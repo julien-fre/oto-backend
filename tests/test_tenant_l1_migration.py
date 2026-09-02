@@ -69,6 +69,15 @@ def test_tenant_one_is_seeded_before_the_column_references_it():
 _LECTEURS_ADMIS = {
     "db/tenants.py",              # les compteurs de suivi (lecture seule)
     "capabilities/tenants_admin.py",  # la capacité qui les sert (PLATFORM_ADMIN)
+    # L'audience d'une relance de plateforme (2026-09-02). Entrée DÉLIBÉRÉE, et deux
+    # précisions qui la bornent :
+    #  - ce module ne lit pas `orgs.tenant_id` lui-même — il réutilise
+    #    `tenants._ORG_TENANT_EXPR`, déjà admise ci-dessus ; ce que le grep attrape est
+    #    le join sur le tenant du SUB (`tenants.id`), plus la prose qui l'explique ;
+    #  - le rattachement n'y sert qu'à REFUSER (écarter les comptes d'un partenaire
+    #    d'un envoi), jamais à accorder quoi que ce soit. Aucune identité, aucun
+    #    credential, aucune visibilité n'en dépend — ce que ce garde-fou protège.
+    "db/outreach.py",
 }
 
 

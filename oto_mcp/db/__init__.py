@@ -56,6 +56,10 @@ from . import (
     runner_triggers,
     runner_fleets,
     journal_calls,
+    # NON aplati ci-dessous (comme `access_shadow`) : ses noms de domaine
+    # (`audience`, `journal`…) sont trop communs pour la surface plate `db.*`.
+    # Les appelants écrivent `from ..db import outreach as db_outreach`.
+    outreach,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au

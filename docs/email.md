@@ -184,6 +184,12 @@ en partie non francophones).
     `locale=None` ⟹ FR. La détection de langue pour un contact jamais loggé reste
     **hors scope** (pas de signal exploitable aujourd'hui — capture à
     l'inscription ? `Accept-Language` ? — question ouverte, pas ce lot).
+    ⚠️ **Question MESURÉE le 2026-09-02, et la réponse est « rien »** :
+    `users.locale` est posée sur 11 des 64 comptes de notre tenant et sur **2 des
+    40** d'une audience de relance, `billing_identities.country_code` est à **zéro
+    ligne**, et le TLD ne tranche pas. Il n'y a donc pas d'algorithme à améliorer —
+    il faut **demander** la langue à l'inscription. Détail et chiffres :
+    `relance-comptes.md`.
   - `resources.py::_notify_grant` — même `db.get_user_by_email`, déjà appelé pour
     dériver `dest_sub`/le front. `type_label` (« projet »/« project ») est choisi
     ICI, à la source (`_TYPE_LABELS` / `_TYPE_LABELS_EN`) : le gabarit ne traduit

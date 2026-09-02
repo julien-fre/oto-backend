@@ -17,6 +17,7 @@ de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 - `GET /api/invitations/{token}` + `/code/{code}` → aperçu d'invitation (le jeton EST le secret)
 - `GET /api/public/docs/{token}`           → doc partagé (JSON)
 - `GET /p/d/{token}`                       → le même, server-rendered (lisible par un agent sans JS)
+- `GET /o/u/{token}`                       → désinscription d'une relance (le jeton EST le secret)
 
 `/api/connectors` est la seule MIXTE : anonyme pour la vitrine, authentifiée pour
 le dashboard qui y scope son catalogue sur l'org active — d'où son `verifier`.
@@ -273,3 +274,33 @@ async def public_doc_view(request: Request) -> Response:
     html_page = public_doc_page.render(title=title, body_md=body_md,
                                        updated_at=doc.get("updated_at"))
     return HTMLResponse(html_page, headers={"Cache-Control": "public, max-age=300"})
+
+
+async def outreach_unsubscribe(request: Request) -> Response:
+    """Désinscription des relances — route `/o/u/<token>`, **sans auth**.
+
+    Le jeton signé EST l'autorisation : demander une session ici ferait dépendre un
+    refus de la capacité à se reconnecter, alors que c'est précisément la personne qui
+    ne veut plus rien avoir à faire avec nous. Server-rendered, sans JS : un lien de
+    désinscription doit marcher dans un webmail d'entreprise comme dans un lecteur
+    texte.
+
+    **GET qui écrit**, en connaissance de cause : les clients mail ne savent poster
+    que depuis un formulaire, et l'écriture est idempotente et strictement
+    soustractive (elle ne fait que RETIRER un destinataire). Un préchargeur qui
+    suivrait le lien désinscrirait quelqu'un — assumé : la conséquence d'un faux
+    positif est de ne plus recevoir de la publicité, celle du sens inverse est
+    d'écrire à qui n'en veut plus.
+    """
+    from .. import outreach_optout
+    from ..db import outreach as db_outreach
+    sub = outreach_optout.verify(request.path_params.get("token", ""))
+    if not sub:
+        return HTMLResponse(outreach_optout.page_refus(), status_code=400)
+    db_outreach.desinscrire(sub, source="link")
+    # La langue de la page de confirmation suit la préférence DÉCLARÉE du compte,
+    # comme le mail qui a porté le lien. Compte inconnu (supprimé entre-temps) ⇒ FR :
+    # le refus est enregistré quand même, il ne dépend pas de l'existence d'une fiche.
+    locale = (db.get_user(sub) or {}).get("locale")
+    return HTMLResponse(outreach_optout.page_confirmation(locale),
+                        headers={"Cache-Control": "no-store"})

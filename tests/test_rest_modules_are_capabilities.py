@@ -51,6 +51,11 @@ _KNOWN: dict[str, str] = {
     "/api/billing/webhook": NATURE,
     # --- Formulaire public du site vitrine (POST anonyme).
     "/api/contact": NATURE,
+    # --- Lien de DÉSINSCRIPTION d'une relance : un NAVIGATEUR suit un lien depuis un
+    # webmail, sans en-tête d'auth, et reçoit une page HTML. Même nature qu'un
+    # callback — et exiger une session la demanderait à celui-là même qui ne veut plus
+    # rien avoir à faire avec nous. Le jeton signé EST l'autorisation.
+    "/o/u/{token}": NATURE,
     # --- APIs consommées par un PROGRAMME externe (oto-core / oto-cli), chemins
     # gelés par contrat : `SireneStock` HTTP client, repli CLI des accords quand le
     # transport MCP est indisponible. Un tool MCP existe en parallèle, mais c'est un

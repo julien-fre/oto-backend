@@ -218,6 +218,8 @@ def render_composed_email(
     image_url: str | None = None,
     image_alt: str | None = None,
     brand: str = "oto",
+    locale: str | None = None,
+    unsubscribe_url: str | None = None,
 ) -> str:
     """Rend le HTML, à la charte de `brand`, d'un email dont le **contenu est fourni
     par l'agent** (prose brute + CTA optionnel + UNE image de tête).
@@ -242,12 +244,33 @@ def render_composed_email(
     cta_html = _charte.bouton(m, cta_url, cta_text) if (cta_text and cta_url) else ""
     # Le pied MARKETING (pourquoi vous recevez ça, comment ne plus le recevoir) —
     # celui d'un transactionnel dit autre chose, cf. `email_templates`.
-    mention = (f"vous recevez ce message car vous avez un compte {m.nom} — "
-               "répondez à cet email pour nous parler, ou pour ne plus en recevoir."
-               ) if footer else None
+    #
+    # ⚠️ La phrase CHANGE quand un lien de désinscription accompagne le pied : sans
+    # lien, « répondez pour ne plus en recevoir » est le seul refus possible et il
+    # faut le dire ; avec lien, le laisser proposerait deux chemins dont un seul est
+    # enregistré quelque part (une réponse humaine ne persiste aucun refus).
+    en = locale == "en"
+    if not footer:
+        mention = None
+    elif unsubscribe_url:
+        mention = (f"you're receiving this because you have a {m.nom} account — "
+                   "reply to this email to talk to us."
+                   if en else
+                   f"vous recevez ce message car vous avez un compte {m.nom} — "
+                   "répondez à cet email pour nous parler.")
+    else:
+        mention = (f"you're receiving this because you have a {m.nom} account — "
+                   "reply to this email to talk to us, or to stop receiving them."
+                   if en else
+                   f"vous recevez ce message car vous avez un compte {m.nom} — "
+                   "répondez à cet email pour nous parler, ou pour ne plus en recevoir.")
+    desinscription = ((unsubscribe_url, "unsubscribe" if en else
+                       "ne plus recevoir ces messages")
+                      if (footer and unsubscribe_url) else None)
     apercu = paras[0] if paras else m.nom
     return _charte.page(m, image_html + body_html + cta_html,
-                        preheader=apercu, mention=mention, locale=None)
+                        preheader=apercu, mention=mention, locale=locale,
+                        desinscription=desinscription)
 
 
 def format_from(from_email: str | None, from_name: str | None = None) -> str | None:
@@ -272,6 +295,8 @@ def send_composed_email(
     image_url: str | None = None,
     image_alt: str | None = None,
     brand: str = "oto",
+    locale: str | None = None,
+    unsubscribe_url: str | None = None,
 ) -> bool:
     """Envoie un email à contenu libre (fourni par l'agent), rendu à la charte de
     `brand`, via le mailer Otomata (Scaleway TEM).
@@ -281,7 +306,8 @@ def send_composed_email(
     du studio (`OTO_CONTACT_TO`). `image_url`/`image_alt` = l'image de tête (cf.
     `render_composed_email`). True si envoyé, False sinon (best-effort)."""
     html = render_composed_email(body, cta_text=cta_text, cta_url=cta_url, footer=footer,
-                                 image_url=image_url, image_alt=image_alt, brand=brand)
+                                 image_url=image_url, image_alt=image_alt, brand=brand,
+                                 locale=locale, unsubscribe_url=unsubscribe_url)
     rt = reply_to or os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
     return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name))
 

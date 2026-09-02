@@ -173,7 +173,32 @@ def bouton(m: Marque, url: Optional[str], libelle: str) -> str:
     )
 
 
-def _pied(m: Marque, mention: Optional[str]) -> str:
+def _lien_desinscription(m: Marque, desinscription: Optional[tuple]) -> str:
+    """Le lien « ne plus recevoir », ou RIEN.
+
+    Il ne passe PAS par `mention` : cette phrase-là est échappée (aucun appelant n'a
+    le droit d'y glisser du HTML), donc un lien y arriverait en toutes lettres. Il a
+    son propre paramètre, une paire `(url, libellé)`, et l'URL est échappée en
+    ATTRIBUT — un guillemet refermerait le `href` et la balise suivante serait celle
+    de l'auteur du texte.
+
+    Un `https://` est exigé : un lien de désinscription en clair est bloqué ou marqué
+    « non sécurisé », et un désabonnement qu'on ne peut pas cliquer n'en est pas un.
+    """
+    if not desinscription:
+        return ""
+    url, libelle = desinscription
+    url, libelle = (url or "").strip(), (libelle or "").strip()
+    if not url or not libelle:
+        return ""
+    if not url.startswith("https://"):
+        raise ValueError(f"lien de désinscription : https:// attendu (reçu {url[:24]!r}).")
+    return (f'<br><a href="{_email._esc_attr(url)}" style="color:inherit">'
+            f'{_email._esc(libelle)}</a>')
+
+
+def _pied(m: Marque, mention: Optional[str],
+          desinscription: Optional[tuple] = None) -> str:
     """Le pied : la signature de marque, puis la raison de l'envoi.
 
     Trois régimes, et la distinction porte du sens :
@@ -182,7 +207,10 @@ def _pied(m: Marque, mention: Optional[str]) -> str:
 
     Sans `site` (marque inconnue), la ligne de signature disparaît plutôt que de
     porter un nom sans adresse — on n'invente pas le domaine d'un partenaire ; et un
-    pied qui n'aurait alors NI signature NI mention ne se rend pas du tout."""
+    pied qui n'aurait alors NI signature NI mention ne se rend pas du tout.
+
+    `desinscription` = `(url, libellé)` d'un lien de désabonnement, réservé au pied
+    MARKETING (cf. `mention_transactionnelle`, qui n'en propose délibérément pas)."""
     if mention is None:
         return ""
     signature = f"{_email._esc(m.nom)} · {_email._esc(m.site)}<br>" if m.site else ""
@@ -192,7 +220,8 @@ def _pied(m: Marque, mention: Optional[str]) -> str:
         f'<tr><td style="padding:0 32px"><div style="border-top:1px solid {m.filet}">'
         f'</div></td></tr>'
         f'<tr><td style="padding:16px 32px 28px 32px;font-family:{POLICE};'
-        f'{discret(m)}">{signature}{_email._esc(mention)}</td></tr>'
+        f'{discret(m)}">{signature}{_email._esc(mention)}'
+        f'{_lien_desinscription(m, desinscription)}</td></tr>'
     )
 
 
@@ -212,7 +241,7 @@ def mention_transactionnelle(m: Marque, locale: Optional[str]) -> str:
 
 
 def page(m: Marque, contenu: str, *, preheader: str, mention: Optional[str],
-         locale: Optional[str] = None) -> str:
+         locale: Optional[str] = None, desinscription: Optional[tuple] = None) -> str:
     """Le document complet : `<head>`, fond, carte, en-tête de marque, pied.
 
     `contenu` = les `<p>` déjà rendus par le gabarit (la cellule porte la typo, donc
@@ -253,6 +282,6 @@ def page(m: Marque, contenu: str, *, preheader: str, mention: Optional[str],
         f'font-weight:600;letter-spacing:-0.01em;color:{m.encre}">{_email._esc(m.nom)}</td></tr>'
         f'<tr><td style="padding:20px 32px 4px 32px;font-family:{POLICE};'
         f'font-size:16px;line-height:1.6;color:{m.encre}">{contenu}</td></tr>'
-        + _pied(m, mention) +
+        + _pied(m, mention, desinscription) +
         '</table></td></tr></table></body></html>'
     )

@@ -470,6 +470,9 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # Page de partage publique server-rendered (lisible par un agent, ADR gap
         # « pages SPA non lisibles »). Servie sous dashboard.oto.ninja via Caddy.
         Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
+        # Désinscription des relances (oto_admin_outreach) — jeton signé dans
+        # l'URL, aucune session : c'est le lien du pied de page des mails.
+        Route("/o/u/{token}", public.outreach_unsubscribe, methods=["GET"]),
         Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs/instructions.py),

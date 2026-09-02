@@ -216,6 +216,22 @@ _PK_SUB_TABLES = (
     #   l'ancien si le canonique l'a déjà, repointer sinon. Une bascule reste bornée à
     #   UN MÊME tenant (R3), donc le rôle garde son slug.
     ("tenant_admins", "sub", ("slug",)),
+    # Le refus de recevoir nos relances : PK = `sub` SEUL (reste de PK vide).
+    # Un UPDATE nu lèverait `UniqueViolation` — et ferait échouer TOUT le merge —
+    # dès que les deux comptes de la personne se sont désinscrits. Le refus suit
+    # la personne : ne pas le repointer la ré-abonnerait en silence à la fusion,
+    # ce qui est exactement ce qu'un opt-out interdit.
+    ("outreach_optouts", "sub", ()),
+    # Les relances DÉJÀ reçues. ⚠️ Ici la contrainte n'est PAS une PK (`id`
+    # BIGSERIAL) mais l'index unique PARTIEL `(campaign, sub) WHERE kind='send'`
+    # — le mécanisme requis est pourtant le même, et c'est lui le critère de
+    # cette liste : un UPDATE nu lève `UniqueViolation` dès que les deux comptes
+    # de la personne ont reçu la même campagne, et fait échouer TOUT le merge.
+    # Le « reste » est donc la clé de l'index, `kind` compris : sans lui on
+    # jetterait un essai en croyant dédupliquer un envoi. Ne pas repointer ferait
+    # ressortir le compte fusionné comme « jamais relancé » — il recevrait le
+    # même mail une seconde fois, ce que la campagne promet d'éviter.
+    ("outreach_sends", "sub", ("campaign", "kind")),
 )
 
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
@@ -304,6 +320,9 @@ _SUB_COLUMNS = [
     ("connector_settings", "set_by"),
     # Qui a déclaré un admin de tenant (L-clés PR 2) — colonne d'auteur.
     ("tenant_admins", "granted_by"),
+    # Qui a DÉCLENCHÉ une relance — colonne d'auteur (le TITULAIRE, lui, est
+    # sous contrainte d'unicité → `_PK_SUB_TABLES`).
+    ("outreach_sends", "sent_by"),
 ]
 
 
@@ -420,7 +439,11 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
         #    l'ancien compte à l'étape 4 : un canal de messagerie à reconnecter et
         #    des prêts à re-consentir, sans trace de ce qui a disparu.
         for table, col, reste in _PK_SUB_TABLES:
-            meme_ligne = " AND ".join(f"a.{c} = b.{c}" for c in reste)
+            # `reste` VIDE = la colonne de sub est à elle seule la clé (PK `sub`
+            # nue) : « la même ligne » veut alors dire « une ligne, n'importe
+            # laquelle ». Sans ce repli, le `AND` resterait suspendu et le SQL
+            # serait invalide — un merge qui échoue en entier sur une syntaxe.
+            meme_ligne = " AND ".join(f"a.{c} = b.{c}" for c in reste) or "TRUE"
             conn.execute(
                 f"DELETE FROM {table} a WHERE a.{col}=%s AND EXISTS ("
                 f"SELECT 1 FROM {table} b WHERE b.{col}=%s AND {meme_ligne})",

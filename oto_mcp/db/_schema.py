@@ -50,6 +50,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.users.ALIASES,            # alias de sub (bascule de compte)
     schema.connectors.SCHEMAS,       # schémas d'outils mis en cache
     schema.emails.EMAILS,            # envois programmés
+    schema.outreach.OUTREACH,        # relances de plateforme et refus de recevoir
     schema.billing.SUBSCRIPTIONS,    # abonnements et paiements (ADR 0043)
     schema.billing.IDENTITIES,       # identité de facturation par org (#486)
     schema.billing.INVOICES,         # factures et avoirs émis chez Pennylane (#488)
