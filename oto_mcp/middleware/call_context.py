@@ -150,6 +150,27 @@ class CallContextMiddleware(Middleware):
             for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
+            # `_run_id=` est ACCEPTÉ PARTOUT, jamais un motif de refus.
+            #
+            # La notice servie au handshake dit « `_run_id` sur CHAQUE appel dès qu'un
+            # run est ouvert » ; l'axe, lui, n'est advertisé/lu que sur la surface de
+            # TRAVAIL (coût jetons de `tools/list`). Les 53 capacités `oto_*` restantes
+            # le voyaient donc arriver sans le déclarer, et le schéma plat le refusait
+            # AVANT le handler (« Unexpected keyword argument ») : deux consignes du
+            # même serveur qui se contredisent, et un agent qui obéit perd son appel.
+            # Vécu trois fois — #168 (spine projet), puis les signaux #651
+            # (`oto_trigger`) et #664 (`oto_procedure`), tous deux le 02/09/2026. Les
+            # deux premières fois on a nommé le tool ; ici on ferme la CLASSE, comme
+            # `oto_call` le fait déjà pour sa cible (`strip_unconsumed_axes`).
+            #
+            # ⚠️ RETIRÉ, pas posé. Poser la ContextVar ferait résoudre l'org du run
+            # (`run_org.pin_for_call`) sur des outils qui ne l'ont jamais fait — donc
+            # de NOUVEAUX refus (« tu n'es pas membre de l'org de ce run ») sur des
+            # appels qui passaient, et réveillerait les gardes anti-agent d'`oto_fleet`
+            # sur un chemin qui ne les a jamais vues. Élargir la CORRÉLATION est un
+            # autre lot, avec sa propre mesure ; ici on ne fait que cesser de refuser.
+            if name not in call_axes.RUN_SELF_HANDLED:
+                args.pop(call_axes.RUN.param, None)
             # L'org du RUN (#639) : APRÈS les axes — un `_org=`/`_project=` explicite a
             # déjà posé l'org et garde la priorité ; sinon un appel qui porte un run se
             # résout dans l'org du run, appartenance gardée (refus nommé, jamais un

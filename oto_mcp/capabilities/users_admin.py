@@ -185,7 +185,35 @@ def _set_option(ctx: ResolvedCtx, inp: OptionInput) -> dict:
         db.clear_option_comp(inp.entity_type, eid, inp.option)
         key = _compose_platform_revoke(inp, eid)
     return {"ok": True, "entity_type": inp.entity_type, "entity_id": eid,
-            "option": inp.option, "on": inp.on, "platform_key": key}
+            "option": inp.option, "on": inp.on, "platform_key": key,
+            "visible_next_session": _visible_next_session(ctx, inp, eid)}
+
+
+def _visible_next_session(ctx: ResolvedCtx, inp: "OptionInput", eid: str) -> bool:
+    """L'effet de ce grant sur une BOÎTE À OUTILS déjà ouverte : maintenant, ou à la
+    prochaine connexion ? (signal #660, 02/09/2026.)
+
+    Une option gouverne des surfaces masquées (`BETA_TOOLS`), et la visibilité d'une
+    session se calcule au HANDSHAKE. Poser l'option rendait donc `ok: true` pendant
+    que l'outil restait absent de la session — et rien ne permettait de distinguer
+    « l'option n'a pas pris » de « elle a pris, la session ne l'a pas encore vue ».
+    Un booléen qui NOMME lequel des deux, c'est la moitié du diagnostic qui manquait.
+
+    `False` = la session de l'appelant est concernée, et `refresh_visibility` vient de
+    lui repousser sa liste d'outils (best-effort : un hoquet retombe sur la prochaine
+    session, ce que `True` décrit de toute façon).
+    `True` = le bénéficiaire est un AUTRE compte, ou une org qui n'est pas l'org
+    effective de l'appelant : aucune session ouverte ne peut être rafraîchie d'ici, et
+    l'outil apparaîtra à la reconnexion du bénéficiaire.
+    """
+    if not ctx.sub:
+        return True
+    if inp.entity_type == "user":
+        return eid != ctx.sub
+    try:
+        return int(eid) != access.current_org(ctx.sub)
+    except (TypeError, ValueError):
+        return True
 
 
 def _compose_platform_grant(ctx: ResolvedCtx, inp: OptionInput, eid: str) -> Optional[dict]:
@@ -287,14 +315,17 @@ CAPABILITIES += [
     ),
     Capability(
         key="platform.option.set", handler=_set_option, Input=OptionInput,
-        authz=SUPER_ADMIN,
+        authz=SUPER_ADMIN, refresh_visibility=True,
         description="[super admin] Grant (on=true) or remove (on=false) a connector option as a FREE "
                     "comp for a user or org (e.g. option='unipile'). Read by access.has_option "
                     "(no billing — option governance is admin-only). entity_type='user'|'org', entity_id=sub|org_id. "
                     "For a platform-mode connector this ALSO grants/revokes its platform key (so "
                     "the option is actually usable, not a dead has_option without a key); the "
                     "`platform_key` field reports what happened (granted / no_platform_key / "
-                    "byo_inert / revoked).",
+                    "byo_inert / revoked). An option can also GATE tools (e.g. 'beta'), and a tool "
+                    "list is computed at handshake: `visible_next_session: true` means the change "
+                    "lands on a session other than yours and shows up when its owner reconnects — "
+                    "false means your own tool list was just refreshed. Neither is a failure.",
         mcp="oto_admin_set_option",
         rest=RestBinding("POST", "/api/admin/option-comps", {}),
     ),
