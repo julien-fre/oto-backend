@@ -222,3 +222,39 @@ def test_supprimer_perime_avant_de_supprimer(client, org):
     # Et la trace demeure, avec sa raison — l'état n'est pas une suppression.
     compte = db.comptage_perime(org["id"], t["id"])
     assert compte["expired_count"] == 1
+
+
+def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
+    """⚠️ La CONSÉQUENCE observable, pas le mécanisme : un déclencheur éteint deux
+    semaines, rallumé, ne doit produire AUCUNE exécution immédiate.
+
+    Le test précédent vérifie que l'échéance est recalculée ; celui-ci vérifie ce
+    qu'un utilisateur constate. Les deux sont nécessaires — une échéance
+    recalculée mais toujours dans le passé passerait le premier et raterait
+    celui-ci."""
+    import datetime
+
+    from oto_mcp import db, runner_tick
+
+    passe = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)
+    t = db.create_trigger(
+        org["id"], org["membre"], procedure="veille-du-soir", cron="0 18 * * *",
+        tz="Europe/Paris", next_due=passe, tools=["data_write"],
+        label="éteinte depuis deux semaines")
+    db.update_trigger(t["id"], org["id"], {"enabled": False})
+
+    # Le rallumage passe par la ROUTE : c'est le geste réel de l'utilisateur.
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "update", "trigger_id": t["id"], "enabled": True})
+    assert r.status_code == 200, r.text
+
+    # ⚠️ LE fait : le tick ne le voit plus dû. `due_triggers` sélectionne sur
+    # `enabled AND next_due <= NOW()` — c'est exactement ce qui enfilait.
+    dus = [d["id"] for d in db.due_triggers(limit=100)]
+    assert t["id"] not in dus, (
+        "rallumé, il est encore vu DÛ : l'échéance figée pendant l'extinction "
+        "déclenche une exécution que personne n'a demandée")
+
+    # Et le tick, joué pour de vrai, n'enfile rien pour lui.
+    runner_tick._tick()
+    assert db.claim_next_job(org["id"], "un-worker") is None

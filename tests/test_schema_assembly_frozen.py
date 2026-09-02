@@ -175,8 +175,8 @@ from oto_mcp.db import _schema, schema
 # `schema.unipile.UNIPILE_GROUP_GRANTS`, un fragment à part posé juste après
 # `schema.orgs.GROUPS` dans `_schema.ASSEMBLAGE`. ADDITIF : rien n'est retiré ni
 # contraint sur les tables existantes.
-EMPREINTE = "__A_CALCULER__"
-LONGUEUR = 0
+EMPREINTE = "30e2c6f23ad4c7743e14dc1c2e9307327ebe3b48aadc1372617b90a50eadd5e4"
+LONGUEUR = 135678
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
