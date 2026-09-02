@@ -253,7 +253,14 @@ def test_sans_option_beta_la_capacite_REFUSE_et_nomme_le_geste(monkeypatch):
         return False
 
     monkeypatch.setattr(RF.access, "has_option", _has_option)
-    for op in ("list", "create", "launch", "stop", "state"):
+    # ⚠️ La liste des ops se LIT sur la surface servie, elle ne se recopie pas.
+    # Écrite à la main, elle disait cinq verbes ; le tronc en a ajouté trois
+    # (`take`/`beat`/`ack_stop`, les gestes de l'ordonnanceur) que la garde
+    # couvre déjà — mais qu'aucun banc ne prouvait. Un verbe ajouté demain
+    # entre dans ce test sans que personne y pense.
+    ops = RF.FleetInput.model_fields["op"].annotation.__args__
+    assert len(ops) >= 10, "la surface a rétréci — vérifier ce qui a disparu"
+    for op in ops:
         with pytest.raises(AuthzDenied) as e:
             _appel(_ctx(), op=op, fleet_id=1)
         assert e.value.status == 403 and e.value.code == "beta_required", op
