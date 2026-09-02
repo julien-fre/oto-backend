@@ -10,8 +10,18 @@ scheduler.py) fait tout le cycle à intervalle horaire :
    Le montant prélevé est le **TTC** (#486), calculé par le MÊME seam que la
    souscription (`billing.tax_for_org`) sur l'identité de facturation de l'org à
    l'instant du prélèvement. Une identité qui ne permet plus de calculer la TVA
-   rend `tax_blocked` : rien n'est prélevé, rien n'est décalé, et le log dit
-   pourquoi — un montant approximatif serait pire qu'un mois non prélevé.
+   rend `blocked:<code>` : rien n'est prélevé, rien n'est décalé — un montant
+   approximatif serait pire qu'un mois non prélevé.
+
+   ⚠️ **Une échéance inprélevable laisse un ÉTAT, pas seulement un log (#829).**
+   Trois branches abandonnaient ici sans rien écrire (TVA incalculable, palier
+   disparu du catalogue, mandat perdu) : le cycle ne bougeait pas, le droit ne se
+   fermait pas, et le seul témoin était une `log.error` dans un journal qui ne
+   remonte qu'à ~24 h. Passé ce délai, plus rien ne disait qu'une org consommait
+   gratuitement ni depuis quand. Elles écrivent désormais `block_code`/
+   `block_since` sur l'abonnement (`_block`), effacés dès qu'une échéance passe.
+   La question « qui sert-on sans encaisser, et depuis quand ? » a enfin une
+   réponse : `db_billing.blocked_subscriptions()`.
 2. **Politique d'impayé** (dunning borné) : échec → retry à J+3 (tentatives
    trackées par le JOURNAL, pas un compteur mutable) ; 3 échecs → `past_due`
    + grace 15 j (Art 9.4 — cf. `_GRACE`).
@@ -89,9 +99,34 @@ _PAYMENT_OK = frozenset({"paid", "pending", "authorized"})
 _PAYMENT_FAILED = frozenset({"failed", "canceled", "expired"})
 
 
+def _block(org_id: int, code: str, detail: str, now: datetime) -> str:
+    """Une échéance qu'on ne peut PAS tirer — et qui le DIT (#829).
+
+    ⚠️ **C'est le correctif de fond de ce module.** Ces branches se contentaient d'une
+    `log.error` et d'un `return` : rien n'était prélevé, mais rien n'avançait non plus
+    — ni le cycle, ni l'impayé, ni la fermeture du droit. Le seul témoin était une
+    ligne dans un journal qui ne remonte qu'à ~24 h. Passé ce délai, PLUS AUCUNE
+    donnée ne disait qu'une org consommait sans payer, ni depuis quand : le service
+    continuait gratuitement, indéfiniment, sans que personne — ni le client, ni
+    nous — en soit averti.
+
+    Ce que ça reste, volontairement : **on ne prélève pas, et on ne ferme pas non
+    plus**. Un montant approximatif serait pire qu'un mois non prélevé, et fermer le
+    droit d'un client qui n'a jamais été prévenu serait pire encore (le préavis de
+    5 jours promis par l'Art 9.4 n'existe toujours pas — #768). Ce que ça n'est plus :
+    muet. L'état est en base (`block_code`/`block_since`), lisible par
+    `db_billing.blocked_subscriptions()` et servi au client sur son propre écran de
+    facturation.
+    """
+    db_billing.flag_subscription_block(org_id, code, detail, now=now)
+    log.error("billing_runner: org %s NON PRÉLEVABLE (%s) — service rendu sans "
+              "encaissement, cycle non avancé : %s", org_id, code, detail)
+    return f"blocked:{code}"
+
+
 def _charge_one(sub_row: dict, now: datetime) -> str:
     """Tire l'échéance d'UN abonnement. Retourne l'issue (log/test) :
-    'renewed' | 'retry' | 'past_due' | 'skipped' | 'tax_blocked'."""
+    'renewed' | 'retry' | 'past_due' | 'skipped' | 'blocked:<code>'."""
     org_id = sub_row["org_id"]
     if sub_row.get("provider") == "comp":
         # abonnement FORCÉ par un admin (non payé) — jamais de débit. Ceinture
@@ -99,13 +134,13 @@ def _charge_one(sub_row: dict, now: datetime) -> str:
         return "skipped"
     plan = billing.PLANS.get(sub_row["plan"])
     if plan is None:
-        log.error("billing_runner: org %s a un plan inconnu %r — échéance sautée",
-                  org_id, sub_row["plan"])
-        return "skipped"
+        return _block(org_id, "plan_unknown",
+                      f"palier {sub_row['plan']!r} absent du catalogue courant",
+                      now)
     if not sub_row.get("customer_id") or not sub_row.get("mandate_id"):
-        log.error("billing_runner: org %s sans customer/mandat rejouable "
-                  "(method=%s) — sautée", org_id, sub_row.get("method"))
-        return "skipped"
+        return _block(org_id, "no_mandate",
+                      f"aucun customer/mandat rejouable (method="
+                      f"{sub_row.get('method')})", now)
 
     # MÊME calcul qu'à la souscription, MÊME seam (#486) : l'échéance est prélevée
     # TTC, au taux de l'identité de facturation AU MOMENT DU PRÉLÈVEMENT — une org
@@ -117,9 +152,8 @@ def _charge_one(sub_row: dict, now: datetime) -> str:
         # Ni fallback ni débit approximatif : sans identité exploitable, il n'y a pas
         # de montant correct à prendre. On ne touche PAS au cycle (next_billing_at
         # reste dû) — le prélèvement repartira dès que l'identité sera réparée.
-        log.error("billing_runner: org %s non prélevable — TVA incalculable : %s",
-                  org_id, e)
-        return "tax_blocked"
+        return _block(org_id, str(e).split(":", 1)[0].strip() or "tax_blocked",
+                      str(e), now)
 
     period_ref = str(sub_row.get("current_period_end") or "epoch")[:10]
     attempt = db_billing.count_renewal_attempts(
@@ -177,6 +211,12 @@ def _reconcile_one(row: dict, now: datetime) -> None:
     des objets `payment` Mollie `tr_`)."""
     ref = row.get("payment_id") or row.get("payment_intent_id")
     if not ref:
+        # Ligne non terminale SANS référence PSP : elle sera re-sélectionnée à chaque
+        # tick, et aucun polling ne pourra jamais la faire avancer. Un `return` nu en
+        # faisait un déchet invisible dans la file de réconciliation.
+        log.error("billing_runner: paiement %s (org %s) non terminal SANS référence "
+                  "PSP — irréconciliable, bloqué en file", row.get("id"),
+                  row.get("org_id"))
         return
     status = str(mollie_client.get_payment(ref).get("status") or "")
     if row.get("kind") == "initial" and status == "paid":
@@ -203,8 +243,12 @@ def _catch_up(org_id: int, payment_ref: str) -> None:
     try:
         billing.confirm(org_id, payment_ref=payment_ref)
     except Exception as e:
-        log.warning("billing_runner: confirm de rattrapage org %s (paiement %s) : %s",
-                    org_id, payment_ref, e)
+        # ERREUR, pas warning : ici un payeur est DÉBITÉ et sans droits. Le niveau
+        # décide de la visibilité au-delà du journal (Sentry ne remonte que les
+        # ERROR) — un rattrapage qui échoue à chaque tick doit se voir.
+        log.error("billing_runner: confirm de rattrapage org %s (paiement %s) a "
+                  "échoué — encaissement sans droits ouverts : %s",
+                  org_id, payment_ref, e, exc_info=True)
 
 
 def tick() -> dict:
@@ -269,5 +313,10 @@ async def run_billing_loop(interval: int = _POLL_INTERVAL_S) -> None:
             log.info("billing runner arrêté")
             raise
         except Exception as e:  # un tick raté ne tue pas la boucle
-            log.warning("billing_runner tick échoué : %s", e)
+            # ERROR et pas WARNING : un tick qui échoue systématiquement arrête TOUT
+            # le cycle de facturation (échéances, dunning, réconciliation, factures)
+            # sans rien changer d'observable. En warning, il ne franchissait même pas
+            # le journal — c'était le plus silencieux des arrêts de ce module.
+            log.error("billing_runner tick échoué — aucune échéance n'a été traitée "
+                      "ce passage : %s", e, exc_info=True)
         await asyncio.sleep(interval)

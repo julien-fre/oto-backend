@@ -31,7 +31,7 @@ IDENTITE_FR = {"legal_name": "ACME SAS", "country_code": "FR", "vat_number": Non
 def _wire(monkeypatch, *, attempts_before=0, payment=None, payment_exc=None,
           identity=IDENTITE_FR):
     state = {"journal": [], "updates": [], "schedule": None, "retry": None,
-             "status": None}
+             "status": None, "blocked": []}
     monkeypatch.setattr(db_billing, "get_billing_identity", lambda org: identity)
     monkeypatch.setattr(db_billing, "count_renewal_attempts",
                         lambda org, since: attempts_before)
@@ -45,6 +45,9 @@ def _wire(monkeypatch, *, attempts_before=0, payment=None, payment_exc=None,
                         lambda org, when: state.update(retry=(org, when)) or True)
     monkeypatch.setattr(db_billing, "set_subscription_status",
                         lambda org, st, **k: state.update(status=(org, st, k)) or True)
+    monkeypatch.setattr(db_billing, "flag_subscription_block",
+                        lambda org, code, detail, **k:
+                        state["blocked"].append((org, code, detail)) or True)
 
     def fake_payment(amount, **k):
         state["charge"] = (amount, k)
@@ -132,10 +135,20 @@ def test_le_delai_de_grace_tient_les_quinze_jours_ecrits_au_contrat():
 
 
 def test_unknown_plan_or_missing_mandate_skips(monkeypatch):
+    """#829 : ces deux branches abandonnaient sans rien écrire — plus maintenant.
+
+    Elles ne débitent toujours pas (c'est correct : il n'y a rien à débiter), mais
+    elles GRAVENT pourquoi. Sans cette écriture, un abonnement dont le palier a
+    disparu du catalogue ou dont le mandat s'est perdu était servi gratuitement,
+    indéfiniment, sans qu'aucune donnée ne le dise."""
     state = _wire(monkeypatch)
-    assert billing_runner._charge_one(_sub(plan="gold"), NOW) == "skipped"
-    assert billing_runner._charge_one(_sub(mandate_id=None), NOW) == "skipped"
+    assert billing_runner._charge_one(_sub(plan="gold"), NOW) == "blocked:plan_unknown"
+    assert billing_runner._charge_one(_sub(mandate_id=None), NOW) == "blocked:no_mandate"
     assert "charge" not in state               # aucun débit tenté
+    assert [(o, c) for o, c, _ in state["blocked"]] == [
+        (42, "plan_unknown"), (42, "no_mandate")], (
+        "Une échéance qu'on ne peut pas tirer doit laisser un état lisible en base, "
+        "pas seulement une ligne dans un journal qui ne remonte qu'à ~24 h.")
 
 
 def test_une_identite_devenue_incalculable_bloque_le_prelevement(monkeypatch):
@@ -145,9 +158,15 @@ def test_une_identite_devenue_incalculable_bloque_le_prelevement(monkeypatch):
     que ce lot répare. Rien n'est débité, rien n'est journalisé, et le cycle n'est
     pas décalé : l'échéance reste due et repartira dès l'identité réparée."""
     state = _wire(monkeypatch, identity=None)
-    assert billing_runner._charge_one(_sub(), NOW) == "tax_blocked"
+    assert billing_runner._charge_one(_sub(), NOW) == "blocked:billing_identity_required"
     assert "charge" not in state and state["journal"] == []
     assert state["schedule"] is None and state["retry"] is None
+    # #829 : et surtout, ça se VOIT. C'est le cas de toute org souscrite AVANT que
+    # l'identité de facturation devienne un préalable (28/08/2026) : sa première
+    # échéance ne peut pas passer, et rien n'en gardait la trace au-delà de la
+    # rétention du journal (~24 h).
+    assert [(o, c) for o, c, _ in state["blocked"]] == [
+        (42, "billing_identity_required")]
 
 
 # ── réconciliation ───────────────────────────────────────────────────────────

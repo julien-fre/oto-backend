@@ -120,7 +120,8 @@ def set_comp_subscription(org_id: int, plan: str, *,
             "  provider='comp', method='comp', plan=EXCLUDED.plan, "
             "  status='active', customer_id=NULL, card_id=NULL, sepa_id=NULL, "
             "  mandate_id=NULL, next_billing_at=NULL, grace_until=NULL, "
-            "  canceled_at=NULL, updated_at=NOW()",
+            "  canceled_at=NULL, block_code=NULL, block_detail=NULL, "
+            "  block_since=NULL, block_seen_at=NULL, updated_at=NOW()",
             (org_id, plan),
         )
 
@@ -166,6 +167,12 @@ def schedule_next_billing(
         n = conn.execute(
             "UPDATE org_subscriptions SET current_period_end = %s, "
             "next_billing_at = %s, status = 'active', grace_until = NULL, "
+            # Le blocage s'efface ICI et pas dans l'appelant : une échéance
+            # encaissée EST la preuve qu'il n'y en a plus, quel qu'ait été le
+            # motif. Effacer côté runner l'aurait laissé traîner sur tout chemin
+            # futur qui fait avancer un cycle sans passer par lui.
+            "block_code = NULL, block_detail = NULL, block_since = NULL, "
+            "block_seen_at = NULL, "
             "updated_at = NOW() WHERE org_id = %s",
             (current_period_end, next_billing_at, org_id),
         ).rowcount
@@ -181,6 +188,57 @@ def retry_billing_at(org_id: int, when) -> bool:
             "WHERE org_id = %s", (when, org_id),
         ).rowcount
     return n > 0
+
+
+def flag_subscription_block(org_id: int, code: str, detail: str, *, now) -> bool:
+    """Grave POURQUOI l'échéance n'a pas pu être prélevée — l'état visible qui
+    manquait (#829).
+
+    ⚠️ **`block_since` ne bouge pas d'un tick à l'autre** (`COALESCE`), et c'est tout
+    l'intérêt de la colonne : c'est la date à partir de laquelle on sert sans
+    encaisser. La réécrire à chaque passage rendrait un blocage vieux d'un mois
+    indiscernable d'un blocage né il y a une heure — soit exactement l'aveuglement
+    qu'on répare. `block_seen_at`, lui, avance à chaque constat : il dit que le
+    runner tourne encore et voit toujours le problème.
+
+    Le motif change (identité réparée mais mandat perdu) → `block_since` repart, car
+    ce n'est plus le même blocage.
+    """
+    with _connect() as conn:
+        n = conn.execute(
+            "UPDATE org_subscriptions SET block_code = %s, block_detail = %s, "
+            "block_since = CASE WHEN block_code IS DISTINCT FROM %s "
+            "                   THEN %s ELSE COALESCE(block_since, %s) END, "
+            "block_seen_at = %s, updated_at = NOW() WHERE org_id = %s",
+            (code, detail, code, now, now, now, org_id),
+        ).rowcount
+    return n > 0
+
+
+def clear_subscription_block(org_id: int) -> bool:
+    """Lève le blocage sans toucher au cycle — pour un chemin qui répare la cause
+    sans encaisser (une identité de facturation enfin posée, par exemple)."""
+    with _connect() as conn:
+        n = conn.execute(
+            "UPDATE org_subscriptions SET block_code = NULL, block_detail = NULL, "
+            "block_since = NULL, block_seen_at = NULL, updated_at = NOW() "
+            "WHERE org_id = %s AND block_code IS NOT NULL", (org_id,),
+        ).rowcount
+    return n > 0
+
+
+def blocked_subscriptions(limit: int = 200) -> list[dict]:
+    """Les abonnements qu'on SERT SANS POUVOIR ENCAISSER, le plus ancien d'abord.
+
+    La liste qui n'existait pas : sans elle, « combien de clients consomment
+    gratuitement, et depuis quand ? » n'avait aucune réponse — ni en base, ni au
+    journal (~24 h de rétention), ni ailleurs."""
+    with _connect() as conn:
+        return list(conn.execute(
+            "SELECT org_id, plan, status, block_code, block_detail, block_since, "
+            "       block_seen_at, next_billing_at, current_period_end "
+            "FROM org_subscriptions WHERE block_code IS NOT NULL "
+            "ORDER BY block_since ASC NULLS LAST LIMIT %s", (limit,)))
 
 
 def count_renewal_attempts(org_id: int, since) -> int:

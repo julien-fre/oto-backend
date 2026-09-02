@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS option_comps (
     option      TEXT NOT NULL,        -- 'unipile', …
     granted_by  TEXT,
     granted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- ÉCHÉANCE du don. NULL = perpétuel — l'état de TOUS les dons antérieurs au
+    -- 2026-09-02 et le défaut de `set_option_comp` : ajouter la colonne ne retire
+    -- rien à personne, et l'effacer (NULL) rouvre. Une fois posée, la date FERME
+    -- l'option le jour venu, dans le seam : `has_option_comp` ignore une ligne
+    -- échue, donc les surfaces qui lisent l'entitlement tombent d'accord sans
+    -- qu'aucune ait à connaître la règle. ⚠️ `list_option_comps` ne filtre PAS,
+    -- lui : une console admin doit VOIR le don échu pour pouvoir le rouvrir.
+    expires_at  TIMESTAMPTZ,
     PRIMARY KEY (entity_type, entity_id, option)
 );
 """
@@ -51,6 +59,19 @@ CREATE TABLE IF NOT EXISTS org_subscriptions (
     next_billing_at TIMESTAMPTZ,
     grace_until TIMESTAMPTZ,                -- posé au passage past_due (grace 14 j)
     canceled_at TIMESTAMPTZ,
+    -- ⚠️ **Pourquoi une échéance N'A PAS pu être prélevée**, écrit par le runner.
+    -- Sans ces quatre colonnes, un abonnement inprélevable (identité de facturation
+    -- absente → TVA incalculable, palier disparu du catalogue, mandat perdu) laissait
+    -- pour toute trace une ligne `log.error` dans un journal qui ne remonte qu'à ~24 h :
+    -- rien n'avançait, rien ne fermait, personne n'était averti, et le service
+    -- continuait gratuitement pour une durée que PLUS AUCUNE donnée ne permettait de
+    -- mesurer. `block_since` est là pour ça — c'est la date à partir de laquelle on
+    -- sert sans encaisser. Un traitement qui ne peut pas s'exécuter DOIT laisser un
+    -- état lisible ; le journal n'en est pas un.
+    block_code TEXT,                        -- billing_identity_required | vat_consumer_unsupported | plan_unknown | no_mandate
+    block_detail TEXT,                      -- le message qui l'accompagne (diagnostic)
+    block_since TIMESTAMPTZ,                -- 1er tick qui a buté — NE bouge PAS aux ticks suivants
+    block_seen_at TIMESTAMPTZ,              -- dernier tick qui a reconstaté le blocage
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

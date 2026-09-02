@@ -358,11 +358,14 @@ def test_un_renouvellement_sans_identite_ne_prend_RIEN(monkeypatch):
     cycle n'est pas décalé non plus — l'échéance reste due et repartira dès que
     l'identité sera réparée."""
     etat: dict = {}
+    trace: list = []
     monkeypatch.setattr(db_billing, "get_billing_identity", lambda org: None)
     for nom in ("insert_billing_payment", "schedule_next_billing", "retry_billing_at",
                 "set_subscription_status"):
         monkeypatch.setattr(db_billing, nom,
                             (lambda n: lambda *a, **k: etat.setdefault(n, True))(nom))
+    monkeypatch.setattr(db_billing, "flag_subscription_block",
+                        lambda org, code, detail, **k: trace.append((org, code)) or True)
     monkeypatch.setattr(billing_runner.mollie_client, "create_recurring_payment",
                         lambda *a, **k: etat.setdefault("psp", True))
     now = datetime.now(timezone.utc)
@@ -371,8 +374,12 @@ def test_un_renouvellement_sans_identite_ne_prend_RIEN(monkeypatch):
          "customer_id": "cst_1", "mandate_id": "mdt_1",
          "current_period_end": now - timedelta(hours=1)}, now)
 
-    assert issue == "tax_blocked"
+    assert issue == "blocked:billing_identity_required"
     assert etat == {}, "ni débit, ni ligne de journal, ni décalage du cycle"
+    # #829 : « ne rien prendre » ne doit pas vouloir dire « ne rien dire ». Le refus
+    # laisse un état daté, sans quoi le service continue gratuitement pour une durée
+    # que plus aucune donnée ne mesure.
+    assert trace == [(ORG, "billing_identity_required")]
 
 
 # ══ 4. ce qu'on ne réécrit PAS ═══════════════════════════════════════════════

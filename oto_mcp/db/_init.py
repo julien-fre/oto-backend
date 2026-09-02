@@ -434,6 +434,21 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # ADR 0043 : id du mandat (mdt_xxx Mollie) sur l'abonnement — la table
     # existait déjà (B1) quand la colonne est arrivée.
     conn.execute("ALTER TABLE org_subscriptions ADD COLUMN IF NOT EXISTS mandate_id TEXT")
+    # #829 : POURQUOI une échéance n'a pas pu être prélevée. Le runner butait en
+    # silence (une `log.error` dans un journal qui ne remonte qu'à ~24 h), sans
+    # avancer le cycle ni fermer le droit : le service continuait gratuitement, et
+    # plus aucune donnée ne disait depuis quand. `block_since` est cette donnée.
+    for _col, _type in (("block_code", "TEXT"), ("block_detail", "TEXT"),
+                        ("block_since", "TIMESTAMPTZ"),
+                        ("block_seen_at", "TIMESTAMPTZ")):
+        conn.execute(f"ALTER TABLE org_subscriptions "
+                     f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
+    # 2026-09-02 : ÉCHÉANCE d'un don d'option. Nullable sans défaut, donc
+    # instantané et sans réécriture (PG 11+) sur une base partagée avec la prod —
+    # et surtout ADDITIF au sens du droit : les 35 dons déjà posés restent à NULL,
+    # c'est-à-dire perpétuels, exactement ce qu'ils étaient. Poser une date est un
+    # acte admin explicite, ligne par ligne ; la retirer rouvre.
+    conn.execute("ALTER TABLE option_comps ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
     # ADR 0043 bascule Stancer→Mollie (2026-07-24) : réaligne l'index partiel
     # de la file de réconciliation sur les statuts terminaux MOLLIE (le
     # prédicat doit matcher billing_payments.TERMINAL_PAYMENT_STATUSES pour

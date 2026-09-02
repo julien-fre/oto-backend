@@ -199,9 +199,63 @@ divergence se serait vue sur une facture, pas dans un test — un client ne peut
 payer 22,80 € le premier mois et 19,00 € les suivants.
 
 Une identité devenue incalculable au moment d'une échéance ne fait **pas** retomber
-le runner sur le HT : il rend `tax_blocked`, ne prélève rien, ne décale pas le cycle
-(l'échéance reste due) et le journalise en `error`. Un montant approximatif serait
-pire qu'un mois non prélevé.
+le runner sur le HT : il rend `blocked:<code>`, ne prélève rien et ne décale pas le
+cycle (l'échéance reste due). Un montant approximatif serait pire qu'un mois non
+prélevé.
+
+## Une échéance qu'on ne peut pas tirer laisse un ÉTAT (#829)
+
+⚠️ **Le refus ne suffit pas : il doit se voir.** Jusqu'au 02/09/2026, trois branches
+de `_charge_one` abandonnaient sans rien écrire — TVA incalculable, palier disparu du
+catalogue, mandat perdu. Rien n'était prélevé, mais **rien n'avançait non plus** : ni
+le cycle, ni l'impayé, ni la fermeture du droit. Le seul témoin était une `log.error`
+dans un journal dont la fenêtre est d'environ 24 h. Passé ce délai, plus aucune
+donnée ne disait qu'une org consommait sans payer, **ni depuis quand** — le service
+continuait gratuitement, indéfiniment, sans que personne en soit averti.
+
+`org_subscriptions` porte désormais quatre colonnes écrites par `_block` :
+
+| colonne | ce qu'elle dit |
+| --- | --- |
+| `block_code` | `billing_identity_required` \| `vat_consumer_unsupported` \| `plan_unknown` \| `no_mandate` |
+| `block_detail` | le diagnostic (exploitation, pas le payeur) |
+| `block_since` | **la date à partir de laquelle on sert sans encaisser** — ne bouge pas d'un tick à l'autre |
+| `block_seen_at` | dernier tick qui a reconstaté le blocage (le runner tourne, et voit toujours) |
+
+`block_since` est la colonne qui compte : la réécrire à chaque passage rendrait un
+blocage vieux d'un mois indiscernable d'un blocage né il y a une heure. Le motif qui
+change fait repartir la date — ce n'est plus le même blocage.
+
+L'état s'efface **dans `schedule_next_billing`** : une échéance encaissée est la
+preuve qu'il n'y a plus de blocage, quel qu'ait été le motif. L'effacer côté runner
+l'aurait laissé traîner sur tout chemin futur qui fait avancer un cycle sans passer
+par lui. Un `comp` (jamais prélevé) le remet à zéro aussi.
+
+Lectures : `db_billing.blocked_subscriptions()` (« qui sert-on sans encaisser, et
+depuis quand ? ») et `billing.status` → `block_code`/`block_detail`/`block_since`,
+servis au client sur son propre écran.
+
+⚠️ **`block_code` n'est pas `vat_blocked`.** `vat_blocked` est une **prévision**
+recalculée à chaque lecture (« au taux d'aujourd'hui, on ne saurait pas quoi
+prélever ») ; `block_code` est un **fait daté** (« l'échéance n'a PAS pu être
+tirée »). Une identité réparée une heure après l'échéance efface la prévision et
+laisse le fait — c'est précisément la différence utile.
+
+**Ce que ce mécanisme ne fait volontairement pas** : il ne prélève pas quand même
+(il n'y a pas de montant correct à prendre), et il **ne ferme pas le droit** — le
+préavis de 5 jours promis par l'Art 9.4 n'existe toujours pas (#768), et suspendre
+sans avoir prévenu serait pire que le défaut réparé ici. Au bout de combien de temps
+un blocage devient un impayé reste une **décision produit**, pas un réglage.
+
+### Les autres abandons muets du même tick, corrigés en même temps
+
+- une ligne non terminale **sans référence PSP** repartait en file à chaque tick sans
+  même un log : elle est irréconciliable, et le dit ;
+- un `confirm` de rattrapage qui échoue était un `warning` — donc sous le seuil
+  Sentry — alors qu'un payeur est **débité sans droits ouverts** : c'est une `error` ;
+- **un tick entier qui lève** était un `warning`. Il arrête pourtant tout le cycle
+  (échéances, dunning, réconciliation, factures) sans rien changer d'observable :
+  c'était le plus silencieux des arrêts de ce module.
 
 ### Ce qui est journalisé, et ce qui ne l'est PAS
 

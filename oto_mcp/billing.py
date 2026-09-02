@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from . import billing_consent, billing_vat, mollie_client
+from . import billing_consent, billing_grants, billing_vat, mollie_client
 from . import db
 from .db import billing as db_billing
 # Le format de date servi par l'API est défini UNE fois, dans la couche DB (le row
@@ -531,10 +531,26 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
 
 # ── état & résiliation ───────────────────────────────────────────────────────
 
-def status(org_id: int) -> dict:
+def status(org_id: int, *, sub: Optional[str] = None) -> dict:
+    """État d'abonnement de l'org — **et ce qui lui est offert sans abonnement**.
+
+    `granted` porte les avantages payants OFFERTS (dons d'option, cf.
+    `billing_grants`). Il est joint dans les DEUX branches, et c'est le point : la
+    branche « aucun abonnement » est justement celle où un bénéficiaire se voyait
+    vendre ce qu'il possédait déjà. Le catalogue `plans` y reste servi — un don n'est
+    pas un abonnement, et la voie pour en prendre un ne doit pas se refermer.
+
+    `sub` = l'appelant, pour ses dons PERSONNELS. Omis sur les faces qui décrivent
+    une org à un tiers (fiche admin) : voir `billing_grants.granted_benefits`.
+    """
+    granted = billing_grants.granted_benefits(org_id, sub=sub)
+    # L'usage est servi à TOUT LE MONDE, gratifié ou non, abonné ou non : c'est le
+    # seul élément de cet écran qui vaut pour tous les comptes.
+    usage = billing_grants.monthly_usage(org_id)
     row = db_billing.get_org_subscription(org_id)
     if not row:
-        return {"subscribed": False, "plans": plans()}
+        return {"subscribed": False, "plans": plans(),
+                "granted": granted, "usage": usage}
     meta = PLANS.get(row["plan"], {})
     comp = row["provider"] == "comp"   # abonnement forcé par un admin (non payé)
     return {
@@ -560,6 +576,19 @@ def status(org_id: int) -> dict:
         "next_billing_at": row.get("next_billing_at"),
         "grace_until": row.get("grace_until"),
         "canceled_at": row.get("canceled_at"),
+        # Ce que le RUNNER a CONSTATÉ, à distinguer de `vat_blocked` juste au-dessus.
+        # `vat_blocked` est une prévision recalculée à chaque lecture (« au taux
+        # d'aujourd'hui, on ne saurait pas quoi prélever ») ; `block_code` est un fait
+        # daté (« l'échéance du 25 n'a PAS pu être tirée, et depuis on sert sans
+        # encaisser »). Un blocage de TVA réparé une heure après l'échéance efface le
+        # premier et laisse le second : c'est précisément la différence utile.
+        "block_code": row.get("block_code"),
+        "block_detail": row.get("block_detail"),
+        "block_since": row.get("block_since"),
+        # Servis dans les DEUX branches : un abonné a lui aussi des dons possibles
+        # (une option offerte survit à une souscription) et un usage à voir.
+        "granted": granted,
+        "usage": usage,
     }
 
 

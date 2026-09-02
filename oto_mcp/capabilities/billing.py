@@ -103,6 +103,80 @@ class PlansView(BaseModel):
     plans: list[Plan]
 
 
+class MonthlyUsage(BaseModel):
+    """Ce que l'org a CONSOMMÉ ce mois-ci, et ce qui est inclus.
+
+    ⚠️ **Rien ici ne refuse quoi que ce soit.** Le journal qui porte ce chiffre est
+    best-effort et non transactionnel : il mesure et il prévient, il ne facture pas
+    et ne coupe pas. Un dépassement s'affiche, il ne bloque aucun appel.
+
+    ⚠️ **Aucun ratio n'est servi, et c'est délibéré.** L'usage médian d'une org active
+    est de 25 appels par mois pour 1000 inclus : une barre de progression ou un
+    « 2,5 % » y dirait « c'est gratuit et sans fin », soit l'inverse de ce que ce
+    bloc existe pour faire comprendre. Afficher le NOMBRE et mentionner le plafond ;
+    ne pas les diviser."""
+    calls: int = Field(description="Appels d'OUTIL D'AGENT émis sous cette org depuis "
+                                   "le 1er du mois (UTC). N'inclut ni la navigation "
+                                   "dans le tableau de bord, ni les handshakes : trois "
+                                   "volumes sans rapport, dont le mélange ne mesurerait "
+                                   "que le fait d'avoir un onglet ouvert.")
+    included: int = Field(description="Appels inclus par mois et par organisation.")
+    period_start: str = Field(description="Début de la période comptée — le 1er du mois "
+                                          "courant, UTC. ⚠️ Le MOIS EN COURS est la "
+                                          "seule fenêtre disponible : la purge du "
+                                          "journal ne garde qu'environ 35 jours, donc "
+                                          "aucune comparaison avec le mois précédent "
+                                          "n'est calculable sur cette source.")
+    over: bool = Field(description="Le compte dépasse-t-il l'inclus ? C'est CE booléen "
+                                   "qui décide d'un message, jamais un pourcentage "
+                                   "calculé côté écran — et il n'entraîne aucun refus.")
+
+
+class GrantedBenefit(BaseModel):
+    """Un avantage payant OFFERT — un droit ouvert sans qu'aucun euro ne circule.
+
+    ⚠️ Ce n'est PAS un abonnement offert (`comp=true` plus haut, qui suppose une
+    ligne d'abonnement et un palier). C'est un **don d'option** : l'org n'a pas
+    d'abonnement du tout, et reçoit quand même un avantage du catalogue. Les deux
+    chemins coexistent et ne se lisent pas au même endroit — d'où ce bloc, servi
+    justement dans la branche `subscribed:false` où rien ne le disait."""
+    option: str = Field(description="Identifiant technique de l'avantage ('unipile'). "
+                                    "Seules les options VENDUES dans un palier "
+                                    "apparaissent ici : un drapeau de population "
+                                    "('beta') n'est pas un cadeau et n'y figure pas.")
+    label: str = Field(description="L'avantage NOMMÉ, tel qu'on l'affiche "
+                                   "('Messagerie hébergée (Unipile)'). Il ne se "
+                                   "présume pas : plusieurs avantages peuvent "
+                                   "s'offrir, ce champ dit lequel.")
+    detail: Optional[str] = Field(default=None, description="Ce que l'avantage permet, "
+                                                            "en une phrase.")
+    scope: str = Field(description="'org' = offert à l'espace (tous ses membres) | "
+                                   "'user' = offert à CE compte, et il le suit dans "
+                                   "tous ses espaces. Offert des deux façons, "
+                                   "l'avantage n'apparaît qu'une fois — avec "
+                                   "l'échéance la plus lointaine des deux.")
+    granted_at: Optional[str] = Field(default=None, description="Date de la mise à "
+                                                                "disposition.")
+    expires_at: Optional[str] = Field(
+        default=None,
+        description="Fin de la mise à disposition. `null` = SANS terme (l'état de "
+                    "tous les dons antérieurs au 2026-09-02) — surtout pas « expire "
+                    "bientôt ». Passée cette date, l'avantage cesse d'être accordé : "
+                    "le droit se referme, les données restent.")
+    days_left: Optional[int] = Field(
+        default=None,
+        description="Jours restants avant `expires_at`. `null` si sans terme. "
+                    "**NÉGATIF si l'échéance est passée** — un don échu se lit échu, "
+                    "il n'est pas ramené à zéro.")
+    value_amount: Optional[int] = Field(
+        default=None,
+        description="Ce que cet avantage coûterait, en CENTIMES **hors taxes** : le "
+                    "prix du palier le MOINS cher qui l'inclut. Rien n'a été facturé "
+                    "— c'est la valeur du cadeau, pas une dette.")
+    currency: Optional[str] = Field(default=None, description="Devise ('eur').")
+    interval: Optional[str] = Field(default=None, description="'month' | 'year'.")
+
+
 class BillingStatus(BaseModel):
     """État d'abonnement de l'org active — servi aussi bien par billing.status que
     par billing.cancel (qui rend l'état APRÈS la demande de résiliation).
@@ -200,6 +274,40 @@ class BillingStatus(BaseModel):
                     "le statut reste 'active' et subscribed=True jusqu'à "
                     "current_period_end. Une résiliation se lit donc ici, JAMAIS sur "
                     "`status`.")
+    block_code: Optional[str] = Field(
+        default=None,
+        description="Ce que le runner a CONSTATÉ à la dernière échéance qu'il n'a PAS "
+                    "pu tirer : 'billing_identity_required', "
+                    "'vat_consumer_unsupported', 'plan_unknown' ou 'no_mandate'. "
+                    "`null` = rien n'a échoué. ⚠️ À ne pas confondre avec `vat_blocked`, "
+                    "qui est une PRÉVISION recalculée à chaque lecture : `block_code` "
+                    "est un fait daté, et tant qu'il est posé le service est rendu SANS "
+                    "être encaissé — le cycle n'avance pas et le droit ne se ferme pas.")
+    block_detail: Optional[str] = Field(
+        default=None,
+        description="Le message de diagnostic qui accompagne `block_code`. Destiné à "
+                    "l'exploitation, pas au payeur.")
+    block_since: Optional[str] = Field(
+        default=None,
+        description="Depuis QUAND l'échéance ne passe plus — donc depuis quand le "
+                    "service est rendu gratuitement. Ne bouge pas d'un tick à l'autre : "
+                    "c'est la date du PREMIER constat, pas du dernier.")
+    granted: list["GrantedBenefit"] = Field(
+        default_factory=list,
+        description="Avantages payants OFFERTS à l'org (et, sur /api/me/billing, au "
+                    "compte appelant) — servis dans les DEUX branches, y compris "
+                    "`subscribed:false`. Liste vide = rien d'offert **ou** org hors "
+                    "du périmètre du dispositif (une org hébergée par un tenant "
+                    "tiers n'en reçoit jamais : ses clients ne sont pas les nôtres). "
+                    "L'absence ne prouve donc pas l'absence de don.")
+    usage: Optional[MonthlyUsage] = Field(
+        default=None,
+        description="Consommation du mois en cours face à ce qui est inclus, servie "
+                    "dans les DEUX branches et à tous les comptes — c'est le seul bloc "
+                    "de cet écran qui vaut pour tout le monde. `null` = rien à "
+                    "montrer : org hors périmètre du dispositif, ou journal illisible. "
+                    "Un compteur qui n'a pas su lire se TAIT plutôt que d'afficher un "
+                    "« 0 » qu'aucun lecteur ne peut recouper.")
 
 
 class SubscribeStarted(BaseModel):
@@ -413,7 +521,12 @@ def _plans(ctx: ResolvedCtx, inp: NoInput) -> dict:
 
 
 def _status(ctx: ResolvedCtx, inp: NoInput) -> dict:
-    return _domain(billing.status, ctx.org_id)
+    # `sub` passé ICI et nulle part ailleurs : /api/me/billing est l'écran de
+    # l'appelant, et un don sur douze est posé sur un COMPTE — sans ce grain, son
+    # porteur voit un catalogue qui lui vend ce qu'il a déjà. La fiche d'org servie à
+    # un admin plateforme (`orgs.reads._org_detail`) ne le passe pas : elle décrit
+    # l'org, pas son lecteur.
+    return _domain(lambda: billing.status(ctx.org_id, sub=ctx.sub))
 
 
 def _subscribe(ctx: ResolvedCtx, inp: SubscribeInput) -> dict:
