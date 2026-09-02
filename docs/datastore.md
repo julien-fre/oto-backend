@@ -531,6 +531,36 @@ rendre un tableau inécrivable. Il est annoncé par `enforced` (#389) via une so
 interroge la fonction qui décide : il ne se prouve pas sur une ROW, puisqu'il se juge
 contre le CONTENU du tableau.
 
+**Le refus disait une sortie impraticable — corrigé le 02/09/2026 (#668).** Le cran
+faisait exactement ce que #516 a voulu ; ce qui manquait était le CHEMIN DE RETOUR. Le
+refus ne nommait qu'une sortie — « vise-la par son identifiant » — vraie, et sans objet
+dans le cas même qui la déclenche : la ligne n'existe pas, et sur un tableau fermé
+encore **vide** il n'y a aucun `_id` à viser. Un tableau fermé ne pouvait alors plus
+recevoir sa première ligne par aucune écriture, et rien ne le disait à qui écrivait.
+⚠️ **Et la description servie de `data_write` disait le contraire du code** : « WITHOUT
+`id` = append a NEW row … UNLESS … a value that **already exists** » — soit, mot pour
+mot, la promesse qu'une clé inédite crée. Le commit qui a posé le cran (`b07c0747`)
+avait documenté `key_required` dans `data_set_schema`, l'outil qui le POSE, et pas dans
+`data_write`, l'outil qui le SUBIT. *Une description d'outil est relue à chaque appel ;
+`docs/` ne l'est jamais par un agent.*
+
+Le coût, daté des deux côtés sur la **même** procédure de journalisation de mails :
+le 01/09 (run `493e624c…`) l'agent refusé relit le schéma, trouve seul la manœuvre —
+`key_required=false`, le lot de 47 lignes, `key_required=true` — et c'est de là que
+viennent les lignes du tableau ; le 02/09 (run `a2da6c1e…`) un autre passage ne la
+retrouve pas, essaie les trois formes d'écriture, et s'arrête sur 19 lignes non
+journalisées. Même refus, même tableau, deux issues : la différence tenait à ce que le
+refus ne disait pas.
+
+Correctif — **la doctrine ne bouge pas, la carte du retour s'affiche** : le refus
+(`_refus_de_creation`) nomme désormais les DEUX gestes, viser une ligne existante et,
+si la ligne doit vraiment naître, lever le cran par le schéma ; la description de
+`data_write` annonce le cran, dit que `data_get_schema` répond, et donne la manœuvre.
+Toujours **pas** de paramètre « forcer » sur l'écriture : la sortie passe par le SCHÉMA,
+délibérément (un bouton force devient un réflexe, et le cran redevient une étiquette).
+Empreinte servie : `data_write` +681 caractères, schémas JSON **inchangés**
+(`scripts/empreinte_servie.py --diff`).
+
 **Un refus `required_when` dit OÙ écrire (#545, 29/08/2026).** Mesuré sur le troisième
 passage d'une campagne — 105 écritures refusées, lues dans les arguments du journal des
 appels : **35 sur 105**, un tiers, ne viennent pas d'une erreur de fond mais de la FORME

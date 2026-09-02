@@ -27,13 +27,28 @@ personne ne peut savoir après coup laquelle il a mesurée. Le besoin légitime 
 viser autre chose se règle comme partout ailleurs : **on duplique, on ne fait pas
 basculer** — une nouvelle flotte, pas une flotte modifiée.
 
-⚠️ **Ni lancer ni ARRÊTER.** Cette capacité déclare et lit ; les deux gestes qui
-agissent sur un passage en cours restent dehors. Ce n'est pas un oubli : les deux
-faces d'une capacité aboutissent au même handler et doivent se comporter pareil,
-donc servir `stop` ici le rendrait appelable par un AGENT — qui pourrait arrêter
-le passage qui le fait tourner, ou celui d'un autre. Arrêter est le geste
-symétrique de lancer : ils entreront ensemble, quand la question de qui a le
-droit sera tranchée.
+⚠️ **Lancer et arrêter sont SERVIS ici** — la question de qui a le droit a été
+tranchée, et elle l'a été garde par garde plutôt qu'en fermant les verbes.
+
+Ce paragraphe a affirmé le contraire jusqu'au 02/09 (« cette capacité déclare et
+lit »), et l'argument tenait : les deux faces aboutissent au même handler, donc
+servir `stop` le rend appelable par un AGENT — qui pourrait couper le passage
+qui le fait tourner. **Fermer le verbe payait ce risque sur tous les usages
+légitimes**, à commencer par le plus utile : un opérateur qui pilote sa campagne
+par la conversation. La garde nomme donc le cas au lieu de fermer la porte —
+`not_your_own_fleet` refuse d'arrêter la flotte qui exécute le déroulé courant,
+et laisse passer tout le reste.
+
+Ce qui reste vrai, et qui est la vraie asymétrie : **`launch` ARME**, il ne
+démarre aucun processus, et il demande un ADMIN d'org ; **`stop` DEMANDE**
+l'arrêt et l'ouvre à tout membre — attendre un admin pendant qu'une flotte
+dépense est le mauvais échange.
+
+Et les trois verbes de l'ORDONNANCEUR sont servis ici aussi (`take`, `beat`,
+`ack_stop`). Ils ont manqué au contrat d'entrée du 30/08 au 02/09 pendant que la
+base et le runner les portaient : `op=stop` écrivait alors un ordre que personne
+ne pouvait lire, et une campagne annoncée « en arrêt » continuait de dépenser.
+**Un ordre que personne ne peut lire est un ordre qui n'arrive jamais.**
 """
 from __future__ import annotations
 
@@ -515,8 +530,13 @@ CAPABILITIES += [
             "pass to another table is what declaring exists to prevent; the "
             "execution context (`provider`/`model`) is frozen too, since changing it "
             "mid-flight falsifies the attribution of rows already written — declare "
-            "another fleet instead — duplicate, never switch. Launching AND stopping "
-            "belong to the scheduler: this capability declares and reads only."
+            "another fleet instead — duplicate, never switch. The scheduler's own three "
+            "verbs are served HERE too: op=take (`armed`→`running`, refused if "
+            "another scheduler already took it), op=beat (heartbeat AND reads back "
+            "`stop_requested` in the same call) and op=ack_stop "
+            "(`stopping`→`stopped`, the only verb that states the FACT of a stop). "
+            "They exist so that op=stop is REAL: an order nobody can read is an "
+            "order that never happens."
         ),
     ),
 ]

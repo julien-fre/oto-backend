@@ -62,6 +62,20 @@ class Trigger(BaseModel):
     next_due: Optional[str] = None
     last_enqueued_at: Optional[str] = None
     created_at: Optional[str] = None
+    #: Ce que ce déclencheur a PERDU : des occurrences enfilées que personne n'est
+    #: venu prendre dans leur cycle, et que le tick a périmées.
+    #: ⚠️ Servi avec le déclencheur parce que c'est là qu'on le cherche. Compté à
+    #: la main dans la file, il n'était visible de personne : quarante-et-une
+    #: occurrences perdues sur treize jours n'ont été découvertes que le 02/09,
+    #: en préparant autre chose.
+    #: `0` est un vrai zéro (rien n'a été perdu), pas une absence de mesure.
+    expired_count: Optional[int] = None
+    #: La PREMIÈRE occurrence perdue et la DERNIÈRE : « depuis quand » et « est-ce
+    #: encore en cours » sont deux questions différentes, et une seule date les
+    #: confondrait. Une perte ancienne qui a cessé n'appelle pas le même geste
+    #: qu'une perte qui continue ce matin.
+    expired_since: Optional[str] = None
+    expired_last: Optional[str] = None
 
 
 class RunnerArme(BaseModel):
@@ -84,6 +98,18 @@ class TriggerOut(BaseModel):
     triggers: Optional[list[Trigger]] = None
     ok: Optional[bool] = None
     runner: Optional[RunnerArme] = None
+
+
+def _avec_pertes(org_id: int, t: dict) -> dict:
+    """Le déclencheur, augmenté de ce qu'il a perdu.
+
+    ⚠️ Un déclencheur ne porte pas en lui-même la trace de ses occurrences
+    perdues — elles vivent dans la file, que personne ne lit. **Une perte que
+    seule une requête manuelle révèle n'est pas une perte connue** : les
+    quarante-et-une occurrences de treize jours ont été découvertes par hasard,
+    en préparant autre chose. Servi ici, l'écart se voit là où on le cherche.
+    """
+    return {**t, **db.comptage_perime(org_id, t["id"])}
 
 
 def _exige_un_runner(org_id: int) -> None:
@@ -148,7 +174,8 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         return {"trigger": t}
 
     if inp.op == "list":
-        return {"triggers": db.list_triggers(ctx.org_id),
+        return {"triggers": [_avec_pertes(ctx.org_id, t)
+                             for t in db.list_triggers(ctx.org_id)],
                 "runner": db.runner_arme(ctx.org_id)}
 
     if inp.trigger_id is None:
@@ -158,7 +185,8 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-        return {"trigger": t, "runner": db.runner_arme(ctx.org_id)}
+        return {"trigger": _avec_pertes(ctx.org_id, t),
+                "runner": db.runner_arme(ctx.org_id)}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):
@@ -173,6 +201,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         v = getattr(inp, c)
         if v is not None:
             champs[c] = v
+    actuel = None
     if inp.cron is not None or inp.tz is not None:
         actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not actuel:
@@ -189,6 +218,31 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # déclencheur mort deviendrait impossible à ranger.
     if champs.get("enabled") is True:
         _exige_un_runner(ctx.org_id)
+        # ⚠️ **RALLUMER REPREND LE RYTHME, ça ne rembobine pas** (arbitré le
+        # 02/09, #826). Une échéance figée pendant l'extinction est restée dans
+        # le PASSÉ : sans ce recalcul, le tick voyait le déclencheur dû à la
+        # seconde du rallumage et enfilait aussitôt — une exécution que personne
+        # n'a demandée, déclenchée par le geste de quelqu'un qui répare.
+        #
+        # ⚠️ Et la cohérence l'impose, pas seulement le confort : éteindre PÉRIME
+        # les occurrences en attente. *Un système qui dit « ce qui a attendu
+        # pendant l'extinction est mort » ne peut pas dire « sauf l'échéance ».*
+        # Une échéance manquée pendant une extinction VOULUE n'a pas été manquée.
+        #
+        # ⚠️ Seul le PASSAGE à allumé recalcule — même motif que la péremption,
+        # qui ne mord qu'au passage à éteint. Recalculer sur un déclencheur déjà
+        # allumé donnerait un moyen de repousser son échéance indéfiniment, en
+        # répétant un geste qui n'est pas censé rien changer.
+        #
+        # ⚠️ Lu APRÈS `_exige_un_runner`, jamais avant : l'ordre des refus est un
+        # contrat. Lire le déclencheur d'abord ferait répondre « inconnu » (404)
+        # là où le serveur répond aujourd'hui « aucun runner » — deux diagnostics
+        # opposés pour la même org, et celui qu'on retirerait est le seul qui dit
+        # quoi faire.
+        if actuel is None:
+            actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if actuel and not actuel["enabled"] and "next_due" not in champs:
+            champs["next_due"] = runner_tick.next_due(actuel["cron"], actuel["tz"])
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
@@ -233,7 +287,15 @@ CAPABILITIES += [
             "`update enabled=true`) is REFUSED when no worker polls this org's "
             "queue — a trigger nothing executes would enqueue forever without an "
             "error; `list`/`get` carry `runner` (armed, workers, last_seen) so an "
-            "existing trigger can be told apart from a live one."
+            "existing trigger can be told apart from a live one. ⚠️ An occurrence "
+            "nobody claimed BEFORE the next one is due is EXPIRED, not silently "
+            "kept: a daily watch run thirteen days late does not return a late "
+            "result, it returns a WRONG one — and a backlog released all at once "
+            "would run with the procedure and context of its era. Expiry never "
+            "deletes: `list`/`get` carry `expired_count` (a real 0, not a missing "
+            "measure) plus `expired_since` and `expired_last` — since when, and "
+            "whether it is STILL happening, are two different questions. A rising "
+            "count on an enabled trigger means nobody is executing this org."
         ),
     ),
 ]

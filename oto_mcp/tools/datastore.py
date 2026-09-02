@@ -594,10 +594,11 @@ def register(mcp: FastMCP) -> None:
         """Write one row, or a BATCH of rows in a single call.
 
         SINGLE (`row`): WITHOUT `id` = append a NEW row (new JSON keys auto-create
-        columns) — UNLESS the table declares a business `key` and your row carries a
-        value that already exists: it then MERGES onto that row, exactly like a batch,
-        and returns its `_id`. WITH `id` = PARTIAL update of that row (only provided
-        fields change). Returns the row (with `_id`/`_created_at`/`_updated_at`).
+        columns, unless the table is CLOSED — see below) — UNLESS the table declares
+        a business `key` and your row carries a value that already exists: it then
+        MERGES onto that row, exactly like a batch, and returns its `_id`. WITH `id`
+        = PARTIAL update of that row (only provided fields change). Returns the row
+        (with `_id`/`_created_at`/`_updated_at`).
 
         On a row you CLAIMED, pass `id="@claimed"` instead of retyping its `_id` —
         `namespace="@claimed"` works too (the reservation carries the table).
@@ -610,6 +611,16 @@ def register(mcp: FastMCP) -> None:
         a summary {inserted, updated, count, key, ids}. Use `data_set_schema` to
         declare a persistent `key`. For LARGE batches, prefer `oto_upload_url` to push
         the data out-of-band (never through your context).
+
+        ⚠️ A table can be CLOSED by its schema (`key_required: true`, next to its
+        business `key`) — `data_get_schema` says whether it is. On such a table there
+        is NO append at all: a write designating no existing row (no `id`, and no key
+        value the table already carries) is REFUSED, single row and batch alike, and
+        nothing is created — including a key value that is simply NEW. That is a
+        deliberate setting of that table, not a platform rule. To make a row EXIST
+        there, it is a schema move and not a write:
+        `data_patch_schema(namespace=…, key_required=false)`, your write, then
+        `data_patch_schema(namespace=…, key_required=true)` to close it back.
 
         On a namespace with a STRICT schema, any key you write that the schema does
         NOT declare comes back in `hors_schema` (with `hors_schema_hint`): the write
