@@ -43,6 +43,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.nodes.NODES,              # nœuds de contenu et blocs
     schema.procedures.PROCEDURES,    # procédures d'org, révisions, bibliothèque
     schema.orgs.GROUPS,              # équipes et leurs membres
+    schema.unipile.UNIPILE_GROUP_GRANTS,  # grant de compte connecteur cible groupe (#55)
     schema.connectors.CREDENTIALS,   # coffre des credentials (ADR 0002/0033)
     schema.connectors.INSTANCES,     # instances de connecteur (blueprint 0053-D9, L6)
     schema.billing.OPTION_COMPS,     # options offertes

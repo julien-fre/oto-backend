@@ -167,8 +167,16 @@ from oto_mcp.db import _schema, schema
 # pendant que la base refuse les deux nouveaux états.
 # ⚠️ Empreinte recalculée APRÈS avoir vérifié que le tronc sans ce fragment rend
 # bien c05cd85f… / 125769.
-EMPREINTE = "17add8d8dede7a767dcaa21dc2aaa76f135721568014da2bf7ac8458e2966cb2"
-LONGUEUR = 130526
+# 2026-09-02 (otomata-private#55, extension groupe) : fragment NEUF
+# `connector_account_group_grants` (+ son index), table SÉPARÉE de
+# `UNIPILE.connector_account_grants` — elle référence `org_groups`, créée par
+# `schema.orgs.GROUPS`, assemblé APRÈS `schema.unipile.UNIPILE` : l'embarquer dans
+# `UNIPILE` casserait le tout premier boot sur une base vierge. D'où
+# `schema.unipile.UNIPILE_GROUP_GRANTS`, un fragment à part posé juste après
+# `schema.orgs.GROUPS` dans `_schema.ASSEMBLAGE`. ADDITIF : rien n'est retiré ni
+# contraint sur les tables existantes.
+EMPREINTE = "188ce410a30ab71593d5f1fc0c0b0d54456b6fe7818a9423a7c9a0bfa59962aa"
+LONGUEUR = 131061
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
@@ -246,6 +254,8 @@ def test_l_ordre_impose_par_les_fk_est_tenu():
         ("docs", "doc_embeddings", "doc_embeddings.doc_id → docs(id)"),
         ("runner_fleets", "runner_jobs", "runner_jobs.fleet_id → runner_fleets(id)"),
         ("datastore_rows", "datastore_row_embeddings", "FK composite sur la PK"),
+        ("org_groups", "connector_account_group_grants",
+         "connector_account_group_grants.grantee_group_id → org_groups(id)"),
     ):
         i = ddl.index(f"CREATE TABLE IF NOT EXISTS {avant}")
         j = ddl.index(f"CREATE TABLE IF NOT EXISTS {apres}")

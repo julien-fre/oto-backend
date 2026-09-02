@@ -187,20 +187,38 @@ de paiement).
 > réconcilie les comptes de l'instance partagée ↔ leur owner oto (flag **orphelin**).
 
 > **Compte partagé autorisé (otomata-private#55).** Le **propriétaire** d'un compte
-> Unipile accorde à un **membre nommé** (d'une org commune, anti-IDOR `users_share_org`)
-> le droit d'**opérer son compte** sur un canal — la **SEULE exception** au no-fallback
-> anti-usurpation (#5). Table `connector_account_grants` (PK `(owner_sub, provider,
-> grantee_sub)`, patron ADR 0025, `granted_by`/`granted_at` ; l'`account_id` stocké =
-> snapshot d'audit, la résolution relit le handle **LIVE** → owner déconnecté = grant
-> inerte). Le grantee bascule via le **sélecteur d'identité** (le compte accordé
-> apparaît « compte de X » ; le select pose le **pointeur** `unipile_operated_accounts`,
-> il n'écrase JAMAIS sa ligne `unipile_accounts`) ou un **pin projet** (garde étendue
-> aux comptes accordés). Résolution : `connector_identities.resolve_operated_account_id`
-> — pointeur **revalidé contre les grants vivants À CHAQUE appel** (révocation =
-> effet immédiat) ; pointeur révoqué = **erreur explicite, jamais de repli** sur le
-> compte propre. Capacité `capabilities/connectors/account_grants.py`
-> (`oto_{list,grant,revoke}_account_*`, REST `/api/me/connector-accounts/*` ; autz
-> `SUB_ONLY`, owner := ctx.sub par construction — pas d'escalade org_admin). ⚠️ La clé
+> Unipile accorde à un **user nommé, cross-org** (⚠️ corrigé le 2026-09-02 : ce
+> paragraphe disait « d'une org commune, anti-IDOR `users_share_org` » — faux depuis
+> l'origine, le code n'a jamais exigé de partager une org, `test_grant_allows_cross_org_grantee`
+> le prouve ; le seul garde-fou est l'existence de l'user) le droit d'**opérer son
+> compte** sur un canal — la **SEULE exception** au no-fallback anti-usurpation (#5).
+> Table `connector_account_grants` (PK `(owner_sub, provider, grantee_sub)`, patron
+> ADR 0025, `granted_by`/`granted_at` ; l'`account_id` stocké = snapshot d'audit, la
+> résolution relit le handle **LIVE** → owner déconnecté = grant inerte).
+>
+> **Cible GROUPE (extension 2026-09-02)** : `grantee="group:<id>"` accorde à TOUS LES
+> MEMBRES ACTUELS d'un groupe, fan-out **dynamique** — table séparée
+> `connector_account_group_grants` (PK `(owner_sub, provider, grantee_group_id)`,
+> jamais un `grantee_sub` nullable : Postgres interdit un NULL en PK). La résolution
+> (`granted_accounts_for`/`list_account_grants_to`) rejoint `org_group_members` EN
+> LIVE à chaque appel — quitter le groupe retire l'accès aussi immédiatement qu'une
+> révocation explicite, sans rien à nettoyer côté grant. L'issue d'origine (#55)
+> demandait déjà « membres nommés OU un département » ; le groupe n'avait jamais été
+> livré (ADR 0051 avait laissé le grant de compte orthogonal au partage d'instance,
+> sans jamais trancher SA cible — gap de plomberie, pas une décision de sécu : seul
+> « qui peut accorder » [le propriétaire, jamais un org_admin] est une garantie
+> délibérée à garder).
+>
+> Le grantee (nominatif ou de groupe) bascule via le **sélecteur d'identité** (le
+> compte accordé apparaît « compte de X » ; le select pose le **pointeur**
+> `unipile_operated_accounts`, il n'écrase JAMAIS sa ligne `unipile_accounts`) ou un
+> **pin projet** (garde étendue aux comptes accordés). Résolution :
+> `connector_identities.resolve_operated_account_id` — pointeur **revalidé contre les
+> grants vivants À CHAQUE appel** (révocation = effet immédiat) ; pointeur révoqué =
+> **erreur explicite, jamais de repli** sur le compte propre. Capacité
+> `capabilities/connectors/account_grants.py` (`oto_{list,grant,revoke}_account_*`,
+> REST `/api/me/connector-accounts/*` ; autz `SUB_ONLY`, owner := ctx.sub par
+> construction — pas d'escalade org_admin, y compris pour une cible groupe). ⚠️ La clé
 > du grantee doit joindre le compte (clé partagée org/plateforme OK ; owner sur une clé
 > BYO perso ≠ celle du grantee → 404 Unipile surfacé).
 

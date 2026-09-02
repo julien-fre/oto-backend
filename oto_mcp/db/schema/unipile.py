@@ -98,3 +98,31 @@ CREATE TABLE IF NOT EXISTS unipile_operated_accounts (
     PRIMARY KEY (sub, provider)
 );
 """
+
+# Même grant que `UNIPILE.connector_account_grants`, cible GROUPE plutôt que membre
+# nommé (extension otomata-private#55, issue d'origine : « membres nommés OU un
+# département » — le groupe était déjà demandé, jamais livré, cf. ADR 0051
+# §orthogonalité). Fan-out DYNAMIQUE : la résolution rejoint `org_group_members` EN
+# LIVE à chaque appel (jamais une liste de subs figée au grant) — quitter le groupe
+# retire l'accès aussi immédiatement qu'une révocation explicite, sans rien à
+# nettoyer côté grant. Table séparée plutôt qu'un `grantee_sub` nullable : Postgres
+# interdit un NULL dans une PK, et superposer deux formes dans une même colonne
+# aurait fait porter à `grantee_sub` un sens qu'il ne dit pas.
+#
+# ⚠️ Fragment SÉPARÉ de `UNIPILE` (pas juste une table de plus dedans) : il référence
+# `org_groups`, créée par `schema.orgs.GROUPS` — assemblé APRÈS `schema.unipile.UNIPILE`
+# dans `_schema.ASSEMBLAGE`. L'embarquer dans `UNIPILE` ferait échouer le tout premier
+# boot sur une base vierge (FK vers une table pas encore créée).
+UNIPILE_GROUP_GRANTS = """
+CREATE TABLE IF NOT EXISTS connector_account_group_grants (
+    owner_sub TEXT NOT NULL REFERENCES users(sub) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    grantee_group_id BIGINT NOT NULL REFERENCES org_groups(id) ON DELETE CASCADE,
+    granted_by TEXT NOT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (owner_sub, provider, grantee_group_id)
+);
+CREATE INDEX IF NOT EXISTS idx_account_group_grants_group
+    ON connector_account_group_grants(grantee_group_id, provider);
+"""
