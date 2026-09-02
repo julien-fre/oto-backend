@@ -106,6 +106,21 @@ def register(mcp: FastMCP) -> None:
                        "`data_to_get` (seuls workEmail, directEmail et phone "
                        "existent). Si l'entrée est correcte : une seule nouvelle "
                        "tentative, différée.")
+            elif status == 402:
+                # 402 = crédits insuffisants sur le COMPTE Kaspr. Le message
+                # générique en-dessous renvoyait l'agent vérifier le profil
+                # LinkedIn — la seule piste qui ne peut RIEN donner ici, et qui
+                # se solde par une relecture du slug puis une nouvelle tentative
+                # identique. Relevé le 2026-09-02 (appel 1345911) : un 402 rendu
+                # comme « Vérifie le profil LinkedIn (slug ou URL valide) ».
+                # Le client oto-core retire déjà `phone` et rejoue UNE fois quand
+                # il était demandé : un 402 qui remonte jusqu'ici est donc un
+                # refus du compte, pas un choix de champs à revoir.
+                msg = ("Kaspr a refusé l'appel faute de crédits (402) — c'est le "
+                       "compte Kaspr qui est à sec, pas ton entrée. Le profil et "
+                       "`data_to_get` n'y sont pour rien : ni les corriger ni "
+                       "réessayer n'y changera quoi que ce soit tant que le compte "
+                       "n'est pas rechargé.")
             else:
                 msg = (f"Kaspr n'a pas pu enrichir `{linkedin_id}` ({e}). Vérifie le "
                        f"profil LinkedIn (slug ou URL valide).")

@@ -15,6 +15,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_REQUEST
 
 from .. import access, output_projection, url_perimeter
+from ..connectors import verify as connector_verify
 
 # Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
 # de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
@@ -51,9 +52,28 @@ _RESULT_DROP = ("sitelinks", "attributes", "imageUrl", "thumbnailUrl")
 _SERPER_STATUS = re.compile(r"Serper \w+ (\d{3}):")
 
 
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
+    """Sonde « tester la connexion » : une recherche web à UN résultat.
+
+    Serper n'expose ni `/me` ni endpoint de crédits : le seul moyen de savoir
+    qu'une clé authentifie est de faire l'appel que les tools font. On prend donc
+    le MÊME endpoint que `serper_search` (`/search`), au plus petit format —
+    même patron que `tavily`/`firecrawl`, et coût d'au plus un crédit.
+
+    Sans cette sonde, `connectors.verify` refusait « pas de test de connexion pour
+    serper » et une clé révoquée ne se découvrait qu'en brûlant un vrai appel dans
+    un run (signal #654 : `Serper search 403: Unauthorized` sur tous les appels
+    d'une org, trois jours durant, sans préflight possible).
+    """
+    from oto.tools.serper import SerperClient
+    SerperClient(api_key=fields["key"]).search("oto", num=1)
+
+
 def register(mcp: FastMCP) -> None:
     # Import au register pour fail-fast si le package n'est pas installé.
     from oto.tools.serper import SerperClient
+
+    connector_verify.register("serper", _verify)
 
     def _client() -> tuple[SerperClient, bool]:
         key, is_platform = access.resolve_api_key("serper")
@@ -361,8 +381,16 @@ def register(mcp: FastMCP) -> None:
         """Récupère une page web via le scraper de Serper.
 
         Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +
-        métadonnées. Préférable à un fetch brut : Serper gère le rendu JS et les
-        anti-bot rudimentaires.
+        métadonnées. Plus robuste qu'un fetch brut face aux anti-bot rudimentaires.
+
+        ⚠️ **Le rendu JS n'est pas garanti.** Un site rendu côté client rend
+        HTTP 200 et un corps quasi vide, sans la moindre erreur : un corps très
+        court ne prouve donc PAS que la page est vide. Regarde sa longueur avant
+        d'en tirer un fait sur l'entreprise.
+
+        ⚠️ **Un appel peut bloquer ~60 s**, y compris sur un domaine qui n'existe
+        pas — rien ne le vérifie avant l'envoi. Une URL fabriquée à partir d'un nom
+        de société coûte donc une minute pour rien : pars d'une URL constatée.
 
         Args:
             url: URL de la page à récupérer — refusée si elle relève des

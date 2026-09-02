@@ -54,6 +54,12 @@ _COMPANY_DROP = ("technologies", "keywords", "naics", "industries", "languages",
 # faux, et rien dans la réponse ne le signale.
 _DEAD_FILTERS: dict[str, dict[str, str]] = {
     "account": {
+        # Mesuré le 2026-09-02 (signal #642) : `account.linkedin_url` en wrapper
+        # `{"any": {"include": […]}}` rend `totalElements` 72 508 445 — la base
+        # entière, exactement comme `website`. Même pathologie, même refus.
+        "linkedin_url": 'domain, en liste nue : {"domain": {"any": {"include": '
+                        '["exemple.com"]}}} — résoudre une société par son URL '
+                        "LinkedIn n'est pas indexé chez AI Ark",
         "website": 'domain, en liste nue : {"domain": {"any": {"include": '
                    '["exemple.com"]}}} (le wrapper {"mode": "SMART", "content": […]} '
                    "ne vaut que pour `name`)",

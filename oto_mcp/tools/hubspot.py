@@ -225,7 +225,34 @@ def _rows_from_memberships(memberships, records, properties=None) -> list[dict]:
     return rows
 
 
+# HubSpot rend un 403 `MISSING_SCOPES` dont le message — « The scope needed for this
+# API call isn't available for public use » — se lit comme « ce scope ne t'est pas
+# accessible ». C'est FAUX pour les objets qu'on sert : le scope `tickets` est
+# documenté « Available to all accounts », il se coche dans l'app privée. Le corps brut
+# partait tel quel à l'agent, qui n'avait aucune raison d'y voir une case à cocher chez
+# le client : le même signal a été redéposé À L'IDENTIQUE deux jours de suite par la
+# même procédure quotidienne (#636 puis #649). On NOMME donc le geste.
+def _scope_refusal(e, object_type) -> Optional[McpError]:
+    """Le 403 MISSING_SCOPES traduit en refus actionnable, ou None si autre chose."""
+    if getattr(e, "status_code", None) != 403:
+        return None
+    body = getattr(e, "body", None)
+    if not (isinstance(body, dict) and body.get("category") == "MISSING_SCOPES"):
+        return None
+    return McpError(ErrorData(code=INVALID_PARAMS, message=(
+        f"HubSpot refuse cette lecture faute de scope sur le jeton "
+        f"(403 MISSING_SCOPES, object_type={object_type!r}). Son message « isn't "
+        "available for public use » est trompeur : le scope existe et se coche. "
+        "Côté HubSpot : Settings > Integrations > Private Apps > l'app qui porte ce "
+        "jeton > onglet Scopes, activer celui de cet objet (`tickets` pour les "
+        "tickets, `crm.objects.*` pour contacts/entreprises/transactions, "
+        "`crm.lists.*` pour les listes), puis relire le jeton. Rien à corriger dans "
+        "l'appel : les autres objets répondent avec la MÊME clé.")))
+
+
 def register(mcp: FastMCP) -> None:
+    from oto.tools.common.errors import UpstreamHTTPError
+
     from oto.tools.hubspot.client import HubSpotClient
 
     def _client() -> HubSpotClient:
@@ -329,12 +356,17 @@ def register(mcp: FastMCP) -> None:
                   "amount": …} for a deal.
             associations:
                 - op="get" : other object types to return associated ids for
-                  (e.g. ["companies", "deals"] on a contact).
+                  (e.g. ["companies", "deals"] on a contact) — this returns the
+                  ids INLINE, so it replaces a separate op="associations" round
+                  trip per object.
                 - op="create" : HubSpot v3 association objects (advanced).
             query: op="search" — full-text search.
             filters: op="search" — list of {propertyName, operator, value} combined
-                with AND. operators: EQ, NEQ, GT, GTE, LT, LTE, CONTAINS_TOKEN,
-                HAS_PROPERTY, IN (then pass "values": [...] instead of "value").
+                with AND. Passed to HubSpot VERBATIM — nothing here validates the
+                operator, so HubSpot's own set is the reference: EQ, NEQ, LT, LTE,
+                GT, GTE, BETWEEN (add "highValue"), IN / NOT_IN (pass "values":
+                [...] instead of "value"), HAS_PROPERTY, NOT_HAS_PROPERTY,
+                CONTAINS_TOKEN, NOT_CONTAINS_TOKEN (wildcards `*`).
             to_object_type: op="associations" — the associated object type to list.
             body: op="add_note" — the note content (text/HTML).
             limit: op="search"/"list" — page size (HubSpot caps it at 100).
@@ -343,57 +375,63 @@ def register(mcp: FastMCP) -> None:
         """
         c = _client()
 
-        if op == "search":
-            return c.search_objects(
-                _need(object_type, "object_type", op),
-                query=query, filters=filters,
-                properties=_names(properties, "properties", op),
-                limit=limit, after=after)
+        try:
+            if op == "search":
+                return c.search_objects(
+                    _need(object_type, "object_type", op),
+                    query=query, filters=filters,
+                    properties=_names(properties, "properties", op),
+                    limit=limit, after=after)
 
-        if op == "list":
-            return c.list_objects(
-                _need(object_type, "object_type", op),
-                properties=_names(properties, "properties", op),
-                limit=limit, after=after)
+            if op == "list":
+                return c.list_objects(
+                    _need(object_type, "object_type", op),
+                    properties=_names(properties, "properties", op),
+                    limit=limit, after=after)
 
-        if op == "get":
-            return c.get_object(
-                _need(object_type, "object_type", op),
-                _need(object_id, "object_id", op),
-                properties=_names(properties, "properties", op),
-                associations=_names(associations, "associations", op))
+            if op == "get":
+                return c.get_object(
+                    _need(object_type, "object_type", op),
+                    _need(object_id, "object_id", op),
+                    properties=_names(properties, "properties", op),
+                    associations=_names(associations, "associations", op))
 
-        if op == "create":
-            return c.create_object(
-                _need(object_type, "object_type", op),
-                _payload(properties, "properties", op),
-                associations=_assoc_objects(associations, op))
+            if op == "create":
+                return c.create_object(
+                    _need(object_type, "object_type", op),
+                    _payload(properties, "properties", op),
+                    associations=_assoc_objects(associations, op))
 
-        if op == "update":
-            return c.update_object(
-                _need(object_type, "object_type", op),
-                _need(object_id, "object_id", op),
-                _payload(properties, "properties", op))
+            if op == "update":
+                return c.update_object(
+                    _need(object_type, "object_type", op),
+                    _need(object_id, "object_id", op),
+                    _payload(properties, "properties", op))
 
-        if op == "delete":
-            return c.delete_object(
-                _need(object_type, "object_type", op),
-                _need(object_id, "object_id", op))
+            if op == "delete":
+                return c.delete_object(
+                    _need(object_type, "object_type", op),
+                    _need(object_id, "object_id", op))
 
-        if op == "associations":
-            return c.list_associations(
-                _need(object_type, "object_type", op),
-                _need(object_id, "object_id", op),
-                _need(to_object_type, "to_object_type", op))
+            if op == "associations":
+                return c.list_associations(
+                    _need(object_type, "object_type", op),
+                    _need(object_id, "object_id", op),
+                    _need(to_object_type, "to_object_type", op))
 
-        if op == "add_note":
-            return c.create_note(
-                _need(body, "body", op),
-                _need(object_type, "object_type", op),
-                _need(object_id, "object_id", op))
+            if op == "add_note":
+                return c.create_note(
+                    _need(body, "body", op),
+                    _need(object_type, "object_type", op),
+                    _need(object_id, "object_id", op))
 
-        raise _bad("op doit être 'search', 'list', 'get', 'create', 'update', "
-                   "'delete', 'associations' ou 'add_note'")
+            raise _bad("op doit être 'search', 'list', 'get', 'create', 'update', "
+                       "'delete', 'associations' ou 'add_note'")
+        except UpstreamHTTPError as e:
+            refus = _scope_refusal(e, object_type)
+            if refus is None:
+                raise          # tout autre refus amont garde sa forme et sa trace
+            raise refus from None
 
     # objectTypeId : les listes sont keyées sur l'id numérique, pas sur le nom
     # d'objet. On accepte les deux — le nom pour les quatre standard, l'id brut

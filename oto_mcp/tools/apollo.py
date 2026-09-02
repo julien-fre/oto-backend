@@ -112,6 +112,7 @@ def register(mcp: FastMCP) -> None:
         org_ids: Optional[list[str]] = None,
         per_page: int = 10,
         page: int = 1,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Find companies by firmographics — the CHEAP way to qualify a list.
 
@@ -134,13 +135,33 @@ def register(mcp: FastMCP) -> None:
             technologies: technology uids in use, e.g. ["salesforce"].
             org_ids: Apollo organization ids.
             per_page: results per page (≤100). page: page number.
+            fields: keep ONLY these keys on each organization (e.g.
+                ["name", "primary_domain", "linkedin_url"]); the envelope
+                (pagination, totals) is kept. Use it when paginating: a full page
+                at per_page=100 is ~113 000 characters, past some clients' cap.
         """
         client, _ = _client()
-        return client.search_organizations(
+        found = client.search_organizations(
             name=name, domain=domain, country=country, per_page=per_page, page=page,
             employee_ranges=employee_ranges, revenue_min=revenue_min,
             revenue_max=revenue_max, locations=locations, keywords=keywords,
             technologies=technologies, org_ids=org_ids)
+        # Projection OPT-IN (`fields` omis ⇒ payload inchangé). Le défaut n'est pas
+        # touché ici : le choisir demanderait de mesurer quelles clés d'une fiche
+        # organisation ne servent jamais, comme `_CONTACT_NOISE` l'a été plus haut.
+        # Ce que ce lot corrige est l'ABSENCE de sortie : sans `fields`, une page à
+        # per_page=100 (~113 000 c.) dépasse la limite de sortie de certains clients
+        # MCP et l'appel devient inexploitable — signal #645.
+        if not fields:
+            return found
+        # `mixed_companies/search` rend DEUX listes — `organizations` et `accounts`
+        # (les sociétés déjà présentes dans le compte Apollo). Projeter la seule
+        # première laisserait `fields` sans effet visible sur la moitié du payload,
+        # ce qui est pire que pas de paramètre du tout. `project` est pur et tolère
+        # un chemin absent : le chaînage est sûr dans les deux sens.
+        out = output_projection.project(found, items_path="organizations",
+                                        fields=fields)
+        return output_projection.project(out, items_path="accounts", fields=fields)
 
     @mcp.tool()
     def apollo_enrich_organization(domain: str) -> dict:

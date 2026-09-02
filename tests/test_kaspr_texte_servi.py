@@ -189,3 +189,50 @@ def test_le_500_cognism_naffirme_plus_que_lentree_est_hors_de_cause():
 
 def test_le_500_cognism_borne_la_reprise():
     assert "une seule" in _message_du_500_cognism().lower()
+
+
+# --- 402 : le compte est à sec, le profil n'y est pour rien -------------------
+
+class _Resp402:
+    status_code = 402
+
+
+class _Boom402(Exception):
+    """Réplique de forme d'une `requests.HTTPError` 402 (Payment Required)."""
+    response = _Resp402()
+
+
+def _message_du_402_kaspr() -> str:
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import kaspr
+
+    class _Stub:
+        def __init__(self, *a, **k):
+            pass
+
+        def enrich_linkedin(self, **k):
+            raise _Boom402()
+
+    with patch("oto.tools.kaspr.client.KasprClient", _Stub), \
+            patch("oto_mcp.access.resolve_api_key", return_value=("k", False)):
+        m = FastMCP("t")
+        kaspr.register(m)
+        fn = asyncio.run(m.get_tool("kaspr_enrich_linkedin")).fn
+        with pytest.raises(McpError) as e:
+            fn(linkedin_id="jane-doe")
+        return e.value.error.message
+
+
+def test_le_402_ne_renvoie_pas_verifier_le_profil():
+    """Relevé le 02/09/2026 (appel 1345911) : un 402 Kaspr était rendu « Vérifie le
+    profil LinkedIn (slug ou URL valide) ». Le 402 dit que le COMPTE n'a plus de
+    crédits — le profil demandé n'a aucun rapport, et le client oto-core a déjà
+    retiré `phone` puis rejoué une fois quand il était demandé. Renvoyer l'agent
+    relire un slug correct, c'est lui faire dépenser un tour pour rien, puis
+    réessayer à l'identique.
+    """
+    msg = _message_du_402_kaspr()
+    assert "crédit" in msg.lower(), msg
+    assert "profil" not in msg.lower() or "n'y sont pour rien" in msg, msg
+    # le refus doit couper la boucle de reprise, pas l'encourager
+    assert "réessayer" in msg or "rechargé" in msg, msg

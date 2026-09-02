@@ -6,7 +6,10 @@ les coordonnées qu'on y cherche sont la priorité du client final. Trois crans,
 un seul verbe, et la réponse DIT toujours son chemin :
 
   ① fetch HTTP nu       — gratuit ; suffit pour la majorité des sites ;
-  ② scraper hébergé     — `serper` (1 crédit) : rendu JS + anti-bot rudimentaire ;
+  ② scraper hébergé     — `serper` (~2 crédits) : anti-bot rudimentaire, mais
+                          PAS de rendu JS garanti — mesuré le 02/09/2026, un
+                          site rendu côté client revient 200 + corps quasi
+                          vide ; c'est le cran ③ qui exécute vraiment le JS ;
   ③ navigateur hébergé  — session Chrome JETABLE (Browserbase, sans compte ni
                           coffre), OPT-IN `browser=True` : jamais un défaut
                           silencieux qui multiplie la facture.
@@ -49,6 +52,12 @@ _TIMEOUT = (10, 30)              # borne CHAQUE socket — pas la lecture entiè
 _DEADLINE_S = 45                 # budget GLOBAL du cran ① (cf. `_fetch_http`)
 _MAX_FETCH_BYTES = 3_000_000     # bytes décompressés lus au maximum (cran ①)
 _EMPTY_TEXT_CHARS = 200          # texte extrait plus court = coquille vide
+# ⚠️ Ce seuil attrape la coquille VIDE, pas la page NON RENDUE : mesuré le
+# 02/09/2026, une page d'accueil rendue côté client rend 455 c. par le cran ②
+# — au-dessus du seuil, donc servie comme « lu », sans que rien n'escalade.
+# Le relever au jugé écarterait de vraies pages courtes : le cas se traite en
+# DISANT le fait (cf. la description de `serper_scrape`), pas en devinant un
+# nombre. oto-backend, signal #653.
 _MAX_REDIRECTS = 5
 _DEFAULT_MAX_CHARS = 12_000
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -253,7 +262,9 @@ def register(mcp: FastMCP) -> None:
         saying which path was used.
 
         Escalation: ① plain HTTP fetch (free) → on 403/timeout/empty shell
-        ② hosted scraper (serper, 1 credit — JS rendering, basic anti-bot) →
+        ② hosted scraper (serper, ~2 credits — basic anti-bot, but NO guaranteed
+        JS rendering: a client-rendered page comes back 200 with a near-empty
+        body, and ② will report it as read) →
         ③ ONLY IF `browser=true`: a disposable hosted Chrome session
         (real fingerprint, patience — costs a browser session). Without
         `browser=true` the answer stops at ② and tells you what to do.
@@ -362,7 +373,11 @@ def register(mcp: FastMCP) -> None:
             tentatives.append({"cran": "serper",
                                "verdict": "sauté — aucune clé serper résolvable"})
         else:
-            cout["serper_credits"] = 1
+            # Le compte vient de la RÉPONSE : Serper facture 2 crédits sur une
+            # page ordinaire et jusqu'à 10 sur une page difficile. Le 1 en dur
+            # sous-déclarait la dépense à l'appelant qui lit `cout` pour décider
+            # s'il escalade. Repli sur 1 si l'amont ne le dit pas.
+            cout["serper_credits"] = scrape.get("credits") or 1
             md = scrape.get("markdown") or scrape.get("text") or ""
             meta = scrape.get("metadata") or {}
             if len(md.strip()) >= _EMPTY_TEXT_CHARS:
