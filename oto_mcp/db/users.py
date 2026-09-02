@@ -181,6 +181,17 @@ _PK_SUB_TABLES = (
     ("unipile_operated_accounts", "sub", ("provider",)),
     ("connector_account_grants", "owner_sub", ("provider", "grantee_sub")),
     ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
+    # Le même prêt, cible GROUPE (oto#40) : `owner_sub` entre dans la PK
+    # `(owner_sub, provider, grantee_group_id)` — l'UPDATE nu de `_SUB_COLUMNS` y
+    # lèverait `UniqueViolation`, et donc ferait échouer TOUT le merge, dès que les
+    # deux comptes de la personne ont prêté le même canal au même groupe (le cas
+    # n'est pas tordu : c'est le même geste, refait après la bascule). Sans ce
+    # pré-traitement, la ligne partait en CASCADE avec l'ancien compte à l'étape 4 :
+    # le groupe perdait l'accès en silence, et le propriétaire fusionné n'avait plus
+    # aucune trace de ce qu'il avait prêté — un partage d'équipe ne se re-consent pas
+    # de mémoire.
+    ("connector_account_group_grants", "owner_sub",
+     ("provider", "grantee_group_id")),
     # Dossier du 23/08 (les colonnes à sub que le merge ABANDONNAIT — cf. le tripwire
     # `test_migrate_sub_sub_bearing_columns_are_triaged`) :
     # - l'acceptation CGU suit la personne : sans repointage, le compte fusionné se
@@ -277,6 +288,16 @@ _SUB_COLUMNS = [
     ("doc_change_requests", "requested_by"), ("doc_change_requests", "resolved_by"),
     ("scheduled_emails", "created_by"), ("connector_credentials", "set_by"),
     ("connector_account_grants", "granted_by"), ("connector_acl", "granted_by"),
+    # Le pendant GROUPE (oto#40). Colonne d'AUTEUR, hors PK et SANS FK : elle
+    # survit donc au `DELETE FROM users` de l'étape 4 en désignant une ligne `users`
+    # qui n'existe plus. Ne pas la repointer ne CONSERVE pas la trace — ça la rend
+    # illisible (jointure vide, « inconnu » à l'affichage). Et le merge ne change
+    # pas d'auteur : il donne un nouvel identifiant à la MÊME personne (borné à un
+    # tenant, ADR 0052 §6). Sur ce chemin l'auteur EST le propriétaire
+    # (`granted_by=ctx.sub`, le même sub qu'`owner_sub`) : repointer l'un sans
+    # l'autre ferait dire à la ligne « accordé par un identifiant mort de celui qui
+    # la possède ». L'identifiant d'origine reste retrouvable par `sub_aliases`.
+    ("connector_account_group_grants", "granted_by"),
     ("option_comps", "granted_by"), ("grants", "created_by"),
     # Qui a posé une surcharge de propriété de connecteur (L6 pièce 2 c2). Colonne
     # d'AUTEUR, pas d'identité : un UPDATE nu suffit, comme pour les voisines.
