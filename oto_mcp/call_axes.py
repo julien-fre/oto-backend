@@ -457,6 +457,15 @@ RUN = CallAxis(
 )
 
 
+# Les tools qui DÉCLARENT `_run_id` dans leur propre signature et le traitent
+# eux-mêmes : le middleware ne doit pas le leur retirer avant le dispatch, sinon il
+# leur mange un paramètre déclaré. Aujourd'hui `oto_call` seul — il rejoue la boucle
+# d'axes pour sa CIBLE (`tools/meta`), donc le jeton doit lui parvenir intact.
+# ⚠️ Une liste par nom rouille en silence : `test_call_axes_run.py` vérifie que
+# chacun de ces noms déclare bien le paramètre sur la surface servie.
+RUN_SELF_HANDLED: frozenset[str] = frozenset({"oto_call"})
+
+
 # ── Axe _org= (org d'exécution de l'appel — connecteurs + data + whoami) ───────
 
 def _is_org_scopable_tool(name: str) -> bool:

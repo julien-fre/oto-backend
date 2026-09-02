@@ -337,7 +337,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def oto_call(name: str, arguments: Optional[dict] = None,
-                       _org: Optional[int] = None, *, ctx: Context):
+                       _org: Optional[int] = None, _run_id: Optional[str] = None,
+                       *, ctx: Context):
         """Call ANY oto tool by name — including one that is NOT listed (hidden by
         default, connector not activated, FOD…), for a single call, WITHOUT adding it
         durably to your toolbox.
@@ -372,6 +373,10 @@ def register(mcp: FastMCP) -> None:
                 credentials/visibility/data for that org (ADR 0038 call token,
                 same membership guard as the flat `_org=` axis). Omit for your
                 current org.
+            _run_id: correlate this call to an open run, exactly like `_run_id` on a
+                listed tool. Accepted here as well as inside `arguments` — same
+                token, same effect — so the instruction « pass it on every call »
+                never costs a call.
         """
         # Identité ambiante : le sub du JWT porte déjà l'appel (le handler cible
         # résout ses propres credentials dessus). Soft — sur stdio local il n'y a pas
@@ -415,6 +420,14 @@ def register(mcp: FastMCP) -> None:
         # oto_call — seul `_org=` était honoré).
         if _org is not None:
             args.setdefault("_org", _org)
+        # `_run_id=` passé AU NIVEAU D'oto_call plutôt que dans `arguments` : replié
+        # comme `_org`, pour la même raison. Le modèle voit `_org` en tête de schéma
+        # et range le jeton frère au même endroit ; sans ce repli, l'appel échouait
+        # (« Unexpected keyword argument ») alors que la notice lui demande de porter
+        # `_run_id` sur CHAQUE appel. `setdefault` : ce qui est déjà dans `arguments`
+        # gagne — c'est la forme documentée, elle ne doit pas se faire écraser.
+        if _run_id is not None:
+            args.setdefault("_run_id", _run_id)
         call_axes.reject_legacy_axis_names(args, getattr(tool, "parameters", None))
         undo: list = []
         try:
