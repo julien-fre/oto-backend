@@ -48,6 +48,11 @@ OUTILS = [
     "oto_admin_guide",         # ADMIN_BY_OP : ORG_MEMBER_OF / ORG_ADMIN_OF
     "oto_admin_signal",           # PLATFORM_ADMIN
     "oto_admin_monitoring",       # PLATFORM_ADMIN
+    # ADMIN_BY_OP : lectures PLATFORM, test/send/optout_clear SUPER. Il est ici parce
+    # que son namespace (`oto`) ne résout AUCUN connecteur : aucun bloc de gating par
+    # connecteur ne le touche, et seule la dérivation du plancher depuis l'autz
+    # déclarée le masque. Le vérifier en EXÉCUTANT le filtre, pas en lisant `PLANCHERS`.
+    "oto_admin_outreach",
     "oto_admin_unipile_seat",     # SUPER_ADMIN
     "oto_admin_set_option",       # SUPER_ADMIN
     "oto_admin_refresh_mount",    # écrit à la main (tools/mount.py) : autz NON déclarée
@@ -92,7 +97,10 @@ async def test_ce_qui_est_reserve_a_la_plateforme_reste_cache(toolbox):
     plateforme n'est utile à personne d'autre — il ne fait qu'alourdir le contexte."""
     caches = await toolbox("member")
     for n in ("oto_admin_org", "oto_admin_signal", "oto_admin_monitoring",
-              "oto_admin_unipile_seat", "oto_admin_set_option"):
+              "oto_admin_unipile_seat", "oto_admin_set_option",
+              # Une campagne de relance n'a rien à faire dans la toolbox de qui la
+              # subirait : 82 des 87 comptes de la prod sont `member` (2026-09-02).
+              "oto_admin_outreach"):
         assert n in caches, n
 
 
@@ -102,7 +110,8 @@ async def test_un_admin_plateforme_non_super_voit_enfin_ses_outils(toolbox):
     `PLATFORM_ADMIN` accepte l'`admin` de supervision. Un opérateur plateforme non-super
     ne voyait donc AUCUN outil admin, y compris ceux écrits pour lui."""
     caches = await toolbox("admin")
-    for n in ("oto_admin_signal", "oto_admin_monitoring", "oto_admin_org"):
+    for n in ("oto_admin_signal", "oto_admin_monitoring", "oto_admin_org",
+              "oto_admin_outreach"):
         assert n not in caches, n
     # …mais l'escalade s'arrête là : le super reste le super.
     for n in ("oto_admin_unipile_seat", "oto_admin_set_option"):

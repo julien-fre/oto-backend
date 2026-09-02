@@ -114,6 +114,28 @@ CHOISIT `default_locale` pour tous ceux qui n'ont pas déclaré. Les compteurs
 l'inscription (ou capter `Accept-Language` au premier login) et l'écrire dans
 `users.locale`. Sans ça, aucune amélioration de l'algorithme ne changera quoi que ce soit.
 
+### Le partage EXACT de l'audience servie (prod, 2026-09-02)
+
+| `users.locale` | comptes | dont venus puis repartis | dont aucune trace |
+|---|---|---|---|
+| aucune | **37** | 14 | 23 |
+| `fr` | **2** | 2 | 0 |
+| `en` | **0** | — | — |
+| total | **39** | 16 | 23 |
+
+⚠️ **Conséquence qu'on ne voit pas en lisant `default_locale`** : les deux seules
+préférences déclarées valent `fr`, et la préférence DÉCLARÉE prime toujours (`_langue`).
+Servir l'anglais par défaut ne rend donc pas la campagne monolingue — les langues servies
+sont **{en, fr}**, pour 37 et 2 personnes. Il faut donc :
+
+- écrire les DEUX versions (`subject_fr`/`body_fr` sont exigés par `_contenu`, sinon
+  `content_required`, pour exactement 2 destinataires) ;
+- `op=test` envoie alors **deux** mails à l'opérateur, un par langue ;
+- `op=send` exige un essai valide **dans chacune des deux**.
+
+Il n'existe aucun moyen de forcer l'anglais à ces deux comptes : la préférence déclarée
+gagne, par construction, et c'est le comportement voulu.
+
 ## Les garde-fous, et pourquoi chacun est mécanique
 
 | garde-fou | mécanisme | ce qu'il empêche |
@@ -170,6 +192,81 @@ pied de page de dizaines de mails.
 (`test`, `send`) ou lève le refus de quelqu'un (`optout_clear`) = `SUPER_ADMIN`.
 `tests/test_outreach_guards.py` **exerce** la règle pour chaque valeur de l'énuméré
 `op` — une op ajoutée sans gate y arrive toute seule.
+
+## Empreinte sur le registre servi — mesurée, pas déduite (2026-09-02)
+
+La question posée au lot : **est-ce qu'il pollue la toolbox de tout le monde ?** Réponse
+mesurée en exécutant le filtre de visibilité (`session_visibility.compute_hidden_tools`)
+sur la liste RÉELLE des outils montés, pour les trois rôles plateforme :
+
+| | ce que le lot ajoute |
+|---|---|
+| verbes MCP | **1** — `oto_admin_outreach` |
+| routes REST | 1 — `POST /api/admin/outreach` |
+| poids servi du verbe | description 1 616 c. + schéma d'entrée 1 432 c. |
+| texte injecté au handshake | **+0 caractère** (le catalogue du bloc A ne liste que des namespaces de CONNECTEURS ; `oto_admin_*` n'y figure pas) |
+
+| rôle | `oto_admin_outreach` | comptes concernés en prod |
+|---|---|---|
+| `member` | **masqué** | 82 |
+| `admin` (opérateur plateforme) | visible | 1 |
+| `super_admin` | visible | 4 |
+
+⟹ **82 des 87 comptes ne le voient pas.** Le verbe ne coûte rien à la surface d'un
+utilisateur ordinaire.
+
+⚠️ **Pourquoi il ne tombe PAS dans le piège du namespace transverse.** `oto_admin_outreach`
+est dans le namespace `oto`, dont `connector_for_namespace` rend `None` : aucun bloc de
+gating par connecteur (activation, RBAC, sélection) ne le touche. Ce qui le masque, c'est
+`_hors_de_portee_plateforme`, qui dérive le plancher de l'autz **DÉCLARÉE** de la capacité
+— ici `operator`, le plus bas des branches d'`ADMIN_BY_OP`.
+
+C'est exactement là que se joue la différence avec les verbes qui ont fuité : **31
+capacités du namespace `oto` ont un plancher `None`** (donc sont servies à tout le monde),
+dont `oto_salesforce_connect` et `oto_zoho_connect`. Une capacité neuve du namespace `oto`
+n'est pas gatée « par défaut » : elle l'est **si et seulement si son autz déclare un
+plancher plateforme**. Le cliquet qui le rappelle est la table `PLANCHERS` de
+`tests/test_admin_tool_visibility_by_authz.py`, et ce test **exécute** désormais le filtre
+sur `oto_admin_outreach` (il ne se contente pas de comparer la déclaration).
+
+## Décisions d'exploitation de la première campagne (2026-09-02)
+
+Prises par Alexis, consignées ici parce qu'elles ne vivent nulle part dans le code : une
+campagne n'est pas un objet, c'est un jeu de paramètres passés à l'appel.
+
+1. **`default_locale='en'`** — les 37 comptes sans préférence déclarée reçoivent l'anglais ;
+   les 2 qui ont déclaré `fr` gardent le français (cf. le partage exact ci-dessus). Le
+   défaut du champ reste `fr` côté schéma : le rendre `en` changerait la langue de toute
+   campagne future sans que personne ne le redise. **La décision se porte à l'appel.**
+2. **Un seul message pour les 39** — pas de campagne séparée pour les « venus puis
+   repartis ». La mesure 16/23 reste écrite plus haut parce qu'elle est vraie et qu'elle
+   doit guider la RÉDACTION, mais elle n'est pas un axe de ciblage : ni troisième `status`,
+   ni double campagne.
+3. **L'usage passe par un écran d'administration** (front), pas par la conversation. Voir
+   « Ce que ce lot ne fait pas ».
+
+## Ce que les garde-fous ne garantissent PAS
+
+Le tableau ci-dessus dit ce que chaque mécanisme empêche. Ce qu'il n'empêche pas, mesuré
+sur banc le 2026-09-02, pour que personne ne le découvre au mauvais moment :
+
+- **L'essai prouve qu'un mail a été REMIS AU MAILER** pour l'adresse du compte appelant —
+  pas qu'un humain l'a ouvert. Rien n'attend d'accusé de lecture : `op=test` puis `op=send`
+  s'enchaînent en deux appels.
+- **`confirm` annonce le nombre DE CET APPEL, et `limit` choisit ce nombre.** Une boucle
+  `limit=1, confirm=1` atteint toute une audience homogène en n'annonçant jamais plus de 1
+  (mesuré : 40 comptes, 40 envois). Le plafond, lui, tient — il se juge sur l'audience
+  entière, que ni `limit`, ni `only`, ni un slug neuf ne réduisent.
+- ⚠️ **Au-dessus de `MAX_ENVOI`, il n'existe aucun découpage** : le refus
+  `audience_too_large` conseille `only` ou « découpe en plusieurs campagnes », or ni l'un
+  ni l'autre ne change le nombre sur lequel le plafond se prononce. Le conseil est faux —
+  à corriger avant qu'une audience dépasse 200.
+- **« Une seule relance par personne » vaut PAR CAMPAGNE** : un slug neuf réécrit aux mêmes
+  gens. C'est le dessin voulu ; le compteur servi `previous_outreach` est ce qui permet de
+  le voir.
+- **Le refus (`outreach_optouts`) n'est lu que par CETTE audience.** `email_send` — même
+  mailer, même marque, `super_admin` pour le repli marque — écrit à n'importe quelle
+  adresse sans essai, sans plafond et sans lien de désinscription.
 
 ## Ce que ce lot ne fait pas
 
