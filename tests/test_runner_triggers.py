@@ -69,6 +69,11 @@ def test_create_exige_procedure_cron_et_outils(monkeypatch):
 
 def test_create_valide_puis_pose_avec_le_fuseau_par_defaut(monkeypatch):
     vu = {}
+    # Poser exige désormais un runner armé (`test_runner_trigger_sans_worker`) :
+    # ce test-ci parle du fuseau, on lui donne l'org servie qu'il suppose.
+    monkeypatch.setattr(RT.db, "runner_arme",
+                        lambda org: {"armed": True, "workers": 1,
+                                     "last_seen": "2026-09-02 07:00:00"})
     monkeypatch.setattr(RT.db, "create_trigger",
                         lambda org, sub, **kw: vu.update(kw, org=org) or {"id": 1, **kw})
     out = _appel(_ctx(), op="create", procedure="veille-linkedin",
