@@ -1,0 +1,260 @@
+"""La péremption SUR LA ROUTE SERVIE — sérialisée, pas inspectée.
+
+⚠️ **Ce fichier existe pour une raison précise et déjà vécue.** `expired_since` et
+`expired_last` viennent de PostgreSQL en `timestamptz`, donc en `datetime` — et le
+modèle servi les déclare en chaîne. Un type qui ne traverse pas la sérialisation
+fait un **500 sur 100 % des appels**, et aucun test qui lit un dictionnaire de
+handler ne le voit : c'est exactement ce qui est arrivé le 02/09 à `usage_tokens`,
+rendu en `Decimal` par un `SUM(…)`.
+
+**La seule garde qui ne peut pas se tromper d'axe : sérialiser une vraie réponse,
+issue d'une vraie base.** Si un type ne passe pas, le test rougit — quel que soit
+le nom du champ, et sans qu'on ait eu à prévoir lequel.
+
+Et un second piège, propre à ce lot : le tick pose `status = 'expired'`, une
+valeur que la contrainte CHECK d'une base **existante** refuse tant que `_init`
+ne l'a pas remplacée. Un test sur base neuve ne le verrait pas.
+"""
+from __future__ import annotations
+
+import uuid
+
+import pytest
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
+ROUTE = "/api/me/runner/triggers"
+
+
+class _Claims:
+    def __init__(self, sub: str):
+        self.claims = {"sub": sub, "email": f"{sub}@perime.invalid", "name": sub}
+
+
+class _Verifier:
+    async def verify_token(self, token: str):
+        return _Claims(token)
+
+
+def _h(sub: str) -> dict:
+    return {"Authorization": f"Bearer {sub}"}
+
+
+@pytest.fixture(scope="module")
+def live(pg_dsn):
+    import os
+
+    psycopg = pytest.importorskip("psycopg")
+    from oto_mcp.db import _conn as dbconn
+
+    nom = "oto_perime_rest_" + uuid.uuid4().hex[:8]
+    root = psycopg.connect(pg_dsn, autocommit=True)
+    root.execute(f'CREATE DATABASE "{nom}"')
+    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + nom
+    url_avant, pool_avant = os.environ.get("DATABASE_URL"), dbconn._pool
+    os.environ["DATABASE_URL"] = dsn
+    dbconn._pool = None
+    try:
+        from oto_mcp.db import init_db
+        init_db()
+        yield dsn
+    finally:
+        if dbconn._pool is not None:
+            dbconn._pool.close()
+        dbconn._pool = pool_avant
+        if url_avant is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = url_avant
+        root.execute(f'DROP DATABASE IF EXISTS "{nom}" WITH (FORCE)')
+        root.close()
+
+
+@pytest.fixture(scope="module")
+def client(live):
+    from oto_mcp.api import routes as api_routes
+    return TestClient(Starlette(routes=api_routes.make_routes(_Verifier(),
+                                                              mcp_instance=None)))
+
+
+@pytest.fixture(scope="module")
+def org(live):
+    from oto_mcp import db, org_store
+    membre = "usr_perime_membre"
+    db.upsert_user(membre, email=f"{membre}@perime.invalid", name=membre)
+    oid = org_store.create_org("Org des péremptions", created_by=membre)
+    org_store.add_org_member(oid, membre, "org_admin")
+    org_store.set_active_org(membre, oid)
+    return {"id": oid, "membre": membre}
+
+
+@pytest.fixture(scope="module")
+def declencheur(live, org):
+    """Un déclencheur posé EN BASE — la route le refuserait, faute de worker armé,
+    et c'est précisément la situation qu'on veut reproduire."""
+    from oto_mcp import db
+    import datetime
+    return db.create_trigger(
+        org["id"], org["membre"], procedure="veille", cron="0 18 * * *",
+        tz="Europe/Paris",
+        next_due=datetime.datetime.now(datetime.timezone.utc),
+        tools=["data_write"], label="veille du soir")
+
+
+def test_zero_perdu_traverse_la_route(client, org, declencheur):
+    """Avant toute péremption : le champ est SERVI à zéro. Absent, il se lirait
+    « je n'ai pas regardé », et un lecteur prudent irait compter à la main."""
+    r = client.post(ROUTE, headers=_h(org["membre"]), json={"op": "list"})
+    assert r.status_code == 200, r.text
+    t = next(t for t in r.json()["triggers"] if t["id"] == declencheur["id"])
+    assert t["expired_count"] == 0
+    assert t["expired_since"] is None and t["expired_last"] is None
+
+
+def test_les_dates_de_perte_traversent_la_serialisation(client, org, declencheur):
+    """⚠️ LE test de ce fichier. Deux occurrences réellement périmées par le tick,
+    dans une vraie base, rendues par la vraie pile HTTP. Un `timestamptz` qui ne
+    se sérialise pas ferait ici un 500 — sur 100 % des appels."""
+    from oto_mcp import db, runner_tick
+
+    for _ in range(2):
+        db.enqueue_job(org["id"], "start",
+                       payload={"procedure": "veille",
+                                "trigger_id": declencheur["id"]})
+    # Le vrai geste du tick, sur la vraie contrainte CHECK de la vraie base.
+    assert db.perimer_travaux_du_declencheur(declencheur["id"], org["id"]) == 2
+
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "trigger_id": declencheur["id"]})
+    assert r.status_code == 200, r.text
+    t = r.json()["trigger"]
+    assert t["expired_count"] == 2
+    # Des CHAÎNES, traversées de bout en bout — c'est ce que le modèle promet.
+    assert isinstance(t["expired_since"], str) and t["expired_since"]
+    assert isinstance(t["expired_last"], str) and t["expired_last"]
+
+
+def test_ce_qui_est_perime_ne_se_reclame_plus(client, org, declencheur):
+    """La conséquence qui compte : une occurrence périmée ne repart pas. Sinon le
+    jour où des agents arrivent, treize jours partent d'un coup — avec le contexte
+    de leur époque."""
+    from oto_mcp import db
+    assert db.claim_next_job(org["id"], "un-worker") is None
+
+
+def test_un_travail_neuf_reste_reclamable(client, org, declencheur):
+    """⚠️ Le contrôle symétrique, sans lequel le précédent ne prouve rien : une
+    file vide donnerait le même `None`. Un travail frais, lui, DOIT partir."""
+    from oto_mcp import db
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille", "trigger_id": declencheur["id"]})
+    pris = db.claim_next_job(org["id"], "un-worker")
+    # ⚠️ `claim_next_job` rend ce dont le worker a besoin pour TRAVAILLER (id,
+    # kind, payload, bail) — pas le statut, qu'il vient lui-même de poser. Une
+    # assertion sur `status` échouerait sur la FORME et masquerait le fait mesuré.
+    assert pris is not None, "un travail frais doit partir — sinon le test précédent ne prouve rien"
+    assert pris["payload"]["trigger_id"] == declencheur["id"]
+    assert pris["lease_until"] is not None
+
+
+# ── un déclencheur qui ne TIQUE plus ne périme plus : les deux gestes qui l'arrêtent
+
+def test_desactiver_perime_ce_qui_reste_en_attente(client, org, declencheur):
+    """⚠️ Le trou que la mécanique du tick laissait ouvert. La péremption passe par
+    le tick DU déclencheur — l'éteindre le fait sortir de la boucle, donc ses
+    occurrences en attente devenaient ÉTERNELLES.
+
+    Et le geste qui les rendait éternelles était précisément celui par lequel
+    quelqu'un cherchait à arrêter les dégâts : **le seul geste de réparation
+    disponible aggravait la panne, en silence.**"""
+    from oto_mcp import db
+
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille", "trigger_id": declencheur["id"]})
+    db.update_trigger(declencheur["id"], org["id"], {"enabled": False})
+
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "trigger_id": declencheur["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["trigger"]["expired_count"] >= 3, "l'occupation en attente a péri"
+    # Et elle ne repartira pas le jour où des agents arrivent.
+    assert db.claim_next_job(org["id"], "un-worker") is None
+
+
+def test_rallumer_ne_perime_rien(client, org, declencheur):
+    """⚠️ Le contrôle symétrique : seul le passage à ÉTEINT périme. Périmer aussi
+    au rallumage effacerait une occurrence toute fraîche — et une garde qui mord
+    dans les deux sens ne se distingue pas d'une purge."""
+    from oto_mcp import db
+
+    db.update_trigger(declencheur["id"], org["id"], {"enabled": True})
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille", "trigger_id": declencheur["id"]})
+    db.update_trigger(declencheur["id"], org["id"], {"label": "un autre nom"})
+    pris = db.claim_next_job(org["id"], "un-worker")
+    assert pris is not None, "une retouche de libellé n'a rien à périmer"
+
+
+def test_supprimer_perime_avant_de_supprimer(client, org):
+    """⚠️ Le pire des deux cas : sans déclencheur, les occurrences deviennent
+    INVISIBLES en même temps qu'éternelles — le compteur de pertes se lit SUR le
+    déclencheur, qui n'existe plus. Elles partiraient pourtant le jour où des
+    agents arrivent, pour un déclencheur que plus personne n'a.
+
+    *« Ne pas toucher » n'est une conservation que si quelque chose garantit la
+    cible* : ici il n'y a aucune clé étrangère entre un travail et son
+    déclencheur, seulement un identifiant recopié dans la charge."""
+    import datetime
+
+    from oto_mcp import db
+
+    t = db.create_trigger(
+        org["id"], org["membre"], procedure="veille-jetable", cron="0 9 * * *",
+        tz="Europe/Paris",
+        next_due=datetime.datetime.now(datetime.timezone.utc),
+        tools=["data_write"], label="à supprimer")
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille-jetable", "trigger_id": t["id"]})
+
+    assert db.delete_trigger(t["id"], org["id"]) is True
+    # Le fait qui compte : plus rien à réclamer.
+    assert db.claim_next_job(org["id"], "un-worker") is None
+    # Et la trace demeure, avec sa raison — l'état n'est pas une suppression.
+    compte = db.comptage_perime(org["id"], t["id"])
+    assert compte["expired_count"] == 1
+
+
+def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
+    """⚠️ La CONSÉQUENCE observable, pas le mécanisme : un déclencheur éteint deux
+    semaines, rallumé, ne doit produire AUCUNE exécution immédiate.
+
+    Le test précédent vérifie que l'échéance est recalculée ; celui-ci vérifie ce
+    qu'un utilisateur constate. Les deux sont nécessaires — une échéance
+    recalculée mais toujours dans le passé passerait le premier et raterait
+    celui-ci."""
+    import datetime
+
+    from oto_mcp import db, runner_tick
+
+    passe = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)
+    t = db.create_trigger(
+        org["id"], org["membre"], procedure="veille-du-soir", cron="0 18 * * *",
+        tz="Europe/Paris", next_due=passe, tools=["data_write"],
+        label="éteinte depuis deux semaines")
+    db.update_trigger(t["id"], org["id"], {"enabled": False})
+
+    # Le rallumage passe par la ROUTE : c'est le geste réel de l'utilisateur.
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "update", "trigger_id": t["id"], "enabled": True})
+    assert r.status_code == 200, r.text
+
+    # ⚠️ LE fait : le tick ne le voit plus dû. `due_triggers` sélectionne sur
+    # `enabled AND next_due <= NOW()` — c'est exactement ce qui enfilait.
+    dus = [d["id"] for d in db.due_triggers(limit=100)]
+    assert t["id"] not in dus, (
+        "rallumé, il est encore vu DÛ : l'échéance figée pendant l'extinction "
+        "déclenche une exécution que personne n'a demandée")
+
+    # Et le tick, joué pour de vrai, n'enfile rien pour lui.
+    runner_tick._tick()
+    assert db.claim_next_job(org["id"], "un-worker") is None

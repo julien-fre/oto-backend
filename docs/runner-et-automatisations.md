@@ -199,6 +199,108 @@ les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclar�
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
+### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
+
+Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait
+rien pour ceux qui sont déjà dedans** — et c'est là qu'était le vrai trou.
+
+**Ce qui l'a daté.** 41 travaux programmés attendaient dans la file, sur quatre
+organisations, `attempts = 0` : jamais pris, pas même une fois pour échouer. Le
+plus ancien datait de treize jours, le plus récent du matin même — donc *ça
+continuait*. Les déclencheurs enfilaient, les agents prenaient ce qu'ils
+pouvaient voir, le périmètre par organisation protégeait : **chaque pièce faisait
+exactement son travail, et leur composition fabriquait le trou.** Rien ne le
+disait, parce qu'**un travail « en attente » ressemble à un travail qui va
+partir**.
+
+⚠️ **Et le pire cas n'était pas l'attente, c'était la réparation naïve** : le jour
+où quelqu'un pointe des agents sur cette organisation, treize jours d'occurrences
+partent d'un coup, avec la procédure et le contexte de leur époque. **Un travail
+qui attend n'est pas gratuit, il est daté** — une veille quotidienne jouée treize
+jours plus tard ne rend pas un résultat en retard, elle rend un résultat FAUX.
+
+**La règle : une occurrence périme quand la SUIVANTE arrive.** Le tick périme les
+`pending` du déclencheur juste avant d'enfiler.
+
+⚠️ **La définition vient du cadencement, jamais d'un délai choisi.** Un délai fixe
+serait faux des deux côtés à la fois — trop court pour une veille mensuelle,
+absurde pour une horaire — et surtout, *un réglage est une chose qui se périme
+elle-même*. Ici il n'y a rien à tenir à jour : c'est un garde-fou sans gardien.
+
+**Périmer ne SUPPRIME rien** — nouvel état `expired`, distinct de `failed` :
+
+```
+pending   enfilé, personne ne l'a encore pris
+claimed   un agent l'a réservé
+done      exécuté
+failed    a TOURNÉ et a échoué        ⟹ va lire l'erreur
+expired   n'a JAMAIS tourné            ⟹ va voir qui dessert cette org
+```
+
+⚠️ Les confondre coûte un faux aiguillage : « échoué » envoie chercher une erreur
+d'exécution **qui n'existe pas**. Et purger au lieu de marquer remplacerait un
+trou silencieux par un pire — *il effacerait la preuve du premier*. Ces 41
+travaux ont été le seul indice qu'une automatisation ne tournait pas ; purgés à
+mesure, personne n'aurait jamais rien vu.
+
+**La perte se lit sur le DÉCLENCHEUR** (`list`/`get` portent `expired_count`,
+`expired_since`, `expired_last`) — là où on la cherche, et non dans une file que
+personne n'ouvre. Ces 41 occurrences ont été découvertes **par hasard**, en
+préparant autre chose : une perte que seule une requête manuelle révèle n'est pas
+une perte connue. `expired_count: 0` est un vrai zéro, servi, pas une absence de
+mesure. **Deux dates et pas une** : une perte ancienne qui a cessé n'appelle pas
+le même geste qu'une perte qui continue ce matin.
+
+⚠️ **Un déclencheur qui ne TIQUE plus ne périme plus** — et les deux gestes qui
+l'arrêtent laissaient donc leurs occurrences éternelles. **Éteindre** (`enabled =
+false`) le sort de la boucle du tick ; **supprimer** est pire encore, puisque le
+compteur de pertes se lit SUR le déclencheur : elles devenaient *invisibles en
+même temps qu'éternelles*, tout en restant réclamables le jour où des agents
+arrivent — pour un déclencheur que plus personne n'a.
+
+> ⚠️ **Le geste de réparation aggravait la panne.** Quelqu'un qui constate qu'une
+> automatisation ne tourne pas l'éteint : c'est exactement ce qu'a fait
+> l'utilisateur du 26/08, et c'était le seul geste à sa portée. Il figeait la file
+> au lieu de la vider.
+
+Les deux périment donc avant d'agir, avec **leur propre raison** — « le cycle a
+tourné », « le déclencheur a été supprimé » et « il a été désactivé » n'envoient
+pas au même geste. ⚠️ Et seul le passage à ÉTEINT périme : périmer aussi au
+rallumage effacerait une occurrence fraîche, et *une garde qui mord dans les deux
+sens ne se distingue pas d'une purge*.
+
+**Et RALLUMER reprend le rythme, ça ne rembobine pas** (arbitré par Alexis le
+02/09, #826). Le rallumage recalcule l'échéance ; sans ce recalcul, celle qui
+avait été figée pendant l'extinction est restée dans le passé, et le tick voyait
+le déclencheur dû **à la seconde du rallumage** — donc une exécution que personne
+n'a demandée, déclenchée par le geste de quelqu'un qui répare.
+
+⚠️ **C'est la cohérence qui l'impose, pas le confort** : puisque éteindre périme
+les occurrences en attente, *un système qui dit « ce qui a attendu pendant
+l'extinction est mort » ne peut pas dire « sauf l'échéance »*. Une échéance
+manquée pendant une extinction VOULUE n'a pas été manquée.
+
+⚠️ Et seul le **passage** à allumé recalcule — même motif que la péremption, qui
+ne mord qu'au passage à éteint : recalculer sur un déclencheur déjà allumé
+donnerait un moyen de repousser son échéance indéfiniment, en répétant un geste
+qui n'est pas censé rien changer.
+
+⚠️ **L'ordre des refus est un contrat** : l'état du déclencheur se lit APRÈS la
+garde « aucun runner armé », jamais avant. Le lire d'abord ferait répondre
+« déclencheur inconnu » là où le serveur répond « aucun runner » — deux
+diagnostics opposés, et celui qu'on retirerait est le seul qui dit quoi faire.
+
+**La forme générale du piège**, qui vaut au-delà d'ici : *« ne pas toucher » n'est
+une conservation que si quelque chose garantit la cible.* Rien ne la garantit
+entre un travail et son déclencheur — il n'y a pas de clé étrangère, seulement un
+identifiant recopié dans la charge.
+
+⚠️ **L'hygiène ne coupe jamais le service** : une péremption qui échoue est
+journalisée et l'enfilage continue. L'inverse ferait qu'un défaut d'entretien
+arrête les automatisations de tout le monde — et le pire qu'on risque en la
+ratant est ce qu'on avait déjà, un travail de trop en attente. *(Défaut trouvé
+par son propre test avant d'être servi.)*
+
 ### `op=list` : la page dit ce qu'elle laisse dehors (#469, 01/09/2026)
 
 **Mesuré le 28/08** : `POST /api/me/runner/jobs {op: list, limit: 1000}` rendait

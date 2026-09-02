@@ -122,6 +122,9 @@ def test_list_porte_letat_du_runner(monkeypatch):
     que cette lecture pour se distinguer d'un déclencheur vivant."""
     _arme(monkeypatch, armed=False, workers=0, last_seen=None)
     monkeypatch.setattr(RT.db, "list_triggers", lambda org: [{"id": 6}])
+    # Ce test regarde l'état du RUNNER ; le comptage des pertes est un autre sujet
+    # et sa lecture en base n'a pas sa place ici.
+    monkeypatch.setattr(RT.db, "comptage_perime", lambda org, tid: {})
     out = _appel(_ctx(), op="list")
     assert out["runner"] == {"armed": False, "workers": 0, "last_seen": None}
 
@@ -129,6 +132,7 @@ def test_list_porte_letat_du_runner(monkeypatch):
 def test_get_porte_letat_du_runner(monkeypatch):
     _arme(monkeypatch)
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {"id": i})
+    monkeypatch.setattr(RT.db, "comptage_perime", lambda org, tid: {})
     assert _appel(_ctx(), op="get", trigger_id=6)["runner"]["armed"] is True
 
 

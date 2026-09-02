@@ -205,6 +205,14 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # existe sur une base déjà construite, et le boot mourrait (piège du 20/07).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet "
                  "ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL")
+    # `expired` (02/09) : un travail programmé que personne n'a pris dans son
+    # cycle. ⚠️ Le CHECK d'une base existante refuserait la valeur — et le refus
+    # tomberait au TICK, pas au boot, donc loin de sa cause.
+    conn.execute("ALTER TABLE runner_jobs DROP CONSTRAINT IF EXISTS "
+                 "runner_jobs_status_check")
+    conn.execute("ALTER TABLE runner_jobs ADD CONSTRAINT runner_jobs_status_check "
+                 "CHECK (status IN ('pending', 'claimed', 'done', 'failed', "
+                 "'expired'))")
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
     # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
     # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT
