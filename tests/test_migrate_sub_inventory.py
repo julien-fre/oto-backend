@@ -159,3 +159,55 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
     assert not mortes, (
         f"entrées d'allowlist sans colonne DDL correspondante : {sorted(mortes)} — "
         "retirer l'entrée (la colonne a disparu) ou réparer le parse.")
+
+
+def test_pk_sub_tables_reste_matches_the_real_primary_key():
+    """`_PK_SUB_TABLES` n'était vérifiée par RIEN — ni contre le DDL, ni contre la PK.
+
+    Son 3ᵉ champ (`reste`) sert à bâtir le prédicat « la même ligne » du DELETE de
+    l'étape 2 ter. Un `reste` incomplet ne casse pas : il ÉLARGIT le DELETE. Oublier
+    `grantee_group_id`, par exemple, ferait supprimer TOUS les prêts de l'ancien
+    compte sur ce canal dès que le nouveau en porte un seul — une perte silencieuse,
+    au milieu de la transaction censée les sauver. Un `reste` en trop, à l'inverse,
+    rend le DELETE inopérant et laisse l'`UPDATE` suivant lever `UniqueViolation`,
+    donc échouer tout le merge (le mode d'échec vécu le 28/07 sur `org_members`).
+
+    On dérive donc la PK du DDL : `{col} | reste` doit être EXACTEMENT la clé
+    primaire de la table, et `col` doit en faire partie. Une entrée dont la table a
+    disparu rougit ici plutôt qu'en fenêtre de bascule.
+    """
+    from oto_mcp.db.users import _PK_SUB_TABLES
+
+    pks: dict[str, tuple[str, ...]] = {}
+    for m in re.finditer(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\);",
+                         _SCHEMA, re.S):
+        table, body = m.group(1), m.group(2)
+        declaree = re.search(r"PRIMARY KEY\s*\(([^)]*)\)", body)
+        if declaree:
+            pks[table] = tuple(c.strip() for c in declaree.group(1).split(","))
+            continue
+        inline = re.findall(r"^\s*(\w+)\s+[^,\n]*\bPRIMARY KEY\b", body, re.M)
+        if inline:
+            pks[table] = tuple(inline)
+    assert pks, "le parse du DDL ne trouve plus aucune PRIMARY KEY — test à réparer"
+
+    problems = []
+    for table, col, reste in _PK_SUB_TABLES:
+        reelle = pks.get(table)
+        if reelle is None:
+            problems.append(f"{table}.{col} : table sans PRIMARY KEY dans _schema.py")
+            continue
+        if col not in reelle:
+            problems.append(
+                f"{table}.{col} : la colonne de sub n'est PAS dans la PK {reelle} — "
+                "elle relève alors de _SUB_COLUMNS (UPDATE nu), pas d'ici")
+            continue
+        if set(reste) | {col} != set(reelle):
+            problems.append(
+                f"{table}.{col} : reste={reste} ⟹ clé {sorted(set(reste) | {col})}, "
+                f"or la PK du DDL est {sorted(reelle)}")
+    assert not problems, (
+        "entrées _PK_SUB_TABLES dont le `reste` ne décrit pas la vraie PK :\n  "
+        + "\n  ".join(problems)
+        + "\nLe DELETE de l'étape 2 ter supprimerait trop (reste incomplet) ou rien "
+          "(reste en trop, puis UniqueViolation à l'UPDATE).")
