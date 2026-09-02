@@ -80,11 +80,23 @@ DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
 # surface. C'est un écart assumé entre les deux faces, pas un oubli — et il se
 # referme le jour où cette surface cesse d'être provisoire.
 #
-# ⚠️ **N'y faire entrer que des noms NEUFS.** Ce bloc masque fail-CLOSED : y poser
-# le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
-# l'option, sans qu'un seul appelant soit prévenu. `oto_resource_v2` y est parce
-# qu'il naît ici ; `oto_resource`, la surface héritée qu'il double, n'y est pas et
-# n'y sera jamais (cliquet : `tests/test_resources_deux_surfaces.py`).
+# ⚠️ **N'y faire entrer que des noms NEUFS — sauf DÉCHARGE MESURÉE.** Ce bloc
+# masque fail-CLOSED : y poser le nom d'une surface vivante la retirerait d'un
+# coup à tous les comptes sans l'option, sans qu'un seul appelant soit prévenu.
+# `oto_resource_v2` y est parce qu'il naît ici ; `oto_resource`, la surface
+# héritée qu'il double, n'y est pas et n'y sera jamais (cliquet :
+# `tests/test_resources_deux_surfaces.py`).
+#
+# La règle interdit un retrait NON MESURÉ, pas un retrait. Un nom vivant peut donc
+# entrer, à deux conditions qui déchargent exactement ce risque-là :
+#
+#   1. ses appelants sont ÉNUMÉRÉS — pas supposés rares, comptés ;
+#   2. ils portent l'option AVANT le déploiement, donc personne ne perd rien.
+#
+# Sans les deux, la règle courte s'applique : noms neufs seulement. Et « on pense
+# que personne ne s'en sert » n'est pas une mesure — c'est précisément ce qu'on
+# croyait des trois verbes de contenu, exposés à tout le monde depuis leur
+# création sans que personne le voie (relevé du 01/09).
 BETA_TOOLS: frozenset[str] = frozenset({
     "oto_node", "oto_node_rows", "oto_node_edit",
     # Gouvernance de ressource au contrat d'entrée STRICT (`resources_v2`) : elle
@@ -100,6 +112,36 @@ BETA_TOOLS: frozenset[str] = frozenset({
     # règle ci-dessus : `oto_fleet` naît avec ce lot, il ne retire donc rien à
     # personne — cf. `oto_mcp/capabilities/runner_fleets.py`.
     "oto_fleet",
+    # Les DÉCLENCHEURS (`runner_triggers`) — le seul nom VIVANT de ce bloc, entré
+    # sous la décharge mesurée ci-dessus.
+    #
+    # Le motif est le même que pour `oto_fleet`, en pire : le verbe ne trouve pas
+    # rien, il PROMET. `op=create` rend un `next_due` que l'agent rapporte comme
+    # une promesse tenue, puis le tick enfile un job à chaque échéance et, sans
+    # worker armé pour l'org, ce job reste `pending` pour toujours — sans une
+    # erreur. La surface ment tous les matins, poliment.
+    #
+    # ⚠️ **La mesure qui décharge la règle** (relevée le 02/09/2026, MCP hébergé) :
+    #
+    #     org 196 (la nôtre)   7 déclencheurs, 4 porteurs, 5 actifs
+    #     toutes les autres    0 — Partoo, Koncile, Hodor et les autres : aucune
+    #
+    # Aucune org cliente ne perd donc quoi que ce soit. ⚠️ Mais l'org 196, elle,
+    # perdrait la MAIN sur ses sept déclencheurs : ce lot ne se déploie qu'une
+    # fois l'option `beta` posée sur elle (`oto_admin_set_option`, SUPER_ADMIN).
+    # L'ordre n'est pas une précaution de confort — c'est la condition 2 de la
+    # décharge, et l'inverser reproduirait exactement le retrait non mesuré que la
+    # règle interdit.
+    #
+    # Ce que le masquage ne fait PAS, et qui borne les dégâts : la face REST
+    # (`POST /api/me/runner/triggers`) n'est pas gatée — le dashboard et le front
+    # continuent de lire, corriger et supprimer. Le gate décide QUI SE LE VOIT
+    # PROPOSER en conversation, rien de plus (ADR 0031).
+    #
+    # ⚠️ Il ne remplace pas la garde de `runner_triggers` (refus de `create` sans
+    # runner armé) : celle-là protège TOUS les appelants, y compris ceux qui ont
+    # l'option et le dashboard qui n'est pas gaté. Cacher n'est pas refuser.
+    "oto_trigger",
 })
 
 # L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur

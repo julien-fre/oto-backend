@@ -59,7 +59,7 @@ se voit que si un admin a posé l'option `beta` sur l'UTILISATEUR ou sur son ORG
 (`oto_admin_set_option`, lue par le seam unique `access.has_option`) : l'utilisateur ne
 peut pas se l'accorder, et aucun override perso ne le lève.
 
-`BETA_TOOLS` (source unique, `tool_visibility.py`) porte **deux** familles, entrées pour
+`BETA_TOOLS` (source unique, `tool_visibility.py`) porte **trois** familles, entrées pour
 des raisons différentes.
 
 **1. Les trois verbes du nouvel univers de contenu** — `oto_node`, `oto_node_rows`,
@@ -84,11 +84,43 @@ montré de vrais appelants dessus, dont un `op=list` qui serait passé de « fon
 > l'inverse d'un alias déprécié (`docs/alias-deprecies.md`), où l'ancien nom part à une
 > date écrite. Ici l'ancien contrat reste tant que quelqu'un s'en sert.
 
-⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS.** Le bloc masque fail-closed : y
-poser le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
-l'option — la rupture de #756 en pire, parce que silencieuse. Cliquet :
+**3. `oto_trigger` — le premier nom VIVANT, sous décharge mesurée (02/09/2026).**
+Le motif de `oto_fleet`, en pire : le verbe ne trouve pas rien, il **PROMET**.
+`op=create` rend un `next_due` que l'agent rapporte comme une promesse tenue ; le tick
+enfile un job à chaque échéance ; sans worker armé pour l'org, ce job reste `pending`
+pour toujours, **sans une erreur**. La surface ment tous les matins, poliment — et le
+seul témoignage qu'on en a trouvé était une phrase tapée dans le LIBELLÉ d'un
+déclencheur (« DISABLED 26 Aug, oto_trigger jobs do not execute », org 196).
+
+⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS — sauf DÉCHARGE MESURÉE.** Le bloc
+masque fail-closed : y poser le nom d'une surface vivante la retirerait d'un coup à tous
+les comptes sans l'option — la rupture de #756 en pire, parce que silencieuse. Cliquet :
 `tests/test_resources_deux_surfaces.py` garde que `oto_resource` n'y est pas, et fige le
 schéma d'entrée servi de l'héritée (`tests/resources_input_legacy.json`).
+
+> La règle interdit un retrait **non mesuré**, pas un retrait. Un nom vivant entre à deux
+> conditions qui déchargent exactement ce risque : **ses appelants sont énumérés** (pas
+> supposés rares — comptés), et **ils portent l'option avant le déploiement**. Sans les
+> deux, la règle courte s'applique.
+
+La mesure qui a déchargé `oto_trigger` (MCP hébergé, 02/09/2026) :
+
+```
+org 196 (la nôtre)   7 déclencheurs, 4 porteurs, 5 actifs
+toutes les autres    0 — Partoo, Koncile, Hodor, et le reste
+```
+
+⚠️ **L'ordre de déploiement EST la condition 2**, pas une précaution de confort : l'option
+`beta` se pose sur l'org 196 (`oto_admin_set_option`, SUPER_ADMIN) **avant** que ce lot
+parte, sinon quatre porteurs perdent la main sur sept déclencheurs — le retrait non mesuré
+que la règle interdit, commis par le lot qui l'invoque.
+
+⚠️ **Et cacher n'est pas refuser.** Le gate décide qui se voit proposer le verbe ; il ne
+protège ni la face REST (non gatée : le dashboard lit, corrige et supprime), ni les comptes
+qui ONT l'option. La garde qui protège tout le monde vit dans la capacité — `create` (et
+`update enabled=true`) refusés quand aucun worker ne sonde la file de l'org, cf.
+`docs/runner-et-automatisations.md`. Les deux lots sont complémentaires, aucun ne remplace
+l'autre.
 
 ⚠️ **Ils étaient exposés à TOUT LE MONDE depuis leur création** — mesuré le 2026-09-01,
 aucun gate, et c'est l'inverse de ce qu'on croyait (on les pensait invisibles). Zéro

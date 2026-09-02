@@ -119,3 +119,44 @@ async def test_le_gate_ne_masque_QUE_les_verbes_beta(socle, monkeypatch):
     caches = await _masques(socle, monkeypatch, lambda sub, opt, org=None: False)
     assert "oto_doc" not in caches
     assert "oto_whoami" not in caches
+
+
+# ── le seul nom VIVANT du bloc, et ce qui le décharge ─────────────────────────
+
+def test_oto_trigger_est_dans_le_bloc_beta():
+    """Le nom vivant entré sous décharge mesurée (02/09/2026).
+
+    Les tests génériques ci-dessus le couvrent déjà — masqué sans l'option,
+    rendu avec, masqué sur erreur. Celui-ci grave la DÉCISION : sans lui, un
+    retrait « pour faire propre » passerait pour un nettoyage, alors qu'il
+    rouvrirait à tout le monde un verbe qui promet une exécution que personne
+    n'assure."""
+    assert "oto_trigger" in BETA_TOOLS
+
+
+def test_oto_trigger_nest_pas_anti_lockout():
+    """⚠️ Le piège de ce lot : une entrée VERTE et INERTE.
+
+    `compute_hidden_tools` retire du masque, en tout dernier, tout tool
+    `is_protected` — un nom protégé posé dans `BETA_TOOLS` n'y ferait donc
+    RIEN, et les assertions génériques d'appartenance passeraient quand même.
+    C'est exactement le défaut que ce chantier dénonce ailleurs : une garde
+    verte qui ne garde pas."""
+    from oto_mcp.tool_visibility import is_protected
+
+    assert not is_protected("oto_trigger")
+
+
+def test_la_face_REST_nest_pas_gatee_par_le_bloc_beta():
+    """Ce qui BORNE les dégâts, et qui doit rester vrai.
+
+    Le masquage est une règle de VISIBILITÉ MCP (ADR 0031), jamais une autz : la
+    route servie n'en sait rien. C'est elle qui laisse au dashboard — et à qui
+    hérite d'un déclencheur mort — de quoi lire, corriger et supprimer sans
+    l'option. Si un jour le gate descendait dans la capacité, ce test rougirait,
+    et c'est le moment où il faudrait en reparler."""
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
+    cap = next(c for c in CAPABILITIES if c.key == "runner.triggers")
+    assert cap.rest is not None and cap.rest.path == "/api/me/runner/triggers"
+    assert cap.mcp == "oto_trigger"
