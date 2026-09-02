@@ -12,4 +12,7 @@ CONNECTOR = _c(
     label="OpenStreetMap", help="points d'intérêt OSM par tag sur une zone (parkings, équipements, commerces) — recensement exhaustif via Overpass (open data)",
 )
 
+# Donnée publique tierce : l'éditeur retombait sur le défaut « Otomata » alors que
+# la carte porte déjà le logo openstreetmap.org (corrigé le 2026-09-02).
+PUBLISHER = "OpenStreetMap"
 LOGO_DOMAIN = "openstreetmap.org"

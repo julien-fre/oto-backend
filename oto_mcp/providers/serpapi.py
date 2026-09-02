@@ -14,7 +14,8 @@ CONNECTOR = _c(
     "serpapi", ["serpapi"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=200, platform_key_open=True,
     label="SerpApi",
-    help="recherche multi-moteurs (Google verticals, Bing, YouTube, Walmart, Amazon, jobs…)",
+    help="pour interroger un AUTRE moteur que Google — Bing, YouTube, Amazon, "
+         "Walmart, eBay, Jobs, Scholar…",
     href="https://serpapi.com",
 )
 

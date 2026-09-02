@@ -21,7 +21,8 @@ CONNECTOR = _c(
     # (un Context Browserbase par host), et il y en a par définition plusieurs.
     cardinality="multi", account_axis_static=True,
     secret_kind="cookie", label="Navigateur connecté", account_noun="site",
-    help="lire un site derrière login — un login par site, session Browserbase",
+    help="lire un site qui exige d'être connecté — un compte par site, la session "
+         "tourne chez Browserbase",
 )
 
 SANS_LOGO_DE_MARQUE = True

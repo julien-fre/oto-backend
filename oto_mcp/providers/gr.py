@@ -11,9 +11,15 @@ from ._model import _c
 # sans clé. Inerte tant que non activé en DB (deny-by-default), comme foncier/sante.
 CONNECTOR = _c(
     "gr", ["gr"], secret_kind="none",
-    label="Data GR", help="entreprises Grèce — registre GEMI + VIES (open data)",
+    label="Entreprises Grèce",
+    help="chercher une entreprise grecque au registre GEMI, vérifier un numéro "
+         "de TVA européen (VIES) — open data",
 )
 
-CATEGORY = "Data GR"
+# « Data GR » était à la fois le libellé et une CATÉGORIE à un seul membre : ni
+# « Grèce » ni « entreprises » n'apparaissaient, et le filtre par type portait une
+# ligne pour lui seul. Rangé (2026-09-02) là où vivent déjà les registres
+# d'entreprises européens — hithorizons, topograph.
+CATEGORY = "Prospection"
 PUBLISHER = "GEMI / VIES"
 SANS_LOGO_DE_MARQUE = True

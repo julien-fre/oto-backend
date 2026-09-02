@@ -14,9 +14,9 @@ from ._model import _c
 # Browserbase par la config plateforme).
 CONNECTOR = _c(
     "web", ["web"], secret_kind="none",
-    label="Lecteur web",
-    help="lire une page publique qui se défend — fetch, puis scraper, "
-         "puis navigateur jetable (opt-in coûté)",
+    label="Lecteur de page web",
+    help="lire une page web publique, même quand elle résiste — fetch, puis "
+         "scraper, puis navigateur jetable (payant, sur demande)",
 )
 
 CATEGORY = "Web"

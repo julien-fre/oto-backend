@@ -44,7 +44,11 @@ CONNECTOR = _c(
     # flag, `platform_grant` ne pose QUE le quota, ne ferme jamais la clé (cf. oto-backend#245).
     platform_key_open=True,
     label="Messagerie hébergée (Unipile)",
-    help="LinkedIn + WhatsApp + Telegram + Instagram + Messenger + X/Twitter hébergés (recherche/scrape/messagerie)",
+    # Depuis le split du 2026-08-28, les six capacités promises ici SONT six autres
+    # connecteurs, et celui-ci n'expose plus qu'un outil : `unipile_connect_start`.
+    # L'aide continuait de promettre les six (corrigée le 2026-09-02).
+    help="raccorder ton compte LinkedIn, WhatsApp, Telegram, Instagram, Messenger "
+         "ou X — le préalable aux connecteurs de ces réseaux",
     href="https://www.unipile.com",
     modules=("unipile", "whatsapp", "telegram", "instagram", "messenger", "twitter"),
 )
