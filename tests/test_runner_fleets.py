@@ -211,3 +211,25 @@ def test_une_flotte_est_org_scopee():
     with pytest.raises(AuthzDenied) as e:
         _appel(ResolvedCtx(sub="alexis", org_id=None), op="list")
     assert e.value.code == "org_required"
+
+
+def test_la_description_servie_dit_que_launch_ARME_et_ne_demarre_rien():
+    """⚠️ Ce test existe parce que le NOM DU VERBE induit en erreur tout seul.
+
+    « launch » invite à écrire « lance ». Trois personnes l'ont annoncé de travers
+    le 02/09/2026 — dont un message de tag **immuable**, qui restera faux dans
+    l'historique. Et une description d'outil est relue à CHAQUE appel par un
+    modèle qui, lui aussi, lira « launch » et conclura « démarre ».
+
+    Le texte le plus proche du geste gagne : la correction appartient à la
+    description servie, pas à une doc à côté que personne ne relit au moment
+    d'agir."""
+    cap = [c for c in CAPABILITIES if c.key == "runner.fleets"][0]
+    d = cap.description
+    assert "ARMS" in d and "does NOT start any process" in d, (
+        "la description doit dire ce que le geste FAIT, pas répéter son nom")
+    assert "`armed`, never `running`" in d
+    assert "REQUESTS the stop" in d and "SPENDING" in d, (
+        "le versant `stop` compte autant : entre l'ordre et sa lecture, le "
+        "passage continue de dépenser — l'annoncer arrêté est le plus coûteux "
+        "des deux mensonges")

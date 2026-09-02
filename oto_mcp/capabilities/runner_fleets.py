@@ -80,7 +80,8 @@ def _bornes_valides(inp: "FleetInput") -> None:
             + ", ".join(f"`{c}`={v}" for c, v in sorted(fautives.items())))
 
 class FleetInput(BaseModel):
-    op: Literal["create", "list", "get", "state", "update", "launch", "stop"]
+    op: Literal["create", "list", "get", "state", "update", "launch", "stop",
+                "take", "beat", "ack_stop"]
     fleet_id: Optional[int] = None
     status: Optional[str] = None
     # create —
@@ -155,6 +156,11 @@ class FleetState(BaseModel):
 
 class FleetOut(BaseModel):
     fleet: Optional[Fleet] = None
+    # `beat` : l'ordre lu dans le même appel que le battement — un ordonnanceur
+    # qui bat sans demander « dois-je m'arrêter ? » laisserait `stopping` sans
+    # lecteur, et l'arrêt resterait une intention.
+    stop_requested: Optional[bool] = None
+    beat_taken: Optional[bool] = None
     fleets: Optional[list[Fleet]] = None
     state: Optional[FleetState] = None
 
@@ -270,6 +276,51 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # encore lu. Le passage continue jusqu'à ce qu'elle accuse réception.
         return {"fleet": f}
 
+    # ── Les gestes de l'ORDONNANCEUR — ceux qui transforment une intention en
+    # fait. Ils sont servis parce que sans eux `op=stop` reste une écriture que
+    # personne ne lit ; et ils POSENT les faits que les verbes d'opérateur
+    # n'ont pas le droit de poser.
+    if inp.op == "take":
+        f = db.prendre(inp.fleet_id, ctx.org_id)
+        if not f:
+            actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
+            if not actuelle:
+                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+            # ⚠️ Refus et non 200 : deux ordonnanceurs qui prendraient la même
+            # flotte armée doubleraient le passage. Le premier gagne, le second
+            # l'apprend au lieu de partir en croyant l'avoir prise.
+            raise AuthzDenied(
+                409, "not_takeable",
+                f"ce passage est `{actuelle['status']}` — on ne prend qu'une "
+                "flotte `armed`. Un autre ordonnanceur l'a peut-être déjà prise.")
+        return {"fleet": f}
+
+    if inp.op == "beat":
+        # Le battement, ET la lecture de l'ordre dans le même appel : un
+        # ordonnanceur qui bat sans jamais demander « dois-je m'arrêter ? »
+        # laisserait `stopping` sans lecteur.
+        vivant = db.battre(inp.fleet_id, ctx.org_id)
+        f = db.get_fleet(inp.fleet_id, ctx.org_id)
+        if not f:
+            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        return {"fleet": f, "stop_requested": f["status"] in ("stopping", "stopped"),
+                "beat_taken": vivant}
+
+    if inp.op == "ack_stop":
+        # ⚠️ Le SEUL geste qui pose `stopped`, et c'est l'ordonnanceur qui le
+        # pose. Si un opérateur pouvait l'écrire, l'écart entre « demandé » et
+        # « effectif » disparaîtrait — et avec lui le seul diagnostic d'un
+        # ordonnanceur mort.
+        if not db.accuser_arret(inp.fleet_id, ctx.org_id, inp.reason):
+            actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
+            if not actuelle:
+                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+            raise AuthzDenied(
+                409, "nothing_to_acknowledge",
+                f"ce passage est `{actuelle['status']}` — il n'y a pas d'arrêt en "
+                "cours à accuser.")
+        return {"fleet": db.get_fleet(inp.fleet_id, ctx.org_id)}
+
     if inp.op == "state":
         etat = db.fleet_state(inp.fleet_id, ctx.org_id)
         if not etat:
@@ -378,7 +429,25 @@ CAPABILITIES += [
             "limits `max_rows` / `max_tokens` / `max_consecutive_failures` / "
             "`max_tokens_per_row` — budgets are counted in TOKENS, never money) / "
             "list (optionally filtered by `status`) / get / "
-            "state / update. op=state returns the pass PROGRESS aggregated "
+            "state / update. "
+            # ⚠️ CE PARAGRAPHE EXISTE PARCE QUE LE NOM DU VERBE INDUIT EN ERREUR
+            # TOUT SEUL. « launch » invite à écrire « lance » — trois personnes
+            # l'ont annoncé de travers le 02/09/2026, dont un message de tag
+            # immuable qui restera faux dans l'historique. Une description d'outil
+            # est relue à CHAQUE appel par un modèle qui, lui aussi, lira
+            # « launch » et conclura « démarre ». Le texte le plus proche du geste
+            # gagne : c'est ici qu'il faut le dire, pas dans une doc à côté.
+            "⚠️ op=launch ARMS the fleet — it does NOT start any process. The "
+            "state becomes `armed`, never `running`: `running` means a scheduler "
+            "has TAKEN it and is beating. A scheduler must still be running for "
+            "the pass to move. Symmetrically, op=stop REQUESTS the stop "
+            "(`stopping`); the fleet keeps reserving, calling and SPENDING until "
+            "the scheduler reads the order and acknowledges it (`stopped`). "
+            "Never report a launch on `armed`, nor a stop on `stopping` — the gap "
+            "between the two is also the diagnosis: a `stopping` that never "
+            "becomes `stopped`, or an `armed` nobody claims, means a dead "
+            "scheduler. "
+            "op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "
             "consumed, heaviest single row — and says `no_jobs_attached` "
             "explicitly rather than returning zeros you would read as 'nothing "
