@@ -35,6 +35,65 @@ jobs:
       - name: Compiler sous le Python le plus ancien supporté
         run: python -m compileall -q oto_mcp
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # UNE RÉFÉRENCE POUSSÉE SANS SON OBJET.
+  #
+  # Le 02/09/2026, `oto_mcp/billing.py` importait `billing_grants` : l'import était
+  # dans le commit, le fichier n'y était pas — il n'existait que sur le disque de son
+  # auteur. Toute la suite échouait à la COLLECTE (pas quelques tests : tous), la
+  # préproduction était sautée, et plus rien ne pouvait partir en production.
+  #
+  # ⚠️ Cette classe est INVISIBLE POUR SON AUTEUR et visible pour tous les autres :
+  # son répertoire de travail complète le commit, donc chez lui tout s'importe. Deux
+  # sessions ont mesuré en même temps et conclu l'inverse, chacune ayant raison sur ce
+  # qu'elle regardait. Et elle naît d'une BONNE pratique — le staging sélectif, imposé
+  # parce que plusieurs sessions écrivent dans le même checkout : rien, au moment du
+  # commit, ne dit qu'on vient de pousser un import sans son fichier.
+  #
+  # Ce job ne juge donc jamais un répertoire de travail. Le script extrait l'arbre
+  # depuis git (`git archive`) dans un emplacement neuf, l'importe DE LÀ, et vérifie
+  # pour chaque module que ce qui vient d'entrer dans `sys.modules` sort bien de cet
+  # arbre — la première version du script se contentait de `sys.path`, et le chercheur
+  # de l'installation éditable résolvait le fichier manquant depuis le checkout de
+  # l'auteur : le garde-fou sortait VERT sur le commit même qui avait cassé le tronc.
+  #
+  # PROFONDEUR — tous les modules, pas seulement la racine du serveur. Mesuré :
+  # importer `oto_mcp.server` en charge 554 sur 590 et coûte 2,7 s ; monter à 590 coûte
+  # 3,3 s. La profondeur complète est donc gratuite, et les 36 modules que la racine
+  # n'atteint pas sont précisément ceux où une référence sans objet dort jusqu'au
+  # runtime, sans que rien ne la révèle avant la production.
+  #
+  # OÙ — sur les PR *ET* sur le tronc, délibérément : le commit qui a cassé le tronc
+  # n'est passé par aucune PR. Sur une PR, `actions/checkout` donne le commit de
+  # FUSION, donc ce job juge l'arbre qui atterrirait — ce qui couvre aussi le cas où
+  # l'un ajoute la référence pendant que l'autre déplace le fichier.
+  #
+  # COÛT — nul sur le chemin critique : `test` tient la chaîne à ~6 min 40, ce job
+  # tourne en parallèle et rend son verdict en ~1 min. Il n'a délibérément PAS été
+  # fondu dans une étape de `test` : une ligne de check distincte est observable (un
+  # job absent de la liste n'est pas un job vert), et un rouge caché dans `test` se
+  # lirait « des tests échouent » — exactement la confusion qu'on retire ici.
+  arbre-importable:
+    name: L'arbre poussé s'importe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Le même que `test`, dont l'installation est éprouvée. Ce job répond à UNE
+          # question — « l'arbre poussé s'importe-t-il ? » — et n'endosse pas en plus
+          # celle du plancher de version, que `syntaxe-plancher` couvre déjà en 3.10.
+          python-version: "3.12"
+          cache: pip
+      # Dépendances de RUNTIME seulement (pas l'extra `dev`) : ce que le serveur
+      # importe au boot ne doit rien devoir à l'outillage de test. Si l'installation
+      # échoue, l'étape échoue et le job est ROUGE — jamais un « je n'ai rien pu
+      # juger » déguisé en succès.
+      - name: Install (dépendances de runtime)
+        run: pip install -e .
+      - name: Importer l'arbre du commit, extrait de git
+        run: python scripts/arbre-importable.py
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -49,7 +108,7 @@ jobs:
         run: pytest -q
 
   deploy-preprod:
-    needs: [test, syntaxe-plancher]
+    needs: [test, syntaxe-plancher, arbre-importable]
     # push main OU relance manuelle (workflow_dispatch depuis main) — un dispatch
     # qui ne faisait que les tests laissait croire à un déploiement (vécu 23/07 :
     # canari resté en arrière après un push failed, dispatch « success » sans effet).
