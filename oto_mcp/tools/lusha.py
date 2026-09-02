@@ -9,7 +9,7 @@ contacts par appel, identifiés par email/LinkedIn/nom+société/id Lusha).
 Chaque contact peut échouer INDIVIDUELLEMENT (`results[].error` :
 NOT_FOUND, COMPLIANCE_RESTRICTED, ENRICH_FAILED) sans faire échouer l'appel
 entier — ce n'est PAS un mode bulk "boucle sur du single-record" comme
-folk/checkcrm : Lusha accepte nativement un lot dans une seule requête HTTP,
+folk : Lusha accepte nativement un lot dans une seule requête HTTP,
 donc aucun `_bulk_run` ici.
 """
 from __future__ import annotations

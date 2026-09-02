@@ -277,7 +277,7 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 | `serper_maps_sample/census`, `serper_reviews`, `serpapi_jobs/trends/finance/flights/hotels` | — | non couvert : lieux, offres, séries — pas des pages ; `website` d'un lieu n'est pas un résultat |
 | `firecrawl_extract_status` | — | non couvert : données au schéma de l'appelant, pas des pages (l'entrée l'est) |
 | `reddit_search`, `reddit_post`, `linkedin_unipile_*`, `linkedin_aiark_*` | — | non couvert : objets d'une plateforme propre ; exclure = ne pas activer le connecteur |
-| `kaspr_enrich_linkedin`, `fullenrich_enrich_linkedin`, `apollo_match_person`, `cognism_enrich_*`, `lemlist_enrich`, `checkcrm_*`, `forager_organization` | — | non couvert : l'URL est un IDENTIFIANT passé à un fournisseur de données, pas une page lue |
+| `kaspr_enrich_linkedin`, `fullenrich_enrich_linkedin`, `apollo_match_person`, `cognism_enrich_*`, `lemlist_enrich`, `forager_organization` | — | non couvert : l'URL est un IDENTIFIANT passé à un fournisseur de données, pas une page lue |
 | `apify_run*` | — | non couvert : `run_input` opaque d'un acteur tiers ; cran = activation |
 | `http_get/post` | — | non couvert : chemin relatif à une `base_url` configurée par l'org (client d'API) |
 | `browser_connect_start` | — | non couvert : page de login ouverte à l'humain, pas une lecture |
