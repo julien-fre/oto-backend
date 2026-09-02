@@ -1503,7 +1503,9 @@ def migrate_business_key_indexes() -> int:
             "WHERE schema->>'key' IS NOT NULL AND schema->>'key' <> ''").fetchall()
     for r in rows:
         try:
-            datastore_ensure_key_index(int(r["id"]), r["k"])
+            # Travail de FOND (CLI, hors chemin de requête) : pas de borne — cf.
+            # `datastore_ensure_key_index`.
+            datastore_ensure_key_index(int(r["id"]), r["k"], bornee=False)
             n += 1
         except Exception:  # noqa: BLE001
             # Un namespace dont les données portent DÉJÀ un doublon sur la clé refuse
