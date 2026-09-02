@@ -156,8 +156,8 @@ from oto_mcp.db import _schema, schema
 # la cascade joue quand même — c'est la vérification des lignes DÉJÀ là qui est
 # différée, pas l'effet — et le boot ne peut donc pas échouer sur un orphelin
 # hérité. Empreinte recalculée sur le module assemblé.
-EMPREINTE = "b85598fa3ce00f694be3661102af359000a299cf321f9aa557b673834282e17b"
-LONGUEUR = 127478
+EMPREINTE = "19065a044d19cefbf93cc2fbc0452c1fda6eeaf8fa27b260b8fe53fa4b88e8b7"
+LONGUEUR = 128822
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
