@@ -94,6 +94,9 @@ def _org(nom: str, sub: str) -> int:
     oid = org_store.create_org(nom, created_by=sub)
     org_store.add_org_member(oid, sub, "org_admin")
     org_store.set_active_org(sub, oid)
+    # Les flottes sont une surface bêta : la route refuse `beta_required` sans
+    # l'option — le banc parle de travaux, pas de la porte, il l'ouvre donc.
+    db.set_option_comp("org", str(oid), "beta", granted_by="test")
     return oid
 
 

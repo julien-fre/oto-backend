@@ -227,6 +227,9 @@ def test_une_flotte_d_une_autre_org_est_invisible(client, org, flotte):
     oid = org_store.create_org("Une autre org", created_by=autre)
     org_store.add_org_member(oid, autre, "org_admin")
     org_store.set_active_org(autre, oid)
+    # Bêta elle aussi : ce test parle d'ISOLATION, pas de la porte — sans
+    # l'option le 403 `beta_required` primerait et masquerait le 404 attendu.
+    db.set_option_comp("org", str(oid), "beta", granted_by="test")
     r = client.post(ROUTE, headers=_h(autre),
                     json={"op": "get", "fleet_id": flotte["id"]})
     assert (r.status_code, r.json().get("error")) == (404, "fleet_not_found")

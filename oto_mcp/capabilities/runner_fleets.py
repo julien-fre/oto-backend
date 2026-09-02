@@ -37,12 +37,15 @@ droit sera tranchée.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
 from .. import access, db
 from ..tool_visibility import BETA_OPTION
+
+logger = logging.getLogger(__name__)
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
@@ -173,6 +176,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     try:
         beta = access.has_option(ctx.sub, BETA_OPTION, org=ctx.org_id)
     except Exception:
+        # Fermer sans le dire serait un silence ; on ferme ET on le trace.
+        logger.warning("beta gate fail-CLOSED for %s in org %s",
+                       ctx.sub, ctx.org_id, exc_info=True)
         beta = False
     if not beta:
         raise AuthzDenied(
