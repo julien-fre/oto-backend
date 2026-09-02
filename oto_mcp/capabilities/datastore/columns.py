@@ -12,12 +12,22 @@ croyant viser juste, la valeur partant dans une colonne que l'interface ne lit p
 fasse disparaître la colonne, et donc le piège.
 
 Une CAPACITÉ, pas un `@mcp.tool()` (ADR 0042 §Convergence des surfaces) : le verbe
-appartient à la plateforme, et le jour où le cockpit affiche « supprimer cette
+appartient à la plateforme, et le jour où le cockpit afficherait « supprimer cette
 colonne » — l'endroit naturel, puisque la colonne morte trompe aussi l'humain qui
-relit une fiche — la face REST est une ligne `rest=` ici, pas une seconde
-implémentation avec sa propre autz à tenir en phase. `rest=None` en attendant,
-opt-out explicite : une route destructive que rien n'appelle est une surface qu'on
-ne teste pas.
+relit une fiche — la face REST serait une ligne `rest=` ici, pas une seconde
+implémentation avec sa propre autz à tenir en phase. Ce jour est arrivé : le
+cockpit pose la corbeille dans le menu ⋯ d'une colonne, la ligne `rest=` est posée
+ci-dessous, et l'autz reste la seule, celle de la capacité.
+
+`POST …/{namespace}/drop_column`, et non `DELETE …/columns/{key}`, pour deux
+raisons de forme qui tiennent aux données : une clé de colonne peut porter un point
+(`site_web.comment` — le store tient exprès à la garder atteignable, cf. son
+commentaire sur le diagnostic d'après-purge), donc elle n'a rien à faire dans un
+segment de chemin ; et `confirm` est un booléen, que seul un corps porte sans
+coercition depuis une chaîne de query — or l'adaptateur ne lit un corps que sur
+POST/PUT/PATCH ou `reads_body` (cf. `_rest_adapter`). Le corps porte donc
+`{key, confirm}`, le chemin le seul `namespace`. Même parti que `claim_next`, déjà
+un verbe en POST sous le namespace.
 
 Les gardes vivent dans le STORE (`DatastorePg.drop_column`), pas ici : `confirm`,
 le refus d'une clé encore déclarée au schéma et celui des colonnes de plateforme
@@ -155,7 +165,9 @@ CAPABILITIES += [
         Output=DropColumnResult,
         authz=SUB_ONLY,
         mcp="data_drop_column",
-        rest=None,  # cf. en-tête : une ligne à poser quand le cockpit l'affichera
+        # Le geste destructif du cockpit — cf. en-tête pour le choix POST + corps.
+        rest=RestBinding(
+            verb="POST", path="/api/datastore/namespaces/{namespace}/drop_column"),
         description=(
             "DESTRUCTIVE — erase a column from EVERY row of a namespace (`confirm=True` "
             "required). Removing a field from the schema takes it out of the view, but "

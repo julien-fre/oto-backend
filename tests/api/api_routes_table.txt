@@ -620,6 +620,8 @@ GET,HEAD /api/datastore/namespaces/{namespace}/queue -> _handler
 OPTIONS /api/datastore/namespaces/{namespace}/queue -> options_handler
 GET,HEAD /api/datastore/namespaces/{namespace}/aggregate -> _handler
 OPTIONS /api/datastore/namespaces/{namespace}/aggregate -> options_handler
+POST /api/datastore/namespaces/{namespace}/drop_column -> _handler
+OPTIONS /api/datastore/namespaces/{namespace}/drop_column -> options_handler
 PATCH /api/datastore/namespaces/{namespace}/schema -> _handler
 OPTIONS /api/datastore/namespaces/{namespace}/schema -> options_handler
 POST /api/me/automations/fire -> _handler
