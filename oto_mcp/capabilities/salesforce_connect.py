@@ -77,7 +77,12 @@ CAPABILITIES += [
         handler=_start,
         Input=SalesforceConnectInput,
         authz=ORG_MEMBER,
-        mcp="oto_salesforce_connect",
+        # ⚠️ Nommé sous SON connecteur, pas sous le préfixe transverse : le gate
+        # par connecteur résout au namespace du nom, donc `oto_…` mettait ce verbe
+        # dans la toolbox de TOUS les comptes, y compris ceux qui n'ont pas
+        # salesforce. L'ancien nom reste servi et appelable jusqu'à sa date de retrait
+        # (`deprecations.TOOLS`) — une procédure d'org le référence encore.
+        mcp="salesforce_connect",
         # Plus de face REST NOMMÉE : le chemin fixe `/api/me/connectors/{name}/connect`
         # (capacité `me.connector_connect`) la sert désormais, via le MÊME `start_for`.
         # La face MCP reste — un agent connaît le connecteur qu'il connecte.

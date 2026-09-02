@@ -35,6 +35,17 @@ from ._model import _c
 # d'exemple de Mintlify (« OpenAPI Plant Store », deux chemins sur `/plants`). Les
 # méthodes du client viennent des pages de référence, lues une par une.
 
+# ⚠️ **JAMAIS EXERCÉ CONTRE LE SERVICE RÉEL** — état au 2026-09-02, et personne ne
+# l'a demandé autrement (la relance pour obtenir une clé d'essai a été explicitement
+# écartée). Ce qui EST vérifié : les quatre outils se montent, chaque méthode
+# correspond à la documentation de référence lue endpoint par endpoint, et une clé
+# `fk_test_` ne peut pas atteindre les vraies créances. Ce qui NE l'est PAS : la forme
+# réelle des réponses, les codes d'erreur, la pagination.
+#
+# La note est ici pour qu'un premier utilisateur sache ce qu'il essuie — un connecteur
+# livré se lit comme un connecteur éprouvé, et rien ne distingue les deux à l'usage
+# tant que le premier appel n'a pas eu lieu.
+
 CONNECTOR = _c(
     "finkare", ["finkare"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",

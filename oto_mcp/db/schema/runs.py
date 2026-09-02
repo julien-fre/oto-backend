@@ -214,6 +214,21 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     -- sans corréler des horodatages à la main. NULL = job isolé (déclencheur, appel
     -- direct) — la file sert les deux et ne les distingue qu'ici.
     fleet_id BIGINT REFERENCES runner_fleets(id) ON DELETE SET NULL,
+    -- QUI a demandé ce travail. C'est l'identité que l'agent porte en
+    -- l'exécutant : par défaut celle du créateur du déclencheur, paramétrable
+    -- vers un autre membre (direction du 02/09).
+    --
+    -- ⚠️ **C'est le préalable du worker MUTUALISÉ.** Tant que l'identité vient du
+    -- jeton que le worker présente, il faut un worker par organisation — ce n'est
+    -- pas un choix d'architecture, c'est un empêchement, et c'est lui qui a laissé
+    -- 41 travaux sans personne pour les prendre. Un travail qui porte son identité
+    -- dispense le worker d'en avoir une par organisation.
+    --
+    -- ⚠️ NULLABLE, et ça le restera : les travaux enfilés avant le 02/09 n'ont pas
+    -- de créateur connu. Écrire un sub par défaut leur inventerait un demandeur —
+    -- et un `NULL` qui dit « on ne sait pas » vaut mieux qu'un nom faux, qu'on
+    -- lirait comme un fait.
+    sub TEXT,
     -- Le RÉSULTAT déclaré par le worker à la conclusion (usage_tokens, stopped,
     -- steps…) : c'est ce qui rend le coût d'un job LISIBLE par un ordonnanceur
     -- de flotte (garde budget) sans parser la note libre d'un run.

@@ -175,17 +175,18 @@ from oto_mcp.db import _schema, schema
 # `schema.unipile.UNIPILE_GROUP_GRANTS`, un fragment à part posé juste après
 # `schema.orgs.GROUPS` dans `_schema.ASSEMBLAGE`. ADDITIF : rien n'est retiré ni
 # contraint sur les tables existantes.
-# 2026-09-02 (#836) : `runner_fleets.rows_at_launch`, une colonne NULLABLE — le
-# DÉNOMINATEUR de l'avancement d'un passage, relu sur la table à chaque armement.
-# ADDITIF : rien n'est retiré ni contraint sur les tables existantes. Elle existe
-# aussi en `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dans `_init.py` : la base est
-# PARTAGÉE prod/preprod, le `CREATE TABLE` ne sert qu'aux installs vierges.
-# ⚠️ Empreinte RECALCULÉE sur le DDL FUSIONNÉ, pas recopiée d'un des deux côtés du
-# conflit : ce lot (+653) et le tronc du 02/09 (+964 : état `expired` et
-# `idx_runner_jobs_expired`) touchent tous deux `schema/runs.py`, dans deux régions
-# distinctes. 134714 (socle commun) + 964 + 653 = 136331.
-EMPREINTE = "b1aab531d43ccbd12dbf79e67c6a4fc77ce99aaa40284fb95aaed80030349d70"
-LONGUEUR = 136331
+# 2026-09-02 (identité portée par un travail, chantier « agents autonomes ») :
+# `runner_jobs.sub` — QUI a demandé ce travail, donc au nom de qui l'agent
+# agira. ⚠️ C'est le préalable du worker MUTUALISÉ : tant que l'identité vient
+# du jeton présenté par le worker, il faut un worker par organisation — ce n'est
+# pas un choix d'architecture, c'est l'empêchement qui a laissé 41 travaux sans
+# personne pour les prendre (#814). NULLABLE et ça le reste : les travaux d'avant
+# n'ont pas de créateur connu, et leur en inventer un donnerait un nom qui se
+# lirait comme un fait.
+# ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
+# bien 30e2c6f2… / 135678, mesuré au moment du rebase et jamais avant.
+EMPREINTE = "bb7aafffcf7f41d5fe9a5c2be58ecdde1d9909292f39ae8f97a8d954664ebcf0"
+LONGUEUR = 137228
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

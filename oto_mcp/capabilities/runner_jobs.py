@@ -142,6 +142,13 @@ class Job(BaseModel):
             "pass. Null for a standalone job (trigger, direct call). This is what "
             "makes `runner.fleets op=state` able to aggregate a pass — without it "
             "a pass is only readable by correlating timestamps by hand."))
+    sub: Optional[str] = Field(
+        None, description=(
+            "WHOSE identity this job carries — the account the agent acts as while "
+            "running it, not an audit trail. Defaults to whoever created the "
+            "trigger. Null on jobs enqueued before 2026-09-02: their requester is "
+            "unknown, and no default was invented for them — a null that says 'we "
+            "do not know' beats a name that would be read as a fact."))
     payload: Optional[dict[str, Any]] = None
     status: Optional[str] = None
     attempts: Optional[int] = None
@@ -172,6 +179,10 @@ class JobsOut(BaseModel):
     # `enqueue` le RÉPÈTE : l'appelant sait ainsi que son rattachement a été pris,
     # au lieu de le supposer et de découvrir au bilan qu'un passage est vide.
     fleet_id: Optional[int] = None
+    # Idem pour l'identité : rendue à l'enfilage, elle se CONSTATE au lieu de se
+    # supposer. C'est ce que l'agent portera, donc ce qu'il faut pouvoir vérifier
+    # avant qu'il tourne, pas après.
+    sub: Optional[str] = None
     job: Optional[Job] = None
     jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
@@ -278,11 +289,16 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # Même 404 sans oracle que le gate propriétaire d'un run juste au-dessus.
         if inp.fleet_id is not None and not db.get_fleet(inp.fleet_id, ctx.org_id):
             raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        # ⚠️ L'identité vient de l'ÉTAT SERVEUR (`ctx.sub`), jamais d'un champ
+        # d'entrée : un travail dont l'appelant choisirait le porteur serait une
+        # usurpation en une ligne de JSON. Le paramétrage vers un autre membre —
+        # prévu par la direction du 02/09 — passera par une garde
+        # d'appartenance, pas par la confiance faite au corps de la requête.
         res = db.enqueue_job(ctx.org_id, inp.kind, payload=inp.payload,
                              run_id=inp.run_id, max_attempts=inp.max_attempts,
-                             fleet_id=inp.fleet_id)
+                             fleet_id=inp.fleet_id, sub=ctx.sub)
         return {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"]),
-                "fleet_id": res.get("fleet_id")}
+                "fleet_id": res.get("fleet_id"), "sub": res.get("sub")}
 
     if inp.op == "claim":
         job = db.claim_next_job(ctx.org_id, ctx.sub,

@@ -143,7 +143,12 @@ CAPABILITIES += [
         handler=_dispatch,
         Input=ZohoConnectInput,
         authz=ORG_MEMBER,
-        mcp="oto_zoho_connect",
+        # ⚠️ Nommé sous SON connecteur, pas sous le préfixe transverse : le gate
+        # par connecteur résout au namespace du nom, donc `oto_…` mettait ce verbe
+        # dans la toolbox de TOUS les comptes, y compris ceux qui n'ont pas
+        # zoho. L'ancien nom reste servi et appelable jusqu'à sa date de retrait
+        # (`deprecations.TOOLS`) — une procédure d'org le référence encore.
+        mcp="zoho_connect",
         rest=None,
         description=(
             "Connexion Zoho « server-based » (CRM / Desk / Analytics) : op='modes' "

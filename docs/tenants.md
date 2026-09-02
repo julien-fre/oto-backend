@@ -121,6 +121,53 @@ description: >-
 > pré-traitée ou allowlistée AVEC sa raison — une colonne neuve arrive rouge. Restent
 > hors repointage, par construction : `connector_credentials.entity_id` (AAD) et la
 > mécanique du merge lui-même (`sub_aliases`, `users.sub`, `orgs.personal_of`).
+>
+> ⚠️ **Une TROISIÈME famille depuis le 2026-09-02 : `_UNIQUE_INDEX_SUB_TABLES`** (étape
+> 2 quinquies). Elle existe parce que les deux premières répondent à des questions
+> différentes, et qu'une table peut n'entrer dans aucune : `outreach_sends` a pour clé
+> primaire un `id` BIGSERIAL, mais son unicité réelle est un index **partiel**
+> (`(campaign, sub) WHERE kind='send'`). Rangée d'abord dans `_PK_SUB_TABLES`, elle
+> aurait fait prendre `kind` pour une colonne de clé et **supprimé des essais que rien
+> ne menaçait** ; rangée dans `_SUB_COLUMNS` seule, l'UPDATE nu aurait levé
+> `UniqueViolation` dès que les deux comptes d'une personne ont reçu la même campagne —
+> et fait échouer TOUT le merge. La famille dédoublonne donc sur les colonnes de
+> l'INDEX, prédicat partiel reporté sur les deux côtés, puis laisse l'UPDATE nu de
+> l'étape 3 repointer (d'où l'obligation d'être AUSSI dans `_SUB_COLUMNS`).
+> Garde-fous dérivés du DDL : `test_migrate_sub_unique_index.py` (l'index existe, avec
+> ces colonnes et ce prédicat ; l'entrée a son repointage ; elle n'est pas dans deux
+> bacs). **Le classement reste manuel, et c'est le vrai défaut** : deux erreurs
+> symétriques en quatre heures le 02/09 (deux colonnes de clé mises en repointage
+> simple le matin, une colonne hors clé mise en patron PK le soir).
+>
+> ⚠️ **Et le classement manuel a un second trou, celui-là JAMAIS gardé** : les trois
+> familles répondent toutes à la même question — *un UPDATE nu peut-il lever une
+> violation d'unicité ?* — mais rien ne vérifiait qu'une colonne à qui la réponse est
+> OUI soit bien rangée quelque part. `test_pk_sub_tables_reste_matches_the_real_primary_
+> key` juge les entrées DÉCLARÉES ; il ne va jamais chercher les MANQUANTES.
+> `test_active_membership_tables_are_pre_treated` ne ferme qu'une forme écrite en dur
+> (`ON <table>(sub) WHERE is_active`), et seulement dans `_schema.py`.
+>
+> `test_toute_colonne_sub_sous_index_unique_est_pre_traitee` (2026-09-02) ferme la
+> CLASSE : toute colonne de `_SUB_COLUMNS` couverte par un index unique — partiel ou
+> non, déclaré dans `_schema.py` **ou créé par `_init.py`** — doit être pré-traitée ou
+> allowlistée avec sa raison. La moitié `_init.py` est le cœur du sujet : **dix des
+> quatorze index uniques du schéma y sont créés, et aucune garde ne les avait jamais
+> lus** — dont quatre des huit qui couvrent une colonne porteuse de sub.
+> Une colonne qui n'est PAS repointée (`connector_instances.owner_id`,
+> `orgs.personal_of`) sort d'elle-même du critère : pas d'UPDATE nu, pas de violation.
+>
+> 🔴 **Ce que la garde a trouvé, et qui reste OUVERT : `user_datastores.owner_id`.**
+> `uq_user_datastores_owner_ns (owner_type, owner_id, namespace)` n'est pas partiel ;
+> deux comptes d'une même personne ayant chacun un namespace du même nom font lever
+> `UniqueViolation` à l'étape 3 et échouer TOUT le merge — le mode d'échec du 28/07,
+> encore ouvert, reproduit sur base réelle le 2026-09-02. Il n'est pas corrigé avec la
+> garde parce que le geste mécanique des autres familles (DELETE de la ligne en trop)
+> serait PIRE que la panne : `datastore_rows` est en `ON DELETE CASCADE` sur
+> `user_datastores(id)`, donc jeter le namespace de l'ancien compte détruit ses
+> LIGNES. Un merge qui échoue est bruyant et rejouable ; des lignes effacées en
+> silence, non. La résolution correcte est probablement de RENOMMER le namespace
+> repris — le nom que verra l'utilisateur est une décision de produit, pas de
+> tuyauterie. Entrée d'allowlist datée, à retirer une fois tranché.
 
 ## La clé de connecteur du tenant (L-clés PR 1 — 2026-08-29)
 

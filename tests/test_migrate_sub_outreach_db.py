@@ -162,11 +162,25 @@ def test_deux_campagnes_DISTINCTES_survivent_toutes_les_deux(live):
 # échoue — c'est le mode d'échec réel qu'on prétend éviter.
 
 def _en_update_nu(monkeypatch, table: str):
+    """Retire à `table` TOUT pré-traitement, quelle que soit la famille qui le porte,
+    et s'assure que l'UPDATE nu reste (il est déjà dans `_SUB_COLUMNS` pour l'une,
+    à ajouter pour l'autre).
+
+    ⚠️ Écrit d'abord en ne visant que `_PK_SUB_TABLES` : le jour où l'entrée a changé
+    de famille, la mutation est devenue un NO-OP et ce fichier a rougi en
+    « DID NOT RAISE » — c'est-à-dire qu'il a dit lui-même qu'il ne gardait plus rien.
+    C'est le comportement voulu ; le silence aurait été la panne."""
     from oto_mcp.db import users
+    avant = {e[0] for e in users._PK_SUB_TABLES} | {e[0] for e in users._UNIQUE_INDEX_SUB_TABLES}
+    assert table in avant, (
+        f"{table} n'est pré-traitée par AUCUNE famille : la mutation ne retirerait "
+        "rien et le test suivant passerait pour la mauvaise raison.")
     monkeypatch.setattr(users, "_PK_SUB_TABLES",
                         tuple(e for e in users._PK_SUB_TABLES if e[0] != table))
-    colonne = "sub"
-    monkeypatch.setattr(users, "_SUB_COLUMNS", users._SUB_COLUMNS + [(table, colonne)])
+    monkeypatch.setattr(users, "_UNIQUE_INDEX_SUB_TABLES",
+                        tuple(e for e in users._UNIQUE_INDEX_SUB_TABLES if e[0] != table))
+    if (table, "sub") not in users._SUB_COLUMNS:
+        monkeypatch.setattr(users, "_SUB_COLUMNS", users._SUB_COLUMNS + [(table, "sub")])
 
 
 def test_en_UPDATE_nu_le_refus_double_ferait_echouer_TOUT_le_merge(live, monkeypatch):
@@ -185,3 +199,22 @@ def test_en_UPDATE_nu_la_meme_campagne_ferait_echouer_TOUT_le_merge(live, monkey
     _envoi(NEUF)
     with pytest.raises(psycopg.errors.UniqueViolation):
         _migre()
+
+
+def test_le_dedoublonnage_ne_touche_QUE_les_envois_reels(live):
+    """La sur-suppression que le mauvais bac provoquait, nommée.
+
+    Rangée un temps dans `_PK_SUB_TABLES`, la table était dédoublonnée sur
+    `(campaign, kind)` — `kind` pris pour une colonne de clé. Deux ESSAIS du même
+    contenu, un par compte, et celui de l'ancien disparaissait : aucune contrainte ne
+    le menaçait, il partait quand même. Le prédicat partiel `kind='send'` de l'étape
+    2 quinquies est ce qui borne le geste à ce que l'index regarde vraiment.
+    """
+    _envoi(VIEUX, campagne="c1", kind="test")
+    _envoi(NEUF, campagne="c1", kind="test")
+    _migre()
+    essais = _sql("SELECT sub FROM outreach_sends WHERE kind = 'test'")
+    assert len(essais) == 2, (
+        "un essai a été supprimé au passage : rien ne l'y obligeait, et sans lui "
+        "l'envoi correspondant redevient bloqué faute d'essai reçu.")
+    assert {e["sub"] for e in essais} == {NEUF}
