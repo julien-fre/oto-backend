@@ -269,6 +269,27 @@ pas au même geste. ⚠️ Et seul le passage à ÉTEINT périme : périmer auss
 rallumage effacerait une occurrence fraîche, et *une garde qui mord dans les deux
 sens ne se distingue pas d'une purge*.
 
+**Et RALLUMER reprend le rythme, ça ne rembobine pas** (arbitré par Alexis le
+02/09, #826). Le rallumage recalcule l'échéance ; sans ce recalcul, celle qui
+avait été figée pendant l'extinction est restée dans le passé, et le tick voyait
+le déclencheur dû **à la seconde du rallumage** — donc une exécution que personne
+n'a demandée, déclenchée par le geste de quelqu'un qui répare.
+
+⚠️ **C'est la cohérence qui l'impose, pas le confort** : puisque éteindre périme
+les occurrences en attente, *un système qui dit « ce qui a attendu pendant
+l'extinction est mort » ne peut pas dire « sauf l'échéance »*. Une échéance
+manquée pendant une extinction VOULUE n'a pas été manquée.
+
+⚠️ Et seul le **passage** à allumé recalcule — même motif que la péremption, qui
+ne mord qu'au passage à éteint : recalculer sur un déclencheur déjà allumé
+donnerait un moyen de repousser son échéance indéfiniment, en répétant un geste
+qui n'est pas censé rien changer.
+
+⚠️ **L'ordre des refus est un contrat** : l'état du déclencheur se lit APRÈS la
+garde « aucun runner armé », jamais avant. Le lire d'abord ferait répondre
+« déclencheur inconnu » là où le serveur répond « aucun runner » — deux
+diagnostics opposés, et celui qu'on retirerait est le seul qui dit quoi faire.
+
 **La forme générale du piège**, qui vaut au-delà d'ici : *« ne pas toucher » n'est
 une conservation que si quelque chose garantit la cible.* Rien ne la garantit
 entre un travail et son déclencheur — il n'y a pas de clé étrangère, seulement un

@@ -142,3 +142,60 @@ def test_la_description_servie_annonce_la_peremption():
     cap = next(c for c in RT.CAPABILITIES if c.key == "runner.triggers")
     assert "expired_count" in cap.description
     assert "EXPIRED" in cap.description or "expired" in cap.description
+
+
+# ── rallumer reprend le RYTHME, ça ne rembobine pas (#826, arbitré le 02/09) ──
+
+def _trigger_db(monkeypatch, **etat):
+    """Le déclencheur tel qu'il est EN BASE avant la retouche."""
+    base = {"id": 6, "cron": "0 18 * * *", "tz": "Europe/Paris", "enabled": False}
+    base.update(etat)
+    monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(base, id=i))
+    monkeypatch.setattr(RT.db, "runner_arme",
+                        lambda org: {"armed": True, "workers": 1,
+                                     "last_seen": "2026-09-02 20:00:00"})
+    vu = {}
+    monkeypatch.setattr(RT.db, "update_trigger",
+                        lambda i, o, champs: vu.update(champs) or {"id": i, **champs})
+    monkeypatch.setattr(RT.db, "comptage_perime", lambda org, tid: {})
+    return vu
+
+
+def test_rallumer_repousse_l_echeance_dans_le_futur(monkeypatch):
+    """⚠️ Sans ce recalcul, l'échéance figée pendant l'extinction est restée dans
+    le PASSÉ : le tick voyait le déclencheur dû à la seconde du rallumage et
+    enfilait aussitôt. Une exécution que personne n'a demandée, déclenchée par le
+    geste de quelqu'un qui répare."""
+    import datetime
+
+    vu = _trigger_db(monkeypatch, enabled=False)
+    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True))
+    assert "next_due" in vu, "rallumer sans recalculer laisse une échéance périmée"
+    assert vu["next_due"] > datetime.datetime.now(datetime.timezone.utc)
+
+
+def test_rallumer_un_declencheur_deja_allume_ne_repousse_rien(monkeypatch):
+    """⚠️ Seul le PASSAGE à allumé recalcule — même motif que la péremption, qui
+    ne mord qu'au passage à éteint. Sinon répéter un geste qui n'est censé rien
+    changer donnerait un moyen de repousser l'échéance indéfiniment."""
+    vu = _trigger_db(monkeypatch, enabled=True)
+    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True))
+    assert "next_due" not in vu
+
+
+def test_eteindre_ne_touche_pas_l_echeance(monkeypatch):
+    """Éteindre ne promet rien et ne recalcule rien : c'est le rallumage qui
+    reprend le rythme, et lui seul."""
+    vu = _trigger_db(monkeypatch, enabled=True)
+    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=False))
+    assert "next_due" not in vu and vu["enabled"] is False
+
+
+def test_rallumer_avec_un_nouveau_cron_ne_calcule_qu_une_fois(monkeypatch):
+    """Le cas combiné : le cadencement fourni fait autorité, et l'échéance vient
+    de LUI — pas de l'ancien cron recalculé par-dessus."""
+    vu = _trigger_db(monkeypatch, enabled=False, cron="0 18 * * *")
+    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True,
+                                         cron="30 7 * * *", tz="UTC"))
+    assert vu["cron"] == "30 7 * * *"
+    assert vu["next_due"].astimezone(__import__("datetime").timezone.utc).hour == 7

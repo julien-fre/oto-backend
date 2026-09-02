@@ -201,6 +201,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         v = getattr(inp, c)
         if v is not None:
             champs[c] = v
+    actuel = None
     if inp.cron is not None or inp.tz is not None:
         actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not actuel:
@@ -217,6 +218,31 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # déclencheur mort deviendrait impossible à ranger.
     if champs.get("enabled") is True:
         _exige_un_runner(ctx.org_id)
+        # ⚠️ **RALLUMER REPREND LE RYTHME, ça ne rembobine pas** (arbitré le
+        # 02/09, #826). Une échéance figée pendant l'extinction est restée dans
+        # le PASSÉ : sans ce recalcul, le tick voyait le déclencheur dû à la
+        # seconde du rallumage et enfilait aussitôt — une exécution que personne
+        # n'a demandée, déclenchée par le geste de quelqu'un qui répare.
+        #
+        # ⚠️ Et la cohérence l'impose, pas seulement le confort : éteindre PÉRIME
+        # les occurrences en attente. *Un système qui dit « ce qui a attendu
+        # pendant l'extinction est mort » ne peut pas dire « sauf l'échéance ».*
+        # Une échéance manquée pendant une extinction VOULUE n'a pas été manquée.
+        #
+        # ⚠️ Seul le PASSAGE à allumé recalcule — même motif que la péremption,
+        # qui ne mord qu'au passage à éteint. Recalculer sur un déclencheur déjà
+        # allumé donnerait un moyen de repousser son échéance indéfiniment, en
+        # répétant un geste qui n'est pas censé rien changer.
+        #
+        # ⚠️ Lu APRÈS `_exige_un_runner`, jamais avant : l'ordre des refus est un
+        # contrat. Lire le déclencheur d'abord ferait répondre « inconnu » (404)
+        # là où le serveur répond aujourd'hui « aucun runner » — deux diagnostics
+        # opposés pour la même org, et celui qu'on retirerait est le seul qui dit
+        # quoi faire.
+        if actuel is None:
+            actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if actuel and not actuel["enabled"] and "next_due" not in champs:
+            champs["next_due"] = runner_tick.next_due(actuel["cron"], actuel["tz"])
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
