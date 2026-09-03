@@ -34,9 +34,27 @@ sont `READY` sur 196 pour ce sub). Coût réel : trois matinées de faux rapport
 est en panne » (20-22/08/2026).
 
 **Un outil absent de la liste n'est donc PAS un connecteur en panne.** En attendant que
-la toolbox suive l'org épinglée, `connectors.me` NOMME l'écart (`toolbox_scope`, cf.
+la toolbox suive l'org épinglée, l'écart est NOMMÉ (`toolbox_scope`, cf.
 `docs/connector-model.md`) — et seulement quand il y en a un, un champ toujours présent
 devenant du bruit qu'on cesse de lire.
+
+⚠️ **Il l'est à DEUX endroits depuis le 03/09/2026, et le second est celui qui compte.**
+L'aveu ne vivait que sur `connectors.me` — c'est-à-dire là où on ne va que si l'on
+soupçonne déjà quelque chose. Or un agent qui cherche un outil appelle
+`oto_list_my_tools`, et y lisait une liste vide **sans un mot**, avec un hint qui disait
+« aucun outil ne porte ces mots, reformule ». Sur écart de boîte ce texte est faux et
+coûteux : l'outil existe et reste appelable. Deux signalements l'ont payé après le
+correctif de #577 — un passage planifié a conclu qu'une source était injoignable et
+publié un rapport faux (#616), un autre a lu trois bascules de visibilité en dix jours
+là où il n'y avait qu'un handshake monté sur une autre org (#639).
+
+`oto_list_my_tools` porte donc `toolbox_scope`, et son hint de zéro résultat **bascule** :
+sans écart il fait reformuler, avec écart il dit l'inverse — l'outil existe, appelle-le
+par `oto_call` avant de conclure. Le texte est isolé dans `meta.hint_zero_resultat()`
+pour être éprouvé seul, et une sonde tient que la liste consulte bien le seam : sans
+elle, un remaniement le reperdrait en silence et le signal reviendrait une troisième
+fois. **La leçon générale, elle, est dans `docs/conventions.md` : un correctif de cette
+classe doit être posé là où l'agent REGARDE, pas là où le défaut a été compris.**
 
 ## Source de vérité + retrait des presets
 

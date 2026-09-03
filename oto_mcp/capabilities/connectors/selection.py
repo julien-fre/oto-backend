@@ -327,7 +327,7 @@ _COMPACT_KEYS = ("name", "label", "help", "family", "category", "availability",
                  "logo_url", "secret_kind")
 
 
-def _toolbox_scope(ctx: ResolvedCtx) -> Optional[dict]:
+def _toolbox_scope(sub: str) -> Optional[dict]:
     """L'écart entre l'org pour laquelle la SESSION a été montée et celle que l'appel
     épingle — ou None s'il n'y en a pas (signal #577).
 
@@ -346,11 +346,17 @@ def _toolbox_scope(ctx: ResolvedCtx) -> Optional[dict]:
 
     Ne se dit QUE sur écart réel : un champ toujours présent devient du bruit qu'on
     cesse de lire. Pas de jeton d'appel (face REST du dashboard) ⟹ pas de session MCP
-    dont la boîte pourrait diverger ⟹ rien à annoncer."""
+    dont la boîte pourrait diverger ⟹ rien à annoncer.
+
+    ⚠️ DEUX consommateurs depuis le 03/09 : cette carte, et `oto_list_my_tools`
+    (`tools/meta.py`). Posé ici seul, l'aveu n'était lu que par qui appelait déjà
+    `oto_connector` — or un agent qui cherche un outil appelle `oto_list_my_tools`, et
+    y lisait une liste vide sans un mot. Ne prend qu'un `sub` pour cette raison : le
+    fait est une propriété de la SESSION, pas des connecteurs."""
     call_org = session_org.current_call_org()
     if call_org is None:
         return None
-    home = org_store.get_active_org(ctx.sub)
+    home = org_store.get_active_org(sub)
     if home == call_org:
         return None
     return {
@@ -485,7 +491,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             "connecteur MARCHE, redemande-le seul — "
             "`oto_connector(op='list', name='<connecteur>')` rend alors `ready` et, "
             "s'il ne l'est pas, l'étape qui manque.")
-    tb = _toolbox_scope(ctx)
+    tb = _toolbox_scope(ctx.sub)
     if tb is not None:
         out["toolbox_scope"] = tb
     return out

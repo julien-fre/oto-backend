@@ -49,6 +49,28 @@ _SEARCH_LIMIT = 40
 logger = logging.getLogger(__name__)
 
 
+def hint_zero_resultat(tb: Optional[dict]) -> str:
+    """Le hint d'une recherche d'outils qui ne trouve rien.
+
+    Deux causes possibles, et **la mauvaise réponse coûte un rapport faux**. Sans
+    écart de boîte, zéro veut bien dire « reformule » — la recherche est lexicale sur
+    des docstrings anglaises. Avec écart (#577), zéro ne dit RIEN de l'existence de
+    l'outil : la session a été montée pour l'org maison au handshake, les outils des
+    connecteurs de l'org épinglée n'y sont pas listés, et ils restent appelables.
+
+    Servir le premier texte dans le second cas est ce qui a produit le rapport
+    « source injoignable » du signal #616, sur un connecteur actif et joignable."""
+    if tb:
+        return ("Zéro résultat ICI ne veut PAS dire que l'outil n'existe pas : la boîte "
+                "de cette session est montée pour une autre org (voir `toolbox_scope`), "
+                "donc les outils des connecteurs de l'org épinglée n'y sont pas listés. "
+                "Appelle-le par `oto_call(name=..., arguments={...})` avant de conclure "
+                "qu'une source est injoignable.")
+    return ("Aucun outil ne porte ces mots (recherche lexicale, docstrings en anglais). "
+            "Repère le domaine dans `namespaces`, ou relance sans `query` pour le "
+            "catalogue complet.")
+
+
 def _namespace_help(ns: str) -> str:
     """Ligne de catalogue du connecteur d'un namespace (curée, en français) — le pont
     entre une requête en langue naturelle et des docstrings anglaises. Fail-soft."""
@@ -218,6 +240,16 @@ def register(mcp: FastMCP) -> None:
             "total": len(entries),
             "disabled_count": sum(1 for e in entries if not e["enabled"]),
         }
+        # L'aveu du décalage de boîte (#577, signaux #616/#639) : la session a été
+        # montée pour l'org MAISON au handshake, l'appel épingle peut-être une autre
+        # org — les outils de ses connecteurs ne sont alors PAS listés, tout en restant
+        # appelables. Il vivait sur `oto_connector op=list` seulement, c'est-à-dire là
+        # où on ne va que si on soupçonne déjà quelque chose. Ici est l'endroit où un
+        # agent cherche un outil, et où il concluait « indisponible ».
+        from ..capabilities.connectors.selection import _toolbox_scope
+        tb = _toolbox_scope(sub)
+        if tb:
+            out["toolbox_scope"] = tb
         if query:
             entries = tool_registry.match(query, entries)
             out["query"] = query
@@ -226,10 +258,7 @@ def register(mcp: FastMCP) -> None:
                 # recherche pourrait CRÉER). On rend la carte des capacités : l'agent
                 # repart du domaine au lieu de conclure à une lacune.
                 out["namespaces"] = providers.render_namespace_catalog()
-                out["hint"] = ("Aucun outil ne porte ces mots (recherche lexicale, "
-                               "docstrings en anglais). Repère le domaine dans "
-                               "`namespaces`, ou relance sans `query` pour le catalogue "
-                               "complet.")
+                out["hint"] = hint_zero_resultat(tb)
         cap = limit if limit is not None else (_SEARCH_LIMIT if query else None)
         shown = entries[:cap] if cap else entries
         out["shown"] = len(shown)
