@@ -104,7 +104,8 @@ plateforme) ; exceptions vers **Sentry** · ⚠️ ne trace ni la connexion d'un
 - **Facturation & avantages offerts** : `billing.status` porte `granted[]` pour les deux façons d'offrir (abonnement
   `comp`, don d'option) · ⚠️ l'avantage **se nomme** et **est un avantage ce qui est vendu** — un drapeau de population
   comme `beta` n'est pas un cadeau · ⚠️⚠️ rien qui s'adresse au titulaire d'une org ne touche une org d'un **tenant
-  tiers** — `orgs.tenant_id` est **inerte**, le discriminant est `db.org_tenant_slug` · ⚠️ l'usage inclus **ne refuse
+  tiers** · ⚠️ le discriminant est `db.org_tenant_slug`, **union de trois axes** — `orgs.tenant_id` porte désormais,
+  mais il est ÉCRIT par quelqu'un quand les deux autres se DÉRIVENT du jeton, donc jamais seul · ⚠️ l'usage inclus **ne refuse
   rien** et ne sert aucun ratio (`docs/billing.md`).
 - **Recherche & KB** : `oto_search` = LE verbe « retrouver », fusion RRF lexicale + sémantique · ⚠️ invariant
   **« cherchable ⇔ lisible »**, tripwire par source = critère de merge (`docs/search-and-kb.md`).
