@@ -32,13 +32,24 @@ from __future__ import annotations
 
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import access, credentials_store, db
 from ..auth import token_scopes
 from ._authz import SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+# Le libellé d'un jeton n'existe que pour une chose : reconnaître ce jeton le jour où
+# il faudra décider de le révoquer, des mois plus tard, sans se souvenir de l'avoir
+# émis. La colonne est en `TEXT` — cette borne est un choix de surface, donc elle est
+# PUBLIÉE dans le schéma servi et un dépassement est REFUSÉ, jamais raboté (oto#42,
+# 4ᵉ règle : une coupe sur une écriture se refuse, la fin ne survit nulle part).
+# ⚠️ 32 est court, et jusqu'au 03/09/2026 la coupe silencieuse EMPÊCHAIT de le
+# découvrir : un libellé raboté n'a jamais produit de plainte, il a produit des listes
+# de jetons qu'on ne sait plus distinguer. Un refus, lui, se signale — si la borne est
+# mal calibrée, on l'apprendra maintenant.
+_LABEL_MAX = 32
 
 _ME = "/api/me/tokens"
 _ADMIN = "/api/admin/users/{sub}/tokens"
@@ -53,9 +64,10 @@ class TokenListInput(BaseModel):
 
 
 class TokenCreateInput(BaseModel):
-    # Absent ⇒ 'cli'. ⚠️ La réponse rend le libellé BRUT, alors que le jeton est écrit
-    # avec un libellé nettoyé (`strip()[:32]`) : c'est la forme servie, on la garde.
-    label: Optional[str] = None
+    label: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _LABEL_MAX},
+        description=("Comment reconnaître ce jeton plus tard — au plus 32 caractères, "
+                     "au-delà : 400 `label_too_long`, jamais une coupe. Absent ⇒ 'cli'."))
     # Document de portée, validé par `token_scopes.parse` (jamais côté porteur). Absent
     # ⇒ jeton NON PORTÉ : il EST le sub, pleins pouvoirs. Sa forme est libre, elle est
     # décrite par `token_scopes` et refusée nommément si elle ne tient pas.
@@ -74,7 +86,10 @@ class AdminTokenListInput(BaseModel):
 
 class AdminTokenCreateInput(BaseModel):
     target_sub: str
-    label: Optional[str] = None
+    label: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _LABEL_MAX},
+        description=("Comment reconnaître ce jeton plus tard — au plus 32 caractères, "
+                     "au-delà : 400 `label_too_long`, jamais une coupe. Absent ⇒ 'cli'."))
     # Accepté en nombre OU en texte, et IGNORÉ s'il n'est pas un entier positif écrit en
     # chiffres (`str(x).isdigit()`) : un `-1` ou un booléen donnent « pas d'expiration »,
     # ce qui est le comportement servi.
@@ -193,6 +208,23 @@ def _cible_connue(target_sub: str) -> str:
     return target_sub
 
 
+def _libelle(brut: Optional[str]) -> str:
+    """Le libellé tel qu'il sera ÉCRIT — c'est lui que les handlers rendent, pour que la
+    réponse ne puisse pas décrire autre chose que la base. Jusqu'au 03/09/2026 elle
+    rendait le brut de l'appelant tandis que la base recevait `strip()[:32]` : sur un
+    libellé long, l'émetteur repartait avec la confirmation d'une valeur qui n'existait
+    nulle part."""
+    net = (brut or "cli").strip() or "cli"
+    if len(net) > _LABEL_MAX:
+        raise AuthzDenied(
+            400, "label_too_long",
+            f"`label` fait {len(net)} caractères pour {_LABEL_MAX} au plus. Il est "
+            "refusé entier plutôt que raboté : une coupe emporterait sa fin, or c'est "
+            "elle qui distingue ce jeton de ses voisins dans la liste où on décidera "
+            "de le révoquer. Raccourcis-le en gardant ce qui le rend reconnaissable.")
+    return net
+
+
 # --- Handlers : MES jetons --------------------------------------------------
 
 def _my_list(ctx: ResolvedCtx, inp: TokenListInput) -> dict:
@@ -200,7 +232,7 @@ def _my_list(ctx: ResolvedCtx, inp: TokenListInput) -> dict:
 
 
 def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
-    label = inp.label or "cli"
+    label = _libelle(inp.label)
     scopes = _portee(inp.scopes)
     if scopes is not None:
         # Refuser un tableau que l'ÉMETTEUR ne voit pas : le jeton ne peut de toute façon
@@ -213,7 +245,7 @@ def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
         if missing:
             raise AuthzDenied(400, "unknown_namespace",
                               f"Tableaux inconnus dans l'org active : {missing}")
-    token = db.create_api_token(ctx.sub, label=label.strip()[:32], scopes=scopes)
+    token = db.create_api_token(ctx.sub, label=label, scopes=scopes)
     return {"token": token, "label": label, "scopes": scopes}
 
 
@@ -231,11 +263,11 @@ def _admin_list(ctx: ResolvedCtx, inp: AdminTokenListInput) -> dict:
 
 def _admin_create(ctx: ResolvedCtx, inp: AdminTokenCreateInput) -> dict:
     cible = _cible_connue(inp.target_sub)
-    label = inp.label or "cli"
+    label = _libelle(inp.label)
     ttl = inp.ttl_days
     ttl_days = int(ttl) if isinstance(ttl, (int, str)) and str(ttl).isdigit() else None
     scopes = _portee(inp.scopes)
-    token = db.create_api_token(cible, label=label.strip()[:32], ttl_days=ttl_days,
+    token = db.create_api_token(cible, label=label, ttl_days=ttl_days,
                                 scopes=scopes)
     return {"token": token, "label": label, "ttl_days": ttl_days, "scopes": scopes}
 

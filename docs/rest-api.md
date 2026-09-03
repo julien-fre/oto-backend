@@ -563,6 +563,20 @@ déploiement : **`docs/version-servie.md`**.
     route ajoutée demain est refusée sans qu'on ait à y penser.
   - ⚠️ La portée nomme le tableau par son **nom** (ce que l'URL adresse), pas par son id :
     après un renommage, ré-émettre le jeton.
+- **`label` : au plus 32 caractères, REFUSÉ au-delà** (`400 label_too_long`, qui donne la
+  longueur reçue **et** la borne). Jusqu'au 03/09/2026 il partait en base en `strip()[:32]`
+  sans que rien ne le dise, **et la réponse rendait le brut de l'appelant** — sur un libellé
+  long, l'émetteur repartait donc avec la confirmation d'une valeur qui n'existait nulle part,
+  puis retrouvait 32 caractères dans `GET /api/me/tokens`, c'est-à-dire sur la liste même où
+  l'on décide de révoquer. La colonne est en `TEXT` : cette borne est un choix de surface,
+  donc elle est **publiée** (`maxLength` dans le schéma servi, pour qu'un front tiers en
+  dérive sa garde de saisie) et un dépassement se refuse au lieu de se raboter — une coupe
+  sur une ÉCRITURE ne se répare pas par un drapeau, la fin ne survit nulle part (oto#42,
+  4ᵉ règle ; le raisonnement complet est dans `conventions.md`, « Projeter ≠ tronquer »).
+  La réponse rend désormais **le libellé écrit**, jamais le brut. ⚠️ 32 reste court et n'a
+  jamais été calibré : la coupe muette empêchait de l'apprendre (un libellé raboté ne produit
+  pas de plainte, il produit des listes de jetons qu'on ne sait plus distinguer). Un refus, lui,
+  se signale — si la borne gêne, on le saura, et la relever ne coûte qu'une constante.
 
 ## Descriptif dérivé + jetons portés (03/08)
 

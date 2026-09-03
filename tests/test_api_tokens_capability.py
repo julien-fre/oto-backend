@@ -166,14 +166,54 @@ def test_le_secret_n_est_rendu_qu_a_la_creation(monkeypatch, socle):
     assert call("me.token.create", body={})[1]["token"] == "oto_SECRET"
 
 
-def test_le_libelle_rendu_est_BRUT_celui_ecrit_est_nettoye(monkeypatch, socle):
-    """Asymétrie servie : la réponse rend ce qu'on a envoyé, la base garde une version
-    `strip()[:32]`. Le figer évite qu'un « nettoyage » change la réponse."""
+def test_un_libelle_trop_long_est_refuse_en_DISANT_la_mesure(monkeypatch, socle):
+    """oto#42, 4ᵉ règle : une coupe sur une ÉCRITURE se refuse. Le libellé partait en
+    base en `strip()[:32]`, sans que rien ne le dise — or il n'existe que pour
+    reconnaître le jeton le jour où l'on décide de le révoquer, et la coupe emporte
+    précisément ce qui le distingue de ses voisins.
+
+    Le refus doit porter les DEUX nombres : la mesure atteinte et la borne. Sans la
+    première, l'émetteur raccourcit à l'aveugle (leçon du datastore, signal #383)."""
     stub_authz(monkeypatch)
     brut = "  un libellé vraiment très long au-delà de trente-deux  "
-    _, out = call("me.token.create", body={"label": brut})
-    assert out["label"] == brut
-    assert socle[0][2] == brut.strip()[:32]
+    code, out = call("me.token.create", body={"label": brut})
+    assert (code, out["error"]) == (400, "label_too_long")
+    assert str(len(brut.strip())) in out["detail"] and "32" in out["detail"]
+    # Et RIEN n'est écrit : un refus qui laisserait passer le geste serait pire que la
+    # coupe — il rendrait une erreur ET un jeton.
+    assert socle == []
+
+
+def test_la_reponse_rend_le_libelle_ECRIT_jamais_le_brut(monkeypatch, socle):
+    """Le banc que ce test remplace figeait l'inverse : réponse = brut de l'appelant,
+    base = `strip()[:32]`. Il défendait la STABILITÉ de la réponse (« éviter qu'un
+    nettoyage la change »), pas la coupe — cette intention est tenue ici, en plus
+    strict : la réponse est exactement ce que la couche d'écriture a reçu, donc elle ne
+    peut plus décrire une valeur qui n'existe nulle part."""
+    stub_authz(monkeypatch)
+    _, out = call("me.token.create", body={"label": "  runner prod  "})
+    assert out["label"] == "runner prod" == socle[0][2]
+
+
+def test_a_la_borne_exacte_le_libelle_arrive_INTACT(monkeypatch, socle):
+    """Versant positif : la garde ne doit pas mordre AVANT la borne, ni raboter à
+    l'espace près. C'est l'argument reçu par `create_api_token` qui est inspecté, pas
+    la sortie de la doublure."""
+    stub_authz(monkeypatch)
+    pile = "x" * at._LABEL_MAX
+    _, out = call("me.token.create", body={"label": pile})
+    assert socle[0][2] == pile and out["label"] == pile
+
+
+def test_un_libelle_absent_ou_blanc_vaut_cli(monkeypatch, socle):
+    """`or "cli"` deux fois dans `_libelle` : absent, et vide-après-strip. Le second
+    cas produisait un libellé VIDE avant le 03/09 — un jeton sans nom dans la liste où
+    l'on révoque."""
+    stub_authz(monkeypatch)
+    for corps in ({}, {"label": "   "}):
+        socle.clear()
+        _, out = call("me.token.create", body=corps)
+        assert out["label"] == "cli" == socle[0][2]
 
 
 def test_une_cle_plateforme_ne_rend_jamais_son_secret(monkeypatch, socle, super_admin):
