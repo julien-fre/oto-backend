@@ -338,3 +338,68 @@ def test_la_liste_des_societes_a_une_voie_de_secours_independante(substrat):
     assert "flow_companies" not in vu["path"], \
         "la voie de secours ne doit pas dépendre de la route en panne"
     assert out["companies"][0]["id"] == 239568
+
+
+def test_la_garde_sur_l_espace_d_id_est_dans_CHAQUE_outil_qui_le_consomme():
+    """Un piège se documente là où l'on TOMBE, pas là où l'on aurait dû passer.
+
+    L'avertissement « le portefeuille n'est pas dans le connecteur `pennylane` »
+    existait depuis le 28/08 — mais dans la description de `pennylaneged_companies`,
+    l'outil qui REND l'identifiant. Le 2026-09-03 un agent est tombé exactement dans
+    le même trou en appelant `pennylaneged_tree` : il n'avait aucune raison de lire la
+    description d'un outil qu'il n'appelait pas, et quand la liste est tombée en panne
+    il ne pouvait même plus la croiser par hasard. Un renvoi ne protège personne."""
+    from fastmcp import FastMCP
+
+    m = FastMCP("t")
+    P.register(m)
+    consommateurs = ["pennylaneged_company", "pennylaneged_tree",
+                     "pennylaneged_create_folder", "pennylaneged_request_upload",
+                     "pennylaneged_finalize", "pennylaneged_delete"]
+    for nom in consommateurs:
+        t = asyncio.run(m.get_tool(nom))
+        # La section `Args:` sort de la description de l'outil pour alimenter le
+        # SCHÉMA du paramètre : c'est là que l'agent lit la garde, donc là qu'on la
+        # vérifie. La chercher dans la description passerait à côté.
+        doc = ((t.parameters.get("properties") or {}).get("company_id") or {}).get(
+            "description", "")
+        assert "pennylane`" in doc and "PAS" in doc, (
+            f"{nom} prend un `company_id` sans dire de quel ESPACE il vient : "
+            "l'id de l'API publique n'est pas celui de la GED")
+        assert "app.pennylane.com/companies/" in doc, (
+            f"{nom} doit dire où LIRE le bon id — sans quoi l'agent ne peut pas se "
+            "corriger quand `pennylaneged_companies` est en panne")
+
+
+def test_un_refus_sur_une_societe_n_accuse_pas_la_session(substrat):
+    """401/403 a TROIS causes et une seule était nommée — la moins probable.
+
+    Le 2026-09-03, deux agents indépendants ont conclu « session expirée » et
+    reconnecté en boucle : l'un tenait un identifiant venu du connecteur `pennylane`,
+    l'autre avait une session parfaitement vivante. Le message doit nommer l'espace
+    d'identifiants EN PREMIER, et donner le moyen de trancher sans reconnecter."""
+    async def _eval(ctx, app, js, arg):
+        return {"status": 403, "data": {"error": "Forbidden"}}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    with pytest.raises(McpError) as e:
+        asyncio.run(_tool("pennylaneged_tree")(company_id=23077330))
+    msg = str(e.value)
+    assert "23077330" in msg, "le refus nomme la société visée"
+    assert "pennylane" in msg and "publique" in msg, \
+        "et la cause la plus fréquente : l'id vient de l'autre connecteur"
+    assert "AUTRE société" in msg or "autre société" in msg, \
+        "et comment trancher sans reconnecter"
+
+
+def test_un_refus_hors_societe_accuse_bien_la_session(substrat):
+    """Le pendant : quand l'appel ne vise AUCUNE société, l'espace d'identifiants
+    est hors de cause et la session est bien la seule explication. Ne pas le dire
+    renverrait l'agent chercher un id fautif qui n'existe pas."""
+    async def _eval(ctx, app, js, arg):
+        return {"status": 401, "data": None}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    with pytest.raises(McpError) as e:
+        asyncio.run(_tool("pennylaneged_companies")(page=1))
+    assert "connect_start" in str(e.value)
