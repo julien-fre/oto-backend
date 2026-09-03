@@ -26,7 +26,7 @@ from __future__ import annotations
 import sys
 
 from oto_mcp import db, org_store
-from oto_mcp.capabilities.kb import KB_NAME
+from oto_mcp.capabilities.kb import KB_NAME, KB_NAME_LEGACY_FR
 from oto_mcp.db import _connect
 
 
@@ -63,7 +63,10 @@ def main(apply: bool) -> int:
             phantoms.append((org, project))
 
     for org, project, n in kept:
-        renamed = "" if project["name"] == KB_NAME else f" (renommée « {project['name']} »)"
+        # Les deux libellés semés dans l'histoire du produit (français jusqu'au
+        # 2026-09-03, anglais depuis) : ni l'un ni l'autre n'est un renommage.
+        semes = (KB_NAME, KB_NAME_LEGACY_FR)
+        renamed = "" if project["name"] in semes else f" (renommée « {project['name']} »)"
         print(f"  GARDÉE   org {org['org_id']:>5} « {org['name']} » — "
               f"projet {project['id']}{renamed} : {n} page(s)")
     for org, project in phantoms:

@@ -408,6 +408,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
                  "REFERENCES projects(id) ON DELETE SET NULL")
     # Backfill one-shot par nom (l'ancien marqueur) : pour chaque org sans ancre,
     # le PLUS ANCIEN projet org-owned vivant nommé « Base de connaissance ».
+    # ⚠️ Ce littéral est de l'HISTOIRE, pas la constante `capabilities.kb.KB_NAME` —
+    # qui vaut « Knowledge base » depuis le 2026-09-03 (#527). Le remplacer par la
+    # constante ferait rater l'ancre de toutes les KB posées avant cette date, qui
+    # sont précisément les seules que ce backfill vise.
     conn.execute("""
         UPDATE orgs o SET kb_project_id = p.id
         FROM (SELECT DISTINCT ON (owner_id) owner_id, id FROM projects

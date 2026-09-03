@@ -13,7 +13,11 @@ fonctions db existantes (zéro schéma neuf).
 de vérité — le nom n'est plus un marqueur (renommer la KB ne casse plus rien, deux
 appels concurrents ne créent plus deux KB). Auto-réparation : une ancre pendouillante
 (projet archivé ou transféré hors org) est levée puis re-posée sur un projet neuf ;
-verrou = claim optimiste (`claim_kb_project`), le perdant archive son doublon."""
+verrou = claim optimiste (`claim_kb_project`), le perdant archive son doublon.
+
+**Semée en ANGLAIS depuis le 2026-09-03 (#527)** : le nom et le résumé étaient des
+littéraux français, servis tels quels à des orgs entièrement anglophones. Rien ici ne
+devine une langue — voir le commentaire de `KB_NAME`."""
 from __future__ import annotations
 
 from typing import Literal, Optional
@@ -25,9 +29,23 @@ from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
-KB_NAME = "Base de connaissance"
-KB_BRIEF = ("La base de connaissance de l'organisation : pages de référence partagées "
-            "(processus, contexte, conventions). Une seule par org.")
+# Le libellé SEMÉ. En anglais depuis le 2026-09-03 (#527) : la base naissait en
+# français dans des orgs entièrement anglophones, en tête de leur écran de projets.
+# On ne DEVINE pas la langue — la plateforme n'a aucun signal honnête (`users.locale`
+# n'est posée que sur une poignée de comptes, `billing_identities` est vide), et de
+# toute façon la KB appartient à l'ORG quand `ensure` est appelé par UN membre. On
+# sème donc dans la langue de la surface servie, qui est l'anglais.
+KB_NAME = "Knowledge base"
+KB_BRIEF = ("The org-wide knowledge base: shared reference pages "
+            "(processes, context, conventions). One per org.")
+
+# Le libellé semé JUSQU'AU 2026-09-03. Aucune base neuve ne le porte plus, mais toutes
+# celles posées avant, oui — le backfill d'ancre de `db/_init.py` et le rapport de
+# `scripts/archive_empty_kb_projects.py` s'y adossent, et eux seuls.
+# ⚠️ Ni celui-ci ni `KB_NAME` n'est une clé de RÉSOLUTION : l'ancre `orgs.kb_project_id`
+# l'est depuis le lot 3 (chantier 0.3). Chercher la KB par son nom, c'est perdre toute
+# base renommée — ce que faisait encore `tools/docs_app.py` jusqu'à ce même lot.
+KB_NAME_LEGACY_FR = "Base de connaissance"
 
 
 class KbInput(BaseModel):
@@ -109,8 +127,10 @@ CAPABILITIES += [
     Capability(
         key="me.kb", handler=_kb, Input=KbInput, authz=SUB_ONLY, Output=KbView,
         description=(
-            "Resolve the active org's KNOWLEDGE BASE — a single dedicated project "
-            "« Base de connaissance ». This is the org-wide Documents space; its pages "
+            "Resolve the active org's KNOWLEDGE BASE — a single dedicated project, "
+            f"seeded as \"{KB_NAME}\" and freely renamable: it is anchored by project "
+            "id, so NEVER look it up by name, call this tool. This is the org-wide "
+            "Documents space; its pages "
             "are managed with oto_doc (tree, versions, public share, change requests). "
             "op=\"get\" (default) READS the anchor and returns project_id=null when the "
             "org has no knowledge base yet — it never creates one, so opening a "

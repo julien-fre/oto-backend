@@ -112,8 +112,13 @@ def doc_app(monkeypatch):
                         lambda sub, rt, rid, want: rid == "7")
     monkeypatch.setattr(da.db, "get_project_by_id",
                         lambda pid: {"id": pid, "name": "KB test"} if pid == 7 else None)
+    # La KB de l'org active est RENOMMÉE : son nom n'est pas — n'a jamais été —
+    # la clé qui la résout ; l'ancre `orgs.kb_project_id` l'est (lot 3, chantier 0.3).
     monkeypatch.setattr(da.db, "list_projects_for_owners",
-                        lambda owners: [{"id": 7, "name": "Base de connaissance"}])
+                        lambda owners: [{"id": 7, "name": "Wiki interne"}])
+    monkeypatch.setattr(da, "org_store",
+                        types.SimpleNamespace(get_kb_project_id=lambda org: 7),
+                        raising=False)
     monkeypatch.setattr(da.db, "list_docs_for_project",
                         lambda pid: list(DOCS) if pid == 7 else [])
     monkeypatch.setattr(da.db, "get_doc_by_id",
@@ -147,6 +152,14 @@ def test_page_view_renders_markdown(doc_app):
 
 
 def test_default_resolves_active_org_kb(doc_app):
+    """Sans argument, l'app ouvre la KB de l'org active — même RENOMMÉE (#527).
+
+    `_kb_project_id` cherchait le projet dont le nom vaut `KB_NAME`, alors que
+    l'identification par nom est morte au lot 3 (chantier 0.3) : l'ancre
+    `orgs.kb_project_id` est la source de vérité. Conséquence mesurée : une org
+    qui renomme sa base — ce que fait justement le client anglophone qui la
+    rebaptise « Knowledge base » — perd `oto_doc_app` sans argument, qui répond
+    « Aucun projet ciblé » alors que sa KB est là, ancrée, lisible."""
     card = doc_app()
     assert card.texts()[0] == "KB test"      # la KB (projet 7) a été résolue
     assert len(card.tables()) == 1
