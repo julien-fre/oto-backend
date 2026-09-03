@@ -80,6 +80,35 @@ def test_resolve_sub_leve_au_lieu_de_servir_l_ancien_compte(monkeypatch):
         db_users.resolve_sub("sub-vieux")
 
 
+def test_un_alias_qui_disparait_entre_les_deux_lectures_leve(monkeypatch):
+    """Le drain lit deux fois : le saut simple, puis la chaîne. Si la seconde lecture ne
+    trouve plus rien, la tentation est de rendre le sub d'entrée — c'est-à-dire de servir
+    la requête sous le compte d'AVANT bascule, exactement le silence B5. Aucun chemin
+    n'écrit ce cas aujourd'hui (rien ne supprime de `sub_aliases`) : sans ce test, la
+    branche ne serait jamais exécutée, donc jamais un refus prouvé."""
+
+    class _ConnScripte:
+        """Un curseur qui rend une réponse DIFFÉRENTE par requête, dans l'ordre."""
+
+        def __init__(self, reponses):
+            self._reponses, self._i = list(reponses), 0
+
+        def execute(self, sql, params=()):
+            self._courant, self._i = self._reponses[self._i], self._i + 1
+            return self
+
+        def fetchone(self):
+            return self._courant
+
+    monkeypatch.setattr(
+        db_aliases, "_connect",
+        _connect_factory(_ConnScripte([_Row(new_sub="sub-migre"), None])))
+
+    with pytest.raises(db_aliases.AliasNonResolvable) as e:
+        db_users.resolve_sub("sub-vieux")
+    assert e.value.motif == "alias_evanoui"
+
+
 def test_le_seam_mcp_ne_reclasse_pas_l_echec_en_absence_de_jeton(monkeypatch):
     """`current_user_sub_from_token` attrapait tout : l'échec de canonicalisation y
     devenait « pas de jeton » et la requête repartait anonyme, sans un mot. Le seam
