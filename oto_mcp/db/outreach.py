@@ -15,9 +15,13 @@ donc survivre au prochain critère qu'on ajoutera sans y penser — elle vit dan
 `tests/test_outreach_audience_db.py` rougit si un compte de partenaire entre dans une
 sélection.
 
-⚠️ **Le discriminant n'est PAS `orgs.tenant_id`** : mesuré INERTE le 2026-09-02 (les
-160 orgs portent le tenant primaire, y compris celles qui vivent chez un partenaire —
-le provisioning ne l'écrit pas). Deux axes portent, et on prend leur UNION :
+⚠️ **Le discriminant n'est PAS `orgs.tenant_id` seul.** Ce n'est plus parce qu'il
+serait vide — il a été alimenté le 2026-09-03 (65 orgs repointées vers leur tenant, et
+`create_org` le pose à la naissance depuis ce jour-là). C'est parce qu'une audience se
+trie sur ce qu'on DÉRIVE, pas sur ce qu'un écrivain a écrit : cette colonne est restée
+vide de l'origine au 2026-09-03, et s'y fier seul aurait alors adressé une relance à
+tous les clients d'un partenaire, dans son produit, par-dessus lui. Deux axes portent,
+et on prend leur UNION :
 
 1. la **qualification du sub** (`tenancy.qualify` → préfixe `<slug>:`), qui suit
    l'émetteur du jeton et rien d'autre — c'est `tenants._SUB_TENANT_SQL` ;

@@ -9,8 +9,8 @@ existantes, elles, attendent cette commande.
 
 **Ce que ça change, et ce que ça ne change pas.** Mesuré en prod le 2026-09-03 :
 
-- `orgs.tenant_id` est INERTE — 165 orgs sur 165 portent le tenant primaire, dont
-  les 65 qui vivent chez le partenaire. Le provisioning ne l'écrivait pas.
+- `orgs.tenant_id` ÉTAIT inerte — 165 orgs sur 165 portaient le tenant primaire,
+  dont les 65 qui vivent chez le partenaire. Le provisioning ne l'écrivait pas.
 - Le seul décideur qui lise le rattachement (`billing_grants.org_is_ours`, le
   périmètre commercial) passe par `db.org_tenant_slug`, l'**union** de trois axes
   dont le déclaré n'est que le premier. Remplir la colonne ne change donc AUCUN de
@@ -44,6 +44,13 @@ d'échappatoire — un rattachement qu'on ne sait pas dériver se tranche à la 
 
 Idempotent : le prédicat ne retient que les lignes dont le rattachement DIFFÈRE de sa
 dérivation. Un second passage n'a plus rien à toucher et le dit.
+
+**JOUÉ EN PRODUCTION le 2026-09-03** (`--apply`, tag servi v1.186.0) : 65 orgs
+repointées vers `tulina` — 48 vivantes, 17 archivées — le compteur `orgs_desalignees`
+tombé de 48 à 0, et le passage suivant rendu « rien à faire ». Les deux refus n'ont
+tiré ni l'un ni l'autre. Ce qui précède décrit donc l'état d'AVANT ce geste ; la
+commande reste, elle resservira au prochain tenant, et son décompte à blanc est la
+façon normale de vérifier qu'il n'y a rien à faire.
 """
 from __future__ import annotations
 

@@ -178,11 +178,16 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
 # et non « le meilleur axe » : chacun a un angle mort connu, et le coût d'un faux
 # négatif (traiter l'org d'un partenaire comme la nôtre) est ce qu'on refuse.
 #
-#   1. `orgs.tenant_id` — le rattachement DÉCLARÉ (ADR 0052 L1). ⚠️ Mesuré INERTE le
-#      2026-09-02 : 160 orgs sur 160 portent le tenant primaire, y compris les 61 qui
-#      vivent chez un partenaire. Le provisioning ne l'écrit pas. Un filtre bâti sur
-#      ce seul axe ne rattrape RIEN — il est gardé parce qu'il ne coûte rien et qu'il
-#      redeviendra vrai le jour où une bascule L3bis l'alimentera.
+#   1. `orgs.tenant_id` — le rattachement DÉCLARÉ (ADR 0052 L1). ⚠️ **Il a été inerte
+#      jusqu'au 2026-09-03, il ne l'est plus.** Mesuré vide le 2026-09-02 (160 orgs
+#      sur 160 portant le tenant primaire, dont les 61 qui vivaient chez un
+#      partenaire) ; ALIMENTÉ le 2026-09-03 par `scripts/migrate_org_tenant --apply`
+#      — 65 orgs repointées, `orgs_desalignees` de 48 à 0 — et posé à la naissance
+#      par `org_store.create_org` depuis le même jour. Cet axe porte, désormais.
+#      ⚠️ Ce qui ne fait PAS de lui un axe suffisant seul, et c'est pourquoi les deux
+#      autres restent : il est ÉCRIT par quelqu'un, quand les deux suivants se
+#      DÉRIVENT de l'émetteur du jeton à chaque lecture. Un écrivain peut cesser
+#      d'écrire sans bruit — c'est exactement ce qui a produit le trou d'origine.
 #   2. `orgs.front_brand` — le front qui HÉBERGE l'org, dérivé de l'émetteur du jeton
 #      de son créateur à l'INSERT (`config.front_for`, écrivain unique dans
 #      `org_store.create_org`). Non déclarable par l'appelant, donc non revendicable.
@@ -283,8 +288,9 @@ def orgs_tenant_mismatches(*, limit: int = _TENANT_LIST_CAP) -> dict:
     - **`non_declaree`** — l'org porte le tenant primaire (le DEFAULT de la colonne)
       alors que sa marque de front ou un membre qualifié la rattachent à un
       partenaire. C'est l'état qu'a laissé le provisioning tant qu'il n'écrivait pas
-      la colonne : **65 orgs sur 165 au 2026-09-03**. Se corrige en écrivant la
-      dérivation (`scripts/migrate_org_tenant.py`).
+      la colonne : **65 orgs sur 165 le matin du 2026-09-03, ramenées à 0 le même
+      jour** par la commande ci-dessous. Se corrige en écrivant la dérivation
+      (`scripts/migrate_org_tenant.py`).
     - **`contredite`** — l'org est déclarée chez un partenaire, et la dérivation en
       désigne un AUTRE. Personne ne peut la produire aujourd'hui (`create_org` est
       l'écrivain unique et dérive de la même source) ; on la surveille pour le jour
