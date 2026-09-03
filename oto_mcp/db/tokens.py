@@ -30,7 +30,8 @@ def _hash_token(token: str) -> str:
 
 
 def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = None,
-                     scopes: Optional[dict] = None) -> str:
+                     scopes: Optional[dict] = None,
+                     ttl_seconds: Optional[int] = None) -> str:
     """Génère un token, persiste son hash, renvoie le plaintext une seule fois.
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
@@ -42,9 +43,22 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     jeton confié à une intégration tierce. Validé par `token_scopes.parse` AVANT
     d'arriver ici (le document est stocké tel quel).
     """
+    # ⚠️ `upsert_user` CRÉE le compte s'il n'existe pas. Pour un jeton émis au nom
+    # d'un tiers (délégation d'un travail programmé), l'existence du compte se
+    # vérifie donc AVANT d'appeler ici — sinon on ressusciterait silencieusement
+    # un compte supprimé, et on lui délivrerait un accès dans la foulée.
     upsert_user(sub)
     token = _TOKEN_PREFIX + secrets.token_urlsafe(32)
-    expires = f"NOW() + INTERVAL '{int(ttl_days)} days'" if ttl_days and ttl_days > 0 else "NULL"
+    # ⚠️ `ttl_seconds` gagne sur `ttl_days` : un jeton de délégation vit le temps
+    # d'un bail (quelques minutes), pas d'une journée. Sans lui, le plus court
+    # exprimable était 1 jour — soit ~90 fois la durée du besoin, pour un jeton
+    # qui porte l'identité de quelqu'un d'autre.
+    if ttl_seconds and ttl_seconds > 0:
+        expires = f"NOW() + INTERVAL '{int(ttl_seconds)} seconds'"
+    elif ttl_days and ttl_days > 0:
+        expires = f"NOW() + INTERVAL '{int(ttl_days)} days'"
+    else:
+        expires = "NULL"
     with _connect() as conn:
         conn.execute(
             f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, scopes) "

@@ -75,8 +75,17 @@ class SchemaOpsMixin:
         efface = dsv2.declarations_effacees(self._schema_of(ns_id), schema,
                                             retraits_annonces)
         db.set_datastore_schema(ns_id, schema)
+        # La pose de l'index est BORNÉE (incident du 2026-09-01 : elle a tenu la boucle
+        # 12 min 48 s derrière une lecture ouverte). Quand la borne coupe, le schéma est
+        # déjà écrit : rendre un 500 ferait chercher un dégât qui n'existe pas, et
+        # taire l'échec ferait croire à une contrainte qui n'est pas là. On le DIT, et
+        # `oto-mcp maintenance key-indexes` repose l'index au tir suivant.
+        index_differe = None
         if new_key:
-            db.datastore_ensure_key_index(ns_id, new_key)
+            try:
+                db.datastore_ensure_key_index(ns_id, new_key)
+            except db.KeyIndexUnavailable as e:
+                index_differe = str(e)
         else:
             db.datastore_drop_key_index(ns_id)
         # #389 : ce que CETTE version fait respecter, dit à celui qui pose. Le
@@ -90,7 +99,8 @@ class SchemaOpsMixin:
                "enforced": dsv2.enforced_keys()}
         # Un statut sans état terminal = file de travail qui ne libère rien : le dire
         # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
-        warnings = [w for w in (dsv2.queue_release_warning(schema),
+        warnings = [w for w in (index_differe,
+                                dsv2.queue_release_warning(schema),
                                 # Clés de déclaration qu'oto n'interprète PAS (#316) :
                                 # posées, stockées, rendues fidèlement… et jamais lues.
                                 # Le cas réel : `enum:` au lieu d'`options:` sur trois

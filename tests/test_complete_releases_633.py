@@ -48,6 +48,20 @@ def live(pg_dsn):
     try:
         from oto_mcp.db import init_db
         init_db()
+        # ⚠️ Le porteur d'un travail doit EXISTER et être membre de son org — c'est
+        # le cas en production (l'enfilage est réservé aux membres), et depuis la
+        # délégation le serveur le VÉRIFIE à la réservation. Un harnais qui ne le
+        # modélisait pas décrivait un état impossible, et il a rougi le jour où
+        # quelque chose l'a enfin lu.
+        from oto_mcp.db._conn import _connect
+        with _connect() as _c:
+            _c.execute("INSERT INTO users (sub) VALUES (%s) ON CONFLICT DO NOTHING",
+                       (WORKER,))
+            _c.execute("INSERT INTO orgs (id, name) VALUES (%s, %s) "
+                       "ON CONFLICT DO NOTHING", (ORG, "org du banc"))
+            _c.execute("INSERT INTO org_members (org_id, sub, org_role) "
+                       "VALUES (%s, %s, 'org_admin') ON CONFLICT DO NOTHING",
+                       (ORG, WORKER))
         yield
     finally:
         if dbconn._pool is not None:

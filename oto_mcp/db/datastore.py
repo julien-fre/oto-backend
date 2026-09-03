@@ -379,10 +379,32 @@ def datastore_merge_key_duplicates(ns_id: int, key: str) -> int:
     return removed
 
 
-def datastore_ensure_key_index(ns_id: int, key: str) -> None:
+class KeyIndexUnavailable(RuntimeError):
+    """La pose de l'index d'unicité de clé métier n'a pas abouti DANS SA BORNE.
+
+    Ce n'est pas une erreur de schéma : le schéma est écrit, la clé est déclarée, et
+    le chemin d'écriture applicatif (lookup-puis-insert de `datastore/core.py`)
+    continue de rapprocher les lignes sur cette clé. Ce qui manque est la garantie
+    ANTI-COURSE que l'index apporte en plus — et `oto-mcp maintenance key-indexes`
+    la repose au tir suivant, puisqu'il balaie justement les namespaces à clé
+    déclarée dont l'index est absent.
+
+    Elle existe pour que l'appelant puisse le DIRE plutôt que rendre un 500 opaque
+    sur un schéma pourtant posé (incident du 2026-09-01)."""
+
+
+def datastore_ensure_key_index(ns_id: int, key: str, *, bornee: bool = True) -> None:
     """Pose l'index UNIQUE partiel de clé métier du namespace (dépose l'ancien —
     la clé a pu changer). Nom déterministe `ds_bkey_<ns_id>` (int → sûr) ; la clé
-    est un LITTÉRAL composé via psycopg.sql (le DDL ne se paramètre pas)."""
+    est un LITTÉRAL composé via psycopg.sql (le DDL ne se paramètre pas).
+
+    ⚠️ **Travail bloquant : jamais depuis le thread de l'event loop.** Les deux
+    adaptateurs de capacité y veillent (handler sync → threadpool) ; un appelant qui
+    invente son propre chemin doit faire pareil.
+
+    `bornee=True` (défaut, chemin de REQUÊTE) : lève `KeyIndexUnavailable` quand la
+    borne coupe — le schéma reste posé, la maintenance reprend l'index. `bornee=False`
+    pour le travail de FOND, qui a le droit d'attendre son tour."""
     from psycopg import sql as _sql
     name = _bkey_index_name(ns_id)
     expr = bkey_index_expr(key)
@@ -395,23 +417,56 @@ def datastore_ensure_key_index(ns_id: int, key: str) -> None:
     # CONCURRENTLY ne bloque pas les écritures pendant la construction, et REFUSE de
     # tourner dans une transaction (vérifié) — d'où la connexion autocommit. Mesuré :
     # 40 ms sur 50 000 lignes, contre 32 ms pour l'ancienne forme plate.
+    #
+    # Ce qu'il ne dit PAS de lui-même : avant de construire, il attend la fin de toute
+    # transaction ouverte avant lui. Une lecture inoffensive suffit à le retenir aussi
+    # longtemps qu'elle dure — d'où la borne posée sur la connexion, et le rattrapage
+    # ci-dessous quand elle coupe.
     tmp = _sql.Identifier(name + "_v2")
-    with _connect_autocommit() as conn:
-        conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
-        conn.execute(_sql.SQL(
-            "CREATE UNIQUE INDEX CONCURRENTLY {t} ON datastore_rows (({e})) "
-            "WHERE ns_id = {ns} AND {e} IS NOT NULL"
-        ).format(t=tmp, e=expr, ns=_sql.Literal(int(ns_id))))
-        conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(n=_sql.Identifier(name)))
-        conn.execute(_sql.SQL("ALTER INDEX {t} RENAME TO {n}").format(
-            t=tmp, n=_sql.Identifier(name)))
+    with _connect_autocommit(bornee=bornee) as conn:
+        try:
+            conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
+            conn.execute(_sql.SQL(
+                "CREATE UNIQUE INDEX CONCURRENTLY {t} ON datastore_rows (({e})) "
+                "WHERE ns_id = {ns} AND {e} IS NOT NULL"
+            ).format(t=tmp, e=expr, ns=_sql.Literal(int(ns_id))))
+            conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(
+                n=_sql.Identifier(name)))
+            conn.execute(_sql.SQL("ALTER INDEX {t} RENAME TO {n}").format(
+                t=tmp, n=_sql.Identifier(name)))
+        except (psycopg.errors.LockNotAvailable, psycopg.errors.QueryCanceled) as e:
+            # Un `CREATE INDEX CONCURRENTLY` coupé laisse son index INVALIDE derrière
+            # lui — et un unique invalide peut continuer d'imposer sa contrainte aux
+            # écritures suivantes. On le retire tout de suite : le laisser ferait
+            # refuser des écritures au nom d'un index que personne ne sait nommer.
+            # Best-effort ET COURT : ce DROP réclame un verrou exclusif, donc il se
+            # heurte au même mur que ce qu'on vient de subir — le tenter au budget
+            # plein doublerait le temps d'échec pour rien.
+            try:
+                conn.execute("SET lock_timeout = '250ms'")
+                conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
+            # noqa: SILENT — nettoyage d'appoint ; la 1re ligne du prochain appel refait le geste
+            except Exception:
+                logger.warning("ds_bkey ns=%s : index temporaire non nettoyé",
+                               ns_id, exc_info=True)
+            raise KeyIndexUnavailable(
+                f"index d'unicité de `{key}` : la base ne l'a pas laissé se poser dans "
+                "sa borne — une transaction ouverte le retenait. Le schéma EST écrit et "
+                "la clé reste rapprochée à l'écriture ; c'est la garantie anti-course "
+                "qui manque, et la maintenance la repose au tir suivant.") from e
 
 
 def datastore_drop_key_index(ns_id: int) -> None:
+    """Dépose l'index d'unicité — ET le temporaire `_v2` qu'une pose coupée aurait
+    pu laisser (sinon un unique orphelin continue de refuser des écritures pour une
+    clé qui n'est plus déclarée)."""
     from psycopg import sql as _sql
+    name = _bkey_index_name(ns_id)
     with _connect() as conn:
         conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(
-            n=_sql.Identifier(_bkey_index_name(ns_id))))
+            n=_sql.Identifier(name)))
+        conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(
+            t=_sql.Identifier(name + "_v2")))
 
 
 def datastore_has_key_index(ns_id: int) -> bool:

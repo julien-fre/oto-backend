@@ -1,10 +1,11 @@
-# Perf event-loop — le serveur est MONO-LOOP (les 3 modes de gel)
+# Perf event-loop — le serveur est MONO-LOOP (les 4 modes de gel)
 
-> ⚠️ Ce titre a dit « les 2 modes » jusqu'au 2026-08-27, et c'était vrai à l'écriture :
-> les deux modes connus étaient des **placements** d'I/O (un handler async sans await,
-> puis un middleware). Le mode n°3 ci-dessous est d'une autre nature — le placement est
-> correct, c'est la requête elle-même qui est lente — et il ne se corrige pas comme les
-> deux autres.
+> ⚠️ Ce titre a dit « les 2 modes » jusqu'au 2026-08-27 puis « les 3 » jusqu'au
+> 2026-09-01, et c'était vrai à chaque écriture. Les deux premiers modes sont des
+> **placements** d'I/O (un handler async sans await, puis un middleware) ; le n°3 est
+> d'une autre nature (le placement est correct, la requête est lente) ; le n°4 est un
+> placement de nouveau, mais à un endroit qu'aucun des trois garde-fous ne regardait —
+> **le seam qui monte les capacités**, donc 285 handlers d'un coup.
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.
 
@@ -166,6 +167,109 @@ runs. Remède = `idx_tool_calls_run_finish_ref` (index partiel d'expression, 624
   second correctif du même lot : les deux lectures par projet poussent leur filtre DANS le
   CTE, au lieu de filtrer le résultat d'une reconstruction déjà faite pour tout le monde.
 
+## Mode n°4 — le SEAM des capacités : un adaptateur async, 285 handlers sync dedans (incident du 2026-09-01)
+
+**13 minutes de production coupée**, dont **12 min 48 s** sans une seule réponse : les
+connexions étaient acceptées par le noyau et jamais traitées — **376 empilées** dans la
+file d'attente. Pas un crash, pas de CPU, pas de 502 : le silence.
+
+py-spy sur le processus vivant, sans le tuer :
+
+```
+wait (psycopg/connection.py:484)              ← bloqué sur la base
+datastore_ensure_key_index (oto_mcp/db/datastore.py)
+set_schema (oto_mcp/datastore/schema_ops.py)
+patch_schema (oto_mcp/datastore/schema_ops.py)
+_patch_schema (oto_mcp/capabilities/datastore/columns.py)   ← handler SYNC… dans la boucle
+```
+
+**Le piège, et il vaut d'être su hors de ce dépôt : une simple LECTURE peut geler la
+production.** Une requête d'analyse lancée à la main tournait depuis 47 minutes. Elle ne
+posait aucun verrou gênant — mais `CREATE INDEX CONCURRENTLY` attend, *par conception*,
+la fin de toute transaction ouverte avant lui (`WaitForOlderSnapshots`) avant sa passe de
+validation. La lecture retenait donc l'index, et l'index retenait la boucle. Reproduit
+sur base jetable : lecture de 20 s ⟹ la pose rend la main à 19,6 s ; à 47 min, 47 min.
+
+⚠️ Une transaction simplement `idle in transaction` en READ COMMITTED, elle, ne retient
+PAS le CIC (elle ne tient plus de snapshot) — c'est la requête qui **tourne**, ou une
+transaction REPEATABLE READ, qui le retient. Utile à savoir avant d'accuser la mauvaise
+session dans `pg_stat_activity`.
+
+### Pourquoi les trois garde-fous précédents étaient aveugles
+
+Le tool MCP n'est pas écrit à la main : il est **fabriqué** par
+`capabilities/_mcp_adapter._make_tool`, et son jumeau REST par
+`_rest_adapter._make_handler`. Ces deux fabriques rendent un `async def` — il leur faut
+la boucle pour les 34 capacités réellement asynchrones et pour le refresh de visibilité.
+FastMCP et Starlette les laissent donc **dans la boucle**… et tout ce qu'elles appelaient
+nûment avec : la règle d'autz (qui marche la cascade des rôles), le handler sync, et
+l'écho d'org (deux lectures de plus sur chaque appel org-scopé).
+
+- `test_no_blocking_async_handlers` : critère « ce `async def` contient-il un `await`
+  dans son propre scope ? ». Le tool fabriqué en contient — c'est la porte dérobée déjà
+  documentée plus haut pour `web_read`, sauf qu'ici elle ne concerne pas un handler mais
+  **le moule de tous les handlers** ;
+- `middleware/test_no_blocking_db_in_middleware` : n'observe que les middlewares ;
+- la règle « un handler d'I/O est `def`, jamais `async def` » : **respectée**. Les 285
+  handlers de capacité SONT sync. C'est justement pour ça qu'ils gelaient : la règle
+  suppose que FastMCP route les sync en threadpool, ce qu'il fait pour un `@mcp.tool`
+  qu'on lui donne — pas pour un sync appelé nûment depuis un `async def`.
+
+Deux appels avaient déjà été rapiécés un par un (`node_view._node`, `node_edit.edit`
+passent par `run_in_threadpool` depuis leur propre handler) : le symptôme était donc
+connu, jamais son axe. Et `docs/` nommait depuis le 15/08 le combinateur d'autz
+`ORG_MEMBER` « appelé depuis `_rest_adapter._handler` » comme reste-à-traiter — c'était
+le même seam, vu par un seul de ses côtés.
+
+### Le remède, en deux temps qui ne se remplacent pas
+
+**① Sortir le travail de la boucle, AU SEAM.** Les deux adaptateurs rangent désormais
+`autz + handler sync + écho d'org` dans `run_in_threadpool`. Un seul endroit, les deux
+faces, les 285 capacités — plutôt que 285 rustines dont chaque nouvelle capacité
+oublierait la sienne. Un handler `async def` reste dans la boucle (un thread n'a pas de
+boucle où jouer une coroutine) ; le tri se fait au **montage**
+(`inspect.iscoroutinefunction`). Les ContextVars traversent : `run_in_threadpool` (anyio)
+exécute sur une **copie** du contexte, donc l'axe `_org`, le `view_as` et l'empreinte
+client sont lus normalement depuis le thread — vérifié. Ce qu'une copie ne rend pas,
+c'est une **écriture** de ContextVar faite dans le thread ; aucune capacité n'en fait
+aujourd'hui.
+
+**② Borner le DDL à chaud.** Sortir de la boucle ne suffit pas, et c'est le contresens à
+éviter : hors boucle, le même `CREATE INDEX CONCURRENTLY` aurait tenu **un thread du
+threadpool pendant 47 minutes** et laissé son appelant pendu. `_conn._connect_autocommit`
+pose donc `lock_timeout` (5 s) et `statement_timeout` (60 s) — l'attente derrière une
+transaction plus ancienne est une attente de VERROU (`ShareLock` sur le VXID), donc
+`lock_timeout` la coupe ; mesuré 5,3 s au lieu de 19,6 s, et 0 s quand rien n'est devant.
+
+Ce qui suit une borne, c'est **ce qu'on fait du travail resté à faire**, sans quoi on a
+juste déplacé le problème :
+
+- `datastore_ensure_key_index` lève `KeyIndexUnavailable` (typée) au lieu d'un 500
+  opaque, et **nettoie l'index temporaire** que le CIC coupé laisse derrière lui — un
+  unique INVALIDE continue d'imposer sa contrainte aux écritures suivantes ;
+- `set_schema` / le provisionnement de slot **écrivent quand même le schéma** et le
+  DISENT en avertissement : le chemin d'écriture applicatif continue de rapprocher les
+  lignes sur la clé, seule la garantie anti-course manque ;
+- `oto-mcp maintenance key-indexes` (timer, déjà en place) la repose au tir suivant —
+  il balaie précisément les namespaces à clé déclarée dont l'index manque. Il appelle
+  donc `bornee=False` : un travail de FOND a le droit d'attendre son tour, et le borner
+  garantirait qu'un index sur une table très occupée ne se pose **jamais**.
+
+### Le garde-fou
+
+`tests/test_capacites_hors_boucle.py` — il n'analyse pas le source, il **observe le
+thread** (même parti que celui des middlewares). Deux crans : le **seam** (ce que les
+fabriques font d'un handler sync, énoncé général valable pour les 285 sans liste à
+tenir) et un **cas réel sur une vraie base** — `data_patch_schema` du registre, joué en
+entier jusqu'au `CREATE INDEX CONCURRENTLY`, avec l'assertion d'inertie (« le DDL a-t-il
+seulement été atteint ? ») sans laquelle le vert ne vaudrait rien. Plus un contrôle qui
+mord : le même travail appelé nûment dans la boucle EST attrapé. Rejoué contre le commit
+d'avant le correctif : **5 rouges sur 8**, dont le DDL montré sur `MainThread`.
+
+⚠️ **Ce que ce lot ne couvre pas** : un handler `async def` qui ferait de l'I/O sync
+avant son premier `await` (la porte dérobée du mode n°1) reste possible sur les 34
+capacités asynchrones — le seam les laisse dans la boucle, à dessein.
+
 ## Un 502 en rafale n'est pas forcément un gel — la 2ᵉ cause (#352, nuit du 15-16/08)
 
 ⚠️ **À lire avant de conclure « c'est encore le gel ».** Ce document a servi, du 15/08 au
@@ -258,3 +362,15 @@ d'expression : 185 s de boucle tenue, prod + tenant tiers à terre) — même si
 que le 2ᵉ, remède opposé : indexer, pas déplacer. Corollaire de méthode : **une lecture dont
 le coût suit le VOLUME TOTAL et non le scope demandé est une panne à retardement, qui se
 déclenche sans déploiement.**
+
+**Ajout du 2026-09-01 (mode n°4).** Deux corollaires de plus, et le second est celui qui
+a coûté treize minutes :
+
+- **Un garde-fou qui énumère des objets écrits à la main ne voit pas ce qui est
+  fabriqué.** Les trois gardes existants regardaient des handlers, des middlewares, des
+  tools — jamais le MOULE qui en produit 285. Quand un lot introduit une fabrique,
+  c'est la fabrique qu'il faut garder, pas ses produits.
+- **Chercher l'axe, pas le call-site.** Le correctif « rapiéce ce handler-là » avait
+  déjà été appliqué deux fois (`node_view`, `node_edit`) sans que personne ne remonte
+  d'un cran. Deux rustines au même endroit sont le signal qu'on répare un cas là où vit
+  une classe.

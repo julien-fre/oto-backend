@@ -6,6 +6,12 @@ binding `rest`. Même séquence que l'adaptateur MCP : authenticate → input
 `json_error(request, status, code)` — **conserve l'enveloppe + les en-têtes
 CORS** consommés par le dashboard.
 
+⚠️ **Autz et handler sync partent en threadpool** — même raison qu'en MCP, et le même
+piège : la route est `async def` (elle doit `await` le corps et l'authentification),
+donc Starlette la laisse dans la boucle, et tout ce qu'elle appelle nûment avec. Un
+serveur MONO-LOOP ne tolère pas ça : `docs/event-loop-perf.md` mode n°4, incident du
+2026-09-01. Le garde-fou est `tests/test_capacites_hors_boucle.py`.
+
 Dépend du core (sens unique ADR 0004).
 """
 from __future__ import annotations
@@ -18,6 +24,7 @@ from typing import Awaitable, Callable
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -51,6 +58,9 @@ def _champs_liste(model) -> frozenset:
 
 def _make_handler(cap: Capability, binding, verifier, authenticate, json_response, json_error):
     champs_liste = _champs_liste(cap.Input)
+    # Décidé au montage (cf. la note jumelle de `_mcp_adapter._make_tool`) : un thread
+    # n'a pas de boucle où jouer une coroutine.
+    handler_async = inspect.iscoroutinefunction(cap.handler)
 
     async def _handler(request: Request) -> JSONResponse:
         # `allow_api_token` n'est passé QUE lorsqu'il vaut False : le défaut reste un
@@ -172,8 +182,20 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                                     request.client.host if request.client else None),
             user_agent=request.headers.get("user-agent"))
         try:
-            ctx = cap.authz(RawCtx(sub=sub), inp)
-            result = cap.handler(ctx, inp)
+            def _amont():
+                """Autz + handler SYNC — le bloc qui touche la base, en un thread.
+
+                `run_in_threadpool` (anyio) exécute sur une COPIE du contexte : le
+                jeton `client_trace` posé juste au-dessus est donc bien lu par le
+                handler. Ce qu'une copie ne rend PAS, c'est une écriture de ContextVar
+                faite DANS le thread — aucune capacité n'en fait, et le jour où l'une
+                s'y mettrait, c'est ici que ça se saurait."""
+                ctx_ = cap.authz(RawCtx(sub=sub), inp)
+                return ctx_, (None if handler_async else cap.handler(ctx_, inp))
+
+            ctx, result = await run_in_threadpool(_amont)
+            if handler_async:
+                result = cap.handler(ctx, inp)        # handler async → dans la boucle
             if inspect.isawaitable(result):           # handler async (ex. guide + manifeste)
                 result = await result
         except AuthzDenied as d:
