@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import os
 import time
 
@@ -89,6 +90,44 @@ def replay_boot_schema_dry(conn: psycopg.Connection) -> None:
     """
     with conn.transaction(force_rollback=True):
         apply_boot_schema(conn)
+
+
+def _poser_domaine(conn, table: str, nom: str, colonne: str,
+                   valeurs: tuple[str, ...]) -> bool:
+    """Pose une contrainte de domaine — **et seulement si elle a changé**.
+
+    ⚠️ Un `ADD CONSTRAINT … CHECK` **valide la contrainte sur toute la table**,
+    sous verrou `ACCESS EXCLUSIVE`. Ce n'est pas une opération de métadonnée :
+    c'est un parcours complet. Le faire à chaque démarrage, y compris quand la
+    contrainte est déjà exactement celle qu'on repose, est un coût qui **croît
+    avec la table** — mesuré le 03/09 : 3 ms à 11 000 lignes, 11 ms à 100 000, et
+    quelques secondes de verrou exclusif à dix millions.
+
+    ⚠️ Pourquoi pas `ADD CONSTRAINT IF NOT EXISTS` : ça n'existe pas en
+    PostgreSQL, et le motif conditionnel déjà employé ailleurs dans ce fichier
+    (`IF NOT EXISTS (SELECT 1 FROM pg_constraint …)`) ne convient pas ici — il ne
+    ferait **rien** quand la contrainte existe avec une définition PÉRIMÉE, ce qui
+    est précisément le cas qu'on doit traiter : ajouter une valeur au domaine
+    d'une table déjà déployée.
+
+    D'où la comparaison des VALEURS, pas du texte : `pg_get_constraintdef`
+    normalise sa sortie (espaces, parenthèses), donc une égalité littérale serait
+    fragile. L'égalité d'ENSEMBLES détecte l'ajout comme le retrait.
+
+    Rend True si la contrainte a été (re)posée — c'est ce que le banc mesure.
+    """
+    row = conn.execute(
+        "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = %s",
+        (nom,),
+    ).fetchone()
+    if row and set(re.findall(r"'([^']*)'", row["def"])) == set(valeurs):
+        return False
+    liste = ", ".join(f"'{v}'" for v in valeurs)
+    conn.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {nom}")
+    conn.execute(f"ALTER TABLE {table} ADD CONSTRAINT {nom} "
+                 f"CHECK ({colonne} IN ({liste}))")
+    logger.info("contrainte %s (re)posée sur %s", nom, table)
+    return True
 
 
 def apply_boot_schema(conn: psycopg.Connection) -> None:
@@ -210,11 +249,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # tomberait au TICK, pas au boot, donc loin de sa cause.
     # `sub` (02/09) : l'identité que l'agent porte en exécutant ce travail.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS sub TEXT")
-    conn.execute("ALTER TABLE runner_jobs DROP CONSTRAINT IF EXISTS "
-                 "runner_jobs_status_check")
-    conn.execute("ALTER TABLE runner_jobs ADD CONSTRAINT runner_jobs_status_check "
-                 "CHECK (status IN ('pending', 'claimed', 'done', 'failed', "
-                 "'expired'))")
+    _poser_domaine(conn, "runner_jobs", "runner_jobs_status_check", "status",
+                   ("pending", "claimed", "done", "failed", "expired"))
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
     # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
     # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT
@@ -223,10 +259,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # nouveaux états — un lot « déployé » dont la moitié est rejetée à l'écriture.
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ")
-    conn.execute("ALTER TABLE runner_fleets DROP CONSTRAINT IF EXISTS runner_fleets_status_check")
-    conn.execute("ALTER TABLE runner_fleets ADD CONSTRAINT runner_fleets_status_check "
-                 "CHECK (status IN ('draft', 'armed', 'running', 'stopping', "
-                 "'stopped', 'done', 'failed'))")
+    _poser_domaine(conn, "runner_fleets", "runner_fleets_status_check", "status",
+                   ("draft", "armed", "running", "stopping", "stopped", "done",
+                    "failed"))
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers
