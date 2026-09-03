@@ -467,8 +467,26 @@ def _merge_column(existing: Any, new: Any) -> Any:
         origine = _existing_layers(existing).get(dsv2.ORIGIN_LAYER)
         if origine is None:
             return new
-        return ({dsv2.ORIGIN_LAYER: origine} if new is None
-                else {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine})
+        if new is None:
+            # EFFACEMENT (signal #695). Une origine `""` est le marqueur « rien
+            # n'avait été remis » (cf. `reserves.py`, qui la pose ainsi quand il n'y
+            # avait pas de valeur d'avant) : elle QUALIFIE une valeur. Quand la valeur
+            # s'en va, il ne reste qu'une enveloppe sans rien à qualifier —
+            # `{"origine": ""}` — qui n'est plus une valeur d'énumération valide et
+            # rend la ligne INVISIBLE au filtrage et aux facettes. Mesuré sur trois
+            # lignes remises à zéro : quatre champs sur quatre, exactement ceux qui
+            # portaient une couche `origine` ; les champs texte nullés au même appel
+            # n'avaient pas ce résidu.
+            # ⚠️ Une origine PLEINE, elle, survit : c'est le point de départ, parfois
+            # l'unique copie de la valeur remise, et l'effacer serait une perte que
+            # personne ne peut reconstituer.
+            # ⚠️ Et le vide ne se lit ICI que — pas au cas général : à la RÉÉCRITURE
+            # le marqueur `""` doit survivre, sinon la deuxième écriture capturerait
+            # la première valeur de l'agent comme si elle venait du client
+            # (`test_vide_a_l_origine_le_marqueur_tient_le_une_seule_fois`, qui a
+            # attrapé une première correction trop large).
+            return None if dsv2.est_vide(origine) else {dsv2.ORIGIN_LAYER: origine}
+        return {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine}
     out = _existing_layers(existing)
     if dsv2.VALUE_LAYER in new and not dsv2.same_value(out.get(dsv2.VALUE_LAYER),
                                                        new[dsv2.VALUE_LAYER]):

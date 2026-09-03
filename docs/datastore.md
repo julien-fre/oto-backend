@@ -711,6 +711,21 @@ de fin de passage détectait après coup.
   lecture, « vide à l'origine » et « jamais modifié » se confondent, et c'est juste —
   dans les deux cas il n'y a rien à rétablir). **Compatible avec l'existant** : une
   couche déjà écrite par un agent avant la pose reste lue telle quelle, jamais réécrite.
+  ⚠️ **À l'EFFACEMENT, le marqueur vide ne survit pas — corrigé le 03/09/2026 (signal
+  #695).** Un `null` nommé laissait `{"origine": ""}` : une enveloppe sans valeur, qui
+  n'est plus une valeur d'énumération valide et rend la ligne **invisible au filtrage et
+  aux facettes**. Mesuré sur trois lignes remises à zéro — quatre champs sur quatre,
+  exactement ceux qui portaient une couche `origine` ; les champs texte nullés au même
+  appel n'avaient pas ce résidu. On le découvrait en relançant un patch de schéma et en
+  lisant son avertissement, jamais autrement. Le marqueur `""` **qualifie une valeur** :
+  quand la valeur s'en va, il ne reste rien à qualifier. Une origine **pleine**, elle,
+  survit à l'effacement — c'est le point de départ, parfois l'unique copie de la valeur
+  remise.
+  ⚠️ **Et le vide ne se lit qu'à l'effacement, jamais au cas général.** Une première
+  correction traitait `""` comme vide partout : elle faisait tomber le marqueur dès la
+  RÉÉCRITURE, et la deuxième écriture aurait alors capturé la première valeur de l'agent
+  comme si elle venait du client — exactement le défaut que ce marqueur existe pour
+  empêcher. C'est un banc existant qui l'a attrapée, pas une relecture.
   ⚠️ **La capture est PARESSEUSE, pas à la pose du schéma** : un format ne vaut que pour
   l'avenir et ne réécrit aucune ligne (doctrine de `_overlong_warning` et consorts) — et
   elle rend la MÊME valeur, puisque rien n'a bougé entre la pose et la première
