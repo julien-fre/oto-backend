@@ -27,6 +27,15 @@ dependencies = [
     # branche : on n'écrit pas dans le dépôt d'autrui (l'API Contents rend 404 dessus).
     # Le mainteneur bump ici, puis `update-branch` la PR. L'atomicité du revert cède
     # devant ça. Cf. docs/contributions-forks.md (amendement du 2026-09-01).
+    # v1.108.0 = serper : le SCRAPE attend 15 s au lieu de 60, et `timeout_s` (1-60,
+    # borné) laisse l'appelant serrer. p95 mesuré à 61,6 s sur 193 passages d'agents,
+    # 58 expirations à 60 s — et ce qui coûte n'est pas l'attente mais ce qu'elle
+    # emporte : le cache de contexte de l'agent expire pendant, le passage médian ayant
+    # scrapé coûtant 72 077 jetons contre 35 798 sans. Le reste du client garde son
+    # délai : une recherche n'a pas le profil d'une extraction (oto-backend#662) ;
+    # v1.107.0 = TROIS clients neufs (oto-core#76, contribution externe) : `github`
+    # (REST v3), `leexi` (intelligence conversationnelle) et `productlane` (retours
+    # clients, roadmap, changelogs) ;
     # v1.105.0 = hubspot : `batch_read_objects` lit jusqu'à 100 fiches en UN appel
     # (tranché par le client) au lieu d'un GET par id, et rend une ENVELOPPE
     # `{results, missing_ids}` dont les deux clés sont toujours là — `missing_ids` est
@@ -155,7 +164,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.106.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.108.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

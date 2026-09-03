@@ -53,7 +53,7 @@ def seams_page(monkeypatch):
     monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
     monkeypatch.setattr(db, "create_doc",
                         lambda pid, title, parent_id=None, body_md="", kind="doc",
-                        created_by=None, description=None: 662)
+                        created_by=None, description=None, trace=None: 662)
     monkeypatch.setattr(db, "update_doc", lambda *a, **k: None)
 
 
