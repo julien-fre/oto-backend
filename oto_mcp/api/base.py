@@ -49,8 +49,6 @@ def _allowed_origins() -> list[str]:
         "https://oto.ninja",                # preprod/canari + redirections
         "https://www.oto.ninja",
         "https://app.oto.ninja",
-        "https://otomata.tech",             # formulaire de contact vitrine
-        "https://www.otomata.tech",
         # noqa: CLIENT — origines FONCTIONNELLES d'un front tiers (repli seulement :
         # les deux box posent OTO_MCP_CORS_ORIGINS, cf. CLAUDE.md). Les retirer casse
         # le CORS d'un dev sans env. Relocalisation = 2e volet de oto-private#85.

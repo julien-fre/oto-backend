@@ -636,8 +636,6 @@ POST /api/me/runner/triggers -> _handler
 OPTIONS /api/me/runner/triggers -> options_handler
 POST /api/me/runner/fleets -> _handler
 OPTIONS /api/me/runner/fleets -> options_handler
-POST /api/contact -> contact
-OPTIONS /api/contact -> options_handler
 POST /api/billing/webhook -> webhook
 OPTIONS /api/billing/webhook -> options_handler
 GET,HEAD /api/me/billing/invoices/{id}/pdf -> invoice_pdf
