@@ -49,7 +49,14 @@ champ transport sur l'expéditeur).
   ⚠️ **L'EXPÉDITEUR, lui, reste `Oto <oto@otomata.tech>`** pour toutes les marques :
   l'allowlist `MAILER_FROM_DOMAINS` vit dans `otomata-tech/otomata-auth-mailer`, pas
   ici, et un domaine hors allowlist rend un 403 que le best-effort avale en silence.
-  Poser `tulina.ai` là-bas est le seul geste qui manque.
+  ⚠️⚠️ **NE PAS y poser le domaine d'un partenaire — l'inverse a été fait le
+  03/09/2026** : ce domaine a été RETIRÉ de l'allowlist ce jour-là (rapporté par la
+  session infra, non vérifié depuis ce dépôt — l'allowlist vit ailleurs). Cette note
+  disait « le poser là-bas est le seul geste qui manque » : la suivre armerait un
+  envoi qui échouerait **sans rien dire**, puisque le refus est avalé. Aucun envoi
+  produit ne part sous ce domaine aujourd'hui, donc rien n'est cassé — mais l'écrire
+  serait le casser en silence. L'expéditeur reste le nôtre ; **ce qui suit la marque
+  d'un partenaire côté produit, c'est le DESSIN, pas le transporteur.**
 - `email_send` (`tools/email.py`) = **spine** (pas un connecteur) : route
   `sender→connecteur→transport` ; autz dynamique (membre d'org pour une adresse
   déclarée ; super_admin pour le repli marque `oto@otomata.tech`). `email.py` =
