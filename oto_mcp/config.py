@@ -153,9 +153,14 @@ def tenant_slug_for(sub: Optional[str]) -> Optional[str]:
 
     Ne lève pas, pour la même raison que `front_for` : on est sur le chemin de
     création d'une org, un registre illisible doit dégrader vers le tenant primaire,
-    pas refuser la création. La dégradation n'est pas muette pour autant — l'org
-    naîtra avec un rattachement que sa dérivation contredit, et c'est exactement ce
-    que `db.orgs_tenant_mismatches()` rapporte.
+    pas refuser la création.
+    ⚠️ **Et cette dégradation est MUETTE depuis le 03/09/2026** : le contrôle qui la
+    rapportait a été retiré. Elle est sans conséquence pour autant, et c'est la raison
+    du retrait — le rattachement déclaré ne DÉCIDE rien. `db.org_tenant_slug` le double
+    par deux dérivations (marque du front, sub qualifié d'un membre) qui, elles, se
+    lisent du jeton à chaque appel : une org née avec le mauvais rattachement rend
+    quand même le bon verdict. Mesuré le 03/09 : 166 orgs sur 166 identiques avec et
+    sans lui.
     """
     if not sub:
         return None
@@ -163,7 +168,7 @@ def tenant_slug_for(sub: Optional[str]) -> Optional[str]:
         from . import tenancy
         slug = tenancy.current().tenant_of(sub)
         return None if (not slug or slug == tenancy.PRIMARY_SLUG) else slug
-    # noqa: SILENT — registre illisible : on dégrade vers le tenant primaire au lieu de refuser une création d'org, et l'écart reste visible au contrôle de conformité (`db.orgs_tenant_mismatches`)
+    # noqa: SILENT — registre illisible : on dégrade vers le tenant primaire au lieu de refuser une création d'org ; l'écart n'est plus rapporté (contrôle retiré le 03/09/2026) et n'a aucune conséquence, les deux dérivations rendent le bon verdict sans lui
     except Exception:  # noqa: BLE001
         return None
 

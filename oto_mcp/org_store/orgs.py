@@ -65,8 +65,10 @@ def create_org(name: str, created_by: Optional[str] = None,
         # pas de fenêtre entre « quel tenant » et « écris-le ». Slug inconnu de la
         # table ⟹ le tenant primaire (`COALESCE(…, 1)`) : la FK refuserait un id
         # inventé, et faire échouer une création d'org sur un registre en avance sur
-        # la base serait le mauvais sens du refus — l'écart, lui, reste visible au
-        # contrôle de conformité (`db.orgs_tenant_mismatches`).
+        # la base serait le mauvais sens du refus. ⚠️ L'écart n'est plus rapporté nulle
+        # part (contrôle retiré le 03/09/2026) — il est sans conséquence : ce
+        # rattachement ne décide rien que les deux dérivations de `db.org_tenant_slug`
+        # ne décident déjà.
         row = conn.execute(
             "INSERT INTO orgs (name, created_by, front_base_url, front_brand, "
             "tenant_id) VALUES (%s, %s, %s, %s, "

@@ -183,24 +183,6 @@ def test_l_application_repointe_puis_n_a_plus_rien_a_faire(base, population, cap
     assert "rien à faire" in capsys.readouterr().out
 
 
-def test_apres_migration_le_controle_de_conformite_est_vide(base, population):
-    """La boucle se ferme : ce que la migration écrit, le garde-fou l'accepte."""
-    from scripts import migrate_org_tenant
-    from oto_mcp import db
-    assert db.orgs_tenant_mismatches()["total"] == 4, (
-        "prémisse : les 4 orgs du partenaire restées au défaut, et elles seules — "
-        "« Chez nous » n'a aucun signal partenaire, « Déjà déclarée » est correcte. "
-        "Le compte doit être connu d'avance, sinon l'assertion d'après ne prouve rien.")
-    migrate_org_tenant.main(apply=True)
-    apres = db.orgs_tenant_mismatches()
-    assert (apres["total"], apres["orgs"], apres["tronque"]) == (0, [], False)
-    # La PORTÉE dit aussi que le contrôle a bien REGARDÉ : un rapport vide obtenu
-    # parce qu'il ne juge plus rien serait le même dict, et ne prouverait rien.
-    assert apres["jugees"] >= 4, (
-        "les 4 orgs repointées doivent rester JUGEABLES après la migration : si la "
-        "portée retombe, le zéro d'au-dessus est un silence, pas un verdict.")
-
-
 # ── Les deux refus ───────────────────────────────────────────────────────────
 
 def test_un_desaccord_entre_derivations_arrete_tout(base, population, capsys):

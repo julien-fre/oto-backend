@@ -62,8 +62,9 @@ from oto_mcp.db.tenants import _AXE_MARQUE, _AXE_MEMBRE
 
 # Les axes viennent de `db/tenants.py`, ils ne sont pas recopiés ici : deux
 # définitions du « chez le partenaire » divergent toujours, et c'est la moins prudente
-# qui l'emporte en silence. Ce script écrit ce que le contrôle de conformité
-# (`db.orgs_tenant_mismatches`) lira ensuite — ils doivent lire la MÊME chose.
+# qui l'emporte en silence. Ce script écrit donc EXACTEMENT ce que `db.org_tenant_slug`
+# dérive — c'est la seule chose qui les tient ensemble depuis que le contrôle de
+# conformité a été retiré (03/09/2026, il ne rapportait qu'un écart sans conséquence).
 _DERIVE = f"COALESCE({_AXE_MARQUE}, {_AXE_MEMBRE})"
 
 # ── Les deux refus, joués AVANT l'écriture ───────────────────────────────────

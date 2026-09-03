@@ -222,27 +222,6 @@ _AXE_MEMBRE = """(SELECT p.slug
         WHERE om.org_id = o.id
         ORDER BY length(p.pfx) DESC LIMIT 1)"""
 
-# La DÉRIVATION seule : les deux axes structurels (2) et (3), **sans le rattachement
-# déclaré**. C'est ce qui la rend capable de juger la colonne — une dérivation qui
-# repartirait de `tenant_id` se comparerait à elle-même et ne rougirait JAMAIS. Cette
-# omission est le cœur du contrôle de conformité, pas un raccourci.
-#
-# ⚠️ **Pas de repli sur le tenant primaire, et c'est tout le sujet.** Cette expression
-# rend NULL quand aucun axe ne parle — une org sans marque de front et sans membre
-# qualifié. NULL veut dire « je ne sais pas », PAS « elle est à nous » : replier sur
-# `%(primary)s` transformerait une absence de signal en affirmation, et le contrôle
-# accuserait toute org d'un tenant sans dashboard dont les membres sont des subs nus.
-# Trois états, jamais un zéro déguisé en verdict.
-_ORG_DERIVE_BRUT_EXPR = f"""COALESCE(
-      {_AXE_MARQUE},
-      {_AXE_MEMBRE})"""
-
-# Le tenant DÉCLARÉ, primaire compris (là où `_AXE_DECLARE` l'annule pour se laisser
-# dépasser dans le COALESCE) : pour comparer, il faut la valeur, pas un trou.
-_ORG_DECLARE_EXPR = """COALESCE(
-      (SELECT t.slug FROM tenants t WHERE t.id = o.tenant_id),
-      %(primary)s)"""
-
 _ORG_TENANT_EXPR = f"""COALESCE(
       {_AXE_DECLARE},
       {_AXE_MARQUE},
@@ -276,99 +255,6 @@ def org_tenant_slug(org_id: int) -> str:
         row = conn.execute(_ORG_TENANT_SQL,
                            {"primary": tenancy.PRIMARY_SLUG, "oid": int(org_id)}).fetchone()
     return (row and row["slug"]) or tenancy.PRIMARY_SLUG
-
-
-def orgs_tenant_mismatches(*, limit: int = _TENANT_LIST_CAP) -> dict:
-    """Les orgs dont le rattachement DÉCLARÉ est démenti par sa DÉRIVATION.
-
-    Le garde-fou du rattachement, et la seule lecture qui JUGE `orgs.tenant_id` au
-    lieu de le compter. Deux fautes, nommées séparément parce qu'elles ne se
-    corrigent pas pareil :
-
-    - **`non_declaree`** — l'org porte le tenant primaire (le DEFAULT de la colonne)
-      alors que sa marque de front ou un membre qualifié la rattachent à un
-      partenaire. C'est l'état qu'a laissé le provisioning tant qu'il n'écrivait pas
-      la colonne : **65 orgs sur 165 le matin du 2026-09-03, ramenées à 0 le même
-      jour** par la commande ci-dessous. Se corrige en écrivant la dérivation
-      (`scripts/migrate_org_tenant.py`).
-    - **`contredite`** — l'org est déclarée chez un partenaire, et la dérivation en
-      désigne un AUTRE. Personne ne peut la produire aujourd'hui (`create_org` est
-      l'écrivain unique et dérive de la même source) ; on la surveille pour le jour
-      où un second écrivain apparaît. Se corrige en tranchant, pas en écrasant.
-
-    ⚠️ **Le troisième état n'est PAS une faute, délibérément.** Une org déclarée chez
-    un partenaire que la dérivation ne corrobore pas — ni marque de front, ni membre
-    qualifié — n'est pas rapportée : la dérivation dit « je ne sais pas », et une
-    absence de signal n'est pas une preuve du contraire. Deux populations réelles y
-    vivent : l'org d'un tenant sans `dashboard_url` (pas de marque à poser) dont les
-    membres sont des subs nus, et l'org qui vient de naître — `create_org` pose le
-    rattachement à l'INSERT, son premier membre arrive à l'appel suivant. Traiter ce
-    silence comme une faute rendrait le contrôle bruyant là où il doit être sûr.
-
-    ⚠️ **La population est DÉRIVÉE, pas énumérée** : la requête balaie `orgs` entière,
-    archivées comprises — c'est sur une archivée qu'un rattachement faux survit le
-    plus longtemps sans que personne le voie.
-
-    Rend `total` (le compte réel, sur toute la table) à part de `orgs` (la liste,
-    bornée par `limit`) : un plafond posé sur une lecture qui tronque déjà annoncerait
-    le chiffre de la page, pas celui de la population.
-
-    ⚠️ **Et rend sa PORTÉE** — `jugees` / `indeterminees` (03/09/2026). `total: 0` ne
-    veut pas dire « tout est conforme » mais « rien de fautif parmi ce que j'ai su
-    juger », et l'écart entre les deux phrases est énorme : mesuré le jour de la
-    migration du partenaire, ce contrôle jugeait 65 orgs sur 166. C'est ce silence
-    non dit qui a laissé huit espaces personnels hors de la migration sans que rien ne
-    le signale. Un zéro sans sa portée est un zéro déguisé en verdict.
-
-    ⚠️ `indeterminees` **n'est pas une file d'attente de fautes**, et c'est pourquoi
-    elle n'a pas de liste : la dérivation se tait aussi sur toutes NOS orgs, qui sont
-    légitimement à nous. C'est une mesure de ce que l'instrument ne voit pas. Nommer
-    ces orgs inviterait à les traiter comme des cas, et ce serait exactement l'erreur
-    que le troisième état existe pour éviter.
-    """
-    sql = f"""
-        WITH juge AS (
-            SELECT o.id, o.name, o.archived_at,
-                   {_ORG_DECLARE_EXPR}    AS declare,
-                   {_ORG_DERIVE_BRUT_EXPR} AS derive
-              FROM orgs o
-        ),
-        fautes AS (
-            SELECT *, CASE WHEN declare = %(primary)s THEN 'non_declaree'
-                           ELSE 'contredite' END AS faute
-              FROM juge
-             -- `derive IS NOT NULL` : le silence de la dérivation ne juge rien.
-             WHERE derive IS NOT NULL AND derive IS DISTINCT FROM declare
-        )
-        SELECT id, name, archived_at, declare, derive, faute,
-               (SELECT COUNT(*) FROM fautes) AS total
-          FROM fautes ORDER BY id LIMIT %(cap)s
-    """
-    # La PORTÉE du contrôle, lue à part. Sans elle, `total: 0` se lit « tout est
-    # conforme » alors qu'il veut dire « rien de ce que j'ai pu juger n'est fautif » —
-    # et le contrôle est muet sur la majorité de la table (mesuré le 03/09/2026 : il
-    # juge 65 orgs sur 166). Les deux phrases ne sont pas la même, et c'est celle qu'on
-    # ne dit pas qui a laissé huit espaces personnels hors de la migration du partenaire
-    # sans que rien ne le signale. Trois états, jamais un zéro déguisé en verdict.
-    # ⚠️ `indeterminees` n'est PAS une file d'attente de fautes : la dérivation s'y tait
-    # aussi sur toutes NOS orgs, qui sont légitimement à nous. C'est une mesure de ce
-    # que l'instrument ne voit pas, pas une liste de suspects — d'où un compteur, et
-    # aucune liste : nommer ces orgs inviterait à les traiter comme des cas.
-    portee_sql = f"""
-        SELECT COUNT(*) AS orgs,
-               COUNT(*) FILTER (WHERE {_ORG_DERIVE_BRUT_EXPR} IS NOT NULL) AS jugees
-          FROM orgs o
-    """
-    params = {"primary": tenancy.PRIMARY_SLUG, "cap": max(1, int(limit))}
-    with _connect() as conn:
-        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
-        portee = dict(conn.execute(portee_sql, params).fetchone())
-    total = int(rows[0]["total"]) if rows else 0
-    for r in rows:
-        r.pop("total", None)
-    return {"total": total, "orgs": rows, "tronque": total > len(rows),
-            "jugees": int(portee["jugees"]),
-            "indeterminees": int(portee["orgs"]) - int(portee["jugees"])}
 
 
 def _shape_tenant(row: dict) -> dict:

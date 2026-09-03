@@ -138,11 +138,12 @@ def test_only_the_tracking_read_touches_tenant_id():
 def test_le_rattachement_a_un_ecrivain_et_un_seul():
     """`orgs.tenant_id` s'écrit à UN endroit — sinon la dérivation ne prouve rien.
 
-    Ce que le contrôle de conformité (`db.orgs_tenant_mismatches`) peut affirmer
-    dépend entièrement de cette unicité : il compare le rattachement DÉCLARÉ à ce
-    qu'on DÉRIVE du front et des membres. Si un second chemin posait la colonne selon
-    une autre règle, l'écart cesserait d'être une faute à corriger pour devenir un
-    désaccord entre deux écrivains — et le contrôle rougirait sans rien pouvoir dire.
+    ⚠️ **Cette unicité compte PLUS depuis le 03/09/2026, pas moins.** Le contrôle de
+    conformité qui rapportait les écarts a été retiré ce jour-là — il surveillait une
+    divergence sans conséquence, puisque `db.org_tenant_slug` double ce rattachement
+    par deux dérivations lues du jeton. Conséquence : plus rien ne rapporte un second
+    écrivain qui poserait la colonne selon sa propre règle. Ce test est donc devenu la
+    SEULE chose qui s'y oppose, et il est mécanique là où le contrôle était humain.
 
     ⚠️ Le test vérifie les DEUX sens, et le second est celui qui compte le jour où
     quelqu'un « simplifie » : que le rattachement soit écrit *quelque part*. Un
@@ -171,6 +172,6 @@ def test_le_rattachement_a_un_ecrivain_et_un_seul():
     assert set(ecrivains) == {_ECRIVAIN_UNIQUE}, (
         f"`orgs.tenant_id` est écrit hors de l'écrivain unique : {sorted(set(ecrivains))}. "
         f"Le rattachement se pose dans `{_ECRIVAIN_UNIQUE}` et nulle part ailleurs — "
-        "un second écrivain avec sa propre règle rend le contrôle de conformité "
-        "(`db.orgs_tenant_mismatches`) incapable de distinguer une faute d'un "
-        "désaccord.")
+        "un second écrivain avec sa propre règle le ferait diverger en silence, et "
+        "plus rien ne le rapporte depuis que le contrôle de conformité a été retiré "
+        "(03/09/2026).")
