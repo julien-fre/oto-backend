@@ -65,6 +65,21 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > Le raisonnement complet, la mesure et le relevé de production (0 cycle) sont dans
 > `docs/noeuds.md` — même défaut, même correction, une table plus loin.
 
+> **Un `unlink` qui n'a rien retiré le DIT (#699, 04/09).** `op=unlink` répondait `ok: true`
+> sur un no-op — le lien visé figurait encore dans les `links` de la réponse à ce même appel.
+> Deux causes, une seule correction. (1) Le **rowcount** de `remove_project_link` existait et
+> personne ne le lisait : l'unlink rend désormais `removed` (nombre de bindings retirés) et
+> **refuse** (`link_not_found`, 404) quand il n'a rien matché — un succès qui n'a rien fait est
+> pire qu'un refus, et la face MCP ne rend que le *message*, donc celui-ci nomme les refs que
+> le projet porte vraiment. (2) **Deux écritures désignent la même entité** : le stockage est
+> canonique (id) depuis que `link` normalise nom/slug→id, mais les lignes d'avant portent le
+> NOM du namespace ou le SLUG du guide — bien vivantes, résolues à la lecture (#117). L'unlink
+> canonisait la réf demandée puis supprimait cet id : zéro ligne quand la ligne porte l'autre
+> écriture, et le lien devenait **indélogeable** par le MCP (vécu sur le projet 59,
+> `suivi-commercial-index` → id 108). `_unlink_refs` confronte les deux côtés **canonisés** et
+> vise les refs BRUTES stockées, dans les deux sens. `op=link` reste inchangé : il canonise, et
+> refuse un nom introuvable (`unknown_tableau`) — on ne rouvre pas la porte aux liens morts.
+
 > **Push out-of-bande de gros contenu par un agent (issue #105).** Écrire un GROS contenu
 > via `oto_doc(body_md=…)`/multipart le fait transiter INLINE par le contexte du LLM (coût
 > tokens + troncature/paraphrase sur du verbatim). **`oto_upload_url(target)`** (capacité

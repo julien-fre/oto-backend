@@ -215,6 +215,62 @@ def _procedure_ref_to_id(org_id: Optional[int], ref: str) -> str:
     return str(inst["id"]) if inst and inst.get("id") is not None else ref
 
 
+def _ref_canonizer(row: dict, org_id: Optional[int], target_type: str):
+    """La fonction qui ramène une réf de lien à son écriture CANONIQUE — celle que `link`
+    STOCKE aujourd'hui (l'id stable). Identité pour les types sans normalisation."""
+    if target_type == "tableau":
+        return lambda r: _resolve_tableau_id(row, r) or str(r or "").strip()
+    if target_type == "procedure":
+        return lambda r: _procedure_ref_to_id(org_id, str(r or "").strip())
+    return lambda r: str(r or "").strip()
+
+
+def _unlink_refs(links: list[dict], target_type: str, given: str, canon) -> list[str]:
+    """Les `target_ref` STOCKÉS que la réf demandée désigne — la cible réelle d'un unlink.
+
+    Le stockage est canonique (id) DEPUIS que `link` normalise nom/slug→id, mais les
+    lignes d'avant portent encore le NOM du namespace (tableau) ou le SLUG du guide
+    (procédure) — et le chemin de LECTURE les résout toujours (#117) : ce sont des liens
+    bien vivants, avec leur `namespace` et leur slot. L'unlink, lui, canonisait la réf
+    demandée puis supprimait CET id : zéro ligne touchée quand la ligne porte l'autre
+    écriture, et un `ok: true` par-dessus (#699). On confronte donc les deux côtés
+    canonisés, dans les deux sens.
+
+    Renvoie les refs BRUTES, sans doublon : c'est la valeur STOCKÉE qui doit matcher la
+    clause SQL, jamais sa forme canonique. Vide = rien à délier (le caller refuse).
+
+    UNE règle, pas deux : `canon` est déterministe, donc deux refs identiques canonisent
+    pareil — un `stored == given` en OU ne déciderait jamais seul, et masquerait une
+    canonisation cassée derrière un vert."""
+    want = canon(given)
+    out: list[str] = []
+    for l in links:
+        if l.get("target_type") != target_type:
+            continue
+        stored = str(l.get("target_ref") or "")
+        if not stored or stored in out:
+            continue
+        if canon(stored) == want:
+            out.append(stored)
+    return out
+
+
+def _rien_a_delier(links: list[dict], target_type: str, given: str) -> str:
+    """Le message d'un unlink qui n'a RIEN retiré : ce qu'on cherchait, et ce que le projet
+    porte vraiment pour ce type. Sans le second, l'agent ne peut que réessayer à l'identique."""
+    presents = [str(l.get("target_ref")) for l in links
+                if l.get("target_type") == target_type and l.get("target_ref")]
+    tete = (f"Aucun lien `{target_type}` « {given} » sur ce projet : RIEN n'a été retiré "
+            "(déjà délié ?).")
+    if not presents:
+        return f"{tete} Ce projet ne porte aucun lien `{target_type}`."
+    montre = presents[:12]
+    return (f"{tete} Liens `{target_type}` de ce projet : "
+            + ", ".join(f"« {r} »" for r in montre)
+            + ("…" if len(presents) > len(montre) else "")
+            + " — reprends la réf telle que `op=get` la rend.")
+
+
 def _tableau_owner_candidates(row: dict) -> list[tuple[str, str]]:
     """Où CHERCHER un tableau nommé, pour un projet donné — du plus spécifique au plus large.
 
@@ -730,8 +786,8 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         target_ref = inp.target_ref
         identity_ref = inp.identity_ref
         config = dict(inp.config) if inp.config else None
+        proj_org = int(row["owner_id"]) if row.get("owner_type") == "org" else ctx.org_id
         if inp.target_type == "procedure":
-            proj_org = int(row["owner_id"]) if row.get("owner_type") == "org" else ctx.org_id
             target_ref = _procedure_ref_to_id(proj_org, target_ref)
         elif inp.target_type == "tableau":
             # Normalise nom→id (le datastore du propriétaire du projet). Stocker l'id garde
@@ -807,12 +863,25 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                 code = "slot_taken" if str(e).startswith("slot_taken") else "bad_link"
                 _require(False, code, str(e), 409 if code == "slot_taken" else 400)
         else:
-            db.remove_project_link(int(inp.project_id), inp.target_type, target_ref,
-                                   identity_ref=identity_ref)
+            # #699 — un unlink ne mime plus un succès. Il vise TOUTES les écritures que la
+            # réf demandée désigne (id canonique / nom-slug d'avant la normalisation), COMPTE
+            # ce qu'il a retiré, et refuse nommément si ce compte est nul : `ok: true` sur un
+            # no-op est pire qu'un refus — le lien restait dans les `links` de la réponse.
+            demande = str(inp.target_ref).strip()
+            existants = db.list_project_links(int(inp.project_id))
+            refs = _unlink_refs(existants, inp.target_type, demande,
+                                _ref_canonizer(row, proj_org, inp.target_type))
+            removed = sum(db.remove_project_link(int(inp.project_id), inp.target_type, r,
+                                                 identity_ref=identity_ref)
+                          for r in refs)
+            _require(removed, "link_not_found",
+                     _rien_a_delier(existants, inp.target_type, demande), 404)
         db.log_project_activity(int(inp.project_id), sub, f"project.{inp.op}",
                                 f"{inp.target_type}:{inp.label or target_ref}")
         out = {"ok": True, "id": inp.project_id,
                "links": db.list_project_links(int(inp.project_id))}
+        if inp.op == "unlink":
+            out["removed"] = removed
         # 0035 × 0046 — schéma CIBLE au binding d'un slot tableau : si une procédure
         # liée déclare ce slot avec un `schema`, un namespace vierge est PROVISIONNÉ
         # (le tableau naît avec son contrat — validation/lifecycle/clé) ; un schéma
@@ -1167,7 +1236,12 @@ CAPABILITIES += [
             "Slot names are a PROJECT-wide vocabulary (unique per project → 409 slot_taken; "
             "two linked procedures sharing `sortie` share the binding). "
             "Re-linking without role/config/slot preserves the "
-            "existing ones. get/link return each link's role + slot + config + a derived "
+            "existing ones. unlink returns `removed` = how many bindings it actually took "
+            "out, and REFUSES (`link_not_found`) when it matched none — it never answers ok "
+            "on a link it did not find. Give the `target_ref` as op=get renders it: an older "
+            "link may still carry the NAME of its tableau (or the SLUG of its procedure) "
+            "instead of the id, and unlink takes back either spelling. "
+            "get/link return each link's role + slot + config + a derived "
             "`cross_project` flag (the same entity is linked by another project → avoid brutal "
             "edits / ask); a tableau link also returns its resolved `namespace` — address THIS "
             "project's table by that name with the data_* tools (never hardcode a namespace). "
