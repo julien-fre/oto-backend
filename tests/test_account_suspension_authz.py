@@ -169,6 +169,44 @@ def test_une_pause_sans_motif_est_refusee(handler):
     assert (refus.value.status, refus.value.code) == (400, "missing_reason")
 
 
+def test_un_motif_trop_long_est_refuse_pas_rabote(handler):
+    """Un motif au-delà de la borne est REFUSÉ, jamais coupé en silence.
+
+    Vécu le 03/09/2026, sur le premier gel posé avec cet outil : le motif s'est
+    arrêté au milieu d'une phrase et a emporté sa dernière ligne — celle qui disait
+    à quelle condition réveiller le compte. Un texte exigé pour être relu des mois
+    plus tard perd, dans une coupe muette, exactement ce qu'on y écrit en dernier.
+    """
+    trop = "x" * (cap._MOTIF_MAX + 1)
+    with pytest.raises(AuthzDenied) as refus:
+        cap._account(_ctx(), _inp(CIBLE_T, reason=trop))
+    assert (refus.value.status, refus.value.code) == (400, "reason_too_long")
+    # Le refus DIT la mesure : sans elle, l'opérateur raccourcit à l'aveugle.
+    assert str(cap._MOTIF_MAX) in refus.value.message
+
+
+def test_un_motif_exactement_a_la_borne_passe_entier(handler, monkeypatch):
+    """La borne est inclusive, et le motif arrive INTACT à la couche qui l'écrit.
+
+    Versant positif du test précédent : refuser au-delà ne sert à rien si l'on rabote
+    encore en deçà. ⚠️ Ce qu'on inspecte est l'argument REÇU par `suspend_account` —
+    c'est le seul endroit où la coupe se produisait. Rappeler la doublure et relire
+    sa sortie ne prouverait que le comportement de la doublure.
+    """
+    recu = {}
+
+    def _capture(sub, by, reason):
+        recu["reason"] = reason
+        return {"sub": sub, "suspended_at": "2026-09-03", "suspended_by": by,
+                "suspended_reason": reason}
+
+    monkeypatch.setattr(cap.db, "suspend_account", _capture)
+    pile = "y" * cap._MOTIF_MAX
+    vue = cap._account(_ctx(), _inp(CIBLE_T, reason=pile))
+    assert vue["suspended"] is True
+    assert recu["reason"] == pile, "le motif a été raboté avant d'atteindre la base"
+
+
 def test_on_ne_met_pas_son_propre_compte_en_pause(handler):
     with pytest.raises(AuthzDenied) as refus:
         cap._account(_ctx(CIBLE_T), _inp(CIBLE_T))

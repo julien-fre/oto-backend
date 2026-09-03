@@ -165,6 +165,17 @@ Re-poser une pause **ne réécrit rien** : ni l'auteur, ni la date, ni le motif
 d'origine. Une pause est un fait daté ; l'écraser ferait perdre la seule chose que ces
 colonnes existent pour retenir.
 
+⚠️ **Un motif trop long est REFUSÉ, jamais raboté** (corrigé le 03/09/2026, le jour
+même du premier usage). Il était coupé en silence à `_MOTIF_MAX` : le premier gel posé
+avec cet outil s'est arrêté au milieu d'une phrase et a emporté sa dernière ligne —
+celle qui disait à quelle condition réveiller le compte. C'est le pire endroit possible
+pour une coupe muette, parce que la consigne de sortie s'écrit **en dernier** et que ce
+texte n'existe que pour être relu, des mois plus tard, par quelqu'un qui n'était pas
+là. La colonne est en `TEXT` : la borne est un choix de surface, pas une contrainte de
+stockage — donc elle se dit, et le refus donne la mesure pour que l'opérateur
+raccourcisse en sachant ce qu'il coupe. Cas de la classe « le code sait, et son savoir
+s'arrête à la frontière de la réponse » (oto#42).
+
 Le réveil est au **même palier** que la pose, et c'est voulu : obliger un partenaire à
 venir nous voir pour réveiller un de ses comptes reproduirait exactement le problème
 qu'on résout. Il rend `changed` — « réveillé » et « il ne dormait pas » ne sont pas la

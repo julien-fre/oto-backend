@@ -115,11 +115,25 @@ def _account(ctx: ResolvedCtx, inp: AccountSuspensionInput) -> dict:
         logger.info("compte réveillé sub=%s par=%s (change=%s)", cible, ctx.sub, change)
         return _vue(cible, None, changed=change)
 
-    motif = (inp.reason or "").strip()[:_MOTIF_MAX]
+    motif = (inp.reason or "").strip()
     if not motif:
         raise AuthzDenied(400, "missing_reason",
                           "`reason` requis : une pause sans motif écrit devient une "
                           "pause que personne ne saura expliquer ni lever.")
+    # ⚠️ REFUSER, pas raboter. Ce motif était tronqué à `_MOTIF_MAX` en silence, et le
+    # premier gel posé avec cet outil (03/09/2026) s'est arrêté au milieu d'une phrase
+    # — emportant sa dernière ligne, celle qui disait à quelle condition réveiller le
+    # compte. C'est le pire endroit pour une coupe muette : on écrit la consigne de
+    # sortie EN DERNIER, et le motif n'existe que pour être relu dans six mois par
+    # quelqu'un qui n'était pas là. La colonne, elle, est en TEXT — la borne est un
+    # choix de surface, pas une contrainte de stockage, donc elle doit se dire.
+    if len(motif) > _MOTIF_MAX:
+        raise AuthzDenied(
+            400, "reason_too_long",
+            f"`reason` fait {len(motif)} caractères pour {_MOTIF_MAX} au plus. Il est "
+            "refusé entier plutôt que raboté : une coupe silencieuse emporterait sa "
+            "fin, là où se trouve d'ordinaire la condition de réveil. Raccourcis-le "
+            "toi-même, en gardant pourquoi la pause est posée et à quoi on la lève.")
     etat = db.suspend_account(cible, by=ctx.sub, reason=motif)
     # `suspend_account` ne réécrit pas une pause en cours : la comparaison sur
     # l'auteur dit si CE geste est celui qui a posé la pause.
