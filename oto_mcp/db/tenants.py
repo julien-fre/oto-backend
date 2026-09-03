@@ -204,16 +204,44 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
 # axes — sinon deux définitions du « chez le partenaire » divergent, et la seconde
 # sera la moins prudente. Aujourd'hui : `db/outreach.py` (l'audience d'une relance).
 # `o` est l'alias attendu pour `orgs`, `%(primary)s` le slug du tenant primaire.
-_ORG_TENANT_EXPR = """COALESCE(
-      (SELECT t.slug FROM tenants t
-        WHERE t.id = o.tenant_id AND t.slug <> %(primary)s),
-      NULLIF(btrim(COALESCE(o.front_brand, '')), ''),
-      (SELECT p.slug
+# Les trois axes, NOMMÉS un par un — parce que deux expressions différentes en ont
+# besoin, et qu'elles ne prennent pas les mêmes. Les recopier serait la voie normale
+# vers deux définitions du « chez le partenaire » qui divergent en silence.
+_AXE_DECLARE = """(SELECT t.slug FROM tenants t
+        WHERE t.id = o.tenant_id AND t.slug <> %(primary)s)"""
+_AXE_MARQUE = """NULLIF(btrim(COALESCE(o.front_brand, '')), '')"""
+_AXE_MEMBRE = """(SELECT p.slug
          FROM org_members om
          JOIN (SELECT slug, slug || ':' AS pfx FROM tenants
                 WHERE slug <> %(primary)s) p ON om.sub LIKE p.pfx || '%%'
         WHERE om.org_id = o.id
-        ORDER BY length(p.pfx) DESC LIMIT 1),
+        ORDER BY length(p.pfx) DESC LIMIT 1)"""
+
+# La DÉRIVATION seule : les deux axes structurels (2) et (3), **sans le rattachement
+# déclaré**. C'est ce qui la rend capable de juger la colonne — une dérivation qui
+# repartirait de `tenant_id` se comparerait à elle-même et ne rougirait JAMAIS. Cette
+# omission est le cœur du contrôle de conformité, pas un raccourci.
+#
+# ⚠️ **Pas de repli sur le tenant primaire, et c'est tout le sujet.** Cette expression
+# rend NULL quand aucun axe ne parle — une org sans marque de front et sans membre
+# qualifié. NULL veut dire « je ne sais pas », PAS « elle est à nous » : replier sur
+# `%(primary)s` transformerait une absence de signal en affirmation, et le contrôle
+# accuserait toute org d'un tenant sans dashboard dont les membres sont des subs nus.
+# Trois états, jamais un zéro déguisé en verdict.
+_ORG_DERIVE_BRUT_EXPR = f"""COALESCE(
+      {_AXE_MARQUE},
+      {_AXE_MEMBRE})"""
+
+# Le tenant DÉCLARÉ, primaire compris (là où `_AXE_DECLARE` l'annule pour se laisser
+# dépasser dans le COALESCE) : pour comparer, il faut la valeur, pas un trou.
+_ORG_DECLARE_EXPR = """COALESCE(
+      (SELECT t.slug FROM tenants t WHERE t.id = o.tenant_id),
+      %(primary)s)"""
+
+_ORG_TENANT_EXPR = f"""COALESCE(
+      {_AXE_DECLARE},
+      {_AXE_MARQUE},
+      {_AXE_MEMBRE},
       %(primary)s)"""
 
 _ORG_TENANT_SQL = f"""
@@ -243,6 +271,67 @@ def org_tenant_slug(org_id: int) -> str:
         row = conn.execute(_ORG_TENANT_SQL,
                            {"primary": tenancy.PRIMARY_SLUG, "oid": int(org_id)}).fetchone()
     return (row and row["slug"]) or tenancy.PRIMARY_SLUG
+
+
+def orgs_tenant_mismatches(*, limit: int = _TENANT_LIST_CAP) -> dict:
+    """Les orgs dont le rattachement DÉCLARÉ est démenti par sa DÉRIVATION.
+
+    Le garde-fou du rattachement, et la seule lecture qui JUGE `orgs.tenant_id` au
+    lieu de le compter. Deux fautes, nommées séparément parce qu'elles ne se
+    corrigent pas pareil :
+
+    - **`non_declaree`** — l'org porte le tenant primaire (le DEFAULT de la colonne)
+      alors que sa marque de front ou un membre qualifié la rattachent à un
+      partenaire. C'est l'état qu'a laissé le provisioning tant qu'il n'écrivait pas
+      la colonne : **65 orgs sur 165 au 2026-09-03**. Se corrige en écrivant la
+      dérivation (`scripts/migrate_org_tenant.py`).
+    - **`contredite`** — l'org est déclarée chez un partenaire, et la dérivation en
+      désigne un AUTRE. Personne ne peut la produire aujourd'hui (`create_org` est
+      l'écrivain unique et dérive de la même source) ; on la surveille pour le jour
+      où un second écrivain apparaît. Se corrige en tranchant, pas en écrasant.
+
+    ⚠️ **Le troisième état n'est PAS une faute, délibérément.** Une org déclarée chez
+    un partenaire que la dérivation ne corrobore pas — ni marque de front, ni membre
+    qualifié — n'est pas rapportée : la dérivation dit « je ne sais pas », et une
+    absence de signal n'est pas une preuve du contraire. Deux populations réelles y
+    vivent : l'org d'un tenant sans `dashboard_url` (pas de marque à poser) dont les
+    membres sont des subs nus, et l'org qui vient de naître — `create_org` pose le
+    rattachement à l'INSERT, son premier membre arrive à l'appel suivant. Traiter ce
+    silence comme une faute rendrait le contrôle bruyant là où il doit être sûr.
+
+    ⚠️ **La population est DÉRIVÉE, pas énumérée** : la requête balaie `orgs` entière,
+    archivées comprises — c'est sur une archivée qu'un rattachement faux survit le
+    plus longtemps sans que personne le voie.
+
+    Rend `total` (le compte réel, sur toute la table) à part de `orgs` (la liste,
+    bornée par `limit`) : un plafond posé sur une lecture qui tronque déjà annoncerait
+    le chiffre de la page, pas celui de la population.
+    """
+    sql = f"""
+        WITH juge AS (
+            SELECT o.id, o.name, o.archived_at,
+                   {_ORG_DECLARE_EXPR}    AS declare,
+                   {_ORG_DERIVE_BRUT_EXPR} AS derive
+              FROM orgs o
+        ),
+        fautes AS (
+            SELECT *, CASE WHEN declare = %(primary)s THEN 'non_declaree'
+                           ELSE 'contredite' END AS faute
+              FROM juge
+             -- `derive IS NOT NULL` : le silence de la dérivation ne juge rien.
+             WHERE derive IS NOT NULL AND derive IS DISTINCT FROM declare
+        )
+        SELECT id, name, archived_at, declare, derive, faute,
+               (SELECT COUNT(*) FROM fautes) AS total
+          FROM fautes ORDER BY id LIMIT %(cap)s
+    """
+    params = {"primary": tenancy.PRIMARY_SLUG, "cap": max(1, int(limit))}
+    with _connect() as conn:
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    total = int(rows[0]["total"]) if rows else 0
+    for r in rows:
+        r.pop("total", None)
+    return {"total": total, "orgs": rows, "tronque": total > len(rows)}
 
 
 def _shape_tenant(row: dict) -> dict:

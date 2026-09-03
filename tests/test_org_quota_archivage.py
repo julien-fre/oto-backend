@@ -40,6 +40,13 @@ AUTRE = "sub-test-2"
 
 # ── le banc : DDL réel + migrations réelles ──────────────────────────────────
 
+# Les tables que le banc monte, dans l'ORDRE du DDL réel. `tenants` est en tête :
+# `orgs.tenant_id` la référence, et PostgreSQL crée les tables dans l'ordre donné —
+# c'est la contrainte que `test_tenant_l1_migration` garde sur le schéma servi.
+_TABLES = ("tenants", "users", "orgs", "org_members", "org_groups",
+           "org_group_members", "option_comps", "org_subscriptions")
+
+
 def _real_ddl(table: str) -> str:
     """Le `CREATE TABLE` de `table`, extrait du schéma RÉEL (`db/_schema.py`)."""
     m = re.search(rf"^CREATE TABLE IF NOT EXISTS {table} \(.*?^\);",
@@ -55,11 +62,16 @@ def _real_orgs_migrations() -> list[str]:
     par migration, pas par `_SCHEMA` : les recopier ici ferait diverger le banc du
     système au premier changement de type ou de nom.
 
-    On écarte les seules migrations porteuses d'un `REFERENCES` (`tenant_id`,
-    `kb_project_id`) : elles exigeraient `tenants`/`projects`, hors sujet ici, et les
-    inventer serait exactement le DDL de complaisance qu'on refuse. Le filtre est sur
-    la FORME du statement, pas sur une liste de colonnes — une colonne ajoutée demain
-    entre donc dans le banc toute seule.
+    On écarte les migrations qui référencent une table que le banc ne monte PAS
+    (aujourd'hui `kb_project_id` → `projects`) : les inventer serait exactement le
+    DDL de complaisance qu'on refuse. Le filtre se dérive de `_TABLES`, la liste des
+    tables réellement montées — pas d'une liste de colonnes. Une colonne ajoutée
+    demain entre donc dans le banc toute seule, et une table ajoutée à `_TABLES` y
+    fait entrer ses migrations sans qu'on y pense.
+
+    ⚠️ `tenant_id` était écarté par ce filtre jusqu'au 2026-09-03 ; depuis que
+    `create_org` DÉCLARE le tenant de l'org à l'INSERT, le banc doit monter `tenants`
+    — sans quoi il exercerait une création d'org que la production ne fait plus.
     """
     tree = ast.parse(open(_init.__file__, encoding="utf-8").read())
     out = [
@@ -68,7 +80,8 @@ def _real_orgs_migrations() -> list[str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str)
         and (node.value.startswith("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS")
              or node.value.startswith("CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_"))
-        and "REFERENCES" not in node.value
+        and all(cible in _TABLES
+                for cible in re.findall(r"REFERENCES\s+(\w+)", node.value))
     ]
     for col in ("archived_at", "personal_of"):
         assert any(col in s for s in out), f"migration de `orgs.{col}` introuvable"
@@ -83,15 +96,19 @@ def conn(pg_dsn):
     # sur le seul type que le code historique suppose.
     with psycopg.connect(pg_dsn, row_factory=_conn_mod._str_dict_row,
                          autocommit=True) as c:
-        for t in ("org_subscriptions", "option_comps", "org_group_members",
-                  "org_groups", "org_members", "orgs", "users"):
+        for t in reversed(_TABLES):
             c.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
         # `option_comps` + `org_subscriptions` : la liste de mes espaces dit
         # désormais, par org, si le compte est bêta (`access.has_option`) — le
         # banc porte les tables que le code servi LIT, toujours en DDL réel.
-        for t in ("users", "orgs", "org_members", "org_groups", "org_group_members",
-                  "option_comps", "org_subscriptions"):
+        for t in _TABLES:
             c.execute(_real_ddl(t))
+        # Le tenant primaire AVANT la migration qui le référence : `orgs.tenant_id`
+        # naît `NOT NULL DEFAULT 1 REFERENCES tenants(id)`, donc la FK est violée si
+        # la ligne 1 n'est pas là. Même ordre que `db/_init.py`, et c'est exactement
+        # la propriété que `test_tenant_l1_migration` tient sur le schéma servi.
+        c.execute("INSERT INTO tenants (id, slug, name) VALUES (1, 'oto', 'Oto') "
+                  "ON CONFLICT (id) DO NOTHING")
         for stmt in _real_orgs_migrations():
             c.execute(stmt)
         yield c
