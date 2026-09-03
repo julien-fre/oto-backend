@@ -79,11 +79,16 @@ def test_serper_scrape_perimeter_precedes_its_own_param_validation(perimetre, mo
     _assert_perimeter_spoke(e)
 
 
+@pytest.mark.exige_pin_oto_core
 def test_serper_scrape_perimeter_precedes_the_clients_linkedin_rule(monkeypatch):
     """Avec le VRAI client : sous périmètre, la règle interne du client (pages LinkedIn)
     n'est pas même consultée ; sans périmètre, elle refuse AVANT tout réseau — c'est
     l'ordre « périmètre → règle du client → réseau », indépendant du texte de la règle
-    (qui vit dans oto-core, épinglé par tag)."""
+    (qui vit dans oto-core, épinglé par tag).
+
+    ⚠️ Marqué `exige_pin_oto_core` depuis le 03/09 : il appelle le vrai
+    `scrape_page`, dont la signature a gagné `timeout_s` en v1.108.0. Sur un venv
+    resté en deçà, son rouge accuse ce dépôt pour un client qui n'est pas le sien."""
     from oto.tools.serper import SerperClient
     from oto_mcp.tools import serper
     monkeypatch.setattr("oto_mcp.access.resolve_api_key", lambda p, account=None: ("k", False))

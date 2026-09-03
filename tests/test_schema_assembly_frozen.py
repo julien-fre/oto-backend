@@ -175,8 +175,18 @@ from oto_mcp.db import _schema, schema
 # `schema.unipile.UNIPILE_GROUP_GRANTS`, un fragment à part posé juste après
 # `schema.orgs.GROUPS` dans `_schema.ASSEMBLAGE`. ADDITIF : rien n'est retiré ni
 # contraint sur les tables existantes.
-EMPREINTE = "30e2c6f23ad4c7743e14dc1c2e9307327ebe3b48aadc1372617b90a50eadd5e4"
-LONGUEUR = 135678
+# 2026-09-02 (identité portée par un travail, chantier « agents autonomes ») :
+# `runner_jobs.sub` — QUI a demandé ce travail, donc au nom de qui l'agent
+# agira. ⚠️ C'est le préalable du worker MUTUALISÉ : tant que l'identité vient
+# du jeton présenté par le worker, il faut un worker par organisation — ce n'est
+# pas un choix d'architecture, c'est l'empêchement qui a laissé 41 travaux sans
+# personne pour les prendre (#814). NULLABLE et ça le reste : les travaux d'avant
+# n'ont pas de créateur connu, et leur en inventer un donnerait un nom qui se
+# lirait comme un fait.
+# ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
+# bien 30e2c6f2… / 135678, mesuré au moment du rebase et jamais avant.
+EMPREINTE = "bf968c762090ec2fdc0f414963af4fdd398e28418b2b756060121be8fe16a467"
+LONGUEUR = 136575
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -39,8 +39,15 @@ JOBS_PAGE_MAX = 200
 
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 run_id: Optional[str] = None, max_attempts: int = 3,
-                fleet_id: Optional[int] = None) -> dict:
+                fleet_id: Optional[int] = None,
+                sub: Optional[str] = None) -> dict:
     """Enfile un travail, éventuellement rattaché à une FLOTTE.
+
+    ⚠️ `sub` = **l'identité que l'agent portera en exécutant ce travail**, pas
+    une simple trace d'audit. C'est le préalable du worker mutualisé : tant que
+    l'identité vient du jeton présenté par le worker, il faut un worker par
+    organisation. Absent = créateur inconnu (travaux d'avant le 02/09) ; on ne
+    lui en invente pas un.
 
     ⚠️ `fleet_id` est ce qui rend un passage lisible d'un bout à l'autre : sans
     lui, `runner.fleets op=state` agrège sur un ensemble vide et répond
@@ -57,13 +64,13 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
         row = conn.execute(
             """
             INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts,
-                                     fleet_id)
-            VALUES (%s, %s, %s::jsonb, %s, %s, %s)
-            RETURNING id, status, due_at, fleet_id
+                                     fleet_id, sub)
+            VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s)
+            RETURNING id, status, due_at, fleet_id, sub
             """,
             (org_id, kind,
              json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-             run_id, max(1, int(max_attempts)), fleet_id),
+             run_id, max(1, int(max_attempts)), fleet_id, sub),
         ).fetchone()
     return dict(row)
 
@@ -178,7 +185,8 @@ def claim_next_job(org_id: int, worker_sub: str,
                     ORDER BY due_at
                       FOR UPDATE SKIP LOCKED
                     LIMIT 1)
-            RETURNING id, kind, run_id, payload, attempts, max_attempts, lease_until
+            RETURNING id, kind, run_id, payload, attempts, max_attempts,
+                      lease_until, sub, org_id
             """,
             (worker_sub, int(lease_seconds), org_id),
         ).fetchone()
@@ -301,7 +309,7 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     ou, params = _filtre_de_file(org_id, status)
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
          "       claimed_by, lease_until, last_error, result, due_at, created_at, "
-         "       finished_at, fleet_id "
+         "       finished_at, fleet_id, sub "
          "FROM runner_jobs") + ou
     if before_id is not None:
         q += " AND id < %s"
@@ -341,7 +349,7 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
         row = conn.execute(
             "SELECT id, kind, run_id, payload, status, attempts, max_attempts, result, "
             "       claimed_by, lease_until, last_error, due_at, created_at, "
-            "       finished_at, fleet_id "
+            "       finished_at, fleet_id, sub "
             "FROM runner_jobs WHERE id = %s AND org_id = %s",
             (job_id, org_id),
         ).fetchone()

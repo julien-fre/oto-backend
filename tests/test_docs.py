@@ -20,11 +20,11 @@ def seams(monkeypatch):
     monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     monkeypatch.setattr(db, "get_doc_by_id", lambda i: dict(DOC, id=i) if i in (3, 9) else None)
     monkeypatch.setattr(db, "create_doc",
-                        lambda pid, title, parent_id=None, body_md="", kind="doc", created_by=None, description=None:
+                        lambda pid, title, parent_id=None, body_md="", kind="doc", created_by=None, description=None, trace=None:
                         rec["create"].append((pid, title, parent_id, kind, created_by)) or 3)
     monkeypatch.setattr(db, "list_docs_for_project", lambda pid: [DOC])
     monkeypatch.setattr(db, "update_doc",
-                        lambda did, title=None, body_md=None, kind=None, edited_by=None, description=None, expected_rev=None: rec["update"].append((did, title, body_md, kind, edited_by, expected_rev)))
+                        lambda did, title=None, body_md=None, kind=None, edited_by=None, description=None, expected_rev=None, trace=None: rec["update"].append((did, title, body_md, kind, edited_by, expected_rev)))
     monkeypatch.setattr(db, "list_doc_revisions",
                         lambda did, limit=50: [{"id": 1, "title": "v0", "body_md": "old", "edited_by": "u1", "created_at": "2026-06-30"}])
     # `delete_doc` rend le nombre de DESCENDANTS emportés (#657) : le double le rend

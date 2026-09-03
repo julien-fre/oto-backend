@@ -45,7 +45,7 @@ def _web_read(monkeypatch, *, fetch=None, serper="absent", browserbase_page=None
             def __init__(self, api_key):
                 pass
 
-            def scrape_page(self, url, include_markdown=True):
+            def scrape_page(self, url, include_markdown=True, timeout_s=None):
                 if isinstance(serper, Exception):
                     raise serper
                 return serper

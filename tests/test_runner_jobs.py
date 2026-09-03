@@ -31,9 +31,13 @@ def espion(monkeypatch):
     # ancienne signature ne protège plus rien — elle éclate en `TypeError`, ce qui
     # est le bon comportement : c'est le contrat qui a bougé, pas le test.
     monkeypatch.setattr(RJ.db, "enqueue_job",
+                        # ⚠️ `**_` : une doublure qui fige la signature de son
+                        # original casse au premier champ ajouté — et l'échec
+                        # accuse le test, pas le manque.
                         lambda org_id, kind, payload=None, run_id=None,
-                        max_attempts=3, fleet_id=None:
-                        vu.update(org=org_id, kind=kind, fleet=fleet_id) or
+                        max_attempts=3, fleet_id=None, sub=None, **_:
+                        vu.update(org=org_id, kind=kind, fleet=fleet_id,
+                                  sub=sub) or
                         {"id": 7, "status": "pending", "due_at": "2026-08-13",
                          "fleet_id": fleet_id})
     monkeypatch.setattr(RJ.db, "claim_next_job",
