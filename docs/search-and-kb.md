@@ -60,7 +60,22 @@ Le lien `project_links.target_type='doc'` est RETIRÉ ; relier des pages =
 les **backlinks `[[…]]`** (Ship 4, LIVE) : résolus À L'ÉCRITURE (hook `db.create/update/
 delete_doc` — JAMAIS capacité, `resolve_change` appelle db en direct), précédence projet >
 KB (`db/backlinks.py`), table dérivée `doc_links` (CASCADE 2 côtés), `oto_doc op=backlinks`
-= « Cité par » filtré accès. **Propositions modif+création + inbox** (Ship 3, LIVE) : « les
+= « Cité par » filtré accès.
+⚠️ **Le graphe n'est PAS symétrique, et ce n'est pas un bug d'index (#611, 03/09).** La
+portée de résolution EST le scope `[projet, KB]` — donc une page qui vit dans la **KB**
+résout contre la KB SEULE et ne peut jamais lier une page de projet, pendant que cette
+page de projet la lie sans peine. Signalé le 28/08 sur une carte de tête citant six pages
+en tableau ET en ligne de liens, dont aucune ne la voyait en retour ; quatre hypothèses
+avaient été éprouvées et écartées avant d'arriver ici, et **un `op=update` complet ne
+répare rien** puisque la résolution est la même. Conséquence à connaître : *`op=backlinks`
+ne vaut pas comme contrôle de complétude ni d'orphelin* — une page bien citée depuis la
+carte de l'org s'y lit comme orpheline. Élargir la portée à tous les projets a été écarté :
+« Start Here » résoudrait n'importe où, et chaque écriture deviendrait un scan de toute
+l'org. **Ce qui manquait n'était pas la portée, c'était de SAVOIR** : un lien-souche n'est
+stocké nulle part et n'était dit nulle part. Toute écriture rend donc
+`citations_sans_cible` (+ son hint, qui dit la conséquence ET la cause), et la description
+servie porte l'asymétrie. Reproduit sur banc factice, pas déduit.
+**Propositions modif+création + inbox** (Ship 3, LIVE) : « les
 lecteurs proposent » — un viewer (lecture sans écriture) qui crée/modifie obtient une
 PROPOSITION (`doc_change_requests`, `doc_id` nullable + `project_id` + emplacement + CHECK) ;
 le dispatch `docs/core.py` route resolve/list/create-proposal sur request_id/project_id **AVANT

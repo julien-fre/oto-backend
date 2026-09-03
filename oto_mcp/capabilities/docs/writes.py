@@ -33,12 +33,13 @@ def create(sub: Optional[str], inp) -> dict:
         parent = db.get_doc_by_id(int(inp.parent_id))
         require(parent and parent["project_id"] == inp.project_id, "bad_parent",
                 "Parent invalide (autre projet ou inexistant).")
+    trace: dict = {}
     did = db.create_doc(int(inp.project_id), inp.title.strip(), parent_id=inp.parent_id,
                         body_md=inp.body_md or "", kind=(inp.kind or "doc"), created_by=sub,
-                        description=inp.description)
+                        description=inp.description, trace=trace)
     db.log_project_activity(int(inp.project_id), sub, "doc.create", inp.title.strip())
-    return view.projected(db.get_doc_by_id(did), sub, inp.fields,
-                          brut_par_defaut=False, hint=view.HINT_ACCUSE)
+    return {**view.projected(db.get_doc_by_id(did), sub, inp.fields,
+                             brut_par_defaut=False, hint=view.HINT_ACCUSE), **trace}
 
 
 def bulk_create(sub: Optional[str], inp) -> dict:
@@ -76,18 +77,20 @@ def set_public(sub: Optional[str], inp, row: dict, pid: int) -> dict:
 
 def update(sub: Optional[str], inp, row: dict, pid: int) -> dict:
     require(common.can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+    trace: dict = {}
     try:
         db.update_doc(int(inp.doc_id), title=(inp.title.strip() if inp.title else None),
                       body_md=inp.body_md, kind=inp.kind, edited_by=sub,
-                      description=inp.description, expected_rev=inp.expected_rev)
+                      description=inp.description, expected_rev=inp.expected_rev,
+                      trace=trace)
     except db.DocConflict as e:
         # Écrasement concurrent évité : le doc a changé depuis la lecture du client.
         require(False, "conflict",
                 f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                 f"Relis-le (op=get) et refais ton édition sur la version à jour.", 409)
     db.log_project_activity(pid, sub, "doc.update", row.get("title"))
-    return view.projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
-                          brut_par_defaut=False, hint=view.HINT_ACCUSE)
+    return {**view.projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
+                             brut_par_defaut=False, hint=view.HINT_ACCUSE), **trace}
 
 
 def delete(sub: Optional[str], inp, row: dict, pid: int) -> dict:

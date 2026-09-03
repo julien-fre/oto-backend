@@ -504,7 +504,8 @@ _DOC_COLS = ("id, project_id, parent_id, title, description, position, body_md, 
 
 def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
                body_md: str = "", kind: str = "doc", created_by: Optional[str] = None,
-               description: Optional[str] = None) -> int:
+               description: Optional[str] = None,
+               trace: Optional[dict] = None) -> int:
     # `position` : fin de fratrie (MAX+16, même transaction) — l'ordre curé (Ship 2)
     # est posé dès la création, le tri (parent_id, position, title) reste stable.
     with _connect() as conn:
@@ -520,7 +521,7 @@ def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
         conn.execute("UPDATE projects SET updated_at = NOW() WHERE id = %s", (project_id,))
         from .search import stamp_rank_vector
         stamp_rank_vector(conn, "docs", "id = %s", (int(row["id"]),))
-        _backlinks.refresh_links(conn, int(row["id"]), project_id, body_md)
+        _backlinks.refresh_links(conn, int(row["id"]), project_id, body_md, trace)
         # #6 C : une page créée avec ce titre résout les `[[Titre]]`-souches écrits AVANT
         # elle dans d'autres pages → on re-résout leurs liens.
         _backlinks.reresolve_referrers(conn, project_id, title)
@@ -632,7 +633,8 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
                body_md: Optional[str] = None, kind: Optional[str] = None,
                edited_by: Optional[str] = None,
                description: Optional[str] = None,
-               expected_rev: Optional[str] = None) -> None:
+               expected_rev: Optional[str] = None,
+               trace: Optional[dict] = None) -> None:
     sets: list[str] = []
     params: list = []
     if title is not None:
@@ -680,7 +682,8 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
             pr = conn.execute("SELECT project_id FROM docs WHERE id = %s",
                               (doc_id,)).fetchone()
             if pr is not None:
-                _backlinks.refresh_links(conn, doc_id, pr["project_id"], body_md)
+                _backlinks.refresh_links(conn, doc_id, pr["project_id"], body_md,
+                                         trace)
         # #6 C : RENOMMAGE — re-résout les référents de l'ANCIEN et du NOUVEAU titre (les
         # `[[ancien]]` se délient proprement, les `[[nouveau]]`-souches se lient).
         if title is not None and prior is not None and title != prior["title"]:
