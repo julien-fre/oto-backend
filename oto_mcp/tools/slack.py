@@ -187,6 +187,18 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Send a Slack message to a channel or DM (appears as you).
 
+        ⚠️ **Long text is SPLIT, never truncated.** Above ~4,000 characters the
+        text goes out as SEVERAL messages: the first one where you asked, each
+        later part threaded under it. Nothing is lost. The response then carries
+        `ts_all` (every ts, in order) and `split_into` next to `ts` — and `ts` is
+        always the FIRST part, the one to reuse to reply in the same thread.
+        A response with `ts` alone means one single message went out.
+
+        Read that before re-posting: a message can be deleted but NOT edited, so
+        a caller who wrongly concludes it was truncated posts a duplicate instead
+        of fixing one. `split_into` is what tells you, without reading the
+        channel back — which some procedures forbid as a source.
+
         Args:
             channel: Channel ID (e.g. C0123456789), DM channel ID (D…), or an
                 already-opened conversation. To DM a user by email, call

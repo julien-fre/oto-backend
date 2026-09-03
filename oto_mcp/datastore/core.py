@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import copy
 
 import base64
 import binascii
@@ -33,6 +34,7 @@ from typing import Any, Optional
 
 from psycopg.errors import UniqueViolation
 
+from . import ecartes as dsec
 from . import schema as dsv2
 from . import claimable, hors_org
 # Les refus : extraits dans `errors` (#325), ré-importés ici pour que tout appelant
@@ -387,6 +389,10 @@ class DatastorePg(SchemaOpsMixin):
         # Même portée que les relevés ci-dessus (un store par requête), même union
         # sur un lot — mais une LISTE : la ligne fait partie de l'information.
         self.off_erased: list = []
+        # #667 : les valeurs que le geste a posées et que le schéma REFUSE, écartées
+        # pour que le reste de la ligne s'écrive. Sixième liste, distincte des cinq
+        # autres — celles-ci ne sont NI en base NI perdues en silence.
+        self.off_rejected: list = []
         # Et ce qu'il aurait vidé sans la règle de #608 : les colonnes qu'il nomme
         # avec un vide non-`null` par-dessus une valeur en place. Liste SÉPARÉE
         # d'`off_erased` — l'une nomme ce qui n'est plus, l'autre ce qui est resté.
@@ -713,6 +719,70 @@ class DatastorePg(SchemaOpsMixin):
         self.off_forced = list(releve)
         session_org.note_call_trace(readonly_forced=list(releve))
 
+    def _ecarter(self, schema: Optional[dict], merged: dict, errors: list,
+                 hors: list, *, prev_status=None,
+                 written: Optional[set] = None) -> Optional[list]:
+        """Écarte les valeurs hors options et rend leur relevé — ou None pour
+        refuser tout, comme avant (#667).
+
+        Trois conditions, et chacune ferme un trou :
+
+        1. **Les refus sont TOUS des valeurs hors options.** Un requis manquant ou
+           une transition interdite portent sur la COHÉRENCE de la ligne : les
+           écarter écrirait une fiche fausse. Le partage est là, pas ailleurs.
+        2. **Chaque champ fautif est posé par CE geste.** Un patch ne se fait pas
+           amputer d'une valeur qu'il n'a pas écrite : ce serait un effacement
+           silencieux de la base, exactement ce que `valeurs_effacees` existe pour
+           empêcher. Le cran juge le geste, pas le passé qu'il hérite.
+        3. **La ligne amputée REPASSE la validation entière.** Retirer une valeur
+           peut en défaire une autre — une colonne-aiguillage écartée cesse de
+           rendre requis ce qu'elle gardait. Sans ce second tour, on écrirait une
+           ligne incomplète sur la foi d'un contrôle qui n'a pas vu sa forme
+           finale. Elle échoue ⇒ on refuse tout, avec le message d'origine.
+
+        ⚠️ L'amputation se joue d'abord sur une COPIE : `merged` n'est touché que
+        si le second tour est propre. Un écartement à moitié appliqué sur un
+        refus final laisserait l'appelant avec un dict trafiqué et une exception.
+        """
+        if not hors or len(hors) != len(errors):
+            return None
+        # Une valeur dont le schéma déclare la DESTINATION est mal rangée, pas
+        # indésirable (#545/#667) : le refus dit où l'écrire, et 27 agents sur 27
+        # se corrigent. L'écarter écrirait une fiche qui prétend ne pas avoir été
+        # qualifiée, sous un `ok: true` — corrompre en silence, pas sauver.
+        if any(h.get("destination") for h in hors):
+            return None
+        essai = copy.deepcopy(merged)
+        releve: list = []
+        for h in hors:
+            champ = str(h.get("champ") or "")
+            tete = dsec.tete(champ)
+            if not tete or (written is not None and tete not in written):
+                return None
+            if not dsec.retirer(essai, champ):
+                return None
+            options = ", ".join(str(o) for o in (h.get("options") or []))
+            releve.append({
+                "champ": champ,
+                "motif": f"valeur hors options ({options})",
+                "valeur_rejetee": h.get("valeur"),
+            })
+        # Rien à sauver ⇒ rien à écarter. Quand la valeur fautive est TOUT ce que
+        # le geste pose, l'amputer ne sauve pas une fiche : elle en crée une VIDE,
+        # sous un `ok`. Le motif de ce lot est de préserver un travail déjà fait —
+        # là où il n'y en a pas, le refus reste la bonne réponse, et c'est ce que
+        # le banc du régime strict (#319) a rappelé.
+        reste = (essai if written is None
+                 else {k: v for k, v in essai.items() if k in written})
+        if not any(not dsv2.est_vide(v) for v in reste.values()):
+            return None
+        if dsv2.validate_row(schema, essai, prev_status=prev_status,
+                             written=written):
+            return None
+        for h in hors:
+            dsec.retirer(merged, str(h.get("champ") or ""))
+        return releve
+
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
@@ -731,10 +801,17 @@ class DatastorePg(SchemaOpsMixin):
         # récupérer après coup imposerait de reparser le message, ce que la face REST
         # ne doit jamais avoir à faire.
         details: dict = {}
+        hors: list = []
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
-                                   written=written, details=details)
+                                   written=written, details=details, hors=hors)
         if errors:
-            raise RowValidationError(errors, details=details)   # refusée ⇒ rien à relever
+            # #667 : une valeur hors options s'ÉCARTE, la fiche s'écrit. Tout autre
+            # refus — et toute combinaison avec un autre refus — retombe ici.
+            ecartes = self._ecarter(schema, merged, errors, hors,
+                                    prev_status=prev_status, written=written)
+            if ecartes is None:
+                raise RowValidationError(errors, details=details)  # rien à relever
+            self.off_rejected.extend(ecartes)
         posed = merged if written is None else {k: merged[k] for k in written
                                                 if k in merged}
         # #354 : un `id` NU posé par le geste, qu'aucun field ne déclare, est un
@@ -853,6 +930,10 @@ class DatastorePg(SchemaOpsMixin):
         # distincte des quatre autres — les valeurs qu'elle nomme sont ENCORE en
         # base, et c'est toute la différence avec `valeurs_effacees`.
         out.update(ignores_report(self.off_ignored))
+        # #667 : SIXIÈME clé — ce que le schéma a refusé et que le geste a écarté
+        # pour écrire le reste. Ni en base (à la différence de `hors_options`), ni
+        # détruite (à la différence de `valeurs_effacees`) : jamais entrée.
+        out.update(dsec.rapport(self.off_rejected))
         return out
 
     # Le message que voient les tableaux dont l'écriture d'un état final libérait la

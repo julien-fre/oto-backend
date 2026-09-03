@@ -1003,6 +1003,44 @@ pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules �
 sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
 rétroactivement casserait des tableaux qui n'ont rien demandé.
 
+**Une valeur refusée s'ÉCARTE, la fiche s'écrit (03/09, #667).** Le refus de schéma
+partait en bloc : une seule sous-valeur hors des options déclarées, et tout l'appel
+repartait. Mesuré le 02/09 sur une vague de 40 écritures d'agents — **8 rejets, dont 5
+pour ce seul motif**, chacun emportant une fiche entière (effectif relevé au registre,
+convention collective vérifiée, interlocuteurs trouvés, qualification rédigée et
+sourcée), soit ~60 000 jetons déjà payés à repayer. Le refus reste légitime — la colonne
+du cas déclare `__non_conserve__`, une exigence de confidentialité du client — mais pas
+sa PORTÉE : l'agent n'a pas commis une faute de structure, il a rangé une donnée publique
+dans un champ que le schéma ferme. **Le verrou doit protéger la donnée, pas détruire le
+reste.** D'où la **sixième** clé du relevé, `valeurs_ecartees` (`{champ, motif,
+valeur_rejetee}`) + son `hint` : ni en base (à la différence de `hors_options`), ni
+détruite (à la différence de `valeurs_effacees`) — jamais entrée. Le geste vit dans
+`datastore/ecartes.py`, décidé au seam `_check_row`.
+
+⚠️ **Quatre gardes bornent l'écartement, et chacune ferme un trou.** *(1)* Les refus sont
+TOUS des valeurs hors options : un requis manquant ou une réservation ambiguë portent sur
+la COHÉRENCE de la ligne, et leur rejet total reste juste — les écarter écrirait une fiche
+fausse. *(2)* Le champ fautif est posé par CE geste : amputer un patch d'une valeur qu'il
+n'a pas écrite serait un effacement silencieux de la base. *(3)* La ligne amputée REPASSE
+la validation entière — retirer une valeur peut en défaire une autre (une colonne-
+aiguillage écartée cesse de rendre requis ce qu'elle gardait), et sans second tour on
+écrirait une ligne incomplète sur la foi d'un contrôle qui n'a pas vu sa forme finale.
+*(4)* Il RESTE quelque chose à écrire : quand la valeur fautive est tout ce que le geste
+pose, l'amputer ne sauve aucune fiche — elle en crée une **vide**, sous un `ok`. Le motif
+du lot est de préserver un travail déjà fait ; là où il n'y en a pas, refuser reste juste.
+Cette borne-là a été rappelée par le banc du régime strict (#319), pas par un raisonnement
+— **deux bancs existants sur quatre gardes** : une règle neuve se mesure contre ce qui est
+déjà gardé avant de se croire complète.
+
+⚠️ **Et une valeur MAL RANGÉE n'est pas une valeur à jeter.** Quand le schéma déclare une
+destination pour elle (#545 — la colonne qui se dit requise par celle qui refuse), le
+refus dit OÙ l'écrire et 27 agents sur 27 se corrigent : l'écarter écrirait une fiche qui
+prétend ne pas avoir été qualifiée, sous un `ok: true`. *Perdre du travail coûte cher ; en
+corrompre en silence coûte plus cher.* La première rédaction de ce lot écartait
+uniformément — c'est le banc de #545 qui l'a attrapée, pas un raisonnement.
+⚠️ **Pas de réglage par tableau**, demande explicite du signal : un cran de plus à tenir
+est un défaut qui ne se voit qu'en production, quand il est mal posé.
+
 ⚠️ **Un vide qui ne pose RIEN d'autre est REFUSÉ, et le refus écrit la porte (#724,
 01/09/2026).** Entre 04:16 et 04:20 ce jour-là, dix `data_write(id=…,
 row={'contacts': []})` sur des fiches clientes : dix `200`, zéro retrait, découverts en

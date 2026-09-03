@@ -377,6 +377,7 @@ def register(mcp: FastMCP) -> None:
     def serper_scrape(
         url: str,
         format: Literal["markdown", "text", "both"] = "markdown",
+        timeout_s: Optional[int] = None,
     ) -> dict:
         """Récupère une page web via le scraper de Serper.
 
@@ -388,15 +389,22 @@ def register(mcp: FastMCP) -> None:
         court ne prouve donc PAS que la page est vide. Regarde sa longueur avant
         d'en tirer un fait sur l'entreprise.
 
-        ⚠️ **Un appel peut bloquer ~60 s**, y compris sur un domaine qui n'existe
-        pas — rien ne le vérifie avant l'envoi. Une URL fabriquée à partir d'un nom
-        de société coûte donc une minute pour rien : pars d'une URL constatée.
+        ⚠️ **Un appel attend au plus 15 secondes**, puis rend une expiration —
+        y compris sur un domaine qui n'existe pas, que rien ne vérifie avant
+        l'envoi. Une expiration est un échec NORMAL, pas une panne : sur les
+        appels mesurés, la moitié des échecs portait sur des adresses fabriquées
+        à partir d'un nom de société. **Pars d'une URL constatée**, et ne réessaie
+        pas la même : ce n'est pas la lenteur qui coûte, c'est ce qu'elle emporte
+        — pendant que tu attends, ton propre contexte se refacture.
 
         Args:
             url: URL de la page à récupérer — refusée si elle relève des
                 `excluded_url_prefixes` du projet.
             format: "markdown" (défaut, la représentation lisible par un LLM) |
                 "text" (brut) | "both" (seulement si tu as vraiment besoin de comparer).
+            timeout_s: secondes d'attente, 1 à 60 (défaut 15). Serre-le quand tu
+                enchaînes beaucoup de pages douteuses ; une valeur hors bornes est
+                ramenée dedans, jamais refusée.
         """
         # Le refus du périmètre parle en PREMIER (#632) : avant la validation de
         # `format`, avant la règle du client amont sur les hôtes clos.
@@ -404,7 +412,8 @@ def register(mcp: FastMCP) -> None:
         if format not in ("markdown", "text", "both"):
             raise _bad(f"`format` invalide : {format!r} (markdown | text | both).")
         try:
-            res = _run("scrape_page", url=url, include_markdown=format != "text")
+            res = _run("scrape_page", url=url, include_markdown=format != "text",
+                       timeout_s=timeout_s)
             # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
             # contenu (mesuré, 97 % de mots communs), pour 37 % du payload en pure
             # duplication. On n'en sert qu'une — retirer un doublon ne perd rien. Le
