@@ -11,7 +11,10 @@ répondent par webhook (async) → hors périmètre (itération suivante).
 """
 from __future__ import annotations
 
+import time
 from typing import Literal, Optional
+
+import requests
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -142,6 +145,57 @@ def _shape(payload: object, op: str, full: bool, fields: Optional[list[str]]) ->
     return out
 
 
+# ── Échec de TRANSPORT : AI Ark n'a jamais répondu ───────────────────────────────
+# Signal #675 (2026-09-03, org 196) : l'endpoint EXPORT rend des « Read timed out.
+# (read timeout=30) » par rafales — 7 fois sur 4 URLs de profil — pendant que la
+# RECHERCHE répond normalement dans les mêmes minutes. Rejouer l'appel IDENTIQUE finit
+# par passer.
+#
+# Deux défauts, mesurés sur la chaîne réelle (tool → client oto-core → requests) :
+#   1. AUCUNE reprise, ni ici ni dans le client : une tentative, puis l'échec ;
+#   2. l'échec sortait EMBALLÉ dans une `McpError(INVALID_PARAMS)` → la taxonomie le
+#      classait `code="invalid_input"`, `retryable=false`. Le MÊME timeout non emballé
+#      est classé `upstream_timeout`, `retryable=true`, « réessaie dans un instant » :
+#      notre traduction INVERSAIT le verdict que la plateforme sait déjà rendre, et son
+#      message (« n'a pas pu traiter la requête ») accusait l'entrée d'un appel qu'AI
+#      Ark n'a jamais lu.
+#
+# C'est le pire endroit pour se tromper de verdict. Sur un export, un agent à qui on
+# répond « ton appel est mauvais, ne réessaie pas » conclut à une ABSENCE et écrit
+# `not_found` sur quelqu'un que personne n'a résolu.
+#
+# D'où : reprise bornée, puis le timeout REMONTE TEL QUEL. L'emballer curerait le
+# message au prix du verdict — `error_taxonomy.classify` traite toute `McpError` en
+# premier et n'en rend jamais une `retryable`, les deux ne sont pas cumulables depuis
+# ici. Ce que le message perd, la description de l'outil le dit (relue à chaque appel).
+_TRANSPORT_TENTATIVES = 2      # la tentative initiale + UNE reprise
+_TRANSPORT_PAUSE_S = 1.5
+
+
+def _appel_avec_reprise(fn, client):
+    """Exécute `fn(client)`, en reprenant les seuls échecs de TRANSPORT.
+
+    `requests.exceptions.Timeout` = AI Ark n'a jamais répondu : ni un refus, ni une
+    absence, RIEN. C'est le seul cas où rejouer l'appel identique a un sens (mesuré :
+    la tentative suivante passe) et le seul où l'agent ne doit surtout pas conclure.
+    Tout le reste — 4xx, 5xx, corps illisible — est une RÉPONSE d'AI Ark : on ne la
+    rejoue pas, elle part au traducteur d'erreurs.
+
+    Bornée à `_TRANSPORT_TENTATIVES` : une tentative coûte jusqu'à 30 s de read timeout
+    (`AiArkClient.TIMEOUT`, oto-core), donc deux tiennent encore dans le budget d'un
+    appel d'outil là où trois monopoliseraient une minute et demie un thread du pool —
+    et c'est ce pool qui a hangé la box le 25/06. Au-delà, la reprise revient à l'agent,
+    et la réponse le lui dit (`retryable: true`).
+    """
+    for n in range(1, _TRANSPORT_TENTATIVES + 1):
+        try:
+            return fn(client)
+        except requests.exceptions.Timeout:
+            if n == _TRANSPORT_TENTATIVES:
+                raise
+            time.sleep(_TRANSPORT_PAUSE_S)
+
+
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
     """Sonde « tester la connexion » : la clé authentifie-t-elle vraiment ?
 
@@ -162,7 +216,7 @@ def register(mcp: FastMCP) -> None:
         return AiArkClient(api_key=key), is_platform
 
     def _run(fn):
-        """Exécute un appel AI Ark : traduit une erreur HTTP en McpError
+        """Exécute un appel AI Ark : traduit une RÉPONSE d'erreur en McpError
         actionnable et compte l'usage plateforme sur succès.
 
         ⚠️ Un 5xx amont n'innocente PAS l'entrée — le message ne l'affirme donc
@@ -170,11 +224,21 @@ def register(mcp: FastMCP) -> None:
         faux : Kaspr rend 500 sur un `dataToGet` inconnu). La reprise est bornée
         à une tentative différée, cohérent avec le `retryable: false` que rend la
         taxonomie pour cette McpError : « rejouable tel quel » n'est pas le
-        premier geste quand l'entrée peut être en cause."""
+        premier geste quand l'entrée peut être en cause.
+
+        Un échec de TRANSPORT, lui, ne dit rien de l'entrée : AI Ark n'a pas lu
+        l'appel. Il est repris une fois (`_appel_avec_reprise`) puis remonte NU —
+        cf. le bloc `_TRANSPORT_*`. La distinction est toute la correction du
+        signal #675 : ici, une erreur mal traduite se lit comme une absence."""
         client, is_platform = _client()
         try:
-            result = fn(client)
+            result = _appel_avec_reprise(fn, client)
         except McpError:
+            raise
+        except requests.exceptions.Timeout:
+            # NE PAS emballer : tel quel la taxonomie rend `upstream_timeout` /
+            # `retryable: true` ; emballé, elle rendrait `invalid_input` /
+            # `retryable: false` — « corrige ton appel » sur un appel jamais lu.
             raise
         except Exception as e:
             resp = getattr(e, "response", None)
@@ -232,6 +296,10 @@ def register(mcp: FastMCP) -> None:
         - **"companies"**: companies by firmographics.
 
         Returns the AI Ark page: `content[]`, `totalElements`, `totalPages`.
+
+        A read timeout is retried ONCE and then raised with `retryable: true` — a
+        failure, never an empty page (⚠️ the retry can bill a second time if AI Ark
+        had already processed the first attempt).
 
         Args:
             op: "people" (default) | "companies".
@@ -304,6 +372,15 @@ def register(mcp: FastMCP) -> None:
 
         Every op returns `{"found": false}` rather than an error when nothing
         matches — an absence is a result, not a failure.
+
+        The converse matters more, and is the whole point of this note: a FAILURE is
+        never an absence. When AI Ark does not answer at all (read timeout — it comes
+        in bursts on `op="export"` while search stays healthy in the same minutes),
+        the call is retried ONCE, then raised as an error carrying `retryable: true`.
+        Nobody was looked up: retry it, and never record a not-found from it — the
+        person may well have an e-mail nobody has asked for yet.
+        ⚠️ That retry can bill a second credit if AI Ark had already processed the
+        first attempt and only the answer was lost.
 
         Args:
             op: export (default) | reverse | mobile.
