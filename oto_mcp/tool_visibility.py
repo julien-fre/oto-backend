@@ -55,10 +55,16 @@ from __future__ import annotations
 # n'est pas un connecteur, il n'y a pas de namespace où les faire tomber. D'où ce
 # grain-ci, qui est de la DÉCOUVRABILITÉ et pas un contrôle : `oto_enable_tool` les
 # rend à qui les veut.
-# ⚠️ **`oto_trigger` n'y est PAS**, et c'est mesuré : 112 appels, 10 acteurs, dont le
-# jour même de la décision. Le masquer le rendrait injoignable (le masquage filtre
-# aussi `get_tool`, pas seulement la liste) pour dix personnes qui s'en servent — et
-# la décision a été prise sans ce chiffre. Cf. le journal des appels avant de l'ajouter.
+# ⚠️ **`oto_trigger` n'y est PAS, et c'est TRANCHÉ** — Alexis, 2026-09-02, « laisse
+# oto_trigger visible », après relevé de son usage : 112 appels, 10 acteurs, dont le
+# jour même. Le masquage filtre aussi `get_tool`, pas seulement la liste : il aurait
+# rendu le verbe injoignable pour dix personnes en cours de travail. Sa description le
+# dit elle-même — c'est le `/schedule` du produit.
+#
+# La première consigne était « resserre » sur les trois ; elle a été donnée sur une
+# question qui ne portait aucun chiffre, et l'usage l'a renversée pour celui-ci.
+# **Ne pas l'ajouter sans relever son usage d'abord** : c'est ce relevé, pas
+# l'appartenance à un sous-système, qui a décidé.
 DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
     {"email_send", "fr_egapro_declaration", "browser_eval", "lemlist_launch_lead",
      "lemlist_campaign_start", "lemlist_inbox_send",
