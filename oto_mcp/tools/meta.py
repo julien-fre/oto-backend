@@ -186,6 +186,10 @@ def register(mcp: FastMCP) -> None:
         `oto_tool_schema(name)` before calling.
 
         Returns `{tools: [{name, description, enabled}], total, shown, disabled_count}`.
+        `total` = how many tools MATCH (the whole catalogue when there is no `query`),
+        `shown` = how many are in this response. When a `query` filtered the catalogue,
+        `catalog_total` says how many exist in all — so « 3 tools » never reads « oto
+        only has 3 ». A truncated response says so (`truncated`, `hint_truncated`).
         `enabled: false` = not mounted in your session — call it anyway with `oto_call`,
         or install its connector durably with `oto_connector(op='select')`.
 
@@ -236,10 +240,12 @@ def register(mcp: FastMCP) -> None:
             e["enabled"] = is_tool_visible(tool_alias.canonical(e["name"], prefix),
                                            disabled, enabled_override,
                                            frozenset(admin_hidden))
-        out: dict = {
-            "total": len(entries),
-            "disabled_count": sum(1 for e in entries if not e["enabled"]),
-        }
+        # ⚠️ `total` et `disabled_count` sont posés APRÈS le filtrage (voir plus bas) :
+        # un champ nommé `total` décrit le jeu qu'il accompagne, sinon il ment mieux
+        # que le silence. Le catalogue entier reste rendu, sous son propre nom.
+        catalogue_entier = len(entries)
+        catalogue_desactives = sum(1 for e in entries if not e["enabled"])
+        out: dict = {}
         # L'aveu du décalage de boîte (#577, signaux #616/#639) : la session a été
         # montée pour l'org MAISON au handshake, l'appel épingle peut-être une autre
         # org — les outils de ses connecteurs ne sont alors PAS listés, tout en restant
@@ -259,9 +265,29 @@ def register(mcp: FastMCP) -> None:
                 # repart du domaine au lieu de conclure à une lacune.
                 out["namespaces"] = providers.render_namespace_catalog()
                 out["hint"] = hint_zero_resultat(tb)
+        # oto#42, entrée 1 : `total` valait le CATALOGUE ENTIER, calculé avant le
+        # filtrage — donc sur une recherche, la réponse portait un champ littéralement
+        # nommé `total` qui ne décrivait pas ce qu'elle rendait, un `shown` plafonné,
+        # et JAMAIS le nombre de correspondances, pourtant disponible ici. C'est la
+        # forme exacte du « 92 résultats, 10 rendus » corrigé ailleurs, en pire : là
+        # le total manquait, ici il était présent et faux.
+        out["total"] = len(entries)
+        out["disabled_count"] = sum(1 for e in entries if not e["enabled"])
+        if query and len(entries) != catalogue_entier:
+            # Ce que le filtre a écarté ne disparaît pas en silence : sans ce chiffre,
+            # « 3 outils » se lit « oto n'en a que 3 ».
+            out["catalog_total"] = catalogue_entier
+            out["catalog_disabled_count"] = catalogue_desactives
         cap = limit if limit is not None else (_SEARCH_LIMIT if query else None)
         shown = entries[:cap] if cap else entries
         out["shown"] = len(shown)
+        if len(shown) < len(entries):
+            # La branche « trop de résultats » était la seule non traitée : la branche
+            # zéro rendait la carte des namespaces, celle-ci ne disait rien.
+            out["truncated"] = True
+            out["hint_truncated"] = (
+                f"{len(entries)} outils correspondent, {len(shown)} rendus. Affine la "
+                "recherche, ou relance avec `limit` plus haut pour les voir tous.")
         out["tools"] = [{k: e[k] for k in ("name", "description", "enabled")}
                         for e in shown]
         return out
