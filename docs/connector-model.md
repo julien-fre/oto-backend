@@ -76,6 +76,16 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
   → la page `/console/connectors` du membre, donc « voir en tant que » reflète l'effet réel), (c) **backstop
   call-time** `access.require_connector_access` dans `resolve_credential` → bloque **même avec une clé BYO**.
   super_admin bypasse ; fail-open sur erreur infra.
+  ⚠️ **Sur la FICHE, ce fail-open se dit** (`/api/me`, `access.status_for` — oto#42 règle 1,
+  04/09/2026). Les deux paliers (org, équipe) y sont lus sous leur propre `try/except` ; quand
+  l'un tombe, `rbac_restricted: false` sortait pour tout le monde et « rien ne te restreint »
+  était indistinguable de « personne n'a pu vérifier ». La valeur servie ne change pas — le
+  fail-open est le bon choix, un mur affiché à tort arrête quelqu'un que rien ne bloque, et une
+  restriction vraie est de toute façon appliquée au call-time par le même seam — mais l'entrée
+  porte désormais `rbac_restricted_measured: false` + `rbac_restricted_hint` (quel palier est
+  muet, et que l'appel serait refusé quand même). **Sur écart seulement**, et **jamais sur un
+  `rbac_restricted: true`** : celui-là reste établi même si l'autre palier est tombé, l'union
+  des refus ne pouvant que croître.
   Surface : `oto_{list,set,clear}_connector_access` / `/api/orgs/{id}/connectors/{acl,…/access}`
   (`ORG_ADMIN_OF`) + levier « accès » sur la carte `/org/connectors`.
 
