@@ -58,9 +58,13 @@ Rien n'interdit `A → B` puis `B → A` : `sub_aliases` contraint `old_sub` (cl
 primaire), jamais `new_sub`. Une résolution qui tourne en rond en tête de chaque
 requête gèlerait le service — la production a déjà gelé 13 minutes pour une raison
 voisine (2026-07-02, `docs/event-loop-perf.md`). **Deux freins
-indépendants** : la récursion transporte le chemin déjà parcouru et s'arrête net dès
-qu'un maillon s'y répète ; et elle est bornée en profondeur, quoi qu'il arrive. Les
-deux se prouvent séparément (retirer l'un laisse l'autre rouge).
+indépendants** : la clause `CYCLE` de PostgreSQL arrête la récursion dès qu'un maillon
+déjà parcouru se représente — c'est la forme qu'un cliquet exige de toute récursion de
+`db/`, et il a rougi sur la 1re version de ce module, qui portait le chemin à la main ;
+et la descente est bornée en profondeur, quoi qu'il arrive, ce que `CYCLE` ne fait pas
+(une chaîne acyclique absurdement longue se déroulerait sans elle). Retirer les DEUX
+fait tourner la récursion jusqu'à ce que le serveur la coupe — c'est ce qui prouve
+qu'aucun des deux n'est décoratif.
 """
 from __future__ import annotations
 
@@ -113,28 +117,38 @@ _UN_SAUT_SQL = "SELECT new_sub FROM sub_aliases WHERE old_sub=%s"
 # La chaîne d'alias en UNE requête, bornée et protégée du cycle. N'est exécutée que
 # lorsque le saut simple a trouvé un alias.
 #
-# - `chemin` transporte les maillons déjà vus ; `boucle` s'allume dès qu'un maillon
-#   s'y répète, et la clause `NOT c.boucle` arrête la récursion à ce moment-là (on
-#   garde la ligne fautive pour pouvoir NOMMER le cycle plutôt que le taire) ;
-# - `c.profondeur <= %(max)s` borne la descente quoi qu'il arrive. La borne laisse
-#   produire un maillon de PLUS que `MAX_SAUTS` : c'est ce qui rend « trop longue »
-#   distinguable de « terminée pile à la borne », qu'on ne pourrait pas trancher
-#   sinon ;
+# - **la clause `CYCLE` de PostgreSQL** arrête la récursion dès qu'un maillon déjà
+#   parcouru se représente, et allume `boucle` sur la ligne fautive — qu'elle rend,
+#   ce qui permet de NOMMER le cycle plutôt que de le taire. C'est la forme qu'un
+#   cliquet exige de toute récursion de `db/`
+#   (`tests/test_node_parent_cycle.py::test_aucune_recursion_sur_l_arbre_n_est_SANS_BORNE`),
+#   et il a rougi sur la 1re version de ce module, qui portait le chemin à la main ;
+# - `c.profondeur <= %(max)s` borne la descente quoi qu'il arrive — SECOND frein,
+#   indépendant du premier (une chaîne acyclique absurdement longue ne déclenche pas
+#   la clause `CYCLE`). La borne laisse produire un maillon de PLUS que `MAX_SAUTS` :
+#   c'est ce qui rend « trop longue » distinguable de « terminée pile à la borne »,
+#   qu'on ne pourrait pas trancher sinon ;
 # - le test d'existence du compte est corrélé au SEUL bout de chaîne (`bout`), donc
 #   il ne touche `users` que s'il y a eu au moins un alias.
+#
+# ⚠️ `bout` nomme ses colonnes une par une, et ce n'est pas du zèle : `SELECT * FROM
+# chaine` dans une CTE imbriquée ne rapporte PAS les colonnes que la clause `CYCLE`
+# ajoute (`boucle`, `chemin`) — l'expansion de l'étoile a lieu avant leur greffe.
+# Mesuré sur PostgreSQL 17 : `column b.boucle does not exist`, alors que le même
+# `SELECT *` posé directement sur la CTE récursive les rend toutes les deux.
 _CHAINE_SQL = """
-WITH RECURSIVE chaine(sub, profondeur, chemin, boucle) AS (
-        SELECT a.new_sub, 1, ARRAY[a.old_sub, a.new_sub], false
+WITH RECURSIVE chaine AS (
+        SELECT a.new_sub AS sub, 1 AS profondeur
           FROM sub_aliases a
          WHERE a.old_sub = %(sub)s
     UNION ALL
-        SELECT n.new_sub, c.profondeur + 1, c.chemin || n.new_sub,
-               n.new_sub = ANY(c.chemin)
+        SELECT n.new_sub, c.profondeur + 1
           FROM chaine c
           JOIN sub_aliases n ON n.old_sub = c.sub
-         WHERE NOT c.boucle AND c.profondeur <= %(max)s
-), bout AS (
-    SELECT * FROM chaine ORDER BY profondeur DESC LIMIT 1
+         WHERE c.profondeur <= %(max)s
+) CYCLE sub SET boucle USING chemin
+, bout AS (
+    SELECT sub, profondeur, boucle, chemin FROM chaine ORDER BY profondeur DESC LIMIT 1
 )
 SELECT b.sub AS canonique, b.profondeur, b.boucle, array_length(b.chemin, 1) AS maillons,
        EXISTS (SELECT 1 FROM users u WHERE u.sub = b.sub) AS compte_vivant
