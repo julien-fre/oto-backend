@@ -396,12 +396,55 @@ def project_run_stats(project_id: int) -> dict:
     return {"runs": int(row["n"] or 0), "doctrines": list(row["doctrines"] or [])}
 
 
+#: Fenêtre pendant laquelle un signalement STRICTEMENT identique du même auteur
+#: est tenu pour un REJEU, pas pour une seconde occurrence. Dix minutes : un rejeu
+#: se produit dans la seconde ou la minute (coupure réseau, réponse non vue,
+#: relance d'un pas de procédure), tandis qu'un même défaut qui se reproduit
+#: vraiment ne se raconte pas deux fois mot pour mot en si peu de temps.
+_REJEU_SIGNAL_MINUTES = 10
+
+
 def insert_usage_signal(
     *, sub: Optional[str], org_id: Optional[int], signal: str, kind: str,
     target: Optional[str], body: Optional[str], session_id: Optional[str],
     source: str = "agent",
-) -> int:
+) -> tuple[int, bool]:
+    """Dépose un signalement → `(id, deja_depose)`.
+
+    Un signalement identique du même auteur dans les dernières minutes rend l'id
+    du PREMIER, sans en créer un second (#684/#685 — le même retour déposé deux
+    fois à ONZE SECONDES d'écart par le même agent, sur des doublons créés en
+    silence dans le CRM d'un client). L'insertion était nue : deux dépôts, deux
+    lignes, aucun signe.
+
+    ⚠️ **C'est notre propre boucle de retour qui se faisait le défaut qu'elle
+    sert à remonter** — une information produite (« tu m'as déjà dit ça ») que
+    personne ne rendait. Elle n'a droit à aucun traitement de faveur.
+
+    ⚠️ **On ne REFUSE pas, on rend l'existant et on le DIT.** Refuser ferait
+    perdre son retour à un agent qui redépose de bonne foi ; se taire laisserait
+    croire à deux occurrences là où il n'y a qu'un rejeu, et gonflerait la pile
+    d'arbitrage de faux volume. Le second appel reçoit donc le même identifiant,
+    et sait que c'est le même.
+
+    ⚠️ La comparaison porte sur le CORPS ENTIER, pas sur le sujet : deux
+    signalements sur le même outil sont normaux et fréquents — c'est le texte à
+    l'identique qui trahit le rejeu."""
     with _connect() as conn:
+        vu = conn.execute(
+            """
+            SELECT id FROM usage_signals
+             WHERE sub IS NOT DISTINCT FROM %s
+               AND signal = %s AND kind = %s
+               AND target IS NOT DISTINCT FROM %s
+               AND body IS NOT DISTINCT FROM %s
+               AND created_at > NOW() - (%s || ' minutes')::interval
+             ORDER BY id DESC LIMIT 1
+            """,
+            (sub, signal, kind, target, body, str(_REJEU_SIGNAL_MINUTES)),
+        ).fetchone()
+        if vu is not None:
+            return int(vu["id"]), True
         row = conn.execute(
             """
             INSERT INTO usage_signals
@@ -410,7 +453,7 @@ def insert_usage_signal(
             """,
             (sub, org_id, signal, kind, target, body, session_id, source),
         ).fetchone()
-        return int(row["id"])
+        return int(row["id"]), False
 
 
 # Les quatre états d'ARBITRAGE d'un signal (#450). Deux ne suffisaient pas :
@@ -1055,23 +1098,44 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
 _REST_ROUTE_SHAPE = "position(' /' in tool) > 0"
 
 
-def rest_call_stats(since_days: int = 7) -> dict:
+def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
+                    sub: Optional[str] = None) -> dict:
     """Lentille REST (ADR 0017, kind='rest') : volume + erreurs + latence des appels
     `/api/*`, **par route** normalisée. `ok` = 2xx/3xx ; les ≥400 sont comptés erreurs.
     Les lignes SÉMANTIQUES du journal datastore (même `kind`, `tool` = nom de geste)
-    sont exclues — cf. `_REST_ROUTE_SHAPE`."""
+    sont exclues — cf. `_REST_ROUTE_SHAPE`.
+
+    Défaut = PLATEFORME-wide. `sub`/`org_id` RESTREIGNENT la fenêtre (#451 : la console
+    les acceptait et les JETAIT — on croyait lire l'activité d'un compte, on lisait
+    celle de toute la plateforme).
+
+    ⚠️ Les deux axes n'ont pas la même solidité, et la réponse le DIT quand ils sont
+    posés : `sub` vient du jeton présenté (fiable) ; `org_id` vient de l'org de
+    CONSULTATION revendiquée en en-tête par le client (`RestCallLogger`, best-effort) —
+    une requête sans cet en-tête ne porte aucune org et sort donc du filtre. Un total
+    à 0 sous `org_id` ne prouve pas l'inactivité de l'org."""
     since_days = max(1, min(int(since_days), 365))
+
+    def _where() -> tuple[str, list]:
+        clauses = [f"kind = 'rest' AND {_REST_ROUTE_SHAPE}",
+                   "created_at >= NOW() - make_interval(days => %s)"]
+        params: list = [since_days]
+        if org_id is not None:
+            clauses.append("org_id = %s"); params.append(int(org_id))
+        if sub is not None:
+            clauses.append("sub = %s"); params.append(sub)
+        return " AND ".join(clauses), params
+
+    w, wp = _where()
     with _connect() as conn:
         totals = conn.execute(
             f"""
             SELECT COUNT(*) AS total,
                    COUNT(*) FILTER (WHERE NOT ok) AS errors,
                    COUNT(DISTINCT sub) AS users
-            FROM tool_calls
-            WHERE kind = 'rest' AND {_REST_ROUTE_SHAPE}
-                  AND created_at >= NOW() - make_interval(days => %s)
+            FROM tool_calls WHERE {w}
             """,
-            (since_days,),
+            tuple(wp),
         ).fetchone() or {}
         by_route = conn.execute(
             f"""
@@ -1080,22 +1144,32 @@ def rest_call_stats(since_days: int = 7) -> dict:
                    COUNT(*) FILTER (WHERE NOT ok) AS errors,
                    ROUND(AVG(duration_ms))::int AS avg_ms,
                    ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::int AS p95_ms
-            FROM tool_calls
-            WHERE kind = 'rest' AND {_REST_ROUTE_SHAPE}
-                  AND created_at >= NOW() - make_interval(days => %s)
+            FROM tool_calls WHERE {w}
             GROUP BY tool
             ORDER BY calls DESC
             LIMIT 100
             """,
-            (since_days,),
+            tuple(wp),
         ).fetchall()
-    return {
+    out = {
         "since_days": since_days,
         "total_calls": int((totals or {}).get("total") or 0),
         "error_count": int((totals or {}).get("errors") or 0),
         "active_users": int((totals or {}).get("users") or 0),
         "by_route": list(by_route),
     }
+    if org_id is not None or sub is not None:
+        # Le filtre APPLIQUÉ est rendu : c'est ce qui distingue « restreint à ce
+        # compte » de « toute la plateforme » quand les deux rendent le même total.
+        out["filters"] = {k: v for k, v in (("org_id", org_id), ("sub", sub))
+                          if v is not None}
+    if org_id is not None:
+        out["org_id_caveat"] = (
+            "`org_id` du journal REST = l'org de consultation revendiquée en en-tête "
+            "par le client (best-effort) : les requêtes sans cet en-tête ne portent "
+            "aucune org et sont EXCLUES de ce filtre. Un 0 ici ne prouve pas "
+            "l'inactivité de l'org — recoupe avec `sub`.")
+    return out
 
 
 def connector_failure_stats(since_days: int = 7, *, org_id: Optional[int] = None) -> dict:
