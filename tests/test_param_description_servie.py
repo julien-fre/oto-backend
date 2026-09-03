@@ -121,23 +121,61 @@ def test_tout_champ_decrit_du_registre_est_servi_decrit():
 
 # ── #689 bis : la borne de taille est PUBLIÉE sur les deux faces ──────────────
 
-def test_la_borne_du_corps_est_servie_sur_le_chemin_connecteur():
-    """La face REST des guides publie `maxLength` depuis le 29/08 ; le chemin
-    connecteur (`oto_procedure op=set`, porté par ces `Input`) ne publiait RIEN —
-    même objet, deux faces, une seule le disait. Un agent découvrait la borne en s'y
-    cognant : constaté le 03/09, une procédure à 7 octets de la limite dont chaque
-    nouvelle leçon en chassait une ancienne.
+def test_la_borne_du_corps_est_publiee_sur_la_face_REST():
+    """La borne de `body_md` est publiée dans le schéma des `Input` — donc sur la face
+    REST (`Input.model_json_schema()`, ce que sert `/api/openapi.json`).
 
-    ⚠️ `maxLength` compte des CARACTÈRES là où la garde compte des OCTETS : il est
-    nécessaire, jamais suffisant. C'est la description qui porte l'unité réelle — et
-    le fait qu'un trait de schéma, que la plateforme EXIGE dans toute procédure, pèse
-    trois octets."""
+    ⚠️ **Ce test ne dit RIEN de la face MCP**, et c'est exactement le piège que
+    l'en-tête de ce fichier met en garde de ne pas retomber : « un test posé sur la
+    fonction d'aplatissement dirait que l'annotation est bien construite sans rien
+    dire de ce que le modèle reçoit ». Je l'ai retrouvé le 03/09 en croyant l'éviter
+    — le test ci-dessous mesure la face MCP, et il constate qu'elle NE la publie pas.
+
+    `maxLength` compte des CARACTÈRES là où la garde compte des OCTETS : nécessaire,
+    jamais suffisant. C'est la description qui porte l'unité réelle, et le fait qu'un
+    trait de schéma — que la plateforme EXIGE dans toute procédure — pèse trois octets."""
     from oto_mcp.capabilities.orgs import instructions as I
     for nom in ("InstrSetInput", "InstrCreateInput", "AdminInstrSetInput"):
         champ = getattr(I, nom).model_json_schema()["properties"]["body_md"]
         assert champ.get("maxLength") == I._MAX_BODY_BYTES, (
-            f"{nom}.body_md ne publie plus la borne : l'agent la redécouvrira en "
-            "s'y cognant, comme avant le 03/09")
+            f"{nom}.body_md ne publie plus la borne côté REST")
         assert "OCTETS" in (champ.get("description") or ""), (
             f"{nom}.body_md publie une borne sans son unité — `maxLength` seul se "
             "lit en caractères et sous-estime le poids réel")
+
+
+def test_la_face_MCP_ne_publie_PAS_la_borne_du_corps(monkeypatch):
+    """État MESURÉ le 03/09 sur le montage réel, pas une intention : la face MCP sert
+    `body_md` en `{anyOf: [string, null], default: null}` — sans `maxLength` NI
+    description. Un agent du connecteur découvre donc toujours la borne en s'y cognant.
+
+    La cause est écrite dans `_types.py` : l'aplatissement construit un `Field` NEUF
+    et « rien d'autre ne voyage — ni examples, ni json_schema_extra, ni les
+    contraintes ». Le commit `5e3f1cf2` a donc publié la borne sur la face REST
+    seulement, malgré son titre. Ce test FIGE le manque au lieu de le laisser croire
+    comblé : le jour où l'aplatissement fera voyager les contraintes, il tombera — et
+    ce sera le signal de le remplacer par son inverse.
+
+    ⚠️ Ne pas « réparer » ce test en le supprimant : c'est la seule trace exécutable
+    que la borne n'est PAS servie de ce côté."""
+    import asyncio
+    from fastmcp import FastMCP
+    from oto_mcp.capabilities import _mcp_adapter
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
+    mcp = FastMCP("t")
+    _mcp_adapter.register(mcp, CAPABILITIES)
+
+    async def _lire():
+        for t in await mcp.list_tools(run_middleware=False):
+            if t.name == "oto_procedure":
+                return (t.parameters or {}).get("properties", {}).get("body_md", {})
+        return None
+
+    champ = asyncio.run(_lire())
+    assert champ is not None, "`oto_procedure` n'est plus monté"
+    assert "maxLength" not in champ, (
+        "la face MCP publie DÉSORMAIS la borne — bonne nouvelle : remplace ce test "
+        "par son inverse (elle DOIT la publier) et corrige la carte")
+    assert "description" not in champ, (
+        "la face MCP publie désormais la description de `body_md` — même geste")

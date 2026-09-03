@@ -407,7 +407,14 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   est temps de découper. ⚠️ **La garde est COMMUNE aux deux faces** (`.set`, `.create`
   et `.admin_set` passent tous par `_set_instruction`, que `oto_procedure` atteint via
   l'adaptateur MCP) : le relèvement vaut donc aussi côté connecteur, ce qui est un
-  effet constaté avant, pas découvert après ; `DELETE /api/me/orgs/{id}/membership` → **404
+  effet constaté avant, pas découvert après.
+  ⚠️ **En revanche la borne n'est PUBLIÉE que sur la face REST** — mesuré le 03/09 sur
+  le montage réel : la face MCP sert `body_md` en `{anyOf: [string, null]}`, sans
+  `maxLength` ni description. La cause est écrite dans `capabilities/_types.py` :
+  l'aplatissement construit un `Field` NEUF et « rien d'autre ne voyage — ni examples,
+  ni json_schema_extra, ni les contraintes ». Un agent du connecteur découvre donc
+  toujours la borne en s'y cognant. `tests/test_param_description_servie.py` fige ce
+  manque plutôt que de le laisser croire comblé, et tombera le jour où il sera corrigé ; `DELETE /api/me/orgs/{id}/membership` → **404
   `unknown_org`, 409 `personal_org`, 404 `not_a_member`, 409 `last_org_admin`**, dans
   l'ordre des gardes. La liste d'une opération n'est pas exhaustive : les 400 de
   l'adaptateur (`invalid_input`, `unknown_fields`, `invalid_json`, `invalid_body`) valent
