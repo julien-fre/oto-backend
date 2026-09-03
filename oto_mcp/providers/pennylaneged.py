@@ -19,8 +19,14 @@ from ._model import _c
 # (cas cabinet : une seule connexion Pennylane partagée par la team pour pousser
 # dans les GED clients — cascade user > groupe > org). `personal_session=True`
 # reste = catégorie « session navigateur » côté UI (orthogonal au partage).
+# Deux modules d'outils : la GED (`pennylaneged`) et la SESSION (login Live View +
+# sonde de vérification). Séparés le 2026-09-03 — la sonde de login n'a rien à voir
+# avec le bac documentaire, et les mêler avait fini par mettre 600 lignes dans un
+# fichier. L'ordre compte : `pennylaneged` est importé d'abord, `pennylaneged_session`
+# en dérive (origine + seams d'erreur).
 CONNECTOR = _c(
     "pennylaneged", ["pennylaneged"], auth_modes={"byo_user", "byo_org"},
+    modules=("pennylaneged", "pennylaneged_session"),
     personal_session=True, secret_kind="cookie",
     label="Pennylane GED",
     help="bac documentaire Pennylane (session Browserbase)",

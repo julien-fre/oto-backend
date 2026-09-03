@@ -31,7 +31,23 @@ destination de toute façon.
 **GED cible (une par client)** — le cabinet gère N sociétés clientes, chacune
 avec SA GED. Chaque tool prend un `company_id` **obligatoire** : aucun défaut
 mémorisé, pour ne jamais risquer d'écrire dans la GED du mauvais client.
-`pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible.
+`pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible —
+mais ce n'est PAS un passage obligé, et il ne faut pas le croire : le `company_id` est
+lisible **dans l'URL de la SPA** (`app.pennylane.com/companies/<company_id>/…`, visible
+dès qu'on ouvre un dossier), et `pennylaneged_companies(minimal=True)` le rend par une
+route indépendante. Quand la liste tombe, les trois autres outils (arborescence, fiche,
+dépôt) marchent toujours — le 2026-09-03, une cliente a passé sa matinée à croire le
+connecteur mort parce que SEULE cette liste l'était.
+
+⚠️ **Une API interne BOUGE, et son 404 le dit.** Vérifié le 2026-09-03 : une route
+VIVANTE répond **401** à une session anonyme, une route DISPARUE répond **404**. Ici un
+404 = « endpoint déplacé/renommé », jamais « session expirée » (ça, c'est 401/403) ; la
+nouvelle route se relève dans le bundle de la SPA (`assets.pennylane.com/assets/
+application-*.js` + ses chunks). Le portefeuille a ainsi migré de `/crm/flow_companies`
+vers `/portfolio/crm/flow_companies`.
+
+Le LOGIN (Live View, sonde de vérification, persistance de la session au coffre) vit
+dans le module frère `pennylaneged_session.py` — ici, on suppose la session acquise.
 
 Statut : flux RE **validé manuellement** (18/06, compte test client) ; **reste à
 smoker en live** sur le substrat Browserbase (CSRF in-page + longévité de session).
@@ -41,11 +57,11 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlencode
 
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
-from .. import access, browser_session, browserbase
+from .. import access, browserbase
 from ..auth.hooks import current_user_sub_from_token
 
 # Origine de la SPA — toutes les routes internes (DMS, direct_uploads, crm) en
@@ -148,6 +164,19 @@ async def _call_raw(app: str, path: str, method: str = "GET",
     st = res.get("status")
     if st in (401, 403):
         raise _err("Session Pennylane expirée / déconnectée — relance `pennylaneged_connect_start`.")
+    if st == 404:
+        # Le 404 de cette API n'est PAS ambigu (cf. en-tête) : la route n'existe plus.
+        # Le taire a coûté une matinée de chasse à l'authentification le 2026-09-03.
+        raise _err(f"Pennylane a répondu 404 sur {method.upper()} {path} — sur cette API "
+                   "interne un 404 dit que l'ENDPOINT N'EXISTE PLUS (route déplacée ou "
+                   "renommée par Pennylane), PAS que la session est expirée (ça, c'est "
+                   "401/403). Conduite à tenir : NE RELANCE PAS `pennylaneged_connect_"
+                   "start` — ta session est bonne, se reconnecter ne changera rien. Le "
+                   "correctif est chez nous (relever la nouvelle route dans le bundle de "
+                   "la SPA). En attendant, les AUTRES outils du connecteur fonctionnent "
+                   "sans doute très bien : essaies-en un avant de conclure que la GED "
+                   "est en panne, et lis le `company_id` dans l'URL de la SPA si c'est "
+                   "la liste des sociétés qui manque.", code=INTERNAL_ERROR)
     if not (200 <= (st or 0) < 300):
         raise _err(f"Pennylane GED a renvoyé {st} : {str(res.get('data'))[:200]}",
                    code=INTERNAL_ERROR)
@@ -171,77 +200,13 @@ async def _call(app: str, path: str, method: str = "GET",
     return data or {}
 
 
-async def _verify_session(session_id: str) -> bool:
-    """Login Pennylane confirmé ? Sonde une route interne authentifiée DEPUIS la session
-    vivante (same-origin) : elle ne répond 200 que loguée. Partagé par les deux surfaces
-    de connexion (dashboard REST + MCP) via `browser_session`."""
-    from patchright.async_api import async_playwright
-    async with async_playwright() as p:
-        b = await p.chromium.connect_over_cdp(browserbase.connect_url(session_id))
-        try:
-            c = b.contexts[0] if b.contexts else await b.new_context()
-            pg = c.pages[0] if c.pages else await c.new_page()
-            await pg.goto(f"{_ORIGIN}/", wait_until="domcontentloaded", timeout=40000)
-            res = await pg.evaluate(
-                """async () => {
-                    try {
-                        const r = await fetch("/crm/flow_companies?page=1", {
-                            credentials: "include",
-                            headers: {"accept": "application/json",
-                                      "x-requested-with": "XMLHttpRequest"}});
-                        return r.status;
-                    } catch (e) { return 0; }
-                }""")
-            return res == 200
-        finally:
-            await b.close()
-
-
-# Déclare Pennylane GED comme connecteur à session navigateur (start générique + ce
-# verify) — alimente le flux de connexion REST (dashboard) ET MCP. À l'import.
-browser_session.register("pennylaneged", _verify_session, login_url=f"{_ORIGIN}/")
 
 
 def register(mcp: FastMCP) -> None:
 
-    # --- Onboarding (Live View) --------------------------------------------
-    @mcp.tool()
-    def pennylaneged_connect_start(ctx: Context) -> dict:
-        """Démarre la connexion à la GED Pennylane. Ouvre un navigateur distant et
-        renvoie une **`live_view_url`** : ouvre-la, connecte-toi à Pennylane normalement
-        (email/mot de passe, SSO, 2FA — tu gères tout dans cette fenêtre). Puis appelle
-        `pennylaneged_connect_status(context_id, session_id)` avec les valeurs renvoyées
-        pour finaliser (ta session est mémorisée ; à refaire seulement quand elle expire).
-        """
-        sub = _sub()
-        try:
-            out = browser_session.start(sub, "pennylaneged")
-        except browser_session.SessionError as e:
-            raise _err(str(e), code=INTERNAL_ERROR)
-        out["instructions"] = ("Ouvre `live_view_url`, connecte-toi à Pennylane, puis "
-                               "appelle `pennylaneged_connect_status` avec context_id + session_id.")
-        return out
-
-    @mcp.tool()
-    async def pennylaneged_connect_status(ctx: Context, context_id: str,
-                                          session_id: str) -> dict:
-        """Finalise la connexion à la GED Pennylane. Vérifie que tu t'es bien logué dans
-        la Live View (en appelant l'API interne depuis ta session) ; si oui, **mémorise**
-        ta session (le Context) pour les prochains appels. Renvoie `{connected}`.
-        Rappelle-le si `connected=false` (pas encore logué)."""
-        sub = _sub()
-        try:
-            connected = await browser_session.finalize(sub, "pennylaneged", context_id, session_id)
-        except browser_session.SessionError as e:
-            raise _err(str(e), code=INTERNAL_ERROR)
-        if not connected:
-            return {"connected": False,
-                    "hint": "Pas encore logué — connecte-toi dans la Live View puis relance."}
-        return {"connected": True, "context_id": context_id}
-
     # --- Résolution « où » (control plane) ----------------------------------
     @mcp.tool()
-    async def pennylaneged_companies(page: int = 1) -> dict:
+    async def pennylaneged_companies(page: int = 1, minimal: bool = False) -> dict:
         """Liste les sociétés du portefeuille (côté cabinet) — résout le `company_id`
         cible d'une opération GED, et porte la fiche de gestion de chaque dossier.
 
@@ -250,7 +215,10 @@ def register(mcp: FastMCP) -> None:
         clients FACTURÉS par une société, pas les dossiers gérés. Cherché là, le
         portefeuille est introuvable — vécu par une cliente le 2026-08-28.
 
-        Tape `/crm/flow_companies` et renvoie la réponse BRUTE :
+        ⚠️ **La route a déménagé** (bundle de la SPA, chunk `list-*.js`,
+        `getCRMFlowCompanies`, relevé le 2026-09-03) : `/crm/flow_companies` →
+        `/portfolio/crm/flow_companies`. Un 404 ici = « elle a encore bougé », pas
+        « déloguée ». Renvoie la réponse BRUTE :
         `{companies: [...], pagination: {page, pageSize, pages, totalEntries,
         hasNextPage}}`. **20 sociétés par page** — un portefeuille de cabinet se
         parcourt donc en plusieurs appels, pilotés par `hasNextPage`/`pages`.
@@ -290,11 +258,29 @@ def register(mcp: FastMCP) -> None:
         ⚠️ Coût : UNE session navigateur par appel — 350 dossiers = 18 pages = 18
         sessions ouvertes puis refermées.
 
+        **Si cet outil tombe, le connecteur n'est PAS mort.** Il n'est le passage obligé
+        que pour la fiche de gestion : le `company_id` seul se lit dans l'URL de la SPA
+        (`app.pennylane.com/companies/<company_id>/…`), et `minimal=True` le rend par une
+        route INDÉPENDANTE de celle du portefeuille. Arborescence, fiche société et dépôt
+        marchent sans passer par ici.
+
         Args:
             page: page de pagination (1-based).
+            minimal: prendre la voie LÉGÈRE — `/navbar/companies`, la route du sélecteur
+                de société de la SPA, qui rend `{companies: [...]}` sans la fiche de
+                gestion. Deux usages : résoudre un `company_id` à moindre coût, et
+                surtout garder une voie ouverte quand la route du portefeuille est en
+                panne (elles ne partagent rien). Champs OBSERVÉS sous session loguée
+                le 2026-09-03 : `id` (= le `company_id`), `display_name`, `source_id`,
+                `saas_plan`, `uc_exists`, `is_demo`/`is_training`/`is_fake`, `firm`,
+                `company_group` — de quoi identifier un dossier, RIEN de la fiche de
+                gestion (ni forme juridique, ni TVA, ni équipe, ni reste-à-faire).
         """
+        if minimal:
+            qs = urlencode({"page": max(1, int(page)), "per_page": 20})
+            return await _call(f"{_ORIGIN}/", f"/navbar/companies?{qs}")
         qs = urlencode({"page": max(1, int(page))})
-        return await _call(f"{_ORIGIN}/", f"/crm/flow_companies?{qs}")
+        return await _call(f"{_ORIGIN}/", f"/portfolio/crm/flow_companies?{qs}")
 
     @mcp.tool()
     async def pennylaneged_company(company_id: int) -> dict:

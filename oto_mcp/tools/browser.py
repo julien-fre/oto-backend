@@ -88,12 +88,22 @@ def _context_id(site: str) -> str:
                    "pour t'y loguer une fois (session mémorisée ensuite).")
 
 
-async def _verify_site(session_id: str, account: str) -> bool:
+async def _verify_site(session_id: str, account: str) -> browser_session.Verdict:
     """Sonde de login GÉNÉRIQUE : la session vivante porte-t-elle des cookies sur le
-    host ? (cf. l'avertissement en tête de module — signal, pas preuve.)"""
+    host ? (cf. l'avertissement en tête de module — signal, pas preuve.) Le refus dit
+    son motif ET l'échappatoire, sans quoi l'agent ne peut que boucler."""
     if not account:
-        return False
-    return await browserbase.host_cookies(session_id, f"https://{account}/") > 0
+        return browser_session.Verdict(
+            False, browser_session.NO_SESSION,
+            "Aucun site visé : rappelle `browser_connect_start(url)` d'abord.",
+            retry=False)
+    if await browserbase.host_cookies(session_id, f"https://{account}/") > 0:
+        return browser_session.Verdict(True, browser_session.LOGGED_IN)
+    return browser_session.Verdict(
+        False, browser_session.NO_SESSION,
+        f"Aucun cookie sur `{account}` : soit le login n'est pas allé au bout (finis-le "
+        "dans la Live View), soit ce site garde sa session HORS cookies (localStorage) "
+        "— dans ce cas relance avec `force=true`.")
 
 
 # Connecteur à session navigateur, variante GÉNÉRIQUE : `login_url` fournie à l'appel
@@ -147,16 +157,20 @@ def register(mcp: FastMCP) -> None:
         """
         sub = _sub()
         try:
-            connected = await browser_session.finalize(
+            res = await browser_session.finalize(
                 sub, _CONNECTOR, context_id, session_id, account=site, force=force)
         except browser_session.SessionError as e:
             raise _err(str(e), code=INTERNAL_ERROR)
-        if not connected:
-            return {"connected": False, "site": site,
-                    "hint": ("Pas encore logué (aucun cookie sur ce site) — connecte-toi "
-                             "dans la Live View puis relance. Si tu ES logué, relance avec "
-                             "force=true (le site garde peut-être sa session hors cookies).")}
-        return {"connected": True, "site": site}
+        if not res.connected:
+            return {"connected": False, "site": site, "reason": res.reason,
+                    "retry": res.retry,
+                    "hint": res.detail or ("Pas encore logué (aucun cookie sur ce site) — "
+                                           "connecte-toi dans la Live View puis relance.")}
+        out = {"connected": True, "site": site, "reason": res.reason,
+               "login_verified": not res.warning}
+        if res.warning:
+            out["warning"], out["retry"] = res.warning, False
+        return out
 
     @mcp.tool()
     def browser_sites() -> dict:

@@ -55,16 +55,30 @@ def test_missing_site_credential_points_to_connect(monkeypatch):
     assert "browser_connect_start" in str(e.value)
 
 
-def test_force_is_refused_for_single_site_connectors(monkeypatch):
-    # `force` contourne la vérification : recevable seulement là où la vérification est
-    # générique (connecteur account-aware). Sur pennylaneged & co le verify est une vraie
-    # sonde d'API — la contourner n'aurait aucune justification.
+def test_force_est_ouvert_a_tous_les_connecteurs_a_session(monkeypatch):
+    """⚠️ Ce test affirmait le CONTRAIRE jusqu'au 2026-09-03 : `force` était refusé aux
+    connecteurs à site unique, au motif que « le verify y est une vraie sonde d'API, la
+    contourner n'aurait aucune justification ». Le motif est tombé le jour où une vraie
+    sonde d'API a cassé (route Pennylane déplacée) : il n'existait alors AUCUN moyen de
+    débloquer une cliente. Le risque couvert demeure et il est assumé — persister un
+    Context non logué pose un credential mort, découvert au premier appel métier — mais
+    un client inconnectable sans recours, lui, n'était pas récupérable."""
+    appelee = []
+
     async def _v(_sid):
-        return True
+        appelee.append(1)
+        return browser_session.Verdict(False, browser_session.NO_SESSION, "non")
+
+    persiste = []
+    monkeypatch.setattr(browser_session, "_persist", lambda *a, **k: persiste.append(a))
     browser_session.register("_test_single_site", _v)
-    with pytest.raises(browser_session.SessionError):
-        asyncio.run(browser_session.finalize(
-            "sub-1", "_test_single_site", "ctx", "sess", force=True))
+    browser_session._PENDING[("sub-1", "ctx", "sess")] = float("inf")
+    out = asyncio.run(browser_session.finalize(
+        "sub-1", "_test_single_site", "ctx", "sess", force=True))
+    assert out.connected is True and len(persiste) == 1
+    assert appelee == [], "`force` NE passe PAS par la sonde — c'est tout son objet"
+    assert out.reason == browser_session.FORCED and out.retry is False
+    assert out.warning, "et le contournement est ANNONCÉ, jamais silencieux"
 
 
 def test_account_aware_verify_receives_the_site(monkeypatch):
@@ -72,11 +86,16 @@ def test_account_aware_verify_receives_the_site(monkeypatch):
 
     async def _v(session_id, account):
         seen["args"] = (session_id, account)
-        return False  # pas logué → finalize renvoie False sans rien persister
+        # Pas logué → finalize refuse SANS rien persister, et rend le motif : un
+        # booléen nu laisserait l'agent appelant boucler sur la reconnexion.
+        return browser_session.Verdict(False, browser_session.NO_SESSION,
+                                       "aucun cookie sur ce site")
 
     browser_session.register("_test_generic", _v, account_aware=True)
     browser_session._PENDING[("sub-1", "ctx", "sess")] = float("inf")
     out = asyncio.run(browser_session.finalize(
         "sub-1", "_test_generic", "ctx", "sess", account="exemple.fr"))
-    assert out is False
+    assert out.connected is False and out.warning == ""
+    assert (out.reason, out.retry) == (browser_session.NO_SESSION, True)
+    assert "cookie" in out.detail
     assert seen["args"] == ("sess", "exemple.fr")

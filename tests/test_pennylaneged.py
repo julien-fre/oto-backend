@@ -28,6 +28,25 @@ un 204 et `{raw}` sur un corps non-JSON, sans jamais lever.
 Trois conséquences, un test chacune : le corps ne se lit qu'UNE fois, une
 suppression réussie se dit, et une panne du substrat est NOMMÉE plutôt que
 traduite en « Erreur interne du serveur ».
+
+---
+
+**2026-09-03 — la sonde de login était couplée à une route métier.** Pennylane a
+déplacé le portefeuille de `/crm/flow_companies` vers `/portfolio/crm/flow_companies`.
+`_verify_session` sondait CETTE route et faisait `return res == 200` : elle a reçu 404,
+rendu False, et `browser_session.finalize` est sorti AVANT `_persist()` — plus aucune
+cliente ne pouvait connecter sa GED, et le message accusait l'authentification. Une
+matinée perdue chez une cliente (cabinet Fidens) et chez son agent.
+
+Deux faits mesurés le jour même sur `app.pennylane.com`, qui fondent le correctif :
+une route VIVANTE répond **401** à une session anonyme (`/portfolio/crm/flow_companies`
+→ 401), une route DISPARUE répond **404** (`/crm/flow_companies` → 404). Un 404 dit donc
+« l'endpoint a bougé », jamais « tu n'es pas connecté ».
+
+D'où la seconde salve de tests : la sonde ne tape plus une route métier mais
+`/users/me` (200 dans les deux cas, verdict dans le CORPS), un 404 de la sonde ne
+bloque PLUS la persistance, un 401 la bloque toujours, et un 404 sur un appel métier
+se dit comme un déménagement de route.
 """
 from __future__ import annotations
 
@@ -35,8 +54,9 @@ import asyncio
 
 import pytest
 from oto_mcp.mcp_errors import McpError
-from oto_mcp import browserbase as B
+from oto_mcp import browser_session, browserbase as B
 from oto_mcp.tools import pennylaneged as P
+from oto_mcp.tools import pennylaneged_session as S
 
 
 def _tool(name: str):
@@ -171,3 +191,150 @@ def test_une_fiche_sans_societe_est_refusee_pas_rendue_vide(substrat):
     with pytest.raises(McpError) as e:
         asyncio.run(_tool("pennylaneged_company")(company_id=777))
     assert "777" in str(e.value)
+
+
+# --- La sonde de login (2026-09-03) -----------------------------------------
+
+def test_la_sonde_ne_tape_pas_une_route_metier():
+    """LE défaut structurant : vérifier le login sur une vue MÉTIER, c'est faire
+    dépendre la connexion de tous les clients du découpage des URL du produit. La
+    sonde doit taper une route de SESSION — et surtout jamais celle du portefeuille,
+    qui a précisément déménagé."""
+    assert S._PROBE_PATH == "/users/me"
+    for interdit in ("flow_companies", "/crm/", "/portfolio/", "/dms/", "/companies/"):
+        assert interdit not in S._PROBE_JS, \
+            f"la sonde de login ne doit rien savoir de {interdit!r}"
+
+
+@pytest.mark.parametrize("res,connecte,motif", [
+    ({"status": 200, "json": True, "logged_in": True}, True, browser_session.LOGGED_IN),
+    ({"status": 200, "json": True, "logged_in": False}, False, browser_session.NO_SESSION),
+    ({"status": 401}, False, browser_session.AUTH_REJECTED),
+    ({"status": 403}, False, browser_session.AUTH_REJECTED),
+    ({"status": 200, "json": True, "logged_in": True, "login_page": True},
+     False, browser_session.AUTH_REJECTED),
+    ({"status": 0, "error": "TypeError: Failed to fetch"}, False,
+     browser_session.NO_SESSION),
+], ids=["logue", "anonyme", "401", "403", "page-de-login", "reseau-mort"])
+def test_le_verdict_de_la_sonde_vient_du_corps_pas_du_code(res, connecte, motif):
+    """`/users/me` répond 200 logué comme délogué : c'est `user` qui tranche.
+
+    Et un refus n'est PAS un booléen : « tu n'as pas fini de te loguer » (`no_session`)
+    et « Pennylane t'a refusé » (`auth_rejected`) appellent deux conduites différentes.
+    Sans le motif, l'agent n'a qu'une option — recommencer, en boucle."""
+    v = S._read_probe(res)
+    assert (v.connected, v.reason) == (connecte, motif)
+    if not v.connected:
+        assert v.detail and v.retry is True, \
+            "un refus qui vient de l'utilisateur se répare en recommençant, et le dit"
+
+
+@pytest.mark.parametrize("st", [404, 500, 502])
+def test_une_sonde_sans_verdict_leve_au_lieu_de_dire_pas_logue(st):
+    """Un 404 dit « cet endpoint n'existe plus », pas « tu n'es pas connecté ». Le
+    confondre avec un refus d'authentification est exactement ce qui a cassé toutes
+    les connexions le 2026-09-03 — et le message accusait le mot de passe."""
+    with pytest.raises(browser_session.ProbeUnavailable) as e:
+        S._read_probe({"status": st})
+    msg = str(e.value)
+    assert S._PROBE_PATH in msg and str(st) in msg, \
+        "l'anomalie nomme l'endpoint sondé et ce qu'il a répondu"
+    assert "ne recommence pas" in msg.lower(), \
+        "et elle COUPE la boucle : le problème n'est pas chez l'utilisateur"
+    if st == 404:
+        assert "déplacée" in msg or "n'existe plus" in msg
+
+
+def _finalize_avec(verify, monkeypatch, nom):
+    """Joue `finalize` de bout en bout sur un connecteur jetable — seule l'écriture au
+    coffre est doublée, la décision « persister ou non » reste celle du seam."""
+    persiste: list = []
+    monkeypatch.setattr(browser_session, "_persist",
+                        lambda *a, **k: persiste.append(a))
+    browser_session.register(nom, verify)
+    browser_session._PENDING[("sub-1", "ctx-1", "ses-1")] = float("inf")
+    out = asyncio.run(browser_session.finalize("sub-1", nom, "ctx-1", "ses-1"))
+    return out, persiste
+
+
+def test_un_404_de_la_sonde_ne_bloque_plus_la_persistance(monkeypatch):
+    """LE correctif. La session vient d'être loguée à la main dans la Live View :
+    refuser de l'écrire parce que la SONDE est hors service rend le connecteur
+    inconnectable pour tout le monde. On persiste — et on remonte l'anomalie, on ne
+    l'avale pas."""
+    async def _sonde_muette(_sid):
+        return S._read_probe({"status": 404})
+
+    out, persiste = _finalize_avec(_sonde_muette, monkeypatch, "_test_pl_404")
+    assert out.connected is True, "un endpoint disparu n'est pas un refus de login"
+    assert len(persiste) == 1, "le Context DOIT être écrit au coffre"
+    assert S._PROBE_PATH in out.warning, \
+        "et l'appelant apprend que le login n'a pas pu être confirmé"
+    assert (out.reason, out.retry) == (browser_session.PROBE_UNAVAILABLE, False), \
+        "`retry: false` — la panne est chez nous, se reconnecter n'y changera rien"
+
+
+def test_un_401_de_la_sonde_bloque_toujours_la_persistance(monkeypatch):
+    """Le pendant : un vrai signal d'authentification reste bloquant. Persister un
+    Context non logué poserait au coffre un credential mort — la sonde garde tout son
+    sens, elle ne devient pas permissive."""
+    async def _pas_logue(_sid):
+        return S._read_probe({"status": 401})
+
+    out, persiste = _finalize_avec(_pas_logue, monkeypatch, "_test_pl_401")
+    assert out.connected is False and out.warning == ""
+    assert persiste == [], "rien ne s'écrit au coffre tant que le login n'est pas fait"
+    assert (out.reason, out.retry) == (browser_session.AUTH_REJECTED, True), \
+        "celui-là, en revanche, se répare en refaisant le login"
+
+
+def test_le_portefeuille_tape_la_route_deplacee(substrat):
+    """La route relevée dans le bundle de la SPA le 2026-09-03 (`getCRMFlowCompanies`).
+    L'ancienne, `/crm/flow_companies`, répond 404 : la garder revenait à ne jamais
+    pouvoir lister le portefeuille d'un cabinet."""
+    vu: dict = {}
+
+    async def _eval(ctx, app, js, arg):
+        vu["path"] = arg["path"]
+        return {"status": 200, "data": {"companies": [], "pagination": {"page": 2}}}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    asyncio.run(_tool("pennylaneged_companies")(page=2))
+    assert vu["path"] == "/portfolio/crm/flow_companies?page=2"
+
+
+def test_un_404_metier_se_dit_comme_un_demenagement_de_route(substrat):
+    """Le message qui aurait épargné la matinée du 2026-09-03 : sur cette API interne
+    un 404 est un endpoint disparu, pas une session expirée (ça, c'est 401/403)."""
+    async def _eval(ctx, app, js, arg):
+        return {"status": 404, "data": {"status": 404, "error": "Not Found"}}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    with pytest.raises(McpError) as e:
+        asyncio.run(_tool("pennylaneged_companies")())
+    msg = str(e.value)
+    assert "404" in msg and "/portfolio/crm/flow_companies" in msg
+    assert "ENDPOINT" in msg or "n'existe plus" in msg
+    assert "401" in msg, "et il rappelle à quoi ressemble une VRAIE session expirée"
+    assert "NE RELANCE PAS" in msg, \
+        "il coupe la boucle de reconnexion : six essais chez la cliente le 2026-09-03"
+    assert "AUTRES outils" in msg and "company_id" in msg, \
+        "et il dit que le connecteur n'est pas mort pour autant"
+
+
+def test_la_liste_des_societes_a_une_voie_de_secours_independante(substrat):
+    """Point de passage obligé = point de panne unique. `minimal=True` passe par
+    `/navbar/companies` (le sélecteur de société de la SPA), qui ne partage RIEN avec la
+    route du portefeuille : quand l'une tombe, l'autre résout encore le `company_id`."""
+    vu: dict = {}
+
+    async def _eval(ctx, app, js, arg):
+        vu["path"] = arg["path"]
+        return {"status": 200, "data": {"companies": [{"id": 239568}]}}
+
+    substrat.setattr(P.browserbase, "run_page_eval", _eval)
+    out = asyncio.run(_tool("pennylaneged_companies")(page=1, minimal=True))
+    assert vu["path"].startswith("/navbar/companies?")
+    assert "flow_companies" not in vu["path"], \
+        "la voie de secours ne doit pas dépendre de la route en panne"
+    assert out["companies"][0]["id"] == 239568

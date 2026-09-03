@@ -87,6 +87,10 @@ class SessionFinalized(BaseModel):
     connected: bool
     scope: str
     account: str
+    # Non vide = session PERSISTÉE alors que la sonde de login n'a pas pu se prononcer
+    # (son endpoint a bougé, cf. `browser_session.ProbeUnavailable`). À afficher : la
+    # connexion vaut peut-être, mais rien ne l'atteste.
+    warning: str = ""
 
 
 # --- Handlers ---------------------------------------------------------------
@@ -135,12 +139,13 @@ async def _finalize(ctx: ResolvedCtx, inp: SessionFinalizeInput) -> dict:
                 raise AuthzDenied(403, "forbidden")
     account = (inp.account or "").strip()
     try:
-        connected = await browser_session.finalize(
+        res = await browser_session.finalize(
             ctx.sub, inp.name, inp.context_id, inp.session_id, scope=scope,
             group_id=group_id, account=account, force=bool(inp.force))
     except browser_session.SessionError as e:
         raise AuthzDenied(502, "session_verify_failed", str(e))
-    return {"connected": connected, "scope": scope, "account": account}
+    return {"connected": res.connected, "scope": scope, "account": account,
+            "warning": res.warning}
 
 
 _DOC_START = (
