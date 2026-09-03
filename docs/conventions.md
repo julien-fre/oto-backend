@@ -440,17 +440,24 @@ rien ne rendait navigable et que rien ne tenait.
   Figé par `tests/middleware/test_middleware_order.py` — le changer demande de relire ses invariants.
 - **PERF — le serveur est MONO-LOOP : aucun I/O bloquant dans la boucle.** Un handler
   de tool qui n'`await` rien doit être `def` sync (threadpool) ; du DB sync dans un
-  middleware = même règle (`run_in_threadpool`). Deux modes de gel vécus + garde-fous
-  CI, pool borné (`timeout=5`), observabilité
+  middleware = même règle (`run_in_threadpool`) ; et **une capacité passe par le seam
+  des adaptateurs**, qui range autz + handler sync en threadpool (ne pas rapiécer une
+  capacité à la main : le seam le fait pour toutes). Quatre modes de gel vécus +
+  garde-fous CI, pool borné (`timeout=5`), **DDL à chaud borné**
+  (`lock_timeout`/`statement_timeout` sur `_connect_autocommit`), observabilité
   (loop_watch/aiodebug, py-spy box, Kuma timeout 30s).
-  ⚠️ **DEUX garde-fous, de natures différentes, parce qu'un middleware échappe au
-  premier** : `test_no_blocking_async_handlers` lit le source des `@mcp.tool` (async
+  ⚠️ **TROIS garde-fous, de natures différentes, parce que chacun échappe aux
+  précédents** : `test_no_blocking_async_handlers` lit le source des `@mcp.tool` (async
   sans `await` = rejeté) — or un middleware n'est pas un tool ET doit `await
   call_next`, donc il passe deux fois à côté ; `test_no_blocking_db_in_middleware`
   **observe le thread** qui emprunte une connexion (mouchard sur `db._conn._get_pool`)
-  et refuse tout accès DB depuis la boucle. Gel de prod du 15/08 : le handshake
-  composait l'artefact de session — la cascade de statut de TOUS les connecteurs —
-  dans la boucle. Un chemin de la même classe reste à traiter, listé dans le doc.
+  et refuse tout accès DB depuis la boucle ; `test_capacites_hors_boucle` observe le
+  thread lui aussi, mais sur **le seam qui FABRIQUE les tools** — un tool fabriqué est
+  `async def` et `await`, donc il passe le premier critère alors que les 285 handlers
+  sync qu'il appelle tournaient dans la boucle (gel de prod du 01/09, 12 min 48 s de
+  silence). Gel du 15/08 : le handshake composait l'artefact de session — la cascade de
+  statut de TOUS les connecteurs — dans la boucle. Un chemin de la même classe reste à
+  traiter (un `async def` qui bloque AVANT son premier `await`), listé dans le doc.
   **Détail (incidents, recettes de diagnostic) : `docs/event-loop-perf.md`**.
 - **Un 502 en rafale n'est pas forcément un gel** — deuxième cause, distincte (#352,
   nuit du 15-16/08) : un POST `/mcp` en vol quand la session streamable-http se termine

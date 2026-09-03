@@ -130,7 +130,11 @@ def key_indexes(*, dry_run: bool = False) -> dict:
     for ns in manquants:
         try:
             removed = ds.datastore_merge_key_duplicates(ns["id"], ns["key"])
-            ds.datastore_ensure_key_index(ns["id"], ns["key"])
+            # `bornee=False` : travail de FOND. Les bornes du DDL à chaud existent
+            # pour qu'un appel de requête n'attende pas ; ici, attendre son tour ne
+            # dessert personne — et borner garantirait qu'un index sur une table très
+            # occupée ne se pose jamais.
+            ds.datastore_ensure_key_index(ns["id"], ns["key"], bornee=False)
             poses += 1
             resorbes += removed
             if removed:
