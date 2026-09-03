@@ -429,19 +429,33 @@ def insert_usage_signal(
 
     ⚠️ La comparaison porte sur le CORPS ENTIER, pas sur le sujet : deux
     signalements sur le même outil sont normaux et fréquents — c'est le texte à
-    l'identique qui trahit le rejeu."""
+    l'identique qui trahit le rejeu.
+
+    ⚠️ **Et sur l'ORGANISATION, faute de quoi ce cran détruirait la donnée qu'il
+    prétend ranger.** Les deux dépôts qui ont motivé ce lot n'étaient PAS un
+    rejeu : l'auteur avait adressé le premier à la mauvaise organisation et l'a
+    redéposé, texte identique, sur la bonne — il le dit lui-même dans le second
+    corps. Sans cette clause, le second aurait été fusionné dans le premier et le
+    signalement serait resté classé au mauvais endroit, définitivement.
+
+    ⚠️ **Le défaut de fond reste entier et n'est pas ici** : corriger l'adresse
+    d'un signalement impose de le redéposer, parce que le réaiguillage n'existe
+    que côté administrateur. L'émetteur n'a pas d'autre recours que le doublon.
+    Tant que ça dure, ces doublons-là sont légitimes."""
     with _connect() as conn:
         vu = conn.execute(
             """
             SELECT id FROM usage_signals
              WHERE sub IS NOT DISTINCT FROM %s
+               AND org_id IS NOT DISTINCT FROM %s
                AND signal = %s AND kind = %s
                AND target IS NOT DISTINCT FROM %s
                AND body IS NOT DISTINCT FROM %s
                AND created_at > NOW() - (%s || ' minutes')::interval
              ORDER BY id DESC LIMIT 1
             """,
-            (sub, signal, kind, target, body, str(_REJEU_SIGNAL_MINUTES)),
+            (sub, org_id, signal, kind, target, body,
+             str(_REJEU_SIGNAL_MINUTES)),
         ).fetchone()
         if vu is not None:
             return int(vu["id"]), True

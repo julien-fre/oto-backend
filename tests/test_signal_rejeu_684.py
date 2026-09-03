@@ -122,3 +122,25 @@ def test_la_surface_DIT_le_rejeu_au_lieu_de_le_taire(live_signals, monkeypatch):
     assert second["deja_signale"] is True and second["id"] == premier["id"]
     assert "ce qui a changé" in second["deja_signale_hint"], (
         "le témoin doit dire quoi faire si le défaut s'est VRAIMENT reproduit")
+
+
+def test_une_AUTRE_organisation_n_est_jamais_un_rejeu(live_signals):
+    """La borne la plus importante, et je l'avais manquée.
+
+    Les deux dépôts qui ont motivé ce lot n'étaient PAS un rejeu : l'auteur avait
+    adressé le premier à la mauvaise organisation et l'a redéposé, texte
+    identique, sur la bonne — il l'écrit dans le second corps, que je n'avais pas
+    lu jusqu'au bout. Sans cette clause, mon propre correctif aurait fusionné le
+    second dans le premier et laissé le signalement classé au mauvais endroit,
+    **définitivement**.
+
+    ⚠️ C'est la forme la plus coûteuse d'une garde : celle qui détruit la donnée
+    qu'elle prétend ranger, en croyant reconnaître un défaut qu'elle n'a pas
+    vérifié. Un rapport de terrain est une mesure ; l'interprétation qu'on en
+    fait n'en est pas une.
+    """
+    premier, _ = _depose(org_id=249)
+    second, deja = _depose(org_id=178)
+    assert deja is False and second != premier, (
+        "le même texte sur DEUX organisations est une correction d'adresse, "
+        "pas un rejeu — les fusionner perd le classement")
