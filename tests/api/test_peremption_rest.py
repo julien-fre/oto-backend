@@ -243,6 +243,13 @@ def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
         label="éteinte depuis deux semaines")
     db.update_trigger(t["id"], org["id"], {"enabled": False})
 
+    # ⚠️ Armer le runner ICI, explicitement. Ce test le tenait d'un effet de bord
+    # d'un test précédent (un `claim` y écrit le sondage qui vaut présence) — donc
+    # il passait ou non selon l'ordre et le contenu du reste du fichier, sans que
+    # son sujet ait changé. **Un banc qui dépend de l'état laissé par un autre ne
+    # mesure plus ce qu'il annonce.**
+    db.claim_next_job(org["id"], "worker-du-banc")
+
     # Le rallumage passe par la ROUTE : c'est le geste réel de l'utilisateur.
     r = client.post(ROUTE, headers=_h(org["membre"]),
                     json={"op": "update", "trigger_id": t["id"], "enabled": True})
@@ -255,6 +262,17 @@ def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
         "rallumé, il est encore vu DÛ : l'échéance figée pendant l'extinction "
         "déclenche une exécution que personne n'a demandée")
 
-    # Et le tick, joué pour de vrai, n'enfile rien pour lui.
+    # Et le tick, joué pour de vrai, n'enfile rien POUR LUI.
+    #
+    # ⚠️ « Pour lui », pas « rien du tout » : la file de l'org porte d'autres
+    # déclencheurs posés par les bancs précédents, et un tick les sert aussi.
+    # Assurer que la file est VIDE mesurerait donc l'org entière au lieu de ce
+    # déclencheur — un banc trop large lit comme une régression tout changement
+    # qui fait partir un travail légitime ailleurs.
+    avant = {j["id"] for j in db.list_jobs(org["id"], status="pending", limit=200)}
     runner_tick._tick()
-    assert db.claim_next_job(org["id"], "un-worker") is None
+    apres = db.list_jobs(org["id"], status="pending", limit=200)
+    nouveaux = [j for j in apres if j["id"] not in avant
+                and (j.get("payload") or {}).get("trigger_id") == t["id"]]
+    assert not nouveaux, (
+        "rallumé, il a enfilé une occurrence immédiate que personne n'a demandée")
