@@ -29,10 +29,11 @@ import uuid
 
 import pytest
 
-# La requête que celle-ci REMPLACE — le point de comparaison du coût nominal. Elle
-# n'est pas là pour la nostalgie : sans elle, « le cas nominal ne coûte rien de
-# plus » n'a pas de référence, et se mesure contre une intuition.
-_SQL_UN_SAUT = "SELECT new_sub FROM sub_aliases WHERE old_sub=%(sub)s"
+# La requête d'AVANT le 2026-09-03, recopiée ici à l'octet près. Elle n'est pas là
+# pour la nostalgie : sans elle, « le cas nominal ne coûte rien de plus qu'avant »
+# n'a pas de référence et se mesure contre une intuition. C'est aussi, désormais,
+# exactement ce que le chemin nominal exécute — et c'est ce qu'on vérifie.
+_SQL_UN_SAUT = "SELECT new_sub FROM sub_aliases WHERE old_sub=%s"
 
 
 @pytest.fixture(scope="module")
@@ -264,6 +265,17 @@ def test_une_chaine_pile_a_la_borne_se_resout_encore(live):
 
 
 # ── 5. le cas nominal ne coûte rien de plus — mesuré, pas affirmé ────────────
+#
+# ⚠️ La 1re version de ce lot ancrait la récursion sur la requête d'avant et
+# comptait sur l'inertie du reste. Le raisonnement était juste, la mesure non : sur
+# la production (`EXPLAIN (ANALYZE, BUFFERS)` du 2026-09-03, sub sans alias), le
+# terme récursif construit le côté interne de sa jointure de hachage AVANT de sonder
+# une table de travail vide — `sub_aliases` lue DEUX fois, 5 buffers et 0,149 ms
+# contre 1 buffer et 0,012 ms. Et ça ne se voyait PAS ici : sur une base de test
+# minuscule, le planificateur choisit un autre plan et le compte tombait juste.
+#
+# D'où les deux mesures ci-dessous, et le fait qu'elles portent sur ce qui
+# S'EXÉCUTE, pas sur ce que le module déclare exécuter.
 
 def _noeuds(plan: dict):
     yield plan
@@ -271,13 +283,13 @@ def _noeuds(plan: dict):
         yield from _noeuds(enfant)
 
 
-def _relations_visitees(sql: str, params: dict) -> dict:
+def _relations_visitees(sql: str, params) -> dict:
     """Les relations RÉELLEMENT accédées par ce plan, et combien de fois.
 
-    ⚠️ `Actual Loops` est ce qui compte, pas la présence du nœud : le test
-    d'existence du compte apparaît dans le plan de la requête neuve même quand il
-    n'est jamais exécuté. Lire l'arbre sans lire les boucles ferait dire à ce test
-    l'inverse de la vérité."""
+    ⚠️ `Actual Loops` est ce qui compte, pas la présence du nœud : un sous-plan
+    apparaît dans l'arbre même quand il n'est jamais exécuté (`never executed`).
+    Lire l'arbre sans lire les boucles ferait dire à ce test l'inverse de la
+    vérité."""
     from oto_mcp.db._conn import _connect
     with _connect() as conn:
         row = conn.execute(
@@ -291,36 +303,11 @@ def _relations_visitees(sql: str, params: dict) -> dict:
     return visites
 
 
-def test_le_cas_nominal_ne_touche_QUE_sub_aliases_et_une_seule_fois(live):
-    """Un identifiant courant, sans alias — le cas de tout le trafic. Le plan de la
-    requête neuve doit accéder aux MÊMES relations, le MÊME nombre de fois, que la
-    requête d'un seul saut qu'elle remplace. En particulier : `users` n'est pas
-    touchée, alors que la requête sait la joindre."""
-    from oto_mcp.db import sub_aliases
-    uniq = uuid.uuid4().hex[:8]
-    sub = f"sans_alias_{uniq}"
-    _chaine_par_merges(2)  # de quoi peupler la table : on ne mesure pas sur du vide
-
-    avant = _relations_visitees(_SQL_UN_SAUT, {"sub": sub})
-    apres = _relations_visitees(sub_aliases._CHAINE_SQL,
-                                {"sub": sub, "max": sub_aliases.MAX_SAUTS})
-
-    assert avant == {"sub_aliases": 1}, avant
-    assert apres == avant, (
-        f"le cas nominal touche désormais {apres} au lieu de {avant} — c'est un "
-        "coût de plus en tête de CHAQUE requête servie")
-
-
-def test_le_cas_nominal_ne_fait_qu_une_seule_requete(live, monkeypatch):
-    """Le compagnon de la mesure de plan : une requête, pas deux. Un correctif qui
-    irait vérifier l'existence du compte dans un SECOND aller-retour serait invisible
-    au test ci-dessus, qui ne juge qu'un plan à la fois."""
+def _espionner(monkeypatch) -> list[str]:
+    """Les requêtes que `resolve_sub` envoie réellement, dans l'ordre."""
     import contextlib
 
-    from oto_mcp import db
     from oto_mcp.db import _conn as dbconn
-    uniq = uuid.uuid4().hex[:8]
-    sub = f"sans_alias_{uniq}"
     passages: list[str] = []
 
     class _Espion:
@@ -342,5 +329,51 @@ def test_le_cas_nominal_ne_fait_qu_une_seule_requete(live, monkeypatch):
             yield _Espion(conn)
 
     monkeypatch.setattr("oto_mcp.db.sub_aliases._connect", _compte)
+    return passages
+
+
+def test_le_cas_nominal_execute_EXACTEMENT_la_requete_d_avant(live, monkeypatch):
+    """Un identifiant courant, qu'aucun alias ne nomme — le cas de tout le trafic.
+
+    L'assertion est volontairement littérale : c'est la seule qui prouve « rien de
+    plus qu'avant » sans le paraphraser. Un correctif qui ajouterait une lecture, ou
+    qui remplacerait cette requête par une variante « équivalente », le dirait ici."""
+    from oto_mcp import db
+    _chaine_par_merges(2)  # la table n'est pas vide : on ne mesure pas sur du néant
+    sub = f"sans_alias_{uuid.uuid4().hex[:8]}"
+
+    passages = _espionner(monkeypatch)
     assert db.resolve_sub(sub) == sub
-    assert len(passages) == 1, f"{len(passages)} requêtes sur le cas nominal"
+
+    assert passages == [_SQL_UN_SAUT], passages
+
+
+def test_la_requete_du_cas_nominal_ne_touche_QUE_sub_aliases_une_fois(live, monkeypatch):
+    """Et ce qu'elle exécute ne va pas chercher `users` — alors que la résolution
+    complète, elle, sait le faire. Mesuré sur le plan, pas déduit du texte."""
+    from oto_mcp import db
+    _chaine_par_merges(2)
+    sub = f"sans_alias_{uuid.uuid4().hex[:8]}"
+
+    passages = _espionner(monkeypatch)
+    db.resolve_sub(sub)
+
+    assert _relations_visitees(passages[0], (sub,)) == {"sub_aliases": 1}
+
+
+def test_le_chemin_AVEC_alias_paie_une_requete_de_plus(live, monkeypatch):
+    """Le prix du correctif, écrit noir sur blanc là où il se paie : deux requêtes,
+    sur la même connexion, et seulement quand un alias nomme le sub.
+
+    Le figer ici sert deux fois : ça dit que le compromis est délibéré (payer sur le
+    chemin rare plutôt que sur le chemin de tout le trafic), et ça rend visible un
+    troisième aller-retour que quelqu'un ajouterait plus tard."""
+    from oto_mcp import db
+    a, b, c = _chaine_par_merges(2)
+
+    passages = _espionner(monkeypatch)
+    assert db.resolve_sub(a) == c
+
+    assert len(passages) == 2, passages
+    assert passages[0] == _SQL_UN_SAUT
+    assert "RECURSIVE" in passages[1]

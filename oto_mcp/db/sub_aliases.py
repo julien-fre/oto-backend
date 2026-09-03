@@ -30,12 +30,27 @@ et rendre un maillon mort fabriquerait le fantôme qu'on ferme ici.
 
 ## Ce que ça coûte sur le chemin chaud
 
-**Le cas nominal — un identifiant courant, sans alias — coûte exactement ce qu'il
-coûtait : UNE requête, UN accès index sur `sub_aliases_pkey`, et zéro accès à
-`users`.** L'ancrage de la récursion est le `SELECT … WHERE old_sub = %(sub)s` de
-l'ancienne version ; s'il ne rend rien, la partie récursive ne tourne pas et le test
-d'existence du compte, corrélé au bout de chaîne, n'est jamais exécuté. C'est mesuré
-(`tests/test_resolve_sub_chaine_live.py`), pas affirmé.
+Ce code est en tête de CHAQUE requête servie. **Le cas nominal — un identifiant
+courant, qu'aucun alias ne nomme — exécute la requête d'AVANT, mot pour mot, et
+s'arrête là.** Pas une requête de plus, pas un buffer de plus, pas un accès à `users`.
+
+⚠️ **Ce n'est pas ce que faisait la première version de ce module**, et c'est le
+plan d'exécution qui l'a dit, pas la relecture. Elle ancrait la récursion sur la
+requête d'avant et laissait le reste inerte — raisonnement juste, mesure fausse :
+sur la production (`EXPLAIN (ANALYZE, BUFFERS)`, 2026-09-03, sub sans alias), la
+jointure de hachage du terme récursif construit son côté interne AVANT de sonder
+une table de travail vide, donc `sub_aliases` était lue DEUX fois — 5 buffers et
+0,149 ms contre 1 buffer et 0,012 ms. Le test d'existence du compte, lui, était
+bien `never executed`. Rien de dramatique en absolu ; mais « rien de plus » était
+faux, et il ne se voyait ni dans le code ni sur la base de test (dont le plan,
+minuscule, est différent).
+
+D'où la forme retenue : le saut simple d'abord, la récursion **seulement** s'il y a
+un alias. Le prix se paie là où il y a quelque chose à résoudre — un chemin
+emprunté par un identifiant sur les vingt-trois que porte la table — et nulle part
+ailleurs. Les deux requêtes partagent la même connexion (pas d'aller-retour de pool
+en plus), et c'est mesuré au plan d'exécution dans
+`tests/test_resolve_sub_chaine_live.py`, pas affirmé.
 
 ## Et si un alias bouclait ?
 
@@ -73,10 +88,12 @@ class AliasNonResolvable(RuntimeError):
     bascule avait supprimée, sans org, sans coffre, sans historique — et sans une
     ligne de trace. Vécu : 884 appels servis sous une identité ressuscitée.
 
-    `motif` dit lequel des trois cas :
+    `motif` dit lequel des cas :
     - `compte_disparu` — la chaîne aboutit à un identifiant sans ligne `users` ;
     - `cycle` — un maillon se répète, la chaîne ne se termine pas ;
-    - `chaine_trop_longue` — la borne `MAX_SAUTS` est atteinte sans terminaison.
+    - `chaine_trop_longue` — la borne `MAX_SAUTS` est atteinte sans terminaison ;
+    - `alias_evanoui` — l'alias vu au premier saut a disparu au second (garde de
+      cohérence entre les deux lectures ; aucun chemin ne l'écrit aujourd'hui).
     """
 
     def __init__(self, sub: str, motif: str, detail: str):
@@ -86,11 +103,16 @@ class AliasNonResolvable(RuntimeError):
             "refusée plutôt que servie sous un compte qui n'existe plus")
 
 
-# La chaîne d'alias en UNE requête, bornée et protégée du cycle.
+# LE CHEMIN NOMINAL, et rien d'autre : la requête d'avant le 2026-09-03, à l'octet
+# près. Tout le trafic passe par elle et s'arrête là. Elle est une constante parce
+# qu'un test la compare à ce qui s'exécute réellement — la promesse « rien de plus
+# qu'avant » ne vaut que si « avant » est écrit quelque part.
+_UN_SAUT_SQL = "SELECT new_sub FROM sub_aliases WHERE old_sub=%s"
+
+
+# La chaîne d'alias en UNE requête, bornée et protégée du cycle. N'est exécutée que
+# lorsque le saut simple a trouvé un alias.
 #
-# - l'ANCRE est mot pour mot la requête d'avant (`old_sub = %(sub)s`, accès par la
-#   clé primaire) : sans alias, elle ne rend rien et tout le reste est inerte —
-#   c'est ce qui tient la promesse « le cas nominal ne coûte rien de plus » ;
 # - `chemin` transporte les maillons déjà vus ; `boucle` s'allume dès qu'un maillon
 #   s'y répète, et la clause `NOT c.boucle` arrête la récursion à ce moment-là (on
 #   garde la ligne fautive pour pouvoir NOMMER le cycle plutôt que le taire) ;
@@ -134,9 +156,22 @@ def resolve_sub(sub: str) -> str:
     if not sub:
         return sub
     with _connect() as conn:
+        # 1. Le saut simple — la requête d'avant, mot pour mot. Aucun alias : on
+        #    s'arrête ici, et le chemin chaud n'a rien payé de plus qu'hier.
+        if conn.execute(_UN_SAUT_SQL, (sub,)).fetchone() is None:
+            return sub
+        # 2. Il y a un alias : dérouler la chaîne jusqu'au bout, sur la MÊME
+        #    connexion. Le premier saut est refait — c'est le prix, minuscule et
+        #    payé seulement là où il y a quelque chose à résoudre.
         row = conn.execute(_CHAINE_SQL, {"sub": sub, "max": MAX_SAUTS}).fetchone()
     if not row:
-        return sub  # cas nominal : aucun alias ne nomme ce sub
+        # L'alias a disparu entre les deux lectures. Impossible aujourd'hui (rien ne
+        # supprime de `sub_aliases`), mais le taire rendrait le sub d'entrée — donc
+        # servirait la requête sous le compte d'AVANT bascule, ce que ce module
+        # existe pour empêcher.
+        raise AliasNonResolvable(
+            sub, "alias_evanoui",
+            "un alias nommait ce sub à la lecture précédente et n'y est plus")
     # L'ORDRE compte : dans un cycle, le « bout » de chaîne est arbitraire — juger
     # son existence avant d'avoir écarté le cycle donnerait un verdict au hasard.
     if row["boucle"]:
