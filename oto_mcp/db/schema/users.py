@@ -51,9 +51,10 @@ CREATE TABLE IF NOT EXISTS user_account_profile (
 # alias de sub (bascule de compte)
 ALIASES = """
 -- Bascule de tenant Logto (B1, otomata#35) : alias ancien_sub → nouveau_sub. Posé
--- par migrate_sub au 1er login d'un compte sur le nouveau tenant (merge par email).
--- Sert à canonicaliser les tokens encore émis par l'ancien tenant pendant le drain
--- (sinon un vieux token re-créerait le compte supprimé). Vide hors fenêtre de bascule.
+-- par migrate_sub, désormais sur acte d'OPÉRATEUR seulement : le merge automatique
+-- par email au login a été retiré le 2026-09-03 (cf. oto_mcp/tenant_migration.py).
+-- Sert à canonicaliser les tokens portant un ancien sub pendant le drain — qui, lui,
+-- reste armé (sinon un vieux token re-créerait le compte supprimé par le merge).
 CREATE TABLE IF NOT EXISTS sub_aliases (
     old_sub TEXT PRIMARY KEY,
     new_sub TEXT NOT NULL,

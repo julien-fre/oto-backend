@@ -97,9 +97,10 @@ def _make_tool(cap: Capability):
             en entier dans un thread. Le rendre en un seul morceau garde l'ordre et
             évite quatre allers-retours de thread par appel.
 
-            La résolution d'identité en fait partie : pendant une bascule de tenant
-            (`OTO_MCP_TENANT_MIGRATION_ISS`), `current_user_sub_from_token` canonicalise
-            le sub et repousse l'utilisateur — deux allers-retours DB sur CHAQUE appel.
+            La résolution d'identité en fait partie : quand le drain d'alias est armé
+            (`tenant_migration.alias_drain_armed`), `current_user_sub_from_token`
+            canonicalise le sub et repousse l'utilisateur — deux allers-retours DB sur
+            CHAQUE appel.
             Le jeton se lit par ContextVar, que la copie de contexte transporte."""
             raw = RawCtx(sub=current_user_sub_from_token())
             inp = cap.Input(**kwargs)                 # validation (seule source : Input)
