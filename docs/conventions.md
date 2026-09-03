@@ -218,6 +218,18 @@ rien ne rendait navigable et que rien ne tenait.
   callback qui ne distingue jamais les causes d'un refus, ACK de webhook), les autres
   portent « dette déclarée … (#424, verdict C) » et attendent leur lot.
   **Détail : `docs/silences-2026-08-27.md`.**
+- **Un test assert sur le CODE d'un refus, jamais sur sa phrase** — et la phrase ne se
+  cite que quand c'est ELLE qu'on éprouve (un message qui doit porter une mesure, un
+  hint qui doit basculer). Le code est le contrat, il ne bouge pas ; la phrase est de
+  l'ergonomie, elle bouge tout le temps.
+  **Ce que ça a rapporté, chiffré le 03/09/2026** : décision de passer en anglais les
+  messages atteignables par un utilisateur extérieur. Sur 97 fragments de phrase citables
+  des modules concernés, **6 seulement sont cités par un test — 21 lignes dans 11
+  fichiers**. La même décision sur une suite qui asserte des phrases aurait coûté des
+  centaines de réécritures, et se serait probablement soldée par un report. La discipline
+  n'a pas été tenue POUR ça ; c'est ce qui la rend démonstrative — **elle a payé un
+  changement que personne n'avait anticipé en la posant.** À citer quand on demande
+  pourquoi on s'impose des codes nommés.
 - **Ce dépôt est PUBLIC : aucun nom de client, de personne réelle ou de domaine client.**
   Remplacer par `acme`, `Jane Doe`, de la prose générique, un TLD `.test`. La règle se tient
   **à la relecture** : il n'existe aucun contrôle automatique, et aucun n'est souhaité.
