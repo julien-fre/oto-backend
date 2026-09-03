@@ -756,14 +756,51 @@ de fin de passage détectait après coup.
   de longueur et le motif se jugent sur ce que l'APPELANT pose, et un refus portant sur
   une valeur qu'il ne contrôle pas serait inactionnable.
 
-⚠️ **Le cran borne TOUT LE MONDE, faces humaine et REST comprises — et c'est dit.** Le
-store ne sait pas distinguer un agent d'un humain : il connaît un sub et une org, et le
-run n'est pas obligatoire sur toute écriture ; une exemption par défaut serait un trou
-(un agent hors run passerait). La sortie du propriétaire est le schéma —
-`data_patch_schema(fields=[{"key": "adresse", "readonly": false}])`, puis écrire, puis
-refermer — deux gestes délibérés, même parti que le bail (#317) et `key_required` (#516).
-Il n'y a pas de « forcer » sur `data_write`, **et le refus n'enseigne pas comment lever
-le cran** : un bouton nommé dans le refus devient un réflexe. `null` lève un cran comme
+⚠️ **Le cran borne TOUT LE MONDE PAR DÉFAUT, faces humaine et REST comprises — et c'est
+dit.** Le store ne sait pas distinguer un agent d'un humain : il connaît un sub et une
+org, et le run n'est pas obligatoire sur toute écriture ; une exemption par défaut serait
+un trou (un agent hors run passerait).
+
+⚠️ **Amendement du 02/09/2026 (#658) — `readonly` seul, et il faut dire pourquoi le
+parti d'avant est tombé.** La sortie du propriétaire était le schéma :
+`data_patch_schema(fields=[{"key": "adresse", "readonly": false}])`, écrire, refermer —
+deux gestes délibérés, même parti que le bail (#317) et `key_required` (#516) ; il n'y
+avait pas de « forcer » sur `data_write`, et le refus n'enseignait pas comment lever le
+cran, au motif qu'un bouton nommé dans un refus devient un réflexe. **Ce parti a été
+mesuré sur `key_required`, et il ne tient pas.** Sur la même procédure, deux jours de
+suite (#668) : le 01/09 l'agent refusé retrouve seul la manœuvre et la rejoue deux fois
+sur deux tableaux — il referme ; le 02/09 un autre passage ne la retrouve pas et
+s'arrête. *Il suffit qu'une exécution s'interrompe entre « lever » et « remettre » pour
+que le verrou reste ouvert sans que personne le sache* — et une colonne déverrouillée ne
+produit **aucun** signal. Un cran qu'on doit ouvrir pour écrire est donc plus dangereux
+que le forçage qu'il voulait éviter.
+
+Ce qui le remplace, en trois pièces (`datastore/forcage.py`) :
+
+- **`readonly_override=true` SUR L'APPEL** (`data_write` en MCP ; paramètre de query sur
+  `POST`/`PATCH …/rows` en REST — le corps y EST la ligne). Il vaut pour cet appel et
+  rien d'autre : rien à rouvrir dans le schéma, donc rien à refermer, rien à oublier.
+- **Le palier : propriétaire du tableau ∪ qui le gouverne** (`ownership.owns` ∪
+  `ownership.can_govern`). Les deux ensembles se croisent sans s'inclure — un membre de
+  l'org propriétaire possède sans gouverner, un gérant (ADR 0048) gouverne sans posséder
+  — d'où l'union. ⚠️ Ce qui reste dehors est le tiers à qui le tableau a été PARTAGÉ en
+  écriture : il écrit, il ne force pas. Sinon quiconque peut écrire pourrait lever le
+  verrou, ce qui est la définition d'une colonne ouverte. Le palier est lu **une fois par
+  appel et hors de toute transaction** — l'évaluer sous le `FOR UPDATE` du verrou de
+  ligne prendrait une seconde connexion du pool en tenant un verrou. Zéro SQL de plus sur
+  le chemin nominal : sans demande, ou sans colonne `readonly` déclarée, rien n'est lu.
+- **Le refus nomme le geste**, dans les deux sens : sans le paramètre, il dit comment
+  forcer et à qui c'est ouvert ; avec le paramètre mais sans le palier, il dit qui peut,
+  et ne renvoie pas l'appelant au paramètre qu'il a déjà passé.
+- **La trace est au journal des appels**, clé `readonly_forced` (ligne, colonne, valeur
+  remplacée), à côté du `sub` que le journal stampe déjà — face MCP par
+  `session_org.note_call_trace` + l'allowlist `server._TRACED_ARGS`, face REST par
+  `calllog.log_rest_call(forced=…)` (hors `args`, qui stringifierait la liste). ⚠️ **Le
+  journal ne remonte qu'à ~35 jours** : la trace disparaîtra alors que la valeur forcée
+  restera. Arbitré en connaissance de cause le 02/09/2026 — pas de colonne de plus sur la
+  ligne.
+
+`null` lève un cran comme
 une clé de champ ordinaire, et **la levée ne touche aucune ligne** : une origine posée
 reste. `enforced` annonce `readonly` et `origine` par une sonde qui interroge la fonction
 qui décide (comme `key_required`, elles ne se prouvent pas sur une ROW seule). **Cinq
@@ -1126,7 +1163,7 @@ dont découlent les deux défauts payés :
 | `{"champ": {"origine": null}}` | origine effacée ; ne reste que la valeur ⇒ colonne à nouveau plate |
 | `{"champ": {"origine": X}}` sur un champ `origine: "system"` | **refusé** — la plateforme la pose (#586) |
 | `{"champ": X}` avec X **identique** à la valeur en place | **no-op : toutes les couches restent** (29/08/2026 — le round-trip relire → repousser porte la valeur nue, il ne doit rien détruire) |
-| `{"champ": Y}` sur un champ `readonly: true` | **refusé** si Y change la valeur ; identique = no-op ; `{"champ": {"comment": …}}` passe (#606) |
+| `{"champ": Y}` sur un champ `readonly: true` | **refusé** si Y change la valeur ; identique = no-op ; `{"champ": {"comment": …}}` passe (#606) ; `readonly_override=true` force, pour cet appel, si l'appelant possède ou gouverne le tableau (#658) |
 | `{"champ": {"origine": X}}` sur un champ `origine: "system"`, X = ce que le système poserait | accepté, no-op (29/08/2026 — le geste dominant du terrain) |
 
 `comment` et `link` décrivent la valeur : quand elle CHANGE sans qu'ils soient

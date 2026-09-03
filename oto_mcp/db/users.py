@@ -281,6 +281,17 @@ _SUB_COLUMNS = [
     # existe encore et la prod y écrit pendant la fenêtre : les DEUX se repointent,
     # sinon une bascule de tenant orphelinerait ce que la conversion recopiera après.
     ("guides", "owner_id"), ("nodes", "owner_id"),
+    # L'identité qu'un travail programmé PORTE — celle au nom de laquelle l'agent
+    # agira (chantier agents autonomes, 02/09). Elle se repointe pour la même
+    # raison que le reste : un travail `pending` doit s'exécuter au nom de la
+    # PERSONNE, qui existe toujours sous son nouveau compte.
+    # ⚠️ Et ne pas repointer ne conserverait RIEN : il n'y a pas de clé étrangère
+    # entre un travail et son porteur, donc la ligne survivrait en désignant un
+    # compte disparu. On ne préserverait pas une trace historique, on
+    # fabriquerait un pointeur mort — et l'agent s'arrêterait en disant que
+    # l'identité n'est plus valide, alors qu'elle l'est, sous un autre nom.
+    # Hors PK (`runner_jobs` a `id` pour clé) : UPDATE nu, pas de `_PK_SUB_TABLES`.
+    ("runner_jobs", "sub"),
     # l'HISTORIQUE de la personne (dossier du 23/08 — ces lignes survivaient au merge
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :

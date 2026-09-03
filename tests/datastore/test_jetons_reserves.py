@@ -190,13 +190,16 @@ class _StoreREST:
     def __init__(self):
         self.vu = []
 
-    def append_row(self, ns, data, *, trace=None):
+    def append_row(self, ns, data, *, trace=None, readonly_override=False):
         self.vu.append(("append_row", ns, data))
         return {"_id": "r9", **data}
 
-    def update_row(self, ns, row_id, patch, *, trace=None):
+    def update_row(self, ns, row_id, patch, *, trace=None, readonly_override=False):
         self.vu.append(("update_row", ns, row_id, patch))
         return {"_id": row_id, **patch}
+
+    # #658 : la surface REST relit ce relevé pour sa ligne de journal.
+    off_forced: list = []
 
     def off_schema_report(self):
         return {}

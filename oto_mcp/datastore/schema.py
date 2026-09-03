@@ -38,6 +38,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from . import claimable
+from . import forcage as fcg
 
 # `url`/`email`/`datetime`/`enum` sont des types de PRÉSENTATION : même donnée (une
 # string) qu'un `text`, mais ils disent au client QUEL widget rendre (lien cliquable,
@@ -620,7 +621,8 @@ def system_value_fields(schema: Optional[dict]) -> dict:
 
 def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
                       avant: Optional[dict] = None, *,
-                      pose_systeme: Optional[dict] = None) -> tuple[list[str], dict]:
+                      pose_systeme: Optional[dict] = None,
+                      forcage: Optional["fcg.Forcage"] = None) -> tuple[list[str], dict]:
     """Les refus « champ que l'appelant n'écrit pas » → `(messages, details)`.
 
     `payload` = ce que le geste POSE (après arbitrage des vides, #608) ; `avant` = la
@@ -642,7 +644,10 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       rien (un tableau qui ne doit pas grossir se ferme par `key_required`). La
       colonne-clé ne se pose pas en `readonly` (refusé à la déclaration : elle se
       protège par `key_required`) ; un schéma legacy qui la porterait n'est pas
-      fermé, puisque l'identique passe.
+      fermé, puisque l'identique passe. **Un `forcage` TENU lève ce refus-là, pour
+      cet appel seulement** (#658, `forcage.py`) — les deux autres crans, eux, ne
+      se forcent pas : ils ferment ce que la PLATEFORME pose, pas ce que le client
+      a remis ;
 
     - `system: "<source>"` — le payload NOMME la colonne que la PLATEFORME pose
       (#607) avec une valeur qui n'est ni celle en place ni celle qu'on s'apprête
@@ -654,8 +659,12 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       sur une fiche et `…2511` sur la suivante.
 
     `details.expected_column` = `<colonne>.comment`, pour la face REST (#545) — un
-    front pointe la destination sans reparser une phrase. Le refus n'enseigne PAS
-    comment lever le cran : la sortie du propriétaire est le schéma, pas un réflexe.
+    front pointe la destination sans reparser une phrase. ⚠️ **Le refus NOMME
+    désormais le geste** (#658, arbitré le 02/09/2026) : qui peut forcer et comment.
+    Il ne l'enseignait pas, au motif que la sortie du propriétaire était le schéma —
+    or c'est précisément ce silence qui a produit la manœuvre « lever, écrire,
+    remettre » sur `key_required` (#668), dont une exécution interrompue laisse le
+    verrou ouvert sans aucun signal.
 
     ⚠️ Ici et pas dans le registre des jetons (#602) : celui-ci juge AVANT la
     résolution, sans schéma ; un champ réservé est une propriété du TABLEAU."""
@@ -677,12 +686,18 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
         if cle in ro and avant is not None \
                 and (not names_layers(neuf) or VALUE_LAYER in neuf) \
                 and not same_value(unwrap(neuf), unwrap(avant.get(cle))):
-            errors.append(
-                f"`{cle}` est une colonne du fichier source, non modifiable "
-                f"(`readonly`) — rien n'a été écrit. Ce que dit une autre source va "
-                f"dans `{cle}.comment` ({{\"{cle}\": {{\"comment\": …}}}}) ; la "
-                f"valeur reste celle du fichier.")
-            details["expected_column"] = f"{cle}.comment"
+            # #658 : le forçage se juge ICI, sur la même condition que le refus —
+            # ce qui garantit qu'il ne peut porter QUE sur ce que le cran refusait.
+            # `arbitrer` rend `None` quand il passe (et relève la substitution pour
+            # le journal), sinon le refus, qui nomme le geste dans les deux cas :
+            # paramètre absent → comment le passer ; palier non tenu → à qui il est
+            # ouvert. Le forçage ne touche PAS les deux autres crans de la famille :
+            # `origine`/`system` sont posés par la plateforme, pas par le client, et
+            # il n'y a rien à y corriger de la main du propriétaire.
+            refus = fcg.arbitrer(forcage, cle, unwrap(avant.get(cle)), unwrap(neuf))
+            if refus is not None:
+                errors.append(refus)
+                details["expected_column"] = f"{cle}.comment"
         if cle in sv and not _valeur_systeme_admise(cle, neuf, avant, pose_systeme):
             errors.append(
                 f"`{cle}` est posé par la plateforme depuis `{sv[cle]}` — il ne "

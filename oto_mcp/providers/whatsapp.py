@@ -20,7 +20,8 @@ CONNECTOR = channel(
     "whatsapp",
     hosted_channel="WHATSAPP",
     label="WhatsApp",
-    help="Ton WhatsApp — lire tes conversations et envoyer des messages",
+    help="Ton WhatsApp — lire tes conversations et envoyer des messages. "
+         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
     href="https://www.whatsapp.com",
 )
 

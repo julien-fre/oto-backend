@@ -111,7 +111,11 @@ def _tick() -> int:
             log.warning("déclencheur %s (org %s) : %d occurrence(s) périmée(s) — "
                         "aucun agent ne dessert cette organisation",
                         t["id"], t["org_id"], perimes)
-        db.enqueue_job(t["org_id"], "start",
+        # ⚠️ L'identité du travail est celle du CRÉATEUR du déclencheur, pas
+        # celle d'un compte de service : c'est en son nom que l'agent agira, et
+        # c'est ce qui rend le worker mutualisable. Le tick n'a pas d'identité
+        # propre — il est une horloge, pas un acteur.
+        db.enqueue_job(t["org_id"], "start", sub=t.get("sub"),
                        payload={k: v for k, v in payload.items() if v is not None})
         enfiles += 1
     return enfiles

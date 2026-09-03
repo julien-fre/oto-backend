@@ -99,13 +99,13 @@ class _FakeStore:
     def get_row(self, namespace, row_id):
         return dict(self.row)
 
-    def update_row(self, namespace, row_id, patch, *, trace=None):
+    def update_row(self, namespace, row_id, patch, *, trace=None, readonly_override=False):
         self._fill(trace, prev_status=self.row.get("statut"))
         self.row = {**self.row, **patch}
         self.written = patch
         return dict(self.row)
 
-    def append_row(self, namespace, data, *, trace=None):
+    def append_row(self, namespace, data, *, trace=None, readonly_override=False):
         self._fill(trace)
         return {"_id": "row-2", **data}
 
@@ -115,6 +115,9 @@ class _FakeStore:
 
     def declared_key(self, namespace):
         return "societe"
+
+    # #658 : la surface REST relit ce relevé pour sa ligne de journal.
+    off_forced: list = []
 
     def off_schema_report(self):
         return {}   # relevé « hors schéma » (#294) : rien de hors format ici
@@ -232,7 +235,8 @@ def test_illegal_transition_is_a_400_not_a_500(monkeypatch):
     store = _FakeStore()
     _wire_journal(monkeypatch)
 
-    def _refuse(namespace, row_id, patch, *, trace=None):
+    def _refuse(namespace, row_id, patch, *, trace=None,
+                readonly_override=False):
         raise RowValidationError(["statut: transition 'ecarte' → 'enrichi' interdite"])
 
     store.update_row = _refuse
@@ -532,11 +536,14 @@ def test_trace_only_yields_a_closed_set_of_keys():
     """Le relevé est un seam de service : il ne doit pas devenir une porte par
     laquelle n'importe quel état de résolution finit journalisé.
 
-    Trois clés, trois raisons nommées : l'entité datastore résolue (`ns_id`), et
+    QUATRE clés, quatre raisons nommées : l'entité datastore résolue (`ns_id`) ;
     l'EMPREINTE d'un run — la version de procédure exécutée + l'instance de connecteur
-    résolue (chantier du run, lot J2)."""
+    résolue (chantier du run, lot J2) ; et le FORÇAGE d'une colonne verrouillée (#658,
+    02/09/2026), dont c'est la seule trace — décidé comme telle, sans colonne de plus
+    sur la ligne. Une clé s'ajoute ICI, à la main, dans le commit qui la provoque."""
     from oto_mcp import server
-    assert server._TRACED_ARGS == ("ns_id", "doctrine_version", "instance")
+    assert server._TRACED_ARGS == ("ns_id", "doctrine_version", "instance",
+                                   "readonly_forced")
 
 
 def test_namespace_lens_correlates_on_the_id_without_a_tenant_bound(monkeypatch):

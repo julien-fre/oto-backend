@@ -20,7 +20,8 @@ CONNECTOR = channel(
     "twitter",
     hosted_channel="TWITTER",
     label="X (Twitter)",
-    help="Tes DM X (Twitter) — lire et envoyer des messages",
+    help="Tes DM X (Twitter) — lire et envoyer des messages. "
+         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
     href="https://x.com",
 )
 

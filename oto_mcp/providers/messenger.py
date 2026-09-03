@@ -20,7 +20,8 @@ CONNECTOR = channel(
     "messenger",
     hosted_channel="MESSENGER",
     label="Messenger",
-    help="Ton Messenger — lire tes conversations et envoyer des messages",
+    help="Ton Messenger — lire tes conversations et envoyer des messages. "
+         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
     href="https://www.messenger.com",
 )
 
