@@ -393,7 +393,21 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   (le docstring `GroupUpdated` disait le contraire — corrigé et daté) ; `PUT
   /api/me/guides/{scope}/{slug}` → **400 `body_too_large`**, borne **65 536 octets UTF-8**
   publiée en `maxLength` sur `body_md` (nécessaire, pas suffisant : un caractère
-  accentué pèse deux octets) ; `DELETE /api/me/orgs/{id}/membership` → **404
+  accentué pèse deux octets) ;
+  ⚠️ **`PUT /api/me/instructions/{slug}` porte le même code mais PAS la même borne
+  depuis le 03/09/2026 : 131 072 octets**, le double. Deux bornes, deux raisons, et
+  c'est la raison qui décide — le corps d'un **guide** est injecté dans CHAQUE session
+  (sa borne protège un budget réel), celui d'une **procédure** est chargé à la demande
+  par `oto_procedure op=get`. La justification historique « injecté à chaque session »
+  ne valait donc pas sur ce second chemin, qui refuse d'ailleurs explicitement le slug
+  du README. Relevée pour débloquer une procédure de mission qui était à sept octets
+  de l'ancienne borne. 128 Ko de français ≈ 34 000 jetons, soit environ un sixième
+  d'une fenêtre de 200 k — au plafond, une procédure reste chargeable avec de quoi
+  travailler autour ; doubler plutôt que décupler garde la borne comme signal qu'il
+  est temps de découper. ⚠️ **La garde est COMMUNE aux deux faces** (`.set`, `.create`
+  et `.admin_set` passent tous par `_set_instruction`, que `oto_procedure` atteint via
+  l'adaptateur MCP) : le relèvement vaut donc aussi côté connecteur, ce qui est un
+  effet constaté avant, pas découvert après ; `DELETE /api/me/orgs/{id}/membership` → **404
   `unknown_org`, 409 `personal_org`, 404 `not_a_member`, 409 `last_org_admin`**, dans
   l'ordre des gardes. La liste d'une opération n'est pas exhaustive : les 400 de
   l'adaptateur (`invalid_input`, `unknown_fields`, `invalid_json`, `invalid_body`) valent

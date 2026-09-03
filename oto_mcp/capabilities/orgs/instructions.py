@@ -53,10 +53,29 @@ _DROITS_SERVIS = {
 
 _OID = {"id": "org_id"}
 _OID_SLUG = {"id": "org_id", "slug": "slug"}
-# Jumelle de `guides._MAX_BODY_BYTES`, même valeur, deux surfaces distinctes : ce
-# corps-ci est injecté dans le guide de base à chaque session. Nommée plutôt que
-# littérale pour que la garde et le message du refus ne puissent pas diverger.
-_MAX_BODY_BYTES = 64 * 1024
+# Borne du corps d'une PROCÉDURE. Relevée de 64 à 128 Ko le 03/09/2026 (décision
+# d'Alexis : « fais une amélioration sur le mode http »), pour débloquer une mission
+# dont la procédure était à SEPT octets de l'ancienne — chaque nouvelle leçon y
+# chassait une ancienne.
+#
+# Pourquoi 128 Ko et pas plus : une procédure n'est PAS injectée à chaque session
+# (le README l'est, et ce handler le refuse explicitement quelques lignes plus bas),
+# elle est chargée À LA DEMANDE dans le contexte d'un agent. Le critère est donc
+# « tient-elle dans un contexte utile, avec de quoi travailler autour ». 128 Ko de
+# français ≈ 34 000 jetons (ratio mesuré le 03/09 : 3,78 octets par jeton) — environ
+# un sixième d'une fenêtre de 200 k, un quart d'une fenêtre de 128 k. Une procédure au
+# plafond reste chargeable sans manger la place du travail. Doubler plutôt que
+# décupler est délibéré : la borne doit rester un signal qu'il est temps de découper.
+#
+# ⚠️ Cette garde est COMMUNE aux deux faces — `org.instruction.set` (REST),
+# `.create` et `.admin_set` passent tous par `_set_instruction`, que `oto_procedure`
+# atteint aussi via l'adaptateur MCP. La relever la relève donc PARTOUT, pas
+# seulement sur la route. Constaté avant de la toucher, pas après.
+#
+# ⚠️ Et ce n'est PAS la jumelle de `guides._MAX_BODY_BYTES`, qui garde 64 Ko : ce
+# corps-là est injecté dans CHAQUE session, sa borne protège un budget réel. Même
+# valeur hier, deux raisons différentes — c'est la raison qui décide, pas la symétrie.
+_MAX_BODY_BYTES = 128 * 1024
 
 _BASE = org_store.BASE_SLUG
 # Outil MCP qui charge le guide (donc loggé dans `tool_calls`) → c'est lui que
@@ -448,10 +467,11 @@ class InstrSetInput(BaseModel):
     slug: Optional[str] = None
     body_md: Optional[str] = Field(
         None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
-        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
-                     "`body_too_large`, qui donne le poids atteint et la borne. "
-                     "`maxLength` compte des CARACTÈRES : nécessaire, pas suffisant — "
-                     "un accent pèse deux octets, un trait de schéma (`─│┌┘`) trois."))
+        description=(f"Corps markdown, au plus {_MAX_BODY_BYTES} OCTETS UTF-8 — "
+                     "au-delà : 400 `body_too_large`, qui donne le poids atteint et "
+                     "la borne. `maxLength` compte des CARACTÈRES : nécessaire, pas "
+                     "suffisant — un accent pèse deux octets, un trait de schéma "
+                     "(`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None
@@ -497,10 +517,11 @@ class InstrCreateInput(BaseModel):
     slug: str
     body_md: Optional[str] = Field(
         None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
-        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
-                     "`body_too_large`, qui donne le poids atteint et la borne. "
-                     "`maxLength` compte des CARACTÈRES : nécessaire, pas suffisant — "
-                     "un accent pèse deux octets, un trait de schéma (`─│┌┘`) trois."))
+        description=(f"Corps markdown, au plus {_MAX_BODY_BYTES} OCTETS UTF-8 — "
+                     "au-delà : 400 `body_too_large`, qui donne le poids atteint et "
+                     "la borne. `maxLength` compte des CARACTÈRES : nécessaire, pas "
+                     "suffisant — un accent pèse deux octets, un trait de schéma "
+                     "(`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     slots: Optional[list] = None
@@ -614,10 +635,11 @@ class AdminInstrSetInput(BaseModel):
     slug: Optional[str] = None
     body_md: Optional[str] = Field(
         None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
-        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
-                     "`body_too_large`, qui donne le poids atteint et la borne. "
-                     "`maxLength` compte des CARACTÈRES : nécessaire, pas suffisant — "
-                     "un accent pèse deux octets, un trait de schéma (`─│┌┘`) trois."))
+        description=(f"Corps markdown, au plus {_MAX_BODY_BYTES} OCTETS UTF-8 — "
+                     "au-delà : 400 `body_too_large`, qui donne le poids atteint et "
+                     "la borne. `maxLength` compte des CARACTÈRES : nécessaire, pas "
+                     "suffisant — un accent pèse deux octets, un trait de schéma "
+                     "(`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None

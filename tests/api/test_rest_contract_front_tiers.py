@@ -448,12 +448,43 @@ def test_le_corps_dune_PROCEDURE_trop_lourde_rend_400_avec_la_mesure(client, org
     code, même borne, et il n'était gardé par AUCUN test. C'est le voisin immédiat que
     les correctifs de cette classe laissent intact d'habitude — cf. oto#42.
 
-    ⚠️ Sa borne, elle, n'est toujours PAS publiée dans le schéma servi (contrairement à
-    celle des guides) : ligne du lot 3, hors de ce banc."""
-    r = client.put("/api/me/instructions/trop-lourde", json={"body_md": "é" * 40_000},
+    ⚠️ La borne d'une PROCÉDURE a été relevée à 128 Ko le 03/09 (décision d'Alexis),
+    celle des GUIDES reste à 64 : deux bornes, deux raisons — le corps d'un guide est
+    injecté dans chaque session, celui d'une procédure est chargé à la demande. Ce
+    banc a dû être ajusté pour cette raison, et non parce qu'il avait tort : 80 000
+    octets, qui étaient refusés le matin même, passent désormais."""
+    from oto_mcp.capabilities.orgs.instructions import _MAX_BODY_BYTES as BORNE
+    # Juste AU-DESSUS de la borne, en accentué (2 octets par signe).
+    trop = "é" * (BORNE // 2 + 1)
+    r = client.put("/api/me/instructions/trop-lourde", json={"body_md": trop},
                    headers=_h(org["admin"]))
     assert (r.status_code, r.json()["error"]) == (400, "body_too_large"), r.text
-    assert "80000" in r.json()["detail"] and "65536" in r.json()["detail"], r.text
+    assert str(len(trop.encode())) in r.json()["detail"], r.text
+    assert str(BORNE) in r.json()["detail"], r.text
+
+
+def test_une_PROCEDURE_de_100_Ko_passe_depuis_le_relevement(client, org):
+    """La borne neuve sert à quelque chose : un corps que l'ancienne refusait doit
+    désormais s'écrire. Sans ce banc, on tiendrait le refus sans tenir l'ouverture —
+    et un retour en arrière sur la constante passerait inaperçu."""
+    from oto_mcp.capabilities.orgs.instructions import _MAX_BODY_BYTES as BORNE
+    corps = "# Procédure\n\n" + ("é" * 50_000)      # 100 000 octets
+    assert 64 * 1024 < len(corps.encode()) <= BORNE   # refusé hier, accepté aujourd'hui
+    r = client.put("/api/me/instructions/cent-ko", json={"body_md": corps},
+                   headers=_h(org["admin"]))
+    assert r.status_code == 200, r.text
+
+
+def test_la_borne_des_GUIDES_n_a_PAS_bouge(client, org):
+    """Les deux constantes avaient la même valeur ; elles n'ont pas la même raison.
+    Celle d'un guide protège un budget RÉEL — ce corps-là est injecté dans chaque
+    session. Relever l'une ne doit jamais entraîner l'autre par symétrie."""
+    from oto_mcp.capabilities.guides import _MAX_BODY_BYTES as GUIDE
+    from oto_mcp.capabilities.orgs.instructions import _MAX_BODY_BYTES as PROC
+    assert GUIDE == 64 * 1024 and PROC == 128 * 1024
+    r = client.put("/api/me/guides/user/gros", json={"body_md": "é" * 40_000},
+                   headers=_h(org["admin"]))
+    assert (r.status_code, r.json()["error"]) == (400, "body_too_large"), r.text
 
 
 # ── DELETE /api/me/orgs/{id}/membership : les quatre refus, dans l'ordre ──────
