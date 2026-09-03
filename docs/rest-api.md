@@ -595,6 +595,23 @@ https://mcp.oto.cx/api/mcp/catalog -H 'Origin: <x>'` → l'en-tête `Access-Cont
 revient si l'origine passe. ⚠️ Ne pas déduire « c'est la liste du code » du seul fait qu'une
 origine du défaut est acceptée : l'override en contient une copie.
 
+⚠️ **Et le piège SYMÉTRIQUE, constaté le 03/09/2026 : conclure qu'une origine est
+BLOQUÉE sans le vérifier.** Un lot a retiré `POST /api/contact` en motivant le
+retrait par « la route était de toute façon morte, l'origine du site n'est pas dans
+`OTO_MCP_CORS_ORIGINS`, donc le navigateur bloquait avant d'arriver ici ».
+**Mesuré en production le jour même : l'origine EST autorisée**, le serveur rend son
+`Access-Control-Allow-Origin`, et une origine inconnue ne l'obtient pas — le contrôle
+est donc bien discriminant. La route était vivante. Ce qui rendait le retrait sûr
+était autre chose, et de vérifiable : le formulaire du site avait basculé vers le
+service de messagerie une minute plus tôt.
+
+Le geste était bon, le motif était faux — et c'est le motif qui voyage. « Morte par
+blocage d'origine » resservira à retirer une autre route, et sera faux la prochaine
+fois aussi. Le diagnostic est le même `curl -X OPTIONS` d'un paragraphe plus haut, il
+coûte une seconde, **et il répond dans les DEUX sens** : ce qui vaut pour « je crois
+que ça passe » vaut pour « je crois que c'est bloqué ». Une croyance qui autorise un
+retrait mérite le même contrôle qu'une croyance qui autorise un ajout.
+
 ## Le `content-type` d'une réponse JSON porte son charset (#472, 29/08)
 
 `api.base._json` construit une `JSONResponse` : son `media_type` ne commence pas par
