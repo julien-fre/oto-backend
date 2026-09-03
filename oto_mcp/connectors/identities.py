@@ -241,10 +241,25 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
     # Statut live des comptes hébergés (clé plateforme), résolu au plus une fois et
     # seulement si un compte non-BYO le requiert (#201). Fail-soft → "ok".
     _live: dict = {}
+
     def _live_status(account_id: str) -> str:
         if "map" not in _live:
             _live["map"] = _unipile_live_status_map(sub)
         return _live["map"].get(account_id) or "ok"
+
+    def _statut_mesure(account_id: str) -> bool:
+        """La sonde a-t-elle RÉPONDU pour ce compte ?
+
+        oto#42, règle 1 : une valeur qu'on n'a pas pu établir n'est jamais rendue
+        par son défaut — et « ok » est le pire des défauts, il affirme que ça
+        marche. La sonde est fail-soft (map vide si elle échoue en bloc, compte
+        absent si elle a échoué pour lui seul), et l'appelant retombait alors sur
+        « ok » sans qu'aucune trace ne l'en avertisse : un compte réellement mort
+        s'affichait connecté, ce qui est le défaut #201/#236 par un troisième
+        chemin — celui de la PANNE DE SONDE, pas celui du statut périmé.
+        On ne change pas la valeur servie (le front la lit), on dit si elle a été
+        MESURÉE. Faux ⟹ `status` est le statut stocké, pas un constat."""
+        return account_id in _live.get("map", {})
     if cli is not None:  # BYO : les comptes de la clé (liste existante)
         try:
             accounts = cli.list_accounts()
@@ -281,6 +296,15 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
                 "id": a["account_id"],
                 "label": a.get("account_name") or a["account_id"],
                 "status": _live_status(a["account_id"]),
+                # Ne se dit QUE sur écart : un champ toujours présent devient du bruit
+                # qu'on cesse de lire. Absent ⟹ le statut a bien été mesuré.
+                **({} if _statut_mesure(a["account_id"]) else {
+                    "status_measured": False,
+                    "status_hint": (
+                        "la sonde de liveness n'a pas répondu pour ce compte : "
+                        "`status` est le dernier état CONNU, pas un constat. Un "
+                        "compte mort peut s'y afficher « ok ». Rejoue pour mesurer."),
+                }),
                 "is_default": a["account_id"] == _unipile_chosen(sub, a["provider"]),
                 "channel": a["provider"],
             })
