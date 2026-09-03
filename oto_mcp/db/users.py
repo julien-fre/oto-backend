@@ -355,20 +355,13 @@ _SUB_COLUMNS = [
 ]
 
 
-def resolve_sub(sub: str) -> str:
-    """Canonicalise un sub via sub_aliases (vieux token d'un tenant en drain →
-    compte migré). Renvoie le sub inchangé si pas d'alias (cas normal).
-
-    ⚠️ **Ne rattrape RIEN.** Rendre le sub d'entrée sur un hoquet DB, c'est servir la
-    requête sous le compte d'AVANT migration — coffre, org, projets — et sans une
-    ligne de trace (`docs/silences-2026-08-27.md`, site B5). « Je ne sais pas qui tu
-    es » et « tu es celui-ci » ne sont pas la même réponse : la première se lève, elle
-    ne se devine pas."""
-    if not sub:
-        return sub
-    with _connect() as conn:
-        row = conn.execute("SELECT new_sub FROM sub_aliases WHERE old_sub=%s", (sub,)).fetchone()
-    return row["new_sub"] if row else sub
+# Le DRAIN (la LECTURE de `sub_aliases`) vit dans son propre module depuis le
+# 2026-09-03 : il ne faisait qu'UN saut alors que la table porte des CHAÎNES, et le
+# corriger demande une récursion bornée et protégée du cycle — trop de matière pour
+# rester une note en marge du merge. `migrate_sub` ci-dessous reste le seul ÉCRIVAIN
+# de la table ; `sub_aliases.resolve_sub` en est le seul lecteur servi. Ré-exporté ici
+# pour que la surface plate `db.resolve_sub` ne bouge pas.
+from .sub_aliases import AliasNonResolvable, resolve_sub  # noqa: E402,F401
 
 
 _ROLE_RANK = {"member": 0, "admin": 1, "super_admin": 2}

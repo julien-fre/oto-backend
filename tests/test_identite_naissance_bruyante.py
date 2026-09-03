@@ -20,6 +20,7 @@ import os
 import pytest
 
 from oto_mcp.auth import hooks as auth_hooks
+from oto_mcp.db import sub_aliases as db_aliases
 from oto_mcp.db import users as db_users
 
 
@@ -52,22 +53,28 @@ def _connect_factory(conn):
 
 
 # ── B5 : un sub non canonicalisé n'est jamais servi ──────────────────────────
+#
+# Le drain a quitté `db/users.py` pour `db/sub_aliases.py` le 2026-09-03 (il suit
+# désormais la CHAÎNE d'alias, cf. `tests/test_resolve_sub_chaine_live.py`). Les
+# tests ci-dessous continuent d'appeler `db_users.resolve_sub` — la surface servie
+# n'a pas bougé — mais scriptent le curseur du module qui porte la requête.
 
 def test_resolve_sub_rend_l_alias(monkeypatch):
-    conn = _Conn(row=_Row(new_sub="sub-migre"))
-    monkeypatch.setattr(db_users, "_connect", _connect_factory(conn))
+    conn = _Conn(row=_Row(canonique="sub-migre", profondeur=1, boucle=False,
+                          maillons=2, compte_vivant=True))
+    monkeypatch.setattr(db_aliases, "_connect", _connect_factory(conn))
     assert db_users.resolve_sub("sub-vieux") == "sub-migre"
 
 
 def test_resolve_sub_sans_alias_rend_le_sub(monkeypatch):
-    monkeypatch.setattr(db_users, "_connect", _connect_factory(_Conn(row=None)))
+    monkeypatch.setattr(db_aliases, "_connect", _connect_factory(_Conn(row=None)))
     assert db_users.resolve_sub("sub-1") == "sub-1"
 
 
 def test_resolve_sub_leve_au_lieu_de_servir_l_ancien_compte(monkeypatch):
     """Le cœur de B5 : sur un hoquet DB, rendre le sub d'entrée = servir la requête
     sous le compte d'AVANT migration. Le refus doit être bruyant."""
-    monkeypatch.setattr(db_users, "_connect",
+    monkeypatch.setattr(db_aliases, "_connect",
                         _connect_factory(_Conn(boum=RuntimeError("pool épuisé"))))
     with pytest.raises(RuntimeError):
         db_users.resolve_sub("sub-vieux")
