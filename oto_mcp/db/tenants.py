@@ -312,6 +312,19 @@ def orgs_tenant_mismatches(*, limit: int = _TENANT_LIST_CAP) -> dict:
     Rend `total` (le compte réel, sur toute la table) à part de `orgs` (la liste,
     bornée par `limit`) : un plafond posé sur une lecture qui tronque déjà annoncerait
     le chiffre de la page, pas celui de la population.
+
+    ⚠️ **Et rend sa PORTÉE** — `jugees` / `indeterminees` (03/09/2026). `total: 0` ne
+    veut pas dire « tout est conforme » mais « rien de fautif parmi ce que j'ai su
+    juger », et l'écart entre les deux phrases est énorme : mesuré le jour de la
+    migration du partenaire, ce contrôle jugeait 65 orgs sur 166. C'est ce silence
+    non dit qui a laissé huit espaces personnels hors de la migration sans que rien ne
+    le signale. Un zéro sans sa portée est un zéro déguisé en verdict.
+
+    ⚠️ `indeterminees` **n'est pas une file d'attente de fautes**, et c'est pourquoi
+    elle n'a pas de liste : la dérivation se tait aussi sur toutes NOS orgs, qui sont
+    légitimement à nous. C'est une mesure de ce que l'instrument ne voit pas. Nommer
+    ces orgs inviterait à les traiter comme des cas, et ce serait exactement l'erreur
+    que le troisième état existe pour éviter.
     """
     sql = f"""
         WITH juge AS (
@@ -331,13 +344,31 @@ def orgs_tenant_mismatches(*, limit: int = _TENANT_LIST_CAP) -> dict:
                (SELECT COUNT(*) FROM fautes) AS total
           FROM fautes ORDER BY id LIMIT %(cap)s
     """
+    # La PORTÉE du contrôle, lue à part. Sans elle, `total: 0` se lit « tout est
+    # conforme » alors qu'il veut dire « rien de ce que j'ai pu juger n'est fautif » —
+    # et le contrôle est muet sur la majorité de la table (mesuré le 03/09/2026 : il
+    # juge 65 orgs sur 166). Les deux phrases ne sont pas la même, et c'est celle qu'on
+    # ne dit pas qui a laissé huit espaces personnels hors de la migration du partenaire
+    # sans que rien ne le signale. Trois états, jamais un zéro déguisé en verdict.
+    # ⚠️ `indeterminees` n'est PAS une file d'attente de fautes : la dérivation s'y tait
+    # aussi sur toutes NOS orgs, qui sont légitimement à nous. C'est une mesure de ce
+    # que l'instrument ne voit pas, pas une liste de suspects — d'où un compteur, et
+    # aucune liste : nommer ces orgs inviterait à les traiter comme des cas.
+    portee_sql = f"""
+        SELECT COUNT(*) AS orgs,
+               COUNT(*) FILTER (WHERE {_ORG_DERIVE_BRUT_EXPR} IS NOT NULL) AS jugees
+          FROM orgs o
+    """
     params = {"primary": tenancy.PRIMARY_SLUG, "cap": max(1, int(limit))}
     with _connect() as conn:
         rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+        portee = dict(conn.execute(portee_sql, params).fetchone())
     total = int(rows[0]["total"]) if rows else 0
     for r in rows:
         r.pop("total", None)
-    return {"total": total, "orgs": rows, "tronque": total > len(rows)}
+    return {"total": total, "orgs": rows, "tronque": total > len(rows),
+            "jugees": int(portee["jugees"]),
+            "indeterminees": int(portee["orgs"]) - int(portee["jugees"])}
 
 
 def _shape_tenant(row: dict) -> dict:

@@ -171,6 +171,16 @@ def _semer(dsn, nom, *, tenant_id, front_brand=None, membre=None, archivee=False
     return oid
 
 
+def _compte_orgs(dsn: str) -> int:
+    """Le nombre RÉEL d'orgs en base — lu, jamais déduit des créations du test.
+
+    Un test qui compte ses propres `create_org` raterait les orgs personnelles semées
+    par le chemin nominal, et la somme de la portée paraîtrait fausse alors que c'est
+    l'attente qui l'est."""
+    with psycopg.connect(dsn, row_factory=dict_row, autocommit=True) as c:
+        return int(c.execute("SELECT COUNT(*) AS n FROM orgs").fetchone()["n"])
+
+
 def _fautives(ids_rapportees):
     return {o["id"] for o in ids_rapportees["orgs"]}
 
@@ -294,10 +304,38 @@ def test_une_plateforme_saine_ne_rapporte_rien(base):
     org_store.create_org("Espace Acme", created_by="acme:carla")
     org_store.create_org("Espace Globex", created_by="globex:gina")
     rapport = db.orgs_tenant_mismatches()
-    assert rapport == {"total": 0, "orgs": [], "tronque": False}, (
+    assert (rapport["total"], rapport["orgs"], rapport["tronque"]) == (0, [], False), (
         f"des orgs nées par le chemin nominal sont jugées fautives : {rapport}. "
         "Le contrôle et l'écrivain doivent tenir la MÊME règle — sinon toute org "
         "créée demain naît fautive.")
+
+
+def test_le_rapport_dit_ce_quil_na_PAS_pu_juger(base):
+    """`total: 0` veut dire « rien de FAUTIF parmi ce que j'ai su juger », pas « tout
+    est conforme ». Le rapport doit donc porter sa PORTÉE.
+
+    Sans elle, un zéro se lit comme un succès alors que la dérivation peut être muette
+    sur la majorité de la table — c'est ce silence qui a laissé, en production, huit
+    espaces personnels hors de la migration d'un partenaire sans que rien ne le
+    signale. Trois états : conforme, fautif, et « je ne sais pas », compté à part.
+    """
+    from oto_mcp import db, org_store
+    # Une org dont la dérivation PARLE (marque de front dérivée du créateur qualifié).
+    org_store.create_org("Espace Acme", created_by="acme:carla")
+    # Une org sur laquelle la dérivation se TAIT : créateur nu, aucune marque.
+    _semer(base["dsn"], "Muette", tenant_id=base["ids"]["oto"], front_brand=None)
+
+    rapport = db.orgs_tenant_mismatches()
+    total_orgs = _compte_orgs(base["dsn"])
+    assert rapport["jugees"] + rapport["indeterminees"] == total_orgs, (
+        "la portée doit couvrir TOUTE la table : ce qui n'est ni jugé ni indéterminé "
+        "n'existe nulle part, et disparaîtrait du rapport sans laisser de trace.")
+    assert rapport["indeterminees"] >= 1, (
+        "une org sans marque et sans membre qualifié n'est PAS jugeable ; la compter "
+        "comme jugée ferait passer un silence pour un verdict.")
+    assert rapport["jugees"] >= 1, (
+        "une org dont la marque parle EST jugeable ; ne pas la compter viderait la "
+        "portée de son sens.")
 
 
 def test_le_total_est_compte_a_part_de_la_liste(base):

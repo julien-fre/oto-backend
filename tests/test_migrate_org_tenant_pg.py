@@ -192,7 +192,13 @@ def test_apres_migration_le_controle_de_conformite_est_vide(base, population):
         "« Chez nous » n'a aucun signal partenaire, « Déjà déclarée » est correcte. "
         "Le compte doit être connu d'avance, sinon l'assertion d'après ne prouve rien.")
     migrate_org_tenant.main(apply=True)
-    assert db.orgs_tenant_mismatches() == {"total": 0, "orgs": [], "tronque": False}
+    apres = db.orgs_tenant_mismatches()
+    assert (apres["total"], apres["orgs"], apres["tronque"]) == (0, [], False)
+    # La PORTÉE dit aussi que le contrôle a bien REGARDÉ : un rapport vide obtenu
+    # parce qu'il ne juge plus rien serait le même dict, et ne prouverait rien.
+    assert apres["jugees"] >= 4, (
+        "les 4 orgs repointées doivent rester JUGEABLES après la migration : si la "
+        "portée retombe, le zéro d'au-dessus est un silence, pas un verdict.")
 
 
 # ── Les deux refus ───────────────────────────────────────────────────────────
