@@ -195,7 +195,6 @@ async def _authenticate(
         lambda: db.upsert_user(
             sub, email=access_token.claims.get("email"),
             name=access_token.claims.get("name"),
-            iss=access_token.claims.get("iss"),
             locale=_locale_from_accept_language(request.headers.get("accept-language"))))
     return _maybe_view_as(sub, apply_view_as), None
 

@@ -84,6 +84,6 @@ def current_user_sub_from_token() -> Optional[str]:
                 from .. import db
                 sub = db.resolve_sub(sub)
                 db.upsert_user(sub, email=token.claims.get("email"),
-                               name=token.claims.get("name"), iss=token.claims.get("iss"))
+                               name=token.claims.get("name"))
             return sub
     return os.environ.get("OTO_MCP_DEV_SUB")

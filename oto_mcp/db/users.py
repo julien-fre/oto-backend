@@ -19,7 +19,6 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 from ._conn import _connect
-from ..tenant_migration import email_merge_armed
 
 
 class OnboardingIncomplet(RuntimeError):
@@ -49,7 +48,7 @@ class OnboardingIncomplet(RuntimeError):
 
 
 def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = None,
-                iss: Optional[str] = None, locale: Optional[str] = None) -> None:
+                locale: Optional[str] = None) -> None:
     """Create the user row if missing, refresh email/name if known.
 
     Le `(xmax = 0)` distingue insert/update sans SELECT préalable : 0 sur une ligne
@@ -112,24 +111,23 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
             manques.append("ensure_personal_org")
     if manques:
         raise OnboardingIncomplet(sub, manques)
-    # Bascule de tenant (B1, otomata#35) : sur un login du NOUVEAU tenant, fusionner
-    # l'ancien compte (même email) → ce sub. Idempotent, best-effort, à chaque login
-    # new-tenant (pas que au 1er insert → couvre les retries / l'ordre des logins).
-    # ⚠️ La commande est celle du RAPPROCHEMENT seul (`tenant_migration`), à ne pas
-    # confondre avec celle du DRAIN d'alias : les deux mécanismes lisent aujourd'hui la
-    # même variable, mais pas de la même façon, et ne s'arrêtent pas ensemble.
-    # ⚠️ SÉCU (account takeover) : la décision de merge se prend sur l'email
-    # AUTORITATIF lu de Logto (Management API), JAMAIS sur le claim email/email_verified
-    # du token — un token forgé pourrait revendiquer l'email d'autrui pour absorber son
-    # compte (rôle, coffre). reconcile_tenant_migration récupère lui-même cet email ;
-    # le claim `email` n'est passé que comme PRÉ-FILTRE cheap (éviter un appel Logto à
-    # chaque requête quand rien ne matche).
-    if email_merge_armed(iss):
-        try:
-            reconcile_tenant_migration(sub, email_hint=email)
-        # noqa: SILENT — réconciliation de tenant dormante (gate env), idempotente au login suivant
-        except Exception:
-            pass
+    # ⚠️ Le RAPPROCHEMENT d'identités a été retiré de ce chemin le 2026-09-03. Il
+    # fusionnait à chaque login l'ancien compte de même email dans le nouveau
+    # (`reconcile_tenant_migration`, toujours défini plus bas mais plus appelé par
+    # aucun chemin servi). Trois raisons, dans cet ordre :
+    #  - il ne servait plus : zéro rapprochement sur les 20 jours précédents ;
+    #  - sa commande était réglée sur NOTRE émetteur, pas sur celui d'un tiers, donc
+    #    il se déclenchait à CHAQUE connexion de CHACUN de nos comptes — et coûtait un
+    #    `SELECT … WHERE lower(email)=…` sur `users` (aucun index ne le sert) en tête
+    #    de chaque requête REST, sur le chemin qui a déjà gelé la production ;
+    #  - il a ressuscité un compte supprimé, qui a ensuite servi 884 appels sous une
+    #    identité morte.
+    # Le DRAIN d'alias, lui, reste armé : c'est LUI qui empêche cette résurrection
+    # (cf. `tenant_migration`). Les deux ne s'arrêtent pas ensemble — et surtout pas
+    # dans cet ordre-là.
+    # Le rapprochement reste possible en acte d'OPÉRATEUR : `migrate_sub(old, new,
+    # operator_source=…)`, où « ces deux subs sont la même personne » est tranché hors
+    # du code (ADR 0052 §6). Ce qui est retiré, c'est son déclenchement automatique.
 
 
 def get_user(sub: str) -> Optional[dict]:

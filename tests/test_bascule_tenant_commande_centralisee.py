@@ -1,19 +1,22 @@
-"""Les deux commandes de la bascule se lisent à UN endroit, et n'y coûtent rien.
+"""La commande de la bascule se lit à UN endroit, et n'y coûte rien.
 
 Séparer les deux mécanismes n'a de valeur que si la séparation tient : tant qu'un site
 peut relire `OTO_MCP_TENANT_MIGRATION_ISS` dans son coin, désarmer le rapprochement ne
 désarme que celui qu'on a sous les yeux — et le prochain lot rouvrira le couplage sans
-que personne ne le voie, puisque rien ne l'interdit.
+que personne ne le voie, puisque rien ne l'interdit. Depuis le 2026-09-03 elle ne
+commande plus qu'un mécanisme, le drain d'alias ; raison de plus pour que sa lecture
+reste à un seul endroit, où la question « qu'est-ce que ça arme, au juste ? » a
+exactement une réponse.
 
 Deux cliquets, donc :
 
 1. **la commande ne se lit que dans `tenant_migration`** — partout ailleurs, on demande
    au prédicat, on ne relit pas l'environnement ;
-2. **le module d'armement n'importe rien d'autre que `os`** — les deux prédicats sont
-   consultés en tête de CHAQUE appel (REST et MCP) ; ce chemin est celui qui a gelé la
-   production le 2026-07-02. Une décision d'armement qui irait chercher une ligne en
-   base, un client HTTP ou un cache poserait ce travail sur le trajet chaud de tout le
-   trafic. Le cliquet le rend impossible sans le dire.
+2. **le module d'armement n'importe rien d'autre que `os`** — le prédicat est consulté
+   en tête de CHAQUE appel (REST et MCP) ; ce chemin est celui qui a gelé la production
+   le 2026-07-02. Une décision d'armement qui irait chercher une ligne en base, un
+   client HTTP ou un cache poserait ce travail sur le trajet chaud de tout le trafic.
+   Le cliquet le rend impossible sans le dire.
 """
 from __future__ import annotations
 
@@ -86,10 +89,10 @@ def test_la_commande_de_bascule_ne_se_lit_QUE_dans_le_module_d_armement():
         if f != _SEAM and _COMMANDE in _lectures_d_env(arbre)
     )
     assert not coupables, (
-        f"{coupables} relit {_COMMANDE} directement. Les deux mécanismes de la bascule "
-        "(rapprochement d'identités / drain d'alias) ne se commandent pas de la même "
-        "façon et ne s'arrêtent pas ensemble : demander `email_merge_armed(iss)` ou "
-        "`alias_drain_armed()` à oto_mcp/tenant_migration.py, pas relire l'env."
+        f"{coupables} relit {_COMMANDE} directement. Cette variable ne commande plus "
+        "que le DRAIN d'alias (le rapprochement d'identités a été retiré du login le "
+        "2026-09-03) : demander `alias_drain_armed()` à oto_mcp/tenant_migration.py. "
+        "Une relecture inline rouvre le couplage que ce module a défait."
     )
 
 
@@ -100,8 +103,8 @@ def test_le_module_d_armement_lit_bien_la_commande():
 
 
 def test_armer_ne_coute_rien_sur_le_chemin_chaud():
-    """Les deux prédicats sont consultés en tête de chaque appel : le module qui les
-    porte ne doit dépendre que de la lecture d'environnement."""
+    """Le prédicat est consulté en tête de chaque appel : le module qui le porte ne
+    doit dépendre que de la lecture d'environnement."""
     arbre = ast.parse(_SEAM.read_text(encoding="utf-8"))
     importes = set()
     for n in ast.walk(arbre):
@@ -119,13 +122,9 @@ def test_armer_ne_coute_rien_sur_le_chemin_chaud():
 @pytest.mark.parametrize("porte,attendu", [
     ("oto_mcp/api/base.py", "alias_drain_armed"),
     ("oto_mcp/auth/hooks.py", "alias_drain_armed"),
-    ("oto_mcp/db/users.py", "email_merge_armed"),
 ])
 def test_chaque_porte_consulte_le_predicat_de_SON_mecanisme(porte, attendu):
-    """Le drain et le rapprochement ne se confondent pas : une porte qui demanderait
-    le mauvais prédicat serait recouplée en silence — et le test ci-dessus, lui,
-    resterait vert (elle ne relirait pas l'env pour autant)."""
+    """Une porte qui cesserait de consulter le prédicat se recouplerait en silence —
+    et le cliquet ci-dessus resterait vert (elle ne relirait pas l'env pour autant)."""
     src = (_RACINE.parent / porte).read_text(encoding="utf-8")
-    autre = "email_merge_armed" if attendu == "alias_drain_armed" else "alias_drain_armed"
     assert attendu in src, f"{porte} ne consulte pas {attendu}"
-    assert autre not in src, f"{porte} consulte {autre}, qui commande l'AUTRE mécanisme"
