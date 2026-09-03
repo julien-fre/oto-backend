@@ -185,8 +185,8 @@ from oto_mcp.db import _schema, schema
 # lirait comme un fait.
 # ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
 # bien 30e2c6f2… / 135678, mesuré au moment du rebase et jamais avant.
-EMPREINTE = "bf968c762090ec2fdc0f414963af4fdd398e28418b2b756060121be8fe16a467"
-LONGUEUR = 136575
+EMPREINTE = "8e272044aa856c0ab62729511ae7c71de556406fc3331c36c26f73dfbb3fdbf7"
+LONGUEUR = 136654
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
