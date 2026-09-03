@@ -80,13 +80,13 @@ def seams(monkeypatch):
     monkeypatch.setattr(db, "move_doc", lambda did, p, position=None: None)
 
     def _update(did, title=None, body_md=None, kind=None, edited_by=None,
-                description=None, expected_rev=None):
+                description=None, expected_rev=None, trace=None):
         if body_md is not None:
             etat["body"] = body_md
     monkeypatch.setattr(db, "update_doc", _update)
     monkeypatch.setattr(db, "create_doc",
                         lambda pid, title, parent_id=None, body_md="", kind="doc",
-                        created_by=None, description=None: 662)
+                        created_by=None, description=None, trace=None: 662)
     return etat
 
 
