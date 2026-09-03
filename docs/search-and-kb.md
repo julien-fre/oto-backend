@@ -75,6 +75,24 @@ l'org. **Ce qui manquait n'était pas la portée, c'était de SAVOIR** : un lien
 stocké nulle part et n'était dit nulle part. Toute écriture rend donc
 `citations_sans_cible` (+ son hint, qui dit la conséquence ET la cause), et la description
 servie porte l'asymétrie. Reproduit sur banc factice, pas déduit.
+⚠️ **La portée d'ÉCRITURE n'est pas celle de LECTURE, et les deux surfaces se
+contredisaient (#696, 03/09, mesuré sur vrai PG).** `refresh_links` résout dans
+`[projet, KB]` ; `backlinks_of` rend **toute** ligne `doc_links` pointant vers la page,
+**sans aucun filtre de projet** — seul l'accès borne, au call-site. Et rien ne recale les
+liens **entrants** d'une page déplacée (`move_doc_to_project` ne re-résout que les
+**sortants** des pages déplacées) : une ligne stockée **survit** au déplacement de sa
+cible, hors de toute portée de résolution, et ne meurt qu'à la prochaine écriture de la
+page qui cite. D'où le signal : l'accusé d'écriture jurait « ce projet puis la KB — et
+rien d'autre » pendant qu'`op=backlinks` affichait des entrants venus d'un autre projet ;
+faute de savoir laquelle fait foi, un agent a réécrit **tous** ses renvois inter-projets
+en clair et perdu la navigation. Les deux disaient vrai de périmètres différents (et la
+KB *est* un projet : un backlink ordinaire est déjà inter-projets). Les deux surfaces le
+DISENT désormais — hint d'écriture, description servie — et le cran est en outre porté par
+`op=move`, **du côté qui le subit**. ⚠️ Corollaire à démentir partout où il traîne :
+« déplacer une page est gratuit, le titre est la clé » est **faux** ; après une
+réorganisation, réécrire les pages qui citent et lire leur `citations_sans_cible`. Banc :
+`tests/test_backlinks.py::test_un_lien_STOCKE_survit_au_deplacement_de_sa_cible_et_reste_rendu`
+(base PG dédiée, chemin servi).
 **Propositions modif+création + inbox** (Ship 3, LIVE) : « les
 lecteurs proposent » — un viewer (lecture sans écriture) qui crée/modifie obtient une
 PROPOSITION (`doc_change_requests`, `doc_id` nullable + `project_id` + emplacement + CHECK) ;

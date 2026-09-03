@@ -87,3 +87,26 @@ def test_la_LIMITE_est_dite_dans_la_description_servie():
     assert "not symmetric" in prose
     assert "orphan check" in prose
     assert "citations_sans_cible" in prose
+
+
+def test_la_description_servie_ne_promet_plus_une_portee_UNIQUE():
+    """L'autre moitié, signal #696 : la description jurait « that scope is the
+    WHOLE reach ». Vrai de la RÉSOLUTION, faux du GRAPHE — `op=backlinks` rend
+    aussi les liens stockés avant qu'une page ne change de projet, que plus
+    aucune écriture ne referait. Un agent qui voyait ces liens entrants venus
+    d'un autre projet en a conclu que l'avertissement d'écriture mentait, et a
+    réécrit tous ses renvois inter-projets en clair, perdant la navigation.
+
+    Le fait est mesuré sur vrai PostgreSQL par `test_backlinks.py`
+    (`test_un_lien_STOCKE_survit_au_deplacement_de_sa_cible_et_reste_rendu`) :
+    ici on exige seulement que la surface servie le DISE."""
+    from oto_mcp.capabilities.docs import core as C
+    prose = " ".join(c.description or "" for c in C.CAPABILITIES
+                     if c.key.startswith("me.doc"))
+    assert "WHOLE reach" not in prose, (
+        "la portée de résolution n'est PAS la portée du graphe — c'est cette "
+        "phrase-là qui a fait croire à une contradiction")
+    assert "every STORED link whatever its project" in prose
+    assert "MOVED between projects" in prose
+    # …et le cran doit être dit du côté qui le SUBIT : celui qui déplace une page.
+    assert "A move is NOT free for links" in prose
