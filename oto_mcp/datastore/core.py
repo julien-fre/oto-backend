@@ -43,6 +43,7 @@ from .claimable import RowOutsideClaimable  # noqa: F401
 from .schema_ops import SchemaOpsMixin
 from .forcage import Forcage
 from .reserves import (
+    iso_utc,
     poser_origine_systeme,
     poser_valeurs_systeme,
     refuser_champs_reserves,
@@ -144,7 +145,11 @@ def _filter_clauses(filter: Optional[dict], filters: Optional[list]) -> list[dic
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Même forme que toute estampille posée par la plateforme (#859) : les deux
+    # sources système d'une date en rendaient deux, et un tri les rangeait par
+    # l'alphabet. La règle vit à UN endroit — `reserves.iso_utc` — pour qu'elles
+    # ne puissent plus diverger.
+    return iso_utc(datetime.now(timezone.utc))
 
 
 def _new_id() -> str:

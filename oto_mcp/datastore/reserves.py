@@ -62,6 +62,35 @@ from .errors import RowValidationError
 from .forcage import Forcage
 
 
+def iso_utc(valeur) -> str:
+    """La forme CANONIQUE d'un horodatage posé par la PLATEFORME (#859).
+
+    Une seule forme, pour une raison mesurée : les deux sources système d'une
+    date en produisaient deux. `write.at` rendait `2026-09-03T11:22:19+00:00`
+    (précision seconde) pendant que `run.started_at` rendait
+    `2026-09-03T11:22:19.619406+00:00` (microsecondes) — deux colonnes
+    déterministes du même tableau, deux écritures. Un troisième format observé en
+    production, `…T00:00:00.000Z`, ne vient d'aucune des deux : il précède ce
+    cran.
+
+    ⚠️ **Le tri est ce qui paie.** `Z` et `+00:00` désignent le même décalage et
+    ne se rangent pas pareil dans l'alphabet — `Z` passe après `+`. Deux instants
+    IDENTIQUES notés différemment se rangeaient donc l'un après l'autre. Le tri
+    caste désormais en horodatage plutôt que de comparer des chaînes, ce qui
+    absorbe l'existant ; mais la donnée ne doit pas naître hétérogène pour
+    autant : *corriger la lecture d'une donnée qu'on écrit soi-même de travers,
+    c'est réparer autour de la source.*
+
+    Ramène tout en UTC, à la seconde. La précision perdue sur l'ouverture d'un
+    passage n'a aucun usage — on date un travail, pas une mesure physique — et
+    l'uniformité, elle, se voit à chaque tri.
+    """
+    from datetime import timezone as _tz
+    if hasattr(valeur, "astimezone"):
+        return valeur.astimezone(_tz.utc).isoformat(timespec="seconds")
+    return str(valeur)
+
+
 def valeurs_systeme(schema: Optional[dict], *, run: Optional[str],
                     maintenant: str) -> dict:
     """Ce que la plateforme POSERAIT sur ce geste → `{colonne: valeur}` (#607).
@@ -111,7 +140,7 @@ def _ouverture_du_run(run: str):
     depart = head.get("started_at")
     if depart is None:
         return None
-    valeur = depart.isoformat() if hasattr(depart, "isoformat") else str(depart)
+    valeur = iso_utc(depart)
     _OUVERTURE_DU_RUN[run] = valeur
     while len(_OUVERTURE_DU_RUN) > _CAP:
         del _OUVERTURE_DU_RUN[next(iter(_OUVERTURE_DU_RUN))]
