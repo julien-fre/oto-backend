@@ -446,7 +446,12 @@ class SlugInput(BaseModel):
 
 class InstrSetInput(BaseModel):
     slug: Optional[str] = None
-    body_md: Optional[str] = None
+    body_md: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
+                     "`body_too_large`, qui donne le poids atteint et la borne. "
+                     "`maxLength` compte des CARACTÈRES : nécessaire, pas suffisant — "
+                     "un accent pèse deux octets, un trait de schéma (`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None
@@ -490,7 +495,12 @@ class InstrCreateInput(BaseModel):
     Pas de `from_version` : restaurer une version suppose une procédure existante,
     donc l'inverse exact d'une création."""
     slug: str
-    body_md: Optional[str] = None
+    body_md: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
+                     "`body_too_large`, qui donne le poids atteint et la borne. "
+                     "`maxLength` compte des CARACTÈRES : nécessaire, pas suffisant — "
+                     "un accent pèse deux octets, un trait de schéma (`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     slots: Optional[list] = None
@@ -602,7 +612,12 @@ class AdminGuideListInput(BaseModel):
 class AdminInstrSetInput(BaseModel):
     org_id: int
     slug: Optional[str] = None
-    body_md: Optional[str] = None
+    body_md: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
+                     "`body_too_large`, qui donne le poids atteint et la borne. "
+                     "`maxLength` compte des CARACTÈRES : nécessaire, pas suffisant — "
+                     "un accent pèse deux octets, un trait de schéma (`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None

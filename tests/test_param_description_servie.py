@@ -117,3 +117,27 @@ def test_tout_champ_decrit_du_registre_est_servi_decrit():
             f"descriptions déclarées mais NON servies : {', '.join(manquants)}"
 
     asyncio.run(go())
+
+
+# ── #689 bis : la borne de taille est PUBLIÉE sur les deux faces ──────────────
+
+def test_la_borne_du_corps_est_servie_sur_le_chemin_connecteur():
+    """La face REST des guides publie `maxLength` depuis le 29/08 ; le chemin
+    connecteur (`oto_procedure op=set`, porté par ces `Input`) ne publiait RIEN —
+    même objet, deux faces, une seule le disait. Un agent découvrait la borne en s'y
+    cognant : constaté le 03/09, une procédure à 7 octets de la limite dont chaque
+    nouvelle leçon en chassait une ancienne.
+
+    ⚠️ `maxLength` compte des CARACTÈRES là où la garde compte des OCTETS : il est
+    nécessaire, jamais suffisant. C'est la description qui porte l'unité réelle — et
+    le fait qu'un trait de schéma, que la plateforme EXIGE dans toute procédure, pèse
+    trois octets."""
+    from oto_mcp.capabilities.orgs import instructions as I
+    for nom in ("InstrSetInput", "InstrCreateInput", "AdminInstrSetInput"):
+        champ = getattr(I, nom).model_json_schema()["properties"]["body_md"]
+        assert champ.get("maxLength") == I._MAX_BODY_BYTES, (
+            f"{nom}.body_md ne publie plus la borne : l'agent la redécouvrira en "
+            "s'y cognant, comme avant le 03/09")
+        assert "OCTETS" in (champ.get("description") or ""), (
+            f"{nom}.body_md publie une borne sans son unité — `maxLength` seul se "
+            "lit en caractères et sous-estime le poids réel")
