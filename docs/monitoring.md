@@ -205,11 +205,27 @@ un outil, verbe en `op` :
 | `calls` | le journal brut filtré — chaque ligne porte `arg_keys`, jamais `args` | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
 | `call` | la fiche d'UN appel (`call.args` tels que journalisés + corrélation) | `call_id` |
 | `run` / `runs` | timeline d'un déroulé / déroulés récents | `run_id`, `limit` |
-| `rest` / `connectors` / `funnel` | lentilles REST / santé connecteurs / activation | `days` |
+| `rest` | lentille REST par route (`/api/*`) — **les gestes du tableau de bord sont ICI, pas dans `calls`** | `days`, `org_id`, `sub` |
+| `connectors` / `funnel` | santé connecteurs / activation | `days` (+ `org_id` pour `connectors`) |
 | `gaps` / `tool_quality` | signaux d'usage agrégés | `days` |
 
 `sub` accepte un **email OU un sub** (on enquête sur « les appels de jb@… », pas sur un
 identifiant opaque). Les signaux bruts et leur résolution restent sur `oto_admin_signal`.
+
+⚠️ **Un paramètre que l'op ne lit pas est REFUSÉ** (`param_not_read_by_op`), jamais
+ignoré. Jusqu'au 2026-09-03, `op=rest` acceptait `sub`/`org_id` et les jetait : on
+croyait lire l'activité REST d'un compte, on lisait celle de toute la plateforme, et
+aucune forme de la réponse ne distinguait les deux (#451). Les deux axes sont
+désormais honorés — mais ⚠️ **`org_id` d'une ligne REST vient de l'en-tête de
+consultation** posé par le client (`RestCallLogger`, best-effort), pas d'une
+résolution : une requête sans en-tête ne porte aucune org et sort du filtre, donc un
+0 sous `org_id` ne prouve pas une org inactive. La réponse le dit (`org_id_caveat`).
+
+⚠️ **`summary` et `calls` ne portent que le flux AGENT (`kind='mcp'`)** : ce qu'une
+personne fait depuis le tableau de bord ou l'API n'y figure JAMAIS — c'est `op=rest`.
+**Zéro appel n'est donc pas un compte inactif**, et c'était la deuxième moitié du
+#451 : une enquête honnête concluait « ce compte ne s'est jamais servi d'oto » sur
+une lentille qui, par construction, ne pouvait pas voir ses gestes.
 
 ### Recette : enquêter sur une erreur
 
