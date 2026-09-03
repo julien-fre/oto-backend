@@ -169,9 +169,14 @@ def extract_text(html_str: str) -> tuple:
 
 
 # ── cran ① : fetch HTTP nu, streamé, gardé ───────────────────────────────────
-def _fetch_http(url: str) -> dict:
+def _fetch_http(url: str, deadline_s: float = _DEADLINE_S) -> dict:
     """{verdict, ok, status?, html?, final_url?} — les redirections sont
     marchées À LA MAIN : chaque saut repasse la garde SSRF.
+
+    `deadline_s` = le budget GLOBAL, paramétrable parce que tous les appelants
+    n'ont pas la même patience : `web_read` escalade (45 s se justifient), la
+    sonde d'obfuscation de `serper_scrape` s'ajoute à un scrape DÉJÀ payé et
+    n'a droit qu'à quelques secondes (#681).
 
     ⚠️ `_TIMEOUT` borne chaque SOCKET, jamais la lecture entière : six sauts de
     redirection valent six fois ce budget, et la boucle de streaming n'est
@@ -185,6 +190,7 @@ def _fetch_http(url: str) -> dict:
     t0 = _now()
     courante = url
     sauts = 0
+    budget = max(1.0, float(deadline_s))
 
     def _delai(ou: str) -> dict:
         ecoule = _now() - t0
@@ -194,7 +200,7 @@ def _fetch_http(url: str) -> dict:
                             .format(ecoule, ou, sauts, courante))}
 
     for _ in range(_MAX_REDIRECTS + 1):
-        reste = _DEADLINE_S - (_now() - t0)
+        reste = budget - (_now() - t0)
         if reste <= 0:
             return _delai("avant le saut suivant")
         check_url_public(courante)
@@ -228,7 +234,7 @@ def _fetch_http(url: str) -> dict:
                 total += len(chunk)
                 if total >= _MAX_FETCH_BYTES:
                     break
-                if _now() - t0 >= _DEADLINE_S:
+                if _now() - t0 >= budget:
                     return _delai("pendant la lecture du corps")
             brut = b"".join(morceaux)
             html_str = brut.decode(r.encoding or "utf-8", errors="replace")

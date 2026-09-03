@@ -261,7 +261,7 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 |---|---|---|
 | `serper_search` (web, news, images, videos, places, shopping, scholar, patents) | sortie, avant projection | couvert (`autocomplete` : suggestions, pas d'URL) |
 | `serper_lens` | entrée (URL d'image) + sortie | couvert |
-| `serper_scrape` | entrée | couvert |
+| `serper_scrape` | entrée + URL finale de notre lecture directe | couvert |
 | `serpapi_search` (tout moteur) | sortie | couvert |
 | `searchapi_search` (tout moteur) | sortie | couvert |
 | `tavily_search` | sortie | couvert (`answer` = prose, non filtrée) |
@@ -282,6 +282,16 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 | `http_get/post` | — | non couvert : chemin relatif à une `base_url` configurée par l'org (client d'API) |
 | `browser_connect_start` | — | non couvert : page de login ouverte à l'humain, pas une lecture |
 | `email_send(cta_url, image_url)`, `brevo_import_contacts(file_url)`, `fireflies_transcript(url)`, webhooks (`folk`/`linear`/`grain`/`granola`/`webflow`), `ahrefs_*`, `promptwatch_*`, `snitcher_*` | — | non couvert : URL écrite, importée par le fournisseur, ou de configuration — rien n'est lu par nous |
+
+**`serper_scrape` a DEUX amonts depuis le 2026-09-03 (#681).** Le scraper hébergé ne
+rend aucun champ HTML, et les adresses obfusquées (base64 d'un `joomla-hidden-mail`,
+`mailto:` en entités, `cloudflare-email-protection`) n'existent QUE là : l'outil relit
+donc la page lui-même — sur `format="html"`, en repli après un refus du fournisseur, et
+en sonde quand la page servie ne montre aucune adresse. Cette seconde lecture, elle,
+observe une URL finale : le périmètre s'y applique aussi. Sur les deux chemins qui
+SERVENT du contenu (`html`, repli), un atterrissage hors périmètre refuse ; sur la sonde,
+qui ne sert que des adresses en complément d'un scrape déjà réussi, il l'ÉCARTE et le dit
+dans `sonde_obfuscation` — un scrape réussi ne doit pas tomber à cause de son complément.
 
 **Le refus du périmètre parle en premier (#632, 2026-08-29).** Sur une campagne,
 `serper_scrape` d'un profil personnel a été refusé par une règle interne du client amont
