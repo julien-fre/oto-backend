@@ -213,6 +213,19 @@ def search(sub: str, org_id: int, q: str, *,
                     else "mixed" if "semantic" in tones and len(tones) > 1
                     else "lexical")
     out: dict = {"hits": hits, "count": len(hits), "matched_by": root_matched}
+    # oto#42, entrée 2 du lot 1 : `len(ordered)` est connu ICI, trois lignes après la
+    # coupe, et ne sortait pas. `count` dit honnêtement ce que la réponse contient —
+    # mais rien ne disait qu'il y avait plus, et une recherche qui rend 20 sur 300 se
+    # lit « voilà tout ce qui existe ». Une absence ne se rappelle jamais : l'agent
+    # cherche, ne trouve pas ce qu'il voulait, et conclut que ça n'existe pas.
+    # Ne se dit QUE sur troncature réelle — pas d'écart, pas de bruit.
+    if len(ordered) > len(hits):
+        out["total"] = len(ordered)
+        out["truncated"] = True
+        out["hint_truncated"] = (
+            f"{len(ordered)} résultats trouvés, {len(hits)} rendus (les mieux classés). "
+            "Relance avec `limit` plus haut, ou resserre la requête — ce qui manque "
+            "n'est pas absent, il est plus bas dans le classement.")
     if not hits:
         out["hint"] = ("Aucun résultat — reformule (la V1 est lexicale : essaie les "
                        "mots exacts du contenu), ou navigue : `oto_project op=list` "
