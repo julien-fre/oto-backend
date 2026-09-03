@@ -87,21 +87,20 @@ class Marque:
     bouton_encre: str
 
 
-# La charte des deux produits maison. Elles ne partagent PAS une palette : c'est le
-# constat qui a motivé ce module. Tulina reprend le système de son application
-# (échelle Radix Slate + `#1c2024`, cf. `src/app/globals.css` et `logto/custom.css`
-# de tulina-app-front) ; oto garde sa charte chaude, à l'octet près — repeindre oto
-# au passage aurait été une décision produit prise en douce.
+# NOTRE charte, et elle seule. Les palettes de partenaires vivaient ici jusqu'au
+# 03/09/2026 ; elles se DÉCLARENT désormais en base (`tenants.brand`, servi par
+# `_declaree` ci-dessous), pour la même raison que leur adresse de tableau de bord :
+# accueillir le partenaire suivant demandait d'éditer ce fichier et de redéployer
+# pour lui. oto garde sa charte chaude, à l'octet près.
+# ⚠️ **Ce n'est PAS un registre de marques et ça ne doit pas le redevenir.** Une
+# entrée posée ici pour un tiers reprendrait la main sur ce qu'il déclare dès que
+# son slug manque au registre de tenants — le repli du code gagnerait en silence,
+# et on serait revenu au point de départ sans que rien ne rougisse.
 MARQUES: dict[str, Marque] = {
     "oto": Marque(
         slug="oto", nom="oto", site="oto.cx",
         fond="#faf6ec", surface="#fffdf7", encre="#2c2112", discret="#7a6c50",
         filet="#ece4d0", bouton_fond="#2c2112", bouton_encre="#fefcf5",
-    ),
-    "tulina": Marque(
-        slug="tulina", nom="Tulina", site="tulina.ai",
-        fond="#f9f9fb", surface="#ffffff", encre="#1c2024", discret="#60646c",
-        filet="#d9d9e0", bouton_fond="#1c2024", bouton_encre="#ffffff",
     ),
 }
 
@@ -165,9 +164,10 @@ def marque(slug: Optional[str]) -> Marque:
     **Ordre depuis le 03/09/2026 : ce que le TENANT déclare d'abord**, `MARQUES`
     ensuite. Une palette de partenaire écrite dans notre code oblige à nous
     redéployer pour accueillir le suivant — c'est le même défaut que son adresse de
-    tableau de bord, corrigé de la même façon et au même endroit. `MARQUES` garde
-    la nôtre, qui est chez elle ici, et sert de repli le temps que les palettes
-    déclarées soient posées.
+    tableau de bord, corrigé de la même façon et au même endroit. `MARQUES` ne
+    garde plus que la nôtre : depuis le 03/09/2026, aucune palette de partenaire ne
+    vit dans ce fichier, et un slug tiers sans déclaration prend le gabarit neutre à
+    son nom — jamais nos couleurs.
     """
     s = (slug or "").strip()
     if not s:
