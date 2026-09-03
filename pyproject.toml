@@ -27,6 +27,15 @@ dependencies = [
     # branche : on n'écrit pas dans le dépôt d'autrui (l'API Contents rend 404 dessus).
     # Le mainteneur bump ici, puis `update-branch` la PR. L'atomicité du revert cède
     # devant ça. Cf. docs/contributions-forks.md (amendement du 2026-09-01).
+    # v1.109.0 = unipile : un enrichissement de noms d'interlocuteurs qui n'a PAS eu
+    # lieu se dit (`attendee_names`: `unavailable` | `partial`, avec les ids manquants
+    # et le repli à faire), au lieu de partir en `logger.warning` côté serveur pendant
+    # que l'appelant lit une liste muette. Signal #682 : sur ~40 fils, l'agent a conclu
+    # que « l'enrichissement annoncé dans la doc n'apparaît pas » sans pouvoir
+    # distinguer une panne d'un carnet incomplet. Le pire cas n'est pas la panne mais
+    # la résolution PARTIELLE, qui rend une liste hétérogène où l'absence de nom se lit
+    # « pas d'interlocuteur ». Rien n'est dit quand tout est résolu (une page pèse déjà
+    # ~105 Ko). Classe oto#42 ;
     # v1.108.0 = serper : le SCRAPE attend 15 s au lieu de 60, et `timeout_s` (1-60,
     # borné) laisse l'appelant serrer. p95 mesuré à 61,6 s sur 193 passages d'agents,
     # 58 expirations à 60 s — et ce qui coûte n'est pas l'attente mais ce qu'elle
@@ -175,7 +184,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.108.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.109.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome
