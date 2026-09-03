@@ -362,6 +362,26 @@ lie au sub le plus **récent, non déjà lié, du bon provider, créé APRÈS so
 anti-rebind d'un siège tiers). **Self-heal** dans `GET /api/me/unipile` (no-op sans pending,
 donc sans appel Unipile) + endpoint explicite `POST /api/me/unipile/reconcile`.
 
+⚠️ **Une réconciliation qui ne lie rien DIT pourquoi (03/09/2026, signal #689).** Elle
+avait six sorties, toutes rendant le même `{bound: false, accounts: []}` : pas de pending,
+pas de credential résoluble, fournisseur injoignable, aucun candidat éligible, candidats
+tous morts (session 401), écriture refusée à sa garde. Un utilisateur a suivi le parcours
+hosted-auth **deux fois**, la seconde jusqu'à la redirection finale, attendu plusieurs
+minutes — et lu `connected:false`, sans un mot. Les trois causes d'un « aucun candidat »
+sont d'ailleurs indiscernables sans être nommées : compte jamais créé (parcours
+abandonné), compte **antérieur** au pending (donc sous le floor), ou compte appartenant à
+quelqu'un d'autre.
+
+La réponse porte désormais `reason` + `detail` quand rien n'a été lié, et `pendings` (le
+détail par nonce, pour que deux demandes en attente ne se confondent pas). Rien n'est
+ajouté quand la liaison réussit : pas d'écart, pas de bruit. C'est la règle que ce
+module écrit déjà en tête, pour `BindOutcome` — *« un refus muet est un refus que personne
+ne saura avoir eu »* — et que `reconcile_pending`, sa voisine immédiate, n'appliquait pas.
+
+⚠️ **Ce que ça ne fait PAS** : nommer la cause ne la corrige pas. Si un parcours se termine
+côté fournisseur sans produire de compte éligible, le défaut reste entier — on saura
+seulement lequel des trois il est, en une lecture au lieu de deux tentatives.
+
 ⚠️ **Le webhook de liaison `POST /api/unipile/webhook` a été RETIRÉ le 2026-08-29 (#581) :
 dormant depuis la v2 du fournisseur.** Le champ `notify_url` du hosted-auth v1 n'existe plus
 en v2, le callback n'est plus rappelé — **zéro appel** sur le mois de journal REST retenu

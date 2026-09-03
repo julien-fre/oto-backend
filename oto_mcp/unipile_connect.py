@@ -370,6 +370,11 @@ def _parse_dt(v):
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def _rien(reason: str, detail: str) -> dict:
+    """Une réconciliation qui n'a rien lié, et qui DIT pourquoi."""
+    return {"bound": False, "accounts": [], "reason": reason, "detail": detail}
+
+
 def reconcile_pending(sub: str) -> dict:
     """Lie le(s) compte(s) fraîchement connecté(s) par `sub` sans dépendre du
     webhook. No-op si pas de pending / pas de clé / pas de nouveau compte.
@@ -377,20 +382,29 @@ def reconcile_pending(sub: str) -> dict:
     from datetime import timedelta
     pendings = db.list_unipile_pending_for_sub(sub)
     if not pendings:
-        return {"bound": False, "accounts": []}
+        return _rien("no_pending",
+                     "Aucune demande de liaison en attente pour ce compte : le lien "
+                     "hosted-auth n'a pas été demandé depuis ce sub, ou la liaison a "
+                     "déjà eu lieu. Relance `op=connect` pour en obtenir un.")
     try:
         rc = access.resolve_credential("unipile", want="auto", sub=sub,
                                        emit_on_failure=False)
     except McpError:
-        return {"bound": False, "accounts": []}
+        return _rien("no_credential",
+                     "Aucun credential Unipile résoluble pour ce compte : la liaison "
+                     "ne peut pas être vérifiée chez le fournisseur. Le parcours a pu "
+                     "aboutir de son côté sans que nous puissions le constater.")
     from oto.tools.unipile import make_unipile_client
     dsn = None if rc.is_platform else rc.config.get("dsn")
     client = make_unipile_client(api_key=rc.key, dsn=dsn)
     try:
         accounts = client.list_accounts()
-    except Exception:  # noqa: BLE001 — best-effort, jamais fatal pour le statut
+    except Exception as e:  # noqa: BLE001 — best-effort, jamais fatal pour le statut
         logger.warning("reconcile unipile: list_accounts échoué", exc_info=True)
-        return {"bound": False, "accounts": []}
+        return _rien("provider_unreachable",
+                     f"Le fournisseur n'a pas répondu à la liste des comptes "
+                     f"({type(e).__name__}) : la liaison n'a pas pu être tentée. "
+                     "Réessaie — ce n'est pas un refus.")
     taken = db.bound_unipile_account_ids()  # vivants + morts (jamais le siège d'un tiers)
     # La garde de sécurité (#559), posée à l'ÉCRITURE dans `bind_account` : `foreign`
     # est le sous-ensemble de `taken` qui appartient à quelqu'un d'AUTRE. `taken` reste,
@@ -398,7 +412,8 @@ def reconcile_pending(sub: str) -> dict:
     # repiocher un identifiant déjà attribué en balayant une liste), pas une frontière.
     # Distinguer les deux est ce qui rend la frontière transposable au prochain chemin.
     foreign = db.foreign_unipile_account_ids(sub)
-    bound = []
+    bound: list = []
+    motifs: list = []
     for pend in pendings:
         provider = (pend.get("provider") or "LINKEDIN").upper()
         floor = _parse_dt(pend.get("created_at"))
@@ -426,6 +441,21 @@ def reconcile_pending(sub: str) -> dict:
             if floor is None or created is None or created >= floor - timedelta(minutes=5):
                 cand.append((created, a))
         if not cand:
+            # Le cas du signal #689 : le parcours s'est terminé côté fournisseur
+            # (redirection finale vue par l'utilisateur) et pourtant aucun compte
+            # n'est éligible. Trois causes possibles, indiscernables jusqu'ici parce
+            # que ce `continue` était muet.
+            motifs.append({
+                "nonce": pend.get("nonce"), "provider": provider,
+                "reason": "no_candidate",
+                "detail": (f"{len(accounts)} compte(s) chez le fournisseur, aucun "
+                           f"éligible pour {provider} : soit le parcours n'a créé "
+                           "aucun compte (abandonné avant la fin), soit le compte "
+                           "existait DÉJÀ avant la demande (il est alors plus ancien "
+                           "que le pending), soit il appartient à quelqu'un d'autre. "
+                           "Un compte déjà lié ailleurs se libère par `op=disconnect` "
+                           "chez son porteur."),
+            })
             continue
         from datetime import datetime, timezone
         cand.sort(key=lambda t: t[0] or datetime.min.replace(tzinfo=timezone.utc))
@@ -437,6 +467,15 @@ def reconcile_pending(sub: str) -> dict:
                        if client.account_alive(a["id"])), None)
         if chosen is None:
             logger.info("reconcile unipile: candidats tous morts (session 401) sub=%s", sub)
+            motifs.append({
+                "nonce": pend.get("nonce"), "provider": provider,
+                "reason": "candidates_dead",
+                "detail": (f"{len(cand)} compte(s) candidat(s), tous avec une session "
+                           "morte côté fournisseur (401) : le parcours a produit un "
+                           "compte que le fournisseur n'authentifie plus. Refais le "
+                           "parcours jusqu'au bout SANS fermer l'onglet avant la "
+                           "redirection finale."),
+            })
             continue
         issue = bind_account(sub, chosen["id"], account_name=chosen.get("name"),
                              org_id=pend["org_id"], provider=provider,
@@ -448,6 +487,10 @@ def reconcile_pending(sub: str) -> dict:
             # cette discipline-là qui manquait au chemin jumeau.
             logger.warning("reconcile unipile: liaison refusée (%s) sub=%s account_id=%s",
                            issue.reason, sub, chosen["id"])
+            motifs.append({"nonce": pend.get("nonce"), "provider": provider,
+                           "reason": issue.reason or "bind_refused",
+                           "detail": "Le compte a été trouvé mais l'écriture de la "
+                                     "liaison a été refusée à son point de garde."})
             continue
         db.resolve_unipile_pending(pend["nonce"])
         taken.add(chosen["id"])
@@ -455,7 +498,17 @@ def reconcile_pending(sub: str) -> dict:
                       "org_id": pend["org_id"]})
         logger.info("reconcile unipile: bound sub=%s account_id=%s org=%s",
                     sub, chosen["id"], pend["org_id"])
-    return {"bound": bool(bound), "accounts": bound}
+    out: dict = {"bound": bool(bound), "accounts": bound}
+    if motifs and not bound:
+        # Rien n'a été lié ET on sait pourquoi : le dire. C'est la règle que ce
+        # module écrit pour `BindOutcome` en tête de fichier — « un refus muet est un
+        # refus que personne ne saura avoir eu » — et que cette fonction, sa voisine
+        # immédiate, n'appliquait pas (signal #689 : deux parcours suivis jusqu'au
+        # bout, plusieurs minutes d'attente, et `connected:false` sans un mot).
+        out["reason"] = motifs[0]["reason"]
+        out["detail"] = motifs[0]["detail"]
+        out["pendings"] = motifs
+    return out
 
 
 # --- Le geste « connecter », sous le point de passage commun (#300) ----------

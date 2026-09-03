@@ -303,8 +303,18 @@ def test_la_reconciliation_refuse_le_compte_dun_tiers(scene, monkeypatch):
         {"id": ACC_VICTIME, "provider": "linkedin",
          "created_at": "2099-01-01 00:00:00+00", "name": "La victime"}])
     _pending(PIRATE, scene["org_pirate"])
-    assert unipile_connect.reconcile_pending(PIRATE) == {"bound": False, "accounts": []}
+    out = unipile_connect.reconcile_pending(PIRATE)
+    # ⚠️ Ce test comparait la réponse ENTIÈRE à `{bound: False, accounts: []}`. C'était
+    # la FORME du refus, pas la garde : la garde, c'est qu'aucune liaison n'est écrite.
+    # La forme a cassé dès que le refus a gagné sa raison (#689) — on tient donc ce qui
+    # protège, et en prime que le refus se DIT.
+    assert out["bound"] is False and out["accounts"] == []
     assert _liaisons(PIRATE) == []
+    # Le pirate apprend qu'il n'y a pas de candidat — jamais que ce compte existe et
+    # appartient à quelqu'un : le détail nomme les trois causes possibles sans
+    # désigner la victime ni confirmer son existence.
+    assert out["reason"] == "no_candidate"
+    assert ACC_VICTIME not in str(out)
 
 
 def test_la_reconciliation_passe_par_la_garde(scene, monkeypatch):
