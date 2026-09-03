@@ -33,9 +33,20 @@ dependencies = [
     # emporte : le cache de contexte de l'agent expire pendant, le passage médian ayant
     # scrapé coûtant 72 077 jetons contre 35 798 sans. Le reste du client garde son
     # délai : une recherche n'a pas le profil d'une extraction (oto-backend#662) ;
-    # v1.107.0 = TROIS clients neufs (oto-core#76, contribution externe) : `github`
-    # (REST v3), `leexi` (intelligence conversationnelle) et `productlane` (retours
-    # clients, roadmap, changelogs) ;
+    # v1.107.0 = TROIS clients neufs (oto-core#76) : `github` (REST v3 — dépôts et
+    # code, issues, PR et revues, organisations et équipes, Actions, recherche),
+    # `leexi` (intelligence conversationnelle — appels, transcripts, notes, réunions)
+    # et `productlane` (retours clients, roadmap adossée à Linear, changelogs, centre
+    # d'aide). Chacun porte le relevé des divergences SILENCIEUSES de son API : les
+    # filtres multi-valués de Leexi qui exigent `nom[]=` sous peine d'être réduits à
+    # leur dernière valeur (Rails) ; la pagination par curseur de Productlane, dont
+    # une page intermédiaire peut être VIDE avec `has_more` vrai ; et chez GitHub le
+    # `per_page` raboté sans erreur au-delà de 100, les listes qui sont des OBJETS
+    # (`items`, `workflow_runs`, `jobs`), les 204/404 sans corps qui valent oui/non,
+    # et le 403 qui ne se retente que s'il porte la marque d'une limite d'usage.
+    # Aucune écriture n'est retentée dans les trois : aucune de ces API n'a de clé
+    # d'idempotence, et un rejeu créerait un doublon (une issue, un utilisateur
+    # facturé, ou une diffusion de changelog envoyée DEUX fois) ;
     # v1.105.0 = hubspot : `batch_read_objects` lit jusqu'à 100 fiches en UN appel
     # (tranché par le client) au lieu d'un GET par id, et rend une ENVELOPPE
     # `{results, missing_ids}` dont les deux clés sont toujours là — `missing_ids` est

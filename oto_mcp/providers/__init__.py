@@ -193,6 +193,15 @@ _DECLARATIONS: tuple[str, ...] = (
     "tally",
     # --- prospection téléphonique — câblé 2026-08-31 -------------------------
     "minari",
+    # --- forge logicielle — câblé 2026-09-02 ---------------------------------
+    "github",
+    # Voisin de `fireflies`/`grain`/`granola` par le métier (intelligence
+    # conversationnelle), et l'ordre gouverne l'affichage du catalogue.
+    "leexi",
+    # Voisin de `linear` : la roadmap de Productlane est ADOSSÉE à Linear
+    # (projets et issues y naissent, puis sont reflétés). Les deux cartes se
+    # lisent ensemble.
+    "productlane",
 )
 
 _MODULES: dict = {}
