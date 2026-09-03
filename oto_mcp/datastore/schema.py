@@ -1673,15 +1673,29 @@ def _is_empty(v: Any) -> bool:
     return v is None or v == "" or v == [] or v == {}
 
 
+#: Alias PUBLIC de `_is_empty`. La notion de « vide » du datastore est UNE : un
+#: appelant qui en écrirait une seconde la ferait diverger au premier cas limite
+#: — c'est exactement le défaut de #608, où le validateur et le merge lisaient la
+#: chaîne vide autrement l'un que l'autre.
+est_vide = _is_empty
+
+
 def _type_error(value: Any, ftype: str, path: str,
                 fields: Optional[list] = None, of: Optional[dict] = None,
                 options: Optional[list] = None, *,
-                closed: bool = False) -> list[str]:
+                closed: bool = False,
+                hors: Optional[list] = None) -> list[str]:
     """Erreurs de conformité d'UNE valeur à un type déclaré (récursif).
 
     `closed` = le référentiel de CE composite est fermé (#544) : un attribut que sa
     déclaration ne nomme pas est refusé, au lieu d'être traversé en silence. Il se
-    propage vers le bas — une liste d'objets dans un objet reste fermée."""
+    propage vers le bas — une liste d'objets dans un objet reste fermée.
+
+    `hors` (liste mutable, optionnelle) = le relevé STRUCTURÉ des valeurs hors
+    options (#667), rempli en chemin : `{champ, valeur, options}`. Il existe pour
+    que l'appelant puisse ÉCARTER la valeur sans reparser le message — un refus
+    français relu comme un contrat est un contrat déguisé. Optionnel par
+    construction : ce validateur reste pur si personne ne le lui passe."""
     if ftype == "text":
         return [] if isinstance(value, str) else [f"{path}: attendu text, reçu {type(value).__name__}"]
     if ftype == "number":
@@ -1716,12 +1730,14 @@ def _type_error(value: Any, ftype: str, path: str,
             return [f"{path}: attendu une valeur d'énumération, reçu {value!r}"]
         allowed = [str(o) for o in (options or [])]
         if allowed and value not in allowed:
+            if hors is not None:
+                hors.append({"champ": path, "valeur": value, "options": allowed})
             return [f"{path}: valeur {value!r} hors options ({', '.join(allowed)})"]
         return []
     if ftype == "object":
         if not isinstance(value, dict):
             return [f"{path}: attendu object, reçu {type(value).__name__}"]
-        return _row_errors(fields or [], value, path, closed=closed)
+        return _row_errors(fields or [], value, path, closed=closed, hors=hors)
     if ftype == "list":
         if not isinstance(value, list):
             return [f"{path}: attendu list, reçu {type(value).__name__}"]
@@ -1742,11 +1758,12 @@ def _type_error(value: Any, ftype: str, path: str,
                 else:
                     errors.extend(_row_errors(
                         [x for x in sub_fields if isinstance(x, dict)], item, ipath,
-                        closed=closed, vus=vus))
+                        closed=closed, vus=vus, hors=hors))
             elif of.get("type"):
                 errors.extend(_type_error(item, of["type"], ipath,
                                           of.get("fields"), of.get("of"),
-                                          of.get("options"), closed=closed))
+                                          of.get("options"), closed=closed,
+                                          hors=hors))
         return errors
     return []  # json / type absent : tout passe
 
@@ -1839,7 +1856,8 @@ def _row_errors(fields: list, data: dict, path: str,
                 written: Optional[set] = None, *,
                 strict: bool = False, closed: bool = False,
                 vus: Optional[set] = None,
-                details: Optional[dict] = None) -> list[str]:
+                details: Optional[dict] = None,
+                hors: Optional[list] = None) -> list[str]:
     """Erreurs d'un (sous-)record. `written` = clés effectivement RÉÉCRITES par ce
     geste (None = toutes) : la borne de longueur, le motif et la fermeture d'un
     composite s'y restreignent — eux seuls, cf. `validate_row`. La récursion dans un
@@ -1946,7 +1964,8 @@ def _row_errors(fields: list, data: dict, path: str,
         if f.get("type"):
             errs_type = _type_error(value, f["type"], fpath,
                                     f.get("fields"), f.get("of"), f.get("options"),
-                                    closed=closed or (strict and pose))
+                                    closed=closed or (strict and pose),
+                                    hors=hors)
             # #545 : la colonne qui vient de refuser est-elle un AIGUILLAGE dont une
             # autre colonne dépend ? Alors la chaîne libre qu'on y a écrite a une
             # destination déclarée, et le refus doit la donner — c'est le cas
@@ -1964,6 +1983,13 @@ def _row_errors(fields: list, data: dict, path: str,
                     f"({_forme_attendue(cible)}), pas dans `{key}`")
                 if details is not None:
                     details.setdefault("expected_column", str(cible.get("key")))
+                # #667 : cette valeur-là a une DESTINATION déclarée — elle est mal
+                # rangée, pas indésirable. L'écarter écrirait une fiche qui prétend
+                # ne pas avoir été retraitée, et l'agent verrait un succès : la
+                # corruption silencieuse, en pire que la perte. Le relevé porte donc
+                # la destination, et l'écartement s'y refuse.
+                if hors and hors[-1].get("champ") == fpath:
+                    hors[-1]["destination"] = str(cible.get("key"))
             errors.extend(errs_type)
         mi = f.get("max_items")
         if (isinstance(mi, int) and not isinstance(mi, bool) and mi > 0
@@ -2003,7 +2029,8 @@ def _row_errors(fields: list, data: dict, path: str,
 def validate_row(schema: Optional[dict], merged: dict, *,
                  prev_status: Any = None,
                  written: Optional[set] = None,
-                 details: Optional[dict] = None) -> list[str]:
+                 details: Optional[dict] = None,
+                 hors: Optional[list] = None) -> list[str]:
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
@@ -2033,7 +2060,7 @@ def validate_row(schema: Optional[dict], merged: dict, *,
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
         errors.extend(_row_errors(_fields(schema), merged, "", written,
                                   strict=bool(schema.get("strict")),
-                                  details=details))
+                                  details=details, hors=hors))
     lc = lifecycle_of(schema)
     if lc:
         sf = status_field(schema)
