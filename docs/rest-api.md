@@ -1,5 +1,5 @@
 ---
-title: REST API (consommée par oto.ninja /account)
+title: REST API (consommée par le tableau de bord)
 type: reference
 description: >-
   Inventaire des endpoints REST /api/* de oto-backend : profil /api/me (billing,
@@ -13,7 +13,7 @@ description: >-
   pour implémenter ou déboguer un endpoint REST ou comprendre le contrat front/back.
 ---
 
-# REST API (consommée par oto.ninja /account)
+# REST API (consommée par le tableau de bord)
 
 ## Où vit chaque famille (découpe du 2026-08-27)
 

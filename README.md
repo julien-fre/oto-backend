@@ -6,9 +6,10 @@ connectors (`oto.tools.*`) as tools to Claude — plus a REST API for the
 [dashboard](https://github.com/otomata-tech/oto-dashboard). Imports oto-core directly;
 no CLI dependency.
 
-- **Public endpoint**: `https://mcp.oto.ninja/mcp` (plug into claude.ai or Claude Code).
-- **Auth**: OAuth via [Logto](https://logto.io) self-hosted (`auth.oto.zone`), JWT
-  verified against the Logto JWKS (ES384), audience `https://mcp.oto.ninja/mcp`.
+- **Public endpoint**: `https://mcp.oto.cx/mcp` (plug into claude.ai or Claude Code);
+  `https://mcp.oto.ninja/mcp` is the pre-production deployment of the same service.
+- **Auth**: OAuth via [Logto](https://logto.io) self-hosted (`auth.oto.ninja`), JWT
+  verified against the Logto JWKS (ES384); the audience is the endpoint's own URL.
 - **Self-hostable**: image `Dockerfile`, configured entirely through environment variables.
 
 ## What it does
@@ -25,10 +26,10 @@ Around the connectors, oto-mcp provides the platform plumbing:
 
 - **Credential vault** — encrypted (AES-256-GCM), single `connector_credentials` table;
   per-user keys, per-org/group shared secrets, and platform keys with quotas.
-- **Orgs, groups & roles** — `member < admin < super_admin`, org/department hierarchy,
-  cascading key resolution (`user_key > group > org > platform_grant`).
-- **Per-user tool visibility**, presets, call monitoring, org guides/skills, and
-  MCP federation (mount / remote bridge).
+- **Orgs, groups & roles** — `member < admin < super_admin`, org/team hierarchy, and a
+  single key-resolution walker (`user > cross-org > team > org > tenant > platform`).
+- **Per-user tool visibility**, call monitoring, org guides and procedures, and MCP
+  federation (mount / remote bridge).
 
 ## Architecture
 
@@ -36,24 +37,31 @@ Around the connectors, oto-mcp provides the platform plumbing:
 oto_mcp/
 ├── server.py          # FastMCP + uvicorn entrypoint, server instructions, route wiring
 ├── tools/             # one module per connector, each exposing register(mcp)
-├── connectors.py      # the connector registry — single source of truth
+├── providers/         # the connector registry — one declaration per connector, single source of truth
+├── connectors/        # platform-side connector governance: activation, selection, identities, link, verify
 ├── capabilities/      # capabilities shared across MCP + REST faces (ADR 0009)
-├── api_routes*.py     # REST /api/* (account, settings, orgs, admin, datastore…)
-├── access.py          # roles, resolve_api_key, quotas, key-resolution cascade
+├── api/               # REST /api/*: the route table (its order is a contract) + one handler per domain
+├── access/            # roles, org context, key-resolution cascade, quotas — flat access.<fn> surface
+├── org_store/         # the org tier: orgs, members, vault, settings, library
 ├── credentials_store.py / crypto.py  # the encrypted vault
-├── db.py              # PostgreSQL (psycopg pool) — per-user state
-├── auth_hooks.py      # Logto JWT → current user sub for the tool context
-└── config.py          # require_env
+├── db/                # PostgreSQL (psycopg pool) — flat db.<fn> surface, one module per domain
+├── datastore/         # the typed-record spine behind data_*
+├── middleware/        # the MCP middleware chain — registration order is a contract
+├── auth/              # who is calling (Logto JWT → sub) and how a credential is acquired
+├── fod/               # clients for French public-data services
+└── config.py          # require_env, environment domains, dashboard URL
 
 deploy/
 ├── oto-mcp.service    # systemd unit (port 9103)
-├── Caddyfile.snippet  # mcp.oto.ninja → :9103
-└── DEPLOY.md          # DNS + Caddy + systemd procedure
+├── *.timer/*.service  # maintenance and call-journal archiving units
+├── Caddyfile.snippet  # reverse-proxy snippet to :9103
+└── *.sh               # deploy, blue/green, drain and data-refresh scripts
 ```
 
-Adding a connector is two steps: a `tools/<service>.py` exposing `register(mcp)`, and an
-entry in the `connectors.py` registry — `register_all` derives loading from the registry.
-See [`CLAUDE.md`](CLAUDE.md) for the full conventions.
+Adding a connector is two steps: a declaration in the `providers/` registry, and a
+`tools/<service>.py` exposing `register(mcp)` — `register_all` derives loading from the
+registry. The client itself lives in oto-core, never here. See [`CLAUDE.md`](CLAUDE.md)
+for the full conventions.
 
 ## Local dev
 
@@ -64,20 +72,25 @@ transport was removed — for a local CLI use [`oto-cli`](https://github.com/oto
 python -m venv .venv
 .venv/bin/pip install -e .
 # set the LOGTO_* and DATABASE_URL env vars, then launch the HTTP server and
-# call it with a bearer token. See deploy/DEPLOY.md.
+# call it with a bearer token. See docs/commands.md.
 ```
 
 ## Deploy
 
-Pushing to `main` triggers `.github/workflows/deploy.yml`, which SSHes the dedicated box,
-resets to `origin/main`, reinstalls (`pip install -e .`), and restarts the `oto-mcp`
-systemd service. Full procedure in [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
+Single trunk, two rings. Pushing to `main` triggers `.github/workflows/deploy-canari.yml`
+and deploys **pre-production**; pushing a `vX.Y.Z` tag triggers `.github/workflows/deploy.yml`
+and deploys **production**. Both SSH the dedicated box, reset to the ref, reinstall
+(`pip install -e .` plus a forced reinstall of oto-core at the pinned tag), restart the
+`oto-mcp` systemd service, run an HTTP smoke check and roll back on failure. Machine-level
+details are kept in a private infrastructure repository, not here.
 
 ## Docs
 
-In-depth docs live under [`docs/`](docs/): `connector-vault.md` (the central
-architecture), `roles-and-resolution.md`, `auth-logto.md`, `rest-api.md`,
-`datastore.md`, `groups-and-roles.md`, `federation.md`, `guides.md`, `monitoring.md`,
-`usage-loop.md`.
+In-depth docs live under [`docs/`](docs/): `conventions.md` and `commands.md` first,
+then `architecture.md`, `connector-model.md`, `connector-vault.md`,
+`roles-and-resolution.md`, `auth-logto.md`, `rest-api.md`, `datastore.md`,
+`groups-and-roles.md`, `federation.md`, `guides.md`, `monitoring.md`, `usage-loop.md`.
+The security posture of the deployed service is in [`SECURITY.md`](SECURITY.md).
 
-Open source.
+Licensed [MIT](LICENSE). Pull requests require a signed CLA (`.github/workflows/cla.yml`);
+the CLA text lives in `otomata-tech/oto`.
