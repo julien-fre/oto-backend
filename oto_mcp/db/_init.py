@@ -243,6 +243,17 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # même défaut que le socle et les liens, mais sur l'identifiant affiché à
     # chaque appel. NULL = les noms canoniques (l'état d'avant, et le défaut).
     conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tool_prefix TEXT")
+    # (03/09/2026) La PALETTE de ce tenant, pour ce qu'on lui dessine — aujourd'hui
+    # les emails. Elle vivait en dur dans `email_brand.MARQUES`, comme l'adresse de
+    # son tableau de bord y avait vécu avant : accueillir un second partenaire
+    # demandait d'éditer notre code et de le redéployer pour lui. Même raison, même
+    # remède, même colonne de configuration par tenant. `{}` = notre charte.
+    # ⚠️ Ce n'est PAS un thème complet : seulement les sept teintes que le rendu
+    # d'email consomme (`email_brand.Marque`), validées à la lecture. Une clé
+    # inconnue est ignorée, une valeur qui n'est pas une couleur aussi — un email
+    # ne doit jamais casser parce qu'une configuration est mal remplie.
+    conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS brand JSONB "
+                 "NOT NULL DEFAULT '{}'::jsonb")
     # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
     # une table volumineuse (une colonne sans défaut ne touche pas les lignes
     # existantes), et les lignes d'avant restent lisibles avec des NULL — elles

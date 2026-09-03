@@ -37,6 +37,8 @@ D'où ce qui suit, qui n'est pas un goût mais une contrainte de client :
 """
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -47,6 +49,8 @@ from typing import Optional
 # de la même façon (`from . import email_brand as _charte`) et personne ne dépend,
 # au moment de l'import, d'un attribut de l'autre — seulement à l'appel.
 from . import email as _email
+
+logger = logging.getLogger(__name__)
 
 # Une webfont ne se charge pas dans un client mail : `Inter` est le premier choix
 # (il s'affiche chez qui l'a installée, et sur les clients web des deux produits),
@@ -111,16 +115,69 @@ _NEUTRE = Marque(
 )
 
 
+_CHAMPS_COULEUR = ("fond", "surface", "encre", "discret", "filet",
+                   "bouton_fond", "bouton_encre")
+_COULEUR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _declaree(slug: str) -> Optional[Marque]:
+    """La palette que le TENANT déclare (`tenants.brand`), ou None.
+
+    ⚠️ **Validée ici, pas au transport.** Le registre porte ce qui est écrit en base ;
+    c'est à l'usage de juger, parce que c'est l'usage qui sait ce qu'il consomme —
+    sept teintes nommées, en notation hexadécimale. Une clé inconnue est ignorée, une
+    valeur qui n'est pas une couleur aussi : une configuration à moitié remplie ne
+    doit jamais empêcher un email de partir, ni laisser passer une valeur qui finirait
+    telle quelle dans un attribut `style` (une palette est du texte injecté dans du
+    HTML — la valider est aussi ce qui l'empêche d'y écrire autre chose).
+
+    Une palette PARTIELLE est refusée entière plutôt que complétée par la nôtre :
+    mélanger sept teintes venues de deux chartes produit un dessin que personne n'a
+    dessiné, et le défaut ne se verrait qu'à l'arrivée, chez le destinataire.
+    """
+    from . import tenancy  # tardif : `tenancy` n'a pas à connaître le dessin
+    entree = tenancy.current().entry_for_slug(slug)
+    declaree = getattr(entree, "brand", None) if entree is not None else None
+    if not isinstance(declaree, dict) or not declaree:
+        return None
+    teintes = {}
+    for champ in _CHAMPS_COULEUR:
+        val = declaree.get(champ)
+        if not isinstance(val, str) or not _COULEUR_RE.match(val.strip()):
+            logger.warning(
+                "marque du tenant %r : « %s » absent ou pas une couleur (%r) — palette "
+                "déclarée ignorée en entier, on ne mélange pas deux chartes",
+                slug, champ, val)
+            return None
+        teintes[champ] = val.strip()
+    nom = str(declaree.get("nom") or slug)
+    return Marque(slug=slug, nom=nom, site=str(declaree.get("site") or ""), **teintes)
+
+
 def marque(slug: Optional[str]) -> Marque:
     """La marque de ce slug. Inconnu ⟹ gabarit neutre **portant son nom**.
 
     On ne replie PAS sur oto : écrire « oto » en pied de l'email d'un partenaire est
     le faux que 7d10a798 a corrigé côté texte, et il reviendrait ici par la porte du
     dessin. Sans nom du tout (`None`, `""`), c'est bien oto — le défaut de
-    `front_brand`, dont NULL veut dire « la plateforme »."""
+    `front_brand`, dont NULL veut dire « la plateforme ».
+
+    **Ordre depuis le 03/09/2026 : ce que le TENANT déclare d'abord**, `MARQUES`
+    ensuite. Une palette de partenaire écrite dans notre code oblige à nous
+    redéployer pour accueillir le suivant — c'est le même défaut que son adresse de
+    tableau de bord, corrigé de la même façon et au même endroit. `MARQUES` garde
+    la nôtre, qui est chez elle ici, et sert de repli le temps que les palettes
+    déclarées soient posées.
+    """
     s = (slug or "").strip()
     if not s:
         return MARQUES["oto"]
+    if s.lower() != "oto":
+        # Le tenant primaire ne se surcharge pas : notre charte n'est pas une
+        # configuration, et une ligne en base ne doit pas pouvoir repeindre oto.
+        declaree = _declaree(s)
+        if declaree is not None:
+            return declaree
     connue = MARQUES.get(s.lower())
     if connue is not None:
         return connue

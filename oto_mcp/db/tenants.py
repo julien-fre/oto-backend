@@ -43,7 +43,7 @@ def list_tenant_issuers() -> list:
             # au host), jamais la vérification d'un jeton — celle-ci ne connaît que
             # l'émetteur. Les lire ici ne change donc rien au chemin d'auth.
             "SELECT slug, name, issuer, jwks_uri, hosts, oauth_client_id, "
-            "dashboard_url, link_paths, tool_prefix FROM tenants "
+            "dashboard_url, link_paths, tool_prefix, brand FROM tenants "
             "WHERE issuer IS NOT NULL AND btrim(issuer) <> '' ORDER BY id"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -154,7 +154,7 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
               GROUP BY o.tenant_id
          )
     SELECT t.id, t.slug, t.name, t.issuer, t.jwks_uri, t.hosts, t.oauth_client_id,
-           t.dashboard_url, t.link_paths, t.tool_prefix, t.created_at,
+           t.dashboard_url, t.link_paths, t.tool_prefix, t.brand, t.created_at,
            COALESCE(oc.orgs, 0) AS orgs,
            COALESCE(oc.orgs_archivees, 0) AS orgs_archivees,
            COALESCE(ac.comptes, 0) AS comptes,

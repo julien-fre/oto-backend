@@ -85,6 +85,13 @@ class TenantIssuer:
     # DÉCLARÉ, jamais dérivé du slug : renommer les outils rompt les procédures et la
     # prose déjà écrites du tenant, donc ça se décide.
     tool_prefix: str = ""
+    # PALETTE de ce tenant pour ce qu'on lui dessine — aujourd'hui les emails
+    # (`email_brand`). Vide/absente = notre charte. Même raison d'être que
+    # `dashboard_url` et `link_paths` : ce qui appartient au partenaire se DÉCLARE,
+    # il ne s'écrit pas dans notre code, sinon le second partenaire nous coûte un
+    # déploiement. Les teintes sont validées à la LECTURE, pas ici : le registre
+    # transporte ce qui est déclaré, il ne juge pas des couleurs.
+    brand: Any = None
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -150,7 +157,7 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
 
     def _put(slug: str, issuer, jwks_uri=None, name="", hosts=(),
              oauth_client_id="", dashboard_url="", link_paths=None,
-             tool_prefix="") -> None:
+             tool_prefix="", brand=None) -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
@@ -163,7 +170,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                                     link_paths=_normalize_paths(link_paths),
                                     # Tel que DÉCLARÉ (cf. le slug juste au-dessus) :
                                     # `tool_alias.normalize_prefix` juge, il ne répare pas.
-                                    tool_prefix=str(tool_prefix or ""))
+                                    tool_prefix=str(tool_prefix or ""),
+                                    brand=brand if isinstance(brand, dict) else None)
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -194,7 +202,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
              oauth_client_id=str((row or {}).get("oauth_client_id") or ""),
              dashboard_url=str((row or {}).get("dashboard_url") or ""),
              link_paths=(row or {}).get("link_paths"),
-             tool_prefix=(row or {}).get("tool_prefix"))
+             tool_prefix=(row or {}).get("tool_prefix"),
+             brand=(row or {}).get("brand"))
     return entries
 
 
@@ -277,6 +286,24 @@ class IssuerRegistry:
         et il rejettera (l'`iss` ne correspond pas au sien)."""
         entry = self.get(issuer)
         return entry.slug if entry else PRIMARY_SLUG
+
+    def entry_for_slug(self, slug: Optional[str]) -> Optional[TenantIssuer]:
+        """L'entrée d'un tenant par son SLUG — ce que ce tenant DÉCLARE (son adresse,
+        ses chemins, sa palette).
+
+        `None` pour le tenant primaire comme pour un slug inconnu, et c'est la même
+        réponse à dessein : dans les deux cas il n'y a rien de déclaré à appliquer, et
+        l'appelant sert ce qui est à nous. Rendre une entrée pour `oto` ouvrirait la
+        porte à repeindre la plateforme depuis une ligne en base.
+
+        ⚠️ Cherche par balayage : le registre est indexé par ÉMETTEUR (sa clé d'usage,
+        celle du chemin d'authentification), et il compte quelques entrées. Un second
+        index à tenir se désynchroniserait pour économiser une comparaison.
+        """
+        s = (slug or "").strip()
+        if not s or s == PRIMARY_SLUG:
+            return None
+        return next((e for e in self.entries() if e.slug == s), None)
 
     def qualify_claims(self, claims: Optional[Mapping]) -> Optional[str]:
         """Sub qualifié depuis un jeu de claims — le qualificateur, appelé partout où
