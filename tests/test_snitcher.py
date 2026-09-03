@@ -9,6 +9,11 @@ f-string-docstring), la sonde « tester la connexion », la jointure
 tool↔client oto-core (garde version-skew), et le dispatch `op=` (required
 manquant refusé, arg non pertinent pour CET op refusé, exclusions
 date/plage et organisation_uuid/domain).
+
+Verrouille aussi, depuis le signalement #625 (30/08/2026), **le texte SERVI** de
+`snitcher_organisation` et `snitcher_session` : le nom d'entreprise rendu est une
+supposition amont que rien dans la charge utile ne permet de noter — cf. la
+section « texte servi » plus bas pour le détail des faits et de leur source.
 """
 import asyncio
 from unittest.mock import patch
@@ -93,6 +98,110 @@ def test_snitcher_tools_all_have_descriptions(all_tools):
 def test_verify_probe_registered():
     _fn_with_mock_client()
     assert connector_verify.supports("snitcher")
+
+
+# --- texte servi : le nom d'entreprise est une supposition amont --------------
+#
+# Signalement #625 (30/08/2026). Une balayage des visiteurs a rendu, pour UNE
+# localisation de visiteur (une ville d'Afrique australe), DEUX multinationales
+# sans lien ; et entre deux relevés du même jour, des pages vues sont passées
+# d'une ligne à l'autre. Le rapporteur en tire — à raison — qu'un nom sorti d'ici
+# ne qualifie pas un lead seul.
+#
+# **Ce que fait notre code, vérifié à la source.** Rien. Chaque branche de
+# `snitcher_organisation` rend `_run(lambda: client.<methode>(…))` (tools/
+# snitcher.py:274-305) et `SnitcherClient._request` rend `resp.json()` tel quel
+# (oto-core, oto/tools/snitcher/client.py:86). Aucune fusion, aucun
+# dédoublonnage, aucun cache, aucune notation : l'identité rendue est celle que
+# le fournisseur a résolue. Il n'y a donc rien à corriger dans le transport.
+#
+# **Ce que le contrat amont dit, et ce qu'il ne dit pas** (spec OpenAPI officiel
+# app.snitcher.com/api/docs?api-docs.json, schéma `Organisation` — 18 champs) :
+#   - l'objet ne porte AUCUN qualificatif de match : ni `confidence`, ni
+#     `match_type`, ni `ip`, ni `type`. Le contraste est net — l'autre surface de
+#     Snitcher (IP2Company) rend, elle, `fuzzy` (bool) et
+#     `type: business|isp|educational|government`, et son exemple officiel de
+#     non-match est `{"fuzzy": false, "domain": null, "type": "isp"}`. Ces
+#     qualificatifs EXISTENT chez le fournisseur et ne traversent pas jusqu'ici.
+#   - Snitcher documente lui-même que les IP d'ISP grand public, de VPN et de
+#     réseaux mobiles sont partagées et non identifiables
+#     (docs.snitcher.com/product/how-snitcher-works), et son propre produit
+#     propose « ISP, Public Place, Customer, Identification inaccurate » comme
+#     motifs de suppression d'une société.
+#   - `visitor_locations` est un simple `array of string` (ex. `["Amsterdam,
+#     NL"]`) : deux sociétés sans lien sous la même ville sont un résultat que le
+#     contrat AUTORISE, pas une anomalie.
+#
+# ⚠️ **Là où l'hypothèse du rapporteur ne tient pas** — et c'est ce qui rend la
+# mise en garde délicate : il lit le déplacement des pages vues comme une
+# ré-attribution rétroactive. Rien ne l'établit. `total_pageviews` n'a AUCUNE
+# description dans le spec : personne ne dit s'il compte tout l'historique ou
+# seulement la fenêtre `date`/`date_from`/`date_to` de l'appel, et aucune
+# stabilité n'est promise entre deux lectures. Écrire « les compteurs se
+# ré-attribuent entre sociétés » affirmerait un mécanisme que le fournisseur ne
+# documente nulle part, et masquerait la cause banale et vérifiable : un champ
+# dont la sémantique n'est pas définie. Le texte servi dit donc l'absence de
+# garantie, pas une garantie contraire.
+#
+# Classement : comportement du fournisseur servi brut ⟹ le remède est de le DIRE
+# (oto#42), pas de corriger un transport qui ne transforme rien. Ces bancs
+# verrouillent la phrase dans le texte SERVI et non dans la docstring : fastmcp
+# jette toute prose placée après le bloc `Args:` (cf.
+# test_docstring_prose_served.py), donc une mise en garde bien écrite mais mal
+# placée n'atteindrait aucun agent. Éprouvé : déplacée après `Args:`, elle
+# disparaît du texte servi et les trois cas ci-dessous rougissent.
+
+
+def _description_servie(nom: str) -> str:
+    """Le texte que `tools/list` rend au modèle — PAS `inspect.getdoc` : le
+    harnais retire le bloc `Args:` et jette ce qui le suit."""
+    from fastmcp import FastMCP
+
+    m = FastMCP("t")
+    snitcher.register(m)
+    return asyncio.run(m.get_tool(nom)).description or ""
+
+
+def _mise_en_garde(servie: str) -> str:
+    """La partie ⚠️ de la description — le texte le plus proche du geste.
+
+    Une mention noyée ailleurs ne compterait pas : l'agent qui lit une ligne
+    d'organisation doit trouver l'avertissement AVEC elle."""
+    assert "⚠️" in servie, "aucune mise en garde dans le texte servi"
+    return servie[servie.index("⚠️"):]
+
+
+def test_organisation_dit_que_le_nom_ne_qualifie_pas_un_lead_seul():
+    """Le remède du #625, servi au modèle : un second signal avant de qualifier.
+
+    La description ouvre sur « Companies Snitcher identified visiting … » — un
+    agent y lit une identification établie, et rien ne le détrompe."""
+    garde = _mise_en_garde(_description_servie("snitcher_organisation")).lower()
+    assert "second signal" in garde, (
+        "le texte servi ne nomme pas le remède — un agent qui lit « Companies "
+        "Snitcher identified » prend le nom pour un fait vérifié")
+
+
+def test_organisation_nomme_les_deux_champs_qui_ont_trompe():
+    """`visitor_locations` (la collision) et `total_pageviews` (le compteur sans
+    sémantique définie) sont des jetons d'API stables, pas de la prose : c'est ce
+    qui rend ce banc vérifiable sans figer une tournure — et c'est sous ces deux
+    noms exacts que l'agent reverra le cas."""
+    servie = _description_servie("snitcher_organisation")
+    for champ in ("visitor_locations", "total_pageviews"):
+        assert champ in servie, (
+            f"`{champ}` n'est pas nommé dans le texte servi — l'agent ne peut pas "
+            f"relier ce qu'il lit à la mise en garde")
+
+
+def test_session_herite_de_la_supposition_quand_il_narrow_sur_une_organisation():
+    """Le tool qui SUBIT le plus la supposition est celui qui attribue un
+    comportement à une société : `organisation_uuid` n'est pas une clé métier,
+    c'est le résultat d'une résolution amont."""
+    garde = _mise_en_garde(_description_servie("snitcher_session"))
+    assert "organisation_uuid" in garde, (
+        "la mise en garde de snitcher_session ne vise pas le narrowing par "
+        "organisation_uuid — c'est pourtant là que le nom devient une conclusion")
 
 
 # --- jointure tool ↔ client oto-core (garde version-skew) ---------------------

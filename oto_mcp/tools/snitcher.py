@@ -226,6 +226,22 @@ def register(mcp: FastMCP) -> None:
         """Companies Snitcher identified visiting the workspace's website —
         list them, filter them, fetch one, or tag/untag one.
 
+        ⚠️ The company on a row is Snitcher's reverse-IP guess, served
+        untouched: oto neither verifies nor scores it, and the payload
+        carries no confidence, match type or IP to score it with.
+        Consumer-ISP, VPN and mobile IPs are shared — Snitcher documents
+        them as unidentifiable — and `visitor_locations` is a free string
+        list, so two unrelated companies under one city is a result the
+        contract ALLOWS (seen live 2026-08-30). The visit behaviour is
+        real, the name on it is a guess: qualify a lead on a second signal
+        (form-submission values in snitcher_session `events`, a known email
+        domain), never on the name alone.
+
+        ⚠️ `total_pageviews` is undocumented upstream — nothing says whether
+        it counts all history or only the `date`/`date_from`/`date_to`
+        window, and nothing promises it is stable across reads. A count that
+        moved between two sweeps is not, by itself, evidence of anything.
+
         Returns (live-confirmed): list/search: `{"success", "current_page",
             "total", "data": [...]}`, top-level pagination, same as
             snitcher_workspace's list. get: the organisation object BARE —
@@ -383,6 +399,10 @@ def register(mcp: FastMCP) -> None:
         form submissions (WITH the submitted field values), custom `track`
         events, clicks and downloads. (The `views` array also present is
         deprecated — read `events`.)
+
+        ⚠️ Narrowing by `organisation_uuid` inherits Snitcher's reverse-IP
+        guess about whose visit this is: the `events` are solid, the company
+        attached to them is a guess (see snitcher_organisation).
 
         Returns (live-confirmed, both branches): `{"success",
             "current_page", "total", "data": [...]}` — top-level pagination,
