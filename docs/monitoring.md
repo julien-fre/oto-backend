@@ -436,6 +436,25 @@ pas `tools/call`) = erreur **GÉRÉE actionnable** `tool_not_mounted`
 (`error_taxonomy` : oto_call immédiat / `oto_connector op=select`), droppée de
 Sentry — plus jamais un « Erreur interne du serveur » opaque (vécu 16/07, #224/#225).
 
+⚠️ **Un statut amont rangé dans la CHAÎNE au lieu d'un attribut est invisible aux deux
+mécanismes à la fois.** `_upstream_status` cherche `.status_code` / `.status` /
+`.response.status_code` **sur l'objet exception** : un client oto-core qui lève
+`Exception(f"… API {status} on …: {corps}")` n'en porte aucun. Le refus tiers échappe
+donc *et* au drop de `before_send` (Sentry ouvre une issue de bug backend pour un 4xx
+normal) *et* à l'enveloppe, qui tombe en étape (5) « interne » — la seule branche qui
+n'écho RIEN du message. **Les deux symptômes ont la même cause, et le journal, lui,
+garde le corps en clair** : un écart entre ce que dit `tool_calls.error` et ce que
+l'agent a lu est la signature de ce défaut.
+Attio en était le cas type (signal #610, 18 refus en 45 jours, 16 remontés à tort) :
+Attio nommait le champ fautif et l'enregistrement en conflit, l'agent lisait « Erreur
+interne du serveur. » et a conclu à un bug amont inexistant. Corrigé **au tool**
+(`tools/attio.py`, `_rendre_le_refus_lisible` posé sur l'unique sortie HTTP du client)
+en re-typant vers `UpstreamHTTPError` — le porteur canonique d'oto-core, déjà honoré
+ici. ⚠️ **Pas en `McpError`** : elle conserverait le message mais écraserait le verdict
+machine (`code`/`retryable`) que la taxonomie dérive du statut. ⚠️ Ce qui est relayé du
+corps amont est une **liste blanche bornée** (`code`, `path`, `message`) : un corps tiers
+n'est jamais rendu en bloc.
+
 ## `client_id` — ce qu'il ne dit pas
 
 > Reprise mot pour mot du `CLAUDE.md` (2026-08-31).
