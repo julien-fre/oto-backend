@@ -61,10 +61,16 @@ def test_lecheance_sevalue_dans_le_fuseau_du_declencheur():
 
 # ── la capacité : exigences et 404 org-scopé ──────────────────────────────────
 
-def test_create_exige_procedure_cron_et_outils(monkeypatch):
+def test_create_exige_la_procedure_et_le_cadencement(monkeypatch):
+    """⚠️ `tools` N'EST PLUS exigé depuis le 03/09 : il se DÉDUIT de la procédure.
+    Sans ça, le bouton « en faire un agent programmé » demanderait une liste
+    d'outils — c'est-à-dire ne serait pas un bouton."""
     with pytest.raises(AuthzDenied) as e:
         _appel(_ctx(), op="create", procedure="veille-linkedin")
-    assert e.value.code == "missing_fields" and "tools" in str(e.value.message)
+    assert e.value.code == "missing_fields"
+    assert "cron" in str(e.value.message)
+    assert "tools" not in str(e.value.message), (
+        "le message exige encore les outils alors qu'ils se déduisent")
 
 
 def test_create_valide_puis_pose_avec_le_fuseau_par_defaut(monkeypatch):
@@ -74,6 +80,9 @@ def test_create_valide_puis_pose_avec_le_fuseau_par_defaut(monkeypatch):
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": True, "workers": 1,
                                      "last_seen": "2026-09-02 07:00:00"})
+    # ⚠️ Un objet ne porte qu'UN agent : la création lit d'abord ce qui
+    # existe. Sans doublure, ce banc irait interroger la vraie base.
+    monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
     monkeypatch.setattr(RT.db, "create_trigger",
                         lambda org, sub, **kw: vu.update(kw, org=org) or {"id": 1, **kw})
     out = _appel(_ctx(), op="create", procedure="veille-linkedin",

@@ -70,6 +70,9 @@ def test_le_refus_distingue_le_silence_recent_de_labsence_totale(monkeypatch):
 
 def test_create_passe_quand_un_worker_sonde(monkeypatch):
     _arme(monkeypatch)
+    # ⚠️ Un objet ne porte qu'UN agent : la création lit d'abord ce qui
+    # existe. Sans doublure, ce banc irait interroger la vraie base.
+    monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
     monkeypatch.setattr(RT.db, "create_trigger",
                         lambda org, sub, **kw: {"id": 1, **kw})
     out = _appel(_ctx(), op="create", procedure="veille", cron="5 6 * * *",

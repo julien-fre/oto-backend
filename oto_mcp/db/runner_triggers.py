@@ -123,6 +123,26 @@ def delete_trigger(trigger_id: int, org_id: int) -> bool:
     return supprime
 
 
+def triggers_for_procedure(org_id: int, procedure: str) -> list[dict]:
+    """Les déclencheurs d'UN objet — ce que l'écran d'une procédure doit savoir.
+
+    ⚠️ Les déclencheurs ne se listaient que par ORGANISATION. La page d'une
+    procédure ne pouvait donc pas dire si elle tourne toute seule : il aurait
+    fallu charger tous les déclencheurs de l'org et filtrer côté client, ce qui
+    devient faux dès qu'il y en a plus d'une page.
+
+    L'agent programmé est une PROPRIÉTÉ de l'objet (direction du 02/09), pas un
+    objet séparé — donc il doit se lire depuis l'objet.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT {_COLS} FROM runner_triggers "
+            f"WHERE org_id = %s AND procedure = %s ORDER BY id DESC",
+            (org_id, procedure),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def due_triggers(limit: int = 50) -> list[dict]:
     """Les déclencheurs à échéance — lecture nue, TOUTES orgs (le tick est un
     service de plateforme). La consommation se fait par CAS, pas ici."""
