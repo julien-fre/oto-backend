@@ -116,7 +116,16 @@ def _get_pool() -> ConnectionPool:
         _pool = ConnectionPool(
             conninfo=_database_url(),
             min_size=1,
-            max_size=int(os.environ.get("OTO_MCP_DB_POOL_MAX", "8")),
+            # 24 et non 40 (taille du threadpool anyio) : un pool PLUS PETIT que le
+            # threadpool est ce qui fait qu'une rafale échoue proprement en 5 s
+            # au lieu de saturer la base. Les aligner supprimerait le signal.
+            # Marge PG : 3 process (prod, canari, preprod) x 24 = 72 sur 150,
+            # base MANAGÉE PARTAGÉE — le reste va aux migrations, sondes et
+            # opérations manuelles. Monté de 8 le 2026-09-03 : le seam des
+            # capacités ayant sorti 285 handlers de la boucle, jusqu'à 40
+            # traitements se disputent désormais le pool (mesuré : 7/8 en
+            # heure CREUSE, avant tout pic).
+            max_size=int(os.environ.get("OTO_MCP_DB_POOL_MAX", "24")),
             kwargs={"row_factory": _str_dict_row, "options": _connect_options()},
             open=True,
             # Attente MAX d'une connexion (défaut psycopg_pool : 30s !). Pendant un
