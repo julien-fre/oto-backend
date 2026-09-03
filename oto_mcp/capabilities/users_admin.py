@@ -121,6 +121,14 @@ def _user_detail(ctx: ResolvedCtx, inp: UserGetInput) -> dict:
     return {
         "sub": target, "email": u.get("email"), "name": u.get("name"),
         "role": status["role"], "active_org": status.get("active_org"),
+        # L'état de PAUSE, sur la fiche plutôt que sur une surface à part : c'est ici
+        # qu'on regarde un compte, et un compte neutralisé dont la fiche n'en dit rien
+        # se diagnostique en devinant. `suspended_at` est déjà une chaîne ISO (le
+        # driver rend tout en texte) — pas de `.isoformat()` par-dessus.
+        "suspended": bool(u.get("suspended_at")),
+        "suspended_at": u.get("suspended_at"),
+        "suspended_by": u.get("suspended_by"),
+        "suspended_reason": u.get("suspended_reason"),
         "orgs": orgs,
         "providers": status["providers"],
         "grants": db.list_grants_for_user(target),

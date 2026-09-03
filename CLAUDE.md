@@ -50,6 +50,17 @@ Paliers `member < admin < super_admin` ; clé résolue à chaque appel par le **
 (`perso > cross-org > équipe active > org > tenant > plateforme`), jamais recopié ; un credential qui se **pose** est
 **multi-compte** · ⚠️ compte nommé introuvable ⇒ « introuvable », **jamais un repli plateforme silencieux**
 (`docs/roles-and-resolution.md`, `docs/connector-vault.md`).
+**Mettre un compte en pause** (03/09/2026) : le cran qui manquait entre « vivant » et « supprimé » — et **la
+suppression n'existe pas** comme geste de produit, le seul `DELETE FROM users` étant l'étape 4 de `migrate_sub`. Un
+compte en pause ne peut plus rien faire **dès la requête suivante, jeton déjà émis compris** (les deux branches
+d'`api.base._authenticate`, la levée d'`upsert_user`, et un middleware MCP sur **`on_request`** — pas `on_call_tool`,
+sinon un compte sorti lirait encore les instructions d'org du handshake) · ⚠️ **rien n'est détruit ni détaché** :
+appartenances, projets, documents, coffre et journal restent et le désignent toujours (ADR 0062-D4) · ⚠️ **aucune
+résurrection automatique** : `upsert_user` refuse de recréer une ligne dont la **chaîne** d'alias mène à un compte en
+pause, `migrate_sub` refuse la fusion **dans les deux sens, acte d'opérateur compris** · ⚠️ **le drain d'alias ne s'en
+charge PAS** (son prédicat de vivacité est l'existence de la ligne, qu'une pause conserve) · ⚠️ **les sièges ne
+bougent pas parce qu'il n'y en a aucun** (forfaits plats par org) · ⚠️ **pas un org_admin** — un compte n'appartient
+pas à une org ; c'est l'admin de **tenant**, sur les comptes du sien (`docs/comptes-en-pause.md`).
 `/api/*` sous le même `JWTVerifier` que `/mcp` ; `GET /openapi.json` **dérivé** du registre de capacités ; un jeton
 `oto_` peut naître **porté** · ⚠️ **CORS : la liste du code est morte**, chaque box pose `OTO_MCP_CORS_ORIGINS` dans son
 `.env` (`docs/rest-api.md`). Une étiquette de version unique sur trois surfaces (`GET /api/version`, `info.version`

@@ -18,6 +18,7 @@ import oto_mcp.capabilities.orgs.invites  # noqa: F401 — org.invite.{create,li
 # Invitation PLATEFORME (feature cascade, sommet) — onboarding admin, org cible optionnelle.
 from . import platform_invites  # noqa: F401 — platform.invite.{create,list,revoke}
 from . import users_admin  # noqa: F401 — platform.user.{list,get,set_role}, platform.{key,org}.{grant,revoke}_key, platform.option.set
+from . import account_suspension  # noqa: F401 — admin.account (pause d'un compte : neutraliser sans rien détruire)
 from . import outreach  # noqa: F401 — admin.outreach (relance des comptes jamais actifs)
 from . import vault_health  # noqa: F401 — admin.vault_health (scan credentials indéchiffrables, #72)
 from . import tenants_admin  # noqa: F401 — admin.tenant{s,_console} (suivi de l'étage tenant, ADR 0052)

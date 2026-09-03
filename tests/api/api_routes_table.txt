@@ -158,6 +158,8 @@ DELETE /api/admin/orgs/{id}/grants/{provider} -> _handler
 OPTIONS /api/admin/orgs/{id}/grants/{provider} -> options_handler
 POST /api/admin/option-comps -> _handler
 OPTIONS /api/admin/option-comps -> options_handler
+POST /api/admin/users/{sub}/suspension -> _handler
+OPTIONS /api/admin/users/{sub}/suspension -> options_handler
 POST /api/admin/outreach -> _handler
 OPTIONS /api/admin/outreach -> options_handler
 GET,HEAD /api/admin/vault/health -> _handler

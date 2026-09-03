@@ -47,6 +47,28 @@ class OnboardingIncomplet(RuntimeError):
             " — le compte existe mais pas ce qui devait naître avec lui")
 
 
+class CompteEnPause(RuntimeError):
+    """Le geste refusé porte sur un compte MIS EN PAUSE (`users.suspended_at`).
+
+    Levée par les deux écritures qui, sans elle, feraient revenir un compte
+    neutralisé : `upsert_user` (qui RECRÉE une ligne absente) et `migrate_sub`
+    (le seul `DELETE FROM users` du dépôt).
+
+    Une exception plutôt qu'un retour falsy parce que les appelants d'`upsert_user`
+    ignorent tous sa valeur de retour : un refus muet y serait indistinguable d'un
+    succès — et un refus indistinguable d'un succès est exactement le mode d'échec
+    que cette pause existe pour fermer.
+
+    `code` est la chaîne servie aux DEUX faces, sans traduction : un signal remonté
+    par un agent se retrouve tel quel dans le journal."""
+
+    code = "account_suspended"
+
+    def __init__(self, sub: str, motif: str, quoi: str):
+        self.sub, self.motif = sub, motif
+        super().__init__(f"{quoi} : le compte {sub} est en pause ({motif})")
+
+
 def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = None,
                 locale: Optional[str] = None) -> None:
     """Create the user row if missing, refresh email/name if known.
@@ -78,6 +100,67 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
             """,
             (sub, email, name, locale),
         ).fetchone()
+        # ⚠️ Une ligne qui vient de NAÎTRE peut être la résurrection d'un compte
+        # qu'on a délibérément neutralisé, et le scénario n'a rien de théorique : un
+        # compte fusionné laisse son ancien identifiant dans `sub_aliases`, et ce
+        # jeton-là reste signé et valide jusqu'à son expiration. S'il se présente
+        # sans avoir été canonicalisé (drain désarmé, ou chaîne d'alias à plus d'un
+        # maillon — `resolve_sub` ne fait QU'UN saut), on arrive ici avec un sub
+        # inconnu : l'INSERT réussit, l'org maison naît, et la personne mise en pause
+        # est de retour sous une identité neuve, vierge de toute marque. C'est mot
+        # pour mot ce qui s'est produit avec la SUPPRESSION — 884 appels sous une
+        # identité morte.
+        #
+        # ⚠️ **Sous le gate `inserted`, et il n'est pas décoratif.** Une première
+        # version fusionnait ce contrôle dans l'INSERT lui-même : `sub_aliases` était
+        # alors jointe à CHAQUE requête REST. C'est exactement la lecture que le
+        # désarmement du rapprochement (2026-09-03) vient de retirer de ce chemin, et
+        # pour la raison dite plus bas — c'est le chemin qui a déjà gelé la
+        # production. Ici, le coût est d'une lecture UNE FOIS dans la vie d'un
+        # compte, et le chemin chaud est identique à ce qu'il était.
+        #
+        # Posé AVANT les effets de naissance : rien n'a encore été créé quand il
+        # refuse, et la levée annule la transaction — la ligne insérée repart avec.
+        if row and row.get("inserted"):
+            bloquant = conn.execute(
+                """
+                -- La CHAÎNE d'alias, pas le premier saut. `migrate_sub` écrit
+                -- `(old → new)` sans aplatir les alias qui pointaient déjà vers
+                -- `old` : deux fusions successives laissent A→B→C, et une chaîne à
+                -- trois maillons a été mesurée en production. Une garde qui ne
+                -- regarde qu'un saut trouve B — supprimé par la fusion, donc ni
+                -- vivant ni en pause — et laisse passer, ce qui est très exactement
+                -- la résurrection qu'elle existe pour interdire.
+                --
+                -- Clause `CYCLE` native : c'est la convention du dépôt pour toute
+                -- récursion sur un graphe auto-référent, et un cliquet la vérifie
+                -- (`tests/test_node_parent_cycle.py`). Rien n'interdit
+                -- structurellement A→B→A ; sans elle la remontée tournerait jusqu'au
+                -- timeout, sur le chemin de naissance d'un compte. La borne de
+                -- profondeur qui l'accompagne est une seconde ceinture, contre une
+                -- chaîne longue mais acyclique.
+                WITH RECURSIVE chaine(sub, profondeur) AS (
+                    SELECT a.new_sub, 1
+                      FROM sub_aliases a WHERE a.old_sub = %s
+                    UNION ALL
+                    SELECT a.new_sub, c.profondeur + 1
+                      FROM chaine c JOIN sub_aliases a ON a.old_sub = c.sub
+                     WHERE c.profondeur < 16
+                ) CYCLE sub SET boucle USING chemin
+                SELECT u.sub, u.suspended_reason
+                  FROM chaine c JOIN users u ON u.sub = c.sub
+                 WHERE u.suspended_at IS NOT NULL AND NOT c.boucle
+                 LIMIT 1
+                """,
+                (sub,)).fetchone()
+            if bloquant and bloquant.get("sub"):
+                logger.error(
+                    "upsert_user: RÉSURRECTION refusée — l'identifiant %s redirige "
+                    "vers %s, qui est en pause ; la ligne n'est pas créée",
+                    sub, bloquant["sub"])
+                raise CompteEnPause(bloquant["sub"],
+                                    bloquant.get("suspended_reason") or "sans motif",
+                                    f"l'identifiant {sub} y redirige")
     # Les DEUX effets de première inscription sont tentés, PUIS l'échec est rendu :
     # que l'un tombe ne dispense pas de l'autre, et l'erreur finale dit lesquels ont
     # manqué. Ils n'étaient ni journalisés ni remontés jusqu'au 2026-08-27 (sites B8
@@ -352,6 +435,11 @@ _SUB_COLUMNS = [
     # index unique partiel : l'UPDATE nu ci-dessous ne suffit pas seul, il est
     # précédé du retrait de l'étape 2 quinquies (`_UNIQUE_INDEX_SUB_TABLES`).
     ("outreach_sends", "sub"), ("outreach_sends", "sent_by"),
+    # Qui a mis un compte en pause — colonne d'AUTEUR sur `users` elle-même, hors PK
+    # (la PK est `sub`). Sans FK : la ligne survivrait au `DELETE` de l'étape 4 en
+    # désignant un identifiant disparu, donc la signature ne deviendrait pas
+    # historique, elle deviendrait illisible. L'étape 3 tourne AVANT ce DELETE.
+    ("users", "suspended_by"),
 ]
 
 
@@ -410,13 +498,37 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
         old = conn.execute("SELECT * FROM users WHERE sub=%s", (old_sub,)).fetchone()
         if not old:
             return False  # déjà migré / inexistant
+        # ⚠️ Un compte EN PAUSE ne se fusionne pas, dans aucun des deux sens. C'est
+        # la seconde moitié de la garde d'`upsert_user`, et elle ferme le seul autre
+        # chemin par lequel une pause peut disparaître :
+        #  - source en pause ⟹ l'étape 4 (`DELETE FROM users`) emporterait la marque
+        #    ET repointerait tout le patrimoine vers un compte vivant : le geste de
+        #    neutralisation serait annulé par un geste qui ne le mentionne même pas ;
+        #  - cible en pause ⟹ on verserait le patrimoine d'un compte vivant dans un
+        #    compte neutralisé, donc on le rendrait inatteignable sans le vouloir.
+        # Ce refus vaut aussi pour l'acte d'OPÉRATEUR (`operator_source`) : le
+        # rapprochement automatique a été désarmé le 2026-09-03, mais la porte
+        # manuelle reste ouverte, et c'est celle qui reste. Un opérateur qui veut
+        # vraiment fusionner réveille d'abord — explicitement, avec sa trace.
+        # Il LÈVE, il ne rend pas False : `False` veut déjà dire « déjà migré /
+        # inexistant » sur ce chemin, et un refus indistinguable d'un no-op n'est
+        # pas un refus.
+        pause = old.get("suspended_at") and old_sub or None
+        new_row = conn.execute("SELECT role, suspended_at, suspended_reason FROM users "
+                               "WHERE sub=%s", (new_sub,)).fetchone() or {}
+        if new_row.get("suspended_at"):
+            pause = new_sub
+        if pause:
+            motif = (old if pause == old_sub else new_row).get("suspended_reason")
+            logger.error("migrate_sub REFUSÉ : %s est en pause (%s → %s)",
+                         pause, old_sub, new_sub)
+            raise CompteEnPause(pause, motif or "sans motif",
+                                f"fusion {old_sub} → {new_sub} refusée")
         # 1. fusionner le rôle SANS JAMAIS RÉTROGRADER : on prend le rôle le plus
         #    fort. ⚠️ Le naïf « hérite de l'ancien » downgrade le nouveau si l'ancien
         #    est un stub frais (member) re-fusionné par-dessus un compte établi
         #    (vécu 2026-06-23 : alexis super_admin repassé member).
-        new = conn.execute(
-            "SELECT role FROM users WHERE sub=%s", (new_sub,)
-        ).fetchone() or {}
+        new = new_row  # déjà lu par la garde de pause ci-dessus
         conn.execute(
             """UPDATE users SET
                  role = %(role)s,
@@ -634,6 +746,61 @@ def set_user_role(sub: str, role: str) -> None:
             "UPDATE users SET role = %s, updated_at = NOW() WHERE sub = %s",
             (role, sub),
         )
+
+
+def get_suspension(sub: str) -> Optional[dict]:
+    """L'état de pause d'un compte : `None` s'il est vivant (le cas de tout le monde).
+
+    Lecture d'un seul champ décisif (`suspended_at`) sur la clé primaire. C'est la
+    SOURCE UNIQUE du prédicat — le seam `account_suspension` est le seul appelant
+    prévu, et les deux faces passent par lui. Ne jamais dériver « en pause » d'autre
+    chose (une absence de ligne, un rôle, une appartenance) : ce sont des faits
+    différents, et le compte en pause a précisément une ligne et un rôle intacts."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT sub, suspended_at, suspended_by, suspended_reason FROM users "
+            "WHERE sub = %s AND suspended_at IS NOT NULL", (sub,)).fetchone()
+    return dict(row) if row else None
+
+
+def suspend_account(sub: str, *, by: str, reason: str) -> Optional[dict]:
+    """Met un compte en pause. Rend l'état posé, ou `None` si le compte n'existe pas.
+
+    Idempotent au sens où re-poser une pause ne casse rien, mais **ne réécrit pas**
+    une pause en cours : ni l'auteur, ni la date, ni le motif d'origine. Une pause
+    est un fait daté ; l'écraser ferait perdre qui l'a décidée et quand, c'est-à-dire
+    la seule chose que cette colonne existe pour retenir.
+
+    ⚠️ Ce verbe n'écrit QUE ces trois colonnes. Rien n'est supprimé, rien n'est
+    détaché : appartenances, projets, documents, lignes de tableau, credentials du
+    coffre et journal restent en place et continuent de désigner ce compte."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE users SET suspended_at = COALESCE(suspended_at, NOW()), "
+            "  suspended_by = COALESCE(suspended_by, %s), "
+            "  suspended_reason = COALESCE(suspended_reason, %s), updated_at = NOW() "
+            "WHERE sub = %s "
+            "RETURNING sub, suspended_at, suspended_by, suspended_reason",
+            (by, reason, sub)).fetchone()
+    return dict(row) if row else None
+
+
+def resume_account(sub: str) -> bool:
+    """Réveille un compte en pause. True si une pause a bien été levée.
+
+    Efface les trois colonnes : l'état courant est la seule chose qu'elles portent.
+    L'historique — qui a mis en pause, quand, pourquoi, qui a réveillé — vit dans le
+    journal des appels, où l'acte est enregistré avec son auteur et ses arguments.
+    Rendre `False` sur un compte déjà vivant permet à l'appelant de distinguer
+    « réveillé » de « il ne dormait pas », au lieu d'annoncer un geste qui n'a rien
+    fait."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE users SET suspended_at = NULL, suspended_by = NULL, "
+            "  suspended_reason = NULL, updated_at = NOW() "
+            "WHERE sub = %s AND suspended_at IS NOT NULL RETURNING sub",
+            (sub,)).fetchone()
+    return bool(row)
 
 
 def set_avatar_url(sub: str, url: Optional[str]) -> None:

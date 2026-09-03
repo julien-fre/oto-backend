@@ -34,6 +34,7 @@ class _Conn:
     def __init__(self, row=None, boum: BaseException = None):
         self._row, self._boum = row, boum
         self.vues = []
+        self._servi = False
 
     def execute(self, sql, params=()):
         self.vues.append(sql)
@@ -42,6 +43,17 @@ class _Conn:
         return self
 
     def fetchone(self):
+        """`row` répond à la PREMIÈRE requête ; les suivantes rendent « rien trouvé ».
+
+        ⚠️ Servir la même ligne à toutes les requêtes fabrique des réponses que la
+        base ne donnerait jamais, et le banc devient alors un piège pour le premier
+        appelant qui en fait deux. Vécu le 2026-09-03 : `upsert_user` lit
+        `sub_aliases` après son INSERT (garde anti-résurrection d'un compte en pause)
+        et recevait ici la ligne de l'INSERT — donc un `KeyError` sur une colonne que
+        cette requête-là ne rend pas."""
+        if self._servi:
+            return None
+        self._servi = True
         return self._row
 
 

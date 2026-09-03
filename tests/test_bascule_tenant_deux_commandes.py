@@ -159,6 +159,11 @@ def drain_rest(monkeypatch):
 
     monkeypatch.setattr(api_routes.db, "resolve_sub", _resolve)
     monkeypatch.setattr(api_routes.db, "upsert_user", lambda *a, **k: None)
+    # Personne n'est en pause : `_authenticate` lit l'état de pause du porteur à
+    # CHAQUE requête depuis le 2026-09-03 (`docs/comptes-en-pause.md`). Ce fichier
+    # n'exerce pas ce cran-là, mais il passe par lui — il le double donc comme il
+    # double déjà `upsert_user`.
+    monkeypatch.setattr(api_routes.db, "get_suspension", lambda sub: None)
     return journal
 
 
@@ -175,11 +180,17 @@ def test_le_drain_REST_lit_la_PRESENCE_de_la_commande(
 
 def test_la_porte_REST_rafraichit_le_compte_MEME_commande_absente(monkeypatch):
     """⚠️ C'est ce qui rend le drain porteur : ici `upsert_user` est HORS commande.
-    Un ancien identifiant non redirigé y RECRÉE donc la ligne `users` supprimée."""
+    Un ancien identifiant non redirigé y RECRÉE donc la ligne `users` supprimée.
+
+    ⚠️ Depuis le 2026-09-03, cette recréation a UNE exception, et une seule : si
+    l'alias mène à un compte MIS EN PAUSE, `upsert_user` refuse de créer la ligne
+    (`db.CompteEnPause`, cf. `docs/comptes-en-pause.md`). Le reste est inchangé —
+    un compte simplement fusionné, lui, revient toujours par ce chemin."""
     _poser(monkeypatch, None)
     vus: list = []
     monkeypatch.setattr(api_routes.db, "upsert_user",
                         lambda sub, **k: vus.append(sub))
+    monkeypatch.setattr(api_routes.db, "get_suspension", lambda sub: None)
     monkeypatch.setattr(api_routes.db, "resolve_sub",
                         lambda s: pytest.fail("le drain ne devait pas être consulté"))
     asyncio.run(api_routes._authenticate(_requete_jwt(), _VerifieurJWT()))

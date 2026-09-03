@@ -32,6 +32,7 @@ from starlette.responses import JSONResponse, Response
 from .. import db
 from ..auth import token_scopes
 from ..tenant_migration import alias_drain_armed
+from .. import account_suspension
 
 # Signature de `_authenticate`, telle que la consomment les modules de routes.
 AuthFn = Callable[..., Awaitable["tuple[str | None, JSONResponse | None]"]]
@@ -172,6 +173,14 @@ async def _authenticate(
                 f"Ce jeton est porté : il n'ouvre que {' et '.join(granted)}, en "
                 "lecture ou écriture selon sa portée. Rien d'autre de l'organisation "
                 "ne lui est accessible.")
+        # Compte en PAUSE : un jeton `oto_` ne porte aucune expiration obligatoire,
+        # donc c'est ici que la pause serait la plus facilement contournée si on ne
+        # la vérifiait qu'au login — il n'y a pas de login sur ce chemin. La garde
+        # porte sur le PORTEUR du jeton, avant `_maybe_view_as` : un opérateur qui
+        # consulte « en tant que » un compte en pause doit pouvoir le faire, c'est
+        # même le premier geste de diagnostic après une mise en pause.
+        if (pause := await run_in_threadpool(account_suspension.refus, row["sub"])):
+            return None, _json_error(request, 403, account_suspension.CODE, pause[0])
         return _maybe_view_as(row["sub"], apply_view_as), None
 
     # Sinon, JWT Logto (session interactive) — jamais de portée de jeton.
@@ -188,14 +197,29 @@ async def _authenticate(
     # s'arrête pas parce que le rapprochement, lui, a cessé de servir.
     if alias_drain_armed():
         sub = await run_in_threadpool(db.resolve_sub, sub)
+    # Compte en PAUSE : le refus tombe ici, AVANT l'upsert — un compte neutralisé
+    # n'écrit plus rien, pas même le rafraîchissement de son adresse. Et il tombe à
+    # CHAQUE requête, pas au login : le jeton qu'il porte a été émis avant la pause
+    # et reste signé jusqu'à son expiration ; une pause vérifiée à la connexion
+    # laisserait une heure de sursis à ce qu'elle est censée arrêter.
+    if (pause := await run_in_threadpool(account_suspension.refus, sub)):
+        return None, _json_error(request, 403, account_suspension.CODE, pause[0])
     # upsert_user = DB à CHAQUE requête REST → threadpool (jamais dans la loop).
     # locale (#701) : signal déduit de l'en-tête, jamais un choix — `upsert_user`
     # ne le pose que si la ligne n'en porte encore aucun (COALESCE côté SQL).
-    await run_in_threadpool(
-        lambda: db.upsert_user(
-            sub, email=access_token.claims.get("email"),
-            name=access_token.claims.get("name"),
-            locale=_locale_from_accept_language(request.headers.get("accept-language"))))
+    try:
+        await run_in_threadpool(
+            lambda: db.upsert_user(
+                sub, email=access_token.claims.get("email"),
+                name=access_token.claims.get("name"),
+                locale=_locale_from_accept_language(request.headers.get("accept-language"))))
+    except db.CompteEnPause as refus:
+        # L'ANCIEN identifiant d'un compte mis en pause. Il n'a pas de ligne à lui
+        # (la fusion l'a supprimée), donc la garde ci-dessus ne l'a pas vu : c'est
+        # `upsert_user` qui reconnaît, au moment de le RECRÉER, que son alias mène à
+        # un compte neutralisé. Sans ce refus, le porteur repartirait avec un compte
+        # neuf et un espace personnel neuf — la résurrection déjà vécue.
+        return None, _json_error(request, 403, db.CompteEnPause.code, str(refus))
     return _maybe_view_as(sub, apply_view_as), None
 
 

@@ -936,6 +936,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Avatar utilisateur + logo d'org (2026-06-16) : URL publique (Scaleway
     # Object Storage), pas un secret → colonne en clair, hors coffre.
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
+    # Mise en pause d'un compte (2026-09-03) : neutraliser sans détruire. NULL
+    # partout à la pose — la colonne n'a d'effet que sur acte d'opérateur.
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_by TEXT")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT")
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logo_url TEXT")
     # Description libre de l'org (self-service org_admin) — prose, pas un secret.
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''")

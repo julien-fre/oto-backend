@@ -465,6 +465,57 @@ def TENANT_ADMIN_OF(field: str, *, platform):
     return rule
 
 
+def TENANT_ADMIN_OF_TARGET(field: str, *, platform):
+    """Admin du tenant **DE LA CIBLE** désignée par `input.<field>` (un sub), OU la
+    règle plateforme `platform`.
+
+    Sœur de `TENANT_ADMIN_OF`, et la différence est tout l'intérêt : là-bas le
+    périmètre est un slug que l'appelant écrit dans sa requête ; ici il est **dérivé
+    de la cible**. La cible vient de l'appelant — c'est normal, c'est ce qu'il
+    désigne — mais le périmètre vient du serveur (ADR 0066-R3). Sans ça, la garde
+    vérifierait seulement que l'appelant a écrit deux fois le même mot.
+
+    Le tenant se lit sur le PRÉFIXE du sub (`tenancy.tenant_of`), donc sans toucher
+    la base : un sub nu relève du tenant primaire et n'est **jamais** atteignable par
+    ce chemin, quel que soit l'admin de tenant qui le vise. C'est le même invariant
+    que `TENANT_ADMIN_OF`, et il n'est pas décoratif — c'est lui qui empêche qu'un
+    partenaire agisse sur un compte de la plateforme.
+
+    ⚠️ La cible est un **sub**, jamais une adresse électronique, alors que les autres
+    consoles de compte acceptent les deux. Motif : une adresse ne désigne pas un
+    compte de façon unique — le chantier qui a demandé ce geste porte huit personnes
+    présentes DEUX fois, une identité chez nous et une chez le partenaire, sous la
+    même adresse. Résoudre par adresse choisirait pour l'opérateur, exactement là où
+    il doit choisir lui-même. En prime, le tenant reste dérivable sans lecture.
+
+    Plancher plateforme `None` : l'accès dépend d'une CIBLE que le handshake ne
+    connaît pas. ⚠️ Sur une surface MCP, ce plancher fait entrer l'outil dans la
+    boîte de chaque compte. C'est un coût de surface servie, à assumer explicitement
+    — et c'est le seul moyen qu'un admin de tenant puisse APPELER le geste depuis un
+    agent : un outil masqué n'est pas seulement invisible, fastmcp en refuse aussi
+    l'appel."""
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        sub = _require_sub(raw)
+        cible = (getattr(inp, field, None) or "").strip() if inp is not None else ""
+        if not cible:
+            raise AuthzDenied(400, "missing_target", f"Champ `{field}` requis.")
+        try:
+            return platform(raw, inp)
+        except AuthzDenied as refus:
+            if refus.status != 403:
+                raise
+        registre = tenancy.current()
+        slug = registre.tenant_of(cible)
+        if (slug == tenancy.PRIMARY_SLUG or registre.tenant_of(sub) != slug
+                or not db.is_tenant_admin(slug, sub)):
+            raise AuthzDenied(403, "forbidden",
+                              "Réservé à un admin du tenant dont relève ce compte.")
+        return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
+                           role=access.get_user_role(sub))
+    rule.platform_floor = None
+    return rule
+
+
 def GROUP_MEMBER_OF(field: str):
     """Lecture d'un groupe désigné par `input.<field>` : membre du groupe, OU
     org_admin du groupe parent, OU platform_admin (escalade descendante `roles`).
