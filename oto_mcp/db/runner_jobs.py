@@ -193,6 +193,35 @@ def claim_next_job(org_id: int, worker_sub: str,
     return dict(row) if row else None
 
 
+def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:
+    """Arrête DÉFINITIVEMENT un travail dont le porteur ne peut plus agir.
+
+    ⚠️ Pas `complete_job(ok=False)` : celui-là refile avec backoff jusqu'au
+    plafond de tentatives. **Une identité invalide ne se répare pas en
+    réessayant** — on rejouerait trois fois le même refus, en trois fois plus de
+    temps, pour le même verdict. Le seul effet serait de retarder le moment où
+    quelqu'un le voit.
+
+    ⚠️ Et surtout pas un relâchement silencieux : le travail repartirait au worker
+    suivant, indéfiniment. Une file qui tourne sans jamais aboutir, et rien pour
+    dire pourquoi — c'est exactement le trou de #814 sous une autre forme.
+
+    `failed` et non `expired` : celui-ci a bien été PRIS, et il ne peut pas
+    s'exécuter. `expired` dit « personne n'est venu le prendre », ce qui serait
+    faux ici et enverrait chercher au mauvais endroit.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'failed', finished_at = NOW(), last_error = %s
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+            """,
+            (raison, job_id, worker_sub),
+        )
+        return bool(cur.rowcount)
+
+
 def bind_job_run(job_id: int, worker_sub: str, run_id: str) -> bool:
     """Lie un job `start` au run que le worker vient d'ouvrir — claimant seul."""
     with _connect() as conn:
