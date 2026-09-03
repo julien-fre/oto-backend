@@ -10,9 +10,16 @@ par la même lecture d'environnement — donc impossibles à arrêter l'un sans 
   précédents, une commande réglée sur NOTRE émetteur — donc armée en permanence sur
   tous nos comptes — et une résurrection de compte supprimé à son actif ;
 - **le drain d'alias** — à chaque requête, rediriger un ancien identifiant vers le
-  compte actuel (`db.resolve_sub`). Mécanisme de LECTURE, permanent, dont la fenêtre
-  utile reste ouverte tant qu'un jeton portant un ancien identifiant peut se présenter.
-  **Armé, et il le reste.**
+  compte actuel (`db.resolve_sub`, dont le détail vit dans `db/sub_aliases.py`).
+  Mécanisme de LECTURE, permanent, dont la fenêtre utile reste ouverte tant qu'un
+  jeton portant un ancien identifiant peut se présenter. **Armé, et il le reste.**
+
+  ⚠️ Depuis le 2026-09-03, il suit la CHAÎNE d'alias jusqu'au bout au lieu de faire
+  un seul saut. Une personne rapprochée plusieurs fois laisse une ligne par bascule
+  (mesuré en prod : une chaîne de 3 maillons) : un seul saut rendait le maillon du
+  milieu, supprimé par la bascule suivante — donc **recréé** par l'`upsert_user` qui
+  suit. Et quand la chaîne n'aboutit pas à un compte vivant, le drain **refuse** au
+  lieu de rendre un identifiant mort : le fantôme ne se fabrique plus en silence.
 
 ⚠️ **C'est le drain qu'il ne faut pas couper, pas le rapprochement.** La porte REST
 (`api/base._authenticate`) appelle `upsert_user` **hors** de toute commande : un ancien
@@ -20,6 +27,12 @@ identifiant qui n'est PAS redirigé n'échoue pas, il **recrée** la ligne `user
 supprimée par la fusion. Couper le drain ressuscite donc les comptes fusionnés — c'est
 arrivé, et le compte ressuscité a servi 884 appels sous une identité morte. Le drain
 porte encore plus de mille appels par semaine, et du trafic entre par là tous les jours.
+
+⚠️ Corollaire, appris de cette résurrection-là : **un drain qui rend un identifiant
+sans valeur ne vaut pas mieux qu'un drain coupé.** C'est la même porte, le même
+`upsert_user`, le même fantôme. D'où le refus explicite de `db.sub_aliases` quand la
+chaîne n'aboutit à aucun compte vivant — ne rien rendre est la seule sortie sûre à cet
+endroit.
 
 Corollaire pour qui lira la variable d'environnement : elle ne commande plus qu'UNE
 chose. Son nom (`…_MIGRATION_ISS`) et sa valeur (un émetteur) sont hérités de l'époque

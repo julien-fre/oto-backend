@@ -20,6 +20,7 @@ import os
 import pytest
 
 from oto_mcp.auth import hooks as auth_hooks
+from oto_mcp.db import sub_aliases as db_aliases
 from oto_mcp.db import users as db_users
 
 
@@ -51,26 +52,86 @@ def _connect_factory(conn):
     return _c
 
 
+class _ConnScripte:
+    """Un curseur qui rend une réponse DIFFÉRENTE par requête, dans l'ordre.
+
+    ⚠️ **À préférer à `_Conn` dès que le code sous test fait plus d'UNE requête.**
+    Une doublure qui sert la même ligne à tout le monde fabrique une réponse que la
+    base ne donnerait jamais : elle rend vert un appelant qui lit deux fois, et elle
+    masque précisément ce que ce lot exerce — une CHAÎNE d'alias, dont chaque maillon
+    est une requête distincte.
+
+    Lire plus que ce qui est scripté ne rend pas `None` en silence : ça DIT le geste.
+    Un banc qui répondrait « rien trouvé » à la requête de trop laisserait le code
+    sous test conclure — et c'est exactement le mode de panne qu'on ferme ici.
+    """
+
+    def __init__(self, reponses):
+        self._reponses, self._i = list(reponses), 0
+        self.vues = []
+
+    def execute(self, sql, params=()):
+        self.vues.append(sql)
+        if self._i >= len(self._reponses):
+            raise AssertionError(
+                f"{self._i + 1}ᵉ requête alors que {len(self._reponses)} réponse(s) "
+                f"ont été scriptées — ajoute la réponse attendue à la liste plutôt "
+                f"que de laisser le banc en inventer une.\nRequêtes vues : {self.vues}")
+        self._courant, self._i = self._reponses[self._i], self._i + 1
+        return self
+
+    def fetchone(self):
+        return self._courant
+
+
 # ── B5 : un sub non canonicalisé n'est jamais servi ──────────────────────────
+#
+# Le drain a quitté `db/users.py` pour `db/sub_aliases.py` le 2026-09-03 (il suit
+# désormais la CHAÎNE d'alias, cf. `tests/test_resolve_sub_chaine_live.py`). Les
+# tests ci-dessous continuent d'appeler `db_users.resolve_sub` — la surface servie
+# n'a pas bougé — mais scriptent le curseur du module qui porte la requête.
 
 def test_resolve_sub_rend_l_alias(monkeypatch):
-    conn = _Conn(row=_Row(new_sub="sub-migre"))
-    monkeypatch.setattr(db_users, "_connect", _connect_factory(conn))
+    """Le drain lit DEUX fois quand un alias existe : le saut simple, puis la chaîne.
+    Les deux réponses sont donc scriptées séparément — une doublure qui rendrait la
+    même ligne aux deux décrirait une base qui n'existe pas."""
+    conn = _ConnScripte([
+        _Row(new_sub="sub-migre"),                      # 1. le saut simple : il y a un alias
+        _Row(canonique="sub-migre", profondeur=1,       # 2. la chaîne, déroulée
+             boucle=False, maillons=2, compte_vivant=True),
+    ])
+    monkeypatch.setattr(db_aliases, "_connect", _connect_factory(conn))
     assert db_users.resolve_sub("sub-vieux") == "sub-migre"
+    assert len(conn.vues) == 2, conn.vues
 
 
 def test_resolve_sub_sans_alias_rend_le_sub(monkeypatch):
-    monkeypatch.setattr(db_users, "_connect", _connect_factory(_Conn(row=None)))
+    monkeypatch.setattr(db_aliases, "_connect", _connect_factory(_Conn(row=None)))
     assert db_users.resolve_sub("sub-1") == "sub-1"
 
 
 def test_resolve_sub_leve_au_lieu_de_servir_l_ancien_compte(monkeypatch):
     """Le cœur de B5 : sur un hoquet DB, rendre le sub d'entrée = servir la requête
     sous le compte d'AVANT migration. Le refus doit être bruyant."""
-    monkeypatch.setattr(db_users, "_connect",
+    monkeypatch.setattr(db_aliases, "_connect",
                         _connect_factory(_Conn(boum=RuntimeError("pool épuisé"))))
     with pytest.raises(RuntimeError):
         db_users.resolve_sub("sub-vieux")
+
+
+def test_un_alias_qui_disparait_entre_les_deux_lectures_leve(monkeypatch):
+    """Le drain lit deux fois : le saut simple, puis la chaîne. Si la seconde lecture ne
+    trouve plus rien, la tentation est de rendre le sub d'entrée — c'est-à-dire de servir
+    la requête sous le compte d'AVANT bascule, exactement le silence B5. Aucun chemin
+    n'écrit ce cas aujourd'hui (rien ne supprime de `sub_aliases`) : sans ce test, la
+    branche ne serait jamais exécutée, donc jamais un refus prouvé."""
+    monkeypatch.setattr(
+        db_aliases, "_connect",
+        _connect_factory(_ConnScripte([_Row(new_sub="sub-migre"), None])))
+
+    with pytest.raises(db_aliases.AliasNonResolvable) as e:
+        db_users.resolve_sub("sub-vieux")
+    assert e.value.motif == "alias_evanoui"
 
 
 def test_le_seam_mcp_ne_reclasse_pas_l_echec_en_absence_de_jeton(monkeypatch):
