@@ -24,6 +24,16 @@ CREATE TABLE IF NOT EXISTS users (
     -- Préférence de langue de l'UI dashboard ('en'|'fr'). NULL = pas de préférence
     -- explicite (le front retombe sur la langue du navigateur).
     locale TEXT,
+    -- Mise en pause du compte (2026-09-03). NULL = compte vivant, c'est le cas
+    -- de tout le monde. Non NULL = le compte est NEUTRALISÉ : il ne peut plus
+    -- rien faire, sur aucune face, dès la requête suivante — mais RIEN de ce
+    -- qui pend de lui n'est touché (appartenances, projets, documents, coffre,
+    -- journal restent en place et continuent de le désigner comme auteur).
+    -- C'est le cran qui manquait entre « vivant » et « supprimé », le second
+    -- n'existant ici que par `migrate_sub` et laissant des pointeurs morts.
+    suspended_at TIMESTAMPTZ,
+    suspended_by TEXT,        -- le sub de l'opérateur qui a mis en pause
+    suspended_reason TEXT,    -- exigé à l'écriture : une pause sans motif est un oubli
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

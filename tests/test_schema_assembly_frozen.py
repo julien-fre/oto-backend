@@ -185,8 +185,17 @@ from oto_mcp.db import _schema, schema
 # lirait comme un fait.
 # ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
 # bien 30e2c6f2… / 135678, mesuré au moment du rebase et jamais avant.
-EMPREINTE = "8e272044aa856c0ab62729511ae7c71de556406fc3331c36c26f73dfbb3fdbf7"
-LONGUEUR = 136654
+# 2026-09-03 — trois colonnes sur `users` : `suspended_at`, `suspended_by`,
+# `suspended_reason`. Le cran manquant entre « vivant » et « supprimé » : un
+# compte en pause ne peut plus rien faire, et rien de ce qui pend de lui n'est
+# touché. Colonnes NULL partout à la pose — la migration n'a aucun effet tant
+# qu'un administrateur n'a pas posé le geste.
+# ⚠️ Empreinte recalculée APRÈS avoir vérifié l'arithmétique : le fragment
+# `USERS` grandit de 740 caractères, et l'assemblé exactement de 740 aussi
+# (136 654 → 137 394). Un écart aurait voulu dire qu'un autre fragment avait
+# bougé sous la mesure.
+EMPREINTE = "f15f961779e4bfd93bdbff4d38a7382cfea6c05260f0bb6356b5f4760c13980a"
+LONGUEUR = 137394
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

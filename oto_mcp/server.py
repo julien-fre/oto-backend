@@ -609,6 +609,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.alias import ToolAliasMiddleware
     instance.add_middleware(ToolAliasMiddleware())
 
+    # 0 bis. Compte en PAUSE : refus de TOUTE requête, avant tout le reste. Sous
+    # `ToolAlias` seulement parce que celui-ci se déclare outermost absolu et
+    # rétablit un nom en entrée — nom que ce refus ne lit pas, donc l'ordre entre
+    # eux est sans conséquence. Il est en revanche AU-DESSUS du contexte d'appel,
+    # de la rédaction, de la visibilité et du journal : rien de tout cela n'a de
+    # raison de tourner pour une requête qu'on refuse, et un compte neutralisé ne
+    # doit pas non plus RECEVOIR les instructions d'org du handshake.
+    from .middleware.account_suspended import AccountSuspendedMiddleware
+    instance.add_middleware(AccountSuspendedMiddleware())
+
     # 1. Rendu du VIDE en PHRASE (otomata-tech/oto#32) : un résultat sans aucun
     # résultat ne part JAMAIS en structure nue dans le canal texte, qui fait dégénérer
     # le décodage du modèle. Plus EXTERNE que la rédaction et que l'écho de compte,

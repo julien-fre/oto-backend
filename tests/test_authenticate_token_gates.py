@@ -52,6 +52,11 @@ def token_row(monkeypatch):
     box = {"row": {"sub": "u-1", "scopes": None}}
     monkeypatch.setattr(api_routes.db, "verify_api_token", lambda t: box["row"])
     monkeypatch.setattr(api_routes.db, "upsert_user", lambda *a, **k: None)
+    # Personne n'est en pause : `_authenticate` lit l'état de pause du porteur à
+    # CHAQUE requête, sur les deux branches (2026-09-03). Ce fichier n'exerce pas ce
+    # cran-là — il vit dans `test_account_suspension_gates.py` — mais il passe par
+    # lui, donc il doit le doubler comme il double déjà `upsert_user`.
+    monkeypatch.setattr(api_routes.db, "get_suspension", lambda sub: None)
     yield box
     token_scopes.set_current(None)
 

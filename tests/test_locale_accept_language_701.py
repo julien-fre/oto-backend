@@ -63,6 +63,11 @@ def capture_upsert(monkeypatch):
     monkeypatch.setattr(
         api_base.db, "upsert_user",
         lambda *a, **k: appels.append(k) or None)
+    # Personne n'est en pause : `_authenticate` lit l'état de pause du porteur à
+    # CHAQUE requête depuis le 2026-09-03 (`docs/comptes-en-pause.md`). Ce fichier
+    # n'exerce pas ce cran-là, mais il passe par lui — il le double donc comme il
+    # double déjà `upsert_user`.
+    monkeypatch.setattr(api_base.db, "get_suspension", lambda sub: None)
     return appels
 
 

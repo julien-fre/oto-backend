@@ -43,8 +43,12 @@ AUTRE = "sub-test-2"
 # Les tables que le banc monte, dans l'ORDRE du DDL réel. `tenants` est en tête :
 # `orgs.tenant_id` la référence, et PostgreSQL crée les tables dans l'ordre donné —
 # c'est la contrainte que `test_tenant_l1_migration` garde sur le schéma servi.
+# ⚠️ `sub_aliases` : `upsert_user` la consulte quand il INSÈRE, pour refuser de
+# ressusciter un compte mis en pause (2026-09-03, `docs/comptes-en-pause.md`). Le banc
+# porte les tables que le code servi LIT — c'est la règle de ce fichier, et elle vient
+# d'en gagner une.
 _TABLES = ("tenants", "users", "orgs", "org_members", "org_groups",
-           "org_group_members", "option_comps", "org_subscriptions")
+           "org_group_members", "option_comps", "org_subscriptions", "sub_aliases")
 
 
 def _real_ddl(table: str) -> str:
