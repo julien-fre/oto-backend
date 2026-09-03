@@ -41,3 +41,5 @@ CRUD générique par sObject (Contact, Account = « companies », Lead, Opportun
 - « crée un contact Ada Lovelace chez Acme Corp »
 - « cherche les opportunités ouvertes de plus de 50k€ »
 - « ajoute une note à ce compte »
+
+⚠️ **oto n'applique pas la déduplication de Salesforce, ni en lot ni à l'unité.** Que tes règles de doublon jouent ou non dépend du paramétrage de TON org Salesforce ; oto ne les active pas et ne vérifie pas qu'elles ont joué. Une création en lot a déjà rendu « succès » pour des fiches en doublon exact d'existantes (même nom, même compte). Une procédure qui prend ces règles pour filet de sécurité doit vérifier l'existence elle-même avant de créer.

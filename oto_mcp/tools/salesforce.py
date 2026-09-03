@@ -478,7 +478,13 @@ def register(mcp: FastMCP) -> None:
           id field (idempotent).
         - **"bulk_create"** — ⚠️ WRITES: create up to 200 records of the SAME
           sObject type in ONE Salesforce call (sObject Collections) — instead of N
-          separate op="create" calls.
+          separate op="create" calls. ⚠️ **Never lean on Salesforce's own
+          de-duplication — here or on op="create"**: whether a duplicate rule fires
+          at all is that org's Setup, not something oto applies or checks, and this
+          path has been measured returning `success: true` for exact duplicates
+          (same name, same Account). When a rule DOES fire here it lands as a
+          per-record `DUPLICATES_DETECTED` in `results`, never as an exception.
+          Check existence yourself before creating.
         - **"bulk_update"** — ⚠️ WRITES: update up to 200 records of the SAME
           sObject type in ONE Salesforce call (sObject Collections) — instead of N
           separate op="update" calls.
