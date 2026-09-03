@@ -67,6 +67,18 @@ _DEAD_FILTERS: dict[str, dict[str, str]] = {
     "contact": {
         "title": "seniority (+ location), puis un tri des titres CÔTÉ CLIENT sur les "
                  "pages rendues — AI Ark n'indexe pas l'intitulé de poste",
+        # Mesuré le 2026-09-03 (signal #694), deux domaines, différentiel strict :
+        # grasset.fr seul → 63 ; + `department: ["human_resources"]` → 63, les MÊMES
+        # enregistrements dans le MÊME ordre (un auteur, un romancier, un éditeur…),
+        # aucun avec `department.departments == ["human_resources"]`. Idem
+        # dargaud.com + [human_resources, finance] → 68, dont zéro RH et zéro finance.
+        # ⚠️ Le champ `department.departments` EXISTE sur les enregistrements rendus :
+        # la donnée est indexée, c'est le filtre EN ENTRÉE qui ne mord pas. Le piège
+        # est donc plus fin que pour `title` — on voit la donnée, on croit pouvoir la
+        # filtrer. Coût : 63 enregistrements facturés pour en garder zéro ou un.
+        "department": "un tri CÔTÉ CLIENT sur `department.departments` des pages "
+                      "rendues (le champ est présent sur chaque enregistrement) — "
+                      "combiné à `seniority` pour réduire la pagination",
     },
 }
 
@@ -236,11 +248,13 @@ def register(mcp: FastMCP) -> None:
                 it, returning the whole 72 M database as if it were your filtered
                 result. Filter on `domain` instead.
             contact: op="people" — filters on the person, e.g.
-                {"seniority": {"any": {"include": ["founder"]}}}. Supports seniority,
-                location, department…
-                ⚠️ `title` is REFUSED for the same reason (job titles are not indexed):
-                filter on `seniority`, then sort titles client-side on the pages you
-                fetched.
+                {"seniority": {"any": {"include": ["founder"]}}}. Supports seniority
+                and location.
+                ⚠️ `title` and `department` are REFUSED for the same reason: AI Ark
+                accepts them and silently ignores them, so you get the company's first
+                page and pay for it. Filter on `seniority`, then sort client-side —
+                `department.departments` IS on every record returned, it just cannot
+                be filtered on.
             lookalike_domains: op="companies" — up to 5 company URLs to find similar ones.
             lists: exclude records already in saved lists.
             page: zero-based page number. size: 0-100 (default 10).

@@ -185,6 +185,41 @@ def test_dead_filter_title_is_refused():
             account=None, contact={"title": {"any": {"include": ["cmo"]}}})
 
 
+def test_dead_filter_department_is_refused():
+    """Signal #694 (03/09) : `contact.department` est accepté et silencieusement
+    ignoré, alors que la description l'annonçait comme supporté.
+
+    Différentiel strict, deux domaines : grasset.fr seul → 63 enregistrements ;
+    + `department: ["human_resources"]` → 63, LES MÊMES dans le MÊME ordre, dont
+    aucun RH. Le piège est plus fin que pour `title` : `department.departments` EST
+    présent sur chaque enregistrement rendu, donc on voit la donnée et on croit
+    pouvoir la filtrer. Coût mesuré : 63 enregistrements facturés pour en garder
+    zéro ou un."""
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import aiark
+
+    with pytest.raises(McpError) as e:
+        aiark._reject_dead_filters(
+            account=None,
+            contact={"department": {"any": {"include": ["human_resources"]}}})
+    # Le refus NOMME le remplaçant, comme ses trois jumeaux — sinon il déplace le
+    # problème au lieu de le résoudre.
+    assert "CÔTÉ CLIENT" in str(e.value) or "côté client" in str(e.value).lower()
+
+
+def test_la_description_n_annonce_plus_department_comme_supporte():
+    """Le silence n'était que la moitié du défaut : la description citait
+    explicitement `department` parmi les champs supportés. Un refus posé sans
+    corriger le texte laisserait l'agent tenter puis se faire refuser — le contrat
+    doit cesser de le promettre."""
+    import inspect
+    from oto_mcp.tools import aiark
+
+    src = inspect.getsource(aiark)
+    assert "Supports seniority,\n                location, department" not in src
+    assert "`title` and `department` are REFUSED" in src
+
+
 def test_live_filters_pass_through():
     """La garde ne mord QUE sur les clés mortes : `domain` et `seniority` passent."""
     from oto_mcp.tools import aiark
