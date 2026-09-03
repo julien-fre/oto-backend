@@ -138,6 +138,48 @@ def _parse_csv_preview(csv_text: str) -> dict:
     return {"columns": header, "rows": count, "preview": preview}
 
 
+def _dit_si_rien_n_a_ete_fait(res: dict) -> dict:
+    """Un déroulé TERMINÉ qui n'a produit AUCUNE action le dit (#627).
+
+    Mesuré le 31/08 : un enrôlement incrémental a rendu un texte affirmant
+    « 19/19 personnes ajoutées, ouverture conservée mot pour mot », avec une
+    liste d'actions VIDE. La campagne, elle, racontait l'inverse — le nombre de
+    personnes trouvées montait de 52 à 71 pendant que les contactées restaient
+    à 52, et les 19 séquences neuves n'avaient aucun destinataire.
+
+    ⚠️ **Le pire assemblage possible pour un agent sans surveillance** : une
+    prose de succès et une trace vide. La prose vient du modèle d'en face, on
+    ne la contrôle pas ; ce qu'on peut faire, c'est refuser qu'elle voyage
+    seule. Le fait mesurable la contredit dans la même réponse.
+
+    ⚠️ **La garde se tait sur ce qu'elle ne voit pas.** La liste d'actions n'est
+    pas dans le contrat documenté du fournisseur : on la cherche à la racine
+    puis sous `response`, et on n'avertit QUE si on l'a trouvée et qu'elle est
+    vide. Absente, on ne dit rien — une garde qui devine une forme fabrique des
+    fausses alertes, ce qui coûte la confiance qu'elle est censée servir.
+    """
+    if not isinstance(res, dict):
+        return res
+    statut = str(res.get("status") or "")
+    if not statut or statut == "running":
+        return res
+    for source in (res, res.get("response")):
+        if not isinstance(source, dict) or "actions" not in source:
+            continue
+        actions = source.get("actions")
+        if isinstance(actions, list) and not actions:
+            res = {**res, "aucune_action": True, "aucune_action_hint": (
+                "ce déroulé s'est terminé sans produire UNE SEULE action. Si sa "
+                "réponse en prose annonce un résultat (des personnes ajoutées, "
+                "une campagne modifiée), elle n'est corroborée par rien : va "
+                "lire l'état réel avec origami_campaigns(op='get') et "
+                "op='people' avant de rapporter quoi que ce soit. Un compte de "
+                "personnes trouvées qui monte sans que les contactées suivent "
+                "signale des séquences sans destinataire.")}
+        break
+    return res
+
+
 def register(mcp: FastMCP) -> None:
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.origami.client import OrigamiClient
@@ -507,6 +549,21 @@ def register(mcp: FastMCP) -> None:
         `origami_campaigns(op="list_for_table", table_id=…)`. Review it (`get`,
         `people`) BEFORE `origami_campaign_launch`.
 
+        ⚠️ **These two settings govern a campaign this call CREATES — not one the
+        agent enrols into.** If your brief makes the Origami agent add people to a
+        campaign that already exists, that campaign's own settings apply and yours
+        have NO effect, even though they are echoed back to you. Nothing in this
+        connector updates an existing campaign's settings: read what actually
+        governs with `origami_campaigns(op="get")` → `settings`, and if it is wrong
+        the change is a human action in Origami.
+
+        ⚠️ **Check the result, do not trust the run's prose.** The agent answers in
+        words; those words are not a measurement. A run that reports people added
+        while its action list is empty has added nobody — `origami_run_get` now
+        flags that as `aucune_action`. The state that settles it is the campaign
+        itself: if found rises while contacted does not, the new sequences have no
+        recipient and nothing will ever send to them.
+
         Settings (persisted on the campaign, read back in `settings`):
         - `block_prior_contacts=True` (default): auto-cancels every person who was
           EVER enrolled in a previous campaign — INCLUDING people who sat in a
@@ -546,7 +603,21 @@ def register(mcp: FastMCP) -> None:
         agent_id = ((result or {}).get("agent") or {}).get("id")
         run_id = ((result or {}).get("run") or {}).get("id")
         return {"table_id": table_id, "agent_id": agent_id, "run_id": run_id,
-                "settings": settings, "response": result,
+                # #627 : `settings` est ce qui a été DEMANDÉ, pas ce qui s'applique.
+                # L'agent Origami peut enrôler dans une campagne qui EXISTE déjà ;
+                # ce sont alors les réglages de CELLE-CI qui gouvernent, et les nôtres
+                # sont sans effet — tout en étant renvoyés ici, ce qui les fait lire
+                # comme acquis. L'écho reste (des appelants le lisent), la note dit
+                # ce qu'il vaut.
+                "settings": settings,
+                "settings_note": (
+                    "réglages DEMANDÉS pour une campagne créée par cet appel. Si "
+                    "l'agent enrôle dans une campagne EXISTANTE, ce sont les "
+                    "réglages de celle-là qui s'appliquent et ceux-ci n'ont aucun "
+                    "effet — lis ce qui gouverne vraiment avec "
+                    "origami_campaigns(op='get', campaign_id=…) → settings. Aucun "
+                    "verbe ne modifie les réglages d'une campagne existante."),
+                "response": result,
                 "next": ("poll origami_run_get(agent_id, run_id) until status != 'running', "
                          "then origami_campaigns(op='list_for_table', table_id) — nothing "
                          "is sent until origami_campaign_launch(dry_run=False)")}
@@ -570,7 +641,8 @@ def register(mcp: FastMCP) -> None:
         """
         if not agent_id or not run_id:
             raise _bad("`agent_id` et `run_id` requis (rendus par origami_campaign_create).")
-        return _run(lambda: _client().get_run(agent_id, run_id, include=include))
+        res = _run(lambda: _client().get_run(agent_id, run_id, include=include))
+        return _dit_si_rien_n_a_ete_fait(res)
 
     def _launch(c: OrigamiClient, campaign_id: str, dry_run: bool) -> dict:
         campaign = c.get_campaign(campaign_id)
