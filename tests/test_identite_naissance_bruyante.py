@@ -52,6 +52,38 @@ def _connect_factory(conn):
     return _c
 
 
+class _ConnScripte:
+    """Un curseur qui rend une réponse DIFFÉRENTE par requête, dans l'ordre.
+
+    ⚠️ **À préférer à `_Conn` dès que le code sous test fait plus d'UNE requête.**
+    Une doublure qui sert la même ligne à tout le monde fabrique une réponse que la
+    base ne donnerait jamais : elle rend vert un appelant qui lit deux fois, et elle
+    masque précisément ce que ce lot exerce — une CHAÎNE d'alias, dont chaque maillon
+    est une requête distincte.
+
+    Lire plus que ce qui est scripté ne rend pas `None` en silence : ça DIT le geste.
+    Un banc qui répondrait « rien trouvé » à la requête de trop laisserait le code
+    sous test conclure — et c'est exactement le mode de panne qu'on ferme ici.
+    """
+
+    def __init__(self, reponses):
+        self._reponses, self._i = list(reponses), 0
+        self.vues = []
+
+    def execute(self, sql, params=()):
+        self.vues.append(sql)
+        if self._i >= len(self._reponses):
+            raise AssertionError(
+                f"{self._i + 1}ᵉ requête alors que {len(self._reponses)} réponse(s) "
+                f"ont été scriptées — ajoute la réponse attendue à la liste plutôt "
+                f"que de laisser le banc en inventer une.\nRequêtes vues : {self.vues}")
+        self._courant, self._i = self._reponses[self._i], self._i + 1
+        return self
+
+    def fetchone(self):
+        return self._courant
+
+
 # ── B5 : un sub non canonicalisé n'est jamais servi ──────────────────────────
 #
 # Le drain a quitté `db/users.py` pour `db/sub_aliases.py` le 2026-09-03 (il suit
@@ -60,10 +92,17 @@ def _connect_factory(conn):
 # n'a pas bougé — mais scriptent le curseur du module qui porte la requête.
 
 def test_resolve_sub_rend_l_alias(monkeypatch):
-    conn = _Conn(row=_Row(canonique="sub-migre", profondeur=1, boucle=False,
-                          maillons=2, compte_vivant=True))
+    """Le drain lit DEUX fois quand un alias existe : le saut simple, puis la chaîne.
+    Les deux réponses sont donc scriptées séparément — une doublure qui rendrait la
+    même ligne aux deux décrirait une base qui n'existe pas."""
+    conn = _ConnScripte([
+        _Row(new_sub="sub-migre"),                      # 1. le saut simple : il y a un alias
+        _Row(canonique="sub-migre", profondeur=1,       # 2. la chaîne, déroulée
+             boucle=False, maillons=2, compte_vivant=True),
+    ])
     monkeypatch.setattr(db_aliases, "_connect", _connect_factory(conn))
     assert db_users.resolve_sub("sub-vieux") == "sub-migre"
+    assert len(conn.vues) == 2, conn.vues
 
 
 def test_resolve_sub_sans_alias_rend_le_sub(monkeypatch):
@@ -86,20 +125,6 @@ def test_un_alias_qui_disparait_entre_les_deux_lectures_leve(monkeypatch):
     la requête sous le compte d'AVANT bascule, exactement le silence B5. Aucun chemin
     n'écrit ce cas aujourd'hui (rien ne supprime de `sub_aliases`) : sans ce test, la
     branche ne serait jamais exécutée, donc jamais un refus prouvé."""
-
-    class _ConnScripte:
-        """Un curseur qui rend une réponse DIFFÉRENTE par requête, dans l'ordre."""
-
-        def __init__(self, reponses):
-            self._reponses, self._i = list(reponses), 0
-
-        def execute(self, sql, params=()):
-            self._courant, self._i = self._reponses[self._i], self._i + 1
-            return self
-
-        def fetchone(self):
-            return self._courant
-
     monkeypatch.setattr(
         db_aliases, "_connect",
         _connect_factory(_ConnScripte([_Row(new_sub="sub-migre"), None])))
