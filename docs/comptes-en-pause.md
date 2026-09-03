@@ -173,8 +173,18 @@ pour une coupe muette, parce que la consigne de sortie s'écrit **en dernier** e
 texte n'existe que pour être relu, des mois plus tard, par quelqu'un qui n'était pas
 là. La colonne est en `TEXT` : la borne est un choix de surface, pas une contrainte de
 stockage — donc elle se dit, et le refus donne la mesure pour que l'opérateur
-raccourcisse en sachant ce qu'il coupe. Cas de la classe « le code sait, et son savoir
-s'arrête à la frontière de la réponse » (oto#42).
+raccourcisse en sachant ce qu'il coupe.
+
+Ce cas appartient à l'inventaire « le code sait, et son savoir s'arrête à la frontière
+de la réponse » (oto#42), et il y a produit une règle. Il prend la **règle 2** — « un
+chemin qui coupe rend un total, un curseur ou un drapeau » — **à l'envers** : ici même
+un drapeau n'aurait rien réparé, puisque la fin du texte ne survit nulle part et que
+celui qui l'avait s'en va. D'où la **règle 4**, ajoutée le 03/09 : *une coupe sur une
+LECTURE se signale, une coupe sur une ÉCRITURE se refuse*. En lecture, l'appelant
+redemande ; en écriture, il n'y a rien à redemander.
+⚠️ Et ce n'est pas la garde qui a sauvé ce texte-là, elle n'existait pas encore : c'est
+d'avoir relu la réponse dans la minute. Le journal, lui, écrit le motif **après** la
+coupe — il n'aurait rien gardé. Rien dans le système ne signalait le manque.
 
 Le réveil est au **même palier** que la pose, et c'est voulu : obliger un partenaire à
 venir nous voir pour réveiller un de ses comptes reproduirait exactement le problème
