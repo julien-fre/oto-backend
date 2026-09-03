@@ -234,6 +234,50 @@ c'est lui qui rendra le worker mutualisable. ⚠️ Le paramétrage de l'identit
 un autre membre (validé le 02/09) passera par une garde d'appartenance, jamais
 par la confiance faite au corps de la requête.
 
+### Le worker porte l'identité du demandeur — il n'a aucun pouvoir propre (02/09/2026)
+
+**Barreau 2, et il est plus court que prévu.** J'allais concevoir une primitive de
+délégation ; Alexis a tranché : *« rien, il est juste un client MCP qui porte
+l'identité du user »*. ⚠️ **Le mécanisme existait déjà** — `user_api_tokens` porte
+des jetons par personne, avec échéance et portée.
+
+```
+à la RÉSERVATION    le serveur vérifie que le porteur est encore valide, émet un
+                    jeton À SON NOM (durée du bail + 2 min) et le rend au worker
+pendant le travail  le worker appelle avec ce jeton — client ORDINAIRE, aucun
+                    chemin d'autorisation particulier, aucun droit propre
+porteur invalide    le travail passe `failed` AVEC SA RAISON, et le refus est
+                    servi : l'agent s'arrête EN LE DISANT
+```
+
+⚠️ **Ce que ça évite** : pas de nouvelle primitive de sécurité, pas de liste de
+workers habilités (dont la compromission ouvrirait tous les comptes), pas de
+paramètre « agis en tant que » (usurpation en une ligne de JSON). Le pouvoir est
+**borné par l'échéance du jeton**, sans qu'on ait eu à l'inventer.
+
+**La marge de 2 minutes au-delà du bail** : un agent qui conclut à la dernière
+seconde doit pouvoir écrire. Couper au bail exact tuerait un travail abouti juste
+avant sa conclusion — le pire moment, puisqu'il a déjà tout coûté.
+
+⚠️ **`create_api_token` fait un `upsert_user`** : il CRÉE le compte s'il n'existe
+pas. L'existence se vérifie donc AVANT — sinon on ressusciterait un compte
+supprimé et on lui délivrerait un accès dans la foulée.
+
+⚠️ **Le refus n'est pas un `complete_job(ok=False)`** : celui-là refile avec
+backoff jusqu'au plafond, donc rejouerait trois fois le même verdict. Et surtout
+pas un relâchement silencieux — le travail repartirait au worker suivant
+indéfiniment, *une file qui tourne sans jamais aboutir*. `failed` et non
+`expired` : celui-ci a bien été PRIS.
+
+**Ce qui se vérifie, et ce qui ne se vérifie pas** : les trois cas arrêtés le
+02/09 sont compte supprimé, sortie de l'organisation, rôle retiré. ⚠️ **Les deux
+derniers ne se distinguent pas** dans le modèle — être membre, c'est avoir un
+rôle, `org_members` porte les deux en une ligne. La raison rendue le dit en une
+phrase plutôt que d'inventer une distinction que la base ne fait pas.
+
+⚠️ **Vérifié à la RÉSERVATION seulement** (arbitrage explicite) : un travail long
+continue avec un droit retiré en cours de route. C'est assumé, pas oublié.
+
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 
 Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait
