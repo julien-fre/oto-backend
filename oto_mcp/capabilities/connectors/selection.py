@@ -151,7 +151,7 @@ class MyConnectorRow(BaseModel):
     # leur confusion. Détail des couches et du coût : `connectors/readiness.py`.
     ready: Optional[bool] = None
     # La PREMIÈRE couche qui manque : paid_option_off | no_credential | over_quota |
-    # pending_step. Absent quand `ready` est vrai.
+    # credential_rejected | pending_step. Absent quand `ready` est vrai.
     not_ready: Optional[str] = None
     next_step: Optional[str] = None         # le geste, rendu tel quel (jamais reformulé)
 

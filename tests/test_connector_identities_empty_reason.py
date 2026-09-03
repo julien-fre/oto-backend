@@ -39,6 +39,10 @@ def _list(monkeypatch, *, identities, mode="platform", pending=None, option_ok=T
             raise RuntimeError("cascade indisponible")
         return "unipile" if name == "unipile" else None
     monkeypatch.setattr(access, "paid_option_for", _opt)
+    # Couche 2bis (#541) : aucune clé rejetée par l'amont — sans ce double, la
+    # marche de cascade réelle ferait tomber le diagnostic tout entier.
+    monkeypatch.setattr(access, "credential_rejection_for",
+                        lambda sub, name, org=None, group=None: None)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access, "account_noun", lambda name: "compte")
     monkeypatch.setattr(status_hints, "pending_action",

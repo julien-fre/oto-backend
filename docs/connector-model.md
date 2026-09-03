@@ -207,9 +207,10 @@ séparément :
 
 **Le seam qui les lit ensemble : `oto_mcp/connectors/readiness.py`** (`diagnose`), qui
 rend la **PREMIÈRE** couche manquante dans l'ordre `option (3) → clé (2) → quota →
-étape restante` — plus le geste, relayé tel quel depuis `status_hints`. Deux surfaces le
-consomment, et **une troisième formulation est interdite** : c'est ce qui avait déjà fait
-diverger `option_ok` et `status_for.subscribed` (corrigé le 07/07/2026).
+clé REJETÉE par l'amont → étape restante` — plus le geste, relayé tel quel depuis
+`status_hints`. Deux surfaces le consomment, et **une troisième formulation est
+interdite** : c'est ce qui avait déjà fait diverger `option_ok` et
+`status_for.subscribed` (corrigé le 07/07/2026).
 
 - **carte connecteur** → `ready` / `not_ready` / `next_step`, sur une lecture **ciblée**
   (`op='list', name=…`). Sur le catalogue entier : `readiness:"not_computed"` + le geste
@@ -218,6 +219,39 @@ diverger `option_ok` et `status_for.subscribed` (corrigé le 07/07/2026).
   MONO-LOOP ; un connecteur seul coûte ~244 ms. La règle qui en sort vaut au-delà d'ici :
   **dire « je n'ai pas calculé » coûte moins cher que rassurer à tort.**
 - **liste d'identités** → `reason` + `next_step` sur `identities: []` (#504).
+
+### `credential_rejected` — la clé est là, le fournisseur n'en veut pas (#541, 03/09/2026)
+
+Cinquième forme du même défaut. La clé `linear` d'une org était **refusée par Linear**
+sur l'appel le plus simple (`AUTHENTICATION_ERROR`) — invalide ou révoquée. Le verdict
+EXISTAIT en base : `oto_instance op=verify` l'y écrit depuis toujours
+(`connector_credentials.meta.health_ko` + `health_reason`). Il n'avait simplement
+**aucun lecteur du côté où l'on regarde** : son seul consommateur, `access.status_for`,
+ne lit que les clés de palier **MEMBRE**, donc jamais celle d'un connecteur `byo_org`
+only. `ready` répondait `true` sur une clé morte, et le porteur n'apprenait le refus
+qu'au premier appel, sous la forme du **message brut du fournisseur**.
+
+Trois pièces, et il fallait les trois :
+
+1. **Le lire** — `access.credential_rejection_for` remarche la cascade et lit la santé
+   de la ligne qui résoudrait *vraiment* (une clé perso saine ne doit pas masquer le
+   rejet d'une clé d'org, ni l'inverse). ⚠️ **C'est une SECONDE marche** (~22 ms) :
+   assumée plutôt que de faire rendre deux choses à `credential_mode_for`, dont le
+   contrôle de quota plateforme ne se recopie pas.
+2. **L'écrire là où il tombe** — la cible de santé de `op=verify` ne valait que pour le
+   palier membre : un `level="auto"` qui résolvait une clé d'ORG n'écrivait **rien**.
+   Elle vaut désormais pour la ligne réellement testée (compte compris), **sauf** les
+   paliers `tenant` et `platform` : le hoquet réseau d'un seul membre n'a pas à peindre
+   en rouge une clé partagée par des orgs entières.
+3. **Nommer le refus à l'appel** — `tools/linear.py` portait une branche 401/403 qui
+   nommait exactement ce cas, **inatteignable** : Linear répond son refus d'auth dans un
+   `errors[]` GraphQL sous **HTTP 200**, donc `LinearGraphQLError` est levée avant tout
+   `raise_for_upstream`. Leçon transférable : *une branche d'erreur gardée sur le statut
+   HTTP ne voit pas un fournisseur GraphQL* — le code est dans le corps.
+
+Le constat se **lève** en rejouant `op=verify` (un succès écrit `health_ko: false`) ou
+en reposant la clé (une repose réécrit `meta`). C'est dit dans le `next_step`, parce
+qu'un état qui ne sait pas s'effacer devient un faux positif permanent.
 
 ⚠️ **`ready` n'inclut PAS l'état de sélection** (`not_selected` / `paused`), et c'est
 volontaire : un connecteur non sélectionné reste **appelable par `oto_call`** (dispatch

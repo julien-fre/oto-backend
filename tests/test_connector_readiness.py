@@ -50,6 +50,11 @@ def _wire(monkeypatch, *, catalog=(_ROW,), selection=None, option_ok=True,
     monkeypatch.setattr(CS.access, "credential_mode_for",
                         lambda sub, name, org=None, group=None, probe=None: mode)
     # Le hook d'étape manquante est lu par le seam PARTAGÉ, pas par la carte.
+    # Couche 2bis (#541) : la clé résout ET l'amont ne l'a pas rejetée. Sans ce
+    # double, `diagnose` irait marcher la cascade pour de vrai — pas de base ici, et
+    # le verdict entier retomberait en `readiness: "unavailable"`.
+    monkeypatch.setattr(CS.access, "credential_rejection_for",
+                        lambda sub, name, org=None, group=None: None)
     monkeypatch.setattr(RD.status_hints, "pending_action",
                         lambda name, sub, org, group, entry: pending)
     # Le groupe est résolu UNE fois et passé explicitement aux seams (le contexte doit

@@ -81,8 +81,9 @@ class ConnectorIdentities(BaseModel):
     # l'agent ni l'écran n'ont de moyen de deviner le vocabulaire du fournisseur.
     noun: str = "compte"
     # ── Pourquoi la liste est VIDE (signal #504) ── présents SEULEMENT sur `[]`.
-    # `no_credential` | `paid_option_off` | `over_quota` (une couche manque, cf.
-    # `connectors/readiness.py`) | `no_identity_connected` (tout est en place, il
+    # `no_credential` | `paid_option_off` | `over_quota` | `credential_rejected`
+    # (une couche manque, cf. `connectors/readiness.py`) | `no_identity_connected`
+    # (tout est en place, il
     # reste à en connecter un). Le défaut de #504 n'était pas le CONTENU de la
     # liste — vérifié sur la prod le 28/08, elle était vide parce qu'il n'y avait
     # rien à lister — c'était son SILENCE : `[]` ne disait pas s'il n'y avait aucun
@@ -236,7 +237,9 @@ CAPABILITIES_DOC_LIST = (
     "List the connected identities/accounts your credential can act as for a connector "
     "(e.g. the LinkedIn accounts under your Unipile key, or your Google accounts), with "
     "which one is currently the default. An EMPTY list always says why: `reason` is "
-    "no_credential / paid_option_off / over_quota (a layer is missing) or "
+    "no_credential / paid_option_off / over_quota / credential_rejected (a layer is "
+    "missing — credential_rejected = the key resolves but the provider refused it at "
+    "the last connection test) or "
     "no_identity_connected (everything resolves, nothing linked yet), with `next_step`. "
     "Never read an empty list as a bug before reading its reason."
 )
