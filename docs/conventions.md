@@ -364,6 +364,17 @@ rien ne rendait navigable et que rien ne tenait.
     N caractères est une mutilation silencieuse — l'agent croit avoir lu. D'où la TAILLE, jamais
     un extrait (mesuré le 11/08 : un feed coupé à 600 c. tombait pile avant la chute qui
     départage un post de fond d'une pub, 2 cas limites sur 5 tranchés à l'aveugle).
+    ⚠️ **Ce remède ne vaut qu'en LECTURE — borne posée le 03/09.** Rendre la taille laisse
+    l'appelant redemander : le savoir perdu reste récupérable, et le drapeau le rend
+    récupérable. À l'**ÉCRITURE** il ne répare rien — la fin ne survit nulle part et celui
+    qui l'avait s'en va. Donc **une coupe sur une écriture se REFUSE**, en disant la longueur
+    reçue ET la borne, tant que le détenteur du texte peut encore raccourcir lui-même.
+    Cas fondateur : le motif d'une mise en pause de compte — exigé précisément pour être relu
+    dans six mois par quelqu'un qui n'était pas là — coupé à 500 c. en silence. La coupe prend
+    la FIN, c'est-à-dire la condition de réveil, qu'on écrit en dernier : le texte garde sa
+    forme et perd sa fonction. Le journal n'aide pas, il écrit la valeur APRÈS la coupe.
+    Et le critère de décision : la colonne était en `TEXT` — **quand la borne ne vient pas du
+    stockage, c'est un choix de surface, et un choix se dit** (oto#42, 4ᵉ règle).
   - **Denylist de clés nommées, jamais une allowlist** (leçon `fr_get`/`liste_idcc` : un champ
     oublié disparaît en silence). Le seam ne connaît aucun outil — chaque connecteur déclare
     ce qu'il coupe, là où il sait ce que ses champs valent (`full=True` rend le brut).
