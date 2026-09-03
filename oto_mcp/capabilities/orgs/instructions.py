@@ -53,6 +53,11 @@ _DROITS_SERVIS = {
 
 _OID = {"id": "org_id"}
 _OID_SLUG = {"id": "org_id", "slug": "slug"}
+# Jumelle de `guides._MAX_BODY_BYTES`, même valeur, deux surfaces distinctes : ce
+# corps-ci est injecté dans le guide de base à chaque session. Nommée plutôt que
+# littérale pour que la garde et le message du refus ne puissent pas diverger.
+_MAX_BODY_BYTES = 64 * 1024
+
 _BASE = org_store.BASE_SLUG
 # Outil MCP qui charge le guide (donc loggé dans `tool_calls`) → c'est lui que
 # l'usage compte. UNE source pour le nom : sert de `mcp=` de la capacité de lecture
@@ -849,8 +854,17 @@ async def _set_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> 
     if not body_md:
         raise AuthzDenied(400, "body_md_required", "body_md vide (ou fournis `from_version`).")
     # Injecté dans le guide de base servi à chaque session → caper la taille.
-    if len(body_md.encode()) > 64 * 1024:
-        raise AuthzDenied(400, "body_too_large", "body_md > 64 KB.")
+    # ⚠️ La borne n'est PAS publiée dans le schéma servi de `InstrSetInput` /
+    # `AdminInstrSetInput` / la création — contrairement au `body_md` des guides, qui
+    # porte son `maxLength` depuis le 29/08. Un front tiers ne peut donc pas dériver sa
+    # garde de saisie ici : ligne du lot 3 d'oto#42, pas traitée dans ce commit.
+    poids = len(body_md.encode())
+    if poids > _MAX_BODY_BYTES:
+        raise AuthzDenied(
+            400, "body_too_large",
+            f"body_md pèse {poids} octets UTF-8 pour {_MAX_BODY_BYTES} au plus "
+            f"({poids - _MAX_BODY_BYTES} de trop). La borne est en OCTETS : un caractère "
+            "accentué en pèse deux, donc compter les caractères la sous-estime.")
     if norm == _BASE:
         raise AuthzDenied(400, "reserved_slug",
                           f"`{_BASE}` est le readme (prose injectée), pas une "

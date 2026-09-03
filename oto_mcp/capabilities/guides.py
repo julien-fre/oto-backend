@@ -270,8 +270,18 @@ def _get(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
 
 def _set(ctx: ResolvedCtx, inp: GuideSetInput) -> dict:
     body = inp.body_md or ""
-    if len(body.encode()) > _MAX_BODY_BYTES:
-        raise AuthzDenied(400, "body_too_large", "`body_md` > 64 KB.")
+    poids = len(body.encode())
+    if poids > _MAX_BODY_BYTES:
+        # La borne était publiée depuis le 29/08 (`maxLength` ci-dessus) ; il manquait la
+        # MESURE. Sans elle l'auteur raccourcit à l'aveugle, et il ne peut même pas la
+        # calculer : `maxLength` compte des caractères, la garde compte des OCTETS, et
+        # deux textes de même longueur ne pèsent pas pareil (leçon du datastore, signal
+        # #383 — « pas de combien on dépasse fait deviner »).
+        raise AuthzDenied(
+            400, "body_too_large",
+            f"`body_md` pèse {poids} octets UTF-8 pour {_MAX_BODY_BYTES} au plus "
+            f"({poids - _MAX_BODY_BYTES} de trop). La borne est en OCTETS : un caractère "
+            "accentué en pèse deux, donc compter les caractères la sous-estime.")
     if inp.delivery == "init":
         # Un corps vide EFFACE la couche (la note se retire comme elle s'écrit) — là où
         # un guide on-demand vide n'aurait aucun sens (rien à charger).

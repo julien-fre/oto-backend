@@ -421,6 +421,11 @@ def test_un_corps_de_guide_au_dela_de_65536_octets_rend_400(client, org):
     r = client.put("/api/me/guides/user/trop-gros", json={"body_md": "a" * 65537},
                    headers=_h(admin))
     assert (r.status_code, r.json()["error"]) == (400, "body_too_large"), r.text
+    # Le refus doit porter la MESURE, pas seulement le verdict : la borne était publiée
+    # depuis le 29/08, mais l'auteur d'un corps trop lourd ne savait pas de combien il
+    # dépassait — et il ne pouvait pas le calculer, `maxLength` comptant des caractères
+    # là où la garde compte des octets (oto#42, 4ᵉ règle ; leçon du datastore, #383).
+    assert "65537" in r.json()["detail"] and "65536" in r.json()["detail"], r.text
     # La borne EXACTE passe.
     r = client.put("/api/me/guides/user/juste", json={"body_md": "a" * 65536},
                    headers=_h(admin))
@@ -433,6 +438,22 @@ def test_la_borne_est_en_octets_pas_en_caracteres(client, org):
     r = client.put("/api/me/guides/user/accents", json={"body_md": "é" * 40_000},
                    headers=_h(org["admin"]))
     assert (r.status_code, r.json()["error"]) == (400, "body_too_large"), r.text
+    # Et c'est ICI que la mesure compte le plus : 40 000 caractères pour 80 000 octets,
+    # donc l'auteur qui compte ses caractères se croit à 61 % de la borne.
+    assert "80000" in r.json()["detail"], r.text
+
+
+def test_le_corps_dune_PROCEDURE_trop_lourde_rend_400_avec_la_mesure(client, org):
+    """Jumeau du refus des guides, à un fichier de là (`orgs/instructions.py`) : même
+    code, même borne, et il n'était gardé par AUCUN test. C'est le voisin immédiat que
+    les correctifs de cette classe laissent intact d'habitude — cf. oto#42.
+
+    ⚠️ Sa borne, elle, n'est toujours PAS publiée dans le schéma servi (contrairement à
+    celle des guides) : ligne du lot 3, hors de ce banc."""
+    r = client.put("/api/me/instructions/trop-lourde", json={"body_md": "é" * 40_000},
+                   headers=_h(org["admin"]))
+    assert (r.status_code, r.json()["error"]) == (400, "body_too_large"), r.text
+    assert "80000" in r.json()["detail"] and "65536" in r.json()["detail"], r.text
 
 
 # ── DELETE /api/me/orgs/{id}/membership : les quatre refus, dans l'ordre ──────
