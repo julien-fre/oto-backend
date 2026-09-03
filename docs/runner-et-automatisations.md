@@ -199,6 +199,37 @@ les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclar�
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
+### Le verrou du tick porte sur l'ÉLIGIBILITÉ, pas sur l'échéance relue (#839, 03/09/2026)
+
+Le compare-and-swap qui empêche deux environnements de jouer la même échéance
+comparait `next_due` à **la valeur que le tick venait de lire**. Or toute date lue
+passe par `_normalize_value`, qui retire **les microsecondes ET le fuseau**.
+
+```
+microsecondes   une échéance à 19:37:27.482 est relue « 19:37:27 »
+fuseau retiré   la chaîne naïve est réinterprétée dans le fuseau de la SESSION
+```
+
+⚠️ **Dans les deux cas la comparaison ne matche jamais, et rien n'échoue** :
+`consume_due` rend `False`, que le tick lit comme « un pair a déjà consommé cette
+échéance » — le cas NORMAL quand preprod et prod partagent la base. Il passe sans
+enfiler, sans erreur, sans avertissement. **Le déclencheur reste éternellement
+dû** : sélectionné à chaque tour, jamais consommé — *avec l'air parfaitement
+sain*, `enabled`, échéance passée, runner armé.
+
+Et le compteur d'occurrences perdues ne le verrait pas non plus : **aucune
+occurrence n'est enfilée, il n'y a rien à périmer.**
+
+**Le verrou porte désormais sur `next_due <= NOW()`.** L'exclusion mutuelle est
+intacte — deux ticks se sérialisent sur la ligne, et le second ré-évalue son
+`WHERE` après le verrou : l'échéance est alors dans le futur. ⚠️ Et ça ferme un
+second défaut au passage : l'ancienne forme pouvait consommer une échéance **pas
+encore due** (le tick filtrait avant, donc la garde ne tenait pas seule).
+
+**Ça ne se produisait pas** parce que toutes les échéances viennent de croniter,
+qui rend des secondes rondes. *Une garantie qui tient par la propriété d'une
+bibliothèque tierce n'est pas une garantie.*
+
 ### Un travail porte l'identité de qui l'a demandé (02/09/2026)
 
 **Premier barreau du chantier « agents autonomes », et le préalable de tout le
