@@ -31,6 +31,7 @@ from starlette.responses import JSONResponse, Response
 
 from .. import db
 from ..auth import token_scopes
+from ..tenant_migration import alias_drain_armed
 
 # Signature de `_authenticate`, telle que la consomment les modules de routes.
 AuthFn = Callable[..., Awaitable["tuple[str | None, JSONResponse | None]"]]
@@ -181,10 +182,11 @@ async def _authenticate(
     sub = access_token.claims.get("sub")
     if not sub:
         return None, _json_error(request, 401, "missing_sub")
-    # Bascule de tenant (B1) : pendant la fenêtre, canonicaliser le sub AVANT l'upsert
-    # (un vieux token de l'ancien tenant en drain → compte migré, sinon il re-créerait
-    # le compte supprimé). Gaté env → no-op hors bascule.
-    if os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS"):
+    # Drain d'alias (B1) : canonicaliser le sub AVANT l'upsert. ⚠️ L'`upsert_user` qui
+    # suit n'est PAS sous commande : un vieux sub non redirigé n'échoue pas ici, il
+    # RECRÉE le compte supprimé par la fusion. Le drain est donc porteur — il ne
+    # s'arrête pas parce que le rapprochement, lui, a cessé de servir.
+    if alias_drain_armed():
         sub = await run_in_threadpool(db.resolve_sub, sub)
     # upsert_user = DB à CHAQUE requête REST → threadpool (jamais dans la loop).
     # locale (#701) : signal déduit de l'en-tête, jamais un choix — `upsert_user`

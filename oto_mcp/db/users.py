@@ -19,6 +19,7 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 from ._conn import _connect
+from ..tenant_migration import email_merge_armed
 
 
 class OnboardingIncomplet(RuntimeError):
@@ -112,23 +113,23 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
     if manques:
         raise OnboardingIncomplet(sub, manques)
     # Bascule de tenant (B1, otomata#35) : sur un login du NOUVEAU tenant, fusionner
-    # l'ancien compte (même email) → ce sub. Gaté par env `OTO_MCP_TENANT_MIGRATION_ISS`
-    # (dormant hors fenêtre de bascule). Idempotent, best-effort, à chaque login
+    # l'ancien compte (même email) → ce sub. Idempotent, best-effort, à chaque login
     # new-tenant (pas que au 1er insert → couvre les retries / l'ordre des logins).
+    # ⚠️ La commande est celle du RAPPROCHEMENT seul (`tenant_migration`), à ne pas
+    # confondre avec celle du DRAIN d'alias : les deux mécanismes lisent aujourd'hui la
+    # même variable, mais pas de la même façon, et ne s'arrêtent pas ensemble.
     # ⚠️ SÉCU (account takeover) : la décision de merge se prend sur l'email
     # AUTORITATIF lu de Logto (Management API), JAMAIS sur le claim email/email_verified
     # du token — un token forgé pourrait revendiquer l'email d'autrui pour absorber son
     # compte (rôle, coffre). reconcile_tenant_migration récupère lui-même cet email ;
     # le claim `email` n'est passé que comme PRÉ-FILTRE cheap (éviter un appel Logto à
     # chaque requête quand rien ne matche).
-    if iss:
-        _mig = os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS", "").strip().rstrip("/")
-        if _mig and iss.rstrip("/") == _mig:
-            try:
-                reconcile_tenant_migration(sub, email_hint=email)
-            # noqa: SILENT — réconciliation de tenant dormante (gate env), idempotente au login suivant
-            except Exception:
-                pass
+    if email_merge_armed(iss):
+        try:
+            reconcile_tenant_migration(sub, email_hint=email)
+        # noqa: SILENT — réconciliation de tenant dormante (gate env), idempotente au login suivant
+        except Exception:
+            pass
 
 
 def get_user(sub: str) -> Optional[dict]:
