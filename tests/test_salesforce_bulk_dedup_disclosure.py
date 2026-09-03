@@ -18,9 +18,18 @@ référence Salesforce de la ressource `POST composite/sobjects` montre l'invers
 son exemple NORMATIF d'échec par enregistrement est précisément
 `{"success": false, "errors": [{"statusCode": "DUPLICATES_DETECTED", …}]}`. Les
 règles s'exécutent donc bien sur ce chemin ; ce qui manquait était leur
-PARAMÉTRAGE dans l'org Salesforce du client. ⚠️ Écrire « le chemin groupé n'a pas
-le filet du chemin unitaire » serait donc mentir dans l'autre sens : **aucun des
-deux chemins ne porte de filet appliqué par oto** — ni `create`, ni `bulk_create`.
+PARAMÉTRAGE dans l'org Salesforce du client — les règles de doublon se créent et
+s'activent objet par objet dans le Setup de chaque org (`DuplicateRule.IsActive`
+est en lecture seule par l'API). ⚠️ Écrire « le chemin groupé n'a pas le filet du
+chemin unitaire » serait donc mentir dans l'autre sens : **aucun des deux chemins
+ne porte de filet appliqué par oto** — ni `create`, ni `bulk_create`.
+
+**Le seul écart RÉELLEMENT propre au chemin groupé**, lui, est documenté chez
+Salesforce (« Things to Know About Duplicate Rules », §Timing of Saves) :
+plusieurs enregistrements enregistrés ensemble « aren't compared with each other.
+They're compared only with records already in Salesforce ». Un lot de 200 qui
+contient deux fois la même personne passe donc entier, règles actives ou non —
+d'où la seconde consigne servie : dédoublonner `items` contre lui-même.
 
 **Ce que le code fait, vérifié à la source.** `SalesforceClient.create_records`
 (oto-core, `oto/tools/salesforce/client.py`) poste sur `composite/sobjects` et
