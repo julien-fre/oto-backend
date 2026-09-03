@@ -134,6 +134,54 @@ def test_op_backlinks_filters_unreadable_projects(monkeypatch):
     assert out["count"] == 1 and out["backlinks"][0]["id"] == 10
 
 
+def test_des_citations_MASQUEES_par_l_acces_sont_dites(monkeypatch):
+    """oto#42, entrée 4. Le filtrage retirait des citations en silence, et quand il
+    les retirait TOUTES, le hint affirmait « personne ne cite encore cette page ».
+
+    Une phrase fausse servie à un agent qui n'avait aucun moyen de le savoir — et les
+    deux situations appellent des gestes OPPOSÉS : demander un accès, ou écrire le
+    lien qui manque. C'est le mode de panne de la classe : l'agent cherche, ne voit
+    rien, et conclut à une absence.
+
+    ⚠️ Le NOMBRE de citations masquées n'est pas rendu : il révélerait combien de
+    pages existent dans des projets fermés à l'appelant. Le fait qu'il y en ait
+    suffit à corriger le geste."""
+    from oto_mcp.capabilities.docs import core as D
+    from oto_mcp.capabilities._types import ResolvedCtx
+    monkeypatch.setattr(db, "get_doc_by_id",
+                        lambda did: {"id": did, "project_id": 1, "title": "Cible"})
+    monkeypatch.setattr(db, "doc_backlinks", lambda did: [
+        {"id": 11, "project_id": 99, "title": "Citation d'un projet fermé"},
+    ])
+    monkeypatch.setattr(ownership, "can_access",
+                        lambda sub, t, rid, want="read": str(rid) == "1")
+    out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
+    assert out["count"] == 0 and out["backlinks"] == []
+    assert out["hidden_by_access"] is True
+    assert "PARTIEL" in out["hidden_hint"]
+    # LE point : le hint « personne ne cite » ne doit PAS être servi ici.
+    assert "hint" not in out, (
+        "« Personne ne cite encore cette page » alors que trois pages la citent — "
+        "c'est la phrase fausse que cette entrée corrige")
+    # Et le nombre ne fuit pas.
+    assert "1" not in out.get("hidden_hint", "")
+
+
+def test_aucune_citation_ni_masquee_garde_le_hint_pedagogique(monkeypatch):
+    """Le vrai zéro garde son conseil : c'est le cas #244, où trois formats de lien
+    avaient été essayés en vain sans le moindre indice. On ne l'a pas remplacé, on l'a
+    borné au cas où il est VRAI."""
+    from oto_mcp.capabilities.docs import core as D
+    from oto_mcp.capabilities._types import ResolvedCtx
+    monkeypatch.setattr(db, "get_doc_by_id",
+                        lambda did: {"id": did, "project_id": 1, "title": "Cible"})
+    monkeypatch.setattr(db, "doc_backlinks", lambda did: [])
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
+    assert "Personne ne cite encore" in out["hint"]
+    assert "hidden_by_access" not in out
+
+
 def test_op_backlinks_empty_says_how_a_backlink_is_made(monkeypatch):
     """Un zéro muet se lit comme « la fonction est cassée » : trois formats de lien
     ont été essayés en vrai, tous inertes, sans le moindre indice (signal #244)."""
