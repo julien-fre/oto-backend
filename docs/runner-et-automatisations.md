@@ -235,6 +235,38 @@ laisser se créer produirait un agent qui tourne à vide tous les matins.
 cadencement en langage d'utilisateur, l'état lisible — et **afficher le compteur
 d'occurrences perdues**, servi depuis le 02/09 et affiché nulle part.
 
+### L'instruction se compose ICI, jamais dans le worker (#873, 04/09/2026)
+
+Le worker est **un client MCP** : il exécute une instruction et **ne sait pas ce
+qu'elle contient**. Trois textes de repli disaient le contraire — `DEFAULT_INPUT`
+dans l'ordonnanceur de flotte, deux « Exécute la procédure. » dans le worker.
+Tous trois inventaient le travail à la place de qui l'avait déclaré, **depuis le
+seul étage qui ne connaît pas le métier**. Une instruction inventée là ne se
+relit ni ne se corrige depuis le produit : elle se découvre dans le résultat.
+
+```
+capabilities/_instruction.py   domicile UNIQUE de la composition
+  derivee(slug)                « lis la procédure X et applique-la »
+  de_file(slug, ns, filtre)    + la mécanique de réservation, qui est À NOUS
+```
+
+⚠️ **La mécanique de file n'est pas du métier.** « Réserve une ligne, une seule,
+rends-la » appartient à la flotte, pas à la procédure : c'est la plateforme qui
+distribue le travail entre plusieurs agents. L'écrire ici évite qu'un client
+recopie à la main, dans chaque campagne, un protocole que la plateforme est seule
+à savoir juste. Sans cible déclarée, **aucune file n'est inventée**.
+
+⚠️ **Les deux surfaces qui déclarent un agent en dépendent** (déclencheur,
+flotte). Le déclencheur y a perdu la copie locale posée par #866 : si chacune
+rédige sa variante, la même règle vit à plusieurs endroits et l'une d'elles finit
+par mentir. Un banc tient la classe — aucune autre capacité ne rédige la sienne.
+
+⚠️ **`launch` répare avant d'armer.** Une campagne sans instruction armée telle
+quelle resterait `armed` sans avancer : le worker refuse de démarrer, et le
+symptôme lu depuis le produit serait « l'ordonnanceur est mort » — un diagnostic
+faux posé sur une cause invisible. Le refus du worker reste, en dernier ressort ;
+il n'est plus le seul filet.
+
 ### Le verrou du tick porte sur l'ÉLIGIBILITÉ, pas sur l'échéance relue (#839, 03/09/2026)
 
 Le compare-and-swap qui empêche deux environnements de jouer la même échéance
