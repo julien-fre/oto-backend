@@ -116,3 +116,30 @@ def test_la_cle_ne_sort_que_de_la_reservation_jamais_d_une_lecture():
     assert len(appels) == 1 and 'op == "claim"' in src
     branche = src.split('if inp.op == "claim":')[1].split("if inp.op ==")[0]
     assert "_avec_cle(" in branche
+
+
+# ── ce que le journal peut en voir : rien ─────────────────────────────────────
+
+def test_le_journal_des_appels_ne_garde_aucune_reponse():
+    """La clé part dans la RÉPONSE au claim, pas dans ses arguments — le masque
+    de `tool_calls.args` (#558/#564) ne la couvre donc pas, et n'a pas à le
+    faire : le journal ne stocke aucune réponse. Le jour où une colonne de
+    résultat s'ajouterait, ce banc tombe et force à reposer la question — un
+    travail réservé journalisé avec sa clé serait une fuite."""
+    import inspect
+
+    from oto_mcp.db import usage
+    sql = inspect.getsource(usage.insert_tool_call)
+    colonnes = sql.split("INSERT INTO tool_calls")[1].split(")")[0]
+    for mot in ("result", "response", "output", "reponse", "resultat"):
+        assert mot not in colonnes.lower(), (
+            f"`tool_calls` garde maintenant une {mot} : la clé de modèle servie "
+            "au claim y passerait")
+
+
+def test_la_remise_ne_modifie_pas_le_travail_d_origine(_coffre):
+    """`_avec_cle` rend une COPIE : le dict du claim, lui, peut être relu,
+    compté ou tracé ailleurs sans emporter le secret."""
+    origine = {"id": 1, "org_id": 42}
+    servi = RJ._avec_cle(origine, "anthropic")
+    assert servi is not origine and "model_key" not in origine
