@@ -22,3 +22,11 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Ahrefs"
 LOGO_DOMAIN = "ahrefs.com"
+
+DESCRIPTION = (
+    "Le SEO d'un site vu par Ahrefs : backlinks, mots-clés positionnés, suivi "
+    "de rang, audits techniques, visibilité de marque dans les réponses des "
+    "chatbots IA, analytics on-site, Search Console et publication social. Byo "
+    "uniquement — un siège Ahrefs est un abonnement cher et nominatif, pas de "
+    "clé plateforme."
+)

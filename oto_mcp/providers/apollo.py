@@ -18,3 +18,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Apollo"
 LOGO_DOMAIN = "apollo.io"
+
+DESCRIPTION = (
+    "Prospection B2B chez Apollo.io : rechercher des organisations et des "
+    "personnes, lire les offres d'emploi publiées, enrichir un contact ou une "
+    "entreprise déjà trouvée. Consomme les crédits du compte connecté."
+)

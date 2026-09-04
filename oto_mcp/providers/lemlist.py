@@ -22,3 +22,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "lemlist"
 LOGO_DOMAIN = "lemlist.com"
+
+DESCRIPTION = (
+    "Les campagnes de cold outreach Lemlist : créer et piloter une campagne, "
+    "gérer ses leads, plus tout le reste du compte (CRM natif, inbox, "
+    "désinscriptions, signaux, réglages) dans un module séparé."
+)

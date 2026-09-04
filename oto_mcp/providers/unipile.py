@@ -56,6 +56,13 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Unipile"
 LOGO_DOMAIN = "unipile.com"
+DESCRIPTION = (
+    "L'abonnement Unipile qui ouvre la messagerie hébergée : chaque membre y "
+    "raccorde ensuite son propre compte LinkedIn, WhatsApp, Telegram, "
+    "Instagram, Messenger ou X — chacun avec sa propre fiche, son activation "
+    "et ses droits. Cette fiche-ci gère la clé d'abonnement, pas une "
+    "conversation."
+)
 
 
 # --- la FORME d'une connexion hébergée (le porteur de la clé la décrit) --------

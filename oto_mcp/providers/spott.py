@@ -22,3 +22,9 @@ CONNECTOR = _c(
 CATEGORY = "Recrutement"
 PUBLISHER = "Spott"
 LOGO_DOMAIN = "spott.io"
+
+DESCRIPTION = (
+    "L'ATS ET le CRM d'un cabinet de recrutement : candidats, offres et "
+    "candidatures, mais aussi les entreprises clientes et les placements "
+    "facturés — le candidat et le client dans le même produit."
+)

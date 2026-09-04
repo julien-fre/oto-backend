@@ -26,3 +26,10 @@ CONNECTOR = _c(
 
 CATEGORY = "Automatisation"
 LOGO_DOMAIN = "brevo.com"
+
+DESCRIPTION = (
+    "Les automations (workflows marketing) de Brevo, pilotées via ta session "
+    "Brevo connectée par navigateur hébergé — pas la clé API v3 (connecteur "
+    "`brevo` séparé, qui ne donne aucun accès à cet éditeur d'automations). "
+    "Expérimental : l'API n'est pas documentée publiquement."
+)

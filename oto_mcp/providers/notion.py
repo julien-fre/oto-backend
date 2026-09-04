@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "Notion"
 LOGO_DOMAIN = "notion.so"
+
+DESCRIPTION = (
+    "L'espace Notion d'une équipe : pages, bases de données et blocs, en "
+    "lecture et en écriture."
+)

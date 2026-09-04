@@ -39,3 +39,8 @@ CONNECTOR = _c(
 CATEGORY = "Comms"
 PUBLISHER = "Zoho"
 LOGO_DOMAIN = "zoho.com"
+
+DESCRIPTION = (
+    "Le support client dans Zoho Desk : tickets, fils de conversation, contacts "
+    "et articles de la base de connaissance."
+)

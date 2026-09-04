@@ -37,3 +37,10 @@ CONNECTOR = _c(
 CATEGORY = "Dev"
 PUBLISHER = "PostHog"
 LOGO_DOMAIN = "posthog.com"
+
+DESCRIPTION = (
+    "L'usage produit remonté par PostHog : requêtes HogQL, événements, "
+    "personnes et comptes (groupes), insights et feature flags, enregistrements "
+    "de session. Clé personnelle uniquement (`phx_…`) — la clé de projet mise "
+    "en avant par PostHog n'a pas accès en lecture à ces données."
+)

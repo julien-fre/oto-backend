@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Phantombuster"
 LOGO_DOMAIN = "phantombuster.com"
+
+DESCRIPTION = (
+    "Les agents d'automatisation Phantombuster : lancer un agent et lire ses "
+    "résultats."
+)

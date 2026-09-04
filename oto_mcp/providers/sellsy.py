@@ -26,3 +26,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Sellsy"
 LOGO_DOMAIN = "sellsy.com"
+
+DESCRIPTION = (
+    "Le CRM et la gestion commerciale d'une entreprise dans Sellsy : tiers, "
+    "opportunités, devis, factures et paiements, dans le même compte. OAuth2 "
+    "avec un accès personnel du portail développeur Sellsy."
+)

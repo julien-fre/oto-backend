@@ -25,3 +25,10 @@ CATEGORY = "Web"
 # défaut : depuis le 2026-09-02 il n'y en a plus (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
+
+DESCRIPTION = (
+    "Lire une page web publique, même quand elle résiste à un simple fetch : le "
+    "lecteur escalade de lui-même — fetch nu, puis scraper, puis navigateur "
+    "jetable en dernier recours (payant, sur demande explicite). Pas un moteur "
+    "de recherche : donne une URL, pas une requête."
+)

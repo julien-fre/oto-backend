@@ -60,3 +60,11 @@ CONNECTOR = _c(
 CATEGORY = "Dev"
 PUBLISHER = "GitHub"
 LOGO_DOMAIN = "github.com"
+
+DESCRIPTION = (
+    "Les dépôts d'une organisation ou d'un compte GitHub : code, issues, pull "
+    "requests et leurs revues, organisations et workflows Actions. Jeton "
+    "personnel classique, fine-grained ou jeton GitHub App, chacun avec ses "
+    "propres scopes — ce que le jeton peut faire ne se lit pas sur cette fiche. "
+    "Support GitHub Enterprise Server via une URL de base dédiée."
+)

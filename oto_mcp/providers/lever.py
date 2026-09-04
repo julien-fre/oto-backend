@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Recrutement"
 PUBLISHER = "Lever"
 LOGO_DOMAIN = "lever.co"
+
+DESCRIPTION = (
+    "Le recrutement suivi dans Lever (ATS) : opportunities (candidats), "
+    "postings (offres), étapes du pipeline (stages) et notes."
+)

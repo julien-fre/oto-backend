@@ -28,3 +28,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "FullEnrich"
 LOGO_DOMAIN = "fullenrich.com"
+
+DESCRIPTION = (
+    "Enrichissement « waterfall » chez FullEnrich : combine plusieurs "
+    "fournisseurs de données pour retrouver l'email et le téléphone d'un "
+    "contact avec le meilleur taux de succès."
+)

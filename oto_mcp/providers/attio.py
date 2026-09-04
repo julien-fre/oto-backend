@@ -19,3 +19,11 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Attio"
 LOGO_DOMAIN = "attio.com"
+
+DESCRIPTION = (
+    "Un CRM léger et personnalisable : lister, créer et mettre à jour des "
+    "enregistrements (personnes, entreprises, deals) selon le schéma propre à "
+    "ton espace Attio. Hors socle depuis juin 2026 — le MCP officiel d'Attio "
+    "est aujourd'hui plus complet ; ce connecteur reste disponible pour des "
+    "implémentations sur mesure."
+)

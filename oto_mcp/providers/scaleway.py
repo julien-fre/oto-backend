@@ -26,3 +26,9 @@ CONNECTOR = _c(
 )
 
 LOGO_DOMAIN = "scaleway.com"
+
+DESCRIPTION = (
+    "L'envoi d'email transactionnel via le compte Scaleway TEM de ton "
+    "organisation, depuis un domaine vérifié chez Scaleway. Expéditeurs et "
+    "fenêtre calme (quiet hours) se configurent sur la fiche du connecteur."
+)

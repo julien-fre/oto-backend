@@ -36,3 +36,11 @@ PUBLISHER = "redditapis.com (passerelle tierce)"
 # Pas le logo de Reddit : le service rendu n'est pas le sien. Et redditapis.com
 # n'est pas une marque que l'utilisateur reconnaîtrait — monogramme côté UI.
 SANS_LOGO_DE_MARQUE = True
+
+DESCRIPTION = (
+    "Lire des posts, subreddits et commentaires Reddit avec leurs métriques "
+    "(score, nombre de commentaires, ratio d'upvotes), via une passerelle "
+    "tierce (redditapis.com) — l'API officielle de Reddit est fermée au self- "
+    "serve. Clé plateforme partagée avec quota quotidien, ou clé de ta propre "
+    "passerelle."
+)

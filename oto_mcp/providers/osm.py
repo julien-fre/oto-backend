@@ -16,3 +16,9 @@ CONNECTOR = _c(
 # la carte porte déjà le logo openstreetmap.org (corrigé le 2026-09-02).
 PUBLISHER = "OpenStreetMap"
 LOGO_DOMAIN = "openstreetmap.org"
+
+DESCRIPTION = (
+    "Les points d'intérêt OpenStreetMap sur une zone, filtrés par tag "
+    "(parkings, équipements, commerces…) : un recensement exhaustif via "
+    "Overpass, en donnée ouverte."
+)

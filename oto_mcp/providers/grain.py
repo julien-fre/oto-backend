@@ -21,3 +21,9 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "Grain"
 LOGO_DOMAIN = "grain.com"
+
+DESCRIPTION = (
+    "Les réunions enregistrées par Grain : transcripts, partage, webhooks et "
+    "données d'organisation. Jeton personnel ou jeton workspace (accès admin à "
+    "toutes les données de l'espace)."
+)

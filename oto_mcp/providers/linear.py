@@ -24,3 +24,10 @@ CONNECTOR = _c(
 CATEGORY = "Métier"
 PUBLISHER = "Linear"
 LOGO_DOMAIN = "linear.app"
+
+DESCRIPTION = (
+    "Le suivi de projet Linear : issues, projets, cycles (sprints), équipes, "
+    "labels, commentaires et webhooks. Une clé par workspace, posée par l'org — "
+    "pas de clé personnelle ni de pool partagé, une clé API Linear est scopée à "
+    "un espace de travail."
+)

@@ -40,3 +40,10 @@ CONNECTOR = _c(
 )
 
 LOGO_DOMAIN = "anthropic.com"
+
+DESCRIPTION = (
+    "Déclencher une routine Claude Code (agent autonome hébergé chez Anthropic) "
+    "via son endpoint `/fire` : oto ne fait pas tourner l'agent, il le lance — "
+    "l'agent revient ensuite avec les outils de ton propre compte. Une instance "
+    "= une routine, révocable seule."
+)

@@ -54,3 +54,10 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "Leexi"
 LOGO_DOMAIN = "leexi.ai"
+
+DESCRIPTION = (
+    "Les appels et réunions enregistrés par Leexi : transcripts, notes de "
+    "synthèse, équipes — même famille que Fireflies, Grain et Granola. "
+    "Authentification à deux champs générés par un compte admin, dans Settings "
+    "→ API Keys."
+)

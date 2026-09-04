@@ -21,3 +21,9 @@ CONNECTOR = _c(
 CATEGORY = "Finance"
 PUBLISHER = "GoCardless"
 LOGO_DOMAIN = "gocardless.com"
+
+DESCRIPTION = (
+    "Les prélèvements SEPA d'un compte GoCardless, en lecture. Chacun connecte "
+    "son propre compte (sandbox ou production) — pas de clé plateforme "
+    "partagée."
+)

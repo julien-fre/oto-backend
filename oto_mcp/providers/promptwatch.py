@@ -40,3 +40,10 @@ CONNECTOR = _c(
 CATEGORY = "Marketing"
 PUBLISHER = "PromptWatch"
 LOGO_DOMAIN = "promptwatch.com"
+
+DESCRIPTION = (
+    "Comment une marque apparaît dans les réponses de ChatGPT, Claude, Gemini "
+    "et consorts — visibilité, sentiment et citations, organisés en prompts et "
+    "en monitors, avec du contenu généré par IA pour combler les trous de "
+    "couverture repérés."
+)

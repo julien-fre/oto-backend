@@ -25,3 +25,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Tavily"
 LOGO_DOMAIN = "tavily.com"
+
+DESCRIPTION = (
+    "Une réponse rédigée et sourcée à une question, plutôt qu'une liste de "
+    "liens à dépouiller soi-même — plus l'extraction, le crawl et le plan (map) "
+    "d'un site, pensés pour un agent. Clé plateforme ouverte disponible, avec "
+    "un quota mensuel."
+)

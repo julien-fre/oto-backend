@@ -34,3 +34,10 @@ CONNECTOR = _c(
 CATEGORY = "Métier"
 PUBLISHER = "Productlane"
 LOGO_DOMAIN = "productlane.com"
+
+DESCRIPTION = (
+    "Les retours clients remontés dans Productlane : fils de discussion, "
+    "contacts, entreprises, plus la roadmap publique et le centre d'aide. La "
+    "roadmap est adossée à Linear — les mêmes projets et issues s'y retrouvent "
+    "des deux côtés."
+)

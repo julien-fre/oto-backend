@@ -24,3 +24,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Firecrawl"
 LOGO_DOMAIN = "firecrawl.dev"
+
+DESCRIPTION = (
+    "Convertir une page ou un site entier en markdown propre à donner à un "
+    "agent — pas un moteur de recherche. Scrape une URL, crawl ou map un site "
+    "complet, ou cherche sur le web avec le contenu des pages déjà extrait. "
+    "Accès plateforme réservé (grant explicite), le BYO reste ouvert."
+)

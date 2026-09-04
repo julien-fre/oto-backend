@@ -23,3 +23,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Folk"
 LOGO_DOMAIN = "folk.app"
+
+DESCRIPTION = (
+    "Le CRM Folk : contacts, entreprises, deals et objets personnalisés. Clé "
+    "API classique — coexiste avec le connecteur `folkmcp` (MCP officiel par "
+    "OAuth), l'un ou l'autre étant visible selon l'utilisateur."
+)

@@ -46,3 +46,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Salesforce"
 LOGO_DOMAIN = "salesforce.com"
+
+DESCRIPTION = (
+    "Le CRM Salesforce : contacts, comptes (entreprises), leads, opportunités "
+    "et notes. OAuth2 via une Connected App, en flow de consentement — plus de "
+    "refresh token à coller à la main."
+)

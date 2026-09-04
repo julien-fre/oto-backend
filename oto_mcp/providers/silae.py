@@ -25,3 +25,9 @@ CONNECTOR = _c(
 CATEGORY = "Finance"
 PUBLISHER = "Silae"
 LOGO_DOMAIN = "silae.fr"
+
+DESCRIPTION = (
+    "La paie d'une entreprise dans Silae (lecture) : bulletins, salariés, "
+    "éléments variables. IBAN et BIC sont masqués avant d'atteindre l'agent. "
+    "OAuth2 à trois secrets, généré côté admin Silae."
+)

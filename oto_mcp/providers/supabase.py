@@ -17,3 +17,10 @@ CONNECTOR = _c(
 CATEGORY = "Dev"
 PUBLISHER = "Supabase"
 LOGO_DOMAIN = "supabase.com"
+
+DESCRIPTION = (
+    "Le Management API de Supabase : lister et configurer les projets, la "
+    "configuration d'authentification, consulter les logs. Pas les données de "
+    "l'application elle-même (les tables Postgres du projet) — seulement son "
+    "administration."
+)

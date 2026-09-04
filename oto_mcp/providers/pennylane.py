@@ -16,3 +16,10 @@ CONNECTOR = _c(
 CATEGORY = "Finance"
 PUBLISHER = "Pennylane"
 LOGO_DOMAIN = "pennylane.com"
+
+DESCRIPTION = (
+    "La comptabilité de l'entreprise dans Pennylane : factures, clients, "
+    "fournisseurs, transactions bancaires et balance comptable. À distinguer de "
+    "`pennylaneged`, qui donne accès au bac documentaire (GED) via une session "
+    "navigateur plutôt qu'une clé API."
+)

@@ -21,3 +21,8 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Bright Data"
 LOGO_DOMAIN = "brightdata.com"
+
+DESCRIPTION = (
+    "Scraping et SERP via le réseau de proxys Bright Data — la carte existe, "
+    "les tools (SERP, Unlocker, Datasets) ne sont pas encore construits."
+)

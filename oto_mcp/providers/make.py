@@ -21,3 +21,9 @@ CONNECTOR = _c(
 CATEGORY = "Automatisation"
 PUBLISHER = "Make"
 LOGO_DOMAIN = "make.com"
+
+DESCRIPTION = (
+    "Les scénarios Make (ex-Integromat) : lister, déclencher et suivre "
+    "l'exécution, consulter les logs, via l'API v2. Deux champs : le jeton API "
+    "et l'URL de zone de ton compte (europe ou US)."
+)

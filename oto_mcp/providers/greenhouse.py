@@ -22,3 +22,8 @@ CONNECTOR = _c(
 CATEGORY = "Recrutement"
 PUBLISHER = "Greenhouse"
 LOGO_DOMAIN = "greenhouse.io"
+
+DESCRIPTION = (
+    "Le recrutement suivi dans Greenhouse (ATS) : candidats, offres d'emploi, "
+    "candidatures et notes, via l'API Harvest. Hors socle, à activer par org."
+)

@@ -35,3 +35,10 @@ CONNECTOR = _c(
 
 CATEGORY = "Finance"
 LOGO_DOMAIN = "pennylane.com"
+
+DESCRIPTION = (
+    "Le bac documentaire (GED) de Pennylane, via ta session Pennylane connectée "
+    "par navigateur hébergé — pas la clé API publique du connecteur "
+    "`pennylane`, qui n'a aucun accès à ces documents. Configurable au niveau "
+    "d'un utilisateur, d'une équipe ou de toute l'organisation."
+)

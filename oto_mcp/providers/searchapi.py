@@ -23,3 +23,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "SearchApi"
 LOGO_DOMAIN = "searchapi.io"
+
+DESCRIPTION = (
+    "Le même périmètre multi-moteurs que SerpApi — Google, YouTube, Bing, "
+    "offres d'emploi, actualités, cartes, Google Scholar — à poser si ta clé "
+    "est chez SearchApi.io plutôt que SerpApi. Clé plateforme partagée "
+    "disponible, avec un quota quotidien."
+)

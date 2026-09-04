@@ -36,3 +36,9 @@ PUBLISHER = "Otomata"
 # Pas le logo de Planity : le service monté est le nôtre, pas une intégration
 # officielle de Planity. Monogramme côté UI.
 SANS_LOGO_DE_MARQUE = True
+
+DESCRIPTION = (
+    "L'agenda et la caisse Planity d'un salon : rendez-vous, clients, chiffre "
+    "d'affaires et statistiques, via une passerelle qu'Otomata opère et qui "
+    "rejoue ta connexion Planity (email + mot de passe) pour toi."
+)

@@ -20,3 +20,8 @@ CONNECTOR = _c(
 CATEGORY = "Recrutement"
 PUBLISHER = "Recruitee"
 LOGO_DOMAIN = "recruitee.com"
+
+DESCRIPTION = (
+    "Le recrutement suivi dans Recruitee (ATS) : candidats, offres d'emploi "
+    "(offers) et notes."
+)
