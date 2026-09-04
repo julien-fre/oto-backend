@@ -10,6 +10,9 @@ from ._model import _c
 CONNECTOR = _c(
     "pennylane", ["pennylane"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
+    # Le grand livre est un domaine à lui : son propre module, même clé et même
+    # namespace (`pennylane_*`, le gate d'activation lit le 1er token).
+    modules=("pennylane", "pennylane_ledger"),
     label="Pennylane", help="compta", href="https://app.pennylane.com",
 )
 

@@ -39,7 +39,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pennylane_ref(kind: Literal["company", "fiscal_years", "ledger_accounts",
-                                    "categories", "invoice_templates", "products"],
+                                    "journals", "categories", "invoice_templates",
+                                    "products"],
                       product_id: Optional[int] = None,
                       max_pages: Optional[int] = None) -> dict | list:
         """Référentiels Pennylane en LECTURE SEULE — ce qu'il faut résoudre AVANT
@@ -49,6 +50,11 @@ def register(mcp: FastMCP) -> None:
         - "company" : informations de l'entreprise du compte courant.
         - "fiscal_years" : exercices fiscaux.
         - "ledger_accounts" : plan comptable (comptes du grand livre).
+        - "journals" : journaux (`{id, code, label, type}` — « HA » achats, « VT »
+          ventes, « BQ » banque…). Prérequis d'une écriture au grand livre, qui
+          exige un `journal_id` : ces ids sont PROPRES À LA SOCIÉTÉ, les résoudre
+          ici plutôt que les coder en dur. Scope `journals:*`, distinct de celui
+          des écritures — une clé peut lire les unes sans les autres.
         - "categories" : catégories de dépenses.
         - "invoice_templates" : modèles de facturation. Le modèle pilote le RENDU
           PDF — notamment le modèle « Avoir » (sans bloc paiement/IBAN), seul moyen
@@ -75,6 +81,8 @@ def register(mcp: FastMCP) -> None:
             return c.get_fiscal_years()
         if kind == "ledger_accounts":
             return c.get_ledger_accounts()
+        if kind == "journals":
+            return c.get_journals(max_pages=max_pages)
         if kind == "categories":
             return c.get_categories()
         if kind == "invoice_templates":
@@ -84,7 +92,7 @@ def register(mcp: FastMCP) -> None:
                 return c.get_product(product_id)
             return c.list_products(max_pages=max_pages)
         raise _bad("kind doit être 'company', 'fiscal_years', 'ledger_accounts', "
-                   "'categories', 'invoice_templates' ou 'products'")
+                   "'journals', 'categories', 'invoice_templates' ou 'products'")
 
     # --- clients -------------------------------------------------------------
 
