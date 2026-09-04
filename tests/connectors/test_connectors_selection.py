@@ -1,7 +1,9 @@
 """Sélection marketplace (`connectors.*`) — projection compacte (#109) + guidage
 d'activation (#111). Seams de domaine monkeypatchés (pas de DB)."""
+import pytest
+
 from oto_mcp.capabilities.connectors import selection as CS
-from oto_mcp.capabilities._types import ResolvedCtx
+from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 
 def _catalog(monkeypatch, entries):
@@ -61,6 +63,35 @@ def test_me_state_filter(monkeypatch):
                         lambda sub, org: {"hunter": "active"})
     out = CS._me(ResolvedCtx(sub="u1", org_id=42), CS.MyConnectorsInput(state="active"))
     assert [c["name"] for c in out["connectors"]] == ["hunter"]
+
+
+# ── oto#42 / oto-backend#868 : un unselect qui ne retire rien REFUSE ──────────
+
+def test_unselect_reussi_rend_removed_true(monkeypatch):
+    monkeypatch.setattr(CS.connector_selection, "unselect", lambda sub, name, org: True)
+    out = CS._unselect(ResolvedCtx(sub="u1", org_id=42), CS.ConnectorActionInput(name="hunter"))
+    assert out == {"connector": "hunter", "state": "not_selected", "removed": True}
+
+
+def test_unselect_sans_ligne_a_retirer_refuse_au_lieu_de_repondre_ok(monkeypatch):
+    """Le défaut signalé (oto-backend#868) : `unselect` sur un connecteur déjà
+    non-sélectionné (ou sélectionné sous une autre org active) ne trouve aucune
+    ligne — `rowcount=0` — et ça ne doit plus jamais se lire comme un succès."""
+    monkeypatch.setattr(CS.connector_selection, "unselect", lambda sub, name, org: False)
+    with pytest.raises(AuthzDenied) as e:
+        CS._unselect(ResolvedCtx(sub="u1", org_id=42), CS.ConnectorActionInput(name="instagram"))
+    assert e.value.code == "connector_not_selected" and e.value.status == 404
+    assert "instagram" in e.value.message
+
+
+def test_unselect_scope_lappel_sur_org_id_ou_zero(monkeypatch):
+    """`ctx.org_id or 0` : la même règle que `_select`/`_pause`, un espace perso
+    (org_id=None côté ctx) écrit/lit sous la sentinelle 0, jamais None en SQL."""
+    seen = []
+    monkeypatch.setattr(CS.connector_selection, "unselect",
+                        lambda sub, name, org: seen.append((sub, name, org)) or True)
+    CS._unselect(ResolvedCtx(sub="u1", org_id=None), CS.ConnectorActionInput(name="hunter"))
+    assert seen == [("u1", "hunter", 0)]
 
 
 # ── #326 : filtre `name` (lecture d'état ciblée, plus d'échec silencieux) ──

@@ -68,6 +68,17 @@ Source de vérité = tables PG `user_disabled_tools(sub, tool_name)` (négatif) 
 
 **Sélection par membre = régime NOMINAL « non-sélectionné = masqué » (ADR 0019/0050).** La toolbox d'un membre = les connecteurs qu'il a **installés** (`user_selected_connectors`, per (sub, org)). Au premier profil d'un (sub, org), `session_visibility` seed le socle `providers.DEFAULT_ACTIVE_CONNECTORS` ∩ exposé — **VIDE depuis le 16/07** (décision produit : un nouveau compte démarre SANS connecteurs installés ; l'agent guide depuis les tools spine — `oto_connector` op=list/select, `oto_call` — et le catalogue injecté au bloc A) ; tout l'exposé = library installable (capacité `connectors.select`, dashboard). Les pairs pré-0050 ont été backfillés une fois avec leur visible d'alors (`connector_selection.backfill_preexisting`, sentinelle `#adr0050-backfill`). Un connecteur activé pour l'org APRÈS le seed arrive dans la library, pas dans la toolbox. Le grain CONNECTEUR `default_hidden` et les flags `OTO_CONNECTOR_SELECTION_*` ont été **retirés** (0050). **Masqués par défaut, grain OUTIL** (`is_default_hidden` = `DEFAULT_HIDDEN_TOOLS` seul : `email_send`, `fr_egapro_declaration`) : self-activables. Règle effective (`is_tool_visible`) : override positif prime > désactivé > masqué par un admin (denylist org/équipe ci-dessus) > masqué-par-défaut plateforme > visible. `oto_enable_tool` pose l'override, `oto_disable_tool` le lève (même logique côté REST `/api/me/tools/{name}`). **Stdio local (sub=None) = accès complet**, le masquage ne vise que le multi-user. Sortir un connecteur du départ = ne PAS le mettre dans le socle `default_active` ; un tool isolé = `DEFAULT_HIDDEN_TOOLS`.
 
+> **Un `unselect` qui ne retire rien REFUSE (oto#42, oto-backend#868, 04/09).**
+> `connectors.unselect` répondait `ok` avec `removed: false` sur un `DELETE` qui n'avait
+> touché aucune ligne — un succès qui n'a rien fait, pire qu'un refus (même patron que
+> l'unlink de projet, `d3c5de40`). Il refuse désormais nommément (`connector_not_selected`,
+> 404) ; `removed` vaut toujours `True` sur un succès. La cause régulièrement en jeu n'est
+> pas propre à ce verbe : `select`/`pause`/`unselect` lisent et écrivent tous sous
+> `ctx.org_id or 0`, l'org **active au moment de l'appel** — un membre dont la sélection a
+> été posée sous une autre org (legacy `org_id=0` d'avant la suppression du « perso sans
+> org », ADR 0030 §8 ; ou une org active qui a changé depuis) ne verra ni ne pourra jamais
+> toucher cette ligne-là par ce chemin, quel que soit le nombre de tentatives.
+
 ## Surfaces BÊTA : une population CHOISIE, pas une découvrabilité (2026-09-01)
 
 **Troisième grain de masquage, et il ne se confond avec aucun des deux autres.** Un

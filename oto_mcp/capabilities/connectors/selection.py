@@ -226,8 +226,10 @@ class ConnectorSelectionState(BaseModel):
     # montés dans la conversation courante (registre figé à l'ouverture), il faut
     # passer par `oto_call` ou rouvrir une conversation.
     hint: Optional[str] = None
-    # `unselect` seulement. `false` = il n'y avait rien à retirer : l'opération est
-    # idempotente, ce n'est PAS un échec.
+    # `unselect` seulement, toujours `True` sur un succès (oto#42/oto-backend#868) :
+    # un retrait qui n'a rien trouvé REFUSE désormais (`connector_not_selected`, 404)
+    # au lieu de rendre `removed: false` sur un 200 — un succès qui n'a rien fait est
+    # pire qu'un refus, même pattern que l'unlink de projet (`d3c5de40`).
     removed: Optional[bool] = None
 
 
@@ -547,8 +549,18 @@ def _pause(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
 
 
 def _unselect(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
-    removed = connector_selection.unselect(ctx.sub, inp.name, ctx.org_id or 0)
-    return {"connector": inp.name, "state": "not_selected", "removed": removed}
+    # oto#42/oto-backend#868 — un retrait qui ne retire rien ne répond plus `ok`
+    # (`removed: false` par-dessus un 200 se lisait comme un succès idempotent ;
+    # `setExposure` côté dashboard ne lit d'ailleurs pas ce champ et pose l'état
+    # local dès que l'appel n'a pas levé). REFUSE nommément, sur le même patron
+    # que l'unlink de projet (`d3c5de40`) : un succès qui n'a rien fait est pire
+    # qu'un refus.
+    if not connector_selection.unselect(ctx.sub, inp.name, ctx.org_id or 0):
+        raise AuthzDenied(404, "connector_not_selected",
+                          f"`{inp.name}` n'est pas dans ta sélection active pour cette org — "
+                          "rien n'a été retiré (déjà désinstallé, ou jamais installé ici). "
+                          "`connectors.me` te dit ce qui l'est.")
+    return {"connector": inp.name, "state": "not_selected", "removed": True}
 
 
 def _recommend(ctx: ResolvedCtx, inp: RecommendInput) -> dict:
@@ -665,7 +677,13 @@ CAPABILITIES += [
         key="connectors.unselect", handler=_unselect, Input=ConnectorActionInput, authz=SUB_ONLY,
         Output=ConnectorSelectionState,
         description="Remove a connector from your workspace (back to the library). Does not touch "
-                    "credentials, only your selection.",
+                    "credentials, only your selection. REFUSES (connector_not_selected, 404) if "
+                    "it wasn't in your active selection for this org — it never answers ok on a "
+                    "removal that found nothing.",
+        errors=(DeclaredError(404, "connector_not_selected",
+                              "le connecteur n'est pas dans ta sélection active pour "
+                              "cette org : déjà retiré, jamais installé ici, ou "
+                              "installé sous une autre org active"),),
         rest=RestBinding("DELETE", "/api/me/connectors/{name}"),
     ),
     Capability(
