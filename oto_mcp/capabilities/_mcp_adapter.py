@@ -19,6 +19,7 @@ Dépend du core (sens unique ADR 0004) ; le core n'importe pas cet adaptateur.
 """
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import logging
 from typing import Optional
@@ -105,6 +106,10 @@ def _make_tool(cap: Capability):
             raw = RawCtx(sub=current_user_sub_from_token())
             inp = cap.Input(**kwargs)                 # validation (seule source : Input)
             ctx = cap.authz(raw, inp)                 # autz (peut lire inp pour ORG_ADMIN_OF)
+            # Le canal est posé ICI, au seuil : la règle d'autz sert les deux faces et
+            # ne peut pas le savoir. `replace` plutôt qu'une mutation — un ctx est un
+            # fait, pas un accumulateur.
+            ctx = dataclasses.replace(ctx, channel="mcp")
             before = None
             if ctx.org_id is not None and raw.sub:
                 # Org résolue AVANT le handler (même garde que l'écho plus bas — une cap

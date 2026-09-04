@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from ... import db
 from .._authz import PROJECT_SHARED_READ
+from .. import _publication
 from .._types import Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 from . import changes, common, history, patch, reads, view, writes
@@ -140,6 +141,12 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         return reads.backlinks(sub, inp, row, pid)
 
     if inp.op == "set_public":
+        # Retirer un partage public RÉDUIT la portée : jamais un risque, jamais gardé.
+        # Seul `public=True` ouvre.
+        if inp.public:
+            _publication.refuser_si_agent(
+                ctx, "cette page",
+                "Elle se partage depuis le dashboard, sur la page elle-même.")
         return writes.set_public(sub, inp, row, pid)
 
     if inp.op == "request_change":

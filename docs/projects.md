@@ -183,7 +183,24 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > **Endpoint MCP par projet — `<slug>.mcp.oto.cx` (ADR 0032, amende #44).** Un projet
 > se **publie** comme serveur MCP dédié sur son propre sous-domaine (le « preset » de
 > l'ADR 0032 §7). Colonnes `projects.mcp_slug`/`mcp_access`(`off|anonymous|secret|org`)/`mcp_tools[]` ;
-> capacité `oto_project` op **`publish_mcp`/`unpublish_mcp`** (autz `can_govern`) ; **sonde de
+> capacité `oto_project` op **`publish_mcp`/`unpublish_mcp`** (autz `can_govern`).
+> ⚠️ **Publier au-delà de l'org ne sort pas d'une conversation (04/09/2026).** Décision
+> d'Alexis après l'inventaire des chemins d'élargissement : « org = explicite, public =
+> interdit à l'agent ». `mcp_access` **n'a plus de défaut** (il valait `anonymous` — le
+> web entier, *et* listé dans l'annuaire public : publier sans rien préciser était le
+> geste le plus ouvert) ; et `anonymous`/`secret` sont refusés
+> (`publication_reservee_a_l_humain`, 403) quand l'appel vient de la face **MCP**, que
+> `ResolvedCtx.channel` nomme depuis les deux seuils (`_mcp_adapter`, `_rest_adapter`).
+> L'asymétrie est délibérée : un contenu d'org reste dans une population nommée et se
+> reprend, un contenu servi sans login est indexable et ne se reprend pas.
+> ⚠️ **Ce n'est pas un contrôle d'accès mais un cran d'intention** : un porteur de jeton
+> peut toujours appeler la face REST. Il vise le geste non voulu, pas l'adversaire — le
+> nommer « sécurité » ferait croire le vrai contrôle posé. Même régime pour `oto_doc
+> op=set_public` (l'OUVERTURE seule : `public=false` reste permis, sinon un agent
+> constaterait une fuite sans pouvoir la refermer) et `oto_procedure op=publish`, dont
+> le `visibility` perd aussi son défaut `public`. Le canal se lit sur le MONTAGE
+> (`tests/test_canal_d_appel.py`) : non posé, toutes ces gardes seraient vertes et
+> inertes. **Sonde de
 > publication NON bloquante** (`_mcp_unresolvable_tools`) : pour un preset sans login, les tools
 > **non credential-less** (`secret_kind≠none`) ou dont le connecteur n'a pas de clé résoluble pour
 > l'org propriétaire sont **publiés quand même** mais **échouent proprement à l'appel** (McpError,

@@ -83,7 +83,7 @@ async def _appeler(qs: str):
         return {"ok": True}
 
     cap = Capability(key="test.repete", handler=_core, Input=_Input,
-                     authz=lambda raw, inp: raw, rest=RestBinding("GET", "/api/x"))
+                     authz=lambda raw, inp: ResolvedCtx(sub=raw.sub), rest=RestBinding("GET", "/api/x"))
     code, corps = await _get(_handler_de(cap, cap.rest), "/api/x", qs)
     return code, corps, vus
 

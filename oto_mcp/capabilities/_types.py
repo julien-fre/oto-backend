@@ -37,6 +37,26 @@ class ResolvedCtx:
     org_id: Optional[int] = None
     role: Optional[str] = None
     group_id: Optional[int] = None
+    # D'OÙ vient l'appel — `"mcp"` = un agent parle, `"rest"` = la face HTTP (le
+    # dashboard, où un humain clique ; ou un intégrateur qui a écrit son code).
+    #
+    # Posé au SEUIL par les adaptateurs, jamais par une règle d'autz : les règles sont
+    # communes aux deux faces, c'est le transport qui sait. Une règle qui le poserait
+    # mentirait sur la moitié des appels.
+    #
+    # ⚠️ **Ce n'est pas un contrôle de sécurité, c'est un cran d'intention** (décision
+    # d'Alexis, 04/09/2026 : « org = explicite, public = interdit à l'agent »). Il
+    # empêche qu'une CONVERSATION rende un contenu lisible sans login — le chemin par
+    # lequel un document marqué non diffusable s'est retrouvé partagé. Un agent qui
+    # détient un jeton porté peut toujours appeler la face REST : le cran vise le geste
+    # non voulu, pas l'adversaire. Dire l'inverse serait promettre une garantie qu'il
+    # ne tient pas.
+    #
+    # ⚠️ `None` = ni l'un ni l'autre (appel interne, banc). Les gardes ne refusent que
+    # sur `"mcp"` EXPLICITE, jamais sur « pas rest » : un adaptateur qui oublierait de
+    # le poser rendrait alors la garde inerte — un vert qui ne prouve rien. C'est
+    # pourquoi `tests/test_canal_d_appel.py` le lit sur le MONTAGE réel.
+    channel: Optional[str] = None
 
 
 class AuthzDenied(Exception):

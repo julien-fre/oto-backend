@@ -52,7 +52,10 @@ def test_procedure_routes(monkeypatch):
     assert run(P(op="delete", slug="s1"))["called"] == "delete"
     assert run(P(op="library_list"))["called"] == "library_list"
     assert run(P(op="library_get", slug="pub"))["called"] == "library_get"
-    out = run(P(op="publish", slug="s1"))
+    # ⚠️ `visibility` est EXPLICITE depuis le 04/09 : ce banc enregistrait le défaut
+    # `"public"` au lieu de le défendre, et ce défaut publiait dans la bibliothèque
+    # publique une procédure d'org dont personne n'avait choisi la portée.
+    out = run(P(op="publish", slug="s1", visibility="public"))
     assert out["called"] == "publish" and out["inp"].visibility == "public"
     assert run(P(op="fork", slug="pub", new_slug="mine"))["called"] == "fork"
     assert run(P(op="unpublish", id=3))["called"] == "unpublish"
@@ -65,6 +68,8 @@ def test_procedure_required_fields():
         (P(op="delete"), "missing_slug"),
         (P(op="library_get"), "missing_slug"),
         (P(op="publish"), "missing_slug"),
+        # Le slug fourni, c'est la PORTÉE qui manque — et elle n'a plus de défaut.
+        (P(op="publish", slug="s1"), "missing_visibility"),
         (P(op="fork"), "missing_slug"),
         (P(op="unpublish"), "missing_id"),
     ]:

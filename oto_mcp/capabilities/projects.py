@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org, url_perimeter)
 from ._authz import ORG_MEMBER, SUB_ONLY
+from . import _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -1023,8 +1024,22 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                  "Publier un endpoint MCP est réservé au propriétaire / admin.", 403)
         if inp.op == "unpublish_mcp":
             return unpublish_project_mcp(sub, int(inp.project_id))
+        # ⚠️ Le défaut était `anonymous` : publier sans rien préciser ouvrait le projet
+        # au web ET le listait dans l'annuaire public. Un mode d'accès se choisit.
+        _require(inp.mcp_access, "missing_mcp_access",
+                 "`mcp_access` requis : 'org' (les membres de l'org, avec leur compte), "
+                 "'secret' (URL non devinable, sans login, sans expiration) ou "
+                 "'anonymous' (le web entier, et listé dans l'annuaire public). Il n'y "
+                 "a pas de défaut raisonnable ici — le plus ouvert l'était.")
+        if inp.mcp_access in ("anonymous", "secret"):
+            quoi = "ce projet"
+            if inp.mcp_expose_datastore is not False:
+                quoi = "ce projet et les tableaux qui y sont liés"
+            _publication.refuser_si_agent(
+                ctx, quoi,
+                "La publication se fait depuis le dashboard, sur la page du projet.")
         return publish_project_mcp(
-            sub, row, access_mode=inp.mcp_access or "anonymous", mcp_slug=inp.mcp_slug,
+            sub, row, access_mode=inp.mcp_access, mcp_slug=inp.mcp_slug,
             mcp_tools=inp.mcp_tools, expose_datastore=inp.mcp_expose_datastore,
             expose_datastore_write=inp.mcp_expose_datastore_write,
             expose_docs=inp.mcp_expose_docs,

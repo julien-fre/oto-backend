@@ -25,6 +25,7 @@ from . import guide_library
 from .orgs import instructions as orgs_instructions
 from ._authz import (BY_OP, GROUP_ADMIN_OPT, GROUP_MEMBER_OPT, ORG_ADMIN_OPT,
                      ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY)
+from . import _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
 
@@ -136,10 +137,20 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
         return lib._get(ctx, lib.LibraryGetInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (public) requis pour library_get.")))
     if inp.op == "publish":
+        # `public` ET `unlisted` sont servis SANS LOGIN (l'un est listé dans
+        # l'annuaire, l'autre non) : les deux sortent la procédure de l'org.
+        _publication.refuser_si_agent(
+            ctx, "cette procédure",
+            "Elle se publie depuis le dashboard, dans la bibliothèque de guides.")
         return lib._publish(ctx, lib.PublishInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (skill d'org) requis pour publish."),
             public_slug=inp.public_slug, title=inp.title, description=inp.description,
-            category=inp.category, tags=inp.tags, visibility=inp.visibility or "public"))
+            category=inp.category, tags=inp.tags,
+            visibility=_need(inp.visibility, "missing_visibility",
+                             "`visibility` requis : 'public' (listé dans la "
+                             "bibliothèque publique) ou 'unlisted' (accessible par son "
+                             "adresse, sans login, non listé). Le défaut était "
+                             "'public' — le plus ouvert des deux.")))
     if inp.op == "fork":
         return lib._fork(ctx, lib.ForkInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (public) requis pour fork."),

@@ -16,6 +16,7 @@ Dépend du core (sens unique ADR 0004).
 """
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import logging
 import types
@@ -191,6 +192,10 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                 faite DANS le thread — aucune capacité n'en fait, et le jour où l'une
                 s'y mettrait, c'est ici que ça se saurait."""
                 ctx_ = cap.authz(RawCtx(sub=sub), inp)
+                # Symétrique du seuil MCP : la face HTTP se nomme, elle aussi. Sans ça
+                # « pas mcp » serait la seule façon de reconnaître REST — donc un
+                # adaptateur muet passerait pour la face humaine.
+                ctx_ = dataclasses.replace(ctx_, channel="rest")
                 return ctx_, (None if handler_async else cap.handler(ctx_, inp))
 
             ctx, result = await run_in_threadpool(_amont)
