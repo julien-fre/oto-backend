@@ -13,7 +13,11 @@ quelqu'un ajoutera un critère :
    parler par-dessus lui, dans son produit. `tests/test_outreach_audience.py` rougit si
    un compte de partenaire entre dans une sélection.
 2. **On ne relance pas deux fois** : l'index unique `(campaign, sub)` de
-   `outreach_sends`, et l'écriture PRÉCÈDE l'envoi.
+   `outreach_sends`, et l'écriture PRÉCÈDE l'envoi. ⚠️ Cet index ne garde qu'un
+   COMPTE ; ce qui reçoit le message est une BOÎTE MAIL, et un humain peut s'inscrire
+   deux fois avec la même adresse (mesuré le 2026-09-04). Le doublon de boîte est donc
+   empêché par la LECTURE — `db/outreach.py` regroupe l'audience par adresse et sert
+   une ligne par boîte, en portant `accounts` pour que la fusion se voie.
 3. **On n'envoie pas ce qu'on n'a pas vu arriver dans sa propre boîte** : `op=send`
    refuse tant qu'un `op=test` n'a pas été reçu pour CETTE empreinte de contenu et
    pour CHAQUE langue que l'envoi va servir. Retoucher une virgule invalide l'essai.
@@ -21,7 +25,9 @@ quelqu'un ajoutera un critère :
    `confirm` refuse en annonçant N ; un `confirm` qui ne colle pas refuse aussi.
    Plafond dur à `db_outreach.MAX_ENVOI`.
 5. **Le refus se respecte** : chaque mail porte un lien de désinscription signé, et un
-   compte désinscrit quitte toute audience, pour toute campagne.
+   refus fait quitter toute audience, pour toute campagne. Il se lit sur TOUS les
+   comptes de la boîte : se désinscrire une fois doit suffire, même à qui s'est
+   inscrit deux fois.
 
 **Sur la langue, on ne devine pas.** Le seul signal déclaré est `users.locale`, la
 préférence d'UI du dashboard — posée sur 2 des 40 comptes de l'audience au 2026-09-02.
@@ -98,6 +104,11 @@ class AudienceRow(BaseModel):
     served_locale: str
     locale_source: Literal["declared", "default"]
     email_domain: Optional[str] = None
+    # Combien de COMPTES partagent cette boîte mail. Une relance s'adresse à la boîte,
+    # donc les comptes d'une même adresse sont fusionnés en une ligne — `sub` est le
+    # plus récent d'entre eux. Servi pour que la fusion se VOIE : une audience qui
+    # rétrécit sans dire pourquoi se lit comme un filtre qui a trop mordu.
+    accounts: int = 1
     sent: Optional[bool] = None
     reason: Optional[str] = None
 
@@ -190,6 +201,7 @@ def _fiche(row: dict, defaut: str) -> dict:
             "previous_outreach": int(row.get("relances_deja_recues") or 0),
             "locale": row.get("locale"), "served_locale": lg, "locale_source": source,
             "email_domain": _domaine(row.get("email")),
+            "accounts": int(row.get("comptes") or 1),
             "sent": None, "reason": None}
 
 

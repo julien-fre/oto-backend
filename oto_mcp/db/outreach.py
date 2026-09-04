@@ -1,10 +1,40 @@
 """Relance de plateforme : l'audience, le journal des envois, les refus.
 
-Une relance s'adresse à une **personne**, donc tout se compte par COMPTE (`users.sub`)
-et jamais par organisation. Le piège est mesuré : au 2026-09-02, 64 des 78 organisations
-directes vivantes sont des espaces PERSONNELS créés d'office à l'inscription — compter
-l'inactivité par org, c'est écrire à quelqu'un au sujet d'un espace qu'il n'a jamais
-demandé, et le message n'a alors aucun sens pour lui.
+Une relance s'adresse à une **personne**, jamais à une organisation. Le piège est mesuré :
+au 2026-09-02, 64 des 78 organisations directes vivantes sont des espaces PERSONNELS créés
+d'office à l'inscription — compter l'inactivité par org, c'est écrire à quelqu'un au sujet
+d'un espace qu'il n'a jamais demandé, et le message n'a alors aucun sens pour lui.
+
+## Une personne, c'est une BOÎTE MAIL — pas un compte
+
+⚠️ Le grain n'est PAS `users.sub`, et c'est une correction, pas une nuance : compter par
+compte a affiché **deux fois la même personne** dans l'audience du 2026-09-04, et l'aurait
+donc servie deux fois dans la même boîte. Un humain peut s'inscrire deux fois avec la même
+adresse — mesuré le 2026-09-04 : sur 91 comptes et 77 adresses, **10 adresses portent
+2 comptes**. Neuf de ces paires opposent un sub qualifié chez un partenaire à un sub nu (le
+filtre partenaire en écarte déjà une moitié) ; la dixième est une **vraie double
+inscription chez nous**, deux subs nus créés à deux semaines d'écart.
+
+Ce qui reçoit le message, c'est la boîte. Donc `_AUDIENCE_SQL` **regroupe par adresse
+normalisée** (`lower(btrim(email))`) et sert **une ligne par boîte** :
+
+- le compte SERVI (`sub`) est le plus récent de la boîte — celui par lequel la personne
+  est entrée en dernier ; c'est lui qui portera la trace d'envoi et le lien de refus ;
+- l'activité est agrégée : `appels` = la somme, `last_seen_at` = le maximum. Sans quoi
+  quelqu'un d'actif sur son second compte serait dit « jamais actif » sur le premier ;
+- les trois soustractions (refus, déjà-relancé, appartenance) se lisent sur **TOUS** les
+  comptes de la boîte, via `p.subs`. C'est le point qui compte : un refus posé depuis un
+  compte doit sortir la personne, pas ce compte-là. Sans ça, se désinscrire une fois ne
+  suffirait pas, et le lien de désinscription mentirait.
+
+⚠️ **L'index unique `(campagne, sub)` ne voit rien de tout ça.** Il empêche deux envois
+au même COMPTE ; deux comptes distincts n'ont jamais violé cette contrainte. C'est donc
+ici, dans la lecture, que le doublon de boîte est empêché — et nulle part ailleurs.
+
+⚠️ **Le regroupement est EN AVAL du filtre partenaire, délibérément** : `notres` a déjà
+écarté les comptes d'un tenant tiers, donc un compte de partenaire ne peut ni entrer dans
+une boîte, ni en faire sortir un des nôtres. Regrouper d'abord rouvrirait la porte que
+tout ce fichier ferme.
 
 ## Le filtre partenaire est dans la REQUÊTE, pas dans une consigne
 
@@ -91,35 +121,69 @@ WITH pref AS ({_TENANT_PREF_SQL}),
      appels AS (
          SELECT sub, COUNT(*) AS appels, MAX(created_at) AS last_seen_at
            FROM tool_calls WHERE kind = 'mcp' AND sub IS NOT NULL GROUP BY sub
+     ),
+     -- Un COMPTE, avec son activité et son adresse normalisée. Sans adresse il n'y a
+     -- rien à envoyer — et rien à regrouper : le filtre est donc ici, en amont.
+     comptes AS (
+         SELECT lower(btrim(n.email)) AS adresse, n.sub, n.email, n.name, n.locale,
+                n.created_at, COALESCE(a.appels, 0) AS appels, a.last_seen_at
+           FROM notres n
+           LEFT JOIN appels a ON a.sub = n.sub
+          WHERE n.email IS NOT NULL AND btrim(n.email) <> ''
+     ),
+     -- Une PERSONNE = une boîte mail (cf. l'en-tête du module). Le compte servi est le
+     -- plus récent ; l'activité s'additionne ; `subs` porte TOUS les comptes de la
+     -- boîte, parce que c'est sur eux que se lisent le refus et le déjà-relancé.
+     personnes AS (
+         SELECT c.adresse,
+                COUNT(*) AS comptes,
+                ARRAY_AGG(c.sub) AS subs,
+                (ARRAY_AGG(c.sub
+                    ORDER BY c.created_at DESC NULLS LAST, c.sub))[1] AS sub,
+                (ARRAY_AGG(c.email
+                    ORDER BY c.created_at DESC NULLS LAST, c.sub))[1] AS email,
+                -- Un nom ou une langue DÉCLARÉS sur l'un des comptes valent pour la
+                -- personne : préférer le renseigné au récent, sinon le second compte,
+                -- souvent vide, effacerait ce que le premier savait d'elle.
+                (ARRAY_AGG(c.name ORDER BY (c.name IS NULL),
+                    c.created_at DESC NULLS LAST, c.sub))[1] AS name,
+                (ARRAY_AGG(c.locale ORDER BY (c.locale IS NULL),
+                    c.created_at DESC NULLS LAST, c.sub))[1] AS locale,
+                MIN(c.created_at) AS created_at,
+                SUM(c.appels) AS appels,
+                MAX(c.last_seen_at) AS last_seen_at
+           FROM comptes c
+          GROUP BY c.adresse
      )
 SELECT {{projection}}
-  FROM notres n
-  LEFT JOIN appels a ON a.sub = n.sub
- WHERE n.email IS NOT NULL AND btrim(n.email) <> ''
-   -- Un refus vaut pour toute campagne : il se lit ici, pas au moment d'envoyer.
-   AND NOT EXISTS (SELECT 1 FROM outreach_optouts o WHERE o.sub = n.sub)
-   -- Déjà relancé sur CETTE campagne ⟹ hors audience (l'index unique le garantit de
-   -- toute façon à l'écriture ; ici, c'est pour que le compte affiché soit juste).
+  FROM personnes p
+   -- Un refus vaut pour toute campagne, et pour la PERSONNE : il se lit sur tous ses
+   -- comptes, sinon se désinscrire une fois ne suffirait pas.
+ WHERE NOT EXISTS (SELECT 1 FROM outreach_optouts o WHERE o.sub = ANY(p.subs))
+   -- Déjà relancé sur CETTE campagne ⟹ hors audience. Lu sur tous les comptes de la
+   -- boîte : l'index unique `(campagne, sub)`, lui, ne verrait pas le second.
    AND NOT EXISTS (SELECT 1 FROM outreach_sends s
-                    WHERE s.sub = n.sub AND s.campaign = %(campaign)s AND s.kind = 'send')
+                    WHERE s.sub = ANY(p.subs) AND s.campaign = %(campaign)s
+                      AND s.kind = 'send')
    AND {{critere}}
 """
 
 # Les colonnes servies. À part de la requête pour qu'on puisse compter l'audience
 # ENTIÈRE avec exactement les mêmes filtres — sans quoi le nombre annoncé avant un
 # envoi ne serait que celui de la page servie.
-_COLONNES = """n.sub, n.email, n.name, n.locale, n.created_at,
-       COALESCE(a.appels, 0) AS appels, a.last_seen_at,
+_COLONNES = """p.sub, p.email, p.name, p.locale, p.created_at,
+       p.appels, p.last_seen_at, p.comptes,
        (SELECT COUNT(*) FROM outreach_sends s
-         WHERE s.sub = n.sub AND s.kind = 'send') AS relances_deja_recues"""
+         WHERE s.sub = ANY(p.subs) AND s.kind = 'send') AS relances_deja_recues"""
 
 _CRITERE = {
-    # « n'a jamais rien fait » : aucun appel d'OUTIL. Un compte peut avoir des lignes
-    # `rest`/`protocol` (il a ouvert le dashboard, ou son client a fait un handshake)
-    # sans avoir jamais rien demandé à la plateforme — c'est bien un compte à relancer.
-    "jamais_actif": "COALESCE(a.appels, 0) = 0",
-    "silencieux": ("COALESCE(a.appels, 0) > 0 AND "
-                   "a.last_seen_at < NOW() - make_interval(days => %(days)s)"),
+    # « n'a jamais rien fait » : aucun appel d'OUTIL, sur AUCUN de ses comptes. Une
+    # personne peut avoir des lignes `rest`/`protocol` (elle a ouvert le dashboard, ou
+    # son client a fait un handshake) sans avoir jamais rien demandé à la plateforme —
+    # c'est bien quelqu'un à relancer.
+    "jamais_actif": "p.appels = 0",
+    "silencieux": ("p.appels > 0 AND "
+                   "p.last_seen_at < NOW() - make_interval(days => %(days)s)"),
 }
 
 
@@ -136,9 +200,10 @@ def _critere(statut: str) -> str:
 
 def audience(*, campaign: str, statut: str = "jamais_actif",
              silence_days: int = DEFAULT_SILENCE_DAYS, cap: int = MAX_ENVOI) -> list[dict]:
-    """Les comptes à relancer, filtre partenaire déjà appliqué. Bornée par `cap`."""
+    """Les PERSONNES à relancer — une ligne par boîte mail, filtre partenaire déjà
+    appliqué. Bornée par `cap`."""
     sql = (_AUDIENCE_SQL.format(projection=_COLONNES, critere=_critere(statut))
-           + " ORDER BY n.created_at ASC LIMIT %(cap)s")
+           + " ORDER BY p.created_at ASC LIMIT %(cap)s")
     with _connect() as conn:
         rows = conn.execute(sql, _params(campaign, silence_days, cap)).fetchall()
     return [dict(r) for r in rows]

@@ -110,8 +110,9 @@ plateforme) ; exceptions vers **Sentry** · ⚠️ ne trace ni la connexion d'un
   ⚠️ `namespace_of` résout au **plus long préfixe déclaré**, pas au 1er token (`docs/unipile.md`).
 - **Email per-org** : `scaleway` (TEM) et `resend` en BYO-org, `email_send` route `sender → connecteur → transport` ·
   ⚠️ le front qui héberge une org est **dérivé de l'org cible** (`docs/email.md`).
-- **Relance des comptes jamais actifs** : **REST seule** (`oto_admin_outreach`) · ⚠️ comptée par **compte**, jamais par
-  org ; tenant partenaire écarté **par la requête** ; la langue se choisit, ne se devine pas (`docs/relance-comptes.md`).
+- **Relance des comptes jamais actifs** : **REST seule** (`oto_admin_outreach`) · ⚠️ comptée par **boîte mail**, jamais
+  par compte ni par org — un humain s'inscrit deux fois, et l'index unique `(campagne, sub)` ne voit pas ce doublon-là ;
+  tenant partenaire écarté **par la requête** ; la langue se choisit, ne se devine pas (`docs/relance-comptes.md`).
 - **Facturation & avantages offerts** : `billing.status` porte `granted[]` pour les deux façons d'offrir (abonnement
   `comp`, don d'option) · ⚠️ l'avantage **se nomme** et **est un avantage ce qui est vendu** — un drapeau de population
   comme `beta` n'est pas un cadeau · ⚠️⚠️ rien qui s'adresse au titulaire d'une org ne touche une org d'un **tenant
