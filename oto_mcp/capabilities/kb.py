@@ -64,6 +64,15 @@ class KbInput(BaseModel):
     ne doit rien écrire ; l'écriture a désormais son verbe."""
 
     op: Literal["get", "ensure"] = "get"
+    # ⚠️ Le défaut n'est PLUS de poser au niveau de l'org (décision d'Alexis, 04/09).
+    # `ensure` sur une org sans base REFUSE, et nomme les deux gestes possibles : la
+    # base partagée de l'org, ou un projet à soi. Créer une ressource visible de tous
+    # les membres redevient un acte demandé, pas la conséquence d'un verbe dont le nom
+    # — « assure-toi que » — sonne comme une vérification.
+    # Incident fondateur : une DG demande « ma knowledge base », l'agent appelle
+    # `ensure`, et un document marqué « non diffusable » se retrouve 3 min 18 s dans un
+    # espace visible de toute l'entreprise.
+    create_shared: bool = False
 
 
 class KbView(BaseModel):
@@ -133,6 +142,24 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
                     # mais dire dès la lecture ce qu'elle SERA évite de l'apprendre
                     # après l'avoir créée.
                     "visible_to": _VISIBLE_TO, "created": False}
+        # ⚠️ RÉPARER n'est pas CRÉER, et deux bancs existants l'ont rappelé. Une ancre
+        # présente mais pendouillante (projet archivé, ou transféré hors de l'org) veut
+        # dire que cette org AVAIT une base : la rétablir ne fait naître aucune
+        # ressource que personne n'a voulue. Le cran ne porte donc que sur la PREMIÈRE
+        # création — aucune ancre, aucune trace.
+        if pid is None and not inp.create_shared:
+            # Le refus PORTE le geste, les deux : celui qu'on demandait peut-être, et
+            # celui qu'on voulait vraiment. Sans le second, on pousse à confirmer sans
+            # savoir qu'il existait une autre réponse.
+            raise AuthzDenied(
+                409, "shared_creation_not_confirmed",
+                "Cette org n'a pas encore de base de connaissance, et en créer une "
+                "pose un projet visible de TOUS ses membres — ce n'est pas un espace "
+                "personnel. Deux gestes possibles, choisis exprès : pour la base "
+                "PARTAGÉE de l'org, rappelle `oto_kb op=ensure create_shared=true` ; "
+                "pour un espace à toi seul, invisible même des administrateurs, "
+                "`oto_project op=create` (owner_type='user'). Si la demande disait "
+                "« ma » base de connaissance, c'est le second.")
         if pid is not None:
             # Ancre pendouillante — compare-and-clear (jamais écraser une réparation
             # concurrente déjà re-posée).
@@ -167,6 +194,12 @@ CAPABILITIES += [
             "id, so NEVER look it up by name, call this tool. This is the org-wide "
             "Documents space; its pages "
             "are managed with oto_doc (tree, versions, public share, change requests). "
+            "⚠️ CREATING it is now an EXPLICIT act: `ensure` on an org that "
+            "has no knowledge base yet REFUSES (`shared_creation_not_confirmed`) and "
+            "names both moves — `create_shared=true` for the ORG's shared base, or "
+            "`oto_project op=create` (owner_type='user') for a space only you can see. "
+            "If the request said « MY knowledge base », it is the second. Repairing a "
+            "dangling anchor is not creating, and needs no confirmation. "
             "⚠️ It belongs to the ORG and is visible to EVERY member — « the knowledge "
             "base » is never a personal space, whatever the request sounded like. The "
             "answer says so in `visible_to`, and `created: true` tells you that YOU just "
@@ -174,8 +207,9 @@ CAPABILITIES += [
             "make a project instead (`oto_project op=create`, owner_type='user'). "
             "op=\"get\" (default) READS the anchor and returns project_id=null when the "
             "org has no knowledge base yet — it never creates one, so opening a "
-            "Documents view costs the org nothing. op=\"ensure\" resolves it and CREATES "
-            "it if missing: use it right before writing the first page, not to look."
+            "Documents view costs the org nothing. op=\"ensure\" resolves it, repairs a "
+            "dangling anchor, and creates the shared base ONLY with create_shared=true: "
+            "use it right before writing the first page, not to look."
         ),
         mcp="oto_kb",
         rest=RestBinding("POST", "/api/me/kb"),

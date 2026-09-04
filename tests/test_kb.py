@@ -83,8 +83,12 @@ def test_get_does_not_repair_a_dangling_anchor(seams):
     assert seams["cleared"] == [] and seams["created"] == []
 
 
+# ⚠️ Depuis le 04/09, CRÉER la base demande `create_shared=True` : le défaut de
+# `ensure` n'est plus de poser une ressource visible de toute l'org. Les tests qui
+# créent le disent donc explicitement — ceux qui RÉPARENT une ancre pendouillante,
+# non : réparer n'est pas créer, et c'est eux qui ont borné le cran.
 def test_no_anchor_creates_and_claims(seams):
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure", create_shared=True))
     assert seams["created"] == [("org", "7", K.KB_NAME)]
     assert out["project_id"] == 42 and seams["anchor"] == 42
 
@@ -116,7 +120,7 @@ def test_lost_claim_archives_duplicate_and_returns_winner(seams):
         return False
     K.org_store.claim_kb_project = _racing_claim
     try:
-        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure", create_shared=True))
     finally:
         K.org_store.claim_kb_project = real_claim
     assert seams["archived"] == [42]          # mon doublon archivé
@@ -184,7 +188,7 @@ def test_ensure_DIT_que_la_base_est_partagee_et_qu_il_vient_de_la_creer(seams):
     qu'une ressource PARTAGÉE venait de naître. « Ma base » se comprend comme « la
     mienne » ; celle-ci est celle de l'org, et c'est le mot qui manquait."""
     seams["anchor"] = None                      # aucune base : `ensure` va la CRÉER
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure", create_shared=True))
     assert out["created"] is True, "l'appelant doit savoir qu'il vient de CRÉER"
     assert "TOUS les membres" in out["visible_to"]
     assert "n'est pas personnelle" in out["visible_to"]
@@ -210,3 +214,35 @@ def test_meme_une_LECTURE_dit_la_portee(seams):
     out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
     assert out["project_id"] is None and out["created"] is False
     assert "TOUS les membres" in out["visible_to"]
+
+
+def test_ensure_REFUSE_de_creer_la_base_partagee_sans_intention(seams):
+    """Le défaut n'est plus de poser au niveau de l'org (décision du 04/09).
+
+    Le verbe `ensure` — « assure-toi que » — sonne comme une vérification et créait
+    une ressource visible de TOUS les membres. Un agent qui entend « ma knowledge
+    base » l'appelle naturellement : c'est ainsi qu'un document marqué « non
+    diffusable » s'est retrouvé 3 min 18 s dans un espace partagé.
+
+    Le refus porte les DEUX gestes — celui qu'on demandait peut-être, et celui qu'on
+    voulait vraiment. Sans le second, on pousse à confirmer sans savoir qu'il existait
+    une autre réponse."""
+    seams["anchor"] = None
+    with pytest.raises(AuthzDenied) as e:
+        K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    assert e.value.code == "shared_creation_not_confirmed"
+    msg = e.value.message
+    assert "TOUS ses membres" in msg
+    assert "create_shared=true" in msg, "le geste pour la base d'org doit être nommé"
+    assert "oto_project op=create" in msg, "et celui pour un espace À SOI aussi"
+    # Rien n'a été créé : un refus qui écrirait quand même serait pire que le silence.
+    assert seams["created"] == []
+
+
+def test_une_LECTURE_ne_refuse_jamais(seams):
+    """`op=get` sur une org sans base rend `project_id: null` — il ne crée rien, donc
+    il n'a rien à faire confirmer. Le cran est sur l'écriture, pas sur le regard."""
+    seams["anchor"] = None
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+    assert out["project_id"] is None
+    assert seams["created"] == []

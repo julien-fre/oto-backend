@@ -1,7 +1,7 @@
 """La base de connaissance d'une org naît en FRANÇAIS, quelle que soit sa langue.
 
-`oto_kb op="ensure"` sème toute nouvelle base avec un nom et un résumé français
-codés en dur : « Base de connaissance » et « La base de connaissance de
+`oto_kb op="ensure" create_shared=true` sème toute nouvelle base avec un nom et un
+résumé français codés en dur : « Base de connaissance » et « La base de connaissance de
 l'organisation : pages de référence partagées (processus, contexte, conventions).
 Une seule par org. » Reproduit sur trois orgs clientes anglophones, dont deux ont
 déjà des membres extérieurs — et c'est la PREMIÈRE ligne de leur écran de projets,
@@ -84,8 +84,14 @@ def test_la_kb_semee_ne_parle_pas_francais(seams):
 
     C'est ce couple exact que le client anglophone voit en tête de son écran de
     projets — pas une valeur par défaut d'affichage, mais la ligne `projects`
-    réellement créée par `op="ensure"`."""
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    réellement créée par `op="ensure"`.
+
+    ⚠️ `create_shared=True` depuis le 04/09 : créer la base d'org n'est plus le
+    défaut d'`ensure` (elle est visible de TOUS les membres, et le verbe sonnait
+    comme une vérification). Ce banc n'a pas d'avis là-dessus — il a besoin d'une
+    création pour lire ce qu'elle sème, et le demande donc explicitement."""
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7),
+                K.KbInput(op="ensure", create_shared=True))
     assert len(seams["created"]) == 1
     seme = seams["created"][0]
     assert _marqueurs_fr(seme["name"]) == [], f"nom semé en français : {seme['name']!r}"
