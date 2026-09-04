@@ -65,6 +65,18 @@ def _client_for_user(account: Optional[str] = None):
     return TasksClient(credentials=creds)
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
+# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(rafraîchissement de jeton) — réessaie.")
+
+
 def _normalize_due(due: Optional[str]) -> Optional[str]:
     """Expand a YYYY-MM-DD date to the RFC 3339 the Tasks API wants."""
     if due is None:
@@ -88,7 +100,7 @@ def register(mcp: FastMCP) -> None:
                 instead of listing.
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         if create:
             return await asyncio.to_thread(client.create_tasklist, create)
         tasklists = await asyncio.to_thread(client.list_tasklists)
@@ -140,7 +152,7 @@ def register(mcp: FastMCP) -> None:
         if op not in _TASK_OPS:
             raise _bad(_UNKNOWN_OP)
 
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         if op == "list":
             tasks = await asyncio.to_thread(client.list_tasks, tasklist, completed, max_results)

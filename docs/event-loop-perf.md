@@ -130,6 +130,30 @@ gel, pas de 500 générique). Banc `tests/test_fod_rest_routes_hors_boucle.py` :
 routes, deux crans chacune (thread observé + timeout → 504), plus le même contrôle
 qui mord qu'au lot 1 (neutralisation vérifiée empiriquement).
 
+### Le rafraîchissement du jeton Google, sous douze tools (oto-backend#867 lot 2)
+
+`gmail.py`/`drive.py`/`sheets.py`/`tasks.py`/`calendar.py`/`chat.py` (deux tools
+`async def` chacun) appellent tous `_client_for_user(account)` — qui résout les
+credentials Google (`auth/google.py::credentials_for`) et, si l'access token stocké
+est expiré, fait un `_refresh_access_token` **synchrone** (`requests.post`, 15s)
+avant de construire le client. Les appels à l'API Google, EUX, sont déjà en
+`asyncio.to_thread` dans chacun des 12 tools — c'est précisément ce qui a fait
+écarter ces chemins d'un premier balayage naïf ; seule la construction du client
+(donc le refresh, quand il a lieu) tournait encore nûment dans la boucle.
+
+**Remède, dupliqué dans les six fichiers** (comme `_client_for_user` lui-même
+l'est déjà — même granularité, pas de module partagé nouveau) : un
+`_client_for_user_async` qui enveloppe l'appel sync en `asyncio.to_thread` +
+`asyncio.wait_for(20s)`. 20s et non un nouveau timeout plus court : le socket
+timeout existant (15s, `auth/google.py::_refresh_access_token`) est déjà court —
+le remède est d'abord « sortir de la boucle », le délai REST ne fait que ne pas
+préempter l'échec naturel de la requête. Chaque fichier garde son propre
+vocabulaire d'erreur (`_bad(...)` où il existe, `McpError(ErrorData(...))` sinon,
+cf. `calendar.py`/`sheets.py`) plutôt que d'en introduire un nouveau.
+
+Banc `tests/test_google_token_refresh_hors_boucle.py` : six modules × deux crans,
+neutralisation vérifiée empiriquement — même méthode que les deux lots précédents.
+
 ## Le mode n°2 a une SECONDE porte : les middlewares MCP (incident du 15/08)
 
 Même mode de gel (DB sync dans la boucle), autre famille de call-sites — et celle-là

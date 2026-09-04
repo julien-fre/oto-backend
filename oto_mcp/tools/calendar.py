@@ -52,6 +52,20 @@ def _client_for_user(account: Optional[str] = None):
     return CalendarClient(credentials=creds)
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
+# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                    "(rafraîchissement de jeton) — réessaie."))
+
+
 def register(mcp: FastMCP) -> None:
 
     def _bad(msg: str) -> McpError:
@@ -78,7 +92,7 @@ def register(mcp: FastMCP) -> None:
         Args:
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         calendars = await asyncio.to_thread(client.list_calendars)
         return {"calendars": calendars, "count": len(calendars)}
 
@@ -147,7 +161,7 @@ def register(mcp: FastMCP) -> None:
                 cancelling silently is the lesser surprise. Pass "all" deliberately.
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         if op == "list":
             # ⚠️ ordre POSITIONNEL du client : (calendar_id, time_min, time_max,

@@ -85,6 +85,18 @@ def _client_for_user(account: Optional[str] = None):
     return ChatClient(credentials=creds)
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
+# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(rafraîchissement de jeton) — réessaie.")
+
+
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
@@ -101,7 +113,7 @@ def register(mcp: FastMCP) -> None:
             max_results: cap on spaces returned.
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         filter_ = f'spaceType = "{space_type}"' if space_type else None
         spaces = await _call(client.list_spaces, filter_, max_results)
         return {"spaces": spaces, "count": len(spaces)}
@@ -138,7 +150,7 @@ def register(mcp: FastMCP) -> None:
             max_results: op="list" — cap on messages returned.
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         if op == "list":
             if space is None:
