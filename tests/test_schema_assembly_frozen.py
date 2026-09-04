@@ -217,8 +217,14 @@ from oto_mcp.db import _schema, schema
 # ⚠️ Empreinte recalculée APRÈS l'arithmétique : deux commentaires de 211 caractères
 # ajoutés, deux « NOT NULL » (9 caractères) retirés → +422 attendus, +422 mesurés
 # (139 488 → 139 910). Un écart aurait voulu dire qu'un autre fragment avait bougé.
-EMPREINTE = "8ebb0a703d7fc776e2ad7fd53eed480cdc6963142d84c1a705b3793aa100928c"
-LONGUEUR = 139910
+# 2026-09-04 (jetons de délégation) : `user_api_tokens.kind` — qui a demandé le
+# jeton, l'UTILISATEUR ou l'EXÉCUTION. ⚠️ Une colonne et non un filtre sur le
+# libellé : `label` est du texte libre, un utilisateur peut nommer son jeton
+# « runner job 42 ». Filtrer sur du texte libre n'est pas une garantie.
+# ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
+# bien 8ebb0a70… / 139910, mesuré au moment du lot.
+EMPREINTE = "fdbf80b8ed6b1ead995a24778e3f12105bb95803c6540c8cebecd0b98d9818c6"
+LONGUEUR = 140769
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

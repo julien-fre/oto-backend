@@ -1122,6 +1122,14 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Portée opt-in d'un jeton API (`token_scopes.py`) : NULL = jeton non porté
     # (pleins pouvoirs du sub) → additif pur, aucun jeton existant n'est touché.
     conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS scopes JSONB")
+    # `kind` (04/09) : distinguer les jetons de l'UTILISATEUR de ceux de
+    # l'EXÉCUTION. Les jetons de délégation émis avant cette colonne prennent le
+    # défaut `user` — ils sont donc encore listés. Ils sont expirés depuis
+    # longtemps ; la purge des expirés de type `delegation` ne les attrapera pas
+    # (ils portent `user`), et c'est assumé : réétiqueter d'après un libellé
+    # serait exactement le filtre sur texte libre qu'on refuse.
+    conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS "
+                 "kind TEXT NOT NULL DEFAULT 'user'")
     # L6 pièce 2 : le MOTIF d'un archivage d'instance. La base est PARTAGÉE
     # prod/preprod — le `CREATE TABLE` du schéma ne sert qu'aux installs vierges,
     # une table déjà là ne reçoit ses colonnes que par cet `ALTER`. Additif,

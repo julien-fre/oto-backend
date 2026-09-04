@@ -25,7 +25,21 @@ CREATE TABLE IF NOT EXISTS user_api_tokens (
     -- pleins pouvoirs (comportement historique de tous les jetons émis à ce jour).
     -- Non NULL = deny-by-default : seules les routes que la portée nomme passent,
     -- p.ex. {"namespaces": {"leads-dormants": "read"}} pour une intégration tierce.
-    scopes JSONB
+    scopes JSONB,
+    -- QUI a demandé ce jeton : l'UTILISATEUR (`user`) ou l'EXÉCUTION
+    -- (`delegation` — émis à la réservation d'un travail, au nom de son
+    -- demandeur, borné au bail).
+    --
+    -- ⚠️ Ce n'est pas de l'étiquetage, c'est ce qui empêche deux choses de nature
+    -- différente d'apparaître dans la même liste. L'écran des jetons annonce
+    -- « long-lived tokens for the oto cli and ci environments » : y voir des
+    -- jetons de 12 minutes émis automatiquement par dizaines fait MENTIR l'écran,
+    -- et met un bouton « révoquer » sur un accès en cours d'usage.
+    --
+    -- ⚠️ Une COLONNE, pas un filtre sur le libellé : `label` est du texte libre —
+    -- un utilisateur peut nommer son jeton « runner job 42 ». Filtrer sur du
+    -- texte libre n'est pas une garantie, c'est une convention qu'on espère.
+    kind TEXT NOT NULL DEFAULT 'user'
 );
 CREATE INDEX IF NOT EXISTS idx_user_api_tokens_sub ON user_api_tokens(sub);
 
