@@ -13,8 +13,10 @@ motif fournisseur BRUT en valeur de champ.
 Second volet : `_link_state` (le seam `connectors/link.py` que lit `access.status_for`
 pour `/api/me`, seul lecteur qui atteigne ce scope LEGACY `("user", sub)`) doit
 relayer cette santé — sinon la marque n'est observable nulle part pour cette
-famille (`test_link_state_surfaces_health`, et le pendant `access/status.py` dans
-`tests/test_federated_oauth_health.py`).
+famille (`test_link_state_surfaces_health` ci-dessous, et le pendant côté
+`access/status.py` : `test_la_sante_legacy_est_relayee` /
+`test_la_sante_absente_ne_pose_rien` dans
+`tests/connectors/test_connector_link_status.py`).
 """
 from __future__ import annotations
 
