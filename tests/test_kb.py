@@ -75,7 +75,7 @@ def test_get_on_an_org_without_kb_creates_nothing(seams):
 
 
 def test_get_does_not_repair_a_dangling_anchor(seams):
-    # Réparer, c'est écrire (clear + create + claim) : réservé à `ensure`.
+    # Réparer, c'est écrire (clear + create + claim) : réservé à `create`.
     seams["anchor"] = 9
     seams["projects"][9] = _proj(9, archived="2026-07-01")
     out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
@@ -83,12 +83,11 @@ def test_get_does_not_repair_a_dangling_anchor(seams):
     assert seams["cleared"] == [] and seams["created"] == []
 
 
-# ⚠️ Depuis le 04/09, CRÉER la base demande `create_shared=True` : le défaut de
-# `ensure` n'est plus de poser une ressource visible de toute l'org. Les tests qui
-# créent le disent donc explicitement — ceux qui RÉPARENT une ancre pendouillante,
-# non : réparer n'est pas créer, et c'est eux qui ont borné le cran.
+# ⚠️ Le verbe d'écriture s'appelait `ensure` jusqu'au 04/09 — un idiome de
+# développeur (get-or-create) dont le nom ne disait pas qu'il ÉCRIT. Il s'appelle
+# `create`, et ce nom EST la confirmation : plus de drapeau à passer en plus.
 def test_no_anchor_creates_and_claims(seams):
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure", create_shared=True))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     assert seams["created"] == [("org", "7", K.KB_NAME)]
     assert out["project_id"] == 42 and seams["anchor"] == 42
 
@@ -97,7 +96,7 @@ def test_dangling_anchor_transferred_project_repairs(seams):
     # Le projet ancré a été transféré hors org → clear + recréation + re-claim.
     seams["anchor"] = 9
     seams["projects"][9] = _proj(9, org="99")   # owner ≠ org active
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     assert seams["cleared"] == [9]
     assert out["project_id"] == 42 and seams["anchor"] == 42
 
@@ -105,7 +104,7 @@ def test_dangling_anchor_transferred_project_repairs(seams):
 def test_dangling_anchor_archived_project_repairs(seams):
     seams["anchor"] = 9
     seams["projects"][9] = _proj(9, archived="2026-07-01")
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     assert out["project_id"] == 42
 
 
@@ -120,7 +119,7 @@ def test_lost_claim_archives_duplicate_and_returns_winner(seams):
         return False
     K.org_store.claim_kb_project = _racing_claim
     try:
-        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure", create_shared=True))
+        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     finally:
         K.org_store.claim_kb_project = real_claim
     assert seams["archived"] == [42]          # mon doublon archivé
@@ -146,15 +145,28 @@ def test_kb_output_holds_for_every_op(seams):
     C'est le seul garde-fou qui compte sur une surface consolidée (le verbe vit
     dans le corps) : une `op` ajoutée demain qui rendrait une autre forme ferait
     générer des types FAUX chez l'intégrateur qui dérive son client d'`/openapi.json`.
-    Ici l'énumération tient dans une ligne — `op` n'a qu'une valeur — et c'est
-    précisément pourquoi cette surface-là est déclarable, quand ses trois voisines
-    (me.project, me.doc, resources.govern) ne le sont pas (#269)."""
+    Ici l'énumération tient dans une ligne — deux verbes qui rendent la même forme —
+    et c'est précisément pourquoi cette surface-là est déclarable, quand ses trois
+    voisines (me.project, me.doc, resources.govern) ne le sont pas (#269).
+
+    Les `op` de `K.OPS_RETIREES` ne rendent rien : elles lèvent en nommant leur
+    remplaçant. On les vérifie séparément, sans les sauter — « retirée » ne doit pas
+    devenir un moyen de sortir une op du garde-fou."""
     from typing import get_args
 
     ops = get_args(K.KbInput.model_fields["op"].annotation)
     assert ops, "aucune `op` énumérée : le test ne prouverait rien."
+    vivantes = [o for o in ops if o not in K.OPS_RETIREES]
+    assert vivantes, "toutes les op retirées : la surface ne répond plus à rien."
+    # Une op retirée ne rend AUCUNE forme — mais on vérifie qu'elle lève vraiment,
+    # sinon « retirée » deviendrait un moyen de sortir une op du garde-fou.
+    for op in K.OPS_RETIREES:
+        seams["anchor"] = 9
+        seams["projects"][9] = _proj(9)
+        with pytest.raises(AuthzDenied):
+            K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op=op))
     declared = set(K.KbView.model_fields)
-    for op in ops:
+    for op in vivantes:
         seams["anchor"] = 9
         seams["projects"][9] = _proj(9)
         out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op=op))
@@ -177,9 +189,9 @@ def test_kb_output_reaches_the_openapi_document():
 
 # ── 04/09/2026 : « ma » base de connaissance est celle de l'ORG ────────────────
 
-def test_ensure_DIT_que_la_base_est_partagee_et_qu_il_vient_de_la_creer(seams):
+def test_create_DIT_que_la_base_est_partagee_et_qu_il_vient_de_la_creer(seams):
     """Vécu ce matin-là. Une DG demande à son agent de « mettre à jour sa knowledge
-    base » ; il appelle `ensure`, qui CRÉE un projet possédé par l'ORG — visible de
+    base » ; il appelle le verbe d'écriture, qui CRÉE un projet possédé par l'ORG — visible de
     tous ses membres — et y dépose un document stratégique marqué « non diffusable ».
     Il s'en aperçoit 3 minutes plus tard, déplace la page vers un projet perso et
     archive la base. Le contenu aura été exposé 3 min 18 s.
@@ -187,8 +199,8 @@ def test_ensure_DIT_que_la_base_est_partagee_et_qu_il_vient_de_la_creer(seams):
     La réponse rendait `{project_id, name, brief_md}` : ni la portée, ni le fait
     qu'une ressource PARTAGÉE venait de naître. « Ma base » se comprend comme « la
     mienne » ; celle-ci est celle de l'org, et c'est le mot qui manquait."""
-    seams["anchor"] = None                      # aucune base : `ensure` va la CRÉER
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure", create_shared=True))
+    seams["anchor"] = None                      # aucune base : `create` va la poser
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     assert out["created"] is True, "l'appelant doit savoir qu'il vient de CRÉER"
     assert "TOUS les membres" in out["visible_to"]
     assert "n'est pas personnelle" in out["visible_to"]
@@ -202,7 +214,7 @@ def test_une_base_qui_existait_deja_ne_se_dit_pas_creee(seams):
     précisément la question qui décide s'il doit s'inquiéter."""
     seams["anchor"] = 9
     seams["projects"][9] = _proj(9)
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     assert out["created"] is False
     assert "TOUS les membres" in out["visible_to"]
 
@@ -216,32 +228,36 @@ def test_meme_une_LECTURE_dit_la_portee(seams):
     assert "TOUS les membres" in out["visible_to"]
 
 
-def test_ensure_REFUSE_de_creer_la_base_partagee_sans_intention(seams):
-    """Le défaut n'est plus de poser au niveau de l'org (décision du 04/09).
+def test_le_verbe_retire_REFUSE_en_nommant_les_deux_gestes(seams):
+    """`op=ensure` n'existe plus (décision d'Alexis, 04/09) — et son retrait ne se lit
+    pas comme une erreur de validation.
 
-    Le verbe `ensure` — « assure-toi que » — sonne comme une vérification et créait
-    une ressource visible de TOUS les membres. Un agent qui entend « ma knowledge
-    base » l'appelle naturellement : c'est ainsi qu'un document marqué « non
-    diffusable » s'est retrouvé 3 min 18 s dans un espace partagé.
+    « ensure X » est un idiome de développeur : *rends-moi X, et crée-le s'il n'y est
+    pas*. Le mot ne porte aucune trace de l'écriture. Un agent qui entend « ma
+    knowledge base » l'appelait en croyant vérifier, et posait une ressource visible
+    de TOUS les membres : c'est ainsi qu'un document marqué « non diffusable » s'est
+    retrouvé 3 min 18 s dans un espace partagé.
 
-    Le refus porte les DEUX gestes — celui qu'on demandait peut-être, et celui qu'on
-    voulait vraiment. Sans le second, on pousse à confirmer sans savoir qu'il existait
-    une autre réponse."""
+    Laisser pydantic rendre « Input should be 'get' or 'create' » n'apprendrait rien
+    à l'appelant. Le refus nomme les trois chemins — lire, créer la base de l'ORG,
+    ou faire un espace à soi — parce qu'un refus qui ne porte pas le geste ne fait
+    qu'arrêter."""
     seams["anchor"] = None
     with pytest.raises(AuthzDenied) as e:
         K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
-    assert e.value.code == "shared_creation_not_confirmed"
+    assert e.value.code == "op_renamed"
     msg = e.value.message
-    assert "TOUS ses membres" in msg
-    assert "create_shared=true" in msg, "le geste pour la base d'org doit être nommé"
-    assert "oto_project op=create" in msg, "et celui pour un espace À SOI aussi"
-    # Rien n'a été créé : un refus qui écrirait quand même serait pire que le silence.
-    assert seams["created"] == []
+    assert "op=get" in msg, "le verbe qui LIT doit être nommé"
+    assert "op=create" in msg, "celui qui CRÉE la base d'org aussi"
+    assert "oto_project op=create" in msg, "et celui d'un espace À SOI"
+    assert "TOUS ses membres" in msg, "la portée de ce qu'on crée reste dite"
+    # Un refus qui écrirait quand même serait pire que le silence.
+    assert seams["created"] == [] and seams["anchor"] is None
 
 
 def test_une_LECTURE_ne_refuse_jamais(seams):
-    """`op=get` sur une org sans base rend `project_id: null` — il ne crée rien, donc
-    il n'a rien à faire confirmer. Le cran est sur l'écriture, pas sur le regard."""
+    """`op=get` sur une org sans base rend `project_id: null` — il ne refuse pas,
+    il répond. Ouvrir une zone Documents vide ne coûte rien à l'org."""
     seams["anchor"] = None
     out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
     assert out["project_id"] is None

@@ -1,7 +1,7 @@
 """La base de connaissance d'une org naît en FRANÇAIS, quelle que soit sa langue.
 
-`oto_kb op="ensure" create_shared=true` sème toute nouvelle base avec un nom et un
-résumé français codés en dur : « Base de connaissance » et « La base de connaissance de
+`oto_kb op="create"` sème toute nouvelle base avec un nom et un résumé français
+codés en dur : « Base de connaissance » et « La base de connaissance de
 l'organisation : pages de référence partagées (processus, contexte, conventions).
 Une seule par org. » Reproduit sur trois orgs clientes anglophones, dont deux ont
 déjà des membres extérieurs — et c'est la PREMIÈRE ligne de leur écran de projets,
@@ -12,7 +12,7 @@ base » que parce que quelqu'un l'a renommée à la main (#527).
 signal de langue honnête : mesuré le 2026-09-02, `users.locale` n'est posée que
 sur une poignée de comptes, `billing_identities` est à zéro ligne, et le TLD de
 l'adresse ne tranche rien. Pire ici : la KB appartient à l'ORG, alors que
-`op="ensure"` est appelé par UN membre — déduire la langue d'une org de la
+`op="create"` est appelé par UN membre — déduire la langue d'une org de la
 préférence d'interface d'un de ses membres serait une devinette déguisée en
 donnée. L'anglais est en revanche déjà la langue de la surface servie : les
 descriptions d'outils, l'OpenAPI et les libellés que cette même org lit partout
@@ -84,14 +84,12 @@ def test_la_kb_semee_ne_parle_pas_francais(seams):
 
     C'est ce couple exact que le client anglophone voit en tête de son écran de
     projets — pas une valeur par défaut d'affichage, mais la ligne `projects`
-    réellement créée par `op="ensure"`.
+    réellement créée par `op="create"`.
 
-    ⚠️ `create_shared=True` depuis le 04/09 : créer la base d'org n'est plus le
-    défaut d'`ensure` (elle est visible de TOUS les membres, et le verbe sonnait
-    comme une vérification). Ce banc n'a pas d'avis là-dessus — il a besoin d'une
-    création pour lire ce qu'elle sème, et le demande donc explicitement."""
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7),
-                K.KbInput(op="ensure", create_shared=True))
+    ⚠️ Le verbe est `create` depuis le 04/09 (il s'appelait `ensure`, un nom qui ne
+    disait pas qu'il écrit). Ce banc n'a pas d'avis là-dessus — il a besoin d'une
+    création pour lire ce qu'elle sème."""
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="create"))
     assert len(seams["created"]) == 1
     seme = seams["created"][0]
     assert _marqueurs_fr(seme["name"]) == [], f"nom semé en français : {seme['name']!r}"

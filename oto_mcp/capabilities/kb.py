@@ -1,7 +1,7 @@
 """Base de connaissance d'org = la zone « Documents » (réunion
 30/06, fusion KB↔Document). Une SEULE base par org : un projet dédié « Base de
 connaissance », possédé par l'org active, résolu ici — et créé à la demande par
-`op="ensure"` SEULEMENT (`op="get"` lit, cf. `KbInput`). La
+`op="create"` SEULEMENT (`op="get"` lit, cf. `KbInput`). La
 zone Documents du dashboard l'ouvre via le composant doc existant — on réutilise
 tout le substrat docs (pages arborescentes, versions, partage public, demande de
 modif) sans nouvelle table.
@@ -33,7 +33,7 @@ from .registry import CAPABILITIES
 # français dans des orgs entièrement anglophones, en tête de leur écran de projets.
 # On ne DEVINE pas la langue — la plateforme n'a aucun signal honnête (`users.locale`
 # n'est posée que sur une poignée de comptes, `billing_identities` est vide), et de
-# toute façon la KB appartient à l'ORG quand `ensure` est appelé par UN membre. On
+# toute façon la KB appartient à l'ORG quand `create` est appelé par UN membre. On
 # sème donc dans la langue de la surface servie, qui est l'anglais.
 #: La phrase qui manquait — une seule définition, servie par toutes les `op`.
 _VISIBLE_TO = ("TOUS les membres de l'org — cette base est partagée, elle n'est pas "
@@ -54,32 +54,42 @@ KB_NAME_LEGACY_FR = "Base de connaissance"
 
 
 class KbInput(BaseModel):
-    """`get` LIT, `ensure` CRÉE — la distinction n'est pas cosmétique.
+    """`get` LIT, `create` CRÉE — la distinction n'est pas cosmétique.
 
     Jusqu'ici la seule op, `get`, créait la KB au passage (« résolue et créée
     paresseusement »). Or ce endpoint est monté à la racine des fronts : le
     simple fait d'ouvrir l'app posait un projet « Base de connaissance » VIDE
     dans l'org de chaque client, que personne n'avait demandé et dont personne
     ne pouvait expliquer l'origine (remonté par un client, 19/08). Une lecture
-    ne doit rien écrire ; l'écriture a désormais son verbe."""
+    ne doit rien écrire ; l'écriture a désormais son verbe.
 
-    op: Literal["get", "ensure"] = "get"
-    # ⚠️ Le défaut n'est PLUS de poser au niveau de l'org (décision d'Alexis, 04/09).
-    # `ensure` sur une org sans base REFUSE, et nomme les deux gestes possibles : la
-    # base partagée de l'org, ou un projet à soi. Créer une ressource visible de tous
-    # les membres redevient un acte demandé, pas la conséquence d'un verbe dont le nom
-    # — « assure-toi que » — sonne comme une vérification.
-    # Incident fondateur : une DG demande « ma knowledge base », l'agent appelle
-    # `ensure`, et un document marqué « non diffusable » se retrouve 3 min 18 s dans un
-    # espace visible de toute l'entreprise.
-    create_shared: bool = False
+    ⚠️ **Ce verbe s'appelait `ensure`, et le nom était le bug** (décision d'Alexis,
+    04/09/2026). « ensure X » est un idiome de développeur — *get-or-create* — qui ne
+    porte aucune trace du fait qu'il ÉCRIT : un agent qui entend « ma knowledge base »
+    l'appelle en croyant vérifier, et vient de poser un projet visible de toute
+    l'entreprise. Vécu : un document marqué « non diffusable » exposé 3 min 18 s.
+    `create` dit ce qu'il fait, dans son nom, à chaque lecture de la description.
+    `ensure` n'est plus accepté — il REFUSE en nommant les deux gestes, plutôt que de
+    laisser pydantic rendre une erreur de validation que personne ne sait lire."""
+
+    op: Literal["get", "create", "ensure"] = "get"
+
+
+#: Les `op` que le schéma accepte encore mais qui ne RÉPONDENT plus — elles lèvent, et
+#: leur refus nomme le remplaçant. Elles restent dans le `Literal` pour ça : retirées
+#: de l'énumération, pydantic rendrait « Input should be 'get' or 'create' », un
+#: message qui n'apprend rien à l'agent qui l'a appelée. Déclarées ICI plutôt que
+#: devinées : `test_kb_output_holds_for_every_op` parcourt toutes les `op` et exige de
+#: chacune la forme de `KbView` — il doit savoir laquelle est un refus, et vérifier
+#: qu'elle refuse bel et bien plutôt que de la sauter sur la foi d'un `except`.
+OPS_RETIREES = ("ensure",)
 
 
 class KbView(BaseModel):
     """Ancre de la base de connaissance de l'org active.
 
     Cette surface est consolidée comme ses voisines (le verbe vit dans le corps,
-    `op=`), mais elle n'a **qu'une seule `op`** — `get` — donc l'intersection des
+    `op=`), mais ses `op` rendent toutes la même forme — donc l'intersection des
     réponses de toutes ses `op` EST la réponse entière : ce modèle décrit la 200
     en totalité, ce n'est pas une enveloppe partielle. Un `op` ajouté ici devra
     donc, soit rendre ces trois champs, soit faire retomber la déclaration sur
@@ -89,13 +99,14 @@ class KbView(BaseModel):
     l'entrée — l'arbre, les versions, le partage public et les propositions de
     modification se lisent et s'écrivent avec `oto_doc` (`POST /api/me/docs`)."""
     project_id: Optional[int]  # le projet dédié, ou None : op="get" sur une org qui
-                               # n'a PAS encore de KB (op="ensure" la crée)
+                               # n'a PAS encore de KB (op="create" la crée)
     name: str                # son nom courant — renommable, l'ancre est l'id ;
                              # KB_NAME quand il n'y a pas encore de projet
     brief_md: str            # brief du projet KB ('' si vidé, ou pas de KB)
     # ⚠️ QUI VOIT — le fait que cette réponse taisait, et qui a coûté (04/09/2026).
     # Une DG demande à son agent de « mettre à jour sa base de connaissance » ; il
-    # appelle `ensure`, qui CRÉE un projet possédé par l'ORG, visible de tous ses
+    # appelle `ensure` (le verbe d'alors, retiré depuis), qui CRÉE un projet de l'ORG,
+    # visible de tous ses
     # membres, et y dépose un document stratégique marqué « non diffusable ». Il s'en
     # aperçoit 3 min plus tard, déplace la page et archive la base. Entre-temps le
     # contenu a été exposé 3 min 18 s, et personne n'en a été averti — la réponse
@@ -128,13 +139,25 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
     org = ctx.org_id
     if org is None:
         raise AuthzDenied(400, "no_active_org", "Aucune org active.")
+    if inp.op == "ensure":
+        # Le nom retiré ne rend pas une ValidationError pydantic (« Input should be
+        # 'get' or 'create' »), qui n'apprend rien : il rend le geste, les deux.
+        raise AuthzDenied(
+            400, "op_renamed",
+            "`op=ensure` n'existe plus : le mot cachait qu'il ÉCRIT, et des bases "
+            "partagées ont été créées par des agents qui croyaient vérifier. "
+            "Deux verbes désormais, chacun dit ce qu'il fait : `op=get` lit l'ancre "
+            "et ne crée rien (`project_id: null` si l'org n'a pas de base) ; "
+            "`op=create` crée la base de connaissance de l'ORG, visible de TOUS ses "
+            "membres. Pour un espace à toi seul, invisible même des administrateurs, "
+            "ce n'est ni l'un ni l'autre : `oto_project op=create` (owner_type='user').")
     pid, kb = _anchored_kb(org)
     cree = False
     if kb is None:
         if inp.op == "get":
             # Lecture pure : ni création, ni réparation d'ancre pendouillante
             # (les deux écrivent). L'appelant qui a besoin d'un project_id pour
-            # ÉCRIRE demande `ensure` ; celui qui affiche une zone Documents
+            # ÉCRIRE demande `create` ; celui qui affiche une zone Documents
             # vide n'a rien à créer pour ça.
             return {"project_id": None, "name": KB_NAME, "brief_md": "",
                     # Le garde-fou `test_kb_output_holds_for_every_op` exige que CHAQUE
@@ -142,24 +165,9 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
                     # mais dire dès la lecture ce qu'elle SERA évite de l'apprendre
                     # après l'avoir créée.
                     "visible_to": _VISIBLE_TO, "created": False}
-        # ⚠️ RÉPARER n'est pas CRÉER, et deux bancs existants l'ont rappelé. Une ancre
-        # présente mais pendouillante (projet archivé, ou transféré hors de l'org) veut
-        # dire que cette org AVAIT une base : la rétablir ne fait naître aucune
-        # ressource que personne n'a voulue. Le cran ne porte donc que sur la PREMIÈRE
-        # création — aucune ancre, aucune trace.
-        if pid is None and not inp.create_shared:
-            # Le refus PORTE le geste, les deux : celui qu'on demandait peut-être, et
-            # celui qu'on voulait vraiment. Sans le second, on pousse à confirmer sans
-            # savoir qu'il existait une autre réponse.
-            raise AuthzDenied(
-                409, "shared_creation_not_confirmed",
-                "Cette org n'a pas encore de base de connaissance, et en créer une "
-                "pose un projet visible de TOUS ses membres — ce n'est pas un espace "
-                "personnel. Deux gestes possibles, choisis exprès : pour la base "
-                "PARTAGÉE de l'org, rappelle `oto_kb op=ensure create_shared=true` ; "
-                "pour un espace à toi seul, invisible même des administrateurs, "
-                "`oto_project op=create` (owner_type='user'). Si la demande disait "
-                "« ma » base de connaissance, c'est le second.")
+        # `op=create` — plus de drapeau de confirmation : le VERBE porte l'intention,
+        # c'est tout l'objet du renommage. Un `create_shared=true` en plus de `create`
+        # ne ferait que redemander ce que l'appelant vient de dire.
         if pid is not None:
             # Ancre pendouillante — compare-and-clear (jamais écraser une réparation
             # concurrente déjà re-posée).
@@ -194,22 +202,19 @@ CAPABILITIES += [
             "id, so NEVER look it up by name, call this tool. This is the org-wide "
             "Documents space; its pages "
             "are managed with oto_doc (tree, versions, public share, change requests). "
-            "⚠️ CREATING it is now an EXPLICIT act: `ensure` on an org that "
-            "has no knowledge base yet REFUSES (`shared_creation_not_confirmed`) and "
-            "names both moves — `create_shared=true` for the ORG's shared base, or "
-            "`oto_project op=create` (owner_type='user') for a space only you can see. "
-            "If the request said « MY knowledge base », it is the second. Repairing a "
-            "dangling anchor is not creating, and needs no confirmation. "
             "⚠️ It belongs to the ORG and is visible to EVERY member — « the knowledge "
             "base » is never a personal space, whatever the request sounded like. The "
             "answer says so in `visible_to`, and `created: true` tells you that YOU just "
             "brought a shared project into existence. For something only you can see, "
-            "make a project instead (`oto_project op=create`, owner_type='user'). "
+            "make a project instead (`oto_project op=create`, owner_type='user') — if "
+            "the request said « MY knowledge base », that is the one you want. "
             "op=\"get\" (default) READS the anchor and returns project_id=null when the "
             "org has no knowledge base yet — it never creates one, so opening a "
-            "Documents view costs the org nothing. op=\"ensure\" resolves it, repairs a "
-            "dangling anchor, and creates the shared base ONLY with create_shared=true: "
-            "use it right before writing the first page, not to look."
+            "Documents view costs the org nothing. op=\"create\" CREATES the org's "
+            "shared knowledge base (and re-anchors it if a previous one was archived "
+            "or moved out of the org); it is idempotent — an org that already has one "
+            "gets it back with created: false, never a duplicate. Use it right before "
+            "writing the first page, not to look."
         ),
         mcp="oto_kb",
         rest=RestBinding("POST", "/api/me/kb"),

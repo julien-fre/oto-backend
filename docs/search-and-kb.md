@@ -56,15 +56,22 @@ réindexe la fratrie ATOMIQUEMENT) + **épine** `oto_project(op=get, include=['s
 depth?)` bornée (N+2, plafond 200, compteurs `more`) — la carte que l'agent lit avant
 `oto_doc(op=get)`, jamais `op=list` de tout. **KB d'org ancrée PAR ID** (`orgs.kb_project_id`,
 claim optimiste anti-doublon, auto-réparation transfert/archive — le nom n'est plus un marqueur).
-⚠️ **`oto_kb op=ensure` ne CRÉE plus cette ancre tout seul (04/09).** Le verbe sonne comme une
-vérification et posait un projet d'org, visible de TOUS ses membres : un document présenté comme
-« ma » base de connaissance et marqué non diffusable s'est ainsi retrouvé partagé. Sur une org
-sans base, l'appel refuse (`shared_creation_not_confirmed`, 409) et nomme les **deux** gestes —
-`create_shared=true` pour la base d'org, `oto_project op=create` (`owner_type='user'`) pour un
-espace à soi seul ; sans le second, le refus ne fait que pousser à confirmer. Le cran ne porte
-QUE la première création : réparer une ancre pendouillante (projet transféré, archivé) n'est pas
-créer et ne demande rien. Une lecture (`op=get`) rend `project_id: null` et ne refuse jamais.
-Toute vue de projet porte `visible_to`, en clair, la portée réelle.
+⚠️ **Le verbe qui CRÉE cette base s'appelle `create` depuis le 04/09 ; il s'appelait
+`ensure`, et le nom était le bug.** « ensure X » est un idiome de développeur —
+*get-or-create* — dont le mot ne porte aucune trace de l'écriture : un agent qui entend
+« ma knowledge base » l'appelait en croyant vérifier, et posait un projet possédé par
+l'org, visible de TOUS ses membres. Vécu : un document présenté comme personnel et
+marqué non diffusable, exposé le temps qu'on s'en aperçoive. Les deux verbes disent
+désormais ce qu'ils font — `op=get` lit l'ancre et ne crée rien (`project_id: null` si
+l'org n'a pas de base), `op=create` crée la base de l'ORG et la ré-ancre si la
+précédente a été archivée ou transférée. `create` est idempotent : une org qui en a
+déjà une la récupère avec `created: false`, jamais un doublon. `op=ensure` reste dans
+l'énumération (`kb.OPS_RETIREES`) pour REFUSER en nommant les trois chemins — lire,
+créer la base d'org, ou faire un espace à soi (`oto_project op=create`,
+`owner_type='user'`) : retiré du `Literal`, pydantic rendrait « Input should be 'get'
+or 'create' », qui n'apprend rien. ⚠️ **Ce verbe est le seul qui pose l'ancre**
+(`claim_kb_project`) — le retirer sans successeur laisserait toute org neuve sans base
+possible. Toute vue de projet porte `visible_to`, en clair, la portée réelle.
 Le lien `project_links.target_type='doc'` est RETIRÉ ; relier des pages =
 les **backlinks `[[…]]`** (Ship 4, LIVE) : résolus À L'ÉCRITURE (hook `db.create/update/
 delete_doc` — JAMAIS capacité, `resolve_change` appelle db en direct), précédence projet >
