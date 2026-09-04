@@ -1018,16 +1018,26 @@ class DatastorePg(SchemaOpsMixin):
         from .. import access
         if self.acting_org is not None:
             owner = ("org", str(self.acting_org))
+            proprios: list = [owner]
         else:
-            owner = ownership.active_owner(access.current_org(self.sub))
-            if owner is None:
+            org = access.current_org(self.sub)
+            if ownership.active_owner(org) is None:
                 return []
+            # ⚠️ `active_org_principals` et non `active_owner` (oto-backend#870,
+            # 04/09/2026) : l'org active ET l'acteur. Depuis l'ADR 0068 un tableau créé
+            # par un agent naît PERSONNEL — et cette liste ne montrait que l'org, donc
+            # le créateur ne voyait pas ce qu'il venait de créer. Il concluait qu'il
+            # n'existait pas ; il était pourtant résoluble par nom, et la recherche le
+            # voyait. Une écriture sans lecteur, la classe oto#42 exactement.
+            # Le jeu reste borné à l'org active : rien de cross-org n'entre par là.
+            proprios = ownership.active_org_principals(self.sub, org)
         # ADR 0049 (cadrage 10/07) : les tableaux TEAM-OWNED de l'org active sont listés
         # comme les org-owned. `_active_scope` est la source unique du jeu de groupes
         # (mes équipes, ou TOUS les groupes de l'org pour un org_admin — même règle que
         # `oto_project op=list`) ; le scope reste borné à l'org active.
         org_ids, group_ids = self._active_scope()
-        owned = [owner] + [("group", str(g)) for g in group_ids]
+        owned = proprios + [("group", str(g)) for g in group_ids
+                            if ("group", str(g)) not in proprios]
         out: dict[int, dict] = {}
         for n in db.list_datastore_namespaces_for_owners(owned):
             out[int(n["id"])] = self._entry(n, shared=False)

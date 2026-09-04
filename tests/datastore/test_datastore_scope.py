@@ -59,7 +59,11 @@ def test_list_namespaces_scopes_groups_on_active_org(monkeypatch):
     assert rec["groups_for"] == ("u1", 99)          # le filtre org est bien passé
     # ADR 0049 (cadrage 10/07) : le contenu possédé = org active + MES équipes de cette
     # org (un tableau team-owned se liste sans grant, comme un projet de pôle).
-    assert rec["owners"] == [("org", "99"), ("group", "5")]
+    # ⚠️ Et MOI (oto-backend#870, 04/09) : ce banc figeait `[("org","99"),("group","5")]`
+    # et CERTIFIAIT donc l'absence du demandeur. Depuis l'ADR 0068 un tableau créé par
+    # un agent naît personnel — sans cette entrée, son créateur ne le voyait pas et
+    # concluait qu'il n'existait pas. Le jeu reste borné à l'org active.
+    assert rec["owners"] == [("org", "99"), ("user", "u1"), ("group", "5")]
     assert rec["granted_to"] == ("u1", [99], [5])   # grants org active + mes groupes de cette org
 
     by_id = {e["id"]: e for e in out}
@@ -77,7 +81,10 @@ def test_list_namespaces_org_admin_sees_all_team_tableaux(monkeypatch):
     monkeypatch.setattr(group_store, "list_groups",
                         lambda org_id: [{"id": 5, "org_id": org_id}, {"id": 6, "org_id": org_id}])
     D.make_store("adm").list_namespaces()
-    assert rec["owners"] == [("org", "99"), ("group", "5"), ("group", "6")]
+    # ⚠️ `("user", "adm")` — le DEMANDEUR, pas un sub en dur. Un org_admin voit les
+    # tableaux de toutes les équipes ET les siens ; il ne voit pas ceux des autres
+    # personnes, et cette liste ne les nomme pas (oto-backend#870).
+    assert rec["owners"] == [("org", "99"), ("user", "adm"), ("group", "5"), ("group", "6")]
 
 
 def test_org_store_lists_owned_without_sub(monkeypatch):
@@ -210,3 +217,58 @@ def test_org_store_read_only_blocks_write(monkeypatch):
     with pytest.raises(D.NamespaceReadOnly):
         store._resolve("leads", write=True)
     assert store._resolve("leads") == 1        # lecture OK en read_only
+
+
+def test_un_tableau_qu_on_vient_de_CREER_apparait_dans_sa_propre_liste(monkeypatch):
+    """oto-backend#870 — le banc qui manquait, et son absence explique tout.
+
+    Mesuré en PRODUCTION le 04/09 : `data_create_namespace` rend un id, la liste
+    appelée aussitôt ne le montre pas, `data_delete_namespace` le supprime — donc il
+    existait. Le créateur conclut que sa création a échoué. Classe `oto#42` : le code
+    sait, la réponse ne le dit pas — et son couple, une écriture sans lecteur.
+
+    ⚠️ Aucun banc ne faisait ce trajet-là. Les deux bancs de scope FIGEAIENT le jeu de
+    propriétaires sans l'utilisateur, donc ils CERTIFIAIENT l'absence ; ceux de la
+    capacité stubbent le store et injectent les verdicts. Chacun prouvait sa moitié,
+    aucun ne joignait les deux — le défaut vivait exactement dans l'espace entre eux.
+    Un test qui crée puis lit est le seul qui pouvait le voir.
+    """
+    rec = {}
+    _wire(monkeypatch, rec)
+    store = D.make_store("u1")
+    # Ce que `_default_owner` donne à une création sans précision (ADR 0068).
+    assert store._default_owner() == ("user", "u1")
+    # …et ce jeu-là doit être celui que la liste interroge.
+    store.list_namespaces()
+    assert ("user", "u1") in rec["owners"], (
+        "le propriétaire d'un tableau créé par défaut n'est pas dans le jeu que la "
+        "liste interroge : il naîtrait invisible à celui qui vient de l'écrire")
+
+
+def test_parite_recherche_liste(monkeypatch):
+    """« Cherchable ⇔ lisible » — l'invariant que le CLAUDE.md pose en critère de
+    merge, tenu par un banc plutôt que par une phrase.
+
+    ⚠️ Il a été FAUX une journée (oto-backend#870) : `search._accessible_namespaces`
+    interrogeait `active_org_principals` (org + moi + mes groupes) quand
+    `list_namespaces` n'interrogeait que l'org. Un tableau personnel était donc
+    trouvable par la recherche et absent de la liste — et la docstring de la recherche
+    AFFIRMAIT la parité, ce qui rendait l'écart invisible à qui lisait le code.
+
+    Les deux appellent maintenant la même fonction. Ce banc compare les JEUX obtenus,
+    pas les noms de fonctions : renommer l'une sans l'autre ne le tromperait pas."""
+    import inspect
+    from oto_mcp import ownership, search
+
+    src_liste = inspect.getsource(D.DatastorePg.list_namespaces)
+    src_reche = inspect.getsource(search._accessible_namespaces)
+    for nom, src in (("liste", src_liste), ("recherche", src_reche)):
+        assert "active_org_principals" in src, (
+            f"la {nom} n'interroge plus le même jeu de propriétaires que l'autre : "
+            "l'invariant « cherchable ⇔ lisible » se rompt en silence, et c'est le "
+            "sens de l'écart qui décide s'il cache ou s'il fuit")
+    # Et le jeu lui-même porte bien les trois paliers, dans l'org active seulement.
+    monkeypatch.setattr(ownership.group_store, "list_groups_for_user",
+                        lambda sub, org: [{"group_id": 5}])
+    jeu = ownership.active_org_principals("u1", 99)
+    assert jeu == [("org", "99"), ("user", "u1"), ("group", "5")]

@@ -170,7 +170,13 @@ def list_datastore_namespaces_granted_to(
             "WHERE g.resource_type = 'datastore_namespace' AND ("
             "     (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
             "  OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ) "
-            "AND NOT (d.owner_type = 'user' AND d.owner_id = %(sub)s) "
+            # ⚠️ L'exclusion « AND NOT (owner_type='user' AND owner_id=sub) » est
+            # RETIRÉE (oto-backend#870). Son commentaire disait « reliques perso
+            # possédées (gérées à part) » — et ce « à part » ne pointait vers rien :
+            # `list_namespaces` ne listait que l'org, donc un tableau personnel
+            # n'était rendu par AUCUN des deux chemins. La déduplication par id, en
+            # amont, suffit à ne pas le compter deux fois.
+
             "GROUP BY d.id, d.owner_type, d.owner_id, d.namespace, d.created_at "
             "ORDER BY d.namespace",
             {"sub": sub, "org": org_txt, "grp": grp_txt},

@@ -236,7 +236,12 @@ def search(sub: str, org_id: int, q: str, *,
 def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
     """Namespaces datastore du CONTEXTE : owners (org + moi + mes groupes) ∪ grants
     org/groupe — parité EXACTE du listing datastore (mêmes fonctions db, sujet du
-    tripwire d'étanchéité). Source unique du scoping des sources `tableau` ET `ligne`
+    tripwire d'étanchéité).
+    ⚠️ Cette parité était FAUSSE du 04/09 (ADR 0068) au 04/09 (#870) : la liste, elle,
+    ne prenait que l'org — la recherche voyait un tableau personnel que la liste
+    cachait. La phrase affirmait donc un invariant que le code ne tenait pas, et
+    personne ne pouvait le savoir en la lisant. Elle est vraie depuis, et
+    `test_parite_recherche_liste` la tient au lieu de la répéter. Source unique du scoping des sources `tableau` ET `ligne`
     → l'invariant « cherchable ⇔ lisible » tient au grain ligne par héritage du ns."""
     principals = ownership.active_org_principals(sub, org_id)
     gids = [int(p[1]) for p in principals if p[0] == "group"]
