@@ -19,10 +19,12 @@ par construction, et classé par NATURE comme les autres callbacks OAuth.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Awaitable, Callable
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
@@ -32,6 +34,11 @@ from ..auth import google as google_oauth
 
 # Type alias for the auth helper passed in from api_routes.
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
+
+# oto-backend#867 lot 2 — délai défendable pour l'échange OAuth Google hors boucle
+# (exchange_code + persist_token→_fetch_email, deux appels HTTP synchrones 15s
+# chacun ; voir google.py::_client_for_user_async pour la même justification).
+_OAUTH_EXCHANGE_TIMEOUT_S = 30
 
 
 def _app_url() -> str:
@@ -67,9 +74,19 @@ def make_routes(
         if not parsed:
             return json_error(request, 400, "invalid_state")
         sub, org_id = parsed
-        try:
+
+        def _finish() -> None:
             tokens = google_oauth.exchange_code(code)
             google_oauth.persist_token(sub, org_id, tokens)
+
+        try:
+            # DB + HTTP sync → hors event loop (#867), même patron qu'api/zoho.py.
+            await asyncio.wait_for(run_in_threadpool(_finish),
+                                   timeout=_OAUTH_EXCHANGE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return json_error(request, 504,
+                              f"oauth_exchange_timeout: no response within "
+                              f"{_OAUTH_EXCHANGE_TIMEOUT_S}s")
         except Exception as e:
             return json_error(request, 502, f"oauth_exchange_failed: {e}")
         # Retour vers la page connecteurs (où vit la config Google, ADR 0024 B2).
