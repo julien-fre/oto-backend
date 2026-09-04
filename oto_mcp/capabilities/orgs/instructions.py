@@ -695,8 +695,15 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
     `/api/me/instructions/*`) trouve `ctx.group_id` vide et se fait refuser : le palier
     équipe n'est atteignable que par une règle qui a vérifié l'équipe. C'est le
     verrou — relire l'équipe ici (via l'équipe ACTIVE, par exemple) rendrait le champ
-    client suffisant pour écrire chez elle. Une entrée sans `scope` reste au palier org,
-    à l'octet près.
+    client suffisant pour écrire chez elle.
+
+    ⚠️ **Le palier PERSONNEL (`scope='user'`) est ouvert depuis le 04/09/2026** (ADR
+    0068), mais il n'est PAS le défaut ici — et c'est délibéré. Les quatre appelants de
+    cette fonction sont des capacités gardées par `ORG_ADMIN_OPT` : leur objet EST
+    d'écrire la procédure de l'org. Y mettre un défaut personnel transformerait une
+    surface d'administration en espace privé, ce que personne n'a demandé. Le défaut
+    personnel vit sur la surface AGENT (`oto_procedure`), là où l'appelant est un
+    modèle qui écrit ce qu'on lui a dicté sans rien demander de partagé.
 
     ⚠️ Ce verrou ne dit RIEN du palier de droits : le rôle exigé dépend du VERBE et se
     déclare à la capacité (`set` = membre de l'équipe, `delete` = chef — #681). Deux
@@ -710,6 +717,13 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
                               "y supprimer d'en être le chef. Cette surface-ci écrit "
                               "l'org.")
         return ("group", str(ctx.group_id))
+    if getattr(inp, "scope", None) == "user":
+        # Palier PERSONNEL : l'identité vient du contexte, jamais d'un champ client —
+        # même verrou que les deux autres paliers. Un `owner_id` accepté ici
+        # permettrait d'écrire la procédure de quelqu'un d'autre.
+        if ctx.sub is None:
+            raise AuthzDenied(401, "no_identity", "Identité requise pour écrire ici.")
+        return ("user", str(ctx.sub))
     if ctx.org_id is None:
         raise AuthzDenied(400, "no_active_org",
                           "Aucune org active — vois `oto_use_org`, ou passe `org` "
@@ -718,9 +732,15 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
 
 
 def _scope_ref(owner: tuple[str, str]) -> dict:
-    """La clé de scope d'une réponse — `org_id` ou `group_id`, jamais les deux, jamais
-    une clé nulle (convention de tout ce module, cf. `GuideView`)."""
-    return {f"{owner[0]}_id": int(owner[1]), "scope": owner[0]}
+    """La clé de scope d'une réponse — `org_id`, `group_id` ou `user_id`, jamais deux,
+    jamais une clé nulle (convention de tout ce module, cf. `GuideView`).
+
+    ⚠️ `int()` sur l'identifiant vaut pour une org et une équipe (clés primaires), pas
+    pour une PERSONNE : un `sub` est du texte. La conversion levait un `ValueError` que
+    l'adaptateur REST ne rattrape pas — donc un 500 sur une procédure personnelle, au
+    retour d'une écriture qui avait RÉUSSI (ADR 0068)."""
+    otype, oid = owner[0], owner[1]
+    return {f"{otype}_id": (oid if otype == "user" else int(oid)), "scope": otype}
 
 
 # ── Handlers (core ; owner depuis ctx → partagés membre/admin) ──────────────
@@ -802,12 +822,23 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
         })
 
     # Un guide nommé précis.
-    if scope == "group" and member_mode:
+    if scope == "user" and member_mode:
+        # Palier PERSONNEL (ADR 0068) — l'identité vient du contexte d'autz, jamais
+        # d'un champ client : le palier personnel de QUELQU'UN D'AUTRE n'est pas
+        # atteignable, même en le nommant. Même verrou que l'org et l'équipe.
+        # ⚠️ Sans cette branche, `scope='user'` tombait dans le `else` et cherchait au
+        # palier ORG : la procédure écrite à soi devenait « introuvable » à la
+        # relecture, sur un message qui nommait pourtant le bon scope.
+        if ctx.sub is None:
+            raise AuthzDenied(401, "no_identity", "Identité requise.")
+        owner: tuple[str, str] = ("user", str(ctx.sub))
+        scope_ref: dict = {"user_id": str(ctx.sub)}
+    elif scope == "group" and member_mode:
         group_id = _active_group(ctx)
         if group_id is None:
             raise AuthzDenied(400, "no_active_group", "Pas de département actif — vois `oto_use_group`.")
-        owner: tuple[str, str] = ("group", str(group_id))
-        scope_ref: dict = {"group_id": group_id}
+        owner = ("group", str(group_id))
+        scope_ref = {"group_id": group_id}
     else:
         if org_id is None:
             raise AuthzDenied(400, "no_active_org", "Pas d'org active — vois `oto_use_org`.")

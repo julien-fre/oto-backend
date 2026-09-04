@@ -77,6 +77,19 @@ def _schema_servi(nom: str) -> dict:
 def test_le_schema_servi_de_la_surface_heritee_est_inchange():
     """CLIQUET — relevé sur `origin/main` au 2026-09-01, après le revert de #756.
 
+    ⚠️ **Regravé le 2026-09-04, une seule valeur : `permission` passe de `"write"` à
+    `"read"`** (ADR 0068, décision d'Alexis « pas de v2 » — on corrige l'outil que les
+    gens utilisent). Ce cliquet protège d'une rupture qui fait ÉCHOUER un appel : #756
+    rendait un champ obligatoire, et un appelant qui l'omettait passait de
+    « fonctionne » à « refusé ». Un défaut plus RESTRICTIF ne fait échouer personne —
+    l'appel réussit, avec moins de droit. Et le seul appelant hors backend, le
+    dashboard, passe toujours `role` explicitement (`shareResource(…, role)`), qui
+    prime sur `permission` : vérifié dans `oto-dashboard/frontend/src/api/console.ts`
+    avant de graver, pas supposé.
+    Le fichier est regravé **au format d'origine** (une ligne, `sort_keys`) pour que
+    le diff montre LA valeur qui bouge et non une réindentation — un cliquet illisible
+    ne se relit plus, et ne garde donc plus rien.
+
     Ce fichier `.json` EST la déclaration : le régénérer est un geste qui se voit en
     revue et qui se nomme, exactement comme `tests/api/api_routes_table.txt`. Toute
     évolution du contrat d'entrée de la gouvernance passe par `oto_resource_v2`, dont

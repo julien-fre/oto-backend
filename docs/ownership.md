@@ -154,3 +154,24 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > ⚠️ Limite CONNUE de l'observation : le canal `mcp` est un proxy d'« agent », pas la
 > vérité. Un jeton `oto_` porté sur la face REST est une machine et n'est pas compté ;
 > le distinguer demande de séparer, sur REST, un JWT Logto d'un jeton porté.
+
+> **Le palier PERSONNEL des procédures est ouvert (04/09/2026, phase 2 de #681).**
+> Décision d'Alexis : « procédure doit pouvoir être privée ». Le préalable était réel —
+> `org_instructions.org_id` était `NOT NULL`, elle porte l'org PARENTE du propriétaire
+> **et la cascade de suppression**, et une personne n'a pas d'org parente. Y ranger son
+> org de CONTEXTE aurait fait disparaître une procédure personnelle avec l'org : le
+> store refusait d'écrire cette ligne-là, à raison. La colonne est relâchée **aux deux
+> tables** (vivante et historique — la laisser `NOT NULL` sur l'historique ferait
+> échouer la première ÉCRITURE, pas la création, donc bien après qu'on aurait cru le
+> lot fini) ; une procédure perso y porte `NULL`.
+> Ouvert : `OWNER_TYPES` gagne `user`, `_parent_org_id` rend `None`, `_owner_of`
+> accepte `scope='user'` (identité prise dans le contexte d'autz, **jamais** un champ
+> client — le palier personnel d'autrui n'est pas atteignable), `_get_guide` a sa
+> branche de lecture, et `oto_resource op=transfer` déplace une procédure vers une
+> personne.
+> ⚠️ **Le DÉFAUT reste l'org** — c'est un choix, pas un oubli. Le basculer fait tomber
+> une vingtaine de bancs et une garde (`…_reads_honor_explicit_org`) : l'absence de
+> scope voyage jusqu'à des modèles d'entrée en aval qui l'exigent. Ouvrir la porte
+> d'abord, déplacer le défaut ensuite — dans cet ordre chaque pas se vérifie seul.
+> ⚠️ Le défaut des surfaces d'ADMIN (`org.instruction.*`, gardées `ORG_ADMIN_OPT`)
+> restera l'org quoi qu'il arrive : leur objet EST d'écrire la procédure de l'org.

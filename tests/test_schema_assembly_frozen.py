@@ -204,8 +204,21 @@ from oto_mcp.db import _schema, schema
 # l'assemblé grandit exactement de 2 094 (137 394 → 139 488). Un écart aurait voulu
 # dire qu'un autre fragment avait bougé sous la mesure — sur une base PARTAGÉE
 # prod/preprod, c'est la vérification qui compte, pas le hash recopié.
-EMPREINTE = "282a2817cf3e49287f254ab2abcdffa5fd7a9b483ccddd3d078ab939f09d3001"
-LONGUEUR = 139488
+# 2026-09-04 — `org_id` devient NULLABLE sur `org_instructions` et sa table
+# d'historique : le palier PERSONNEL des procédures (ADR 0068, phase 2 de #681,
+# décision d'Alexis « procédure doit pouvoir être privée »). Cette colonne portait
+# l'org PARENTE du propriétaire ET la cascade de suppression ; une personne n'a pas
+# d'org parente, et y ranger son org de CONTEXTE ferait disparaître une procédure
+# personnelle avec l'org. Le store refusait d'écrire cette ligne-là, à raison.
+# ⚠️ Geste RELÂCHANT : aucune ligne existante ne devient invalide, et il se rejoue
+# sans effet. Les deux tables bougent ENSEMBLE — laisser l'historique NOT NULL
+# ferait échouer la première ÉCRITURE d'une procédure perso, pas sa création, donc
+# bien après qu'on aurait cru le lot fini.
+# ⚠️ Empreinte recalculée APRÈS l'arithmétique : deux commentaires de 211 caractères
+# ajoutés, deux « NOT NULL » (9 caractères) retirés → +422 attendus, +422 mesurés
+# (139 488 → 139 910). Un écart aurait voulu dire qu'un autre fragment avait bougé.
+EMPREINTE = "8ebb0a703d7fc776e2ad7fd53eed480cdc6963142d84c1a705b3793aa100928c"
+LONGUEUR = 139910
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

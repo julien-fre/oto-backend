@@ -63,13 +63,18 @@ class ResourceInput(BaseModel):
                                "public", "secret"]] = None
     # RÔLE du grant (viewer=lecteur, editor=éditeur, manager=gérant/gouvernance grantable).
     role: Optional[Literal["viewer", "editor", "manager"]] = None
-    # ⚠️ Ce défaut est `"write"` et le RESTE ici, alors que l'ADR 0068 veut `"read"` :
-    # le schéma servi de `oto_resource` est un CLIQUET (empreinte JSON figée, relevé
-    # sur des appelants réels au journal). Changer un défaut sur cette surface casse en
-    # production, chez quelqu'un d'autre, sans trace. Le durcissement va sur
-    # `ResourceInputV2` — c'est le sens même de la duplication (ADR 0019/0050 : un
-    # contrat servi ne se durcit pas en place, il se double).
-    permission: Literal["read", "write"] = "write"  # share — rétro-compat (mappé en rôle)
+    # ADR 0068 — « partager » veut dire « qu'il puisse le lire ». Ce défaut valait
+    # `"write"`, annoté « rétro-compat » : un héritage, jamais une intention.
+    #
+    # ⚠️ Ce champ vit sous le CLIQUET du schéma servi (`resources_input_legacy.json`),
+    # posé après l'incident #756 — et le changer ici est un choix examiné, pas un
+    # oubli. Ce que le cliquet protège, c'est une rupture qui fait ÉCHOUER un appel
+    # (#756 rendait un champ obligatoire) ; un défaut plus restrictif ne fait échouer
+    # personne, l'appel réussit avec moins de droit. Et le seul appelant hors backend,
+    # le dashboard, passe toujours `role` explicitement (`shareResource(…, role)`), qui
+    # PRIME sur `permission` — il n'est donc pas concerné. Vérifié le 04/09, décision
+    # d'Alexis : pas de seconde surface pour ça.
+    permission: Literal["read", "write"] = "read"   # share — legacy (mappé en rôle)
     # Publication (audience public/secret/org sur un PROJET) : préciser les outils exposés.
     mcp_slug: Optional[str] = None          # préfixe de sous-domaine (facultatif en secret)
     mcp_tools: Optional[list[str]] = None   # allowlist figée (vide = réutilise la liste publiée)

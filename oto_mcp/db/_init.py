@@ -668,6 +668,20 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE org_instructions ALTER COLUMN id SET DEFAULT nextval('org_instructions_id_seq')")
     conn.execute("ALTER TABLE org_instructions ALTER COLUMN id SET NOT NULL")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_org_instructions_id ON org_instructions(id)")
+    # ADR 0068 (04/09/2026) — le palier PERSONNEL des procédures, phase 2 de #681.
+    # `org_id` était NOT NULL : elle porte l'org PARENTE du propriétaire (une org est
+    # la sienne, une équipe tient la sienne dans `org_groups`) et la cascade de
+    # suppression. Une personne n'a pas d'org parente — s'y ranger l'org de contexte
+    # ferait supprimer une procédure PERSONNELLE avec l'org, ce que le store refusait
+    # explicitement d'écrire plutôt que de poser une ligne bancale. On relâche donc la
+    # colonne : une procédure perso porte `org_id = NULL`, ce qui est le fait, et non
+    # une org qui ne la possède pas.
+    # ⚠️ Geste RELÂCHANT : il n'invalide aucune ligne existante et se rejoue sans
+    # effet. Les deux tables bougent ensemble — l'historique porte la même clé de
+    # propriétaire que la table vivante, et le laisser NOT NULL ferait échouer la
+    # PREMIÈRE écriture d'une procédure perso, pas sa création.
+    conn.execute("ALTER TABLE org_instructions ALTER COLUMN org_id DROP NOT NULL")
+    conn.execute("ALTER TABLE org_instruction_revisions ALTER COLUMN org_id DROP NOT NULL")
     # Archivage (soft-delete) d'une procédure : masquée de tous les listings —
     # y compris ceux que l'IA lit (`skills_index_md`, `oto_procedure op=list`,
     # l'index de guide) — mais la ligne ET son historique de révisions

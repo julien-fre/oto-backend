@@ -62,15 +62,11 @@ class ResourceInputV2(ResourceInput):
     resource_id: Optional[str] = Field(
         None, pattern=r"^\d+$",
         description="Identifiant numérique de la ressource (clé primaire).")
-    # ADR 0068 — le troisième durcissement, et il ne porte pas sur la FORME de l'entrée
-    # mais sur ce qu'elle donne quand on ne dit rien. La surface héritée partage en
-    # ÉCRITURE par défaut (« rétro-compat », le code le disait déjà comme un héritage
-    # et non comme une intention) ; ici partager veut dire laisser LIRE, ce que veut
-    # dire le mot pour qui le demande. `role=` continue de primer sur les deux surfaces.
-    permission: Literal["read", "write"] = Field(
-        "read",
-        description="Droit accordé quand `role` n'est pas passé. read = lecture seule "
-                    "(défaut ici ; la surface héritée `oto_resource` donne l'écriture).")
+    # ⚠️ `permission` n'est PAS redéclaré ici, et c'est délibéré. Son défaut « partager
+    # = laisser lire » (ADR 0068) est posé sur l'entrée HÉRITÉE dont cette classe
+    # dérive — décision d'Alexis du 04/09 : « pas de v2 » pour ce changement-là, on
+    # corrige l'outil que les gens utilisent. Le redéclarer donnerait deux endroits à
+    # tenir d'accord, exactement ce que la dérivation existe pour éviter.
 
 
 CAPABILITIES += [

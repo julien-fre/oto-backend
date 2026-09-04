@@ -38,7 +38,13 @@ from .registry import CAPABILITIES
 #
 # ⚠️ `None` et `"org"` doivent MAPPER LA MÊME règle : `scope` est optionnel, et son
 # absence ne veut pas dire « palier inconnu ».
-_LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
+# ⚠️ Le palier PERSONNEL (`scope='user'`) existe depuis le 04/09/2026 (ADR 0068) —
+# mais `None` reste sur l'ORG, et c'est un choix à trancher, pas un oubli. Le basculer
+# fait tomber une vingtaine de bancs et une garde (`…_reads_honor_explicit_org`) :
+# l'absence de scope voyage jusqu'à des modèles d'entrée en aval qui l'exigent, et
+# « privé par défaut » y demande un lot à part. Ouvrir la porte d'abord, déplacer le
+# défaut ensuite — dans cet ordre, chaque pas se vérifie seul.
+_LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "user": SUB_ONLY, "org": ORG_MEMBER_OPT("org"),
                "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
 # ⚠️ `set` et `delete` ne partagent PAS une règle : ce n'est pas la surface qui décide du
 # palier, c'est le VERBE.
@@ -55,11 +61,13 @@ _LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
 # ajoute une version et `from_version` restaure la précédente. Le risque d'une procédure
 # qui pilote un agent se traite là — par les versions et par le digest qui dit ce qui a
 # changé — et non en fermant la porte à ceux qui s'en servent.
-_ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org"), "org": ORG_ADMIN_OPT("org"),
+_ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org"), "user": SUB_ONLY, "org": ORG_ADMIN_OPT("org"),
                  "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
 # `delete` reste au **chef d'équipe** : il emporte la procédure ET tout son historique,
 # sans corbeille — rien ne le défait. Un geste destructeur n'est pas un geste de travail.
-_SUPPRIMER = BY_OP({None: ORG_ADMIN_OPT("org"), "org": ORG_ADMIN_OPT("org"),
+# Au palier PERSONNEL, supprimer sa propre procédure ne demande personne d'autre :
+# le geste destructeur ne l'est que pour son auteur, qui est le seul à la voir.
+_SUPPRIMER = BY_OP({None: ORG_ADMIN_OPT("org"), "user": SUB_ONLY, "org": ORG_ADMIN_OPT("org"),
                     "group": GROUP_ADMIN_OPT("group")}, fields=("scope",))
 
 
