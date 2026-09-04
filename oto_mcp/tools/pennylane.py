@@ -29,30 +29,12 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from ..mcp_errors import McpError
-from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, file_source
+from .. import file_source
+from .pennylane_socle import _bad, _client, _ecrit, _need
 
 
 def register(mcp: FastMCP) -> None:
-    from oto.tools.pennylane import PennylaneClient
-
-    def _client() -> PennylaneClient:
-        key, _is_platform = access.resolve_api_key("pennylane")
-        # Rédaction appliquée à la frontière des tools par `FieldRedactionMiddleware`
-        # (policy de l'org active), plus au niveau client.
-        return PennylaneClient(api_key=key)
-
-    def _bad(msg: str) -> McpError:
-        return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
-
-    def _need(value, name: str, op: str):
-        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
-        if value is None:
-            raise _bad(f"op='{op}' requiert {name}")
-        return value
-
     # --- référentiels (lecture seule) ---------------------------------------
 
     @mcp.tool()
@@ -160,15 +142,16 @@ def register(mcp: FastMCP) -> None:
                 _need(external_reference, "external_reference", op))
             return found if found else {"found": False}
         if op == "create":
-            return c.create_customer(
+            return _ecrit(c.create_customer(
                 name=_need(name, "name", op), emails=emails,
                 address=_need(address, "address", op),
                 postal_code=_need(postal_code, "postal_code", op),
                 city=_need(city, "city", op), country_alpha2=country_alpha2,
-                external_reference=external_reference)
+                external_reference=external_reference), "la création de client")
         if op == "update":
-            return c.update_customer(_need(customer_id, "customer_id", op),
-                                     **(fields or {}))
+            return _ecrit(c.update_customer(_need(customer_id, "customer_id", op),
+                                            **(fields or {})),
+                          "la mise à jour de client")
         raise _bad("op doit être 'list', 'find', 'create' ou 'update'")
 
     # --- factures de VENTE + avoirs (brouillon-d'abord, supervision) ---------
@@ -279,27 +262,29 @@ def register(mcp: FastMCP) -> None:
                 customer_invoice_template_id=customer_invoice_template_id,
                 draft=True)
             if op == "create":
-                return c.create_customer_invoice(**kwargs)
-            note = c.create_credit_note(**kwargs)
+                return _ecrit(c.create_customer_invoice(**kwargs), "la création de facture")
+            note = _ecrit(c.create_credit_note(**kwargs), "la création d'avoir")
             if credited_invoice_id:
                 note_id = note.get("id") or (note.get("customer_invoice") or {}).get("id")
                 if not note_id:
                     return {"credit_note": note,
                             "link": "NON posé : id de l'avoir introuvable dans la réponse"}
                 return {"credit_note": note,
-                        "link": c.link_credit_note(credited_invoice_id, note_id)}
+                        "link": _ecrit(c.link_credit_note(credited_invoice_id, note_id),
+                                       "le rattachement de l'avoir à sa facture")}
             return note
         if op == "update":
-            return c.update_invoice(_need(invoice_id, "invoice_id", op), **(fields or {}))
+            return _ecrit(c.update_invoice(_need(invoice_id, "invoice_id", op),
+                                           **(fields or {})), "la mise à jour de facture")
         if op == "finalize":
-            return c.finalize_invoice(_need(invoice_id, "invoice_id", op))
+            return _ecrit(c.finalize_invoice(_need(invoice_id, "invoice_id", op)),
+                          "la finalisation de facture")
         if op == "send":
-            return c.send_invoice(_need(invoice_id, "invoice_id", op))
+            return _ecrit(c.send_invoice(_need(invoice_id, "invoice_id", op)),
+                          "l'envoi de facture")
         if op == "delete":
-            res = c.delete_invoice(_need(invoice_id, "invoice_id", op))
-            if isinstance(res, dict) and res.get("error"):
-                raise _bad(f"Pennylane invoice delete failed: {res.get('details', res)}")
-            return res
+            return _ecrit(c.delete_invoice(_need(invoice_id, "invoice_id", op)),
+                          "la suppression de facture")
         raise _bad("op doit être 'list', 'find', 'create', 'credit_note', 'update', "
                    "'finalize', 'send' ou 'delete'")
 
@@ -331,7 +316,8 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             return c.list_suppliers(max_pages=max_pages)
         if op == "create":
-            return c.create_supplier(_need(name, "name", op), **(fields or {}))
+            return _ecrit(c.create_supplier(_need(name, "name", op), **(fields or {})),
+                          "la création de fournisseur")
         raise _bad("op doit être 'list' ou 'create'")
 
     @mcp.tool()
@@ -388,7 +374,7 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             return c.get_supplier_invoices(max_pages=max_pages)
         if op == "import":
-            res = c.import_supplier_invoice(
+            return _ecrit(c.import_supplier_invoice(
                 file_attachment_id=_need(file_attachment_id, "file_attachment_id", op),
                 supplier_id=_need(supplier_id, "supplier_id", op),
                 date=_need(date, "date", op), deadline=_need(deadline, "deadline", op),
@@ -400,10 +386,7 @@ def register(mcp: FastMCP) -> None:
                 currency=currency, external_reference=external_reference,
                 import_as_incomplete=import_as_incomplete,
                 invoice_number=invoice_number, label=label,
-            )
-            if isinstance(res, dict) and res.get("error"):
-                raise _bad(f"Pennylane supplier invoice import failed: {res.get('details', res)}")
-            return res
+            ), "l'import de facture d'achat")
         raise _bad("op doit être 'list' ou 'import'")
 
     @mcp.tool()
@@ -426,9 +409,12 @@ def register(mcp: FastMCP) -> None:
             rf = file_source.resolve(source)
         except file_source.FileSourceError as e:
             raise _bad(str(e))
-        res = _client().upload_file_bytes(rf.data, rf.filename, rf.mime or "application/pdf")
-        if res.get("error") or not res.get("id"):
-            raise _bad(f"Pennylane file upload failed: {res.get('details', res)}")
+        res = _ecrit(
+            _client().upload_file_bytes(rf.data, rf.filename, rf.mime or "application/pdf"),
+            "le dépôt de fichier")
+        if not res.get("id"):
+            raise _bad(f"Pennylane a accepté le dépôt de fichier mais n'a rendu aucun "
+                       f"`id` — rien à rattacher à une facture. Réponse : {str(res)[:300]}")
         return {"file_attachment_id": res["id"], "filename": rf.filename, "url": res.get("url")}
 
     # --- banque & lettrage ---------------------------------------------------
@@ -483,4 +469,5 @@ def register(mcp: FastMCP) -> None:
             transaction_id: ID de la transaction bancaire.
             invoice_type: "customer" (ventes) ou "supplier" (achats).
         """
-        return _client().match_transaction(invoice_id, transaction_id, invoice_type)
+        return _ecrit(_client().match_transaction(invoice_id, transaction_id, invoice_type),
+                      "le rapprochement banque/facture")
