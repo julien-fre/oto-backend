@@ -377,6 +377,45 @@ phrase plutôt que d'inventer une distinction que la base ne fait pas.
 ⚠️ **Vérifié à la RÉSERVATION seulement** (arbitrage explicite) : un travail long
 continue avec un droit retiré en cours de route. C'est assumé, pas oublié.
 
+### La clé de modèle de l'org part avec le travail réservé (#874, 04/09/2026)
+
+La clé de modèle **vit avec les autres secrets de connecteurs de l'org**, et le
+worker — qui fait partie du backend — a le droit de la lire. Ce droit s'exerce
+**à la réservation, une fois, avec le travail**. Le runner n'interroge jamais le
+coffre : un worker qui saurait l'interroger pourrait y lire autre chose que ce
+travail-ci. Avant ce lot, toutes les orgs tournaient sur la clé de la plateforme,
+prise dans l'environnement du worker.
+
+```
+claim(provider="anthropic")  le worker NOMME le dépôt qu'il sait consommer
+  → job["model_key"]         la clé de l'ORG DU TRAVAIL, si elle en a déposé une
+absente                      → le worker retombe sur la clé de la plateforme
+```
+
+⚠️ **La garde porte sur le TYPE du dépôt, pas sur son nom.** Si le worker pouvait
+nommer n'importe quel connecteur, *réserver un travail suffirait à faire sortir le
+secret Folk ou Salesforce de l'org*. Seuls les `kind="credential"` passent — ceux
+dont porter une clé est la seule raison d'être, sans aucun outil derrière. **C'est
+la raison d'être du type distinct** plutôt que d'un connecteur ordinaire aux
+namespaces vides : le type EST la liste d'autorisation.
+
+⚠️ **La clé est celle de l'org du travail**, jamais d'une org que le worker
+nommerait : il choisit le dépôt, jamais à qui il appartient. Un travail déjà
+refusé pour identité n'en reçoit aucune — lui en remettre une armerait un travail
+qui ne doit pas tourner.
+
+⚠️ **Ce que les journaux en voient : rien**, et c'est tenu par des cliquets, pas
+par une promesse. `tool_calls` ne garde aucune réponse (la clé part dans la
+réponse au claim, pas dans ses arguments — le masque de #558/#564 ne la couvre
+donc pas et n'a pas à le faire) ; `_avec_cle` rend une copie ; Sentry a
+`include_local_variables=False` (#564) ; le runner n'a pas de Sentry et ne
+journalise que `job["id"]`.
+
+**Ce qui n'est pas ici** : la grille d'offre — qui a droit à la clé de la
+plateforme, qui doit déposer la sienne. Elle appartient au chantier « qui a le
+droit de quoi et pourquoi », au blueprint. Aujourd'hui, une org sans dépôt
+continue sur la clé de la plateforme.
+
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 
 Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait
