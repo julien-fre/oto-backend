@@ -268,6 +268,56 @@ volontaire : un connecteur non sélectionné reste **appelable par `oto_call`** 
 universel, ADR 0036). La sélection gouverne la **visibilité** des outils, jamais
 l'aptitude — les mélanger recréerait la confusion de #476 sous un autre nom.
 
+### Purge silencieuse des mounts OAuth (atlassian/folk) — oto#25 lot (a), 2026-09-04
+
+Sixième forme, propre à la famille des connecteurs OAuth **fédérés « mount »**
+(atlassian, folkmcp — Rovo Remote MCP, MCP officiel Folk) : leur credential vit au
+scope **LEGACY** `("user", sub)`, pas au scope MEMBRE `(org, sub)` des connecteurs
+keyés (`connectors/link.py` explique pourquoi — un module par module, jamais une
+boucle générique qui devinerait le rangement). `access_token_for(sub)` rafraîchit
+l'access token de façon transparente à chaque appel ; jusqu'ici, un refresh token
+mort (`invalid_grant`) faisait **PURGER** la ligne (`clear_credential`) — le fait
+« ça a été révoqué » redevenait indiscernable de « jamais posé », un repli qui
+masque un problème plutôt que de le nommer.
+
+**Le correctif** réutilise le mécanisme déjà en place pour les connecteurs keyés :
+la ligne reste, et se fait marquer via `credentials_store.update_meta(..., {
+"health_ko": True, "health_reason": <motif brut>})` — même paire de champs que
+`_record_health`, motif fournisseur **brut** en valeur de champ (`invalid_grant`),
+pas la seule catégorie opaque `credential_rejected`. Elle se lève en reposant la
+clé (reconnexion : `persist_token` écrase `meta`) ou par un futur refresh réussi
+(qui écrase `meta` lui aussi).
+
+**Rendre la marque observable a demandé un second geste**, propre à cette famille :
+le batch générique de `access.status_for` qui lit `health_ko`/`health_reason`
+(cf. #541 ci-dessus) **ne regarde que le palier MEMBRE** — il ne verra donc
+*jamais* une ligne `("user", sub)`. `connectors/link.py::LinkState` porte
+désormais `health_ko`/`health_reason` ; chaque module lit sa propre ligne dans
+son `_link_state()` (il sait sous quel scope il range son credential, une boucle
+générique se tromperait), et la 4ᵉ boucle de `status_for` (celle qui ferme le
+trou « ces connecteurs n'ont aucune entrée dans `me.providers` ») relaie ces deux
+champs sur l'entrée `ProviderStatus` — c'est ce que lit la fiche `/api/me` du
+dashboard.
+
+⚠️ **Ce que ce lot NE fait PAS** : `oto_instance op=verify` reste **indisponible**
+pour `atlassian`/`folkmcp` (`verify_unavailable` — aucune sonde enregistrée).
+Vérifié empiriquement : `access.resolve_credential("atlassian", sub=…)` lève
+`McpError("Aucune clé `atlassian` configurée pour toi…")` **même quand une ligne
+existe réellement** au scope legacy, parce que le walker (`_member_fetch` /
+`db.get_member_api_key`) ne cherche que `("member", "{org}:{sub}")`. Enregistrer
+une sonde `verify` sans corriger ce point ferait *pire* que l'absence actuelle :
+un utilisateur réellement connecté se verrait dire « aucune clé configurée » — un
+énoncé faux — là où `verify_unavailable` reste honnête (aucun test n'existe,
+sans se prononcer sur la connexion). Élargir le walker à ce scope legacy est le
+« barreau ultérieur d'ADR 0033 » déjà nommé par `tests/test_member_credential_scope.py`
+(§4, `_OAUTH_FAMILY_FILES`) — plus grand que ce lot, pas fait ici. La marque de
+santé écrite par `access_token_for` reste donc observable via `/api/me`
+uniquement, pas via `op=verify`, tant que ce barreau n'existe pas.
+
+Changement de comportement **servi** : un connecteur qui, avant ce lot, semblait
+redevenir « à connecter » (purge muette) après un grant mort dira désormais
+`health_ko: true` sur sa fiche — à annoncer avant tag.
+
 ### La quatrième confusion : la boîte à outils n'est pas l'org de l'appel (#577)
 
 La toolbox d'une session MCP est calculée **au handshake**

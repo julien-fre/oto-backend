@@ -278,7 +278,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
         link = connector_link.state(c.name, sub) if sub else None
         if link is None:
             continue          # pas de lecture déclarée, ou lecture en échec : on se tait
-        out["providers"][c.name] = {
+        entry = {
             # `forbidden` = « aucune clé ne résout », l'état par défaut d'un BYO pas
             # encore connecté (ce n'est PAS un refus RBAC — cf. la carte connecteur).
             "mode": "user" if link.linked else "forbidden",
@@ -290,6 +290,13 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
             "quota_used_today": 0,
             "quota_daily": None,
         }
+        # Santé (oto#25 lot a) : le batch générique juste plus bas ne voit QUE le
+        # palier MEMBRE — invisible pour ce scope LEGACY (`("user", sub)`). Le module
+        # a lu SA propre ligne (`_link_state`) ; on relaie sans la recalculer.
+        if link.health_ko:
+            entry["health_ko"] = True
+            entry["health_reason"] = link.health_reason
+        out["providers"][c.name] = entry
 
     # Étape manquante par connecteur (seam générique `pending_action`, lot 2) :
     # « la clé résout mais il reste une étape » (unipile : lier un canal…). La
@@ -304,6 +311,10 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # le « read facile » de chaque connecteur) : un « connecteur KO » (session expirée,
     # token révoqué…) reste signalé jusqu'à ce qu'un test/reconnexion le rétablisse.
     # Lu en UN batch sur les clés MEMBRE de l'acteur — générique (tout connecteur), fail-open.
+    # ⚠️ Ne couvre PAS les OAuth fédérés de la boucle ci-dessus (scope LEGACY `("user",
+    # sub)`, hors de ce batch) : ceux-là ont déjà posé `health_ko`/`health_reason` sur
+    # leur entrée depuis leur propre `LinkState` — `m.get("health_ko")` y est absent,
+    # donc cette passe ne les touche pas (oto#25 lot a).
     if sub and active_org is not None:
         try:
             health = {r["connector"]: (r.get("meta") or {})

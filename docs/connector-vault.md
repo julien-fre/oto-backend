@@ -610,6 +610,19 @@ articles-only). Avec, il ne reste que le geste utile : consentir.
   né du consentement. Roter l'app d'éditeur ne casse donc pas les connexions déjà
   établies… jusqu'à leur prochain refresh, qui échouera avec l'ancien `client_secret`.
 
+### Grant mort : marquer, plus jamais purger (oto#25 lot a, 2026-09-04)
+
+Un refresh token révoqué (`invalid_grant`) n'efface plus la ligne du coffre — ça la
+rendait indiscernable d'un credential jamais posé, un repli qui masque un problème
+plutôt que de le nommer. Elle se fait marquer (`meta.health_ko` + `meta.health_reason`
+= motif fournisseur **brut**, pas une catégorie opaque), même mécanisme que la sonde
+`verify` des connecteurs keyés. Concerne aujourd'hui les mounts OAuth fédérés au scope
+LEGACY `("user", sub)` (`auth/atlassian.py`, `auth/folk.py`) — récit complet, ce que ça
+rend observable (`/api/me` via `connectors/link.py::LinkState`) et ce que ça NE rend
+PAS observable (`oto_instance op=verify`, faute de sonde enregistrée et d'un walker qui
+sache lire ce scope) dans `connector-model.md` §« Purge silencieuse des mounts OAuth ».
+Changement de comportement **servi** — à annoncer avant tag.
+
 ## Validation
 
 Pas de framework de tests dans le repo → validation manuelle sur **PG16 jetable (docker)** + revue adversariale par phase. Migrations idempotentes au boot (`init_db` : ALTER additifs, PK 4-col, backfills, encrypt-existing, drop-plaintext gaté).

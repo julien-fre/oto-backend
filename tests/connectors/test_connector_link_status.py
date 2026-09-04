@@ -7,7 +7,11 @@ ne l'avait vu, et ça expliquait quatre choses d'un coup :
 
 - un hook `status_hints` sur eux aurait été inatteignable (la décoration itère les
   entrées EXISTANTES) ;
-- `health_ko` idem ;
+- `health_ko` idem — **fermé le 2026-09-04 (oto#25 lot a)** : `LinkState` porte
+  désormais `health_ko`/`health_reason`, chaque module les lit sur SA propre ligne
+  (le batch générique de `status_for` ne couvre que le palier MEMBRE, jamais ce
+  scope LEGACY `("user", sub)`), et la 4e boucle les relaie — cf.
+  `test_la_sante_legacy_est_relayee` plus bas ;
 - le verdict de leur fiche n'avait rien à lire ;
 - et le dashboard interrogeait `/api/<nom>/oauth/status` — un nom de connecteur dans une
   URL — faute d'état dans `/api/me`.
@@ -74,6 +78,35 @@ def test_la_traduction_vers_provider_status_est_complete(monkeypatch, linked):
     assert entry["mode"] == ("user" if linked else "forbidden")
 
 
+def test_la_sante_legacy_est_relayee(monkeypatch):
+    """oto#25 lot (a) — la 4e boucle relaie `health_ko`/`health_reason` du `LinkState`
+    (le batch générique de `status_for`, quelques lignes plus bas dans le vrai code,
+    ne voit QUE le palier MEMBRE : invisible pour ce scope legacy sans ce relais)."""
+    from oto_mcp import access
+
+    monkeypatch.setattr(connector_link, "state",
+                        lambda name, sub: connector_link.LinkState(
+                            linked=True, set_at="2026-09-04 10:00:00", accounts=1,
+                            health_ko=True, health_reason="invalid_grant"))
+    entry = _entry_for(access, "atlassian")
+    assert entry["health_ko"] is True
+    assert entry["health_reason"] == "invalid_grant"
+
+
+def test_la_sante_absente_ne_pose_rien(monkeypatch):
+    """Tant que rien n'a été constaté (`health_ko=None`), l'entrée ne porte ni
+    `health_ko` ni `health_reason` — un champ toujours présent deviendrait du bruit
+    (même règle que `rbac_restricted_measured`, cf. `provider_status.py`)."""
+    from oto_mcp import access
+
+    monkeypatch.setattr(connector_link, "state",
+                        lambda name, sub: connector_link.LinkState(
+                            linked=True, set_at="2026-09-04 10:00:00", accounts=1))
+    entry = _entry_for(access, "atlassian")
+    assert "health_ko" not in entry
+    assert "health_reason" not in entry
+
+
 def test_une_lecture_en_echec_ne_casse_pas_api_me(monkeypatch):
     """Fail-open : un fournisseur tiers qui tousse ne doit pas faire tomber /api/me. On
     retombe sur l'absence d'entrée — l'état d'avant, donc une dégradation, pas une
@@ -97,7 +130,7 @@ def _entry_for(access, name: str):
         link = connector_link.state(c.name, "sub-x")
         if link is None:
             continue
-        out["providers"][c.name] = {
+        entry = {
             "mode": "user" if link.linked else "forbidden",
             "user_key_configured": link.linked,
             "session_set_at": link.set_at,
@@ -107,6 +140,10 @@ def _entry_for(access, name: str):
             "quota_used_today": 0,
             "quota_daily": None,
         }
+        if link.health_ko:
+            entry["health_ko"] = True
+            entry["health_reason"] = link.health_reason
+        out["providers"][c.name] = entry
     return out["providers"].get(name)
 
 

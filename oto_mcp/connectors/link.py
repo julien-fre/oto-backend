@@ -37,10 +37,24 @@ class LinkState:
     """Ce que le connecteur sait dire de son lien, dans le vocabulaire du CONSOMMATEUR.
 
     Volontairement pauvre : `status_for` le traduit ensuite en `ProviderStatus` (la forme
-    que le dashboard lit). Un module ne doit pas avoir à connaître ce contrat-là."""
+    que le dashboard lit). Un module ne doit pas avoir à connaître ce contrat-là.
+
+    `health_ko`/`health_reason` (oto#25 lot a, 2026-09-04) ferment le second manque
+    nommé par le module docstring ci-dessus (« health_ko idem ») : le batch générique
+    de `access.status_for` ne lit la santé QUE sur les clés de palier MEMBRE
+    (`credentials_store.list_credentials(MEMBER, member_id(org, sub))`), donc jamais
+    sur le scope LEGACY `("user", sub)` où vivent ces credentials. Le module SAIT sous
+    quel scope il range sa ligne — il lit donc sa propre santé et la porte ici plutôt
+    que de laisser une quatrième boucle générique deviner (même raison d'être que ce
+    fichier : « une boucle générique se tromperait silencieusement »)."""
     linked: bool
     set_at: Optional[str] = None
     accounts: int = 0          # multi-compte (google) : combien de comptes liés
+    # `None` tant que rien n'a été constaté — jamais `False` (cf. `ProviderStatus`,
+    # `capabilities/connectors/provider_status.py`) : ce lecteur ne sait pas confirmer
+    # une santé bonne, seulement en rapporter le REJET, une fois écrit.
+    health_ko: Optional[bool] = None
+    health_reason: Optional[str] = None
 
 
 _READERS: dict[str, Callable[[str], LinkState]] = {}
