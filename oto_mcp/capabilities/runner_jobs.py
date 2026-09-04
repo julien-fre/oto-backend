@@ -312,9 +312,13 @@ def _delegue(job: dict, bail_s: int, claimant: str) -> dict:
         db.refuser_pour_identite(job["id"], claimant,
                                  f"identité invalide — {raison}")
         return {**job, "delegation_refusee": raison}
+    # ⚠️ Purger AVANT d'émettre : le nettoyage est amorti sur l'usage, sans
+    # tâche de fond à faire vivre. Un jeton mort est inutilisable, et
+    # l'accumulation est mécanique — un par travail exécuté.
+    db.purger_delegations_expirees(porteur)
     job["delegated_token"] = db.create_api_token(
         porteur, label=f"runner job {job['id']}",
-        ttl_seconds=bail_s + _MARGE_JETON_S)
+        ttl_seconds=bail_s + _MARGE_JETON_S, kind="delegation")
     return job
 
 

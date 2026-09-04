@@ -202,6 +202,11 @@ _DECLARATIONS: tuple[str, ...] = (
     # (projets et issues y naissent, puis sont reflétés). Les deux cartes se
     # lisent ensemble.
     "productlane",
+    # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
+    # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
+    # servent aucun tool : le worker la consomme pour le compte de l'org.
+    "anthropic",
+    "mistral",
 )
 
 _MODULES: dict = {}

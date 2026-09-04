@@ -110,6 +110,22 @@ class Connector:
     # "mount" = MCP distant fédéré (otomata#16) monté via FastMCP proxy par le
     # module générique tools/mount.py — credential per-user (token OAuth) injecté
     # par requête, endpoint = `mount_url`.
+    # "credential" = ne fournit AUCUN outil : l'objet ne sert qu'à porter une clé
+    # que la plateforme utilise pour le compte de l'org (ex. la clé de modèle
+    # qu'un agent programmé consomme). Tranché par Alexis le 03/09 : un type
+    # DISTINCT, pas un connecteur à namespaces vides.
+    #
+    # ⚠️ La raison n'est pas technique — un connecteur sans namespace se construit
+    # très bien. C'est qu'il **se présenterait comme un connecteur sans en avoir
+    # les effets** : il apparaîtrait dans la liste, se « connecterait », et son
+    # activation n'apporterait aucune capacité. Un objet qui a l'air de faire
+    # quelque chose et ne fait rien est la famille de défauts qu'on documente
+    # depuis le 03/09 — un champ lu sans producteur, un champ produit que rien ne
+    # lit, une alerte qui ne se déclenche jamais. Ici c'est la version que
+    # l'UTILISATEUR voit.
+    #
+    # Un type distinct laisse l'écran le présenter pour ce qu'il est — « clé de
+    # fournisseur », pas « connecteur » — au lieu de mentir par omission.
     kind: str = "tools"
     # Endpoint MCP du serveur distant à monter (kind="mount" uniquement).
     mount_url: str | None = None
