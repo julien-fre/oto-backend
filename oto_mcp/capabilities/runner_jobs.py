@@ -41,6 +41,9 @@ class JobsInput(BaseModel):
     run_id: Optional[str] = None
     max_attempts: int = 3
     fleet_id: Optional[int] = None
+    # claim — le worker nomme le dépôt de clé qu'il sait consommer (voir
+    # `_cle_de_modele`). Absent : il tourne sur la clé de la plateforme.
+    provider: Optional[str] = None
     # claim / extend —
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
@@ -142,6 +145,14 @@ class Job(BaseModel):
             "for every call made while executing this job, then drop it — it "
             "expires with the lease. Absent on jobs with no known requester "
             "(enqueued before 2026-09-02): fall back to your own token."))
+    model_key: Optional[str] = Field(
+        None, description=(
+            "The MODEL PROVIDER KEY this job's organisation deposited, returned by "
+            "op=claim only, when the worker named a deposit it can consume. Use it "
+            "for this job's model calls instead of your own environment key, then "
+            "drop it — it is the org's secret, not yours, and it is never written "
+            "to a log or a thread. Absent means the org deposited none: fall back "
+            "to the platform key."))
     delegation_refusee: Optional[str] = Field(
         None, description=(
             "WHY this job cannot run: the account that scheduled it no longer "
@@ -286,6 +297,50 @@ def _identite_invalide(sub_porteur: str, org_id: int) -> Optional[str]:
     return None
 
 
+def _cle_de_modele(org_id: int, depot: str) -> Optional[str]:
+    """La clé de modèle DÉPOSÉE PAR L'ORG, ou None si elle n'en a pas posé.
+
+    ⚠️ La garde tient au TYPE, pas au nom du connecteur. Un worker qui pourrait
+    nommer n'importe quel dépôt tirerait le secret Folk ou Salesforce de l'org au
+    moment de réserver un travail : seuls les connecteurs `kind="credential"` —
+    ceux dont porter une clé est la SEULE raison d'être, sans aucun outil derrière
+    — passent ici. Le type distinct n'est pas un détail d'écran : c'est la liste
+    d'autorisation, et c'est pourquoi il fallait un type plutôt qu'un connecteur
+    ordinaire aux namespaces vides.
+
+    ⚠️ Et la clé remise est celle de l'ORG DU TRAVAIL, jamais celle du worker ni
+    celle d'une org qu'il nommerait : le worker ne choisit que le DÉPÔT, jamais
+    à qui il appartient.
+    """
+    from .. import credentials_store, providers
+    c = providers.connector_for_provider(depot)
+    if not c or c.kind != "credential":
+        return None
+    try:
+        return credentials_store.get_credential("org", str(org_id), depot) or None
+    except Exception:
+        # Un coffre qui ne rend pas la clé n'empêche pas le travail : le worker
+        # retombe sur la clé de la plateforme. Mais le silence, lui, est refusé —
+        # une org qui a déposé sa clé et qu'on facture sur la nôtre doit se voir.
+        logger.warning("clé de modèle `%s` illisible pour l'org %s",
+                       depot, org_id, exc_info=True)
+        return None
+
+
+def _avec_cle(job: dict, depot: Optional[str]) -> dict:
+    """Le travail, augmenté de la clé de modèle de son org — à la RÉSERVATION.
+
+    Le worker fait partie du backend et a le droit de lire les clés que les orgs
+    déposent (arbitrage du 02/09) ; ce droit s'exerce ici, une fois, avec le
+    travail — jamais par un accès au coffre depuis le runner. Un worker qui
+    saurait interroger le coffre pourrait lire autre chose que ce travail-ci.
+    """
+    if not depot or not job.get("org_id") or job.get("delegation_refusee"):
+        return job
+    cle = _cle_de_modele(job["org_id"], depot)
+    return {**job, "model_key": cle} if cle else job
+
+
 def _delegue(job: dict, bail_s: int, claimant: str) -> dict:
     """Le travail, augmenté du moyen d'agir AU NOM de son porteur.
 
@@ -367,7 +422,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail)
         if job is None:
             return {"job": None}
-        return {"job": _delegue(job, bail, ctx.sub)}
+        return {"job": _avec_cle(_delegue(job, bail, ctx.sub), inp.provider)}
 
     if inp.op == "list":
         # Surveillance (page Automatisations) : lecture org-scopée, jamais un
