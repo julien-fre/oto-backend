@@ -380,6 +380,44 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
     return out
 
 
+_REVOKED_REASON_LABELS = {
+    db.REVOKED_CREDENTIAL_REMOVED: "clé retirée",
+    db.REVOKED_RENAMED_ONTO_EXISTING: "compte renommé vers un autre déjà posé",
+    db.REVOKED_VAULT_ROW_MISSING: "ligne de coffre disparue (maintenance)",
+}
+
+
+def _revoked_hint(sub: str, org: Optional[int], provider: str) -> str:
+    """Suffixe actionnable des erreurs « aucun credential configuré » : dit si CE
+    connecteur a existé ici puis a été RETIRÉ, plutôt que de laisser croire qu'il n'a
+    jamais été posé. Chaîne vide si rien n'a jamais existé, ou sans org (pas de scope
+    membre à interroger).
+
+    oto#42, entrée 11 du lot 1 — quatre signalements le même jour (03/09) pour cette
+    seule cause : chacun a mené sa propre enquête pour retrouver une info déjà en
+    base. Lecture seule (`connector_instances.most_recent_revocation`), jamais un
+    critère d'aiguillage — voir son docstring.
+
+    Fail-soft PAR CONSTRUCTION (comme `chain_shadow.observe`) : c'est un hint EN
+    PLUS d'un refus déjà levé, jamais un chemin dont la résolution dépend — un
+    hoquet DB ici doit rendre le refus normal (sans second indice), pas remplacer
+    le refus par une 500."""
+    if org is None:
+        return ""
+    try:
+        rev = db.most_recent_revocation("member", credentials_store.member_id(org, sub), provider)
+    # noqa: SILENT — hint best-effort : un hoquet DB laisse le refus SANS second indice
+    except Exception:
+        logger.warning("hint de révocation indisponible pour %s (fail-soft)", provider,
+                       exc_info=True)
+        return ""
+    if not rev:
+        return ""
+    motif = _REVOKED_REASON_LABELS.get(rev["revoked_reason"], rev["revoked_reason"])
+    quand = str(rev["revoked_at"])[:10]
+    return f"\n(un `{provider}` a existé ici et a été retiré le {quand} — {motif})"
+
+
 def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
     """Suffixe actionnable des erreurs « rien ne résout » : remonte les instances
     à portée avec le GESTE de pin pour chacune — jeton d'appel d'abord (`_group=`/

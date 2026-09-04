@@ -371,12 +371,31 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         return {"namespaces": store.list_namespaces()}
 
+    # ⚠️ Cette description a dit « unique per user » jusqu'au 04/09/2026, quand le code
+    # créait des tableaux d'ORG depuis toujours. Le mensonge est réparé DEUX FOIS ce
+    # jour-là : d'abord le texte (`ab6d0eff`), puis le comportement lui-même (ADR 0068,
+    # le tableau naît personnel) — et c'est le second qui rend le premier obsolète.
+    # Le récit vit ICI et pas dans le docstring : une description est une instruction
+    # relue à chaque appel, et y CITER la formule fautive, même pour la démentir, c'est
+    # la re-servir au modèle.
+    # `tests/test_description_dit_le_proprietaire.py` lit le défaut réel dans le code
+    # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse. C'est lui qui
+    # a refusé de virer au vert quand le défaut a changé, avant que ce texte ne bouge.
     @mcp.tool()
     def data_create_namespace(namespace: str) -> dict:
         """Create a new datastore namespace (PG-backed, schema-free).
 
+        The table is PRIVATE: it belongs to you, and no one else can read it — not
+        the other members of your org, not its admins. That is the default and it is
+        never implicit (ADR 0068).
+
+        ⚠️ It used to be owned by your ACTIVE ORG, readable by every member. To share
+        a table with your org or a team, say so: the REST route takes
+        `owner: {type: "org"|"group", id: N}`. Tables created before 2026-09-04 keep
+        the owner they have.
+
         Args:
-            namespace: kebab-case identifier, unique per user (e.g. `timetrack`).
+            namespace: kebab-case identifier, unique per owner (e.g. `timetrack`).
         """
         sub = access.current_user_sub_or_raise()
         if not namespace or not namespace.strip():
@@ -590,7 +609,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_write(namespace: str, row: dict | None = None, id: str | None = None,
-                   rows: list | None = None, key: str | None = None) -> dict:
+                   rows: list | None = None, key: str | None = None,
+                   readonly_override: bool = False) -> dict:
         """Write one row, or a BATCH of rows in a single call.
 
         SINGLE (`row`): WITHOUT `id` = append a NEW row (new JSON keys auto-create
@@ -622,6 +642,17 @@ def register(mcp: FastMCP) -> None:
         `data_patch_schema(namespace=…, key_required=false)`, your write, then
         `data_patch_schema(namespace=…, key_required=true)` to close it back.
 
+        ⚠️ A COLUMN can be LOCKED by the schema (`readonly: true`) — it holds a
+        value someone put there, and an ordinary write that CHANGES it is refused by
+        name (writing the same value again is fine, and `<column>.comment` always
+        stays open for what another source says). To REPLACE it anyway, pass
+        `readonly_override=true` ON THIS CALL. It is open to the OWNER of the table
+        (you, your org or your team) or to whoever GOVERNS it — a table merely SHARED
+        with you in write is refused, by design. It applies to this one call and
+        nothing else: there is no schema setting to reopen and therefore none to
+        close back. Every forced replacement is written to the call journal (row,
+        column, replaced value) next to who called.
+
         On a namespace with a STRICT schema, any key you write that the schema does
         NOT declare comes back in `hors_schema` (with `hors_schema_hint`): the write
         IS accepted and the value persists, but it lands in a free column that the
@@ -648,6 +679,9 @@ def register(mcp: FastMCP) -> None:
                 run is OPEN, `run_finish` releases what it held.
             rows: BATCH mode — a list of row dicts written in one call.
             key: business key field for batch upsert/dedup (else `schema.key`).
+            readonly_override: `true` = overwrite the `readonly` columns THIS CALL
+                writes, instead of being refused. Owner or governor of the table
+                only ; valid for this call alone ; journaled.
         """
         store = _acting_store()
         try:
@@ -667,15 +701,20 @@ def register(mcp: FastMCP) -> None:
                                              message="passer `rows` (batch) OU `row`/`id`, pas les deux"))
                 if not isinstance(rows, list):
                     raise McpError(ErrorData(code=INVALID_PARAMS, message="rows doit être une liste de dicts"))
-                out = {"namespace": namespace, **store.write_rows(namespace, rows, key=key)}
+                out = {"namespace": namespace,
+                       **store.write_rows(namespace, rows, key=key,
+                                          readonly_override=readonly_override)}
             else:
                 if row is None:
                     raise McpError(ErrorData(code=INVALID_PARAMS,
                                              message="fournir `row` (objet) ou `rows` (liste d'objets, mode batch)"))
                 if not isinstance(row, dict):
                     raise McpError(ErrorData(code=INVALID_PARAMS, message="row doit être un dict"))
-                out = store.append_row(namespace, row) if id is None \
-                    else store.update_row(namespace, id, row)
+                out = store.append_row(namespace, row,
+                                       readonly_override=readonly_override) \
+                    if id is None \
+                    else store.update_row(namespace, id, row,
+                                          readonly_override=readonly_override)
             # Champs posés hors du format déclaré (#294) : l'écriture est acceptée (un
             # champ libre reste un droit du contrat), mais elle n'est plus silencieuse.
             out = {**out, **store.off_schema_report()}
@@ -1058,7 +1097,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_share(
-        namespace: str, email: str, permission: str = "write", remove: bool = False,
+        namespace: str, email: str, permission: str = "read", remove: bool = False,
     ) -> dict:
         """Share (or with `remove=True`, unshare) a namespace with another oto user
         (by email). The recipient accesses it with their own oto account.

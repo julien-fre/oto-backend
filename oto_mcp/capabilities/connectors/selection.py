@@ -151,7 +151,7 @@ class MyConnectorRow(BaseModel):
     # leur confusion. Détail des couches et du coût : `connectors/readiness.py`.
     ready: Optional[bool] = None
     # La PREMIÈRE couche qui manque : paid_option_off | no_credential | over_quota |
-    # pending_step. Absent quand `ready` est vrai.
+    # credential_rejected | pending_step. Absent quand `ready` est vrai.
     not_ready: Optional[str] = None
     next_step: Optional[str] = None         # le geste, rendu tel quel (jamais reformulé)
 
@@ -226,8 +226,10 @@ class ConnectorSelectionState(BaseModel):
     # montés dans la conversation courante (registre figé à l'ouverture), il faut
     # passer par `oto_call` ou rouvrir une conversation.
     hint: Optional[str] = None
-    # `unselect` seulement. `false` = il n'y avait rien à retirer : l'opération est
-    # idempotente, ce n'est PAS un échec.
+    # `unselect` seulement, toujours `True` sur un succès (oto#42/oto-backend#868) :
+    # un retrait qui n'a rien trouvé REFUSE désormais (`connector_not_selected`, 404)
+    # au lieu de rendre `removed: false` sur un 200 — un succès qui n'a rien fait est
+    # pire qu'un refus, même pattern que l'unlink de projet (`d3c5de40`).
     removed: Optional[bool] = None
 
 
@@ -327,7 +329,7 @@ _COMPACT_KEYS = ("name", "label", "help", "family", "category", "availability",
                  "logo_url", "secret_kind")
 
 
-def _toolbox_scope(ctx: ResolvedCtx) -> Optional[dict]:
+def _toolbox_scope(sub: str) -> Optional[dict]:
     """L'écart entre l'org pour laquelle la SESSION a été montée et celle que l'appel
     épingle — ou None s'il n'y en a pas (signal #577).
 
@@ -346,11 +348,17 @@ def _toolbox_scope(ctx: ResolvedCtx) -> Optional[dict]:
 
     Ne se dit QUE sur écart réel : un champ toujours présent devient du bruit qu'on
     cesse de lire. Pas de jeton d'appel (face REST du dashboard) ⟹ pas de session MCP
-    dont la boîte pourrait diverger ⟹ rien à annoncer."""
+    dont la boîte pourrait diverger ⟹ rien à annoncer.
+
+    ⚠️ DEUX consommateurs depuis le 03/09 : cette carte, et `oto_list_my_tools`
+    (`tools/meta.py`). Posé ici seul, l'aveu n'était lu que par qui appelait déjà
+    `oto_connector` — or un agent qui cherche un outil appelle `oto_list_my_tools`, et
+    y lisait une liste vide sans un mot. Ne prend qu'un `sub` pour cette raison : le
+    fait est une propriété de la SESSION, pas des connecteurs."""
     call_org = session_org.current_call_org()
     if call_org is None:
         return None
-    home = org_store.get_active_org(ctx.sub)
+    home = org_store.get_active_org(sub)
     if home == call_org:
         return None
     return {
@@ -485,7 +493,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             "connecteur MARCHE, redemande-le seul — "
             "`oto_connector(op='list', name='<connecteur>')` rend alors `ready` et, "
             "s'il ne l'est pas, l'étape qui manque.")
-    tb = _toolbox_scope(ctx)
+    tb = _toolbox_scope(ctx.sub)
     if tb is not None:
         out["toolbox_scope"] = tb
     return out
@@ -541,8 +549,18 @@ def _pause(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
 
 
 def _unselect(ctx: ResolvedCtx, inp: ConnectorActionInput) -> dict:
-    removed = connector_selection.unselect(ctx.sub, inp.name, ctx.org_id or 0)
-    return {"connector": inp.name, "state": "not_selected", "removed": removed}
+    # oto#42/oto-backend#868 — un retrait qui ne retire rien ne répond plus `ok`
+    # (`removed: false` par-dessus un 200 se lisait comme un succès idempotent ;
+    # `setExposure` côté dashboard ne lit d'ailleurs pas ce champ et pose l'état
+    # local dès que l'appel n'a pas levé). REFUSE nommément, sur le même patron
+    # que l'unlink de projet (`d3c5de40`) : un succès qui n'a rien fait est pire
+    # qu'un refus.
+    if not connector_selection.unselect(ctx.sub, inp.name, ctx.org_id or 0):
+        raise AuthzDenied(404, "connector_not_selected",
+                          f"`{inp.name}` n'est pas dans ta sélection active pour cette org — "
+                          "rien n'a été retiré (déjà désinstallé, ou jamais installé ici). "
+                          "`connectors.me` te dit ce qui l'est.")
+    return {"connector": inp.name, "state": "not_selected", "removed": True}
 
 
 def _recommend(ctx: ResolvedCtx, inp: RecommendInput) -> dict:
@@ -659,7 +677,13 @@ CAPABILITIES += [
         key="connectors.unselect", handler=_unselect, Input=ConnectorActionInput, authz=SUB_ONLY,
         Output=ConnectorSelectionState,
         description="Remove a connector from your workspace (back to the library). Does not touch "
-                    "credentials, only your selection.",
+                    "credentials, only your selection. REFUSES (connector_not_selected, 404) if "
+                    "it wasn't in your active selection for this org — it never answers ok on a "
+                    "removal that found nothing.",
+        errors=(DeclaredError(404, "connector_not_selected",
+                              "le connecteur n'est pas dans ta sélection active pour "
+                              "cette org : déjà retiré, jamais installé ici, ou "
+                              "installé sous une autre org active"),),
         rest=RestBinding("DELETE", "/api/me/connectors/{name}"),
     ),
     Capability(

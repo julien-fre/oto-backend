@@ -104,12 +104,34 @@ def test_la_cardinalite_declaree_prime_sur_la_derivation():
     assert multi.auth_multi_account is True        # `cookie` dérivait mono
 
 
-def test_aucun_connecteur_ne_se_declare_MONO_aujourd_hui():
-    """Tripwire : le sens `mono` existe SANS porteur — aucun connecteur servi n'a
-    aujourd'hui de raison de FOURNISSEUR d'être mono-compte (ceux qui le sont le sont
-    par une condition structurelle, testée juste au-dessus). En ajouter un est une
-    décision explicite, qui casse ce test et se motive en revue."""
-    assert [c.name for c in providers._REGISTRY_LIST if c.cardinality == "mono"] == []
+def test_seuls_les_depots_de_cle_se_declarent_MONO_et_on_sait_pourquoi():
+    """Le sens `mono` a eu ZÉRO porteur jusqu'au 04/09/2026, par tripwire : en
+    ajouter un est une décision explicite, qui casse ce test et se motive en revue.
+    Voici le motif des deux premiers.
+
+    `anthropic` et `mistral` sont des DÉPÔTS DE CLÉ (`kind="credential"`) : ils ne
+    portent aucun outil, seulement la clé de modèle sur laquelle les agents
+    programmés de l'org tournent. La dérivation les rendrait multi (c'est une
+    `api_key`), donc l'écran proposerait d'en poser une deuxième — et
+    `runner.jobs` lit le COMPTE UNIQUE au moment de servir un travail. Une clé
+    posée sous un nom de compte ne serait jamais lue : l'org paierait sur la clé
+    de la plateforme en croyant payer sur la sienne, un écart qui ne se voit que
+    sur une facture.
+
+    Et c'est bien une raison de FOURNISSEUR au sens de ce fichier : un passage
+    tourne sur une clé, deux dépôts pour la même org seraient deux factures pour
+    un même travail, sans aucun critère pour trancher laquelle."""
+    assert sorted(c.name for c in providers._REGISTRY_LIST
+                  if c.cardinality == "mono") == ["anthropic", "mistral"]
+
+
+def test_un_compte_nomme_sur_un_depot_de_cle_est_refuse(monkeypatch):
+    """La conséquence de la déclaration ci-dessus, et la raison de la poser : la
+    garde de pose refuse ce que la résolution n'irait jamais lire."""
+    _vault_forbidden(monkeypatch)
+    with pytest.raises(credentials_store.SingleAccountConnector):
+        credentials_store.guard_account_write(
+            credentials_store.ORG, "2", "anthropic", "equipe-data")
 
 
 def test_seuls_deux_connecteurs_se_declarent_MULTI_et_on_sait_pourquoi():

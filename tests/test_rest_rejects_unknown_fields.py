@@ -37,7 +37,7 @@ async def _appeler(corps: dict) -> tuple[int, dict]:
     Un test qui se contente de relire le source prouve que le code n'a pas bougé, pas
     qu'il refuse. On construit donc une capacité factice, on lui envoie un corps, et on
     lit la réponse."""
-    from oto_mcp.capabilities._types import Capability, RestBinding
+    from oto_mcp.capabilities._types import Capability, RestBinding, ResolvedCtx
 
     vus: list = []
 
@@ -55,7 +55,7 @@ async def _appeler(corps: dict) -> tuple[int, dict]:
         return "sub-test", None
 
     cap = Capability(key="test.cap", handler=_core, Input=_Input,
-                     authz=lambda raw, inp: raw,
+                     authz=lambda raw, inp: ResolvedCtx(sub=raw.sub),
                      rest=RestBinding(verb="POST", path="/api/x"))
     handler = _rest_adapter._make_handler(cap, cap.rest, None, _auth,
                                           _json_response, _json_error)

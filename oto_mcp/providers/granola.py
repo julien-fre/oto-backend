@@ -21,3 +21,9 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "Granola"
 LOGO_DOMAIN = "granola.ai"
+
+DESCRIPTION = (
+    "Les notes de réunion prises par Granola : transcripts, résumés générés par "
+    "IA, dossiers, journal d'audit et endpoints de webhook. Clé personnelle "
+    "(tout abonnement Business) ou clé workspace (admin, Enterprise)."
+)

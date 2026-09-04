@@ -57,6 +57,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from . import _instruction
 from .. import access, db
 from ..tool_visibility import BETA_OPTION
 
@@ -275,7 +276,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         return {"fleet": db.create_fleet(
             ctx.org_id, ctx.sub, label=inp.label, procedure=inp.procedure,
             tools=inp.tools, namespace=inp.namespace, row_filter=inp.row_filter,
-            project_id=inp.project_id, input=inp.input, max_steps=inp.max_steps,
+            project_id=inp.project_id, max_steps=inp.max_steps,
+            input=inp.input or _instruction.de_file(
+                inp.procedure, inp.namespace, inp.row_filter),
             provider=inp.provider, model=inp.model, workers=inp.workers or 1,
             max_rows=inp.max_rows, max_tokens=inp.max_tokens,
             max_consecutive_failures=inp.max_consecutive_failures,
@@ -313,6 +316,20 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
                 403, "not_from_a_run",
                 "un déroulé ne lance pas de passage — un agent qui se relance "
                 "lui-même dépense en boucle.")
+        # ⚠️ Une campagne déclarée avant que la plateforme compose — ou par une
+        # surface qui a laissé le champ vide — n'a pas d'instruction. L'armer
+        # telle quelle la rend MUETTE au premier passage : le worker refuse de
+        # démarrer sans instruction, la flotte reste `armed`, et le symptôme lu
+        # depuis le produit est « l'ordonnanceur est mort » — un diagnostic faux
+        # posé sur une cause invisible. On répare AVANT d'armer, jamais après.
+        avant = db.get_fleet(inp.fleet_id, ctx.org_id)
+        if avant and avant.get("procedure") and not (avant.get("input") or "").strip():
+            db.update_fleet(inp.fleet_id, ctx.org_id, {"input": _instruction.de_file(
+                avant["procedure"], avant.get("namespace"), avant.get("row_filter"))})
+        # ⚠️ UN SEUL armement, qui porte le dénominateur (#836). La fusion des deux
+        # lots en avait produit deux : #873 arme après avoir réparé, #836 arme avec
+        # `rows_at_launch` — les garder tous les deux armait avant ET après la
+        # réparation, ce qui défait précisément l'ordre que #873 existe pour tenir.
         f = db.armer(inp.fleet_id, ctx.org_id,
                      rows_at_launch=_lignes_visees(ctx, inp.fleet_id))
         if not f:

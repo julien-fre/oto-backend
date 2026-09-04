@@ -34,6 +34,14 @@ def client(monkeypatch):
     inst = MagicMock()
     monkeypatch.setattr("oto.tools.serper.SerperClient", lambda **kw: inst)
     monkeypatch.setattr("oto_mcp.access.resolve_api_key", lambda p, account=None: ("k", False))
+    # `serper_scrape` a désormais DEUX amonts : le scraper hébergé, et NOTRE
+    # propre lecture du HTML — celle qui récupère les adresses qu'un rendu
+    # markdown fait disparaître (#681). Un test qui bouchonne l'un doit
+    # bouchonner l'autre, sinon il part vraiment sur le réseau.
+    monkeypatch.setattr("oto_mcp.tools.mail_obfuscation.fetch",
+                        lambda url, deadline_s=None: {
+                            "ok": True, "status": 200, "verdict": "lu",
+                            "html": "<p>rien de caché</p>", "final_url": url})
     return inst
 
 

@@ -49,8 +49,6 @@ _KNOWN: dict[str, str] = {
     # (`/api/unipile/webhook` a quitté cette liste le 2026-08-29, #581 : dormant depuis
     #  la v2 du fournisseur — plus aucun appelant légitime, donc plus de route.)
     "/api/billing/webhook": NATURE,
-    # --- Formulaire public du site vitrine (POST anonyme).
-    "/api/contact": NATURE,
     # --- Lien de DÉSINSCRIPTION d'une relance : un NAVIGATEUR suit un lien depuis un
     # webmail, sans en-tête d'auth, et reçoit une page HTML. Même nature qu'un
     # callback — et exiger une session la demanderait à celui-là même qui ne veut plus

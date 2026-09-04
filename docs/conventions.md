@@ -218,6 +218,18 @@ rien ne rendait navigable et que rien ne tenait.
   callback qui ne distingue jamais les causes d'un refus, ACK de webhook), les autres
   portent « dette déclarée … (#424, verdict C) » et attendent leur lot.
   **Détail : `docs/silences-2026-08-27.md`.**
+- **Un test assert sur le CODE d'un refus, jamais sur sa phrase** — et la phrase ne se
+  cite que quand c'est ELLE qu'on éprouve (un message qui doit porter une mesure, un
+  hint qui doit basculer). Le code est le contrat, il ne bouge pas ; la phrase est de
+  l'ergonomie, elle bouge tout le temps.
+  **Ce que ça a rapporté, chiffré le 03/09/2026** : décision de passer en anglais les
+  messages atteignables par un utilisateur extérieur. Sur 97 fragments de phrase citables
+  des modules concernés, **6 seulement sont cités par un test — 21 lignes dans 11
+  fichiers**. La même décision sur une suite qui asserte des phrases aurait coûté des
+  centaines de réécritures, et se serait probablement soldée par un report. La discipline
+  n'a pas été tenue POUR ça ; c'est ce qui la rend démonstrative — **elle a payé un
+  changement que personne n'avait anticipé en la posant.** À citer quand on demande
+  pourquoi on s'impose des codes nommés.
 - **Ce dépôt est PUBLIC : aucun nom de client, de personne réelle ou de domaine client.**
   Remplacer par `acme`, `Jane Doe`, de la prose générique, un TLD `.test`. La règle se tient
   **à la relecture** : il n'existe aucun contrôle automatique, et aucun n'est souhaité.
@@ -364,6 +376,17 @@ rien ne rendait navigable et que rien ne tenait.
     N caractères est une mutilation silencieuse — l'agent croit avoir lu. D'où la TAILLE, jamais
     un extrait (mesuré le 11/08 : un feed coupé à 600 c. tombait pile avant la chute qui
     départage un post de fond d'une pub, 2 cas limites sur 5 tranchés à l'aveugle).
+    ⚠️ **Ce remède ne vaut qu'en LECTURE — borne posée le 03/09.** Rendre la taille laisse
+    l'appelant redemander : le savoir perdu reste récupérable, et le drapeau le rend
+    récupérable. À l'**ÉCRITURE** il ne répare rien — la fin ne survit nulle part et celui
+    qui l'avait s'en va. Donc **une coupe sur une écriture se REFUSE**, en disant la longueur
+    reçue ET la borne, tant que le détenteur du texte peut encore raccourcir lui-même.
+    Cas fondateur : le motif d'une mise en pause de compte — exigé précisément pour être relu
+    dans six mois par quelqu'un qui n'était pas là — coupé à 500 c. en silence. La coupe prend
+    la FIN, c'est-à-dire la condition de réveil, qu'on écrit en dernier : le texte garde sa
+    forme et perd sa fonction. Le journal n'aide pas, il écrit la valeur APRÈS la coupe.
+    Et le critère de décision : la colonne était en `TEXT` — **quand la borne ne vient pas du
+    stockage, c'est un choix de surface, et un choix se dit** (oto#42, 4ᵉ règle).
   - **Denylist de clés nommées, jamais une allowlist** (leçon `fr_get`/`liste_idcc` : un champ
     oublié disparaît en silence). Le seam ne connaît aucun outil — chaque connecteur déclare
     ce qu'il coupe, là où il sait ce que ses champs valent (`full=True` rend le brut).
@@ -440,17 +463,24 @@ rien ne rendait navigable et que rien ne tenait.
   Figé par `tests/middleware/test_middleware_order.py` — le changer demande de relire ses invariants.
 - **PERF — le serveur est MONO-LOOP : aucun I/O bloquant dans la boucle.** Un handler
   de tool qui n'`await` rien doit être `def` sync (threadpool) ; du DB sync dans un
-  middleware = même règle (`run_in_threadpool`). Deux modes de gel vécus + garde-fous
-  CI, pool borné (`timeout=5`), observabilité
+  middleware = même règle (`run_in_threadpool`) ; et **une capacité passe par le seam
+  des adaptateurs**, qui range autz + handler sync en threadpool (ne pas rapiécer une
+  capacité à la main : le seam le fait pour toutes). Quatre modes de gel vécus +
+  garde-fous CI, pool borné (`timeout=5`), **DDL à chaud borné**
+  (`lock_timeout`/`statement_timeout` sur `_connect_autocommit`), observabilité
   (loop_watch/aiodebug, py-spy box, Kuma timeout 30s).
-  ⚠️ **DEUX garde-fous, de natures différentes, parce qu'un middleware échappe au
-  premier** : `test_no_blocking_async_handlers` lit le source des `@mcp.tool` (async
+  ⚠️ **TROIS garde-fous, de natures différentes, parce que chacun échappe aux
+  précédents** : `test_no_blocking_async_handlers` lit le source des `@mcp.tool` (async
   sans `await` = rejeté) — or un middleware n'est pas un tool ET doit `await
   call_next`, donc il passe deux fois à côté ; `test_no_blocking_db_in_middleware`
   **observe le thread** qui emprunte une connexion (mouchard sur `db._conn._get_pool`)
-  et refuse tout accès DB depuis la boucle. Gel de prod du 15/08 : le handshake
-  composait l'artefact de session — la cascade de statut de TOUS les connecteurs —
-  dans la boucle. Un chemin de la même classe reste à traiter, listé dans le doc.
+  et refuse tout accès DB depuis la boucle ; `test_capacites_hors_boucle` observe le
+  thread lui aussi, mais sur **le seam qui FABRIQUE les tools** — un tool fabriqué est
+  `async def` et `await`, donc il passe le premier critère alors que les 285 handlers
+  sync qu'il appelle tournaient dans la boucle (gel de prod du 01/09, 12 min 48 s de
+  silence). Gel du 15/08 : le handshake composait l'artefact de session — la cascade de
+  statut de TOUS les connecteurs — dans la boucle. Un chemin de la même classe reste à
+  traiter (un `async def` qui bloque AVANT son premier `await`), listé dans le doc.
   **Détail (incidents, recettes de diagnostic) : `docs/event-loop-perf.md`**.
 - **Un 502 en rafale n'est pas forcément un gel** — deuxième cause, distincte (#352,
   nuit du 15-16/08) : un POST `/mcp` en vol quand la session streamable-http se termine

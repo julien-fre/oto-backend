@@ -65,9 +65,25 @@ def backlinks(sub: Optional[str], inp, row: dict, pid: int) -> dict:
             seen[prj] = common.can(sub, prj, "read")
         return seen[prj]
 
-    cites = [b for b in db.doc_backlinks(int(inp.doc_id)) if _readable(b["project_id"])]
+    tous = db.doc_backlinks(int(inp.doc_id))
+    cites = [b for b in tous if _readable(b["project_id"])]
     out = {"doc_id": inp.doc_id, "backlinks": cites, "count": len(cites)}
-    if not cites:
+    # oto#42, entrée 4 : le filtrage d'accès retirait des citations en silence, et le
+    # hint affirmait alors « personne ne cite encore cette page » — une phrase FAUSSE
+    # servie à un agent qui n'avait aucun moyen de le savoir. « Trois pages la citent,
+    # tu n'y as pas accès » et « aucune page ne la cite » appellent deux gestes
+    # opposés : demander un accès, ou écrire le lien qui manque.
+    # ⚠️ Le NOMBRE n'est pas rendu : il révélerait combien de pages existent dans des
+    # projets fermés à l'appelant. Le fait qu'il y en ait est déjà l'information utile
+    # — le nombre demanderait un arbitrage de divulgation, pas une nuit de correctifs.
+    masquees = len(tous) - len(cites)
+    if masquees:
+        out["hidden_by_access"] = True
+        out["hidden_hint"] = (
+            "Des pages citent celle-ci depuis des projets auxquels tu n'as pas accès : "
+            "ce relevé est PARTIEL. Demande l'accès au projet concerné si tu as besoin "
+            "du graphe complet.")
+    if not cites and not masquees:
         # Un zéro muet se lit comme « la fonction ne marche pas » : personne ne
         # peut deviner que SEUL `[[Titre]]` compte (signal #244 — trois formats
         # de lien essayés, tous inertes, aucun indice nulle part).

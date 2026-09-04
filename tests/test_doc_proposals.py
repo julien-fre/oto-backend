@@ -136,4 +136,33 @@ def test_inbox_no_org_empty_never_400(monkeypatch):
     monkeypatch.setattr(I.db, "list_change_requests_by_requester", lambda sub, **k: [])
     monkeypatch.setattr(I.org_store, "list_pending_invitations_for_email", lambda e: [])
     out = I._inbox(ResolvedCtx(sub="u1", org_id=None), I.InboxInput())
-    assert out == {"to_review": [], "invitations": [], "recent": [], "count": 0}
+    assert out == {"to_review": [], "invitations": [], "recent": [], "recent_total": 0, "count": 0}
+
+
+# oto#42, entrée 10 du lot 1 — `recent` coupé à 30 sans le dire.
+
+def test_inbox_recent_total_dit_ce_que_la_coupe_ampute(monkeypatch):
+    monkeypatch.setattr(I.db, "list_change_requests_by_requester",
+                        lambda sub, **k: [
+                            {"id": i, "status": "accepted", "doc_title": f"D{i}",
+                             "resolved_at": f"2026-07-{i:02d}"} for i in range(1, 40)])
+    monkeypatch.setattr(I.db, "get_user", lambda sub: {"email": ""})
+    monkeypatch.setattr(I.org_store, "list_pending_invitations_for_email", lambda e: [])
+    out = I._inbox(ResolvedCtx(sub="u1", org_id=None), I.InboxInput())
+    assert len(out["recent"]) == 30                # la coupe existe toujours
+    assert out["recent_total"] == 39, (
+        "39 propositions résolues existent, la coupe n'en rend que 30 — sans "
+        "recent_total, rien ne distingue « c'est tout » de « 9 de plus, tronqués »")
+
+
+def test_inbox_recent_total_egale_len_recent_sous_la_borne(monkeypatch):
+    """Contrôle qui mord : sous la borne de 30, recent_total doit valoir EXACTEMENT
+    len(recent) — un total qui resterait figé à autre chose (ex. count) tromperait
+    de la même façon qu'une coupe non dite."""
+    monkeypatch.setattr(I.db, "list_change_requests_by_requester",
+                        lambda sub, **k: [{"id": 1, "status": "accepted", "doc_title": "D",
+                                           "resolved_at": "2026-07-19"}])
+    monkeypatch.setattr(I.db, "get_user", lambda sub: {"email": ""})
+    monkeypatch.setattr(I.org_store, "list_pending_invitations_for_email", lambda e: [])
+    out = I._inbox(ResolvedCtx(sub="u1", org_id=None), I.InboxInput())
+    assert out["recent_total"] == len(out["recent"]) == 1

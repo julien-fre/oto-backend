@@ -51,10 +51,11 @@ from ..db import _connect
 BASE_SLUG = "claude_md"
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
-# Les paliers de propriété qu'une procédure connaît AUJOURD'HUI. `user` est la
-# phase 2 de #681 (la colonne `org_id` doit d'abord devenir nullable) : l'ajouter
-# ici sans ce préalable écrirait `org_id = NULL` sur une colonne NOT NULL.
-OWNER_TYPES: tuple[str, ...] = ("org", "group")
+# Les paliers de propriété qu'une procédure connaît. `user` est ouvert depuis le
+# 04/09/2026 (ADR 0068, phase 2 de #681) : la colonne `org_id` est devenue nullable
+# aux deux tables, une procédure personnelle y porte NULL — le fait, plutôt qu'une
+# org qui ne la possède pas et dont la suppression l'emporterait.
+OWNER_TYPES: tuple[str, ...] = ("org", "group", "user")
 
 _OWNER_WHERE = "owner_type = %s AND owner_id = %s"
 
@@ -106,12 +107,19 @@ def _owner(owner_type: str, owner_id: int | str) -> tuple[str, str]:
     return otype, oid
 
 
-def _parent_org_id(conn, owner_type: str, owner_id: str) -> int:
+def _parent_org_id(conn, owner_type: str, owner_id: str) -> Optional[int]:
     """L'org PARENTE du propriétaire = la valeur d'`org_instructions.org_id`, colonne
-    dénormalisée NOT NULL (FK vers `orgs`, porteuse de la cascade de suppression).
+    dénormalisée (FK vers `orgs`, porteuse de la cascade de suppression).
 
     Une org EST son org ; une équipe tient la sienne dans `org_groups` (`org_id` NOT
-    NULL). Lu en SQL direct : `org_store` n'importe jamais `group_store` (cycle)."""
+    NULL). Lu en SQL direct : `org_store` n'importe jamais `group_store` (cycle).
+
+    ⚠️ **Une PERSONNE n'a pas d'org parente, et rend donc None** (ADR 0068). Y mettre
+    son org de CONTEXTE serait plus commode et faux : la cascade de cette colonne
+    ferait disparaître une procédure personnelle le jour où l'org est supprimée, alors
+    qu'elle ne lui a jamais appartenu. Le NULL dit ce qui est."""
+    if owner_type == "user":
+        return None
     if owner_type == "org":
         return int(owner_id)
     row = conn.execute(

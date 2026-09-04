@@ -33,7 +33,7 @@ def tools(monkeypatch):
         def __init__(self, *a, **k):
             ...
 
-        def scrape_page(self, url, include_markdown=True):
+        def scrape_page(self, url, include_markdown=True, timeout_s=None):
             calls["url"] = url
             raise calls["exc"]
 

@@ -43,7 +43,7 @@ def list_tenant_issuers() -> list:
             # au host), jamais la vérification d'un jeton — celle-ci ne connaît que
             # l'émetteur. Les lire ici ne change donc rien au chemin d'auth.
             "SELECT slug, name, issuer, jwks_uri, hosts, oauth_client_id, "
-            "dashboard_url, link_paths, tool_prefix FROM tenants "
+            "dashboard_url, link_paths, tool_prefix, brand FROM tenants "
             "WHERE issuer IS NOT NULL AND btrim(issuer) <> '' ORDER BY id"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -154,7 +154,7 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
               GROUP BY o.tenant_id
          )
     SELECT t.id, t.slug, t.name, t.issuer, t.jwks_uri, t.hosts, t.oauth_client_id,
-           t.dashboard_url, t.link_paths, t.tool_prefix, t.created_at,
+           t.dashboard_url, t.link_paths, t.tool_prefix, t.brand, t.created_at,
            COALESCE(oc.orgs, 0) AS orgs,
            COALESCE(oc.orgs_archivees, 0) AS orgs_archivees,
            COALESCE(ac.comptes, 0) AS comptes,
@@ -178,11 +178,16 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
 # et non « le meilleur axe » : chacun a un angle mort connu, et le coût d'un faux
 # négatif (traiter l'org d'un partenaire comme la nôtre) est ce qu'on refuse.
 #
-#   1. `orgs.tenant_id` — le rattachement DÉCLARÉ (ADR 0052 L1). ⚠️ Mesuré INERTE le
-#      2026-09-02 : 160 orgs sur 160 portent le tenant primaire, y compris les 61 qui
-#      vivent chez un partenaire. Le provisioning ne l'écrit pas. Un filtre bâti sur
-#      ce seul axe ne rattrape RIEN — il est gardé parce qu'il ne coûte rien et qu'il
-#      redeviendra vrai le jour où une bascule L3bis l'alimentera.
+#   1. `orgs.tenant_id` — le rattachement DÉCLARÉ (ADR 0052 L1). ⚠️ **Il a été inerte
+#      jusqu'au 2026-09-03, il ne l'est plus.** Mesuré vide le 2026-09-02 (160 orgs
+#      sur 160 portant le tenant primaire, dont les 61 qui vivaient chez un
+#      partenaire) ; ALIMENTÉ le 2026-09-03 par `scripts/migrate_org_tenant --apply`
+#      — 65 orgs repointées, `orgs_desalignees` de 48 à 0 — et posé à la naissance
+#      par `org_store.create_org` depuis le même jour. Cet axe porte, désormais.
+#      ⚠️ Ce qui ne fait PAS de lui un axe suffisant seul, et c'est pourquoi les deux
+#      autres restent : il est ÉCRIT par quelqu'un, quand les deux suivants se
+#      DÉRIVENT de l'émetteur du jeton à chaque lecture. Un écrivain peut cesser
+#      d'écrire sans bruit — c'est exactement ce qui a produit le trou d'origine.
 #   2. `orgs.front_brand` — le front qui HÉBERGE l'org, dérivé de l'émetteur du jeton
 #      de son créateur à l'INSERT (`config.front_for`, écrivain unique dans
 #      `org_store.create_org`). Non déclarable par l'appelant, donc non revendicable.
@@ -204,16 +209,23 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
 # axes — sinon deux définitions du « chez le partenaire » divergent, et la seconde
 # sera la moins prudente. Aujourd'hui : `db/outreach.py` (l'audience d'une relance).
 # `o` est l'alias attendu pour `orgs`, `%(primary)s` le slug du tenant primaire.
-_ORG_TENANT_EXPR = """COALESCE(
-      (SELECT t.slug FROM tenants t
-        WHERE t.id = o.tenant_id AND t.slug <> %(primary)s),
-      NULLIF(btrim(COALESCE(o.front_brand, '')), ''),
-      (SELECT p.slug
+# Les trois axes, NOMMÉS un par un — parce que deux expressions différentes en ont
+# besoin, et qu'elles ne prennent pas les mêmes. Les recopier serait la voie normale
+# vers deux définitions du « chez le partenaire » qui divergent en silence.
+_AXE_DECLARE = """(SELECT t.slug FROM tenants t
+        WHERE t.id = o.tenant_id AND t.slug <> %(primary)s)"""
+_AXE_MARQUE = """NULLIF(btrim(COALESCE(o.front_brand, '')), '')"""
+_AXE_MEMBRE = """(SELECT p.slug
          FROM org_members om
          JOIN (SELECT slug, slug || ':' AS pfx FROM tenants
                 WHERE slug <> %(primary)s) p ON om.sub LIKE p.pfx || '%%'
         WHERE om.org_id = o.id
-        ORDER BY length(p.pfx) DESC LIMIT 1),
+        ORDER BY length(p.pfx) DESC LIMIT 1)"""
+
+_ORG_TENANT_EXPR = f"""COALESCE(
+      {_AXE_DECLARE},
+      {_AXE_MARQUE},
+      {_AXE_MEMBRE},
       %(primary)s)"""
 
 _ORG_TENANT_SQL = f"""

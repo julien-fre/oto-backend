@@ -83,10 +83,37 @@ def _kb_project_of(conn, project_id: int) -> Optional[int]:
     return int(kb["kb_project_id"]) if kb and kb["kb_project_id"] is not None else None
 
 
-def refresh_links(conn, from_doc: int, project_id: int, body_md: str) -> None:
+def refresh_links(conn, from_doc: int, project_id: int, body_md: str,
+                  trace: Optional[dict] = None) -> None:
     """Recalcule les backlinks SORTANTS de `from_doc` (appelé à create/update).
     Résout chaque `[[Titre]]` contre le projet courant puis la KB (précédence),
-    par plus petit id à égalité ; remplace en bloc les liens existants du doc."""
+    par plus petit id à égalité ; remplace en bloc les liens existants du doc.
+
+    `trace` (dict mutable, optionnel) = le relevé des citations qui n'ont RIEN
+    trouvé, sous `citations_sans_cible` (#611). Un lien-souche n'est stocké nulle
+    part et n'était dit nulle part : la page se croyait citée, l'index ne le
+    savait pas, et personne ne pouvait l'apprendre autrement qu'en interrogeant
+    les liens entrants de chaque cible une par une.
+
+    ⚠️ **Le cas mesuré est une ASYMÉTRIE de portée, pas un bug d'extraction**
+    (reproduit le 03/09 sur le banc factice) : une page de la **KB** résout
+    contre `[KB]` seule, tandis qu'une page de **projet** résout contre
+    `[projet, KB]`. Une page de KB qui cite une page de projet ne la trouve donc
+    jamais — alors que l'inverse marche. Le lien est à sens unique dans l'index
+    et à double sens dans la prose. Ce n'est pas réparable par une réécriture,
+    ce qui explique qu'un `op=update` complet n'ait rien changé.
+
+    ⚠️ **La portée d'ÉCRITURE n'est pas celle de LECTURE** (signal #696, mesuré
+    sur vrai PG par `test_backlinks.py`) : ici on résout dans `[projet, KB]`,
+    mais `backlinks_of` rend TOUTE ligne pointant vers la page, sans filtre de
+    projet — et rien ne recale les liens ENTRANTS d'une page déplacée
+    (`move_doc_to_project` ne re-résout que les liens SORTANTS des pages
+    déplacées). Une ligne stockée survit donc au déplacement de sa cible, hors
+    de toute portée de résolution, et ne meurt qu'à la prochaine écriture de la
+    page qui cite. Le relevé ci-dessous doit le DIRE : sans ça, un lecteur qui
+    voit un lien entrant venu d'ailleurs conclut que l'avertissement ment, et
+    réécrit ses renvois en clair (ce qui a été payé).
+    """
     titles = extract_titles(body_md)
     conn.execute("DELETE FROM doc_links WHERE from_doc = %s", (from_doc,))
     if not titles:
@@ -106,10 +133,12 @@ def refresh_links(conn, from_doc: int, project_id: int, body_md: str) -> None:
         return (0 if r["project_id"] == project_id else 1, r["id"])
 
     targets: set[int] = set()
+    orphelines: list[str] = []
     for t in titles:
         cands = by_title.get(t.casefold())
         if not cands:
-            continue                       # lien-souche (N=0) : rendu UI, pas stocké
+            orphelines.append(t)           # lien-souche (N=0) : rendu UI, pas stocké
+            continue
         winner = min(cands, key=_rank)
         if winner["id"] != from_doc:       # une page ne se cite pas elle-même
             targets.add(winner["id"])
@@ -117,6 +146,22 @@ def refresh_links(conn, from_doc: int, project_id: int, body_md: str) -> None:
         conn.execute(
             "INSERT INTO doc_links (from_doc, to_doc) VALUES (%s, %s) "
             "ON CONFLICT DO NOTHING", (from_doc, to_doc))
+    if trace is not None and orphelines:
+        trace["citations_sans_cible"] = orphelines
+        trace["citations_sans_cible_hint"] = (
+            f"{len(orphelines)} citation(s) `[[…]]` ne désignent aucune page "
+            "atteignable depuis ici, donc elles ne créent AUCUN lien entrant : "
+            "la cible lira cette page comme absente de ses liens. À L'ÉCRITURE, "
+            "la résolution regarde ce projet puis la base de connaissance de "
+            "l'org — qui est elle-même un projet, donc un lien vers elle est "
+            "déjà inter-projets — et rien d'autre : depuis une page de la BASE, "
+            "une page de projet est hors de portée. `op=backlinks` ne mesure PAS "
+            "la même chose : il rend les liens DÉJÀ STOCKÉS quel que soit leur "
+            "projet, y compris ceux qu'un déplacement de page a laissés hors de "
+            "cette portée — y voir un lien venu d'ailleurs ne dément donc pas ce "
+            "relevé, et ne prouve pas que la citation résoudrait aujourd'hui : "
+            "ce lien-là disparaîtra à la prochaine écriture de la page qui cite. "
+            "Vérifie le titre exact, ou place la cible à portée.")
 
 
 def backlinks_of(conn, doc_id: int) -> list[dict]:

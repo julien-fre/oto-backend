@@ -102,6 +102,11 @@ def _ref(entity_type: "str | None", entity_id: "str | None", provider: str) -> s
     return f"{entity_type}:{entity_id}:{provider}"
 
 
+# Paliers dont on accepte de FLAGUER la clé : ceux dont la portée ne dépasse pas l'org
+# de celui qui sonde. `tenant` et `platform` en sont exclus — cf. `_fields_config_scope`.
+_FLAGGABLE = (credentials_store.MEMBER, "group", "org")
+
+
 def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict, "tuple | None", dict, "tuple | None"]:
     """(champs, config, SCOPE-santé, INSTANCE sondée, CIBLE d'écriture) selon le niveau.
 
@@ -112,9 +117,15 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
 
     `config` = satellites NON-secrets appariés à la clé (meta public : dsn
     unipile…) — une sonde vers un endpoint dont l'hôte dépend de la clé DOIT en tenir compte.
-    `scope-santé` = où persister le résultat (flag `meta.health_ko`, lu par `status_for`) :
-    `('org', org_id)` en niveau org, `('member', member_id)` quand la clé EFFECTIVE est
-    bien celle du membre (sinon None → on ne flague pas une clé partagée pour un seul user).
+    `scope-santé` = où persister le résultat (`meta.health_ko` + `meta.health_reason`) :
+    `(entity_type, entity_id, account)` de la ligne RÉELLEMENT testée, tant qu'elle
+    n'est pas partagée au-delà de l'org de l'appelant — sinon None.
+    ⚠️ Elle ne valait que pour le palier MEMBRE jusqu'au 2026-09-03 : un `level="auto"`
+    qui résolvait une clé d'ORG — le seul palier possible d'un connecteur `byo_org` only
+    comme `linear` — n'écrivait RIEN. L'utilisateur lisait `ok:false` sur la sonde et
+    retrouvait sa carte verte derrière lui (#541). Restent exclus le palier TENANT et la
+    clé PLATEFORME, partagés par des orgs entières : le hoquet réseau d'un seul membre
+    n'a pas à les peindre en rouge pour tout le monde.
 
     - `auto` (carte user) : le credential EFFECTIF (cascade user > équipe > org >
       plateforme). `emit_on_failure=False` : une sonde ne doit pas polluer le monitoring.
@@ -127,15 +138,15 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
                               "aucune clé d'org posée pour ce connecteur.")
         return (credentials_store.unpack_secret(inp.provider, row["secret"]),
                 credentials_store.public_meta(row.get("meta")),
-                ("org", str(ctx.org_id)),
+                ("org", str(ctx.org_id), ""),
                 {"level": "org", "ref": _ref("org", str(ctx.org_id), inp.provider)},
                 ("org", str(ctx.org_id), ""))
     rc = access.resolve_credential(
         inp.provider, want="auto", sub=ctx.sub, emit_on_failure=False,
     )
-    scope = (("member", credentials_store.member_id(ctx.org_id, ctx.sub))
-             if getattr(rc, "mode", None) == "user" and ctx.org_id is not None else None)
     etype, eid = getattr(rc, "entity_type", None), getattr(rc, "entity_id", None)
+    scope = ((etype, eid, getattr(rc, "account", "") or "")
+             if etype in _FLAGGABLE and eid else None)
     # `level` et `ref` sont DÉRIVÉS de la même source — l'entité — pour qu'ils ne
     # puissent pas se contredire. La version précédente exposait `rc.mode`, dont le
     # vocabulaire diffère (`user` là où l'entité, le `ref` et `oto_instance op=list`
@@ -149,14 +160,19 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
 
 
 def _record_health(provider: str, scope: "tuple | None", ok: bool, error: "str | None") -> None:
-    """Persiste l'état de santé du credential testé (flag `meta.health_ko` + raison) —
-    lu par `status_for`, rendu terra au verdict (« connexion KO »). Merge (n'écrase rien),
-    best-effort. `scope=None` (clé partagée sous un user) → on ne flague pas."""
+    """Persiste l'état de santé du credential testé (`meta.health_ko` + raison) — lu par
+    `status_for` (fiche) et, depuis #541, par `access.credential_rejection_for`, donc par
+    le verdict `ready` de la carte connecteur. Merge (n'écrase rien), best-effort.
+    `scope=None` (clé partagée au-delà de l'org) → on ne flague pas.
+
+    ⚠️ Le COMPTE fait partie de la cible : sur un connecteur multi-compte, écrire sur
+    `account=""` flaguerait une autre ligne que celle qu'on vient de tester — verdict
+    invisible d'un côté, calomnie de l'autre."""
     if scope is None:
         return
     try:
         credentials_store.update_meta(
-            scope[0], scope[1], provider, "",
+            scope[0], scope[1], provider, scope[2],
             {"health_ko": (not ok), "health_reason": (error if not ok else None)})
     # noqa: SILENT — dette déclarée : le flag de santé non écrit devrait se journaliser (#424, verdict C)
     except Exception:  # noqa: BLE001 — la santé est un bonus, jamais bloquant

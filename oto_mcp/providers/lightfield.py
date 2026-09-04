@@ -27,3 +27,11 @@ CONNECTOR = _c(
 CATEGORY = "CRM"
 PUBLISHER = "Lightfield"
 LOGO_DOMAIN = "lightfield.app"
+
+DESCRIPTION = (
+    "Un CRM dont les champs sont propres à chaque espace de travail — le client "
+    "définit lui-même son modèle de données. Le connecteur lit d'abord la "
+    "définition des champs avant d'écrire, pour ne jamais deviner une clé qui "
+    "n'existe pas chez ce client. Peut aussi envoyer un email depuis une boîte "
+    "connectée, en dry-run par défaut."
+)

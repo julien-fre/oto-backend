@@ -80,13 +80,52 @@ def _connect_options() -> str:
     return " ".join(parts)
 
 
+# Bornes du DDL À CHAUD (incident du 2026-09-01, `docs/event-loop-perf.md` mode n°4).
+#
+# `CREATE INDEX CONCURRENTLY` n'a pas de durée propre : avant de construire, il ATTEND
+# la fin de toute transaction ouverte avant lui — y compris une simple LECTURE, qui ne
+# pose pourtant aucun verrou gênant. Une requête d'analyse lancée à la main et laissée
+# 47 min l'a donc retenu 47 min. Ces attentes sont des attentes de VERROU (le waiter
+# prend un `ShareLock` sur le VXID de chaque transaction plus ancienne) : `lock_timeout`
+# les coupe. `statement_timeout` borne en plus la construction elle-même, pour le cas où
+# la table aurait grossi hors de toute mesure — mesuré 40 ms pour 50 000 lignes, donc
+# 60 s laissent trois ordres de grandeur de marge.
+#
+# ⚠️ Ces bornes ne valent QUE pour le DDL à chaud (`_connect_autocommit`). Le pool
+# ordinaire garde `statement_timeout=0` : c'est lui qui porte les migrations de boot, où
+# un index sur une grosse table a le droit de prendre son temps (personne ne sert encore).
+_DDL_LOCK_TIMEOUT_MS = "OTO_MCP_DDL_LOCK_TIMEOUT_MS"
+_DDL_STATEMENT_TIMEOUT_MS = "OTO_MCP_DDL_STATEMENT_TIMEOUT_MS"
+
+
+def _ddl_options() -> str:
+    """`_connect_options()` + les deux bornes du DDL à chaud. `0` désarme une borne."""
+    parts = [_connect_options()]
+    lock = os.environ.get(_DDL_LOCK_TIMEOUT_MS, "5000")
+    stmt = os.environ.get(_DDL_STATEMENT_TIMEOUT_MS, "60000")
+    if lock and lock != "0":
+        parts.append(f"-c lock_timeout={lock}")
+    if stmt and stmt != "0":
+        parts.append(f"-c statement_timeout={stmt}")
+    return " ".join(parts)
+
+
 def _get_pool() -> ConnectionPool:
     global _pool
     if _pool is None:
         _pool = ConnectionPool(
             conninfo=_database_url(),
             min_size=1,
-            max_size=int(os.environ.get("OTO_MCP_DB_POOL_MAX", "8")),
+            # 24 et non 40 (taille du threadpool anyio) : un pool PLUS PETIT que le
+            # threadpool est ce qui fait qu'une rafale échoue proprement en 5 s
+            # au lieu de saturer la base. Les aligner supprimerait le signal.
+            # Marge PG : 3 process (prod, canari, preprod) x 24 = 72 sur 150,
+            # base MANAGÉE PARTAGÉE — le reste va aux migrations, sondes et
+            # opérations manuelles. Monté de 8 le 2026-09-03 : le seam des
+            # capacités ayant sorti 285 handlers de la boucle, jusqu'à 40
+            # traitements se disputent désormais le pool (mesuré : 7/8 en
+            # heure CREUSE, avant tout pic).
+            max_size=int(os.environ.get("OTO_MCP_DB_POOL_MAX", "24")),
             kwargs={"row_factory": _str_dict_row, "options": _connect_options()},
             open=True,
             # Attente MAX d'une connexion (défaut psycopg_pool : 30s !). Pendant un
@@ -107,7 +146,7 @@ def _connect() -> Iterator[psycopg.Connection]:
 
 
 @contextmanager
-def _connect_autocommit() -> Iterator[psycopg.Connection]:
+def _connect_autocommit(*, bornee: bool = True) -> Iterator[psycopg.Connection]:
     """Connexion HORS pool, en autocommit — pour le seul DDL qui l'exige.
 
     `CREATE INDEX CONCURRENTLY` est REFUSÉ dans un bloc transactionnel (« cannot run
@@ -117,7 +156,17 @@ def _connect_autocommit() -> Iterator[psycopg.Connection]:
     de tout le monde le temps du scan.
 
     Hors pool et à usage strictement local : on n'expose pas une connexion sans
-    transaction à du code métier, qui perdrait l'atomicité sans le voir."""
-    with psycopg.connect(_database_url(), options=_connect_options(),
+    transaction à du code métier, qui perdrait l'atomicité sans le voir.
+
+    `bornee=True` (défaut) pose `lock_timeout`/`statement_timeout` : un DDL à chaud qui
+    attend sans fin est un gel de production, pas une lenteur. Cf. l'incident du
+    2026-09-01 — 12 min 48 s sans une seule réponse, derrière une requête d'analyse
+    lancée à la main qui tournait depuis 47 min.
+
+    `bornee=False` pour un travail de FOND (timer de maintenance, migration de boot) :
+    là, attendre ne dessert personne, et une borne ne ferait que garantir qu'un index
+    sur une table très occupée ne se pose jamais."""
+    options = _ddl_options() if bornee else _connect_options()
+    with psycopg.connect(_database_url(), options=options,
                          row_factory=_str_dict_row, autocommit=True) as conn:
         yield conn

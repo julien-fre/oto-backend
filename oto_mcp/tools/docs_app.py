@@ -12,8 +12,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .. import access, db, ownership
-from ..capabilities.kb import KB_NAME
+from .. import access, db, org_store, ownership
 
 PROJECT_RTYPE = "project"
 
@@ -39,14 +38,17 @@ def register(mcp: FastMCP) -> None:
 
     def _kb_project_id(sub: str) -> Optional[int]:
         """KB de l'org active — résolution LECTURE seule (pas de création paresseuse
-        ici : c'est `oto_kb` qui crée ; une app de lecture ne mute rien)."""
+        ici : c'est `oto_kb` qui crée ; une app de lecture ne mute rien).
+
+        Par l'ANCRE `orgs.kb_project_id`, comme `capabilities/kb.py`. Cette fonction
+        cherchait le projet dont le NOM vaut `KB_NAME`, alors que l'identification par
+        nom est morte au lot 3 (chantier 0.3) : une org qui renommait sa base perdait
+        `oto_doc_app` sans argument, qui répondait « Aucun projet ciblé » pendant que
+        la KB était là, ancrée et lisible (#527)."""
         org = access.current_org(sub)
         if org is None:
             return None
-        for p in db.list_projects_for_owners([("org", str(org))]):
-            if p.get("name") == KB_NAME:
-                return p["id"]
-        return None
+        return org_store.get_kb_project_id(org)
 
     def _tree_rows(docs: list) -> list:
         """Aplatis l'arbre (parent_id) en lignes indentées, ordre DFS — les enfants
@@ -90,7 +92,8 @@ def register(mcp: FastMCP) -> None:
 
         Visual variant of `oto_doc` that renders pages INLINE instead of returning
         JSON. WITHOUT arguments = the tree of the active org's KNOWLEDGE BASE
-        (« Base de connaissance »). With `project_id` = that project's pages tree
+        (whatever it is named — it is resolved by its anchor, see `oto_kb`). With
+        `project_id` = that project's pages tree
         (children indented under parents). With `doc_id` = ONE page, markdown
         rendered. With `query` (+ optional `project_id`) = full-text hits with
         snippets, accent-insensitive.

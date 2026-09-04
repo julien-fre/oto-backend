@@ -41,7 +41,7 @@ def socle(monkeypatch):
                         group_id=None, account="", force=False):
         vus.append(("finalize", sub, connector, context_id, session_id, scope,
                     group_id, account, force))
-        return True
+        return browser_session.FinalizeResult(True)
 
     monkeypatch.setattr(browser_session, "start", _start)
     monkeypatch.setattr(browser_session, "finalize", _finalize)
@@ -116,12 +116,13 @@ def test_pas_encore_logue_est_une_200_pas_une_erreur(monkeypatch, socle):
     stub_authz(monkeypatch)
 
     async def _pas_encore(*a, **kw):
-        return False
+        return browser_session.FinalizeResult(False)
 
     monkeypatch.setattr(browser_session, "finalize", _pas_encore)
     code, out = _finalize(_OK)
     assert code == 200
-    assert out == {"connected": False, "scope": "member", "account": ""}
+    assert out == {"connected": False, "scope": "member", "account": "",
+                   "warning": ""}
 
 
 @pytest.mark.parametrize("corps", [{}, {"session_id": "s"}, {"context_id": "c"}])

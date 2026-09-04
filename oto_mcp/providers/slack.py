@@ -30,3 +30,10 @@ CONNECTOR = _c(
 CATEGORY = "Comms"
 PUBLISHER = "Slack"
 LOGO_DOMAIN = "slack.com"
+
+DESCRIPTION = (
+    "La messagerie Slack d'un ou plusieurs workspaces : canaux, messages, fils "
+    "de discussion. Un jeton bot (xoxb-) et/ou un jeton utilisateur (xoxp-) — "
+    "au moins l'un des deux ; chaque workspace connecté devient un compte "
+    "distinct dans le coffre."
+)

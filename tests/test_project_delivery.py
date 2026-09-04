@@ -53,10 +53,20 @@ def _wire(monkeypatch, *, governed=("11", "77")):
     monkeypatch.setattr(R.ownership, "revoke",
                         lambda rt, rid, pt, pid: calls["revokes"].append((rt, rid, pt, pid)) or True)
     monkeypatch.setattr(R.org_store, "copy_instruction_to_owner",
+                        # ⚠️ `oid` reste du TEXTE : depuis l'ADR 0068 la cible peut être
+                        # une PERSONNE, dont l'identifiant est un `sub`. L'`int()` qui
+                        # vivait ici levait un ValueError que la cascade attrapait et
+                        # rendait comme « raison » de l'entrée — un refus fabriqué par
+                        # le banc, pas par le code qu'il teste.
                         lambda iid, otype, oid, set_by=None:
-                        calls["copies"].append((iid, int(oid)))
+                        calls["copies"].append((iid, oid))
                         or {"id": 501, "slug": "process-mutuelle", "owner_type": otype,
-                            "owner_id": str(oid), "org_id": int(oid)})
+                            "owner_id": str(oid),
+                            # ⚠️ NULL pour une PERSONNE : `org_id` porte l'org PARENTE
+                            # et la cascade de suppression, et personne n'en a une
+                            # (ADR 0068). Le stub le reflète, sinon il décrit une
+                            # ligne que le store refuserait d'écrire.
+                            "org_id": None if otype == "user" else int(oid)})
     monkeypatch.setattr(R.db, "update_project_link_ref",
                         lambda pid, t, old, new: calls["repoints"].append((pid, t, old, new)) or 1)
     return calls
@@ -65,9 +75,16 @@ def _wire(monkeypatch, *, governed=("11", "77")):
 # ── oto_resource : partage à une org ─────────────────────────────────────────
 
 def test_share_to_org_principal(monkeypatch):
+    """⚠️ Le droit attendu est `read` depuis l'ADR 0068 : partager sans préciser ne
+    donne plus l'écriture. Ce banc enregistrait `write` — le défaut « rétro-compat »
+    que le code annonçait lui-même comme un héritage, jamais comme une intention."""
     calls = _wire(monkeypatch)
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                             resource_id="7", org_id=35))
+    assert ("project", "7", "org", "35", "read") in calls["grants"]
+    # Et l'écriture reste accessible, en la demandant.
+    R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
+                                      resource_id="7", org_id=35, permission="write"))
     assert ("project", "7", "org", "35", "write") in calls["grants"]
     assert out["shared_with"] == "acme" and out["principal_type"] == "org"
 
@@ -91,12 +108,14 @@ def test_share_to_user_still_works(monkeypatch):
                         lambda to, **kw: sent.update({"to": to, **kw}) or True)
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                             resource_id="7", email="jane@x.co"))
-    assert ("project", "7", "user", "u2", "write") in calls["grants"]
+    assert ("project", "7", "user", "u2", "read") in calls["grants"]
     assert out["principal_type"] == "user"
     # Le bénéficiaire user est notifié par email (best-effort, une seule fois).
     assert out["notified"] is True
     assert sent["to"] == "jane@x.co" and sent["type_label"] == "projet"
-    assert sent["name"] == "Campagne mutuelle" and sent["permission"] == "write"
+    # Le mail dit le droit RÉELLEMENT accordé — `read` depuis l'ADR 0068. Un mail qui
+    # annoncerait l'écriture sur un grant en lecture ferait chercher un bug ailleurs.
+    assert sent["name"] == "Campagne mutuelle" and sent["permission"] == "read"
 
 
 def test_share_to_user_passes_recipient_locale_and_english_label(monkeypatch):
@@ -178,22 +197,31 @@ def test_transfer_cascade_to_org(monkeypatch):
     assert ("project", "7", "org", "35") in calls["transfers"]
     assert ("datastore_namespace", "11", "org", "35") in calls["transfers"]
     # procédure : COPIÉE chez la cible (l'originale reste), lien re-pointé sur la copie.
-    assert calls["copies"] == [(77, 35)]
+    assert calls["copies"] == [(77, "35")]
     assert calls["repoints"] == [(7, "procedure", "77", "501")]
     by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}
     assert by_ref[("procedure", "77")]["status"] == "copied"
     assert by_ref[("procedure", "77")]["new_ref"] == "501"
 
 
-def test_transfer_cascade_to_user_skips_guide(monkeypatch):
+def test_transfer_cascade_vers_une_PERSONNE_copie_la_procedure(monkeypatch):
+    """⚠️ Ce banc s'appelait `…_skips_guide` et vérifiait que la cascade SAUTAIT la
+    procédure quand le destinataire est une personne — parce que le palier personnel
+    n'existait pas (`doctrine_needs_org_owner`). L'ADR 0068 l'a ouvert : la procédure
+    suit désormais le projet chez son nouveau propriétaire, comme elle le fait déjà
+    vers une org ou une équipe.
+
+    C'est le sens du transfert : livrer un projet sans sa procédure livrait un mode
+    d'emploi manquant, et le rapport de cascade le disait sans que personne puisse y
+    remédier."""
     calls = _wire(monkeypatch)
     monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
                                             resource_id="7", new_owner_email="jane@x.co",
                                             cascade=True))
-    assert calls["copies"] == []
+    assert calls["copies"] == [(77, "u2")], "la procédure est copiée chez la personne"
     by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}
-    assert by_ref[("procedure", "77")]["reason"] == "doctrine_needs_org_owner"
+    assert by_ref[("procedure", "77")]["status"] == "copied"
 
 
 def test_cascade_entity_failure_does_not_break_delivery(monkeypatch):
@@ -244,13 +272,18 @@ def test_guide_owner_none_for_slug_ref():
     assert ownership.owner_of("doctrine", "vieux-slug") is None
 
 
-def test_guide_reparent_rejects_user_owner():
-    """Le palier PERSONNEL reste fermé (phase 2 de #681 : `org_instructions.org_id` est
-    NOT NULL et une personne n'a pas d'org parente). Le refus doit nommer les paliers
-    ouverts — « un guide est un objet d'org » était devenu faux."""
+def test_guide_reparent_refuse_un_palier_INCONNU():
+    """⚠️ Ce banc gardait la fermeture du palier PERSONNEL, et sa raison était juste :
+    `org_instructions.org_id` était NOT NULL. La phase 2 de #681 l'a levée (ADR 0068,
+    « procédure doit pouvoir être privée ») — `user` est désormais un palier ouvert.
+
+    Ce qu'il reste à garder, et c'est ce que ce banc vérifie maintenant : ouvrir `user`
+    n'ouvre pas TOUT. Un palier hors liste est refusé en nommant les trois qui
+    existent, plutôt que de retomber silencieusement sur l'org."""
     with pytest.raises(ValueError) as e:
-        ownership._guide_reparent("77", "user", "u1")
-    assert "org" in str(e.value) and "group" in str(e.value)
+        ownership._guide_reparent("77", "team", "42")
+    msg = str(e.value)
+    assert "org" in msg and "group" in msg and "user" in msg
 
 
 def test_guide_listed_in_resource_ops():

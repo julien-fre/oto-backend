@@ -31,3 +31,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Cognism"
 LOGO_DOMAIN = "cognism.com"
+
+DESCRIPTION = (
+    "Recherche de contacts et d'entreprises B2B chez Cognism, avec reveal "
+    "(email, téléphone) au crédit et enrichissement par identité (email, "
+    "LinkedIn, nom + société). Les recherches restent en aperçu tant que le "
+    "reveal n'est pas demandé explicitement."
+)

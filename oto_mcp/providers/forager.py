@@ -34,3 +34,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Forager.ai"
 LOGO_DOMAIN = "forager.ai"
+
+DESCRIPTION = (
+    "Offres d'emploi, données d'entreprise (firmographics) et enrichissement de "
+    "contact chez Forager, payant au crédit par recherche. Une clé donne accès "
+    "à un ou plusieurs comptes Forager ; le bon compte se résout tout seul "
+    "quand elle n'en a qu'un."
+)

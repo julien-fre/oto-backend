@@ -38,3 +38,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Zoho"
 LOGO_DOMAIN = "zoho.com"
+
+DESCRIPTION = (
+    "Le CRM Zoho : créer, lire, mettre à jour des modules et poser des notes. "
+    "OAuth2 self-client, partageable par toute une équipe ; la région Zoho "
+    "(com/eu/in…) se choisit à la connexion."
+)

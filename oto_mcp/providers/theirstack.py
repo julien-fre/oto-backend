@@ -25,3 +25,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "TheirStack"
 LOGO_DOMAIN = "theirstack.com"
+
+DESCRIPTION = (
+    "Offres d'emploi publiées par une entreprise, avec les technologies "
+    "détectées dans ces offres (ERP, CRM…) — une lecture technographique de son "
+    "stack. Couverture partielle sur les PME, en lecture seule."
+)

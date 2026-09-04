@@ -66,6 +66,25 @@ son successeur s'installe — elle exécute encore l'ancien code, elle doit donc
 continuer à annoncer l'ancienne version. Sans la mémoïsation, la vidange fabriquerait
 exactement l'erreur d'attribution que ce lot supprime.
 
+⚠️ **Et côté LECTEUR, la vidange fabrique l'erreur que la mémoïsation évite côté
+serveur (03/09/2026).** Chaque processus annonce correctement SA version — mais le
+**journal des appels ne porte aucune colonne de version**. Une ligne de `tool_calls`
+ne dit donc pas quel processus l'a servie, et pendant la vidange le journal MÉLANGE
+les deux sans qu'aucun champ ne le signale. *Un horodatage postérieur au démarrage du
+nouveau processus ne prouve pas que le nouveau code a servi l'appel.*
+
+Mesuré à la mise en production de `v1.185.0` : le relevé montrait une extraction de
+page à **46 s** après le démarrage, alors que le lot venait de ramener le plafond à
+15 s — la signature exacte d'un contrat qui ment. Rejeu de la même adresse :
+**16,5 s, et le refus nomme la borne**. L'appel de 46 s venait de l'ancien processus,
+encore en vidange. La fausse alerte était à un cheveu d'être remontée comme un défaut.
+
+**Le seul contrôle qui tranche est de REJOUER le cas soi-même** après la bascule ; la
+relecture du journal ne le peut pas, et l'en-tête `X-Oto-Version` ne sert que sur une
+réponse qu'on tient encore, jamais sur une ligne déjà journalisée. Vérifier un
+correctif par le journal juste après un déploiement est donc une mesure dont
+l'étiquette manque — au sens propre.
+
 Ordre de résolution :
 
 1. **L'environnement** — `OTO_DEPLOY_REF` / `OTO_DEPLOY_SHA` / `OTO_DEPLOY_AT`. Il

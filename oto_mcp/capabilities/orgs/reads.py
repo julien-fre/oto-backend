@@ -94,9 +94,20 @@ class MyOrgs(BaseModel):
 
 
 class OrgMemberEntry(BaseModel):
-    """Un membre de l'org. ⚠️ `active` ne qualifie PAS le membre (compte activé /
-    suspendu) : il dit que CETTE org est l'org maison de cette personne. Un membre
-    parfaitement actif y est `false` dès qu'il travaille par défaut ailleurs."""
+    """Un membre de l'org.
+
+    ⚠️ **`active` et `suspended` ne parlent pas de la même chose**, et le premier est
+    un faux ami de longue date : `active` dit que CETTE org est l'org MAISON de cette
+    personne — un membre parfaitement en état y est `false` dès qu'il travaille par
+    défaut ailleurs. C'est `suspended` qui dit que le compte est neutralisé.
+
+    Un membre en pause **reste dans la liste**, marqué. Le retirer serait détruire une
+    appartenance qu'on a justement choisi de ne pas détruire, et laisserait un
+    administrateur devant des documents signés par quelqu'un qui n'apparaît plus nulle
+    part. Il ne compte en revanche dans aucune facture — non pas par décision de ce
+    lot, mais parce qu'aucune facture ne compte les membres : l'abonnement est un
+    forfait par org (`billing.PLANS`), et le seul compteur de « sièges » du dépôt
+    (`db.count_unipile_accounts_for_org`) porte sur des comptes de messagerie."""
     sub: str
     # None quand aucune ligne `users` ne correspond (invité jamais connecté, compte
     # machine) — le membre existe quand même.
@@ -105,6 +116,9 @@ class OrgMemberEntry(BaseModel):
     avatar_url: Optional[str] = None
     role: str
     active: bool
+    # Compte mis en pause (`users.suspended_at`). Faux pour tout le monde tant qu'un
+    # administrateur n'a pas posé le geste.
+    suspended: bool = False
 
 
 class OrgSecretEntry(BaseModel):
@@ -181,7 +195,9 @@ def _members(org_id: int) -> list[dict]:
         u = db.get_user(m["sub"]) or {}
         out.append({"sub": m["sub"], "email": u.get("email"), "name": u.get("name"),
                     "avatar_url": u.get("avatar_url"),
-                    "role": m["org_role"], "active": m["is_active"]})
+                    "role": m["org_role"], "active": m["is_active"],
+                    # Gratuit : la ligne `users` est déjà lue juste au-dessus.
+                    "suspended": bool(u.get("suspended_at"))})
     return out
 
 

@@ -73,7 +73,7 @@ def _wire_byo(monkeypatch, mode="org"):
 def test_unipile_list_byo(monkeypatch):
     _wire_byo(monkeypatch)
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "A2")
-    ids = connector_identities.list_identities("u1", "unipile")
+    ids = asyncio.run(connector_identities.list_identities("u1", "unipile"))
     assert {i["id"] for i in ids} == {"A1", "A2"}
     a2 = next(i for i in ids if i["id"] == "A2")
     assert a2["is_default"] and a2["channel"] == "LINKEDIN" and a2["label"] == "Laurent Guy"
@@ -87,7 +87,7 @@ def test_unipile_select_valid(monkeypatch):
                                platform_seat=False:
                         saved.update(aid=aid, name=name, provider=provider,
                                      org_id=org_id, platform_seat=platform_seat))
-    res = connector_identities.select_identity("u1", "unipile", "A1")
+    res = asyncio.run(connector_identities.select_identity("u1", "unipile", "A1"))
     assert res["id"] == "A1" and res["channel"] == "LINKEDIN"
     # Scope membre (ADR 0033 B4) : le binding est rattaché à l'org de contexte,
     # BYO = pas un siège plateforme.
@@ -100,7 +100,7 @@ def test_unipile_select_unknown_id_raises(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.set_unipile_account",
                         lambda *a, **k: pytest.fail("ne doit pas écrire un id inconnu"))
     with pytest.raises(ValueError, match="inconnu"):
-        connector_identities.select_identity("u1", "unipile", "GHOST")
+        asyncio.run(connector_identities.select_identity("u1", "unipile", "GHOST"))
 
 
 def test_unipile_platform_no_selector(monkeypatch):
@@ -109,9 +109,9 @@ def test_unipile_platform_no_selector(monkeypatch):
     monkeypatch.setattr(access, "credential_mode_for", lambda sub, prov: "platform")
     monkeypatch.setattr("oto_mcp.db.list_account_grants_to", lambda sub: [])
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts", lambda sub: [])
-    assert connector_identities.list_identities("u1", "unipile") == []
+    assert asyncio.run(connector_identities.list_identities("u1", "unipile")) == []
     with pytest.raises(ValueError, match="plateforme"):
-        connector_identities.select_identity("u1", "unipile", "A1")
+        asyncio.run(connector_identities.select_identity("u1", "unipile", "A1"))
 
 
 def test_unipile_hosted_lists_own_accounts(monkeypatch):
@@ -126,7 +126,7 @@ def test_unipile_hosted_lists_own_accounts(monkeypatch):
                         lambda sub: [{"account_id": "H1", "account_name": "Jane Doe",
                                       "provider": "LINKEDIN", "org_id": 39}])
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "H1")
-    ids = connector_identities.list_identities("u1", "unipile")
+    ids = asyncio.run(connector_identities.list_identities("u1", "unipile"))
     assert [i["id"] for i in ids] == ["H1"]
     assert ids[0]["label"] == "Jane Doe" and ids[0]["channel"] == "LINKEDIN"
     assert ids[0]["is_default"]
@@ -145,9 +145,11 @@ def test_unipile_hosted_reflects_live_status(monkeypatch):
                         lambda sub: [{"account_id": "H1", "account_name": "Jane",
                                       "provider": "LINKEDIN", "org_id": 39}])
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "H1")
-    monkeypatch.setattr(connector_identities, "_unipile_live_status_map",
-                        lambda sub: {"H1": "credentials"})
-    ids = connector_identities.list_identities("u1", "unipile")
+
+    async def _live_map(sub):
+        return {"H1": "credentials"}
+    monkeypatch.setattr(connector_identities, "_unipile_live_status_map", _live_map)
+    ids = asyncio.run(connector_identities.list_identities("u1", "unipile"))
     assert ids[0]["status"] == "credentials"
 
 
@@ -168,7 +170,7 @@ def test_live_status_map_downgrades_dead_session(monkeypatch):
     monkeypatch.setattr(access, "resolve_credential",
                         lambda prov, want=None, sub=None, **k: _RC())
     monkeypatch.setattr("oto.tools.unipile.make_unipile_client", lambda **k: _Cli())
-    m = connector_identities._unipile_live_status_map("u1")
+    m = asyncio.run(connector_identities._unipile_live_status_map("u1"))
     assert m == {"H1": "disconnected", "H2": "OK"}
 
 
@@ -186,7 +188,7 @@ def test_live_status_map_probe_failsoft(monkeypatch):
     monkeypatch.setattr(access, "resolve_credential",
                         lambda prov, want=None, sub=None, **k: _RC())
     monkeypatch.setattr("oto.tools.unipile.make_unipile_client", lambda **k: _Cli())
-    assert connector_identities._unipile_live_status_map("u1") == {"H1": "OK"}
+    assert asyncio.run(connector_identities._unipile_live_status_map("u1")) == {"H1": "OK"}
 
 
 def test_unipile_hosted_status_failsoft_ok(monkeypatch):
@@ -201,8 +203,10 @@ def test_unipile_hosted_status_failsoft_ok(monkeypatch):
                         lambda sub: [{"account_id": "H1", "account_name": "Jane",
                                       "provider": "LINKEDIN", "org_id": 39}])
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "H1")
-    monkeypatch.setattr(connector_identities, "_unipile_live_status_map", lambda sub: {})
-    ids = connector_identities.list_identities("u1", "unipile")
+    async def _live_map(sub):
+        return {}
+    monkeypatch.setattr(connector_identities, "_unipile_live_status_map", _live_map)
+    ids = asyncio.run(connector_identities.list_identities("u1", "unipile"))
     assert ids[0]["status"] == "ok"
 
 
@@ -219,7 +223,7 @@ def test_unipile_hosted_scopes_accounts_to_current_org(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts",
                         lambda sub: [{"account_id": "A2", "account_name": "Alexis",
                                       "provider": "LINKEDIN", "org_id": 2}])
-    assert connector_identities.list_identities("u1", "unipile") == []
+    assert asyncio.run(connector_identities.list_identities("u1", "unipile")) == []
 
 
 def test_unknown_connector_slug_is_an_error():

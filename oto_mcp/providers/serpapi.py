@@ -22,3 +22,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "SerpApi"
 LOGO_DOMAIN = "serpapi.com"
+
+DESCRIPTION = (
+    "Interroger un AUTRE moteur que Google : Bing, YouTube, Amazon, Walmart, "
+    "eBay, les offres d'emploi (Jobs), Google Scholar… tout le scope multi- "
+    "moteurs de SerpApi. Clé plateforme partagée disponible, avec un quota "
+    "quotidien."
+)

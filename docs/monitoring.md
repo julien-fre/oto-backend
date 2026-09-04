@@ -205,11 +205,27 @@ un outil, verbe en `op` :
 | `calls` | le journal brut filtré — chaque ligne porte `arg_keys`, jamais `args` | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
 | `call` | la fiche d'UN appel (`call.args` tels que journalisés + corrélation) | `call_id` |
 | `run` / `runs` | timeline d'un déroulé / déroulés récents | `run_id`, `limit` |
-| `rest` / `connectors` / `funnel` | lentilles REST / santé connecteurs / activation | `days` |
+| `rest` | lentille REST par route (`/api/*`) — **les gestes du tableau de bord sont ICI, pas dans `calls`** | `days`, `org_id`, `sub` |
+| `connectors` / `funnel` | santé connecteurs / activation | `days` (+ `org_id` pour `connectors`) |
 | `gaps` / `tool_quality` | signaux d'usage agrégés | `days` |
 
 `sub` accepte un **email OU un sub** (on enquête sur « les appels de jb@… », pas sur un
 identifiant opaque). Les signaux bruts et leur résolution restent sur `oto_admin_signal`.
+
+⚠️ **Un paramètre que l'op ne lit pas est REFUSÉ** (`param_not_read_by_op`), jamais
+ignoré. Jusqu'au 2026-09-03, `op=rest` acceptait `sub`/`org_id` et les jetait : on
+croyait lire l'activité REST d'un compte, on lisait celle de toute la plateforme, et
+aucune forme de la réponse ne distinguait les deux (#451). Les deux axes sont
+désormais honorés — mais ⚠️ **`org_id` d'une ligne REST vient de l'en-tête de
+consultation** posé par le client (`RestCallLogger`, best-effort), pas d'une
+résolution : une requête sans en-tête ne porte aucune org et sort du filtre, donc un
+0 sous `org_id` ne prouve pas une org inactive. La réponse le dit (`org_id_caveat`).
+
+⚠️ **`summary` et `calls` ne portent que le flux AGENT (`kind='mcp'`)** : ce qu'une
+personne fait depuis le tableau de bord ou l'API n'y figure JAMAIS — c'est `op=rest`.
+**Zéro appel n'est donc pas un compte inactif**, et c'était la deuxième moitié du
+#451 : une enquête honnête concluait « ce compte ne s'est jamais servi d'oto » sur
+une lentille qui, par construction, ne pouvait pas voir ses gestes.
 
 ### Recette : enquêter sur une erreur
 
@@ -403,6 +419,17 @@ backend). Env box : `OTO_SENTRY_{DSN,ENV,RELEASE,TRACES_SAMPLE_RATE}` ; région 
 `de.sentry.io` (org slug `otomata-vz`). Surveillance/triage = guide oto
 `surveillance-erreurs` (token API en SOPS `sentry_api_token`).
 
+⚠️ **Le middleware est le SEUL capteur — deux copies coupées à l'init (oto-backend#869,
+2026-09-04)**, mesurées à un triplet exact par erreur (528/528/528, 293/293/293). (1)
+`sentry_sdk.integrations.mcp.MCPIntegration` s'AUTO-ACTIVE dès `mcp>=1.15.0` (installé :
+1.27.2) et capturait la MÊME `McpError` **sans** le tag `mcp.tool` ni l'utilisateur,
+sans passer par `before_send` — d'où une issue Sentry au titre trompeur « Erreur interne
+du serveur » ; coupée via `disabled_integrations=[MCPIntegration()]`. (2) La
+`LoggingIntegration` relayait `logger.exception("Error calling tool …")` de fastmcp
+(logger `fastmcp.server.server`) — même événement que le middleware, sans rien ajouter ;
+coupée via `ignore_logger("fastmcp.server.server")`. Les deux coupes ne perdent aucune
+information : le middleware capture déjà tout ce qui n'est pas une erreur gérée.
+
 ⚠️ **`include_local_variables=False` n'est pas un doublon de `send_default_pii=False`, et
 sans lui cette section était FAUSSE** (#564, corrigé le 2026-08-29). Elle affirmait
 « jamais les args d'appel dans l'event » : `send_default_pii` ne couvre que ce que le SDK
@@ -419,6 +446,25 @@ Un appel sur un tool HORS toolbox de session (la visibilité filtre `tools/list`
 pas `tools/call`) = erreur **GÉRÉE actionnable** `tool_not_mounted`
 (`error_taxonomy` : oto_call immédiat / `oto_connector op=select`), droppée de
 Sentry — plus jamais un « Erreur interne du serveur » opaque (vécu 16/07, #224/#225).
+
+⚠️ **Un statut amont rangé dans la CHAÎNE au lieu d'un attribut est invisible aux deux
+mécanismes à la fois.** `_upstream_status` cherche `.status_code` / `.status` /
+`.response.status_code` **sur l'objet exception** : un client oto-core qui lève
+`Exception(f"… API {status} on …: {corps}")` n'en porte aucun. Le refus tiers échappe
+donc *et* au drop de `before_send` (Sentry ouvre une issue de bug backend pour un 4xx
+normal) *et* à l'enveloppe, qui tombe en étape (5) « interne » — la seule branche qui
+n'écho RIEN du message. **Les deux symptômes ont la même cause, et le journal, lui,
+garde le corps en clair** : un écart entre ce que dit `tool_calls.error` et ce que
+l'agent a lu est la signature de ce défaut.
+Attio en était le cas type (signal #610, 18 refus en 45 jours, 16 remontés à tort) :
+Attio nommait le champ fautif et l'enregistrement en conflit, l'agent lisait « Erreur
+interne du serveur. » et a conclu à un bug amont inexistant. Corrigé **au tool**
+(`tools/attio.py`, `_rendre_le_refus_lisible` posé sur l'unique sortie HTTP du client)
+en re-typant vers `UpstreamHTTPError` — le porteur canonique d'oto-core, déjà honoré
+ici. ⚠️ **Pas en `McpError`** : elle conserverait le message mais écraserait le verdict
+machine (`code`/`retryable`) que la taxonomie dérive du statut. ⚠️ Ce qui est relayé du
+corps amont est une **liste blanche bornée** (`code`, `path`, `message`) : un corps tiers
+n'est jamais rendu en bloc.
 
 ## `client_id` — ce qu'il ne dit pas
 

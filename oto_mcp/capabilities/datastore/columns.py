@@ -12,12 +12,22 @@ croyant viser juste, la valeur partant dans une colonne que l'interface ne lit p
 fasse disparaître la colonne, et donc le piège.
 
 Une CAPACITÉ, pas un `@mcp.tool()` (ADR 0042 §Convergence des surfaces) : le verbe
-appartient à la plateforme, et le jour où le cockpit affiche « supprimer cette
+appartient à la plateforme, et le jour où le cockpit afficherait « supprimer cette
 colonne » — l'endroit naturel, puisque la colonne morte trompe aussi l'humain qui
-relit une fiche — la face REST est une ligne `rest=` ici, pas une seconde
-implémentation avec sa propre autz à tenir en phase. `rest=None` en attendant,
-opt-out explicite : une route destructive que rien n'appelle est une surface qu'on
-ne teste pas.
+relit une fiche — la face REST serait une ligne `rest=` ici, pas une seconde
+implémentation avec sa propre autz à tenir en phase. Ce jour est arrivé : le
+cockpit pose la corbeille dans le menu ⋯ d'une colonne, la ligne `rest=` est posée
+ci-dessous, et l'autz reste la seule, celle de la capacité.
+
+`POST …/{namespace}/drop_column`, et non `DELETE …/columns/{key}`, pour deux
+raisons de forme qui tiennent aux données : une clé de colonne peut porter un point
+(`site_web.comment` — le store tient exprès à la garder atteignable, cf. son
+commentaire sur le diagnostic d'après-purge), donc elle n'a rien à faire dans un
+segment de chemin ; et `confirm` est un booléen, que seul un corps porte sans
+coercition depuis une chaîne de query — or l'adaptateur ne lit un corps que sur
+POST/PUT/PATCH ou `reads_body` (cf. `_rest_adapter`). Le corps porte donc
+`{key, confirm}`, le chemin le seul `namespace`. Même parti que `claim_next`, déjà
+un verbe en POST sous le namespace.
 
 Les gardes vivent dans le STORE (`DatastorePg.drop_column`), pas ici : `confirm`,
 le refus d'une clé encore déclarée au schéma et celui des colonnes de plateforme
@@ -33,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ... import access
 from ...datastore.core import NamespaceNotFound, NamespaceReadOnly, make_store
+from ...datastore.errors import ColumnAbsent
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -74,6 +85,11 @@ def _drop_column(ctx: ResolvedCtx, inp: DropColumnInput) -> dict:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:
         raise AuthzDenied(403, "namespace_read_only")
+    except ColumnAbsent as e:
+        # Code à PART (cf. `ColumnAbsent`) : « rien à purger » est un refus qu'un
+        # appelant en deux temps — le cockpit, qui retire d'abord le champ du schéma —
+        # doit pouvoir reconnaître comme abouti sans lire la phrase.
+        raise AuthzDenied(400, "drop_column_no_rows", str(e))
     except ValueError as e:
         raise AuthzDenied(400, "invalid_drop_column", str(e))
 
@@ -155,7 +171,9 @@ CAPABILITIES += [
         Output=DropColumnResult,
         authz=SUB_ONLY,
         mcp="data_drop_column",
-        rest=None,  # cf. en-tête : une ligne à poser quand le cockpit l'affichera
+        # Le geste destructif du cockpit — cf. en-tête pour le choix POST + corps.
+        rest=RestBinding(
+            verb="POST", path="/api/datastore/namespaces/{namespace}/drop_column"),
         description=(
             "DESTRUCTIVE — erase a column from EVERY row of a namespace (`confirm=True` "
             "required). Removing a field from the schema takes it out of the view, but "
@@ -202,7 +220,11 @@ CAPABILITIES += [
             "names it back in `hors_schema` — `strict` alone never refused it — while "
             "`\"reject\"` refuses the write and stores nothing; set it on a table that "
             "has FINISHED being explored. Per field, `readonly: true` locks the value "
-            "in place (layers such as `.comment` stay open), `origine: \"system\"` "
+            "in place (layers such as `.comment` stay open) — the table's OWNER, or "
+            "whoever GOVERNS it, can still replace such a value with "
+            "`data_write(readonly_override=true)`, for that one call and journaled, "
+            "so locking a column never means nobody can correct it again — "
+            "`origine: \"system\"` "
             "makes the platform keep the previous value in `<field>.origine`, and "
             "`system: \"run.id\"|\"run.started_at\"|\"write.at\"` makes the PLATFORM "
             "write the value on every write (the caller is refused, by name) — `null` "

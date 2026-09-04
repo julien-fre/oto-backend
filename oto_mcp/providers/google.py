@@ -25,3 +25,10 @@ CONNECTOR = _c(
 CATEGORY = "Comms"
 PUBLISHER = "Google"
 LOGO_DOMAIN = "google.com"
+
+DESCRIPTION = (
+    "Ta boîte Google, par OAuth : Gmail (lire, composer, envoyer), Google "
+    "Tasks, Calendar, Sheets et Drive, plus Chat. Chaque adresse Google "
+    "connectée devient un compte distinct dans le coffre — plusieurs "
+    "consentements, plusieurs comptes."
+)

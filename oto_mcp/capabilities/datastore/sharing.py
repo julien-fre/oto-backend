@@ -31,7 +31,9 @@ from ..registry import CAPABILITIES
 class ShareInput(BaseModel):
     namespace: str
     email: str = ""
-    permission: str = "write"
+    # ADR 0068 : partager sans préciser donnait l'ÉCRITURE. « Partager », dans la tête
+    # de qui le demande, veut dire « qu'il puisse le lire ».
+    permission: str = "read"
 
 
 class UnshareInput(BaseModel):
@@ -88,7 +90,7 @@ def _recipient(email: str) -> dict:
 
 def _share(ctx: ResolvedCtx, inp: ShareInput) -> dict:
     email = (inp.email or "").strip()
-    permission = (inp.permission or "write").strip()
+    permission = (inp.permission or "read").strip()
     if not email:
         raise AuthzDenied(400, "email_required")
     if permission not in ("read", "write"):

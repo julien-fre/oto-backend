@@ -59,6 +59,18 @@ def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
+# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(rafraîchissement de jeton) — réessaie.")
+
+
 def _need(value, name: str, op: str):
     """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
 
@@ -80,7 +92,7 @@ def register(mcp: FastMCP) -> None:
             title: the new spreadsheet's title.
             account: Google account (email) to act as — default account if omitted.
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         return await asyncio.to_thread(client.create, title)
 
     @mcp.tool()
@@ -121,7 +133,7 @@ def register(mcp: FastMCP) -> None:
         if op not in _SPREADSHEET_OPS:
             raise _bad(_SPREADSHEET_OPS_HINT)
 
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         if op == "metadata":
             return await asyncio.to_thread(client.get_metadata, spreadsheet_id)

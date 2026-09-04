@@ -23,7 +23,7 @@ from .. import access, db, group_store, roles, tenancy
 from ._types import AuthzDenied, RawCtx, ResolvedCtx
 
 
-def _refus_org_admin(org_id) -> AuthzDenied:
+def _refus_org_admin(org_id, autres: Optional[str] = None) -> AuthzDenied:
     """LE refus « il faut être administrateur de cette org » — une seule phrase.
 
     Il s'écrivait à quatre endroits sous **deux** formulations : « de ton org active »
@@ -34,9 +34,19 @@ def _refus_org_admin(org_id) -> AuthzDenied:
 
     La phrase NOMME l'org : « ton org active » oblige à deviner laquelle, et c'est
     précisément l'ambiguïté qui fait retenter au lieu de comprendre.
+
+    ⚠️ **`autres` répare ce que la phrase ci-dessus laissait entier** (04/09/2026).
+    Elle disait QUI a le droit, jamais QUEL AUTRE CHEMIN existe — et c'est le second
+    qui manque à celui qui la lit. Mesuré sur un cas réel : une membre d'org a tenté
+    d'écrire une procédure le 31/08, réessayé le 02/09, et n'a trouvé le palier ÉQUIPE
+    que le 04/09 — quatre jours, trois refus, pour un geste qui lui était ouvert depuis
+    le début. Le défaut est décrit mot pour mot dans le paragraphe précédent, écrit
+    lors du lot qui l'a relevé : on avait unifié la phrase sans lui donner d'issue.
+
+    Un refus qui ne porte pas le geste n'arrête pas la demande, il la déplace.
     """
-    return AuthzDenied(403, "forbidden",
-                       f"Réservé à un administrateur de l'org #{org_id}.")
+    phrase = f"Réservé à un administrateur de l'org #{org_id}."
+    return AuthzDenied(403, "forbidden", phrase + (f" {autres}" if autres else ""))
 
 
 def _require_sub(raw: RawCtx) -> str:
@@ -322,7 +332,7 @@ def ORG_ADMIN_OF_LIVE(field: str):
     return rule
 
 
-def ORG_ADMIN_OPT(field: str):
+def ORG_ADMIN_OPT(field: str, autres: Optional[str] = None):
     """Écriture org-admin **self-service par défaut, épinglable explicitement**.
 
     Si `input.<field>` (un org_id) est fourni → sémantique `ORG_ADMIN_OF` : garde
@@ -331,14 +341,18 @@ def ORG_ADMIN_OPT(field: str):
     mauvaise org, otomata-private#69). Sinon → sémantique `ORG_ADMIN` : org active
     depuis l'état serveur. Même garde `roles.is_org_admin` (escalade platform_admin)
     dans les deux branches → aucun changement de privilège : un org explicite dont on
-    n'est pas admin est refusé exactement comme l'org active."""
+    n'est pas admin est refusé exactement comme l'org active.
+
+    `autres` = les chemins ouverts à qui n'est PAS admin, dans les mots de la surface
+    gardée. La règle ne peut pas les deviner : elle sait qui a le droit, pas ce que
+    l'appelant cherchait à faire."""
     def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
         sub = _require_sub(raw)
         explicit = getattr(inp, field, None) if inp is not None else None
         if explicit is not None:
             org_id = int(explicit)
             if not roles.is_org_admin(sub, org_id):
-                raise _refus_org_admin(org_id)
+                raise _refus_org_admin(org_id, autres)
             return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
         org_id = access.current_org(sub)
         if org_id is None:
@@ -346,7 +360,7 @@ def ORG_ADMIN_OPT(field: str):
                               "Aucune org active — choisis-en une avec oto_use_org, "
                               "ou passe `org` explicitement.")
         if not roles.is_org_admin(sub, org_id):
-            raise _refus_org_admin(org_id)
+            raise _refus_org_admin(org_id, autres)
         return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
     return rule
 
@@ -459,6 +473,57 @@ def TENANT_ADMIN_OF(field: str, *, platform):
                 raise
         if tenancy.current().tenant_of(sub) != slug or not db.is_tenant_admin(slug, sub):
             raise AuthzDenied(403, "forbidden", f"Réservé à un admin du tenant `{slug}`.")
+        return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
+                           role=access.get_user_role(sub))
+    rule.platform_floor = None
+    return rule
+
+
+def TENANT_ADMIN_OF_TARGET(field: str, *, platform):
+    """Admin du tenant **DE LA CIBLE** désignée par `input.<field>` (un sub), OU la
+    règle plateforme `platform`.
+
+    Sœur de `TENANT_ADMIN_OF`, et la différence est tout l'intérêt : là-bas le
+    périmètre est un slug que l'appelant écrit dans sa requête ; ici il est **dérivé
+    de la cible**. La cible vient de l'appelant — c'est normal, c'est ce qu'il
+    désigne — mais le périmètre vient du serveur (ADR 0066-R3). Sans ça, la garde
+    vérifierait seulement que l'appelant a écrit deux fois le même mot.
+
+    Le tenant se lit sur le PRÉFIXE du sub (`tenancy.tenant_of`), donc sans toucher
+    la base : un sub nu relève du tenant primaire et n'est **jamais** atteignable par
+    ce chemin, quel que soit l'admin de tenant qui le vise. C'est le même invariant
+    que `TENANT_ADMIN_OF`, et il n'est pas décoratif — c'est lui qui empêche qu'un
+    partenaire agisse sur un compte de la plateforme.
+
+    ⚠️ La cible est un **sub**, jamais une adresse électronique, alors que les autres
+    consoles de compte acceptent les deux. Motif : une adresse ne désigne pas un
+    compte de façon unique — le chantier qui a demandé ce geste porte huit personnes
+    présentes DEUX fois, une identité chez nous et une chez le partenaire, sous la
+    même adresse. Résoudre par adresse choisirait pour l'opérateur, exactement là où
+    il doit choisir lui-même. En prime, le tenant reste dérivable sans lecture.
+
+    Plancher plateforme `None` : l'accès dépend d'une CIBLE que le handshake ne
+    connaît pas. ⚠️ Sur une surface MCP, ce plancher fait entrer l'outil dans la
+    boîte de chaque compte. C'est un coût de surface servie, à assumer explicitement
+    — et c'est le seul moyen qu'un admin de tenant puisse APPELER le geste depuis un
+    agent : un outil masqué n'est pas seulement invisible, fastmcp en refuse aussi
+    l'appel."""
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        sub = _require_sub(raw)
+        cible = (getattr(inp, field, None) or "").strip() if inp is not None else ""
+        if not cible:
+            raise AuthzDenied(400, "missing_target", f"Champ `{field}` requis.")
+        try:
+            return platform(raw, inp)
+        except AuthzDenied as refus:
+            if refus.status != 403:
+                raise
+        registre = tenancy.current()
+        slug = registre.tenant_of(cible)
+        if (slug == tenancy.PRIMARY_SLUG or registre.tenant_of(sub) != slug
+                or not db.is_tenant_admin(slug, sub)):
+            raise AuthzDenied(403, "forbidden",
+                              "Réservé à un admin du tenant dont relève ce compte.")
         return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
                            role=access.get_user_role(sub))
     rule.platform_floor = None

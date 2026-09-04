@@ -278,7 +278,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
         link = connector_link.state(c.name, sub) if sub else None
         if link is None:
             continue          # pas de lecture déclarée, ou lecture en échec : on se tait
-        out["providers"][c.name] = {
+        entry = {
             # `forbidden` = « aucune clé ne résout », l'état par défaut d'un BYO pas
             # encore connecté (ce n'est PAS un refus RBAC — cf. la carte connecteur).
             "mode": "user" if link.linked else "forbidden",
@@ -290,6 +290,13 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
             "quota_used_today": 0,
             "quota_daily": None,
         }
+        # Santé (oto#25 lot a) : le batch générique juste plus bas ne voit QUE le
+        # palier MEMBRE — invisible pour ce scope LEGACY (`("user", sub)`). Le module
+        # a lu SA propre ligne (`_link_state`) ; on relaie sans la recalculer.
+        if link.health_ko:
+            entry["health_ko"] = True
+            entry["health_reason"] = link.health_reason
+        out["providers"][c.name] = entry
 
     # Étape manquante par connecteur (seam générique `pending_action`, lot 2) :
     # « la clé résout mais il reste une étape » (unipile : lier un canal…). La
@@ -304,6 +311,10 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # le « read facile » de chaque connecteur) : un « connecteur KO » (session expirée,
     # token révoqué…) reste signalé jusqu'à ce qu'un test/reconnexion le rétablisse.
     # Lu en UN batch sur les clés MEMBRE de l'acteur — générique (tout connecteur), fail-open.
+    # ⚠️ Ne couvre PAS les OAuth fédérés de la boucle ci-dessus (scope LEGACY `("user",
+    # sub)`, hors de ce batch) : ceux-là ont déjà posé `health_ko`/`health_reason` sur
+    # leur entrée depuis leur propre `LinkState` — `m.get("health_ko")` y est absent,
+    # donc cette passe ne les touche pas (oto#25 lot a).
     if sub and active_org is not None:
         try:
             health = {r["connector"]: (r.get("meta") or {})
@@ -331,17 +342,42 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # escalades : super_admin, org_admin, chef d'équipe ne sont jamais refusés.
     # Fail-open INDÉPENDANT par palier, et fail-open GLOBAL : un hoquet de DB ne doit
     # pas inventer une restriction — mieux vaut ne rien annoncer que refuser à tort.
+    #
+    # ⚠️ **Le fail-open reste, mais il se DIT (oto#42, règle 1 — 04/09/2026).** Une
+    # valeur qu'on n'a pas pu établir n'est jamais rendue par son défaut, et ici le
+    # défaut était le plus permissif possible : `rbac_restricted: false` disait « rien
+    # ne te restreint » là où personne n'avait pu vérifier. Les deux phrases sortaient
+    # du même `false`, indistinguables. On ne change PAS la valeur servie (le front la
+    # lit, et le fail-open est le bon choix : un mur affiché à tort arrête quelqu'un,
+    # alors qu'une restriction vraie est de toute façon appliquée au call-time par le
+    # même seam) — on ajoute le fait qu'elle n'a pas été MESURÉE.
     denied: set = set()
+    illisibles: list[str] = []
     try:
         denied |= rbac.rbac_denied_connectors(sub, active_org) if sub else set()
     except Exception:
+        illisibles.append("org")
         logger.warning("status_for: RBAC d'org indisponible pour %s — aucune "
-                       "restriction annoncée", sub, exc_info=True)
+                       "restriction annoncée, l'écart est dit dans la fiche",
+                       sub, exc_info=True)
     try:
         denied |= rbac.group_rbac_denied_connectors(sub, active_group) if sub else set()
     except Exception:
+        illisibles.append("équipe")
         logger.warning("status_for: RBAC d'équipe indisponible pour %s — aucune "
-                       "restriction annoncée", sub, exc_info=True)
+                       "restriction annoncée, l'écart est dit dans la fiche",
+                       sub, exc_info=True)
+    aveu = (f"la règle d'accès ({' et '.join(illisibles)}) n'a pas pu être lue : "
+            "`rbac_restricted: false` dit ici « on n'a pas su », pas « rien ne te "
+            "restreint ». Un connecteur réservé peut donc s'y afficher ouvert, et "
+            "l'appel serait refusé quand même. Recharge pour mesurer.") if illisibles else None
     for name, entry in out["providers"].items():
         entry["rbac_restricted"] = name in denied
+        # L'aveu ne se pose que SUR ÉCART (un champ toujours là devient du bruit qu'on
+        # cesse de lire), et seulement là où il change quelque chose : un `true` reste
+        # ÉTABLI même si l'autre palier est tombé — l'union des refus ne peut que
+        # croître, c'est le `false` qui devient une non-réponse.
+        if aveu and not entry["rbac_restricted"]:
+            entry["rbac_restricted_measured"] = False
+            entry["rbac_restricted_hint"] = aveu
     return out

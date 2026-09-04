@@ -24,3 +24,10 @@ CONNECTOR = _c(
 CATEGORY = "Métier"
 PUBLISHER = "Atlassian"
 LOGO_DOMAIN = "atlassian.com"
+
+DESCRIPTION = (
+    "Jira et Confluence via le MCP fédéré officiel d'Atlassian (Rovo Remote "
+    "MCP) : issues, projets, pages et espaces, avec ton propre compte Atlassian "
+    "par OAuth. Le site (cloudid) est résolu automatiquement par Atlassian au "
+    "moment de la connexion."
+)

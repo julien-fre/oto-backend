@@ -18,3 +18,8 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "HitHorizons"
 LOGO_DOMAIN = "hithorizons.com"
+
+DESCRIPTION = (
+    "Données d'entreprise européennes chez HitHorizons : recherche et fiche "
+    "détaillée."
+)

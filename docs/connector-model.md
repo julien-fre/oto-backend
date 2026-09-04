@@ -76,6 +76,16 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
   → la page `/console/connectors` du membre, donc « voir en tant que » reflète l'effet réel), (c) **backstop
   call-time** `access.require_connector_access` dans `resolve_credential` → bloque **même avec une clé BYO**.
   super_admin bypasse ; fail-open sur erreur infra.
+  ⚠️ **Sur la FICHE, ce fail-open se dit** (`/api/me`, `access.status_for` — oto#42 règle 1,
+  04/09/2026). Les deux paliers (org, équipe) y sont lus sous leur propre `try/except` ; quand
+  l'un tombe, `rbac_restricted: false` sortait pour tout le monde et « rien ne te restreint »
+  était indistinguable de « personne n'a pu vérifier ». La valeur servie ne change pas — le
+  fail-open est le bon choix, un mur affiché à tort arrête quelqu'un que rien ne bloque, et une
+  restriction vraie est de toute façon appliquée au call-time par le même seam — mais l'entrée
+  porte désormais `rbac_restricted_measured: false` + `rbac_restricted_hint` (quel palier est
+  muet, et que l'appel serait refusé quand même). **Sur écart seulement**, et **jamais sur un
+  `rbac_restricted: true`** : celui-là reste établi même si l'autre palier est tombé, l'union
+  des refus ne pouvant que croître.
   Surface : `oto_{list,set,clear}_connector_access` / `/api/orgs/{id}/connectors/{acl,…/access}`
   (`ORG_ADMIN_OF`) + levier « accès » sur la carte `/org/connectors`.
 
@@ -207,9 +217,10 @@ séparément :
 
 **Le seam qui les lit ensemble : `oto_mcp/connectors/readiness.py`** (`diagnose`), qui
 rend la **PREMIÈRE** couche manquante dans l'ordre `option (3) → clé (2) → quota →
-étape restante` — plus le geste, relayé tel quel depuis `status_hints`. Deux surfaces le
-consomment, et **une troisième formulation est interdite** : c'est ce qui avait déjà fait
-diverger `option_ok` et `status_for.subscribed` (corrigé le 07/07/2026).
+clé REJETÉE par l'amont → étape restante` — plus le geste, relayé tel quel depuis
+`status_hints`. Deux surfaces le consomment, et **une troisième formulation est
+interdite** : c'est ce qui avait déjà fait diverger `option_ok` et
+`status_for.subscribed` (corrigé le 07/07/2026).
 
 - **carte connecteur** → `ready` / `not_ready` / `next_step`, sur une lecture **ciblée**
   (`op='list', name=…`). Sur le catalogue entier : `readiness:"not_computed"` + le geste
@@ -219,10 +230,93 @@ diverger `option_ok` et `status_for.subscribed` (corrigé le 07/07/2026).
   **dire « je n'ai pas calculé » coûte moins cher que rassurer à tort.**
 - **liste d'identités** → `reason` + `next_step` sur `identities: []` (#504).
 
+### `credential_rejected` — la clé est là, le fournisseur n'en veut pas (#541, 03/09/2026)
+
+Cinquième forme du même défaut. La clé `linear` d'une org était **refusée par Linear**
+sur l'appel le plus simple (`AUTHENTICATION_ERROR`) — invalide ou révoquée. Le verdict
+EXISTAIT en base : `oto_instance op=verify` l'y écrit depuis toujours
+(`connector_credentials.meta.health_ko` + `health_reason`). Il n'avait simplement
+**aucun lecteur du côté où l'on regarde** : son seul consommateur, `access.status_for`,
+ne lit que les clés de palier **MEMBRE**, donc jamais celle d'un connecteur `byo_org`
+only. `ready` répondait `true` sur une clé morte, et le porteur n'apprenait le refus
+qu'au premier appel, sous la forme du **message brut du fournisseur**.
+
+Trois pièces, et il fallait les trois :
+
+1. **Le lire** — `access.credential_rejection_for` remarche la cascade et lit la santé
+   de la ligne qui résoudrait *vraiment* (une clé perso saine ne doit pas masquer le
+   rejet d'une clé d'org, ni l'inverse). ⚠️ **C'est une SECONDE marche** (~22 ms) :
+   assumée plutôt que de faire rendre deux choses à `credential_mode_for`, dont le
+   contrôle de quota plateforme ne se recopie pas.
+2. **L'écrire là où il tombe** — la cible de santé de `op=verify` ne valait que pour le
+   palier membre : un `level="auto"` qui résolvait une clé d'ORG n'écrivait **rien**.
+   Elle vaut désormais pour la ligne réellement testée (compte compris), **sauf** les
+   paliers `tenant` et `platform` : le hoquet réseau d'un seul membre n'a pas à peindre
+   en rouge une clé partagée par des orgs entières.
+3. **Nommer le refus à l'appel** — `tools/linear.py` portait une branche 401/403 qui
+   nommait exactement ce cas, **inatteignable** : Linear répond son refus d'auth dans un
+   `errors[]` GraphQL sous **HTTP 200**, donc `LinearGraphQLError` est levée avant tout
+   `raise_for_upstream`. Leçon transférable : *une branche d'erreur gardée sur le statut
+   HTTP ne voit pas un fournisseur GraphQL* — le code est dans le corps.
+
+Le constat se **lève** en rejouant `op=verify` (un succès écrit `health_ko: false`) ou
+en reposant la clé (une repose réécrit `meta`). C'est dit dans le `next_step`, parce
+qu'un état qui ne sait pas s'effacer devient un faux positif permanent.
+
 ⚠️ **`ready` n'inclut PAS l'état de sélection** (`not_selected` / `paused`), et c'est
 volontaire : un connecteur non sélectionné reste **appelable par `oto_call`** (dispatch
 universel, ADR 0036). La sélection gouverne la **visibilité** des outils, jamais
 l'aptitude — les mélanger recréerait la confusion de #476 sous un autre nom.
+
+### Purge silencieuse des mounts OAuth (atlassian/folk) — oto#25 lot (a), 2026-09-04
+
+Sixième forme, propre à la famille des connecteurs OAuth **fédérés « mount »**
+(atlassian, folkmcp — Rovo Remote MCP, MCP officiel Folk) : leur credential vit au
+scope **LEGACY** `("user", sub)`, pas au scope MEMBRE `(org, sub)` des connecteurs
+keyés (`connectors/link.py` explique pourquoi — un module par module, jamais une
+boucle générique qui devinerait le rangement). `access_token_for(sub)` rafraîchit
+l'access token de façon transparente à chaque appel ; jusqu'ici, un refresh token
+mort (`invalid_grant`) faisait **PURGER** la ligne (`clear_credential`) — le fait
+« ça a été révoqué » redevenait indiscernable de « jamais posé », un repli qui
+masque un problème plutôt que de le nommer.
+
+**Le correctif** réutilise le mécanisme déjà en place pour les connecteurs keyés :
+la ligne reste, et se fait marquer via `credentials_store.update_meta(..., {
+"health_ko": True, "health_reason": <motif brut>})` — même paire de champs que
+`_record_health`, motif fournisseur **brut** en valeur de champ (`invalid_grant`),
+pas la seule catégorie opaque `credential_rejected`. Elle se lève en reposant la
+clé (reconnexion : `persist_token` écrase `meta`) ou par un futur refresh réussi
+(qui écrase `meta` lui aussi).
+
+**Rendre la marque observable a demandé un second geste**, propre à cette famille :
+le batch générique de `access.status_for` qui lit `health_ko`/`health_reason`
+(cf. #541 ci-dessus) **ne regarde que le palier MEMBRE** — il ne verra donc
+*jamais* une ligne `("user", sub)`. `connectors/link.py::LinkState` porte
+désormais `health_ko`/`health_reason` ; chaque module lit sa propre ligne dans
+son `_link_state()` (il sait sous quel scope il range son credential, une boucle
+générique se tromperait), et la 4ᵉ boucle de `status_for` (celle qui ferme le
+trou « ces connecteurs n'ont aucune entrée dans `me.providers` ») relaie ces deux
+champs sur l'entrée `ProviderStatus` — c'est ce que lit la fiche `/api/me` du
+dashboard.
+
+⚠️ **Ce que ce lot NE fait PAS** : `oto_instance op=verify` reste **indisponible**
+pour `atlassian`/`folkmcp` (`verify_unavailable` — aucune sonde enregistrée).
+Vérifié empiriquement : `access.resolve_credential("atlassian", sub=…)` lève
+`McpError("Aucune clé `atlassian` configurée pour toi…")` **même quand une ligne
+existe réellement** au scope legacy, parce que le walker (`_member_fetch` /
+`db.get_member_api_key`) ne cherche que `("member", "{org}:{sub}")`. Enregistrer
+une sonde `verify` sans corriger ce point ferait *pire* que l'absence actuelle :
+un utilisateur réellement connecté se verrait dire « aucune clé configurée » — un
+énoncé faux — là où `verify_unavailable` reste honnête (aucun test n'existe,
+sans se prononcer sur la connexion). Élargir le walker à ce scope legacy est le
+« barreau ultérieur d'ADR 0033 » déjà nommé par `tests/test_member_credential_scope.py`
+(§4, `_OAUTH_FAMILY_FILES`) — plus grand que ce lot, pas fait ici. La marque de
+santé écrite par `access_token_for` reste donc observable via `/api/me`
+uniquement, pas via `op=verify`, tant que ce barreau n'existe pas.
+
+Changement de comportement **servi** : un connecteur qui, avant ce lot, semblait
+redevenir « à connecter » (purge muette) après un grant mort dira désormais
+`health_ko: true` sur sa fiche — à annoncer avant tag.
 
 ### La quatrième confusion : la boîte à outils n'est pas l'org de l'appel (#577)
 

@@ -56,11 +56,60 @@ réindexe la fratrie ATOMIQUEMENT) + **épine** `oto_project(op=get, include=['s
 depth?)` bornée (N+2, plafond 200, compteurs `more`) — la carte que l'agent lit avant
 `oto_doc(op=get)`, jamais `op=list` de tout. **KB d'org ancrée PAR ID** (`orgs.kb_project_id`,
 claim optimiste anti-doublon, auto-réparation transfert/archive — le nom n'est plus un marqueur).
+⚠️ **Le verbe qui CRÉE cette base s'appelle `create` depuis le 04/09 ; il s'appelait
+`ensure`, et le nom était le bug.** « ensure X » est un idiome de développeur —
+*get-or-create* — dont le mot ne porte aucune trace de l'écriture : un agent qui entend
+« ma knowledge base » l'appelait en croyant vérifier, et posait un projet possédé par
+l'org, visible de TOUS ses membres. Vécu : un document présenté comme personnel et
+marqué non diffusable, exposé le temps qu'on s'en aperçoive. Les deux verbes disent
+désormais ce qu'ils font — `op=get` lit l'ancre et ne crée rien (`project_id: null` si
+l'org n'a pas de base), `op=create` crée la base de l'ORG et la ré-ancre si la
+précédente a été archivée ou transférée. `create` est idempotent : une org qui en a
+déjà une la récupère avec `created: false`, jamais un doublon. `op=ensure` reste dans
+l'énumération (`kb.OPS_RETIREES`) pour REFUSER en nommant les trois chemins — lire,
+créer la base d'org, ou faire un espace à soi (`oto_project op=create`,
+`owner_type='user'`) : retiré du `Literal`, pydantic rendrait « Input should be 'get'
+or 'create' », qui n'apprend rien. ⚠️ **Ce verbe est le seul qui pose l'ancre**
+(`claim_kb_project`) — le retirer sans successeur laisserait toute org neuve sans base
+possible. Toute vue de projet porte `visible_to`, en clair, la portée réelle.
 Le lien `project_links.target_type='doc'` est RETIRÉ ; relier des pages =
 les **backlinks `[[…]]`** (Ship 4, LIVE) : résolus À L'ÉCRITURE (hook `db.create/update/
 delete_doc` — JAMAIS capacité, `resolve_change` appelle db en direct), précédence projet >
 KB (`db/backlinks.py`), table dérivée `doc_links` (CASCADE 2 côtés), `oto_doc op=backlinks`
-= « Cité par » filtré accès. **Propositions modif+création + inbox** (Ship 3, LIVE) : « les
+= « Cité par » filtré accès.
+⚠️ **Le graphe n'est PAS symétrique, et ce n'est pas un bug d'index (#611, 03/09).** La
+portée de résolution EST le scope `[projet, KB]` — donc une page qui vit dans la **KB**
+résout contre la KB SEULE et ne peut jamais lier une page de projet, pendant que cette
+page de projet la lie sans peine. Signalé le 28/08 sur une carte de tête citant six pages
+en tableau ET en ligne de liens, dont aucune ne la voyait en retour ; quatre hypothèses
+avaient été éprouvées et écartées avant d'arriver ici, et **un `op=update` complet ne
+répare rien** puisque la résolution est la même. Conséquence à connaître : *`op=backlinks`
+ne vaut pas comme contrôle de complétude ni d'orphelin* — une page bien citée depuis la
+carte de l'org s'y lit comme orpheline. Élargir la portée à tous les projets a été écarté :
+« Start Here » résoudrait n'importe où, et chaque écriture deviendrait un scan de toute
+l'org. **Ce qui manquait n'était pas la portée, c'était de SAVOIR** : un lien-souche n'est
+stocké nulle part et n'était dit nulle part. Toute écriture rend donc
+`citations_sans_cible` (+ son hint, qui dit la conséquence ET la cause), et la description
+servie porte l'asymétrie. Reproduit sur banc factice, pas déduit.
+⚠️ **La portée d'ÉCRITURE n'est pas celle de LECTURE, et les deux surfaces se
+contredisaient (#696, 03/09, mesuré sur vrai PG).** `refresh_links` résout dans
+`[projet, KB]` ; `backlinks_of` rend **toute** ligne `doc_links` pointant vers la page,
+**sans aucun filtre de projet** — seul l'accès borne, au call-site. Et rien ne recale les
+liens **entrants** d'une page déplacée (`move_doc_to_project` ne re-résout que les
+**sortants** des pages déplacées) : une ligne stockée **survit** au déplacement de sa
+cible, hors de toute portée de résolution, et ne meurt qu'à la prochaine écriture de la
+page qui cite. D'où le signal : l'accusé d'écriture jurait « ce projet puis la KB — et
+rien d'autre » pendant qu'`op=backlinks` affichait des entrants venus d'un autre projet ;
+faute de savoir laquelle fait foi, un agent a réécrit **tous** ses renvois inter-projets
+en clair et perdu la navigation. Les deux disaient vrai de périmètres différents (et la
+KB *est* un projet : un backlink ordinaire est déjà inter-projets). Les deux surfaces le
+DISENT désormais — hint d'écriture, description servie — et le cran est en outre porté par
+`op=move`, **du côté qui le subit**. ⚠️ Corollaire à démentir partout où il traîne :
+« déplacer une page est gratuit, le titre est la clé » est **faux** ; après une
+réorganisation, réécrire les pages qui citent et lire leur `citations_sans_cible`. Banc :
+`tests/test_backlinks.py::test_un_lien_STOCKE_survit_au_deplacement_de_sa_cible_et_reste_rendu`
+(base PG dédiée, chemin servi).
+**Propositions modif+création + inbox** (Ship 3, LIVE) : « les
 lecteurs proposent » — un viewer (lecture sans écriture) qui crée/modifie obtient une
 PROPOSITION (`doc_change_requests`, `doc_id` nullable + `project_id` + emplacement + CHECK) ;
 le dispatch `docs/core.py` route resolve/list/create-proposal sur request_id/project_id **AVANT

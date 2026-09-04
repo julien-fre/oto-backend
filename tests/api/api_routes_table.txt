@@ -148,6 +148,8 @@ GET,HEAD /api/admin/users/{sub} -> _handler
 OPTIONS /api/admin/users/{sub} -> options_handler
 POST /api/admin/users/{sub}/role -> _handler
 OPTIONS /api/admin/users/{sub}/role -> options_handler
+POST /api/admin/users/{sub}/reset-mfa -> _handler
+OPTIONS /api/admin/users/{sub}/reset-mfa -> options_handler
 POST /api/admin/users/{sub}/grants/{provider} -> _handler
 OPTIONS /api/admin/users/{sub}/grants/{provider} -> options_handler
 DELETE /api/admin/users/{sub}/grants/{provider} -> _handler
@@ -158,6 +160,8 @@ DELETE /api/admin/orgs/{id}/grants/{provider} -> _handler
 OPTIONS /api/admin/orgs/{id}/grants/{provider} -> options_handler
 POST /api/admin/option-comps -> _handler
 OPTIONS /api/admin/option-comps -> options_handler
+POST /api/admin/users/{sub}/suspension -> _handler
+OPTIONS /api/admin/users/{sub}/suspension -> options_handler
 POST /api/admin/outreach -> _handler
 OPTIONS /api/admin/outreach -> options_handler
 GET,HEAD /api/admin/vault/health -> _handler
@@ -620,6 +624,8 @@ GET,HEAD /api/datastore/namespaces/{namespace}/queue -> _handler
 OPTIONS /api/datastore/namespaces/{namespace}/queue -> options_handler
 GET,HEAD /api/datastore/namespaces/{namespace}/aggregate -> _handler
 OPTIONS /api/datastore/namespaces/{namespace}/aggregate -> options_handler
+POST /api/datastore/namespaces/{namespace}/drop_column -> _handler
+OPTIONS /api/datastore/namespaces/{namespace}/drop_column -> options_handler
 PATCH /api/datastore/namespaces/{namespace}/schema -> _handler
 OPTIONS /api/datastore/namespaces/{namespace}/schema -> options_handler
 POST /api/me/automations/fire -> _handler
@@ -632,8 +638,6 @@ POST /api/me/runner/triggers -> _handler
 OPTIONS /api/me/runner/triggers -> options_handler
 POST /api/me/runner/fleets -> _handler
 OPTIONS /api/me/runner/fleets -> options_handler
-POST /api/contact -> contact
-OPTIONS /api/contact -> options_handler
 POST /api/billing/webhook -> webhook
 OPTIONS /api/billing/webhook -> options_handler
 GET,HEAD /api/me/billing/invoices/{id}/pdf -> invoice_pdf

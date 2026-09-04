@@ -107,14 +107,24 @@ def status_of(row: Any, ctx: NsContext) -> Optional[Any]:
 
 
 def record(tool: str, *, sub: Optional[str], ctx: NsContext, row_id: Optional[str] = None,
-           fields: Any = None, from_status: Any = None, to_status: Any = None) -> None:
-    """Pose la ligne de journal du geste. Un seul appel par route."""
+           fields: Any = None, from_status: Any = None, to_status: Any = None,
+           forced: Any = None) -> None:
+    """Pose la ligne de journal du geste. Un seul appel par route.
+
+    `forced` (#658) = les colonnes VERROUILLÉES que le geste a remplacées de force
+    (`DatastorePg.off_forced` : ligne, colonne, valeur remplacée). Le pendant REST de
+    ce que la face MCP verse au relevé d'appel — mêmes entrées, même clé, pour qu'une
+    lecture du journal n'ait pas à savoir par quelle porte l'écriture est passée. Vide
+    ⟹ la clé est ABSENTE, pas à `[]` : un forçage se cherche par sa présence."""
     calllog.log_rest_call(
         tool,
         sub=sub,
         args={"namespace": ctx.name, "ns_id": ctx.ns_id, "id": row_id,
               "from_status": from_status, "to_status": to_status},
         fields=fields,
+        # ⚠️ PAS dans `args` : `truncated_args` y stringifierait la liste et la
+        # couperait à 300 caractères. Même raison que `fields`, même chemin.
+        forced=forced,
     )
 
 

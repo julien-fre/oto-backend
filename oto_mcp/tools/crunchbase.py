@@ -40,10 +40,18 @@ _API = "https://www.crunchbase.com/v4/data"
 _APP = "https://www.crunchbase.com/"
 
 
-async def _verify_session(session_id: str) -> bool:
+async def _verify_session(session_id: str) -> browser_session.Verdict:
     """Login Crunchbase confirmé ? Sonde l'API privée DEPUIS la session vivante
     (same-origin) : elle ne répond 200 que loguée. Partagé par les deux surfaces de
-    connexion (dashboard REST + MCP) via `browser_session`."""
+    connexion (dashboard REST + MCP) via `browser_session`.
+
+    ⚠️ **Dette connue, nommée le 2026-09-03** : cette sonde tape une route MÉTIER (la
+    fiche d'une entité précise, `organizations/crunchbase`). C'est EXACTEMENT le
+    couplage qui a rendu `pennylaneged` inconnectable quand Pennylane a déplacé la
+    route sondée. Ici il n'est plus fatal — un statut qui n'est pas un signal
+    d'authentification lève `ProbeUnavailable` et `finalize` persiste en le disant —
+    mais la sonde reste à porter sur une route de SESSION (profil / utilisateur
+    courant), à relever dans le bundle de la SPA."""
     from patchright.async_api import async_playwright
     async with async_playwright() as p:
         b = await p.chromium.connect_over_cdp(browserbase.connect_url(session_id))
@@ -60,9 +68,19 @@ async def _verify_session(session_id: str) -> bool:
                         return r.status;
                     } catch (e) { return 0; }
                 }""", _API)
-            return res == 200
         finally:
             await b.close()
+    if res == 200:
+        return browser_session.Verdict(True, browser_session.LOGGED_IN)
+    if res in (401, 403, 0):
+        return browser_session.Verdict(
+            False, browser_session.AUTH_REJECTED if res else browser_session.NO_SESSION,
+            f"Crunchbase n'a pas reconnu la session (sonde → {res}) : finis de te loguer "
+            "dans la Live View, puis relance `crunchbase_connect_status`.")
+    raise browser_session.ProbeUnavailable(
+        f"la sonde de login Crunchbase n'a pas pu se prononcer (elle a répondu {res}) — "
+        "sa route a probablement bougé. Ta session a été mémorisée quand même, SANS "
+        "confirmation du login : ne recommence pas la connexion, tente un appel.")
 
 
 # Déclare Crunchbase comme connecteur à session navigateur (start générique + ce
@@ -155,13 +173,18 @@ def register(mcp: FastMCP) -> None:
         `{connected}`. Rappelle-le si `connected=false` (pas encore logué)."""
         sub = _sub()
         try:
-            connected = await browser_session.finalize(sub, "crunchbase", context_id, session_id)
+            res = await browser_session.finalize(sub, "crunchbase", context_id, session_id)
         except browser_session.SessionError as e:
             raise _err(str(e), code=INTERNAL_ERROR)
-        if not connected:
-            return {"connected": False,
-                    "hint": "Pas encore logué — connecte-toi dans la Live View puis relance."}
-        return {"connected": True, "context_id": context_id}
+        if not res.connected:
+            return {"connected": False, "reason": res.reason, "retry": res.retry,
+                    "hint": res.detail or "Pas encore logué — connecte-toi dans la Live "
+                                          "View puis relance."}
+        out = {"connected": True, "context_id": context_id, "reason": res.reason,
+               "login_verified": not res.warning}
+        if res.warning:
+            out["warning"], out["retry"] = res.warning, False
+        return out
 
     # --- Lecture ------------------------------------------------------------
     @mcp.tool()

@@ -19,7 +19,7 @@ Les handlers vivent par DOMAINE, chacun une fonction de module appelable seule :
 | `api/uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
 
 Les modules ANTÉRIEURS à la découpe gardent leur forme : datastore, sirene,
-accords, atlassian, folk, zoho, salesforce, contact, billing — ils exposent un
+accords, atlassian, folk, zoho, salesforce, billing — ils exposent un
 `make_routes(...)` qui reçoit les primitives en paramètres. (`api/connectors.py` a
 disparu le 2026-08-29 avec sa dernière route, le webhook de liaison messagerie :
 dormant depuis la v2 du fournisseur, #581.)
@@ -55,7 +55,6 @@ from .. import db, journal_secrets, tenancy
 from . import (accords as api_routes_accords,
                atlassian as api_routes_atlassian,
                billing as api_routes_billing,
-               contact as api_routes_contact,
                datastore as api_routes_datastore,
                folk as api_routes_folk,
                salesforce as api_routes_salesforce,
@@ -410,11 +409,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         _cap_registry.CAPABILITIES,
     )
 
-    # Formulaire de contact public d'otomata.tech (non authentifié).
-    contact_routes = api_routes_contact.make_routes(
-        _json, _json_error, options_handler,
-    )
-
     # Billing écrit à la main (ADR 0043, #488) : le webhook Mollie (non authentifié)
     # et le téléchargement du PDF d'une facture (authentifié — un octet n'est pas du
     # JSON, il ne peut donc pas passer par la couche capacité).
@@ -487,7 +481,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *zoho_routes,
         *salesforce_oauth_routes,
         *capability_routes,
-        *contact_routes,
         *billing_webhook_routes,
         # EN DERNIER, et c'est la garde : un alias déprécié ne peut capturer que ce
         # que rien d'autre ne sert. Monté plus haut, un de ses placeholders pourrait

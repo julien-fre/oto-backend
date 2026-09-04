@@ -21,10 +21,23 @@ champ transport sur l'expéditeur).
   texte des gabarits écrivait le nom du produit du destinataire depuis 7d10a798,
   mais la couleur restait celle d'oto pour tout le monde : un client de Tulina lisait
   « sur tulina » en brun otomata, puis cliquait vers une application blanc-et-ardoise.
-  `email_brand.MARQUES[<slug>]` (le MÊME slug que le texte : `orgs.front_brand` /
+  `email_brand.marque(<slug>)` (le MÊME slug que le texte : `orgs.front_brand` /
   `config.front_for`) porte nom, site et palette ; `page()` rend le document complet
   et `bouton()` le CTA. Un slug **inconnu** prend un gabarit neutre **portant son
-  nom** — jamais un repli sur oto, qui serait le faux qu'on répare. Contraintes de
+  nom** — jamais un repli sur oto, qui serait le faux qu'on répare.
+  ⚠️ **La palette d'un tenant se DÉCLARE en base** (`tenants.brand`, 03/09/2026),
+  et elle passe AVANT `email_brand.MARQUES`. Celle d'un partenaire écrite dans notre
+  code obligeait à nous redéployer pour accueillir le suivant — même défaut que son
+  `dashboard_url`, même remède, même table. `MARQUES` garde la charte d'**oto**, qui
+  est chez elle ici, et sert de repli le temps qu'une palette soit posée.
+  ⚠️ Une palette **incomplète est refusée EN ENTIER**, jamais complétée par la nôtre :
+  sept teintes venues de deux chartes donnent un dessin que personne n'a dessiné, et
+  qui ne se voit qu'à l'arrivée, chez le destinataire. Les teintes sont validées à la
+  LECTURE (`#rgb`/`#rrggbb`) — le registre transporte ce qui est déclaré, il ne juge
+  pas des couleurs ; et cette validation est aussi ce qui empêche une valeur de base
+  d'écrire autre chose qu'une couleur dans un attribut `style`.
+  ⚠️ **Le tenant primaire ne se surcharge pas** : notre charte n'est pas une
+  configuration, et une ligne en base ne repeint pas oto (`tests/test_marque_par_tenant.py`). Contraintes de
   client mail portées par le gabarit et gardées par `tests/test_email_charte.py` :
   tables imbriquées (Outlook ne met en page que ça), styles en LIGNE uniquement
   (pas de `<style>`, pas de variable CSS, pas de flex/grid), `color-scheme: light`
@@ -36,7 +49,14 @@ champ transport sur l'expéditeur).
   ⚠️ **L'EXPÉDITEUR, lui, reste `Oto <oto@otomata.tech>`** pour toutes les marques :
   l'allowlist `MAILER_FROM_DOMAINS` vit dans `otomata-tech/otomata-auth-mailer`, pas
   ici, et un domaine hors allowlist rend un 403 que le best-effort avale en silence.
-  Poser `tulina.ai` là-bas est le seul geste qui manque.
+  ⚠️⚠️ **NE PAS y poser le domaine d'un partenaire — l'inverse a été fait le
+  03/09/2026** : ce domaine a été RETIRÉ de l'allowlist ce jour-là (rapporté par la
+  session infra, non vérifié depuis ce dépôt — l'allowlist vit ailleurs). Cette note
+  disait « le poser là-bas est le seul geste qui manque » : la suivre armerait un
+  envoi qui échouerait **sans rien dire**, puisque le refus est avalé. Aucun envoi
+  produit ne part sous ce domaine aujourd'hui, donc rien n'est cassé — mais l'écrire
+  serait le casser en silence. L'expéditeur reste le nôtre ; **ce qui suit la marque
+  d'un partenaire côté produit, c'est le DESSIN, pas le transporteur.**
 - `email_send` (`tools/email.py`) = **spine** (pas un connecteur) : route
   `sender→connecteur→transport` ; autz dynamique (membre d'org pour une adresse
   déclarée ; super_admin pour le repli marque `oto@otomata.tech`). `email.py` =

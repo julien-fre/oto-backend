@@ -42,7 +42,7 @@ from .registry import CAPABILITIES
 class NodeEditInput(BaseModel):
     op: Literal["create", "update", "move", "delete"]
     # create
-    scope: Optional[str] = None          # platform | org | group | user (défaut : org)
+    scope: Optional[str] = None          # platform | org | group | user (défaut : user)
     owner_id: Optional[str] = None       # cible explicite du scope
     # Le GENRE, et il n'y en a que trois (0054-D5). Une ligne se crée sous son
     # tableau : `kind="ligne"` + `parent_id` du tableau + `data`.
@@ -183,7 +183,11 @@ def _create(ctx: ResolvedCtx, inp: NodeEditInput) -> dict:
                               "`parent_id` doit désigner un tableau né ici.")
         return {"ok": True, "id": row["public_id"], "op": "create"}
 
-    scope = (inp.scope or "org").strip()
+    # ADR 0068 : le défaut était `org` — un nœud créé sans préciser naissait lisible de
+    # tous les membres. Le palier exigeait déjà `org_admin` (`_owner_for_write`), donc
+    # personne n'élargissait à son insu sans en avoir le droit ; mais « en avoir le
+    # droit » n'est pas « l'avoir voulu », et c'est un agent qui appelle.
+    scope = (inp.scope or "user").strip()
     owner_id = _owner_for_write(ctx, scope, inp.owner_id)
     if not (inp.title or "").strip():
         raise AuthzDenied(400, "missing_title",

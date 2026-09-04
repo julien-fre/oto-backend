@@ -130,8 +130,11 @@ def test_le_chef_dequipe_ecrit_une_procedure_sans_etre_admin_de_lorg(monde):
     assert out["group_id"] == monde["equipe"] and out["scope"] == "group"
     assert "org_id" not in out
 
+    # ⚠️ `scope="org"` EXPLICITE depuis le 04/09 : sans scope, l'écriture va chez soi
+    # (ADR 0068) et réussit. Ce qu'on prouve ici reste le même — le palier ORG lui est
+    # fermé — mais il faut désormais le VISER pour s'y heurter.
     with pytest.raises(AuthzDenied) as refus:
-        _appel("u-chef", op="set", slug="au-niveau-org", body_md=_CORPS)
+        _appel("u-chef", op="set", scope="org", slug="au-niveau-org", body_md=_CORPS)
     assert refus.value.status == 403
 
 
@@ -185,7 +188,8 @@ def test_un_membre_de_lequipe_annote_la_procedure_quil_deroule(monde):
     # Le palier ORG lui reste fermé — sans cette moitié, le test dirait seulement
     # qu'on a tout ouvert.
     with pytest.raises(AuthzDenied) as refus:
-        _appel("u-membre", op="set", slug="au-niveau-org", body_md=_CORPS)
+        # `scope="org"` explicite : sans scope, l'écriture va chez soi (ADR 0068).
+        _appel("u-membre", op="set", scope="org", slug="au-niveau-org", body_md=_CORPS)
     assert refus.value.status == 403
 
 
@@ -432,16 +436,46 @@ def test_le_deplacement_ne_remplace_jamais_une_procedure_de_la_cible(monde):
     assert arrivee["slug"] == "budget-2" and arrivee["title"] == "Budget de l'org"
 
 
-def test_le_palier_personnel_est_refuse_en_disant_pourquoi(monde):
-    """Phase 2 de #681 : `org_instructions.org_id` est NOT NULL et une personne n'a pas
-    d'org parente. Le refus nomme les paliers ouverts plutôt que d'affirmer « un guide
-    est un objet d'org », devenu faux à la fusion des procédures d'équipe."""
+def test_une_procedure_peut_devenir_PERSONNELLE(monde):
+    """⚠️ Ce banc affirmait l'inverse jusqu'au 04/09/2026, et sa raison était juste :
+    `org_instructions.org_id` était NOT NULL, une personne n'a pas d'org parente, et le
+    store refusait d'écrire une ligne bancale plutôt que d'y ranger une org qui ne
+    possède rien. La phase 2 de #681 lève ce préalable (ADR 0068, décision d'Alexis
+    « procédure doit pouvoir être privée ») : la colonne est relâchée aux DEUX tables,
+    et une procédure personnelle y porte NULL — le fait, plutôt qu'une org dont la
+    suppression l'emporterait.
+
+    Ce qu'on vérifie ici est le point exact où le refus vivait : le transfert, et ce
+    que l'historique devient avec lui. Une révision laissée sur l'ancienne org
+    survivrait à la ligne vivante, et une restauration la ramènerait chez son ancien
+    propriétaire."""
     from oto_mcp import org_store, ownership
     proc = org_store.get_instruction("org", monde["org"], "cloture-annuelle")
+    ownership.transfer("doctrine", str(proc["id"]), "user", "u-chef")
+    apres = org_store.get_instruction_by_id(proc["id"])
+    assert (apres["owner_type"], apres["owner_id"]) == ("user", "u-chef")
+    assert apres["org_id"] is None, (
+        "une procédure personnelle ne s'accroche à aucune org : la colonne porte la "
+        "CASCADE de suppression, y laisser l'ancienne org la ferait disparaître avec "
+        "elle")
+
+
+def test_le_palier_personnel_refuse_toujours_un_type_INCONNU(monde):
+    """Ouvrir `user` n'ouvre pas tout : un palier hors liste reste refusé, en nommant
+    ceux qui existent. Sans ce banc, l'ouverture d'aujourd'hui aurait pu se lire comme
+    « le store accepte désormais n'importe quel owner_type »."""
+    from oto_mcp import org_store, ownership
+    # ⚠️ On NE relit PAS `("org", …, "cloture-annuelle")` : la fixture `monde` est
+    # `scope="module"`, et le banc précédent vient justement de déplacer cette
+    # procédure. Un test qui suppose l'état laissé par son voisin échoue pour une
+    # raison qui n'a rien à voir avec ce qu'il vérifie. On pose donc la nôtre.
+    org_store.set_instruction("org", monde["org"], "palier-inconnu",
+                              body_md="corps", set_by="u-chef")
+    proc = org_store.get_instruction("org", monde["org"], "palier-inconnu")
     with pytest.raises(ValueError) as e:
-        ownership.transfer("doctrine", str(proc["id"]), "user", "u-chef")
-    assert "org" in str(e.value) and "group" in str(e.value)
-    # …et rien n'a bougé : le refus est levé AVANT la première écriture.
+        ownership.transfer("doctrine", str(proc["id"]), "team", "42")
+    msg = str(e.value)
+    assert "org" in msg and "group" in msg and "user" in msg
     assert org_store.get_instruction_by_id(proc["id"])["owner_type"] == "org"
 
 
@@ -524,3 +558,145 @@ def test_une_procedure_dequipe_est_visible_dans_oto_resource(monde):
     assert enrichie["owner_id"] == str(monde["equipe"])
     # La vue opérateur ne filtre plus par palier non plus.
     assert "gouvernee" in {r["slug"] for r in R._OPS["doctrine"]["list_all"]()}
+
+
+# ── ADR 0068 : le palier PERSONNEL, par le chemin servi ───────────────────────
+
+def test_une_procedure_perso_s_ecrit_et_se_relit_par_son_auteur(monde):
+    """Décision d'Alexis (04/09) : « procédure doit pouvoir être privée ». Le préalable
+    de #681 était réel — `org_instructions.org_id` NOT NULL — et il est levé.
+
+    On passe par le chemin SERVI (autz déclarée puis handler), pas par le store : la
+    règle d'autz est justement l'endroit qui était fermé, et la câbler hors du champ du
+    test laisserait la porte non vérifiée."""
+    out = _appel("u-membre", op="set", scope="user", slug="ma-methode",
+                 body_md=_CORPS)
+    assert out["scope"] == "user"
+    assert out["user_id"] == "u-membre", (
+        "la clé de scope porte le SUB, pas un entier : `int()` y levait un ValueError "
+        "que l'adaptateur REST ne rattrape pas — un 500 après une écriture réussie")
+    relu = _appel("u-membre", op="get", scope="user", slug="ma-methode")
+    # Sous-chaîne et non égalité : le corps servi porte le digest que la surface
+    # ajoute. Comparer à l'octet ferait échouer ce banc pour une raison qui n'a rien
+    # à voir avec le palier qu'il vérifie.
+    assert "Étapes." in relu["body_md"]
+    assert relu["scope"] == "user" and relu["user_id"] == "u-membre"
+
+
+def test_une_procedure_perso_est_INVISIBLE_des_autres(monde):
+    """Le point qui décide si « privée » veut dire quelque chose. Un membre de la même
+    org — et le chef d'équipe, qui a plus de droits — ne doit pas la lire.
+
+    ⚠️ On vise `scope='user'` pour les deux : le palier personnel de QUELQU'UN D'AUTRE
+    n'est pas atteignable, parce que l'identité vient du contexte d'autz et jamais d'un
+    champ client. C'est le même verrou que pour l'org et l'équipe."""
+    _appel("u-membre", op="set", scope="user", slug="a-moi-seul", body_md=_CORPS)
+    for autre in ("u-chef", "u-tiers"):
+        with pytest.raises(AuthzDenied) as e:
+            _appel(autre, op="get", scope="user", slug="a-moi-seul")
+        assert e.value.status in (403, 404), (
+            f"{autre} atteint la procédure personnelle de quelqu'un d'autre")
+
+
+def test_le_palier_perso_ne_porte_AUCUNE_org(monde):
+    """`org_id` porte la cascade de suppression : y ranger l'org de contexte ferait
+    disparaître une procédure personnelle le jour où l'org part. Le NULL est le fait."""
+    from oto_mcp import org_store
+    _appel("u-membre", op="set", scope="user", slug="sans-org", body_md=_CORPS)
+    ligne = org_store.get_instruction("user", "u-membre", "sans-org")
+    assert ligne["org_id"] is None
+
+
+def test_le_refus_d_ecriture_NOMME_le_palier_equipe(monde):
+    """Le cas réel du 04/09, lu au journal des appels d'une org cliente.
+
+    Une membre d'org tente d'écrire une procédure le 31/08 → « Réservé à un org_admin
+    de l'org #35 ». Elle réessaie le 02/09 → même mur, autre formulation. Elle ne
+    trouve le palier ÉQUIPE — qui lui était ouvert depuis le début — que le 04/09.
+    Quatre jours, trois refus, pour un geste permis.
+
+    ⚠️ Le défaut est décrit MOT POUR MOT dans la docstring de `_refus_org_admin`,
+    écrite lors du lot #681 qui l'avait relevé : « il cherchait, lui, un palier
+    d'écriture autre que l'org ». On avait unifié la phrase des quatre refus sans lui
+    donner d'issue — la moitié du travail, et c'est la moitié qui se voit à l'usage."""
+    # ⚠️ Le cas de Céleste n'existe PLUS tel quel : sans scope, sa procédure part
+    # désormais chez elle et l'appel réussit — le refus ne survient que si l'on VISE
+    # l'org. Ce banc garde ce qui reste vrai : quand on vise l'org sans en être admin,
+    # le refus nomme les paliers ouverts au lieu de fermer la porte sans issue.
+    with pytest.raises(AuthzDenied) as e:
+        _appel("u-membre", op="set", scope="org", slug="au-niveau-org", body_md=_CORPS)
+    msg = e.value.message
+    assert "administrateur" in msg, "la cause reste dite"
+    assert "scope='group'" in msg, "et l'ISSUE aussi, c'est tout l'objet"
+    assert "MEMBRE, pas chef" in msg, (
+        "sans ça, elle croit qu'il faut être chef d'équipe — le geste reste hors "
+        "de portée pour une raison inventée")
+    # ⚠️ Les DEUX issues, pas une. Le message n'a nommé que l'équipe pendant quelques
+    # heures — le jour même où le palier personnel était ouvert. Un refus qui énumère
+    # à moitié envoie chez la mauvaise porte : qui voulait SA procédure aurait écrit
+    # celle de son équipe, partagée, sans savoir que l'autre existait.
+    assert "scope='user'" in msg, "le palier personnel doit être nommé LE PREMIER"
+    assert msg.index("scope='user'") < msg.index("scope='group'"), (
+        "le plus restreint d'abord : on propose de partager après avoir proposé de "
+        "ne pas le faire, jamais l'inverse")
+    assert "pas même les administrateurs" in msg, (
+        "« qui n'appartient qu'à toi » se vérifie sur la question qu'on se pose "
+        "vraiment — les admins la voient-ils ?")
+
+
+def test_le_refus_du_palier_EQUIPE_ne_renvoie_pas_vers_l_equipe(monde):
+    """⚠️ Le garde-fou du garde-fou. Le texte d'issue est posé sur la règle ORG : il ne
+    doit pas apparaître quand c'est justement l'équipe qui refuse — un refus qui
+    propose ce qu'on vient de tenter fait tourner en rond."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel("u-tiers", op="set", scope="group", group=monde["equipe"],
+               slug="pas-la-mienne", body_md=_CORPS)
+    assert "scope='group'" not in e.value.message
+
+
+def test_ECRIRE_sans_scope_va_chez_SOI_et_ne_refuse_plus(monde):
+    """Le défaut d'écriture, retourné le 04/09 sur question d'Alexis : « il ne peut pas
+    y avoir un défaut à scope ? »
+
+    Il valait `org`, donc il menait à un REFUS pour toute personne non administratrice
+    — la majorité. Un défaut qui échoue pour le plus grand nombre n'est pas un défaut,
+    c'est un piège : mesuré sur quatre jours et trois refus chez une org cliente.
+
+    Désormais une membre simple écrit, du premier coup, et chez elle."""
+    out = _appel("u-membre", op="set", slug="mon-premier-reflexe", body_md=_CORPS)
+    assert out["ok"] and out["scope"] == "user"
+    assert out["user_id"] == "u-membre" and "org_id" not in out
+
+
+def test_RELIRE_sans_scope_retrouve_ce_qu_on_vient_d_ecrire(monde):
+    """⚠️ Le corollaire, et il n'est pas décoratif : écrire chez soi par défaut tout en
+    relisant dans l'org par défaut ferait « perdre » la procédure à l'instant même où
+    on la crée. La lecture cascade — la mienne d'abord, celle de l'org ensuite."""
+    _appel("u-membre", op="set", slug="a-retrouver", body_md=_CORPS)
+    relu = _appel("u-membre", op="get", slug="a-retrouver")
+    assert relu["scope"] == "user" and "Étapes." in relu["body_md"]
+
+
+def test_la_procedure_d_ORG_reste_lisible_sans_scope(monde):
+    """L'autre moitié de la cascade : si elle ne retombait pas sur l'org, tous les
+    agents qui lisent la procédure d'org sans préciser cesseraient de la trouver — une
+    régression bien plus large que le défaut qu'on corrige."""
+    # ⚠️ Slug PROPRE : `monde` est module-scope, et un banc voisin écrit
+    # « au-niveau-org » chez u-membre. La cascade rendrait alors `user` — pour une
+    # raison qui n'a rien à voir avec ce qu'on vérifie, et qui serait juste.
+    _appel("u-chef", op="set", scope="group", slug="lisible-sans-scope", body_md=_CORPS)
+    from oto_mcp import org_store
+    org_store.set_instruction("org", monde["org"], "seulement-dans-l-org",
+                              body_md=_CORPS, set_by="u-chef")
+    relu = _appel("u-membre", op="get", slug="seulement-dans-l-org")
+    assert relu["scope"] == "org"
+
+
+def test_op_list_montre_AUSSI_les_siennes(monde):
+    """Écrire chez soi sans se voir dans la liste ferait croire la procédure perdue.
+    Le cumul porte les trois paliers qu'on peut atteindre, chacun étiqueté."""
+    _appel("u-membre", op="set", slug="dans-ma-liste", body_md=_CORPS)
+    vus = _appel("u-membre", op="list")["guides"]
+    par_slug = {g["slug"]: g["scope"] for g in vus}
+    assert par_slug.get("dans-ma-liste") == "user", "la mienne manque au cumul"
+    assert "org" in par_slug.values(), "et celles de l'org y sont toujours"

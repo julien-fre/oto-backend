@@ -85,6 +85,18 @@ def _client_for_user(account: Optional[str] = None):
     return DriveClient(credentials=creds)
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
+# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(rafraîchissement de jeton) — réessaie.")
+
+
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
@@ -163,7 +175,7 @@ def register(mcp: FastMCP) -> None:
             move_to_folder: op="update" — destination folder id (move).
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         if op == "list":
             files = await asyncio.to_thread(client.list_files, folder_id, query,
@@ -263,7 +275,7 @@ def register(mcp: FastMCP) -> None:
             notify: send Google's notification email (when granting).
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         if not email:
             perms = await asyncio.to_thread(client.list_permissions, file_id)
             return {"permissions": perms, "count": len(perms)}

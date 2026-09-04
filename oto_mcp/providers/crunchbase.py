@@ -24,3 +24,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Crunchbase"
 LOGO_DOMAIN = "crunchbase.com"
+
+DESCRIPTION = (
+    "Les fiches société et personne de Crunchbase, via ta session connectée par "
+    "navigateur hébergé. Tu te loques une fois, la session persiste ensuite "
+    "dans le coffre."
+)

@@ -214,7 +214,18 @@ CAPABILITIES += [
         mcp=None,
         # 201 : le code que cette route rend depuis toujours au dashboard et à oto-core.
         rest=RestBinding(verb="POST", path=_BASE, status=201),
-        description="Crée un tableau (classeur d'org par défaut, d'équipe sur demande).",
+        # ⚠️ 04/09/2026 : cette description annonçait « classeur d'org par défaut »
+        # quand le code faisait `owner.get("type") or "user"`, donc PERSO — et la face
+        # MCP du même verbe créait chez l'org en annonçant « per user ». Deux
+        # propriétaires pour un seul geste, chaque texte affirmant le contraire de sa
+        # propre face. L'ADR 0068 tranche l'écart dans le sens de CETTE face-ci : le
+        # tableau naît personnel des deux côtés, et les deux textes disent la même
+        # chose parce que les deux faces font la même chose.
+        description=("Crée un tableau. Par défaut il est PERSONNEL (visible de toi "
+                     "seul — ni les autres membres de ton org, ni ses administrateurs) ; "
+                     "passe `owner: {type: \"org\"|\"group\", id: N}` pour qu'il "
+                     "appartienne à l'org ou à l'équipe, et soit lisible de tous ses "
+                     "membres."),
     ),
     Capability(
         key="me.datastore.delete_namespace",

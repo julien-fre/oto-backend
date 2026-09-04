@@ -72,6 +72,35 @@ def test_zero_hits_carries_hint(monkeypatch):
     assert out["hits"] == [] and "reformule" in out["hint"]
 
 
+def test_une_recherche_TRONQUEE_dit_combien_elle_a_trouve(monkeypatch):
+    """oto#42, entrée 2 : `len(ordered)` était connu trois lignes après la coupe et ne
+    sortait pas. `count` disait honnêtement ce que la réponse contenait, mais rien ne
+    disait qu'il y avait plus — et une recherche qui rend 2 sur 5 se lit « voilà tout
+    ce qui existe ». C'est le mode de panne de cette classe : l'agent cherche, ne
+    trouve pas, et conclut à une absence. Une valeur fausse se constate, une absence
+    ne se rappelle jamais."""
+    _stub_empty(monkeypatch, search_docs_fts=[
+        {"id": i, "project_id": 1, "title": f"Page {i}", "headline": "<b>x</b>"}
+        for i in range(10, 15)])
+    out = S.search("u1", 7, "x", limit=2)
+    assert out["count"] == 2 and len(out["hits"]) == 2
+    assert out["total"] == 5, "le nombre TROUVÉ ne sort pas"
+    assert out["truncated"] is True
+    assert "5 résultats trouvés, 2 rendus" in out["hint_truncated"]
+    assert "limit" in out["hint_truncated"], "le hint doit dire le GESTE"
+
+
+def test_une_recherche_COMPLETE_ne_dit_rien_de_plus(monkeypatch):
+    """Pas d'écart, pas de bruit : quand tout est rendu, la réponse ne s'encombre pas
+    d'un aveu de troncature — un champ toujours présent devient du bruit qu'on cesse
+    de lire."""
+    _stub_empty(monkeypatch, search_docs_fts=[
+        {"id": 10, "project_id": 1, "title": "Page A", "headline": "<b>x</b>"}])
+    out = S.search("u1", 7, "x", limit=20)
+    assert out["count"] == 1
+    assert "truncated" not in out and "total" not in out
+
+
 def test_kinds_filters_sources(monkeypatch):
     called = []
     _stub_empty(monkeypatch)

@@ -42,3 +42,10 @@ CONNECTOR = _c(
 CATEGORY = "Finance"
 PUBLISHER = "Stripe"
 LOGO_DOMAIN = "stripe.com"
+
+DESCRIPTION = (
+    "Les paiements et la facturation d'un compte Stripe : clients, abonnements, "
+    "factures, encaissements et solde. Trois champs de credential : la clé "
+    "secrète, une version d'API optionnelle, et l'identifiant de compte Connect "
+    "si tu factures pour plusieurs sociétés depuis un seul compte."
+)

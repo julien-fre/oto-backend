@@ -73,10 +73,16 @@ oto_mcp/
 
 deploy/
 ├── oto-mcp.service       # systemd, User=root, /opt/oto-mcp, port 9103
+├── oto-mcp-maintenance.{service,timer}   # les travaux sortis du boot (ADR 0065), prod seulement
+├── oto-journal-archive.{service,timer}   # archivage du journal des appels
 ├── Caddyfile.snippet     # mcp.oto.ninja → 9103 (pas de bearer-gate, masquerait WWW-Authenticate)
-└── DEPLOY.md             # procédure DNS + Caddy + systemd + Claude.ai
+└── *.sh, *.py            # oto-backend{,-canari}.sh (deploy), bluegreen/drain, start-encrypted, refresh SIRENE, ingestions
 
 ```
+
+> ⚠️ **`deploy/DEPLOY.md` n'existe plus depuis le 2026-06-21** (sortie de l'infra sensible avant l'ouverture
+> du repo) : la procédure DNS + Caddy + systemd vit dans le repo privé `otomata-tech/infra`. Cet arbre — et la
+> carte `CLAUDE.md` — l'ont cité comme présent jusqu'au 2026-09-03.
 
 L'extension Chrome (Oto Companion) vit dans `oto-app/extension/` (repo
 `otomata-tech/oto-app`, monorepo des fronts). Elle parle au backend via REST :

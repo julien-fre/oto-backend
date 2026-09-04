@@ -29,8 +29,31 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def purger_delegations_expirees(sub: str) -> int:
+    """Efface les jetons de DÉLÉGATION expirés de ce compte.
+
+    ⚠️ Un jeton mort n'a aucune raison de rester : il est inutilisable, et
+    l'accumulation est mécanique — un par travail exécuté. Appelée à l'émission
+    plutôt que par une tâche de fond : le nettoyage est amorti sur l'usage, et
+    il n'y a pas de mécanisme nouveau à faire vivre.
+
+    ⚠️ Ne touche QUE `kind='delegation'` : un jeton d'utilisateur expiré reste
+    visible, parce que son propriétaire doit pouvoir constater qu'il a expiré —
+    c'est le sien, il l'a créé, sa disparition silencieuse serait une surprise.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM user_api_tokens WHERE sub = %s AND kind = 'delegation' "
+            "AND expires_at IS NOT NULL AND expires_at < NOW()",
+            (sub,),
+        )
+        return cur.rowcount or 0
+
+
 def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = None,
-                     scopes: Optional[dict] = None) -> str:
+                     scopes: Optional[dict] = None,
+                     ttl_seconds: Optional[int] = None,
+                     kind: str = "user") -> str:
     """Génère un token, persiste son hash, renvoie le plaintext une seule fois.
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
@@ -42,15 +65,28 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     jeton confié à une intégration tierce. Validé par `token_scopes.parse` AVANT
     d'arriver ici (le document est stocké tel quel).
     """
+    # ⚠️ `upsert_user` CRÉE le compte s'il n'existe pas. Pour un jeton émis au nom
+    # d'un tiers (délégation d'un travail programmé), l'existence du compte se
+    # vérifie donc AVANT d'appeler ici — sinon on ressusciterait silencieusement
+    # un compte supprimé, et on lui délivrerait un accès dans la foulée.
     upsert_user(sub)
     token = _TOKEN_PREFIX + secrets.token_urlsafe(32)
-    expires = f"NOW() + INTERVAL '{int(ttl_days)} days'" if ttl_days and ttl_days > 0 else "NULL"
+    # ⚠️ `ttl_seconds` gagne sur `ttl_days` : un jeton de délégation vit le temps
+    # d'un bail (quelques minutes), pas d'une journée. Sans lui, le plus court
+    # exprimable était 1 jour — soit ~90 fois la durée du besoin, pour un jeton
+    # qui porte l'identité de quelqu'un d'autre.
+    if ttl_seconds and ttl_seconds > 0:
+        expires = f"NOW() + INTERVAL '{int(ttl_seconds)} seconds'"
+    elif ttl_days and ttl_days > 0:
+        expires = f"NOW() + INTERVAL '{int(ttl_days)} days'"
+    else:
+        expires = "NULL"
     with _connect() as conn:
         conn.execute(
-            f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, scopes) "
-            f"VALUES (%s, %s, %s, {expires}, %s)",
+            f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, "
+            f"scopes, kind) VALUES (%s, %s, %s, {expires}, %s, %s)",
             (sub, label, _hash_token(token),
-             json.dumps(scopes) if scopes is not None else None),
+             json.dumps(scopes) if scopes is not None else None, kind),
         )
     return token
 
@@ -104,8 +140,14 @@ def _as_scopes(raw: object) -> Optional[dict]:
 def list_api_tokens(sub: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
+            # ⚠️ `kind = 'user'` : cet écran annonce des jetons de CLI et
+            # d'intégration continue. Les jetons de délégation — 12 minutes,
+            # émis automatiquement, un par travail — n'y ont pas leur place :
+            # ils feraient mentir l'écran, et son bouton « révoquer » porterait
+            # sur un accès en cours d'usage.
             "SELECT id, label, created_at, last_used_at, expires_at, scopes "
-            "FROM user_api_tokens WHERE sub = %s ORDER BY created_at DESC",
+            "FROM user_api_tokens WHERE sub = %s AND kind = 'user' "
+            "ORDER BY created_at DESC",
             (sub,),
         ).fetchall()
         return [dict(r) for r in rows]

@@ -28,3 +28,10 @@ CONNECTOR = _c(
 CATEGORY = "Automatisation"
 PUBLISHER = "n8n"
 LOGO_DOMAIN = "n8n.io"
+
+DESCRIPTION = (
+    "Les workflows n8n : lister, déclencher et suivre l'exécution des workflows "
+    "de ton instance (cloud ou self-hosted), via l'API publique. Deux champs : "
+    "la clé API et l'URL de ton instance — n8n s'auto-héberge, il n'y a pas "
+    "d'endpoint unique."
+)

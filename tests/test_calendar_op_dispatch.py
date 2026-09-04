@@ -92,6 +92,8 @@ def test_discovery_tool_stays_alone_because_it_has_no_business_param():
     ("list", {}, "list_events"),
     ("get", {"event_id": "e1"}, "get_event"),
     ("create", {"summary": "Point", "start": "2026-08-12T10:00:00Z"}, "create_event"),
+    ("update", {"event_id": "e1", "summary": "Point corrigé"}, "update_event"),
+    ("rm", {"event_id": "e1"}, "delete_event"),
 ])
 def test_event_ops_route_to_the_right_client_method(client, op, kwargs, method):
     _call("calendar_event", op=op, **kwargs)
@@ -126,9 +128,15 @@ def test_create_calls_only_the_write_method(client):
 ])
 def test_read_ops_never_write(client, op, kwargs):
     """Aucune lecture n'atteint l'écriture — le mode de panne redouté d'une
-    consolidation par `op=` (un `op` mal câblé qui glisse sur la voisine)."""
+    consolidation par `op=` (un `op` mal câblé qui glisse sur la voisine).
+
+    ⚠️ La garde vise les TROIS écritures, pas la seule création : depuis #686 le
+    même outil sait aussi corriger et supprimer, et une lecture qui glisserait sur
+    `delete_event` détruirait au lieu d'afficher."""
     _call("calendar_event", op=op, **kwargs)
     client.create_event.assert_not_called()
+    client.update_event.assert_not_called()
+    client.delete_event.assert_not_called()
 
 
 def test_default_op_is_a_read(client):
@@ -165,16 +173,27 @@ def test_unknown_op_is_refused_with_the_allowed_list(client):
         _call("calendar_event", op="nope")
     msg = e.value.error.message
     assert "'list'" in msg and "'get'" in msg and "'create'" in msg
+    # Les deux verbes ajoutés par #686 doivent être NOMMÉS eux aussi : la liste
+    # servie est le seul endroit où un agent apprend qu'il peut défaire.
+    assert "'update'" in msg and "'rm'" in msg
 
 
-@pytest.mark.parametrize("op", ["metadata", "delete", "update", "CREATE", ""])
+@pytest.mark.parametrize("op", ["metadata", "delete", "remove", "CREATE", "RM", ""])
 def test_unknown_op_never_reaches_the_write_path(client, op):
     """Le scénario redouté : un `op` que le module ne connaît pas (faute de frappe,
     op d'un autre connecteur, casse différente) ne doit atteindre NI l'écriture, ni
-    une lecture par défaut."""
+    une lecture par défaut.
+
+    ⚠️ `delete` et `remove` sont ici DÉLIBÉRÉMENT : le verbe exposé est `rm`, aligné
+    sur `tasks_task` (#686). Ce sont les deux synonymes qu'un agent essaiera, et ils
+    doivent tomber sur le refus qui nomme la liste — pas être avalés par un alias
+    de complaisance, qui ferait diverger les deux connecteurs dans l'autre sens.
+    `update` a quitté cette liste le 03/09 : il est devenu un op valide."""
     with pytest.raises(McpError, match="op doit être"):
         _call("calendar_event", op=op, summary="Point", start="2026-08-12T10:00:00Z")
     client.create_event.assert_not_called()
+    client.update_event.assert_not_called()
+    client.delete_event.assert_not_called()
     client.list_events.assert_not_called()
     client.get_event.assert_not_called()
 
@@ -255,3 +274,39 @@ def test_account_selects_the_google_account(client, name, kwargs):
 def test_account_defaults_to_none(client):
     _call("calendar_event", op="list")
     assert client.resolved_accounts == [None]
+
+
+# --- #686 : un outil qui écrit doit pouvoir défaire ----------------------------
+
+@pytest.mark.parametrize("op", ["update", "rm"])
+def test_corriger_et_supprimer_exigent_un_event_id(client, op):
+    """Aucun défaut ne comble un `event_id` manquant : deviner la cible d'une
+    écriture destructrice est le pire endroit possible pour un fallback."""
+    with pytest.raises(Exception, match="event_id"):
+        _call("calendar_event", op=op)
+    client.update_event.assert_not_called()
+    client.delete_event.assert_not_called()
+
+
+@pytest.mark.parametrize("op,kwargs", [
+    ("update", {"event_id": "e1", "summary": "x"}),
+    ("rm", {"event_id": "e1"}),
+])
+def test_les_invites_ne_sont_pas_prevenus_sans_quon_le_demande(client, op, kwargs):
+    """`send_updates` par défaut à "none", et TRANSMIS au client — corriger une
+    coquille ne doit pas écrire à tous les participants. Le banc tient le passage,
+    pas seulement la valeur du défaut dans la signature."""
+    _call("calendar_event", op=op, **kwargs)
+    appel = (client.update_event if op == "update" else client.delete_event).call_args
+    assert "none" in appel.args or appel.kwargs.get("send_updates") == "none"
+
+
+def test_supprimer_ne_touche_que_la_suppression(client):
+    """Symétrique de `test_create_calls_only_the_write_method` pour le verbe qui
+    détruit — sauf que `delete_event` relit l'événement AVANT de le retirer, côté
+    client (oto-core), pas ici : cet appel-ci ne doit donc frapper qu'une méthode."""
+    _call("calendar_event", op="rm", event_id="e1")
+    client.delete_event.assert_called_once()
+    client.create_event.assert_not_called()
+    client.update_event.assert_not_called()
+    client.list_events.assert_not_called()

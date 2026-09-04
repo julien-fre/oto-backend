@@ -20,3 +20,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "HubSpot"
 LOGO_DOMAIN = "hubspot.com"
+
+DESCRIPTION = (
+    "Le CRM HubSpot : contacts, entreprises (companies), deals, tickets, notes, "
+    "listes et propriétés personnalisées. Hors socle, à activer par org ; pas "
+    "de clé plateforme, chacun pose la sienne."
+)

@@ -26,19 +26,41 @@ elles sont servies telles quelles et « harmoniser » casserait un appelant :
 - le `DELETE` membre rend `{ok}`, l'admin rend `{ok, id}` ;
 - seul le palier MEMBRE refuse un tableau que l'émetteur ne voit pas ; le palier admin
   n'a pas ce garde-fou (il émet pour quelqu'un d'autre, dont le catalogue n'est pas le
-  sien), et n'accepte en revanche un `ttl_days` que le palier membre ignore.
+  sien).
+
+⚠️ **Une QUATRIÈME asymétrie a été levée le 04/09/2026** (#514 lot d, décision d'Alexis
+« expiration pour tout le monde) : `ttl_days` était accepté du seul palier admin et
+ignoré du palier membre. Une personne qui voulait borner son propre jeton devait donc
+passer par un opérateur — la précaution existait sans être à sa portée, ce qui est le
+motif même de #514. Les deux paliers l'acceptent et le RENDENT désormais, avec la même
+lecture tolérante (`_jours`, partagée) : c'est l'instant de la création qui est le seul
+où une échéance est lisible, la liste ne rendant pas le secret et le porteur ne sachant
+jamais de lui-même quand il cesse de fonctionner. Cette asymétrie-là ne « servait » rien
+— contrairement aux trois ci-dessus, la lever ne casse aucun appelant : un champ jusque-là
+ignoré devient un champ obéi, et personne ne s'appuyait sur le fait qu'il ne l'était pas.
 """
 from __future__ import annotations
 
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import access, credentials_store, db
 from ..auth import token_scopes
 from ._authz import SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+# Le libellé d'un jeton n'existe que pour une chose : reconnaître ce jeton le jour où
+# il faudra décider de le révoquer, des mois plus tard, sans se souvenir de l'avoir
+# émis. La colonne est en `TEXT` — cette borne est un choix de surface, donc elle est
+# PUBLIÉE dans le schéma servi et un dépassement est REFUSÉ, jamais raboté (oto#42,
+# 4ᵉ règle : une coupe sur une écriture se refuse, la fin ne survit nulle part).
+# ⚠️ 32 est court, et jusqu'au 03/09/2026 la coupe silencieuse EMPÊCHAIT de le
+# découvrir : un libellé raboté n'a jamais produit de plainte, il a produit des listes
+# de jetons qu'on ne sait plus distinguer. Un refus, lui, se signale — si la borne est
+# mal calibrée, on l'apprendra maintenant.
+_LABEL_MAX = 32
 
 _ME = "/api/me/tokens"
 _ADMIN = "/api/admin/users/{sub}/tokens"
@@ -53,13 +75,26 @@ class TokenListInput(BaseModel):
 
 
 class TokenCreateInput(BaseModel):
-    # Absent ⇒ 'cli'. ⚠️ La réponse rend le libellé BRUT, alors que le jeton est écrit
-    # avec un libellé nettoyé (`strip()[:32]`) : c'est la forme servie, on la garde.
-    label: Optional[str] = None
+    label: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _LABEL_MAX},
+        description=("Comment reconnaître ce jeton plus tard — au plus 32 caractères, "
+                     "au-delà : 400 `label_too_long`, jamais une coupe. Absent ⇒ 'cli'."))
     # Document de portée, validé par `token_scopes.parse` (jamais côté porteur). Absent
     # ⇒ jeton NON PORTÉ : il EST le sub, pleins pouvoirs. Sa forme est libre, elle est
     # décrite par `token_scopes` et refusée nommément si elle ne tient pas.
     scopes: Any = None
+    # ADR/issue #514 lot (d), décision d'Alexis du 04/09/2026 « expiration pour tout le
+    # monde » : le palier MEMBRE l'ignorait, seul l'admin l'acceptait. Un jeton émis
+    # depuis le dashboard vivait donc éternellement, et la personne qui voulait le
+    # borner devait passer par un opérateur — la précaution existait sans être à sa
+    # portée, exactement le motif de cette issue.
+    # ⚠️ MÊME tolérance que le palier admin, à dessein : nombre ou texte, et ce qui
+    # n'est pas un entier positif écrit en chiffres vaut « pas d'expiration ». Durcir
+    # ici et pas là ferait deux contrats pour un même geste.
+    ttl_days: Union[int, str, None] = Field(
+        None,
+        description=("Nombre de jours avant échéance. Absent ou non numérique ⇒ le "
+                     "jeton n'expire PAS — et rien ne le rappellera ensuite."))
 
 
 class TokenDeleteInput(BaseModel):
@@ -74,7 +109,10 @@ class AdminTokenListInput(BaseModel):
 
 class AdminTokenCreateInput(BaseModel):
     target_sub: str
-    label: Optional[str] = None
+    label: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _LABEL_MAX},
+        description=("Comment reconnaître ce jeton plus tard — au plus 32 caractères, "
+                     "au-delà : 400 `label_too_long`, jamais une coupe. Absent ⇒ 'cli'."))
     # Accepté en nombre OU en texte, et IGNORÉ s'il n'est pas un entier positif écrit en
     # chiffres (`str(x).isdigit()`) : un `-1` ou un booléen donnent « pas d'expiration »,
     # ce qui est le comportement servi.
@@ -129,12 +167,19 @@ class ApiTokenCreated(BaseModel):
     token: str
     label: Optional[str] = None
     scopes: Optional[dict] = None
+    # `null` = le jeton n'expire pas. Rendu aux DEUX paliers depuis #514 lot (d) : une
+    # échéance qu'on pose sans la voir revenir ne se vérifie qu'en attendant qu'elle
+    # tombe. C'est le seul instant où elle est lisible — la liste ne rend pas le secret,
+    # et le porteur ne saura jamais de lui-même quand il cesse de fonctionner.
+    ttl_days: Optional[int] = None
 
 
 class AdminApiTokenCreated(ApiTokenCreated):
-    """Le palier admin ajoute `ttl_days` (absent du palier membre) — `null` = pas
-    d'expiration."""
-    ttl_days: Optional[int] = None
+    """⚠️ Cette classe ne se distingue PLUS de sa mère depuis le 04/09/2026 (#514 lot
+    d) : `ttl_days` est monté dans `ApiTokenCreated`, les deux paliers l'acceptant et
+    le rendant. Elle est conservée telle quelle parce qu'elle NOMME la sortie admin
+    dans le document servi — la fusionner renommerait un schéma que des intégrations
+    lisent, pour aucun gain."""
 
 
 class TokenDeleted(BaseModel):
@@ -187,10 +232,40 @@ def _portee(brut: Any) -> Optional[dict]:
         raise AuthzDenied(400, "invalid_scopes", str(e))
 
 
+def _jours(brut: Any) -> Optional[int]:
+    """`ttl_days` tel que la surface l'accepte : nombre OU texte, et tout ce qui n'est
+    pas un entier positif écrit en chiffres vaut « pas d'expiration ».
+
+    ⚠️ Extrait pour être PARTAGÉ par les deux paliers (#514 lot d) : la même règle
+    vivait en une ligne dans le seul handler admin, et l'ouvrir au membre en la
+    recopiant aurait fait deux lectures d'un même champ — elles auraient divergé au
+    premier durcissement, et le contrat servi aurait dépendu du palier appelé.
+    Cette tolérance est CONSERVÉE telle quelle, y compris pour `-1` ou un booléen qui
+    donnent « pas d'expiration » : c'est le comportement déjà servi côté admin."""
+    return int(brut) if isinstance(brut, (int, str)) and str(brut).isdigit() else None
+
+
 def _cible_connue(target_sub: str) -> str:
     if not db.get_user(target_sub):
         raise AuthzDenied(404, "unknown_user")
     return target_sub
+
+
+def _libelle(brut: Optional[str]) -> str:
+    """Le libellé tel qu'il sera ÉCRIT — c'est lui que les handlers rendent, pour que la
+    réponse ne puisse pas décrire autre chose que la base. Jusqu'au 03/09/2026 elle
+    rendait le brut de l'appelant tandis que la base recevait `strip()[:32]` : sur un
+    libellé long, l'émetteur repartait avec la confirmation d'une valeur qui n'existait
+    nulle part."""
+    net = (brut or "cli").strip() or "cli"
+    if len(net) > _LABEL_MAX:
+        raise AuthzDenied(
+            400, "label_too_long",
+            f"`label` fait {len(net)} caractères pour {_LABEL_MAX} au plus. Il est "
+            "refusé entier plutôt que raboté : une coupe emporterait sa fin, or c'est "
+            "elle qui distingue ce jeton de ses voisins dans la liste où on décidera "
+            "de le révoquer. Raccourcis-le en gardant ce qui le rend reconnaissable.")
+    return net
 
 
 # --- Handlers : MES jetons --------------------------------------------------
@@ -200,7 +275,7 @@ def _my_list(ctx: ResolvedCtx, inp: TokenListInput) -> dict:
 
 
 def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
-    label = inp.label or "cli"
+    label = _libelle(inp.label)
     scopes = _portee(inp.scopes)
     if scopes is not None:
         # Refuser un tableau que l'ÉMETTEUR ne voit pas : le jeton ne peut de toute façon
@@ -213,8 +288,9 @@ def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
         if missing:
             raise AuthzDenied(400, "unknown_namespace",
                               f"Tableaux inconnus dans l'org active : {missing}")
-    token = db.create_api_token(ctx.sub, label=label.strip()[:32], scopes=scopes)
-    return {"token": token, "label": label, "scopes": scopes}
+    ttl_days = _jours(inp.ttl_days)
+    token = db.create_api_token(ctx.sub, label=label, ttl_days=ttl_days, scopes=scopes)
+    return {"token": token, "label": label, "scopes": scopes, "ttl_days": ttl_days}
 
 
 def _my_delete(ctx: ResolvedCtx, inp: TokenDeleteInput) -> dict:
@@ -231,11 +307,10 @@ def _admin_list(ctx: ResolvedCtx, inp: AdminTokenListInput) -> dict:
 
 def _admin_create(ctx: ResolvedCtx, inp: AdminTokenCreateInput) -> dict:
     cible = _cible_connue(inp.target_sub)
-    label = inp.label or "cli"
-    ttl = inp.ttl_days
-    ttl_days = int(ttl) if isinstance(ttl, (int, str)) and str(ttl).isdigit() else None
+    label = _libelle(inp.label)
+    ttl_days = _jours(inp.ttl_days)
     scopes = _portee(inp.scopes)
-    token = db.create_api_token(cible, label=label.strip()[:32], ttl_days=ttl_days,
+    token = db.create_api_token(cible, label=label, ttl_days=ttl_days,
                                 scopes=scopes)
     return {"token": token, "label": label, "ttl_days": ttl_days, "scopes": scopes}
 

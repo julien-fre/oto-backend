@@ -504,7 +504,8 @@ _DOC_COLS = ("id, project_id, parent_id, title, description, position, body_md, 
 
 def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
                body_md: str = "", kind: str = "doc", created_by: Optional[str] = None,
-               description: Optional[str] = None) -> int:
+               description: Optional[str] = None,
+               trace: Optional[dict] = None) -> int:
     # `position` : fin de fratrie (MAX+16, même transaction) — l'ordre curé (Ship 2)
     # est posé dès la création, le tri (parent_id, position, title) reste stable.
     with _connect() as conn:
@@ -520,7 +521,7 @@ def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
         conn.execute("UPDATE projects SET updated_at = NOW() WHERE id = %s", (project_id,))
         from .search import stamp_rank_vector
         stamp_rank_vector(conn, "docs", "id = %s", (int(row["id"]),))
-        _backlinks.refresh_links(conn, int(row["id"]), project_id, body_md)
+        _backlinks.refresh_links(conn, int(row["id"]), project_id, body_md, trace)
         # #6 C : une page créée avec ce titre résout les `[[Titre]]`-souches écrits AVANT
         # elle dans d'autres pages → on re-résout leurs liens.
         _backlinks.reresolve_referrers(conn, project_id, title)
@@ -632,7 +633,8 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
                body_md: Optional[str] = None, kind: Optional[str] = None,
                edited_by: Optional[str] = None,
                description: Optional[str] = None,
-               expected_rev: Optional[str] = None) -> None:
+               expected_rev: Optional[str] = None,
+               trace: Optional[dict] = None) -> None:
     sets: list[str] = []
     params: list = []
     if title is not None:
@@ -680,7 +682,8 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
             pr = conn.execute("SELECT project_id FROM docs WHERE id = %s",
                               (doc_id,)).fetchone()
             if pr is not None:
-                _backlinks.refresh_links(conn, doc_id, pr["project_id"], body_md)
+                _backlinks.refresh_links(conn, doc_id, pr["project_id"], body_md,
+                                         trace)
         # #6 C : RENOMMAGE — re-résout les référents de l'ANCIEN et du NOUVEAU titre (les
         # `[[ancien]]` se délient proprement, les `[[nouveau]]`-souches se lient).
         if title is not None and prior is not None and title != prior["title"]:
@@ -1327,7 +1330,8 @@ def _provision_tableau(owner_type: str, owner_id: str, src_ref: str, *,
 
 def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str,
                       copied_by: Optional[str] = None,
-                      track_source: bool = False) -> int:
+                      track_source: bool = False,
+                      context_org_id: Optional[int] = None) -> int:
     """Copie un projet en un NOUVEAU projet possédé par `(owner_type, owner_id)` :
     brief + arbre des docs (hiérarchie préservée) + liens (label/role/config) +
     fichiers bruts (copie S3, repartis PRIVÉS). Un lien `procedure` vers une procédure
@@ -1350,9 +1354,13 @@ def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str
 
     # `track_source` = fork « Ajouter à mon Oto » : on garde le pointeur `copied_from`
     # pour un ré-import idempotent. Une copie interne (op=copy) ne le pose pas (défaut).
+    # `context_org_id` = l'org de CONTEXTE d'une copie PERSONNELLE (ADR 0030 amendé,
+    # ADR 0068) : la copie est rangée dans l'org où l'on travaille sans y être
+    # partagée. NULL pour une copie org/group, dont le contexte se dérive de l'owner.
     new_id = create_project(owner_type, owner_id, new_name,
                             brief_md=src.get("brief_md", ""), created_by=copied_by,
-                            copied_from=src_id if track_source else None)
+                            copied_from=src_id if track_source else None,
+                            context_org_id=context_org_id)
 
     # Arbre des docs : copie niveau par niveau, en remappant parent_id src→cible.
     docs = list_docs_for_project(src_id)

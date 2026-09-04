@@ -21,3 +21,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Dropcontact"
 LOGO_DOMAIN = "dropcontact.com"
+
+DESCRIPTION = (
+    "Enrichissement de contact et d'entreprise chez Dropcontact : email, "
+    "téléphone, données SIRENE, traité en lot de façon asynchrone (on soumet, "
+    "puis on récupère le résultat)."
+)

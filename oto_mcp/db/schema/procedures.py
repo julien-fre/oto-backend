@@ -27,7 +27,10 @@ PROCEDURES = """
 -- incrémenté à chaque écriture, qui archive un snapshot dans la table sœur.
 -- (Le readme `claude_md` vit dans `guides`, ADR 0042 — plus une ligne d'ici.)
 CREATE TABLE IF NOT EXISTS org_instructions (
-    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    -- NULL pour une procédure PERSONNELLE (ADR 0068) : une personne n'a pas
+    -- d'org parente, et y ranger son org de CONTEXTE ferait cascader la
+    -- suppression de l'org sur un contenu qui ne lui appartient pas.
+    org_id BIGINT REFERENCES orgs(id) ON DELETE CASCADE,
     owner_type TEXT NOT NULL DEFAULT 'org',
     owner_id TEXT NOT NULL,
     slug TEXT NOT NULL,
@@ -52,7 +55,10 @@ CREATE INDEX IF NOT EXISTS idx_org_instructions_org ON org_instructions(org_id);
 -- Porte le même scope owner que la table vivante (unicité vivante :
 -- (owner_type, owner_id, slug, version), index unique posé par _init).
 CREATE TABLE IF NOT EXISTS org_instruction_revisions (
-    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    -- NULL pour une procédure PERSONNELLE (ADR 0068) : une personne n'a pas
+    -- d'org parente, et y ranger son org de CONTEXTE ferait cascader la
+    -- suppression de l'org sur un contenu qui ne lui appartient pas.
+    org_id BIGINT REFERENCES orgs(id) ON DELETE CASCADE,
     owner_type TEXT NOT NULL DEFAULT 'org',
     owner_id TEXT NOT NULL,
     slug TEXT NOT NULL,

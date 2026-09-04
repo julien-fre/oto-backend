@@ -27,3 +27,9 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "Zoho"
 LOGO_DOMAIN = "zoho.com"
+
+DESCRIPTION = (
+    "Les tableaux de bord Zoho Analytics : workspaces, vues, export de données "
+    "et requêtes SQL sur les jeux de données. OAuth2 self-client, comme les "
+    "autres connecteurs Zoho."
+)

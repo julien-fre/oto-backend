@@ -78,11 +78,15 @@ supprimer. Une op inconnue est refusée AVANT même la résolution de la clé.
 """
 from __future__ import annotations
 
+import json
+import re
 from typing import Literal, Optional, get_args
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
+
+from oto.tools.common.errors import UpstreamHTTPError
 
 from .. import access
 
@@ -147,12 +151,166 @@ def _need(value, name: str, op: str):
     return value
 
 
+# --- Ce qu'Attio a dit, l'agent doit le lire (oto#42) -------------------------
+#
+# `AttioClient._request` (oto-core) REÇOIT le corps d'erreur d'Attio et le range dans
+# le message d'une `Exception` NUE :
+#     Exception(f"Attio API {status} on {method} /{endpoint}: {response.text[:2000]}")
+# La taxonomie du backend, elle, cherche le statut amont sur un ATTRIBUT de l'exception
+# (`error_taxonomy._upstream_status` : `.status_code` / `.status` / `.response.status_code`).
+# Une exception nue n'en porte aucun ⟹ le refus d'Attio n'est reconnu à AUCUNE étape et
+# tombe en (5) « interne », la seule branche qui n'écho RIEN du message (anti-fuite).
+# L'agent lit « Erreur interne du serveur. », `retryable: false`, et Sentry ouvre une
+# issue de bug backend pour un 4xx tiers parfaitement normal.
+#
+# Mesuré sur le signal #610 (2026-08-28) : trois créations de company refusées en 400
+# `uniqueness_conflict`, Attio nommant le champ (« slug "domains" ») ET l'enregistrement
+# déjà porteur du domaine. Rien de tout ça n'est sorti ; l'agent a conclu à un bug de
+# suffixe public `.co.uk` et dépensé quatre appels à isoler une cause qui n'existait pas.
+#
+# On re-type donc au seul point où le backend touche ce client. Pas en `McpError` : elle
+# écraserait le verdict machine (`code` / `retryable`) que la taxonomie sait dériver du
+# statut — message curé et verdict juste sont mutuellement exclusifs par ce chemin-là.
+# `UpstreamHTTPError` est le porteur canonique d'oto-core, déjà honoré par la taxonomie.
+_UPSTREAM_RE = re.compile(r"\AAttio API (\d{3}) on ([A-Z]+) /(\S*?): (.*)\Z", re.S)
+# oto-core lève ce texte-là AVANT de composer le message à statut (branche 429 dédiée).
+_RATE_LIMITED = "Rate limit exceeded"
+
+# Bornes de ce qu'on laisse traverser du corps amont. Un corps d'erreur tiers peut
+# porter des données du workspace : on ne le relaie JAMAIS en bloc.
+_BODY_KEEP = ("code", "path", "message")   # et rien d'autre
+_MAX_MESSAGE = 400                         # caractères de la phrase d'Attio
+_MAX_OPAQUE = 120                          # caractères d'un corps non JSON
+_CUT_OTO_CORE = 2000                       # `response.text[:2000]` chez oto-core
+# ⚠️ Couplage DÉCLARÉ (et tenu par le banc) avec `error_taxonomy._LONG_ID`, qui
+# remplace tout jeton de ≥ 20 caractères par `[id]` : `unknown_filter_attribute_slug`
+# (29 c.) se rendrait « attio HTTP 400: [id] — … », c'est-à-dire un `[id]` en tête de
+# message qui se lit comme un identifiant caviardé alors que c'est le NOM du refus.
+# Un code trop long est donc omis plutôt que servi méconnaissable — la phrase d'Attio,
+# elle, le redit toujours en clair (« Unknown attribute slug: … »).
+_MAX_CODE = 19
+
+
+def _upstream_body(raw: str) -> str:
+    """Le corps d'erreur d'Attio réduit à ce qu'un agent peut UTILISER, borné.
+
+    Attio répond une enveloppe JSON `{status_code, type, code, message, path?}`. On
+    n'en relaie que `_BODY_KEEP` : `code` (nature du refus), `path` (le champ fautif
+    quand Attio le donne) et `message` (la phrase actionnable), tronquée à
+    `_MAX_MESSAGE`. Tout le reste est écarté PAR CONSTRUCTION — une clé qu'Attio
+    ajouterait demain ne traverse pas, elle n'est pas dans la liste.
+
+    ⚠️ Ce qui traverse quand même vient du workspace de l'appelant, atteint avec le
+    credential de l'appelant (l'id du record en conflit, l'id demandé introuvable) :
+    aucune frontière de tenant n'est franchie. Ce qu'on borne est le VOLUME et
+    l'INCONNU, pas un secret. La taxonomie passe ensuite son `scrub`, qui remplace
+    tout jeton de ≥ 20 caractères par `[id]` — les identifiants n'arrivent donc pas
+    lisibles jusqu'à l'agent, le champ et la raison si.
+
+    Corps non JSON (page d'erreur d'un frontal, « Service Unavailable ») : on n'en
+    rend qu'une amorce d'une ligne de `_MAX_OPAQUE` caractères — assez pour voir que
+    l'amont n'a pas répondu en API, jamais un document entier.
+    """
+    try:
+        data = json.loads(raw)
+    # noqa: SILENT — un corps non JSON n'est pas une panne : on le dit et on le borne
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        amorce = " ".join(raw.split())[:_MAX_OPAQUE]
+        if not amorce:
+            return "corps d'erreur vide"
+        # Un corps qui COMMENCE comme du JSON sans se refermer n'est pas un corps
+        # malformé d'Attio : c'est oto-core qui coupe à `response.text[:2000]` avant
+        # de composer son message. Le dire, sinon on renvoie l'agent enquêter chez
+        # l'amont sur une amputation qui est la nôtre.
+        if raw.lstrip().startswith(("{", "[")):
+            return f"corps JSON tronqué à {_CUT_OTO_CORE} c. en amont : {amorce}…"
+        return f"corps non JSON : {amorce}"
+
+    # La liste blanche SÉLECTIONNE : ce qui n'y est pas n'existe plus après cette
+    # ligne, sans qu'aucune branche en dessous ait à s'en souvenir.
+    retenu = {cle: data.get(cle) for cle in _BODY_KEEP}
+
+    bouts: list[str] = []
+    code = retenu["code"]
+    if isinstance(code, str) and 0 < len(code.strip()) <= _MAX_CODE:
+        bouts.append(code.strip())
+    chemin = retenu["path"]
+    if isinstance(chemin, list) and chemin:
+        bouts.append("champ " + ", ".join(str(p)[:60] for p in chemin[:5]))
+    message = retenu["message"]
+    if isinstance(message, str) and message.strip():
+        phrase = " ".join(message.split())
+        if len(phrase) > _MAX_MESSAGE:
+            phrase = phrase[:_MAX_MESSAGE].rstrip() + "… (tronqué)"
+        bouts.append(phrase)
+    return " — ".join(bouts) or "corps d'erreur sans champ exploitable"
+
+
+def _as_upstream(exc: Exception) -> Optional[UpstreamHTTPError]:
+    """`UpstreamHTTPError` équivalente si `exc` est un refus d'Attio, sinon `None`.
+
+    Le statut n'existe QUE dans le texte composé par oto-core : on le relit. Un format
+    qui aurait dérivé ne correspond plus ⟹ `None` ⟹ l'exception d'origine remonte
+    inchangée (jamais pire qu'aujourd'hui), et le banc
+    `test_le_format_compose_par_oto_core_est_celui_qu_on_relit` rougit pour le dire —
+    c'est LUI l'alarme de dérive, pas un silence en prod.
+    """
+    texte = str(exc)
+    if texte.strip() == _RATE_LIMITED:
+        # Sans ce cas, une limite de débit d'Attio se rend « interne, ne réessaie
+        # pas » — l'exact inverse de ce qu'il faut faire.
+        return UpstreamHTTPError(429, "Attio a limité le débit.", service="attio")
+    trouve = _UPSTREAM_RE.match(texte)
+    if trouve is None:
+        return None
+    status, method, endpoint, corps = trouve.groups()
+    return UpstreamHTTPError(
+        int(status),
+        f"{_upstream_body(corps)} (sur {method} /{endpoint})",
+        service="attio",
+    )
+
+
+def _rendre_le_refus_lisible(client):
+    """Pose le re-typage sur l'UNIQUE sortie HTTP du client, et rend le client.
+
+    Toutes les ressources d'`AttioClient` appellent `self.client._request(...)` :
+    envelopper cette méthode sur l'INSTANCE couvre les dix tools et toutes leurs ops
+    d'un seul geste — au lieu d'une cinquantaine de sites d'appel dont un seul oublié
+    se tairait exactement comme aujourd'hui.
+
+    Si oto-core renommait `_request`, on rend le client tel quel : on retombe sur le
+    comportement d'avant ce lot, jamais sur une panne de tous les appels Attio. Le
+    banc, lui, exige que la méthode existe — la dérive est bruyante là où on la lit.
+    """
+    interne = getattr(client, "_request", None)
+    if not callable(interne):
+        return client
+
+    def _request(*args, **kwargs):
+        try:
+            return interne(*args, **kwargs)
+        except Exception as exc:
+            retype = _as_upstream(exc)
+            if retype is None:
+                raise
+            raise retype from exc
+
+    client._request = _request
+    return client
+
+
 def register(mcp: FastMCP) -> None:
     from oto.tools.attio.client import AttioClient
 
     def _client() -> tuple[AttioClient, bool]:
         key, is_platform = access.resolve_api_key("attio")
-        return AttioClient(api_key=key), is_platform
+        # `_rendre_le_refus_lisible` : ce qu'Attio répond en erreur doit atteindre
+        # l'agent, borné (oto#42) — sinon un 400 qui NOMME le champ fautif se rend
+        # « Erreur interne du serveur. ».
+        return _rendre_le_refus_lisible(AttioClient(api_key=key)), is_platform
 
     def _record_if_platform(is_platform: bool) -> None:
         if is_platform:

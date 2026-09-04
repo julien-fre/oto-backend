@@ -102,7 +102,7 @@ def test_l_adaptateur_refuse_un_corps_illisible():
     from pydantic import BaseModel
 
     from oto_mcp.capabilities import _rest_adapter as RA
-    from oto_mcp.capabilities._types import Capability, RawCtx, RestBinding
+    from oto_mcp.capabilities._types import Capability, RawCtx, RestBinding, ResolvedCtx
 
     appels = []
 
@@ -110,7 +110,7 @@ def test_l_adaptateur_refuse_un_corps_illisible():
         label: str = "defaut"
 
     cap = Capability(key="test.echo", Input=_In,
-                     authz=lambda ctx, inp: ctx,
+                     authz=lambda ctx, inp: ResolvedCtx(sub=ctx.sub),
                      handler=lambda ctx, inp: appels.append(inp.label) or {"ok": True},
                      rest=RestBinding(verb="POST", path="/api/test/echo"))
 

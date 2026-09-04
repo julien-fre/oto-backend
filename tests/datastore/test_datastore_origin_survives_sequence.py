@@ -124,3 +124,51 @@ def test_the_write_protection_still_applies_to_a_layered_column(monkeypatch, sto
                         lambda ns_id, row_id: appels.append(row_id))
     s.update_row("t", "r1", {"contact1_nom": {"valeur": "x", "origine": "o"}})
     assert appels == ["r1"], "la garde de bail doit s'appliquer AUSSI sur une couche"
+
+
+# --- #695 : l'origine VIDE ne doit pas laisser de coquille ------------------------
+
+def test_un_null_sur_une_origine_VIDE_ne_laisse_pas_de_coquille(store):
+    """Signal #695, mesuré sur trois lignes remises à zéro : effacer un champ enum par
+    `null` laissait `{"origine": ""}` — une enveloppe SANS valeur, qui n'est plus une
+    valeur d'énumération valide et rend la ligne INVISIBLE au filtrage et aux facettes.
+
+    Les quatre champs touchés étaient exactement ceux qui portaient une couche
+    `origine` ; les champs texte nullés au même appel n'avaient pas ce résidu.
+
+    La cause : `_merge_column` lisait le vide avec `is None`, alors que la pose système
+    écrit `""` quand il n'y avait pas de valeur d'avant. C'est le défaut de #608 un
+    cran plus loin — deux notions de vide qui divergent sur la chaîne vide — et c'est
+    ce que l'alias public `est_vide` existe pour empêcher.
+
+    ⚠️ Par le CHEMIN, pas par `_merge_column` : c'est la leçon de l'en-tête de ce
+    fichier, et elle vaut deux fois ici."""
+    s, db = store
+    s.update_row("t", "r1", {"qualification": {"valeur": "qualifie", "origine": ""}})
+    s.update_row("t", "r1", {"qualification": None})
+    ligne = DatastorePg._row_to_dict(db.rows["r1"])
+    assert ligne.get("qualification") is None
+    assert "qualification.origine" not in ligne, (
+        "la coquille est de retour : la ligne redevient invisible au filtrage")
+    # Et la cellule est bien VIDE en base, pas une enveloppe déguisée.
+    assert db.rows["r1"]["data"].get("qualification") in (None, ""), \
+        db.rows["r1"]["data"].get("qualification")
+
+
+def test_un_null_sur_une_origine_PLEINE_la_preserve(store):
+    """Le versant qu'il ne faut PAS casser en corrigeant l'autre : une origine réelle
+    est le point de départ, parfois l'unique copie de la valeur remise. Elle survit à
+    l'effacement de la valeur — c'est écrit dans `schema.py` (« elle décrit le point de
+    DÉPART, pas la valeur courante, et c'est pourquoi elle est la seule à survivre »).
+
+    Sans ce test, la correction de la coquille aurait pu être écrite comme « on efface
+    tout », ce que le signalement proposait en première option — et qui détruirait une
+    donnée que personne ne peut reconstituer."""
+    s, db = store
+    s.update_row("t", "r1", {"qualification": {"valeur": "qualifie",
+                                               "origine": "brut-source"}})
+    s.update_row("t", "r1", {"qualification": None})
+    ligne = DatastorePg._row_to_dict(db.rows["r1"])
+    assert ligne.get("qualification") is None          # la valeur est bien effacée
+    assert ligne.get("qualification.origine") == "brut-source", \
+        "l'origine réelle a été détruite — c'était peut-être son unique copie"

@@ -123,3 +123,21 @@ def test_funnel_defaults_to_30_days(monkeypatch):
     idx = _mount(monkeypatch)
     asyncio.run(idx[("/api/admin/monitoring/funnel", "GET")](FakeReq()))
     assert seen["active_window_days"] == 30
+
+
+def test_la_lentille_rest_scope_par_compte_depuis_la_query_string(monkeypatch):
+    """#451 : la lentille REST accepte désormais `sub`/`org_id` (elle les jetait).
+    Ces valeurs arrivent en query string, donc en `str` : `org_id` doit atteindre le
+    SQL en `int`, sinon PG compare une chaîne à un bigint et la lecture échoue —
+    un test qui appellerait le handler avec des types propres ne le verrait pas."""
+    from oto_mcp.capabilities import monitoring
+
+    seen = {}
+    monkeypatch.setattr(db, "rest_call_stats", lambda **kw: seen.update(kw) or {})
+    monkeypatch.setattr(monitoring, "_resolve_sub", lambda t: "sub-jane" if t else None)
+    idx = _mount(monkeypatch)
+    asyncio.run(idx[("/api/admin/monitoring/rest", "GET")](
+        FakeReq(query={"days": "30", "org_id": "42", "sub": "jane@example.com"})))
+
+    assert seen["org_id"] == 42 and isinstance(seen["org_id"], int)
+    assert seen["sub"] == "sub-jane"

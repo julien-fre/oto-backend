@@ -34,9 +34,27 @@ sont `READY` sur 196 pour ce sub). Coût réel : trois matinées de faux rapport
 est en panne » (20-22/08/2026).
 
 **Un outil absent de la liste n'est donc PAS un connecteur en panne.** En attendant que
-la toolbox suive l'org épinglée, `connectors.me` NOMME l'écart (`toolbox_scope`, cf.
+la toolbox suive l'org épinglée, l'écart est NOMMÉ (`toolbox_scope`, cf.
 `docs/connector-model.md`) — et seulement quand il y en a un, un champ toujours présent
 devenant du bruit qu'on cesse de lire.
+
+⚠️ **Il l'est à DEUX endroits depuis le 03/09/2026, et le second est celui qui compte.**
+L'aveu ne vivait que sur `connectors.me` — c'est-à-dire là où on ne va que si l'on
+soupçonne déjà quelque chose. Or un agent qui cherche un outil appelle
+`oto_list_my_tools`, et y lisait une liste vide **sans un mot**, avec un hint qui disait
+« aucun outil ne porte ces mots, reformule ». Sur écart de boîte ce texte est faux et
+coûteux : l'outil existe et reste appelable. Deux signalements l'ont payé après le
+correctif de #577 — un passage planifié a conclu qu'une source était injoignable et
+publié un rapport faux (#616), un autre a lu trois bascules de visibilité en dix jours
+là où il n'y avait qu'un handshake monté sur une autre org (#639).
+
+`oto_list_my_tools` porte donc `toolbox_scope`, et son hint de zéro résultat **bascule** :
+sans écart il fait reformuler, avec écart il dit l'inverse — l'outil existe, appelle-le
+par `oto_call` avant de conclure. Le texte est isolé dans `meta.hint_zero_resultat()`
+pour être éprouvé seul, et une sonde tient que la liste consulte bien le seam : sans
+elle, un remaniement le reperdrait en silence et le signal reviendrait une troisième
+fois. **La leçon générale, elle, est dans `docs/conventions.md` : un correctif de cette
+classe doit être posé là où l'agent REGARDE, pas là où le défaut a été compris.**
 
 ## Source de vérité + retrait des presets
 
@@ -49,6 +67,17 @@ Source de vérité = tables PG `user_disabled_tools(sub, tool_name)` (négatif) 
 ## Sélection par membre — régime NOMINAL (ADR 0019/0050)
 
 **Sélection par membre = régime NOMINAL « non-sélectionné = masqué » (ADR 0019/0050).** La toolbox d'un membre = les connecteurs qu'il a **installés** (`user_selected_connectors`, per (sub, org)). Au premier profil d'un (sub, org), `session_visibility` seed le socle `providers.DEFAULT_ACTIVE_CONNECTORS` ∩ exposé — **VIDE depuis le 16/07** (décision produit : un nouveau compte démarre SANS connecteurs installés ; l'agent guide depuis les tools spine — `oto_connector` op=list/select, `oto_call` — et le catalogue injecté au bloc A) ; tout l'exposé = library installable (capacité `connectors.select`, dashboard). Les pairs pré-0050 ont été backfillés une fois avec leur visible d'alors (`connector_selection.backfill_preexisting`, sentinelle `#adr0050-backfill`). Un connecteur activé pour l'org APRÈS le seed arrive dans la library, pas dans la toolbox. Le grain CONNECTEUR `default_hidden` et les flags `OTO_CONNECTOR_SELECTION_*` ont été **retirés** (0050). **Masqués par défaut, grain OUTIL** (`is_default_hidden` = `DEFAULT_HIDDEN_TOOLS` seul : `email_send`, `fr_egapro_declaration`) : self-activables. Règle effective (`is_tool_visible`) : override positif prime > désactivé > masqué par un admin (denylist org/équipe ci-dessus) > masqué-par-défaut plateforme > visible. `oto_enable_tool` pose l'override, `oto_disable_tool` le lève (même logique côté REST `/api/me/tools/{name}`). **Stdio local (sub=None) = accès complet**, le masquage ne vise que le multi-user. Sortir un connecteur du départ = ne PAS le mettre dans le socle `default_active` ; un tool isolé = `DEFAULT_HIDDEN_TOOLS`.
+
+> **Un `unselect` qui ne retire rien REFUSE (oto#42, oto-backend#868, 04/09).**
+> `connectors.unselect` répondait `ok` avec `removed: false` sur un `DELETE` qui n'avait
+> touché aucune ligne — un succès qui n'a rien fait, pire qu'un refus (même patron que
+> l'unlink de projet, `d3c5de40`). Il refuse désormais nommément (`connector_not_selected`,
+> 404) ; `removed` vaut toujours `True` sur un succès. La cause régulièrement en jeu n'est
+> pas propre à ce verbe : `select`/`pause`/`unselect` lisent et écrivent tous sous
+> `ctx.org_id or 0`, l'org **active au moment de l'appel** — un membre dont la sélection a
+> été posée sous une autre org (legacy `org_id=0` d'avant la suppression du « perso sans
+> org », ADR 0030 §8 ; ou une org active qui a changé depuis) ne verra ni ne pourra jamais
+> toucher cette ligne-là par ce chemin, quel que soit le nombre de tentatives.
 
 ## Surfaces BÊTA : une population CHOISIE, pas une découvrabilité (2026-09-01)
 

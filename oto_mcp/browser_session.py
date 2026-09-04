@@ -14,23 +14,43 @@ de logique (derive-don't-duplicate) :
 `start()` est générique (aucune donnée par connecteur). Seule la **vérification du login**
 diffère (cookie attendu vs sonde d'API) → chaque connecteur enregistre son `verify`.
 Le substrat Browserbase lui-même vit dans `browserbase.py` (seam à sens unique, ADR 0004).
+
+⚠️ **Ce flux est piloté par des AGENTS, pas par des humains qui liront les logs.** Un
+agent n'a que le retour ; ce qui n'y est pas dit n'existe pas pour lui, et il comble par
+la supposition la plus courante — « session expirée », donc « je recommence ». Trois
+règles en découlent, portées par `Verdict` / `FinalizeResult` et à tenir dans TOUT
+connecteur à session : (1) un refus dit son MOTIF (`reason`), jamais un booléen nu ;
+(2) une panne de notre côté dit `retry=False` — recommencer ne peut pas aboutir ;
+(3) une session capturée mais non vérifiable est persistée et ANNONCÉE (`warning`),
+jamais présentée comme un échec de connexion. Vécu le 2026-09-03 : six reconnexions
+d'affilée sur une session valide, une matinée perdue chez une cliente.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, NamedTuple
 
 from . import browserbase, db
 
 logger = logging.getLogger(__name__)
 
-# verify(session_id) -> bool : True si la session est bel et bien loguée (vérifié sur
-# la session VIVANTE, jamais sur un export de cookie — cf. leçons ADR 0026).
+# verify(session_id) -> Verdict : la session est-elle loguée, et SINON POURQUOI (vérifié
+# sur la session VIVANTE, jamais sur un export de cookie — cf. leçons ADR 0026). Un
+# verify qui ne peut pas TRANCHER lève `ProbeUnavailable` — il ne rend pas « pas logué ».
 # Variante account-aware (connecteur générique) : verify(session_id, account) — le
 # site à vérifier vient de l'appel, cf. `register(..., account_aware=True)`.
-Verify = Callable[..., Awaitable[bool]]
+Verify = Callable[..., Awaitable["Verdict"]]
+
+# Motifs de refus, stables — c'est le CODE que lit l'agent appelant, le texte n'étant
+# qu'une glose. Trois causes, trois conduites : finir de se loguer dans la fenêtre /
+# recommencer le login parce qu'il a été rejeté / ne PAS recommencer, ça vient de nous.
+LOGGED_IN = "logged_in"
+NO_SESSION = "no_session"              # rien ne prouve un login : l'humain n'a pas fini
+AUTH_REJECTED = "auth_rejected"        # 401/403, page de login : identifiants refusés
+PROBE_UNAVAILABLE = "probe_unavailable"  # la SONDE est en panne, pas l'utilisateur
+FORCED = "forced"                      # persisté sans vérification, à la demande
 
 _REGISTRY: dict[str, Verify] = {}
 
@@ -56,6 +76,52 @@ class SessionError(RuntimeError):
     """Erreur actionnable du flux de connexion (Browserbase indispo, vérif KO…).
     Son message est rendu au client → ne JAMAIS y interpoler une exception brute
     (peut contenir l'URL CDP avec `?apiKey=…`) : logguer le détail, message propre."""
+
+
+class ProbeUnavailable(RuntimeError):
+    """La sonde de login n'a rendu AUCUN verdict — endpoint sondé disparu (404),
+    réponse d'une forme inattendue. Ce n'est pas « pas logué », c'est « je ne sais pas ».
+
+    ⚠️ Les confondre casse TOUT le connecteur. Le 2026-09-03 : la sonde de
+    `pennylaneged` tapait la route MÉTIER `/crm/flow_companies` ; Pennylane l'a
+    déplacée sous `/portfolio/`, elle a répondu 404, `verify` a rendu False et
+    `finalize` est sorti AVANT `_persist()` — plus aucune cliente ne pouvait connecter
+    sa GED, et le message accusait l'authentification (une matinée perdue).
+
+    Une sonde muette ne doit donc pas rendre un connecteur inconnectable. Mais elle ne
+    doit pas non plus passer inaperçue : `finalize` persiste ET rend l'anomalie à
+    l'appelant dans `FinalizeResult.warning`, en la logguant en ERROR. On ne masque
+    rien — on distingue, et on le dit."""
+
+
+class Verdict(NamedTuple):
+    """Ce que rend une sonde de login — pas un booléen nu.
+
+    ⚠️ **Un connecteur parle à des AGENTS.** Un `False` sans motif ne leur laisse
+    qu'une conduite : recommencer. Le 2026-09-03 une cliente a ainsi relancé six fois
+    la connexion de sa GED sur une session qui était valide depuis le début. Les trois
+    causes d'un refus appellent trois conduites OPPOSÉES — finir de se loguer dans la
+    fenêtre, refaire un login rejeté, ou surtout ne PAS recommencer — donc elles se
+    distinguent ici, dans le retour, ou elles ne se distinguent nulle part.
+
+    `retry=False` veut dire : inutile de repasser par la Live View, le problème n'est
+    pas chez l'utilisateur."""
+    connected: bool
+    reason: str
+    detail: str = ""
+    retry: bool = True
+
+
+class FinalizeResult(NamedTuple):
+    """Issue de `finalize`. `connected=False` = rien n'a été écrit, et `reason`/`detail`
+    disent POURQUOI (cf. `Verdict`). `warning` non vide = persisté SANS confirmation du
+    login, la sonde étant hors service (cf. `ProbeUnavailable`) — à répercuter, pas à
+    avaler : la session est probablement bonne, mais rien ne l'atteste."""
+    connected: bool
+    reason: str = LOGGED_IN
+    detail: str = ""
+    retry: bool = True
+    warning: str = ""
 
 
 def _prune(now: float) -> None:
@@ -145,41 +211,62 @@ def _persist(sub: str, connector: str, context_id: str, session_id: str,
 
 async def finalize(sub: str, connector: str, context_id: str, session_id: str,
                    *, scope: str = "member", group_id: "int | None" = None,
-                   account: str = "", force: bool = False) -> bool:
+                   account: str = "", force: bool = False) -> FinalizeResult:
     """Vérifie le login sur la session vivante ; si OK, persiste le Context (= credential)
-    au niveau demandé (`scope` ∈ member|org|group) et renvoie True. False = pas encore
-    logué (l'appelant invite à réessayer). ⚠️ Le contrôle des DROITS de pose à un niveau
-    partagé (org_admin / group_admin) incombe à l'appelant (route REST / tool).
+    au niveau demandé (`scope` ∈ member|org|group). Rend un `FinalizeResult` :
+    `connected=False` = pas encore logué (l'appelant invite à réessayer, rien n'est
+    écrit) ; `warning` non vide = persisté SANS confirmation du login, parce que la
+    sonde elle-même est hors service (`ProbeUnavailable`). ⚠️ Le contrôle des DROITS de
+    pose à un niveau partagé (org_admin / group_admin) incombe à l'appelant (route REST
+    / tool).
 
     `account` = compte du coffre visé (connecteur générique : le site). `force=True`
-    persiste SANS passer par `verify` : échappatoire des sites dont le login ne laisse
-    aucune trace lisible génériquement (état en localStorage plutôt qu'en cookie) — le
-    verify générique y répondrait « pas logué » à tort et rendrait le site inconnectable.
-    Réservé aux connecteurs account-aware (sur un connecteur à site unique le verify est
-    une vraie sonde d'API : la contourner n'aurait aucune justification)."""
+    persiste SANS passer par `verify` : l'échappatoire quand la sonde répond « pas
+    logué » à tort — site dont le login vit en localStorage plutôt qu'en cookie, ou
+    sonde d'API cassée.
+
+    ⚠️ Cette échappatoire était RÉSERVÉE aux connecteurs account-aware, au motif que
+    « sur un connecteur à site unique le verify est une vraie sonde d'API : la
+    contourner n'aurait aucune justification ». Le 2026-09-03 a réfuté le motif : une
+    vraie sonde d'API casse aussi (Pennylane a déplacé la route sondée), et il n'existait
+    alors AUCUN moyen de débloquer une cliente. Elle est donc ouverte à tous les
+    connecteurs à session. Le risque qu'elle couvrait demeure et il est assumé :
+    persister un Context non logué pose au coffre un credential MORT, dont l'agent se
+    croira pourvu — il ne l'apprendra qu'au premier appel métier (401 → « session
+    expirée »). C'est récupérable, et c'est un geste explicite ; l'inverse — un client
+    inconnectable sans recours — ne l'était pas."""
     verify = _REGISTRY.get(connector)
     if verify is None:
         raise SessionError(f"{connector} n'est pas un connecteur à session navigateur.")
     if scope not in ("member", "org", "group"):
         raise SessionError(f"scope inconnu : {scope!r}")
-    if force and connector not in _ACCOUNT_AWARE:
-        raise SessionError("`force` n'est pas recevable pour ce connecteur.")
     # La session DOIT avoir été émise par `start()` pour CE sub (anti-IDOR) : on ne
     # persiste jamais un Context tiers passé à la main.
     key = (sub, context_id, session_id)
     if _PENDING.get(key, 0.0) < time.monotonic():
         _PENDING.pop(key, None)
         raise SessionError("session de connexion inconnue ou expirée — relance « Connecter ».")
+    verdict = Verdict(True, FORCED, "Session persistée SANS vérification du login "
+                      "(`force`) : si les appels échouent, c'est qu'elle n'était pas "
+                      "loguée.", retry=False)
+    warning = "" if not force else verdict.detail
     if not force:
         try:
-            ok = (await verify(session_id, account) if connector in _ACCOUNT_AWARE
-                  else await verify(session_id))
+            verdict = (await verify(session_id, account) if connector in _ACCOUNT_AWARE
+                       else await verify(session_id))
+        except ProbeUnavailable as e:
+            # La sonde est aveugle — pas l'utilisateur délogué. Bloquer ici rendrait le
+            # connecteur inconnectable pour tout le monde (2026-09-03). On persiste, et
+            # on remonte l'anomalie au lieu de la taire.
+            logger.error("session verify inconclusive for %s: %s", connector, e)
+            verdict = Verdict(True, PROBE_UNAVAILABLE, str(e), retry=False)
+            warning = str(e)
         except Exception:  # noqa: BLE001 — détail loggué, jamais renvoyé (peut porter l'apiKey)
             logger.exception("session verify failed for %s", connector)
             raise SessionError("vérification de la session impossible — réessaie.")
-        if not ok:
-            return False
+        if not verdict.connected:
+            return FinalizeResult(False, verdict.reason, verdict.detail, verdict.retry)
     await asyncio.to_thread(_persist, sub, connector, context_id, session_id, scope,
                             group_id, account)
     _PENDING.pop(key, None)
-    return True
+    return FinalizeResult(True, verdict.reason, verdict.detail, verdict.retry, warning)

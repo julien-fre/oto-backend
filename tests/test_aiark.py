@@ -8,6 +8,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from oto_mcp import providers
 from oto_mcp.tool_visibility import namespace_of
@@ -185,6 +186,41 @@ def test_dead_filter_title_is_refused():
             account=None, contact={"title": {"any": {"include": ["cmo"]}}})
 
 
+def test_dead_filter_department_is_refused():
+    """Signal #694 (03/09) : `contact.department` est accepté et silencieusement
+    ignoré, alors que la description l'annonçait comme supporté.
+
+    Différentiel strict, deux domaines : grasset.fr seul → 63 enregistrements ;
+    + `department: ["human_resources"]` → 63, LES MÊMES dans le MÊME ordre, dont
+    aucun RH. Le piège est plus fin que pour `title` : `department.departments` EST
+    présent sur chaque enregistrement rendu, donc on voit la donnée et on croit
+    pouvoir la filtrer. Coût mesuré : 63 enregistrements facturés pour en garder
+    zéro ou un."""
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import aiark
+
+    with pytest.raises(McpError) as e:
+        aiark._reject_dead_filters(
+            account=None,
+            contact={"department": {"any": {"include": ["human_resources"]}}})
+    # Le refus NOMME le remplaçant, comme ses trois jumeaux — sinon il déplace le
+    # problème au lieu de le résoudre.
+    assert "CÔTÉ CLIENT" in str(e.value) or "côté client" in str(e.value).lower()
+
+
+def test_la_description_n_annonce_plus_department_comme_supporte():
+    """Le silence n'était que la moitié du défaut : la description citait
+    explicitement `department` parmi les champs supportés. Un refus posé sans
+    corriger le texte laisserait l'agent tenter puis se faire refuser — le contrat
+    doit cesser de le promettre."""
+    import inspect
+    from oto_mcp.tools import aiark
+
+    src = inspect.getsource(aiark)
+    assert "Supports seniority,\n                location, department" not in src
+    assert "`title` and `department` are REFUSED" in src
+
+
 def test_live_filters_pass_through():
     """La garde ne mord QUE sur les clés mortes : `domain` et `seniority` passent."""
     from oto_mcp.tools import aiark
@@ -192,3 +228,145 @@ def test_live_filters_pass_through():
     aiark._reject_dead_filters(
         account={"domain": {"any": {"include": ["finecobank.com"]}}},
         contact={"seniority": {"any": {"include": ["c_suite"]}}})
+
+
+# --- échec de TRANSPORT : ni un refus, ni une absence (signal #675) ------------
+# 2026-09-03, org 196 : l'endpoint EXPORT rend des « Read timed out. (read
+# timeout=30) » par rafales — 7 fois sur 4 URLs de profil — pendant que la RECHERCHE
+# répond normalement dans les mêmes minutes ; rejouer l'appel IDENTIQUE finit par
+# passer. Le coût n'est pas l'échec, c'est sa LECTURE : une procédure qui prend un
+# export raté pour un miss écrit `email_status=not_found` sur quelqu'un que personne
+# n'a résolu.
+
+_TIMEOUT_REEL = ("HTTPSConnectionPool(host='api.ai-ark.com', port=443): "
+                 "Read timed out. (read timeout=30)")
+
+
+def _appeler_outil(nom, args, *, http):
+    """Appelle l'outil TEL QU'IL EST SERVI (registre réel, chaîne complète
+    tool → client oto-core → `requests`), la seule couche substituée étant le
+    `requests.request` d'oto-core.
+
+    Rend `(structured, exception, mock_http, mock_pause)` — les deux mocks sont
+    rendus pour qu'un banc VÉRIFIE sa substitution avant de lire son résultat : un
+    patch qui rate ne rougit pas, il verdit.
+    """
+    from fastmcp import FastMCP
+    from oto_mcp import access
+    from oto_mcp.tools import aiark
+
+    async def go():
+        m = FastMCP("t")
+        aiark.register(m)
+        outil = next(t for t in await m._list_tools() if t.name == nom)
+        with patch("oto.tools.aiark.client.requests.request", side_effect=http) as req, \
+             patch("oto_mcp.tools.aiark.time.sleep") as pause, \
+             patch.object(access, "resolve_api_key", return_value=("k", False)):
+            try:
+                res = await outil.run(args)
+                return res.structured_content, None, req, pause
+            except Exception as e:                      # noqa: BLE001 — c'est l'objet du banc
+                return None, e, req, pause
+
+    return asyncio.run(go())
+
+
+def test_le_timeout_de_transport_est_repris_puis_rendu_RETRYABLE():
+    """Le verdict servi à l'agent, mesuré sur la chaîne réelle.
+
+    Avant correction : UNE tentative, puis l'échec emballé en
+    `McpError(INVALID_PARAMS)` — que `error_taxonomy.classify` sert
+    `code="invalid_input"`, `retryable=false`, c'est-à-dire « corrige ton appel, ne
+    réessaie pas », sur un appel qu'AI Ark n'a jamais lu. Le MÊME timeout non emballé
+    est classé `upstream_timeout` / `retryable=true` : notre traduction inversait le
+    verdict que la plateforme sait déjà rendre.
+    """
+    from oto_mcp import error_taxonomy
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import aiark
+
+    structured, exc, req, pause = _appeler_outil(
+        "linkedin_aiark_person",
+        {"op": "export", "url": "https://www.linkedin.com/in/une-personne/"},
+        http=requests.exceptions.ReadTimeout(_TIMEOUT_REEL))
+
+    # ① la substitution a bien eu lieu, et la reprise est BORNÉE — sans cette
+    #    première assertion, tout ce qui suit peut être du vert obtenu sans rien
+    #    exercer (patch mal ciblé = zéro appel = zéro reprise = zéro preuve).
+    assert req.call_count == aiark._TRANSPORT_TENTATIVES == 2, (
+        f"substitution non exercée ou reprise non bornée : {req.call_count} appel(s)")
+    assert pause.call_count == 1, "une pause entre les deux tentatives, pas plus"
+
+    # ② l'échec ne se déguise pas en absence
+    assert structured is None and exc is not None
+    assert not isinstance(exc, McpError), (
+        "emballer le timeout en McpError le rend `retryable: false` — "
+        "`classify` traite toute McpError en premier et n'en rend jamais une retryable")
+
+    # ③ ce que l'agent reçoit
+    info = error_taxonomy.classify(exc)
+    assert info.code == "upstream_timeout"
+    assert info.retryable is True
+
+
+def test_la_reprise_rend_le_profil_quand_la_seconde_tentative_passe():
+    """« Rejouer l'appel identique finit par passer » : la reprise doit RÉUSSIR, pas
+    seulement mieux échouer. Sans elle, l'agent paie un aller-retour pour ce que le
+    handler peut absorber."""
+    profil = {"id": "p1", "email": {"output": [{"address": "a@b.co", "status": "valid"}]}}
+    structured, exc, req, pause = _appeler_outil(
+        "linkedin_aiark_person", {"op": "export", "id": "p1"},
+        http=[requests.exceptions.ReadTimeout(_TIMEOUT_REEL), _resp(200, profil)])
+
+    assert req.call_count == 2, "substitution non exercée"
+    assert pause.call_count == 1
+    assert exc is None
+    assert structured == {"found": True, **profil}
+
+
+def test_une_absence_ne_se_rejoue_pas_et_reste_une_absence():
+    """404 = AI Ark a RÉPONDU « je ne connais pas » : un résultat, pas un échec. La
+    reprise ne mord que sur le transport — la rejouer facturerait deux fois la même
+    absence, et le contrat `{"found": false}` doit survivre au changement."""
+    structured, exc, req, pause = _appeler_outil(
+        "linkedin_aiark_person", {"op": "export", "url": "https://x.test/in/y"},
+        http=[_resp(404)])
+
+    assert req.call_count == 1, "substitution non exercée, ou 404 rejoué"
+    assert pause.call_count == 0
+    assert exc is None
+    assert structured == {"found": False}
+
+
+def test_une_reponse_d_erreur_reste_emballee_et_actionnable():
+    """Un 5xx est une RÉPONSE : AI Ark a lu l'appel. Il garde son message curé (et
+    son `retryable: false`), la reprise transport ne doit pas le rejouer — sinon on
+    facture deux fois un refus, et le message qui nomme la cause disparaît."""
+    from oto_mcp.mcp_errors import McpError
+
+    structured, exc, req, pause = _appeler_outil(
+        "linkedin_aiark_person", {"op": "export", "id": "p1"}, http=[_resp(500)])
+
+    assert req.call_count == 1, "substitution non exercée, ou 5xx rejoué"
+    assert pause.call_count == 0
+    assert isinstance(exc, McpError)
+    assert "erreur serveur (500)" in str(exc.error.message)
+
+
+def test_la_description_servie_dit_qu_un_echec_n_est_pas_une_absence():
+    """Le message servi sur ce chemin est GÉNÉRIQUE (« Délai d'attente dépassé. ») :
+    la taxonomie n'écho pas le nôtre quand elle rend un verdict retryable. Ce que le
+    message ne peut pas porter, la description doit le dire — elle, l'agent la relit
+    à chaque appel."""
+    from fastmcp import FastMCP
+    from oto_mcp.tools import aiark
+
+    async def go():
+        m = FastMCP("t")
+        aiark.register(m)
+        return {t.name: (t.description or "") for t in await m._list_tools()}
+
+    d = asyncio.run(go())["linkedin_aiark_person"]
+    assert "never record a not-found" in d      # l'instruction, mot pour mot
+    assert "retryable: true" in d               # le verdict machine, nommé
+    assert "bill a second credit" in d          # le coût de la reprise, assumé

@@ -1,6 +1,8 @@
 """#55 — sélecteur d'identité avec comptes ACCORDÉS : la liste inclut les comptes
 partagés (label owner), le select d'un compte accordé pose le POINTEUR sans toucher
 la ligne de connexion du grantee, le retour-à-soi efface le pointeur."""
+import asyncio
+
 import pytest
 
 from oto_mcp import access
@@ -32,7 +34,7 @@ def test_list_platform_mode_includes_granted_with_owner_label(monkeypatch):
     _wire_platform(monkeypatch, grants=[_GRANT],
                    own=[{"provider": "LINKEDIN", "account_id": "MY_ACC",
                          "account_name": "Moi", "org_id": 3, "connected_at": "x"}])
-    ids = connector_identities.list_identities("grantee", "unipile")
+    ids = asyncio.run(connector_identities.list_identities("grantee", "unipile"))
     by_id = {i["id"]: i for i in ids}
     # Comptes propres listés (retour-à-soi possible) + compte accordé annoté.
     assert set(by_id) == {"MY_ACC", "OWNER_ACC"}
@@ -47,7 +49,7 @@ def test_list_group_grant_shows_team_label_and_via_group(monkeypatch):
     pas ce nom reconnaît quand même « l'équipe Croissance »."""
     grant = {**_GRANT, "via_group_id": 42, "via_group_name": "Croissance"}
     _wire_platform(monkeypatch, grants=[grant])
-    ids = connector_identities.list_identities("grantee", "unipile")
+    ids = asyncio.run(connector_identities.list_identities("grantee", "unipile"))
     g = {i["id"]: i for i in ids}["OWNER_ACC"]
     assert g["via_group"] == {"id": 42, "name": "Croissance"}
     # "Anna K" (le nom du COMPTE) reste affiché — c'est "compte de {owner}" qui
@@ -58,7 +60,7 @@ def test_list_group_grant_shows_team_label_and_via_group(monkeypatch):
 
 def test_list_nominative_grant_has_no_via_group(monkeypatch):
     _wire_platform(monkeypatch, grants=[_GRANT])
-    ids = connector_identities.list_identities("grantee", "unipile")
+    ids = asyncio.run(connector_identities.list_identities("grantee", "unipile"))
     g = {i["id"]: i for i in ids}["OWNER_ACC"]
     assert g["via_group"] is None
     assert "Anna" in g["label"]
@@ -71,7 +73,7 @@ def test_list_platform_mode_shows_own_account_without_grants(monkeypatch):
     _wire_platform(monkeypatch, grants=[],
                    own=[{"provider": "LINKEDIN", "account_id": "MY_ACC",
                          "account_name": "Moi", "org_id": 3, "connected_at": "x"}])
-    ids = connector_identities.list_identities("grantee", "unipile")
+    ids = asyncio.run(connector_identities.list_identities("grantee", "unipile"))
     assert [i["id"] for i in ids] == ["MY_ACC"]
     assert ids[0].get("granted") is None  # compte propre, pas un compte accordé
 
@@ -79,13 +81,13 @@ def test_list_platform_mode_shows_own_account_without_grants(monkeypatch):
 def test_list_platform_mode_truly_empty_without_accounts(monkeypatch):
     # Ni grant ni compte connecté → liste vide (rien à montrer, hosted-auth).
     _wire_platform(monkeypatch, grants=[], own=[])
-    assert connector_identities.list_identities("grantee", "unipile") == []
+    assert asyncio.run(connector_identities.list_identities("grantee", "unipile")) == []
 
 
 def test_list_skips_inactive_grants(monkeypatch):
     # Owner déconnecté → grant inerte, absent de la liste.
     _wire_platform(monkeypatch, grants=[{**_GRANT, "active": False, "account_id": None}])
-    assert connector_identities.list_identities("grantee", "unipile") == []
+    assert asyncio.run(connector_identities.list_identities("grantee", "unipile")) == []
 
 
 def test_select_granted_sets_pointer_not_unipile_accounts(monkeypatch):
@@ -98,7 +100,7 @@ def test_select_granted_sets_pointer_not_unipile_accounts(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.set_operated_account",
                         lambda sub, prov, aid, owner: pointer.update(
                             sub=sub, prov=prov, aid=aid, owner=owner))
-    res = connector_identities.select_identity("grantee", "unipile", "OWNER_ACC")
+    res = asyncio.run(connector_identities.select_identity("grantee", "unipile", "OWNER_ACC"))
     assert res["granted"] is True and res["channel"] == "LINKEDIN"
     assert pointer == {"sub": "grantee", "prov": "LINKEDIN",
                        "aid": "OWNER_ACC", "owner": "owner"}
@@ -111,7 +113,7 @@ def test_select_own_account_clears_pointer(monkeypatch):
     cleared = {}
     monkeypatch.setattr("oto_mcp.db.clear_operated_account",
                         lambda sub, prov: cleared.update(sub=sub, prov=prov))
-    res = connector_identities.select_identity("grantee", "unipile", "MY_ACC")
+    res = asyncio.run(connector_identities.select_identity("grantee", "unipile", "MY_ACC"))
     assert res["is_default"] and "granted" not in res
     assert cleared == {"sub": "grantee", "prov": "LINKEDIN"}
 
@@ -120,7 +122,7 @@ def test_select_unknown_id_rejected(monkeypatch):
     # Ni accordé, ni propre, ni sur une clé BYO (revente) → refus net (anti-binding).
     _wire_platform(monkeypatch, grants=[_GRANT])
     with pytest.raises(ValueError):
-        connector_identities.select_identity("grantee", "unipile", "GHOST")
+        asyncio.run(connector_identities.select_identity("grantee", "unipile", "GHOST"))
 
 
 def test_resolver_pointer_valid_returns_granted_account(monkeypatch):

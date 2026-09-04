@@ -13,9 +13,14 @@ def _wire(monkeypatch, *, src):
     created = {"projects": [], "docs": [], "links": [], "files": [], "activity": []}
     counter = {"pid": 100, "doc": 200}
 
-    def create_project(ot, oid, name, brief_md="", created_by=None, copied_from=None):
+    def create_project(ot, oid, name, brief_md="", created_by=None, copied_from=None,
+                       context_org_id=None):
+        # `context_org_id` (ADR 0068) : une copie PERSONNELLE est rangée dans l'org où
+        # l'on travaille sans y être partagée. Le stub le RETIENT plutôt que de
+        # l'avaler — un seam qui accepte tout et ne garde rien ne prouve plus rien.
         counter["pid"] += 1
-        created["projects"].append((counter["pid"], ot, oid, name, brief_md, created_by, copied_from))
+        created["projects"].append((counter["pid"], ot, oid, name, brief_md, created_by,
+                                    copied_from, context_org_id))
         return counter["pid"]
 
     def create_doc(pid, title, *, parent_id=None, body_md="", kind="doc", created_by=None):
@@ -71,8 +76,26 @@ def test_duplicate_copies_brief_and_owner(monkeypatch):
     created = _wire(monkeypatch, src=src)
     new_id, warnings = PJ.duplicate_project(7, "Copie", "org", "42", copied_by="u1")
     assert new_id == 101 and warnings == []
-    assert created["projects"] == [(101, "org", "42", "Copie", "le brief", "u1", None)]
+    # Le dernier None = `context_org_id` : NULL pour une copie d'ORG, dont le contexte
+    # se dérive de son propriétaire (ADR 0030 amendé).
+    assert created["projects"] == [(101, "org", "42", "Copie", "le brief", "u1", None, None)]
     assert created["activity"] == [(101, "project.copy", "from #7")]
+
+
+def test_une_copie_PERSONNELLE_garde_son_org_de_contexte(monkeypatch):
+    """ADR 0068 : `op=copy` rendait la copie possédée par l'ORG active, même en
+    dupliquant un projet perso — son propre travail se publiait aux collègues sans
+    qu'aucun paramètre ne l'ait demandé.
+
+    La copie perso doit néanmoins rester RANGÉE quelque part : `context_org_id` dit où
+    elle apparaît, pas qui la voit. Sans lui, elle serait invisible dans l'org où on
+    travaille — et on aurait remplacé un excès de partage par une disparition."""
+    src = {"project": {"id": 7, "brief_md": "b"}, "docs": [], "links": [], "files": []}
+    created = _wire(monkeypatch, src=src)
+    PJ.duplicate_project(7, "La mienne", "user", "u1", copied_by="u1", context_org_id=35)
+    (_pid, ot, oid, _n, _b, _by, _cf, ctx_org) = created["projects"][0]
+    assert (ot, oid) == ("user", "u1"), "la copie appartient à la personne"
+    assert ctx_org == 35, "et reste rangée dans l'org où elle a été faite"
 
 
 def test_duplicate_remaps_doc_tree(monkeypatch):

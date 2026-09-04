@@ -8,6 +8,13 @@ mêmes chemins, mêmes codes, même corps sur le fil :
 - `DELETE /api/{atlassian,folkmcp,google}/oauth`        → révoque
 - `POST   /api/google/oauth/default`                    → élit le compte Google par défaut
 
+⚠️ **`.start` candidate au retrait (oto-dashboard#125) — PAS encore fait.** Le dashboard
+oto démarre désormais ces trois flux par le chemin fixe générique
+(`POST /api/me/connectors/{name}/connect`, commit dashboard `433d563`), mais ce sont des
+routes REST PUBLIQUES : un front tiers (Tulina) peut les appeler directement sans que ce
+dépôt le voie. Retrait gelé tant que l'usage réel sur 30 j, toutes origines, n'est pas
+mesuré à zéro — cf. oto-dashboard#125 pour l'état de la mesure.
+
 ⚠️ **Les CALLBACKS ne migrent pas** (`…/oauth/callback`, un par fournisseur) : le
 fournisseur y redirige le NAVIGATEUR, sans en-tête d'auth, et la réponse est une **302**,
 pas du JSON. L'adaptateur REST authentifie toujours et répond toujours en JSON : ils sont

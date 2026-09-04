@@ -113,6 +113,46 @@ def test_le_flag_de_cle_ouverte_ne_se_recopie_pas_sur_les_canaux():
 
 # --- 3. ce qui devient PROPRE à chaque canal ----------------------------------
 
+# Population DÉRIVÉE du registre — pas la constante `CANAUX` écrite à la main juste
+# au-dessus. Un septième canal câblé demain sur `unipile.channel` entre ici tout seul ;
+# ajouté à une liste en dur, il y serait entré le jour où quelqu'un y pense. C'est
+# exactement l'angle mort qui a laissé un connecteur fédéré sans éditeur pendant un
+# mois : le contrôle existait, il ne regardait pas la famille où le défaut vivait.
+_CANAUX_DERIVES = tuple(sorted(
+    n for n, c in providers.REGISTRY.items() if c.credential_of == "unipile"))
+
+
+def test_la_population_derivee_est_bien_celle_des_canaux():
+    """Sans ça, le paramétrage ci-dessous serait vrai par vacuité — et un dérivé vide
+    ferait passer un contrôle qui ne juge personne pour un contrôle satisfait."""
+    assert _CANAUX_DERIVES, "aucun canal dérivé : le contrôle ne juge rien"
+    assert _CANAUX_DERIVES == tuple(sorted(CANAUX)), (
+        f"dérivé {_CANAUX_DERIVES} ≠ liste écrite {tuple(sorted(CANAUX))} — l'une des "
+        "deux ment ; c'est le registre qui a raison.")
+
+
+@pytest.mark.parametrize("canal", _CANAUX_DERIVES)
+def test_chaque_canal_dit_quun_intermediaire_recoit_lappel(canal):
+    """L'aide NOMME le fournisseur — l'éditeur ne suffit pas à le dire.
+
+    Une carte de canal porte la marque du réseau (libellé, logo, `href`), et c'est
+    voulu : ce qu'on connecte, c'est bien son compte. Mais l'appel, lui, part chez
+    Unipile, qui détient la session — et **le bloc catalogue injecté au handshake ne
+    sert que `« label : help »`**, jamais l'éditeur. Une fiche dont seul le champ
+    éditeur nommerait l'intermédiaire le tairait donc là où l'agent la lit, et à la
+    personne qui décide d'installer.
+
+    Les six ont reçu la clause le 2026-09-02, la même pour toutes. Ce cliquet ferme la
+    CLASSE et pas les six cas : un septième canal câblé sur `unipile.channel` rougit
+    ici tant que son aide ne nomme personne."""
+    aide = providers.REGISTRY[canal].help
+    assert "Unipile" in aide, (
+        f"l'aide de `{canal}` ne nomme pas l'intermédiaire : « {aide} ». Un canal "
+        "hébergé envoie et lit des messages PAR Unipile, qui détient la session — "
+        "l'aide doit le dire, en une clause, comme les cinq autres. Cf. "
+        "`docs/connector-vault.md` §« Ce que la fiche DIT ».")
+
+
 @pytest.mark.parametrize("canal", CANAUX)
 def test_chaque_canal_a_son_namespace_et_son_flux(canal):
     """Un namespace par canal = un gate par canal (activation, ACL, sélection,

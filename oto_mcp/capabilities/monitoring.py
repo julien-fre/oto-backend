@@ -42,8 +42,19 @@ class SummaryInput(BaseModel):
     sub: Optional[str] = None      # restreindre à UN appelant (email ou sub)
 
 
-class WindowInput(BaseModel):
+class RestInput(BaseModel):
     days: int = 7
+    org_id: Optional[int] = None   # org de CONSULTATION revendiquée (best-effort, #451)
+    sub: Optional[str] = None      # restreindre à UN appelant (email ou sub)
+    # Une route (préfixe) — compte EXACT, jamais tronqué par le `LIMIT 100` de
+    # `by_route` (oto-dashboard#125 : mesurer une route à faible volume, invisible
+    # dans le top-100 sans que rien ne le dise).
+    route: Optional[str] = None
+
+
+class ConnectorsInput(BaseModel):
+    days: int = 7
+    org_id: Optional[int] = None   # les échecs subis SOUS cette org
 
 
 class FunnelInput(BaseModel):
@@ -77,12 +88,13 @@ def _summary(ctx: ResolvedCtx, inp: SummaryInput) -> dict:
                               sub=_resolve_sub(inp.sub))
 
 
-def _rest_stats(ctx: ResolvedCtx, inp: WindowInput) -> dict:
-    return db.rest_call_stats(since_days=inp.days)
+def _rest_stats(ctx: ResolvedCtx, inp: RestInput) -> dict:
+    return db.rest_call_stats(since_days=inp.days, org_id=inp.org_id,
+                              sub=_resolve_sub(inp.sub), route=inp.route)
 
 
-def _connector_stats(ctx: ResolvedCtx, inp: WindowInput) -> dict:
-    return db.connector_failure_stats(since_days=inp.days)
+def _connector_stats(ctx: ResolvedCtx, inp: ConnectorsInput) -> dict:
+    return db.connector_failure_stats(since_days=inp.days, org_id=inp.org_id)
 
 
 def _funnel(ctx: ResolvedCtx, inp: FunnelInput) -> dict:
@@ -167,10 +179,11 @@ class MonitoringInput(BaseModel):
                 "runs", "run", "gaps", "tool_quality"]
     days: Optional[int] = None            # fenêtre (défaut : 7 ; funnel/gaps/tool_quality : 30)
     limit: Optional[int] = None           # calls (défaut 200) / runs (défaut 100)
-    sub: Optional[str] = None             # summary/calls : filtre appelant (email ou sub)
+    sub: Optional[str] = None             # summary/rest/calls : appelant (email ou sub)
     tool: Optional[str] = None            # calls : filtre outil exact
     errors: bool = False                  # calls : erreurs seulement
-    org_id: Optional[int] = None          # summary/calls : scope un workspace
+    org_id: Optional[int] = None          # summary/rest/connectors/calls : un workspace
+    route: Optional[str] = None           # rest : une route (préfixe), compte exact
     run_id: Optional[str] = None          # run (requis) / calls (filtre)
     session_id: Optional[str] = None      # calls : tous les appels d'une conversation
     min_duration_ms: Optional[int] = None  # calls : appels lents
@@ -192,13 +205,61 @@ def _need(val, code: str, msg: str):
     return val
 
 
+# Ce que CHAQUE op LIT vraiment. Un champ hors de sa liste n'est pas « toléré », il est
+# REFUSÉ (#451) : la console acceptait `sub`/`org_id` sur `op=rest` et ne les passait
+# nulle part — on croyait lire l'activité REST d'un compte, on lisait la plateforme
+# entière, sans rien pour s'en apercevoir. Accepter puis jeter est le pire des trois
+# comportements possibles ; on honore là où la donnée existe, on refuse ailleurs.
+# ⚠️ À tenir à jour avec le dispatch ci-dessous — le test le vérifie dans les DEUX sens.
+_CHAMPS_LUS: dict[str, set[str]] = {
+    "summary": {"days", "org_id", "sub"},
+    "rest": {"days", "org_id", "sub", "route"},
+    "connectors": {"days", "org_id"},
+    "funnel": {"days"},
+    "calls": {"days", "limit", "sub", "tool", "errors", "org_id", "run_id",
+              "session_id", "min_duration_ms", "error_contains"},
+    "call": {"call_id"},
+    "runs": {"limit"},
+    "run": {"run_id"},
+    "gaps": {"days"},
+    "tool_quality": {"days"},
+}
+
+
+def _refuser_les_champs_muets(inp: MonitoringInput) -> None:
+    """Refus NOMMÉ des filtres que l'op choisie ne lit pas.
+
+    ⚠️ Sur la face MCP, `model_fields_set` ne tranche rien (fastmcp remplit les défauts
+    avant d'appeler le handler) : le seul discriminant est « la valeur diffère-t-elle du
+    défaut ». D'où la comparaison aux défauts déclarés, pas aux champs « fournis »."""
+    lus = _CHAMPS_LUS[inp.op]
+    muets = sorted(
+        nom for nom, champ in MonitoringInput.model_fields.items()
+        if nom != "op" and nom not in lus and getattr(inp, nom) != champ.default
+    )
+    if not muets:
+        return
+    def _porteuses(nom: str) -> str:
+        ops = sorted(o for o, champs in _CHAMPS_LUS.items() if nom in champs)
+        return f"`{nom}` : " + (f"op={'/'.join(ops)}" if ops else "aucune op")
+
+    raise AuthzDenied(400, "param_not_read_by_op", (
+        f"op={inp.op} ne lit pas {', '.join('`' + m + '`' for m in muets)} : le filtre "
+        "serait ignoré et la réponse porterait plus large que demandé (c'est ainsi "
+        "qu'on lit la plateforme entière en croyant lire un compte). Là où ces filtres "
+        "sont lus — " + " ; ".join(_porteuses(m) for m in muets) + "."))
+
+
 def _monitoring(ctx: ResolvedCtx, inp: MonitoringInput) -> dict:
+    _refuser_les_champs_muets(inp)
     if inp.op == "summary":
         return _summary(ctx, SummaryInput(days=inp.days or 7, org_id=inp.org_id, sub=inp.sub))
     if inp.op == "rest":
-        return _rest_stats(ctx, WindowInput(days=inp.days or 7))
+        return _rest_stats(ctx, RestInput(days=inp.days or 7, org_id=inp.org_id,
+                                          sub=inp.sub, route=inp.route))
     if inp.op == "connectors":
-        return _connector_stats(ctx, WindowInput(days=inp.days or 7))
+        return _connector_stats(ctx, ConnectorsInput(days=inp.days or 7,
+                                                     org_id=inp.org_id))
     if inp.op == "funnel":
         return _funnel(ctx, FunnelInput(days=inp.days or 30))
     if inp.op == "calls":
@@ -224,10 +285,11 @@ CAPABILITIES += [
     Capability(key="monitoring.summary", handler=_summary, Input=SummaryInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/summary")),
-    Capability(key="monitoring.rest", handler=_rest_stats, Input=WindowInput,
+    Capability(key="monitoring.rest", handler=_rest_stats, Input=RestInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/rest")),
-    Capability(key="monitoring.connectors", handler=_connector_stats, Input=WindowInput,
+    Capability(key="monitoring.connectors", handler=_connector_stats,
+               Input=ConnectorsInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/connectors")),
     Capability(key="monitoring.funnel", handler=_funnel, Input=FunnelInput,
@@ -243,15 +305,27 @@ CAPABILITIES += [
         key="admin.monitoring", handler=_monitoring, Input=MonitoringInput,
         authz=PLATFORM_ADMIN,
         description=(
-            "Platform observability console (platform admin). op=summary (aggregates: "
+            "Platform observability console (platform admin). ⚠️ TWO journals, never "
+            "one: summary/calls cover AGENT (MCP) calls ONLY — what a person does from "
+            "the dashboard or the API is NOT there, it is in op=rest. An account at "
+            "zero calls is therefore NOT an idle account: check op=rest before saying "
+            "so. ⚠️ A filter an op does not read is REFUSED (error "
+            "`param_not_read_by_op`), never silently ignored. op=summary (aggregates: "
             "totals, by tool w/ avg+p95 latency, by user, by day; optional `days`, "
             "`org_id`, `sub` email|sub) / calls (raw MCP call log, newest first; filters "
             "`sub`, `tool`, `errors`, `days`, `org_id`, `run_id`, `session_id`, "
             "`min_duration_ms` slow calls, `error_contains`) / call (`call_id` → full "
             "record incl. truncated args + correlation ids) / run (`run_id` → timeline) "
-            "/ runs (recent runs) / rest (REST lens by route) / connectors (credential "
-            "resolution failures) / funnel (accounts vs real usage) / gaps · tool_quality "
-            "(aggregated usage signals). For raw signals use oto_admin_signal."),
+            "/ runs (recent runs) / rest (REST lens by route — `days`, `org_id`, `sub`, "
+            "and `route` (prefix match) for an EXACT count/errors/last_call_at on one "
+            "route — `by_route` is capped at the top 100, so a low-volume route can be "
+            "invisible there without saying so; ⚠️ `org_id` here is the consultation "
+            "org claimed by a header (best-effort): a request without it carries none "
+            "and drops out of the filter, so a 0 does not prove an idle org — "
+            "cross-check with `sub`) / "
+            "connectors (credential resolution failures; optional `org_id`) / funnel "
+            "(accounts vs real usage) / gaps · tool_quality (aggregated usage signals). "
+            "For raw signals use oto_admin_signal."),
         mcp="oto_admin_monitoring",
     ),
 ]

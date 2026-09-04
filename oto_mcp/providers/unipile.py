@@ -56,6 +56,13 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Unipile"
 LOGO_DOMAIN = "unipile.com"
+DESCRIPTION = (
+    "L'abonnement Unipile qui ouvre la messagerie hébergée : chaque membre y "
+    "raccorde ensuite son propre compte LinkedIn, WhatsApp, Telegram, "
+    "Instagram, Messenger ou X — chacun avec sa propre fiche, son activation "
+    "et ses droits. Cette fiche-ci gère la clé d'abonnement, pas une "
+    "conversation."
+)
 
 
 # --- la FORME d'une connexion hébergée (le porteur de la clé la décrit) --------
@@ -98,7 +105,14 @@ def channel(name: str, *, hosted_channel: str, label: str, help: str,
     COMPTE (comme la clé, le quota, l'option) et pas du canal — le recopier six
     fois, ce serait se donner cinq occasions de le faire diverger. Même forme que
     `reddit` → `redditapis.com` : la passerelle se nomme, la marque garde le
-    libellé, le logo et le `href`."""
+    libellé, le logo et le `href`.
+
+    ⚠️ **Et l'`help` de chaque canal le dit AUSSI, en une clause.** L'éditeur ne
+    suffit pas : le bloc catalogue injecté au handshake ne sert que `« label : help »`
+    — pas l'éditeur — et l'aide est ce qu'on lit AVANT d'installer. Les six l'ont
+    reçue le 2026-09-02 (`docs/connector-vault.md` : « l'aide dit qu'un intermédiaire
+    existe, en une clause et sans jargon »). **Même forme pour les six**, et un canal
+    ajouté demain la doit aussi : cliquet dans `tests/test_unipile_split.py`."""
     return _c(
         name, [name],
         auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,

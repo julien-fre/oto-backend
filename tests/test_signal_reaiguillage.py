@@ -266,7 +266,7 @@ def live_signals(pg_dsn, monkeypatch):
 def test_le_deplacement_rend_l_avant_ET_l_apres(live_signals):
     """Les deux valeurs, en une instruction. Les lire en deux temps les laisserait
     diverger entre les deux."""
-    sid = usage.insert_usage_signal(
+    sid, _ = usage.insert_usage_signal(
         sub="u1", org_id=246, signal="gap", kind="missing_tool",
         target="retirer un membre", body="déposé sur le mauvais espace",
         session_id=None)
@@ -281,8 +281,9 @@ def test_le_deplacement_rend_l_avant_ET_l_apres(live_signals):
 
 
 def test_remonter_a_la_plateforme_puis_redescendre(live_signals):
-    sid = usage.insert_usage_signal(sub="u1", org_id=246, signal="gap", kind="other",
-                                    target="x", body=None, session_id=None)
+    sid, _ = usage.insert_usage_signal(sub="u1", org_id=246, signal="gap",
+                                       kind="other", target="x", body=None,
+                                       session_id=None)
     assert usage.reroute_usage_signal(sid, org_id=None)["org_id"] is None
     assert usage.reroute_usage_signal(sid, org_id=246)["previous_org_id"] is None
 

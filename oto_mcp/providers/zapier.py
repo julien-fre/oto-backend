@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Automatisation"
 PUBLISHER = "Zapier"
 LOGO_DOMAIN = "zapier.com"
+
+DESCRIPTION = (
+    "Les AI Actions exposées par un compte Zapier : lister les actions "
+    "disponibles et les exécuter."
+)

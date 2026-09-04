@@ -27,3 +27,9 @@ CATEGORY = "Prospection"
 # porte le logo de topograph.co — deux affirmations contraires au même endroit.
 PUBLISHER = "Topograph"
 LOGO_DOMAIN = "topograph.co"
+
+DESCRIPTION = (
+    "Vérification d'identité d'entreprise (KYB) : fiches et documents officiels "
+    "d'entreprises européennes, agrégés depuis plus de 100 registres publics, "
+    "via une seule API."
+)

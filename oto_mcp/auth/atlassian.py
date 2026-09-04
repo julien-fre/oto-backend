@@ -200,9 +200,19 @@ def access_token_for(sub: str) -> Optional[str]:
     if needs_refresh:
         try:
             resp = _refresh(cred["secret"])
-        except AtlassianReauthRequired:
-            # Grant mort : purge → status_for repasse « non connecté », l'UI reconnecte.
-            credentials_store.clear_credential("user", sub, _CONNECTOR)
+        except AtlassianReauthRequired as e:
+            # Grant mort : NE PURGE PLUS le credential (oto#25 lot a) — effacer la
+            # ligne rendait « révoqué » indiscernable de « jamais posé », un repli qui
+            # masque un problème plutôt que de le nommer. On MARQUE rejetée à la
+            # place : même mécanisme que la sonde `verify` d'un connecteur keyé
+            # (`capabilities/connectors/verify._record_health` → `meta.health_ko` +
+            # `meta.health_reason`), motif fournisseur BRUT en valeur de champ (pas la
+            # seule catégorie opaque `credential_rejected`). La ligne — et le refresh
+            # token mort qu'elle porte encore — reste en place ; elle se lève en la
+            # reposant (reconnexion : `persist_token` écrase `meta`, cf. plus haut).
+            credentials_store.update_meta(
+                "user", sub, _CONNECTOR, "",
+                {"health_ko": True, "health_reason": str(e) or None})
             return None
         access_token = resp["access_token"]
         new_refresh = resp.get("refresh_token", cred["secret"])  # rotation possible
@@ -223,11 +233,18 @@ def status_for(sub: str) -> dict:
 def _link_state(sub: str) -> connector_link.LinkState:
     """État de lien pour `/api/me` — le credential vit au scope LEGACY ("user", sub),
     pas au scope MEMBRE des connecteurs keyés. C'est précisément pour ça que la
-    lecture est déclarée ici et pas devinée par une boucle générique."""
+    lecture est déclarée ici et pas devinée par une boucle générique.
+
+    La santé (oto#25 lot a) suit la même règle : `access.status_for` ne batch-lit
+    `health_ko`/`health_reason` que sur le palier MEMBRE, donc jamais sur ce scope —
+    on la lit nous-mêmes sur la ligne qu'on sait être la bonne."""
     st = status_for(sub)
+    reason = credentials_store.credential_health("user", sub, _CONNECTOR)
     return connector_link.LinkState(linked=bool(st.get("connected")),
                                     set_at=st.get("set_at"),
-                                    accounts=1 if st.get("connected") else 0)
+                                    accounts=1 if st.get("connected") else 0,
+                                    health_ko=True if reason is not None else None,
+                                    health_reason=reason)
 
 
 connector_link.register(_CONNECTOR, _link_state)

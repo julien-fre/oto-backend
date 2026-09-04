@@ -111,5 +111,71 @@ def test_provider_mismatch_ignored(monkeypatch):
 
 
 def test_no_pending_is_noop(monkeypatch):
+    """No-op = rien de lié ET aucun appel au fournisseur.
+
+    ⚠️ Ce test comparait la réponse ENTIÈRE à `{bound: False, accounts: []}`. Cette
+    forme exacte était le MOYEN de vérifier le no-op, pas son objet — et elle a cassé
+    dès que la réponse a gagné la raison du refus (#689). Réécrit sur ce que son nom
+    annonce : le `set_unipile_account` non appelé et la liste des comptes jamais
+    demandée sont ce qui fait qu'il ne se passe rien."""
+    calls = _setup(monkeypatch, [], [])
+    vus = []
+    import oto.tools.unipile as core
+    monkeypatch.setattr(core, "make_unipile_client",
+                        lambda **k: vus.append("client") or types.SimpleNamespace(
+                            list_accounts=lambda: [], account_alive=lambda a: True))
+    out = uc.reconcile_pending("sub1")
+    assert out["bound"] is False and out["accounts"] == []
+    assert calls["set"] == [] and calls["resolved"] == []
+    assert vus == [], "sans pending, le fournisseur ne doit même pas être contacté"
+
+
+# ── #689 : une réconciliation qui ne lie rien DIT pourquoi ────────────────────
+#
+# Vécu le 03/09 : un utilisateur suit le parcours hosted-auth DEUX fois, la seconde
+# jusqu'à la redirection finale, attend plusieurs minutes — et lit `connected:false`.
+# Rien, nulle part, ne lui disait ce qui avait manqué. Les six sorties de cette
+# fonction rendaient toutes le même `{bound: False}`.
+#
+# C'est la doctrine que ce module écrit en tête, pour `BindOutcome`, et que sa voisine
+# immédiate n'appliquait pas : « un refus muet est un refus que personne ne saura
+# avoir eu ».
+
+def test_sans_pending_la_raison_est_dite(monkeypatch):
     _setup(monkeypatch, [], [])
-    assert uc.reconcile_pending("sub1") == {"bound": False, "accounts": []}
+    out = uc.reconcile_pending("u1")
+    assert out["bound"] is False and out["reason"] == "no_pending"
+    # Et le message dit le GESTE, pas seulement l'état.
+    assert "op=connect" in out["detail"]
+
+
+def test_aucun_candidat_nomme_les_trois_causes_possibles(monkeypatch):
+    """LE cas du signalement : le parcours s'est terminé côté fournisseur et pourtant
+    aucun compte n'est éligible. Trois causes indiscernables jusqu'ici — compte
+    jamais créé, compte antérieur au pending, compte appartenant à un tiers."""
+    _setup(monkeypatch, [_pend()], [_acc("A", "vieux", created="2026-07-01 09:00:00+00")])
+    out = uc.reconcile_pending("u1")
+    assert out["bound"] is False and out["reason"] == "no_candidate"
+    assert "plus ancien que le pending" in out["detail"]
+    assert "quelqu'un d'autre" in out["detail"]
+    # Le compte-rendu porte AUSSI le nonce : deux demandes en attente ne se
+    # confondent pas dans une seule phrase.
+    assert out["pendings"][0]["nonce"] == "N"
+
+
+def test_candidats_tous_morts_dit_quoi_refaire(monkeypatch):
+    """Un wizard avorté produit un compte que le fournisseur n'authentifie plus.
+    L'utilisateur doit apprendre qu'il faut refaire le parcours, pas attendre."""
+    _setup(monkeypatch, [_pend()], [_acc("A", "mort")], alive_ids=set())
+    out = uc.reconcile_pending("u1")
+    assert out["reason"] == "candidates_dead"
+    assert "redirection finale" in out["detail"]
+
+
+def test_une_liaison_REUSSIE_ne_porte_aucune_raison(monkeypatch):
+    """Pas d'écart, pas de bruit : le succès ne s'encombre pas d'un champ d'échec."""
+    _setup(monkeypatch, [_pend()], [_acc("A", "bon")])
+    monkeypatch.setattr(uc.db, "resolve_unipile_pending", lambda n: None)
+    out = uc.reconcile_pending("u1")
+    assert out["bound"] is True
+    assert "reason" not in out and "detail" not in out

@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Recrutement"
 PUBLISHER = "Ashby"
 LOGO_DOMAIN = "ashbyhq.com"
+
+DESCRIPTION = (
+    "Le recrutement suivi dans Ashby (ATS) : candidats, offres d'emploi, "
+    "candidatures et notes."
+)

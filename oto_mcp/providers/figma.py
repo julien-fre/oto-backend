@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Design"
 PUBLISHER = "Figma"
 LOGO_DOMAIN = "figma.com"
+
+DESCRIPTION = (
+    "Les fichiers Figma d'une équipe : lire leur contenu, exporter des images, "
+    "consulter les commentaires, et FigJam."
+)

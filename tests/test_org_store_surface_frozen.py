@@ -55,6 +55,22 @@ a payés en découvrant qu'une création sur un slug pris remplaçait la procéd
 place sans un mot. Ils vivent dans le store, sous le verrou advisory, parce que
 n'importe quel pré-check posé dehors laisserait passer deux créations simultanées.
 
+⚠️ **Mise à jour du 03/09/2026 (bascule de tenant)** — `upsert_user` PERD son
+paramètre `iss`. Il n'a jamais servi qu'à une chose : décider si le login devait
+déclencher le rapprochement d'identités (fusionner l'ancien compte de même email dans
+le nouveau). Ce déclenchement automatique est retiré — zéro rapprochement sur les 20
+jours précédents, une commande réglée sur NOTRE émetteur donc armée en permanence sur
+tous nos comptes, et une résurrection de compte supprimé à son actif (884 appels sous
+une identité morte). L'émetteur n'étant plus lu, le garder en signature ferait calculer
+aux deux portes une valeur que personne ne regarde.
+
+Deux appelants seulement le passaient, tous deux nommément (`api/base._authenticate`,
+`auth/hooks.current_user_sub_from_token`) ; les seize autres sites ne le passaient pas.
+La fusion reste joignable en acte d'OPÉRATEUR (`migrate_sub`, ADR 0052 §6) — c'est le
+déclenchement sans décideur qui disparaît, pas le mécanisme. Le DRAIN d'alias, lui,
+reste armé : c'est lui qui empêche la résurrection, et les couper ensemble aurait fait
+renaître les comptes fusionnés.
+
 ⚠️ **Mise à jour du 01/09/2026 (issue `oto`#27)** — une couture de PLUS dans le
 package : `instructions.py` touchait 499 lignes pour un plafond de 500 (le lot
 précédent avait raboté sa prose pour y tenir), donc plus rien ne pouvait s'y
@@ -231,7 +247,7 @@ FROZEN_SIGNATURES = {
     'set_org_secret': "(org_id: 'int', provider: 'str', api_key: 'str', set_by: 'Optional[str]' = None, meta: 'Optional[dict]' = None, account: 'str' = '') -> 'None'",
     'unpublish_guide': "(entry_id: 'int') -> 'bool'",
     'update_org': "(org_id: 'int', name: 'Optional[str]' = None, description: 'Optional[str]' = None, domain: 'Optional[str]' = None, industry: 'Optional[str]' = None, location: 'Optional[str]' = None) -> 'bool'",
-    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None, locale: 'Optional[str]' = None) -> 'None'",
+    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, locale: 'Optional[str]' = None) -> 'None'",
 }
 
 

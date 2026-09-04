@@ -3,6 +3,7 @@
 Garantissent que ce qui est déclaré au registre est réellement monté, et qu'un
 nom de tool n'est pas enregistré deux fois (legacy + capacité).
 """
+import ast
 import asyncio
 import pathlib
 
@@ -21,9 +22,27 @@ _EXPLICIT_TOOL_MODULES = {
 }
 
 
+_TOOLS_DIR = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "tools"
+
+
 def _tools_module_files() -> set[str]:
-    d = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "tools"
-    return {p.stem for p in d.glob("*.py") if p.stem != "__init__"}
+    """Les modules de `tools/` qui prétendent SERVIR un outil, c'est-à-dire ceux
+    qui définissent un `register()`.
+
+    Un module de `tools/` sans `register()` n'est pas un connecteur qui dort : il
+    ne peut pas être monté, donc il n'a rien à déclarer au registre. C'est un
+    HELPER partagé entre modules voisins (`mail_obfuscation`, importé par
+    `serper`). Le critère est dérivé du fichier, pas d'une liste de noms à tenir
+    à jour : c'est la classe qui est fermée, pas les cas connus."""
+    modules = set()
+    for f in _TOOLS_DIR.glob("*.py"):
+        if f.stem == "__init__":
+            continue
+        arbre = ast.parse(f.read_text(encoding="utf-8"))
+        if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name == "register" for n in arbre.body):
+            modules.add(f.stem)
+    return modules
 
 
 def test_mcp_caps_are_mounted():

@@ -36,8 +36,13 @@ def seams(monkeypatch):
     monkeypatch.setattr(P.db, "update_project",
                         lambda pid, name=None, brief_md=None, is_template=None, icon=None: rec["update"].append((pid, name, brief_md, is_template)))
     rec["copy"] = []
+    # `context_org_id` (ADR 0068) : une copie PERSONNELLE reste rangée dans l'org où
+    # elle a été faite, sans y être partagée. Le stub le RETIENT — un seam qui accepte
+    # le paramètre et l'avale ne prouverait plus que la copie est bien perso.
     monkeypatch.setattr(P.db, "duplicate_project",
-                        lambda src, name, ot, oid, copied_by=None: rec["copy"].append((src, name, ot, oid, copied_by)) or (8, []))
+                        lambda src, name, ot, oid, copied_by=None, context_org_id=None:
+                        rec["copy"].append((src, name, ot, oid, copied_by, context_org_id))
+                        or (8, []))
     monkeypatch.setattr(P.db, "archive_project", lambda pid: rec["archive"].append(pid))
     rec["link"] = []
     rec["unlink"] = []
@@ -341,10 +346,39 @@ def test_list_templates(seams):
 
 
 def test_copy(seams):
+    """ADR 0068 — la copie appartient à qui la fait, plus à l'org active.
+
+    Le banc enregistrait `("org", "42")` : dupliquer son PROPRE projet perso le
+    publiait à ses collègues, sans qu'aucun paramètre ne l'ait demandé. L'ADR 0032 §7
+    B5a visait le cas « copier un MODÈLE pour l'équipe » — il n'a pas disparu, il se
+    dit maintenant (`owner_type='org'`, ci-dessous)."""
     ctx = ResolvedCtx(sub="u1", org_id=42)
     out = P._project(ctx, P.ProjectInput(op="copy", project_id=7, name="  Ma copie  "))
-    assert seams["copy"] == [(7, "Ma copie", "org", "42", "u1")]
+    assert seams["copy"] == [(7, "Ma copie", "user", "u1", "u1", 42)]
     assert out["id"] == 8 and out["copied_from"] == 7 and "links" in out
+
+
+def test_copy_vers_une_org_se_DIT(seams):
+    """Le cas de l'ADR 0032 : copier un modèle pour son équipe. Il reste possible à un
+    agent — l'org est une population nommée, l'élargissement se répare — mais il
+    s'écrit. `context_org_id` est NULL : une copie d'org dérive son contexte de son
+    propriétaire."""
+    ctx = ResolvedCtx(sub="u1", org_id=42)
+    P._project(ctx, P.ProjectInput(op="copy", project_id=7, name="Pour l'équipe",
+                                   owner_type="org", owner_id="42"))
+    assert seams["copy"] == [(7, "Pour l'équipe", "org", "42", "u1", None)]
+
+
+def test_copy_vers_une_org_dont_on_n_est_PAS_membre_est_refusee(seams, monkeypatch):
+    """La même garde que `op=create` : nommer une org ne suffit pas, il faut y être.
+    Sans ça, « explicite » voudrait dire « n'importe où sur simple demande »."""
+    monkeypatch.setattr(P.roles, "is_org_member", lambda sub, oid: False)
+    ctx = ResolvedCtx(sub="u1", org_id=42)
+    with pytest.raises(AuthzDenied) as e:
+        P._project(ctx, P.ProjectInput(op="copy", project_id=7, name="X",
+                                       owner_type="org", owner_id="99"))
+    assert e.value.code == "forbidden"
+    assert seams["copy"] == []
 
 
 def test_copy_needs_read(seams, monkeypatch):
@@ -881,3 +915,84 @@ def test_import_rejects_unpublished(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         P._import_project(CTX, P.ImportProjectInput(slug="demo-x"))
     assert e.value.status == 403 and e.value.code == "not_importable"
+
+
+# ── 04/09/2026 : un projet dit QUI le voit ─────────────────────────────────────
+
+def test_un_projet_perso_dit_qu_il_n_est_vu_que_de_son_proprietaire():
+    """`owner_type` seul oblige à dériver la conséquence, et personne ne la dérive —
+    surtout pas sur une question de confidentialité, où l'on suppose le pire à raison.
+
+    Vécu ce jour-là : une DG voit son projet PERSO apparaître dans le contexte de son
+    org, en conclut qu'il est visible par tous, et passe la matinée à vérifier. Il ne
+    l'était pas. L'agent lui-même s'est accusé à tort — il a confondu contexte et
+    visibilité, exactement comme elle."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
+    assert "toi seul" in dit
+    assert "administrateurs de ton org" in dit, "c'est LA question qu'on se pose"
+    # Le contexte n'est pas la visibilité : c'est la confusion qui a coûté la matinée.
+    assert "n'est PAS la même chose" in dit
+    # Et on ne promet pas « personne » : l'opérateur plateforme voit le nom.
+    assert "opérateur de la plateforme" in dit
+
+
+def test_un_projet_d_org_dit_qu_il_N_EST_PAS_prive():
+    """Le sens qui coûte le plus cher : croire privé ce qui est partagé. Le message
+    le dit en toutes lettres plutôt que de laisser lire `owner_type: "org"`."""
+    dit = P._visible_to({"owner_type": "org", "owner_id": "35"})
+    assert "TOUS les membres" in dit and "n'est pas privé" in dit
+
+
+# ── 04/09/2026 : la propriété n'est pas la seule portée ────────────────────────
+#
+# En inventoriant les chemins par lesquels un contenu élargit sa portée, deux faits
+# rendaient `_visible_to` faux là où il rassurait le plus. Ce ne sont pas des cas
+# tordus : ce sont les deux seules manières qu'a un projet de dépasser son owner.
+
+def test_un_projet_PUBLIE_ne_se_decrit_pas_par_son_owner():
+    """`mcp_access='anonymous'` sert le projet SANS LOGIN et le liste dans l'annuaire
+    public (`/api/public/mcp-projects`). La phrase annonçait « TOUS les membres de
+    l'org » — vrai sur le papier de la propriété, et trompeur au point d'être
+    dangereux : elle nomme une population fermée pour un contenu ouvert au web.
+
+    La publication est dite EN TÊTE, avant la propriété : c'est le fait le plus large,
+    donc celui qui décide de ce qu'on peut y mettre."""
+    dit = P._visible_to({"owner_type": "org", "owner_id": "35",
+                         "mcp_access": "anonymous"})
+    assert dit.startswith("⚠️"), "le fait le plus large passe devant, pas en note de bas"
+    assert "N'IMPORTE QUI" in dit and "sans login" in dit
+    # La propriété reste dite : on ajoute une portée, on n'en cache pas une autre.
+    assert "TOUS les membres de l'org 35" in dit
+
+
+def test_un_partage_secret_dit_l_absence_d_expiration_et_les_tableaux():
+    """`secret` = URL non devinable (128 bits), mais permanente : ni TTL ni rotation.
+    Et un partage `secret` expose les tableaux liés en lecture par DÉFAUT
+    (`projects.py`, `mcp_expose_datastore`) — sur la même URL, sans login."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35",
+                         "mcp_access": "secret", "mcp_expose_datastore": True})
+    assert "URL de partage" in dit
+    assert "sans expiration" in dit, "une URL éternelle n'est pas un secret temporaire"
+    assert "tableaux liés" in dit, "le contenu QUI PART avec n'est pas le projet seul"
+
+
+def test_un_projet_NON_publie_ne_prefixe_rien():
+    """Pas d'écart, pas de bruit : sans publication, la phrase reste celle de la
+    propriété. Un avertissement servi à tout le monde n'avertit plus personne."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
+    assert not dit.startswith("⚠️") and "N'IMPORTE QUI" not in dit
+
+
+def test_un_projet_perso_ne_porte_PLUS_la_reserve_des_propositions():
+    """La réserve a vécu quelques heures, le 04/09 : `docs/notify.py` envoyait le corps
+    d'une page proposée aux `org_admin` de l'org de CONTEXTE, même pour un projet
+    perso. Le défaut corrigé (ADR 0068), la phrase doit repartir — sinon elle inquiète
+    pour un chemin qui n'existe plus, et un texte servi qui inquiète pour rien ment
+    autant qu'un texte qui rassure à tort.
+
+    ⚠️ Ce banc est le pendant de `test_une_proposition_sur_un_projet_PERSO_n_alerte_pas_
+    les_org_admin` (tests/test_docs.py) : si quelqu'un remettait la notification, c'est
+    LÀ que ça rougirait — ici on garde seulement le texte aligné sur le code."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
+    assert "administrateurs de ton org" in dit, "le cas nominal tient toujours"
+    assert "PROPOSÉE" not in dit and "e-mail" not in dit

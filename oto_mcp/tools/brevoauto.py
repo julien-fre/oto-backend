@@ -93,17 +93,25 @@ _STEP_OPS_ERROR = "op doit être 'add', 'configure' ou 'delete'"
 _STATUSES = ("active", "paused", "draft")
 
 
-async def _verify_session(session_id: str) -> bool:
+async def _verify_session(session_id: str) -> browser_session.Verdict:
     """Login Brevo confirmé ? Vérifie sur la session VIVANTE la présence du cookie
     `auth` httpOnly (posé par le login Brevo). Partagé par les deux surfaces de
-    connexion (dashboard REST + MCP) via `browser_session`."""
+    connexion (dashboard REST + MCP) via `browser_session`. Rend un `Verdict` : un
+    refus DIT son motif, sans quoi l'agent appelant n'a d'autre conduite que de
+    recommencer en boucle (cf. en-tête de `browser_session`)."""
     from patchright.async_api import async_playwright
     async with async_playwright() as p:
         b = await p.chromium.connect_over_cdp(browserbase.connect_url(session_id))
         try:
             c = b.contexts[0] if b.contexts else await b.new_context()
             cks = await c.cookies()
-            return any(x["name"] == "auth" for x in cks)
+            if any(x["name"] == "auth" for x in cks):
+                return browser_session.Verdict(True, browser_session.LOGGED_IN)
+            return browser_session.Verdict(
+                False, browser_session.NO_SESSION,
+                "Le cookie de session Brevo (`auth`) est absent : le login n'est pas "
+                "allé au bout. Finis-le dans la Live View, puis relance "
+                "`brevoauto_connect_status` avec les mêmes identifiants de session.")
         finally:
             await b.close()
 
@@ -204,13 +212,20 @@ def register(mcp: FastMCP) -> None:
         logué)."""
         sub = _sub()
         try:
-            connected = await browser_session.finalize(sub, "brevoauto", context_id, session_id)
+            res = await browser_session.finalize(sub, "brevoauto", context_id, session_id)
         except browser_session.SessionError as e:
             raise _err(str(e), code=INTERNAL_ERROR)
-        if not connected:
-            return {"connected": False,
-                    "hint": "Pas encore logué — connecte-toi dans la Live View puis relance."}
-        return {"connected": True, "context_id": context_id}
+        if not res.connected:
+            # `reason` + `retry` avant tout : un refus sans motif ne laisse à l'agent
+            # que la reconnexion en boucle (cf. en-tête de `browser_session`).
+            return {"connected": False, "reason": res.reason, "retry": res.retry,
+                    "hint": res.detail or "Pas encore logué — connecte-toi dans la Live "
+                                          "View puis relance."}
+        out = {"connected": True, "context_id": context_id, "reason": res.reason,
+               "login_verified": not res.warning}
+        if res.warning:
+            out["warning"], out["retry"] = res.warning, False
+        return out
 
     # --- Le scénario lui-même ----------------------------------------------
     @mcp.tool()

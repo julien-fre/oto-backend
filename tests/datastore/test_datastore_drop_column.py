@@ -17,6 +17,7 @@ import pytest
 
 from oto_mcp.datastore import core as dsm
 from oto_mcp.datastore.core import DatastorePg
+from oto_mcp.datastore.errors import ColumnAbsent
 
 
 STRICT = {"strict": True, "fields": [{"key": "siren", "type": "text"},
@@ -260,3 +261,66 @@ def test_set_schema_warns_about_the_columns_it_leaves_behind(pg_rows, monkeypatc
     assert msg and "`actualite_sociale`" in msg and "data_drop_column" in msg
     # souple = le champ libre est un droit du contrat : rien à signaler
     assert st._orphan_columns_warning(7, {"fields": [{"key": "siren"}]}) is None
+
+
+# ── la séquence du cockpit : retirer du schéma, puis purger ─────────────────
+#
+# Les deux gardes ci-dessus se tiennent l'une l'autre : `drop_column` refuse une
+# clé encore déclarée, et le seul moyen de la sortir du schéma est `patch_schema
+# remove`. C'est donc une SÉQUENCE, c'est elle que « supprimer cette colonne »
+# veut dire dans l'interface, et rien ne la jouait bout à bout — chaque moitié
+# était gardée séparément, ce qui ne prouve pas qu'elles s'enchaînent.
+#
+# Le stub descend d'un cran par rapport au reste du fichier : au lieu de figer
+# `_schema_of`, il tient un schéma MUTABLE derrière la couche db, pour que
+# `patch_schema` → `set_schema` → `drop_column` s'exécutent pour de vrai et que
+# la deuxième moitié lise ce que la première a écrit. C'est le seul montage où
+# « retirer suffit-il à lever le refus ? » a une réponse.
+
+@pytest.fixture()
+def store_mutable(monkeypatch):
+    etat = {"schema": dict(STRICT), "purgees": [], "rows_par_colonne": 12}
+    st = DatastorePg("u", acting_org=35)
+    monkeypatch.setattr(st, "_resolve", lambda ns, write=False: 7)
+    monkeypatch.setattr(dsm.db, "get_datastore_namespace_by_id",
+                        lambda ns_id: {"id": ns_id, "schema": etat["schema"]})
+    monkeypatch.setattr(dsm.db, "set_datastore_schema",
+                        lambda ns_id, schema: etat.__setitem__("schema", schema))
+    monkeypatch.setattr(dsm.db, "datastore_key_dup_groups", lambda ns_id, key: [])
+    monkeypatch.setattr(dsm.db, "datastore_ensure_key_index", lambda ns_id, key: None)
+    monkeypatch.setattr(dsm.db, "datastore_drop_key_index", lambda ns_id: None)
+    monkeypatch.setattr(dsm.db, "datastore_row_keys", lambda ns_id: [])
+    monkeypatch.setattr(dsm.db, "datastore_overlong_fields", lambda ns_id, bounds: [])
+    monkeypatch.setattr(dsm.db, "datastore_field_values", lambda ns_id, champs: {})
+    monkeypatch.setattr(dsm.db, "datastore_offending_enum_values", lambda ns_id, opts: [])
+    monkeypatch.setattr(
+        dsm.db, "datastore_drop_column",
+        lambda ns_id, key: (etat["purgees"].append(key) or etat["rows_par_colonne"]))
+    return st, etat
+
+
+def test_retirer_du_schema_puis_purger(store_mutable):
+    """La séquence entière, dans l'ordre imposé — c'est le geste de l'interface."""
+    st, etat = store_mutable
+    # 1. le refus est bien là tant que le champ est déclaré
+    with pytest.raises(ValueError, match="encore DÉCLARÉE"):
+        st.drop_column("v", "analyse1", confirm=True)
+    # 2. on le retire du schéma, et rien d'autre ne bouge
+    patch = st.patch_schema("v", remove=["analyse1"])
+    assert patch["removed"] == ["analyse1"]
+    assert [f["key"] for f in etat["schema"]["fields"]] == ["siren"]
+    # 3. la purge passe désormais, et elle a bien touché les données
+    out = st.drop_column("v", "analyse1", confirm=True)
+    assert out == {"namespace": "v", "key": "analyse1", "rows": 12}
+    assert etat["purgees"] == ["analyse1"]
+
+
+def test_une_colonne_declaree_que_personne_ne_porte_finit_en_ColumnAbsent(store_mutable):
+    """Le cas ORDINAIRE de l'interface : une colonne ajoutée, puis retirée avant
+    qu'une ligne ne l'ait portée. Le refus est celui de #680 — et il porte
+    désormais son propre nom, pour que le front sache que le geste a abouti."""
+    st, etat = store_mutable
+    etat["rows_par_colonne"] = 0
+    st.patch_schema("v", remove=["analyse1"])
+    with pytest.raises(ColumnAbsent):
+        st.drop_column("v", "analyse1", confirm=True)

@@ -22,3 +22,9 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "Fireflies.ai"
 LOGO_DOMAIN = "fireflies.ai"
+
+DESCRIPTION = (
+    "Les réunions enregistrées par Fireflies : transcripts, contrôle d'une "
+    "réunion en direct, questions posées à AskFred (Q&A IA sur le contenu), et "
+    "les données d'organisation (utilisateurs, groupes, canaux, analytics)."
+)

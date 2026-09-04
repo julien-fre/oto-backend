@@ -59,7 +59,14 @@ sont des reliques nullable, **DROP différé** (Phase H) après cutover prod vé
 > `RESOURCE_GOVERN`. Surface unifiée : **`oto_resource op=share`** accepte deux axes —
 > **audience** (`person`/`team`/`org` → grant ; `public`/`secret` → publication projet ;
 > `private` → dépublier) × **rôle** ; l'ancien `permission` read/write est accepté en entrée
-> (mappé). Rétro-compat : backfill `role` depuis `permission` au boot (jamais `manager`, qui
+> (mappé). ⚠️ **Son défaut diverge entre les deux surfaces, à dessein (ADR 0068)** :
+> `oto_resource` garde `"write"` — son schéma servi est un **cliquet** (empreinte JSON
+> figée sur des appelants mesurés au journal le 01/09), et un défaut qui change y casse
+> en production, chez quelqu'un d'autre, sans trace ; `oto_resource_v2` prend `"read"`,
+> comme le veut « privé par défaut ». C'est le sens même de la duplication (ADR
+> 0019/0050 : un contrat servi ne se durcit pas en place, il se double). Le partage de
+> tableau (`data_share`, route REST), lui, n'a pas de cliquet : son défaut passe bien à
+> `read`. Rétro-compat : backfill `role` depuis `permission` au boot (jamais `manager`, qui
 > est un acte explicite). Tests purs + **tripwire gouvernance** (`test_ownership.py` :
 > un lecteur/éditeur/inconnu ne gouverne JAMAIS). Front : sélecteur de rôle
 > lecteur/éditeur/gérant (`lib/resourceRole.ts`).
@@ -110,3 +117,61 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > **transfert** reste `can_transfer = owner ∪ escalade` (jamais un gérant). Surface unique
 > `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
 > projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.
+
+## Privé par défaut, et l'observation qui l'accompagne (ADR 0068, 04/09/2026)
+
+> **La règle.** Aucune opération ne donne à ce qu'elle crée une portée plus large que
+> son auteur, sauf si l'appel le demande par un **paramètre nommé**. Trois régimes,
+> gradués par la **réversibilité** de l'élargissement et non par sa gravité ressentie :
+> ① **privé** partout par défaut ; ② **org / équipe** explicite, ouvert à un agent
+> (population nommée, comptes, administrateur — l'élargissement se répare) ; ③ **sans
+> login** interdit à un agent, disponible sur la face REST où vit le dashboard (ce qui
+> est servi sans compte est indexable ; le retirer n'efface pas ce qui a été lu).
+> Le mécanisme : `ResolvedCtx.channel`, posé aux deux SEUILS (`_mcp_adapter`,
+> `_rest_adapter`) et **jamais** par une règle d'autz — les règles servent les deux
+> faces et ne peuvent pas savoir d'où vient l'appel.
+> ⚠️ **Ce n'est pas un contrôle d'accès** : un porteur de jeton peut appeler la face
+> REST et faire ce que la face MCP lui refuse. Le régime ③ vise le geste NON VOULU,
+> pas l'adversaire — l'appeler « sécurité » ferait croire posé un contrôle qui ne l'est
+> pas, et personne ne poserait le vrai ensuite (`capabilities/_publication.py`).
+
+> **Le second volet : savoir — en OBSERVATION, rien ne part.** Une garde ne couvrira
+> jamais tous les chemins, et un agent peut légitimement passer le paramètre parce que
+> la demande était ambiguë. `capabilities/_portee.observer()` enregistre donc chaque
+> élargissement fait par un agent dans `portee_elargissements`, avec **les
+> destinataires qu'on aurait prévenus** (le propriétaire ET l'auteur du geste) et
+> **l'urgence qu'il aurait eue** (`immediat` = ouverture sans login ; le reste serait
+> groupé, un agent qui partage trente lignes devant produire un message et non trente).
+> ⚠️ **Aucun e-mail n'est envoyé** (décision d'Alexis) : on mesure d'abord le volume —
+> `oto-mcp maintenance portee-observation`, lecture pure, sans `--apply`. Ouvrir un
+> canal en devinant son débit, c'est le refermer une semaine plus tard après avoir
+> appris à ses destinataires à l'ignorer. `notifie_at` reste NULL, et ce NULL EST la
+> preuve que rien n'est parti.
+> ⚠️ **`tool_calls` journalise déjà tout, et personne ne le regarde** : journaliser
+> n'est pas avertir. Cette table ne retient que les gestes qui CHANGENT QUI VOIT, et
+> n'enregistre jamais le contenu élargi — une trace qui recopie ce qu'elle surveille
+> est un second exemplaire à protéger.
+> ⚠️ Limite CONNUE de l'observation : le canal `mcp` est un proxy d'« agent », pas la
+> vérité. Un jeton `oto_` porté sur la face REST est une machine et n'est pas compté ;
+> le distinguer demande de séparer, sur REST, un JWT Logto d'un jeton porté.
+
+> **Le palier PERSONNEL des procédures est ouvert (04/09/2026, phase 2 de #681).**
+> Décision d'Alexis : « procédure doit pouvoir être privée ». Le préalable était réel —
+> `org_instructions.org_id` était `NOT NULL`, elle porte l'org PARENTE du propriétaire
+> **et la cascade de suppression**, et une personne n'a pas d'org parente. Y ranger son
+> org de CONTEXTE aurait fait disparaître une procédure personnelle avec l'org : le
+> store refusait d'écrire cette ligne-là, à raison. La colonne est relâchée **aux deux
+> tables** (vivante et historique — la laisser `NOT NULL` sur l'historique ferait
+> échouer la première ÉCRITURE, pas la création, donc bien après qu'on aurait cru le
+> lot fini) ; une procédure perso y porte `NULL`.
+> Ouvert : `OWNER_TYPES` gagne `user`, `_parent_org_id` rend `None`, `_owner_of`
+> accepte `scope='user'` (identité prise dans le contexte d'autz, **jamais** un champ
+> client — le palier personnel d'autrui n'est pas atteignable), `_get_guide` a sa
+> branche de lecture, et `oto_resource op=transfer` déplace une procédure vers une
+> personne.
+> ⚠️ **Le DÉFAUT reste l'org** — c'est un choix, pas un oubli. Le basculer fait tomber
+> une vingtaine de bancs et une garde (`…_reads_honor_explicit_org`) : l'absence de
+> scope voyage jusqu'à des modèles d'entrée en aval qui l'exigent. Ouvrir la porte
+> d'abord, déplacer le défaut ensuite — dans cet ordre chaque pas se vérifie seul.
+> ⚠️ Le défaut des surfaces d'ADMIN (`org.instruction.*`, gardées `ORG_ADMIN_OPT`)
+> restera l'org quoi qu'il arrive : leur objet EST d'écrire la procédure de l'org.

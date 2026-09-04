@@ -16,3 +16,8 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Hunter.io"
 LOGO_DOMAIN = "hunter.io"
+
+DESCRIPTION = (
+    "Retrouver et vérifier des adresses email professionnelles chez Hunter.io. "
+    "Une clé plateforme gratuite est disponible, avec un quota limité par jour."
+)

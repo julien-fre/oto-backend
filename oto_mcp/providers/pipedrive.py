@@ -27,3 +27,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Pipedrive"
 LOGO_DOMAIN = "pipedrive.com"
+
+DESCRIPTION = (
+    "Le CRM Pipedrive : deals, personnes, organisations, activités, notes et "
+    "leads. Le domaine de compte, facultatif, accélère les requêtes en les "
+    "routant vers le bon data center."
+)

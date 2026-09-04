@@ -689,6 +689,32 @@ def instance_suspended(entity_type: str, entity_id: str, connector: str, account
     return bool(row) and row["s"] == "true"
 
 
+def credential_health(entity_type: str, entity_id: str, connector: str,
+                      account: str = "") -> Optional[str]:
+    """La raison du REJET enregistrée sur cette ligne de coffre, ou `None` si elle va
+    bien (ou n'existe pas). Lecture SANS déchiffrer — même patron qu'`instance_suspended`,
+    et pour la même raison : c'est un chemin de statut, il n'a rien à faire du secret.
+
+    `meta.health_ko` / `meta.health_reason` sont écrits par la sonde
+    `oto_instance op=verify` (`capabilities/connectors/verify._record_health`). Ils
+    n'avaient jusqu'au 2026-09-03 qu'un seul lecteur, `access.status_for`, qui ne
+    regarde QUE les clés de palier MEMBRE : le verdict porté par une clé d'ORG — le
+    seul palier possible d'un connecteur `byo_org` only comme `linear` — n'était lu
+    nulle part (#541). Rend la RAISON et pas un booléen : « rejetée » sans le motif du
+    fournisseur envoie chercher à l'aveugle."""
+    with _connect() as c:
+        row = c.execute(
+            "SELECT meta->>'health_ko' AS ko, meta->>'health_reason' AS why "
+            "FROM connector_credentials "
+            "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=%s",
+            (entity_type, entity_id, connector, account)).fetchone()
+    if not row or row["ko"] != "true":
+        return None
+    # Un rejet sans motif reste un rejet : on le NOMME plutôt que de le taire, sinon
+    # `health_ko` vrai + `health_reason` nul se lirait comme une clé saine.
+    return row["why"] or "rejetée au dernier test (motif non conservé)"
+
+
 def update_meta(entity_type: str, entity_id: str, connector: str, account: str,
                 patch: dict, conn=None) -> bool:
     """Merge `patch` dans `meta` (JSONB ||) SANS toucher secret/secret_enc — pour

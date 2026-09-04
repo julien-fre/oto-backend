@@ -78,7 +78,27 @@ _LECTEURS_ADMIS = {
     #    d'un envoi), jamais à accorder quoi que ce soit. Aucune identité, aucun
     #    credential, aucune visibilité n'en dépend — ce que ce garde-fou protège.
     "db/outreach.py",
+    # Le CONTRÔLE DE CONFORMITÉ du rattachement (2026-09-03) vit dans `db/tenants.py`,
+    # déjà admis ci-dessus — rien à ajouter pour lui.
 }
+
+# ── L'ÉCRIVAIN (2026-09-03) ──────────────────────────────────────────────────
+#
+# L1 laissait la colonne au DEFAULT : 165 orgs sur 165 portaient le tenant primaire,
+# dont les 65 qui vivent chez un partenaire. Le provisioning l'écrit désormais à la
+# naissance de l'org — sinon on la remplit à la main tous les six mois.
+#
+# ⚠️ **Écrire n'est pas résoudre**, et c'est ce qui rend l'ajout compatible avec ce
+# que ce fichier protège : `create_org` POSE le rattachement dérivé de l'émetteur du
+# jeton de son créateur ; aucune identité, aucun credential, aucune visibilité, aucune
+# autz ne le LIT pour décider. La cascade de credentials le dit à ses deux points
+# d'entrée (`access/cascade.py`, `access/chain_resolution.py`) : le tenant servi est
+# celui du SUB appelant, « jamais sur le rattachement de l'org ».
+#
+# Deux fichiers, deux natures :
+_ECRIVAIN_UNIQUE = "org_store/orgs.py"      # le SEUL SQL qui pose la colonne
+_DERIVATION_ADMISE = "config.py"            # `tenant_slug_for`, qui la dérive du sub
+_ECRIVAINS_ADMIS = {_ECRIVAIN_UNIQUE, _DERIVATION_ADMISE}
 
 
 def test_only_the_tracking_read_touches_tenant_id():
@@ -105,7 +125,7 @@ def test_only_the_tracking_read_touches_tenant_id():
             if line.lstrip().startswith(("#", "--")):
                 continue
             rel = path.relative_to(root).as_posix()
-            if rel in _LECTEURS_ADMIS:
+            if rel in _LECTEURS_ADMIS or rel in _ECRIVAINS_ADMIS:
                 continue
             readers.append(f"{path.relative_to(root.parent)}: {line.strip()}")
     assert not readers, (
@@ -113,3 +133,45 @@ def test_only_the_tracking_read_touches_tenant_id():
         f"(« l'existant est nommé, pas déplacé ») : {readers}. Un chemin de "
         "résolution qui dépend du rattachement d'org est un LOT, avec sa revue : "
         f"l'ajouter à _LECTEURS_ADMIS doit être un acte délibéré.")
+
+
+def test_le_rattachement_a_un_ecrivain_et_un_seul():
+    """`orgs.tenant_id` s'écrit à UN endroit — sinon la dérivation ne prouve rien.
+
+    ⚠️ **Cette unicité compte PLUS depuis le 03/09/2026, pas moins.** Le contrôle de
+    conformité qui rapportait les écarts a été retiré ce jour-là — il surveillait une
+    divergence sans conséquence, puisque `db.org_tenant_slug` double ce rattachement
+    par deux dérivations lues du jeton. Conséquence : plus rien ne rapporte un second
+    écrivain qui poserait la colonne selon sa propre règle. Ce test est donc devenu la
+    SEULE chose qui s'y oppose, et il est mécanique là où le contrôle était humain.
+
+    ⚠️ Le test vérifie les DEUX sens, et le second est celui qui compte le jour où
+    quelqu'un « simplifie » : que le rattachement soit écrit *quelque part*. Un
+    inventaire qui ne trouve rien rendrait 0 écrivain illégitime et passerait au vert
+    — exactement l'état inerte d'avant ce lot, en silence.
+    """
+    root = _DB.parent
+    ecrivains = []
+    for path in sorted(root.rglob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        rel = path.relative_to(root).as_posix()
+        if rel in ("db/_init.py", "db/_schema.py") or path.parent.name == "schema":
+            continue  # DDL et migration : ils CRÉENT la colonne, ils ne la peuplent pas
+        for ordre in ("INSERT INTO orgs", "UPDATE orgs"):
+            for bloc in src.split(ordre)[1:]:
+                # La portée d'un ordre SQL, généreusement : ce qui suit jusqu'au
+                # prochain `)` fermant de l'appel Python. Assez pour attraper la
+                # colonne dans la liste comme dans un SET.
+                if "tenant_id" in bloc[:400]:
+                    ecrivains.append(rel)
+    assert ecrivains, (
+        "PERSONNE n'écrit `orgs.tenant_id` : le provisioning est retombé au DEFAULT "
+        "de la colonne, et toute org naîtra sur le tenant primaire quel que soit son "
+        "émetteur — l'état inerte que ce lot ferme (65 orgs sur 165 au 2026-09-03). "
+        "Ce contrôle rougit AUSSI quand il ne trouve rien : un zéro n'est pas un vert.")
+    assert set(ecrivains) == {_ECRIVAIN_UNIQUE}, (
+        f"`orgs.tenant_id` est écrit hors de l'écrivain unique : {sorted(set(ecrivains))}. "
+        f"Le rattachement se pose dans `{_ECRIVAIN_UNIQUE}` et nulle part ailleurs — "
+        "un second écrivain avec sa propre règle le ferait diverger en silence, et "
+        "plus rien ne le rapporte depuis que le contrôle de conformité a été retiré "
+        "(03/09/2026).")

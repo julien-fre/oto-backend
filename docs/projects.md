@@ -65,6 +65,21 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > Le raisonnement complet, la mesure et le relevé de production (0 cycle) sont dans
 > `docs/noeuds.md` — même défaut, même correction, une table plus loin.
 
+> **Un `unlink` qui n'a rien retiré le DIT (#699, 04/09).** `op=unlink` répondait `ok: true`
+> sur un no-op — le lien visé figurait encore dans les `links` de la réponse à ce même appel.
+> Deux causes, une seule correction. (1) Le **rowcount** de `remove_project_link` existait et
+> personne ne le lisait : l'unlink rend désormais `removed` (nombre de bindings retirés) et
+> **refuse** (`link_not_found`, 404) quand il n'a rien matché — un succès qui n'a rien fait est
+> pire qu'un refus, et la face MCP ne rend que le *message*, donc celui-ci nomme les refs que
+> le projet porte vraiment. (2) **Deux écritures désignent la même entité** : le stockage est
+> canonique (id) depuis que `link` normalise nom/slug→id, mais les lignes d'avant portent le
+> NOM du namespace ou le SLUG du guide — bien vivantes, résolues à la lecture (#117). L'unlink
+> canonisait la réf demandée puis supprimait cet id : zéro ligne quand la ligne porte l'autre
+> écriture, et le lien devenait **indélogeable** par le MCP (vécu sur le projet 59,
+> `suivi-commercial-index` → id 108). `_unlink_refs` confronte les deux côtés **canonisés** et
+> vise les refs BRUTES stockées, dans les deux sens. `op=link` reste inchangé : il canonise, et
+> refuse un nom introuvable (`unknown_tableau`) — on ne rouvre pas la porte aux liens morts.
+
 > **Push out-of-bande de gros contenu par un agent (issue #105).** Écrire un GROS contenu
 > via `oto_doc(body_md=…)`/multipart le fait transiter INLINE par le contexte du LLM (coût
 > tokens + troncature/paraphrase sur du verbatim). **`oto_upload_url(target)`** (capacité
@@ -152,6 +167,17 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > serveur inchangée). Le hero porte aussi un CTA **« Ajouter à mon Oto »** → deep-link
 > `dashboard.oto.ninja/import?slug=<slug>`.
 >
+> ⚠️ **`op=copy` rend une copie possédée par QUI la fait (ADR 0068, 04/09/2026).** Elle
+> était possédée par l'**org active** (ADR 0032 §7 B5a), y compris en dupliquant un
+> projet PERSONNEL : son propre travail se publiait à ses collègues, sans qu'aucun
+> paramètre ne l'ait demandé. Le cas que 0032 visait — copier un MODÈLE pour l'équipe —
+> n'a pas disparu, il se DIT : `owner_type='org'|'group'` + `owner_id`, gardé par
+> l'appartenance comme `op=create`. Une copie perso garde son `context_org_id` : elle
+> reste rangée dans l'org où on travaille sans y être partagée — sans quoi on aurait
+> remplacé un excès de partage par une disparition. **L'import ci-dessous n'est PAS
+> concerné** : `me.import_project` est REST-only (aucun agent ne l'appelle), et forker
+> dans l'org active y est le geste demandé, par un humain, depuis le dashboard.
+>
 > **« Ajouter à mon Oto » — import d'un projet publié par slug.** Capacité `me.import_project`
 > (REST-only `POST /api/me/projects/import`, `ORG_MEMBER`) : **forke** un projet PUBLIÉ
 > (`mcp_access ∈ {anonymous, secret}`, résolu par `get_project_by_mcp_slug` — le slug non
@@ -168,7 +194,24 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > **Endpoint MCP par projet — `<slug>.mcp.oto.cx` (ADR 0032, amende #44).** Un projet
 > se **publie** comme serveur MCP dédié sur son propre sous-domaine (le « preset » de
 > l'ADR 0032 §7). Colonnes `projects.mcp_slug`/`mcp_access`(`off|anonymous|secret|org`)/`mcp_tools[]` ;
-> capacité `oto_project` op **`publish_mcp`/`unpublish_mcp`** (autz `can_govern`) ; **sonde de
+> capacité `oto_project` op **`publish_mcp`/`unpublish_mcp`** (autz `can_govern`).
+> ⚠️ **Publier au-delà de l'org ne sort pas d'une conversation (04/09/2026).** Décision
+> d'Alexis après l'inventaire des chemins d'élargissement : « org = explicite, public =
+> interdit à l'agent ». `mcp_access` **n'a plus de défaut** (il valait `anonymous` — le
+> web entier, *et* listé dans l'annuaire public : publier sans rien préciser était le
+> geste le plus ouvert) ; et `anonymous`/`secret` sont refusés
+> (`publication_reservee_a_l_humain`, 403) quand l'appel vient de la face **MCP**, que
+> `ResolvedCtx.channel` nomme depuis les deux seuils (`_mcp_adapter`, `_rest_adapter`).
+> L'asymétrie est délibérée : un contenu d'org reste dans une population nommée et se
+> reprend, un contenu servi sans login est indexable et ne se reprend pas.
+> ⚠️ **Ce n'est pas un contrôle d'accès mais un cran d'intention** : un porteur de jeton
+> peut toujours appeler la face REST. Il vise le geste non voulu, pas l'adversaire — le
+> nommer « sécurité » ferait croire le vrai contrôle posé. Même régime pour `oto_doc
+> op=set_public` (l'OUVERTURE seule : `public=false` reste permis, sinon un agent
+> constaterait une fuite sans pouvoir la refermer) et `oto_procedure op=publish`, dont
+> le `visibility` perd aussi son défaut `public`. Le canal se lit sur le MONTAGE
+> (`tests/test_canal_d_appel.py`) : non posé, toutes ces gardes seraient vertes et
+> inertes. **Sonde de
 > publication NON bloquante** (`_mcp_unresolvable_tools`) : pour un preset sans login, les tools
 > **non credential-less** (`secret_kind≠none`) ou dont le connecteur n'a pas de clé résoluble pour
 > l'org propriétaire sont **publiés quand même** mais **échouent proprement à l'appel** (McpError,
@@ -261,7 +304,7 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 |---|---|---|
 | `serper_search` (web, news, images, videos, places, shopping, scholar, patents) | sortie, avant projection | couvert (`autocomplete` : suggestions, pas d'URL) |
 | `serper_lens` | entrée (URL d'image) + sortie | couvert |
-| `serper_scrape` | entrée | couvert |
+| `serper_scrape` | entrée + URL finale de notre lecture directe | couvert |
 | `serpapi_search` (tout moteur) | sortie | couvert |
 | `searchapi_search` (tout moteur) | sortie | couvert |
 | `tavily_search` | sortie | couvert (`answer` = prose, non filtrée) |
@@ -282,6 +325,16 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 | `http_get/post` | — | non couvert : chemin relatif à une `base_url` configurée par l'org (client d'API) |
 | `browser_connect_start` | — | non couvert : page de login ouverte à l'humain, pas une lecture |
 | `email_send(cta_url, image_url)`, `brevo_import_contacts(file_url)`, `fireflies_transcript(url)`, webhooks (`folk`/`linear`/`grain`/`granola`/`webflow`), `ahrefs_*`, `promptwatch_*`, `snitcher_*` | — | non couvert : URL écrite, importée par le fournisseur, ou de configuration — rien n'est lu par nous |
+
+**`serper_scrape` a DEUX amonts depuis le 2026-09-03 (#681).** Le scraper hébergé ne
+rend aucun champ HTML, et les adresses obfusquées (base64 d'un `joomla-hidden-mail`,
+`mailto:` en entités, `cloudflare-email-protection`) n'existent QUE là : l'outil relit
+donc la page lui-même — sur `format="html"`, en repli après un refus du fournisseur, et
+en sonde quand la page servie ne montre aucune adresse. Cette seconde lecture, elle,
+observe une URL finale : le périmètre s'y applique aussi. Sur les deux chemins qui
+SERVENT du contenu (`html`, repli), un atterrissage hors périmètre refuse ; sur la sonde,
+qui ne sert que des adresses en complément d'un scrape déjà réussi, il l'ÉCARTE et le dit
+dans `sonde_obfuscation` — un scrape réussi ne doit pas tomber à cause de son complément.
 
 **Le refus du périmètre parle en premier (#632, 2026-08-29).** Sur une campagne,
 `serper_scrape` d'un profil personnel a été refusé par une règle interne du client amont

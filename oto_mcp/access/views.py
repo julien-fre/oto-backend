@@ -184,6 +184,36 @@ def credential_mode_for(sub: str, provider: str, *,
     return "over_quota" if (limit and used >= limit) else "platform"
 
 
+def credential_rejection_for(sub: str, provider: str, *,
+                             org: "int | None | object" = scope._UNSET,
+                             group: "int | None | object" = scope._UNSET,
+                             probe: "Optional[CascadeProbe]" = None) -> Optional[str]:
+    """Le REJET enregistré sur la clé qui résoudrait pour `sub` — ou `None`.
+
+    Même marche que `credential_mode_for`, même walker : on lit la santé de la ligne
+    que l'appel utiliserait VRAIMENT, pas d'une ligne voisine. Sans ça, une clé perso
+    saine masquerait le rejet d'une clé d'org — ou l'inverse.
+
+    ⚠️ **C'est une SECONDE marche de cascade** (~22 ms sur un compte réel, cf.
+    `connectors/readiness`). Assumé plutôt que de faire rendre deux choses à
+    `credential_mode_for` : le contrôle de quota du barreau plateforme vit là-bas, et
+    le recopier ici rouvrirait la divergence que le walker unique a fermée. C'est aussi
+    pourquoi ce calcul ne se fait que sur une lecture CIBLÉE d'un connecteur.
+
+    Le verdict lui-même est écrit par la sonde `oto_instance op=verify` ; il se lève en
+    la rejouant (elle écrit `health_ko: false` sur un succès) ou en reposant la clé
+    (une repose réécrit `meta`)."""
+    o = scope.current_org(sub) if org is scope._UNSET else org
+    g = scope.current_group(sub) if group is scope._UNSET else group
+    win = cascade.cascade_winner(sub, provider, org=o, group=g,
+                                 probe=probe or cascade.PRESENCE_PROBE, want="auto")
+    if win is None or win.entity_type is None:
+        return None
+    return credentials_store.credential_health(
+        win.entity_type, win.entity_id, providers.credential_provider(provider),
+        win.account or "")
+
+
 def connector_resolvable_for_org(provider: str, org_id: int) -> bool:
     """Un connecteur peut-il être résolu pour une ORG **sans user identifié** ?
     Vrai si : credential-less (`secret_kind='none'`), OU secret d'org configuré, OU

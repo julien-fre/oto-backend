@@ -42,3 +42,11 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "AI Ark"
 LOGO_DOMAIN = "ai-ark.com"
+
+DESCRIPTION = (
+    "Recherche de personnes et d'entreprises via LinkedIn, en donnée ACHETÉE au "
+    "crédit — pas de compte LinkedIn à connecter. Fiche personne enrichie "
+    "(export + email), recherche inversée et téléphone mobile, en appel "
+    "synchrone. Alternative à Unipile (session LinkedIn opérée) pour qui ne "
+    "veut pas connecter de compte."
+)

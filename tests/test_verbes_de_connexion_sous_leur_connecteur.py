@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import deprecations, tool_visibility
+from oto_mcp import deprecations, providers, tool_visibility
+from oto_mcp.capabilities import _authz
 from oto_mcp.capabilities.registry import CAPABILITIES
 
 # clé de capacité → connecteur auquel le verbe appartient
@@ -76,3 +77,62 @@ def test_aucun_autre_verbe_de_connexion_ne_traine_sous_le_prefixe_transverse():
     assert not fautifs, (
         f"verbes de connexion encore sous le préfixe transverse : {sorted(fautifs)} — "
         "ils seront servis à tous les comptes, connecteur installé ou non")
+
+
+def _connecteur_porte_par(nom: str) -> str | None:
+    """Le nom d'un connecteur RÉEL du registre, s'il apparaît comme TOKEN(S) exact(s)
+    de `nom` (après split sur `_`) — jamais une sous-chaîne (« connect » ⊂
+    « connector » avait produit le faux positif du test précédent, dans sa toute
+    première version)."""
+    tokens = nom.split("_")
+    for conn in sorted(providers.REGISTRY, key=len, reverse=True):
+        conn_tokens = conn.split("_")
+        largeur = len(conn_tokens)
+        if any(tokens[i:i + largeur] == conn_tokens
+               for i in range(len(tokens) - largeur + 1)):
+            return conn
+    return None
+
+
+def test_aucun_verbe_a_plancher_ouvert_ne_porte_un_connecteur_non_rattache():
+    """oto-backend#822, point 2 — le contre-test au bon GRAIN, généralisé le 04/09/2026.
+
+    Le test précédent garde une TERMINAISON de nom (`_connect`/`_connect_start`) : il
+    n'aurait rien dit d'un futur `oto_hubspot_import` ou `oto_notion_sync`. Ce qui fait
+    RÉELLEMENT le défaut n'est pas la terminaison, c'est une PROPRIÉTÉ : `oto_salesforce_
+    connect` était joignable par n'importe quel membre parce que son autz `ORG_MEMBER` ne
+    pose AUCUN plancher de rôle plateforme (`_authz.platform_floor` ne rend `operator`/
+    `super` que pour `PLATFORM_ADMIN`/`SUPER_ADMIN` — tout le reste, y compris
+    `ORG_MEMBER`/`ORG_ADMIN`, rend `None`, cf. `_authz.py` §Plancher). Rien, côté rôle,
+    ne le protégeait donc : SEUL le gate connecteur (résolu sur le nom) aurait pu le
+    faire, et il ne le voyait pas.
+
+    ⚠️ **Un verbe à plancher `operator`/`super` est hors de cette classe PAR
+    CONSTRUCTION** — pas une exception ad hoc. `oto_admin_unipile_seat` (plancher
+    `super`) gère les sièges de TOUTE la plateforme, pas les siens : le rôle le masque
+    déjà à qui n'est pas super admin, connecteur installé ou non, et le gater EN PLUS
+    casserait le geste pour un super admin qui n'a personnellement rien connecté.
+    Vérifié le 2026-09-04 : c'est le SEUL nom du registre réel (675 outils montés,
+    `scripts/empreinte_servie.py`) qui porte un connecteur hors de son namespace, et
+    il tombe dans cette exception — zéro troisième verbe fautif.
+
+    Éprouvé rouge en repassant `mcp="oto_salesforce_connect"` sur
+    `capabilities/salesforce_connect.py` (2026-09-04) : ce test nomme
+    `('oto_salesforce_connect', 'salesforce')` avant le premier test du fichier
+    (qui, lui, connaît déjà les DEUX noms fautifs et ne dirait rien d'un troisième).
+    """
+    fautifs = []
+    for c in CAPABILITIES:
+        if not c.mcp or _authz.platform_floor(c.authz) is not None:
+            continue  # masqué par le rôle plateforme, peu importe le connecteur
+        ns = tool_visibility.namespace_of(c.mcp)
+        if providers.connector_for_namespace(ns) is not None:
+            continue  # déjà rattaché à son connecteur
+        conn = _connecteur_porte_par(c.mcp)
+        if conn:
+            fautifs.append((c.mcp, conn))
+
+    assert not fautifs, (
+        f"verbes nommés d'après un connecteur, à plancher de rôle OUVERT, hors de son "
+        f"namespace : {sorted(fautifs)} — servis à tout le monde, connecteur installé "
+        "ou non, et aucun rôle ne les protège")

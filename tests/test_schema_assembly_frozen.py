@@ -185,8 +185,54 @@ from oto_mcp.db import _schema, schema
 # lirait comme un fait.
 # ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
 # bien 30e2c6f2… / 135678, mesuré au moment du rebase et jamais avant.
-EMPREINTE = "bb7aafffcf7f41d5fe9a5c2be58ecdde1d9909292f39ae8f97a8d954664ebcf0"
-LONGUEUR = 137228
+# 2026-09-03 — trois colonnes sur `users` : `suspended_at`, `suspended_by`,
+# `suspended_reason`. Le cran manquant entre « vivant » et « supprimé » : un
+# compte en pause ne peut plus rien faire, et rien de ce qui pend de lui n'est
+# touché. Colonnes NULL partout à la pose — la migration n'a aucun effet tant
+# qu'un administrateur n'a pas posé le geste.
+# ⚠️ Empreinte recalculée APRÈS avoir vérifié l'arithmétique : le fragment
+# `USERS` grandit de 740 caractères, et l'assemblé exactement de 740 aussi
+# (136 654 → 137 394). Un écart aurait voulu dire qu'un autre fragment avait
+# bougé sous la mesure.
+# 2026-09-04 — fragment `PORTEE` : la table `portee_elargissements` (ADR 0068 §4),
+# qui enregistre les moments où un AGENT fait sortir un contenu du périmètre de son
+# propriétaire. Elle naît en période d'OBSERVATION (décision d'Alexis) : chaque ligne
+# porte les destinataires qu'elle aurait prévenus et l'urgence qu'elle aurait eue,
+# et `notifie_at` reste NULL — aucun message ne part. On veut voir le volume avant
+# d'écrire à qui que ce soit.
+# ⚠️ Empreinte recalculée APRÈS l'arithmétique : le fragment fait 2 094 caractères et
+# l'assemblé grandit exactement de 2 094 (137 394 → 139 488). Un écart aurait voulu
+# dire qu'un autre fragment avait bougé sous la mesure — sur une base PARTAGÉE
+# prod/preprod, c'est la vérification qui compte, pas le hash recopié.
+# 2026-09-04 — `org_id` devient NULLABLE sur `org_instructions` et sa table
+# d'historique : le palier PERSONNEL des procédures (ADR 0068, phase 2 de #681,
+# décision d'Alexis « procédure doit pouvoir être privée »). Cette colonne portait
+# l'org PARENTE du propriétaire ET la cascade de suppression ; une personne n'a pas
+# d'org parente, et y ranger son org de CONTEXTE ferait disparaître une procédure
+# personnelle avec l'org. Le store refusait d'écrire cette ligne-là, à raison.
+# ⚠️ Geste RELÂCHANT : aucune ligne existante ne devient invalide, et il se rejoue
+# sans effet. Les deux tables bougent ENSEMBLE — laisser l'historique NOT NULL
+# ferait échouer la première ÉCRITURE d'une procédure perso, pas sa création, donc
+# bien après qu'on aurait cru le lot fini.
+# ⚠️ Empreinte recalculée APRÈS l'arithmétique : deux commentaires de 211 caractères
+# ajoutés, deux « NOT NULL » (9 caractères) retirés → +422 attendus, +422 mesurés
+# (139 488 → 139 910). Un écart aurait voulu dire qu'un autre fragment avait bougé.
+# 2026-09-04 (jetons de délégation) : `user_api_tokens.kind` — qui a demandé le
+# jeton, l'UTILISATEUR ou l'EXÉCUTION. ⚠️ Une colonne et non un filtre sur le
+# libellé : `label` est du texte libre, un utilisateur peut nommer son jeton
+# « runner job 42 ». Filtrer sur du texte libre n'est pas une garantie.
+# ⚠️ Empreinte recalculée après avoir vérifié que le tronc SANS ce fragment rend
+# bien 8ebb0a70… / 139910, mesuré au moment du lot.
+# 2026-09-04 — fragment `runs.py` : la colonne `runner_fleets.rows_at_launch`, le
+# dénominateur d'un passage (oto-backend#836). Écrite à l'armement, `NULL` = inconnu :
+# un taux calculé sur un total qui a bougé depuis est faux sans que rien ne le signale.
+# ⚠️ Empreinte recalculée APRÈS l'arithmétique, et la vérification a servi : le fragment
+# `runs.py` grandit de 653 caractères (17 067 → 17 720) et l'assemblé exactement de 653
+# aussi (140 769 → 141 422). Un premier comptage fait sur le DIFF donnait 680 — il
+# comptait des lignes de contexte : c'est la différence des ASSEMBLÉS qui fait foi, pas
+# un `grep` sur un patch.
+EMPREINTE = "b079ffab84ac85d5636ce5689212d6353f6bff5f34027614e853c3c211007a09"
+LONGUEUR = 141422
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

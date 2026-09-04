@@ -29,3 +29,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Minari"
 LOGO_DOMAIN = "minari.ai"
+
+DESCRIPTION = (
+    "La prospection téléphonique suivie par Minari : journal d'appels "
+    "transcrits (résumé IA, objections détectées), listes de contacts à "
+    "composer, champs personnalisés, statistiques d'équipe (taux de décroché, "
+    "conversations, rendez-vous pris)."
+)

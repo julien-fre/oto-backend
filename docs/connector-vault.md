@@ -43,6 +43,8 @@ Tranché par Alexis le **2026-09-02** : *« dire la vérité sur les deux »*. L
 
   Corollaire : **un connecteur légitimement nôtre le DÉCLARE** (`PUBLISHER = "Otomata"`) au lieu d'y retomber — même valeur, mais elle devient un choix relisible. Les trois génériques/maison (`browser`, `web`, `http`) l'ont fait le 2026-09-02 ; les six canaux nomment désormais `Unipile`, la passerelle qui reçoit l'appel et détient la session du compte opéré — déclaré **une seule fois**, chez le porteur de la clé (`providers/unipile.channel`), parce que c'est une propriété du COMPTE et pas du canal. Cliquet : **`tests/test_connector_publisher.py`**, qui exige une déclaration pour **tout** le registre, lit la valeur **SERVIE** (`publisher_name` — donc les deux chemins de déclaration, constante de module *et* champ d'entrée), et refuse aussi la déclaration périmée. ⚠️ Il n'a **aucun filtre de famille**, et il le prouve **par mutation** : un test paramétré sur les familles présentes rend muet un connecteur réel de chacune et exige que le contrôle le voie — glisser `kind == "tools"` dans son calcul fait rougir la famille `mount`, nommément. Un test qui se contenterait de recalculer la population serait aveugle au même défaut.
 - **`help` dit qu'un intermédiaire existe**, en une clause et sans jargon — avant l'installation, pas après. Et quand la connexion se fait avec les **identifiants du service** (planity : email + mot de passe rejoués par notre mount), l'aide le dit : c'est ce que la fiche engage de plus lourd.
+
+  ⚠️ **L'éditeur ne dispense PAS de le dire dans l'aide** — les deux champs ne sont pas lus au même endroit. Le **bloc catalogue injecté au handshake** (`render_namespace_catalog`, ~10 400 c. à chaque session) ne sert que `« label : help »` : il ne porte **jamais** l'éditeur. Une fiche dont seul `PUBLISHER` nommerait la passerelle la tairait donc à l'agent, et à la personne au moment de décider. Les **six canaux hébergés** ont reçu la clause le 2026-09-02, la même pour les six — *« Ton compte se connecte chez Unipile, notre prestataire, qui détient la session. »* — au prix mesuré de **+486 c.** sur le bloc injecté (10 402 → 10 888) et d'une recopie par outil dans `oto_list_my_tools`. Cliquet : `tests/test_unipile_split.py`, sur une population **dérivée du registre** (`credential_of == "unipile"`), pas sur une liste écrite à la main — un septième canal y entre tout seul.
 - **`LOGO_DOMAIN` ne pose pas une marque tierce sur un service qui n'est pas le sien.** L'absence se DÉCLARE (`SANS_LOGO_DE_MARQUE = True`), elle ne s'invente pas.
 - Le **NOM** du connecteur et de ses tools ne bouge pas pour autant : des appelants s'y accrochent (`docs/alias-deprecies.md`).
 
@@ -607,6 +609,19 @@ articles-only). Avec, il ne reste que le geste utile : consentir.
 - **Conséquence de rotation** : `persist()` range une COPIE de l'app dans le credential
   né du consentement. Roter l'app d'éditeur ne casse donc pas les connexions déjà
   établies… jusqu'à leur prochain refresh, qui échouera avec l'ancien `client_secret`.
+
+### Grant mort : marquer, plus jamais purger (oto#25 lot a, 2026-09-04)
+
+Un refresh token révoqué (`invalid_grant`) n'efface plus la ligne du coffre — ça la
+rendait indiscernable d'un credential jamais posé, un repli qui masque un problème
+plutôt que de le nommer. Elle se fait marquer (`meta.health_ko` + `meta.health_reason`
+= motif fournisseur **brut**, pas une catégorie opaque), même mécanisme que la sonde
+`verify` des connecteurs keyés. Concerne aujourd'hui les mounts OAuth fédérés au scope
+LEGACY `("user", sub)` (`auth/atlassian.py`, `auth/folk.py`) — récit complet, ce que ça
+rend observable (`/api/me` via `connectors/link.py::LinkState`) et ce que ça NE rend
+PAS observable (`oto_instance op=verify`, faute de sonde enregistrée et d'un walker qui
+sache lire ce scope) dans `connector-model.md` §« Purge silencieuse des mounts OAuth ».
+Changement de comportement **servi** — à annoncer avant tag.
 
 ## Validation
 

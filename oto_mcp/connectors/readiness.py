@@ -45,6 +45,7 @@ from .. import status_hints
 PAID_OPTION_OFF = "paid_option_off"      # couche 3 — l'option n'est pas levée
 NO_CREDENTIAL = "no_credential"          # couche 2 — aucune clé ne résout
 OVER_QUOTA = "over_quota"                # couche 2 — la clé résout, la journée est finie
+CREDENTIAL_REJECTED = "credential_rejected"  # couche 2 — la clé résout, l'AMONT la refuse
 PENDING_STEP = "pending_step"            # couches OK, il reste un geste (lier un canal…)
 
 
@@ -123,6 +124,23 @@ def diagnose(sub: str, connector: str, *, org, group) -> Optional[Diagnosis]:
             f"Quota de la clé plateforme `{porteur}` épuisé pour aujourd'hui — la "
             f"clé résout, elle est à bout de course. Pose ta propre clé sur "
             f"{_account_url(sub)} pour continuer sans limite, ou reprends demain."))
+
+    # Couche 2 (suite) — la clé résout, mais le FOURNISSEUR l'a refusée. Le verdict
+    # existait déjà en base (`meta.health_ko`, écrit par `oto_instance op=verify`) et
+    # n'avait aucun lecteur ici : une clé révoquée rendait `ready: true`, et son
+    # porteur n'apprenait le refus qu'au premier appel, sous la forme du message brut
+    # de l'amont (#541, org sur `linear` : « AUTHENTICATION_ERROR: Authentication
+    # required, not authenticated »). APRÈS `no_credential` à dessein — dire « rejetée »
+    # d'une clé qui n'existe pas enverrait reposer ce qu'on n'a jamais posé.
+    rejet = access.credential_rejection_for(sub, connector, org=org, group=group)
+    if rejet:
+        ou = (f"Repose-la sur {_account_url(sub)} (section {porteur.capitalize()})."
+              if mode == "user" else
+              f"C'est une clé de palier `{mode}` : demande à un admin de la reposer.")
+        return Diagnosis(CREDENTIAL_REJECTED, (
+            f"La clé `{porteur}` qui résout pour toi ici a été REJETÉE par le service "
+            f"au dernier test : {rejet}. {ou} Le constat se lève en rejouant "
+            f"`oto_instance op=verify` (un succès l'efface), ou en reposant la clé."))
 
     # Le geste qui reste. Seam générique `status_hints` : la spécificité (unipile =
     # « lier un canal », zoho/salesforce = « autoriser oto ») vit dans le module du

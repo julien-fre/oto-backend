@@ -199,6 +199,105 @@ les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclar�
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
+### Un agent programmé se crée DEPUIS l'objet (#860, moitié serveur, 03/09/2026)
+
+**L'agent autonome est une PROPRIÉTÉ de ce qui existe déjà**, pas un objet séparé
+qu'on déclare. Une procédure gagne un état « celle-ci tourne toute seule ».
+
+```
+les OUTILS   se déduisent de la procédure — ceux qu'elle CITE (`<tool:nom>`)
+l'INSTRUCTION est dérivée : « lis la procédure X et applique-la »
+un SEUL agent par objet, et le refus NOMME celui qui existe
+la LECTURE   se fait depuis l'objet (`list` filtré par `procedure`)
+```
+
+⚠️ **Sans la déduction des outils, le bouton demanderait une liste d'outils — donc
+ne serait pas un bouton.** La procédure cite déjà ses outils par marqueur, et
+c'est ce que lit le compteur « référencé par N guides » : on ne devine rien, on
+lit ce que l'auteur a écrit. Une liste fournie explicitement gagne quand même —
+*la déduction est un défaut, pas une contrainte*.
+
+⚠️ **L'instruction est dérivée, JAMAIS saisie.** Une instruction rédigée à la main
+est un **second domicile du métier** : la même règle vit dans la procédure et
+dans l'instruction, et l'une des deux finit par mentir. Une instruction qui
+POINTE l'objet ne peut pas diverger de lui.
+
+⚠️ **Un seul agent par objet** : deux agents sur le même objet, c'est deux
+réponses à « est-ce que ça tourne ? », et l'écran devrait en choisir une. Le refus
+donne l'identifiant et le cadencement de celui qui existe — sinon l'utilisateur ne
+peut que réessayer.
+
+⚠️ **Une procédure qui ne cite aucun outil est REFUSÉE, avec les deux issues** :
+citer les outils, ou passer `tools`. Un agent sans outil n'exécute rien ; le
+laisser se créer produirait un agent qui tourne à vide tous les matins.
+
+**Ce que la moitié tableau de bord doit encore faire** : l'interrupteur, le
+cadencement en langage d'utilisateur, l'état lisible — et **afficher le compteur
+d'occurrences perdues**, servi depuis le 02/09 et affiché nulle part.
+
+### L'instruction se compose ICI, jamais dans le worker (#873, 04/09/2026)
+
+Le worker est **un client MCP** : il exécute une instruction et **ne sait pas ce
+qu'elle contient**. Trois textes de repli disaient le contraire — `DEFAULT_INPUT`
+dans l'ordonnanceur de flotte, deux « Exécute la procédure. » dans le worker.
+Tous trois inventaient le travail à la place de qui l'avait déclaré, **depuis le
+seul étage qui ne connaît pas le métier**. Une instruction inventée là ne se
+relit ni ne se corrige depuis le produit : elle se découvre dans le résultat.
+
+```
+capabilities/_instruction.py   domicile UNIQUE de la composition
+  derivee(slug)                « lis la procédure X et applique-la »
+  de_file(slug, ns, filtre)    + la mécanique de réservation, qui est À NOUS
+```
+
+⚠️ **La mécanique de file n'est pas du métier.** « Réserve une ligne, une seule,
+rends-la » appartient à la flotte, pas à la procédure : c'est la plateforme qui
+distribue le travail entre plusieurs agents. L'écrire ici évite qu'un client
+recopie à la main, dans chaque campagne, un protocole que la plateforme est seule
+à savoir juste. Sans cible déclarée, **aucune file n'est inventée**.
+
+⚠️ **Les deux surfaces qui déclarent un agent en dépendent** (déclencheur,
+flotte). Le déclencheur y a perdu la copie locale posée par #866 : si chacune
+rédige sa variante, la même règle vit à plusieurs endroits et l'une d'elles finit
+par mentir. Un banc tient la classe — aucune autre capacité ne rédige la sienne.
+
+⚠️ **`launch` répare avant d'armer.** Une campagne sans instruction armée telle
+quelle resterait `armed` sans avancer : le worker refuse de démarrer, et le
+symptôme lu depuis le produit serait « l'ordonnanceur est mort » — un diagnostic
+faux posé sur une cause invisible. Le refus du worker reste, en dernier ressort ;
+il n'est plus le seul filet.
+
+### Le verrou du tick porte sur l'ÉLIGIBILITÉ, pas sur l'échéance relue (#839, 03/09/2026)
+
+Le compare-and-swap qui empêche deux environnements de jouer la même échéance
+comparait `next_due` à **la valeur que le tick venait de lire**. Or toute date lue
+passe par `_normalize_value`, qui retire **les microsecondes ET le fuseau**.
+
+```
+microsecondes   une échéance à 19:37:27.482 est relue « 19:37:27 »
+fuseau retiré   la chaîne naïve est réinterprétée dans le fuseau de la SESSION
+```
+
+⚠️ **Dans les deux cas la comparaison ne matche jamais, et rien n'échoue** :
+`consume_due` rend `False`, que le tick lit comme « un pair a déjà consommé cette
+échéance » — le cas NORMAL quand preprod et prod partagent la base. Il passe sans
+enfiler, sans erreur, sans avertissement. **Le déclencheur reste éternellement
+dû** : sélectionné à chaque tour, jamais consommé — *avec l'air parfaitement
+sain*, `enabled`, échéance passée, runner armé.
+
+Et le compteur d'occurrences perdues ne le verrait pas non plus : **aucune
+occurrence n'est enfilée, il n'y a rien à périmer.**
+
+**Le verrou porte désormais sur `next_due <= NOW()`.** L'exclusion mutuelle est
+intacte — deux ticks se sérialisent sur la ligne, et le second ré-évalue son
+`WHERE` après le verrou : l'échéance est alors dans le futur. ⚠️ Et ça ferme un
+second défaut au passage : l'ancienne forme pouvait consommer une échéance **pas
+encore due** (le tick filtrait avant, donc la garde ne tenait pas seule).
+
+**Ça ne se produisait pas** parce que toutes les échéances viennent de croniter,
+qui rend des secondes rondes. *Une garantie qui tient par la propriété d'une
+bibliothèque tierce n'est pas une garantie.*
+
 ### Un travail porte l'identité de qui l'a demandé (02/09/2026)
 
 **Premier barreau du chantier « agents autonomes », et le préalable de tout le
@@ -233,6 +332,89 @@ La délégation — le worker agissant AU NOM du porteur — est le barreau suiv
 c'est lui qui rendra le worker mutualisable. ⚠️ Le paramétrage de l'identité vers
 un autre membre (validé le 02/09) passera par une garde d'appartenance, jamais
 par la confiance faite au corps de la requête.
+
+### Le worker porte l'identité du demandeur — il n'a aucun pouvoir propre (02/09/2026)
+
+**Barreau 2, et il est plus court que prévu.** J'allais concevoir une primitive de
+délégation ; Alexis a tranché : *« rien, il est juste un client MCP qui porte
+l'identité du user »*. ⚠️ **Le mécanisme existait déjà** — `user_api_tokens` porte
+des jetons par personne, avec échéance et portée.
+
+```
+à la RÉSERVATION    le serveur vérifie que le porteur est encore valide, émet un
+                    jeton À SON NOM (durée du bail + 2 min) et le rend au worker
+pendant le travail  le worker appelle avec ce jeton — client ORDINAIRE, aucun
+                    chemin d'autorisation particulier, aucun droit propre
+porteur invalide    le travail passe `failed` AVEC SA RAISON, et le refus est
+                    servi : l'agent s'arrête EN LE DISANT
+```
+
+⚠️ **Ce que ça évite** : pas de nouvelle primitive de sécurité, pas de liste de
+workers habilités (dont la compromission ouvrirait tous les comptes), pas de
+paramètre « agis en tant que » (usurpation en une ligne de JSON). Le pouvoir est
+**borné par l'échéance du jeton**, sans qu'on ait eu à l'inventer.
+
+**La marge de 2 minutes au-delà du bail** : un agent qui conclut à la dernière
+seconde doit pouvoir écrire. Couper au bail exact tuerait un travail abouti juste
+avant sa conclusion — le pire moment, puisqu'il a déjà tout coûté.
+
+⚠️ **`create_api_token` fait un `upsert_user`** : il CRÉE le compte s'il n'existe
+pas. L'existence se vérifie donc AVANT — sinon on ressusciterait un compte
+supprimé et on lui délivrerait un accès dans la foulée.
+
+⚠️ **Le refus n'est pas un `complete_job(ok=False)`** : celui-là refile avec
+backoff jusqu'au plafond, donc rejouerait trois fois le même verdict. Et surtout
+pas un relâchement silencieux — le travail repartirait au worker suivant
+indéfiniment, *une file qui tourne sans jamais aboutir*. `failed` et non
+`expired` : celui-ci a bien été PRIS.
+
+**Ce qui se vérifie, et ce qui ne se vérifie pas** : les trois cas arrêtés le
+02/09 sont compte supprimé, sortie de l'organisation, rôle retiré. ⚠️ **Les deux
+derniers ne se distinguent pas** dans le modèle — être membre, c'est avoir un
+rôle, `org_members` porte les deux en une ligne. La raison rendue le dit en une
+phrase plutôt que d'inventer une distinction que la base ne fait pas.
+
+⚠️ **Vérifié à la RÉSERVATION seulement** (arbitrage explicite) : un travail long
+continue avec un droit retiré en cours de route. C'est assumé, pas oublié.
+
+### La clé de modèle de l'org part avec le travail réservé (#874, 04/09/2026)
+
+La clé de modèle **vit avec les autres secrets de connecteurs de l'org**, et le
+worker — qui fait partie du backend — a le droit de la lire. Ce droit s'exerce
+**à la réservation, une fois, avec le travail**. Le runner n'interroge jamais le
+coffre : un worker qui saurait l'interroger pourrait y lire autre chose que ce
+travail-ci. Avant ce lot, toutes les orgs tournaient sur la clé de la plateforme,
+prise dans l'environnement du worker.
+
+```
+claim(provider="anthropic")  le worker NOMME le dépôt qu'il sait consommer
+  → job["model_key"]         la clé de l'ORG DU TRAVAIL, si elle en a déposé une
+absente                      → le worker retombe sur la clé de la plateforme
+```
+
+⚠️ **La garde porte sur le TYPE du dépôt, pas sur son nom.** Si le worker pouvait
+nommer n'importe quel connecteur, *réserver un travail suffirait à faire sortir le
+secret Folk ou Salesforce de l'org*. Seuls les `kind="credential"` passent — ceux
+dont porter une clé est la seule raison d'être, sans aucun outil derrière. **C'est
+la raison d'être du type distinct** plutôt que d'un connecteur ordinaire aux
+namespaces vides : le type EST la liste d'autorisation.
+
+⚠️ **La clé est celle de l'org du travail**, jamais d'une org que le worker
+nommerait : il choisit le dépôt, jamais à qui il appartient. Un travail déjà
+refusé pour identité n'en reçoit aucune — lui en remettre une armerait un travail
+qui ne doit pas tourner.
+
+⚠️ **Ce que les journaux en voient : rien**, et c'est tenu par des cliquets, pas
+par une promesse. `tool_calls` ne garde aucune réponse (la clé part dans la
+réponse au claim, pas dans ses arguments — le masque de #558/#564 ne la couvre
+donc pas et n'a pas à le faire) ; `_avec_cle` rend une copie ; Sentry a
+`include_local_variables=False` (#564) ; le runner n'a pas de Sentry et ne
+journalise que `job["id"]`.
+
+**Ce qui n'est pas ici** : la grille d'offre — qui a droit à la clé de la
+plateforme, qui doit déposer la sienne. Elle appartient au chantier « qui a le
+droit de quoi et pourquoi », au blueprint. Aujourd'hui, une org sans dépôt
+continue sur la clé de la plateforme.
 
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 

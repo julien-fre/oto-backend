@@ -81,6 +81,25 @@ def _client_for_user(account: Optional[str] = None):
     return GmailClient(credentials=creds)
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — `_client_for_user` peut déclencher un rafraîchissement de
+# jeton (`google_oauth.credentials_for` → `_refresh_access_token`, HTTP synchrone
+# 15s), dans un handler `async def` : hors boucle + borné, même méthode que la liste
+# d'identités Unipile (lot 1) et les routes FOD (lot 2). Les appels à l'API Gmail,
+# eux, sont déjà en `to_thread` — seule la construction du client (donc le refresh)
+# tournait encore dans la boucle.
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise _bad(f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                   "(rafraîchissement de jeton) — réessaie.")
+
+
+_ATTACHMENTS_TIMEOUT_S = 90
+
+
 def _resolve_attachments(attachments):
     """Résout des refs `file_source` en fichiers TEMPORAIRES (le GmailClient attend
     des CHEMINS locaux pour ses pièces jointes, or le serveur n'a pas le disque de
@@ -186,7 +205,7 @@ def register(mcp: FastMCP) -> None:
         # jamais le client — donc jamais, par un chemin dérivé, une écriture.
         if op not in _MESSAGE_OPS:
             raise _bad(_MESSAGE_OPS_ERROR)
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         # ---- lectures --------------------------------------------------------
         if op == "search":
@@ -303,9 +322,20 @@ def register(mcp: FastMCP) -> None:
         """
         if mode not in ("send", "draft"):
             raise _bad("mode doit être 'send' ou 'draft'.")
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         try:
-            att = _resolve_attachments(attachments)
+            # oto-backend#867 lot 2 — chaque pièce jointe (drive/gmail/url) est
+            # résolue par un appel HTTP synchrone (file_source.resolve), en série :
+            # hors boucle + borné, même méthode que le rafraîchissement de jeton
+            # ci-dessus. 90s et non 20s : un envoi tolère l'attente de vraies
+            # pièces jointes (jusqu'à 25 Mo chacune) — ce qui ne doit pas arriver,
+            # c'est que ça gèle tout le processus pendant ce temps.
+            att = await asyncio.wait_for(
+                asyncio.to_thread(_resolve_attachments, attachments),
+                timeout=_ATTACHMENTS_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            raise _bad(f"Récupération des pièces jointes trop longue "
+                      f"(> {_ATTACHMENTS_TIMEOUT_S}s) — réessaie.")
         except file_source.FileSourceError as e:
             raise _bad(str(e))
         att_paths, _cleanup = att

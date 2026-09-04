@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org, url_perimeter)
 from ._authz import ORG_MEMBER, SUB_ONLY
+from . import _portee, _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -132,6 +133,79 @@ def _project_web_url(sub: Optional[str], project_id) -> Optional[str]:
     return links.link_for("project", sub=sub, id=project_id)
 
 
+def _visible_to(row: dict) -> str:
+    """QUI voit ce projet, en une phrase — le fait que la réponse taisait.
+
+    Vécu le 04/09/2026 : une DG demande à un agent de travailler sa base de
+    connaissance ; il crée un projet PERSO (`owner_type='user'`, donc visible d'elle
+    seule) dans le contexte de son org. Elle le voit apparaître « à la racine de
+    l'organisation », en conclut qu'il est **visible par tous**, et passe la matinée à
+    vérifier. L'agent lui-même s'est accusé à tort. Le projet était privé.
+
+    Rien dans la réponse ne permettait de trancher : elle rend `owner_type`,
+    `owner_id` et `context_org_id` — les faits TECHNIQUES — et laisse dériver la
+    conséquence. Personne ne la dérive, et devant un doute sur la confidentialité on
+    suppose le pire, avec raison.
+
+    ⚠️ Le contexte n'est PAS la visibilité : un projet perso est listé dans son org de
+    contexte et n'y est vu que de son propriétaire. C'est cette confusion qu'on paie.
+
+    ⚠️ **La propriété n'est PAS la seule portée** (constaté le 04/09 en inventoriant
+    les chemins d'élargissement). Deux faits que cette phrase taisait, et qui la
+    rendaient fausse là où elle rassurait le plus :
+
+    1. **Un projet PUBLIÉ échappe à son `owner_type`.** `mcp_access='anonymous'` le
+       sert sans login ET le liste dans l'annuaire public ; `'secret'` le sert sur une
+       URL non devinable, sans expiration ni rotation. La phrase annonçait « TOUS les
+       membres de l'org » sur un projet lisible par n'importe qui.
+    2. ~~Une proposition sur un projet perso notifiait les org_admin~~ — **corrigé le
+       04/09 même (ADR 0068)** : `docs/notify.py` suit désormais la PROPRIÉTÉ du projet
+       et non son `context_org_id`, donc un projet perso ne prévient que son
+       propriétaire. La réserve que cette phrase avait dû porter quelques heures est
+       retirée : un texte servi qui inquiète pour rien ment autant qu'un texte qui
+       rassure à tort."""
+    otype = str(row.get("owner_type") or "user")
+    org = row.get("context_org_id")
+    # La publication PRIME sur la propriété : dite en tête, avant tout le reste.
+    pub = str(row.get("mcp_access") or "off")
+    prefix = ""
+    if pub == "anonymous":
+        prefix = ("⚠️ N'IMPORTE QUI sur le web — ce projet est publié sans login et "
+                  "listé dans l'annuaire public. Au-delà de ça : ")
+    elif pub == "secret":
+        prefix = ("⚠️ toute personne qui a l'URL de partage — publiée sans login, sans "
+                  "expiration ni rotation"
+                  + (", et les tableaux liés sont lisibles par la même URL"
+                     if row.get("mcp_expose_datastore") else "")
+                  + ". Au-delà de ça : ")
+    elif pub == "org":
+        prefix = "publié en accès MCP pour les membres de l'org. Au-delà de ça : "
+    if otype == "user":
+        # Vérifié sur les CINQ chemins le 04/09 : liste (`list_member_projects` filtre
+        # `owner_id = sub`), recherche (même seam, parité tenue par tripwire), ouverture
+        # par id (`_owner_match_content` → `sub == owner_id`, « pas d'escalade
+        # plateforme ici, privacy by default »), transfert (`sub == owner_id` ou admin
+        # PLATEFORME), et console de gouvernance (un admin d'org n'y reçoit que
+        # `("user", son_sub)` + ses orgs).
+        # ⚠️ La seule exception est l'opérateur PLATEFORME, qui voit tous les projets en
+        # MÉTADONNÉES (nom + propriétaire, jamais le contenu) via cette console. On le
+        # dit : un nom de projet est parfois plus révélateur que son contenu.
+        return (prefix
+                + "toi seul — ni les autres membres, ni les administrateurs de ton org "
+                  "ne le voient, ni en liste, ni par recherche, ni en l'ouvrant par son id"
+                + (f" ; il est rangé dans le contexte de l'org {org}, ce qui n'est PAS "
+                   "la même chose qu'y être partagé" if org is not None else "")
+                + ". Seul un opérateur de la plateforme en voit le NOM, jamais le "
+                  "contenu.")
+    if otype == "org":
+        return (prefix + f"TOUS les membres de l'org {row.get('owner_id')} — ce projet "
+                "n'est pas privé")
+    if otype == "group":
+        return (prefix + f"les membres de l'équipe {row.get('owner_id')}, et les "
+                "administrateurs de l'org")
+    return prefix + "tout le monde sur la plateforme (projet bibliothèque)"
+
+
 def _view(row: dict, sub: Optional[str] = None) -> dict:
     return {
         "id": row["id"], "name": row["name"], "icon": row.get("icon"),
@@ -139,6 +213,9 @@ def _view(row: dict, sub: Optional[str] = None) -> dict:
         "url": _project_web_url(sub, row["id"]),
         "brief_md": row.get("brief_md", ""),
         "owner_type": row["owner_type"], "owner_id": row["owner_id"],
+        # Qui voit ce projet, en clair. `owner_type` seul oblige à dériver, et personne
+        # ne dérive — surtout pas sur une question de confidentialité (04/09).
+        "visible_to": _visible_to(row),
         # Org de CONTEXTE d'un projet perso (ADR 0030 amendé) — « moi, org ». NULL sinon.
         "context_org_id": (str(row["context_org_id"])
                            if row.get("context_org_id") is not None else None),
@@ -213,6 +290,62 @@ def _procedure_ref_to_id(org_id: Optional[int], ref: str) -> str:
         return ref
     inst = org_store.get_instruction("org", org_id, ref)
     return str(inst["id"]) if inst and inst.get("id") is not None else ref
+
+
+def _ref_canonizer(row: dict, org_id: Optional[int], target_type: str):
+    """La fonction qui ramène une réf de lien à son écriture CANONIQUE — celle que `link`
+    STOCKE aujourd'hui (l'id stable). Identité pour les types sans normalisation."""
+    if target_type == "tableau":
+        return lambda r: _resolve_tableau_id(row, r) or str(r or "").strip()
+    if target_type == "procedure":
+        return lambda r: _procedure_ref_to_id(org_id, str(r or "").strip())
+    return lambda r: str(r or "").strip()
+
+
+def _unlink_refs(links: list[dict], target_type: str, given: str, canon) -> list[str]:
+    """Les `target_ref` STOCKÉS que la réf demandée désigne — la cible réelle d'un unlink.
+
+    Le stockage est canonique (id) DEPUIS que `link` normalise nom/slug→id, mais les
+    lignes d'avant portent encore le NOM du namespace (tableau) ou le SLUG du guide
+    (procédure) — et le chemin de LECTURE les résout toujours (#117) : ce sont des liens
+    bien vivants, avec leur `namespace` et leur slot. L'unlink, lui, canonisait la réf
+    demandée puis supprimait CET id : zéro ligne touchée quand la ligne porte l'autre
+    écriture, et un `ok: true` par-dessus (#699). On confronte donc les deux côtés
+    canonisés, dans les deux sens.
+
+    Renvoie les refs BRUTES, sans doublon : c'est la valeur STOCKÉE qui doit matcher la
+    clause SQL, jamais sa forme canonique. Vide = rien à délier (le caller refuse).
+
+    UNE règle, pas deux : `canon` est déterministe, donc deux refs identiques canonisent
+    pareil — un `stored == given` en OU ne déciderait jamais seul, et masquerait une
+    canonisation cassée derrière un vert."""
+    want = canon(given)
+    out: list[str] = []
+    for l in links:
+        if l.get("target_type") != target_type:
+            continue
+        stored = str(l.get("target_ref") or "")
+        if not stored or stored in out:
+            continue
+        if canon(stored) == want:
+            out.append(stored)
+    return out
+
+
+def _rien_a_delier(links: list[dict], target_type: str, given: str) -> str:
+    """Le message d'un unlink qui n'a RIEN retiré : ce qu'on cherchait, et ce que le projet
+    porte vraiment pour ce type. Sans le second, l'agent ne peut que réessayer à l'identique."""
+    presents = [str(l.get("target_ref")) for l in links
+                if l.get("target_type") == target_type and l.get("target_ref")]
+    tete = (f"Aucun lien `{target_type}` « {given} » sur ce projet : RIEN n'a été retiré "
+            "(déjà délié ?).")
+    if not presents:
+        return f"{tete} Ce projet ne porte aucun lien `{target_type}`."
+    montre = presents[:12]
+    return (f"{tete} Liens `{target_type}` de ce projet : "
+            + ", ".join(f"« {r} »" for r in montre)
+            + ("…" if len(presents) > len(montre) else "")
+            + " — reprends la réf telle que `op=get` la rend.")
 
 
 def _tableau_owner_candidates(row: dict) -> list[tuple[str, str]]:
@@ -438,6 +571,13 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                                 inp.brief_md or "", created_by=sub,
                                 context_org_id=context_org)
         db.log_project_activity(pid, sub, "project.create", inp.name.strip())
+        if owner_type != "user":
+            # ADR 0068 §4 — naître chez l'org est explicite, et reste observé : c'est
+            # le geste, pas le défaut, qui rend un contenu lisible par d'autres.
+            _portee.observer(ctx, ressource_type="project", ressource_id=pid,
+                             ressource_nom=inp.name.strip(), vers=owner_type,
+                             geste=f"oto_project op=create owner_type={owner_type}",
+                             cible=str(owner_id))
         return _view(db.get_project_by_id(pid), sub)
 
     if inp.op == "list":
@@ -710,12 +850,36 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
 
     if inp.op == "copy":
         # Copier un projet qu'on peut LIRE (le sien ou un modèle) → nouveau projet
-        # possédé par l'org active (ADR 0032 §7 B5a). L'original reste intact.
+        # possédé par SOI (ADR 0068). L'original reste intact.
+        # ⚠️ La copie était possédée par l'org active (ADR 0032 §7 B5a), y compris
+        # depuis un projet PERSONNEL : dupliquer son propre travail le publiait à ses
+        # collègues, sans qu'aucun paramètre ne l'ait demandé. Le cas que 0032 visait —
+        # copier un MODÈLE pour l'équipe — se dit maintenant : `owner_type='org'`.
         _require(ownership.can_access(sub, RTYPE, rid, "read"), "forbidden", "Accès refusé.", 403)
         _require(inp.name and inp.name.strip(), "missing_name", "`name` (cible) requis.")
         _require(ctx.org_id is not None, "no_active_org", "Aucune org active.", 400)
+        if inp.owner_type == "org":
+            _require(inp.owner_id, "missing_owner",
+                     "`owner_id` (org) requis pour copier vers une org.")
+            _require(roles.is_org_member(sub, int(inp.owner_id)), "forbidden",
+                     "Tu n'es pas membre de cette org.", 403)
+            cible = ("org", str(inp.owner_id), None)
+        elif inp.owner_type == "group":
+            _require(inp.owner_id, "missing_owner",
+                     "`owner_id` (group) requis pour copier vers une équipe.")
+            _require(roles.can_read_group(sub, int(inp.owner_id)), "forbidden",
+                     "Tu n'es pas membre de cette équipe.", 403)
+            cible = ("group", str(inp.owner_id), None)
+        else:
+            cible = ("user", sub, int(ctx.org_id))
         new_id, warnings = db.duplicate_project(int(inp.project_id), inp.name.strip(),
-                                                "org", str(ctx.org_id), copied_by=sub)
+                                                cible[0], cible[1], copied_by=sub,
+                                                context_org_id=cible[2])
+        if cible[0] != "user":
+            _portee.observer(ctx, ressource_type="project", ressource_id=new_id,
+                             ressource_nom=inp.name.strip(), vers=cible[0],
+                             geste=f"oto_project op=copy owner_type={cible[0]}",
+                             cible=str(cible[1]))
         return {**_view(db.get_project_by_id(new_id), sub),
                 "links": db.list_project_links(new_id), "copied_from": inp.project_id,
                 "warnings": warnings}
@@ -730,8 +894,8 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         target_ref = inp.target_ref
         identity_ref = inp.identity_ref
         config = dict(inp.config) if inp.config else None
+        proj_org = int(row["owner_id"]) if row.get("owner_type") == "org" else ctx.org_id
         if inp.target_type == "procedure":
-            proj_org = int(row["owner_id"]) if row.get("owner_type") == "org" else ctx.org_id
             target_ref = _procedure_ref_to_id(proj_org, target_ref)
         elif inp.target_type == "tableau":
             # Normalise nom→id (le datastore du propriétaire du projet). Stocker l'id garde
@@ -807,12 +971,25 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                 code = "slot_taken" if str(e).startswith("slot_taken") else "bad_link"
                 _require(False, code, str(e), 409 if code == "slot_taken" else 400)
         else:
-            db.remove_project_link(int(inp.project_id), inp.target_type, target_ref,
-                                   identity_ref=identity_ref)
+            # #699 — un unlink ne mime plus un succès. Il vise TOUTES les écritures que la
+            # réf demandée désigne (id canonique / nom-slug d'avant la normalisation), COMPTE
+            # ce qu'il a retiré, et refuse nommément si ce compte est nul : `ok: true` sur un
+            # no-op est pire qu'un refus — le lien restait dans les `links` de la réponse.
+            demande = str(inp.target_ref).strip()
+            existants = db.list_project_links(int(inp.project_id))
+            refs = _unlink_refs(existants, inp.target_type, demande,
+                                _ref_canonizer(row, proj_org, inp.target_type))
+            removed = sum(db.remove_project_link(int(inp.project_id), inp.target_type, r,
+                                                 identity_ref=identity_ref)
+                          for r in refs)
+            _require(removed, "link_not_found",
+                     _rien_a_delier(existants, inp.target_type, demande), 404)
         db.log_project_activity(int(inp.project_id), sub, f"project.{inp.op}",
                                 f"{inp.target_type}:{inp.label or target_ref}")
         out = {"ok": True, "id": inp.project_id,
                "links": db.list_project_links(int(inp.project_id))}
+        if inp.op == "unlink":
+            out["removed"] = removed
         # 0035 × 0046 — schéma CIBLE au binding d'un slot tableau : si une procédure
         # liée déclare ce slot avec un `schema`, un namespace vierge est PROVISIONNÉ
         # (le tableau naît avec son contrat — validation/lifecycle/clé) ; un schéma
@@ -876,8 +1053,22 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                  "Publier un endpoint MCP est réservé au propriétaire / admin.", 403)
         if inp.op == "unpublish_mcp":
             return unpublish_project_mcp(sub, int(inp.project_id))
+        # ⚠️ Le défaut était `anonymous` : publier sans rien préciser ouvrait le projet
+        # au web ET le listait dans l'annuaire public. Un mode d'accès se choisit.
+        _require(inp.mcp_access, "missing_mcp_access",
+                 "`mcp_access` requis : 'org' (les membres de l'org, avec leur compte), "
+                 "'secret' (URL non devinable, sans login, sans expiration) ou "
+                 "'anonymous' (le web entier, et listé dans l'annuaire public). Il n'y "
+                 "a pas de défaut raisonnable ici — le plus ouvert l'était.")
+        if inp.mcp_access in ("anonymous", "secret"):
+            quoi = "ce projet"
+            if inp.mcp_expose_datastore is not False:
+                quoi = "ce projet et les tableaux qui y sont liés"
+            _publication.refuser_si_agent(
+                ctx, quoi,
+                "La publication se fait depuis le dashboard, sur la page du projet.")
         return publish_project_mcp(
-            sub, row, access_mode=inp.mcp_access or "anonymous", mcp_slug=inp.mcp_slug,
+            sub, row, access_mode=inp.mcp_access, mcp_slug=inp.mcp_slug,
             mcp_tools=inp.mcp_tools, expose_datastore=inp.mcp_expose_datastore,
             expose_datastore_write=inp.mcp_expose_datastore_write,
             expose_docs=inp.mcp_expose_docs,
@@ -1167,7 +1358,12 @@ CAPABILITIES += [
             "Slot names are a PROJECT-wide vocabulary (unique per project → 409 slot_taken; "
             "two linked procedures sharing `sortie` share the binding). "
             "Re-linking without role/config/slot preserves the "
-            "existing ones. get/link return each link's role + slot + config + a derived "
+            "existing ones. unlink returns `removed` = how many bindings it actually took "
+            "out, and REFUSES (`link_not_found`) when it matched none — it never answers ok "
+            "on a link it did not find. Give the `target_ref` as op=get renders it: an older "
+            "link may still carry the NAME of its tableau (or the SLUG of its procedure) "
+            "instead of the id, and unlink takes back either spelling. "
+            "get/link return each link's role + slot + config + a derived "
             "`cross_project` flag (the same entity is linked by another project → avoid brutal "
             "edits / ask); a tableau link also returns its resolved `namespace` — address THIS "
             "project's table by that name with the data_* tools (never hardcode a namespace). "

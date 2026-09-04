@@ -1,18 +1,24 @@
 """Un 4xx de CONFIGURATION ne doit pas détruire un credential valide.
 
-Les trois flux OAuth fédérés purgent le credential quand leur `_refresh` lève
-`*ReauthRequired` (`clear_credential` puis `return None`, auth/atlassian.py ~:196,
-auth/folk.py ~:207). C'est juste quand le GRANT est mort —
-l'utilisateur doit re-consentir de toute façon.
+Les flux OAuth fédérés lèvent `*ReauthRequired` depuis `_refresh` quand — et
+SEULEMENT quand — le GRANT est mort (`oauth_flow.grant_is_dead`). L'appelant
+(`access_token_for`) réagit à cette exception : jusqu'au 2026-09-04 il PURGEAIT la
+ligne du coffre (`clear_credential`) ; depuis oto#25 lot (a), il la MARQUE rejetée
+(`update_meta` → `meta.health_ko`/`health_reason`, motif brut) et la laisse en
+place — purger rendait « révoqué » indiscernable de « jamais posé ». Ce
+comportement du CALLER est verrouillé par
+`test_oauth_dead_grant_marks_rejected.py`, pas ici.
 
 Mais jusqu'ici, TOUT 400/401 levait cette exception. Or un serveur d'autorisation
 répond 400 aussi pour `invalid_client`, `invalid_request`, `unauthorized_client` :
-autrement dit pour une CONFIG fausse. Un client_secret mal saisi effaçait donc
-irréversiblement un refresh_token parfaitement valide, et l'utilisateur devait tout
-reconnecter — pour une faute de frappe qui n'avait rien détruit.
+autrement dit pour une CONFIG fausse. Un client_secret mal saisi déclenchait donc
+la même conséquence qu'un grant mort pour un refresh_token parfaitement valide,
+et l'utilisateur devait tout reconnecter — pour une faute de frappe qui n'avait
+rien cassé côté fournisseur.
 
-La distinction vit dans `oauth_flow.grant_is_dead` (une règle, trois appelants).
-Ce fichier verrouille la règle ET son application dans les trois modules.
+La distinction vit dans `oauth_flow.grant_is_dead` (une règle, ses appelants).
+Ce fichier verrouille la règle ET le fait que `_refresh` lui-même (pas l'appelant,
+cf. plus haut) la respecte dans atlassian/folk.
 """
 import pytest
 

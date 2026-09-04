@@ -166,13 +166,62 @@ def _scrape(sub: str, fn):
             "déjà vues sont servies du cache — inutile de les relire.")))
 
 
-def _slim_search(res):
+# Filtres STRUCTURÉS de `linkedin_unipile_search` (≠ mots-clés) : ce sont eux que
+# l'amont peut ne pas appliquer sans le dire (#536).
+_FACETTES_RECHERCHE = ("company", "location", "industry", "skills",
+                       "network_distance", "advanced_keywords")
+
+
+def _alertes_recherche(items, total, cursor, facettes, page_suivante):
+    """Ce que la page NE dit pas d'elle-même (#536 : trois amputations muettes sur une
+    même cible, aucune erreur, aucun indicateur — un agent honnête en conclut « vivier
+    vide » ou « population balayée »)."""
+    out = []
+    if isinstance(total, int) and len(items) < total:
+        if cursor:
+            out.append(
+                f"page PARTIELLE : {len(items)} résultats servis sur {total} — il reste "
+                "des pages, rappelle avec `cursor` avant de conclure quoi que ce soit "
+                "sur la population.")
+        else:
+            out.append(
+                f"⚠️ {total - len(items)} résultats sur {total} sont INATTEIGNABLES : "
+                f"l'amont n'en rend que {len(items)} et ne donne AUCUN curseur "
+                "(plafond du produit LinkedIn — mesuré à 25 sur 86 en "
+                "api='sales_navigator'). Ce n'est PAS un balayage complet : ne conclus "
+                "rien sur les profils non vus ; resserre la recherche (facette plus "
+                "fine, découpage par localisation/intitulé, autre `api=`) pour faire "
+                "tenir la population sous le plafond.")
+    if facettes and not items:
+        out.append(
+            f"0 résultat AVEC facette(s) {', '.join(facettes)} : une facette peut ne PAS "
+            "être appliquée par l'amont, sans erreur ni indicateur (mesuré : même cible "
+            "et même facette employeur → 0 en api='sales_navigator', 10 en "
+            "api='classic'). Un zéro ici ne prouve pas un vivier vide — recoupe avec un "
+            "autre `api=` ou en mots-clés avant de le rapporter.")
+    if page_suivante and facettes:
+        out.append(
+            f"pagination CURSOR-ONLY : les filtres repassés avec `cursor` "
+            f"({', '.join(facettes)}) ne sont PAS ré-appliqués — seul le curseur porte la "
+            "requête amont, et la page 2 PERD parfois le filtre employeur (mesuré en "
+            "api='classic' : profils sans rapport). Vérifie l'employeur de chaque item "
+            "de cette page avant de l'exploiter.")
+    return out
+
+
+def _slim_search(res, *, facettes=(), page_suivante=False):
     """Allège une réponse de recherche (feedback #335, coût token ÷~2 en bulk) :
     - dé-duplique `data`/`items` et `next_cursor`/`cursor` — oto-core `_norm` renvoie les
       DEUX (même liste) pour la stabilité de l'aval ; l'agent n'a besoin QUE de `items`/`cursor` ;
     - retire de chaque résultat les URLs d'image (`*picture_url*` : photo + large + fond) =
       poids mort en recherche (l'agent ne rend pas d'images ; un profil précis → linkedin_unipile_profile).
-    Ne touche à RIEN d'autre (tous les champs métier restent)."""
+    Ne touche à RIEN d'autre (tous les champs métier restent).
+
+    ...et DIT ce que la page ampute (#536) : `returned`/`truncated` dès que
+    `items < total_count`, plus des `warnings` en clair quand le résultat ne se
+    lit pas au premier degré (plafond sans curseur, zéro sur facette, page
+    obtenue par curseur). L'enveloppe ne grossit QUE s'il y a quelque chose à
+    avouer — une recherche complète reste aussi légère qu'avant."""
     if not isinstance(res, dict):
         return res
     items = res.get("items")
@@ -182,9 +231,17 @@ def _slim_search(res):
         if isinstance(it, dict):
             for k in [k for k in it if "picture_url" in k.lower()]:
                 it.pop(k, None)
-    out = {"items": items, "cursor": res.get("cursor") or res.get("next_cursor")}
-    if res.get("total_count") is not None:
-        out["total_count"] = res["total_count"]
+    cursor = res.get("cursor") or res.get("next_cursor")
+    total = res.get("total_count")
+    out = {"items": items, "cursor": cursor}
+    if total is not None:
+        out["total_count"] = total
+    if isinstance(total, int) and len(items) < total:
+        out["returned"] = len(items)
+        out["truncated"] = True
+    alertes = _alertes_recherche(items, total, cursor, tuple(facettes), page_suivante)
+    if alertes:
+        out["warnings"] = alertes
     return out
 
 
@@ -924,10 +981,23 @@ def register(mcp: FastMCP) -> None:
 
         ⚠️ **Recherche Recruiter / Sales Navigator par facettes** (compétences,
         secteur, localisation, employeur) : lis d'abord le guide
-        `oto_guide(op=read, slug="linkedin-search")`. Deux pièges qui FAUSSENT en
+        `oto_guide(op=read, slug="linkedin-search")`. Quatre pièges qui FAUSSENT en
         silence : (1) une facette exige un **ID résolu** — passe le terme par
         `linkedin_unipile_facets` et donne l'`id` choisi ; un terme brut NE filtre PAS ;
-        (2) le mode `url=` est **plafonné à 25 sans pagination** — préfère le structuré.
+        (2) le mode `url=` est **plafonné à 25 sans pagination** — préfère le structuré ;
+        (3) une facette peut n'être **PAS appliquée** par le produit choisi, sans erreur
+        (mesuré : même employeur → 0 en `sales_navigator`, 10 en `classic`) — un **0 sur
+        recherche à facettes ne prouve pas un vivier vide**, recoupe ;
+        (4) la pagination est **CURSOR-ONLY** : les filtres repassés à côté du `cursor`
+        ne sont pas ré-appliqués, et la page 2 **perd parfois le filtre employeur** —
+        contrôle l'employeur des items d'une page paginée.
+
+        **Le retour DIT ce qu'il ampute** (#536) : `total_count` (population annoncée)
+        vs `returned` + `truncated: true` dès que la page en rend moins, et des
+        `warnings` en clair quand le résultat ne se lit pas au premier degré. `truncated`
+        **sans** `cursor` = le reste est INATTEIGNABLE (plafond produit, ex. 25 sur 86) :
+        ne conclus rien sur les non-vus, resserre la recherche. Lis ces champs avant de
+        rapporter « vivier vide » ou « population balayée ».
 
         ⚠️ **Cadence** : LinkedIn rate-limite par compte. Enchaîner des dizaines
         d'appels en rafale déclenche un `429`, puis DÉGRADE et finit par DÉCONNECTER
@@ -972,12 +1042,16 @@ def register(mcp: FastMCP) -> None:
             cursor: Curseur de pagination renvoyé par un appel précédent.
         """
         sub = _actor_key()
+        poses = dict(company=company, location=location, industry=industry,
+                     skills=skills, network_distance=network_distance,
+                     advanced_keywords=advanced_keywords)
+        facettes = tuple(n for n in _FACETTES_RECHERCHE if poses.get(n))
         return _slim_search(_scrape(sub, lambda: unipile_client().search(
             keywords=keywords, category=category, company=company, location=location,
             industry=industry, network_distance=network_distance,
             advanced_keywords=advanced_keywords, skills=skills, url=url, api=api,
             cursor=cursor,
-        )))
+        )), facettes=facettes, page_suivante=bool(cursor))
 
     @mcp.tool()
     def linkedin_unipile_facets(facet_type: str, keywords: str, limit: int = 25) -> dict:

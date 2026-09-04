@@ -69,10 +69,10 @@ def _tenant_of(sub: Optional[str]):
     try:
         from . import tenancy
         registre = tenancy.current()
-        slug = registre.tenant_of(sub)
-        if not slug or slug == tenancy.PRIMARY_SLUG:
-            return None
-        return next((e for e in registre.entries() if e.slug == slug), None)
+        # `entry_for_slug` rend None pour le tenant primaire comme pour un slug
+        # inconnu — la distinction ne servait à personne ici, et la refaire à la
+        # main était la deuxième copie d'une recherche qui n'a qu'un sens.
+        return registre.entry_for_slug(registre.tenant_of(sub))
     except Exception:  # noqa: BLE001 — un lien ne casse jamais un appel
         logger.warning("résolution du tenant impossible pour un lien (fail-open)",
                        exc_info=True)

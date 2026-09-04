@@ -25,6 +25,7 @@ from . import guide_library
 from .orgs import instructions as orgs_instructions
 from ._authz import (BY_OP, GROUP_ADMIN_OPT, GROUP_MEMBER_OPT, ORG_ADMIN_OPT,
                      ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY)
+from . import _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
 
@@ -37,7 +38,13 @@ from .registry import CAPABILITIES
 #
 # ⚠️ `None` et `"org"` doivent MAPPER LA MÊME règle : `scope` est optionnel, et son
 # absence ne veut pas dire « palier inconnu ».
-_LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
+# ⚠️ Le palier PERSONNEL (`scope='user'`) existe depuis le 04/09/2026 (ADR 0068) —
+# mais `None` reste sur l'ORG, et c'est un choix à trancher, pas un oubli. Le basculer
+# fait tomber une vingtaine de bancs et une garde (`…_reads_honor_explicit_org`) :
+# l'absence de scope voyage jusqu'à des modèles d'entrée en aval qui l'exigent, et
+# « privé par défaut » y demande un lot à part. Ouvrir la porte d'abord, déplacer le
+# défaut ensuite — dans cet ordre, chaque pas se vérifie seul.
+_LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "user": SUB_ONLY, "org": ORG_MEMBER_OPT("org"),
                "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
 # ⚠️ `set` et `delete` ne partagent PAS une règle : ce n'est pas la surface qui décide du
 # palier, c'est le VERBE.
@@ -54,11 +61,41 @@ _LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
 # ajoute une version et `from_version` restaure la précédente. Le risque d'une procédure
 # qui pilote un agent se traite là — par les versions et par le digest qui dit ce qui a
 # changé — et non en fermant la porte à ceux qui s'en servent.
-_ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org"), "org": ORG_ADMIN_OPT("org"),
+# ⚠️ Le refus d'écriture NOMME les autres chemins (04/09/2026). Mesuré sur un cas
+# réel, au journal des appels : une membre d'org tente d'écrire une procédure le
+# 31/08, réessaie le 02/09, et ne trouve le palier ÉQUIPE que le 04/09 — quatre jours,
+# trois refus, pour un geste qui lui était ouvert depuis le début. « Réservé à un
+# administrateur » dit qui a le droit ; il ne dit pas ce qu'elle, elle cherchait à
+# faire. Un refus qui ne porte pas le geste n'arrête pas la demande, il la déplace.
+# ⚠️ Il en nommait UN SEUL — l'équipe — le jour même où le palier PERSONNEL était
+# ouvert (ADR 0068). Un refus qui n'énumère qu'une partie des issues envoie chez la
+# mauvaise : la personne qui voulait sa propre procédure se serait retrouvée à écrire
+# celle de son équipe, partagée avec elle, sans savoir que l'autre existait.
+_AUTRES_PALIERS = (
+    "Tu n'as pas besoin de l'être pour écrire une procédure — deux paliers te sont "
+    "ouverts. `scope='user'` : une procédure qui n'appartient qu'à TOI, que personne "
+    "d'autre ne voit, pas même les administrateurs de ton org. `scope='group'` "
+    "(+ `group=<id>` si tu es dans plusieurs équipes) : celle de ton ÉQUIPE, partagée "
+    "avec ses membres — y écrire demande d'en être MEMBRE, pas chef. "
+    "`oto_procedure(op='list')` montre celles que tu vois déjà."
+)
+# ⚠️ `None` écrit à SOI (04/09/2026, question d'Alexis : « il ne peut pas y avoir un
+# défaut à scope ? »). Il valait `org`, donc le défaut menait à un REFUS pour toute
+# personne qui n'est pas administratrice — la majorité. Un défaut qui échoue pour le
+# plus grand nombre n'est pas un défaut, c'est un piège : on l'a mesuré sur quatre
+# jours et trois refus chez une org cliente.
+# ⚠️ La LECTURE ne bascule PAS avec lui : `list` sans scope CUMULE déjà l'org et
+# l'équipe active, ce qui est le bon geste pour retrouver. Restreindre la lecture au
+# palier personnel cacherait ce qu'on cherche. C'est le verbe qui décide, pas la
+# surface — la même règle que celle qui sépare `set` de `delete` ci-dessous.
+_ECRIRE = BY_OP({None: SUB_ONLY, "user": SUB_ONLY,
+                 "org": ORG_ADMIN_OPT("org", _AUTRES_PALIERS),
                  "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
 # `delete` reste au **chef d'équipe** : il emporte la procédure ET tout son historique,
 # sans corbeille — rien ne le défait. Un geste destructeur n'est pas un geste de travail.
-_SUPPRIMER = BY_OP({None: ORG_ADMIN_OPT("org"), "org": ORG_ADMIN_OPT("org"),
+# Au palier PERSONNEL, supprimer sa propre procédure ne demande personne d'autre :
+# le geste destructeur ne l'est que pour son auteur, qui est le seul à la voir.
+_SUPPRIMER = BY_OP({None: SUB_ONLY, "user": SUB_ONLY, "org": ORG_ADMIN_OPT("org"),
                     "group": GROUP_ADMIN_OPT("group")}, fields=("scope",))
 
 
@@ -98,12 +135,25 @@ class ProcedureInput(BaseModel):
     limit: int = 100                       # library_list
 
 
+def _ECRIT_SCOPE(inp) -> str:
+    """Le palier d'ÉCRITURE effectif — `user` quand rien n'est demandé.
+
+    ⚠️ Il doit dire EXACTEMENT ce que `_ECRIRE` a vérifié : l'autz mappe `None` sur
+    `SUB_ONLY`, donc laisser passer `None` en aval ferait écrire à l'ORG une demande
+    autorisée au palier PERSONNEL. Le trou serait invisible — l'écriture réussit, et
+    au mauvais endroit."""
+    return getattr(inp, "scope", None) or "user"
+
+
 async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
     oi, lib = orgs_instructions, guide_library
     if inp.op == "get":
         return await oi._get_guide(ctx, oi.GuideGetInput(
             slug=inp.slug, guide_id=inp.guide_id, doctrine_id=inp.doctrine_id,
-            scope=inp.scope or "org",
+            # Pas de repli sur "org" : `None` déclenche la CASCADE de lecture
+            # (chez soi d'abord, puis l'org). Écrire à soi par défaut et relire
+            # ailleurs par défaut ferait « perdre » la procédure qu'on vient d'écrire.
+            scope=inp.scope,
             version=inp.version, with_history=inp.with_history))
     if inp.op == "list":
         return oi._list_guides(ctx, oi.GuideListInput(query=inp.query, scope=inp.scope))
@@ -111,23 +161,23 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
         return await oi._create_instruction(ctx, oi.ConsoleInstrCreateInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour create."),
             body_md=inp.body_md, title=inp.title, description=inp.description,
-            slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
+            slots=inp.slots, org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "set":
         return await oi._set_instruction(ctx, oi.ConsoleInstrSetInput(
             slug=inp.slug, body_md=inp.body_md, title=inp.title,
             description=inp.description, from_version=inp.from_version,
             expected_version=inp.expected_version,
-            slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
+            slots=inp.slots, org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "describe":
         return oi._describe_instruction(ctx, oi.ConsoleInstrDescribeInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour describe."),
             title=inp.title, description=inp.description,
             expected_version=inp.expected_version,
-            org=inp.org, scope=inp.scope, group=inp.group))
+            org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "delete":
         return oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour delete."),
-            org=inp.org, scope=inp.scope, group=inp.group))
+            org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "library_list":
         return lib._list(ctx, lib.LibraryListInput(
             query=inp.query, category=inp.category, author_kind=inp.author_kind,
@@ -136,10 +186,20 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
         return lib._get(ctx, lib.LibraryGetInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (public) requis pour library_get.")))
     if inp.op == "publish":
+        # `public` ET `unlisted` sont servis SANS LOGIN (l'un est listé dans
+        # l'annuaire, l'autre non) : les deux sortent la procédure de l'org.
+        _publication.refuser_si_agent(
+            ctx, "cette procédure",
+            "Elle se publie depuis le dashboard, dans la bibliothèque de guides.")
         return lib._publish(ctx, lib.PublishInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (skill d'org) requis pour publish."),
             public_slug=inp.public_slug, title=inp.title, description=inp.description,
-            category=inp.category, tags=inp.tags, visibility=inp.visibility or "public"))
+            category=inp.category, tags=inp.tags,
+            visibility=_need(inp.visibility, "missing_visibility",
+                             "`visibility` requis : 'public' (listé dans la "
+                             "bibliothèque publique) ou 'unlisted' (accessible par son "
+                             "adresse, sans login, non listé). Le défaut était "
+                             "'public' — le plus ouvert des deux.")))
     if inp.op == "fork":
         return lib._fork(ctx, lib.ForkInput(
             slug=_need(inp.slug, "missing_slug", "`slug` (public) requis pour fork."),
@@ -195,8 +255,17 @@ CAPABILITIES += [
             "the grammar is a contract: read the `procedure-flowchart` guide before writing "
             "one. The response carries `diagram_warning` when the body has none. "
             "`from_version` "
-            "restores; `slots` = required entities referenced <slot:name> in the prose; `org` "
-            "pins an explicit org id) "
+            "restores; `org` pins an explicit org id. "
+            "`slots` = the entities the prose cites as <slot:name>, and its SHAPE is "
+            "`[{name, type}]` — a bare list of names is refused, so is a list of "
+            "`{name}` alone. `type` is one of tableau | connecteur | doc. Optional per "
+            "entry: `description`; `connector` on a `connecteur` slot ONLY (omit it and "
+            "the slot NAME is used as the connector — it is not required, contrary to "
+            "what the refusals may suggest); `schema` on a `tableau` slot only, to "
+            "prescribe the target table's shape. The refusals name the faulty entry by "
+            "index and say what was expected, so read them rather than guessing — but "
+            "one procedure still reached version 3 discovering this shape by trial, "
+            "which is why it is written here) "
             "/ describe (fix `title` and/or `description` ALONE — the body is carried "
             "over untouched. Use this for a stale catalog line instead of re-sending the "
             "whole body through `set`, which risks degrading prose you did not mean to "

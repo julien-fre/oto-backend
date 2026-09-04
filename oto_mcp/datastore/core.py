@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import copy
 
 import base64
 import binascii
@@ -33,13 +34,16 @@ from typing import Any, Optional
 
 from psycopg.errors import UniqueViolation
 
+from . import ecartes as dsec
 from . import schema as dsv2
 from . import claimable, hors_org
 # Les refus : extraits dans `errors` (#325), ré-importés ici pour que tout appelant
 # (`from .datastore.core import RowNotFound`) reste inchangé.
 from .claimable import RowOutsideClaimable  # noqa: F401
 from .schema_ops import SchemaOpsMixin
+from .forcage import Forcage
 from .reserves import (
+    iso_utc,
     poser_origine_systeme,
     poser_valeurs_systeme,
     refuser_champs_reserves,
@@ -141,7 +145,11 @@ def _filter_clauses(filter: Optional[dict], filters: Optional[list]) -> list[dic
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Même forme que toute estampille posée par la plateforme (#859) : les deux
+    # sources système d'une date en rendaient deux, et un tri les rangeait par
+    # l'alphabet. La règle vit à UN endroit — `reserves.iso_utc` — pour qu'elles
+    # ne puissent plus diverger.
+    return iso_utc(datetime.now(timezone.utc))
 
 
 def _new_id() -> str:
@@ -386,10 +394,20 @@ class DatastorePg(SchemaOpsMixin):
         # Même portée que les relevés ci-dessus (un store par requête), même union
         # sur un lot — mais une LISTE : la ligne fait partie de l'information.
         self.off_erased: list = []
+        # #667 : les valeurs que le geste a posées et que le schéma REFUSE, écartées
+        # pour que le reste de la ligne s'écrive. Sixième liste, distincte des cinq
+        # autres — celles-ci ne sont NI en base NI perdues en silence.
+        self.off_rejected: list = []
         # Et ce qu'il aurait vidé sans la règle de #608 : les colonnes qu'il nomme
         # avec un vide non-`null` par-dessus une valeur en place. Liste SÉPARÉE
         # d'`off_erased` — l'une nomme ce qui n'est plus, l'autre ce qui est resté.
         self.off_ignored: list = []
+        # #658 : les colonnes VERROUILLÉES que ce geste a remplacées de force, avec
+        # la ligne et la valeur d'avant. Même portée que les relevés ci-dessus (un
+        # store par requête). Deux lecteurs, parce qu'il y a deux journaux : la face
+        # MCP le verse au relevé d'appel (`note_call_trace`, no-op ailleurs), la face
+        # REST le lit ici pour sa propre ligne (`datastore_journal.record`).
+        self.off_forced: list = []
 
     # --- résolution namespace -> ns_id ---------------------------------------
 
@@ -639,6 +657,137 @@ class DatastorePg(SchemaOpsMixin):
         impossible à reproduire."""
         return valeurs_systeme(schema, run=_current_run(), maintenant=_now_iso())
 
+    # --- forçage d'une colonne verrouillée (#658) -----------------------------
+
+    def _forcage_readonly(self, ns_id: int, schema: Optional[dict],
+                          demande: bool) -> Optional[Forcage]:
+        """Le forçage de CET appel — `None` quand rien ne le demande.
+
+        ⚠️ Le palier est tranché ICI, **une fois par appel et hors de toute
+        transaction**. Il coûte une lecture d'ownership : l'évaluer dans le `_apply`
+        du verrou de ligne prendrait une seconde connexion du pool pendant qu'on tient
+        un `FOR UPDATE` — la forme exacte du gel de production du 02/09/2026.
+
+        Deux courts-circuits avant la moindre requête, donc **zéro SQL de plus sur le
+        chemin nominal** : personne ne demande le forçage, ou le tableau ne déclare
+        aucune colonne verrouillée — il n'y a alors rien à forcer, et le demander ne
+        doit rien coûter."""
+        if not demande:
+            return None
+        if not dsv2.readonly_fields(schema):
+            return Forcage(demande=True, autorise=False)
+        return Forcage(demande=True, autorise=self._peut_forcer(ns_id))
+
+    def _peut_forcer(self, ns_id: int) -> bool:
+        """Le PALIER : propriétaire du tableau ∪ qui le gouverne. L'un des deux suffit.
+
+        Les deux ensembles se croisent sans s'inclure — un membre de l'org
+        propriétaire POSSÈDE sans gouverner, un gérant (`role='manager'`, ADR 0048)
+        GOUVERNE sans posséder — d'où l'union, et non l'un des deux seul.
+
+        ⚠️ Ce qui reste dehors est exactement ce qui doit rester dehors : le tiers à
+        qui le tableau a été PARTAGÉ en écriture (`data_share`, permission `write`).
+        Il écrit — c'est le droit qu'on lui a donné — et il ne force pas. Sinon le
+        verrou ne protégerait de personne : quiconque peut écrire pourrait le lever,
+        ce qui est la définition d'une colonne ouverte.
+
+        Endpoint agissant-org (sub-less) : pas de gouvernance par cette porte —
+        `_entry` pose déjà la même règle — reste l'owner-match de l'org elle-même."""
+        if self.acting_org is not None:
+            owner = ownership.owner_of("datastore_namespace", str(ns_id))
+            return (owner is not None
+                    and (str(owner[0]), str(owner[1])) == ("org", str(self.acting_org)))
+        if not self.sub:
+            return False
+        return (ownership.owns(self.sub, "datastore_namespace", str(ns_id))
+                or ownership.can_govern(self.sub, "datastore_namespace", str(ns_id)))
+
+    def _relever_forcage(self, forcage: Optional[Forcage],
+                         row_id: Optional[str]) -> None:
+        """Agrafe la ligne aux substitutions, puis les verse aux DEUX journaux.
+
+        Appelée seulement quand l'écriture a ABOUTI : un geste refusé n'a rien forcé,
+        et le journaliser ferait chercher une valeur qui n'a pas bougé.
+
+        Deux dépôts parce qu'il y a deux faces et deux journaux : `note_call_trace`
+        pour la face MCP (versé dans les `args` de la ligne `tool_calls` par
+        `server._calllog_sink`, via l'allowlist `_TRACED_ARGS` ; no-op hors appel
+        MCP), et `self.off_forced` que la face REST relit pour SA ligne. Le « qui »
+        n'est répété ni dans l'un ni dans l'autre : les deux journaux stampent déjà
+        le `sub` et l'org de l'appelant."""
+        if forcage is None or not forcage.forcees:
+            return
+        forcage.rattacher(row_id)
+        releve = forcage.releve()
+        if not releve:
+            return
+        self.off_forced = list(releve)
+        session_org.note_call_trace(readonly_forced=list(releve))
+
+    def _ecarter(self, schema: Optional[dict], merged: dict, errors: list,
+                 hors: list, *, prev_status=None,
+                 written: Optional[set] = None) -> Optional[list]:
+        """Écarte les valeurs hors options et rend leur relevé — ou None pour
+        refuser tout, comme avant (#667).
+
+        Trois conditions, et chacune ferme un trou :
+
+        1. **Les refus sont TOUS des valeurs hors options.** Un requis manquant ou
+           une transition interdite portent sur la COHÉRENCE de la ligne : les
+           écarter écrirait une fiche fausse. Le partage est là, pas ailleurs.
+        2. **Chaque champ fautif est posé par CE geste.** Un patch ne se fait pas
+           amputer d'une valeur qu'il n'a pas écrite : ce serait un effacement
+           silencieux de la base, exactement ce que `valeurs_effacees` existe pour
+           empêcher. Le cran juge le geste, pas le passé qu'il hérite.
+        3. **La ligne amputée REPASSE la validation entière.** Retirer une valeur
+           peut en défaire une autre — une colonne-aiguillage écartée cesse de
+           rendre requis ce qu'elle gardait. Sans ce second tour, on écrirait une
+           ligne incomplète sur la foi d'un contrôle qui n'a pas vu sa forme
+           finale. Elle échoue ⇒ on refuse tout, avec le message d'origine.
+
+        ⚠️ L'amputation se joue d'abord sur une COPIE : `merged` n'est touché que
+        si le second tour est propre. Un écartement à moitié appliqué sur un
+        refus final laisserait l'appelant avec un dict trafiqué et une exception.
+        """
+        if not hors or len(hors) != len(errors):
+            return None
+        # Une valeur dont le schéma déclare la DESTINATION est mal rangée, pas
+        # indésirable (#545/#667) : le refus dit où l'écrire, et 27 agents sur 27
+        # se corrigent. L'écarter écrirait une fiche qui prétend ne pas avoir été
+        # qualifiée, sous un `ok: true` — corrompre en silence, pas sauver.
+        if any(h.get("destination") for h in hors):
+            return None
+        essai = copy.deepcopy(merged)
+        releve: list = []
+        for h in hors:
+            champ = str(h.get("champ") or "")
+            tete = dsec.tete(champ)
+            if not tete or (written is not None and tete not in written):
+                return None
+            if not dsec.retirer(essai, champ):
+                return None
+            options = ", ".join(str(o) for o in (h.get("options") or []))
+            releve.append({
+                "champ": champ,
+                "motif": f"valeur hors options ({options})",
+                "valeur_rejetee": h.get("valeur"),
+            })
+        # Rien à sauver ⇒ rien à écarter. Quand la valeur fautive est TOUT ce que
+        # le geste pose, l'amputer ne sauve pas une fiche : elle en crée une VIDE,
+        # sous un `ok`. Le motif de ce lot est de préserver un travail déjà fait —
+        # là où il n'y en a pas, le refus reste la bonne réponse, et c'est ce que
+        # le banc du régime strict (#319) a rappelé.
+        reste = (essai if written is None
+                 else {k: v for k, v in essai.items() if k in written})
+        if not any(not dsv2.est_vide(v) for v in reste.values()):
+            return None
+        if dsv2.validate_row(schema, essai, prev_status=prev_status,
+                             written=written):
+            return None
+        for h in hors:
+            dsec.retirer(merged, str(h.get("champ") or ""))
+        return releve
+
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
@@ -657,10 +806,17 @@ class DatastorePg(SchemaOpsMixin):
         # récupérer après coup imposerait de reparser le message, ce que la face REST
         # ne doit jamais avoir à faire.
         details: dict = {}
+        hors: list = []
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
-                                   written=written, details=details)
+                                   written=written, details=details, hors=hors)
         if errors:
-            raise RowValidationError(errors, details=details)   # refusée ⇒ rien à relever
+            # #667 : une valeur hors options s'ÉCARTE, la fiche s'écrit. Tout autre
+            # refus — et toute combinaison avec un autre refus — retombe ici.
+            ecartes = self._ecarter(schema, merged, errors, hors,
+                                    prev_status=prev_status, written=written)
+            if ecartes is None:
+                raise RowValidationError(errors, details=details)  # rien à relever
+            self.off_rejected.extend(ecartes)
         posed = merged if written is None else {k: merged[k] for k in written
                                                 if k in merged}
         # #354 : un `id` NU posé par le geste, qu'aucun field ne déclare, est un
@@ -779,6 +935,10 @@ class DatastorePg(SchemaOpsMixin):
         # distincte des quatre autres — les valeurs qu'elle nomme sont ENCORE en
         # base, et c'est toute la différence avec `valeurs_effacees`.
         out.update(ignores_report(self.off_ignored))
+        # #667 : SIXIÈME clé — ce que le schéma a refusé et que le geste a écarté
+        # pour écrire le reste. Ni en base (à la différence de `hors_options`), ni
+        # détruite (à la différence de `valeurs_effacees`) : jamais entrée.
+        out.update(dsec.rapport(self.off_rejected))
         return out
 
     # Le message que voient les tableaux dont l'écriture d'un état final libérait la
@@ -858,16 +1018,26 @@ class DatastorePg(SchemaOpsMixin):
         from .. import access
         if self.acting_org is not None:
             owner = ("org", str(self.acting_org))
+            proprios: list = [owner]
         else:
-            owner = ownership.active_owner(access.current_org(self.sub))
-            if owner is None:
+            org = access.current_org(self.sub)
+            if ownership.active_owner(org) is None:
                 return []
+            # ⚠️ `active_org_principals` et non `active_owner` (oto-backend#870,
+            # 04/09/2026) : l'org active ET l'acteur. Depuis l'ADR 0068 un tableau créé
+            # par un agent naît PERSONNEL — et cette liste ne montrait que l'org, donc
+            # le créateur ne voyait pas ce qu'il venait de créer. Il concluait qu'il
+            # n'existait pas ; il était pourtant résoluble par nom, et la recherche le
+            # voyait. Une écriture sans lecteur, la classe oto#42 exactement.
+            # Le jeu reste borné à l'org active : rien de cross-org n'entre par là.
+            proprios = ownership.active_org_principals(self.sub, org)
         # ADR 0049 (cadrage 10/07) : les tableaux TEAM-OWNED de l'org active sont listés
         # comme les org-owned. `_active_scope` est la source unique du jeu de groupes
         # (mes équipes, ou TOUS les groupes de l'org pour un org_admin — même règle que
         # `oto_project op=list`) ; le scope reste borné à l'org active.
         org_ids, group_ids = self._active_scope()
-        owned = [owner] + [("group", str(g)) for g in group_ids]
+        owned = proprios + [("group", str(g)) for g in group_ids
+                            if ("group", str(g)) not in proprios]
         out: dict[int, dict] = {}
         for n in db.list_datastore_namespaces_for_owners(owned):
             out[int(n["id"])] = self._entry(n, shared=False)
@@ -881,12 +1051,19 @@ class DatastorePg(SchemaOpsMixin):
         return list(out.values())
 
     def _default_owner(self) -> tuple[str, str]:
-        """Owner d'un namespace créé sans précision = l'**org ACTIVE** (suppression du
-        perso ; `current_org` toujours posé). Filet `user` si jamais None (ne devrait
-        plus arriver)."""
-        from .. import access
-        oid = access.current_org(self.sub)
-        return ("org", str(oid)) if oid is not None else ("user", self.sub)
+        """Owner d'un namespace créé sans précision = **la personne** (ADR 0068).
+
+        ⚠️ C'était l'**org active** — « suppression du perso », un choix assumé du temps
+        où l'appelant était un humain devant un écran, qui voit ce qu'il crée et où.
+        L'appelant est aujourd'hui un agent qui ne lit que le nom du verbe : le geste le
+        plus banal du produit posait du contenu lisible de toute l'org, sous une
+        description qui annonçait « unique per user ».
+
+        Le paramètre reste : `owner_type='org'` (ou `'group'`) donne un classeur
+        partagé, et c'est désormais une phrase qu'on écrit plutôt qu'un défaut qu'on
+        subit. Les tableaux existants ne bougent pas — la décision porte sur ce qui
+        NAÎT."""
+        return ("user", self.sub)
 
     def create_namespace(
         self, namespace: str, *, owner_type: Optional[str] = None, owner_id: Optional[str] = None,
@@ -943,7 +1120,8 @@ class DatastorePg(SchemaOpsMixin):
     # --- row ops -------------------------------------------------------------
 
     def append_row(self, namespace: str, data: dict, *,
-                   trace: Optional[dict] = None) -> dict:
+                   trace: Optional[dict] = None,
+                   readonly_override: bool = False) -> dict:
         """Écrit UNE row. Si le namespace déclare une clé métier (`schema.key`),
         applique la MÊME dédup upsert que le batch `write_rows` : une row de même
         valeur de clé est MERGÉE (pas de doublon, l'index `ds_bkey_<ns>` la refuse) ;
@@ -953,7 +1131,9 @@ class DatastorePg(SchemaOpsMixin):
         une écriture qui ne désigne aucune ligne existante est REFUSÉE
         (`BusinessKeyRequired`) au lieu d'en créer une.
 
-        `trace` (dict mutable, optionnel) = relevé pour le journal, cf. `_trace`."""
+        `trace` (dict mutable, optionnel) = relevé pour le journal, cf. `_trace`.
+        `readonly_override` (#658) = forcer les colonnes verrouillées de CET appel,
+        sous palier — cf. `_forcage_readonly`."""
         if isinstance(data, dict) and "_id" in data:
             # PROMOTION (#354, amende le refus #390) : `_id` dans `row` EST
             # l'adresse de la ligne — réécrire la ligne telle que
@@ -964,7 +1144,8 @@ class DatastorePg(SchemaOpsMixin):
             cible = str(data["_id"])
             reste = {k: v for k, v in data.items() if k != "_id"}
             try:
-                return self.update_row(namespace, cible, reste, trace=trace)
+                return self.update_row(namespace, cible, reste, trace=trace,
+                                       readonly_override=readonly_override)
             except RowNotFound:
                 raise ValueError(
                     f"`_id` ({cible!r}) ne correspond à aucune ligne de "
@@ -993,6 +1174,8 @@ class DatastorePg(SchemaOpsMixin):
         # qu'on s'apprête à poser — sinon l'agent qui réémet l'estampille courante
         # (le geste dominant) se ferait refuser sa propre lecture.
         sys_pose = self._pose_systeme(schema)
+        # #658 : tranché AVANT la fusion — c'est elle qui ouvre le verrou de ligne.
+        forcage = self._forcage_readonly(ns_id, schema, readonly_override)
         refuser_champs_reserves(schema, user_data, pose_systeme=sys_pose)
         self._trace(trace, ns_id, ns)
         # La clé métier sort du MÊME schéma que ci-dessus (`declared_key` re-résolvait
@@ -1003,7 +1186,8 @@ class DatastorePg(SchemaOpsMixin):
             existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
             if existing_id is not None:
                 return self._row_to_dict(
-                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema),
+                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema,
+                                         forcage=forcage),
                     schema)
         # #516 : sur un tableau FERMÉ, on ne crée pas — on vise. Le geste est arrivé
         # jusqu'ici sans désigner de ligne : ni par son `_id` (promu plus haut, et
@@ -1043,7 +1227,8 @@ class DatastorePg(SchemaOpsMixin):
             if existing_id is None:
                 raise  # violation inexpliquée → erreur franche, pas de repli muet
             return self._row_to_dict(
-                self._merge_into_row(ns_id, existing_id, user_data, schema=schema),
+                self._merge_into_row(ns_id, existing_id, user_data, schema=schema,
+                                     forcage=forcage),
                 schema)
         return self._row_to_dict(row, schema)
 
@@ -1130,7 +1315,8 @@ class DatastorePg(SchemaOpsMixin):
         return _guard
 
     def _merge_into_row(self, ns_id: int, row_id: str, user_data: dict,
-                        *, schema: Optional[dict] = None) -> dict:
+                        *, schema: Optional[dict] = None,
+                        forcage: Optional[Forcage] = None) -> dict:
         """MERGE `user_data` dans la row existante (dernier écrit gagne par champ),
         en appliquant le schéma v2 (ADR 0046) au résultat mergé : validation avec
         `prev_status` (transition de lifecycle) puis release du claim si l'état
@@ -1185,7 +1371,7 @@ class DatastorePg(SchemaOpsMixin):
             # (payload, ligne en place, résultat), sous le verrou, avant que quoi
             # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.
             refuser_champs_reserves(schema, pose, avant=current or {},
-                                    pose_systeme=sys_pose)
+                                    pose_systeme=sys_pose, forcage=forcage)
             poser_origine_systeme(schema, current, merged, set(pose))
             # #607 : l'estampille est reposée sur CHAQUE écriture — c'est le point du
             # cran. Après l'origine : sur une colonne qui porterait les deux, la
@@ -1205,6 +1391,8 @@ class DatastorePg(SchemaOpsMixin):
         if result is None:
             raise RowNotFound(row_id)  # supprimée entre le lookup et le verrou (course)
         row, merged = result
+        # #658 : après le verrou — un forçage n'est journalisé que s'il a ABOUTI.
+        self._relever_forcage(forcage, row_id)
         self._terminal_write_notice(schema, ns_id, row_id, merged)
         return row
 
@@ -1263,14 +1451,16 @@ class DatastorePg(SchemaOpsMixin):
         write. None si aucune (table libre / schéma sans clé)."""
         return self._declared_key_of(self.get_schema(namespace))
 
-    def write_rows(self, namespace: str, rows: list, *, key: Optional[str] = None) -> dict:
+    def write_rows(self, namespace: str, rows: list, *, key: Optional[str] = None,
+                   readonly_override: bool = False) -> dict:
         """Écrit un LOT de rows en un appel. Si une clé métier est en vigueur (param
         `key` explicite, sinon `schema.key` déclarée), chaque row qui la porte fait un
         UPSERT (merge) sur la row existante de même valeur de clé — pas de doublon ;
         sinon append d'une nouvelle row. Renvoie un récap {inserted, updated, count,
         key, ids}. Résout le namespace UNE fois (write) pour tout le lot."""
         ns_id = self._resolve(namespace, write=True)
-        return self._write_rows_to_ns(ns_id, rows, key=key or self.declared_key(namespace))
+        return self._write_rows_to_ns(ns_id, rows, key=key or self.declared_key(namespace),
+                                      readonly_override=readonly_override)
 
     @staticmethod
     def _designation_de_lot(rang: int, total: int, key: Optional[str],
@@ -1295,7 +1485,8 @@ class DatastorePg(SchemaOpsMixin):
                 else "aucune ligne écrite avant l'arrêt")
         return f"ligne {rang}/{total} du lot{ref} · {etat}"
 
-    def _write_rows_to_ns(self, ns_id: int, rows: list, *, key: Optional[str]) -> dict:
+    def _write_rows_to_ns(self, ns_id: int, rows: list, *, key: Optional[str],
+                          readonly_override: bool = False) -> dict:
         """Cœur du batch, keyé par `ns_id` déjà résolu (réutilisable hors contexte
         d'org — matérialisation d'un upload signé, où l'org de session est absente).
         Le schéma v2 (validation/lifecycle, ADR 0046) s'applique à CHAQUE row du
@@ -1304,6 +1495,9 @@ class DatastorePg(SchemaOpsMixin):
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
         nom_ns = ns.get("namespace") or f"#{ns_id}"
+        # #658 : UN palier pour le lot entier, lu une seule fois — pas une lecture
+        # d'ownership par ligne sur un import de huit mille.
+        forcage = self._forcage_readonly(ns_id, schema, readonly_override)
         inserted, updated, ids = 0, 0, []
         total = len(rows)
         for rang, data in enumerate(rows, 1):
@@ -1352,7 +1546,8 @@ class DatastorePg(SchemaOpsMixin):
                     if existing_id is None:
                         raise _refus_de_creation(nom_ns, dk, dkv)
                 if existing_id is not None:
-                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
+                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema,
+                                         forcage=forcage)
                     updated += 1
                     ids.append(existing_id)
                     continue
@@ -1381,7 +1576,8 @@ class DatastorePg(SchemaOpsMixin):
                                    if dk and dkv is not None else None)
                     if existing_id is None:
                         raise  # violation inexpliquée → erreur franche, pas de repli muet
-                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
+                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema,
+                                         forcage=forcage)
                     updated += 1
                     ids.append(existing_id)
                     continue
@@ -1603,10 +1799,14 @@ class DatastorePg(SchemaOpsMixin):
         return out
 
     def update_row(self, namespace: str, row_id: str, patch: dict, *,
-                   trace: Optional[dict] = None) -> dict:
+                   trace: Optional[dict] = None,
+                   readonly_override: bool = False) -> dict:
         """Patch partiel d'une row. `trace` (dict mutable, optionnel) = relevé pour
         le journal — dont l'état AVANT, celui-là même sur lequel la transition de
-        cycle de vie est validée juste en dessous (cf. `_trace`)."""
+        cycle de vie est validée juste en dessous (cf. `_trace`).
+
+        `readonly_override` (#658) = forcer les colonnes verrouillées de CET appel,
+        sous palier — cf. `_forcage_readonly`."""
         self._reject_misplaced_id(patch, row_id)
         ns_id = self._resolve(namespace, write=True)
         existing = db.datastore_get_row(ns_id, row_id)
@@ -1650,7 +1850,9 @@ class DatastorePg(SchemaOpsMixin):
         # #586/#606 : MÊME garde que la fusion — le patch par `id` est le geste le
         # plus courant d'un agent, et celui qui a écrasé les quatorze valeurs.
         sys_pose = self._pose_systeme(schema)
-        refuser_champs_reserves(schema, pose, avant=avant, pose_systeme=sys_pose)
+        forcage = self._forcage_readonly(ns_id, schema, readonly_override)
+        refuser_champs_reserves(schema, pose, avant=avant, pose_systeme=sys_pose,
+                                forcage=forcage)
         poser_origine_systeme(schema, avant, data, written)
         # #607 : le patch par `id` est le geste le plus courant d'un agent — donc
         # celui où une estampille manquante se verrait le plus.
@@ -1677,6 +1879,8 @@ class DatastorePg(SchemaOpsMixin):
                     f"un autre enregistrement porte déjà {dk}={dkv} "
                     "(clé métier unique) — impossible de dupliquer") from None
             raise  # violation inexpliquée → erreur franche, pas de repli muet
+        # #658 : après l'UPDATE — un forçage n'est journalisé que s'il a ABOUTI.
+        self._relever_forcage(forcage, row_id)
         self._terminal_write_notice(schema, ns_id, row_id, data)
         return self._row_to_dict(row, schema)
 

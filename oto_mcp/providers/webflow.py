@@ -35,3 +35,9 @@ CONNECTOR = _c(
 
 CATEGORY = "CMS"
 LOGO_DOMAIN = "webflow.com"
+
+DESCRIPTION = (
+    "Le CMS Webflow : collections et items d'un site, en lecture, écriture et "
+    "publication. Un jeton de site suffit — le site cible se résout tout seul, "
+    "pas besoin de le préciser."
+)

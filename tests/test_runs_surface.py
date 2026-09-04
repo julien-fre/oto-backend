@@ -162,8 +162,33 @@ def test_le_filtre_par_declencheur_lit_le_payload_et_entre_dans_le_total():
     demandé par Alexis au même titre que `fleet_id` : un historique trié côté
     client donne un total qui ne sert pas de dénominateur."""
     ou, params = JOBS._filtre_de_file(196, None, None, fleet_id=None, trigger_id=14)
-    assert "payload->>'trigger_id'" in ou and params == [196, 14]
+    assert "payload->>'trigger_id'" in ou and params == [196, "14"]
     import inspect
     for fn in (JOBS.list_jobs, JOBS.count_jobs):
         assert "trigger_id" in inspect.signature(fn).parameters, fn.__name__
     assert "trigger_id" in RJ.JobsInput.model_fields
+
+
+def test_le_filtre_par_declencheur_ne_CASTE_pas_le_payload():
+    """⚠️ Le filtre a d'abord été écrit `(payload->>'trigger_id')::bigint = %s`.
+
+    `payload` est un JSON libre : il suffit d'UNE ligne de l'org dont `trigger_id` n'est
+    pas un nombre pour que le cast fasse échouer la requête ENTIÈRE — pas seulement
+    cette ligne-là. Le filtre deviendrait une panne, sur des données qu'aucun de nos
+    écrivains ne produit aujourd'hui mais que rien n'empêche d'exister : un payload est
+    précisément l'endroit où l'on met ce qu'on n'a pas modélisé.
+
+    La forme sûre vivait déjà deux fonctions plus haut dans le même fichier
+    (`perimer_travaux_du_declencheur`, `comptage_perime`) : même clé, même lecture. Ce
+    banc tient les TROIS d'accord, parce que c'est la divergence qui a produit le
+    défaut — pas l'ignorance de la bonne forme."""
+    import inspect
+    ou, params = JOBS._filtre_de_file(196, None, None, fleet_id=None, trigger_id=14)
+    assert "::bigint" not in ou, (
+        "un cast sur une clé de payload libre : une seule ligne non numérique dans "
+        "l'org fait tomber la requête entière")
+    assert params == [196, "14"], "la comparaison est textuelle des deux côtés"
+    # Et les trois lectures de cette clé restent d'accord.
+    src = inspect.getsource(JOBS)
+    assert src.count("payload->>'trigger_id')::bigint") == 0
+    assert src.count("payload->>'trigger_id' = %s") >= 3

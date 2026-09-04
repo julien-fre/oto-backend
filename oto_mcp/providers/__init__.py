@@ -193,6 +193,20 @@ _DECLARATIONS: tuple[str, ...] = (
     "tally",
     # --- prospection téléphonique — câblé 2026-08-31 -------------------------
     "minari",
+    # --- forge logicielle — câblé 2026-09-02 ---------------------------------
+    "github",
+    # Voisin de `fireflies`/`grain`/`granola` par le métier (intelligence
+    # conversationnelle), et l'ordre gouverne l'affichage du catalogue.
+    "leexi",
+    # Voisin de `linear` : la roadmap de Productlane est ADOSSÉE à Linear
+    # (projets et issues y naissent, puis sont reflétés). Les deux cartes se
+    # lisent ensemble.
+    "productlane",
+    # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
+    # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
+    # servent aucun tool : le worker la consomme pour le compte de l'org.
+    "anthropic",
+    "mistral",
 )
 
 _MODULES: dict = {}

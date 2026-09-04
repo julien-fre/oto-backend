@@ -33,7 +33,8 @@ CONNECTOR = channel(
     "linkedin_unipile",
     hosted_channel="LINKEDIN",
     label="LinkedIn",
-    help="Ta session LinkedIn — recherche, profils, posts, réseau, jobs, messagerie",
+    help="Ta session LinkedIn — recherche, profils, posts, réseau, jobs, messagerie. "
+         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
     href="https://www.linkedin.com",
     modules=("unipile",),
 )

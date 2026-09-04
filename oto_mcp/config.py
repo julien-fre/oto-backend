@@ -134,6 +134,45 @@ def dashboard_url_for(sub: Optional[str]) -> str:
         return dashboard_url()
 
 
+def tenant_slug_for(sub: Optional[str]) -> Optional[str]:
+    """Le tenant qui HÉBERGE les orgs créées par ce compte : son slug, ou `None`
+    pour le tenant primaire (le défaut).
+
+    Alimente `orgs.tenant_id` à la création (`org_store.create_org`). Même source
+    que `front_for` juste dessous — le registre d'émetteurs, donc le préfixe du sub,
+    donc l'émetteur du jeton : **dérivé, jamais déclaré**, un appelant ne peut pas
+    revendiquer un tenant auquel il n'appartient pas.
+
+    ⚠️ **La paire se lit ensemble, et elle diffère d'une condition.** `front_for`
+    n'écrit la marque que si le tenant déclare un `dashboard_url` (sans adresse, pas
+    de lien sortant à poser — cf. son inertie volontaire). Le RATTACHEMENT, lui, n'a
+    besoin d'aucune adresse : une org d'un tenant sans dashboard doit quand même
+    déclarer son tenant. D'où deux fonctions et non un tuple élargi : la condition de
+    l'une serait un angle mort de l'autre, et c'est précisément l'angle mort qui a
+    laissé 65 orgs sur le tenant primaire.
+
+    Ne lève pas, pour la même raison que `front_for` : on est sur le chemin de
+    création d'une org, un registre illisible doit dégrader vers le tenant primaire,
+    pas refuser la création.
+    ⚠️ **Et cette dégradation est MUETTE depuis le 03/09/2026** : le contrôle qui la
+    rapportait a été retiré. Elle est sans conséquence pour autant, et c'est la raison
+    du retrait — le rattachement déclaré ne DÉCIDE rien. `db.org_tenant_slug` le double
+    par deux dérivations (marque du front, sub qualifié d'un membre) qui, elles, se
+    lisent du jeton à chaque appel : une org née avec le mauvais rattachement rend
+    quand même le bon verdict. Mesuré le 03/09 : 166 orgs sur 166 identiques avec et
+    sans lui.
+    """
+    if not sub:
+        return None
+    try:
+        from . import tenancy
+        slug = tenancy.current().tenant_of(sub)
+        return None if (not slug or slug == tenancy.PRIMARY_SLUG) else slug
+    # noqa: SILENT — registre illisible : on dégrade vers le tenant primaire au lieu de refuser une création d'org ; l'écart n'est plus rapporté (contrôle retiré le 03/09/2026) et n'a aucune conséquence, les deux dérivations rendent le bon verdict sans lui
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def front_for(sub: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """Le front qui héberge les orgs créées par CE COMPTE : `(base_url, brand)`.
 

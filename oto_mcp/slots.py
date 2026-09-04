@@ -299,5 +299,10 @@ def provision_tableau_schema(ns_id: int, target: dict) -> dict:
                             "pose le schéma via data_set_schema.")}
     db.set_datastore_schema(int(ns_id), target)
     if key:
-        db.datastore_ensure_key_index(int(ns_id), key)
+        try:
+            db.datastore_ensure_key_index(int(ns_id), key)
+        except db.KeyIndexUnavailable as e:
+            # Même parti que `set_schema` : le schéma EST provisionné, seule la
+            # contrainte anti-course manque, et la maintenance la repose.
+            return {"status": "provisioned", "warning": str(e)}
     return {"status": "provisioned"}

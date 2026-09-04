@@ -19,3 +19,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Kaspr"
 LOGO_DOMAIN = "kaspr.io"
+
+DESCRIPTION = (
+    "Enrichissement de contact chez Kaspr : retrouver l'email et le téléphone "
+    "direct d'une personne à partir de son profil. Une clé plateforme gratuite "
+    "est disponible, avec un quota limité par jour."
+)

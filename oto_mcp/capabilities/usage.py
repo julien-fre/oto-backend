@@ -71,12 +71,24 @@ def _active_org(sub: str) -> Optional[int]:
 
 def _feedback(ctx: ResolvedCtx, inp: FeedbackInput) -> dict:
     source, session_id = _correlation()
-    sid = db.insert_usage_signal(
+    sid, deja = db.insert_usage_signal(
         sub=ctx.sub, org_id=ctx.org_id or _active_org(ctx.sub),
         signal=inp.signal, kind=inp.kind, target=inp.target, body=inp.text,
         session_id=session_id, source=source,
     )
-    return {"ok": True, "id": sid}
+    out = {"ok": True, "id": sid}
+    if deja:
+        # #684/#685 : le même retour déposé deux fois à onze secondes d'écart.
+        # On rend l'id du premier et on le DIT — se taire ferait croire à deux
+        # occurrences, refuser ferait perdre son retour à qui redépose de bonne foi.
+        out["deja_signale"] = True
+        out["deja_signale_hint"] = (
+            "ce retour était déjà enregistré, à l'identique, il y a moins de dix "
+            "minutes : voici l'identifiant du PREMIER, aucun second n'a été créé. "
+            "Si le défaut s'est vraiment reproduit, dis ce qui a changé (autre "
+            "ligne, autre paramètre, autre moment) — deux textes identiques ne se "
+            "distinguent pas d'un rejeu.")
+    return out
 
 
 # --- Projections de lecture (barreau 4) — opérateur plateforme -------------

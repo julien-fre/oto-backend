@@ -231,7 +231,9 @@ plateforme essayée d'abord (`PLATFORM_ADMIN` pour lire, `SUPER_ADMIN` pour écr
 son 403 seulement, l'admin du tenant — **lu sur le sub qualifié** (`tenancy.tenant_of`), jamais
 sur le rattachement d'une org (L1). Un admin déclaré sur `pilote` est un compte `pilote:…` ;
 le tenant `oto` n'en a pas (ses admins sont ceux de la plateforme). Ce qu'il fait : poser et
-retirer la clé de son tenant, en accorder l'usage à ses orgs, voir la fiche de son tenant.
+retirer la clé de son tenant, en accorder l'usage à ses orgs, voir la fiche de son tenant, et
+**mettre en pause / réveiller les comptes de son tenant** (2026-09-03,
+`docs/comptes-en-pause.md`).
 Déclarer le rôle reste un acte de la plateforme (`POST/DELETE /api/admin/tenants/{slug}/
 admins[/{sub}]`, `oto_admin_tenant op=admin_add|admin_remove`, super admin).
 
@@ -241,6 +243,20 @@ op au rôle de tenant ferait descendre `oto_admin_tenant` à `None`, c'est-à-di
 l'outil dans le handshake de chaque compte de la plateforme. La console garde donc son plancher
 `operator` (gardé par `test_tenant_admin_role.py`), et ce sont les capacités REST par geste qui
 portent `TENANT_ADMIN_OF`.
+
+⚠️ **Une exception assumée depuis le 2026-09-03 : `oto_admin_account`** (mettre un compte en
+pause) est servi **en MCP**, plancher `None`, donc visible de tout le monde — 1 242 caractères,
+1,37 % de ce qu'un compte ordinaire reçoit au handshake. Le raisonnement ci-dessus reste juste
+(le plancher descend), mais sa conclusion ne vaut que pour une console qui a d'AUTRES ops : ici
+la capacité est dédiée, et la restreindre à la face web reproduirait le défaut qui rend le rôle
+inerte — **un partenaire travaille par MCP**, et fastmcp refuse aussi le `tools/call` d'un outil
+masqué (#471), pas seulement le `tools/list`. Une capacité bornée inatteignable depuis la face
+qu'on utilise ne rend littéralement rien.
+
+⚠️ **`tenant_admins` est à zéro ligne en production à ce jour** : tant que personne n'y est
+nommé, tous ces verbes ne sont exerçables que par la plateforme. C'est un fait de peuplement,
+pas de conception — et c'est ce qui explique que l'opérateur du premier tenant tiers travaille
+encore avec un rôle plateforme.
 
 **L'arête tenant→org** (0053-D3 : « le tenant s'insère dans la même chaîne »). Ressource = la
 clé du tenant (`tenant:{slug}:{connecteur}`, le ref du coffre), grantor `tenant:{slug}`,

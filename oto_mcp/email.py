@@ -310,25 +310,3 @@ def send_composed_email(
                                  locale=locale, unsubscribe_url=unsubscribe_url)
     rt = reply_to or os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
     return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name))
-
-
-def send_contact_email(name: str, email: str, message: str) -> bool:
-    """Message du formulaire de contact d'otomata.tech → boîte du studio.
-
-    `reply_to` = l'email du visiteur pour répondre en un clic. Destinataire
-    configurable via `OTO_CONTACT_TO` (défaut alexis@otomata.tech). Pas de pied :
-    ce mail-ci part chez NOUS, il n'a personne à qui expliquer pourquoi il arrive."""
-    to = os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
-    subject = f"otomata.tech — message de {name}"
-    m = _charte.marque("oto")
-    corps = _esc(message).replace("\n", "<br>")
-    contenu = (
-        f'<p style="{_charte.PARA};{_charte.discret(m)}">nouveau message via '
-        f'otomata.tech</p>'
-        f'<p style="{_charte.PARA}"><strong>{_esc(name)}</strong> '
-        f'&lt;{_esc(email)}&gt;</p>'
-        f'<div style="border-top:1px solid {m.filet};margin:0 0 16px"></div>'
-        f'<p style="{_charte.PARA}">{corps}</p>'
-    )
-    html = _charte.page(m, contenu, preheader=f"message de {name}", mention=None)
-    return _send(to, subject, html, reply_to=email)

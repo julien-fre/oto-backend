@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Recrutement"
 PUBLISHER = "Teamtailor"
 LOGO_DOMAIN = "teamtailor.com"
+
+DESCRIPTION = (
+    "Le recrutement suivi dans Teamtailor (ATS) : candidats, offres d'emploi et "
+    "candidatures."
+)

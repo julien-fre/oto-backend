@@ -148,29 +148,39 @@ def test_le_store_derive_le_front_quand_personne_ne_le_pose(registre, insert_cap
     """Le trou du 26/08 : deux des trois créateurs d'org ne dérivaient rien. Désormais
     l'appel nu — celui de la console admin et de l'org perso — pose quand même."""
     org_store.create_org("Perso", created_by="acme:u-1")
-    _, _, base, brand = insert_capture["params"]
+    _, _, base, brand, tenant = insert_capture["params"]
     assert (base, brand) == ("https://app.acme.test", "acme")
+    assert tenant == "acme", (
+        "l'INSERT porte AUSSI le rattachement (`orgs.tenant_id`, 2026-09-03) : marque "
+        "de front et tenant se posent au même endroit, au même instant.")
 
 
 def test_le_store_ne_marque_pas_une_org_oto(registre, insert_capture):
     org_store.create_org("Une org oto", created_by="bn01jfy76a5n")
-    assert insert_capture["params"][2:] == (None, None)
+    assert insert_capture["params"][2:] == (None, None, None), (
+        "un sub nu ne pose ni marque de front ni tenant : le `None` du rattachement "
+        "laisse l'INSERT retomber sur le DEFAULT de la colonne, le tenant primaire.")
 
 
 def test_le_front_suit_le_responsable_pas_loperateur(registre, insert_capture):
     """Console admin : un opérateur oto provisionne une org POUR un compte Acme —
     elle doit être une org Acme (`front_of`), `created_by` restant l'opérateur."""
     org_store.create_org("Pour Acme", created_by="bn01jfy76a5n", front_of="acme:u-1")
-    _, created_by, base, brand = insert_capture["params"]
+    _, created_by, base, brand, tenant = insert_capture["params"]
     assert created_by == "bn01jfy76a5n"
     assert (base, brand) == ("https://app.acme.test", "acme")
+    assert tenant == "acme", (
+        "le RATTACHEMENT suit le responsable lui aussi : sinon l'org provisionnée "
+        "depuis la console admin naîtrait chez nous.")
 
 
 def test_un_front_pose_par_lappelant_nest_pas_rederive(registre, insert_capture):
     """`capabilities/orgs.py` dérive déjà et passe le résultat : le store le garde."""
     org_store.create_org("X", created_by="acme:u-1",
                          front_base_url="https://app.acme.test", front_brand="acme")
-    assert insert_capture["params"][2:] == ("https://app.acme.test", "acme")
+    assert insert_capture["params"][2:] == ("https://app.acme.test", "acme", "acme"), (
+        "le front posé par l'appelant est gardé tel quel ; le TENANT, lui, reste "
+        "dérivé du sub — il n'est jamais déclarable, même par un appelant interne.")
 
 
 def test_la_console_admin_passe_le_front_du_responsable(registre, monkeypatch):

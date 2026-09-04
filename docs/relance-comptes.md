@@ -17,7 +17,50 @@ Sur 78 organisations directes vivantes, **64 sont des espaces personnels créés
 organisation** revient donc à écrire à quelqu'un au sujet d'un espace qu'il n'a jamais
 demandé, et le message n'a alors aucun sens pour lui.
 
-⟹ **tout se compte par COMPTE (`users.sub`)**, jamais par org.
+⟹ **rien ne se compte par org.**
+
+## Le second piège : un humain s'inscrit deux fois (2026-09-04)
+
+Le grain n'est pas non plus `users.sub`. L'audience du 2026-09-04 a affiché **deux fois
+la même personne** — deux inscriptions avec la même adresse, deux `sub`, deux lignes,
+donc deux mails dans une seule boîte.
+
+Recensé le 2026-09-04 : **91 comptes, 77 adresses distinctes, 10 adresses portées par
+2 comptes** (aucune au-delà de 2). Deux motifs, qui ne se traitent pas pareil :
+
+| motif | combien | ce que ça donne dans l'audience |
+|---|---|---|
+| un sub qualifié `tulina:` **et** un sub nu, même humain | **9** | le filtre partenaire écarte déjà la moitié qualifiée : pas de doublon |
+| **deux subs nus** — une vraie double inscription chez nous | **1** | deux lignes, deux mails |
+
+⚠️ **L'index unique `(campagne, sub)` ne pouvait rien y voir** : les deux comptes sont
+distincts, la contrainte n'était pas violée une seule fois. Un garde-fou d'écriture ne
+protège que le grain qu'il connaît, et son grain était le compte.
+
+⟹ **tout se compte par BOÎTE MAIL** (`lower(btrim(email))`). `_AUDIENCE_SQL` regroupe et
+sert **une ligne par boîte** :
+
+- le compte servi (`sub`) est **le plus récent** de la boîte — celui par lequel la
+  personne est entrée en dernier ; c'est lui qui porte la trace d'envoi et le lien de
+  refus. La réponse porte `accounts` (combien de comptes ont fusionné) : sans ce
+  compteur, une audience qui rétrécit se lit comme un filtre qui a trop mordu ;
+- l'activité s'agrège — `calls` = la somme, `last_seen_at` = le maximum. Sans ça,
+  quelqu'un d'actif sur son second compte serait dit « jamais actif » ;
+- un nom ou une langue **déclarés sur l'un des comptes** valent pour la personne : le
+  second compte, souvent vide, n'efface pas ce que le premier savait d'elle ;
+- ⚠️ **les trois soustractions se lisent sur TOUS les comptes de la boîte** (refus,
+  déjà-relancé, appartenance). C'est le point qui compte : **se désinscrire une fois
+  doit suffire**, même à qui s'est inscrit deux fois — sinon le lien de désinscription
+  mentirait, la personne aurait refusé et le mail suivant serait quand même parti.
+
+⚠️ **Le regroupement est EN AVAL du filtre partenaire**, délibérément : `notres` a déjà
+écarté les comptes d'un tenant tiers, donc un compte de partenaire ne peut ni entrer
+dans une boîte, ni en faire sortir un des nôtres. Regrouper d'abord rouvrirait la porte
+que tout ce fichier ferme.
+
+`tests/test_outreach_audience_db.py` porte quatre boîtes-témoins à deux comptes (une par
+situation) et **la mutation qui dégrade le regroupement au grain du compte** : sans elle,
+les tests de fusion pourraient être verts faute de doublon dans le jeu de données.
 
 ## Deux populations, à ne pas confondre
 
@@ -140,7 +183,7 @@ gagne, par construction, et c'est le comportement voulu.
 
 | garde-fou | mécanisme | ce qu'il empêche |
 |---|---|---|
-| une seule relance par personne | index unique partiel `(campaign, sub) WHERE kind='send'`, **écrit AVANT l'envoi** | le doublon dans une boîte mail |
+| une seule relance par personne | audience regroupée par **boîte mail** (lecture) + index unique partiel `(campaign, sub) WHERE kind='send'`, **écrit AVANT l'envoi** | le doublon dans une boîte mail |
 | rien ne part sans essai reçu | `op=send` exige un `op=test` portant la MÊME empreinte de contenu, **pour chaque langue servie** | envoyer un message qu'on n'a pas vu arriver chez soi |
 | le nombre est annoncé | `op=send` sans `confirm` refuse en disant N ; `confirm` faux refuse | découvrir N après coup |
 | plafond dur | `MAX_ENVOI = 200`, jugé sur `taille_audience()` — l'audience ENTIÈRE | l'envoi de masse non relu |
@@ -304,6 +347,11 @@ sur banc le 2026-09-02, pour que personne ne le découvre au mauvais moment :
 - **« Une seule relance par personne » vaut PAR CAMPAGNE** : un slug neuf réécrit aux mêmes
   gens. C'est le dessin voulu ; le compteur servi `previous_outreach` est ce qui permet de
   le voir.
+- ⚠️ **L'index unique ne garde que le COMPTE.** Ce qui empêche aujourd'hui deux mails
+  dans une même boîte, c'est le regroupement à la LECTURE — pas une contrainte de base.
+  Un futur chemin d'envoi qui n'emprunterait pas `_AUDIENCE_SQL` ne serait donc gardé
+  par rien. Un index unique `(campaign, lower(to_email)) WHERE kind='send'` fermerait ça
+  mécaniquement ; il n'a pas été posé, faute d'avoir été demandé.
 - **Le refus (`outreach_optouts`) n'est lu que par CETTE audience.** `email_send` — même
   mailer, même marque, `super_admin` pour le repli marque — écrit à n'importe quelle
   adresse sans essai, sans plafond et sans lien de désinscription.

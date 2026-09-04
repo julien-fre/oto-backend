@@ -21,6 +21,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from .. import access, db, email, group_store, org_store, ownership, roles
+from . import _portee
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -62,7 +63,18 @@ class ResourceInput(BaseModel):
                                "public", "secret"]] = None
     # RÔLE du grant (viewer=lecteur, editor=éditeur, manager=gérant/gouvernance grantable).
     role: Optional[Literal["viewer", "editor", "manager"]] = None
-    permission: Literal["read", "write"] = "write"  # share — rétro-compat (mappé en rôle)
+    # ADR 0068 — « partager » veut dire « qu'il puisse le lire ». Ce défaut valait
+    # `"write"`, annoté « rétro-compat » : un héritage, jamais une intention.
+    #
+    # ⚠️ Ce champ vit sous le CLIQUET du schéma servi (`resources_input_legacy.json`),
+    # posé après l'incident #756 — et le changer ici est un choix examiné, pas un
+    # oubli. Ce que le cliquet protège, c'est une rupture qui fait ÉCHOUER un appel
+    # (#756 rendait un champ obligatoire) ; un défaut plus restrictif ne fait échouer
+    # personne, l'appel réussit avec moins de droit. Et le seul appelant hors backend,
+    # le dashboard, passe toujours `role` explicitement (`shareResource(…, role)`), qui
+    # PRIME sur `permission` — il n'est donc pas concerné. Vérifié le 04/09, décision
+    # d'Alexis : pas de seconde surface pour ça.
+    permission: Literal["read", "write"] = "read"   # share — legacy (mappé en rôle)
     # Publication (audience public/secret/org sur un PROJET) : préciser les outils exposés.
     mcp_slug: Optional[str] = None          # préfixe de sous-domaine (facultatif en secret)
     mcp_tools: Optional[list[str]] = None   # allowlist figée (vide = réutilise la liste publiée)
@@ -512,6 +524,11 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         ownership.grant(inp.resource_type, rid, ptype, pid, role=role, granted_by=ctx.sub)
         out = {"ok": True, "resource_id": rid, "shared_with": plabel,
                "principal_type": ptype, "role": role, "permission": perm}
+        # ADR 0068 §4 — observation : ce partage aurait prévenu quelqu'un.
+        _portee.observer(ctx, ressource_type=inp.resource_type, ressource_id=rid,
+                         vers={"org": "org", "group": "group"}.get(ptype, "person"),
+                         geste=f"oto_resource op=share role={role}",
+                         cible=str(plabel))
         if inp.cascade and inp.resource_type == "project":
             out["cascade"] = _cascade_project(ctx.sub, int(rid), "share",
                                               principal=(ptype, pid), role=role)

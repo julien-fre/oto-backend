@@ -193,6 +193,35 @@ def claim_next_job(org_id: int, worker_sub: str,
     return dict(row) if row else None
 
 
+def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:
+    """Arrête DÉFINITIVEMENT un travail dont le porteur ne peut plus agir.
+
+    ⚠️ Pas `complete_job(ok=False)` : celui-là refile avec backoff jusqu'au
+    plafond de tentatives. **Une identité invalide ne se répare pas en
+    réessayant** — on rejouerait trois fois le même refus, en trois fois plus de
+    temps, pour le même verdict. Le seul effet serait de retarder le moment où
+    quelqu'un le voit.
+
+    ⚠️ Et surtout pas un relâchement silencieux : le travail repartirait au worker
+    suivant, indéfiniment. Une file qui tourne sans jamais aboutir, et rien pour
+    dire pourquoi — c'est exactement le trou de #814 sous une autre forme.
+
+    `failed` et non `expired` : celui-ci a bien été PRIS, et il ne peut pas
+    s'exécuter. `expired` dit « personne n'est venu le prendre », ce qui serait
+    faux ici et enverrait chercher au mauvais endroit.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'failed', finished_at = NOW(), last_error = %s
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+            """,
+            (raison, job_id, worker_sub),
+        )
+        return bool(cur.rowcount)
+
+
 def bind_job_run(job_id: int, worker_sub: str, run_id: str) -> bool:
     """Lie un job `start` au run que le worker vient d'ouvrir — claimant seul."""
     with _connect() as conn:
@@ -313,8 +342,15 @@ def _filtre_de_file(org_id: int, status: Optional[str],
     # déclencheur trié côté client donne un total qui ne peut pas servir de
     # dénominateur, donc des taux faux sans que rien ne le signale.
     if trigger_id is not None:
-        q += " AND (payload->>'trigger_id')::bigint = %s"
-        params.append(int(trigger_id))
+        # ⚠️ Comparaison en TEXTE, jamais `::bigint`. `payload` est un JSON libre : il
+        # suffit d'UNE ligne de l'org dont `trigger_id` n'est pas un nombre pour que le
+        # cast fasse échouer la requête ENTIÈRE — pas seulement cette ligne-là. Le
+        # filtre deviendrait alors une panne, sur des données qu'aucun de nos écrivains
+        # ne produit mais que rien n'empêche d'exister.
+        # La forme sûre était déjà deux fonctions plus haut (`perimer_travaux_du_
+        # declencheur`, `comptage_perime`) : c'est la même clé, lue de la même façon.
+        q += " AND payload->>'trigger_id' = %s"
+        params.append(str(int(trigger_id)))
     return q, params
 
 

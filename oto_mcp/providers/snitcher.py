@@ -28,3 +28,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Snitcher"
 LOGO_DOMAIN = "snitcher.com"
+
+DESCRIPTION = (
+    "Identifier les entreprises qui visitent ton site web, avec leurs sessions "
+    "et événements de visite (dont les valeurs de formulaires soumis) : "
+    "organisations, contacts (reveal email au crédit), segments, tags et champs "
+    "personnalisés."
+)

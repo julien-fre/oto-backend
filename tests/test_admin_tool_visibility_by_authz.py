@@ -159,6 +159,15 @@ PLANCHERS = {
     "oto_admin_key_grant": "operator",     # list PLATFORM, grant/revoke SUPER
     "oto_admin_monitoring": "operator",
     "oto_admin_org": "operator",           # list/get PLATFORM, create/archive SUPER
+    # `admin.account` (pause d'un compte) : plancher `None`, donc l'outil entre
+    # dans la boîte de CHAQUE compte — 837 caractères de description servis à
+    # tout le monde. Assumé, et ce n'est pas un oubli : ses deux ops passent par
+    # `TENANT_ADMIN_OF_TARGET`, dont l'accès dépend d'une cible que le handshake
+    # ne connaît pas. Le masquer ne protégerait rien (ADR 0031/0066-R4) et
+    # rendrait le geste INAPPELABLE pour un admin de tenant — fastmcp refuse
+    # aussi le `tools/call` d'un outil masqué (#471). Or c'est précisément lui
+    # que ce verbe existe pour servir, et il travaille par MCP.
+    "oto_admin_account": None,
     "oto_admin_org_member": None,          # 4 ops ORG_ADMIN_OF, list PLATFORM
     "oto_admin_platform_instructions": "operator",
     "oto_admin_set_option": "super",

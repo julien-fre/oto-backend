@@ -25,3 +25,9 @@ CONNECTOR = _c(
 )
 
 LOGO_DOMAIN = "resend.com"
+
+DESCRIPTION = (
+    "L'envoi d'email transactionnel via la clé Resend de ton organisation — pas "
+    "de tools propres : la clé est consommée par l'envoi d'email de la "
+    "plateforme, depuis un domaine que tu as vérifié chez Resend."
+)

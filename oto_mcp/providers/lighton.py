@@ -39,3 +39,11 @@ CONNECTOR = _c(
 CATEGORY = "Knowledge"
 PUBLISHER = "LightOn"
 LOGO_DOMAIN = "lighton.ai"
+
+DESCRIPTION = (
+    "Indexation documentaire souveraine avec LightOn : recherche hybride "
+    "multivectorielle, question-réponse groundée sur tes documents (RAG), "
+    "conversion en Markdown, extraction structurée, et ingestion par espace de "
+    "travail (synchronisation SharePoint/Drive possible depuis la console "
+    "LightOn)."
+)

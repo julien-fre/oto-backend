@@ -88,3 +88,12 @@ CONNECTOR = _c(
 # d'un défaut : depuis le 2026-09-02 il n'y en a plus (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
+
+DESCRIPTION = (
+    "Connecter n'importe quelle API HTTP à oto en confiant son secret au coffre "
+    ": renseigne l'URL de base, choisis le mode d'authentification (bearer, "
+    "header, query, basic, OAuth2 ou aucun), et l'agent l'appelle en GET ou en "
+    "POST. Utile pour une API interne ou un service tiers sans connecteur dédié "
+    "— la clé reste chez oto, contrairement à un bridge où le tiers garde la "
+    "sienne."
+)

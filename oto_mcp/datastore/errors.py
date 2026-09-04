@@ -77,6 +77,25 @@ class BusinessKeyRequired(ValueError):
         super().__init__(f"{row} : {message}" if row else message)
 
 
+class ColumnAbsent(ValueError):
+    """Purge de colonne qui n'a touché AUCUNE ligne (#680) — nommée, pas seulement
+    dite.
+
+    Le message reste celui de `_rien_purge` : il distingue déjà la faute de frappe de
+    l'annotation (`site_web.comment`), et il est suffisant seul pour la face MCP, qui
+    n'a pas d'enveloppe structurée. Ce qui manquait est pour la face REST, donc pour
+    le cockpit : sa suppression de colonne est en DEUX temps (retirer le champ du
+    schéma, puis purger les données), et le cas normal d'une colonne fraîchement
+    ajoutée puis retirée est précisément « aucune ligne ne la portait ». Sans code
+    distinct, le front devait soit crier au rouge sur un geste parfaitement abouti,
+    soit reconnaître une phrase française — un contrat déguisé, exactement ce que
+    `RowValidationError.details` existe pour éviter.
+
+    Reste une `ValueError` : c'est ce qui garde le refus actionnable côté MCP plutôt
+    que de le laisser ressortir en « erreur interne » (même raison que
+    `BusinessKeyRequired`)."""
+
+
 class InvalidCursor(ValueError):
     """Curseur de pagination illisible (mal formé / tronqué)."""
 

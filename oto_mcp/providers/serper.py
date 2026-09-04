@@ -22,3 +22,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Serper"
 LOGO_DOMAIN = "serper.dev"
+
+DESCRIPTION = (
+    "Google en JSON — recherche web, images, Google Maps et ses avis, Lens, "
+    "plus le scraping d'une page — le moteur de recherche généraliste par "
+    "défaut d'oto. Clé plateforme partagée disponible, avec un quota quotidien."
+)

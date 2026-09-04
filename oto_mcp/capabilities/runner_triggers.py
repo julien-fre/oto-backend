@@ -19,7 +19,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import db, runner_tick
+from . import _instruction
+from .. import db, runner_tick, tool_registry
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
@@ -146,16 +147,48 @@ def _exige_un_runner(org_id: int) -> None:
         "déclencheurs existants restent ouvertes.")
 
 
+def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
+    """L'allowlist DÉDUITE de la procédure — les outils qu'elle cite.
+
+    ⚠️ Tranché le 03/09 : *la liste d'outils se déduit de la procédure*. Sans ça,
+    le bouton « en faire un agent programmé » demanderait une liste d'outils à
+    l'utilisateur — **c'est-à-dire ne serait pas un bouton**.
+
+    La procédure cite ses outils par marqueur (`<tool:nom>`), et c'est déjà ce
+    que lit le compteur « référencé par N guides ». On ne devine donc rien : on
+    lit ce que l'auteur a écrit.
+
+    ⚠️ Rendue VIDE si la procédure n'en cite aucun — l'appelant décide quoi en
+    faire. Rendre un défaut ici inventerait une allowlist que personne n'a
+    déclarée, et une allowlist trop large est exactement ce qu'elle existe pour
+    empêcher.
+    """
+    g = db.get_guide_db("org", str(ctx.org_id), slug)
+    if not g:
+        return []
+    return tool_registry.ref_names(g.get("body_md") or "")
+
+
 def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les déclencheurs sont org-scopés")
 
     if inp.op == "create":
-        manquants = [c for c in ("procedure", "cron", "tools") if not getattr(inp, c)]
+        manquants = [c for c in ("procedure", "cron") if not getattr(inp, c)]
         if manquants:
             raise AuthzDenied(400, "missing_fields",
                               f"create exige : {', '.join(manquants)} — la procédure à "
-                              "jouer, quand, et avec quels outils (l'allowlist du run)")
+                              "jouer, et quand")
+        # ⚠️ `tools` n'est plus exigé : il se DÉDUIT de la procédure quand il
+        # n'est pas fourni. C'est ce qui rend le geste possible depuis un bouton.
+        outils = list(inp.tools or []) or _outils_de_la_procedure(ctx, inp.procedure)
+        if not outils:
+            raise AuthzDenied(
+                400, "no_tools",
+                f"la procédure `{inp.procedure}` ne cite aucun outil, et aucun n'a "
+                "été fourni. Un agent sans outil n'exécute rien : cite les outils "
+                "dans la procédure (marqueurs `<tool:nom>`), ou passe `tools` "
+                "explicitement.")
         tz = inp.tz or _TZ_DEFAUT
         try:
             runner_tick.validate_cron(inp.cron, tz)
@@ -166,16 +199,33 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # refus ne se remplacent pas, et celui qu'on lit d'abord est celui qu'on
         # peut réparer sans quitter l'appel.
         _exige_un_runner(ctx.org_id)
+        # ⚠️ UN SEUL agent programmé par objet (tranché le 03/09). L'agent est une
+        # PROPRIÉTÉ de la procédure, pas une collection : deux agents sur le même
+        # objet, c'est deux réponses à « est-ce que ça tourne ? », et l'écran
+        # devrait en choisir une. Le refus dit lequel existe, pour qu'on puisse
+        # le modifier plutôt que d'en créer un second.
+        deja = db.triggers_for_procedure(ctx.org_id, inp.procedure)
+        if deja:
+            raise AuthzDenied(
+                409, "already_scheduled",
+                f"`{inp.procedure}` a déjà un agent programmé (#{deja[0]['id']}, "
+                f"cadencement `{deja[0]['cron']}`). Modifie-le plutôt que d'en "
+                "créer un second — un objet ne porte qu'un agent.")
         t = db.create_trigger(
             ctx.org_id, ctx.sub, procedure=inp.procedure, cron=inp.cron, tz=tz,
-            next_due=runner_tick.next_due(inp.cron, tz), tools=inp.tools,
-            project_id=inp.project_id, input=inp.input, label=inp.label,
-            max_steps=inp.max_steps)
+            next_due=runner_tick.next_due(inp.cron, tz), tools=outils,
+            project_id=inp.project_id,
+            input=inp.input or _instruction.derivee(inp.procedure),
+            label=inp.label, max_steps=inp.max_steps)
         return {"trigger": t}
 
     if inp.op == "list":
-        return {"triggers": [_avec_pertes(ctx.org_id, t)
-                             for t in db.list_triggers(ctx.org_id)],
+        # ⚠️ Filtré par OBJET quand `procedure` est fourni : l'écran d'une
+        # procédure demande « celle-ci tourne-t-elle ? », pas la liste de l'org.
+        # Filtrer côté client devient faux dès qu'il y a plus d'une page.
+        lus = (db.triggers_for_procedure(ctx.org_id, inp.procedure) if inp.procedure
+               else db.list_triggers(ctx.org_id))
+        return {"triggers": [_avec_pertes(ctx.org_id, t) for t in lus],
                 "runner": db.runner_arme(ctx.org_id)}
 
     if inp.trigger_id is None:

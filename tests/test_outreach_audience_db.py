@@ -88,6 +88,16 @@ def _peupler() -> None:
         # il documente la CONTAGION, avec son voisin.
         ("tulina:sub-croise", "croise@exemple.test", None),
         ("sub-voisin-du-croise", "voisin@exemple.test", None),
+        # ── quatre BOÎTES à deux comptes chacune (une personne, deux inscriptions) ──
+        # La casse diffère exprès : c'est la même boîte, et le regroupement normalise.
+        ("sub-double-vieux", "double@exemple.test", None),
+        ("sub-double-neuf", "Double@Exemple.test", "fr"),
+        ("sub-refus-a", "refus@exemple.test", None),
+        ("sub-refus-b", "refus@exemple.test", None),
+        ("sub-relance-a", "relance@exemple.test", None),
+        ("sub-relance-b", "relance@exemple.test", None),
+        ("sub-mixte-inactif", "mixte@exemple.test", None),
+        ("sub-mixte-actif", "mixte@exemple.test", None),
     ]
     with _connect() as conn:
         conn.execute("INSERT INTO tenants (slug, name, issuer) VALUES "
@@ -133,6 +143,13 @@ def _peupler() -> None:
             conn.execute("INSERT INTO org_members (org_id, sub) VALUES (%s, %s)",
                          (cible, sub))
 
+        # Le compte SERVI d'une boîte est le plus récent : il faut donc que « vieux »
+        # et « neuf » soient réellement datés, pas nés à la même microseconde.
+        conn.execute("UPDATE users SET created_at = NOW() - INTERVAL '60 days' "
+                     "WHERE sub = 'sub-double-vieux'")
+        conn.execute("UPDATE users SET created_at = NOW() - INTERVAL '10 days' "
+                     "WHERE sub = 'sub-double-neuf'")
+
         # Activité : l'actif a appelé hier, le dormant il y a 90 jours.
         conn.execute("INSERT INTO tool_calls (sub, tool, kind, created_at) VALUES "
                      "(%s, 'oto_whoami', 'mcp', NOW() - INTERVAL '1 day')", ("sub-actif",))
@@ -142,11 +159,23 @@ def _peupler() -> None:
         conn.execute("INSERT INTO tool_calls (sub, tool, kind) VALUES "
                      "(%s, 'GET /api/me', 'rest')", ("sub-jamais",))
 
+        # Un SEUL des deux comptes de « mixte » a appelé : la boîte, elle, a appelé.
+        conn.execute("INSERT INTO tool_calls (sub, tool, kind, created_at) VALUES "
+                     "(%s, 'oto_whoami', 'mcp', NOW() - INTERVAL '90 days')",
+                     ("sub-mixte-actif",))
+
         conn.execute("INSERT INTO outreach_optouts (sub) VALUES (%s)", ("sub-desinscrit",))
+        # Le refus posé sur UN SEUL des deux comptes de la boîte « refus ».
+        conn.execute("INSERT INTO outreach_optouts (sub) VALUES (%s)", ("sub-refus-a",))
         conn.execute(
             "INSERT INTO outreach_sends (campaign, sub, to_email, locale, kind, fingerprint) "
             "VALUES (%s, %s, 'deja@exemple.test', 'fr', 'send', 'abc')",
             (CAMPAGNE, "sub-deja-relance"))
+        # Un envoi passé par UN SEUL des deux comptes de la boîte « relance ».
+        conn.execute(
+            "INSERT INTO outreach_sends (campaign, sub, to_email, locale, kind, fingerprint) "
+            "VALUES (%s, %s, 'relance@exemple.test', 'fr', 'send', 'abc')",
+            (CAMPAGNE, "sub-relance-a"))
 
 
 def _subs(**kw) -> set:
@@ -246,6 +275,80 @@ def test_un_compte_sans_adresse_sort(live):
     assert "sub-sans-email" not in _subs(), "aucune adresse ⟹ rien à envoyer"
 
 
+# ── une PERSONNE est une boîte mail, pas un compte ───────────────────────────
+#
+# Le 2026-09-04, l'audience a affiché DEUX FOIS la même personne : deux inscriptions
+# avec la même adresse, deux `sub`, deux lignes — et donc deux mails dans une seule
+# boîte. L'index unique `(campagne, sub)` ne pouvait rien y voir : les comptes sont
+# distincts, la contrainte n'était pas violée. La garde est dans la LECTURE, et c'est
+# ce que les tests suivants exercent.
+
+
+def _lignes(**kw) -> list:
+    from oto_mcp.db import outreach
+    return outreach.audience(campaign=CAMPAGNE, **kw)
+
+
+def _par_adresse(**kw) -> dict:
+    return {(r["email"] or "").strip().lower(): r for r in _lignes(**kw)}
+
+
+def test_deux_comptes_sur_UNE_boite_ne_font_QU_UNE_ligne(live):
+    """Le doublon vu en prod. Deux comptes, une adresse, une seule ligne servie — et
+    la casse de l'adresse ne fabrique pas deux boîtes."""
+    lignes = [r for r in _lignes() if (r["email"] or "").lower() == "double@exemple.test"]
+    assert len(lignes) == 1, (
+        "une adresse a produit plusieurs lignes : la personne recevrait autant de fois "
+        f"le même mail dans la même boîte. Servi : {[r['sub'] for r in lignes]}")
+    assert lignes[0]["comptes"] == 2, (
+        "la fusion doit se VOIR : sans ce compteur, une audience qui rétrécit se lit "
+        "comme un filtre qui a trop mordu.")
+
+
+def test_la_boite_est_servie_par_son_compte_le_PLUS_RECENT(live):
+    """Celui par lequel la personne est entrée en dernier — c'est lui qui portera la
+    trace d'envoi et le lien de désinscription."""
+    assert _par_adresse()["double@exemple.test"]["sub"] == "sub-double-neuf"
+
+
+def test_une_langue_declaree_sur_UN_compte_vaut_pour_la_boite(live):
+    """`sub-double-neuf` déclare `fr`, `sub-double-vieux` rien. Servir le `null` du
+    second effacerait ce que la personne a réellement choisi."""
+    assert _par_adresse()["double@exemple.test"]["locale"] == "fr"
+
+
+def test_un_refus_sur_UN_compte_fait_sortir_TOUTE_la_boite(live):
+    """Le point qui compte. Se désinscrire une fois doit suffire — même à qui s'est
+    inscrit deux fois. Sans ça, le lien de désinscription mentirait : la personne
+    aurait refusé, et le mail suivant serait quand même parti dans sa boîte."""
+    assert "refus@exemple.test" not in _par_adresse()
+    assert not {"sub-refus-a", "sub-refus-b"} & _subs()
+
+
+def test_un_envoi_sur_UN_compte_fait_sortir_TOUTE_la_boite_de_CETTE_campagne(live):
+    """Symétrique du refus : relancer le second compte serait relancer la personne."""
+    assert "relance@exemple.test" not in _par_adresse()
+    autre = {(r["email"] or "").lower() for r in _lignes_autre_campagne()}
+    assert "relance@exemple.test" in autre, (
+        "l'exclusion est propre à la campagne : une AUTRE relance doit pouvoir "
+        "atteindre cette boîte.")
+
+
+def _lignes_autre_campagne() -> list:
+    from oto_mcp.db import outreach
+    return outreach.audience(campaign="une-autre-campagne")
+
+
+def test_l_activite_s_agrege_sur_la_boite_entiere(live):
+    """Un seul des deux comptes a appelé. La PERSONNE a donc utilisé oto : la dire
+    « jamais active » lui écrirait qu'elle n'est jamais venue alors qu'elle est venue."""
+    assert "mixte@exemple.test" not in _par_adresse(statut="jamais_actif"), (
+        "une boîte dont un compte a appelé n'est pas « jamais active ».")
+    silencieux = _par_adresse(statut="silencieux", silence_days=30)
+    assert "mixte@exemple.test" in silencieux
+    assert silencieux["mixte@exemple.test"]["appels"] == 1
+
+
 # ── la langue : ce qu'on SAIT, jamais ce qu'on devine ────────────────────────
 
 def test_la_preference_declaree_est_rendue_telle_quelle(live):
@@ -304,6 +407,20 @@ def test_sans_AUCUNE_des_deux_moities_le_partenaire_ENTRE(live):
 
 def _CEINTURE_OTEE() -> set:
     return _audience_sans((_CEINTURE, "AND TRUE"))
+
+
+def test_sans_le_REGROUPEMENT_par_boite_la_personne_apparait_DEUX_FOIS(live):
+    """La même preuve, pour la garde ajoutée le 2026-09-04.
+
+    Sans elle, `test_deux_comptes_sur_UNE_boite_ne_font_QU_UNE_ligne` pourrait être
+    vert parce que le jeu de données ne contient, par accident, aucune boîte à deux
+    comptes. On dégrade le regroupement au grain du COMPTE — exactement l'état d'avant
+    — et les deux subs de la même adresse doivent alors ressortir tous les deux."""
+    entrants = _audience_sans(("GROUP BY c.adresse", "GROUP BY c.adresse, c.sub"))
+    assert {"sub-double-vieux", "sub-double-neuf"} <= entrants, (
+        "au grain du compte, les deux inscriptions de la même boîte devraient entrer. "
+        "Elles n'entrent pas : le jeu de données ne porte plus de doublon, et les "
+        f"tests de regroupement ne prouvent plus rien. Servi : {sorted(entrants)}")
 
 
 def test_sans_la_ceinture_par_appartenance_l_invite_ENTRE(live):

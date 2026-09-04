@@ -59,16 +59,19 @@ class _Store:
     def get_row(self, ns, row_id):
         return self._out("get_row", ns, row_id)
 
-    def append_row(self, ns, data, *, trace=None):
+    def append_row(self, ns, data, *, trace=None, readonly_override=False):
         self._out("append_row", ns, data)
         return {"_id": "r9", "_created_at": "2026-08-12 09:00:00", **data}
 
-    def update_row(self, ns, row_id, patch, *, trace=None):
+    def update_row(self, ns, row_id, patch, *, trace=None, readonly_override=False):
         self._out("update_row", ns, row_id, patch)
         return {"_id": row_id, "_updated_at": "2026-08-12 09:00:00", **patch}
 
     def delete_row(self, ns, row_id, *, trace=None):
         return self._out("delete_row", ns, row_id)
+
+    # #658 : la surface REST relit ce relevé pour sa ligne de journal.
+    off_forced: list = []
 
     def off_schema_report(self):
         return self.v.get("off_schema_report") or {}

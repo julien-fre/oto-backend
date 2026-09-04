@@ -24,3 +24,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Cloro"
 LOGO_DOMAIN = "cloro.dev"
+
+DESCRIPTION = (
+    "Ce que ChatGPT, Gemini, Perplexity, Copilot ou Grok répondent quand on "
+    "leur parle d'une marque — une veille de visibilité IA — plus la SERP "
+    "Google classique en JSON. Accès plateforme réservé (grant explicite), le "
+    "BYO reste ouvert à toute org qui pose sa clé."
+)

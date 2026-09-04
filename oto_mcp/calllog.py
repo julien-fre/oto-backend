@@ -121,7 +121,8 @@ def _fields_list(fields: Any) -> list[str]:
 
 
 def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
-                  fields: Any = None, ok: bool = True, error: str | None = None,
+                  fields: Any = None, forced: Any = None, ok: bool = True,
+                  error: str | None = None,
                   org_id: int | None = None, duration_ms: int | None = None) -> None:
     """Journalise un GESTE fait depuis le dashboard (REST) dans le flux unifié.
 
@@ -133,6 +134,12 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
     `tool` doit nommer le geste dans le vocabulaire de la surface MCP (`data_write`,
     `data_delete_row`, `data_release`) : les lectures du journal (parcours d'une
     ligne, activité d'un tableau) filtrent là-dessus, pas sur la route HTTP.
+    `forced` (#658) = les colonnes verrouillées remplacées de force. Comme `fields`,
+    il rejoint la ligne APRÈS `truncated_args` et reste un VRAI tableau JSON : passé
+    dans `args`, il repartirait stringifié et coupé à 300 caractères, donc illisible
+    colonne par colonne — exactement ce que `_fields_list` existe pour éviter. Absent
+    quand rien n'a été forcé : un forçage se cherche par la PRÉSENCE de la clé.
+
     ⚠️ Distinct de la ligne de route posée par `api.routes.RestCallLogger`
     (`tool='PATCH /api/…'`, dont les `args` ne portent QUE l'empreinte des jetons
     du chemin, #558) : celle-là est de la télémétrie de surface, celle-ci porte le
@@ -143,7 +150,9 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
         "kind": "rest",
         "sub": sub,
         "tool": tool,
-        "args": {**(truncated_args(args, tool=tool) or {}), "fields": _fields_list(fields)},
+        "args": {**(truncated_args(args, tool=tool) or {}),
+                 "fields": _fields_list(fields),
+                 **({"readonly_forced": list(forced)} if forced else {})},
         "ok": bool(ok),
         "error": (str(error)[:MAX_ERROR_CHARS] if error else None),
         "org_id": org_id,
@@ -152,9 +161,22 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # Appelé hors event loop (contexte synchrone) : on insère en direct, même
-        # chemin d'insertion — le journal reste best-effort, pas de file d'attente.
-        _insert_rest(row)
+        # Appelé hors event loop : on insère EN DIRECT, même chemin d'insertion — le
+        # journal reste best-effort, pas de file d'attente.
+        #
+        # ⚠️ Ce `try` n'est pas décoratif, et il manquait. Les deux branches promettent
+        # la même chose (« un échec se log en warning et n'échoue JAMAIS la requête
+        # métier ») mais une seule la tenait : la branche asynchrone est gardée par
+        # `_emit_rest`, celle-ci ne l'était que par les gardes INTERNES d'`_insert_rest`
+        # — donc pas du tout dès que le sink lui-même défaille. L'asymétrie était
+        # invisible tant que ce chemin ne servait qu'en CLI et en test ; depuis que les
+        # handlers de capacité tournent en threadpool (incident du 2026-09-01), c'est
+        # le chemin de PRODUCTION de toute écriture datastore faite en REST.
+        try:
+            _insert_rest(row)
+        except Exception:  # noqa: BLE001 — le journal ne casse jamais le service
+            logger.warning("journalisation rest en échec (%s)", row.get("tool"),
+                           exc_info=True)
         return
     task = loop.create_task(_emit_rest(row))
     _REST_PENDING.add(task)

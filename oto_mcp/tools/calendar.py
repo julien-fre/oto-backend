@@ -52,6 +52,20 @@ def _client_for_user(account: Optional[str] = None):
     return CalendarClient(credentials=creds)
 
 
+_GOOGLE_CLIENT_TIMEOUT_S = 20
+# oto-backend#867 lot 2 — voir gmail.py::_client_for_user_async pour la
+# justification (même mécanisme de rafraîchissement de jeton, même méthode).
+async def _client_for_user_async(account: Optional[str] = None):
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_client_for_user, account),
+                                      timeout=_GOOGLE_CLIENT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=f"Google n'a pas répondu dans les {_GOOGLE_CLIENT_TIMEOUT_S}s "
+                    "(rafraîchissement de jeton) — réessaie."))
+
+
 def register(mcp: FastMCP) -> None:
 
     def _bad(msg: str) -> McpError:
@@ -78,13 +92,13 @@ def register(mcp: FastMCP) -> None:
         Args:
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
         calendars = await asyncio.to_thread(client.list_calendars)
         return {"calendars": calendars, "count": len(calendars)}
 
     @mcp.tool()
     async def calendar_event(
-        op: Literal["list", "get", "create"] = "list",
+        op: Literal["list", "get", "create", "update", "rm"] = "list",
         calendar_id: str = "primary",
         event_id: Optional[str] = None,
         time_min: Optional[str] = None,
@@ -97,9 +111,10 @@ def register(mcp: FastMCP) -> None:
         description: Optional[str] = None,
         location: Optional[str] = None,
         all_day: bool = False,
+        send_updates: Literal["none", "all", "externalOnly"] = "none",
         account: Optional[str] = None,
     ) -> dict:
-        """An event in a calendar — list a time range, read one, create one.
+        """An event in a calendar — list, read, create, fix or delete one.
 
         `op`:
         - **"list"** (default): list events from a calendar over a time range
@@ -109,6 +124,13 @@ def register(mcp: FastMCP) -> None:
           adds description, attendees, recurrence, reminders).
         - **"create"**: create a calendar event (`summary` + `start`).
           ⚠️ **Writes into a real calendar** — attendees may be notified.
+        - **"update"**: fix an existing event (`event_id` + what changes). PATCHES —
+          only the fields you pass are touched, everything else (attendees,
+          recurrence, reminders, meeting link) is left alone. Use this instead of
+          creating a second event.
+        - **"rm"**: delete an event (`event_id`). Irreversible. Returns what was
+          deleted (summary + start), read before the deletion — so that deleting the
+          wrong id does not look exactly like deleting the right one.
 
         Args:
             op: list (default) | get | create.
@@ -134,9 +156,12 @@ def register(mcp: FastMCP) -> None:
             all_day: op="create" — treat start/end as dates (YYYY-MM-DD).
                 ⚠️ A 10-character `start` ('YYYY-MM-DD') is treated as all-day
                 even when all_day is False (CalendarClient.create_event).
+            send_updates: op="update"/"rm" — whether attendees get an email.
+                Default **"none"**: fixing a typo must not mail twelve people, and
+                cancelling silently is the lesser surprise. Pass "all" deliberately.
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
+        client = await _client_for_user_async(account)
 
         if op == "list":
             # ⚠️ ordre POSITIONNEL du client : (calendar_id, time_min, time_max,
@@ -156,4 +181,17 @@ def register(mcp: FastMCP) -> None:
                 _need(start, "start", op), end, description, location, all_day,
                 calendar_id,
             )
-        raise _bad("op doit être 'list', 'get' ou 'create'")
+        if op == "update":
+            # Le client REFUSE un patch vide : sans champ, l'appel dépenserait une
+            # écriture et rendrait un succès sans rien changer (signal #686).
+            return await asyncio.to_thread(
+                client.update_event, _need(event_id, "event_id", op), summary,
+                start, end, description, location, all_day, calendar_id,
+                send_updates,
+            )
+        if op == "rm":
+            return await asyncio.to_thread(
+                client.delete_event, _need(event_id, "event_id", op), calendar_id,
+                send_updates,
+            )
+        raise _bad("op doit être 'list', 'get', 'create', 'update' ou 'rm'")

@@ -26,3 +26,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Origami"
 LOGO_DOMAIN = "origami.chat"
+
+DESCRIPTION = (
+    "Des campagnes email ET LinkedIn pilotées par l'agent Origami : tables de "
+    "leads (import CSV), rédaction et lancement de campagne, pause et reprise, "
+    "statistiques. Chaque envoi réel passe par un mode d'essai (dry-run) activé "
+    "par défaut, avant d'atteindre de vraies personnes."
+)

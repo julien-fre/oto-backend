@@ -23,3 +23,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "GEMI / VIES"
 SANS_LOGO_DE_MARQUE = True
+
+DESCRIPTION = (
+    "Vérifier une entreprise grecque au registre GEMI (autocomplétion) ou un "
+    "numéro de TVA intracommunautaire (VIES) — donnée ouverte, sans clé à "
+    "poser."
+)

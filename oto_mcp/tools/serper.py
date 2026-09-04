@@ -16,6 +16,7 @@ from mcp.types import ErrorData, INVALID_REQUEST
 
 from .. import access, output_projection, url_perimeter
 from ..connectors import verify as connector_verify
+from . import mail_obfuscation
 
 # Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
 # de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
@@ -109,6 +110,14 @@ def register(mcp: FastMCP) -> None:
 
     def _bad(msg: str) -> McpError:
         return McpError(ErrorData(code=INVALID_REQUEST, message=msg))
+
+    def _delai_lecture(timeout_s: Optional[int]) -> float:
+        """Budget de NOTRE lecture directe : celui que l'appelant s'est donné
+        s'il l'a serré, sinon le nôtre. Un agent qui a demandé 3 s ne veut pas
+        en attendre 20 de plus parce que le fournisseur a refusé."""
+        if timeout_s is None:
+            return mail_obfuscation.LECTURE_DELAI_S
+        return max(1, min(int(timeout_s), mail_obfuscation.LECTURE_DELAI_S))
 
     # Verticale → (méthode du client, chemin des items, params acceptés en plus du socle).
     # Le socle commun est `query` + `num` + `page` + `country` + `language` : c'est ce
@@ -376,7 +385,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def serper_scrape(
         url: str,
-        format: Literal["markdown", "text", "both"] = "markdown",
+        format: Literal["markdown", "text", "both", "html"] = "markdown",
+        timeout_s: Optional[int] = None,
     ) -> dict:
         """Récupère une page web via le scraper de Serper.
 
@@ -388,23 +398,55 @@ def register(mcp: FastMCP) -> None:
         court ne prouve donc PAS que la page est vide. Regarde sa longueur avant
         d'en tirer un fait sur l'entreprise.
 
-        ⚠️ **Un appel peut bloquer ~60 s**, y compris sur un domaine qui n'existe
-        pas — rien ne le vérifie avant l'envoi. Une URL fabriquée à partir d'un nom
-        de société coûte donc une minute pour rien : pars d'une URL constatée.
+        ⚠️ **Un appel attend au plus 15 secondes**, puis rend une expiration —
+        y compris sur un domaine qui n'existe pas, que rien ne vérifie avant
+        l'envoi. Une expiration est un échec NORMAL, pas une panne : sur les
+        appels mesurés, la moitié des échecs portait sur des adresses fabriquées
+        à partir d'un nom de société. **Pars d'une URL constatée**, et ne réessaie
+        pas la même : ce n'est pas la lenteur qui coûte, c'est ce qu'elle emporte
+        — pendant que tu attends, ton propre contexte se refacture.
+
+        ⚠️ **Les adresses obfusquées ne survivent pas au rendu.** Trois motifs
+        courants (`joomla-hidden-mail` en base64, `mailto:` en entités HTML,
+        `cloudflare-email-protection`) portent une adresse LISIBLE dans le HTML
+        et INVISIBLE dans le markdown. Quand la page servie n'en montre aucune,
+        l'outil va relire le HTML et rend `adresses_obfusquees` — et colle la
+        même chose en bas du contenu. Un `motifs_obfuscation` sans adresses veut
+        dire « il y a un contact ici, non décodé » : reprends en format="html".
+        `sonde_obfuscation` dit pourquoi la relecture n'a rien conclu.
 
         Args:
             url: URL de la page à récupérer — refusée si elle relève des
                 `excluded_url_prefixes` du projet.
             format: "markdown" (défaut, la représentation lisible par un LLM) |
-                "text" (brut) | "both" (seulement si tu as vraiment besoin de comparer).
+                "text" (brut) | "both" (seulement si tu as vraiment besoin de
+                comparer) | "html" (le HTML BRUT de la page, par notre propre
+                requête, sans le scraper et sans crédit — pour vérifier
+                toi-même ce qu'un rendu a pu perdre ; plafonné, le total est
+                dit dans `html_caracteres`).
+            timeout_s: secondes d'attente, 1 à 60 (défaut 15). Serre-le quand tu
+                enchaînes beaucoup de pages douteuses ; une valeur hors bornes est
+                ramenée dedans, jamais refusée.
         """
         # Le refus du périmètre parle en PREMIER (#632) : avant la validation de
         # `format`, avant la règle du client amont sur les hôtes clos.
-        url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
-        if format not in ("markdown", "text", "both"):
-            raise _bad(f"`format` invalide : {format!r} (markdown | text | both).")
+        per = url_perimeter.perimeter_of_call()
+        url_perimeter.refuse_if_excluded(url, per)
+        if format not in ("markdown", "text", "both", "html"):
+            raise _bad(
+                f"`format` invalide : {format!r} (markdown | text | both | html).")
+        if format == "html":
+            # Le scraper hébergé ne rend AUCUN champ HTML : le demander à
+            # travers lui n'aurait rien donné. On lit donc la page nous-mêmes —
+            # mais sans rouvrir la porte que le client ferme d'emblée sur les
+            # sources closes à l'extraction (mur de connexion).
+            ferme = SerperClient._refuses_scraping(url)
+            if ferme:
+                raise _bad(f"Pas de HTML brut pour {url} : {ferme}")
+            return mail_obfuscation.html_brut(url, per, _delai_lecture(timeout_s))
         try:
-            res = _run("scrape_page", url=url, include_markdown=format != "text")
+            res = _run("scrape_page", url=url, include_markdown=format != "text",
+                       timeout_s=timeout_s)
             # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
             # contenu (mesuré, 97 % de mots communs), pour 37 % du payload en pure
             # duplication. On n'en sert qu'une — retirer un doublon ne perd rien. Le
@@ -413,16 +455,30 @@ def register(mcp: FastMCP) -> None:
             # pas reconstituer, donc les retirer perdrait quelque chose.
             if format == "markdown" and res.get("markdown"):
                 res.pop("text", None)
+            mail_obfuscation.completer(res, url, per)
             return res
         except RuntimeError as e:
             m = _SERPER_STATUS.search(str(e))
             code = int(m.group(1)) if m else None
             if code == 404 or (code is not None and 500 <= code < 600):
+                # Le fournisseur a refusé — avant de rendre la main, on relit la
+                # page NOUS-MÊMES avec un UA de navigateur. Sur le palier du
+                # 03/09, trois sites refusés sur quatre (deux Wix, un
+                # WordPress.com) répondaient normalement à cette requête-là
+                # (#681). Le repli DIT son chemin, il ne se déguise pas en
+                # scrape. Volontairement pas sur une EXPIRATION : celle-là a
+                # déjà consommé le budget de l'appelant, et #662 a mesuré que
+                # ce qu'une attente emporte coûte plus cher que la page.
+                recuperee, pourquoi = mail_obfuscation.repli(
+                    url, per, _delai_lecture(timeout_s))
+                if recuperee:
+                    return recuperee
                 detail = ("cette page n'existe pas (ou plus)" if code == 404 else
                           "la page a bloqué le robot ou n'a pas pu être récupérée")
                 raise McpError(ErrorData(
                     code=INVALID_REQUEST,
                     message=(f"Scrape impossible pour cette URL ({url}) : {detail}. "
-                             "Essaie une autre source ou serper_search."),
+                             f"Notre propre lecture directe a échoué aussi : "
+                             f"{pourquoi}. Essaie une autre source ou serper_search."),
                 )) from None
             raise

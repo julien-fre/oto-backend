@@ -28,3 +28,9 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Waalaxy"
 LOGO_DOMAIN = "waalaxy.com"
+
+DESCRIPTION = (
+    "Pousser des prospects dans une liste et une campagne d'automatisation "
+    "LinkedIn Waalaxy — import seulement : pas de lecture d'inbox ni de "
+    "statistiques, l'API publique de Waalaxy s'arrête à l'ajout de prospects."
+)

@@ -102,11 +102,19 @@ def test_verify_async_probe_awaited(monkeypatch):
 
 def test_verify_records_health_on_member_key(monkeypatch):
     """La sonde alimente le flag santé (`meta.health_ko`) de la clé MEMBRE : échec → KO
-    + raison, succès → rétabli. Lu ensuite par status_for, rendu terra au verdict."""
+    + raison, succès → rétabli. Lu par status_for, rendu terra au verdict — et, depuis
+    #541, par le verdict `ready` de la carte connecteur.
+
+    ⚠️ Le double rend un `ResolvedCredential` COMPLET (`entity_type`/`entity_id`/
+    `account`) : la cible de santé est désormais la LIGNE réellement testée, plus une
+    identité de membre reconstruite depuis le contexte. Le double d'avant n'avait que
+    `mode="user"` — une fiction, `resolve_credential` ne rend jamais ça — et il aurait
+    donc validé une écriture sur la mauvaise ligne d'un connecteur multi-compte."""
     written = {}
     monkeypatch.setattr(cv.access, "resolve_credential",
-                        lambda *a, **k: types.SimpleNamespace(fields={"k": "v"}, config={}, mode="user"))
-    monkeypatch.setattr(cv.credentials_store, "member_id", lambda org, sub: f"{org}:{sub}")
+                        lambda *a, **k: types.SimpleNamespace(
+                            fields={"k": "v"}, config={}, mode="user",
+                            entity_type="member", entity_id="42:user-1", account=""))
     monkeypatch.setattr(cv.credentials_store, "update_meta",
                         lambda et, eid, conn, acct, patch: written.update(scope=(et, eid), patch=patch) or True)
 

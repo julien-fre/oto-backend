@@ -123,6 +123,26 @@ def delete_trigger(trigger_id: int, org_id: int) -> bool:
     return supprime
 
 
+def triggers_for_procedure(org_id: int, procedure: str) -> list[dict]:
+    """Les déclencheurs d'UN objet — ce que l'écran d'une procédure doit savoir.
+
+    ⚠️ Les déclencheurs ne se listaient que par ORGANISATION. La page d'une
+    procédure ne pouvait donc pas dire si elle tourne toute seule : il aurait
+    fallu charger tous les déclencheurs de l'org et filtrer côté client, ce qui
+    devient faux dès qu'il y en a plus d'une page.
+
+    L'agent programmé est une PROPRIÉTÉ de l'objet (direction du 02/09), pas un
+    objet séparé — donc il doit se lire depuis l'objet.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT {_COLS} FROM runner_triggers "
+            f"WHERE org_id = %s AND procedure = %s ORDER BY id DESC",
+            (org_id, procedure),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def due_triggers(limit: int = 50) -> list[dict]:
     """Les déclencheurs à échéance — lecture nue, TOUTES orgs (le tick est un
     service de plateforme). La consommation se fait par CAS, pas ici."""
@@ -137,14 +157,46 @@ def due_triggers(limit: int = 50) -> list[dict]:
 
 def consume_due(trigger_id: int, seen_next_due, new_next_due) -> bool:
     """Compare-and-swap sur l'échéance : True = CE tick a gagné et doit enfiler ;
-    False = un tick concurrent (l'autre environnement, même base) l'a déjà fait."""
+    False = un tick concurrent (l'autre environnement, même base) l'a déjà fait.
+
+    ⚠️ **Le verrou porte sur l'ÉLIGIBILITÉ (`next_due <= NOW()`), jamais sur
+    l'échéance relue.** La version d'avant comparait `next_due = <valeur lue par
+    le tick>` — et cette valeur passe par `_normalize_value`, qui **retire les
+    microsecondes ET le fuseau** de tout horodatage lu.
+
+    Deux façons pour ce `WHERE` de ne jamais matcher, aucune ne produisant
+    d'erreur :
+
+    ```
+    microsecondes   une échéance à 19:37:27.482 est relue « 19:37:27 »
+    fuseau retiré   la chaîne naïve est réinterprétée dans le fuseau de la
+                    SESSION, pas forcément UTC
+    ```
+
+    Dans les deux cas `consume_due` rend `False`, que le tick lit comme « un pair
+    a déjà consommé cette échéance » — le cas NORMAL quand deux environnements
+    partagent la base. Il passe sans enfiler, **sans erreur, sans avertissement**,
+    et le déclencheur reste **éternellement dû** : sélectionné à chaque tour,
+    jamais consommé. ⚠️ Avec l'air parfaitement sain — `enabled`, une échéance
+    dans le passé, un runner armé.
+
+    Ça ne se produisait pas parce que toutes les échéances viennent de croniter,
+    qui rend des secondes rondes. **Une garantie qui tient par la propriété d'une
+    bibliothèque tierce n'est pas une garantie.**
+
+    L'exclusion mutuelle est intacte : deux ticks concurrents se sérialisent sur
+    la ligne, et le second ré-évalue son `WHERE` après le verrou — l'échéance est
+    alors dans le futur, il ne matche plus. `seen_next_due` n'est plus lu ; il
+    reste dans la signature pour ne pas casser les appelants, et parce que le
+    perdre effacerait la trace de ce qu'on a corrigé.
+    """
     with _connect() as conn:
         cur = conn.execute(
             """
             UPDATE runner_triggers
                SET next_due = %s, last_enqueued_at = NOW()
-             WHERE id = %s AND next_due = %s AND enabled
+             WHERE id = %s AND enabled AND next_due <= NOW()
             """,
-            (new_next_due, trigger_id, seen_next_due),
+            (new_next_due, trigger_id),
         )
         return bool(cur.rowcount)

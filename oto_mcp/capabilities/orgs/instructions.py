@@ -53,6 +53,30 @@ _DROITS_SERVIS = {
 
 _OID = {"id": "org_id"}
 _OID_SLUG = {"id": "org_id", "slug": "slug"}
+# Borne du corps d'une PROCÉDURE. Relevée de 64 à 128 Ko le 03/09/2026 (décision
+# d'Alexis : « fais une amélioration sur le mode http »), pour débloquer une mission
+# dont la procédure était à SEPT octets de l'ancienne — chaque nouvelle leçon y
+# chassait une ancienne.
+#
+# Pourquoi 128 Ko et pas plus : une procédure n'est PAS injectée à chaque session
+# (le README l'est, et ce handler le refuse explicitement quelques lignes plus bas),
+# elle est chargée À LA DEMANDE dans le contexte d'un agent. Le critère est donc
+# « tient-elle dans un contexte utile, avec de quoi travailler autour ». 128 Ko de
+# français ≈ 34 000 jetons (ratio mesuré le 03/09 : 3,78 octets par jeton) — environ
+# un sixième d'une fenêtre de 200 k, un quart d'une fenêtre de 128 k. Une procédure au
+# plafond reste chargeable sans manger la place du travail. Doubler plutôt que
+# décupler est délibéré : la borne doit rester un signal qu'il est temps de découper.
+#
+# ⚠️ Cette garde est COMMUNE aux deux faces — `org.instruction.set` (REST),
+# `.create` et `.admin_set` passent tous par `_set_instruction`, que `oto_procedure`
+# atteint aussi via l'adaptateur MCP. La relever la relève donc PARTOUT, pas
+# seulement sur la route. Constaté avant de la toucher, pas après.
+#
+# ⚠️ Et ce n'est PAS la jumelle de `guides._MAX_BODY_BYTES`, qui garde 64 Ko : ce
+# corps-là est injecté dans CHAQUE session, sa borne protège un budget réel. Même
+# valeur hier, deux raisons différentes — c'est la raison qui décide, pas la symétrie.
+_MAX_BODY_BYTES = 128 * 1024
+
 _BASE = org_store.BASE_SLUG
 # Outil MCP qui charge le guide (donc loggé dans `tool_calls`) → c'est lui que
 # l'usage compte. UNE source pour le nom : sert de `mcp=` de la capacité de lecture
@@ -420,7 +444,10 @@ class GuideGetInput(BaseModel):
     slug: Optional[str] = None
     guide_id: Optional[int] = None      # lecture par ID STABLE (ADR 0032) — y compris un guide PARTAGÉ à ton org (grant read, livraison #52)
     doctrine_id: Optional[int] = None   # ALIAS déprécié du précédent (retrait 29/10/2026, #519)
-    scope: str = "org"
+    # `None` = CASCADE de lecture (chez soi, puis l'org) — cf. `_get_guide`. Ce
+    # champ valait `"org"` en dur : depuis que l'écriture sans scope va chez SOI
+    # (ADR 0068), ce défaut faisait relire ailleurs qu'on venait d'écrire.
+    scope: Optional[str] = None
     version: Optional[int] = None
     with_history: bool = False
 
@@ -441,7 +468,13 @@ class SlugInput(BaseModel):
 
 class InstrSetInput(BaseModel):
     slug: Optional[str] = None
-    body_md: Optional[str] = None
+    body_md: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=(f"Corps markdown, au plus {_MAX_BODY_BYTES} OCTETS UTF-8 — "
+                     "au-delà : 400 `body_too_large`, qui donne le poids atteint et "
+                     "la borne. `maxLength` compte des CARACTÈRES : nécessaire, pas "
+                     "suffisant — un accent pèse deux octets, un trait de schéma "
+                     "(`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None
@@ -485,7 +518,13 @@ class InstrCreateInput(BaseModel):
     Pas de `from_version` : restaurer une version suppose une procédure existante,
     donc l'inverse exact d'une création."""
     slug: str
-    body_md: Optional[str] = None
+    body_md: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=(f"Corps markdown, au plus {_MAX_BODY_BYTES} OCTETS UTF-8 — "
+                     "au-delà : 400 `body_too_large`, qui donne le poids atteint et "
+                     "la borne. `maxLength` compte des CARACTÈRES : nécessaire, pas "
+                     "suffisant — un accent pèse deux octets, un trait de schéma "
+                     "(`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     slots: Optional[list] = None
@@ -597,7 +636,13 @@ class AdminGuideListInput(BaseModel):
 class AdminInstrSetInput(BaseModel):
     org_id: int
     slug: Optional[str] = None
-    body_md: Optional[str] = None
+    body_md: Optional[str] = Field(
+        None, json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=(f"Corps markdown, au plus {_MAX_BODY_BYTES} OCTETS UTF-8 — "
+                     "au-delà : 400 `body_too_large`, qui donne le poids atteint et "
+                     "la borne. `maxLength` compte des CARACTÈRES : nécessaire, pas "
+                     "suffisant — un accent pèse deux octets, un trait de schéma "
+                     "(`─│┌┘`) trois."))
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None
@@ -653,8 +698,15 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
     `/api/me/instructions/*`) trouve `ctx.group_id` vide et se fait refuser : le palier
     équipe n'est atteignable que par une règle qui a vérifié l'équipe. C'est le
     verrou — relire l'équipe ici (via l'équipe ACTIVE, par exemple) rendrait le champ
-    client suffisant pour écrire chez elle. Une entrée sans `scope` reste au palier org,
-    à l'octet près.
+    client suffisant pour écrire chez elle.
+
+    ⚠️ **Le palier PERSONNEL (`scope='user'`) est ouvert depuis le 04/09/2026** (ADR
+    0068), mais il n'est PAS le défaut ici — et c'est délibéré. Les quatre appelants de
+    cette fonction sont des capacités gardées par `ORG_ADMIN_OPT` : leur objet EST
+    d'écrire la procédure de l'org. Y mettre un défaut personnel transformerait une
+    surface d'administration en espace privé, ce que personne n'a demandé. Le défaut
+    personnel vit sur la surface AGENT (`oto_procedure`), là où l'appelant est un
+    modèle qui écrit ce qu'on lui a dicté sans rien demander de partagé.
 
     ⚠️ Ce verrou ne dit RIEN du palier de droits : le rôle exigé dépend du VERBE et se
     déclare à la capacité (`set` = membre de l'équipe, `delete` = chef — #681). Deux
@@ -668,6 +720,13 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
                               "y supprimer d'en être le chef. Cette surface-ci écrit "
                               "l'org.")
         return ("group", str(ctx.group_id))
+    if getattr(inp, "scope", None) == "user":
+        # Palier PERSONNEL : l'identité vient du contexte, jamais d'un champ client —
+        # même verrou que les deux autres paliers. Un `owner_id` accepté ici
+        # permettrait d'écrire la procédure de quelqu'un d'autre.
+        if ctx.sub is None:
+            raise AuthzDenied(401, "no_identity", "Identité requise pour écrire ici.")
+        return ("user", str(ctx.sub))
     if ctx.org_id is None:
         raise AuthzDenied(400, "no_active_org",
                           "Aucune org active — vois `oto_use_org`, ou passe `org` "
@@ -676,9 +735,15 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
 
 
 def _scope_ref(owner: tuple[str, str]) -> dict:
-    """La clé de scope d'une réponse — `org_id` ou `group_id`, jamais les deux, jamais
-    une clé nulle (convention de tout ce module, cf. `GuideView`)."""
-    return {f"{owner[0]}_id": int(owner[1]), "scope": owner[0]}
+    """La clé de scope d'une réponse — `org_id`, `group_id` ou `user_id`, jamais deux,
+    jamais une clé nulle (convention de tout ce module, cf. `GuideView`).
+
+    ⚠️ `int()` sur l'identifiant vaut pour une org et une équipe (clés primaires), pas
+    pour une PERSONNE : un `sub` est du texte. La conversion levait un `ValueError` que
+    l'adaptateur REST ne rattrape pas — donc un 500 sur une procédure personnelle, au
+    retour d'une écriture qui avait RÉUSSI (ADR 0068)."""
+    otype, oid = owner[0], owner[1]
+    return {f"{otype}_id": (oid if otype == "user" else int(oid)), "scope": otype}
 
 
 # ── Handlers (core ; owner depuis ctx → partagés membre/admin) ──────────────
@@ -760,12 +825,37 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
         })
 
     # Un guide nommé précis.
-    if scope == "group" and member_mode:
+    if scope is None and member_mode:
+        # ⚠️ CASCADE de lecture (04/09/2026) — l'écriture sans `scope` va chez SOI
+        # depuis l'ADR 0068 ; sans elle, relire sans `scope` chercherait dans l'org et
+        # rendrait « introuvable » la procédure qu'on vient d'écrire.
+        # L'ordre est celui de la propriété : la mienne d'abord, celle de l'org
+        # ensuite. Une procédure perso qui porte le même slug qu'une procédure d'org
+        # gagne — c'est la plus proche de qui demande, et il l'a écrite exprès.
+        # L'ÉQUIPE reste sur `scope='group'` explicite : elle n'était pas dans ce
+        # chemin avant, et l'y ajouter changerait ce que lisent les appels existants.
+        # ⚠️ On ne RÉSOUT ici que le palier — le rendu reste celui du chemin commun
+        # ci-dessous. Recopier la réponse ferait diverger les deux formes au premier
+        # champ ajouté (l'historique y a manqué le temps d'un essai).
+        scope = ("user" if (ctx.sub is not None and org_store.get_instruction(
+            "user", str(ctx.sub), slug, version)) else "org")
+    if scope == "user" and member_mode:
+        # Palier PERSONNEL (ADR 0068) — l'identité vient du contexte d'autz, jamais
+        # d'un champ client : le palier personnel de QUELQU'UN D'AUTRE n'est pas
+        # atteignable, même en le nommant. Même verrou que l'org et l'équipe.
+        # ⚠️ Sans cette branche, `scope='user'` tombait dans le `else` et cherchait au
+        # palier ORG : la procédure écrite à soi devenait « introuvable » à la
+        # relecture, sur un message qui nommait pourtant le bon scope.
+        if ctx.sub is None:
+            raise AuthzDenied(401, "no_identity", "Identité requise.")
+        owner: tuple[str, str] = ("user", str(ctx.sub))
+        scope_ref: dict = {"user_id": str(ctx.sub)}
+    elif scope == "group" and member_mode:
         group_id = _active_group(ctx)
         if group_id is None:
             raise AuthzDenied(400, "no_active_group", "Pas de département actif — vois `oto_use_group`.")
-        owner: tuple[str, str] = ("group", str(group_id))
-        scope_ref: dict = {"group_id": group_id}
+        owner = ("group", str(group_id))
+        scope_ref = {"group_id": group_id}
     else:
         if org_id is None:
             raise AuthzDenied(400, "no_active_org", "Pas d'org active — vois `oto_use_org`.")
@@ -800,6 +890,14 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
     if org_id is None:
         return deprecations.avec_les_deux_noms({"org_id": None, "guides": []})
     out: list = []
+    if member_mode and scope in (None, "user") and ctx.sub is not None:
+        # ⚠️ Le palier PERSONNEL entre dans le cumul (04/09/2026). Sans lui, on écrit
+        # chez soi par défaut et on ne se voit PAS dans la liste : la procédure existe,
+        # `op=list` ne la montre pas, et on la croit perdue. Elle vient EN TÊTE — c'est
+        # la sienne, et c'est le premier endroit où l'on cherche ce qu'on a écrit.
+        rows = (org_store.search_instructions("user", str(ctx.sub), query) if query
+                else org_store.list_instructions("user", str(ctx.sub)))
+        out += [{**r, "scope": "user"} for r in rows]
     if scope in (None, "org"):
         include_base = not member_mode  # la surface admin inclut le guide de base
         rows = (org_store.search_instructions("org", org_id, query, include_base=include_base)
@@ -849,8 +947,17 @@ async def _set_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> 
     if not body_md:
         raise AuthzDenied(400, "body_md_required", "body_md vide (ou fournis `from_version`).")
     # Injecté dans le guide de base servi à chaque session → caper la taille.
-    if len(body_md.encode()) > 64 * 1024:
-        raise AuthzDenied(400, "body_too_large", "body_md > 64 KB.")
+    # ⚠️ La borne n'est PAS publiée dans le schéma servi de `InstrSetInput` /
+    # `AdminInstrSetInput` / la création — contrairement au `body_md` des guides, qui
+    # porte son `maxLength` depuis le 29/08. Un front tiers ne peut donc pas dériver sa
+    # garde de saisie ici : ligne du lot 3 d'oto#42, pas traitée dans ce commit.
+    poids = len(body_md.encode())
+    if poids > _MAX_BODY_BYTES:
+        raise AuthzDenied(
+            400, "body_too_large",
+            f"body_md pèse {poids} octets UTF-8 pour {_MAX_BODY_BYTES} au plus "
+            f"({poids - _MAX_BODY_BYTES} de trop). La borne est en OCTETS : un caractère "
+            "accentué en pèse deux, donc compter les caractères la sous-estime.")
     if norm == _BASE:
         raise AuthzDenied(400, "reserved_slug",
                           f"`{_BASE}` est le readme (prose injectée), pas une "

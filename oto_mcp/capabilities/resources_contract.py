@@ -204,6 +204,11 @@ class PublishedProject(BaseModel):
     brief_md: str
     owner_type: str
     owner_id: str
+    # QUI voit ce projet, en clair (04/09/2026). `owner_type` seul oblige à dériver la
+    # conséquence, et personne ne la dérive — surtout pas sur une question de
+    # confidentialité, où l'on suppose le pire à raison. Recopié ici comme le reste de
+    # la vue : c'est le prix du cycle d'import, et le test voisin le tient.
+    visible_to: str
     context_org_id: Optional[str] = None
     is_template: bool
     mcp_slug: Optional[str] = None

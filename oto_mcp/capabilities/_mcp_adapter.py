@@ -5,16 +5,28 @@ Boucle sur le registre et monte un tool FastMCP par capacité ayant un binding
 handler. L'`AuthzDenied` neutre est traduit en `McpError`. Le schéma du tool
 est aplati (params plats) via `apply_flat_signature`.
 
+⚠️ **Ce qui est SYNC part en threadpool, et c'est le point du montage.** FastMCP
+route un `@mcp.tool` sync en threadpool tout seul — mais le tool qu'on monte ici est
+`async def` (il lui FAUT des `await` : handler async, refresh de visibilité), donc
+FastMCP le laisse dans la boucle, et tout ce qu'il appelle nûment avec. Autz, handler
+sync et écho d'org touchent la base : appelés nûment, ils tenaient la boucle du serveur
+MONO-LOOP pendant toute leur durée. Vécu le 2026-09-01 — 12 min 48 s de production
+muette, 376 connexions acceptées par le noyau et jamais servies, pendant qu'une pose
+d'index attendait derrière une lecture ouverte. Cf. `docs/event-loop-perf.md` mode n°4,
+et le garde-fou `tests/test_capacites_hors_boucle.py`.
+
 Dépend du core (sens unique ADR 0004) ; le core n'importe pas cet adaptateur.
 """
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import logging
 from typing import Optional
 
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_context
+from starlette.concurrency import run_in_threadpool
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
@@ -62,6 +74,11 @@ def reserved_org_tool_names(capabilities: list[Capability]) -> frozenset:
 
 def _make_tool(cap: Capability):
     org_reserved = _org_param_reserved(cap)
+    # Décidé au MONTAGE, pas à l'appel : appeler un `async def` ne l'exécute pas (il
+    # rend une coroutine), donc le tester après coup marcherait — mais il faut savoir
+    # AVANT s'il a le droit de partir au thread, et un thread n'a pas de boucle où
+    # jouer une coroutine.
+    handler_async = inspect.iscoroutinefunction(cap.handler)
 
     async def _tool(**kwargs):
         # `_org=` (axe-contexte, modèle sans état de session) est posé EN AMONT par
@@ -72,11 +89,28 @@ def _make_tool(cap: Capability):
         # régression #108 vécue en prod le 2026-07-04).
         if org_reserved:
             kwargs.pop("_org", None)
-        raw = RawCtx(sub=current_user_sub_from_token())
-        before_org = None
-        try:
+
+        def _amont():
+            """Identité → validation → autz → org de référence → handler SYNC.
+
+            Tout ce bloc touche la base (l'autz marche la cascade des rôles, le
+            handler fait son travail), et RIEN dedans n'est awaitable : il part donc
+            en entier dans un thread. Le rendre en un seul morceau garde l'ordre et
+            évite quatre allers-retours de thread par appel.
+
+            La résolution d'identité en fait partie : quand le drain d'alias est armé
+            (`tenant_migration.alias_drain_armed`), `current_user_sub_from_token`
+            canonicalise le sub et repousse l'utilisateur — deux allers-retours DB sur
+            CHAQUE appel.
+            Le jeton se lit par ContextVar, que la copie de contexte transporte."""
+            raw = RawCtx(sub=current_user_sub_from_token())
             inp = cap.Input(**kwargs)                 # validation (seule source : Input)
             ctx = cap.authz(raw, inp)                 # autz (peut lire inp pour ORG_ADMIN_OF)
+            # Le canal est posé ICI, au seuil : la règle d'autz sert les deux faces et
+            # ne peut pas le savoir. `replace` plutôt qu'une mutation — un ctx est un
+            # fait, pas un accumulateur.
+            ctx = dataclasses.replace(ctx, channel="mcp")
+            before = None
             if ctx.org_id is not None and raw.sub:
                 # Org résolue AVANT le handler (même garde que l'écho plus bas — une cap
                 # non org-scopée, ou sans sub, n'a pas à toucher le seam) : sert de
@@ -84,8 +118,19 @@ def _make_tool(cap: Capability):
                 # PAR le handler (#110, cf. plus bas). Ce n'est QU'une référence : jamais
                 # ce qu'on échoue directement.
                 from .. import access
-                before_org = access.current_org(raw.sub)
-            result = cap.handler(ctx, inp)            # handler core
+                before = access.current_org(raw.sub)
+            # Un handler async, lui, doit être appelé DANS la boucle : on ne l'appelle
+            # pas ici, on rend de quoi le faire au retour.
+            return (raw, ctx, inp, before,
+                    None if handler_async else cap.handler(ctx, inp))
+
+        try:
+            # `run_in_threadpool` (anyio) exécute sur une COPIE du contexte : les
+            # ContextVars posées en amont (axe `_org` de CallContextMiddleware, jeton
+            # de token, contexte FastMCP) sont lues normalement depuis le thread.
+            raw, ctx, inp, before_org, result = await run_in_threadpool(_amont)
+            if handler_async:
+                result = cap.handler(ctx, inp)        # handler async → dans la boucle
             if inspect.isawaitable(result):           # handler async (ex. guide + manifeste)
                 result = await result
         except AuthzDenied as d:
@@ -114,10 +159,16 @@ def _make_tool(cap: Capability):
             # un écart ne peut venir QUE d'un changement d'état fait par le handler lui-
             # même (la ContextVar `_CALL_ORG` posée par le middleware, elle, est stable
             # sur toute la durée de l'appel) — jamais d'un pin métier, qui ne mute rien.
-            from .. import access
-            after_org = access.current_org(raw.sub) if raw.sub else None
-            eff = after_org if (after_org is not None and after_org != before_org) else ctx.org_id
-            result.setdefault("_org", _org_echo(eff if eff is not None else ctx.org_id))
+            def _echo():
+                from .. import access
+                after_org = access.current_org(raw.sub) if raw.sub else None
+                eff = (after_org if (after_org is not None and after_org != before_org)
+                       else ctx.org_id)
+                return _org_echo(eff if eff is not None else ctx.org_id)
+            # Deux lectures DB de plus, sur CHAQUE appel org-scopé : au thread, comme
+            # le reste. C'est peu, et « peu » multiplié par la charge est exactement ce
+            # qui a gelé la boucle les trois fois précédentes.
+            result.setdefault("_org", await run_in_threadpool(_echo))
         if cap.refresh_visibility and raw.sub:
             # Bascule de profil (org/groupe actif déjà commitée par le handler) →
             # re-pousse la denylist de la NOUVELLE org sur la session MCP courante,

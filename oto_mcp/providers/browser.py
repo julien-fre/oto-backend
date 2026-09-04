@@ -32,3 +32,10 @@ CONNECTOR = _c(
 # une omission ne doit pas pouvoir se lire comme un choix (`Connector.publisher_name`).
 PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
+
+DESCRIPTION = (
+    "Lire un site qui exige d'être connecté — un intranet, un média payant, un "
+    "back-office sans API — sans écrire de code dédié pour ce site. Un compte "
+    "du coffre = un site ; la session se connecte une fois par navigateur "
+    "hébergé et persiste ensuite."
+)

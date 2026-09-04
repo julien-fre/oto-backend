@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import os
 import time
 
@@ -89,6 +90,44 @@ def replay_boot_schema_dry(conn: psycopg.Connection) -> None:
     """
     with conn.transaction(force_rollback=True):
         apply_boot_schema(conn)
+
+
+def _poser_domaine(conn, table: str, nom: str, colonne: str,
+                   valeurs: tuple[str, ...]) -> bool:
+    """Pose une contrainte de domaine — **et seulement si elle a changé**.
+
+    ⚠️ Un `ADD CONSTRAINT … CHECK` **valide la contrainte sur toute la table**,
+    sous verrou `ACCESS EXCLUSIVE`. Ce n'est pas une opération de métadonnée :
+    c'est un parcours complet. Le faire à chaque démarrage, y compris quand la
+    contrainte est déjà exactement celle qu'on repose, est un coût qui **croît
+    avec la table** — mesuré le 03/09 : 3 ms à 11 000 lignes, 11 ms à 100 000, et
+    quelques secondes de verrou exclusif à dix millions.
+
+    ⚠️ Pourquoi pas `ADD CONSTRAINT IF NOT EXISTS` : ça n'existe pas en
+    PostgreSQL, et le motif conditionnel déjà employé ailleurs dans ce fichier
+    (`IF NOT EXISTS (SELECT 1 FROM pg_constraint …)`) ne convient pas ici — il ne
+    ferait **rien** quand la contrainte existe avec une définition PÉRIMÉE, ce qui
+    est précisément le cas qu'on doit traiter : ajouter une valeur au domaine
+    d'une table déjà déployée.
+
+    D'où la comparaison des VALEURS, pas du texte : `pg_get_constraintdef`
+    normalise sa sortie (espaces, parenthèses), donc une égalité littérale serait
+    fragile. L'égalité d'ENSEMBLES détecte l'ajout comme le retrait.
+
+    Rend True si la contrainte a été (re)posée — c'est ce que le banc mesure.
+    """
+    row = conn.execute(
+        "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = %s",
+        (nom,),
+    ).fetchone()
+    if row and set(re.findall(r"'([^']*)'", row["def"])) == set(valeurs):
+        return False
+    liste = ", ".join(f"'{v}'" for v in valeurs)
+    conn.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {nom}")
+    conn.execute(f"ALTER TABLE {table} ADD CONSTRAINT {nom} "
+                 f"CHECK ({colonne} IN ({liste}))")
+    logger.info("contrainte %s (re)posée sur %s", nom, table)
+    return True
 
 
 def apply_boot_schema(conn: psycopg.Connection) -> None:
@@ -210,11 +249,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # tomberait au TICK, pas au boot, donc loin de sa cause.
     # `sub` (02/09) : l'identité que l'agent porte en exécutant ce travail.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS sub TEXT")
-    conn.execute("ALTER TABLE runner_jobs DROP CONSTRAINT IF EXISTS "
-                 "runner_jobs_status_check")
-    conn.execute("ALTER TABLE runner_jobs ADD CONSTRAINT runner_jobs_status_check "
-                 "CHECK (status IN ('pending', 'claimed', 'done', 'failed', "
-                 "'expired'))")
+    _poser_domaine(conn, "runner_jobs", "runner_jobs_status_check", "status",
+                   ("pending", "claimed", "done", "failed", "expired"))
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
     # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
     # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT
@@ -226,10 +262,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS rows_at_launch INT")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ")
-    conn.execute("ALTER TABLE runner_fleets DROP CONSTRAINT IF EXISTS runner_fleets_status_check")
-    conn.execute("ALTER TABLE runner_fleets ADD CONSTRAINT runner_fleets_status_check "
-                 "CHECK (status IN ('draft', 'armed', 'running', 'stopping', "
-                 "'stopped', 'done', 'failed'))")
+    _poser_domaine(conn, "runner_fleets", "runner_fleets_status_check", "status",
+                   ("draft", "armed", "running", "stopping", "stopped", "done",
+                    "failed"))
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers
@@ -246,6 +281,17 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # même défaut que le socle et les liens, mais sur l'identifiant affiché à
     # chaque appel. NULL = les noms canoniques (l'état d'avant, et le défaut).
     conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tool_prefix TEXT")
+    # (03/09/2026) La PALETTE de ce tenant, pour ce qu'on lui dessine — aujourd'hui
+    # les emails. Elle vivait en dur dans `email_brand.MARQUES`, comme l'adresse de
+    # son tableau de bord y avait vécu avant : accueillir un second partenaire
+    # demandait d'éditer notre code et de le redéployer pour lui. Même raison, même
+    # remède, même colonne de configuration par tenant. `{}` = notre charte.
+    # ⚠️ Ce n'est PAS un thème complet : seulement les sept teintes que le rendu
+    # d'email consomme (`email_brand.Marque`), validées à la lecture. Une clé
+    # inconnue est ignorée, une valeur qui n'est pas une couleur aussi — un email
+    # ne doit jamais casser parce qu'une configuration est mal remplie.
+    conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS brand JSONB "
+                 "NOT NULL DEFAULT '{}'::jsonb")
     # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
     # une table volumineuse (une colonne sans défaut ne touche pas les lignes
     # existantes), et les lignes d'avant restent lisibles avec des NULL — elles
@@ -411,6 +457,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
                  "REFERENCES projects(id) ON DELETE SET NULL")
     # Backfill one-shot par nom (l'ancien marqueur) : pour chaque org sans ancre,
     # le PLUS ANCIEN projet org-owned vivant nommé « Base de connaissance ».
+    # ⚠️ Ce littéral est de l'HISTOIRE, pas la constante `capabilities.kb.KB_NAME` —
+    # qui vaut « Knowledge base » depuis le 2026-09-03 (#527). Le remplacer par la
+    # constante ferait rater l'ancre de toutes les KB posées avant cette date, qui
+    # sont précisément les seules que ce backfill vise.
     conn.execute("""
         UPDATE orgs o SET kb_project_id = p.id
         FROM (SELECT DISTINCT ON (owner_id) owner_id, id FROM projects
@@ -621,6 +671,20 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE org_instructions ALTER COLUMN id SET DEFAULT nextval('org_instructions_id_seq')")
     conn.execute("ALTER TABLE org_instructions ALTER COLUMN id SET NOT NULL")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_org_instructions_id ON org_instructions(id)")
+    # ADR 0068 (04/09/2026) — le palier PERSONNEL des procédures, phase 2 de #681.
+    # `org_id` était NOT NULL : elle porte l'org PARENTE du propriétaire (une org est
+    # la sienne, une équipe tient la sienne dans `org_groups`) et la cascade de
+    # suppression. Une personne n'a pas d'org parente — s'y ranger l'org de contexte
+    # ferait supprimer une procédure PERSONNELLE avec l'org, ce que le store refusait
+    # explicitement d'écrire plutôt que de poser une ligne bancale. On relâche donc la
+    # colonne : une procédure perso porte `org_id = NULL`, ce qui est le fait, et non
+    # une org qui ne la possède pas.
+    # ⚠️ Geste RELÂCHANT : il n'invalide aucune ligne existante et se rejoue sans
+    # effet. Les deux tables bougent ensemble — l'historique porte la même clé de
+    # propriétaire que la table vivante, et le laisser NOT NULL ferait échouer la
+    # PREMIÈRE écriture d'une procédure perso, pas sa création.
+    conn.execute("ALTER TABLE org_instructions ALTER COLUMN org_id DROP NOT NULL")
+    conn.execute("ALTER TABLE org_instruction_revisions ALTER COLUMN org_id DROP NOT NULL")
     # Archivage (soft-delete) d'une procédure : masquée de tous les listings —
     # y compris ceux que l'IA lit (`skills_index_md`, `oto_procedure op=list`,
     # l'index de guide) — mais la ligne ET son historique de révisions
@@ -935,6 +999,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Avatar utilisateur + logo d'org (2026-06-16) : URL publique (Scaleway
     # Object Storage), pas un secret → colonne en clair, hors coffre.
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT")
+    # Mise en pause d'un compte (2026-09-03) : neutraliser sans détruire. NULL
+    # partout à la pose — la colonne n'a d'effet que sur acte d'opérateur.
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_by TEXT")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT")
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logo_url TEXT")
     # Description libre de l'org (self-service org_admin) — prose, pas un secret.
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''")
@@ -1056,6 +1125,14 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Portée opt-in d'un jeton API (`token_scopes.py`) : NULL = jeton non porté
     # (pleins pouvoirs du sub) → additif pur, aucun jeton existant n'est touché.
     conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS scopes JSONB")
+    # `kind` (04/09) : distinguer les jetons de l'UTILISATEUR de ceux de
+    # l'EXÉCUTION. Les jetons de délégation émis avant cette colonne prennent le
+    # défaut `user` — ils sont donc encore listés. Ils sont expirés depuis
+    # longtemps ; la purge des expirés de type `delegation` ne les attrapera pas
+    # (ils portent `user`), et c'est assumé : réétiqueter d'après un libellé
+    # serait exactement le filtre sur texte libre qu'on refuse.
+    conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS "
+                 "kind TEXT NOT NULL DEFAULT 'user'")
     # L6 pièce 2 : le MOTIF d'un archivage d'instance. La base est PARTAGÉE
     # prod/preprod — le `CREATE TABLE` du schéma ne sert qu'aux installs vierges,
     # une table déjà là ne reçoit ses colonnes que par cet `ALTER`. Additif,
@@ -1508,7 +1585,9 @@ def migrate_business_key_indexes() -> int:
             "WHERE schema->>'key' IS NOT NULL AND schema->>'key' <> ''").fetchall()
     for r in rows:
         try:
-            datastore_ensure_key_index(int(r["id"]), r["k"])
+            # Travail de FOND (CLI, hors chemin de requête) : pas de borne — cf.
+            # `datastore_ensure_key_index`.
+            datastore_ensure_key_index(int(r["id"]), r["k"], bornee=False)
             n += 1
         except Exception:  # noqa: BLE001
             # Un namespace dont les données portent DÉJÀ un doublon sur la clé refuse

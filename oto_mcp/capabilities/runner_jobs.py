@@ -47,6 +47,9 @@ class JobsInput(BaseModel):
     # list : les travaux enfilés par CE déclencheur (lu dans le payload, où le
     # tick le pose). Servi pour la même raison que `fleet_id`.
     trigger_id: Optional[int] = None
+    # claim — le worker nomme le dépôt de clé qu'il sait consommer (voir
+    # `_cle_de_modele`). Absent : il tourne sur la clé de la plateforme.
+    provider: Optional[str] = None
     # claim / extend —
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
@@ -149,6 +152,30 @@ class Job(BaseModel):
             "trigger. Null on jobs enqueued before 2026-09-02: their requester is "
             "unknown, and no default was invented for them — a null that says 'we "
             "do not know' beats a name that would be read as a fact."))
+    org_id: Optional[int] = None
+    delegated_token: Optional[str] = Field(
+        None, description=(
+            "A short-lived API token issued IN THE NAME OF this job's `sub`, "
+            "returned by op=claim only. The worker is not a privileged actor: it "
+            "is an ordinary MCP client carrying the requester's identity. Use it "
+            "for every call made while executing this job, then drop it — it "
+            "expires with the lease. Absent on jobs with no known requester "
+            "(enqueued before 2026-09-02): fall back to your own token."))
+    model_key: Optional[str] = Field(
+        None, description=(
+            "The MODEL PROVIDER KEY this job's organisation deposited, returned by "
+            "op=claim only, when the worker named a deposit it can consume. Use it "
+            "for this job's model calls instead of your own environment key, then "
+            "drop it — it is the org's secret, not yours, and it is never written "
+            "to a log or a thread. Absent means the org deposited none: fall back "
+            "to the platform key."))
+    delegation_refusee: Optional[str] = Field(
+        None, description=(
+            "WHY this job cannot run: the account that scheduled it no longer "
+            "exists, or no longer holds a role in that organisation. The job is "
+            "already marked failed with this reason — do NOT retry it, and do not "
+            "silently drop it either: report the reason. An agent whose identity "
+            "is no longer valid stops SAYING SO."))
     payload: Optional[dict[str, Any]] = None
     status: Optional[str] = None
     attempts: Optional[int] = None
@@ -260,6 +287,112 @@ def _release_run_rows(run_id: Optional[str]) -> dict:
     return {"run_id": run_id, "rows_released": int(n), "release": "ok"}
 
 
+# Le pouvoir délégué vit un peu plus longtemps que le bail : un agent qui
+# conclut à la dernière seconde doit pouvoir écrire. Trop court couperait un
+# travail abouti juste avant sa conclusion — le pire moment, puisqu'il a déjà
+# tout coûté.
+_MARGE_JETON_S = 120
+
+
+def _identite_invalide(sub_porteur: str, org_id: int) -> Optional[str]:
+    """Pourquoi ce porteur ne peut plus agir — ou None s'il le peut encore.
+
+    Les trois cas arrêtés le 02/09 : compte supprimé, sortie de l'organisation,
+    rôle retiré. ⚠️ **Les deux derniers ne se distinguent pas dans le modèle
+    actuel** — être membre, c'est avoir un rôle : `org_members` porte les deux en
+    une ligne. La raison rendue le dit donc en une phrase plutôt que d'inventer
+    une distinction que la base ne fait pas.
+    """
+    from .. import org_store
+
+    if db.get_user(sub_porteur) is None:
+        return ("le compte qui a programmé ce travail n'existe plus")
+    if org_store.get_org_role(org_id, sub_porteur) is None:
+        return ("le compte qui a programmé ce travail n'a plus de rôle dans cette "
+                "organisation (parti, ou droit retiré)")
+    return None
+
+
+def _cle_de_modele(org_id: int, depot: str) -> Optional[str]:
+    """La clé de modèle DÉPOSÉE PAR L'ORG, ou None si elle n'en a pas posé.
+
+    ⚠️ La garde tient au TYPE, pas au nom du connecteur. Un worker qui pourrait
+    nommer n'importe quel dépôt tirerait le secret Folk ou Salesforce de l'org au
+    moment de réserver un travail : seuls les connecteurs `kind="credential"` —
+    ceux dont porter une clé est la SEULE raison d'être, sans aucun outil derrière
+    — passent ici. Le type distinct n'est pas un détail d'écran : c'est la liste
+    d'autorisation, et c'est pourquoi il fallait un type plutôt qu'un connecteur
+    ordinaire aux namespaces vides.
+
+    ⚠️ Et la clé remise est celle de l'ORG DU TRAVAIL, jamais celle du worker ni
+    celle d'une org qu'il nommerait : le worker ne choisit que le DÉPÔT, jamais
+    à qui il appartient.
+    """
+    from .. import credentials_store, providers
+    c = providers.connector_for_provider(depot)
+    if not c or c.kind != "credential":
+        return None
+    try:
+        return credentials_store.get_credential("org", str(org_id), depot) or None
+    except Exception:
+        # Un coffre qui ne rend pas la clé n'empêche pas le travail : le worker
+        # retombe sur la clé de la plateforme. Mais le silence, lui, est refusé —
+        # une org qui a déposé sa clé et qu'on facture sur la nôtre doit se voir.
+        logger.warning("clé de modèle `%s` illisible pour l'org %s",
+                       depot, org_id, exc_info=True)
+        return None
+
+
+def _avec_cle(job: dict, depot: Optional[str]) -> dict:
+    """Le travail, augmenté de la clé de modèle de son org — à la RÉSERVATION.
+
+    Le worker fait partie du backend et a le droit de lire les clés que les orgs
+    déposent (arbitrage du 02/09) ; ce droit s'exerce ici, une fois, avec le
+    travail — jamais par un accès au coffre depuis le runner. Un worker qui
+    saurait interroger le coffre pourrait lire autre chose que ce travail-ci.
+    """
+    if not depot or not job.get("org_id") or job.get("delegation_refusee"):
+        return job
+    cle = _cle_de_modele(job["org_id"], depot)
+    return {**job, "model_key": cle} if cle else job
+
+
+def _delegue(job: dict, bail_s: int, claimant: str) -> dict:
+    """Le travail, augmenté du moyen d'agir AU NOM de son porteur.
+
+    ⚠️ Le worker n'est pas un pouvoir : c'est **un client MCP ordinaire qui porte
+    l'identité du demandeur** (arbitrage du 02/09). Rien ici ne lui donne un droit
+    propre — on lui remet un jeton au nom de quelqu'un d'autre, borné à la durée
+    du bail, et il s'en sert comme n'importe quel client.
+
+    ⚠️ La validité se vérifie ICI, à la réservation, et **une seule fois** : un
+    travail long continue avec un droit retiré en cours de route, c'est assumé.
+    """
+    porteur = job.get("sub")
+    if not porteur:
+        # Travail d'avant le 02/09 : pas de porteur connu. On n'en invente pas, et
+        # on ne délègue rien — le worker retombe sur son propre jeton, comme avant.
+        return job
+    org_id = job.get("org_id")
+    raison = _identite_invalide(porteur, org_id) if org_id else None
+    if raison:
+        # ⚠️ Le travail est ARRÊTÉ ET LA RAISON EST ÉCRITE. Le relâcher en silence
+        # le ferait reprendre par le worker suivant, indéfiniment : une file qui
+        # tourne sans jamais aboutir, et rien pour dire pourquoi. Un agent dont
+        # l'identité n'est plus valide s'arrête EN LE DISANT.
+        db.refuser_pour_identite(job["id"], claimant,
+                                 f"identité invalide — {raison}")
+        return {**job, "delegation_refusee": raison}
+    # ⚠️ Purger AVANT d'émettre : le nettoyage est amorti sur l'usage, sans
+    # tâche de fond à faire vivre. Un jeton mort est inutilisable, et
+    # l'accumulation est mécanique — un par travail exécuté.
+    db.purger_delegations_expirees(porteur)
+    job["delegated_token"] = db.create_api_token(
+        porteur, label=f"runner job {job['id']}",
+        ttl_seconds=bail_s + _MARGE_JETON_S, kind="delegation")
+    return job
+
+
 def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "la file du runner est org-scopée")
@@ -301,9 +434,11 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 "fleet_id": res.get("fleet_id"), "sub": res.get("sub")}
 
     if inp.op == "claim":
-        job = db.claim_next_job(ctx.org_id, ctx.sub,
-                                lease_seconds=max(30, min(inp.lease_seconds, 3600)))
-        return {"job": job}
+        bail = max(30, min(inp.lease_seconds, 3600))
+        job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail)
+        if job is None:
+            return {"job": None}
+        return {"job": _avec_cle(_delegue(job, bail, ctx.sub), inp.provider)}
 
     if inp.op == "list":
         # Surveillance (page Automatisations) : lecture org-scopée, jamais un

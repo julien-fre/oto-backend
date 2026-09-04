@@ -445,7 +445,14 @@ _SERVER_INSTRUCTIONS = instructions.render()
 #     `session_org.note_call_trace(instance=<ref de la ligne gagnante>)`. Tant qu'elle
 #     n'y est pas, cette clé n'apparaît dans AUCUNE ligne de journal : ne rien bâtir
 #     dessus sans avoir vérifié qu'elle se remplit.
-_TRACED_ARGS = ("ns_id", "doctrine_version", "instance")
+#
+# `readonly_forced` (#658, 02/09/2026) — les colonnes VERROUILLÉES qu'un appel a
+# remplacées de force, avec la ligne et la valeur d'avant. C'est la SEULE trace du
+# geste, tranchée comme telle : pas de colonne de plus sur la ligne. ⚠️ Le journal ne
+# remonte qu'à ~35 jours, donc la trace disparaît alors que la valeur forcée reste —
+# la question a été posée et fermée en connaissance de cause. Le « qui » n'est pas
+# répété ici : le sink stampe déjà `sub` et `org_id`.
+_TRACED_ARGS = ("ns_id", "doctrine_version", "instance", "readonly_forced")
 
 
 _PREPARED = False
@@ -601,6 +608,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # et pour tout tenant qui ne déclare pas de préfixe (cf. `tool_alias`).
     from .middleware.alias import ToolAliasMiddleware
     instance.add_middleware(ToolAliasMiddleware())
+
+    # 0 bis. Compte en PAUSE : refus de TOUTE requête, avant tout le reste. Sous
+    # `ToolAlias` seulement parce que celui-ci se déclare outermost absolu et
+    # rétablit un nom en entrée — nom que ce refus ne lit pas, donc l'ordre entre
+    # eux est sans conséquence. Il est en revanche AU-DESSUS du contexte d'appel,
+    # de la rédaction, de la visibilité et du journal : rien de tout cela n'a de
+    # raison de tourner pour une requête qu'on refuse, et un compte neutralisé ne
+    # doit pas non plus RECEVOIR les instructions d'org du handshake.
+    from .middleware.account_suspended import AccountSuspendedMiddleware
+    instance.add_middleware(AccountSuspendedMiddleware())
 
     # 1. Rendu du VIDE en PHRASE (otomata-tech/oto#32) : un résultat sans aucun
     # résultat ne part JAMAIS en structure nue dans le canal texte, qui fait dégénérer

@@ -33,6 +33,8 @@ from typing import Optional
 
 import sentry_sdk
 from fastmcp.server.middleware import Middleware
+from sentry_sdk.integrations.logging import ignore_logger
+from sentry_sdk.integrations.mcp import MCPIntegration
 
 from .auth.hooks import current_client_id_from_token, current_user_sub_from_token
 # Classifieurs partagés (D2, #124) : source unique de la taxonomie d'exceptions,
@@ -107,7 +109,23 @@ def init_sentry() -> bool:
         # Ne pas reporter les erreurs gérées (4xx amont + refus d'entrée/config
         # user McpError) : pas des bugs backend.
         before_send=_before_send,
+        # oto-backend#869 — le SDK AUTO-ACTIVE `MCPIntegration` dès `mcp>=1.15.0`
+        # (nous sommes en mcp 1.27.2) : elle capture la MÊME `McpError` que
+        # `SentryToolErrorMiddleware` ci-dessous, SANS le tag `mcp.tool` ni
+        # l'utilisateur, et sans passer par `_before_send` côté taxonomie — d'où
+        # l'issue Sentry au titre trompeur « Erreur interne du serveur » et un
+        # triplet d'événements par erreur (mesuré : 528/528/528, 293/293/293).
+        # Coupée ici : zéro perte d'information, le middleware reste le SEUL
+        # capteur, celui qui étiquette.
+        disabled_integrations=[MCPIntegration()],
     )
+    # oto-backend#869 — la 2ᵉ copie du triplet : la LoggingIntegration du SDK relaie
+    # `logger.exception(f"Error calling tool {name!r}")` de fastmcp
+    # (`fastmcp/server/server.py`, logger `fastmcp.server.server`) vers Sentry. Le
+    # `before_send` la droppe déjà si l'erreur est gérée, mais sur une erreur RÉELLE
+    # elle double `SentryToolErrorMiddleware` sans rien ajouter (pas de tag, pas
+    # d'utilisateur) — l'événement du middleware suffit.
+    ignore_logger("fastmcp.server.server")
     logger.info("Sentry actif (env=%s)", os.environ.get("OTO_SENTRY_ENV", "production"))
     return True
 

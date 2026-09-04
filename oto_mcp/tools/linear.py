@@ -98,6 +98,18 @@ def _upstream_message(e: Exception) -> str:
                 f"complexité/h){reset} — STOP, ne pas réessayer immédiatement.")
 
     if isinstance(e, LinearGraphQLError):
+        # Linear répond son refus d'authentification dans un `errors[]` GraphQL SOUS
+        # HTTP 200 — `_execute` lève donc avant tout `raise_for_upstream`, et la branche
+        # 401/403 ci-dessus, qui nomme pourtant exactement ce cas, n'a jamais rien vu.
+        # Résultat servi jusqu'au 2026-09-03 : la phrase du fournisseur, recopiée
+        # (« linear GraphQL error (AUTHENTICATION_ERROR): Authentication required, not
+        # authenticated »), qui ne dit ni ce qui est en cause ni où le réparer (#541).
+        # Seul ce code est traduit : les autres portent le VRAI diagnostic de Linear,
+        # que le reformuler perdrait.
+        if getattr(e, "code", None) == "AUTHENTICATION_ERROR":
+            return ("Linear a rejeté la clé API — elle est invalide ou révoquée. Pose "
+                    "une clé valide (linear.app/settings/api) puis re-teste avec "
+                    "`oto_instance op=verify`.")
         return f"Linear a refusé la requête : {e.message if hasattr(e, 'message') else str(e)}"
 
     return str(e)
@@ -105,9 +117,19 @@ def _upstream_message(e: Exception) -> str:
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     """Sonde « tester la connexion » : le profil du porteur de la clé, la
-    plus légère des lectures (aucun filtre, un seul objet)."""
+    plus légère des lectures (aucun filtre, un seul objet).
+
+    Son message d'échec n'est pas jeté : il est persisté en `meta.health_reason` et
+    relu par le verdict `ready` de la carte connecteur (#541). Il passe donc par
+    `_upstream_message`, comme un appel d'outil — sinon la carte afficherait la phrase
+    brute du fournisseur là où l'outil, lui, nomme le rejet de clé."""
+    from oto.tools.linear import LinearError
     from oto.tools.linear.client import LinearClient
-    LinearClient(api_key=fields["key"]).get_viewer()
+    from oto.tools.common.errors import UpstreamHTTPError
+    try:
+        LinearClient(api_key=fields["key"]).get_viewer()
+    except (UpstreamHTTPError, LinearError) as e:
+        raise _bad(_upstream_message(e))
 
 
 def register(mcp: FastMCP) -> None:

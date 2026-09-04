@@ -383,6 +383,17 @@ def _ds_where(ns_id: int, q: Optional[str], filters: Optional[list]) -> tuple[st
 
 _NUMERIC_RE = r'^\s*-?[0-9]+(\.[0-9]+)?\s*$'
 
+# Un horodatage ISO 8601 tel que le datastore en reçoit : date seule, ou date +
+# heure avec séparateur `T` ou espace, secondes et fraction optionnelles, décalage
+# `Z` ou `±HH:MM` optionnel. Motif POSIX (pas de `\d` côté PostgreSQL).
+#
+# ⚠️ Il ne valide pas une date, il reconnaît une FORME castable — `2026-02-31`
+# passe le motif et fait échouer le cast. Le bloc conforme le sait : la garde sert
+# à ne caster que ce qui a une chance, pas à remplacer la validation d'écriture.
+_ISO_DT_RE = (r'^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+              r'([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}([.][0-9]+)?)?'
+              r'(Z|[+-][0-9]{2}:?[0-9]{2})?)?$')
+
 
 def _order_guards(value_sql: str, value_params: list, order_type: str,
                   options) -> tuple:
@@ -406,10 +417,27 @@ def _order_guards(value_sql: str, value_params: list, order_type: str,
         conforme_p = list(value_params) + [list(options or [])]
         typed = f"array_position(%s::text[], {value_sql})"
         typed_p = [list(options or [])] + list(value_params)
-    else:  # date/datetime : ISO trie juste par l'alphabet — seul le bloc vide change
-        conforme = "TRUE"
-        conforme_p = []
-        typed = value_sql
+    else:
+        # date/datetime — le tri était TEXTUEL, sur l'idée qu'« ISO trie juste par
+        # l'alphabet ». C'est vrai d'un seul format dans un seul fuseau, et faux
+        # dès qu'une colonne en mélange deux, ce qu'aucune validation d'écriture
+        # n'empêche (oto-backend#859). Deux ruptures mesurées :
+        #   • un DÉCALAGE horaire range à l'envers — `…T23:00:00+02:00` (21 h UTC)
+        #     passe après `…T22:00:00Z` alphabétiquement, avant temporellement ;
+        #   • `conforme = TRUE` déclarait TOUTE valeur rangeable, donc le compteur
+        #     d'écart du tri restait à zéro par construction et une valeur qui
+        #     n'est pas une date du tout se rangeait comme si elle en était une.
+        #     La garde ne gardait rien : elle affirmait.
+        # On caste donc en `timestamptz`, qui ramène tout à un instant — et on ne
+        # caste QUE ce qui a la forme, sans quoi une seule valeur libre ferait
+        # échouer la requête entière (la raison d'être de la garde du bloc number).
+        # ⚠️ Une date SEULE est prise à minuit dans le fuseau de la base : deux
+        # valeurs du même jour à quelques heures d'écart peuvent donc se ranger
+        # autrement qu'attendu. C'est le prix d'une colonne qui mélange les formats,
+        # et le vrai remède est la normalisation à l'écriture.
+        conforme = f"{value_sql} ~ %s"
+        conforme_p = list(value_params) + [_ISO_DT_RE]
+        typed = f"({value_sql})::timestamptz"
         typed_p = list(value_params)
     return vide, vide_p, conforme, conforme_p, typed, typed_p
 

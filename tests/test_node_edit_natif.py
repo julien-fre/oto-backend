@@ -231,3 +231,64 @@ def test_les_quatre_verbes_sont_joignables():
 def NodeEditInput_ops() -> list:
     champ = node_edit.NodeEditInput.model_fields["op"]
     return list(getattr(champ.annotation, "__args__", ()))
+
+
+# --- ADR 0068 : un nœud créé sans scope naît à SOI ----------------------------
+
+def test_le_scope_par_defaut_dune_creation_est_la_PERSONNE(monkeypatch):
+    """Le défaut était `org` — un nœud créé sans rien préciser naissait lisible de
+    tous les membres. Aucun banc ne le défendait, et c'est bien le problème : il
+    n'était protégé par rien, donc personne n'avait décidé qu'il devait en être ainsi.
+
+    ⚠️ Le palier exigeait déjà `org_admin` (`_owner_for_write`), donc personne
+    n'élargissait sans en avoir le DROIT. Mais « en avoir le droit » n'est pas « l'avoir
+    voulu », et l'appelant est un agent qui ne lit que le nom du verbe : un org_admin
+    qui demande une page à son assistant en obtenait une que toute l'org peut lire.
+
+    On lit ce que le code fait du scope, pas ce qu'on croit qu'il en fait : le palier
+    est bouchonné pour observer l'argument qui lui parvient réellement."""
+    vus: list = []
+    from oto_mcp.capabilities import guides
+    monkeypatch.setattr(guides, "_owner_for_write",
+                        lambda ctx, scope, owner=None: vus.append(scope) or "usr_moi")
+    from oto_mcp.capabilities._types import AuthzDenied
+    with pytest.raises(AuthzDenied):        # `title` manquant : on s'arrête juste après
+        node_edit._create(_Ctx(), node_edit.NodeEditInput(op="create", kind="page"))
+    assert vus == ["user"], "un nœud sans scope demandé ne naît plus au palier de l'org"
+
+
+def test_le_scope_org_reste_possible_en_le_DISANT(monkeypatch):
+    """Privé par défaut n'est pas fermé : l'org reste une cible, elle se nomme."""
+    vus: list = []
+    from oto_mcp.capabilities import guides
+    monkeypatch.setattr(guides, "_owner_for_write",
+                        lambda ctx, scope, owner=None: vus.append(scope) or "7")
+    from oto_mcp.capabilities._types import AuthzDenied
+    with pytest.raises(AuthzDenied):
+        node_edit._create(_Ctx(), node_edit.NodeEditInput(op="create", kind="page",
+                                                            scope="org"))
+    assert vus == ["org"]
+
+
+def test_un_noeud_PERSONNEL_n_est_lisible_que_de_son_proprietaire(monkeypatch):
+    """La vérification demandée par Alexis (04/09) : « privé par défaut » ne vaut que
+    si la LECTURE le respecte aussi. Un défaut de création privé au-dessus d'une
+    lecture permissive ne protégerait rien — il donnerait seulement l'impression.
+
+    `ownership.owner_in_scope` est la règle de portée UNIQUE de la plateforme, et sa
+    branche `user` exige l'égalité stricte avec l'appelant. Aucune escalade
+    d'administrateur n'y touche — contrairement au palier ÉQUIPE, qui en a une
+    (`roles.can_read_group`, ADR 0049) et que ce banc mesure aussi, pour que l'écart
+    entre les deux paliers soit un fait écrit et non une surprise."""
+    from oto_mcp import ownership
+
+    monkeypatch.setattr(ownership, "active_owner", lambda org: ("org", str(org)))
+    # Un nœud à MOI : lisible par moi, dans n'importe quel contexte d'org.
+    assert ownership.owner_in_scope("usr_moi", 7, ("user", "usr_moi")) is True
+    assert ownership.owner_in_scope("usr_moi", 99, ("user", "usr_moi")) is True
+    # Le même nœud, lu par quelqu'un d'autre de la MÊME org — y compris un admin :
+    # la branche `user` ne regarde ni le rôle ni l'org, seulement l'égalité.
+    assert ownership.owner_in_scope("usr_admin", 7, ("user", "usr_moi")) is False
+    # Et un nœud d'ORG reste, lui, visible de son org active — le contraste est le
+    # sens même du défaut : c'est le choix du scope qui décide, pas le hasard.
+    assert ownership.owner_in_scope("usr_admin", 7, ("org", "7")) is True

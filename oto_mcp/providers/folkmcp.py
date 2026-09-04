@@ -36,3 +36,10 @@ CONNECTOR = _c(
 # natif `folk` : même éditeur, même marque.
 PUBLISHER = "Folk"
 LOGO_DOMAIN = "folk.app"
+
+DESCRIPTION = (
+    "Le CRM Folk, via son MCP officiel — coexiste avec le connecteur natif "
+    "`folk` (clé API), sans jamais être visible en même temps que lui pour un "
+    "même utilisateur. Connexion par OAuth avec ton compte Folk, pas de clé à "
+    "copier-coller."
+)

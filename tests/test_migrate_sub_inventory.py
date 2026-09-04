@@ -94,7 +94,7 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
 
     NAMES = ("sub|old_sub|new_sub|effective_sub|owner_sub|grantee_sub|accepted_sub|"
              "personal_of|requested_by|resolved_by|granted_by|created_by|set_by|"
-             "invited_by|published_by|principal_id|entity_id|grantee_id|owner_id")
+             "invited_by|published_by|suspended_by|principal_id|entity_id|grantee_id|owner_id")
     porteurs: set[tuple[str, str]] = set()
     for m in re.finditer(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\);",
                          _SCHEMA, re.S):

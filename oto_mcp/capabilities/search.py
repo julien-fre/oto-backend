@@ -47,6 +47,13 @@ class SearchResults(BaseModel):
     # Présent UNIQUEMENT quand il n'y a aucun résultat — un conseil de reformulation,
     # pas un champ d'erreur.
     hint: Optional[str] = None
+    # Présents UNIQUEMENT quand la coupe a mordu (oto#42) : `count` dit ce que la
+    # réponse CONTIENT, `total` ce que la recherche a TROUVÉ. Sans le second, « 20
+    # résultats » se lit « voilà tout ce qui existe » — et l'agent conclut à une
+    # absence qui n'en est pas une. Rien n'est ajouté quand tout est rendu.
+    total: Optional[int] = None
+    truncated: Optional[bool] = None
+    hint_truncated: Optional[str] = None
 
 
 class SearchInput(BaseModel):
@@ -134,6 +141,9 @@ CAPABILITIES += [
             "not just the table's name). "
             "Lexical (French stemming, accent-insensitive); reformulate with the exact "
             "words if 0 hits. `scope='project'`+`project=<id>` narrows to one project. "
+            "`count` is what this response holds; when the cut bit, `total` says how "
+            "many were FOUND and `truncated` is true — 20 hits out of 300 must not "
+            "read as « that is all there is ». "
             "`kinds` filters (page|brief|procedure|guide|tableau|ligne|fichier|connecteur). "
             "SEARCH when you know what you're looking for; NAVIGATE (oto_project op=get "
             "include=['spine']) when the question is structural. Then open the hit: "

@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from ... import db
 from .._authz import PROJECT_SHARED_READ
+from .. import _portee, _publication
 from .._types import Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 from . import changes, common, history, patch, reads, view, writes
@@ -140,6 +141,12 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         return reads.backlinks(sub, inp, row, pid)
 
     if inp.op == "set_public":
+        # Retirer un partage public RÉDUIT la portée : jamais un risque, jamais gardé.
+        # Seul `public=True` ouvre.
+        if inp.public:
+            _publication.refuser_si_agent(
+                ctx, "cette page",
+                "Elle se partage depuis le dashboard, sur la page elle-même.")
         return writes.set_public(sub, inp, row, pid)
 
     if inp.op == "request_change":
@@ -157,7 +164,19 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     if inp.op == "delete":
         return writes.delete(sub, inp, row, pid)
 
-    return writes.move(sub, inp, row, pid)
+    out = writes.move(sub, inp, row, pid)
+    # ADR 0068 §4 — déplacer une page vers un AUTRE projet change qui peut la lire :
+    # c'est le geste, pas un partage, mais l'effet est le même pour son auteur.
+    # On observe le CHANGEMENT de projet, pas le rangement interne d'un même projet.
+    if inp.to_project is not None and int(inp.to_project) != int(pid):
+        dest = db.get_project_by_id(int(inp.to_project)) or {}
+        _portee.observer(
+            ctx, ressource_type="doc", ressource_id=inp.doc_id,
+            ressource_nom=row.get("title"),
+            vers={"org": "org", "group": "group"}.get(dest.get("owner_type"), "person"),
+            geste=f"oto_doc op=move to_project={inp.to_project}",
+            cible=str(inp.to_project))
+    return out
 
 
 CAPABILITIES += [
@@ -224,7 +243,25 @@ CAPABILITIES += [
             "[text](doc:88) and [text](/docs/88) create none). Resolved AT WRITE TIME against "
             "the current project then the org KB, case- and edge-space-insensitive; a title "
             "that doesn't exist yet is kept as a stub and links itself once the page is "
-            "created or renamed / request_change (read-only "
+            "created or renamed. ⚠️ That is the reach of RESOLUTION, not of the graph, "
+            "and they differ BOTH ways. (a) The graph is not symmetric: a page in the "
+            "org KB resolves against the KB alone, so it can NEVER link to a page living "
+            "in a project — while that project page links back to it fine (the KB is "
+            "itself a project, so an ordinary backlink is already cross-project). A page "
+            "can therefore be cited from the org's top map and still read as an orphan "
+            "here: do not use backlinks as a completeness or orphan check without "
+            "knowing that. (b) op=backlinks shows every STORED link whatever its project, "
+            "including one left behind by a page MOVED between projects — no resolution "
+            "would make it today, and it disappears, silently, the next time the citing "
+            "page is written. So a cross-project backlink is not proof that the same "
+            "`[[…]]`, written now, would resolve. (c) The list is filtered by YOUR "
+            "access: citations living in projects you cannot read are removed. When "
+            "that happens the response says `hidden_by_access: true` — « nobody cites "
+            "this page » and « three pages cite it, you cannot see them » call for "
+            "opposite moves, so the second is never reported as the first. The COUNT "
+            "of hidden ones is deliberately not given: it would tell you how many "
+            "pages exist in projects that are closed to you. Every write says which of its `[[…]]` "
+            "found nothing, under `citations_sans_cible` / request_change (read-only "
             "users propose a new body_md/title + message) / list_changes (owner: pending "
             "requests) / resolve_change (request_id + accept: true applies it, false rejects) "
             "/ set_public (public: true → shareable public read-only link to THIS PAGE "
@@ -238,7 +275,12 @@ CAPABILITIES += [
             "a human has to confirm) / move (reparent/reorder "
             "in-project via parent_id [null=top-level] + position; OR cross-project via "
             "`to_project`=target project id → moves the page AND its subtree there, "
-            "write required on both). kind ∈ doc|note|source. EMBED A LIVE DATASTORE in a "
+            "write required on both. ⚠️ A move is NOT free for links: the page's own "
+            "`[[…]]` are re-resolved in the TARGET project (some become stubs), while "
+            "the links pointing AT it are left stored though now out of reach — they "
+            "still show in op=backlinks and die on the citing page's next write. After "
+            "reorganising a tree, rewrite the citing pages and read their "
+            "`citations_sans_cible`). kind ∈ doc|note|source. EMBED A LIVE DATASTORE in a "
             "page body with a fenced block ```oto-data<newline><namespace-name-or-id><newline>``` "
             "→ the viewer renders that datastore's table LIVE (always up to date). Prefer this "
             "over a hand-typed summary table when the data lives in a datastore (single source "

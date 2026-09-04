@@ -1,5 +1,5 @@
 ---
-title: REST API (consommée par oto.ninja /account)
+title: REST API (consommée par le tableau de bord)
 type: reference
 description: >-
   Inventaire des endpoints REST /api/* de oto-backend : profil /api/me (billing,
@@ -13,7 +13,7 @@ description: >-
   pour implémenter ou déboguer un endpoint REST ou comprendre le contrat front/back.
 ---
 
-# REST API (consommée par oto.ninja /account)
+# REST API (consommée par le tableau de bord)
 
 ## Où vit chaque famille (découpe du 2026-08-27)
 
@@ -246,6 +246,10 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   accès est un acte commercial — les paliers qu'un utilisateur pilote (org, équipe) sont
   déjà servis par `oto_connector_activation`.
 - `GET /api/admin/users` + `POST /api/admin/users/{sub}/role` — admin only
+- `POST /api/admin/users/{sub}/reset-mfa` — super admin only ; efface TOUS les facteurs de
+  double authentification d'un compte (récupération : appli ET codes de secours perdus,
+  aucun autre moyen de rentrer). La politique MFA de son org, si mandatoire, continue de
+  s'appliquer — il configurera un facteur neuf à sa prochaine connexion.
 - `POST /api/admin/users/{sub}/grants/{key_id}` body `{daily_quota}` — set/update quota par grant (admin only)
 - `GET|POST /api/me/tokens` + `DELETE …/{token_id}`, `GET|POST /api/admin/users/{sub}/tokens`
   + `DELETE …/{token_id}`, `GET|POST /api/admin/platform-keys` + `DELETE …/{provider}/{label}`
@@ -393,7 +397,28 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   (le docstring `GroupUpdated` disait le contraire — corrigé et daté) ; `PUT
   /api/me/guides/{scope}/{slug}` → **400 `body_too_large`**, borne **65 536 octets UTF-8**
   publiée en `maxLength` sur `body_md` (nécessaire, pas suffisant : un caractère
-  accentué pèse deux octets) ; `DELETE /api/me/orgs/{id}/membership` → **404
+  accentué pèse deux octets) ;
+  ⚠️ **`PUT /api/me/instructions/{slug}` porte le même code mais PAS la même borne
+  depuis le 03/09/2026 : 131 072 octets**, le double. Deux bornes, deux raisons, et
+  c'est la raison qui décide — le corps d'un **guide** est injecté dans CHAQUE session
+  (sa borne protège un budget réel), celui d'une **procédure** est chargé à la demande
+  par `oto_procedure op=get`. La justification historique « injecté à chaque session »
+  ne valait donc pas sur ce second chemin, qui refuse d'ailleurs explicitement le slug
+  du README. Relevée pour débloquer une procédure de mission qui était à sept octets
+  de l'ancienne borne. 128 Ko de français ≈ 34 000 jetons, soit environ un sixième
+  d'une fenêtre de 200 k — au plafond, une procédure reste chargeable avec de quoi
+  travailler autour ; doubler plutôt que décupler garde la borne comme signal qu'il
+  est temps de découper. ⚠️ **La garde est COMMUNE aux deux faces** (`.set`, `.create`
+  et `.admin_set` passent tous par `_set_instruction`, que `oto_procedure` atteint via
+  l'adaptateur MCP) : le relèvement vaut donc aussi côté connecteur, ce qui est un
+  effet constaté avant, pas découvert après.
+  ⚠️ **En revanche la borne n'est PUBLIÉE que sur la face REST** — mesuré le 03/09 sur
+  le montage réel : la face MCP sert `body_md` en `{anyOf: [string, null]}`, sans
+  `maxLength` ni description. La cause est écrite dans `capabilities/_types.py` :
+  l'aplatissement construit un `Field` NEUF et « rien d'autre ne voyage — ni examples,
+  ni json_schema_extra, ni les contraintes ». Un agent du connecteur découvre donc
+  toujours la borne en s'y cognant. `tests/test_param_description_servie.py` fige ce
+  manque plutôt que de le laisser croire comblé, et tombera le jour où il sera corrigé ; `DELETE /api/me/orgs/{id}/membership` → **404
   `unknown_org`, 409 `personal_org`, 404 `not_a_member`, 409 `last_org_admin`**, dans
   l'ordre des gardes. La liste d'une opération n'est pas exhaustive : les 400 de
   l'adaptateur (`invalid_input`, `unknown_fields`, `invalid_json`, `invalid_body`) valent
@@ -563,6 +588,20 @@ déploiement : **`docs/version-servie.md`**.
     route ajoutée demain est refusée sans qu'on ait à y penser.
   - ⚠️ La portée nomme le tableau par son **nom** (ce que l'URL adresse), pas par son id :
     après un renommage, ré-émettre le jeton.
+- **`label` : au plus 32 caractères, REFUSÉ au-delà** (`400 label_too_long`, qui donne la
+  longueur reçue **et** la borne). Jusqu'au 03/09/2026 il partait en base en `strip()[:32]`
+  sans que rien ne le dise, **et la réponse rendait le brut de l'appelant** — sur un libellé
+  long, l'émetteur repartait donc avec la confirmation d'une valeur qui n'existait nulle part,
+  puis retrouvait 32 caractères dans `GET /api/me/tokens`, c'est-à-dire sur la liste même où
+  l'on décide de révoquer. La colonne est en `TEXT` : cette borne est un choix de surface,
+  donc elle est **publiée** (`maxLength` dans le schéma servi, pour qu'un front tiers en
+  dérive sa garde de saisie) et un dépassement se refuse au lieu de se raboter — une coupe
+  sur une ÉCRITURE ne se répare pas par un drapeau, la fin ne survit nulle part (oto#42,
+  4ᵉ règle ; le raisonnement complet est dans `conventions.md`, « Projeter ≠ tronquer »).
+  La réponse rend désormais **le libellé écrit**, jamais le brut. ⚠️ 32 reste court et n'a
+  jamais été calibré : la coupe muette empêchait de l'apprendre (un libellé raboté ne produit
+  pas de plainte, il produit des listes de jetons qu'on ne sait plus distinguer). Un refus, lui,
+  se signale — si la borne gêne, on le saura, et la relever ne coûte qu'une constante.
 
 ## Descriptif dérivé + jetons portés (03/08)
 
@@ -594,6 +633,23 @@ environnements neufs. Diagnostic en 1 appel, sans lire le `.env` : `curl -X OPTI
 https://mcp.oto.cx/api/mcp/catalog -H 'Origin: <x>'` → l'en-tête `Access-Control-Allow-Origin`
 revient si l'origine passe. ⚠️ Ne pas déduire « c'est la liste du code » du seul fait qu'une
 origine du défaut est acceptée : l'override en contient une copie.
+
+⚠️ **Et le piège SYMÉTRIQUE, constaté le 03/09/2026 : conclure qu'une origine est
+BLOQUÉE sans le vérifier.** Un lot a retiré `POST /api/contact` en motivant le
+retrait par « la route était de toute façon morte, l'origine du site n'est pas dans
+`OTO_MCP_CORS_ORIGINS`, donc le navigateur bloquait avant d'arriver ici ».
+**Mesuré en production le jour même : l'origine EST autorisée**, le serveur rend son
+`Access-Control-Allow-Origin`, et une origine inconnue ne l'obtient pas — le contrôle
+est donc bien discriminant. La route était vivante. Ce qui rendait le retrait sûr
+était autre chose, et de vérifiable : le formulaire du site avait basculé vers le
+service de messagerie une minute plus tôt.
+
+Le geste était bon, le motif était faux — et c'est le motif qui voyage. « Morte par
+blocage d'origine » resservira à retirer une autre route, et sera faux la prochaine
+fois aussi. Le diagnostic est le même `curl -X OPTIONS` d'un paragraphe plus haut, il
+coûte une seconde, **et il répond dans les DEUX sens** : ce qui vaut pour « je crois
+que ça passe » vaut pour « je crois que c'est bloqué ». Une croyance qui autorise un
+retrait mérite le même contrôle qu'une croyance qui autorise un ajout.
 
 ## Le `content-type` d'une réponse JSON porte son charset (#472, 29/08)
 

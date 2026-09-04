@@ -17,3 +17,8 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "ZeroBounce"
 LOGO_DOMAIN = "zerobounce.net"
+
+DESCRIPTION = (
+    "Vérifier la délivrabilité d'une adresse email avant de l'utiliser, avec "
+    "ZeroBounce."
+)

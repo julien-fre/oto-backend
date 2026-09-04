@@ -20,7 +20,8 @@ CONNECTOR = channel(
     "instagram",
     hosted_channel="INSTAGRAM",
     label="Instagram",
-    help="Tes DM Instagram — lire et envoyer des messages",
+    help="Tes DM Instagram — lire et envoyer des messages. "
+         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
     href="https://www.instagram.com",
 )
 

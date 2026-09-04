@@ -42,17 +42,39 @@ def create_org(name: str, created_by: Optional[str] = None,
     l'inscription repartaient à NULL — donc toute invitation émise depuis un espace
     perso d'un tenant tiers pointait `oto.cx` (vécu le 26/08 sur une org cliente, et
     30 orgs perso du même tenant dans le même état). Un écrivain unique ne peut pas oublier.
-    Passer explicitement `None, None` n'est pas « pas de front », c'est « dérive »."""
+    Passer explicitement `None, None` n'est pas « pas de front », c'est « dérive ».
+
+    **Pose aussi `orgs.tenant_id`** (2026-09-03), dérivé de la MÊME source par
+    `config.tenant_slug_for` — et c'est le seul endroit du code qui l'écrit. Avant, la
+    colonne restait au DEFAULT : 165 orgs sur 165 portaient le tenant primaire, dont
+    les 65 hébergées par un partenaire. Le rattachement n'est pas déclarable par
+    l'appelant, pour la même raison que la marque de front — il suivrait alors ce
+    qu'on demande, pas l'émetteur du jeton."""
     name = (name or "").strip()
     if not name:
         raise ValueError("nom d'org requis")
     if front_base_url is None and front_brand is None:
         front_base_url, front_brand = config.front_for(front_of or created_by)
+    # Le RATTACHEMENT de l'org à son tenant, posé au même INSERT que la marque et
+    # pour la même raison : une org ne doit jamais exister, fût-ce un instant, sans
+    # déclarer de qui elle relève. `tenant_slug_for` n'est PAS déductible de
+    # `front_brand` — elle n'a pas sa condition de `dashboard_url` (cf. sa docstring).
+    tenant_slug = config.tenant_slug_for(front_of or created_by)
     with _connect() as conn:
+        # Le slug se résout en id DANS l'INSERT : une seule aller-retour, et surtout
+        # pas de fenêtre entre « quel tenant » et « écris-le ». Slug inconnu de la
+        # table ⟹ le tenant primaire (`COALESCE(…, 1)`) : la FK refuserait un id
+        # inventé, et faire échouer une création d'org sur un registre en avance sur
+        # la base serait le mauvais sens du refus. ⚠️ L'écart n'est plus rapporté nulle
+        # part (contrôle retiré le 03/09/2026) — il est sans conséquence : ce
+        # rattachement ne décide rien que les deux dérivations de `db.org_tenant_slug`
+        # ne décident déjà.
         row = conn.execute(
-            "INSERT INTO orgs (name, created_by, front_base_url, front_brand) "
-            "VALUES (%s, %s, %s, %s) RETURNING id",
-            (name, created_by, front_base_url or None, front_brand or None),
+            "INSERT INTO orgs (name, created_by, front_base_url, front_brand, "
+            "tenant_id) VALUES (%s, %s, %s, %s, "
+            "COALESCE((SELECT id FROM tenants WHERE slug = %s), 1)) RETURNING id",
+            (name, created_by, front_base_url or None, front_brand or None,
+             tenant_slug),
         ).fetchone()
         return int(row["id"])
 

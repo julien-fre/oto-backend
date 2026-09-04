@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
 
 from oto_mcp.capabilities import _authz
 
@@ -55,7 +56,15 @@ def test_une_seule_formulation_dans_tout_le_module():
 
 def test_tous_les_sites_passent_par_la_source_unique():
     """Le compte des appels : si un site se remet à formuler le sien, il ne descend
-    pas ici — c'est le compte qui le dit."""
+    pas ici — c'est le compte qui le dit.
+
+    ⚠️ On compte l'APPEL à la source, pas une forme d'appel exacte. Le banc comptait
+    `raise _refus_org_admin(org_id)` au littéral ; le jour où deux sites ont gagné un
+    second argument (`autres`, les chemins ouverts à qui n'est pas admin — ADR 0068),
+    il est tombé alors que les quatre passaient toujours par la source. Il gardait son
+    MOYEN plutôt que son objet, et le moyen a coûté un rouge sur un changement qui
+    respectait la règle."""
     src = inspect.getsource(_authz)
-    assert src.count("raise _refus_org_admin(org_id)") >= 4, (
-        "un des quatre sites de refus ne passe plus par la source unique")
+    appels = len(re.findall(r"raise _refus_org_admin\(", src))
+    assert appels >= 4, (
+        f"un des quatre sites de refus ne passe plus par la source unique ({appels})")

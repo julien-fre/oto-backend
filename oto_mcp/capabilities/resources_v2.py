@@ -29,7 +29,7 @@ lui-même l'opt-in, personne n'y arrive par accident.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import Field
 
@@ -62,6 +62,11 @@ class ResourceInputV2(ResourceInput):
     resource_id: Optional[str] = Field(
         None, pattern=r"^\d+$",
         description="Identifiant numérique de la ressource (clé primaire).")
+    # ⚠️ `permission` n'est PAS redéclaré ici, et c'est délibéré. Son défaut « partager
+    # = laisser lire » (ADR 0068) est posé sur l'entrée HÉRITÉE dont cette classe
+    # dérive — décision d'Alexis du 04/09 : « pas de v2 » pour ce changement-là, on
+    # corrige l'outil que les gens utilisent. Le redéclarer donnerait deux endroits à
+    # tenir d'accord, exactement ce que la dérivation existe pour éviter.
 
 
 CAPABILITIES += [

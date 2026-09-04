@@ -16,6 +16,10 @@ RECHERCHE (retrouver un outil par des mots, sans parcourir 350 noms).
 """
 import pytest
 
+import pathlib
+
+from oto_mcp.tools import meta
+
 from oto_mcp import tool_registry
 
 
@@ -130,3 +134,38 @@ def test_a_hopeless_query_returns_nothing_rather_than_noise():
     """Zéro est une réponse honnête — l'appelant (`oto_list_my_tools`) rend alors la carte
     des namespaces, pour que l'agent reformule au lieu de conclure à une lacune."""
     assert tool_registry.match("zzzzz", CATALOG) == []
+
+
+# ── #616/#639 : zéro résultat quand la boîte est montée pour une autre org ───
+
+def test_zero_resultat_sur_ecart_de_boite_ne_dit_PAS_reformule():
+    """Signal #616 : un passage planifié épinglait une org dont le connecteur Slack
+    était actif et prêt ; la boîte de la session ayant été montée pour l'org maison au
+    handshake, `oto_list_my_tools(query="slack")` rendait VIDE. L'agent a conclu que la
+    source était injoignable et a publié un rapport faux.
+
+    Le hint doit alors dire l'inverse de « reformule » : l'outil existe, il n'est pas
+    monté ici, et il reste appelable. Servir le texte lexical dans ce cas est ce qui a
+    coûté le rapport."""
+    h = meta.hint_zero_resultat({"mounted_for_org": 42, "listing_for_org": 196,
+                                 "note": "..."})
+    assert "oto_call" in h
+    assert "n'existe pas" in h          # il nie explicitement la conclusion fautive
+    assert "reformule" not in h.lower() and "Repère le domaine" not in h
+
+
+def test_sans_ecart_le_hint_reste_celui_qui_fait_reformuler():
+    """Le cas nominal ne doit pas hériter de la remarque : là, zéro veut bien dire
+    « reformule », et parler d'org embrouillerait."""
+    h = meta.hint_zero_resultat(None)
+    assert "namespaces" in h and "oto_call" not in h
+
+
+def test_la_liste_doutils_CONSULTE_le_seam_de_boite():
+    """L'aveu vivait sur `oto_connector op=list` seulement — c'est-à-dire là où on ne
+    va que si on soupçonne déjà. Cette sonde tient qu'il est aussi consulté LÀ OÙ
+    l'agent cherche un outil ; sans elle, un remaniement de `oto_list_my_tools` le
+    reperdrait en silence, et le signal #616 reviendrait."""
+    src = pathlib.Path(meta.__file__).read_text()
+    assert "_toolbox_scope(sub)" in src
+    assert '"toolbox_scope"' in src

@@ -23,3 +23,10 @@ CONNECTOR = _c(
 CATEGORY = "Prospection"
 PUBLISHER = "Apify"
 LOGO_DOMAIN = "apify.com"
+
+DESCRIPTION = (
+    "Le Store d'Apify : lancer un scraper hébergé prêt à l'emploi (Google Maps, "
+    "LinkedIn, Amazon…) avec un JSON d'entrée, puis lire son résultat "
+    "(dataset). Accès plateforme réservé (grant explicite) ; chaque run se "
+    "facture à l'usage sur le compte connecté."
+)

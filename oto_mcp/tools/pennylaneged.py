@@ -28,24 +28,51 @@ S3 (jamais par Oto, jamais via MCP) ; puis `pennylaneged_finalize` (control plan
 crée l'entrée DMS depuis le `signed_id`. Les octets vont `local → S3 Pennylane`, leur
 destination de toute façon.
 
+⚠️ **DEUX espaces d'`company_id` homonymes, non interchangeables.** Le connecteur
+keyé `pennylane` (API publique) rend des id qui n'ont RIEN à voir avec ceux d'ici. Les
+confondre produit un **401/403**, que ce module traduisait en « session expirée » — deux
+agents s'y sont fait prendre le 2026-09-03 et ont reconnecté en boucle une session
+vivante. Un refus portant un `/companies/<id>` accuse donc l'ID D'ABORD. L'id GED se lit
+dans l'URL de la SPA (`app.pennylane.com/companies/<id>/…`). ⚠️ Et l'avertissement se
+pose là où l'on TOMBE — dans chaque outil qui CONSOMME un `company_id` — pas seulement
+dans celui qui le rend : il y était déjà depuis le 28/08, et le piège s'est reproduit
+à l'identique, parce qu'on ne lit pas la description d'un outil qu'on n'appelle pas.
+
 **GED cible (une par client)** — le cabinet gère N sociétés clientes, chacune
 avec SA GED. Chaque tool prend un `company_id` **obligatoire** : aucun défaut
 mémorisé, pour ne jamais risquer d'écrire dans la GED du mauvais client.
-`pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible.
+`pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible —
+mais ce n'est PAS un passage obligé, et il ne faut pas le croire : le `company_id` est
+lisible **dans l'URL de la SPA** (`app.pennylane.com/companies/<company_id>/…`, visible
+dès qu'on ouvre un dossier), et `pennylaneged_companies(minimal=True)` le rend par une
+route indépendante. Quand la liste tombe, les trois autres outils (arborescence, fiche,
+dépôt) marchent toujours — le 2026-09-03, une cliente a passé sa matinée à croire le
+connecteur mort parce que SEULE cette liste l'était.
+
+⚠️ **Une API interne BOUGE, et son 404 le dit.** Vérifié le 2026-09-03 : une route
+VIVANTE répond **401** à une session anonyme, une route DISPARUE répond **404**. Ici un
+404 = « endpoint déplacé/renommé », jamais « session expirée » ; la
+nouvelle route se relève dans le bundle de la SPA (`assets.pennylane.com/assets/
+application-*.js` + ses chunks). Le portefeuille a ainsi migré de `/crm/flow_companies`
+vers `/portfolio/crm/flow_companies`.
+
+Le LOGIN (Live View, sonde de vérification, persistance de la session au coffre) vit
+dans le module frère `pennylaneged_session.py` — ici, on suppose la session acquise.
 
 Statut : flux RE **validé manuellement** (18/06, compte test client) ; **reste à
 smoker en live** sur le substrat Browserbase (CSRF in-page + longévité de session).
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 from urllib.parse import urlencode
 
-from fastmcp import Context, FastMCP
+from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
-from .. import access, browser_session, browserbase
+from .. import access, browserbase
 from ..auth.hooks import current_user_sub_from_token
 
 # Origine de la SPA — toutes les routes internes (DMS, direct_uploads, crm) en
@@ -147,7 +174,43 @@ async def _call_raw(app: str, path: str, method: str = "GET",
                    code=INTERNAL_ERROR) from e
     st = res.get("status")
     if st in (401, 403):
-        raise _err("Session Pennylane expirée / déconnectée — relance `pennylaneged_connect_start`.")
+        # ⚠️ TROIS causes, TROIS conduites — et la moins probable était la seule
+        # nommée. Un refus PORTANT UN `company_id` accuse d'abord cet id, pas la
+        # session : le 2026-09-03, deux agents indépendants ont conclu « session
+        # expirée » et reconnecté en boucle, alors que l'un tenait un id venu du
+        # connecteur `pennylane` (API publique) et que l'autre avait une session
+        # parfaitement vivante.
+        vise = re.search(r"/companies/(\d+)", path)
+        if vise:
+            raise _err(
+                f"Pennylane a refusé {method.upper()} {path} ({st}). NE CONCLUS PAS à une "
+                f"session expirée : cet appel vise la société {vise.group(1)}, et trois "
+                "causes rendent le même code. (1) MAUVAIS ESPACE D'ID — le plus fréquent : "
+                "cet id vient-il du connecteur `pennylane` (API publique) ? Ce n'est PAS "
+                "le même espace que la GED. L'id GED se lit dans l'URL de la SPA, "
+                "`app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`. "
+                "(2) HORS PÉRIMÈTRE — l'id est bon mais ce compte n'a pas accès à cette "
+                "société. (3) SESSION MORTE, le seul cas qui justifie "
+                "`pennylaneged_connect_start`. Pour trancher entre les trois SANS "
+                "reconnecter : rappelle le même outil sur une AUTRE société. S'il répond, "
+                "ta session va bien et le problème est l'id.")
+        raise _err(
+            f"Pennylane a refusé {method.upper()} {path} ({st}) — cet appel ne vise aucune "
+            "société en particulier, la session est donc bien en cause : relance "
+            "`pennylaneged_connect_start`.")
+    if st == 404:
+        # Le 404 de cette API n'est PAS ambigu (cf. en-tête) : la route n'existe plus.
+        # Le taire a coûté une matinée de chasse à l'authentification le 2026-09-03.
+        raise _err(f"Pennylane a répondu 404 sur {method.upper()} {path} — sur cette API "
+                   "interne un 404 dit que l'ENDPOINT N'EXISTE PLUS (route déplacée ou "
+                   "renommée par Pennylane), PAS que la session est expirée (ça, c'est "
+                   "401/403). Conduite à tenir : NE RELANCE PAS `pennylaneged_connect_"
+                   "start` — ta session est bonne, se reconnecter ne changera rien. Le "
+                   "correctif est chez nous (relever la nouvelle route dans le bundle de "
+                   "la SPA). En attendant, les AUTRES outils du connecteur fonctionnent "
+                   "sans doute très bien : essaies-en un avant de conclure que la GED "
+                   "est en panne, et lis le `company_id` dans l'URL de la SPA si c'est "
+                   "la liste des sociétés qui manque.", code=INTERNAL_ERROR)
     if not (200 <= (st or 0) < 300):
         raise _err(f"Pennylane GED a renvoyé {st} : {str(res.get('data'))[:200]}",
                    code=INTERNAL_ERROR)
@@ -171,77 +234,13 @@ async def _call(app: str, path: str, method: str = "GET",
     return data or {}
 
 
-async def _verify_session(session_id: str) -> bool:
-    """Login Pennylane confirmé ? Sonde une route interne authentifiée DEPUIS la session
-    vivante (same-origin) : elle ne répond 200 que loguée. Partagé par les deux surfaces
-    de connexion (dashboard REST + MCP) via `browser_session`."""
-    from patchright.async_api import async_playwright
-    async with async_playwright() as p:
-        b = await p.chromium.connect_over_cdp(browserbase.connect_url(session_id))
-        try:
-            c = b.contexts[0] if b.contexts else await b.new_context()
-            pg = c.pages[0] if c.pages else await c.new_page()
-            await pg.goto(f"{_ORIGIN}/", wait_until="domcontentloaded", timeout=40000)
-            res = await pg.evaluate(
-                """async () => {
-                    try {
-                        const r = await fetch("/crm/flow_companies?page=1", {
-                            credentials: "include",
-                            headers: {"accept": "application/json",
-                                      "x-requested-with": "XMLHttpRequest"}});
-                        return r.status;
-                    } catch (e) { return 0; }
-                }""")
-            return res == 200
-        finally:
-            await b.close()
-
-
-# Déclare Pennylane GED comme connecteur à session navigateur (start générique + ce
-# verify) — alimente le flux de connexion REST (dashboard) ET MCP. À l'import.
-browser_session.register("pennylaneged", _verify_session, login_url=f"{_ORIGIN}/")
 
 
 def register(mcp: FastMCP) -> None:
 
-    # --- Onboarding (Live View) --------------------------------------------
-    @mcp.tool()
-    def pennylaneged_connect_start(ctx: Context) -> dict:
-        """Démarre la connexion à la GED Pennylane. Ouvre un navigateur distant et
-        renvoie une **`live_view_url`** : ouvre-la, connecte-toi à Pennylane normalement
-        (email/mot de passe, SSO, 2FA — tu gères tout dans cette fenêtre). Puis appelle
-        `pennylaneged_connect_status(context_id, session_id)` avec les valeurs renvoyées
-        pour finaliser (ta session est mémorisée ; à refaire seulement quand elle expire).
-        """
-        sub = _sub()
-        try:
-            out = browser_session.start(sub, "pennylaneged")
-        except browser_session.SessionError as e:
-            raise _err(str(e), code=INTERNAL_ERROR)
-        out["instructions"] = ("Ouvre `live_view_url`, connecte-toi à Pennylane, puis "
-                               "appelle `pennylaneged_connect_status` avec context_id + session_id.")
-        return out
-
-    @mcp.tool()
-    async def pennylaneged_connect_status(ctx: Context, context_id: str,
-                                          session_id: str) -> dict:
-        """Finalise la connexion à la GED Pennylane. Vérifie que tu t'es bien logué dans
-        la Live View (en appelant l'API interne depuis ta session) ; si oui, **mémorise**
-        ta session (le Context) pour les prochains appels. Renvoie `{connected}`.
-        Rappelle-le si `connected=false` (pas encore logué)."""
-        sub = _sub()
-        try:
-            connected = await browser_session.finalize(sub, "pennylaneged", context_id, session_id)
-        except browser_session.SessionError as e:
-            raise _err(str(e), code=INTERNAL_ERROR)
-        if not connected:
-            return {"connected": False,
-                    "hint": "Pas encore logué — connecte-toi dans la Live View puis relance."}
-        return {"connected": True, "context_id": context_id}
-
     # --- Résolution « où » (control plane) ----------------------------------
     @mcp.tool()
-    async def pennylaneged_companies(page: int = 1) -> dict:
+    async def pennylaneged_companies(page: int = 1, minimal: bool = False) -> dict:
         """Liste les sociétés du portefeuille (côté cabinet) — résout le `company_id`
         cible d'une opération GED, et porte la fiche de gestion de chaque dossier.
 
@@ -250,7 +249,10 @@ def register(mcp: FastMCP) -> None:
         clients FACTURÉS par une société, pas les dossiers gérés. Cherché là, le
         portefeuille est introuvable — vécu par une cliente le 2026-08-28.
 
-        Tape `/crm/flow_companies` et renvoie la réponse BRUTE :
+        ⚠️ **La route a déménagé** (bundle de la SPA, chunk `list-*.js`,
+        `getCRMFlowCompanies`, relevé le 2026-09-03) : `/crm/flow_companies` →
+        `/portfolio/crm/flow_companies`. Un 404 ici = « elle a encore bougé », pas
+        « déloguée ». Renvoie la réponse BRUTE :
         `{companies: [...], pagination: {page, pageSize, pages, totalEntries,
         hasNextPage}}`. **20 sociétés par page** — un portefeuille de cabinet se
         parcourt donc en plusieurs appels, pilotés par `hasNextPage`/`pages`.
@@ -290,11 +292,29 @@ def register(mcp: FastMCP) -> None:
         ⚠️ Coût : UNE session navigateur par appel — 350 dossiers = 18 pages = 18
         sessions ouvertes puis refermées.
 
+        **Si cet outil tombe, le connecteur n'est PAS mort.** Il n'est le passage obligé
+        que pour la fiche de gestion : le `company_id` seul se lit dans l'URL de la SPA
+        (`app.pennylane.com/companies/<company_id>/…`), et `minimal=True` le rend par une
+        route INDÉPENDANTE de celle du portefeuille. Arborescence, fiche société et dépôt
+        marchent sans passer par ici.
+
         Args:
             page: page de pagination (1-based).
+            minimal: prendre la voie LÉGÈRE — `/navbar/companies`, la route du sélecteur
+                de société de la SPA, qui rend `{companies: [...]}` sans la fiche de
+                gestion. Deux usages : résoudre un `company_id` à moindre coût, et
+                surtout garder une voie ouverte quand la route du portefeuille est en
+                panne (elles ne partagent rien). Champs OBSERVÉS sous session loguée
+                le 2026-09-03 : `id` (= le `company_id`), `display_name`, `source_id`,
+                `saas_plan`, `uc_exists`, `is_demo`/`is_training`/`is_fake`, `firm`,
+                `company_group` — de quoi identifier un dossier, RIEN de la fiche de
+                gestion (ni forme juridique, ni TVA, ni équipe, ni reste-à-faire).
         """
+        if minimal:
+            qs = urlencode({"page": max(1, int(page)), "per_page": 20})
+            return await _call(f"{_ORIGIN}/", f"/navbar/companies?{qs}")
         qs = urlencode({"page": max(1, int(page))})
-        return await _call(f"{_ORIGIN}/", f"/crm/flow_companies?{qs}")
+        return await _call(f"{_ORIGIN}/", f"/portfolio/crm/flow_companies?{qs}")
 
     @mcp.tool()
     async def pennylaneged_company(company_id: int) -> dict:
@@ -329,7 +349,10 @@ def register(mcp: FastMCP) -> None:
         entier coûte donc un appel PAR dossier — à mettre en regard du volume.
 
         Args:
-            company_id: id de la société (cf. `pennylaneged_companies`).
+            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
+                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
+                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
+                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
         """
         cid = int(company_id)
         res = await _call(_company_app(cid), f"/companies/{cid}/context")
@@ -351,7 +374,10 @@ def register(mcp: FastMCP) -> None:
         pour cibler un `parent_id` de création ou un item à supprimer.
 
         Args:
-            company_id: id de la société (cf. `pennylaneged_companies`).
+            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
+                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
+                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
+                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
             item_type: type d'items listés — `DmsFolder` (dossiers, défaut) ou `DmsFile`.
         """
         cid = int(company_id)
@@ -367,7 +393,10 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             name: nom du dossier (sous sa forme finale — pas de rename séparé ensuite).
-            company_id: id de la société (cf. `pennylaneged_companies`).
+            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
+                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
+                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
+                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
             parent_id: id du dossier parent (None = racine de la GED).
         """
         cid = int(company_id)
@@ -399,7 +428,10 @@ def register(mcp: FastMCP) -> None:
             content_type: type MIME (ex. `application/pdf`).
             byte_size: taille du fichier en octets (calculée en local).
             checksum: MD5 du fichier encodé en base64 (calculé en local).
-            company_id: id de la société (cf. `pennylaneged_companies`).
+            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
+                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
+                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
+                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
         """
         cid = int(company_id)
         res = await _call(
@@ -430,8 +462,11 @@ def register(mcp: FastMCP) -> None:
         Args:
             name: nom final du fichier dans la GED.
             signed_id: `signed_id` renvoyé par `pennylaneged_request_upload`.
-            company_id: id de la société — DOIT être la même que celle du
-                `pennylaneged_request_upload`.
+            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
+                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
+                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
+                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
+                ⚠️ DOIT être la même société qu'au `pennylaneged_request_upload`.
             parent_id: id du dossier cible (None = racine).
         """
         cid = int(company_id)
@@ -450,7 +485,10 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             item_id: id de l'item DMS à supprimer (cf. `pennylaneged_tree`).
-            company_id: id de la société (cf. `pennylaneged_companies`).
+            company_id: id GED du dossier — ⚠️ **PAS** celui du connecteur `pennylane` (API
+                publique) : deux espaces homonymes, et s'y tromper rend un 401/403
+                qui IMITE une session expirée. Il se lit dans l'URL de la SPA,
+                `app.pennylane.com/companies/<id>/…`, ou via `pennylaneged_companies`.
         """
         cid, iid = int(company_id), int(item_id)
         # Une DELETE réussie répond 204 SANS corps : rendre le corps (`{}`) ne

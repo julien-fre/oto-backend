@@ -24,3 +24,11 @@ CONNECTOR = _c(
 CATEGORY = "Métier"
 PUBLISHER = "Tally"
 LOGO_DOMAIN = "tally.so"
+
+DESCRIPTION = (
+    "Les formulaires en ligne créés avec Tally : réponses, questions, blocs, "
+    "analytics, espaces de travail, dossiers, membres de l'organisation et "
+    "webhooks. Une clé Tally est nominative — elle hérite des droits de la "
+    "personne qui l'a créée, et cesse de fonctionner si elle quitte "
+    "l'organisation."
+)

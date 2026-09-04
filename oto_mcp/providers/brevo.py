@@ -22,3 +22,10 @@ CONNECTOR = _c(
 
 CATEGORY = "Prospection"
 LOGO_DOMAIN = "brevo.com"
+
+DESCRIPTION = (
+    "Emailing et CRM Brevo (ex-Sendinblue) : contacts, listes, campagnes, "
+    "envois transactionnels et deals du CRM natif. Une seule clé porte tout le "
+    "compte — à ne pas confondre avec `brevoauto`, qui pilote les automations "
+    "via une session navigateur distincte."
+)

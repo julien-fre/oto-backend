@@ -21,3 +21,8 @@ CONNECTOR = _c(
 
 CATEGORY = "Prospection"
 LOGO_DOMAIN = "lusha.com"
+
+DESCRIPTION = (
+    "Recherche et reveal de contacts chez Lusha : retrouver l'email et le "
+    "téléphone d'une personne à partir de son profil."
+)
