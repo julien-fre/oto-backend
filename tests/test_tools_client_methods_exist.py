@@ -138,6 +138,48 @@ def _import_of(tree: ast.Module, clsname: str) -> str | None:
     return None
 
 
+def _fabrique_importee(tree: ast.Module) -> str | None:
+    """Module FRÈRE d'où vient `_client` quand le module ne le définit pas.
+
+    Un connecteur découpé partage sa fabrique (`from .pennylane_socle import
+    _client`) plutôt que de la recopier — recopier le résolveur de clé serait
+    pire. Mais sans ce chaînage, chaque module d'un connecteur découpé sort de
+    la sonde EN SILENCE : c'est le trou d'apollo (2026-07-31) par un autre
+    chemin, et il s'ouvre au moment précis où un connecteur grandit assez pour
+    être découpé — donc là où il y a le plus de méthodes neuves à vérifier.
+    """
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.ImportFrom) and node.level == 1 and node.module
+                and any(a.name in _CLIENT_FACTORIES for a in node.names)):
+            return node.module
+    return None
+
+
+def _est_fabrique_partagee(stem: str, tree: ast.Module) -> bool:
+    """Un module qui FABRIQUE le client sans jamais l'utiliser.
+
+    Il n'a rien à vérifier par lui-même : les appels vivent chez ses
+    consommateurs, que la sonde couvre via `_fabrique_importee`. On l'établit
+    mécaniquement — définit `_client`, n'appelle aucune méthode, et au moins un
+    module frère importe sa fabrique — plutôt que par une liste : une liste
+    d'exemption vieillit sans qu'on le voie.
+    """
+    if _methods_called_on_client(tree):
+        return False
+    if not any(isinstance(n, ast.FunctionDef) and n.name in _CLIENT_FACTORIES
+               for n in ast.walk(tree)):
+        return False
+    for autre in _TOOLS_DIR.glob("*.py"):
+        if autre.stem == stem:
+            continue
+        try:
+            if _fabrique_importee(ast.parse(autre.read_text())) == stem:
+                return True
+        except SyntaxError:
+            continue
+    return False
+
+
 def _methods_called_on_client(tree: ast.Module) -> set[str]:
     """Méthodes appelées sur le client, quelle que soit la façon de le tenir :
 
@@ -176,12 +218,21 @@ def _covered_modules() -> list[tuple[str, str, str, set[str]]]:
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
         cls = _client_class_name(tree)
+        # La fabrique peut vivre dans un module frère (connecteur découpé) : on
+        # y lit alors la classe ET son import.
+        arbre_fabrique = tree
+        if not cls:
+            socle = _fabrique_importee(tree)
+            chemin = _TOOLS_DIR / f"{socle}.py" if socle else None
+            if chemin and chemin.exists():
+                arbre_fabrique = ast.parse(chemin.read_text(), filename=str(chemin))
+                cls = _client_class_name(arbre_fabrique)
         if not cls:
             continue
         methods = _methods_called_on_client(tree)
         if not methods:
             continue
-        mod = _import_of(tree, cls)
+        mod = _import_of(tree, cls) or _import_of(arbre_fabrique, cls)
         if not mod:
             continue
         out.append((path.stem, cls, mod, methods))
@@ -213,10 +264,12 @@ def test_no_module_silently_uncovered():
         if path.name.startswith("_") or path.stem in covered:
             continue
         tree = ast.parse(path.read_text(), filename=str(path))
-        has_client = any(isinstance(n, ast.FunctionDef) and n.name == "_client"
-                         for n in ast.walk(tree))
+        has_client = (any(isinstance(n, ast.FunctionDef) and n.name == "_client"
+                          for n in ast.walk(tree))
+                      or _fabrique_importee(tree) is not None)
         exempt = _NO_CLIENT_EXPECTED | _SUBOBJECT_CLIENTS | _DYNAMIC_DISPATCH_CLIENTS
-        if has_client and path.stem not in exempt:
+        if has_client and path.stem not in exempt and not _est_fabrique_partagee(
+                path.stem, tree):
             cls = _client_class_name(tree)
             why = ("pas de méthode détectée sur le client" if cls
                    else "type de retour de `_client()` non reconnu")

@@ -13,18 +13,28 @@ que personne le voie.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from ..mcp_errors import McpError
 from .. import access
 
+if TYPE_CHECKING:  # l'annotation de `_client()` seulement — jamais évaluée
+    from oto.tools.pennylane import PennylaneClient
 
-def _client():
+
+def _client() -> PennylaneClient:
     """Le client Pennylane pour la clé de CET appelant.
 
-    L'import est fait ici, pas au chargement du module : les tests remplacent
-    `PennylaneClient` sur le package, et un import différé est ce qui leur
-    laisse la main.
+    L'import réel est fait dans le corps, pas au chargement du module : les
+    tests remplacent `PennylaneClient` sur le package, et un import différé est
+    ce qui leur laisse la main.
+
+    Le type de retour est annoté avec la classe NUE, et pas seulement pour la
+    lecture : la sonde de version-skew lit cette annotation pour savoir contre
+    quel client vérifier que les méthodes appelées ici existent dans l'oto-core
+    épinglé. Sans elle, ce module passerait à travers ce contrôle.
     """
     from oto.tools.pennylane import PennylaneClient
 
