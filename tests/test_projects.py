@@ -881,3 +881,29 @@ def test_import_rejects_unpublished(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         P._import_project(CTX, P.ImportProjectInput(slug="demo-x"))
     assert e.value.status == 403 and e.value.code == "not_importable"
+
+
+# ── 04/09/2026 : un projet dit QUI le voit ─────────────────────────────────────
+
+def test_un_projet_perso_dit_qu_il_n_est_vu_que_de_son_proprietaire():
+    """`owner_type` seul oblige à dériver la conséquence, et personne ne la dérive —
+    surtout pas sur une question de confidentialité, où l'on suppose le pire à raison.
+
+    Vécu ce jour-là : une DG voit son projet PERSO apparaître dans le contexte de son
+    org, en conclut qu'il est visible par tous, et passe la matinée à vérifier. Il ne
+    l'était pas. L'agent lui-même s'est accusé à tort — il a confondu contexte et
+    visibilité, exactement comme elle."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
+    assert "toi seul" in dit
+    assert "administrateurs de ton org" in dit, "c'est LA question qu'on se pose"
+    # Le contexte n'est pas la visibilité : c'est la confusion qui a coûté la matinée.
+    assert "n'est PAS la même chose" in dit
+    # Et on ne promet pas « personne » : l'opérateur plateforme voit le nom.
+    assert "opérateur de la plateforme" in dit
+
+
+def test_un_projet_d_org_dit_qu_il_N_EST_PAS_prive():
+    """Le sens qui coûte le plus cher : croire privé ce qui est partagé. Le message
+    le dit en toutes lettres plutôt que de laisser lire `owner_type: "org"`."""
+    dit = P._visible_to({"owner_type": "org", "owner_id": "35"})
+    assert "TOUS les membres" in dit and "n'est pas privé" in dit

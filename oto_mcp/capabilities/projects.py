@@ -132,6 +132,49 @@ def _project_web_url(sub: Optional[str], project_id) -> Optional[str]:
     return links.link_for("project", sub=sub, id=project_id)
 
 
+def _visible_to(row: dict) -> str:
+    """QUI voit ce projet, en une phrase — le fait que la réponse taisait.
+
+    Vécu le 04/09/2026 : une DG demande à un agent de travailler sa base de
+    connaissance ; il crée un projet PERSO (`owner_type='user'`, donc visible d'elle
+    seule) dans le contexte de son org. Elle le voit apparaître « à la racine de
+    l'organisation », en conclut qu'il est **visible par tous**, et passe la matinée à
+    vérifier. L'agent lui-même s'est accusé à tort. Le projet était privé.
+
+    Rien dans la réponse ne permettait de trancher : elle rend `owner_type`,
+    `owner_id` et `context_org_id` — les faits TECHNIQUES — et laisse dériver la
+    conséquence. Personne ne la dérive, et devant un doute sur la confidentialité on
+    suppose le pire, avec raison.
+
+    ⚠️ Le contexte n'est PAS la visibilité : un projet perso est listé dans son org de
+    contexte et n'y est vu que de son propriétaire. C'est cette confusion qu'on paie."""
+    otype = str(row.get("owner_type") or "user")
+    org = row.get("context_org_id")
+    if otype == "user":
+        # Vérifié sur les CINQ chemins le 04/09 : liste (`list_member_projects` filtre
+        # `owner_id = sub`), recherche (même seam, parité tenue par tripwire), ouverture
+        # par id (`_owner_match_content` → `sub == owner_id`, « pas d'escalade
+        # plateforme ici, privacy by default »), transfert (`sub == owner_id` ou admin
+        # PLATEFORME), et console de gouvernance (un admin d'org n'y reçoit que
+        # `("user", son_sub)` + ses orgs).
+        # ⚠️ La seule exception est l'opérateur PLATEFORME, qui voit tous les projets en
+        # MÉTADONNÉES (nom + propriétaire, jamais le contenu) via cette console. On le
+        # dit : un nom de projet est parfois plus révélateur que son contenu.
+        return ("toi seul — ni les autres membres, ni les administrateurs de ton org ne "
+                "le voient, ni en liste, ni par recherche, ni en l'ouvrant par son id"
+                + (f" ; il est rangé dans le contexte de l'org {org}, ce qui n'est PAS "
+                   "la même chose qu'y être partagé" if org is not None else "")
+                + ". Seul un opérateur de la plateforme en voit le NOM, jamais le "
+                  "contenu.")
+    if otype == "org":
+        return (f"TOUS les membres de l'org {row.get('owner_id')} — ce projet n'est pas "
+                "privé")
+    if otype == "group":
+        return (f"les membres de l'équipe {row.get('owner_id')}, et les administrateurs "
+                "de l'org")
+    return "tout le monde sur la plateforme (projet bibliothèque)"
+
+
 def _view(row: dict, sub: Optional[str] = None) -> dict:
     return {
         "id": row["id"], "name": row["name"], "icon": row.get("icon"),
@@ -139,6 +182,9 @@ def _view(row: dict, sub: Optional[str] = None) -> dict:
         "url": _project_web_url(sub, row["id"]),
         "brief_md": row.get("brief_md", ""),
         "owner_type": row["owner_type"], "owner_id": row["owner_id"],
+        # Qui voit ce projet, en clair. `owner_type` seul oblige à dériver, et personne
+        # ne dérive — surtout pas sur une question de confidentialité (04/09).
+        "visible_to": _visible_to(row),
         # Org de CONTEXTE d'un projet perso (ADR 0030 amendé) — « moi, org ». NULL sinon.
         "context_org_id": (str(row["context_org_id"])
                            if row.get("context_org_id") is not None else None),

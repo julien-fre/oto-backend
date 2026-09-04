@@ -35,6 +35,11 @@ from .registry import CAPABILITIES
 # n'est posée que sur une poignée de comptes, `billing_identities` est vide), et de
 # toute façon la KB appartient à l'ORG quand `ensure` est appelé par UN membre. On
 # sème donc dans la langue de la surface servie, qui est l'anglais.
+#: La phrase qui manquait — une seule définition, servie par toutes les `op`.
+_VISIBLE_TO = ("TOUS les membres de l'org — cette base est partagée, elle n'est pas "
+               "personnelle. Pour un espace privé à toi seul, crée un projet "
+               "(`oto_project op=create`, owner_type='user').")
+
 KB_NAME = "Knowledge base"
 KB_BRIEF = ("The org-wide knowledge base: shared reference pages "
             "(processes, context, conventions). One per org.")
@@ -79,6 +84,23 @@ class KbView(BaseModel):
     name: str                # son nom courant — renommable, l'ancre est l'id ;
                              # KB_NAME quand il n'y a pas encore de projet
     brief_md: str            # brief du projet KB ('' si vidé, ou pas de KB)
+    # ⚠️ QUI VOIT — le fait que cette réponse taisait, et qui a coûté (04/09/2026).
+    # Une DG demande à son agent de « mettre à jour sa base de connaissance » ; il
+    # appelle `ensure`, qui CRÉE un projet possédé par l'ORG, visible de tous ses
+    # membres, et y dépose un document stratégique marqué « non diffusable ». Il s'en
+    # aperçoit 3 min plus tard, déplace la page et archive la base. Entre-temps le
+    # contenu a été exposé 3 min 18 s, et personne n'en a été averti — la réponse
+    # rendait `{project_id, name, brief_md}` sans un mot sur la portée.
+    # « Ma base de connaissance » se comprend comme « la mienne » ; celle-ci est
+    # celle de l'ORG. Le mot manquant est ici.
+    # SANS défaut, délibérément : un champ à valeur par défaut ne serait pas `required`
+    # dans le document servi, et le garde-fou `test_kb_output_reaches_the_openapi_document`
+    # le refuse — « une déclaration qui n'atteint pas le document est décorative ».
+    # Le rendre obligatoire garantit aussi qu'une `op` future ne pourra pas l'oublier.
+    visible_to: str
+    # Distingue « je viens de la créer » de « elle existait déjà ». Sans lui, un
+    # appelant ne peut pas savoir qu'il a fait naître une ressource partagée.
+    created: bool
 
 
 def _anchored_kb(org: int) -> "tuple[Optional[int], Optional[dict]]":
@@ -98,17 +120,28 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
     if org is None:
         raise AuthzDenied(400, "no_active_org", "Aucune org active.")
     pid, kb = _anchored_kb(org)
+    cree = False
     if kb is None:
         if inp.op == "get":
             # Lecture pure : ni création, ni réparation d'ancre pendouillante
             # (les deux écrivent). L'appelant qui a besoin d'un project_id pour
             # ÉCRIRE demande `ensure` ; celui qui affiche une zone Documents
             # vide n'a rien à créer pour ça.
-            return {"project_id": None, "name": KB_NAME, "brief_md": ""}
+            return {"project_id": None, "name": KB_NAME, "brief_md": "",
+                    # Le garde-fou `test_kb_output_holds_for_every_op` exige que CHAQUE
+                    # op rende les champs déclarés : ici la base n'existe pas encore,
+                    # mais dire dès la lecture ce qu'elle SERA évite de l'apprendre
+                    # après l'avoir créée.
+                    "visible_to": _VISIBLE_TO, "created": False}
         if pid is not None:
             # Ancre pendouillante — compare-and-clear (jamais écraser une réparation
             # concurrente déjà re-posée).
             org_store.clear_kb_project(org, pid)
+        # ⚠️ Projet possédé par l'ORG : visible de TOUS ses membres, créé ici par
+        # n'importe quel membre authentifié (`SUB_ONLY`). C'est voulu — une base de
+        # connaissance est faite pour être partagée — mais l'appelant doit l'APPRENDRE
+        # de la réponse (`visible_to`, `created`), pas le découvrir après coup.
+        cree = True
         new_pid = db.create_project("org", str(org), KB_NAME, KB_BRIEF, created_by=ctx.sub)
         if org_store.claim_kb_project(org, new_pid):
             db.log_project_activity(new_pid, ctx.sub, "kb.create", KB_NAME)
@@ -120,7 +153,9 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
         if kb is None:
             raise AuthzDenied(409, "kb_unavailable",
                               "La base de connaissance n'a pas pu être résolue — réessaie.")
-    return {"project_id": kb["id"], "name": kb["name"], "brief_md": kb.get("brief_md", "")}
+    return {"project_id": kb["id"], "name": kb["name"],
+            "brief_md": kb.get("brief_md", ""),
+            "visible_to": _VISIBLE_TO, "created": bool(cree)}
 
 
 CAPABILITIES += [
@@ -132,6 +167,11 @@ CAPABILITIES += [
             "id, so NEVER look it up by name, call this tool. This is the org-wide "
             "Documents space; its pages "
             "are managed with oto_doc (tree, versions, public share, change requests). "
+            "⚠️ It belongs to the ORG and is visible to EVERY member — « the knowledge "
+            "base » is never a personal space, whatever the request sounded like. The "
+            "answer says so in `visible_to`, and `created: true` tells you that YOU just "
+            "brought a shared project into existence. For something only you can see, "
+            "make a project instead (`oto_project op=create`, owner_type='user'). "
             "op=\"get\" (default) READS the anchor and returns project_id=null when the "
             "org has no knowledge base yet — it never creates one, so opening a "
             "Documents view costs the org nothing. op=\"ensure\" resolves it and CREATES "

@@ -169,3 +169,44 @@ def test_kb_output_reaches_the_openapi_document():
               .get("content", {}).get("application/json", {}).get("schema", {}))
     assert set(schema.get("properties", {})) == set(K.KbView.model_fields)
     assert sorted(schema.get("required", [])) == sorted(K.KbView.model_fields)
+
+
+# ── 04/09/2026 : « ma » base de connaissance est celle de l'ORG ────────────────
+
+def test_ensure_DIT_que_la_base_est_partagee_et_qu_il_vient_de_la_creer(seams):
+    """Vécu ce matin-là. Une DG demande à son agent de « mettre à jour sa knowledge
+    base » ; il appelle `ensure`, qui CRÉE un projet possédé par l'ORG — visible de
+    tous ses membres — et y dépose un document stratégique marqué « non diffusable ».
+    Il s'en aperçoit 3 minutes plus tard, déplace la page vers un projet perso et
+    archive la base. Le contenu aura été exposé 3 min 18 s.
+
+    La réponse rendait `{project_id, name, brief_md}` : ni la portée, ni le fait
+    qu'une ressource PARTAGÉE venait de naître. « Ma base » se comprend comme « la
+    mienne » ; celle-ci est celle de l'org, et c'est le mot qui manquait."""
+    seams["anchor"] = None                      # aucune base : `ensure` va la CRÉER
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    assert out["created"] is True, "l'appelant doit savoir qu'il vient de CRÉER"
+    assert "TOUS les membres" in out["visible_to"]
+    assert "n'est pas personnelle" in out["visible_to"]
+    # Et le message dit le GESTE de repli, sinon il ne fait qu'inquiéter.
+    assert "owner_type='user'" in out["visible_to"]
+
+
+def test_une_base_qui_existait_deja_ne_se_dit_pas_creee(seams):
+    """`created` distingue « je viens de la faire naître » de « elle était là ».
+    Sans lui, un appelant ne peut pas savoir lequel des deux il a fait — et c'est
+    précisément la question qui décide s'il doit s'inquiéter."""
+    seams["anchor"] = 9
+    seams["projects"][9] = _proj(9)
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
+    assert out["created"] is False
+    assert "TOUS les membres" in out["visible_to"]
+
+
+def test_meme_une_LECTURE_dit_la_portee(seams):
+    """`op=get` sur une org sans base : la portée est dite AVANT qu'on crée quoi que
+    ce soit. L'apprendre après coup, c'est l'apprendre trop tard."""
+    seams["anchor"] = None
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+    assert out["project_id"] is None and out["created"] is False
+    assert "TOUS les membres" in out["visible_to"]
