@@ -74,6 +74,11 @@ class InboxView(BaseModel):
     to_review: list[InboxProposal]
     invitations: list[InboxInvitation]
     recent: list[InboxRecent]                    # borné à 30, trié du plus récent
+    # oto#42, entrée 10 du lot 1 — règle 2 : un chemin qui coupe rend un total.
+    # `recent` était coupé à 30 sans le dire ; `recent_total` (avant la coupe) dit
+    # s'il y a plus à voir, sans quoi « rien de plus » et « 31e élément tronqué »
+    # rendaient exactement la même réponse.
+    recent_total: int
     # Badge = ce qui attend une DÉCISION (états pending). Jamais un « non lu ».
     count: int
 
@@ -133,6 +138,7 @@ def _inbox(ctx: ResolvedCtx, inp: InboxInput) -> dict:
         "to_review": to_review,
         "invitations": invitations,
         "recent": recent[:30],
+        "recent_total": len(recent),
         # Badge = ce qui attend une décision déterministe (états pending). Zéro « lu/vu ».
         "count": len(to_review) + len(invitations),
     }

@@ -298,6 +298,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                 message=(
                     f"Aucun credential `{provider}` configuré pour toi. Renseigne-le "
                     f"sur {_ACCOUNT_URL} (section {provider.capitalize()})."
+                    + rbac._revoked_hint(sub, active_org, provider)
                     + rbac._reachable_hint(sub, active_org, provider)
                 ),
             ))
@@ -314,6 +315,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                 f"Aucune clé `{porteur}` configurée pour toi. Soit pose "
                 f"ta propre clé sur {_ACCOUNT_URL} (section {porteur.capitalize()}), "
                 f"soit demande à un admin de te grant un accès à une clé plateforme."
+                + rbac._revoked_hint(sub, active_org, porteur)
                 + rbac._reachable_hint(sub, active_org, porteur)
             ),
         ))

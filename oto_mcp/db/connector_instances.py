@@ -80,6 +80,27 @@ def instance_id_for_vault_row(owner_type: str, owner_id: str, connector: str,
     return row["id"] if row else None
 
 
+def most_recent_revocation(owner_type: str, owner_id: str, connector: str) -> Optional[dict]:
+    """La révocation la plus récente pour ce (propriétaire, connecteur), tout compte
+    confondu — ou None si aucune instance de ce connecteur n'a jamais existé ici.
+
+    oto#42, entrée 11 du lot 1 : « aucun credential configuré » ne dit pas si le
+    connecteur n'a JAMAIS été posé ou s'il l'a été puis RETIRÉ (`revoked_at`) — deux
+    faits différents, un seul message. Lecture seule, hors chemin de résolution
+    (cf. en-tête de module : `walk_cascade`/`resolve_credential` ne DÉCIDENT toujours
+    rien d'ici) — c'est un hint construit APRÈS l'échec, par `rbac.<hint>`, jamais un
+    critère d'aiguillage."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT revoked_at, revoked_reason FROM connector_instances "
+            "WHERE owner_type = %s AND owner_id = %s AND connector = %s "
+            "  AND revoked_at IS NOT NULL "
+            "ORDER BY revoked_at DESC LIMIT 1",
+            (owner_type, str(owner_id), connector),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def instances_for_vault_rows(
         keys: Sequence[tuple[str, str, str, str]]) -> dict[tuple[str, str, str, str], dict]:
     """Résolution EN LOT des quadruplets → `{id, visibility}`, pour une projection qui
