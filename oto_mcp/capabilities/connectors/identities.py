@@ -166,9 +166,20 @@ def _require_scope(ctx: ResolvedCtx, scope: str, *, write: bool) -> None:
 async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
     _require_known_connector(inp.connector)
     _require_scope(ctx, inp.scope, write=False)
-    ids = connector_identities.list_identities(ctx.sub, inp.connector, inp.scope)
-    if inspect.isawaitable(ids):
-        ids = await ids
+    try:
+        ids = connector_identities.list_identities(ctx.sub, inp.connector, inp.scope)
+        if inspect.isawaitable(ids):
+            ids = await ids
+    except AuthzDenied:
+        raise
+    except Exception as e:
+        # oto-backend#867 — un Unipile lent/en panne doit rendre une erreur nommée,
+        # jamais un gel ni une liste vide muette. `_unipile_list` ne le fait plus
+        # taire pour la BYO (liste principale) : ça remonte ici.
+        if inp.connector != "unipile":
+            raise
+        raise AuthzDenied(502, "unipile_list_failed",
+                          f"Unipile n'a pas répondu (délai dépassé ou panne) : {e}")
     from ... import access
     noun = access.account_noun(inp.connector)
     out = {
@@ -230,6 +241,15 @@ async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
             res = await res
     except ValueError as e:
         raise AuthzDenied(404, "unknown_identity", str(e))
+    except AuthzDenied:
+        raise
+    except Exception as e:
+        # oto-backend#867 — même règle que `_list` : `_unipile_select` lève un
+        # `RuntimeError` (pas un `ValueError`) précisément pour ne pas se confondre
+        # avec un id inconnu — une panne/lenteur Unipile n'est pas un 404.
+        if inp.connector != "unipile":
+            raise
+        raise AuthzDenied(502, "unipile_list_failed", str(e))
     return {"connector": inp.connector, **res}
 
 

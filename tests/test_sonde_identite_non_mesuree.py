@@ -14,6 +14,8 @@ pas été mesurée. La corriger en `unknown` demanderait une décision de contra
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from oto_mcp import db as _db
@@ -38,8 +40,10 @@ def revente(monkeypatch):
 def test_sonde_en_panne_le_statut_est_dit_NON_mesure(revente, monkeypatch):
     """La sonde échoue en bloc → map vide. Le statut reste « ok » (contrat inchangé),
     mais l'appelant apprend que personne ne l'a constaté."""
-    monkeypatch.setattr(I, "_unipile_live_status_map", lambda sub: {})
-    ident = I._unipile_list("u1")[0]
+    async def _live_map(sub):
+        return {}
+    monkeypatch.setattr(I, "_unipile_live_status_map", _live_map)
+    ident = asyncio.run(I._unipile_list("u1"))[0]
     assert ident["status"] == "ok"
     assert ident["status_measured"] is False
     assert "dernier état CONNU" in ident["status_hint"]
@@ -49,9 +53,10 @@ def test_sonde_en_panne_le_statut_est_dit_NON_mesure(revente, monkeypatch):
 def test_sonde_qui_repond_ne_dit_RIEN_de_plus(revente, monkeypatch):
     """Pas d'écart, pas de bruit : quand la sonde a mesuré, la réponse ne s'encombre
     pas d'un champ que personne ne lira."""
-    monkeypatch.setattr(I, "_unipile_live_status_map",
-                        lambda sub: {"acc-1": "disconnected"})
-    ident = I._unipile_list("u1")[0]
+    async def _live_map(sub):
+        return {"acc-1": "disconnected"}
+    monkeypatch.setattr(I, "_unipile_live_status_map", _live_map)
+    ident = asyncio.run(I._unipile_list("u1"))[0]
     assert ident["status"] == "disconnected"
     assert "status_measured" not in ident and "status_hint" not in ident
 
@@ -59,7 +64,9 @@ def test_sonde_qui_repond_ne_dit_RIEN_de_plus(revente, monkeypatch):
 def test_compte_absent_de_la_sonde_est_aussi_non_mesure(revente, monkeypatch):
     """Le second chemin, plus fin : la sonde a répondu, mais PAS pour ce compte-là.
     Il retombait sur « ok » exactement comme si elle l'avait constaté vivant."""
-    monkeypatch.setattr(I, "_unipile_live_status_map", lambda sub: {"autre": "ok"})
-    ident = I._unipile_list("u1")[0]
+    async def _live_map(sub):
+        return {"autre": "ok"}
+    monkeypatch.setattr(I, "_unipile_live_status_map", _live_map)
+    ident = asyncio.run(I._unipile_list("u1"))[0]
     assert ident["status"] == "ok"
     assert ident["status_measured"] is False

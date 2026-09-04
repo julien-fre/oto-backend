@@ -32,6 +32,29 @@ d'un compte accordé = le grant lui-même (deny-by-default), pas `cli.list_accou
 """
 from __future__ import annotations
 
+import asyncio
+
+# oto-backend#867 — délai DÉFENDABLE pour UN appel HTTP Unipile hors boucle,
+# borné côté backend (le client oto-core n'expose pas de `timeout` par appel :
+# son défaut est `(10, 120)` — 120s de LECTURE, mesuré responsable d'un gel de
+# production de 87.8s le 04/09). Mesuré sur les jours « chroniques » de cet
+# endpoint : 2-4s en temps normal, 19.9-23.3s les jours lents qui répondaient
+# quand même, 46.2-87.9s les jours qui ont gelé la boucle. 25s couvre la quasi-
+# totalité des réponses réelles observées et coupe fermement les deux pires.
+_UNIPILE_TIMEOUT_S = 25
+
+
+async def _call_unipile(fn, *args):
+    """Un appel Unipile (méthode SYNC du client oto-core), hors boucle et borné.
+
+    `asyncio.to_thread` le sort de la boucle d'événements (sinon TOUT le
+    processus — MCP, REST, sondes de veille — attend Unipile, #867).
+    `asyncio.wait_for` le borne à `_UNIPILE_TIMEOUT_S` : au-delà, lève
+    `TimeoutError` — le thread continue en arrière-plan jusqu'à sa vraie fin
+    (impossible d'interrompre un `requests` en cours), mais l'APPELANT reçoit
+    une erreur nommée au lieu d'un gel."""
+    return await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_UNIPILE_TIMEOUT_S)
+
 
 def supports(connector: str) -> bool:
     return connector in _LISTERS
@@ -188,7 +211,7 @@ def _unipile_client(sub: str):
     return make_unipile_client(api_key=rc.key, dsn=rc.config.get("dsn"))
 
 
-def _unipile_live_status_map(sub: str) -> dict:
+async def _unipile_live_status_map(sub: str) -> dict:
     """Statut LIVE des comptes hébergés, lu sur la clé PLATEFORME Unipile :
     `{account_id: status}`.
 
@@ -211,13 +234,13 @@ def _unipile_live_status_map(sub: str) -> dict:
         from oto.tools.unipile import make_unipile_client
         cli = make_unipile_client(api_key=rc.key, dsn=rc.config.get("dsn"))
         out: dict = {}
-        for a in cli.list_accounts():
+        for a in await _call_unipile(cli.list_accounts):
             aid = a.get("id")
             if not aid:
                 continue
             status = (a.get("sources") or [{}])[0].get("status")
             try:  # sonde de vraie liveness (#236) : users/me 401 = session morte
-                if not cli.account_alive(aid):
+                if not await _call_unipile(cli.account_alive, aid):
                     status = "disconnected"
             # noqa: SILENT — best-effort : garde le statut de compte sur incident de sonde
             except Exception:
@@ -229,7 +252,7 @@ def _unipile_live_status_map(sub: str) -> dict:
         return {}
 
 
-def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
+async def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
     """Identités hébergées joignables par `sub`. `canal` (LINKEDIN/WHATSAPP/…) =
     ne rendre que celles de CE canal — ce que voit la carte d'un connecteur de canal
     depuis le split du 2026-08-28. None = tous les canaux (chemin d'appel qui ne
@@ -242,9 +265,9 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
     # seulement si un compte non-BYO le requiert (#201). Fail-soft → "ok".
     _live: dict = {}
 
-    def _live_status(account_id: str) -> str:
+    async def _live_status(account_id: str) -> str:
         if "map" not in _live:
-            _live["map"] = _unipile_live_status_map(sub)
+            _live["map"] = await _unipile_live_status_map(sub)
         return _live["map"].get(account_id) or "ok"
 
     def _statut_mesure(account_id: str) -> bool:
@@ -261,11 +284,11 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
         MESURÉE. Faux ⟹ `status` est le statut stocké, pas un constat."""
         return account_id in _live.get("map", {})
     if cli is not None:  # BYO : les comptes de la clé (liste existante)
-        try:
-            accounts = cli.list_accounts()
-        # noqa: SILENT — sonde de statut live indisponible ⇒ statut stocké conservé
-        except Exception:
-            accounts = []
+        # oto-backend#867 — NE PLUS avaler l'échec : c'est ICI la liste elle-même
+        # (pas une sonde de statut annexe), donc un Unipile lent ou en panne doit
+        # rendre une erreur nommée (`_list`, capabilities/connectors/identities.py,
+        # convertit en `unipile_list_failed`), jamais une liste vide silencieuse.
+        accounts = await _call_unipile(cli.list_accounts)
         for a in accounts:
             ch = (a.get("type") or "").upper() or None
             sources = a.get("sources") or []
@@ -295,7 +318,7 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
             out.append({
                 "id": a["account_id"],
                 "label": a.get("account_name") or a["account_id"],
-                "status": _live_status(a["account_id"]),
+                "status": await _live_status(a["account_id"]),
                 # Ne se dit QUE sur écart : un champ toujours présent devient du bruit
                 # qu'on cesse de lire. Absent ⟹ le statut a bien été mesuré.
                 **({} if _statut_mesure(a["account_id"]) else {
@@ -335,7 +358,7 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
         out.append({
             "id": g["account_id"],
             "label": f"{g.get('account_name') or g['account_id']} — {libelle}",
-            "status": _live_status(g["account_id"]),
+            "status": await _live_status(g["account_id"]),
             "is_default": g["account_id"] == _unipile_chosen(sub, g["provider"]),
             "channel": g["provider"],
             "granted": True,
@@ -353,7 +376,7 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
     return out
 
 
-def _unipile_select(sub: str, identity_id: str, canal: str | None = None) -> dict:
+async def _unipile_select(sub: str, identity_id: str, canal: str | None = None) -> dict:
     """Choisit l'identité opérée. `canal` (carte d'un connecteur de canal) = garde :
     on ne bascule pas son identité Telegram depuis la carte WhatsApp. Le canal RÉEL
     est celui du COMPTE, jamais celui qu'on suppose — d'où une garde sur le résultat
@@ -394,7 +417,14 @@ def _unipile_select(sub: str, identity_id: str, canal: str | None = None) -> dic
     if cli is None:
         raise ValueError("Choix de compte indisponible (clé plateforme — passe par "
                          "la connexion hébergée).")
-    match = next((a for a in cli.list_accounts() if a.get("id") == identity_id), None)
+    # oto-backend#867 — même règle que `_unipile_list` : une panne/lenteur Unipile ici
+    # doit se dire, pas se confondre avec un id inconnu (`unknown_identity`, 404) — le
+    # capable layer (`_set_default`) distingue ce `RuntimeError` d'un `ValueError`.
+    try:
+        accounts = await _call_unipile(cli.list_accounts)
+    except Exception as e:
+        raise RuntimeError(f"Unipile n'a pas répondu pour choisir ce compte : {e}") from e
+    match = next((a for a in accounts if a.get("id") == identity_id), None)
     if match is None:  # anti-binding : l'id DOIT exister sur la clé (ou être accordé)
         raise ValueError(f"Compte Unipile inconnu sur cette clé : {identity_id}")
     ch = (match.get("type") or "LINKEDIN").upper()

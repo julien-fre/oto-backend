@@ -65,6 +65,46 @@ utilisateurs à la fois, sans que le garde-fou ait rien à redire.
 ⚠️ **À vérifier sur tout `async def` de `tools/`** dont l'await est conditionnel ou en
 fin de corps : c'est exactement la forme qui passe le garde-fou.
 
+### Même porte dérobée, côté capacités cette fois (oto-backend#867, 04/09)
+
+Le correctif du seam (mode n°4, plus bas) range les handlers **sync** hors boucle sur
+`inspect.iscoroutinefunction(cap.handler)` — un handler **async** reste dans la boucle,
+À DESSEIN (34 capacités le sont réellement). Mais `connectors.identities` (`_list`) est
+`async def` et appelait NÛMENT `connector_identities.list_identities(...)`, qui pour
+Unipile faisait 1 (liste) + N (statut live, un par compte hébergé) appels HTTP
+`requests` — synchrones, timeout de lecture **120 s par appel** (`oto/tools/unipile/
+const.py`, jamais exposé au-dessus). Résultat mesuré le 04/09 : **87,8 s de gel total
+de la production** (MCP + REST + sondes de veille) pour l'ouverture d'une seule page du
+dashboard, et un appel ≥ 20 s CHAQUE jour où la page est ouverte depuis fin août — le
+seam ne pouvait rien y voir, la porte est dans le CORPS du handler async, pas dans sa
+forme.
+
+**Le remède, backend seul (le client oto-core n'expose pas de `timeout` par appel) :**
+`_call_unipile` (`oto_mcp/connectors/identities.py`) enveloppe chaque appel Unipile
+synchrone en `asyncio.to_thread` (hors boucle) **et** `asyncio.wait_for` borné à **25 s**
+— mesuré défendable contre les deux populations observées (2-4 s en temps normal,
+19,9-23,3 s les jours lents qui répondaient quand même, 46,2-87,9 s les jours qui ont
+gelé) : large marge sur le nominal, coupe ferme les pathologiques. Le thread lancé
+continue jusqu'à sa vraie fin (impossible d'interrompre un `requests` en cours), mais
+l'APPELANT reçoit `TimeoutError` — converti par la capacité (`_list`/`_set_default`,
+`oto_mcp/capabilities/connectors/identities.py`) en `AuthzDenied(502,
+"unipile_list_failed", …)`, même vocabulaire que `unipile_seats.py`. **Un Unipile lent
+rend désormais une erreur nommée, plus un gel.** `_unipile_select` (jumeau exact,
+`oto_identity op=set`) reçoit le même traitement.
+
+Effet de bord assumé : la liste BYO n'avale plus silencieusement une panne Unipile en
+`accounts = []` (l'ancien `except Exception` portait, à tort, le commentaire d'une
+sonde de statut annexe) — c'est ICI la liste elle-même, un `[]` muet valait le défaut
+d'oto#42 (un agent concluait « aucun compte » au lieu de « Unipile n'a pas répondu »).
+Le fail-soft de la sonde de statut live (`_unipile_live_status_map` → `{}`/« ok »),
+LUI, reste inchangé — documenté, intentionnel, hors du périmètre de ce lot.
+
+⚠️ **Reste ouvert (lot 2, non traité ici)** : les 34 sondes de connecteur (`verify.py`),
+la ligne `unipile_connect.py:244` (jumelle non protégée de `hosted_auth_link` juste à
+côté), le segment Browserbase (`start_session`/`release_session`), `web.py` cran ③, et
+trois callbacks OAuth + deux DCR côté REST — même classe, chemins distincts. Lot 3 (le
+garde-fou qui ferme la classe entière) non plus.
+
 ## Le mode n°2 a une SECONDE porte : les middlewares MCP (incident du 15/08)
 
 Même mode de gel (DB sync dans la boucle), autre famille de call-sites — et celle-là
