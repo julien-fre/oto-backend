@@ -360,3 +360,48 @@ def test_un_champ_inconnu_est_desormais_refuse(monkeypatch, socle, super_admin):
                            "apiKey": "K"})
     assert code == 400
     assert out["error"] == "unknown_fields" and "apiKey" in out["detail"]
+
+
+# --- 7. `ttl_days` au palier MEMBRE (#514 lot d) -----------------------------
+
+def test_le_palier_MEMBRE_pose_une_echeance(monkeypatch, socle, super_admin):
+    """#514 lot (d), décision d'Alexis du 04/09/2026 : « expiration pour tout le monde ».
+
+    Le champ était accepté du seul palier admin et IGNORÉ du palier membre. Quelqu'un
+    qui voulait borner son propre jeton devait donc passer par un opérateur : la
+    précaution existait sans être à sa portée — le motif même de #514, où un jeton émis
+    depuis le dashboard ouvrait 35 tableaux en écriture parce que la seule voie sûre
+    était impraticable."""
+    code, out = call("me.token.create", body={"ttl_days": 30})
+    assert code == 201
+    assert out["ttl_days"] == 30, "la réponse doit RENDRE l'échéance"
+    # …et surtout : elle doit atteindre l'écriture, pas seulement l'écho.
+    assert socle[0][3] == 30, (
+        "l'échéance n'est pas arrivée au store : le champ serait accepté-inerte, "
+        "c'est-à-dire pire qu'absent — on croirait le jeton borné")
+
+
+def test_l_echeance_membre_se_LIT_a_la_creation_ou_jamais(monkeypatch, socle, super_admin):
+    """Sans échéance : `null`, et le jeton n'expire pas. Le rendre explicitement plutôt
+    que de l'omettre, parce que c'est le SEUL instant où l'information est lisible — la
+    liste ne rend pas le secret, et le porteur ne saura jamais de lui-même quand son
+    jeton cesse de fonctionner."""
+    code, out = call("me.token.create", body={})
+    assert code == 201 and out["ttl_days"] is None
+    assert "ttl_days" in out, "omettre la clé laisserait deviner ; on la rend à null"
+
+
+@pytest.mark.parametrize("brut,attendu", [(30, 30), ("30", 30), (-1, None), ("abc", None)])
+def test_les_DEUX_paliers_lisent_l_echeance_pareil(monkeypatch, socle, super_admin,
+                                                   brut, attendu):
+    """⚠️ La même tolérance des deux côtés, et c'est le point du lot : la règle vivait
+    en une ligne dans le seul handler admin. L'ouvrir au membre en la RECOPIANT aurait
+    fait deux lectures d'un même champ — elles auraient divergé au premier durcissement,
+    et le contrat servi aurait dépendu du palier appelé. Une seule fonction (`_jours`).
+
+    On garde `-1` → « pas d'expiration » : c'est le comportement déjà servi côté admin,
+    et le lot ouvre un palier, il ne durcit pas l'autre."""
+    membre = call("me.token.create", body={"ttl_days": brut})[1]
+    admin = call("platform.token.create", path_params={"sub": "u-9"},
+                 body={"ttl_days": brut})[1]
+    assert membre["ttl_days"] == admin["ttl_days"] == attendu
