@@ -623,6 +623,17 @@ def test_le_refus_d_ecriture_NOMME_le_palier_equipe(monde):
     assert "MEMBRE, pas chef" in msg, (
         "sans ça, elle croit qu'il faut être chef d'équipe — le geste reste hors "
         "de portée pour une raison inventée")
+    # ⚠️ Les DEUX issues, pas une. Le message n'a nommé que l'équipe pendant quelques
+    # heures — le jour même où le palier personnel était ouvert. Un refus qui énumère
+    # à moitié envoie chez la mauvaise porte : qui voulait SA procédure aurait écrit
+    # celle de son équipe, partagée, sans savoir que l'autre existait.
+    assert "scope='user'" in msg, "le palier personnel doit être nommé LE PREMIER"
+    assert msg.index("scope='user'") < msg.index("scope='group'"), (
+        "le plus restreint d'abord : on propose de partager après avoir proposé de "
+        "ne pas le faire, jamais l'inverse")
+    assert "pas même les administrateurs" in msg, (
+        "« qui n'appartient qu'à toi » se vérifie sur la question qu'on se pose "
+        "vraiment — les admins la voient-ils ?")
 
 
 def test_le_refus_du_palier_EQUIPE_ne_renvoie_pas_vers_l_equipe(monde):

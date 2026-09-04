@@ -67,11 +67,17 @@ _LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "user": SUB_ONLY, "org": ORG_MEMBER_
 # trois refus, pour un geste qui lui était ouvert depuis le début. « Réservé à un
 # administrateur » dit qui a le droit ; il ne dit pas ce qu'elle, elle cherchait à
 # faire. Un refus qui ne porte pas le geste n'arrête pas la demande, il la déplace.
+# ⚠️ Il en nommait UN SEUL — l'équipe — le jour même où le palier PERSONNEL était
+# ouvert (ADR 0068). Un refus qui n'énumère qu'une partie des issues envoie chez la
+# mauvaise : la personne qui voulait sa propre procédure se serait retrouvée à écrire
+# celle de son équipe, partagée avec elle, sans savoir que l'autre existait.
 _AUTRES_PALIERS = (
-    "Tu n'as pas besoin de l'être pour écrire une procédure : passe `scope='group'` "
-    "(+ `group=<id>` si tu es dans plusieurs équipes) pour celle de ton ÉQUIPE — y "
-    "écrire demande d'en être MEMBRE, pas chef. `oto_procedure(op='list')` montre "
-    "celles que tu vois déjà."
+    "Tu n'as pas besoin de l'être pour écrire une procédure — deux paliers te sont "
+    "ouverts. `scope='user'` : une procédure qui n'appartient qu'à TOI, que personne "
+    "d'autre ne voit, pas même les administrateurs de ton org. `scope='group'` "
+    "(+ `group=<id>` si tu es dans plusieurs équipes) : celle de ton ÉQUIPE, partagée "
+    "avec ses membres — y écrire demande d'en être MEMBRE, pas chef. "
+    "`oto_procedure(op='list')` montre celles que tu vois déjà."
 )
 _ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org", _AUTRES_PALIERS), "user": SUB_ONLY,
                  "org": ORG_ADMIN_OPT("org", _AUTRES_PALIERS),
