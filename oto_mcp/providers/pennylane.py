@@ -22,7 +22,9 @@ LOGO_DOMAIN = "pennylane.com"
 
 DESCRIPTION = (
     "La comptabilité de l'entreprise dans Pennylane : factures, clients, "
-    "fournisseurs, transactions bancaires et balance comptable. À distinguer de "
-    "`pennylaneged`, qui donne accès au bac documentaire (GED) via une session "
-    "navigateur plutôt qu'une clé API."
+    "fournisseurs, transactions bancaires, balance comptable, et le grand livre "
+    "— lire les écritures, en poser une, lettrer des lignes entre elles. À "
+    "distinguer de `pennylaneged`, qui donne accès au bac documentaire (GED) via "
+    "une session navigateur plutôt qu'une clé API. Les droits dépendent de la clé "
+    "posée, pas du connecteur : chaque geste demande son propre scope."
 )

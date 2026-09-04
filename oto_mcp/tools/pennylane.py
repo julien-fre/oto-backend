@@ -465,12 +465,18 @@ def register(mcp: FastMCP) -> None:
         transaction_id: int,
         invoice_type: str = "customer",
     ) -> dict:
-        """Lettre (rapproche) une transaction bancaire avec une facture.
+        """Rapproche une transaction bancaire d'une facture.
 
         Lien de rapprochement réversible, pas une écriture comptable. À
         utiliser pour solder une facture payée dont le virement entrant
         n'est pas lettré (sinon Pennylane la garde `late` et relance le
         client à tort).
+
+        ⚠️ **Ne pas confondre avec le lettrage du grand livre.** Le mot
+        « lettrage » recouvre deux gestes sur deux objets : ici une transaction
+        bancaire et une facture ; associer entre elles des LIGNES d'écriture au
+        grand livre, c'est `pennylane_ledger_lettering`. Se tromper d'outil ne
+        produit pas d'erreur, seulement un geste posé au mauvais endroit.
 
         Args:
             invoice_id: ID de la facture (client ou fournisseur).
