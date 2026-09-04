@@ -44,6 +44,17 @@ def test_les_depots_de_cle_sont_d_un_type_a_part_et_ne_portent_aucun_outil():
         assert not c.namespaces, f"{nom} expose des outils — ce n'est plus un dépôt"
 
 
+def test_un_depot_de_cle_est_mono_compte_et_c_est_la_ou_on_le_lit():
+    """La dérivation rendrait `multi` (c'est une api_key), et l'écran proposerait
+    d'en poser une deuxième que rien ne saurait choisir : `_cle_de_modele` lit le
+    compte unique. Une clé déposée sous un nom de compte ne serait jamais lue —
+    l'org paierait sur la clé de la plateforme en croyant payer sur la sienne."""
+    for nom in ("anthropic", "mistral"):
+        c = providers.connector_for_provider(nom)
+        assert not c.auth_multi_account, f"{nom} redevenu multi-compte"
+        assert c.auth["cardinality"] == "single"
+
+
 # ── la remise ─────────────────────────────────────────────────────────────────
 
 def test_le_travail_reserve_emporte_la_cle_deposee_par_son_org(_coffre):

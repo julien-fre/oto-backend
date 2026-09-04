@@ -17,6 +17,11 @@ from ._model import _c
 # c'est elle qui paie les tours, et un agent programmé survit à son auteur.
 CONNECTOR = _c(
     "anthropic", [], kind="credential", auth_modes={"byo_org"}, keyed=True,
+    # ⚠️ MONO-compte, déclaré : la dérivation rendrait `multi` (api_key), et
+    # l'écran proposerait de poser une deuxième clé que rien ne saurait choisir.
+    # Un passage tourne sur UNE clé — deux dépôts pour la même org, ce serait deux
+    # factures pour un même travail, et le worker n'a aucun critère pour trancher.
+    cardinality="mono",
     secret_kind="api_key", label="Anthropic",
     help="Clé de modèle Anthropic — utilisée par les agents programmés de l'organisation, jamais par un outil",
     href="https://console.anthropic.com/settings/keys",
