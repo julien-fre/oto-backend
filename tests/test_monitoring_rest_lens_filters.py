@@ -64,6 +64,57 @@ def test_les_deux_requetes_portent_le_filtre_et_ses_parametres(monkeypatch):
     assert out["filters"] == {"org_id": 42, "sub": "sub-jane"}
 
 
+def test_route_ajoute_un_prefixe_like_aux_deux_requetes(monkeypatch):
+    """oto-dashboard#125 : `by_route` est plafonné à `LIMIT 100` — une route à faible
+    volume peut ne jamais y apparaître sans que rien ne le dise. `route` donne un
+    compte EXACT (pas de limite) en ajoutant un `LIKE route || '%'` aux DEUX requêtes,
+    comme `org_id`/`sub` — sinon totaux et ventilation divergeraient."""
+    out, vues = _run(monkeypatch, since_days=30, route="/api/atlassian/oauth/start")
+
+    assert len(vues) == 2
+    for sql, params in vues:
+        assert "tool LIKE %s" in sql
+        assert sql.count("%s") == len(params), f"placeholders ≠ params : {params}"
+        assert list(params) == [30, "/api/atlassian/oauth/start%"]
+    assert out["filters"] == {"route": "/api/atlassian/oauth/start"}
+
+
+def test_route_est_un_prefixe_pas_une_egalite():
+    """Une valeur complète reste un préfixe d'elle-même : même mécanique pour
+    « donne-moi CETTE route » et « donne-moi toutes les routes sous CE segment »."""
+    import inspect
+    src = inspect.getsource(usage.rest_call_stats)
+    assert 'f"{route}%"' in src, "le motif LIKE doit rester un préfixe, pas une égalité"
+
+
+def test_last_call_at_vient_du_max_de_la_requete_de_totaux(monkeypatch):
+    """oto-dashboard#125 : « appels/erreurs/DERNIER appel » pour une route — le champ
+    doit sortir de `totals`, pas être recalculé ailleurs (une deuxième requête pourrait
+    diverger de la fenêtre/du filtre de la première)."""
+    class _CurAvecDate:
+        def fetchone(self):
+            return {"total": 3, "errors": 1, "users": 2, "last_call_at": "2026-09-01T10:00:00"}
+
+        def fetchall(self):
+            return []
+
+    class _ConnAvecDate:
+        def execute(self, sql, params):
+            if "GROUP BY tool" not in sql:      # la requête de TOTAUX, pas by_route
+                assert "MAX(created_at) AS last_call_at" in sql
+            return _CurAvecDate()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(usage, "_connect", lambda: _ConnAvecDate())
+    out = usage.rest_call_stats(since_days=7)
+    assert out["last_call_at"] == "2026-09-01T10:00:00"
+
+
 def test_le_scope_par_org_dit_ce_qu_il_laisse_dehors(monkeypatch):
     """`tool_calls.org_id` d'une ligne REST vient d'un EN-TÊTE de consultation
     (best-effort, `RestCallLogger`), pas d'une résolution : une requête sans cet

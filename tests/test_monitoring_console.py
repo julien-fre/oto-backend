@@ -99,7 +99,19 @@ def test_rest_honore_le_filtre_appelant(monkeypatch):
         op="rest", days=30, sub="jane@example.com", org_id=42))
 
     assert out == {"total_calls": 3}
-    assert seen == {"since_days": 30, "sub": "sub-jane", "org_id": 42}
+    assert seen == {"since_days": 30, "sub": "sub-jane", "org_id": 42, "route": None}
+
+
+def test_rest_honore_le_filtre_route(monkeypatch):
+    """oto-dashboard#125 : mesurer une route précise (préfixe), pas seulement un
+    compte — `by_route` est plafonné à 100, une route à faible volume peut y être
+    invisible sans que rien ne le dise."""
+    seen = {}
+    monkeypatch.setattr(monitoring.db, "rest_call_stats",
+                        lambda **kw: seen.update(kw) or {"total_calls": 0})
+    monitoring._monitoring(CTX, monitoring.MonitoringInput(
+        op="rest", route="/api/atlassian/oauth/start"))
+    assert seen["route"] == "/api/atlassian/oauth/start"
 
 
 def test_connectors_honore_le_scope_d_org(monkeypatch):

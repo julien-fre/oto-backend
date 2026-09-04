@@ -1113,21 +1113,29 @@ _REST_ROUTE_SHAPE = "position(' /' in tool) > 0"
 
 
 def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
-                    sub: Optional[str] = None) -> dict:
+                    sub: Optional[str] = None, route: Optional[str] = None) -> dict:
     """Lentille REST (ADR 0017, kind='rest') : volume + erreurs + latence des appels
     `/api/*`, **par route** normalisée. `ok` = 2xx/3xx ; les ≥400 sont comptés erreurs.
     Les lignes SÉMANTIQUES du journal datastore (même `kind`, `tool` = nom de geste)
     sont exclues — cf. `_REST_ROUTE_SHAPE`.
 
-    Défaut = PLATEFORME-wide. `sub`/`org_id` RESTREIGNENT la fenêtre (#451 : la console
-    les acceptait et les JETAIT — on croyait lire l'activité d'un compte, on lisait
-    celle de toute la plateforme).
+    Défaut = PLATEFORME-wide. `sub`/`org_id`/`route` RESTREIGNENT la fenêtre (#451 : la
+    console acceptait `sub`/`org_id` et les JETAIT — on croyait lire l'activité d'un
+    compte, on lisait celle de toute la plateforme).
 
-    ⚠️ Les deux axes n'ont pas la même solidité, et la réponse le DIT quand ils sont
-    posés : `sub` vient du jeton présenté (fiable) ; `org_id` vient de l'org de
-    CONSULTATION revendiquée en en-tête par le client (`RestCallLogger`, best-effort) —
-    une requête sans cet en-tête ne porte aucune org et sort donc du filtre. Un total
-    à 0 sous `org_id` ne prouve pas l'inactivité de l'org."""
+    ⚠️ `route` répond à une question que `by_route` ne peut PAS trancher : celui-ci est
+    borné à `LIMIT 100`, donc une route à faible volume (oto-dashboard#125 : mesurer un
+    chemin de fédération OAuth candidat au retrait) peut être invisible sans que rien ne
+    le dise. `total_calls`/`error_count`/`last_call_at` filtrés par `route`, eux, sont un
+    COMPTE exact, jamais tronqué. Préfixe (`LIKE route || '%'`), pas exact : une valeur
+    complète reste un préfixe d'elle-même, donc les deux usages passent par le même
+    paramètre.
+
+    ⚠️ Les axes n'ont pas la même solidité, et la réponse le DIT quand ils sont posés :
+    `sub` vient du jeton présenté (fiable) ; `org_id` vient de l'org de CONSULTATION
+    revendiquée en en-tête par le client (`RestCallLogger`, best-effort) — une requête
+    sans cet en-tête ne porte aucune org et sort donc du filtre. Un total à 0 sous
+    `org_id` ne prouve pas l'inactivité de l'org."""
     since_days = max(1, min(int(since_days), 365))
 
     def _where() -> tuple[str, list]:
@@ -1138,6 +1146,8 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
             clauses.append("org_id = %s"); params.append(int(org_id))
         if sub is not None:
             clauses.append("sub = %s"); params.append(sub)
+        if route is not None:
+            clauses.append("tool LIKE %s"); params.append(f"{route}%")
         return " AND ".join(clauses), params
 
     w, wp = _where()
@@ -1146,7 +1156,8 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
             f"""
             SELECT COUNT(*) AS total,
                    COUNT(*) FILTER (WHERE NOT ok) AS errors,
-                   COUNT(DISTINCT sub) AS users
+                   COUNT(DISTINCT sub) AS users,
+                   MAX(created_at) AS last_call_at
             FROM tool_calls WHERE {w}
             """,
             tuple(wp),
@@ -1170,13 +1181,15 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
         "total_calls": int((totals or {}).get("total") or 0),
         "error_count": int((totals or {}).get("errors") or 0),
         "active_users": int((totals or {}).get("users") or 0),
+        "last_call_at": (totals or {}).get("last_call_at"),
         "by_route": list(by_route),
     }
-    if org_id is not None or sub is not None:
+    if org_id is not None or sub is not None or route is not None:
         # Le filtre APPLIQUÉ est rendu : c'est ce qui distingue « restreint à ce
-        # compte » de « toute la plateforme » quand les deux rendent le même total.
-        out["filters"] = {k: v for k, v in (("org_id", org_id), ("sub", sub))
-                          if v is not None}
+        # compte/cette route » de « toute la plateforme » quand les deux rendent le
+        # même total.
+        out["filters"] = {k: v for k, v in (("org_id", org_id), ("sub", sub),
+                                            ("route", route)) if v is not None}
     if org_id is not None:
         out["org_id_caveat"] = (
             "`org_id` du journal REST = l'org de consultation revendiquée en en-tête "

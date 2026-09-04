@@ -46,6 +46,10 @@ class RestInput(BaseModel):
     days: int = 7
     org_id: Optional[int] = None   # org de CONSULTATION revendiquée (best-effort, #451)
     sub: Optional[str] = None      # restreindre à UN appelant (email ou sub)
+    # Une route (préfixe) — compte EXACT, jamais tronqué par le `LIMIT 100` de
+    # `by_route` (oto-dashboard#125 : mesurer une route à faible volume, invisible
+    # dans le top-100 sans que rien ne le dise).
+    route: Optional[str] = None
 
 
 class ConnectorsInput(BaseModel):
@@ -86,7 +90,7 @@ def _summary(ctx: ResolvedCtx, inp: SummaryInput) -> dict:
 
 def _rest_stats(ctx: ResolvedCtx, inp: RestInput) -> dict:
     return db.rest_call_stats(since_days=inp.days, org_id=inp.org_id,
-                              sub=_resolve_sub(inp.sub))
+                              sub=_resolve_sub(inp.sub), route=inp.route)
 
 
 def _connector_stats(ctx: ResolvedCtx, inp: ConnectorsInput) -> dict:
@@ -179,6 +183,7 @@ class MonitoringInput(BaseModel):
     tool: Optional[str] = None            # calls : filtre outil exact
     errors: bool = False                  # calls : erreurs seulement
     org_id: Optional[int] = None          # summary/rest/connectors/calls : un workspace
+    route: Optional[str] = None           # rest : une route (préfixe), compte exact
     run_id: Optional[str] = None          # run (requis) / calls (filtre)
     session_id: Optional[str] = None      # calls : tous les appels d'une conversation
     min_duration_ms: Optional[int] = None  # calls : appels lents
@@ -208,7 +213,7 @@ def _need(val, code: str, msg: str):
 # ⚠️ À tenir à jour avec le dispatch ci-dessous — le test le vérifie dans les DEUX sens.
 _CHAMPS_LUS: dict[str, set[str]] = {
     "summary": {"days", "org_id", "sub"},
-    "rest": {"days", "org_id", "sub"},
+    "rest": {"days", "org_id", "sub", "route"},
     "connectors": {"days", "org_id"},
     "funnel": {"days"},
     "calls": {"days", "limit", "sub", "tool", "errors", "org_id", "run_id",
@@ -251,7 +256,7 @@ def _monitoring(ctx: ResolvedCtx, inp: MonitoringInput) -> dict:
         return _summary(ctx, SummaryInput(days=inp.days or 7, org_id=inp.org_id, sub=inp.sub))
     if inp.op == "rest":
         return _rest_stats(ctx, RestInput(days=inp.days or 7, org_id=inp.org_id,
-                                          sub=inp.sub))
+                                          sub=inp.sub, route=inp.route))
     if inp.op == "connectors":
         return _connector_stats(ctx, ConnectorsInput(days=inp.days or 7,
                                                      org_id=inp.org_id))
@@ -311,10 +316,13 @@ CAPABILITIES += [
             "`sub`, `tool`, `errors`, `days`, `org_id`, `run_id`, `session_id`, "
             "`min_duration_ms` slow calls, `error_contains`) / call (`call_id` → full "
             "record incl. truncated args + correlation ids) / run (`run_id` → timeline) "
-            "/ runs (recent runs) / rest (REST lens by route — same `days`, `org_id`, "
-            "`sub`; ⚠️ `org_id` here is the consultation org claimed by a header "
-            "(best-effort): a request without it carries none and drops out of the "
-            "filter, so a 0 does not prove an idle org — cross-check with `sub`) / "
+            "/ runs (recent runs) / rest (REST lens by route — `days`, `org_id`, `sub`, "
+            "and `route` (prefix match) for an EXACT count/errors/last_call_at on one "
+            "route — `by_route` is capped at the top 100, so a low-volume route can be "
+            "invisible there without saying so; ⚠️ `org_id` here is the consultation "
+            "org claimed by a header (best-effort): a request without it carries none "
+            "and drops out of the filter, so a 0 does not prove an idle org — "
+            "cross-check with `sub`) / "
             "connectors (credential resolution failures; optional `org_id`) / funnel "
             "(accounts vs real usage) / gaps · tool_quality (aggregated usage signals). "
             "For raw signals use oto_admin_signal."),
