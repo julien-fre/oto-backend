@@ -199,6 +199,42 @@ les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclar�
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
+### Un agent programmé se crée DEPUIS l'objet (#860, moitié serveur, 03/09/2026)
+
+**L'agent autonome est une PROPRIÉTÉ de ce qui existe déjà**, pas un objet séparé
+qu'on déclare. Une procédure gagne un état « celle-ci tourne toute seule ».
+
+```
+les OUTILS   se déduisent de la procédure — ceux qu'elle CITE (`<tool:nom>`)
+l'INSTRUCTION est dérivée : « lis la procédure X et applique-la »
+un SEUL agent par objet, et le refus NOMME celui qui existe
+la LECTURE   se fait depuis l'objet (`list` filtré par `procedure`)
+```
+
+⚠️ **Sans la déduction des outils, le bouton demanderait une liste d'outils — donc
+ne serait pas un bouton.** La procédure cite déjà ses outils par marqueur, et
+c'est ce que lit le compteur « référencé par N guides » : on ne devine rien, on
+lit ce que l'auteur a écrit. Une liste fournie explicitement gagne quand même —
+*la déduction est un défaut, pas une contrainte*.
+
+⚠️ **L'instruction est dérivée, JAMAIS saisie.** Une instruction rédigée à la main
+est un **second domicile du métier** : la même règle vit dans la procédure et
+dans l'instruction, et l'une des deux finit par mentir. Une instruction qui
+POINTE l'objet ne peut pas diverger de lui.
+
+⚠️ **Un seul agent par objet** : deux agents sur le même objet, c'est deux
+réponses à « est-ce que ça tourne ? », et l'écran devrait en choisir une. Le refus
+donne l'identifiant et le cadencement de celui qui existe — sinon l'utilisateur ne
+peut que réessayer.
+
+⚠️ **Une procédure qui ne cite aucun outil est REFUSÉE, avec les deux issues** :
+citer les outils, ou passer `tools`. Un agent sans outil n'exécute rien ; le
+laisser se créer produirait un agent qui tourne à vide tous les matins.
+
+**Ce que la moitié tableau de bord doit encore faire** : l'interrupteur, le
+cadencement en langage d'utilisateur, l'état lisible — et **afficher le compteur
+d'occurrences perdues**, servi depuis le 02/09 et affiché nulle part.
+
 ### Le verrou du tick porte sur l'ÉLIGIBILITÉ, pas sur l'échéance relue (#839, 03/09/2026)
 
 Le compare-and-swap qui empêche deux environnements de jouer la même échéance
