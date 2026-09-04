@@ -268,3 +268,27 @@ def test_le_scope_org_reste_possible_en_le_DISANT(monkeypatch):
         node_edit._create(_Ctx(), node_edit.NodeEditInput(op="create", kind="page",
                                                             scope="org"))
     assert vus == ["org"]
+
+
+def test_un_noeud_PERSONNEL_n_est_lisible_que_de_son_proprietaire(monkeypatch):
+    """La vérification demandée par Alexis (04/09) : « privé par défaut » ne vaut que
+    si la LECTURE le respecte aussi. Un défaut de création privé au-dessus d'une
+    lecture permissive ne protégerait rien — il donnerait seulement l'impression.
+
+    `ownership.owner_in_scope` est la règle de portée UNIQUE de la plateforme, et sa
+    branche `user` exige l'égalité stricte avec l'appelant. Aucune escalade
+    d'administrateur n'y touche — contrairement au palier ÉQUIPE, qui en a une
+    (`roles.can_read_group`, ADR 0049) et que ce banc mesure aussi, pour que l'écart
+    entre les deux paliers soit un fait écrit et non une surprise."""
+    from oto_mcp import ownership
+
+    monkeypatch.setattr(ownership, "active_owner", lambda org: ("org", str(org)))
+    # Un nœud à MOI : lisible par moi, dans n'importe quel contexte d'org.
+    assert ownership.owner_in_scope("usr_moi", 7, ("user", "usr_moi")) is True
+    assert ownership.owner_in_scope("usr_moi", 99, ("user", "usr_moi")) is True
+    # Le même nœud, lu par quelqu'un d'autre de la MÊME org — y compris un admin :
+    # la branche `user` ne regarde ni le rôle ni l'org, seulement l'égalité.
+    assert ownership.owner_in_scope("usr_admin", 7, ("user", "usr_moi")) is False
+    # Et un nœud d'ORG reste, lui, visible de son org active — le contraste est le
+    # sens même du défaut : c'est le choix du scope qui décide, pas le hasard.
+    assert ownership.owner_in_scope("usr_admin", 7, ("org", "7")) is True
