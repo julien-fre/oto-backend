@@ -214,7 +214,17 @@ CAPABILITIES += [
         mcp=None,
         # 201 : le code que cette route rend depuis toujours au dashboard et à oto-core.
         rest=RestBinding(verb="POST", path=_BASE, status=201),
-        description="Crée un tableau (classeur d'org par défaut, d'équipe sur demande).",
+        # ⚠️ Corrigée le 04/09/2026 : elle annonçait « classeur d'org par défaut »
+        # quand `_create_namespace` fait `owner.get("type") or "user"`, donc PERSO. Et
+        # la face MCP du même geste (`data_create_namespace`) crée, elle, chez l'org —
+        # deux propriétaires pour un seul verbe, chaque texte affirmant le contraire de
+        # sa propre face. L'écart de COMPORTEMENT reste à trancher ; d'ici là, chaque
+        # description dit au moins ce que sa face fait vraiment.
+        description=("Crée un tableau. Par défaut il est PERSONNEL (visible de toi "
+                     "seul) ; passe `owner: {type: \"org\"|\"group\", id: N}` pour "
+                     "qu'il appartienne à l'org ou à l'équipe, et soit lisible de tous "
+                     "ses membres. ⚠️ L'outil MCP `data_create_namespace`, lui, crée "
+                     "chez l'ORG active — les deux faces divergent."),
     ),
     Capability(
         key="me.datastore.delete_namespace",

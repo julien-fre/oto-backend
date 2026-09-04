@@ -371,12 +371,23 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         return {"namespaces": store.list_namespaces()}
 
+    # ⚠️ La description ci-dessous a dit « unique per user » jusqu'au 04/09/2026, quand
+    # le code créait des tableaux d'ORG depuis toujours. Le récit vit ICI et pas dans le
+    # docstring : une description est une instruction relue à chaque appel, et y CITER
+    # la formule fautive, même pour la démentir, c'est la re-servir au modèle.
+    # `tests/test_description_dit_le_proprietaire.py` lit le défaut réel dans le code
+    # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse.
     @mcp.tool()
     def data_create_namespace(namespace: str) -> dict:
         """Create a new datastore namespace (PG-backed, schema-free).
 
+        ⚠️ The table is owned by your ACTIVE ORG and readable by EVERY member of it —
+        it is not a personal space. Anything you write into it, they can read. For
+        something only you can see, there is no option on this tool today: use the
+        REST route with `owner: {type: "user"}`, or keep it out of the datastore.
+
         Args:
-            namespace: kebab-case identifier, unique per user (e.g. `timetrack`).
+            namespace: kebab-case identifier, unique per owner (e.g. `timetrack`).
         """
         sub = access.current_user_sub_or_raise()
         if not namespace or not namespace.strip():

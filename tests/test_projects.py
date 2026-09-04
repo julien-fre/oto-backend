@@ -907,3 +907,58 @@ def test_un_projet_d_org_dit_qu_il_N_EST_PAS_prive():
     le dit en toutes lettres plutôt que de laisser lire `owner_type: "org"`."""
     dit = P._visible_to({"owner_type": "org", "owner_id": "35"})
     assert "TOUS les membres" in dit and "n'est pas privé" in dit
+
+
+# ── 04/09/2026 : la propriété n'est pas la seule portée ────────────────────────
+#
+# En inventoriant les chemins par lesquels un contenu élargit sa portée, deux faits
+# rendaient `_visible_to` faux là où il rassurait le plus. Ce ne sont pas des cas
+# tordus : ce sont les deux seules manières qu'a un projet de dépasser son owner.
+
+def test_un_projet_PUBLIE_ne_se_decrit_pas_par_son_owner():
+    """`mcp_access='anonymous'` sert le projet SANS LOGIN et le liste dans l'annuaire
+    public (`/api/public/mcp-projects`). La phrase annonçait « TOUS les membres de
+    l'org » — vrai sur le papier de la propriété, et trompeur au point d'être
+    dangereux : elle nomme une population fermée pour un contenu ouvert au web.
+
+    La publication est dite EN TÊTE, avant la propriété : c'est le fait le plus large,
+    donc celui qui décide de ce qu'on peut y mettre."""
+    dit = P._visible_to({"owner_type": "org", "owner_id": "35",
+                         "mcp_access": "anonymous"})
+    assert dit.startswith("⚠️"), "le fait le plus large passe devant, pas en note de bas"
+    assert "N'IMPORTE QUI" in dit and "sans login" in dit
+    # La propriété reste dite : on ajoute une portée, on n'en cache pas une autre.
+    assert "TOUS les membres de l'org 35" in dit
+
+
+def test_un_partage_secret_dit_l_absence_d_expiration_et_les_tableaux():
+    """`secret` = URL non devinable (128 bits), mais permanente : ni TTL ni rotation.
+    Et un partage `secret` expose les tableaux liés en lecture par DÉFAUT
+    (`projects.py`, `mcp_expose_datastore`) — sur la même URL, sans login."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35",
+                         "mcp_access": "secret", "mcp_expose_datastore": True})
+    assert "URL de partage" in dit
+    assert "sans expiration" in dit, "une URL éternelle n'est pas un secret temporaire"
+    assert "tableaux liés" in dit, "le contenu QUI PART avec n'est pas le projet seul"
+
+
+def test_un_projet_NON_publie_ne_prefixe_rien():
+    """Pas d'écart, pas de bruit : sans publication, la phrase reste celle de la
+    propriété. Un avertissement servi à tout le monde n'avertit plus personne."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
+    assert not dit.startswith("⚠️") and "N'IMPORTE QUI" not in dit
+
+
+def test_un_projet_perso_dit_la_reserve_des_PROPOSITIONS():
+    """La promesse « ni les administrateurs de ton org » est fausse sur un chemin
+    précis, et c'est un chemin qu'on emprunte sans le savoir : un tiers à qui on a
+    partagé le projet en LECTURE qui écrit une page ne l'écrit pas, il PROPOSE
+    (`docs/writes.py`) — et `docs/notify.py` envoie le CORPS proposé par e-mail à tous
+    les `org_admin` de l'org de contexte.
+
+    Dire la réserve, plutôt que retirer la promesse : le cas nominal reste vrai, et
+    c'est lui qu'on lit 99 fois sur 100."""
+    dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
+    assert "administrateurs de ton org" in dit, "le cas nominal tient toujours"
+    assert "PROPOSÉE" in dit and "e-mail" in dit, "la réserve doit nommer le geste"
+    assert "partages en lecture" in dit, "et sa condition — sinon elle inquiète pour rien"

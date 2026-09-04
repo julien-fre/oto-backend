@@ -147,9 +147,38 @@ def _visible_to(row: dict) -> str:
     suppose le pire, avec raison.
 
     ⚠️ Le contexte n'est PAS la visibilité : un projet perso est listé dans son org de
-    contexte et n'y est vu que de son propriétaire. C'est cette confusion qu'on paie."""
+    contexte et n'y est vu que de son propriétaire. C'est cette confusion qu'on paie.
+
+    ⚠️ **La propriété n'est PAS la seule portée** (constaté le 04/09 en inventoriant
+    les chemins d'élargissement). Deux faits que cette phrase taisait, et qui la
+    rendaient fausse là où elle rassurait le plus :
+
+    1. **Un projet PUBLIÉ échappe à son `owner_type`.** `mcp_access='anonymous'` le
+       sert sans login ET le liste dans l'annuaire public ; `'secret'` le sert sur une
+       URL non devinable, sans expiration ni rotation. La phrase annonçait « TOUS les
+       membres de l'org » sur un projet lisible par n'importe qui.
+    2. **Une proposition sur un projet perso notifie les org_admin.** Un tiers à qui
+       le projet a été partagé en LECTURE et qui écrit une page ne l'écrit pas : il
+       PROPOSE (`docs/writes.py`), et `docs/notify.py` envoie le corps proposé par
+       e-mail à tous les `org_admin` de l'org de contexte. Promettre « ni les
+       administrateurs de ton org » sans cette réserve, c'est promettre faux au moment
+       exact où quelqu'un vérifie."""
     otype = str(row.get("owner_type") or "user")
     org = row.get("context_org_id")
+    # La publication PRIME sur la propriété : dite en tête, avant tout le reste.
+    pub = str(row.get("mcp_access") or "off")
+    prefix = ""
+    if pub == "anonymous":
+        prefix = ("⚠️ N'IMPORTE QUI sur le web — ce projet est publié sans login et "
+                  "listé dans l'annuaire public. Au-delà de ça : ")
+    elif pub == "secret":
+        prefix = ("⚠️ toute personne qui a l'URL de partage — publiée sans login, sans "
+                  "expiration ni rotation"
+                  + (", et les tableaux liés sont lisibles par la même URL"
+                     if row.get("mcp_expose_datastore") else "")
+                  + ". Au-delà de ça : ")
+    elif pub == "org":
+        prefix = "publié en accès MCP pour les membres de l'org. Au-delà de ça : "
     if otype == "user":
         # Vérifié sur les CINQ chemins le 04/09 : liste (`list_member_projects` filtre
         # `owner_id = sub`), recherche (même seam, parité tenue par tripwire), ouverture
@@ -160,19 +189,22 @@ def _visible_to(row: dict) -> str:
         # ⚠️ La seule exception est l'opérateur PLATEFORME, qui voit tous les projets en
         # MÉTADONNÉES (nom + propriétaire, jamais le contenu) via cette console. On le
         # dit : un nom de projet est parfois plus révélateur que son contenu.
-        return ("toi seul — ni les autres membres, ni les administrateurs de ton org ne "
-                "le voient, ni en liste, ni par recherche, ni en l'ouvrant par son id"
+        return (prefix
+                + "toi seul — ni les autres membres, ni les administrateurs de ton org "
+                  "ne le voient, ni en liste, ni par recherche, ni en l'ouvrant par son id"
                 + (f" ; il est rangé dans le contexte de l'org {org}, ce qui n'est PAS "
                    "la même chose qu'y être partagé" if org is not None else "")
-                + ". Seul un opérateur de la plateforme en voit le NOM, jamais le "
-                  "contenu.")
+                + ". Deux réserves : un opérateur de la plateforme en voit le NOM (jamais "
+                  "le contenu) ; et si tu le partages en lecture, une page PROPOSÉE par "
+                  "la personne à qui tu l'as partagé part par e-mail aux administrateurs "
+                  "de ton org de contexte.")
     if otype == "org":
-        return (f"TOUS les membres de l'org {row.get('owner_id')} — ce projet n'est pas "
-                "privé")
+        return (prefix + f"TOUS les membres de l'org {row.get('owner_id')} — ce projet "
+                "n'est pas privé")
     if otype == "group":
-        return (f"les membres de l'équipe {row.get('owner_id')}, et les administrateurs "
-                "de l'org")
-    return "tout le monde sur la plateforme (projet bibliothèque)"
+        return (prefix + f"les membres de l'équipe {row.get('owner_id')}, et les "
+                "administrateurs de l'org")
+    return prefix + "tout le monde sur la plateforme (projet bibliothèque)"
 
 
 def _view(row: dict, sub: Optional[str] = None) -> dict:
