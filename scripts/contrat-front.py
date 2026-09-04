@@ -116,9 +116,9 @@ def casse_les_appels(epingle: dict, servie: dict) -> list:
             continue
         if q.get("required") and not p.get("required"):
             raisons.append(f"le paramètre « {nom} » ({ou}) devient obligatoire")
-        tp = (p.get("schema") or {}).get("type")
-        tq = (q.get("schema") or {}).get("type")
-        if tp != tq:
+        sp, sq = (p.get("schema") or {}), (q.get("schema") or {})
+        tp, tq = sp.get("type"), sq.get("type")
+        if tp != tq and not _elargi_a_nullable(sp, sq):
             raisons.append(f"le paramètre « {nom} » ({ou}) change de type : {tp} → {tq}")
     for (nom, ou), q in apres.items():
         if (nom, ou) not in avant and q.get("required"):
@@ -146,6 +146,49 @@ def casse_les_appels(epingle: dict, servie: dict) -> list:
     return raisons
 
 
+def _elargi_a_nullable(avant: dict, apres: dict) -> bool:
+    """`str` devenu `str | null` — un ÉLARGISSEMENT, jamais une casse (04/09/2026).
+
+    Le contrôle jugeait sur `schema.type`, et un `anyOf: [string, null]` n'en a pas :
+    il lisait `str → None` et criait « change de type ». Or aucun appel du front ne
+    casse quand un paramètre accepte EN PLUS l'absence de valeur — ce qui casserait,
+    c'est le rétrécissement inverse, et il reste rouge.
+
+    ⚠️ **Ce que ce contrôle ne voit toujours pas, et qui compte davantage : le DÉFAUT.**
+    Un paramètre qui garde son type mais change de valeur par défaut change ce que le
+    front OBTIENT sans rien modifier chez lui. C'est le cas qui a fait rougir ce script
+    (`scope` de `me.guide.get` : `"org"` → `None`, la lecture cascade désormais chez
+    soi d'abord) — et il a rougi pour la mauvaise raison, en taisant la bonne. D'où
+    l'avertissement que `_defaut_change` fait remonter à côté."""
+    def _types(sch: dict) -> set:
+        if sch.get("type"):
+            return {sch["type"]}
+        return {v.get("type") for v in (sch.get("anyOf") or sch.get("oneOf") or [])
+                if isinstance(v, dict) and v.get("type")}
+    ta, tb = _types(avant), _types(apres)
+    return bool(ta) and ta <= tb and (tb - ta) <= {"null"} and tb != ta
+
+
+def _defaut_change(epingle: dict, servie: dict) -> list[str]:
+    """Les paramètres dont la valeur par DÉFAUT a bougé — avertissement, pas casse.
+
+    Le front continue d'appeler pareil et reçoit autre chose : ça ne « casse » aucun
+    appel au sens du schéma, et c'est pourtant ce qu'un consommateur doit savoir en
+    premier. Le contrôle n'en disait rien du tout."""
+    avant, apres = _index(epingle), _index(servie)
+    out = []
+    for (nom, ou), p in avant.items():
+        q = apres.get((nom, ou))
+        if q is None:
+            continue
+        da = (p.get("schema") or {}).get("default")
+        db = (q.get("schema") or {}).get("default")
+        if da != db:
+            out.append(f"le paramètre « {nom} » ({ou}) change de DÉFAUT : "
+                       f"{da!r} → {db!r} — même appel, autre résultat")
+    return out
+
+
 def _schemas_de_corps(corps) -> dict:
     """Le schéma (déjà résolu) de chaque type de contenu d'un corps de requête."""
     if not isinstance(corps, dict):
@@ -169,6 +212,7 @@ def main() -> int:
 
     servis = servi.get("paths", {})
     disparues, entree_changee, forme_changee = [], [], []
+    defauts_changes: list = []      # avertissement : même appel, autre résultat
 
     for chemin, operations in epingle.get("paths", {}).items():
         for methode, op in operations.items():
@@ -181,6 +225,8 @@ def main() -> int:
                 continue
             op = resoudre(epingle, op)
             vivante = resoudre(servi, vivante)
+            if (avis := _defaut_change(op, vivante)):
+                defauts_changes.append((nom, avis))
             if (raisons := casse_les_appels(op, vivante)):
                 entree_changee.append((nom, raisons))
             elif json.dumps(op, sort_keys=True) != json.dumps(vivante, sort_keys=True):
@@ -207,6 +253,17 @@ def main() -> int:
             "production pour qu'il s'adapte."
         )
         return 1
+
+    if defauts_changes:
+        # ⚠️ Avertissement et non échec : le schéma reste compatible, mais le front
+        # reçoit autre chose sans avoir rien changé. C'est le fait le plus important
+        # que ce contrôle produise, et il ne le voyait pas avant le 04/09/2026.
+        print("\n⚠️  MÊME APPEL, AUTRE RÉSULTAT — valeurs par défaut modifiées :")
+        for n, avis in defauts_changes:
+            print(f"  - {n}")
+            for a in avis:
+                print(f"      · {a}")
+        print("  → prévenir le front : ses appels PASSENT toujours, leur réponse change.")
 
     if forme_changee:
         print("\nÉcarts SANS effet sur ses appels (réponses ou descriptions retouchées) :")
