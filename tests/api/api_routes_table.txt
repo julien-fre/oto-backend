@@ -148,6 +148,8 @@ GET,HEAD /api/admin/users/{sub} -> _handler
 OPTIONS /api/admin/users/{sub} -> options_handler
 POST /api/admin/users/{sub}/role -> _handler
 OPTIONS /api/admin/users/{sub}/role -> options_handler
+POST /api/admin/users/{sub}/reset-mfa -> _handler
+OPTIONS /api/admin/users/{sub}/reset-mfa -> options_handler
 POST /api/admin/users/{sub}/grants/{provider} -> _handler
 OPTIONS /api/admin/users/{sub}/grants/{provider} -> options_handler
 DELETE /api/admin/users/{sub}/grants/{provider} -> _handler

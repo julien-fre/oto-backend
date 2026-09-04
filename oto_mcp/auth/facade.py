@@ -205,6 +205,24 @@ def logto_user_primary_email(sub: str) -> str | None:
         return None
 
 
+def reset_user_mfa(sub: str) -> list[str]:
+    """Efface tous les facteurs de double authentification d'un user Logto (Management
+    API) — geste de récupération de compte : perte de l'appli ET des codes de secours,
+    aucun autre moyen de rentrer. Renvoie les types retirés (pour l'audit du geste
+    admin, jamais les valeurs). Lève si Logto est injoignable (l'appelant décide)."""
+    import requests
+    base, tok = _logto_base(), _mgmt_token()
+    h = {"Authorization": f"Bearer {tok}", "User-Agent": _UA}
+    r = requests.get(f"{base}/api/users/{sub}/mfa-verifications", headers=h, timeout=15)
+    r.raise_for_status()
+    removed = []
+    for v in r.json():
+        d = requests.delete(f"{base}/api/users/{sub}/mfa-verifications/{v['id']}", headers=h, timeout=15)
+        d.raise_for_status()
+        removed.append(v["type"])
+    return removed
+
+
 # ── Magic link : one-time-token Logto (onboarding sans saisie de code) ────────
 # Le backend mint un OTT pour l'email de l'invité (Management API) ; le lien le
 # porte → la custom UI Logto le consomme (signIn extraParams) → auth silencieuse,

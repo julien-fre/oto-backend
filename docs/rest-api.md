@@ -246,6 +246,10 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   accès est un acte commercial — les paliers qu'un utilisateur pilote (org, équipe) sont
   déjà servis par `oto_connector_activation`.
 - `GET /api/admin/users` + `POST /api/admin/users/{sub}/role` — admin only
+- `POST /api/admin/users/{sub}/reset-mfa` — super admin only ; efface TOUS les facteurs de
+  double authentification d'un compte (récupération : appli ET codes de secours perdus,
+  aucun autre moyen de rentrer). La politique MFA de son org, si mandatoire, continue de
+  s'appliquer — il configurera un facteur neuf à sa prochaine connexion.
 - `POST /api/admin/users/{sub}/grants/{key_id}` body `{daily_quota}` — set/update quota par grant (admin only)
 - `GET|POST /api/me/tokens` + `DELETE …/{token_id}`, `GET|POST /api/admin/users/{sub}/tokens`
   + `DELETE …/{token_id}`, `GET|POST /api/admin/platform-keys` + `DELETE …/{provider}/{label}`

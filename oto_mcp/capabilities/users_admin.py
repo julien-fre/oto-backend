@@ -52,6 +52,16 @@ class SetRoleInput(BaseModel):
     role: str
 
 
+class ResetMfaInput(BaseModel):
+    target: str
+
+
+class ResetMfaOutput(BaseModel):
+    ok: bool
+    sub: str
+    removed: list[str]   # types de facteurs retirés (Totp, BackupCode, WebAuthn…) — jamais leur valeur
+
+
 # ADR 0044 §F R4 : le grant vise le CONNECTEUR (provider) au lieu d'un surrogate key_id
 # (la table platform_keys disparaît). L'instance ciblée = la clé plateforme du provider.
 class GrantKeyInput(BaseModel):
@@ -145,6 +155,15 @@ def _set_role(ctx: ResolvedCtx, inp: SetRoleInput) -> dict:
         raise AuthzDenied(404, "unknown_user", f"Compte {target!r} inconnu.")
     db.set_user_role(target, inp.role)
     return {"ok": True, "sub": target, "role": inp.role}
+
+
+def _reset_mfa(ctx: ResolvedCtx, inp: ResetMfaInput) -> dict:
+    target = _resolve_target(inp.target)
+    if not db.get_user(target):
+        raise AuthzDenied(404, "unknown_user", f"Compte {target!r} inconnu.")
+    from ..auth.facade import reset_user_mfa
+    removed = reset_user_mfa(target)
+    return {"ok": True, "sub": target, "removed": removed}
 
 
 def _has_platform_instance(provider: str) -> bool:
@@ -340,6 +359,17 @@ CAPABILITIES += [
         description="[super admin] Set an account's platform role (member|admin|super_admin). "
                     "target = email or sub.",
         rest=RestBinding("POST", "/api/admin/users/{sub}/role", _SUB),
+    ),
+    Capability(
+        key="platform.user.reset_mfa", handler=_reset_mfa, Input=ResetMfaInput,
+        Output=ResetMfaOutput, authz=SUPER_ADMIN,
+        description="[super admin] Reset a user's MFA — remove ALL their second-factor "
+                    "enrollments (authenticator app, backup codes, passkey). Account-recovery "
+                    "gesture: use when they've lost their authenticator AND their backup codes, "
+                    "with no other way in. Their org's mandatory-MFA policy (if any) still "
+                    "applies — they'll be prompted to enroll a fresh factor on next sign-in. "
+                    "target = email or sub. Never reveals any factor value, only the types removed.",
+        rest=RestBinding("POST", "/api/admin/users/{sub}/reset-mfa", _SUB),
     ),
     Capability(
         key="platform.key.grant", handler=_grant_key, Input=GrantKeyInput,
