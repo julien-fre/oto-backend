@@ -105,6 +105,31 @@ côté), le segment Browserbase (`start_session`/`release_session`), `web.py` cr
 trois callbacks OAuth + deux DCR côté REST — même classe, chemins distincts. Lot 3 (le
 garde-fou qui ferme la classe entière) non plus.
 
+### Neuf routes REST FOD, même classe (oto-backend#867 lot 2, 04/09)
+
+`api/sirene.py` (6 routes) et `api/accords.py` (3 routes) sont des routes Starlette
+`async def` qui appelaient le client FOD (`fod/http.py`, `httpx.Client` **synchrone**,
+read timeout **100s partagé par tous les clients FOD** — un scan SIRENE légitime peut
+en avoir besoin, donc **non modifié**) nûment. Même porte dérobée que la liste
+d'identités Unipile : `async def` visible, appel bloquant plus bas, invisible à un
+`grep` du fichier (le client HTTP vit dans un module partagé, pas dans `api/sirene.py`).
+
+**Le remède, local aux deux fichiers d'API (`_fod`, calqué sur `_call_unipile`
+du lot 1)** : `run_in_threadpool` (même primitive qu'`api/zoho.py:85`, le contre-exemple
+qui montrait déjà la discipline) + `asyncio.wait_for`, avec **deux paliers** plutôt
+qu'un délai unique — les neuf routes n'ont pas le même profil :
+- **`_FOD_TIMEOUT_FICHE_S = 20`** — fiche unique (siege/siret/etablissements/info côté
+  SIRENE, themes/get_one côté accords) : ne scanne jamais plus d'un enregistrement,
+  doit répondre en une fraction de seconde en fonctionnement normal.
+- **`_FOD_TIMEOUT_SCAN_S = 60`** — recherche paginée et surtout `headquarters` (jusqu'à
+  10 000 SIREN en UN scan) : un vrai lot volumineux peut légitimement approcher les
+  dizaines de secondes, une borne à 20s l'aurait cassé pour de vrai.
+
+Au-delà du délai, `asyncio.TimeoutError` devient un `504 fod_timeout` nommé (pas de
+gel, pas de 500 générique). Banc `tests/test_fod_rest_routes_hors_boucle.py` : neuf
+routes, deux crans chacune (thread observé + timeout → 504), plus le même contrôle
+qui mord qu'au lot 1 (neutralisation vérifiée empiriquement).
+
 ## Le mode n°2 a une SECONDE porte : les middlewares MCP (incident du 15/08)
 
 Même mode de gel (DB sync dans la boucle), autre famille de call-sites — et celle-là

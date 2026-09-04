@@ -15,9 +15,11 @@ Auth : Bearer Logto JWT ou API token `oto_*` (même `_authenticate` que le reste
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Awaitable, Callable
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -26,6 +28,28 @@ from oto_mcp.fod import client as sirene_duckdb  # ADR 0028 : scan déporté sur
 
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
+
+# oto-backend#867 lot 2 — ces six routes sont des routes Starlette `async def` qui
+# appelaient le client FOD (httpx SYNC, `fod/http.py`) nûment : un scan FOD lent tenait
+# la boucle jusqu'à son read timeout de 100s (partagé par TOUS les clients FOD, non
+# modifié ici — un scan SIRENE légitime peut en avoir besoin). `_fod` sort l'appel de
+# la boucle (`run_in_threadpool`, même primitive qu'`api/zoho.py:85`) et le borne à un
+# délai REST défendable, plus court que ce timeout partagé :
+# - `_FICHE_S` (fiche unique — siege/siret/etablissements/info) : ne scanne jamais plus
+#   d'un SIREN, doit répondre en une fraction de seconde en fonctionnement normal.
+# - `_SCAN_S` (search, et surtout `headquarters` — jusqu'à 10 000 SIREN en UN scan) :
+#   un vrai lot volumineux peut légitimement approcher les dizaines de secondes.
+_FOD_TIMEOUT_FICHE_S = 20
+_FOD_TIMEOUT_SCAN_S = 60
+
+
+async def _fod(fn, *args, timeout: float, **kwargs):
+    """Un appel FOD (fonction sync de `fod/client`), hors boucle et borné.
+
+    Lève `asyncio.TimeoutError` au-delà de `timeout` — le thread continue en
+    arrière-plan (impossible d'interrompre un appel HTTP en cours), mais
+    l'APPELANT REST reçoit un 504 nommé au lieu d'un gel de tout le processus."""
+    return await asyncio.wait_for(run_in_threadpool(fn, *args, **kwargs), timeout=timeout)
 
 
 def _qp(request: Request, name: str) -> str | None:
@@ -63,7 +87,11 @@ def make_routes(
         siren = _qp(request, "siren")
         if not siren or not siren.isdigit() or len(siren) != 9:
             return json_error(request, 400, "invalid_siren")
-        return json_response(request, {"siege": sirene_duckdb.lookup_siege(siren)})
+        try:
+            siege = await _fod(sirene_duckdb.lookup_siege, siren, timeout=_FOD_TIMEOUT_FICHE_S)
+        except asyncio.TimeoutError:
+            return json_error(request, 504, f"fod_timeout: no response within {_FOD_TIMEOUT_FICHE_S}s")
+        return json_response(request, {"siege": siege})
 
     async def etablissements(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
@@ -73,7 +101,11 @@ def make_routes(
         if not siren or not siren.isdigit() or len(siren) != 9:
             return json_error(request, 400, "invalid_siren")
         active_only = _qp_bool(request, "active_only", True)
-        items = sirene_duckdb.list_establishments(siren, active_only=active_only)
+        try:
+            items = await _fod(sirene_duckdb.list_establishments, siren,
+                               active_only=active_only, timeout=_FOD_TIMEOUT_FICHE_S)
+        except asyncio.TimeoutError:
+            return json_error(request, 504, f"fod_timeout: no response within {_FOD_TIMEOUT_FICHE_S}s")
         return json_response(request, {"items": items, "count": len(items)})
 
     async def siret(request: Request) -> JSONResponse:
@@ -83,30 +115,39 @@ def make_routes(
         s = _qp(request, "siret")
         if not s or not s.isdigit() or len(s) != 14:
             return json_error(request, 400, "invalid_siret")
-        return json_response(request, {"etablissement": sirene_duckdb.lookup_siret(s)})
+        try:
+            etab = await _fod(sirene_duckdb.lookup_siret, s, timeout=_FOD_TIMEOUT_FICHE_S)
+        except asyncio.TimeoutError:
+            return json_error(request, 504, f"fod_timeout: no response within {_FOD_TIMEOUT_FICHE_S}s")
+        return json_response(request, {"etablissement": etab})
 
     async def search(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
         if err:
             return err
         _tranche = _qp(request, "tranche_effectifs")
-        items = sirene_duckdb.search(
-            naf=_qp(request, "naf"),
-            code_commune=_qp(request, "code_commune"),
-            code_postal=_qp(request, "code_postal"),
-            departement=_qp(request, "departement"),
-            denomination=_qp(request, "denomination"),
-            enseigne=_qp(request, "enseigne"),
-            active_only=_qp_bool(request, "active_only", True),
-            sieges_only=_qp_bool(request, "sieges_only", False),
-            tranche_effectifs=(
-                [c.strip() for c in _tranche.split(",") if c.strip()]
-                if _tranche
-                else None
-            ),
-            limit=_qp_int(request, "limit", 100),
-            offset=_qp_int(request, "offset", 0),
-        )
+        try:
+            items = await _fod(
+                sirene_duckdb.search,
+                naf=_qp(request, "naf"),
+                code_commune=_qp(request, "code_commune"),
+                code_postal=_qp(request, "code_postal"),
+                departement=_qp(request, "departement"),
+                denomination=_qp(request, "denomination"),
+                enseigne=_qp(request, "enseigne"),
+                active_only=_qp_bool(request, "active_only", True),
+                sieges_only=_qp_bool(request, "sieges_only", False),
+                tranche_effectifs=(
+                    [c.strip() for c in _tranche.split(",") if c.strip()]
+                    if _tranche
+                    else None
+                ),
+                limit=_qp_int(request, "limit", 100),
+                offset=_qp_int(request, "offset", 0),
+                timeout=_FOD_TIMEOUT_SCAN_S,
+            )
+        except asyncio.TimeoutError:
+            return json_error(request, 504, f"fod_timeout: no response within {_FOD_TIMEOUT_SCAN_S}s")
         return json_response(request, {
             "items": items,
             "count": len(items),
@@ -133,7 +174,11 @@ def make_routes(
         clean = [str(s).strip() for s in sirens]
         if not all(s.isdigit() and len(s) == 9 for s in clean):
             return json_error(request, 400, "invalid_siren")
-        addresses = sirene_duckdb.headquarters_addresses(clean)
+        try:
+            addresses = await _fod(sirene_duckdb.headquarters_addresses, clean,
+                                   timeout=_FOD_TIMEOUT_SCAN_S)
+        except asyncio.TimeoutError:
+            return json_error(request, 504, f"fod_timeout: no response within {_FOD_TIMEOUT_SCAN_S}s")
         return json_response(request, {"headquarters": addresses, "count": len(addresses)})
 
     async def info(request: Request) -> JSONResponse:
@@ -142,7 +187,11 @@ def make_routes(
         sub, err = await authenticate(request, verifier)
         if err:
             return err
-        return json_response(request, sirene_duckdb.parquet_info())
+        try:
+            meta = await _fod(sirene_duckdb.parquet_info, timeout=_FOD_TIMEOUT_FICHE_S)
+        except asyncio.TimeoutError:
+            return json_error(request, 504, f"fod_timeout: no response within {_FOD_TIMEOUT_FICHE_S}s")
+        return json_response(request, meta)
 
     return [
         Route("/api/sirene/headquarters", headquarters, methods=["POST"]),
