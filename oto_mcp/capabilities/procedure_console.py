@@ -79,14 +79,23 @@ _AUTRES_PALIERS = (
     "avec ses membres — y écrire demande d'en être MEMBRE, pas chef. "
     "`oto_procedure(op='list')` montre celles que tu vois déjà."
 )
-_ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org", _AUTRES_PALIERS), "user": SUB_ONLY,
+# ⚠️ `None` écrit à SOI (04/09/2026, question d'Alexis : « il ne peut pas y avoir un
+# défaut à scope ? »). Il valait `org`, donc le défaut menait à un REFUS pour toute
+# personne qui n'est pas administratrice — la majorité. Un défaut qui échoue pour le
+# plus grand nombre n'est pas un défaut, c'est un piège : on l'a mesuré sur quatre
+# jours et trois refus chez une org cliente.
+# ⚠️ La LECTURE ne bascule PAS avec lui : `list` sans scope CUMULE déjà l'org et
+# l'équipe active, ce qui est le bon geste pour retrouver. Restreindre la lecture au
+# palier personnel cacherait ce qu'on cherche. C'est le verbe qui décide, pas la
+# surface — la même règle que celle qui sépare `set` de `delete` ci-dessous.
+_ECRIRE = BY_OP({None: SUB_ONLY, "user": SUB_ONLY,
                  "org": ORG_ADMIN_OPT("org", _AUTRES_PALIERS),
                  "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
 # `delete` reste au **chef d'équipe** : il emporte la procédure ET tout son historique,
 # sans corbeille — rien ne le défait. Un geste destructeur n'est pas un geste de travail.
 # Au palier PERSONNEL, supprimer sa propre procédure ne demande personne d'autre :
 # le geste destructeur ne l'est que pour son auteur, qui est le seul à la voir.
-_SUPPRIMER = BY_OP({None: ORG_ADMIN_OPT("org"), "user": SUB_ONLY, "org": ORG_ADMIN_OPT("org"),
+_SUPPRIMER = BY_OP({None: SUB_ONLY, "user": SUB_ONLY, "org": ORG_ADMIN_OPT("org"),
                     "group": GROUP_ADMIN_OPT("group")}, fields=("scope",))
 
 
@@ -126,12 +135,25 @@ class ProcedureInput(BaseModel):
     limit: int = 100                       # library_list
 
 
+def _ECRIT_SCOPE(inp) -> str:
+    """Le palier d'ÉCRITURE effectif — `user` quand rien n'est demandé.
+
+    ⚠️ Il doit dire EXACTEMENT ce que `_ECRIRE` a vérifié : l'autz mappe `None` sur
+    `SUB_ONLY`, donc laisser passer `None` en aval ferait écrire à l'ORG une demande
+    autorisée au palier PERSONNEL. Le trou serait invisible — l'écriture réussit, et
+    au mauvais endroit."""
+    return getattr(inp, "scope", None) or "user"
+
+
 async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
     oi, lib = orgs_instructions, guide_library
     if inp.op == "get":
         return await oi._get_guide(ctx, oi.GuideGetInput(
             slug=inp.slug, guide_id=inp.guide_id, doctrine_id=inp.doctrine_id,
-            scope=inp.scope or "org",
+            # Pas de repli sur "org" : `None` déclenche la CASCADE de lecture
+            # (chez soi d'abord, puis l'org). Écrire à soi par défaut et relire
+            # ailleurs par défaut ferait « perdre » la procédure qu'on vient d'écrire.
+            scope=inp.scope,
             version=inp.version, with_history=inp.with_history))
     if inp.op == "list":
         return oi._list_guides(ctx, oi.GuideListInput(query=inp.query, scope=inp.scope))
@@ -139,23 +161,23 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
         return await oi._create_instruction(ctx, oi.ConsoleInstrCreateInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour create."),
             body_md=inp.body_md, title=inp.title, description=inp.description,
-            slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
+            slots=inp.slots, org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "set":
         return await oi._set_instruction(ctx, oi.ConsoleInstrSetInput(
             slug=inp.slug, body_md=inp.body_md, title=inp.title,
             description=inp.description, from_version=inp.from_version,
             expected_version=inp.expected_version,
-            slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
+            slots=inp.slots, org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "describe":
         return oi._describe_instruction(ctx, oi.ConsoleInstrDescribeInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour describe."),
             title=inp.title, description=inp.description,
             expected_version=inp.expected_version,
-            org=inp.org, scope=inp.scope, group=inp.group))
+            org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "delete":
         return oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour delete."),
-            org=inp.org, scope=inp.scope, group=inp.group))
+            org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
     if inp.op == "library_list":
         return lib._list(ctx, lib.LibraryListInput(
             query=inp.query, category=inp.category, author_kind=inp.author_kind,

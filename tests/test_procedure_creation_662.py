@@ -145,7 +145,9 @@ def test_creer_sur_un_slug_pris_refuse_et_laisse_la_procedure_intacte(monde):
 def test_creer_sur_un_slug_libre_ecrit_la_version_1(monde):
     """Le pendant : la garde ne doit rien fermer d'autre que la collision."""
     slug = _slug("relance")
-    out = _appel("u-admin", op="create", slug=slug, body_md=_CORPS_A,
+    # ⚠️ `scope="org"` explicite depuis l'ADR 0068 : sans lui, la création va chez SOI.
+    # Ce banc parle de la garde anti-collision au palier ORG — il doit donc y viser.
+    out = _appel("u-admin", op="create", scope="org", slug=slug, body_md=_CORPS_A,
                  title="Relance clients")
     assert out["ok"] is True and out["version"] == 1 and out["slug"] == slug
     assert out["org_id"] == monde["org"] and out["scope"] == "org"
@@ -161,12 +163,16 @@ def test_creer_sur_un_slug_archive_refuse_en_disant_quil_est_archive(monde):
     aurait réussi et serait née invisible."""
     from oto_mcp import org_store
     slug = _slug("cloture")
-    _appel("u-admin", op="create", slug=slug, body_md=_CORPS_A)
+    # ⚠️ `scope="org"` aux TROIS gestes (ADR 0068) : sans lui la création irait chez
+    # soi, l'archivage viserait l'org, et le banc constaterait un slug libre — vrai,
+    # mais pour la mauvaise raison. Un test qui passe en visant deux paliers différents
+    # ne prouve rien de la garde qu'il croit tenir.
+    _appel("u-admin", op="create", scope="org", slug=slug, body_md=_CORPS_A)
     assert org_store.archive_instruction("org", monde["org"], slug)
     assert slug not in {p["slug"] for p in _appel("u-admin", op="list")["guides"]}
 
     with pytest.raises(AuthzDenied) as refus:
-        _appel("u-admin", op="create", slug=slug, body_md=_CORPS_B)
+        _appel("u-admin", op="create", scope="org", slug=slug, body_md=_CORPS_B)
     assert (refus.value.status, refus.value.code) == (409, "slug_taken")
     assert refus.value.details["archived"] is True
     assert "archiv" in refus.value.message

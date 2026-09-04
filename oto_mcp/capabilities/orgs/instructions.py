@@ -444,7 +444,10 @@ class GuideGetInput(BaseModel):
     slug: Optional[str] = None
     guide_id: Optional[int] = None      # lecture par ID STABLE (ADR 0032) — y compris un guide PARTAGÉ à ton org (grant read, livraison #52)
     doctrine_id: Optional[int] = None   # ALIAS déprécié du précédent (retrait 29/10/2026, #519)
-    scope: str = "org"
+    # `None` = CASCADE de lecture (chez soi, puis l'org) — cf. `_get_guide`. Ce
+    # champ valait `"org"` en dur : depuis que l'écriture sans scope va chez SOI
+    # (ADR 0068), ce défaut faisait relire ailleurs qu'on venait d'écrire.
+    scope: Optional[str] = None
     version: Optional[int] = None
     with_history: bool = False
 
@@ -822,6 +825,20 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
         })
 
     # Un guide nommé précis.
+    if scope is None and member_mode:
+        # ⚠️ CASCADE de lecture (04/09/2026) — l'écriture sans `scope` va chez SOI
+        # depuis l'ADR 0068 ; sans elle, relire sans `scope` chercherait dans l'org et
+        # rendrait « introuvable » la procédure qu'on vient d'écrire.
+        # L'ordre est celui de la propriété : la mienne d'abord, celle de l'org
+        # ensuite. Une procédure perso qui porte le même slug qu'une procédure d'org
+        # gagne — c'est la plus proche de qui demande, et il l'a écrite exprès.
+        # L'ÉQUIPE reste sur `scope='group'` explicite : elle n'était pas dans ce
+        # chemin avant, et l'y ajouter changerait ce que lisent les appels existants.
+        # ⚠️ On ne RÉSOUT ici que le palier — le rendu reste celui du chemin commun
+        # ci-dessous. Recopier la réponse ferait diverger les deux formes au premier
+        # champ ajouté (l'historique y a manqué le temps d'un essai).
+        scope = ("user" if (ctx.sub is not None and org_store.get_instruction(
+            "user", str(ctx.sub), slug, version)) else "org")
     if scope == "user" and member_mode:
         # Palier PERSONNEL (ADR 0068) — l'identité vient du contexte d'autz, jamais
         # d'un champ client : le palier personnel de QUELQU'UN D'AUTRE n'est pas
@@ -873,6 +890,14 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
     if org_id is None:
         return deprecations.avec_les_deux_noms({"org_id": None, "guides": []})
     out: list = []
+    if member_mode and scope in (None, "user") and ctx.sub is not None:
+        # ⚠️ Le palier PERSONNEL entre dans le cumul (04/09/2026). Sans lui, on écrit
+        # chez soi par défaut et on ne se voit PAS dans la liste : la procédure existe,
+        # `op=list` ne la montre pas, et on la croit perdue. Elle vient EN TÊTE — c'est
+        # la sienne, et c'est le premier endroit où l'on cherche ce qu'on a écrit.
+        rows = (org_store.search_instructions("user", str(ctx.sub), query) if query
+                else org_store.list_instructions("user", str(ctx.sub)))
+        out += [{**r, "scope": "user"} for r in rows]
     if scope in (None, "org"):
         include_base = not member_mode  # la surface admin inclut le guide de base
         rows = (org_store.search_instructions("org", org_id, query, include_base=include_base)

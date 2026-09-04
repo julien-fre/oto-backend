@@ -45,7 +45,11 @@ def test_procedure_routes(monkeypatch):
     P = pc.ProcedureInput
     run = lambda inp: asyncio.run(pc._procedure(CTX, inp))
     out = run(P(op="get", slug="s1", scope=None))
-    assert out["called"] == "get" and out["inp"].scope == "org"   # défaut re-posé
+    # ⚠️ Le défaut n'est PLUS re-posé à "org" (ADR 0068) : `None` voyage jusqu'au
+    # handler, qui fait CASCADER la lecture — la mienne d'abord, celle de l'org
+    # ensuite. Le re-poser ici ferait relire dans l'org ce qu'on vient d'écrire chez
+    # soi, et rendrait « introuvable » une procédure qui existe.
+    assert out["called"] == "get" and out["inp"].scope is None
     assert run(P(op="list", query="q"))["called"] == "list"
     out = run(P(op="set", slug="s1", body_md="x", org=7))
     assert out["called"] == "set" and out["inp"].org == 7

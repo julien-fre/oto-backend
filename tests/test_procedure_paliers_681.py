@@ -130,8 +130,11 @@ def test_le_chef_dequipe_ecrit_une_procedure_sans_etre_admin_de_lorg(monde):
     assert out["group_id"] == monde["equipe"] and out["scope"] == "group"
     assert "org_id" not in out
 
+    # ⚠️ `scope="org"` EXPLICITE depuis le 04/09 : sans scope, l'écriture va chez soi
+    # (ADR 0068) et réussit. Ce qu'on prouve ici reste le même — le palier ORG lui est
+    # fermé — mais il faut désormais le VISER pour s'y heurter.
     with pytest.raises(AuthzDenied) as refus:
-        _appel("u-chef", op="set", slug="au-niveau-org", body_md=_CORPS)
+        _appel("u-chef", op="set", scope="org", slug="au-niveau-org", body_md=_CORPS)
     assert refus.value.status == 403
 
 
@@ -185,7 +188,8 @@ def test_un_membre_de_lequipe_annote_la_procedure_quil_deroule(monde):
     # Le palier ORG lui reste fermé — sans cette moitié, le test dirait seulement
     # qu'on a tout ouvert.
     with pytest.raises(AuthzDenied) as refus:
-        _appel("u-membre", op="set", slug="au-niveau-org", body_md=_CORPS)
+        # `scope="org"` explicite : sans scope, l'écriture va chez soi (ADR 0068).
+        _appel("u-membre", op="set", scope="org", slug="au-niveau-org", body_md=_CORPS)
     assert refus.value.status == 403
 
 
@@ -615,8 +619,12 @@ def test_le_refus_d_ecriture_NOMME_le_palier_equipe(monde):
     écrite lors du lot #681 qui l'avait relevé : « il cherchait, lui, un palier
     d'écriture autre que l'org ». On avait unifié la phrase des quatre refus sans lui
     donner d'issue — la moitié du travail, et c'est la moitié qui se voit à l'usage."""
+    # ⚠️ Le cas de Céleste n'existe PLUS tel quel : sans scope, sa procédure part
+    # désormais chez elle et l'appel réussit — le refus ne survient que si l'on VISE
+    # l'org. Ce banc garde ce qui reste vrai : quand on vise l'org sans en être admin,
+    # le refus nomme les paliers ouverts au lieu de fermer la porte sans issue.
     with pytest.raises(AuthzDenied) as e:
-        _appel("u-membre", op="set", slug="au-niveau-org", body_md=_CORPS)
+        _appel("u-membre", op="set", scope="org", slug="au-niveau-org", body_md=_CORPS)
     msg = e.value.message
     assert "administrateur" in msg, "la cause reste dite"
     assert "scope='group'" in msg, "et l'ISSUE aussi, c'est tout l'objet"
@@ -644,3 +652,51 @@ def test_le_refus_du_palier_EQUIPE_ne_renvoie_pas_vers_l_equipe(monde):
         _appel("u-tiers", op="set", scope="group", group=monde["equipe"],
                slug="pas-la-mienne", body_md=_CORPS)
     assert "scope='group'" not in e.value.message
+
+
+def test_ECRIRE_sans_scope_va_chez_SOI_et_ne_refuse_plus(monde):
+    """Le défaut d'écriture, retourné le 04/09 sur question d'Alexis : « il ne peut pas
+    y avoir un défaut à scope ? »
+
+    Il valait `org`, donc il menait à un REFUS pour toute personne non administratrice
+    — la majorité. Un défaut qui échoue pour le plus grand nombre n'est pas un défaut,
+    c'est un piège : mesuré sur quatre jours et trois refus chez une org cliente.
+
+    Désormais une membre simple écrit, du premier coup, et chez elle."""
+    out = _appel("u-membre", op="set", slug="mon-premier-reflexe", body_md=_CORPS)
+    assert out["ok"] and out["scope"] == "user"
+    assert out["user_id"] == "u-membre" and "org_id" not in out
+
+
+def test_RELIRE_sans_scope_retrouve_ce_qu_on_vient_d_ecrire(monde):
+    """⚠️ Le corollaire, et il n'est pas décoratif : écrire chez soi par défaut tout en
+    relisant dans l'org par défaut ferait « perdre » la procédure à l'instant même où
+    on la crée. La lecture cascade — la mienne d'abord, celle de l'org ensuite."""
+    _appel("u-membre", op="set", slug="a-retrouver", body_md=_CORPS)
+    relu = _appel("u-membre", op="get", slug="a-retrouver")
+    assert relu["scope"] == "user" and "Étapes." in relu["body_md"]
+
+
+def test_la_procedure_d_ORG_reste_lisible_sans_scope(monde):
+    """L'autre moitié de la cascade : si elle ne retombait pas sur l'org, tous les
+    agents qui lisent la procédure d'org sans préciser cesseraient de la trouver — une
+    régression bien plus large que le défaut qu'on corrige."""
+    # ⚠️ Slug PROPRE : `monde` est module-scope, et un banc voisin écrit
+    # « au-niveau-org » chez u-membre. La cascade rendrait alors `user` — pour une
+    # raison qui n'a rien à voir avec ce qu'on vérifie, et qui serait juste.
+    _appel("u-chef", op="set", scope="group", slug="lisible-sans-scope", body_md=_CORPS)
+    from oto_mcp import org_store
+    org_store.set_instruction("org", monde["org"], "seulement-dans-l-org",
+                              body_md=_CORPS, set_by="u-chef")
+    relu = _appel("u-membre", op="get", slug="seulement-dans-l-org")
+    assert relu["scope"] == "org"
+
+
+def test_op_list_montre_AUSSI_les_siennes(monde):
+    """Écrire chez soi sans se voir dans la liste ferait croire la procédure perdue.
+    Le cumul porte les trois paliers qu'on peut atteindre, chacun étiqueté."""
+    _appel("u-membre", op="set", slug="dans-ma-liste", body_md=_CORPS)
+    vus = _appel("u-membre", op="list")["guides"]
+    par_slug = {g["slug"]: g["scope"] for g in vus}
+    assert par_slug.get("dans-ma-liste") == "user", "la mienne manque au cumul"
+    assert "org" in par_slug.values(), "et celles de l'org y sont toujours"
