@@ -51,6 +51,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.connectors.SCHEMAS,       # schémas d'outils mis en cache
     schema.emails.EMAILS,            # envois programmés
     schema.outreach.OUTREACH,        # relances de plateforme et refus de recevoir
+    schema.portee.PORTEE,            # élargissements de portée par un agent (ADR 0068)
     schema.billing.SUBSCRIPTIONS,    # abonnements et paiements (ADR 0043)
     schema.billing.IDENTITIES,       # identité de facturation par org (#486)
     schema.billing.INVOICES,         # factures et avoirs émis chez Pennylane (#488)

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 from ... import db
 from .._authz import PROJECT_SHARED_READ
-from .. import _publication
+from .. import _portee, _publication
 from .._types import Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 from . import changes, common, history, patch, reads, view, writes
@@ -164,7 +164,19 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     if inp.op == "delete":
         return writes.delete(sub, inp, row, pid)
 
-    return writes.move(sub, inp, row, pid)
+    out = writes.move(sub, inp, row, pid)
+    # ADR 0068 §4 — déplacer une page vers un AUTRE projet change qui peut la lire :
+    # c'est le geste, pas un partage, mais l'effet est le même pour son auteur.
+    # On observe le CHANGEMENT de projet, pas le rangement interne d'un même projet.
+    if inp.to_project is not None and int(inp.to_project) != int(pid):
+        dest = db.get_project_by_id(int(inp.to_project)) or {}
+        _portee.observer(
+            ctx, ressource_type="doc", ressource_id=inp.doc_id,
+            ressource_nom=row.get("title"),
+            vers={"org": "org", "group": "group"}.get(dest.get("owner_type"), "person"),
+            geste=f"oto_doc op=move to_project={inp.to_project}",
+            cible=str(inp.to_project))
+    return out
 
 
 CAPABILITIES += [

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org, url_perimeter)
 from ._authz import ORG_MEMBER, SUB_ONLY
-from . import _publication
+from . import _portee, _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -571,6 +571,13 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                                 inp.brief_md or "", created_by=sub,
                                 context_org_id=context_org)
         db.log_project_activity(pid, sub, "project.create", inp.name.strip())
+        if owner_type != "user":
+            # ADR 0068 §4 — naître chez l'org est explicite, et reste observé : c'est
+            # le geste, pas le défaut, qui rend un contenu lisible par d'autres.
+            _portee.observer(ctx, ressource_type="project", ressource_id=pid,
+                             ressource_nom=inp.name.strip(), vers=owner_type,
+                             geste=f"oto_project op=create owner_type={owner_type}",
+                             cible=str(owner_id))
         return _view(db.get_project_by_id(pid), sub)
 
     if inp.op == "list":
@@ -868,6 +875,11 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         new_id, warnings = db.duplicate_project(int(inp.project_id), inp.name.strip(),
                                                 cible[0], cible[1], copied_by=sub,
                                                 context_org_id=cible[2])
+        if cible[0] != "user":
+            _portee.observer(ctx, ressource_type="project", ressource_id=new_id,
+                             ressource_nom=inp.name.strip(), vers=cible[0],
+                             geste=f"oto_project op=copy owner_type={cible[0]}",
+                             cible=str(cible[1]))
         return {**_view(db.get_project_by_id(new_id), sub),
                 "links": db.list_project_links(new_id), "copied_from": inp.project_id,
                 "warnings": warnings}

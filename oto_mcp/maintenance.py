@@ -293,6 +293,34 @@ def residu_projete(*, dry_run: bool = True) -> dict:
     }
 
 
+def portee_observation(*, dry_run: bool = True) -> dict:
+    """Rend le volume d'alertes que l'ADR 0068 §4 aurait envoyées — sans rien envoyer.
+
+    Période d'OBSERVATION (décision d'Alexis, 04/09/2026) : `portee_elargissements`
+    enregistre chaque fois qu'un AGENT fait sortir un contenu du périmètre de son
+    propriétaire, avec les destinataires qu'on aurait prévenus. Aucun message ne part
+    tant que ce comptage n'a pas dit ce que le canal coûterait.
+
+    ⚠️ **Ce travail ne fait que LIRE, et n'a pas de mode `--apply`.** Il n'écrit rien,
+    ne notifie rien, n'efface rien — le mettre dans `_ACTES` suffirait à laisser croire
+    qu'il existe une version qui agit.
+
+    Ce qu'il faut regarder, et dans cet ordre : `sans_login` (ces alertes-là partiraient
+    IMMÉDIATEMENT, et une seule de trop est un incident) puis `personnes` — trente
+    élargissements vers une seule personne ne font pas le même produit que trente
+    élargissements vers trente personnes. Le volume brut, lui, ne décide de rien."""
+    from .db import portee as db_portee
+
+    lignes = db_portee.compter_par_vers()
+    total = sum(int(l["n"]) for l in lignes)
+    sans_login = sum(int(l["n"]) for l in lignes if l["immediat"])
+    personnes = max((int(l["proprietaires"]) for l in lignes), default=0)
+    return {"observation": "aucun message envoyé (ADR 0068 §4)",
+            "elargissements": total, "sans_login": sans_login,
+            "personnes_concernees_max": personnes,
+            "detail": [dict(l) for l in lignes]}
+
+
 _TRAVAUX: dict[str, Callable[..., dict]] = {
     "retention": retention,
     "blocks": blocks,
@@ -301,6 +329,7 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "journal-tokens": journal_tokens,
     "check-boot": check_boot,
     "residu-projete": residu_projete,
+    "portee-observation": portee_observation,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
 # c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.

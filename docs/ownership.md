@@ -117,3 +117,40 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > **transfert** reste `can_transfer = owner ∪ escalade` (jamais un gérant). Surface unique
 > `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
 > projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.
+
+## Privé par défaut, et l'observation qui l'accompagne (ADR 0068, 04/09/2026)
+
+> **La règle.** Aucune opération ne donne à ce qu'elle crée une portée plus large que
+> son auteur, sauf si l'appel le demande par un **paramètre nommé**. Trois régimes,
+> gradués par la **réversibilité** de l'élargissement et non par sa gravité ressentie :
+> ① **privé** partout par défaut ; ② **org / équipe** explicite, ouvert à un agent
+> (population nommée, comptes, administrateur — l'élargissement se répare) ; ③ **sans
+> login** interdit à un agent, disponible sur la face REST où vit le dashboard (ce qui
+> est servi sans compte est indexable ; le retirer n'efface pas ce qui a été lu).
+> Le mécanisme : `ResolvedCtx.channel`, posé aux deux SEUILS (`_mcp_adapter`,
+> `_rest_adapter`) et **jamais** par une règle d'autz — les règles servent les deux
+> faces et ne peuvent pas savoir d'où vient l'appel.
+> ⚠️ **Ce n'est pas un contrôle d'accès** : un porteur de jeton peut appeler la face
+> REST et faire ce que la face MCP lui refuse. Le régime ③ vise le geste NON VOULU,
+> pas l'adversaire — l'appeler « sécurité » ferait croire posé un contrôle qui ne l'est
+> pas, et personne ne poserait le vrai ensuite (`capabilities/_publication.py`).
+
+> **Le second volet : savoir — en OBSERVATION, rien ne part.** Une garde ne couvrira
+> jamais tous les chemins, et un agent peut légitimement passer le paramètre parce que
+> la demande était ambiguë. `capabilities/_portee.observer()` enregistre donc chaque
+> élargissement fait par un agent dans `portee_elargissements`, avec **les
+> destinataires qu'on aurait prévenus** (le propriétaire ET l'auteur du geste) et
+> **l'urgence qu'il aurait eue** (`immediat` = ouverture sans login ; le reste serait
+> groupé, un agent qui partage trente lignes devant produire un message et non trente).
+> ⚠️ **Aucun e-mail n'est envoyé** (décision d'Alexis) : on mesure d'abord le volume —
+> `oto-mcp maintenance portee-observation`, lecture pure, sans `--apply`. Ouvrir un
+> canal en devinant son débit, c'est le refermer une semaine plus tard après avoir
+> appris à ses destinataires à l'ignorer. `notifie_at` reste NULL, et ce NULL EST la
+> preuve que rien n'est parti.
+> ⚠️ **`tool_calls` journalise déjà tout, et personne ne le regarde** : journaliser
+> n'est pas avertir. Cette table ne retient que les gestes qui CHANGENT QUI VOIT, et
+> n'enregistre jamais le contenu élargi — une trace qui recopie ce qu'elle surveille
+> est un second exemplaire à protéger.
+> ⚠️ Limite CONNUE de l'observation : le canal `mcp` est un proxy d'« agent », pas la
+> vérité. Un jeton `oto_` porté sur la face REST est une machine et n'est pas compté ;
+> le distinguer demande de séparer, sur REST, un JWT Logto d'un jeton porté.

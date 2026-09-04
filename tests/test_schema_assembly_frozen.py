@@ -194,8 +194,18 @@ from oto_mcp.db import _schema, schema
 # `USERS` grandit de 740 caractères, et l'assemblé exactement de 740 aussi
 # (136 654 → 137 394). Un écart aurait voulu dire qu'un autre fragment avait
 # bougé sous la mesure.
-EMPREINTE = "f15f961779e4bfd93bdbff4d38a7382cfea6c05260f0bb6356b5f4760c13980a"
-LONGUEUR = 137394
+# 2026-09-04 — fragment `PORTEE` : la table `portee_elargissements` (ADR 0068 §4),
+# qui enregistre les moments où un AGENT fait sortir un contenu du périmètre de son
+# propriétaire. Elle naît en période d'OBSERVATION (décision d'Alexis) : chaque ligne
+# porte les destinataires qu'elle aurait prévenus et l'urgence qu'elle aurait eue,
+# et `notifie_at` reste NULL — aucun message ne part. On veut voir le volume avant
+# d'écrire à qui que ce soit.
+# ⚠️ Empreinte recalculée APRÈS l'arithmétique : le fragment fait 2 094 caractères et
+# l'assemblé grandit exactement de 2 094 (137 394 → 139 488). Un écart aurait voulu
+# dire qu'un autre fragment avait bougé sous la mesure — sur une base PARTAGÉE
+# prod/preprod, c'est la vérification qui compte, pas le hash recopié.
+EMPREINTE = "282a2817cf3e49287f254ab2abcdffa5fd7a9b483ccddd3d078ab939f09d3001"
+LONGUEUR = 139488
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

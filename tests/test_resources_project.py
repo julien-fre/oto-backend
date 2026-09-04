@@ -195,3 +195,47 @@ def test_share_audience_public_rejected_for_datastore(monkeypatch):
         R._resources(CTX, R.ResourceInput(op="share", resource_type="datastore_namespace",
                                           resource_id="7", audience="secret"))
     assert e.value.code == "publication_unsupported"
+
+
+# ── ADR 0068 §4 : le partage laisse une trace d'observation ───────────────────
+
+def test_un_partage_par_un_AGENT_est_observe(monkeypatch):
+    """⚠️ Ce banc existe parce que celui du seam isolé ne suffisait pas. Le premier
+    branchement de `_portee.observer` ici passait `rtype`, une variable qui n'existe
+    pas dans ce scope — huit bancs de partage sont tombés sur un `NameError` que neuf
+    bancs verts sur le seam n'avaient pas vu. Un seam testé seul prouve qu'il marche,
+    jamais qu'on l'a appelé correctement."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
+    monkeypatch.setattr(R.db, "get_user", lambda sub: {"email": "u2@x.co"})
+    monkeypatch.setattr(R.email, "send_resource_shared_email", lambda *a, **k: True)
+    monkeypatch.setattr(R.ownership, "grant", lambda *a, **k: None)
+    vues: list[dict] = []
+    monkeypatch.setattr(R._portee.db_portee, "enregistrer_elargissement",
+                        lambda **kw: vues.append(kw) or 1)
+    from oto_mcp.capabilities._types import ResolvedCtx
+    agent = ResolvedCtx(sub=CTX.sub, org_id=CTX.org_id, channel="mcp")
+    R._resources(agent, R.ResourceInput(op="share", resource_type="project",
+                                        resource_id="7", email="u2@x.co"))
+    assert len(vues) == 1, "un partage fait par un agent doit laisser une trace"
+    l = vues[0]
+    assert l["ressource_type"] == "project" and l["ressource_id"] == "7"
+    assert l["vers"] == "person" and l["immediat"] is False
+    assert "u2@x.co" in str(l["cible"])
+
+
+def test_le_MEME_partage_depuis_le_dashboard_n_observe_rien(monkeypatch):
+    """La face REST est celle où un humain clique : il vient de faire le geste."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
+    monkeypatch.setattr(R.db, "get_user", lambda sub: {"email": "u2@x.co"})
+    monkeypatch.setattr(R.email, "send_resource_shared_email", lambda *a, **k: True)
+    monkeypatch.setattr(R.ownership, "grant", lambda *a, **k: None)
+    vues: list[dict] = []
+    monkeypatch.setattr(R._portee.db_portee, "enregistrer_elargissement",
+                        lambda **kw: vues.append(kw) or 1)
+    from oto_mcp.capabilities._types import ResolvedCtx
+    humain = ResolvedCtx(sub=CTX.sub, org_id=CTX.org_id, channel="rest")
+    R._resources(humain, R.ResourceInput(op="share", resource_type="project",
+                                         resource_id="7", email="u2@x.co"))
+    assert vues == []

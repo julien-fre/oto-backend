@@ -60,6 +60,7 @@ from . import (
     # (`audience`, `journal`…) sont trop communs pour la surface plate `db.*`.
     # Les appelants écrivent `from ..db import outreach as db_outreach`.
     outreach,
+    portee,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au
