@@ -19,6 +19,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
+from . import _instruction
 from .. import db, runner_tick, tool_registry
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -168,19 +169,6 @@ def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
     return tool_registry.ref_names(g.get("body_md") or "")
 
 
-def _instruction_derivee(slug: str) -> str:
-    """L'instruction MINIMALE : « lis l'objet, applique-le ».
-
-    ⚠️ Tranché le 02/09 : l'instruction doit être minime. Une instruction
-    rédigée à la main est un **second domicile du métier** — la même règle vit
-    dans la procédure ET dans l'instruction, et l'une des deux finit par mentir.
-    Une instruction qui POINTE l'objet ne peut pas diverger de lui.
-    """
-    return (f"Lis la procédure `{slug}` et applique-la. Elle fait autorité : "
-            "n'invente rien qu'elle ne dise, et conclus par un bilan bref de ce "
-            "que tu as fait et de ce qui t'a manqué.")
-
-
 def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les déclencheurs sont org-scopés")
@@ -227,7 +215,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             ctx.org_id, ctx.sub, procedure=inp.procedure, cron=inp.cron, tz=tz,
             next_due=runner_tick.next_due(inp.cron, tz), tools=outils,
             project_id=inp.project_id,
-            input=inp.input or _instruction_derivee(inp.procedure),
+            input=inp.input or _instruction.derivee(inp.procedure),
             label=inp.label, max_steps=inp.max_steps)
         return {"trigger": t}
 
