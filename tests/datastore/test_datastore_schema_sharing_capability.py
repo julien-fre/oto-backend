@@ -127,10 +127,27 @@ def test_le_partage_rend_ok_et_ce_qui_a_ete_accorde(monkeypatch, gouvernance):
     assert kw["granted_by"] == "u-1"
 
 
-def test_le_partage_defaut_est_lecriture(monkeypatch, gouvernance):
+def test_le_partage_defaut_est_la_LECTURE(monkeypatch, gouvernance):
+    """ADR 0068 — ce banc enregistrait `"write"` : partager sans rien préciser donnait
+    l'ÉCRITURE. Il n'a jamais défendu ce défaut, il l'a constaté (aucune raison écrite,
+    contrairement au cliquet de `oto_resource`, qui lui reste à `"write"` parce que son
+    schéma servi est figé sur des appelants mesurés).
+
+    « Partager », pour qui le demande, veut dire « qu'il puisse le lire ». Donner
+    l'écriture en plus, c'est accorder ce qu'on n'a pas demandé — et sur un tableau,
+    l'écriture n'ajoute pas un droit, elle en retire un à son propriétaire : celui
+    d'être seul à décider de ce qu'il contient.
+
+    ⚠️ C'est une rupture de comportement pour les appelants de `data_share` et de
+    `POST /api/datastore/namespaces/{ns}/share` : un partage cessera de permettre
+    l'écriture. Le sens du changement est RESTRICTIF — l'effet se voit (un refus
+    d'écriture), il ne se cache pas."""
     monkeypatch.setattr(dsh.ownership, "grant", lambda *a, **k: None)
     assert call("me.datastore.share", path_params=NS,
-                body={"email": "sarah@x.fr"})[1]["permission"] == "write"
+                body={"email": "sarah@x.fr"})[1]["permission"] == "read"
+    # Et l'écriture reste accessible, en le disant.
+    assert call("me.datastore.share", path_params=NS,
+                body={"email": "sarah@x.fr", "permission": "write"})[1]["permission"] == "write"
 
 
 def test_un_email_manquant_est_un_refus_nomme(gouvernance):

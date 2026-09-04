@@ -158,12 +158,12 @@ def _visible_to(row: dict) -> str:
        sert sans login ET le liste dans l'annuaire public ; `'secret'` le sert sur une
        URL non devinable, sans expiration ni rotation. La phrase annonçait « TOUS les
        membres de l'org » sur un projet lisible par n'importe qui.
-    2. **Une proposition sur un projet perso notifie les org_admin.** Un tiers à qui
-       le projet a été partagé en LECTURE et qui écrit une page ne l'écrit pas : il
-       PROPOSE (`docs/writes.py`), et `docs/notify.py` envoie le corps proposé par
-       e-mail à tous les `org_admin` de l'org de contexte. Promettre « ni les
-       administrateurs de ton org » sans cette réserve, c'est promettre faux au moment
-       exact où quelqu'un vérifie."""
+    2. ~~Une proposition sur un projet perso notifiait les org_admin~~ — **corrigé le
+       04/09 même (ADR 0068)** : `docs/notify.py` suit désormais la PROPRIÉTÉ du projet
+       et non son `context_org_id`, donc un projet perso ne prévient que son
+       propriétaire. La réserve que cette phrase avait dû porter quelques heures est
+       retirée : un texte servi qui inquiète pour rien ment autant qu'un texte qui
+       rassure à tort."""
     otype = str(row.get("owner_type") or "user")
     org = row.get("context_org_id")
     # La publication PRIME sur la propriété : dite en tête, avant tout le reste.
@@ -195,10 +195,8 @@ def _visible_to(row: dict) -> str:
                   "ne le voient, ni en liste, ni par recherche, ni en l'ouvrant par son id"
                 + (f" ; il est rangé dans le contexte de l'org {org}, ce qui n'est PAS "
                    "la même chose qu'y être partagé" if org is not None else "")
-                + ". Deux réserves : un opérateur de la plateforme en voit le NOM (jamais "
-                  "le contenu) ; et si tu le partages en lecture, une page PROPOSÉE par "
-                  "la personne à qui tu l'as partagé part par e-mail aux administrateurs "
-                  "de ton org de contexte.")
+                + ". Seul un opérateur de la plateforme en voit le NOM, jamais le "
+                  "contenu.")
     if otype == "org":
         return (prefix + f"TOUS les membres de l'org {row.get('owner_id')} — ce projet "
                 "n'est pas privé")
@@ -845,12 +843,31 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
 
     if inp.op == "copy":
         # Copier un projet qu'on peut LIRE (le sien ou un modèle) → nouveau projet
-        # possédé par l'org active (ADR 0032 §7 B5a). L'original reste intact.
+        # possédé par SOI (ADR 0068). L'original reste intact.
+        # ⚠️ La copie était possédée par l'org active (ADR 0032 §7 B5a), y compris
+        # depuis un projet PERSONNEL : dupliquer son propre travail le publiait à ses
+        # collègues, sans qu'aucun paramètre ne l'ait demandé. Le cas que 0032 visait —
+        # copier un MODÈLE pour l'équipe — se dit maintenant : `owner_type='org'`.
         _require(ownership.can_access(sub, RTYPE, rid, "read"), "forbidden", "Accès refusé.", 403)
         _require(inp.name and inp.name.strip(), "missing_name", "`name` (cible) requis.")
         _require(ctx.org_id is not None, "no_active_org", "Aucune org active.", 400)
+        if inp.owner_type == "org":
+            _require(inp.owner_id, "missing_owner",
+                     "`owner_id` (org) requis pour copier vers une org.")
+            _require(roles.is_org_member(sub, int(inp.owner_id)), "forbidden",
+                     "Tu n'es pas membre de cette org.", 403)
+            cible = ("org", str(inp.owner_id), None)
+        elif inp.owner_type == "group":
+            _require(inp.owner_id, "missing_owner",
+                     "`owner_id` (group) requis pour copier vers une équipe.")
+            _require(roles.can_read_group(sub, int(inp.owner_id)), "forbidden",
+                     "Tu n'es pas membre de cette équipe.", 403)
+            cible = ("group", str(inp.owner_id), None)
+        else:
+            cible = ("user", sub, int(ctx.org_id))
         new_id, warnings = db.duplicate_project(int(inp.project_id), inp.name.strip(),
-                                                "org", str(ctx.org_id), copied_by=sub)
+                                                cible[0], cible[1], copied_by=sub,
+                                                context_org_id=cible[2])
         return {**_view(db.get_project_by_id(new_id), sub),
                 "links": db.list_project_links(new_id), "copied_from": inp.project_id,
                 "warnings": warnings}

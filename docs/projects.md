@@ -167,6 +167,17 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > serveur inchangée). Le hero porte aussi un CTA **« Ajouter à mon Oto »** → deep-link
 > `dashboard.oto.ninja/import?slug=<slug>`.
 >
+> ⚠️ **`op=copy` rend une copie possédée par QUI la fait (ADR 0068, 04/09/2026).** Elle
+> était possédée par l'**org active** (ADR 0032 §7 B5a), y compris en dupliquant un
+> projet PERSONNEL : son propre travail se publiait à ses collègues, sans qu'aucun
+> paramètre ne l'ait demandé. Le cas que 0032 visait — copier un MODÈLE pour l'équipe —
+> n'a pas disparu, il se DIT : `owner_type='org'|'group'` + `owner_id`, gardé par
+> l'appartenance comme `op=create`. Une copie perso garde son `context_org_id` : elle
+> reste rangée dans l'org où on travaille sans y être partagée — sans quoi on aurait
+> remplacé un excès de partage par une disparition. **L'import ci-dessous n'est PAS
+> concerné** : `me.import_project` est REST-only (aucun agent ne l'appelle), et forker
+> dans l'org active y est le geste demandé, par un humain, depuis le dashboard.
+>
 > **« Ajouter à mon Oto » — import d'un projet publié par slug.** Capacité `me.import_project`
 > (REST-only `POST /api/me/projects/import`, `ORG_MEMBER`) : **forke** un projet PUBLIÉ
 > (`mcp_access ∈ {anonymous, secret}`, résolu par `get_project_by_mcp_slug` — le slug non

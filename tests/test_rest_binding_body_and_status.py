@@ -26,7 +26,7 @@ from starlette.responses import JSONResponse
 from starlette.requests import Request
 
 from oto_mcp.capabilities import _rest_adapter
-from oto_mcp.capabilities._types import Capability, RestBinding
+from oto_mcp.capabilities._types import Capability, RestBinding, ResolvedCtx
 
 
 class _RowInput(BaseModel):
@@ -47,7 +47,8 @@ def _exercise(cap, binding, *, method, path_params, body=None, query=b""):
         vus.append(inp)
         return {"ok": True}
 
-    cap = Capability(key=cap, handler=_core, Input=binding[0], authz=lambda raw, inp: raw,
+    cap = Capability(key=cap, handler=_core, Input=binding[0],
+                     authz=lambda raw, inp: ResolvedCtx(sub=raw.sub),
                      rest=binding[1])
     b = cap.rest_bindings()[0]
 

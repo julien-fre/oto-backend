@@ -64,8 +64,24 @@ def _brand_of(sub: Optional[str]) -> str:
 def cr_created(pid: int, proposer_sub: str, *, is_create: bool,
                doc_title: Optional[str]) -> None:
     """Prévient les VALIDATEURS qu'une proposition attend (oto/#6, « les auteurs
-    valident »). Destinataires = org_admins de l'org du projet + le propriétaire si le
-    projet est user-owned, SAUF le proposeur. Best-effort — ne casse jamais la création."""
+    valident »). Best-effort — ne casse jamais la création.
+
+    Destinataires : **qui peut trancher la proposition sur CE projet**, jamais le
+    palier au-dessus. Sur un projet d'org ou d'équipe, ce sont ses `org_admin` ; sur un
+    projet PERSO, c'est son propriétaire et lui seul.
+
+    ⚠️ **Les org_admin étaient notifiés même sur un projet perso** (ADR 0068, corrigé le
+    04/09/2026), et l'e-mail porte le CORPS proposé. Un projet perso partagé en lecture
+    à une personne envoyait donc son contenu à des administrateurs auxquels la réponse
+    de `oto_project` promet, en toutes lettres, que « ni les administrateurs de ton org
+    ne le voient ». La notification ne suivait pas la propriété du projet mais son
+    `context_org_id` — qui est le CONTEXTE de travail, jamais une audience (ADR 0030
+    amendé). C'est la même confusion contexte/visibilité qui a coûté une matinée le
+    même jour, à l'autre bout du produit.
+
+    ⚠️ Un projet perso sans propriétaire joignable ne notifie donc **personne** — et
+    c'est le comportement voulu : mieux vaut une proposition qui attend qu'un corps
+    envoyé à qui n'a pas à le lire."""
     try:
         project = db.get_project_by_id(int(pid)) or {}
         pname = project.get("name")
@@ -75,12 +91,16 @@ def cr_created(pid: int, proposer_sub: str, *, is_create: bool,
         # Une seule URL pour tout le monde envoyait la moitié des validateurs chez un
         # produit qu'ils n'ont pas.
         recips: set[tuple[str, str]] = set()
-        if org is not None:
+        perso = project.get("owner_type") == "user"
+        # Le palier des validateurs SUIT la propriété. `context_org_id` dit où le projet
+        # est rangé, pas qui peut le lire : s'en servir comme audience élargit sans que
+        # personne l'ait demandé (ADR 0068 §1).
+        if org is not None and not perso:
             for m in org_store.list_org_members(int(org)):
                 if m.get("org_role") == "org_admin" and m.get("sub") != proposer_sub:
                     if e := _email_of(m.get("sub")):
                         recips.add((str(m["sub"]), e))
-        if project.get("owner_type") == "user" and project.get("owner_id") != proposer_sub:
+        if perso and project.get("owner_id") != proposer_sub:
             if e := _email_of(project.get("owner_id")):
                 recips.add((str(project["owner_id"]), e))
         if not recips:

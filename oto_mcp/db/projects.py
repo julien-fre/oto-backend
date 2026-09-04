@@ -1330,7 +1330,8 @@ def _provision_tableau(owner_type: str, owner_id: str, src_ref: str, *,
 
 def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str,
                       copied_by: Optional[str] = None,
-                      track_source: bool = False) -> int:
+                      track_source: bool = False,
+                      context_org_id: Optional[int] = None) -> int:
     """Copie un projet en un NOUVEAU projet possédé par `(owner_type, owner_id)` :
     brief + arbre des docs (hiérarchie préservée) + liens (label/role/config) +
     fichiers bruts (copie S3, repartis PRIVÉS). Un lien `procedure` vers une procédure
@@ -1353,9 +1354,13 @@ def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str
 
     # `track_source` = fork « Ajouter à mon Oto » : on garde le pointeur `copied_from`
     # pour un ré-import idempotent. Une copie interne (op=copy) ne le pose pas (défaut).
+    # `context_org_id` = l'org de CONTEXTE d'une copie PERSONNELLE (ADR 0030 amendé,
+    # ADR 0068) : la copie est rangée dans l'org où l'on travaille sans y être
+    # partagée. NULL pour une copie org/group, dont le contexte se dérive de l'owner.
     new_id = create_project(owner_type, owner_id, new_name,
                             brief_md=src.get("brief_md", ""), created_by=copied_by,
-                            copied_from=src_id if track_source else None)
+                            copied_from=src_id if track_source else None,
+                            context_org_id=context_org_id)
 
     # Arbre des docs : copie niveau par niveau, en remappant parent_id src→cible.
     docs = list_docs_for_project(src_id)

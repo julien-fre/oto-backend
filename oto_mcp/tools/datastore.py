@@ -371,20 +371,28 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         return {"namespaces": store.list_namespaces()}
 
-    # ⚠️ La description ci-dessous a dit « unique per user » jusqu'au 04/09/2026, quand
-    # le code créait des tableaux d'ORG depuis toujours. Le récit vit ICI et pas dans le
-    # docstring : une description est une instruction relue à chaque appel, et y CITER
-    # la formule fautive, même pour la démentir, c'est la re-servir au modèle.
+    # ⚠️ Cette description a dit « unique per user » jusqu'au 04/09/2026, quand le code
+    # créait des tableaux d'ORG depuis toujours. Le mensonge est réparé DEUX FOIS ce
+    # jour-là : d'abord le texte (`ab6d0eff`), puis le comportement lui-même (ADR 0068,
+    # le tableau naît personnel) — et c'est le second qui rend le premier obsolète.
+    # Le récit vit ICI et pas dans le docstring : une description est une instruction
+    # relue à chaque appel, et y CITER la formule fautive, même pour la démentir, c'est
+    # la re-servir au modèle.
     # `tests/test_description_dit_le_proprietaire.py` lit le défaut réel dans le code
-    # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse.
+    # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse. C'est lui qui
+    # a refusé de virer au vert quand le défaut a changé, avant que ce texte ne bouge.
     @mcp.tool()
     def data_create_namespace(namespace: str) -> dict:
         """Create a new datastore namespace (PG-backed, schema-free).
 
-        ⚠️ The table is owned by your ACTIVE ORG and readable by EVERY member of it —
-        it is not a personal space. Anything you write into it, they can read. For
-        something only you can see, there is no option on this tool today: use the
-        REST route with `owner: {type: "user"}`, or keep it out of the datastore.
+        The table is PRIVATE: it belongs to you, and no one else can read it — not
+        the other members of your org, not its admins. That is the default and it is
+        never implicit (ADR 0068).
+
+        ⚠️ It used to be owned by your ACTIVE ORG, readable by every member. To share
+        a table with your org or a team, say so: the REST route takes
+        `owner: {type: "org"|"group", id: N}`. Tables created before 2026-09-04 keep
+        the owner they have.
 
         Args:
             namespace: kebab-case identifier, unique per owner (e.g. `timetrack`).
@@ -1089,7 +1097,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_share(
-        namespace: str, email: str, permission: str = "write", remove: bool = False,
+        namespace: str, email: str, permission: str = "read", remove: bool = False,
     ) -> dict:
         """Share (or with `remove=True`, unshare) a namespace with another oto user
         (by email). The recipient accesses it with their own oto account.

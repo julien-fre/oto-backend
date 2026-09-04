@@ -36,8 +36,13 @@ def seams(monkeypatch):
     monkeypatch.setattr(P.db, "update_project",
                         lambda pid, name=None, brief_md=None, is_template=None, icon=None: rec["update"].append((pid, name, brief_md, is_template)))
     rec["copy"] = []
+    # `context_org_id` (ADR 0068) : une copie PERSONNELLE reste rangée dans l'org où
+    # elle a été faite, sans y être partagée. Le stub le RETIENT — un seam qui accepte
+    # le paramètre et l'avale ne prouverait plus que la copie est bien perso.
     monkeypatch.setattr(P.db, "duplicate_project",
-                        lambda src, name, ot, oid, copied_by=None: rec["copy"].append((src, name, ot, oid, copied_by)) or (8, []))
+                        lambda src, name, ot, oid, copied_by=None, context_org_id=None:
+                        rec["copy"].append((src, name, ot, oid, copied_by, context_org_id))
+                        or (8, []))
     monkeypatch.setattr(P.db, "archive_project", lambda pid: rec["archive"].append(pid))
     rec["link"] = []
     rec["unlink"] = []
@@ -341,10 +346,39 @@ def test_list_templates(seams):
 
 
 def test_copy(seams):
+    """ADR 0068 — la copie appartient à qui la fait, plus à l'org active.
+
+    Le banc enregistrait `("org", "42")` : dupliquer son PROPRE projet perso le
+    publiait à ses collègues, sans qu'aucun paramètre ne l'ait demandé. L'ADR 0032 §7
+    B5a visait le cas « copier un MODÈLE pour l'équipe » — il n'a pas disparu, il se
+    dit maintenant (`owner_type='org'`, ci-dessous)."""
     ctx = ResolvedCtx(sub="u1", org_id=42)
     out = P._project(ctx, P.ProjectInput(op="copy", project_id=7, name="  Ma copie  "))
-    assert seams["copy"] == [(7, "Ma copie", "org", "42", "u1")]
+    assert seams["copy"] == [(7, "Ma copie", "user", "u1", "u1", 42)]
     assert out["id"] == 8 and out["copied_from"] == 7 and "links" in out
+
+
+def test_copy_vers_une_org_se_DIT(seams):
+    """Le cas de l'ADR 0032 : copier un modèle pour son équipe. Il reste possible à un
+    agent — l'org est une population nommée, l'élargissement se répare — mais il
+    s'écrit. `context_org_id` est NULL : une copie d'org dérive son contexte de son
+    propriétaire."""
+    ctx = ResolvedCtx(sub="u1", org_id=42)
+    P._project(ctx, P.ProjectInput(op="copy", project_id=7, name="Pour l'équipe",
+                                   owner_type="org", owner_id="42"))
+    assert seams["copy"] == [(7, "Pour l'équipe", "org", "42", "u1", None)]
+
+
+def test_copy_vers_une_org_dont_on_n_est_PAS_membre_est_refusee(seams, monkeypatch):
+    """La même garde que `op=create` : nommer une org ne suffit pas, il faut y être.
+    Sans ça, « explicite » voudrait dire « n'importe où sur simple demande »."""
+    monkeypatch.setattr(P.roles, "is_org_member", lambda sub, oid: False)
+    ctx = ResolvedCtx(sub="u1", org_id=42)
+    with pytest.raises(AuthzDenied) as e:
+        P._project(ctx, P.ProjectInput(op="copy", project_id=7, name="X",
+                                       owner_type="org", owner_id="99"))
+    assert e.value.code == "forbidden"
+    assert seams["copy"] == []
 
 
 def test_copy_needs_read(seams, monkeypatch):
@@ -949,16 +983,16 @@ def test_un_projet_NON_publie_ne_prefixe_rien():
     assert not dit.startswith("⚠️") and "N'IMPORTE QUI" not in dit
 
 
-def test_un_projet_perso_dit_la_reserve_des_PROPOSITIONS():
-    """La promesse « ni les administrateurs de ton org » est fausse sur un chemin
-    précis, et c'est un chemin qu'on emprunte sans le savoir : un tiers à qui on a
-    partagé le projet en LECTURE qui écrit une page ne l'écrit pas, il PROPOSE
-    (`docs/writes.py`) — et `docs/notify.py` envoie le CORPS proposé par e-mail à tous
-    les `org_admin` de l'org de contexte.
+def test_un_projet_perso_ne_porte_PLUS_la_reserve_des_propositions():
+    """La réserve a vécu quelques heures, le 04/09 : `docs/notify.py` envoyait le corps
+    d'une page proposée aux `org_admin` de l'org de CONTEXTE, même pour un projet
+    perso. Le défaut corrigé (ADR 0068), la phrase doit repartir — sinon elle inquiète
+    pour un chemin qui n'existe plus, et un texte servi qui inquiète pour rien ment
+    autant qu'un texte qui rassure à tort.
 
-    Dire la réserve, plutôt que retirer la promesse : le cas nominal reste vrai, et
-    c'est lui qu'on lit 99 fois sur 100."""
+    ⚠️ Ce banc est le pendant de `test_une_proposition_sur_un_projet_PERSO_n_alerte_pas_
+    les_org_admin` (tests/test_docs.py) : si quelqu'un remettait la notification, c'est
+    LÀ que ça rougirait — ici on garde seulement le texte aligné sur le code."""
     dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
     assert "administrateurs de ton org" in dit, "le cas nominal tient toujours"
-    assert "PROPOSÉE" in dit and "e-mail" in dit, "la réserve doit nommer le geste"
-    assert "partages en lecture" in dit, "et sa condition — sinon elle inquiète pour rien"
+    assert "PROPOSÉE" not in dit and "e-mail" not in dit

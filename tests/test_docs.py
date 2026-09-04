@@ -312,3 +312,57 @@ def test_resolve_change_reject(seams):
     D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=False))
     assert seams["update"] == []                                  # rien appliqué
     assert seams["cr_resolve"] == [(5, "rejected", "u1")]
+
+
+# ── ADR 0068 : la notification suit la PROPRIÉTÉ, pas le contexte ─────────────
+
+def _perso(monkeypatch, owner="alice", membres=None):
+    """Projet PERSO rangé dans le contexte de l'org 7, avec des admins dans cette org."""
+    monkeypatch.setattr(ownership, "can_access",
+                        lambda sub, t, rid, want="read": want == "read")
+    monkeypatch.setattr(db, "get_project_by_id",
+                        lambda pid: {"id": pid, "name": "P", "context_org_id": 7,
+                                     "owner_type": "user", "owner_id": owner})
+    monkeypatch.setattr(org_store, "list_org_members", lambda org: membres if membres
+                        is not None else [{"sub": "admin1", "org_role": "org_admin"}])
+    monkeypatch.setattr(db, "get_user", lambda sub: {
+        "alice": {"email": "alice@x.fr", "name": "Alice"},
+        "admin1": {"email": "a1@x.fr", "name": "admin1"},
+        "u1": {"email": "prop@x.fr", "name": "u1"},
+    }.get(sub, {}))
+    sent = []
+    monkeypatch.setattr(email, "send_change_request_email",
+                        lambda to, **k: sent.append(to) or True)
+    return sent
+
+
+def test_une_proposition_sur_un_projet_PERSO_n_alerte_pas_les_org_admin(seams, monkeypatch):
+    """Le cas qui manquait, et il n'était pas théorique : l'e-mail porte le CORPS
+    proposé. Un projet perso partagé en lecture à une personne envoyait donc son
+    contenu à des administrateurs auxquels `oto_project` promet, en toutes lettres,
+    que « ni les administrateurs de ton org ne le voient ».
+
+    La cause : la notification lisait `context_org_id`, qui dit où le projet est RANGÉ
+    et jamais qui peut le lire (ADR 0030 amendé). Même confusion contexte/visibilité
+    qu'à l'autre bout du produit, le même jour."""
+    sent = _perso(monkeypatch)
+    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
+    assert "a1@x.fr" not in sent, "un org_admin n'a rien à voir dans un projet perso"
+    assert sent == ["alice@x.fr"], "le propriétaire, et lui seul, tranche chez lui"
+
+
+def test_un_projet_PERSO_sans_proprietaire_joignable_ne_notifie_PERSONNE(seams, monkeypatch):
+    """⚠️ Le comportement voulu, pas un trou : mieux vaut une proposition qui attend
+    qu'un corps envoyé à qui n'a pas à le lire. Le repli d'hier — « à défaut, préviens
+    les admins » — est exactement ce qu'on retire."""
+    sent = _perso(monkeypatch, owner="fantome")
+    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
+    assert sent == []
+
+
+def test_le_PROPOSEUR_proprietaire_ne_se_notifie_pas_lui_meme(seams, monkeypatch):
+    """Inchangé, et vérifié ici parce que la branche a bougé : proposer chez soi
+    n'envoie pas d'e-mail à soi-même."""
+    sent = _perso(monkeypatch, owner=CTX.sub)
+    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
+    assert sent == []

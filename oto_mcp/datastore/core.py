@@ -1041,12 +1041,19 @@ class DatastorePg(SchemaOpsMixin):
         return list(out.values())
 
     def _default_owner(self) -> tuple[str, str]:
-        """Owner d'un namespace créé sans précision = l'**org ACTIVE** (suppression du
-        perso ; `current_org` toujours posé). Filet `user` si jamais None (ne devrait
-        plus arriver)."""
-        from .. import access
-        oid = access.current_org(self.sub)
-        return ("org", str(oid)) if oid is not None else ("user", self.sub)
+        """Owner d'un namespace créé sans précision = **la personne** (ADR 0068).
+
+        ⚠️ C'était l'**org active** — « suppression du perso », un choix assumé du temps
+        où l'appelant était un humain devant un écran, qui voit ce qu'il crée et où.
+        L'appelant est aujourd'hui un agent qui ne lit que le nom du verbe : le geste le
+        plus banal du produit posait du contenu lisible de toute l'org, sous une
+        description qui annonçait « unique per user ».
+
+        Le paramètre reste : `owner_type='org'` (ou `'group'`) donne un classeur
+        partagé, et c'est désormais une phrase qu'on écrit plutôt qu'un défaut qu'on
+        subit. Les tableaux existants ne bougent pas — la décision porte sur ce qui
+        NAÎT."""
+        return ("user", self.sub)
 
     def create_namespace(
         self, namespace: str, *, owner_type: Optional[str] = None, owner_id: Optional[str] = None,

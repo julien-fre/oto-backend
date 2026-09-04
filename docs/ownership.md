@@ -59,7 +59,14 @@ sont des reliques nullable, **DROP différé** (Phase H) après cutover prod vé
 > `RESOURCE_GOVERN`. Surface unifiée : **`oto_resource op=share`** accepte deux axes —
 > **audience** (`person`/`team`/`org` → grant ; `public`/`secret` → publication projet ;
 > `private` → dépublier) × **rôle** ; l'ancien `permission` read/write est accepté en entrée
-> (mappé). Rétro-compat : backfill `role` depuis `permission` au boot (jamais `manager`, qui
+> (mappé). ⚠️ **Son défaut diverge entre les deux surfaces, à dessein (ADR 0068)** :
+> `oto_resource` garde `"write"` — son schéma servi est un **cliquet** (empreinte JSON
+> figée sur des appelants mesurés au journal le 01/09), et un défaut qui change y casse
+> en production, chez quelqu'un d'autre, sans trace ; `oto_resource_v2` prend `"read"`,
+> comme le veut « privé par défaut ». C'est le sens même de la duplication (ADR
+> 0019/0050 : un contrat servi ne se durcit pas en place, il se double). Le partage de
+> tableau (`data_share`, route REST), lui, n'a pas de cliquet : son défaut passe bien à
+> `read`. Rétro-compat : backfill `role` depuis `permission` au boot (jamais `manager`, qui
 > est un acte explicite). Tests purs + **tripwire gouvernance** (`test_ownership.py` :
 > un lecteur/éditeur/inconnu ne gouverne JAMAIS). Front : sélecteur de rôle
 > lecteur/éditeur/gérant (`lib/resourceRole.ts`).

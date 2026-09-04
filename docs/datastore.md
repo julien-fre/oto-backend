@@ -18,6 +18,23 @@ adr:
 
 # Datastore (spine natif PG, ADR 0016)
 
+> ⚠️ **Un tableau créé sans préciser son propriétaire naît PERSONNEL** (ADR 0068,
+> 04/09/2026). Il naissait possédé par l'**org active** — « suppression du perso », un
+> choix assumé du temps où l'appelant était un humain devant un écran, qui voit ce
+> qu'il crée et où. L'appelant est aujourd'hui un agent qui ne lit que le nom du
+> verbe : le geste le plus banal du produit posait du contenu lisible de toute l'org,
+> sous une description servie qui annonçait « unique **per user** ». La face REST
+> faisait déjà l'inverse (`owner.get("type") or "user"`) **en annonçant « classeur
+> d'org par défaut »** — deux propriétaires pour un seul verbe, chaque texte affirmant
+> le contraire de sa propre face. Les deux convergent maintenant sur `user` ; partager
+> se dit (`owner: {type: "org"|"group", id: N}`), et **les tableaux existants ne
+> bougent pas**. `data_share` suit la même règle : son défaut passe de `write` à
+> `read`, parce que « partager » veut dire « qu'il puisse le lire » — sur un tableau,
+> l'écriture n'ajoute pas un droit, elle en retire un à son propriétaire.
+> Garde : `tests/test_description_dit_le_proprietaire.py` lit le défaut **dans le
+> code** puis exige que le texte servi le nomme — jamais l'inverse, sinon il se
+> périmerait en restant vert.
+
 Stockage structuré léger par user, **substrat PostgreSQL natif** (plus Google
 Sheets — ADR 0016). Un namespace = une ligne `user_datastores` ; les rows vivent
 dans `datastore_rows` (un dict **JSONB** par row, types préservés nativement,
