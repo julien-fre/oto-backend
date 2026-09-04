@@ -61,7 +61,20 @@ _LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "user": SUB_ONLY, "org": ORG_MEMBER_
 # ajoute une version et `from_version` restaure la précédente. Le risque d'une procédure
 # qui pilote un agent se traite là — par les versions et par le digest qui dit ce qui a
 # changé — et non en fermant la porte à ceux qui s'en servent.
-_ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org"), "user": SUB_ONLY, "org": ORG_ADMIN_OPT("org"),
+# ⚠️ Le refus d'écriture NOMME les autres chemins (04/09/2026). Mesuré sur un cas
+# réel, au journal des appels : une membre d'org tente d'écrire une procédure le
+# 31/08, réessaie le 02/09, et ne trouve le palier ÉQUIPE que le 04/09 — quatre jours,
+# trois refus, pour un geste qui lui était ouvert depuis le début. « Réservé à un
+# administrateur » dit qui a le droit ; il ne dit pas ce qu'elle, elle cherchait à
+# faire. Un refus qui ne porte pas le geste n'arrête pas la demande, il la déplace.
+_AUTRES_PALIERS = (
+    "Tu n'as pas besoin de l'être pour écrire une procédure : passe `scope='group'` "
+    "(+ `group=<id>` si tu es dans plusieurs équipes) pour celle de ton ÉQUIPE — y "
+    "écrire demande d'en être MEMBRE, pas chef. `oto_procedure(op='list')` montre "
+    "celles que tu vois déjà."
+)
+_ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org", _AUTRES_PALIERS), "user": SUB_ONLY,
+                 "org": ORG_ADMIN_OPT("org", _AUTRES_PALIERS),
                  "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
 # `delete` reste au **chef d'équipe** : il emporte la procédure ET tout son historique,
 # sans corbeille — rien ne le défait. Un geste destructeur n'est pas un geste de travail.

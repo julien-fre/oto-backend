@@ -601,3 +601,35 @@ def test_le_palier_perso_ne_porte_AUCUNE_org(monde):
     _appel("u-membre", op="set", scope="user", slug="sans-org", body_md=_CORPS)
     ligne = org_store.get_instruction("user", "u-membre", "sans-org")
     assert ligne["org_id"] is None
+
+
+def test_le_refus_d_ecriture_NOMME_le_palier_equipe(monde):
+    """Le cas réel du 04/09, lu au journal des appels d'une org cliente.
+
+    Une membre d'org tente d'écrire une procédure le 31/08 → « Réservé à un org_admin
+    de l'org #35 ». Elle réessaie le 02/09 → même mur, autre formulation. Elle ne
+    trouve le palier ÉQUIPE — qui lui était ouvert depuis le début — que le 04/09.
+    Quatre jours, trois refus, pour un geste permis.
+
+    ⚠️ Le défaut est décrit MOT POUR MOT dans la docstring de `_refus_org_admin`,
+    écrite lors du lot #681 qui l'avait relevé : « il cherchait, lui, un palier
+    d'écriture autre que l'org ». On avait unifié la phrase des quatre refus sans lui
+    donner d'issue — la moitié du travail, et c'est la moitié qui se voit à l'usage."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel("u-membre", op="set", slug="au-niveau-org", body_md=_CORPS)
+    msg = e.value.message
+    assert "administrateur" in msg, "la cause reste dite"
+    assert "scope='group'" in msg, "et l'ISSUE aussi, c'est tout l'objet"
+    assert "MEMBRE, pas chef" in msg, (
+        "sans ça, elle croit qu'il faut être chef d'équipe — le geste reste hors "
+        "de portée pour une raison inventée")
+
+
+def test_le_refus_du_palier_EQUIPE_ne_renvoie_pas_vers_l_equipe(monde):
+    """⚠️ Le garde-fou du garde-fou. Le texte d'issue est posé sur la règle ORG : il ne
+    doit pas apparaître quand c'est justement l'équipe qui refuse — un refus qui
+    propose ce qu'on vient de tenter fait tourner en rond."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel("u-tiers", op="set", scope="group", group=monde["equipe"],
+               slug="pas-la-mienne", body_md=_CORPS)
+    assert "scope='group'" not in e.value.message
