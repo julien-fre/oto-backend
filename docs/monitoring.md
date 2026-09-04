@@ -419,6 +419,17 @@ backend). Env box : `OTO_SENTRY_{DSN,ENV,RELEASE,TRACES_SAMPLE_RATE}` ; région 
 `de.sentry.io` (org slug `otomata-vz`). Surveillance/triage = guide oto
 `surveillance-erreurs` (token API en SOPS `sentry_api_token`).
 
+⚠️ **Le middleware est le SEUL capteur — deux copies coupées à l'init (oto-backend#869,
+2026-09-04)**, mesurées à un triplet exact par erreur (528/528/528, 293/293/293). (1)
+`sentry_sdk.integrations.mcp.MCPIntegration` s'AUTO-ACTIVE dès `mcp>=1.15.0` (installé :
+1.27.2) et capturait la MÊME `McpError` **sans** le tag `mcp.tool` ni l'utilisateur,
+sans passer par `before_send` — d'où une issue Sentry au titre trompeur « Erreur interne
+du serveur » ; coupée via `disabled_integrations=[MCPIntegration()]`. (2) La
+`LoggingIntegration` relayait `logger.exception("Error calling tool …")` de fastmcp
+(logger `fastmcp.server.server`) — même événement que le middleware, sans rien ajouter ;
+coupée via `ignore_logger("fastmcp.server.server")`. Les deux coupes ne perdent aucune
+information : le middleware capture déjà tout ce qui n'est pas une erreur gérée.
+
 ⚠️ **`include_local_variables=False` n'est pas un doublon de `send_default_pii=False`, et
 sans lui cette section était FAUSSE** (#564, corrigé le 2026-08-29). Elle affirmait
 « jamais les args d'appel dans l'event » : `send_default_pii` ne couvre que ce que le SDK
