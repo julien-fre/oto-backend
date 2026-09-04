@@ -16,13 +16,20 @@ en base sous `org_id=0`.
 (ré-installée depuis, à la main) : la migration est donc une FUSION dans
 presque tous les cas, pas un simple repointage.
 
-Politique de fusion — IDENTIQUE à `connector_selection.rename_selection` (le
-plus PERMISSIF gagne, jamais l'inverse) : si le connecteur est déjà
-sélectionné sous l'org réelle, la ligne `org_id=0` est jetée après avoir
-éventuellement RELEVÉ l'état existant en `active` (si l'une des deux
-l'était — un split/renommage/fusion n'est jamais l'occasion de DÉSINSTALLER
-quelque chose) ; sinon la ligne `org_id=0` est simplement repointée sur l'org
-réelle, avec son état inchangé.
+Politique de fusion — **corrigée le 2026-09-04** (relevée par le superviseur
+avant le go d'Alexis) : quand le connecteur est déjà sélectionné sous l'org
+réelle, **c'est son état à LUI qui gagne, toujours** — la ligne `org_id=0` est
+jetée sans jamais toucher l'état réel. La première version reprenait la
+politique de `connector_selection.rename_selection` (« le plus permissif
+gagne », état ACTIVE prioritaire) : ça convient à un renommage de connecteur
+(même personne, même intention, un split n'est pas une occasion de
+désinstaller), mais PAS ici — le legacy `org_id=0` n'est pas une intention
+récente, c'est un fantôme invisible depuis potentiellement des mois. Une
+pause posée sciemment sous l'org réelle est le geste le plus RÉCENT et le
+plus délibéré des deux ; un connecteur relevé en `active` par un fantôme
+qu'on ne pouvait même pas voir serait réveillé sans qu'on l'ait demandé. Sinon
+(rien sous l'org réelle) : la ligne `org_id=0` est simplement repointée, avec
+son état inchangé — il n'y a alors rien avec quoi arbitrer.
 
     ssh -i ~/.ssh/alexis root@<box> \\
       "cd /opt/oto-mcp && ./.venv/bin/python -m scripts.repoint_stale_org0_selection"
@@ -35,7 +42,6 @@ from __future__ import annotations
 
 import sys
 
-from oto_mcp.connectors.selection import ACTIVE
 from oto_mcp.db import _connect
 
 
@@ -57,7 +63,7 @@ def _candidates(conn) -> list[dict]:
 
 
 def main(apply: bool) -> int:
-    total_repointees = total_fusionnees = total_relevees = 0
+    total_repointees = total_fusionnees = 0
     with _connect() as conn:
         candidates = _candidates(conn)
         print(f"{len(candidates)} compte(s) avec une sélection sous l'ancien org_id=0\n")
@@ -65,23 +71,19 @@ def main(apply: bool) -> int:
         for row in candidates:
             sub, home = row["sub"], int(row["home"])
             stale = conn.execute(
-                "SELECT connector, state FROM user_selected_connectors "
+                "SELECT connector FROM user_selected_connectors "
                 "WHERE sub = %s AND org_id = 0", (sub,)).fetchall()
-            reelles = {r["connector"]: r["state"] for r in conn.execute(
-                "SELECT connector, state FROM user_selected_connectors "
+            reelles = {r["connector"] for r in conn.execute(
+                "SELECT connector FROM user_selected_connectors "
                 "WHERE sub = %s AND org_id = %s", (sub, home)).fetchall()}
 
-            repointees, fusionnees, relevees = [], [], []
+            repointees, fusionnees = [], []
             for s in stale:
-                name, stale_state = s["connector"], s["state"]
+                name = s["connector"]
                 if name in reelles:
+                    # L'état réel gagne TOUJOURS : on jette le fantôme sans le
+                    # toucher, jamais l'inverse (cf. docstring du module).
                     fusionnees.append(name)
-                    if stale_state == ACTIVE and reelles[name] != ACTIVE:
-                        relevees.append(name)
-                        conn.execute(
-                            "UPDATE user_selected_connectors SET state = %s "
-                            "WHERE sub = %s AND org_id = %s AND connector = %s",
-                            (ACTIVE, sub, home, name))
                     conn.execute(
                         "DELETE FROM user_selected_connectors "
                         "WHERE sub = %s AND org_id = 0 AND connector = %s",
@@ -94,13 +96,12 @@ def main(apply: bool) -> int:
                         (home, sub, name))
 
             print(f"  {sub} -> org {home} : {len(repointees)} repointée(s), "
-                  f"{len(fusionnees)} fusionnée(s) ({len(relevees)} relevée(s) en actif)")
+                  f"{len(fusionnees)} fusionnée(s) (état réel inchangé)")
             total_repointees += len(repointees)
             total_fusionnees += len(fusionnees)
-            total_relevees += len(relevees)
 
         print(f"\n{total_repointees} ligne(s) repointée(s), {total_fusionnees} fusionnée(s) "
-              f"({total_relevees} relevée(s) en actif)")
+              "(aucun état réel modifié)")
         if apply:
             conn.commit()
             print("commité.")
