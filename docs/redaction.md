@@ -237,12 +237,32 @@ middlewares). Les deux bornes sont des **échecs de natures différentes** :
 `tests/middleware/test_toon_text_channel.py` fait traverser la chaîne RÉELLE et prouve
 les deux, parce qu'un banc qui n'appellerait que l'encodeur n'en dirait rien.
 
+⚠️ **Le détour par `oto_call` est couvert, lui aussi** — et il ne va pas de soi. Ce
+tool atteint sa cible par `Tool.run`, donc HORS chaîne de middleware, ce qui a obligé
+la rédaction à se ré-appliquer à la main dans son handler (`tools/meta.py`) : elle a
+besoin du namespace de la CIBLE, que la chaîne ne voit pas. L'encodage n'a pas ce
+besoin — il lit le canal texte qui SORT du handler, quel que soit ce qui l'a produit.
+Le banc le prouve en rendant depuis un handler un `ToolResult` déjà bâti, la forme
+exacte que rend `oto_call`.
+
 ### Le canal structuré n'est pas touché
 
 `structuredContent` garde son JSON pour les clients qui parsent, comme le fait déjà le
-rendu du vide. **Reste ouvert, et à MESURER** : si un client donne aussi ce canal au
-modèle, la donnée part deux fois et le gain est nul. Le couper à l'aveugle casserait
-les clients qui en dépendent pour un bénéfice supposé.
+rendu du vide. Ce qu'en fait le client décide de la **taille** du gain — et ça se
+BORNE, ça ne se suppose pas :
+
+| Le client donne au modèle | Avant | Après | Gain |
+|---|---|---|---|
+| `content` seul | JSON | TOON | celui du tableau ci-dessus |
+| les deux canaux | JSON + JSON | TOON + JSON | environ la moitié |
+
+Le plancher est donc « pas pire qu'aujourd'hui », par construction. Ce qui reste à
+mesurer est lequel des deux cas on est, et **ça se lit chez le client** : le serveur ne
+journalise pas la taille de ce qu'il rend (`calllog.py` ne sérialise même pas le canal
+structuré), donc aucune lentille de monitoring ne le dira. Protocole : même requête,
+drapeau éteint puis allumé, on compare le contexte consommé côté client. Couper le
+canal structuré à l'aveugle casserait les clients qui en dépendent pour un bénéfice
+supposé.
 
 ### L'encodeur
 

@@ -22,6 +22,8 @@ import json
 from _mcp_app import static_mcp as _test_mcp
 
 from fastmcp import Client, FastMCP
+from fastmcp.tools.tool import ToolResult
+from mcp.types import TextContent
 from oto.tools.common import FieldFilter
 
 from oto_mcp import redaction
@@ -148,3 +150,28 @@ def test_une_erreur_n_est_pas_reecrite(monkeypatch):
             return await c.call_tool("recherche", {}, raise_on_error=False)
 
     assert asyncio.run(appel()).is_error
+
+
+# ── Le détour par `oto_call` ────────────────────────────────────────────────────
+
+def test_un_resultat_deja_emis_par_le_handler_est_reecrit(monkeypatch):
+    """La forme que rend `oto_call` traverse quand même l'encodage.
+
+    `oto_call` atteint sa cible par `Tool.run`, donc HORS chaîne de middleware — ce
+    qui a obligé la rédaction à se ré-appliquer à la main dans le handler, parce
+    qu'elle a besoin du namespace de la CIBLE, que la chaîne ne voit pas (elle voit
+    `oto_call`). L'encodage, lui, ne dépend d'aucun namespace : il lit le canal texte
+    qui sort du handler, quel que soit ce qui l'a produit. Ce test le PROUVE au lieu
+    de le déduire, en rendant depuis le handler un `ToolResult` déjà bâti, la forme
+    exacte que rend `oto_call` (cf. `redaction.rebuild_result`).
+    """
+    _allumer(monkeypatch)
+
+    def recherche() -> ToolResult:
+        brut = json.dumps(TABLE, ensure_ascii=False)
+        return ToolResult(content=[TextContent(type="text", text=brut)],
+                          structured_content=TABLE)
+
+    texte, structure = _servir(_banc(recherche))
+    assert texte.startswith("rows[40]{id,nom,statut,compte}:")
+    assert structure == TABLE

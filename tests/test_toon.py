@@ -215,3 +215,13 @@ def test_un_float_entier_garde_sa_decimale():
     """Même origine : JavaScript n'a qu'un type de nombre et écrit `2` pour `2.0`."""
     rendu = toon.encode({"rows": [{"v": 2.0}]})
     assert rendu.splitlines()[1] == "  2.0"
+
+
+def test_une_ligne_aux_cles_reordonnees_suit_l_en_tete():
+    """Sortie de la référence, verbatim : les colonnes viennent de la PREMIÈRE ligne
+    et chaque cellule se lit par son nom, pas par sa position. Deux lignes portant les
+    mêmes clés dans un ordre différent forment donc un seul bloc, correctement aligné —
+    et non un refus. Vérifié contre la référence, pas supposé."""
+    assert toon.encode({"rows": [{"a": 1, "b": 2}, {"b": 3, "a": 4}]}) == (
+        "rows[2]{a,b}:\n  1,2\n  4,3"
+    )

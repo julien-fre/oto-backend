@@ -30,10 +30,23 @@ marge : le cas défavorable ne se produit pas, il se refuse.
   la décision doit dépendre de l'org.
 
 **Le canal structuré n'est pas touché.** `structuredContent` garde son JSON pour les
-clients qui parsent, comme le fait déjà le rendu du vide. Reste ouvert, et à MESURER
-avant d'y toucher : si un client donne aussi ce canal au modèle, la donnée part deux
-fois et le gain est nul. Le couper à l'aveugle casserait les clients qui en dépendent
-pour un bénéfice supposé — c'est exactement le raisonnement qu'on refuse ailleurs.
+clients qui parsent, comme le fait déjà le rendu du vide. Ce que fait le client de ce
+second canal décide de la TAILLE du gain, et le raisonnement se BORNE, il ne se
+suppose pas — deux cas, et aucun des deux ne régresse :
+
+- le client ne donne que `content` au modèle : le gain est celui qu'on mesure ;
+- le client lui donne les DEUX : il lisait déjà la même donnée en double (la spec MCP
+  demande le JSON sérialisé dans `content` en plus du structuré). On passait alors
+  JSON + JSON, on passe TOON + JSON. Le gain se réduit environ de moitié, il ne
+  disparaît pas.
+
+Le plancher est donc « pas pire qu'aujourd'hui », par construction et non par pari.
+Ce qui reste à mesurer est l'écart entre ces deux cas, et ça se lit chez le CLIENT :
+le serveur ne journalise pas la taille de ce qu'il rend (`calllog.py` ne sérialise
+même pas le structuré), donc aucune lentille de monitoring ne le dira. Protocole :
+même requête, drapeau éteint puis allumé, on compare le contexte consommé côté client.
+Couper le canal structuré à l'aveugle casserait les clients qui en dépendent pour un
+bénéfice supposé — c'est exactement le raisonnement qu'on refuse ailleurs.
 
 **Inerte par défaut** : `OTO_TOON_TEXT_CHANNEL=1` l'allume. Le format que lit l'agent
 n'est pas un détail d'implémentation, et ça s'éprouve sur preprod avant la prod.
