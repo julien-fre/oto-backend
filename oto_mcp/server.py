@@ -653,6 +653,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None, *,
         CallContextMiddleware(_mcp_adapter.reserved_org_tool_names(_cap_registry.CAPABILITIES))
     )
 
+    # 2 bis. Canal texte en TOON quand la charge y gagne (inerte sans
+    # `OTO_TOON_TEXT_CHANNEL=1`). Coincé ici et nulle part ailleurs : plus EXTERNE que
+    # la rédaction, dont l'`extract_payload` ne sait pas relire du TOON — sous elle,
+    # une policy existante ne s'appliquerait plus et la sortie partirait NON RÉDIGÉE,
+    # un échec ouvert ; plus INTERNE qu'`EmptyResult`, qui juge le vide en relisant le
+    # texte en JSON et deviendrait aveugle. Sous `CallContext`, dont la ContextVar est
+    # encore posée si la décision doit un jour dépendre de l'org.
+    from .middleware.toon import ToonTextChannelMiddleware
+    instance.add_middleware(ToonTextChannelMiddleware())
+
     # 3. Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
     # politique de l'org active — sous le contexte d'appel (lit la bonne org), au-dessus
     # de tout le reste (retouche le résultat final en sortie).

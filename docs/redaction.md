@@ -13,7 +13,10 @@ description: >-
   org.field_filters.preview, REST POST /api/orgs/{id}/field-filters/{service}/preview)
   et le moteur FieldFilter d'oto-core (mask/pseudonym/generalize/hash/drop). Porte
   enfin la règle de rendu du VIDE (EmptyResultMiddleware) : un résultat sans aucun
-  résultat se sert au modèle en PHRASE dans le canal texte, jamais en structure nue.
+  résultat se sert au modèle en PHRASE dans le canal texte, jamais en structure nue,
+  et l'encodage TOON du canal texte (ToonTextChannelMiddleware), décidé par CHARGE et
+  jamais par outil : on encode, on compare la longueur, et le JSON reste si le
+  tabulaire ne raccourcit pas.
   À lire pour configurer ou étendre la rédaction de PII dans une org, ou pour toucher
   à la couche qui met en forme le résultat servi à l'agent.
 ---
@@ -182,9 +185,81 @@ avoir été retirée. Contrat figé par `tests/middleware/test_middleware_order.
 avec la chaîne MCP (`_rest_adapter` → `_json`), et continue de servir la structure
 vide aux clients qui parsent.
 
+## Le canal TEXTE en TOON quand ça raccourcit
+
+`ToonTextChannelMiddleware` réécrit le canal texte en **TOON** (Token-Oriented Object
+Notation, spec v4.1) quand la charge y gagne. TOON déclare les colonnes UNE fois puis
+écrit une ligne par enregistrement : sur une liste d'objets plats et uniformes, il
+retire le nom de chaque colonne réécrit à chaque ligne, qui est le poste dominant d'un
+JSON de liste.
+
+**Inerte par défaut** — `OTO_TOON_TEXT_CHANNEL=1` l'allume. Ce que lit l'agent n'est
+pas un détail d'implémentation : ça s'éprouve sur preprod avant la prod.
+
+### La décision se prend par CHARGE, jamais par outil
+
+Mesuré le 08/09/2026 sur des charges réelles, à l'encodeur de référence :
+
+| Charge | Gain |
+|---|---|
+| Relevé de monitoring (champs courts, lignes uniformes) | 33 % |
+| Page de recherche de profils, déjà projetée en lignes plates | 34 % |
+| Table à prose, uniformisée | 12,5 % |
+| Table à prose, telle quelle | **−7,6 %** |
+| Corps markdown, enregistrement seul | 0 % à 4 % |
+
+Deux tables du **même outil** tombent donc de part et d'autre de n'importe quel seuil,
+et le cas défavorable n'est pas neutre : il RALLONGE la sortie. Une seule ligne à qui
+il manque une colonne fait basculer tout le bloc en forme de liste, plus verbeuse que
+le JSON qu'elle remplace — et rien dans la réponse ne le signale.
+
+D'où `toon.choisir()` : on encode, on compare les longueurs, on ne remplace que si le
+TOON est plus court d'au moins 15 %. *Une liste blanche d'outils aurait embarqué la
+régression avec le gain*, et l'aurait embarquée en silence.
+
+⚠️ **On n'uniformise pas une liste qui ne l'est pas.** Compléter les colonnes
+manquantes à `null` ferait voir à l'agent des colonnes que la donnée ne porte pas, et
+la mesure dit que ça ne rachète pas le format de toute façon (12,5 %, sous le seuil).
+Une liste non uniforme est refusée, et son JSON part inchangé.
+
+### La place dans la chaîne est le correctif, pas un rang
+
+Entre `CallContext` et `FieldRedaction` (cf. `docs/conventions.md` §Ordre des
+middlewares). Les deux bornes sont des **échecs de natures différentes** :
+
+- **plus EXTERNE que la rédaction.** Sous elle, `extract_payload` ne saurait pas
+  relire du TOON : elle rendrait `None`, une policy existante cesserait de s'appliquer,
+  et la sortie partirait **NON RÉDIGÉE**. Un échec ouvert, pas fermé.
+- **plus INTERNE que `EmptyResult`**, qui juge le vide en relisant le texte en JSON —
+  un vide rendu en TOON le rendrait aveugle, et la phrase ne partirait plus. On ne
+  touche donc jamais un résultat vide.
+
+`tests/middleware/test_toon_text_channel.py` fait traverser la chaîne RÉELLE et prouve
+les deux, parce qu'un banc qui n'appellerait que l'encodeur n'en dirait rien.
+
+### Le canal structuré n'est pas touché
+
+`structuredContent` garde son JSON pour les clients qui parsent, comme le fait déjà le
+rendu du vide. **Reste ouvert, et à MESURER** : si un client donne aussi ce canal au
+modèle, la donnée part deux fois et le gain est nul. Le couper à l'aveugle casserait
+les clients qui en dépendent pour un bénéfice supposé.
+
+### L'encodeur
+
+`oto_mcp/toon.py` — encodage seul, pas de décodeur (oto écrit du TOON, il n'en relit
+jamais ; ce qui revient d'un client reste du JSON). Il n'écrit que la forme
+**tabulaire** et **refuse** tout le reste en rendant `None`, ce qui laisse le JSON en
+place — correct par construction. Les règles de citation ont été dérivées par
+**différentiel contre l'implémentation de référence** (`@toon-format/toon` 4.1.1), pas
+d'après la prose de la spec, et les chaînes attendues des tests en sortent : il y avait
+six règles à deviner, dont trois contre-intuitives (`|` passe nu, `-` ne se cite qu'en
+tête, `.5` n'est pas un nombre).
+
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
   **rendu du vide**), `middleware/field_redaction.py` + `middleware/empty_result.py`,
+  `toon.py` + `middleware/toon.py` (**canal texte en TOON**, inerte sans
+  `OTO_TOON_TEXT_CHANNEL=1`),
   `connectors/schema_store.py`,
   `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connectors/field_schema.py`
   (curé, libellés), `capabilities/orgs/field_filters.py` (get/set/preview), `db.py`

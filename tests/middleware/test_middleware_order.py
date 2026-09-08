@@ -14,6 +14,10 @@ invariants gardés ici :
   donc tourner APRÈS tout ce qui réémet le payload en JSON dans le canal texte (la
   rédaction, l'écho de compte). Plus interne, la structure qu'il vient de retirer du
   texte y serait rétablie par le middleware suivant (oto#32).
+- `ToonTextChannelMiddleware` entre les deux derniers : plus EXTERNE que la rédaction,
+  dont l'`extract_payload` ne sait pas relire du TOON (sous elle, une policy existante
+  cesserait de s'appliquer et la sortie partirait NON RÉDIGÉE — un échec OUVERT), et
+  plus INTERNE qu'`EmptyResult`, qui juge le vide en relisant le texte en JSON.
 - `CallContextMiddleware` sous lui — sa ContextVar `_CALL_ORG` doit rester posée
   pendant que la rédaction ET le calllog (plus internes… donc ajoutés après) relisent
   `current_org`. Ajouté ailleurs, un appel `_org=` est rédigé/audité sous l'org MAISON
@@ -35,6 +39,7 @@ OURS = [
     "ToolAliasMiddleware",
     "EmptyResultMiddleware",
     "CallContextMiddleware",
+    "ToonTextChannelMiddleware",
     "FieldRedactionMiddleware",
     "ErrorEnvelopeMiddleware",
     "UserDisabledToolsMiddleware",
@@ -51,4 +56,27 @@ def test_mcp_middleware_order_contract():
     assert names == OURS, (
         f"Ordre des middlewares modifié : {names}. Premier ajouté = plus EXTERNE — "
         "relire les invariants du docstring avant de changer quoi que ce soit."
+    )
+
+
+def test_toon_encadre_par_le_vide_et_la_redaction():
+    """Les deux invariants du canal TOON, énoncés en PROPRIÉTÉ et non en rang.
+
+    La liste figée ci-dessus attrape un réordonnancement accidentel ; celui-ci dit
+    POURQUOI l'ordre est celui-là, donc il survit à l'insertion d'un middleware
+    supplémentaire entre deux d'entre eux.
+    """
+    names = [type(m).__name__ for m in _test_mcp().middleware]
+    vide = names.index("EmptyResultMiddleware")
+    toon = names.index("ToonTextChannelMiddleware")
+    redaction = names.index("FieldRedactionMiddleware")
+    # Premier ajouté = plus EXTERNE : un indice PLUS PETIT est plus externe.
+    assert vide < toon, (
+        "EmptyResultMiddleware doit rester plus EXTERNE que le canal TOON : il juge "
+        "le vide en relisant le texte en JSON, et ne saurait pas le faire sur du TOON."
+    )
+    assert toon < redaction, (
+        "Le canal TOON doit rester plus EXTERNE que la rédaction : sous elle, "
+        "extract_payload ne relirait pas le TOON, la policy ne s'appliquerait plus "
+        "et la sortie partirait NON RÉDIGÉE."
     )

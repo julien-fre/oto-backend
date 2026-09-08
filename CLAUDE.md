@@ -200,7 +200,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `monitoring.md` — enquête, rétention, Sentry
 - `event-loop-perf.md` — les 4 gels mono-loop
 - `silences-2026-08-27.md` — `except` muets, `# noqa: SILENT`
-- `redaction.md` — rédaction de champs, résultat servi
+- `redaction.md` — rédaction de champs, résultat servi, **canal texte en TOON**
 - `live-migrations.md` — migrations vivantes, base partagée
 - `migrations-versionnees.md` — ce que le boot exécute
 - `sirene-stock.md` — DuckDB sur parquet INSEE

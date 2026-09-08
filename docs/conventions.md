@@ -469,7 +469,7 @@ rien ne rendait navigable et que rien ne tenait.
   rédaction de champs et le calllog (plus externes) ne relisent `current_org` : politique
   de rédaction et `org_id` d'audit de l'org **maison**, pas de celle de l'appel. Invisible
   quand les deux coïncident (le cas courant), faux sinon. Ordre correct (extern→interne) :
-  `CallContext` → `FieldRedaction` → `ErrorEnvelope` → `UserDisabledTools` →
+  `CallContext` → `ToonTextChannel` → `FieldRedaction` → `ErrorEnvelope` → `UserDisabledTools` →
   `DynamicInstructions` → `ToolCallLogger` → `Sentry` (innermost : traceback brut au plus
   près du handler, et son `event_id` est posé AVANT que le calllog n'écrive la ligne).
   Figé par `tests/middleware/test_middleware_order.py` — le changer demande de relire ses invariants.
