@@ -164,6 +164,11 @@ def test_un_resultat_deja_emis_par_le_handler_est_reecrit(monkeypatch):
     qui sort du handler, quel que soit ce qui l'a produit. Ce test le PROUVE au lieu
     de le déduire, en rendant depuis le handler un `ToolResult` déjà bâti, la forme
     exacte que rend `oto_call` (cf. `redaction.rebuild_result`).
+
+    ⚠️ Et c'est ICI que ça doit vivre, pas dans `tests/test_oto_call_dispatch.py`
+    malgré son nom : ce banc-là appelle la fonction `oto_call` DIRECTEMENT
+    (`asyncio.run(fn(ctx=…))`), donc sans chaîne de middleware. Il ne peut
+    structurellement rien dire d'un middleware.
     """
     _allumer(monkeypatch)
 
