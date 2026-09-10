@@ -193,8 +193,20 @@ Notation, spec v4.1) quand la charge y gagne. TOON déclare les colonnes UNE foi
 retire le nom de chaque colonne réécrit à chaque ligne, qui est le poste dominant d'un
 JSON de liste.
 
-**Inerte par défaut** — `OTO_TOON_TEXT_CHANNEL=1` l'allume. Ce que lit l'agent n'est
-pas un détail d'implémentation : ça s'éprouve sur preprod avant la prod.
+**Actif par défaut** — `OTO_TOON_TEXT_CHANNEL=0` l'éteint. Le TOON ne part que s'il
+raccourcit, donc rien ne rallonge ; et les 74 fichiers de tests qui passent par une
+chaîne MCP réelle rendent les mêmes résultats drapeau éteint ou allumé.
+
+⚠️ **Qui le lit, mesuré le 10/09/2026** : Claude Code et `oto-runner` donnent au modèle
+le canal STRUCTURÉ à la place du texte. Pour eux, tant que `structuredContent` est servi,
+ce TOON n'est pas lu — le gain ne leur parviendra qu'avec le retrait du canal structuré
+des outils au schéma de sortie vide (#910). Les clients qui ne lisent que le texte en
+profitent dès maintenant. Et l'écho de compte (plusieurs comptes nommés) réémet le
+payload en JSON, ce qui défait le TOON sur cet appel.
+
+**En tokens, pas seulement en caractères** (même date, 120 lignes uniformes, base à vide
+soustraite) : JSON compact 5 213 tokens Sonnet 5 / 3 711 Haiku 4.5 ; TOON 2 947 (−43 %)
+/ 2 402 (−35 %), pour −47 % en caractères.
 
 ### La décision se prend par CHARGE, jamais par outil
 
@@ -278,8 +290,8 @@ tête, `.5` n'est pas un nombre).
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
   **rendu du vide**), `middleware/field_redaction.py` + `middleware/empty_result.py`,
-  `toon.py` + `middleware/toon.py` (**canal texte en TOON**, inerte sans
-  `OTO_TOON_TEXT_CHANNEL=1`),
+  `toon.py` + `middleware/toon.py` (**canal texte en TOON**, actif par défaut,
+  `OTO_TOON_TEXT_CHANNEL=0` l'éteint),
   `connectors/schema_store.py`,
   `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connectors/field_schema.py`
   (curé, libellés), `capabilities/orgs/field_filters.py` (get/set/preview), `db.py`

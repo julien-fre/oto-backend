@@ -48,8 +48,18 @@ même requête, drapeau éteint puis allumé, on compare le contexte consommé c
 Couper le canal structuré à l'aveugle casserait les clients qui en dépendent pour un
 bénéfice supposé — c'est exactement le raisonnement qu'on refuse ailleurs.
 
-**Inerte par défaut** : `OTO_TOON_TEXT_CHANNEL=1` l'allume. Le format que lit l'agent
-n'est pas un détail d'implémentation, et ça s'éprouve sur preprod avant la prod.
+**Actif par défaut** : `OTO_TOON_TEXT_CHANNEL=0` l'éteint. Rien ne peut rallonger une
+réponse (le TOON ne part que s'il raccourcit), et 74 fichiers de tests à chaîne MCP
+réelle rendent les mêmes résultats drapeau éteint ou allumé (mesuré le 10/09/2026).
+
+⚠️ **Qui le lit vraiment, mesuré le 10/09/2026.** Claude Code donne au modèle
+`structuredContent` À LA PLACE du texte (marqueurs distincts sur les deux canaux, 3 runs
+sur 3, avec ou sans schéma de sortie) ; `oto-runner` fait de même (`mcp.py` : le canal
+structuré d'abord). Pour ces clients, et pour tout outil qui rend un `dict`, ce TOON
+n'est donc PAS lu tant que le canal structuré est servi. Il profite aux clients qui ne
+lisent que le texte. Et quand l'écho de compte s'applique (plusieurs comptes nommés),
+`CallContextMiddleware`, plus externe, réémet le payload en JSON : le TOON est alors
+défait, sans erreur.
 """
 from __future__ import annotations
 
@@ -74,7 +84,7 @@ _MARQUEUR_LISTE = "[{"
 
 
 def actif() -> bool:
-    return os.environ.get("OTO_TOON_TEXT_CHANNEL", "0") == "1"
+    return os.environ.get("OTO_TOON_TEXT_CHANNEL", "1") != "0"
 
 
 def _texte_servi(result) -> str | None:

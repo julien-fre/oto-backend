@@ -76,10 +76,16 @@ def _allumer(monkeypatch):
     monkeypatch.setenv("OTO_TOON_TEXT_CHANNEL", "1")
 
 
-# ── Inerte tant qu'on ne l'allume pas ───────────────────────────────────────────
+# ── Actif par défaut, éteint par `0` ────────────────────────────────────────────
 
-def test_inerte_par_defaut(monkeypatch):
+def test_actif_par_defaut(monkeypatch):
     monkeypatch.delenv("OTO_TOON_TEXT_CHANNEL", raising=False)
+    texte, _ = _servir(_banc(_outil(TABLE)))
+    assert texte.startswith("rows[40]{id,nom,statut,compte}:")
+
+
+def test_zero_l_eteint(monkeypatch):
+    monkeypatch.setenv("OTO_TOON_TEXT_CHANNEL", "0")
     texte, _ = _servir(_banc(_outil(TABLE)))
     assert json.loads(texte)["count"] == 40
 
@@ -103,7 +109,7 @@ def test_une_charge_a_prose_reste_en_json(monkeypatch):
 
 def test_le_texte_servi_n_est_jamais_plus_long_qu_avant(monkeypatch):
     for charge in (TABLE, PROSE):
-        monkeypatch.delenv("OTO_TOON_TEXT_CHANNEL", raising=False)
+        monkeypatch.setenv("OTO_TOON_TEXT_CHANNEL", "0")
         avant, _ = _servir(_banc(_outil(charge)))
         monkeypatch.setenv("OTO_TOON_TEXT_CHANNEL", "1")
         apres, _ = _servir(_banc(_outil(charge)))
