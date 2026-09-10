@@ -320,6 +320,15 @@ page quand elle est pleine, sinon 30 j — dite dans l'indice ; jamais sans born
 dans un run est résolu — donc stampé — dans l'org du run. `hors_scope` reste, pour ce
 qu'un axe explicite continue légitimement de mettre dehors (agent multi-org).
 
+**Le relevé de facturation, lui, compte ce `hors_scope` chez l'org du run.** La lentille
+membre `org.usage.calls` ne scope pas sur la colonne seule mais sur l'org **effective** :
+l'org du run quand l'appel porte un `run_id` dont le run a une org et a été ouvert par le
+**même `sub`**, sinon `tool_calls.org_id` (`db.usage._billable_window_clauses`). Les deux
+branches sont exclusives — un appel est facturé à une org et une seule, et l'org maison le
+perd quand l'org du run le gagne. La garde `sub` compte : `_run_id` est déclaré par
+l'appelant, le poser ne doit pas suffire à faire payer une autre org. L'export d'audit
+garde, lui, l'org d'**émission**.
+
 ## L'export d'audit dit s'il est complet — ou dit qu'il ne peut pas (#770, 01/09)
 
 `GET /api/orgs/{id}/audit-log/export` n'est pas une lentille de confort : c'est la

@@ -615,6 +615,11 @@ def _console(ctx: ResolvedCtx, inp: OrgMonitoringInput) -> dict:
 # déduplication), l'outil, le nombre d'items, le mode de clé, la date. Aucune
 # identité, aucun message d'erreur. Le membre voit ce que SON ORG consomme, pas
 # qui a fait quoi.
+#
+# « Ce que son org consomme » inclut les appels de ses RUNS résolus ailleurs (l'axe
+# `_org` oublié ⇒ org maison de l'auteur) — ceux que `org.monitoring.calls` range en
+# `hors_scope`. Le relevé les rattache à l'org du run, et les retire de l'org maison :
+# un appel est facturé à une org et une seule (`db.usage._billable_window_clauses`).
 
 class BillableCallRow(BaseModel):
     """Un appel tel qu'un consommateur de FACTURATION en a besoin — et rien de plus."""

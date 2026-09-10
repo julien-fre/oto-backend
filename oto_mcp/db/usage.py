@@ -916,6 +916,55 @@ def _audit_window_clauses(
     return clauses, params
 
 
+# L'org qu'un appel CONSOMME n'est pas toujours celle sous laquelle il a été RÉSOLU.
+# Un agent qui déroule le run d'une org sans poser `_org` sur chaque appel voit ces
+# appels retomber sur son org maison (#631) — c'est exactement ce que `hors_scope`
+# compte dans la vue d'org (`journal_calls.count_calls_of_org_runs_elsewhere`).
+# Pour l'AUDIT, c'est juste : l'appel a bien été émis sous l'org maison. Pour la
+# FACTURATION, non : le travail était celui du run, donc de l'org du run — et le
+# relevé de celle-ci restait à zéro pendant que l'org maison encaissait sa conso.
+#
+# Règle : l'org effective d'un appel = l'org de son run quand ce run existe, porte
+# une org et a été ouvert par le MÊME `sub` que l'appel ; sinon `tool_calls.org_id`.
+# Les deux branches sont EXCLUSIVES — un appel compte pour une org et une seule.
+#
+# ⚠️ `r.sub = l.sub` n'est pas une coquetterie : `_run_id` est DÉCLARÉ par
+# l'appelant et accepté partout (`middleware/call_context.py`). Sans cette garde,
+# poser le `_run_id` d'un run d'une autre org suffirait à lui faire payer ses appels.
+#
+# Stable dans le temps : `prune_orphan_runs` ne retire l'étiquette d'un run que
+# lorsque plus aucun appel ne le référence — tant qu'une ligne est lisible, son
+# run l'est aussi, et relire une période close rend la même attribution.
+#
+# Aucun index neuf : les deux sous-requêtes sont des lookups sur la clé primaire
+# `runs.run_id`, et la branche « résolu ici » garde `idx_tool_calls_org`.
+_RUN_OF_CALL = "SELECT 1 FROM runs r WHERE r.run_id = l.run_id AND r.sub = l.sub"
+
+
+def _billable_window_clauses(
+    org_id: int, since: Optional[str], until: str,
+) -> tuple[list[str], list[Any]]:
+    """Les clauses de la fenêtre du RELEVÉ (`org.usage.calls`), alias `l`.
+
+    Même fenêtre que `_audit_window_clauses`, autre SCOPE : l'org effective (voir le
+    bloc ci-dessus), pas la colonne seule. Un constructeur à part, et pas un drapeau
+    sur celui de l'audit : l'export d'audit doit continuer de dire sous quelle org un
+    appel a été émis, et ne doit pas pouvoir changer de périmètre en silence."""
+    oid = int(org_id)
+    clauses = [
+        "l.kind = 'mcp'",
+        f"((l.org_id = %s AND NOT EXISTS ({_RUN_OF_CALL} "
+        "AND r.org_id IS NOT NULL AND r.org_id <> %s)) "
+        f"OR EXISTS ({_RUN_OF_CALL} AND r.org_id = %s))",
+        "l.created_at <= %s::timestamptz",
+    ]
+    params: list[Any] = [oid, oid, oid, until]
+    if since:
+        clauses.append("l.created_at >= %s::timestamptz")
+        params.append(since)
+    return clauses, params
+
+
 def export_tool_calls_for_org(
     org_id: int, *, since: Optional[str] = None, until: Optional[str] = None,
     limit: int = 1000, before: Optional[tuple[str, int]] = None,
@@ -1012,7 +1061,11 @@ def list_billable_calls_for_org(
     Projection ÉTROITE par construction : id, outil, date, quantité, mode de
     clé. Ni `sub`, ni `email`, ni `error` — la lentille est lisible par tout
     membre, et ce qu'il lit est ce que son org consomme, pas qui a fait quoi.
-    Seuls les appels `ok` : un échec n'a rien consommé chez le fournisseur."""
+    Seuls les appels `ok` : un échec n'a rien consommé chez le fournisseur.
+
+    Scope = l'org EFFECTIVE (`_billable_window_clauses`) : un appel du run d'une org,
+    résolu sous l'org maison de son auteur faute de `_org`, est compté pour l'org du
+    run — et SEULEMENT pour elle."""
     limit = max(1, min(int(limit), 5000))
     with _connect() as conn:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
@@ -1020,7 +1073,7 @@ def list_billable_calls_for_org(
             until = conn.execute(
                 f"SELECT to_char(now() AT TIME ZONE 'UTC', {_ISO_US}) AS t"
             ).fetchone()["t"]
-        clauses, params = _audit_window_clauses(org_id, since, until)
+        clauses, params = _billable_window_clauses(org_id, since, until)
         clauses += ["l.tool = %s", "l.ok = TRUE"]
         params += [tool]
         total = int(conn.execute(

@@ -113,12 +113,12 @@ def live(pg_dsn):
 
 
 def _poser(sub, org_id, *, quand, tool="linkedin_aiark_search", ok=True,
-           quantity=None, key_mode=None, kind="mcp"):
+           quantity=None, key_mode=None, kind="mcp", run_id=None):
     from oto_mcp import db
     from oto_mcp.db._conn import _connect
 
     db.insert_tool_call({"sub": sub, "kind": kind, "tool": tool, "ok": ok,
-                         "org_id": org_id, "duration_ms": 3,
+                         "org_id": org_id, "duration_ms": 3, "run_id": run_id,
                          "quantity": quantity, "key_mode": key_mode})
     with _connect() as conn:
         conn.execute(
@@ -192,3 +192,63 @@ def test_la_borne_haute_est_gelee_quand_elle_est_omise(journal):
                                        since=journal["since"], limit=3)
     assert p["until_effectif"].endswith("Z")
     assert p["total"] == 8     # les 7 + celui du 25/08, avant l'instant gelé
+
+
+# ── L'org EFFECTIVE : un appel de run résolu ailleurs ──────────────────────────
+
+@pytest.fixture
+def runs_ailleurs(live):
+    """Un agent déroule le run de l'org CLIENTE sans poser `_org` : ses appels
+    retombent sur son org MAISON. Plus deux cas qui ne doivent PAS migrer : un
+    `_run_id` emprunté par un autre `sub`, et un run qui ne porte aucune org."""
+    from oto_mcp import db, org_store
+
+    agent = "sub-run-" + uuid.uuid4().hex[:6]
+    intrus = "sub-intrus-" + uuid.uuid4().hex[:6]
+    cliente = org_store.create_org("Cliente", created_by=agent)
+    maison = org_store.create_org("Maison", created_by=agent)
+
+    run = "run-" + uuid.uuid4().hex
+    db.insert_run(run, sub=agent, org_id=cliente, label="sourcing")
+    sans_org = "run-" + uuid.uuid4().hex
+    db.insert_run(sans_org, sub=agent, org_id=None, label="ad hoc")
+
+    q = "2026-08-20T10:{:02d}:00+00:00"
+    _poser(agent, maison, quand=q.format(1), run_id=run, quantity=40, key_mode="platform")
+    _poser(agent, maison, quand=q.format(2), run_id=run, quantity=2, key_mode="platform")
+    _poser(agent, cliente, quand=q.format(3), run_id=run, quantity=5, key_mode="platform")
+    _poser(intrus, maison, quand=q.format(4), run_id=run, quantity=9)   # run d'autrui
+    _poser(agent, maison, quand=q.format(5), run_id=sans_org, quantity=7)
+    _poser(agent, maison, quand=q.format(6), quantity=1)                # hors run
+    return {"cliente": cliente, "maison": maison,
+            "since": "2026-08-20T00:00:00+00:00", "until": "2026-08-21T00:00:00+00:00"}
+
+
+def _quantites(org, w):
+    from oto_mcp import db
+
+    p = db.list_billable_calls_for_org(org, "linkedin_aiark_search",
+                                       since=w["since"], until=w["until"])
+    assert p["total"] == len(p["calls"]), "le total et la page décrivent le même jeu"
+    return sorted(c["quantity"] for c in p["calls"])
+
+
+def test_un_appel_de_run_resolu_ailleurs_est_facture_a_l_org_du_run(runs_ailleurs):
+    assert _quantites(runs_ailleurs["cliente"], runs_ailleurs) == [2, 5, 40]
+
+
+def test_il_quitte_l_org_maison_un_appel_ne_compte_jamais_deux_fois(runs_ailleurs):
+    """Restent à la maison : l'appel hors run, celui d'un run SANS org, et celui
+    qui a emprunté le `_run_id` d'autrui — `_run_id` est déclaré par l'appelant,
+    le poser ne doit pas suffire à faire payer une autre org."""
+    assert _quantites(runs_ailleurs["maison"], runs_ailleurs) == [1, 7, 9]
+
+
+def test_l_export_d_audit_garde_l_org_d_EMISSION(runs_ailleurs):
+    """Le relevé change de périmètre, l'audit non : il dit toujours sous quelle
+    org un appel a été émis."""
+    from oto_mcp import db
+
+    w = runs_ailleurs
+    audit = db.export_tool_calls_for_org(w["maison"], since=w["since"], until=w["until"])
+    assert audit["total"] == 5
