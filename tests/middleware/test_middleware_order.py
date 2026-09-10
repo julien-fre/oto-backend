@@ -21,6 +21,9 @@ invariants gardés ici :
   donc tourner APRÈS tout ce qui réémet le payload en JSON dans le canal texte (la
   rédaction, l'écho de compte). Plus interne, la structure qu'il vient de retirer du
   texte y serait rétablie par le middleware suivant (oto#32).
+- `MarkdownBodyMiddleware` sous lui — il réémet le canal texte d'une fiche à corps
+  markdown en markdown, et doit donc tourner APRÈS l'écho de compte et la rédaction,
+  qui réémettent les deux canaux en JSON. Plus interne, le JSON échappé reviendrait.
 - `CallContextMiddleware` sous lui — sa ContextVar `_CALL_ORG` doit rester posée
   pendant que la rédaction ET le calllog (plus internes… donc ajoutés après) relisent
   `current_org`. Ajouté ailleurs, un appel `_org=` est rédigé/audité sous l'org MAISON
@@ -42,6 +45,7 @@ OURS = [
     "IdentityScopeMiddleware",
     "ToolAliasMiddleware",
     "EmptyResultMiddleware",
+    "MarkdownBodyMiddleware",
     "CallContextMiddleware",
     "FieldRedactionMiddleware",
     "ErrorEnvelopeMiddleware",

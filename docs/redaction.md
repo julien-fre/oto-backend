@@ -182,6 +182,25 @@ avoir été retirée. Contrat figé par `tests/middleware/test_middleware_order.
 avec la chaîne MCP (`_rest_adapter` → `_json`), et continue de servir la structure
 vide aux clients qui parsent.
 
+## Un corps markdown se sert en markdown, jamais en JSON échappé
+
+Une fiche — un dict dont `body_md` porte l'essentiel : procédure, guide, document —
+était servie sur le canal texte comme du JSON, le corps en chaîne échappée (`\n`,
+`\"`, par centaines dans une procédure). Mesuré le 10/09/2026 sur Haiku, sur le même
+texte : **+4 à +7 % de jetons** (un dessin de 3 304 caractères 983 → 1 048, 2 845
+caractères de prose 781 → 814), payés à chaque lecture puis à chaque tour tant que le
+corps reste dans le contexte.
+
+`MarkdownBodyMiddleware` (`middleware/markdown_body.py`) réémet le canal texte en
+markdown : les autres champs en en-tête (`clé: valeur`, structures en JSON compact),
+une ligne vide, le corps tel quel. Le canal structuré garde son JSON. Ne s'applique
+qu'à un dict dont `body_md` fait au moins la **moitié** du payload — la forme d'une
+fiche ; une liste, une enveloppe, un résultat sans corps sont servis comme avant.
+Place : juste sous `EmptyResult`, plus externe que l'écho de compte et la rédaction,
+qui réémettent les deux canaux en JSON (`tests/middleware/test_middleware_order.py`).
+Banc : `tests/middleware/test_markdown_body.py` — dont « la rédaction a tourné avant,
+l'en-tête ne rend pas un champ rédigé ».
+
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
   **rendu du vide**), `middleware/field_redaction.py` + `middleware/empty_result.py`,

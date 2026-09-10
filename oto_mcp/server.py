@@ -659,6 +659,13 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # était la conséquence directe de cet état. Un successeur devra être sans état ;
     # le besoin, lui, reste ouvert : oto-backend#478.
 
+    # 1b. Un corps markdown se sert en markdown, pas en JSON échappé (+4 à +7 % de
+    # jetons mesurés sur le même texte) — sous `EmptyResult` (une fiche n'est jamais
+    # vide), plus externe que l'écho de compte et la rédaction, qui réémettent les
+    # deux canaux en JSON et rétabliraient sinon ce qu'on vient de remplacer.
+    from .middleware.markdown_body import MarkdownBodyMiddleware
+    instance.add_middleware(MarkdownBodyMiddleware())
+
     # 2. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
     # ContextVar `_CALL_ORG` AVANT le reste de la chaîne et la reset APRÈS, pour que
     # le handler ET les hooks post-tool (rédaction, calllog) lisent la MÊME org que
