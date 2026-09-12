@@ -659,6 +659,8 @@ POST /api/billing/webhook -> webhook
 OPTIONS /api/billing/webhook -> options_handler
 GET,HEAD /api/me/billing/invoices/{id}/pdf -> invoice_pdf
 OPTIONS /api/me/billing/invoices/{id}/pdf -> options_handler
+POST /api/hooks/{trigger_id} -> fire
+OPTIONS /api/hooks/{trigger_id} -> options_handler
 GET,HEAD /api/datastore/namespaces -> alias_deprecie
 OPTIONS /api/datastore/namespaces -> options_handler
 POST /api/datastore/namespaces -> alias_deprecie

@@ -15,22 +15,32 @@ les échéances : une seule vérité.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
 from . import _cle_exigee, _instruction, _modele
-from .. import db, runner_models, runner_tick, tool_registry
+from .. import db, runner_hook, runner_models, runner_tick, tool_registry
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
 
+logger = logging.getLogger(__name__)
+
 _TZ_DEFAUT = "Europe/Paris"
 
 
 class TriggerInput(BaseModel):
-    op: Literal["create", "list", "get", "update", "delete"]
+    op: Literal["create", "list", "get", "update", "delete",
+                # Le webhook : (re)poser son secret — il n'est rendu QU'ICI, une
+                # fois. Verbe séparé plutôt qu'un champ d'`update` : c'est une
+                # rotation de credential, pas une retouche de configuration, et
+                # elle CASSE la source en place tant qu'elle n'a pas le nouveau.
+                "rotate_secret",
+                # Ce que ce déclencheur a reçu — le journal que l'écran lit.
+                "deliveries"]
     trigger_id: Optional[int] = None
     # create / update —
     procedure: Optional[str] = None
@@ -45,6 +55,22 @@ class TriggerInput(BaseModel):
     # ne touche à rien ; `""` sur `update` = revenir au modèle du worker.
     model: Optional[str] = None
     enabled: Optional[bool] = None
+    # ── le WEBHOOK ────────────────────────────────────────────────────────────
+    #: `schedule` (défaut) ou `webhook`. Posé à la CRÉATION et jamais après : un
+    #: agent ne change pas de coup d'envoi en cours de route.
+    kind: Optional[Literal["schedule", "webhook"]] = None
+    #: Ce que l'agent fait du corps reçu. `ignore` (défaut) ne le transmet même
+    #: pas ; `fields` n'en extrait que ce qui est nommé ; `inline` joint le tout.
+    payload_mode: Optional[Literal["ignore", "fields", "inline"]] = None
+    #: `{"lead_id": "$.data.id"}` — le mode `fields` et rien d'autre.
+    payload_fields: Optional[dict[str, str]] = None
+    #: Le débit de LISSAGE, par heure. Au-delà, une livraison est acceptée et son
+    #: travail part plus tard — jamais refusée.
+    max_per_hour: Optional[int] = None
+    #: Au-delà de ce délai, un travail lissé ne part plus (`0` = jamais périmé).
+    freshness_seconds: Optional[int] = None
+    #: `deliveries` : combien de livraisons rendre.
+    limit: Optional[int] = None
 
 
 class Trigger(BaseModel):
@@ -83,6 +109,20 @@ class Trigger(BaseModel):
     #: qu'une perte qui continue ce matin.
     expired_since: Optional[str] = None
     expired_last: Optional[str] = None
+    #: `schedule` ou `webhook` — ce qui donne le coup d'envoi.
+    kind: Optional[str] = None
+    payload_mode: Optional[str] = None
+    payload_fields: Optional[dict] = None
+    max_per_hour: Optional[int] = None
+    fraicheur_s: Optional[int] = None
+    #: L'URL à donner à la source. Servie sur un déclencheur webhook, jamais le
+    #: secret — celui-ci n'existe en clair qu'au retour de `create`/`rotate_secret`.
+    hook_url: Optional[str] = None
+    #: Ce que ce déclencheur a reçu sur 24 h : reçues, refusées, la dernière.
+    #: `0` est un vrai zéro, jamais une absence de mesure.
+    deliveries_24h: Optional[int] = None
+    deliveries_refused_24h: Optional[int] = None
+    last_delivery: Optional[str] = None
 
 
 class RunnerArme(BaseModel):
@@ -121,11 +161,28 @@ class RunnerModel(BaseModel):
 RunnerArme.model_rebuild()
 
 
+class Delivery(BaseModel):
+    """Une livraison reçue par un déclencheur webhook."""
+    id: int
+    received_at: Optional[str] = None
+    #: `queued` | `delayed` (lissé) | `refused_paused` | `refused_secret` |
+    #: `refused_too_large`. Un refus garde son MOTIF : c'est lui qui rend une
+    #: source mal branchée réparable plutôt que mystérieuse.
+    outcome: Optional[str] = None
+    job_id: Optional[int] = None
+    source: Optional[str] = None
+
+
 class TriggerOut(BaseModel):
     trigger: Optional[Trigger] = None
     triggers: Optional[list[Trigger]] = None
     ok: Optional[bool] = None
     runner: Optional[RunnerArme] = None
+    deliveries: Optional[list[Delivery]] = None
+    #: Le secret en clair — rendu par `create` d'un webhook et par
+    #: `rotate_secret`, et par RIEN D'AUTRE. Il n'est pas stocké : seul son haché
+    #: l'est. Perdu, il se remplace ; il ne se relit jamais.
+    hook_secret: Optional[str] = None
 
 
 def _avec_pertes(org_id: int, t: dict) -> dict:
@@ -197,16 +254,95 @@ def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
     return tool_registry.ref_names(g.get("body_md") or "")
 
 
+def _valide_le_webhook(inp: TriggerInput) -> None:
+    """Les réglages du webhook, refusés à la POSE plutôt qu'ignorés en silence.
+
+    ⚠️ Un réglage accepté puis inerte est le défaut que ce dépôt a payé plusieurs
+    fois (`provider`/`model` d'une flotte, servis et ignorés pendant deux
+    semaines) : on le croit posé, et le seul endroit où l'écart se voit est le
+    comportement qu'on n'obtient pas.
+    """
+    genre = inp.kind or "schedule"
+    if genre != "webhook":
+        # Les réglages du webhook sur un déclencheur programmé ne s'appliqueraient
+        # à rien. Les refuser NOMME l'erreur au lieu de la laisser dormir.
+        poses = [c for c in ("payload_mode", "payload_fields", "max_per_hour",
+                             "freshness_seconds") if getattr(inp, c) is not None]
+        if poses:
+            raise AuthzDenied(
+                400, "not_a_webhook",
+                f"{', '.join(poses)} ne s'applique qu'à un déclencheur `webhook` — "
+                "un agent programmé n'a pas de corps reçu ni de source à lisser.")
+        return
+    mode = inp.payload_mode or runner_hook.IGNORE
+    if mode == runner_hook.FIELDS and not inp.payload_fields:
+        raise AuthzDenied(
+            400, "missing_fields",
+            "`payload_mode=fields` sans `payload_fields` ne transmettrait rien : "
+            "nomme ce qu'il faut extraire (`{\"lead_id\": \"$.data.id\"}`), ou "
+            "choisis `inline` pour tout joindre.")
+    if inp.payload_fields and mode != runner_hook.FIELDS:
+        raise AuthzDenied(
+            400, "not_a_webhook",
+            f"`payload_fields` n'est lu qu'en `payload_mode=fields` (reçu "
+            f"`{mode}`) — posé ici, il serait inerte.")
+    for champ, valeur in (("max_per_hour", inp.max_per_hour),
+                          ("freshness_seconds", inp.freshness_seconds)):
+        # `freshness_seconds=0` est une VALEUR (« ne périme jamais »), pas une
+        # absence — d'où le test sur le signe et non sur la véracité.
+        if valeur is not None and valeur < (1 if champ == "max_per_hour" else 0):
+            raise AuthzDenied(400, "invalid_bound",
+                              f"`{champ}`={valeur} : un débit se compte (≥ 1), et "
+                              "une fraîcheur est une durée (≥ 0, `0` = jamais).")
+
+
+def _avec_hook(org_id: int, t: dict) -> dict:
+    """Le déclencheur, augmenté de ce qu'un écran de webhook doit lire : son URL,
+    et ce qu'il a reçu. Jamais le secret, ni son haché.
+
+    ⚠️ L'URL est composée ICI et pas côté client : elle se construit sur
+    `OTO_MCP_PUBLIC_URL` — ce que CE process annonce de lui-même (`mcp.oto.cx` en
+    prod, `mcp.oto.ninja` en preprod). Un front qui la fabriquerait la fabriquerait
+    avec le domaine qu'il connaît, et une source branchée sur la preprod depuis un
+    écran de prod n'échouerait qu'au premier événement.
+
+    ⚠️ Sans la variable (dev, tests), l'URL est rendue RELATIVE plutôt qu'inventée :
+    un domaine deviné serait une adresse qui ne répond pas, donnée avec l'assurance
+    d'une adresse juste.
+    """
+    if (t.get("kind") or "schedule") != "webhook":
+        return t
+    import os
+    base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
+    compte = db.comptage_livraisons(t["id"], org_id)
+    return {**t,
+            "hook_url": f"{base}/api/hooks/{t['id']}",
+            "deliveries_24h": compte["recues_24h"],
+            "deliveries_refused_24h": compte["refusees_24h"],
+            "last_delivery": str(compte["derniere"]) if compte["derniere"] else None}
+
+
 def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les déclencheurs sont org-scopés")
 
     if inp.op == "create":
-        manquants = [c for c in ("procedure", "cron") if not getattr(inp, c)]
+        webhook = (inp.kind or "schedule") == "webhook"
+        # ⚠️ Ce qu'on exige dépend du COUP D'ENVOI. Un déclencheur programmé exige
+        # son cadencement ; un webhook n'en a pas — exiger `cron` de lui, ou
+        # l'accepter en l'ignorant, seraient deux façons de mentir sur ce qu'il est.
+        requis = ("procedure",) if webhook else ("procedure", "cron")
+        manquants = [c for c in requis if not getattr(inp, c)]
         if manquants:
             raise AuthzDenied(400, "missing_fields",
                               f"create exige : {', '.join(manquants)} — la procédure à "
-                              "jouer, et quand")
+                              "jouer" + ("" if webhook else ", et quand"))
+        if webhook and inp.cron:
+            raise AuthzDenied(
+                400, "invalid_schedule",
+                "un déclencheur `webhook` n'a pas de cadencement : c'est la source "
+                "qui décide quand. Retire `cron`, ou déclare un agent programmé.")
+        _valide_le_webhook(inp)
         # ⚠️ `tools` n'est plus exigé : il se DÉDUIT de la procédure quand il
         # n'est pas fourni. C'est ce qui rend le geste possible depuis un bouton.
         outils = list(inp.tools or []) or _outils_de_la_procedure(ctx, inp.procedure)
@@ -218,10 +354,11 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 "dans la procédure (marqueurs `<tool:nom>`), ou passe `tools` "
                 "explicitement.")
         tz = inp.tz or _TZ_DEFAUT
-        try:
-            runner_tick.validate_cron(inp.cron, tz)
-        except ValueError as e:
-            raise AuthzDenied(400, "invalid_schedule", str(e))
+        if not webhook:
+            try:
+                runner_tick.validate_cron(inp.cron, tz)
+            except ValueError as e:
+                raise AuthzDenied(400, "invalid_schedule", str(e))
         # Un modèle inconnu se corrige dans l'appel, comme un cron : il se juge
         # avec lui, avant la présence du runner.
         famille = _modele.famille_declaree(inp.model)
@@ -242,23 +379,47 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # objet, c'est deux réponses à « est-ce que ça tourne ? », et l'écran
         # devrait en choisir une. Le refus dit lequel existe, pour qu'on puisse
         # le modifier plutôt que d'en créer un second.
-        deja = db.triggers_for_procedure(ctx.org_id, inp.procedure)
+        # ⚠️ UN SEUL agent PAR COUP D'ENVOI et par objet. La règle du 03/09 tenait
+        # « un objet ne porte qu'un agent » quand il n'existait qu'une façon de le
+        # déclencher ; elle devient « un programmé ET un déclenché », parce qu'une
+        # veille du matin et une réaction à un événement sont deux automatisations
+        # différentes de la même procédure — pas deux réponses à la même question.
+        # Deux du MÊME genre restent refusées, pour la raison d'origine.
+        genre = "webhook" if webhook else "schedule"
+        deja = [d for d in db.triggers_for_procedure(ctx.org_id, inp.procedure)
+                if (d.get("kind") or "schedule") == genre]
         if deja:
+            quoi = ("déjà un agent déclenché par webhook" if webhook else
+                    f"déjà un agent programmé (cadencement `{deja[0]['cron']}`)")
             raise AuthzDenied(
                 409, "already_scheduled",
-                f"`{inp.procedure}` a déjà un agent programmé (#{deja[0]['id']}, "
-                f"cadencement `{deja[0]['cron']}`). Modifie-le plutôt que d'en "
-                "créer un second — un objet ne porte qu'un agent.")
+                f"`{inp.procedure}` a {quoi} (#{deja[0]['id']}). Modifie-le plutôt "
+                "que d'en créer un second — un objet ne porte qu'un agent de "
+                "chaque genre.")
+        secret = hache = None
+        if webhook:
+            secret, hache = runner_hook.nouveau_secret()
         t = db.create_trigger(
-            ctx.org_id, ctx.sub, procedure=inp.procedure, cron=inp.cron, tz=tz,
-            next_due=runner_tick.next_due(inp.cron, tz), tools=outils,
-            project_id=inp.project_id,
+            ctx.org_id, ctx.sub, procedure=inp.procedure,
+            cron=inp.cron or None, tz=tz,
+            next_due=runner_tick.next_due(inp.cron, tz) if not webhook else None,
+            tools=outils, project_id=inp.project_id,
             input=inp.input or _instruction.derivee(inp.procedure),
             label=inp.label, max_steps=inp.max_steps,
             # ⚠️ Sans modèle, on n'écrit PAS le défaut du catalogue : NULL veut
             # dire « n'importe quel worker, sur le sien ». Écrire le défaut
             # refuserait la création dans une org servie par une autre famille.
-            model=inp.model or None)
+            model=inp.model or None,
+            kind=genre,
+            payload_mode=inp.payload_mode or runner_hook.IGNORE,
+            payload_fields=inp.payload_fields,
+            max_per_hour=inp.max_per_hour,
+            fraicheur_s=inp.freshness_seconds)
+        if webhook:
+            db.poser_secret_de_hook(t["id"], ctx.org_id, hache)
+            # Le secret en CLAIR, une seule fois. Il n'est pas stocké — seul son
+            # haché l'est — donc ni une relecture ni un incident ne le rendront.
+            return {"trigger": _avec_hook(ctx.org_id, t), "hook_secret": secret}
         return {"trigger": t}
 
     if inp.op == "list":
@@ -267,7 +428,8 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Filtrer côté client devient faux dès qu'il y a plus d'une page.
         lus = (db.triggers_for_procedure(ctx.org_id, inp.procedure) if inp.procedure
                else db.list_triggers(ctx.org_id))
-        return {"triggers": [_avec_pertes(ctx.org_id, t) for t in lus],
+        return {"triggers": [_avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))
+                             for t in lus],
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id))}
 
     if inp.trigger_id is None:
@@ -277,8 +439,30 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-        return {"trigger": _avec_pertes(ctx.org_id, t),
+        return {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id))}
+
+    if inp.op == "rotate_secret":
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if not t or (t.get("kind") or "schedule") != "webhook":
+            # Même 404 qu'un déclencheur inconnu : un agent programmé n'a pas de
+            # secret, et le dire distinguerait « n'existe pas » de « pas le bon
+            # genre » pour un appelant qui n'a pas à le savoir.
+            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+        secret, hache = runner_hook.nouveau_secret()
+        db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, hache)
+        logger.warning("secret de webhook RENOUVELÉ pour le déclencheur %s (org %s) "
+                       "par %s — la source en place cessera d'être acceptée",
+                       inp.trigger_id, ctx.org_id, ctx.sub)
+        return {"trigger": _avec_hook(ctx.org_id,
+                                      db.get_trigger(inp.trigger_id, ctx.org_id)),
+                "hook_secret": secret}
+
+    if inp.op == "deliveries":
+        # Org-scopé par la requête : un déclencheur d'une autre org rend une liste
+        # vide, jamais les livraisons d'autrui.
+        return {"deliveries": db.livraisons(inp.trigger_id, ctx.org_id,
+                                            limit=inp.limit or 50)}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):

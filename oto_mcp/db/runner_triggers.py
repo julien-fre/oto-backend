@@ -14,26 +14,48 @@ from typing import Any, Optional
 from ._conn import _connect
 
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
-         "model, cron, tz, enabled, next_due, last_enqueued_at, created_at")
+         "model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
+         "cron, tz, enabled, next_due, last_enqueued_at, created_at")
+
+#: ⚠️ `hook_secret_hash` n'est PAS dans `_COLS`, et c'est la garde : un haché servi
+#: à une lecture partirait dans la réponse de `op=list`, donc dans un transcript
+#: d'agent. La route le lit par une requête dédiée (`trigger_par_secret`), et le
+#: secret en clair n'existe qu'une fois, au retour de `poser_secret_de_hook`.
 
 
-def create_trigger(org_id: int, sub: str, *, procedure: str, cron: str, tz: str,
-                   next_due, tools: list, project_id: Optional[int] = None,
+def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
+                   tools: list, cron: Optional[str] = None, next_due=None,
+                   project_id: Optional[int] = None,
                    input: Optional[str] = None, label: Optional[str] = None,
                    max_steps: Optional[int] = None,
-                   model: Optional[str] = None) -> dict:
+                   model: Optional[str] = None,
+                   kind: str = "schedule",
+                   payload_mode: str = "ignore",
+                   payload_fields: Optional[dict] = None,
+                   max_per_hour: Optional[int] = None,
+                   fraicheur_s: Optional[int] = None) -> dict:
+    """Pose un déclencheur — programmé (`cron` + `next_due`) ou par webhook.
+
+    ⚠️ `cron` et `next_due` sont devenus FACULTATIFS en signature, et c'est la
+    seule forme qui dise la vérité : un déclencheur par webhook n'a pas
+    d'échéance. Ce que la capacité exige de l'un ou de l'autre est sa règle à
+    elle — ici on stocke ce qu'on reçoit."""
     with _connect() as conn:
         row = conn.execute(
             f"""
             INSERT INTO runner_triggers
                    (org_id, sub, label, procedure, project_id, tools, input,
-                    max_steps, model, cron, tz, next_due)
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s)
+                    max_steps, model, kind, payload_mode, payload_fields,
+                    max_per_hour, fraicheur_s, cron, tz, next_due)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb,
+                    %s, %s, %s, %s, %s)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
              json.dumps(list(tools), ensure_ascii=False), input, max_steps,
-             model, cron, tz, next_due),
+             model, kind, payload_mode,
+             json.dumps(payload_fields, ensure_ascii=False) if payload_fields else None,
+             max_per_hour, fraicheur_s, cron, tz, next_due),
         ).fetchone()
     return dict(row)
 
@@ -60,7 +82,12 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
     """Mise à jour partielle, org-scopée. `champs` ne contient QUE des colonnes
     déjà validées par la capacité (jamais de SQL construit sur l'entrée brute)."""
     autorises = {"label", "procedure", "project_id", "tools", "input", "max_steps",
-                 "model", "cron", "tz", "enabled", "next_due"}
+                 "model", "cron", "tz", "enabled", "next_due",
+                 # Le webhook. ⚠️ `kind` n'y est PAS : un déclencheur ne change pas
+                 # de coup d'envoi en cours de route — ce serait un autre agent, et
+                 # la bascule laisserait derrière elle soit un cron orphelin, soit
+                 # un secret qui ouvre une porte que plus personne ne regarde.
+                 "payload_mode", "payload_fields", "max_per_hour", "fraicheur_s"}
     inconnu = set(champs) - autorises
     if inconnu:
         raise ValueError(f"colonnes hors contrat : {sorted(inconnu)}")
@@ -92,6 +119,39 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
             raison="déclencheur désactivé : ses occurrences en attente ne seront "
                    "jamais exécutées.")
     return dict(row) if row else None
+
+
+def trigger_par_secret(trigger_id: int, secret_hash: str) -> Optional[dict]:
+    """Le déclencheur webhook d'un id ET d'un secret — les deux, ou rien.
+
+    ⚠️ La comparaison du haché est faite EN SQL, dans le même `WHERE` que l'id :
+    un `SELECT` par id suivi d'une comparaison en Python distinguerait « id
+    inconnu » de « mauvais secret » par le temps de réponse, et rendrait la route
+    bavarde sur les ids qui existent. Ici les deux cas rendent `None`.
+
+    ⚠️ `enabled` n'est PAS filtré : un déclencheur en pause doit être TROUVÉ pour
+    que la route réponde 409 (« il existe, il est en pause ») plutôt que 404. La
+    pause est une information que son propriétaire a le droit de recevoir — c'est
+    lui qui a donné le secret à la source.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {_COLS} FROM runner_triggers "
+            f"WHERE id = %s AND kind = 'webhook' AND hook_secret_hash = %s",
+            (trigger_id, secret_hash),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def poser_secret_de_hook(trigger_id: int, org_id: int, secret_hash: str) -> bool:
+    """Pose (ou remplace) le haché du secret. Le clair ne passe jamais par ici."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE runner_triggers SET hook_secret_hash = %s "
+            "WHERE id = %s AND org_id = %s AND kind = 'webhook'",
+            (secret_hash, trigger_id, org_id),
+        )
+        return bool(cur.rowcount)
 
 
 def delete_trigger(trigger_id: int, org_id: int) -> bool:

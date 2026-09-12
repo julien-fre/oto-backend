@@ -40,7 +40,10 @@ JOBS_PAGE_MAX = 200
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 run_id: Optional[str] = None, max_attempts: int = 3,
                 fleet_id: Optional[int] = None,
-                sub: Optional[str] = None) -> dict:
+                sub: Optional[str] = None,
+                delai_s: Optional[int] = None,
+                perime_apres_s: Optional[int] = None,
+                conn=None) -> dict:
     """Enfile un travail, éventuellement rattaché à une FLOTTE.
 
     ⚠️ `sub` = **l'identité que l'agent portera en exécutant ce travail**, pas
@@ -59,20 +62,49 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     garantit que la flotte EXISTE, pas qu'elle soit celle de cette org. Rattacher
     un travail à la flotte d'autrui ferait entrer son coût et son avancement dans
     l'état d'un passage étranger.
+
+    `delai_s` (12/09/2026) : le travail ne devient réservable que dans N secondes.
+    C'est ce qui rend le LISSAGE d'une rafale de webhooks possible sans rien
+    perdre — au-delà du débit déclaré, la livraison est acceptée et son travail
+    part plus tard. Le mécanisme existait déjà dans la table (`due_at`, que le
+    claim filtre) ; il n'avait simplement aucun écrivain autre que « maintenant ».
+
+    `perime_apres_s` : au-delà, ce travail ne doit plus partir. Posé dans la
+    CHARGE (`_perime_apres`) plutôt que dans une colonne, parce que la réservation
+    est le seul endroit qui puisse l'appliquer sans qu'une boucle de fond doive
+    exister — et parce qu'un travail sans lui reste identique, octet pour octet.
+    ⚠️ Un travail retardé QUI PÉRIME est le seul garde-fou contre un lissage qui
+    deviendrait un arriéré : un événement d'hier joué demain rend un résultat
+    faux, pas un résultat tardif (la leçon de #814).
+
+    `conn` : la connexion de l'appelant, pour que l'enfilage partage SA
+    transaction. La route des webhooks écrit la livraison et le travail ensemble
+    ou pas du tout.
     """
-    with _connect() as conn:
-        row = conn.execute(
+    charge = dict(payload) if payload is not None else None
+    if perime_apres_s:
+        charge = charge or {}
+        charge["_perime_apres_s"] = int(perime_apres_s)
+
+    def _poser(c):
+        return c.execute(
             """
             INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts,
-                                     fleet_id, sub)
-            VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s)
+                                     fleet_id, sub, due_at)
+            VALUES (%s, %s, %s::jsonb, %s, %s, %s, %s,
+                    NOW() + make_interval(secs => %s))
             RETURNING id, status, due_at, fleet_id, sub
             """,
             (org_id, kind,
-             json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-             run_id, max(1, int(max_attempts)), fleet_id, sub),
+             json.dumps(charge, ensure_ascii=False) if charge is not None else None,
+             run_id, max(1, int(max_attempts)), fleet_id, sub,
+             max(0, int(delai_s or 0))),
         ).fetchone()
-    return dict(row)
+
+    if conn is not None:
+        return dict(_poser(conn))
+    with _connect() as c:
+        return dict(_poser(c))
 
 
 _RAISON_CYCLE = ("occurrence non prise dans son cycle : le déclencheur a enfilé "
@@ -212,6 +244,35 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                                 ' [bail expiré, tentatives épuisées]'
              WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
                AND lease_until < NOW() AND attempts >= max_attempts
+            """,
+            (org_id, org_id),
+        )
+        # ⚠️ Ce qui a trop attendu PÉRIME, avant d'être servi (12/09/2026). Un
+        # travail déclenché par un webhook porte sa fraîcheur dans sa charge
+        # (`_perime_apres_s`, posé par `enqueue_job`) : au-delà, il ne part plus.
+        #
+        # Sans ça, un lissage devient un ARRIÉRÉ — une rafale retardée se
+        # déverserait le lendemain, et un agent traiterait un événement d'hier
+        # comme s'il venait d'arriver. C'est exactement la faute que les
+        # occurrences programmées ont payée (#814) : « une veille quotidienne
+        # exécutée treize jours plus tard ne rend pas un résultat en retard, elle
+        # rend un résultat FAUX ».
+        #
+        # `expired` et non `failed` : ce travail n'a jamais tourné. Et ici plutôt
+        # que dans une boucle de fond, pour la même raison que les épaves
+        # ci-dessus — le sondage est le seul rendez-vous garanti.
+        conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'expired', finished_at = NOW(),
+                   last_error = 'livraison périmée : le travail a attendu plus '
+                                'longtemps que la fraîcheur déclarée par son '
+                                'déclencheur. Un événement traité trop tard rend '
+                                'un résultat faux, pas un résultat tardif.'
+             WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'pending'
+               AND payload ? '_perime_apres_s'
+               AND created_at + make_interval(
+                       secs => (payload->>'_perime_apres_s')::int) < NOW()
             """,
             (org_id, org_id),
         )

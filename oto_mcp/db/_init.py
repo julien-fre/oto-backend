@@ -275,6 +275,27 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # déjà, le CREATE TABLE est sauté — seule la colonne manque. NULL = le worker
     # tourne sur le sien, comme avant.
     conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS model TEXT")
+    # Le DÉCLENCHEUR PAR WEBHOOK (12/09/2026). Sur une base qui existe déjà, le
+    # CREATE TABLE est sauté : seules ces colonnes manquent.
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS kind TEXT "
+                 "NOT NULL DEFAULT 'schedule'")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS hook_secret_hash TEXT")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS payload_mode TEXT "
+                 "NOT NULL DEFAULT 'ignore'")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS payload_fields JSONB")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS max_per_hour INT")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS fraicheur_s INT")
+    # ⚠️ Le RELÂCHEMENT de deux NOT NULL, et il est à sens unique : l'ancien code
+    # (la prod, pendant la fenêtre) écrit toujours les deux, et son tick filtre
+    # `next_due <= NOW()` — qu'un NULL ne satisfait jamais. Une ligne webhook lui
+    # est donc invisible plutôt que mal traitée. `IF EXISTS` sur la colonne : sur
+    # une base vierge le DDL les a déjà créées nullables.
+    for col in ("cron", "next_due"):
+        conn.execute(f"ALTER TABLE runner_triggers ALTER COLUMN {col} DROP NOT NULL")
+    # L'index du secret : la route le compare par HACHÉ, jamais en clair.
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runner_triggers_hook_secret "
+                 "ON runner_triggers(hook_secret_hash) "
+                 "WHERE hook_secret_hash IS NOT NULL")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS temperature REAL")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS rows_at_launch INT")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ")

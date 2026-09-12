@@ -352,8 +352,17 @@ from oto_mcp.db import _schema, schema
 # CREATE TABLE. La base partagée la reçoit par `db/revision.py` (ALTER, fonction, et le
 # déclencheur posé seulement s'il manque). Additif : le code du tag précédent ne lit pas
 # `rev`, et ses écritures la font avancer. 153 174 → 153 796.
-EMPREINTE = "cbe344b8cea8525a50efd6abf0e84876a9a4b6e9deca3e7401660d5cb31b752c"
-LONGUEUR = 153796
+# 12/09/2026 — le déclencheur par WEBHOOK (fragment RUNS) : six colonnes sur
+# `runner_triggers` (`kind`, `hook_secret_hash`, `payload_mode`, `payload_fields`,
+# `max_per_hour`, `fraicheur_s`), le relâchement de `cron`/`next_due` en NULLABLE,
+# et la table `runner_hook_deliveries` avec son index de fenêtre. La base partagée
+# reçoit tout par les ALTER de `_init.py`. Additif ET réversible : le code du tag
+# précédent écrit toujours `cron`/`next_due`, et son tick ne voit pas une ligne
+# dont `next_due` est NULL.
+# ⚠️ Empreinte RECALCULÉE sur le résultat FUSIONNÉ (rebase du 13/09 sur `revision`) :
+# recopier l'une des deux aurait validé un DDL que personne n'a servi.
+EMPREINTE = "bc5dea444e1e894cc65c34dde17e20b19a8d25ed086232650885c36b7016d7f2"
+LONGUEUR = 156477
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
