@@ -889,6 +889,22 @@ choix : `writes`, `claims`, `model`, le détail de coût (`usage_input`/`usage_o
 `rappels_contact`, `effectif_non_atteste`, `contact_rattrape`, `contact_arbitre`,
 `ligne_abandonnee`. Ils traversent par `extra=allow` et un client typé ne les voit pas.
 
+### Un run clos se détache de son travail, qui en garde la trace (13/09/2026)
+
+Quand la réservation reprend un `start` dont le run lié est **clos** (le fait
+`run_finish` au journal), elle le sert sans `run_id` — le worker ouvre un run neuf — et
+inscrit, dans la même écriture, le run détaché dans `payload._plateforme.runs_detaches`.
+**Le serveur seul écrit cette clé** : `enqueue_job` la retire de toute charge enfilée.
+Une entrée vaut `{run_id, tentative, raison: "run_clos", a}` (`tentative` = celle qui
+tenait le run, `a` = l'instant du détachement) ; l'historique est **complet** — il
+survit aux conclusions suivantes — et **dédupliqué** sur `run_id`. La clé n'est
+**jamais transmise au modèle** : le worker ne la lit pas, seul son journal local la
+recopie avec le travail reçu. C'est le seul lien d'un travail vers ses runs passés, et
+`modele_du_run` s'en sert pour « Continuer » un run détaché, dans la même org :
+l'association courante prime, et des travaux aux modèles contradictoires lèvent une
+erreur au lieu d'en choisir un (la capacité ne la nomme pas encore : elle sort en 500).
+Preuves : `tests/test_claim_detache_run_clos.py`, `tests/test_modele_du_run_detache.py`.
+
 ## Automatisations — déclencher une routine Claude Code (v1.73.0)
 
 Connecteur `routine` (`routine_fire.py` + capacité `me.automation.fire`, MCP

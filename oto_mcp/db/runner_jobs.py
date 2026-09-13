@@ -345,7 +345,15 @@ def modele_du_run(run_id: str, org_id: int) -> dict:
 
     Lu sur le travail `start` du run (lié par `bind_run`). Un `continue` le reprend :
     un fil ouvert sur une voie ne se poursuit pas sur une autre — la voie
-    Conversations et la boucle Messages n'ont pas le même fil."""
+    Conversations et la boucle Messages n'ont pas le même fil.
+
+    ⚠️ Un run CLOS est détaché de son travail à la reprise (`claim_next_job`) : son
+    `run_id` n'y figure plus. À défaut d'association courante — qui prime, comme
+    avant —, le travail se retrouve par sa trace `_plateforme.runs_detaches`, dans
+    CETTE org seulement. Des travaux aux modèles différents lèvent `RuntimeError` :
+    en choisir un continuerait peut-être le fil sur la mauvaise voie, et `{}` le
+    lancerait sur le modèle du worker. Aucun index ne couvre `payload` : la lecture
+    est bornée à l'org, et ne sert que « Continuer »."""
     with _connect() as conn:
         row = conn.execute(
             """
@@ -358,6 +366,27 @@ def modele_du_run(run_id: str, org_id: int) -> dict:
             """,
             (run_id, org_id),
         ).fetchone()
+        if row is None:
+            couples = conn.execute(
+                f"""
+                SELECT payload->>'model' AS model,
+                       payload->>'model_family' AS model_family,
+                       array_agg(id ORDER BY id) AS travaux
+                  FROM runner_jobs
+                 WHERE org_id = %s AND kind = 'start'
+                   AND payload->'{_CHAMP_PLATEFORME}'->'runs_detaches'
+                       @> jsonb_build_array(jsonb_build_object('run_id', %s::text))
+                 GROUP BY 1, 2
+                """,
+                (org_id, run_id),
+            ).fetchall()
+            if len(couples) > 1:
+                raise RuntimeError(
+                    f"run {run_id} détaché de travaux aux modèles contradictoires — "
+                    + " ; ".join(f"{c['model']}/{c['model_family']} : travaux {c['travaux']}"
+                                 for c in couples)
+                    + ". Aucun n'est choisi.")
+            row = couples[0] if couples else None
     if not row or not row["model_family"]:
         return {}
     return {"model": row["model"], "model_family": row["model_family"]}
