@@ -357,4 +357,70 @@ CREATE TABLE IF NOT EXISTS runner_platform_depots (
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (worker_sub, depot)
 );
+
+-- 13/09/2026 : la TENTATIVE d'un travail — source unique de la Consommation et des
+-- Coûts (oto-backend#943), des journaux (oto#196) et du budget (oto#197). Contrat :
+-- `oto-runner/docs/tentatives-journaux-budget.md` §1 et §3. Elle naît au CLAIM,
+-- dans la transaction qui fait `attempts + 1`, et se ferme done | failed | lost.
+--
+-- ⚠️⚠️ AUCUNE clé étrangère. `runner_jobs.run_id` est `ON DELETE CASCADE` et
+-- `prune_orphan_runs` efface les runs anciens, travaux compris : une tentative
+-- accrochée à eux partirait avec. Les rattachements sont RECOPIÉS, aux types de
+-- leurs sources : `job_id` BIGINT (`runner_jobs.id`), `attempt_no` INT
+-- (`runner_jobs.attempts`), `org_id` / `fleet_id` / `trigger_id` BIGINT, `run_id`
+-- TEXT (`runs.run_id`), `worker_sub` TEXT = l'identité d'une MACHINE.
+-- ⚠️ AUCUN identifiant de personne : la table est durable, jamais élaguée, et n'a
+-- donc rien à pseudonymiser.
+--
+-- ⚠️ `NULL` = inconnu, jamais 0 : payeur (`key_source`), famille de fournisseur,
+-- chaque poste de jetons. Les postes sont stockés TELS QUE REÇUS ; sans
+-- `usage_couverture`, la tentative n'est pas attestée. Le montant (`nano_usd`,
+-- nano-dollars entiers) se fige avec le nom de son `bareme`, ou reste NULL avec sa
+-- raison (`unpriced_reason`). Un montant calculé au prix PROVISOIRE d'un barème non
+-- vérifié existe, et le dit : `price_unverified`.
+CREATE TABLE IF NOT EXISTS runner_job_attempts (
+    id UUID PRIMARY KEY,
+    job_id BIGINT NOT NULL,
+    attempt_no INT NOT NULL,
+    org_id BIGINT NOT NULL,
+    fleet_id BIGINT,
+    run_id TEXT,
+    trigger_id BIGINT,
+    worker_sub TEXT NOT NULL,
+    key_source TEXT,
+    provider_family TEXT,
+    model TEXT,
+    claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at TIMESTAMPTZ,
+    outcome TEXT NOT NULL DEFAULT 'open'
+        CHECK (outcome IN ('open', 'done', 'failed', 'lost')),
+    stopped TEXT,
+    steps INT,
+    usage_input BIGINT,
+    usage_output BIGINT,
+    usage_cache_read BIGINT,
+    usage_cache_write BIGINT,
+    usage_input_total BIGINT,        -- MAJORANT (cache compris) : jamais tarifé
+    usage_couverture JSONB,
+    nano_usd BIGINT,
+    bareme TEXT,
+    unpriced_reason TEXT,
+    price_unverified BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT runner_job_attempts_job_attempt_key UNIQUE (job_id, attempt_no)
+);
+-- Le socle du fencing : une seule tentative OUVERTE par travail. Ouvrir la suivante
+-- sans avoir clos la précédente `lost` échoue, bruyamment.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_runner_job_attempts_open
+    ON runner_job_attempts(job_id) WHERE outcome = 'open';
+CREATE INDEX IF NOT EXISTS idx_runner_job_attempts_org
+    ON runner_job_attempts(org_id, claimed_at);
+CREATE INDEX IF NOT EXISTS idx_runner_job_attempts_run
+    ON runner_job_attempts(run_id) WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_runner_job_attempts_trigger
+    ON runner_job_attempts(trigger_id, claimed_at) WHERE trigger_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_runner_job_attempts_fleet
+    ON runner_job_attempts(fleet_id) WHERE fleet_id IS NOT NULL;
+-- `measured_since` : le premier fait enregistré, lu à chaque regroupement.
+CREATE INDEX IF NOT EXISTS idx_runner_job_attempts_claimed
+    ON runner_job_attempts(claimed_at);
 """

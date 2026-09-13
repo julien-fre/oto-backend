@@ -10,7 +10,8 @@ Prouvé contre un PostgreSQL jetable, par la file telle que la route l'appelle
 (`runner.jobs` → `_jobs`, vrai `db.claim_next_job`). Les faits `run_start` /
 `run_finish` sont écrits dans `tool_calls` sous la forme du journal : c'est là, et
 nulle part ailleurs, que la clôture se lit. La réservation de ligne passe par le
-chemin monté (middleware `_run_id=` + outil de `register_all`).
+chemin monté (middleware `_run_id=` + outil de `register_all`). Chaque verbe du bail
+porte l'`attempt_id` de la prise qui agit (bascule dure : il est exigé).
 """
 from __future__ import annotations
 
@@ -155,10 +156,11 @@ def _vol_rate(*, max_attempts: int = 3, fait: bool = True) -> tuple[int, str]:
           payload={"procedure": "p-run-clos", "input": "fais le travail"})
     job = _prendre()
     r1 = _run_ouvert()
-    assert _jobs(op="bind_run", job_id=job["id"], run_id=r1)["ok"]
+    assert _jobs(op="bind_run", job_id=job["id"], run_id=r1,
+                 attempt_id=job["attempt_id"])["ok"]
     _clore(r1, fait=fait)
     out = _jobs(op="complete", job_id=job["id"], ok=False, run_id=r1,
-                error="l'agent a échoué")
+                error="l'agent a échoué", attempt_id=job["attempt_id"])
     assert out["status"] == "pending", out
     return int(job["id"]), r1
 
@@ -187,7 +189,7 @@ def test_un_start_sur_run_clos_se_sert_sans_run_et_trace_le_detachement(live):
     assert db.run_closed_at(r1) is not None, "l'ancien run et sa clôture restent intacts"
 
     r2 = _run_ouvert()
-    assert _jobs(op="bind_run", job_id=job_id, run_id=r2)["ok"]
+    assert _jobs(op="bind_run", job_id=job_id, run_id=r2, attempt_id=t2["attempt_id"])["ok"]
     assert _relu(job_id)["run_id"] == r2 != r1
 
 
@@ -253,14 +255,16 @@ def test_la_ligne_liberee_a_t1_se_reserve_a_nouveau_a_t2(surface):
 
     _jobs(op="enqueue", kind="start",
           payload={"procedure": "p-run-clos", "input": "fais le travail"})
-    job_id = int(_prendre()["id"])
+    t1 = _prendre()
+    job_id = int(t1["id"])
     r1 = _run_ouvert()
-    assert _jobs(op="bind_run", job_id=job_id, run_id=r1)["ok"]
+    assert _jobs(op="bind_run", job_id=job_id, run_id=r1, attempt_id=t1["attempt_id"])["ok"]
     ligne = _reserver_ligne(ns, r1)["row"]
     assert ligne and _bail(ns_id, ligne["_id"])["claimed_run"] == r1
 
     _clore(r1)
-    out = _jobs(op="complete", job_id=job_id, ok=False, run_id=r1, error="échec")
+    out = _jobs(op="complete", job_id=job_id, ok=False, run_id=r1, error="échec",
+                attempt_id=t1["attempt_id"])
     assert out["rows_released"] == 1, out
     assert _bail(ns_id, ligne["_id"])["claimed_run"] is None, "T1 : la ligne est libérée"
     _backoff_ecoule(job_id)
@@ -268,7 +272,7 @@ def test_la_ligne_liberee_a_t1_se_reserve_a_nouveau_a_t2(surface):
     t2 = _prendre()
     assert t2["id"] == job_id and t2.get("run_id") is None, t2
     r2 = _run_ouvert()
-    assert _jobs(op="bind_run", job_id=job_id, run_id=r2)["ok"]
+    assert _jobs(op="bind_run", job_id=job_id, run_id=r2, attempt_id=t2["attempt_id"])["ok"]
     reprise = _reserver_ligne(ns, r2)["row"]
     assert reprise and reprise["_id"] == ligne["_id"], "T2 : la même ligne, réservée à nouveau"
     assert _bail(ns_id, ligne["_id"])["claimed_run"] == r2, "sous le run NEUF"
@@ -279,12 +283,12 @@ def test_la_ligne_liberee_a_t1_se_reserve_a_nouveau_a_t2(surface):
 def test_la_trace_survit_au_succes_suivant(live):
     job_id, r1 = _vol_rate()
     _backoff_ecoule(job_id)
-    _prendre()
+    t2 = _prendre()
     r2 = _run_ouvert()
-    assert _jobs(op="bind_run", job_id=job_id, run_id=r2)["ok"]
+    assert _jobs(op="bind_run", job_id=job_id, run_id=r2, attempt_id=t2["attempt_id"])["ok"]
 
     out = _jobs(op="complete", job_id=job_id, ok=True, run_id=r2,
-                result={"usage_tokens": 10})
+                result={"usage_tokens": 10}, attempt_id=t2["attempt_id"])
     assert out["status"] == "done", out
     relu = _relu(job_id)
     assert relu["run_id"] == r2, relu
@@ -296,9 +300,10 @@ def test_la_trace_survit_au_succes_suivant(live):
 def test_un_bail_mort_sur_run_ouvert_garde_son_run_sans_trace(live):
     _jobs(op="enqueue", kind="start",
           payload={"procedure": "p-run-clos", "input": "fais le travail"})
-    job_id = int(_prendre()["id"])
+    t1 = _prendre()
+    job_id = int(t1["id"])
     r1 = _run_ouvert()                 # jamais clos : l'agent est mort en plein tour
-    assert _jobs(op="bind_run", job_id=job_id, run_id=r1)["ok"]
+    assert _jobs(op="bind_run", job_id=job_id, run_id=r1, attempt_id=t1["attempt_id"])["ok"]
     _bail_mort(job_id)
 
     reprise = _prendre()
@@ -326,16 +331,19 @@ def test_le_rejeu_ne_duplique_pas_la_trace(live):
     from oto_mcp import db
     job_id, r1 = _vol_rate(max_attempts=5)
     _backoff_ecoule(job_id)
-    assert _prendre()["run_id"] is None
+    t2 = _prendre()
+    assert t2["run_id"] is None
 
     # Deux prises successives sans nouveau run : rien à détacher la seconde fois.
-    assert _jobs(op="complete", job_id=job_id, ok=False, error="encore")["status"] == "pending"
+    assert _jobs(op="complete", job_id=job_id, ok=False, error="encore",
+                 attempt_id=t2["attempt_id"])["status"] == "pending"
     _backoff_ecoule(job_id)
-    assert _prendre()["run_id"] is None
+    t3 = _prendre()
+    assert t3["run_id"] is None
     assert [e["run_id"] for e in _trace(_relu(job_id))] == [r1]
 
     # Le MÊME état rejoué : le run clos se retrouve lié, le bail meurt, on reprend.
-    assert db.bind_job_run(job_id, WORKER, r1)
+    assert db.bind_job_run(job_id, WORKER, r1, attempt_id=t3["attempt_id"])
     _bail_mort(job_id)
     rejeu = _prendre()
     assert rejeu["run_id"] is None, rejeu
@@ -359,7 +367,7 @@ def test_la_cloture_se_lit_du_fait_journalise(live):
     # Le fait arrive : la prise suivante détache.
     _clore(r1)
     assert _jobs(op="complete", job_id=job_id, ok=False, run_id=r1,
-                 error="encore")["status"] == "pending"
+                 error="encore", attempt_id=t2["attempt_id"])["status"] == "pending"
     _backoff_ecoule(job_id)
     t3 = _prendre()
     assert t3["run_id"] is None, t3

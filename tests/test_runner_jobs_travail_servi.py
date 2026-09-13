@@ -172,7 +172,7 @@ def test_prolonger_le_bail_se_voit_a_la_surveillance(live):
     est vivant. Un bail figé pendant qu'il tourne se lirait « mort »."""
     job = _job_claime()
     avant = _dans_la_liste(job["id"])["lease_until"]
-    _jobs(op="extend", job_id=job["id"], lease_seconds=3600)
+    _jobs(op="extend", job_id=job["id"], lease_seconds=3600, attempt_id=job["attempt_id"])
     apres = _dans_la_liste(job["id"])["lease_until"]
     assert apres > avant, "le heartbeat repousse la date, la surveillance la voit"
 
@@ -181,7 +181,7 @@ def test_les_postes_de_garde_traversent_jusqua_la_surveillance(live):
     """Ce que le harnais déclare à la conclusion arrive intact à list et à get —
     `[]` reste `[]`, `null` reste `null`. Le contrat vaut ce que la traversée vaut."""
     job = _job_claime()
-    _jobs(op="complete", job_id=job["id"], ok=True,
+    _jobs(op="complete", job_id=job["id"], ok=True, attempt_id=job["attempt_id"],
           result={"usage_tokens": 12_000, "stopped": "end_turn",
                   "valeurs_cliente_reparees": ["effectif", "ca"],
                   "contacts_fabriques_retires": ["Jean Dupont"],
@@ -201,10 +201,10 @@ def test_non_mesure_et_aucune_destruction_ne_se_confondent_pas(live):
     """Le test qui justifie tout le lot n°3 : deux travaux, deux verdicts opposés,
     et la seule chose qui les sépare est `[]` contre `null`."""
     mesure = _job_claime()
-    _jobs(op="complete", job_id=mesure["id"], ok=True,
+    _jobs(op="complete", job_id=mesure["id"], ok=True, attempt_id=mesure["attempt_id"],
           result={"valeurs_cliente_detruites": []})
     aveugle = _job_claime()
-    _jobs(op="complete", job_id=aveugle["id"], ok=True,
+    _jobs(op="complete", job_id=aveugle["id"], ok=True, attempt_id=aveugle["attempt_id"],
           result={"valeurs_cliente_detruites": None})
 
     vu = _jobs(op="get", job_id=mesure["id"])["job"]["result"]

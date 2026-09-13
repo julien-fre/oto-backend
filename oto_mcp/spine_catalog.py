@@ -140,10 +140,10 @@ SPINE_FAMILIES: tuple[SpineFamily, ...] = (
         "suit un run hébergé, `feedback` remonte un manque ou un défaut",
     ),
     SpineFamily(
-        "oto_fleet / oto_trigger",
-        ("oto_fleet", "oto_trigger"),
-        "agents hébergés : ce que fait passer une flotte, sur quel tableau, et ses "
-        "déclencheurs programmés",
+        "oto_fleet / oto_trigger / oto_cost",
+        ("oto_fleet", "oto_trigger", "oto_cost"),
+        "agents hébergés : ce que fait passer une flotte, sur quel tableau, ses "
+        "déclencheurs programmés, et leur Consommation (jetons) et leurs Coûts (montant)",
     ),
     SpineFamily(
         "oto_upload_url",

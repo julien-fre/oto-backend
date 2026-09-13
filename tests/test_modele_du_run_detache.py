@@ -8,7 +8,8 @@ sur une voie ne se poursuit pas sur une autre.
 
 Contre un PostgreSQL jetable, par le chemin réel : enfilé, pris, lié, clos (le fait
 `run_finish` au journal), conclu en échec, repris. C'est la réservation qui détache,
-jamais une trace écrite à la main.
+jamais une trace écrite à la main. Chaque verbe du bail porte l'`attempt_id` de la prise
+qui agit (bascule dure : `bind_run` et `complete` l'exigent).
 """
 from __future__ import annotations
 
@@ -88,22 +89,25 @@ def _prendre(org: int, charge: dict) -> dict:
     return job
 
 
-def _vol_puis_detachement(org: int, charge: dict) -> tuple[int, str, dict]:
+def _vol_puis_detachement(org: int, charge: dict) -> tuple[int, str, dict, str]:
     """Enfilé, pris, run lié puis clos, conclu en échec, repris : la réservation
-    détache. Rend (travail, run détaché, modèle lu AVANT le détachement)."""
+    détache. Rend (travail, run détaché, modèle lu AVANT le détachement, tentative de
+    la reprise — celle qui peut lier un run neuf)."""
     from oto_mcp import db
     j = db.enqueue_job(org, "start", payload=dict(charge))
-    assert _prendre(org, charge)["id"] == j["id"]
+    pris = _prendre(org, charge)
+    assert pris["id"] == j["id"]
     run = _run_ouvert(org)
-    assert db.bind_job_run(j["id"], SUB, run)
+    assert db.bind_job_run(j["id"], SUB, run, attempt_id=pris["attempt_id"])
     avant = db.modele_du_run(run, org)
     _clore(run, org)
-    assert db.complete_job(j["id"], SUB, False, error="échec")["status"] == "pending"
+    assert db.complete_job(j["id"], SUB, False, error="échec",
+                           attempt_id=pris["attempt_id"])["status"] == "pending"
     _sql("UPDATE runner_jobs SET due_at = NOW() WHERE id = %s", j["id"])
     reprise = _prendre(org, charge)
     assert reprise["id"] == j["id"] and reprise["run_id"] is None, (
         f"la réservation a détaché le run clos — {reprise!r}")
-    return int(j["id"]), run, avant
+    return int(j["id"]), run, avant, reprise["attempt_id"]
 
 
 def _detacher_aussi_dans(org: int, charge: dict, run: str) -> int:
@@ -120,7 +124,7 @@ def _detacher_aussi_dans(org: int, charge: dict, run: str) -> int:
 def test_un_run_detache_rend_le_modele_d_avant_son_detachement(live):
     from oto_mcp import db
     org = 9201
-    job_id, run, avant = _vol_puis_detachement(org, OPUS)
+    job_id, run, avant, _ = _vol_puis_detachement(org, OPUS)
     assert avant == {"model": "claude-opus-5", "model_family": "anthropic"}, avant
     assert db.get_job(job_id, org)["run_id"] is None
     assert db.modele_du_run(run, org) == avant, (
@@ -133,9 +137,9 @@ def test_un_run_detache_rend_le_modele_d_avant_son_detachement(live):
 def test_le_run_courant_est_inchange_et_prime_sur_la_trace(live):
     from oto_mcp import db
     org = 9202
-    job_id, ancien, _ = _vol_puis_detachement(org, OPUS)
+    job_id, ancien, _, tentative = _vol_puis_detachement(org, OPUS)
     neuf = _run_ouvert(org)
-    assert db.bind_job_run(job_id, SUB, neuf)
+    assert db.bind_job_run(job_id, SUB, neuf, attempt_id=tentative)
     assert db.modele_du_run(neuf, org) == {"model": "claude-opus-5",
                                            "model_family": "anthropic"}
 
@@ -152,7 +156,7 @@ def test_sans_lien_le_comportement_existant(live):
     from oto_mcp import db
     org = 9203
     assert db.modele_du_run("run-inconnu", org) == {}
-    _, run, avant = _vol_puis_detachement(org, {"procedure": "p"})
+    _, run, avant, _ = _vol_puis_detachement(org, {"procedure": "p"})
     assert avant == {} and db.modele_du_run(run, org) == {}, (
         "un run démarré sans modèle se poursuit sans modèle")
 
@@ -162,7 +166,7 @@ def test_sans_lien_le_comportement_existant(live):
 def test_des_modeles_contradictoires_levent_au_lieu_de_choisir(live):
     from oto_mcp import db
     org = 9204
-    a, run, _ = _vol_puis_detachement(org, OPUS)
+    a, run, _, _ = _vol_puis_detachement(org, OPUS)
     b = _detacher_aussi_dans(org, MISTRAL, run)
     with pytest.raises(RuntimeError, match="contradictoires") as e:
         db.modele_du_run(run, org)
@@ -172,7 +176,7 @@ def test_des_modeles_contradictoires_levent_au_lieu_de_choisir(live):
 def test_plusieurs_travaux_du_meme_modele_ne_se_contredisent_pas(live):
     from oto_mcp import db
     org = 9205
-    _, run, avant = _vol_puis_detachement(org, OPUS)
+    _, run, avant, _ = _vol_puis_detachement(org, OPUS)
     _detacher_aussi_dans(org, OPUS, run)
     assert db.modele_du_run(run, org) == avant, "un seul couple : rien à choisir"
 
@@ -182,7 +186,7 @@ def test_plusieurs_travaux_du_meme_modele_ne_se_contredisent_pas(live):
 def test_une_autre_org_ne_lit_rien_et_ne_contredit_rien(live):
     from oto_mcp import db
     org, autre = 9206, 9207
-    _, run, avant = _vol_puis_detachement(org, OPUS)
+    _, run, avant, _ = _vol_puis_detachement(org, OPUS)
     assert db.modele_du_run(run, autre) == {}, "le run d'une AUTRE org ne se lit pas"
 
     _detacher_aussi_dans(autre, MISTRAL, run)   # la même trace chez un voisin, autre modèle

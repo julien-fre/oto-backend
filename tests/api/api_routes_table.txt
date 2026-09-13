@@ -647,6 +647,8 @@ POST /api/me/runs/thread -> _handler
 OPTIONS /api/me/runs/thread -> options_handler
 POST /api/me/runner/jobs -> _handler
 OPTIONS /api/me/runner/jobs -> options_handler
+POST /api/me/runner/cost -> _handler
+OPTIONS /api/me/runner/cost -> options_handler
 POST /api/me/runner/triggers -> _handler
 OPTIONS /api/me/runner/triggers -> options_handler
 POST /api/me/runner/fleets -> _handler

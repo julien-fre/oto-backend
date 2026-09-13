@@ -56,14 +56,20 @@ def espion(monkeypatch):
                         lambda org_id, sub, lease_seconds=600, depot=None, **_:
                         vu.update(claim=(org_id, sub, lease_seconds)) or
                         vu.setdefault("depots", []).append(depot))
+    # ⚠️ `attempt_id` suit la signature servie (bascule dure) : les verbes du bail
+    # l'exigent. `bind`/`extend` rendent True (appliqué), False (tentative remplacée),
+    # None (inconnue).
     monkeypatch.setattr(RJ.db, "complete_job",
-                        lambda job_id, sub, ok, error=None, run_id=None, result=None:
-                        vu.update(result=result) or
+                        lambda job_id, sub, ok, error=None, run_id=None, result=None,
+                        attempt_id=None:
+                        vu.update(result=result, tentative=attempt_id) or
                         ({"status": "done"} if sub == "worker-campagne" else None))
-    monkeypatch.setattr(RJ.db, "bind_job_run", lambda j, s, r: s == "worker-campagne")
+    monkeypatch.setattr(RJ.db, "bind_job_run",
+                        lambda j, s, r, attempt_id=None: (s == "worker-campagne") or None)
     # Un `continue` relit le modèle de son run : par défaut, un run démarré sans.
     monkeypatch.setattr(RJ.db, "modele_du_run", lambda run_id, org_id: {})
-    monkeypatch.setattr(RJ.db, "extend_job_lease", lambda j, s, lease_seconds=600: False)
+    monkeypatch.setattr(RJ.db, "extend_job_lease",
+                        lambda j, s, lease_seconds=600, attempt_id=None: False)
     monkeypatch.setattr(RJ.db, "get_job", lambda j, org: None)
     # ⚠️ Doublure OBLIGATOIRE : sans elle, l'arrêt des campagnes épuisées tape la
     # vraie base, lève, et le fail-open de la production avale l'échec — les
@@ -162,32 +168,81 @@ def test_enqueue_scope_lorg_de_lappel(espion):
 
 # ── conclure ce qui ne nous appartient pas = job inconnu (pas d'oracle) ───────
 
+#: La tentative que le claim a rendue — les verbes du bail la portent (bascule dure).
+_TENTATIVE = "00000000-0000-4000-8000-000000000007"
+
+
 def test_conclure_le_job_dun_autre_rend_job_inconnu(espion):
     with pytest.raises(AuthzDenied) as e:
-        _appel(_ctx(sub="autre-worker"), op="complete", job_id=7, ok=True)
+        _appel(_ctx(sub="autre-worker"), op="complete", job_id=7, ok=True,
+               attempt_id=_TENTATIVE)
     assert (e.value.status, e.value.code) == (404, "job_not_found")
 
 
 def test_le_claimant_conclut(espion):
-    out = _appel(_ctx(), op="complete", job_id=7, ok=True)
+    out = _appel(_ctx(), op="complete", job_id=7, ok=True, attempt_id=_TENTATIVE)
     # Sans run connu, la libération des baux n'est pas tentée et la réponse le DIT
     # (#633) : null + raison, jamais un 0 fabriqué.
     assert out == {"ok": True, "status": "done",
                    "run_id": None, "rows_released": None, "release": "no_run"}
+    assert espion["tentative"] == _TENTATIVE, "la conclusion passe PAR la tentative"
 
 
-def test_prolonger_un_bail_perdu_rend_job_inconnu(espion):
-    # Le bail a expiré, un autre worker a re-claimé : extend rend rowcount 0.
+def test_prolonger_un_bail_perdu_est_refuse_tentative_remplacee(espion):
+    # Le bail a expiré, un autre worker a re-claimé : la tentative de ce worker est
+    # close `lost`, et `extend` le dit nommément (409), sans rien prolonger.
     with pytest.raises(AuthzDenied) as e:
-        _appel(_ctx(), op="extend", job_id=7)
-    assert e.value.status == 404, \
+        _appel(_ctx(), op="extend", job_id=7, attempt_id=_TENTATIVE)
+    assert (e.value.status, e.value.code) == (409, "attempt_superseded"), \
         "un worker dont le bail est mort ne garde aucune prise sur le job"
+    assert e.value.details == {"usage_enregistre": False}
+
+
+def test_prolonger_une_tentative_inconnue_rend_job_inconnu(espion, monkeypatch):
+    monkeypatch.setattr(RJ.db, "extend_job_lease",
+                        lambda j, s, lease_seconds=600, attempt_id=None: None)
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="extend", job_id=7, attempt_id=_TENTATIVE)
+    assert (e.value.status, e.value.code) == (404, "job_not_found")
+
+
+@pytest.mark.parametrize("op,kw", [("bind_run", {"run_id": "r1"}), ("extend", {}),
+                                    ("complete", {"ok": True})])
+def test_un_verbe_du_bail_SANS_attempt_id_est_refuse_nommement(espion, monkeypatch, op, kw):
+    """Bascule dure : aucun chemin sans tentative. Le refus arrive AVANT toute écriture."""
+    for nom in ("bind_job_run", "extend_job_lease", "complete_job"):
+        monkeypatch.setattr(RJ.db, nom, lambda *a, **k: pytest.fail("rien ne s'écrit"))
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op=op, job_id=7, **kw)
+    assert (e.value.status, e.value.code) == (400, "attempt_id_required")
+
+
+def test_un_complete_TARDIF_est_refuse_tentative_remplacee_et_dit_s_il_a_enregistre(
+        espion, monkeypatch):
+    monkeypatch.setattr(RJ.db, "complete_job",
+                        lambda *a, **k: {"superseded": True, "usage_enregistre": True})
+    monkeypatch.setattr(RJ.db, "datastore_release_by_run",
+                        lambda run_id: pytest.fail("une tentative remplacée ne libère rien"))
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="complete", job_id=7, ok=True, run_id="r1",
+               attempt_id=_TENTATIVE)
+    assert (e.value.status, e.value.code) == (409, "attempt_superseded")
+    assert e.value.details == {"usage_enregistre": True}
+
+
+def test_un_complete_REJOUE_rend_l_enregistre_sans_rien_liberer(espion, monkeypatch):
+    monkeypatch.setattr(RJ.db, "complete_job",
+                        lambda *a, **k: {"status": "done", "run_id": "r1", "replayed": True})
+    monkeypatch.setattr(RJ.db, "datastore_release_by_run",
+                        lambda run_id: pytest.fail("le run peut appartenir à la tentative suivante"))
+    out = _appel(_ctx(), op="complete", job_id=7, ok=True, attempt_id=_TENTATIVE)
+    assert out == {"ok": True, "status": "done", "replayed": True, "run_id": "r1"}
 
 
 # ── le résultat déclaré (R5, garde budget de flotte) ─────────────────────────
 
 def test_complete_transporte_le_resultat_declare(espion):
-    _appel(_ctx(), op="complete", job_id=7, ok=True,
+    _appel(_ctx(), op="complete", job_id=7, ok=True, attempt_id=_TENTATIVE,
            result={"usage_tokens": 31500, "stopped": "end_turn", "steps": 18})
     assert espion["result"] == {"usage_tokens": 31500, "stopped": "end_turn",
                                 "steps": 18}, \
@@ -196,7 +251,7 @@ def test_complete_transporte_le_resultat_declare(espion):
 
 def test_un_resultat_obese_est_refuse(espion):
     with pytest.raises(AuthzDenied) as e:
-        _appel(_ctx(), op="complete", job_id=7, ok=True,
+        _appel(_ctx(), op="complete", job_id=7, ok=True, attempt_id=_TENTATIVE,
                result={"note": "x" * 5000})
     assert e.value.code == "result_too_large", \
         "result est un résumé, jamais un contenu de fil"
@@ -241,7 +296,8 @@ def test_la_liste_est_scopee_a_lorg_et_filtrable(live):
     a = d.enqueue_job(310, "start", payload={"procedure": "p1"})
     d.enqueue_job(311, "start", payload={"procedure": "autrui"})
     job = d.claim_next_job(310, "w-list", lease_seconds=60)
-    d.complete_job(job["id"], "w-list", False, error="boom")   # pending, attempt 1
+    d.complete_job(job["id"], "w-list", False, error="boom",   # pending, attempt 1
+                   attempt_id=job["attempt_id"])
 
     jobs = d.list_jobs(310)
     assert all("autrui" not in str(j.get("payload")) for j in jobs), \
@@ -261,7 +317,8 @@ def test_le_resultat_fait_l_aller_retour_en_base(live):
     job = d.claim_next_job(226, "worker-live", lease_seconds=60)
     assert job and job["id"] == j["id"]
     out = d.complete_job(job["id"], "worker-live", True,
-                         result={"usage_tokens": 12345, "stopped": "end_turn"})
+                         result={"usage_tokens": 12345, "stopped": "end_turn"},
+                         attempt_id=job["attempt_id"])
     assert out == {"status": "done", "run_id": None}, \
         "complete rend le run connu du job (#633) — aucun ici"
     relu = d.get_job(job["id"], 226)
@@ -499,13 +556,18 @@ def reserve(monkeypatch, espion, magasins_interdits):
 
     def _poser(payload):
         stocke = {"id": 7, "org_id": 226, "sub": "demandeur", "payload": payload}
-        monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: stocke)
+        # La réservation COMPOSE le travail servi : elle applique la décision que la
+        # capacité lui passe, dans sa transaction (ici sans connexion : rien ne s'écrit).
+        monkeypatch.setattr(RJ.db, "claim_next_job",
+                            lambda *a, decider=None, **k: decider(None, stocke)[0])
         return stocke
 
-    def _delegue(job, bail, claimant):
+    def _emettre(job, bail, **_):
         vu["delegue"] = job
         return {**job, "delegated_token": "jeton"}
-    monkeypatch.setattr(RJ, "_delegue", _delegue)
+    # La délégation en deux temps : le porteur est vérifié, puis le jeton émis.
+    monkeypatch.setattr(RJ, "_verifier_porteur", lambda job, claimant, **_: job)
+    monkeypatch.setattr(RJ, "_emettre_jeton", _emettre)
     vu["poser"] = _poser
     return vu
 
@@ -636,5 +698,7 @@ def test_un_membre_sans_org_est_TOUJOURS_refuse(espion):
 def test_les_verbes_du_bail_d_un_worker_passent_par_son_sub(espion, monkeypatch):
     """`bind_run`/`extend`/`complete` filtrent par `claimed_by` : le worker
     conclut ce qu'il a réservé, sans org — c'est tout ce que ces verbes exigent."""
-    monkeypatch.setattr(RJ.db, "bind_job_run", lambda j, s, r: s == "worker:ab12cd34")
-    assert _appel(_worker(), op="bind_run", job_id=3, run_id="r1") == {"ok": True}
+    monkeypatch.setattr(RJ.db, "bind_job_run",
+                        lambda j, s, r, attempt_id=None: (s == "worker:ab12cd34") or None)
+    assert _appel(_worker(), op="bind_run", job_id=3, run_id="r1",
+                  attempt_id=_TENTATIVE) == {"ok": True}
