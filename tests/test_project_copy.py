@@ -13,13 +13,14 @@ def _wire(monkeypatch, *, src):
     created = {"projects": [], "docs": [], "links": [], "files": [], "activity": []}
     counter = {"pid": 100, "doc": 200}
 
-    def create_project(ot, oid, name, brief_md="", created_by=None, context_org_id=None):
+    def create_project(ot, oid, name, brief_md="", created_by=None, copied_from=None,
+                       context_org_id=None):
         # `context_org_id` (ADR 0068) : une copie PERSONNELLE est rangée dans l'org où
         # l'on travaille sans y être partagée. Le stub le RETIENT plutôt que de
         # l'avaler — un seam qui accepte tout et ne garde rien ne prouve plus rien.
         counter["pid"] += 1
         created["projects"].append((counter["pid"], ot, oid, name, brief_md, created_by,
-                                    context_org_id))
+                                    copied_from, context_org_id))
         return counter["pid"]
 
     def create_doc(pid, title, *, parent_id=None, body_md="", kind="doc", created_by=None):
@@ -77,7 +78,7 @@ def test_duplicate_copies_brief_and_owner(monkeypatch):
     assert new_id == 101 and warnings == []
     # Le dernier None = `context_org_id` : NULL pour une copie d'ORG, dont le contexte
     # se dérive de son propriétaire (ADR 0030 amendé).
-    assert created["projects"] == [(101, "org", "42", "Copie", "le brief", "u1", None)]
+    assert created["projects"] == [(101, "org", "42", "Copie", "le brief", "u1", None, None)]
     assert created["activity"] == [(101, "project.copy", "from #7")]
 
 
@@ -92,7 +93,7 @@ def test_une_copie_PERSONNELLE_garde_son_org_de_contexte(monkeypatch):
     src = {"project": {"id": 7, "brief_md": "b"}, "docs": [], "links": [], "files": []}
     created = _wire(monkeypatch, src=src)
     PJ.duplicate_project(7, "La mienne", "user", "u1", copied_by="u1", context_org_id=35)
-    (_pid, ot, oid, _n, _b, _by, ctx_org) = created["projects"][0]
+    (_pid, ot, oid, _n, _b, _by, _cf, ctx_org) = created["projects"][0]
     assert (ot, oid) == ("user", "u1"), "la copie appartient à la personne"
     assert ctx_org == 35, "et reste rangée dans l'org où elle a été faite"
 

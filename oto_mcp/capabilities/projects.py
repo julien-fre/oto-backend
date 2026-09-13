@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org, url_perimeter)
-from ._authz import SUB_ONLY
+from ._authz import ORG_MEMBER, SUB_ONLY
 from . import _portee, _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -204,6 +204,24 @@ def _visible_to(row: dict) -> str:
         return (prefix + f"les membres de l'équipe {row.get('owner_id')}, et les "
                 "administrateurs de l'org")
     return prefix + "tout le monde sur la plateforme (projet bibliothèque)"
+
+
+def _portee_rendue(row: Optional[dict]) -> dict:
+    """Le propriétaire et sa CONSÉQUENCE, pour une réponse qui n'est pas une vue.
+
+    `_view` les porte déjà ; les réponses courtes (l'import) ne les portaient pas, et
+    c'est là que ça se paie : depuis le 08/09/2026, « Ajouter à mon Oto » fait naître
+    un projet PERSONNEL alors qu'il le posait chez l'org. La surprise change de camp —
+    hier le collègue voyait sans qu'on l'ait voulu, demain il ne voit plus sans qu'on
+    l'ait dit — et seule cette phrase-là empêche de la déplacer au lieu de la retirer.
+
+    Mêmes NOMS de champs que partout ailleurs (`owner_type`, `owner_id`,
+    `visible_to`) : un second vocabulaire pour la même information est une dette qui
+    se paie au premier lecteur qui compare deux réponses."""
+    if not row:
+        return {}
+    return {"owner_type": row.get("owner_type"), "owner_id": row.get("owner_id"),
+            "visible_to": _visible_to(row)}
 
 
 def _view(row: dict, sub: Optional[str] = None) -> dict:
@@ -1332,6 +1350,26 @@ def _project_read(ctx: ResolvedCtx, inp: ProjectReadInput) -> dict:
                                       include=inp.include))
 
 
+class ImportedProject(BaseModel):
+    """Résultat d'un « Ajouter à mon Oto ». **`imported: false` n'est pas un échec** —
+    l'opération est idempotente : re-forker un projet déjà importé, ou forker le sien,
+    renvoie 200 en désignant l'existant. `reason` dit lequel des deux cas."""
+    project_id: int
+    imported: bool
+    name: Optional[str] = None
+    reason: Optional[str] = None                 # own_project | already_imported
+    copied_from: Optional[int] = None            # présent seulement sur une vraie copie
+    # Ce que la duplication n'a pas pu reprendre (structure copiée, jamais de secret).
+    warnings: Optional[list] = None
+    # QUI voit la copie — et depuis le 08/09/2026 la réponse est « toi seul » (ADR
+    # 0068). Le dire ICI parce que c'est le seul moment où quelqu'un regarde : un
+    # projet qui cesse d'être visible de l'équipe sans que rien ne le signale
+    # déplacerait la surprise au lieu de la supprimer.
+    owner_type: Optional[str] = None
+    owner_id: Optional[str] = None
+    visible_to: Optional[str] = None
+
+
 CAPABILITIES += [
     Capability(
         key="me.project_read", handler=_project_read, Input=ProjectReadInput,
@@ -1514,7 +1552,81 @@ def _clear_project(ctx: ResolvedCtx, inp: NoInput) -> dict:
                        "`_project=` est hors projet par construction.")}
 
 
+# ── « Ajouter à mon Oto » : forker un projet PUBLIÉ par slug (canal d'acquisition) ──
+class ImportProjectInput(BaseModel):
+    slug: str   # mcp_slug d'un projet publié (partage `<slug>.share.oto.cx` / `<slug>.mcp.oto.cx`)
+
+
+def _import_project(ctx: ResolvedCtx, inp: ImportProjectInput) -> dict:
+    """« Ajouter à mon Oto » : forke un projet PUBLIÉ (résolu par slug) chez L'APPELANT
+    — copie PERSONNELLE, rangée dans son org active sans y être partagée (ADR 0068,
+    08/09/2026 ; c'était l'org active qui la possédait) — ou RÉCUPÈRE la copie déjà
+    présente (idempotent). Copie la STRUCTURE
+    (brief + docs + liens + fichiers ; un tableau d'une autre org est re-provisionné à
+    vide par `duplicate_project` — anti-fuite) — JAMAIS les credentials (org-scopés). Le
+    slug d'un partage `secret` est non devinable → le posséder = consentement au fork ;
+    `anonymous` est déjà listé publiquement. La source reste intacte."""
+    slug = (inp.slug or "").strip().lower()
+    _require(bool(slug), "missing_slug", "`slug` requis.", 400)
+    src = db.get_project_by_mcp_slug(slug)
+    _require(src is not None, "unknown_project", "Aucun projet partagé pour ce lien.", 404)
+    _require((src.get("mcp_access") or "off") in ("anonymous", "secret"), "not_importable",
+             "Ce projet n'est pas partagé publiquement (import réservé aux partages "
+             "anonymous/secret).", 403)
+    src_id = int(src["id"])
+    org_id = ctx.org_id
+    # Déjà à moi : la source EST déjà mienne → rien à forker, on l'ouvre. Le cas
+    # PERSONNEL s'y ajoute depuis que l'import crée perso : sans lui, forker son
+    # propre projet importé en referait une copie à chaque clic.
+    deja_mien = ((src.get("owner_type") == "org" and str(src.get("owner_id")) == str(org_id))
+                 or (src.get("owner_type") == "user" and str(src.get("owner_id")) == str(ctx.sub)))
+    if deja_mien:
+        return {"project_id": src_id, "imported": False, "reason": "own_project",
+                "name": src.get("name"), **_portee_rendue(src)}
+    # Idempotent : une copie déjà forkée → on la récupère (« si déjà dans ton compte »),
+    # pas de doublon. On regarde MA copie perso d'abord, puis celle de l'org — les
+    # imports d'avant le 08/09/2026 sont possédés par l'org, et ne pas les reconnaître
+    # ferait réapparaître le bouton « importer » sur un projet déjà présent.
+    existing = (db.find_copied_project("user", str(ctx.sub), src_id)
+                or db.find_copied_project("org", str(org_id), src_id))
+    if existing is not None:
+        return {"project_id": int(existing["id"]), "imported": False,
+                "reason": "already_imported", "name": existing.get("name"),
+                **_portee_rendue(existing)}
+    # ADR 0068 : ce qui naît appartient à la personne qui l'a créé. L'import posait
+    # `("org", org_active)` en dur — le dernier chemin de CONTENU à hériter du contexte
+    # sans qu'aucun paramètre ne le demande (recensement du 08/09/2026). Les tableaux
+    # liés suivent : `duplicate_project` provisionne chez le propriétaire de la copie.
+    # `context_org_id` range la copie dans l'org où l'on travaille, sans l'y partager —
+    # exactement comme `op=copy` (sinon elle n'apparaîtrait nulle part).
+    new_id, warnings = db.duplicate_project(
+        src_id, src.get("name") or "Projet importé", "user", str(ctx.sub),
+        copied_by=ctx.sub, track_source=True, context_org_id=int(org_id))
+    db.log_project_activity(new_id, ctx.sub, "project.import", f"from #{src_id} ({slug})")
+    return {"project_id": new_id, "imported": True, "name": src.get("name"),
+            "copied_from": src_id, "warnings": warnings,
+            **_portee_rendue(db.get_project_by_id(new_id))}
+
+
 CAPABILITIES += [
+    Capability(
+        key="me.import_project", handler=_import_project, Input=ImportProjectInput,
+        Output=ImportedProject,
+        authz=ORG_MEMBER,
+        description=(
+            "« Add to my Oto »: FORK a PUBLISHED project (resolved by its share slug) to "
+            "YOURSELF — the copy is PRIVATE, visible to you alone, filed in your active org "
+            "without being shared with it (ADR 0068); share or transfer it afterwards if you "
+            "want your team to see it. The reply says so in `visible_to`. "
+            "Or RETURN the copy you already imported (idempotent). Copies the "
+            "STRUCTURE (brief + docs + links + files; a tableau owned by another org is "
+            "re-provisioned EMPTY) — NEVER credentials. Source stays intact. Powers the public "
+            "share page's acquisition CTA; the dashboard calls it after login."
+        ),
+        # Canal d'acquisition dashboard-only (login géré côté dashboard) — pas d'outil MCP.
+        mcp=None,
+        rest=RestBinding("POST", "/api/me/projects/import"),
+    ),
     Capability(
         key="me.use_project", handler=_use_project, Input=UseProjectInput, authz=SUB_ONLY,
         description=(

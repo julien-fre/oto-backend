@@ -27,8 +27,8 @@ _DB = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "db"
 
 # Colonnes délibérément NON relues. Une entrée ici est une décision, pas un oubli.
 NOT_READ = {
-    # Lignage de l'ex-fork « Ajouter à mon Oto », retiré le 13/09/2026 (oto#192) : la
-    # colonne reste au DDL, mais plus rien ne l'écrit ni ne la lit.
+    # Lignage d'un fork « Ajouter à mon Oto » : sert en WHERE (idempotence de l'import),
+    # jamais en sortie — aucune surface ne l'affiche.
     "copied_from",
     # Drapeau d'outbox du worker d'embeddings : drainé par sa propre requête
     # (`db/aux_embed.py`), n'a rien à faire dans la vue d'un projet.

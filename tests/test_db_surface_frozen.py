@@ -63,7 +63,7 @@ _SURFACE = """
     delete_subscription derive_description dict_row doc_backlinks doc_rev
     due_subscriptions duplicate_project edge_exists edges_for emails
     emails_by_subs enqueue_scheduled_email field_read_sql field_value_sql
-    files_pending_extraction finish_run
+    files_pending_extraction find_copied_project finish_run
     get_account_profile get_all_connector_schemas get_aux_embedding_sha
     get_billing_payment_by_ref get_connector_schema get_datastore
     get_datastore_by_id get_doc_by_id get_doc_by_public_token

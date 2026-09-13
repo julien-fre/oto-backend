@@ -54,18 +54,21 @@ _MCP_ACCESS = ("off", "anonymous", "secret", "org")
 
 def create_project(owner_type: str, owner_id: str, name: str,
                    brief_md: str = "", created_by: Optional[str] = None,
+                   copied_from: Optional[int] = None,
                    context_org_id: Optional[int] = None) -> int:
     """Crée un projet possédé par `(owner_type, owner_id)` (ADR 0030). owner_id = sub
-    (perso) | org.id::text | group.id::text. `context_org_id` (ADR 0030 amendé) = l'org de CONTEXTE d'un projet perso (owner='user') — sépare la
+    (perso) | org.id::text | group.id::text. `copied_from` = id de la source si ce projet
+    est un fork (« Ajouter à mon Oto ») → import idempotent par org. `context_org_id`
+    (ADR 0030 amendé) = l'org de CONTEXTE d'un projet perso (owner='user') — sépare la
     propriété (la personne) du contexte de travail (l'org, pour la résolution des
     credentials et le scope de liste) ; NULL pour un projet non-perso (contexte = owner)."""
     if owner_type == "user":
         upsert_user(owner_id)
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO projects (owner_type, owner_id, context_org_id, name, brief_md, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-            (owner_type, owner_id, context_org_id, name, brief_md, created_by),
+            "INSERT INTO projects (owner_type, owner_id, context_org_id, name, brief_md, created_by, copied_from) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (owner_type, owner_id, context_org_id, name, brief_md, created_by, copied_from),
         ).fetchone()
         from .search import stamp_rank_vector
         stamp_rank_vector(conn, "projects", "id = %s", (int(row["id"]),))
@@ -87,6 +90,19 @@ def list_member_projects(sub: str, org_id: int, *,
     sql += "ORDER BY updated_at DESC"
     with _connect() as conn:
         return [dict(r) for r in conn.execute(sql, (sub, org_id)).fetchall()]
+
+
+def find_copied_project(owner_type: str, owner_id: str, src_id: int) -> Optional[dict]:
+    """Un projet NON archivé possédé par `(owner_type, owner_id)` déjà forké depuis
+    `src_id` (« Ajouter à mon Oto » idempotent), ou None. Le plus récent d'abord."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {_PROJECT_COLS} FROM projects "
+            "WHERE owner_type = %s AND owner_id = %s AND copied_from = %s "
+            "  AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1",
+            (owner_type, owner_id, src_id),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def get_project_by_id(project_id: int) -> Optional[dict]:
@@ -1458,6 +1474,7 @@ def _provision_tableau(owner_type: str, owner_id: str, src_ref: str, *,
 
 def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str,
                       copied_by: Optional[str] = None,
+                      track_source: bool = False,
                       context_org_id: Optional[int] = None) -> int:
     """Copie un projet en un NOUVEAU projet possédé par `(owner_type, owner_id)` :
     brief + arbre des docs (hiérarchie préservée) + liens (label/role/config) +
@@ -1479,11 +1496,14 @@ def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str
     if src is None:
         raise ValueError(f"projet source #{src_id} introuvable")
 
+    # `track_source` = fork « Ajouter à mon Oto » : on garde le pointeur `copied_from`
+    # pour un ré-import idempotent. Une copie interne (op=copy) ne le pose pas (défaut).
     # `context_org_id` = l'org de CONTEXTE d'une copie PERSONNELLE (ADR 0030 amendé,
     # ADR 0068) : la copie est rangée dans l'org où l'on travaille sans y être
     # partagée. NULL pour une copie org/group, dont le contexte se dérive de l'owner.
     new_id = create_project(owner_type, owner_id, new_name,
                             brief_md=src.get("brief_md", ""), created_by=copied_by,
+                            copied_from=src_id if track_source else None,
                             context_org_id=context_org_id)
 
     # Arbre des docs : copie niveau par niveau, en remappant parent_id src→cible.

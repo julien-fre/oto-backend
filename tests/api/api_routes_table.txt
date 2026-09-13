@@ -575,6 +575,8 @@ GET,HEAD /api/me/projects/{project_id:int} -> _handler
 OPTIONS /api/me/projects/{project_id:int} -> options_handler
 POST /api/me/projects -> _handler
 OPTIONS /api/me/projects -> options_handler
+POST /api/me/projects/import -> _handler
+OPTIONS /api/me/projects/import -> options_handler
 POST /api/me/kb -> _handler
 OPTIONS /api/me/kb -> options_handler
 GET,HEAD /api/me/search -> _handler
