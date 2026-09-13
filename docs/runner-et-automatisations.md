@@ -636,6 +636,29 @@ objet ne porte qu'un agent ») visait deux réponses à la même question ; une 
 du matin et une réaction à un événement sont deux automatisations différentes de la
 même procédure. Deux du même genre restent refusées, pour la raison d'origine.
 
+#### Le lot atterrit FERMÉ (13/09/2026)
+
+**Créer** un agent déclenché exige l'option `beta` sur le compte ou sur l'org
+(`oto_admin_set_option`, lue par `access.has_option`). Sans elle : 403
+`webhook_beta_only`, et un agent programmé reste disponible.
+
+Pourquoi une porte, alors que `oto_trigger` est visible de tous (tranché le 02/09)
+et que la capacité est ouverte à tout membre d'org : sans elle, le jour du
+déploiement, n'importe quel client peut brancher une source bavarde sur un agent
+hébergé. Or **la file d'un webhook n'a pas de plafond** (assumé, plus haut) et le
+**plafond de dépense est un autre chantier** — tant que `runner.org_key_required`
+n'est pas posé, ces déroulés tournent sur NOTRE clé de modèle. L'option `beta`
+plutôt qu'un réglage neuf : c'est ce que `tool_visibility` dit de faire, et elle se
+pose déjà par une surface admin existante.
+
+⚠️ **Seule la création est gardée.** Retirer l'option ne casse pas un agent qui
+tourne : le geste d'arrêt d'un agent emballé est sa PAUSE, pas la fermeture de la
+population. Ouvrir la bêta à une org :
+
+```
+oto_admin_set_option  option=beta  org_id=N
+```
+
 #### La porte : un secret par déclencheur, jamais relu
 
 `Authorization: Bearer otoh_…`. Le préfixe est **exigé** — et il ne commence pas

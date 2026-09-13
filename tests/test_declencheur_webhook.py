@@ -37,6 +37,13 @@ def _appel(**kw):
 
 
 @pytest.fixture(autouse=True)
+def _dans_la_beta(monkeypatch):
+    """La population bêta, ouverte pour ces bancs : ils parlent du webhook, pas de
+    la porte qui en règle le déploiement (tenue plus bas, à elle seule)."""
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: True)
+
+
+@pytest.fixture(autouse=True)
 def _org_servie(monkeypatch):
     """Un runner armé et aucune clé exigée : ce fichier parle du webhook, pas des
     gardes que les autres bancs tiennent déjà."""
@@ -451,6 +458,46 @@ def test_le_GENRE_ne_se_change_pas_par_update():
     import inspect
     src = inspect.getsource(dbt.update_trigger)
     assert '"kind"' not in src.split("autorises")[1].split("}")[0]
+
+
+# ── 5a. la PORTE de déploiement : le lot atterrit FERMÉ ───────────────────────
+
+def test_creer_un_webhook_HORS_BETA_est_refuse(monkeypatch, pose):
+    """⚠️ La condition du déploiement. `oto_trigger` est visible de tous et la
+    capacité est ouverte à tout membre d'org : sans cette porte, le jour du
+    déploiement, n'importe quel client pourrait brancher une source bavarde sur
+    un agent dont la file n'a pas de plafond — et, tant que la clé de l'org n'est
+    pas exigée, sur NOTRE clé de modèle."""
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: False)
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="create", kind="webhook", procedure="veille", tools=["a"])
+    assert (e.value.status, e.value.code) == (403, "webhook_beta_only")
+    assert "hash_pose" not in pose and not pose, "rien n'est écrit"
+
+
+def test_la_porte_lit_l_option_BETA_sur_l_appelant(monkeypatch, pose):
+    vu = {}
+    monkeypatch.setattr(RT.access, "has_option",
+                        lambda sub, option: vu.update(sub=sub, option=option) or True)
+    _appel(op="create", kind="webhook", procedure="veille", tools=["a"])
+    assert vu == {"sub": "alexis", "option": RT.tool_visibility.BETA_OPTION}
+
+
+def test_un_agent_PROGRAMME_reste_ouvert_a_tous(monkeypatch, pose):
+    """La porte ne ferme QUE le genre neuf : rien de ce qui existe ne se
+    restreint au passage."""
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: False)
+    _appel(op="create", procedure="veille", cron="5 6 * * *", tools=["a"])
+    assert pose["kind"] == "schedule"
+
+
+def test_HORS_BETA_on_gere_encore_un_webhook_DEJA_POSE(monkeypatch, retouche):
+    """⚠️ Seule la CRÉATION est gardée. Retirer l'option ne doit pas casser un
+    agent qui tourne — le geste d'arrêt d'un agent emballé est sa PAUSE, pas la
+    fermeture de la population."""
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: False)
+    _appel(op="update", trigger_id=5, enabled=False)
+    assert retouche.get("enabled") is False
 
 
 # ── 5b. la RETOUCHE d'un webhook (relevé à la revue d'avant déploiement) ──────

@@ -500,3 +500,76 @@ def test_un_travail_SANS_peremption_ne_perime_jamais(live):
                      "WHERE id = %s", (j["id"],))
     pris = db.claim_next_job(8205, "w", lease_seconds=60)
     assert pris and pris["id"] == j["id"]
+
+
+# ── 5. la RÉPÉTITION du déploiement, sur une base d'AVANT ─────────────────────
+
+def test_un_declencheur_DEJA_POSE_survit_a_la_migration_et_tique_encore(pg_dsn):
+    """⚠️⚠️ LE banc du déploiement, et le plus dangereux du lot.
+
+    `due_triggers` filtre désormais `kind = 'schedule'`. Si les lignes DÉJÀ EN
+    PRODUCTION n'héritaient pas de cette valeur, **toutes les automatisations
+    programmées cesseraient de partir** à la seconde du déploiement — sans erreur,
+    sans trace, juste un tick qui ne trouve plus rien.
+
+    La garde est le `NOT NULL DEFAULT 'schedule'` de l'ALTER. Ce banc ne le lit
+    pas : il FABRIQUE l'état d'avant (une ligne posée, puis les colonnes du lot
+    retirées), rejoue la migration du boot, et vérifie la CONSÉQUENCE — la ligne
+    porte le genre, et le tick la voit toujours.
+
+    Même méthode que `test_boot_order_replay` §4 : on défait l'état d'après plutôt
+    que d'exhumer un DDL figé qui se périmerait.
+    """
+    import datetime
+    import uuid as _uuid
+    import os
+    psycopg = pytest.importorskip("psycopg")
+    from oto_mcp.db import _conn as dbconn
+
+    nom = "oto_hook_migr_" + _uuid.uuid4().hex[:8]
+    root = psycopg.connect(pg_dsn, autocommit=True)
+    root.execute(f'CREATE DATABASE "{nom}"')
+    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + nom
+    url_avant, pool_avant = os.environ.get("DATABASE_URL"), dbconn._pool
+    cle_avant = os.environ.get("OTO_MCP_MASTER_KEY")
+    os.environ["DATABASE_URL"] = dsn
+    os.environ["OTO_MCP_MASTER_KEY"] = "4" * 64
+    dbconn._pool = None
+    try:
+        from oto_mcp.db import init_db
+        from oto_mcp import db as dbf
+        init_db()
+        hier = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)
+        t = dbf.create_trigger(9100, "alexis", procedure="veille-historique",
+                               cron="5 6 * * *", tz="UTC", tools=["a"],
+                               next_due=hier)
+        # ── l'état d'AVANT : les colonnes du lot n'existent pas encore ──
+        with dbf._connect() as conn:
+            for col in ("kind", "hook_secret_hash", "payload_mode",
+                        "payload_fields", "max_per_hour", "fraicheur_s"):
+                conn.execute(f"ALTER TABLE runner_triggers DROP COLUMN {col}")
+            conn.execute("ALTER TABLE runner_triggers ALTER COLUMN cron SET NOT NULL")
+            conn.execute("ALTER TABLE runner_triggers ALTER COLUMN next_due SET NOT NULL")
+        # ── on rejoue la migration du boot, comme le fera le déploiement ──
+        init_db()
+        with dbf._connect() as conn:
+            row = conn.execute("SELECT kind, payload_mode FROM runner_triggers "
+                               "WHERE id = %s", (t["id"],)).fetchone()
+        assert row["kind"] == "schedule", (
+            "une ligne d'avant le lot DOIT hériter du genre — sinon le tick, qui "
+            "filtre `kind = 'schedule'`, ne la voit plus jamais")
+        assert row["payload_mode"] == "ignore"
+        assert t["id"] in [d["id"] for d in dbf.due_triggers(limit=500)], (
+            "le déclencheur historique doit toujours être DÛ après la migration")
+    finally:
+        if dbconn._pool is not None:
+            dbconn._pool.close()
+        dbconn._pool = pool_avant
+        for cle, valeur in (("DATABASE_URL", url_avant),
+                            ("OTO_MCP_MASTER_KEY", cle_avant)):
+            if valeur is None:
+                os.environ.pop(cle, None)
+            else:
+                os.environ[cle] = valeur
+        root.execute(f'DROP DATABASE IF EXISTS "{nom}" WITH (FORCE)')
+        root.close()
