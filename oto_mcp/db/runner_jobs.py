@@ -207,18 +207,14 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                 """,
                 (org_id, worker_sub),
             )
-        # ⚠️ Les épaves d'abord RELEVÉES, puis marquées : après l'UPDATE elles ne
-        # se distinguent plus d'un échec ordinaire, et leur coût serait perdu.
+        # ⚠️ `RETURNING` plutôt qu'un SELECT puis un UPDATE : ce balayage tourne à
+        # CHAQUE sondage de CHAQUE worker — le chemin le plus fréquent de la
+        # plateforme. Deux requêtes parcourant le même prédicat le paieraient deux
+        # fois, et laisseraient en plus une fenêtre où une épave marquée par un
+        # sondage concurrent ne se distingue plus d'un échec ordinaire : son coût
+        # serait perdu. Une seule requête, atomique, et le lot revient avec de quoi
+        # écrire sa trace.
         epaves = conn.execute(
-            """
-            SELECT id, org_id, sub, run_id, payload, fleet_id, attempts, key_source
-              FROM runner_jobs
-             WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
-               AND lease_until < NOW() AND attempts >= max_attempts
-            """,
-            (org_id, org_id),
-        ).fetchall()
-        conn.execute(
             """
             UPDATE runner_jobs
                SET status = 'failed', finished_at = NOW(),
@@ -226,9 +222,10 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                                 ' [bail expiré, tentatives épuisées]'
              WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
                AND lease_until < NOW() AND attempts >= max_attempts
+            RETURNING id, org_id, sub, run_id, payload, fleet_id, attempts, key_source
             """,
             (org_id, org_id),
-        )
+        ).fetchall()
         # ⚠️ Une épave a dépensé des jetons chez le fournisseur et n'a JAMAIS rendu
         # de compte — personne n'a appelé `complete`. La ligne est écrite avec des
         # jetons NULL : c'est la seule trace qu'il existe une dépense hors livre,
@@ -251,7 +248,14 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             """
             UPDATE runner_jobs j
                SET status = 'claimed', claimed_by = %s, attempts = j.attempts + 1,
-                   lease_until = NOW() + make_interval(secs => %s)
+                   lease_until = NOW() + make_interval(secs => %s),
+                   -- QUI paiera, par défaut. ⚠️ Posé DANS la réservation plutôt
+                   -- que par un UPDATE qui suivrait : le chemin le plus fréquent
+                   -- de la plateforme ne gagne pas une requête pour une étiquette.
+                   -- La capacité remplace par `org` quand elle sert vraiment la
+                   -- clé déposée. `COALESCE` : une reprise de bail ne réécrit pas
+                   -- ce qui a déjà été décidé.
+                   key_source = COALESCE(j.key_source, 'platform')
              WHERE j.id = (
                    SELECT id FROM runner_jobs
                     WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
@@ -272,14 +276,6 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             """,
             (worker_sub, int(lease_seconds), org_id, org_id, depot or ""),
         ).fetchone()
-        if row is not None:
-            # ⚠️ QUI paiera, décidé ICI et nulle part ailleurs. La clé de l'org
-            # n'est servie que si elle est déposée ET que le worker nomme son
-            # dépôt ; le relire à la conclusion lirait le dépôt tel qu'il est
-            # ALORS, qui n'est pas forcément ce qui a payé. La capacité remplace
-            # cette valeur par `org` quand elle sert effectivement la clé.
-            conn.execute("UPDATE runner_jobs SET key_source = 'platform' "
-                         "WHERE id = %s AND key_source IS NULL", (row["id"],))
     return dict(row) if row else None
 
 
