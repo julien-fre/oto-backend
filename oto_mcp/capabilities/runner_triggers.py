@@ -40,7 +40,13 @@ class TriggerInput(BaseModel):
                 # elle CASSE la source en place tant qu'elle n'a pas le nouveau.
                 "rotate_secret",
                 # Ce que ce déclencheur a reçu — le journal que l'écran lit.
-                "deliveries"]
+                "deliveries",
+                # VIDER la file : périme ce qui attend et rend les créneaux.
+                # Geste EXPLICITE, disponible à tout moment — en marche comme en
+                # pause. C'est le seul moyen de se débarrasser d'un arriéré, et
+                # c'est délibérément une décision de l'utilisateur : la pause,
+                # elle, ne perd plus rien (13/09/2026).
+                "clear_queue"]
     trigger_id: Optional[int] = None
     # create / update —
     procedure: Optional[str] = None
@@ -180,6 +186,9 @@ class TriggerOut(BaseModel):
     ok: Optional[bool] = None
     runner: Optional[RunnerArme] = None
     deliveries: Optional[list[Delivery]] = None
+    #: Combien de travaux `clear_queue` a périmés. `0` est un vrai zéro (la file
+    #: était vide), jamais une absence de mesure.
+    cleared: Optional[int] = None
     #: Le secret en clair — rendu par `create` d'un webhook et par
     #: `rotate_secret`, et par RIEN D'AUTRE. Il n'est pas stocké : seul son haché
     #: l'est. Perdu, il se remplace ; il ne se relit jamais.
@@ -479,6 +488,28 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # vide, jamais les livraisons d'autrui.
         return {"deliveries": db.livraisons(inp.trigger_id, ctx.org_id,
                                             limit=inp.limit or 50)}
+
+    if inp.op == "clear_queue":
+        # ⚠️ Disponible À TOUT MOMENT, en marche comme en pause — c'est tout
+        # l'intérêt. En pause, c'est même le cas le plus courant : on arrête
+        # l'agent qui s'emballe, puis on décide de jeter ce qu'il a accumulé.
+        # Les travaux RETENUS par la pause sont donc périmés eux aussi
+        # (`perimer_travaux_du_declencheur` couvre `pending` ET `held`).
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if not t:
+            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+        vides = db.perimer_travaux_du_declencheur(
+            inp.trigger_id, ctx.org_id,
+            raison="file vidée à la demande : ces occurrences n'ont jamais été "
+                   "exécutées et ne le seront pas.")
+        # Et les créneaux avec, sinon les livraisons suivantes attendraient
+        # derrière une file qui n'existe plus.
+        db.liberer_les_creneaux(inp.trigger_id)
+        logger.info("déclencheur %s (org %s) : file VIDÉE à la demande de %s — "
+                    "%d travaux périmés", inp.trigger_id, ctx.org_id, ctx.sub, vides)
+        return {"ok": True, "cleared": vides,
+                "trigger": _avec_hook(ctx.org_id,
+                                      db.get_trigger(inp.trigger_id, ctx.org_id))}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):

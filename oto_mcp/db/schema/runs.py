@@ -210,8 +210,14 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     -- Les confondre effacerait la seule distinction qui compte au diagnostic —
     -- « ça a échoué » envoie lire une erreur qui n'existe pas, quand le fait est
     -- « personne n'est venu le prendre ». Trois états, jamais deux.
+    --
+    -- `held` (13/09/2026) : RETENU, pas perdu. Mettre un agent déclenché en pause
+    -- gèle sa file au lieu de la périmer — un événement n'a pas de successeur, et
+    -- personne ne le renverra. La réservation ne prend que `pending`, donc un
+    -- travail retenu est invisible aux workers (l'ancien code de prod compris) ;
+    -- rallumer le rend à `pending`. Même patron que `billing_invoices.held`.
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'claimed', 'done', 'failed', 'expired')),
+        CHECK (status IN ('pending', 'held', 'claimed', 'done', 'failed', 'expired')),
     attempts INT NOT NULL DEFAULT 0,
     max_attempts INT NOT NULL DEFAULT 3,
     claimed_by TEXT,

@@ -261,8 +261,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # tomberait au TICK, pas au boot, donc loin de sa cause.
     # `sub` (02/09) : l'identité que l'agent porte en exécutant ce travail.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS sub TEXT")
+    # `held` (13/09/2026) : la file d'un agent déclenché, GELÉE par la pause au
+    # lieu d'être périmée. ⚠️ Ajout PERMISSIF au domaine — l'ancien code de prod
+    # n'écrit jamais cette valeur, et sa réservation filtre `pending`, donc il ne
+    # peut ni la produire ni la servir par erreur.
     _poser_domaine(conn, "runner_jobs", "runner_jobs_status_check", "status",
-                   ("pending", "claimed", "done", "failed", "expired"))
+                   ("pending", "held", "claimed", "done", "failed", "expired"))
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
     # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
     # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT

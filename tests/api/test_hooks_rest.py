@@ -250,15 +250,22 @@ def test_un_corps_trop_gros_avec_un_MAUVAIS_secret_n_ecrit_rien(client, agent):
     assert _lignes_brutes(agent["id"]) == avant
 
 
-def test_un_agent_en_PAUSE_rend_409(client, agent):
+def test_un_agent_en_PAUSE_rend_409_et_GARDE_sa_file(client, agent):
+    """⚠️ Deux promesses distinctes. À la SOURCE : 409, rien n'est enfilé pendant
+    la pause. À la FILE : ce qui attendait est RETENU, jamais périmé — la pause
+    arrête, elle ne détruit pas (13/09/2026)."""
     from oto_mcp import db
+    depart = _post(client, agent["id"], agent["secret"], {})
     db.update_trigger(agent["id"], agent["org"], {"enabled": False})
     try:
         r = _post(client, agent["id"], agent["secret"], {})
         assert (r.status_code, r.json()["error"]) == (409, "trigger_paused")
         assert db.livraisons(agent["id"], agent["org"])[0]["outcome"] == db.REFUSE_PAUSED
+        assert db.get_job(depart.json()["job_id"], agent["org"])["status"] == "held"
     finally:
         db.update_trigger(agent["id"], agent["org"], {"enabled": True})
+    assert db.get_job(depart.json()["job_id"], agent["org"])["status"] == "pending", (
+        "rallumer rend la file")
 
 
 def test_au_dela_du_debit_la_livraison_est_RETARDEE_pas_refusee(client, org):

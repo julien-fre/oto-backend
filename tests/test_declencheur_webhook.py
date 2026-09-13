@@ -545,6 +545,71 @@ def test_une_retouche_ordinaire_ne_LIT_pas_le_declencheur(monkeypatch):
     _appel(op="update", trigger_id=5, label="renommé")
 
 
+# ── 5c. VIDER la file : un geste explicite, à tout moment ─────────────────────
+
+@pytest.fixture
+def purge(monkeypatch):
+    vu = {"perimes": 7, "libere": 0}
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: {"id": i, "org_id": o, "kind": "webhook",
+                                      "enabled": True})
+    monkeypatch.setattr(RT.db, "perimer_travaux_du_declencheur",
+                        lambda i, o, raison: vu.update(raison=raison)
+                        or vu["perimes"])
+    monkeypatch.setattr(RT.db, "liberer_les_creneaux",
+                        lambda i: vu.update(libere=vu["libere"] + 1) or 0)
+    monkeypatch.setattr(RT.db, "comptage_livraisons",
+                        lambda t, o: {"recues_24h": 0, "refusees_24h": 0,
+                                      "derniere": None})
+    return vu
+
+
+def test_VIDER_perime_la_file_ET_rend_les_creneaux(purge):
+    """Les deux moitiés : sans rendre les créneaux, les livraisons suivantes
+    attendraient derrière une file qui n'existe plus."""
+    out = _appel(op="clear_queue", trigger_id=5)
+    assert out == {"ok": True, "cleared": 7, "trigger": out["trigger"]}
+    assert purge["libere"] == 1
+    assert "jamais été exécutées" in purge["raison"]
+
+
+def test_VIDER_est_disponible_meme_EN_MARCHE(monkeypatch, purge):
+    """⚠️ Le geste ne dépend pas de l'état de l'agent : on désengorge une file
+    sans avoir à arrêter ce qui marche."""
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: {"id": i, "org_id": o, "kind": "webhook",
+                                      "enabled": True})
+    assert _appel(op="clear_queue", trigger_id=5)["cleared"] == 7
+
+
+def test_VIDER_une_file_DEJA_vide_rend_zero_pas_une_erreur(monkeypatch, purge):
+    """`0` est un vrai zéro — « il n'y avait rien », pas « on n'a pas su »."""
+    monkeypatch.setattr(RT.db, "perimer_travaux_du_declencheur",
+                        lambda i, o, raison: 0)
+    assert _appel(op="clear_queue", trigger_id=5)["cleared"] == 0
+
+
+def test_VIDER_le_declencheur_d_une_AUTRE_org_est_refuse(monkeypatch, purge):
+    """Org-scopé par la lecture : sans elle, un id suffirait à vider la file
+    d'autrui."""
+    monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: None)
+    touche = {"n": 0}
+    monkeypatch.setattr(RT.db, "perimer_travaux_du_declencheur",
+                        lambda i, o, raison: touche.update(n=touche["n"] + 1) or 0)
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="clear_queue", trigger_id=5)
+    assert (e.value.status, e.value.code) == (404, "trigger_not_found")
+    assert touche["n"] == 0, "rien n'est périmé avant la garde"
+
+
+def test_VIDER_marche_aussi_sur_un_agent_PROGRAMME(monkeypatch, purge):
+    """Un arriéré se vide quel que soit le coup d'envoi ; rendre des créneaux qui
+    n'existent pas est un no-op."""
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: {"id": i, "org_id": o, "kind": "schedule"})
+    assert _appel(op="clear_queue", trigger_id=5)["cleared"] == 7
+
+
 # ── 6. ce que l'écran lit ─────────────────────────────────────────────────────
 
 def test_un_webhook_sert_son_URL_jamais_son_secret(monkeypatch):

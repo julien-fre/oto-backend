@@ -365,8 +365,12 @@ from oto_mcp.db import _schema, schema
 # lissage se juge sur les créneaux réservés et non plus sur les réceptions : dès que
 # rien ne périme par défaut, un retard dure des jours et la fenêtre des réceptions ne
 # dit plus rien de la file. Table NEUVE, jamais déployée — CREATE seul, aucun ALTER.
-EMPREINTE = "948694a4475e9984242c7f43124cb51c3bd855c9842fbc84653b878bbba01b92"
-LONGUEUR = 157280
+# 2026-09-13 : `held` entre au domaine de `runner_jobs.status` — la file d'un agent
+# DÉCLENCHÉ est gelée par la pause au lieu d'être périmée (un événement n'a pas de
+# successeur). Ajout PERMISSIF : l'ancien code de prod n'écrit jamais cette valeur,
+# et sa réservation filtre `pending`, donc il ne peut ni la produire ni la servir.
+EMPREINTE = "b0c533e2b0ac79ae6f3bb7c06967146bd2e71925be47db95ff240b0f2ad1f258"
+LONGUEUR = 157700
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -693,10 +693,45 @@ lit (`fraicheur_s IS NULL` → jamais) : aucune ligne n'est réécrite.
 ⚠️⚠️ **Conséquence assumée : la file n'a pas de plafond.** Une source qui envoie
 durablement plus que son débit construit un arriéré qui ne se résorbe que quand elle
 ralentit — 10 000 événements à 60/h, c'est une semaine de file, et une semaine
-d'exécutions d'agent. **Le frein est la PAUSE** : éteindre l'agent périme tout ce
-qui attend et rend ses créneaux (`liberer_les_creneaux`), de sorte qu'une fois
-rallumé il ne fait pas attendre ses livraisons neuves derrière une file morte. Le
-plafond de dépense est un autre chantier.
+d'exécutions d'agent. Le plafond de dépense est un autre chantier.
+
+#### Mettre en pause GÈLE la file ; la VIDER est un geste à part (13/09/2026)
+
+Deux gestes, deux effets, et rien ne détruit par surprise :
+
+| geste | l'agent tourne ? | la file |
+|---|---|---|
+| `update enabled=false` | non | **gelée** (`runner_jobs.status = 'held'`) |
+| `update enabled=true` | oui | rendue, **redécalée** |
+| `clear_queue` | inchangé | **périmée**, créneaux rendus |
+
+⚠️ **La pause ne perd rien.** Un agent PROGRAMMÉ, lui, périme ce qui attend quand on
+l'éteint, et c'est juste pour lui : son occurrence a un **successeur**, et une veille
+jouée treize jours trop tard rend un résultat FAUX (#814). **Un événement n'a pas de
+successeur** — personne ne renverra le lead d'hier. L'asymétrie est voulue et tenue
+par un banc de chaque côté.
+
+La pause arrête quand même l'agent : `pending → held`, et la réservation ne prend que
+`pending` — donc les travaux retenus sont invisibles aux workers, **l'ancien code de
+prod compris**, dont la requête filtre déjà `status = 'pending'`. `held` entre au
+domaine de la colonne par `_poser_domaine` ; l'ajout est permissif (rien d'ancien
+n'écrit ni ne lit cette valeur). Même patron que `billing_invoices.held`.
+
+⚠️ **Rallumer REDÉCALE la file.** Pendant la pause, tous les créneaux retenus sont
+devenus du passé : les rendre tels quels ferait partir la file ENTIÈRE à la seconde
+du rallumage — la rafale même que le lissage empêche, déclenchée par le geste de
+quelqu'un qui remet en marche. Tout est décalé du même délai (le retard du plus
+ancien créneau retenu), donc l'ordre et l'espacement sont conservés et rien ne part
+avant maintenant. Les créneaux des livraisons suivent le même décalage à partir du
+même point, sans quoi le lissage placerait la prochaine livraison au milieu de la
+file rendue.
+
+**`clear_queue` est le seul geste qui perd quelque chose**, et il est explicite. Il
+périme ce qui attend (`pending` ET `held` — vider pendant la pause est le cas le plus
+courant : on arrête l'agent qui s'emballe, puis on jette) et rend les créneaux
+futurs. Disponible à tout moment, en marche comme en pause, sur les deux genres
+d'agent. Les travaux périmés restent VISIBLES (`expired`) : la perte est comptable,
+jamais silencieuse — c'est la leçon des 41 occurrences du 02/09.
 
 #### Le corps reçu est une DONNÉE, jamais une instruction
 

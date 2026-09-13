@@ -133,6 +133,11 @@ def perimer_travaux_du_declencheur(trigger_id: int, org_id: int,
     ⚠️ `expired` n'est pas `failed` : ce travail n'a jamais tourné. « Échoué »
     envoie chercher une erreur d'exécution qui n'existe pas, quand le fait est
     « personne n'est venu le prendre » — et les deux ne se réparent pas pareil.
+
+    ⚠️ Couvre aussi les travaux RETENUS (`held`, 13/09/2026) : on vide la file
+    d'un agent déclenché **pendant qu'il est en pause**, c'est même le moment le
+    plus naturel pour le faire. Les oublier laisserait le seul geste de purge sans
+    effet exactement là où on s'en sert.
     """
     with _connect() as conn:
         cur = conn.execute(
@@ -140,7 +145,7 @@ def perimer_travaux_du_declencheur(trigger_id: int, org_id: int,
             UPDATE runner_jobs
                SET status = 'expired', finished_at = NOW(),
                    last_error = %s
-             WHERE org_id = %s AND status = 'pending'
+             WHERE org_id = %s AND status IN ('pending', 'held')
                AND payload->>'trigger_id' = %s
             """,
             (raison, org_id, str(trigger_id)),

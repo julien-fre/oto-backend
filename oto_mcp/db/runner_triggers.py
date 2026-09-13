@@ -117,16 +117,26 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
     # et le geste qui les rendait éternelles était précisément celui par lequel
     # quelqu'un cherchait à arrêter les dégâts. **Le seul geste de réparation
     # disponible aggravait la panne, en silence.**
+    #
+    # ⚠️ **Et un agent DÉCLENCHÉ, lui, ne perd rien** (13/09/2026). L'asymétrie est
+    # voulue : l'occurrence d'un agent programmé a un SUCCESSEUR, et la jouer trop
+    # tard rend un résultat faux ; **un événement n'en a pas** — personne ne
+    # renverra le lead d'hier. Sa file est donc GELÉE (`held`), invisible aux
+    # workers tant que l'agent dort, et rendue telle quelle au rallumage. Vider,
+    # c'est un geste explicite et séparé (`runner.triggers op=clear_queue`).
     if row and champs.get("enabled") is False:
-        from .runner_jobs import perimer_travaux_du_declencheur
-        perimer_travaux_du_declencheur(
-            trigger_id, org_id,
-            raison="déclencheur désactivé : ses occurrences en attente ne seront "
-                   "jamais exécutées.")
-        # Et leurs créneaux avec : sinon, rallumé, un webhook ferait attendre ses
-        # livraisons neuves derrière la file de travaux qu'on vient de périmer.
-        from .runner_hooks import liberer_les_creneaux
-        liberer_les_creneaux(trigger_id)
+        if (row.get("kind") or "schedule") == "webhook":
+            from .runner_hooks import suspendre_la_file
+            suspendre_la_file(trigger_id, org_id)
+        else:
+            from .runner_jobs import perimer_travaux_du_declencheur
+            perimer_travaux_du_declencheur(
+                trigger_id, org_id,
+                raison="déclencheur désactivé : ses occurrences en attente ne seront "
+                       "jamais exécutées.")
+    if row and champs.get("enabled") is True and (row.get("kind") or "") == "webhook":
+        from .runner_hooks import reprendre_la_file
+        reprendre_la_file(trigger_id, org_id)
     return dict(row) if row else None
 
 

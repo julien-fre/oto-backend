@@ -58,12 +58,12 @@ def live(pg_dsn):
 ORG = 8100
 
 
-def _webhook(db, procedure="veille", **kw):
-    t = db.create_trigger(ORG, "alexis", procedure=procedure, tz="UTC",
+def _webhook(db, procedure="veille", org=ORG, **kw):
+    t = db.create_trigger(org, "alexis", procedure=procedure, tz="UTC",
                           tools=["a"], kind="webhook", **kw)
     from oto_mcp import runner_hook
     secret, hache = runner_hook.nouveau_secret()
-    db.poser_secret_de_hook(t["id"], ORG, hache)
+    db.poser_secret_de_hook(t["id"], org, hache)
     return t, secret
 
 
@@ -277,24 +277,103 @@ def test_une_fois_la_file_ecoulee_on_repart_tout_de_suite(live):
     assert _livrer(t, secret) == [0]
 
 
-def test_ETEINDRE_rend_les_creneaux_de_la_file_perimee(live):
-    """⚠️ Le frein d'une file sans plafond est la pause, qui périme ce qui attend.
-    Sans rendre les créneaux, l'agent rallumé ferait attendre ses livraisons
-    neuves derrière une file de travaux morts — des heures, pour rien."""
+def _statuts(trigger_id):
     from oto_mcp import db
-    t, secret = _webhook(db, procedure="lissage-pause", max_per_hour=1)
-    _livrer(t, secret, 4)                   # créneaux jusqu'à ~+3 h
-    db.update_trigger(t["id"], ORG, {"enabled": False})
     with db._connect() as conn:
-        statuts = {r["status"] for r in conn.execute(
-            "SELECT status FROM runner_jobs WHERE payload->>'trigger_id' = %s "
-            "AND due_at > NOW()", (str(t["id"]),)).fetchall()}
-    assert statuts == {"expired"}, "éteindre périme ce qui attend"
+        rows = conn.execute(
+            "SELECT status, COUNT(*)::int AS n FROM runner_jobs "
+            "WHERE payload->>'trigger_id' = %s GROUP BY status",
+            (str(trigger_id),)).fetchall()
+    return {r["status"]: r["n"] for r in rows}
+
+
+def test_METTRE_EN_PAUSE_ne_perd_RIEN_et_arrete_quand_meme_l_agent(live):
+    """⚠️ Tranché le 13/09/2026 : la pause GÈLE, elle ne détruit pas. Un événement
+    n'a pas de successeur — personne ne renverra le lead d'hier — donc le perdre
+    parce qu'on met l'agent en pause ferait de la pause une destruction, alors
+    qu'on s'en sert pour réparer.
+
+    Les deux moitiés comptent : rien n'est périmé, ET rien ne tourne (la
+    réservation ne prend que `pending`, ce que l'ancien code de prod filtre déjà).
+    """
+    from oto_mcp import db
+    # Une org à elle seule : la réservation n'est pas scopée au déclencheur, et
+    # les travaux des autres bancs de ce fichier la satisferaient.
+    org = ORG + 71
+    t, secret = _webhook(db, procedure="pause-gele", org=org, max_per_hour=1)
+    _livrer(t, secret, 4)
+    db.update_trigger(t["id"], org, {"enabled": False})
+    assert _statuts(t["id"]) == {"held": 4}, "rien de périmé, tout retenu"
+    assert db.claim_next_job(org, "w", lease_seconds=60) is None, (
+        "un agent en pause ne tourne pas")
+
+
+def test_RALLUMER_rend_la_file_sans_la_faire_partir_d_un_coup(live):
+    """⚠️ Rendre les créneaux tels quels ferait partir la file ENTIÈRE à la
+    seconde du rallumage — la rafale même que le lissage empêche, déclenchée par
+    le geste de quelqu'un qui remet en marche. Tout est décalé du même délai :
+    l'ordre et l'espacement sont conservés, rien ne part avant maintenant."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="pause-reprise", max_per_hour=1)
+    _livrer(t, secret, 4)
+    db.update_trigger(t["id"], ORG, {"enabled": False})
+    _reculer(t["id"], 10)      # dix heures de pause : tous les créneaux sont passés
+    with db._connect() as conn:
+        conn.execute("UPDATE runner_jobs SET due_at = due_at - INTERVAL '10 hours' "
+                     "WHERE payload->>'trigger_id' = %s", (str(t["id"]),))
     db.update_trigger(t["id"], ORG, {"enabled": True})
-    # Le premier créneau (passé, il a pu partir) compte encore dans l'heure :
-    # la neuve attend l'heure, pas les trois heures de file morte.
-    retard = _livrer(t, secret)[0]
-    assert retard <= 3600, f"rallumé, l'agent attend encore {retard} s une file morte"
+    assert _statuts(t["id"]) == {"pending": 4}, "la file est rendue"
+    with db._connect() as conn:
+        rows = conn.execute(
+            "SELECT EXTRACT(EPOCH FROM (due_at - NOW()))::float8 AS d "
+            "FROM runner_jobs WHERE payload->>'trigger_id' = %s ORDER BY id",
+            (str(t["id"]),)).fetchall()
+    ecarts = [r["d"] for r in rows]
+    assert ecarts[0] >= -1, "rien ne part avant maintenant"
+    assert all(b - a >= 3600 - 1e-4 for a, b in zip(ecarts, ecarts[1:])), (
+        f"l'espacement d'une heure est perdu : {ecarts}")
+    # Et le lissage suit : la livraison suivante passe derrière la file rendue.
+    assert _livrer(t, secret)[0] > ecarts[-1] - 1
+
+
+def test_VIDER_la_file_perime_ce_qui_attend_et_rend_les_creneaux(live):
+    """Le geste EXPLICITE — le seul qui perde quelque chose."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="vider", max_per_hour=1)
+    _livrer(t, secret, 4)
+    n = db.perimer_travaux_du_declencheur(t["id"], ORG, raison="vidée")
+    db.liberer_les_creneaux(t["id"])
+    assert n == 4 and _statuts(t["id"]) == {"expired": 4}
+    # Les trois créneaux FUTURS sont rendus : la livraison suivante attend au pire
+    # l'heure glissante du créneau déjà passé, jamais les trois heures de file.
+    assert _livrer(t, secret)[0] <= 3600, "les créneaux futurs sont rendus"
+
+
+def test_VIDER_atteint_aussi_ce_que_la_PAUSE_a_retenu(live):
+    """⚠️ En pause est le cas le plus courant : on arrête l'agent qui s'emballe,
+    PUIS on jette. Oublier `held` laisserait le seul geste de purge sans effet
+    exactement là où on s'en sert."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="vider-en-pause", max_per_hour=1)
+    _livrer(t, secret, 4)
+    db.update_trigger(t["id"], ORG, {"enabled": False})
+    assert _statuts(t["id"]) == {"held": 4}
+    assert db.perimer_travaux_du_declencheur(t["id"], ORG, raison="vidée") == 4
+    assert _statuts(t["id"]) == {"expired": 4}
+
+
+def test_un_agent_PROGRAMME_perime_toujours_a_la_pause(live):
+    """L'asymétrie est VOULUE, et ce banc la tient : l'occurrence d'un agent
+    programmé a un successeur, et la jouer treize jours trop tard rend un résultat
+    FAUX (#814). Un événement n'a pas de successeur. Rien de #814 n'est défait."""
+    import datetime
+    from oto_mcp import db
+    t = db.create_trigger(ORG, "alexis", procedure="programme-pause",
+                          cron="5 6 * * *", tz="UTC", tools=["a"],
+                          next_due=datetime.datetime.now(datetime.timezone.utc))
+    db.enqueue_job(ORG, "start", payload={"procedure": "p", "trigger_id": t["id"]})
+    db.update_trigger(t["id"], ORG, {"enabled": False})
+    assert _statuts(t["id"]) == {"expired": 1}
 
 
 def test_le_lissage_est_par_DECLENCHEUR(live):
