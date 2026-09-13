@@ -58,12 +58,6 @@ class JobsInput(BaseModel):
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
     job_id: Optional[int] = None
-    # bind_run / extend / complete — EXIGÉ (bascule dure, contrat runner §1).
-    attempt_id: Optional[str] = Field(
-        None, description=(
-            "bind_run / extend / complete: REQUIRED — the `attempt_id` returned by the "
-            "claim of this job. Only the CURRENT open attempt may act; an older or closed "
-            "attempt is refused `attempt_superseded` (409)."))
     ok: Optional[bool] = None
     error: Optional[str] = None
     # complete — résultat déclaré par le worker (usage_tokens, stopped, steps…),
@@ -163,11 +157,6 @@ class Job(BaseModel):
             "unknown, and no default was invented for them — a null that says 'we "
             "do not know' beats a name that would be read as a fact."))
     org_id: Optional[int] = None
-    attempt_id: Optional[str] = Field(
-        None, description=(
-            "op=claim only: the ATTEMPT this take opened — an opaque id. Join it to every "
-            "bind_run, extend and complete of this job: they are refused without it, and "
-            "refused `attempt_superseded` once a later claim has replaced it."))
     delegated_token: Optional[str] = Field(
         None, description=(
             "A short-lived API token issued IN THE NAME OF this job's `sub`, "
@@ -230,11 +219,6 @@ class JobsOut(BaseModel):
     job: Optional[Job] = None
     jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
-    replayed: Optional[bool] = Field(
-        None, description=(
-            "complete: true when this attempt was ALREADY concluded — the recorded "
-            "outcome is returned and nothing is counted twice, and no datastore lease "
-            "is released again (the run may be worked by a later attempt)."))
     # list (#469) — les deux champs sans lesquels une page pleine est indiscernable
     # d'une file épuisée. Un relevé tronqué SOUS-DÉCLARE : il rassure exactement
     # quand il ne faut pas.
@@ -445,7 +429,7 @@ def _charge_servie(job: dict) -> dict:
 
 
 def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
-              worker: bool, conn=None) -> dict:
+              worker: bool) -> dict:
     """Le travail, augmenté de la clé de modèle de son org — à la RÉSERVATION.
 
     Le worker fait partie du backend et a le droit de lire les clés que les orgs
@@ -492,7 +476,7 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         exigees = [f for f in _cle_exigee.fournisseurs_de_modele()
                    if _cle_exigee.cle_exigee(job["org_id"], f)]
         if exigees:
-            return _refuser_sans_cle(job, appelant, _SANS_DEPOT, REFUS_SANS_DEPOT, conn=conn)
+            return _refuser_sans_cle(job, appelant, _SANS_DEPOT)
         return job
     cle = _cle_de_modele(job["org_id"], depot)
     if not cle:
@@ -502,8 +486,7 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         # sur la nôtre. La lecture effective est la seule vérité ici.
         if _cle_exigee.cle_exigee(job["org_id"], depot):
             return _refuser_sans_cle(job, appelant,
-                                     _cle_exigee.raison_du_refus([depot]),
-                                     REFUS_CLE_ABSENTE, conn=conn)
+                                     _cle_exigee.raison_du_refus([depot]))
         return job
     # Trace de REMISE : qui, quelle org, quel dépôt, quel travail — jamais la clé.
     # Sans elle, une remise anormale ne laisse aucune trace : le seul endroit où
@@ -520,32 +503,24 @@ _SANS_DEPOT = (
     "dépôt (OTO_RUNNER_PROVIDER / OTO_RUNNER_OPENAI_BASE côté oto-runner).")
 
 
-#: Les CODES d'un refus du SERVEUR au claim — recopiés dans `stopped` de la tentative,
-#: close `failed` à zéro attesté (contrat runner §1). Ce sont des codes servis.
-REFUS_SANS_PORTEUR = "requester_missing"
-REFUS_IDENTITE = "requester_invalid"
-REFUS_SANS_DEPOT = "worker_names_no_key_provider"
-REFUS_CLE_ABSENTE = "org_model_key_missing"
-
-
-def _refuser_sans_cle(job: dict, appelant: str, raison: str, code: str, *, conn) -> dict:
+def _refuser_sans_cle(job: dict, appelant: str, raison: str) -> dict:
     """Arrête le travail pour de bon, raison écrite, et le rend au worker marqué
     comme tel.
 
     ⚠️ `delegation_refusee` est le champ que le worker DÉPLOYÉ sait déjà lire :
     il n'exécute pas, ne conclut pas (le travail est déjà `failed`), et journalise
     la raison. Un champ neuf aurait demandé un runner neuf pour que la garde morde ;
-    celui-ci la fait mordre dès le déploiement du backend. AUCUN jeton délégué n'est
-    émis (`_emettre_jeton` vient après toutes les décisions), et le champ est servi
-    `null` : un travail qui ne tournera pas n'a rien à faire d'un pouvoir d'agir.
+    celui-ci la fait mordre dès le déploiement du backend. Le jeton délégué émis
+    juste avant (`_delegue`) est RETIRÉ de la réponse : un travail qui ne tournera
+    pas n'a rien à faire d'un pouvoir d'agir, même borné au bail.
 
     ⚠️ Pas de retour en file : réessayer rejouerait le même verdict, et un travail
     refusé en boucle ne dit rien de plus la troisième fois que la première.
     """
-    db.arreter_definitivement(job["id"], appelant, raison, conn=conn)
+    db.arreter_definitivement(job["id"], appelant, raison)
     logger.warning("travail %s (org %s) ARRÊTÉ sans clé de modèle : %s",
                    job.get("id"), job.get("org_id"), raison)
-    return {**job, "delegation_refusee": raison, "delegated_token": None, "_refus": code}
+    return {**job, "delegation_refusee": raison, "delegated_token": None}
 
 
 _SANS_PORTEUR = (
@@ -605,7 +580,7 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
     voulu ; ce qui les borne est leur nombre, pas un réglage.
 
     ⚠️ L'identité du travail est celle de QUI A DÉCLARÉ la campagne
-    (`fleet["sub"]`), jamais celle du worker qui sonde. C'est ce que `_verifier_porteur`
+    (`fleet["sub"]`), jamais celle du worker qui sonde. C'est ce que `_delegue`
     lira ensuite pour émettre le jeton : un travail produit ici agit au nom du
     demandeur, comme un travail enfilé à la main.
 
@@ -723,21 +698,16 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
         return cause[:300]
 
 
-def _verifier_porteur(job: dict, claimant: str, *, conn=None) -> dict:
-    """Le porteur du travail peut-il encore agir ? Sinon le travail est ARRÊTÉ.
+def _delegue(job: dict, bail_s: int, claimant: str) -> dict:
+    """Le travail, augmenté du moyen d'agir AU NOM de son porteur.
 
     ⚠️ Le worker n'est pas un pouvoir : c'est **un client MCP ordinaire qui porte
     l'identité du demandeur** (arbitrage du 02/09). Rien ici ne lui donne un droit
-    propre — on lui remettra un jeton au nom de quelqu'un d'autre (`_emettre_jeton`),
-    et seulement si ce quelqu'un peut encore agir.
+    propre — on lui remet un jeton au nom de quelqu'un d'autre, borné à la durée
+    du bail, et il s'en sert comme n'importe quel client.
 
     ⚠️ La validité se vérifie ICI, à la réservation, et **une seule fois** : un
     travail long continue avec un droit retiré en cours de route, c'est assumé.
-
-    ⚠️ `conn` = la connexion de la RÉSERVATION : un refus s'y écrit, jamais sur une
-    seconde connexion — qui ne verrait pas la réservation non validée, ne toucherait
-    aucune ligne, et perdrait le refus en silence. Le code du refus part dans `_refus`,
-    que la réservation recopie dans la tentative close.
     """
     porteur = job.get("sub")
     if not porteur:
@@ -750,8 +720,8 @@ def _verifier_porteur(job: dict, claimant: str, *, conn=None) -> dict:
         # au nom du compte qui héberge le runner, et tout ce qu'il écrit signé
         # par lui. Le défaut est silencieux par construction : les écritures
         # aboutissent, seule l'attribution est fausse. On refuse, et on le DIT.
-        db.refuser_pour_identite(job["id"], claimant, _SANS_PORTEUR, conn=conn)
-        return {**job, "delegation_refusee": _SANS_PORTEUR, "_refus": REFUS_SANS_PORTEUR}
+        db.refuser_pour_identite(job["id"], claimant, _SANS_PORTEUR)
+        return {**job, "delegation_refusee": _SANS_PORTEUR}
     org_id = job.get("org_id")
     raison = _identite_invalide(porteur, org_id) if org_id else None
     if raison:
@@ -760,26 +730,16 @@ def _verifier_porteur(job: dict, claimant: str, *, conn=None) -> dict:
         # tourne sans jamais aboutir, et rien pour dire pourquoi. Un agent dont
         # l'identité n'est plus valide s'arrête EN LE DISANT.
         db.refuser_pour_identite(job["id"], claimant,
-                                 f"identité invalide — {raison}", conn=conn)
-        return {**job, "delegation_refusee": raison, "_refus": REFUS_IDENTITE}
-    return job
-
-
-def _emettre_jeton(job: dict, bail_s: int, *, conn=None) -> dict:
-    """Le moyen d'agir AU NOM du porteur : un jeton délégué, borné au bail.
-
-    ⚠️ Émis DANS la transaction de la réservation (`conn`), et EN DERNIER : une fois le
-    porteur vérifié et la clé décidée. Un travail refusé n'en reçoit aucun ; une
-    réservation qui échoue l'emporte avec elle. Son libellé le rattache à la tentative
-    (`db.libelle_jeton_du_travail`), et la réservation suivante le révoque."""
-    porteur = job["sub"]
+                                 f"identité invalide — {raison}")
+        return {**job, "delegation_refusee": raison}
     # ⚠️ Purger AVANT d'émettre : le nettoyage est amorti sur l'usage, sans
     # tâche de fond à faire vivre. Un jeton mort est inutilisable, et
     # l'accumulation est mécanique — un par travail exécuté.
-    db.purger_delegations_expirees(porteur, conn=conn)
-    return {**job, "delegated_token": db.create_api_token(
-        porteur, label=db.libelle_jeton_du_travail(job["id"], job["attempts"]),
-        ttl_seconds=bail_s + _MARGE_JETON_S, kind="delegation", conn=conn)}
+    db.purger_delegations_expirees(porteur)
+    job["delegated_token"] = db.create_api_token(
+        porteur, label=f"runner job {job['id']}",
+        ttl_seconds=bail_s + _MARGE_JETON_S, kind="delegation")
+    return job
 
 
 def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
@@ -807,36 +767,6 @@ def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
         _modele.famille_declaree(model)
         charge.update(runner_models.charge(model))
     return charge if (charge or inp.payload is not None) else None
-
-
-def _issue_de_la_reservation(servi: dict, *, worker: bool) -> dict:
-    """Ce que la réservation écrit sur la tentative : le PAYEUR, et un éventuel REFUS.
-
-    ⚠️ `key_source` n'a jamais de défaut : `org` quand la clé déposée par l'org est
-    servie, `platform` quand un worker de plateforme tourne sur la sienne, NULL (inconnu)
-    pour un membre qui réserve — il tourne sur ce qu'il a — ou un travail refusé, qui ne
-    tourne pas. Le code du refus quitte le travail servi : il appartient à la tentative."""
-    refus = servi.pop("_refus", None)
-    if refus:
-        return {"refus": refus, "key_source": None}
-    if servi.get("model_key"):
-        return {"key_source": "org"}
-    return {"key_source": "platform" if worker else None}
-
-
-def _exiger_tentative(inp: JobsInput) -> None:
-    """Bascule dure (contrat runner §1) : aucun verbe du bail sans sa tentative."""
-    if not inp.attempt_id:
-        raise AuthzDenied(400, "attempt_id_required",
-                          f"`{inp.op}` requires the `attempt_id` returned by the claim")
-
-
-def _refuser_tentative_remplacee(usage_enregistre: bool) -> None:
-    raise AuthzDenied(
-        409, "attempt_superseded",
-        "this attempt is no longer the current one — a later claim replaced it, or it is "
-        "already closed; nothing was changed on the job",
-        details={"usage_enregistre": bool(usage_enregistre)})
 
 
 #: Ce qu'un worker sait faire — et rien d'autre. Enfiler, lister, lire un
@@ -902,23 +832,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
 
     if inp.op == "claim":
         bail = max(30, min(inp.lease_seconds, 3600))
-
-        def _decider(conn, job):
-            # ⚠️ Exécuté par `claim_next_job` DANS la transaction de la réservation :
-            # la charge servie, la délégation et la CLÉ se décident avant que la
-            # tentative ne s'écrive, et un refus s'écrit sur la même connexion. La
-            # charge est composée AVANT la délégation : tout ce qui se décide ensuite
-            # voit l'org et les outils que l'agent recevra.
-            servi = _avec_cle(
-                _verifier_porteur(_charge_servie(job), ctx.sub, conn=conn), inp.provider,
-                ctx.sub, worker=ctx.platform_worker, conn=conn)
-            # Le jeton EN DERNIER, sur la même transaction : un refus n'en émet aucun.
-            if not servi.get("delegation_refusee"):
-                servi = _emettre_jeton(servi, bail, conn=conn)
-            return servi, _issue_de_la_reservation(servi, worker=ctx.platform_worker)
-
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                depot=inp.provider, decider=_decider)
+                                depot=inp.provider)
         if job is None:
             # ⚠️ La file vide n'est pas la fin de l'histoire : une CAMPAGNE en
             # cours est une règle qui produit des travaux, et c'est ici qu'on
@@ -933,7 +848,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # déjà lieu en boucle.
             panne = _produire_pour_une_campagne(ctx.org_id, bail)
             job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                    depot=inp.provider, decider=_decider)
+                                    depot=inp.provider)
             if job is None and panne:
                 # « Rien à faire » et « je n'ai pas pu regarder » ne se disent
                 # pas de la même façon. Les confondre a coûté des jours de
@@ -941,8 +856,11 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 return {"job": None, "campaign_error": panne}
         if job is None:
             return {"job": None}
-        # Le travail tel que la réservation l'a composé, `attempt_id` compris.
-        return {"job": job}
+        # La charge servie est composée AVANT la délégation : tout ce qui se décide
+        # ensuite voit l'org et les outils que l'agent recevra.
+        return {"job": _avec_cle(
+            _delegue(_charge_servie(job), bail, ctx.sub), inp.provider,
+            ctx.sub, worker=ctx.platform_worker)}
 
     if inp.op == "list":
         # Surveillance (page Automatisations) : lecture org-scopée, jamais un
@@ -974,31 +892,17 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
     if inp.job_id is None:
         raise AuthzDenied(400, "missing_fields", f"{inp.op} exige `job_id`")
 
-    # ⚠️ FENCING (contrat runner §1, bascule dure) : les trois verbes agissent PAR la
-    # tentative que le claim a rendue, et par elle seule. Sans elle, refus nommé avant
-    # toute écriture ; tentative inconnue de ce worker, 404 sans oracle ; tentative
-    # close ou remplacée, 409 `attempt_superseded` et le travail n'a pas bougé.
-    if inp.op in ("bind_run", "extend", "complete"):
-        _exiger_tentative(inp)
-
     if inp.op == "bind_run":
         if not inp.run_id:
             raise AuthzDenied(400, "missing_fields", "bind_run exige `run_id`")
-        lie = db.bind_job_run(inp.job_id, ctx.sub, inp.run_id, attempt_id=inp.attempt_id)
-        if lie is None:
+        if not db.bind_job_run(inp.job_id, ctx.sub, inp.run_id):
             raise AuthzDenied(404, "job_not_found", "job inconnu")
-        if lie is False:
-            _refuser_tentative_remplacee(False)
         return {"ok": True}
 
     if inp.op == "extend":
-        prolonge = db.extend_job_lease(inp.job_id, ctx.sub,
-                                       lease_seconds=max(30, min(inp.lease_seconds, 3600)),
-                                       attempt_id=inp.attempt_id)
-        if prolonge is None:
+        if not db.extend_job_lease(inp.job_id, ctx.sub,
+                                   lease_seconds=max(30, min(inp.lease_seconds, 3600))):
             raise AuthzDenied(404, "job_not_found", "job inconnu")
-        if prolonge is False:
-            _refuser_tentative_remplacee(False)
         return {"ok": True}
 
     if inp.op == "complete":
@@ -1007,22 +911,12 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         if inp.result is not None and len(json.dumps(inp.result)) > 4096:
             raise AuthzDenied(400, "result_too_large",
                               "result > 4 Ko — un résumé, pas un contenu")
-        res = db.complete_job(inp.job_id, ctx.sub, inp.ok, error=inp.error,
-                              run_id=inp.run_id, result=inp.result,
-                              attempt_id=inp.attempt_id)
+        res = db.complete_job(inp.job_id, ctx.sub, inp.ok,
+                              error=inp.error, run_id=inp.run_id, result=inp.result)
         if res is None:
-            # Jamais à ce worker, ou tentative inconnue : on ne conclut pas ce qui ne
-            # nous appartient pas.
+            # Déjà re-claimé après bail mort, ou jamais à lui : on ne conclut pas
+            # ce qui ne nous appartient plus.
             raise AuthzDenied(404, "job_not_found", "job inconnu")
-        if res.get("superseded"):
-            # Le complément tardif de ses postes est déjà écrit ; le travail, repris
-            # par une autre tentative, n'a pas bougé — et aucun bail n'est libéré.
-            _refuser_tentative_remplacee(res["usage_enregistre"])
-        if res.get("replayed"):
-            # Déjà conclue : le résultat enregistré, rien de recompté, rien de libéré
-            # (le run peut désormais appartenir à la tentative suivante).
-            return {"ok": True, "status": res["status"], "replayed": True,
-                    "run_id": res.get("run_id")}
         # Le run de l'appel d'abord (c'est celui que le worker vient d'exécuter),
         # sinon celui que le job connaît (`bind_run`, ou un `continue`).
         return {"ok": True, "status": res["status"],
@@ -1049,13 +943,6 @@ CAPABILITIES += [
             DeclaredError(404, "fleet_not_found",
                           "`enqueue fleet_id=` désignant une flotte qui n'est pas "
                           "celle de l'org du porteur"),
-            DeclaredError(400, "attempt_id_required",
-                          "`bind_run`, `extend` ou `complete` sans l'`attempt_id` rendu "
-                          "au claim"),
-            DeclaredError(409, "attempt_superseded",
-                          "la tentative nommée est close ou remplacée par une réservation "
-                          "plus récente ; `details.usage_enregistre` dit si un complete "
-                          "tardif a rempli ses postes"),
         ),
         # Un WORKER de plateforme (secret de machine déclaré en base, aucun
         # compte, aucune org) ou un MEMBRE d'org. Le worker ne nomme rien et ne

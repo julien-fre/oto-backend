@@ -155,16 +155,8 @@ def _bail(ns_id, row_id) -> dict:
             "WHERE ns_id = %s AND row_id = %s", (ns_id, row_id)).fetchone() or {})
 
 
-#: La tentative que le claim a rendue, par travail : le worker la PORTE et la joint à
-#: chaque verbe du bail (bascule dure — `bind_run` et `complete` l'exigent).
-_TENTATIVES: dict = {}
-
-
 def _jobs(**kw) -> dict:
-    """La capacité telle que la route l'appelle — le worker porte un jeton d'org, et
-    l'`attempt_id` de SA prise sur les verbes du bail."""
-    if kw.get("op") in ("bind_run", "extend", "complete"):
-        kw.setdefault("attempt_id", _TENTATIVES[kw["job_id"]])
+    """La capacité telle que la route l'appelle — le worker porte un jeton d'org."""
     return RJ._jobs(ResolvedCtx(sub=WORKER, org_id=ORG), RJ.JobsInput(**kw))
 
 
@@ -173,7 +165,6 @@ def _job_claime() -> int:
     _jobs(op="enqueue", kind="start", payload={"procedure": "p-633"})
     job = _jobs(op="claim")["job"]
     assert job, "la file portait un job : le claim le rend"
-    _TENTATIVES[int(job["id"])] = job["attempt_id"]
     return int(job["id"])
 
 

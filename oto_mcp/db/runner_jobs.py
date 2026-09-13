@@ -173,8 +173,7 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
 
 def claim_next_job(org_id: Optional[int], worker_sub: str,
                    lease_seconds: int = _LEASE_DEFAULT_S,
-                   depot: Optional[str] = None, *,
-                   decider=None) -> Optional[dict]:
+                   depot: Optional[str] = None) -> Optional[dict]:
     """Le prochain job, bail posé — ou None (file vide).
 
     ⚠️ `depot` = le dépôt de clé que le worker nomme, c'est-à-dire la FAMILLE de
@@ -198,19 +197,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
     `due_at`, donc FIFO GLOBAL. Une organisation qui enfile deux mille travaux
     fait attendre toutes les autres — le partage est équitable dans le TEMPS,
     pas entre clients. Un tourniquet par organisation est le geste suivant ; il
-    n'est pas fait.
-
-    ⚠️ **LA TENTATIVE naît ici, dans la MÊME transaction que `attempts + 1`**
-    (contrat runner §1, bascule dure). Dans l'ordre, sans seconde connexion :
-    les épaves balayées ferment leur tentative `lost` ; la tentative encore
-    ouverte du travail repris est close `lost` ; `decider(conn, job)` — fourni
-    par la capacité — compose le travail servi et rend `(servi, issue)`, où
-    `issue` porte le PAYEUR (`key_source`, NULL = inconnu) et, s'il y a lieu, le
-    code d'un REFUS du serveur, que la capacité écrit sur CETTE connexion ; le
-    jeton délégué des prises précédentes est révoqué ; la tentative est insérée,
-    et close `failed` à zéro attesté si le claim a refusé. Toute erreur annule la
-    réservation entière. `attempt_id` est rendu avec le travail."""
-    from . import runner_attempts as RA
+    n'est pas fait."""
     with _connect() as conn:
         # Le SONDAGE vaut présence — avant même de savoir s'il y a du travail. Un
         # claim sur file vide n'écrit rien d'autre : sans cette ligne, une org
@@ -248,7 +235,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                 """,
                 (org_id, worker_sub),
             )
-        epaves = conn.execute(
+        conn.execute(
             """
             UPDATE runner_jobs
                SET status = 'failed', finished_at = NOW(),
@@ -256,13 +243,9 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                                 ' [bail expiré, tentatives épuisées]'
              WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
                AND lease_until < NOW() AND attempts >= max_attempts
-            RETURNING id
             """,
             (org_id, org_id),
-        ).fetchall()
-        # Une épave a tourné sans jamais conclure : sa tentative se ferme `lost`.
-        for epave in epaves:
-            RA.clore_tentatives_perdues(conn, epave["id"])
+        )
         # ⚠️ Un `start` dont le run lié est CLOS se sert SANS run : le worker lit
         # `run_id` absent comme « ouvre un run neuf », et reprendrait sinon un fil
         # clos dont l'historique tient des lignes déjà libérées. La clôture se lit
@@ -310,54 +293,14 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
               FROM pris LEFT JOIN clos ON TRUE
              WHERE j.id = pris.id
             RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
-                      j.lease_until, j.sub, j.org_id, j.fleet_id
+                      j.lease_until, j.sub, j.org_id
             """,
             (org_id, org_id, depot or "", worker_sub, int(lease_seconds)),
         ).fetchone()
-        if row is None:
-            return None
-        job = dict(row)
-        # Un bail mort repris : la tentative qui le tenait se ferme `lost`, usage NULL.
-        # Son run reste celui où elle a travaillé (noté par `bind_run`) ; le travail
-        # repris garde ce run s'il est ouvert, n'en a plus s'il est clos (détachement).
-        RA.clore_tentatives_perdues(conn, job["id"])
-        servi, issue = decider(conn, job) if decider else (job, {})
-        _revoquer_jetons_precedents(conn, job, servi.get("delegated_token"))
-        charge = job["payload"] if isinstance(job.get("payload"), dict) else {}
-        tentative = RA.ouvrir_tentative(
-            conn, job_id=job["id"], attempt_no=job["attempts"], org_id=job["org_id"],
-            worker_sub=worker_sub, fleet_id=job.get("fleet_id"), run_id=job.get("run_id"),
-            trigger_id=charge.get("trigger_id"), key_source=issue.get("key_source"),
-            provider_family=charge.get("model_family"), model=charge.get("model"))
-        if issue.get("refus"):
-            RA.refuser_tentative(conn, tentative["attempt_id"], issue["refus"])
-    return {**servi, "attempt_id": tentative["attempt_id"]}
+    return dict(row) if row else None
 
 
-def libelle_jeton_du_travail(job_id: int, attempt_no: Any) -> str:
-    """Le libellé du jeton délégué d'une TENTATIVE — une seule définition, lue à
-    l'émission (`_emettre_jeton`) et à la révocation (`attempt_no="%"` : toutes)."""
-    return f"runner job {job_id} tentative {attempt_no}"
-
-
-def _revoquer_jetons_precedents(conn, job: dict, jeton_neuf: Optional[str]) -> int:
-    """Révoque, dans la transaction du claim, les jetons délégués des prises PRÉCÉDENTES.
-
-    ⚠️ Sans elle, un zombie garderait jusqu'à `bail + 120 s` le droit d'écrire au nom du
-    déclarant après que son travail a été repris (contrat §1). Le jeton de la tentative
-    courante, émis juste avant sur CETTE transaction, est écarté par son empreinte."""
-    if not job.get("sub"):
-        return 0
-    from .tokens import _hash_token
-    return conn.execute(
-        "DELETE FROM user_api_tokens WHERE sub = %s AND kind = 'delegation' "
-        "AND label LIKE %s AND token_hash <> %s",
-        (job["sub"], libelle_jeton_du_travail(job["id"], "%"),
-         _hash_token(jeton_neuf) if jeton_neuf else ""),
-    ).rowcount or 0
-
-
-def refuser_pour_identite(job_id: int, worker_sub: str, raison: str, *, conn) -> bool:
+def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:
     """Arrête DÉFINITIVEMENT un travail dont le porteur ne peut plus agir.
 
     ⚠️ Pas `complete_job(ok=False)` : celui-là refile avec backoff jusqu'au
@@ -374,31 +317,27 @@ def refuser_pour_identite(job_id: int, worker_sub: str, raison: str, *, conn) ->
     s'exécuter. `expired` dit « personne n'est venu le prendre », ce qui serait
     faux ici et enverrait chercher au mauvais endroit.
     """
-    return arreter_definitivement(job_id, worker_sub, raison, conn=conn)
+    return arreter_definitivement(job_id, worker_sub, raison)
 
 
-def arreter_definitivement(job_id: int, worker_sub: str, raison: str, *, conn) -> bool:
+def arreter_definitivement(job_id: int, worker_sub: str, raison: str) -> bool:
     """Le geste commun à TOUT refus qui ne se répare pas en réessayant : `failed`,
     avec sa raison écrite, scopé au claimant — jamais un retour en file.
 
     Extrait de `refuser_pour_identite` le 12/09/2026, quand un second motif est
     apparu : un travail dont l'org n'a pas déposé la clé de modèle qu'on exige
     (`capabilities/_cle_exigee.py`). Deux fonctions portant le même UPDATE auraient
-    fini par diverger ; deux NOMS sur un seul geste disent chacun leur motif.
-
-    ⚠️ **Sur la connexion du CLAIM, jamais une seconde** : ces refus tombent pendant la
-    réservation, qui n'est pas encore validée. Une autre connexion ne la voit pas — le
-    travail y est encore `pending` — et son UPDATE ne touche AUCUNE ligne : le refus
-    serait perdu en silence et le travail resterait `claimed` (mesuré par mutation)."""
-    cur = conn.execute(
-        """
-        UPDATE runner_jobs
-           SET status = 'failed', finished_at = NOW(), last_error = %s
-         WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-        """,
-        (raison, job_id, worker_sub),
-    )
-    return bool(cur.rowcount)
+    fini par diverger ; deux NOMS sur un seul geste disent chacun leur motif."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'failed', finished_at = NOW(), last_error = %s
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+            """,
+            (raison, job_id, worker_sub),
+        )
+        return bool(cur.rowcount)
 
 
 def modele_du_run(run_id: str, org_id: int) -> dict:
@@ -453,19 +392,9 @@ def modele_du_run(run_id: str, org_id: int) -> dict:
     return {"model": row["model"], "model_family": row["model_family"]}
 
 
-def bind_job_run(job_id: int, worker_sub: str, run_id: str, *,
-                 attempt_id: Optional[str]) -> Optional[bool]:
-    """Lie un job `start` au run que le worker vient d'ouvrir — tentative COURANTE seule.
-
-    `True` lié (le travail ET sa tentative) ; `False` tentative close ou remplacée ;
-    `None` tentative ou travail inconnus de ce worker."""
-    from . import runner_attempts as RA
+def bind_job_run(job_id: int, worker_sub: str, run_id: str) -> bool:
+    """Lie un job `start` au run que le worker vient d'ouvrir — claimant seul."""
     with _connect() as conn:
-        t = RA.tentative_du_travail(conn, attempt_id, job_id=job_id, worker_sub=worker_sub)
-        if t is None:
-            return None
-        if t["outcome"] != RA.TENTATIVE_OUVERTE:
-            return False
         cur = conn.execute(
             """
             UPDATE runner_jobs SET run_id = %s
@@ -473,25 +402,13 @@ def bind_job_run(job_id: int, worker_sub: str, run_id: str, *,
             """,
             (run_id, job_id, worker_sub),
         )
-        if not cur.rowcount:
-            return None
-        RA.lier_run_tentative(conn, t["attempt_id"], run_id)
-        return True
+        return bool(cur.rowcount)
 
 
 def extend_job_lease(job_id: int, worker_sub: str,
-                     lease_seconds: int = _LEASE_DEFAULT_S, *,
-                     attempt_id: Optional[str]) -> Optional[bool]:
-    """Prolonge le bail — le heartbeat du worker. Tentative COURANTE seule.
-
-    Même réponse que `bind_job_run` : `True`, `False` (remplacée), `None` (inconnue)."""
-    from . import runner_attempts as RA
+                     lease_seconds: int = _LEASE_DEFAULT_S) -> bool:
+    """Prolonge le bail — le heartbeat du worker. Claimant seul."""
     with _connect() as conn:
-        t = RA.tentative_du_travail(conn, attempt_id, job_id=job_id, worker_sub=worker_sub)
-        if t is None:
-            return None
-        if t["outcome"] != RA.TENTATIVE_OUVERTE:
-            return False
         cur = conn.execute(
             """
             UPDATE runner_jobs
@@ -500,14 +417,13 @@ def extend_job_lease(job_id: int, worker_sub: str,
             """,
             (int(lease_seconds), job_id, worker_sub),
         )
-        return True if cur.rowcount else None
+        return bool(cur.rowcount)
 
 
 def complete_job(job_id: int, worker_sub: str, ok: bool,
                  error: Optional[str] = None,
                  run_id: Optional[str] = None,
-                 result: Optional[dict] = None, *,
-                 attempt_id: Optional[str]) -> Optional[dict]:
+                 result: Optional[dict] = None) -> Optional[dict]:
     """Conclut la prise : `done`, ou re-file avec backoff, ou `failed` au plafond.
 
     `result` (R5, flotte) = le résultat DÉCLARÉ par le worker (usage_tokens,
@@ -519,27 +435,8 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
     sinon None) : c'est la clé de la libération des baux du datastore (#633),
     lue par la capacité sans second aller-retour — ou None si le job n'est pas
     au claimant (déjà re-claimé après bail mort, ou jamais à lui) : l'appelant
-    ne conclut pas ce qui ne lui appartient plus.
-
-    ⚠️ **Par la TENTATIVE** (contrat runner §1) : seule la tentative COURANTE ouverte
-    conclut — le travail ET sa tentative, dans la même transaction. Déjà conclue :
-    `{status, run_id, replayed: True}`, rien n'est recompté. `lost` : le complément
-    tardif de ses postes, sans toucher au travail, et `{superseded: True,
-    usage_enregistre}`. Inconnue de ce worker : `None`."""
-    from . import runner_attempts as RA
+    ne conclut pas ce qui ne lui appartient plus."""
     with _connect() as conn:
-        t = RA.tentative_du_travail(conn, attempt_id, job_id=job_id, worker_sub=worker_sub)
-        if t is None:
-            return None
-        if t["outcome"] == RA.TENTATIVE_PERDUE:
-            tardif = RA.completer_tentative_perdue(conn, attempt_id=t["attempt_id"],
-                                                   resultat=result)
-            return {"superseded": True, "usage_enregistre": tardif["usage_enregistre"]}
-        if t["outcome"] != RA.TENTATIVE_OUVERTE:
-            actuel = conn.execute("SELECT status FROM runner_jobs WHERE id = %s",
-                                  (job_id,)).fetchone()
-            return {"status": actuel["status"] if actuel else t["outcome"],
-                    "run_id": t["run_id"], "replayed": True}
         if ok:
             row = conn.execute(
                 """
@@ -575,11 +472,7 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                  json.dumps(result) if result is not None else None,
                  job_id, worker_sub),
             ).fetchone()
-        if row is None:
-            return None
-        RA.conclure_tentative(conn, attempt_id=t["attempt_id"], ok=ok, resultat=result,
-                              run_id=row["run_id"])
-    return dict(row)
+    return dict(row) if row else None
 
 
 # D'OÙ vient un travail, en SQL. Le discriminant existe déjà dans la table : la

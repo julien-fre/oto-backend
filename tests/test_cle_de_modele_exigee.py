@@ -75,9 +75,8 @@ def test_les_fournisseurs_de_modele_se_derivent_du_registre():
 @pytest.fixture
 def arret(monkeypatch):
     vu = {}
-    # `**_` : l'arrêt reçoit la connexion de la RÉSERVATION (`conn=`), jamais une seconde.
     monkeypatch.setattr(RJ.db, "arreter_definitivement",
-                        lambda job_id, sub, raison, **_: vu.update(job=job_id, raison=raison) or True)
+                        lambda job_id, sub, raison: vu.update(job=job_id, raison=raison) or True)
     return vu
 
 

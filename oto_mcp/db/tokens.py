@@ -29,7 +29,7 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def purger_delegations_expirees(sub: str, *, conn=None) -> int:
+def purger_delegations_expirees(sub: str) -> int:
     """Efface les jetons de DÉLÉGATION expirés de ce compte.
 
     ⚠️ Un jeton mort n'a aucune raison de rester : il est inutilisable, et
@@ -40,22 +40,20 @@ def purger_delegations_expirees(sub: str, *, conn=None) -> int:
     ⚠️ Ne touche QUE `kind='delegation'` : un jeton d'utilisateur expiré reste
     visible, parce que son propriétaire doit pouvoir constater qu'il a expiré —
     c'est le sien, il l'a créé, sa disparition silencieuse serait une surprise.
-
-    `conn` = la transaction de l'appelant (la réservation d'un travail) : le nettoyage
-    en suit le sort.
     """
-    requete = ("DELETE FROM user_api_tokens WHERE sub = %s AND kind = 'delegation' "
-               "AND expires_at IS NOT NULL AND expires_at < NOW()")
-    if conn is not None:
-        return conn.execute(requete, (sub,)).rowcount or 0
-    with _connect() as c:
-        return c.execute(requete, (sub,)).rowcount or 0
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM user_api_tokens WHERE sub = %s AND kind = 'delegation' "
+            "AND expires_at IS NOT NULL AND expires_at < NOW()",
+            (sub,),
+        )
+        return cur.rowcount or 0
 
 
 def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = None,
                      scopes: Optional[dict] = None,
                      ttl_seconds: Optional[int] = None,
-                     kind: str = "user", *, conn=None) -> str:
+                     kind: str = "user") -> str:
     """Génère un token, persiste son hash, renvoie le plaintext une seule fois.
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
@@ -66,18 +64,12 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
     Non None = deny-by-default, seul ce que la portée nomme passe — la forme d'un
     jeton confié à une intégration tierce. Validé par `token_scopes.parse` AVANT
     d'arriver ici (le document est stocké tel quel).
-
-    ⚠️ `conn` = la transaction de l'appelant : le jeton n'existe que si elle est
-    validée. C'est la forme du jeton DÉLÉGUÉ d'une réservation — un claim qui échoue
-    n'en laisse aucun. Le compte n'y est jamais créé : son existence a été vérifiée
-    avant, et la clé étrangère annule la transaction entière s'il a disparu.
     """
     # ⚠️ `upsert_user` CRÉE le compte s'il n'existe pas. Pour un jeton émis au nom
     # d'un tiers (délégation d'un travail programmé), l'existence du compte se
     # vérifie donc AVANT d'appeler ici — sinon on ressusciterait silencieusement
     # un compte supprimé, et on lui délivrerait un accès dans la foulée.
-    if conn is None:
-        upsert_user(sub)
+    upsert_user(sub)
     token = _TOKEN_PREFIX + secrets.token_urlsafe(32)
     # ⚠️ `ttl_seconds` gagne sur `ttl_days` : un jeton de délégation vit le temps
     # d'un bail (quelques minutes), pas d'une journée. Sans lui, le plus court
@@ -89,15 +81,13 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
         expires = f"NOW() + INTERVAL '{int(ttl_days)} days'"
     else:
         expires = "NULL"
-    requete = (f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, "
-               f"scopes, kind) VALUES (%s, %s, %s, {expires}, %s, %s)")
-    valeurs = (sub, label, _hash_token(token),
-               json.dumps(scopes) if scopes is not None else None, kind)
-    if conn is not None:
-        conn.execute(requete, valeurs)
-    else:
-        with _connect() as c:
-            c.execute(requete, valeurs)
+    with _connect() as conn:
+        conn.execute(
+            f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, "
+            f"scopes, kind) VALUES (%s, %s, %s, {expires}, %s, %s)",
+            (sub, label, _hash_token(token),
+             json.dumps(scopes) if scopes is not None else None, kind),
+        )
     return token
 
 

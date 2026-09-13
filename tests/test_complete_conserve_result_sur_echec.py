@@ -9,8 +9,7 @@ flotte. Le coût d'un échec sortait de tout total, et la garde budget avec lui.
 les tentatives ne s'additionnent pas — le cas ② le fige pour qu'on ne le lise pas
 comme un cumul.
 
-Contre un PostgreSQL jetable (`OTO_TEST_PG_DSN`), sur le vrai `complete_job`. Chaque
-conclusion porte l'`attempt_id` que le claim a rendu (bascule dure : `complete` l'exige).
+Contre un PostgreSQL jetable (`OTO_TEST_PG_DSN`), sur le vrai `complete_job`.
 """
 from __future__ import annotations
 
@@ -63,14 +62,13 @@ def _flotte(org: int) -> int:
 
 
 def _job_claime(org: int, *, max_attempts: int = 3,
-                fleet_id: int | None = None) -> tuple[int, str]:
-    """Rend (travail, tentative) : la tentative est ce qui conclut (attempt_id exigé)."""
+                fleet_id: int | None = None) -> int:
     from oto_mcp import db
     j = db.enqueue_job(org, "start", payload={"procedure": "p"},
                        max_attempts=max_attempts, fleet_id=fleet_id)
     job = db.claim_next_job(org, WORKER, lease_seconds=60)
     assert job and job["id"] == j["id"], "la file portait ce travail : le claim le rend"
-    return int(j["id"]), job["attempt_id"]
+    return int(j["id"])
 
 
 def _ligne(job_id: int) -> dict:
@@ -106,12 +104,12 @@ def test_un_echec_relancable_ecrit_son_result_et_la_flotte_le_compte(live):
     from oto_mcp import db as d
     org = 9131
     fid = _flotte(org)
-    job_id, tentative = _job_claime(org, max_attempts=2, fleet_id=fid)
+    job_id = _job_claime(org, max_attempts=2, fleet_id=fid)
 
     declare = {"usage_tokens": 1234, "usage_cache_read": 99,
                "stopped": "error", "steps": 3}
     out = d.complete_job(job_id, WORKER, False, error="l'agent a planté",
-                         result=declare, attempt_id=tentative)
+                         result=declare)
     assert out == {"status": "pending", "run_id": None}, out
 
     l = _ligne(job_id)
@@ -129,17 +127,15 @@ def test_la_tentative_finale_ratee_ecrit_son_result(live):
     from oto_mcp import db as d
     org = 9132
     fid = _flotte(org)
-    job_id, tentative = _job_claime(org, max_attempts=2, fleet_id=fid)
+    job_id = _job_claime(org, max_attempts=2, fleet_id=fid)
 
-    d.complete_job(job_id, WORKER, False, error="t1", result={"usage_tokens": 1234},
-                   attempt_id=tentative)
+    d.complete_job(job_id, WORKER, False, error="t1", result={"usage_tokens": 1234})
     _sql("UPDATE runner_jobs SET due_at = NOW() WHERE id = %s", job_id)  # backoff écoulé
     reprise = d.claim_next_job(org, WORKER, lease_seconds=60)
     assert reprise and reprise["id"] == job_id and reprise["attempts"] == 2, reprise
 
     finale = {"usage_tokens": 567, "usage_cache_read": 8, "stopped": "error"}
-    out = d.complete_job(job_id, WORKER, False, error="t2", result=finale,
-                         attempt_id=reprise["attempt_id"])
+    out = d.complete_job(job_id, WORKER, False, error="t2", result=finale)
     assert out == {"status": "failed", "run_id": None}, out
 
     l = _ligne(job_id)
@@ -159,12 +155,12 @@ def test_un_echec_sans_result_ne_touche_pas_au_result(live, org, avant):
     """Aligné sur `ok=true` (`COALESCE`). Le `result` préexistant est posé HORS de
     `complete_job` : ce cas vaut sur l'ancien code comme sur le nouveau."""
     from oto_mcp import db as d
-    job_id, tentative = _job_claime(org)
+    job_id = _job_claime(org)
     if avant is not None:
         _sql("UPDATE runner_jobs SET result = %s::jsonb WHERE id = %s",
              '{"usage_tokens": 42}', job_id)
 
-    out = d.complete_job(job_id, WORKER, False, attempt_id=tentative)
+    out = d.complete_job(job_id, WORKER, False)
     assert out == {"status": "pending", "run_id": None}, out
 
     l = _ligne(job_id)
@@ -179,10 +175,10 @@ def test_temoin_le_succes_ecrit_son_result(live):
     from oto_mcp import db as d
     org = 9135
     fid = _flotte(org)
-    job_id, tentative = _job_claime(org, fleet_id=fid)
+    job_id = _job_claime(org, fleet_id=fid)
 
     declare = {"usage_tokens": 31500, "usage_cache_read": 120, "stopped": "end_turn"}
-    out = d.complete_job(job_id, WORKER, True, result=declare, attempt_id=tentative)
+    out = d.complete_job(job_id, WORKER, True, result=declare)
     assert out == {"status": "done", "run_id": None}, out
 
     l = _ligne(job_id)

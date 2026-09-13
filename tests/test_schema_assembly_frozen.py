@@ -352,16 +352,8 @@ from oto_mcp.db import _schema, schema
 # CREATE TABLE. La base partagée la reçoit par `db/revision.py` (ALTER, fonction, et le
 # déclencheur posé seulement s'il manque). Additif : le code du tag précédent ne lit pas
 # `rev`, et ses écritures la font avancer. 153 174 → 153 796.
-# 13/09/2026 (oto-backend#943, oto#196, oto#197) — la TENTATIVE (fragment RUNS) : table
-# NEUVE `runner_job_attempts`, son index unique partiel (une seule tentative ouverte
-# par travail) et cinq index, dont `price_unverified` (un montant calculé au prix
-# PROVISOIRE d'un barème non vérifié). AUCUNE clé étrangère, aucun identifiant de
-# personne. Additif : le code du tag précédent ne la lit ni ne l'écrit, et elle naît
-# vide — aucun historique n'y est reconstitué. Arithmétique contre 51ed7999 : le
-# fragment RUNS grandit de 3 238 caractères (20 306 → 23 544), l'assemblé d'exactement
-# autant (153 796 + 3 238 = 157 034). Rien d'autre n'a bougé dans le DDL.
-EMPREINTE = "f72e83f9123ef8c3c396acb3207805bd2b5ca49340c89339eaebdccd606c67bc"
-LONGUEUR = 157034
+EMPREINTE = "cbe344b8cea8525a50efd6abf0e84876a9a4b6e9deca3e7401660d5cb31b752c"
+LONGUEUR = 153796
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
