@@ -207,6 +207,13 @@ class ViewAsMiddleware:
             if g is None or not await run_in_threadpool(roles.can_read_group, sub, view_group):
                 return await _json_error(request, 403, "forbidden")(scope, receive, send)
             view_org = g["org_id"]
+            # Même règle que la consultation d'org et qu'`active_org_readonly` de
+            # `/api/me` : un opérateur plateforme SANS rôle réel dans l'org parente
+            # inspecte l'équipe en LECTURE SEULE — un super_admin passe
+            # `can_read_group` par escalade, mais inspection ≠ escalade.
+            role_reel = await run_in_threadpool(org_store.get_org_role, view_org, sub)
+            if role_reel is None and await run_in_threadpool(access.is_platform_operator, sub):
+                read_only = True
         elif view_org:  # org>0 (0=perso = profil global, pas de check)
             # Membership RÉELLE (colonne DB, PAS l'escalade super_admin) : un membre
             # consulte son org normalement (lecture + écriture selon son rôle).
