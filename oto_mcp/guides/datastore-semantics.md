@@ -13,23 +13,23 @@ faces divergent, et ce qu'une réponse ne dit pas.
 ## 0. Adresser un tableau : par son NUMÉRO
 
 Un tableau porte un **numéro** (`ns_id`, ex. `174`) et un **nom** (`edition-vivier`).
-Les deux résolvent, partout, avec le même contrôle de visibilité — `namespace: 174` et
-`namespace: "edition-vivier"` désignent le même tableau, sur les deux faces.
+Les deux résolvent, partout, avec le même contrôle de visibilité — `datastore: 174` et
+`datastore: "edition-vivier"` désignent le même tableau, sur les deux faces.
 
 **Emploie le numéro.** Le nom est en cours de retrait : il marche encore aujourd'hui, et
 rien n'est cassé, mais il n'est unique que par propriétaire, il change au renommage, et
 c'est le numéro que la plateforme enregistre.
 
-Où le trouver : `data_list_namespaces` le donne (`id`), et surtout **les réponses le
+Où le trouver : `data_list_datastores` le donne (`id`), et surtout **les réponses le
 rendent** — `ns_id` dans la réservation (`data_claim_next`), l'écriture (`data_write`),
 la libération (`data_release`), la lecture d'une page (`data_rows`) et la lecture du
 schéma (`data_get_schema`). Réserve, note le `ns_id`, adresse par lui ensuite.
 
-⚠️ La clé `namespace` d'une réponse est le **nom canonique** du tableau, jamais l'écho de
-ce que tu as envoyé : adresser `174` te répond `namespace: "edition-vivier"`, et non
+⚠️ La clé `datastore` d'une réponse est le **nom canonique** du tableau, jamais l'écho de
+ce que tu as envoyé : adresser `174` te répond `datastore: "edition-vivier"`, et non
 `"174"`. C'est ainsi qu'on lit *quel* tableau a été touché. (`data_write` sur une ligne
 seule fait exception et ne rend que `ns_id` : son corps **est** la ligne, une clé
-`namespace` y entrerait en collision avec une colonne.)
+`datastore` y entrerait en collision avec une colonne.)
 
 `slot:<nom>` reste compris des deux côtés : c'est une référence de projet, pas un nom de
 tableau, et elle se résout vers l'un comme vers l'autre.
@@ -139,7 +139,7 @@ appel apporte la donnée **telle que la cliente l'a remise**, et chaque case fig
 version d'origine au moment où la valeur entre.
 
 ```
-data_write(namespace="…", key="siren", donnees_d_origine=True,
+data_write(datastore="…", key="siren", donnees_d_origine=True,
            rows=[{"siren": "123456789",
                   "raison_sociale": {"valeur": "DUPONT",
                                      "comment": "fichier de la cliente du 05/08/2026"}}])
@@ -183,7 +183,7 @@ la cliente a remis. Une écriture vise toujours la courante et n'a pas à le dir
 lecture, elle, nomme ce qu'elle veut.
 
 ```
-data_rows(namespace="…", versions=["current", "origine"])
+data_rows(datastore="…", versions=["current", "origine"])
 ```
 
 ⚠️ **Demande les DEUX dans le MÊME appel quand tu les compares.** Deux appels ne sont
@@ -206,7 +206,7 @@ Le défaut sert encore les deux. **Il basculera vers `current` seul, avec préav
 ## 4 quater. `force` — forcer ce qu'on NOMME, pas tout l'appel
 
 ```
-data_write(namespace="…", id="…", force=["raison_sociale", "raison_sociale.origine"],
+data_write(datastore="…", id="…", force=["raison_sociale", "raison_sociale.origine"],
            row={"raison_sociale": {"valeur": "Dupont SAS"}})
 ```
 
@@ -252,10 +252,13 @@ reconnaîtrait `@keep` au milieu d'un texte effacerait ou figerait une valeur su
 d'une sous-chaîne — `contact@keepcool.fr` en ferait les frais. Mieux vaut servir une
 chaîne visible qu'exécuter une intention devinée.
 
-⚠️ **Si `null` voulait dire « cherché, rien trouvé » chez toi — c'est l'usage le plus
-courant — alors, sur une valeur en place, le geste juste est l'OMISSION.** Ne rien trouver
-n'est pas effacer. Sur une case vide, c'est `@empty`. Traduire mécaniquement tes `null`
-en `@empty` ou en `@clear` détruirait des valeurs que tu voulais seulement laisser en place.
+⚠️ **`@empty` est la forme unique du vide assumé** : « cherché, rien trouvé » comme vider
+une valeur en place que tu ne reprends pas, la raison dans `comment`. Sur une valeur en
+place, `@empty` **retire la valeur courante**, qui n'est gardée nulle part (la réponse la
+rend une fois, dans `valeurs_effacees`) ; seule la version remise par la cliente, si elle
+a été posée à l'import, reste lisible dans `champ.origine` (`versions`, 4 ter).
+L'intention se relit avec `empties=sentinel`. **Omettre le champ veut dire « pas à moi »**
+(la valeur est gardée), et une couche `comment` seule ne dit pas « cherché, rien trouvé ».
 
 Jusqu'à la date, `null` efface encore et la réponse porte un avertissement. Après, il
 est **refusé** — jamais interprété en silence, parce qu'un `null` traduit « pour rendre
@@ -283,7 +286,7 @@ n'y réservera jamais rien. Une colonne avec ses `options`, ou l'ancienne étiqu
 ressemble à un état sans en être un — la réponse te le dit plutôt que de te laisser
 conclure de son silence.
 
-## 5. Ce que `readonly: true` protège## 5. Ce que `readonly: true` protège — et ne protège pas
+## 5. Ce que `readonly: true` protège — et ne protège pas
 
 Une colonne `readonly` (schéma) verrouille la **valeur** d'une ligne en place : une
 écriture qui la **change** (valeur nue, `null`, ou `{"valeur": …}`) est refusée en
@@ -320,10 +323,10 @@ déclarée ; sur une ligne seule, seule la clé déclarée joue.
 
 ## 7. Deux faces, un seul stockage
 
-| geste | MCP (`data_*`) | REST (`/api/datastore/namespaces` = `NS`) |
+| geste | MCP (`data_*`) | REST (`/api/datastores` = `DS`) |
 |---|---|---|
-| tableaux | `data_list_namespaces`, `data_create_namespace`, `data_rename_namespace`, `data_delete_namespace`, `data_url` | `GET`/`POST NS` ; `PATCH`/`DELETE NS/{tableau}` ; `GET NS/{tableau}/url` |
-| lignes | `data_rows` (page, ou `id`), `data_write`, `data_delete_row` | `GET`/`POST NS/{tableau}/rows` ; `GET`/`PATCH`/`DELETE …/rows/{row_id}` |
+| tableaux | `data_list_datastores`, `data_create_datastore`, `data_rename_datastore`, `data_delete_datastore`, `data_url` | `GET`/`POST DS` ; `PATCH`/`DELETE DS/{tableau}` ; `GET DS/{tableau}/url` |
+| lignes | `data_rows` (page, ou `id`), `data_write`, `data_delete_row` | `GET`/`POST DS/{tableau}/rows` ; `GET`/`PATCH`/`DELETE …/rows/{row_id}` |
 | schéma | `data_get_schema`, `data_set_schema`, `data_patch_schema`, `data_drop_column` | `GET`/`PUT`/`PATCH …/schema` ; `POST …/drop_column` |
 | file de travail | `data_claim_next`, `data_release` | `POST …/claim_next` ; `POST …/rows/{row_id}/claim` ; `POST …/rows/{row_id}/release` ; `GET …/queue` |
 | agrégat | `data_aggregate` | `GET …/aggregate` |
@@ -361,8 +364,8 @@ l'autre, à l'identique.
 - **`key=` du lot** : MCP seulement ; REST joue toujours la clé déclarée.
 - **Refus.** MCP : erreur `INVALID_PARAMS` qui porte le message. REST : 400 nommé
   (`row_invalid`, `business_key_required`, `invalid_row_input`, `jeton_mal_place`,
-  `invalid_filters`…), 403 `namespace_read_only` (tableau partagé en lecture seule),
-  404 `namespace_not_found` (avec l'org où il vit, s'il existe dans une autre des
+  `invalid_filters`…), 403 `datastore_read_only` (tableau partagé en lecture seule),
+  404 `datastore_not_found` (avec l'org où il vit, s'il existe dans une autre des
   tiennes) ou `row_not_found` ; 409 `row_locked` (ligne réservée par un autre) ou
   `revision_conflict` (la ligne a changé depuis la `_revision` passée).
 

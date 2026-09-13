@@ -318,7 +318,7 @@ def resolve_datastore_ref(namespace: str) -> str:
     Source UNIQUE de cette résolution, appelée par les tools `data_*` comme par les
     capacités du datastore. Elle a d'abord vécu dans `tools/datastore.py` seulement,
     et c'est ce qui a fait le trou : une capacité datastore recevait `slot:vivier`
-    comme un nom littéral et répondait `namespace_not_found`. Sur un verbe destructif
+    comme un nom littéral et répondait « tableau introuvable ». Sur un verbe destructif
     (`data_drop_column`), l'échec est heureux — mais un agent qui travaille en slots
     voit seize refus sans comprendre pourquoi, et croirait à un tableau déjà propre
     si le refus n'était pas là."""

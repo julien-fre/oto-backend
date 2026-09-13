@@ -46,7 +46,7 @@ toutes les pages dans un seul message.
 
 ## Écrire en masse
 
-- Beaucoup de lignes d'un coup : `data_write(namespace, rows=[…], key="<clé métier>")`
+- Beaucoup de lignes d'un coup : `data_write(datastore, rows=[…], key="<clé métier>")`
   en **lots** — la `key` dédoublonne (ré-écrire la même clé met à jour, ne duplique pas).
 - Très gros volume / contenu lourd : demande une **URL d'upload** (`oto_upload_url`) et
   laisse le sous-agent y pousser le fichier côté serveur, sans faire transiter les octets

@@ -45,12 +45,12 @@ def _layers(raw) -> str:
 # servent la même ligne, et c'est la réservation qui alimente une boucle d'écriture.
 # Typé `str`, pas `Literal`, pour le même refus nommé (`invalid_empties`).
 _EMPTIES = Field(default=dsl.EMPTIES_DEFAUT, description=(
-    "Forme d'une case vidée DÉLIBÉRÉMENT (écrite `@empty`). `plain` (défaut) la sert "
-    "`\"\"`, comme un vide ordinaire ; `sentinel` la sert `\"@empty\"`, le mot qui "
-    "l'écrit — un `\"\"` ordinaire reste `\"\"`. Lisez en `sentinel` une ligne dont vous "
-    "renverrez une liste : réémis tel quel, `@empty` repose le vide délibéré, là où `\"\"` "
-    "sur un champ requis est refusé. Ce n'est pas une valeur : ne recopiez jamais "
-    "`@empty` dans un livrable. Toute autre valeur est refusée."))
+    "Lisez en `sentinel` une ligne dont vous renverrez une liste : un vide ASSUMÉ (écrit "
+    "`@empty`, la raison dans `comment`) y est servi `\"@empty\"`, et réémis tel quel il "
+    "le reste ; réémis `\"\"`, il devient un vide ordinaire, refusé sur un champ requis. "
+    "`plain` (défaut) le sert `\"\"`, comme un vide ordinaire — un `\"\"` ordinaire reste "
+    "`\"\"`. Ce n'est pas une valeur : ne recopiez jamais `@empty` dans un livrable. "
+    "Toute autre valeur est refusée."))
 
 
 def _empties(raw) -> str:

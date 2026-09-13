@@ -153,14 +153,39 @@ def test_le_texte_servi_dit_que_le_mot_doit_etre_SEUL():
     assert "just text and get stored as such" in src
 
 
+def _servies(*noms: str) -> dict[str, str]:
+    """Les descriptions telles que `tools/list` les sert — `Args:` retiré, désindenté."""
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+    from scripts.empreinte_servie import _monter
+
+    return {t.name: t.description or "" for t in _monter() if t.name in noms}
+
+
 def test_le_texte_servi_distingue_empty_de_rien_trouve():
-    """⚠️ Le contresens le plus coûteux : `@empty` sur une case remplie EFFACE. Un
-    agent qui veut dire « je n'ai rien trouvé » et l'emploie détruit la donnée de la
-    cliente. La forme juste — les couches seules, sans `valeur` — doit être servie."""
-    import inspect
+    """⚠️ Le contresens le plus coûteux : `@empty` sur une case remplie EFFACE la valeur.
+    Sur une case qui porte une valeur, l'agent la GARDE et écrit les couches seules, ou
+    l'ÉCARTE avec `@empty` et la raison dans `comment` — `@empty` est la forme unique du
+    vide assumé. Omettre le champ, c'est « pas à moi » ; un `comment` seul n'est pas
+    « cherché, rien trouvé ». Le texte servi jusqu'au 13/09 présentait les couches seules
+    comme la forme du « rien trouvé » : il ne doit plus l'être."""
+    servi = " ".join(_servies("data_write")["data_write"].split())
+    assert "keep it and write the layers alone" in servi
+    assert "or discard it with `@empty` and the reason in `comment`" in servi
+    assert "`valeurs_effacees`" in servi
+    assert 'A field you leave out is "not mine"' in servi
+    assert 'never "searched, nothing found"' in servi
+    assert 'does not mean "I found nothing"' not in servi
+    assert "write the layers ALONE, with no `valeur` key" not in servi
 
-    from oto_mcp.tools import datastore as face_mcp
 
-    src = inspect.getsource(face_mcp)
-    assert 'does not mean "I found nothing"' in src
-    assert "write the layers ALONE, with no `valeur` key" in src
+def test_la_relecture_sentinel_tient_dans_la_tete_servie():
+    """Le runner hébergé coupe chaque description à 1 024 caractères (tête gardée) :
+    une relecture `empties="sentinel"` décrite plus bas n'atteint pas le modèle, qui
+    renvoie alors `""` et perd le vide assumé. Mesuré le 13/09 sur le runner servi."""
+    for nom, desc in _servies("data_rows", "data_claim_next").items():
+        fin = desc.find("refused on a required field")
+        assert 0 <= desc.find('empties="sentinel"') < fin, nom
+        assert fin + len("refused on a required field") <= 1024, (nom, fin)

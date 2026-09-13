@@ -14,7 +14,7 @@ Le datastore a la primitive qui règle ça côté serveur : **`data_claim_next`*
 
 ## Le principe : un bail, pas une liste d'exclusion
 
-`data_claim_next(namespace, worker, filter?, lease_s?)` prend **la prochaine ligne
+`data_claim_next(datastore, worker, filter?, lease_s?)` prend **la prochaine ligne
 claimable et la réserve** dans la même transaction (`FOR UPDATE SKIP LOCKED`, patron
 file de travail PostgreSQL). Deux workers concurrents n'obtiennent **jamais** la même
 ligne — le second saute simplement à la suivante.
@@ -26,20 +26,20 @@ Le claim pose un **bail** : `_claimed_by` (ton libellé de worker) et `_claimed_
 « en cours ». C'est le bail, pas le statut, qui protège du double traitement. Ne
 construis donc rien qui suppose que la ligne a changé après le claim.
 
-Réponse : `{namespace, row}` avec `row = null` quand il n'y a plus rien à prendre
+Réponse : `{datastore, ns_id, row}` avec `row = null` quand il n'y a plus rien à prendre
 (file vide pour ce filtre, ou tout est déjà sous bail).
 
 ## Le cycle complet
 
 ```
 0. run = run_start(label="<ma campagne>")      → run["run_id"]
-1. row = data_claim_next(namespace="<table>", worker="<mon-libellé>",
+1. row = data_claim_next(datastore="<table>", worker="<mon-libellé>",
                          filter={"status": "nouveau"}, _run_id=run["run_id"])
 2. si row == null  → terminé, le worker s'arrête
 3. traiter row (enrichissement, appels connecteurs, raisonnement…)
-4. data_write(namespace="<table>", id=row["_id"],
+4. data_write(datastore="<table>", id=row["_id"],
               row={"status": "traité", ...livrables}, _run_id=run["run_id"])
-5. data_release(namespace="<table>", id=row["_id"], worker="<mon-libellé>",
+5. data_release(datastore="<table>", id=row["_id"], worker="<mon-libellé>",
                 _run_id=run["run_id"])
 6. reboucler en 1                              → puis run_finish(run["run_id"], "done")
 ```
@@ -161,7 +161,7 @@ le guide `bulk-load` (garder les payloads hors du contexte principal).
 
 ## Divers
 
-- `namespace` accepte `slot:<nom>` — le tableau bindé par le projet actif.
+- `datastore` accepte `slot:<nom>` — le tableau bindé par le projet actif.
 - Le bail n'apparaît sur une ligne (`_claimed_by` / `_claimed_until`) **que s'il est
   posé** : une lecture ordinaire d'une ligne libre n'a pas ces champs.
 - L'ordre de service est l'ordre de création (les plus anciennes d'abord).

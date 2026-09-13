@@ -643,7 +643,8 @@ def register(mcp: FastMCP) -> None:
           NON-EMPTY value in that column without posting the layer — the value must
           arrive WITH its provenance, in the SAME call
           (`"col": {"valeur": …, "comment": "where it comes from"}`). A null or
-          empty value, and a layer posted alone without a value, trigger nothing.
+          empty value, and a layer posted alone without a value (a note beside the
+          value, not an assumed empty — that is `@empty`), trigger nothing.
           Applies to sub-fields of objects and of list items too; never to
           `readonly` nor the lifecycle column; never to a column this
           write does not name. It arms ITSELF — no `strict` needed. ⚠️ It does NOT
@@ -760,9 +761,11 @@ def register(mcp: FastMCP) -> None:
             "raison_sociale": {"valeur": "ACME SAS", "comment": "@keep"}
 
         `"@keep"` = leave that sub-field exactly as it is.
-        `"@empty"` = the empty is ASSUMED: you looked, and no source gives it. It
-        satisfies `required` (a plain `""` does not) and reads back `""` — or
-        `"@empty"` with `empties="sentinel"`.
+        `"@empty"` = the ONE form of an assumed empty, its reason in `comment`:
+        `{"valeur": "@empty", "comment": "registry and imprint: none"}` — for
+        "searched, nothing found" as for a value you discard. It satisfies `required`
+        (a plain `""` does not) and reads back `""` — or `"@empty"` with
+        `empties="sentinel"`.
         `"@clear"` = empty it WITHOUT assuming anything: the value goes, and an
         assumed empty goes with it. On a `required` field it is refused.
         On a layer (`comment`, `link`), `@empty` and `@clear` only empty that layer:
@@ -774,11 +777,12 @@ def register(mcp: FastMCP) -> None:
         keep what is there AND add something, you cannot do both in one write: keep
         it (`"@keep"`) or replace it, but do not write the word next to your prose.
 
-        ⚠️ **On a cell that HOLDS a value, `@empty` does not mean "I found nothing".**
-        Like `@clear`, it ERASES the value in place. To record a fruitless search
-        without destroying anything, write the layers ALONE, with no `valeur` key:
-        `{"field": {"comment": "searched on …, nothing"}}`. The value survives, the
-        trace is added beside it.
+        ⚠️ **On a cell that holds a value: keep it and write the layers alone
+        (`{"field": {"comment": "…"}}`), or discard it with `@empty` and the reason in
+        `comment`.** A discarded value is kept nowhere: the response hands it back
+        once, in `valeurs_effacees`. A field you leave out is "not mine" — its value
+        stays. A `comment` alone is a note beside the value, never "searched, nothing
+        found".
 
         In a list, the word goes on the element's field:
         `{"contacts": [{"nom": "Alice", "fonction": "@empty"}]}`. A list whose schema
@@ -1058,6 +1062,12 @@ def register(mcp: FastMCP) -> None:
                         empties: str = dsl.EMPTIES_DEFAUT) -> dict:
         """Atomically claim the NEXT unprocessed row of a datastore (work queue).
 
+        Claim with `empties="sentinel"` when you will re-send a list: an assumed
+        empty (written `@empty`, its reason in `comment`) then comes back
+        `"@empty"` and, sent back as is, stays one; sent back as `""` it becomes an
+        ordinary empty, refused on a required field. Never copy `@empty` into a
+        deliverable.
+
         The primitive for draining a table with N parallel (sub-)agents without
         collisions: picks the oldest row whose claim lease is free or expired,
         stamps `_claimed_by`/`_claimed_until` and returns it — two concurrent
@@ -1126,12 +1136,6 @@ def register(mcp: FastMCP) -> None:
         loses the whole row. This is the only read that feeds a WRITE loop, so it is
         the one where the shape matters.
 
-        `empties="sentinel"` serves a cell emptied ON PURPOSE (written `@empty`) as
-        `"@empty"` instead of `""` — an ordinary `""` stays `""`. Claim that way when
-        you will re-send a list: sent back as is, `@empty` keeps the deliberate empty,
-        where `""` on a required field is refused. It is not a value: never copy it
-        into a deliverable. `plain` (default) serves `""`.
-
         Every column DECLARED in the schema is on the row, `null` when no value is in
         place — `null` means "nothing here yet": find it if your task needs it, never
         make it up. Sending such a `null` back changes nothing (a `null` only erases a
@@ -1148,6 +1152,13 @@ def register(mcp: FastMCP) -> None:
             datastore: the table's NUMBER (`ns_id`, e.g. 174) — the form to use.
                 Its name still resolves and is being retired, not broken.
                 `slot:<name>` also works. It must already exist.
+            layers: shape of a cell that carries layers. `flat` (default): each
+                filled layer beside the value (`email.comment`). `nested`:
+                `{"valeur": …, "comment": …}`, the shape you write. Any other value
+                is refused.
+            empties: how an assumed empty (written `@empty`) comes back. `plain`
+                (default): `""`, like any empty cell. `sentinel`: `"@empty"`, the
+                word that writes it. Any other value is refused.
         """
         store = _acting_store()
         datastore = _ns(datastore)
@@ -1225,13 +1236,13 @@ def register(mcp: FastMCP) -> None:
         """Read rows. WITH `id` = the single row (by `_id`). WITHOUT `id` = one PAGE
         of rows (`filter`/`q` narrow it, `order_by` sorts it) with a stable cursor.
 
+        Read with `empties="sentinel"` before re-sending a list: an assumed empty
+        (written `@empty`, its reason in `comment`) then comes back `"@empty"` — an
+        ordinary `""` stays `""` — and, sent back as is, stays one; sent back as `""`
+        it becomes an ordinary empty, refused on a required field.
+
         Layers come back FLAT by default (`champ.origine` beside the bare name);
         `layers="nested"` returns the shape you write — guide `datastore-semantics`.
-
-        `empties="sentinel"` serves a cell emptied ON PURPOSE (written `@empty`) as
-        `"@empty"` instead of `""`; an ordinary `""` stays `""`. Read that way before
-        re-sending a list: `@empty` sent back keeps the deliberate empty, `""` on a
-        required field is refused.
 
         `versions=["current","origine"]` picks which VERSIONS of each cell you get:
         `current` is what we established, `origine` what the client handed over.
@@ -1335,7 +1346,7 @@ def register(mcp: FastMCP) -> None:
                 a field name only exists in `flat`. The default WILL switch to
                 `nested`, with dated notice: pass `layers` explicitly if you depend
                 on one shape.
-            empties: how a cell emptied ON PURPOSE (written `@empty`) comes back.
+            empties: how an assumed empty (written `@empty`) comes back.
                 `plain` (default): `""`, like any empty cell. `sentinel`:
                 `"@empty"`, the word that writes it — top level, nested
                 (`{"valeur": "@empty", …}`) and inside list elements alike. It is not
