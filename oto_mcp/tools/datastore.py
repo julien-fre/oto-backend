@@ -1068,41 +1068,42 @@ def register(mcp: FastMCP) -> None:
         ordinary empty, refused on a required field. Never copy `@empty` into a
         deliverable.
 
+        ⚠️ **Your `filter` MUST name a column your processing WRITES.** That is the
+        one condition which makes the queue ADVANCE, and nothing enforces it. The
+        order is fixed — oldest first — so releasing a row puts it back at the head
+        if it still matches your filter.
+
+        ⚠️ **How to see a queue running empty**: the row carries `_claims`. Above 1
+        it means « you have already been served this row and it was not written »
+        — that is the signature. Stop and re-read your filter;
+        claiming again will not help.
+
+        Write your result and release it by the `_id` of the returned row.
+
+        ⚠️ **Address the table by its NUMBER, not its name**: the reply carries
+        `ns_id` (e.g. `174`), the form to pass as `datastore` in every following
+        call — `data_write(datastore=174, id=…)`, `data_release(datastore=174, …)`.
+
         The primitive for draining a table with N parallel (sub-)agents without
         collisions: picks the oldest row whose claim lease is free or expired,
         stamps `_claimed_by`/`_claimed_until` and returns it — two concurrent
         workers never get the same row. Returns `{row: null}` when nothing is
         left to claim.
 
-        ⚠️ **Your `filter` MUST name a column your processing WRITES.** That is the
-        one condition which makes the queue ADVANCE, and nothing enforces it. The
-        order is fixed — oldest first — so releasing a row puts it back at the head
-        if it still matches your filter. Filter on column A, write into column B,
-        and you will be served the same two or three rows for ever.
+        Filter on column A, write into column B, and you will be served the same
+        two or three rows for ever. Measured on a 3 766-row table: three workers
+        filtered on a column the processing never touched. **834 fresh rows were
+        never reached**, and one worker claimed the SAME row seven times. Every
+        call succeeded and no error was raised — a livelock, not a failure, and
+        you cannot see it from inside. On a table declaring `lifecycle.max_claims`,
+        such rows eventually leave the queue in the abandon state — LOST to the
+        pass, without being at fault.
 
-        Measured on a 3 766-row table: three workers filtered on a column the
-        processing never touched. **834 fresh rows were never reached**, and one
-        worker claimed the SAME row seven times. Every call succeeded and no error
-        was raised — a livelock, not a failure, and you cannot see it from inside.
-
-        ⚠️ **How to see it anyway**: the row carries `_claims`. Above 1 it means
-        « you have already been served this row and it was not written » — that is
-        the signature. Stop and re-read your filter; claiming again will not help.
-        On a table declaring `lifecycle.max_claims`, such rows eventually leave the
-        queue in the abandon state — LOST to the pass, without being at fault.
-
-        Write your result and release it by the `_id` of the returned row.
-
-        ⚠️ **Address the table by its NUMBER, not its name.** The reply carries
-        `ns_id` — the table's number (e.g. `174`) — beside `datastore`, its
-        canonical name. `ns_id` is the form to pass as `datastore` in every
-        following call: `data_write(datastore=174, id=…)`, `data_release
-        (datastore=174, …)`. A name still resolves — it is being retired, not
-        broken — but the number is what to carry: it survives a rename, it is
-        unique where a name is only unique per owner, and it is what the platform
-        records. `datastore` in the reply is the table's REAL name whatever form
-        you passed in, so reading `"600"` back from a claim on `600` no longer
-        happens.
+        A name still resolves as `datastore` — it is being retired, not broken —
+        but the number is what to carry: it survives a rename, it is unique where
+        a name is only unique per owner, and it is what the platform records.
+        `datastore` in the reply is the table's REAL name whatever form you passed
+        in, so reading `"600"` back from a claim on `600` no longer happens.
 
         `worker` is a label YOU choose and REUSE verbatim on data_release — the
         guard so one agent cannot release another's claim.
@@ -1241,26 +1242,28 @@ def register(mcp: FastMCP) -> None:
         ordinary `""` stays `""` — and, sent back as is, stays one; sent back as `""`
         it becomes an ordinary empty, refused on a required field.
 
-        Layers come back FLAT by default (`champ.origine` beside the bare name);
-        `layers="nested"` returns the shape you write — guide `datastore-semantics`.
+        ⚠️ `datastore` = the table's NUMBER (`ns_id`, e.g. 174) — the form to use;
+        the reply carries it back. A name still resolves and is being retired,
+        not broken. `slot:<name>` also works.
+
+        ⚠️ List mode returns `{rows, count, next_cursor, ns_id}`. When `next_cursor`
+        is not null there are MORE rows: call again with `cursor=<next_cursor>`
+        (same datastore/filter/order) — repeat until `next_cursor` is null. A page
+        is not the table.
 
         `versions=["current","origine"]` picks which VERSIONS of each cell you get:
         `current` is what we established, `origine` what the client handed over.
         ⚠️ Ask for BOTH in ONE call when you compare them — two calls are not atomic,
         and an write in between would make you compare the before of one state with
-        the after of another. The bare name ALWAYS carries the current version;
-        `versions` only decides what is added beside it. The reply states what it
-        served in `versions_servies`, so "I did not ask for it" never looks like
-        "this cell has none".
+        the after of another.
+
+        Layers come back FLAT by default (`champ.origine` beside the bare name);
+        `layers="nested"` returns the shape you write — guide `datastore-semantics`.
+        The bare name ALWAYS carries the current version; `versions` only decides
+        what is added beside it. The reply states what it served in
+        `versions_servies`, so "I did not ask for it" never looks like "this cell
+        has none".
         The REST face `GET …/rows` pages by `offset` with a `total`, no cursor.
-
-        `datastore` = the table's NUMBER (`ns_id`, e.g. 174) — the form to use;
-        the reply carries it back. A name still resolves and is being retired,
-        not broken. `slot:<name>` also works.
-
-        List mode returns `{rows, count, next_cursor, ns_id}`. When `next_cursor` is not null
-        there are MORE rows: call again with `cursor=<next_cursor>` (same datastore/
-        filter/order) to get the next page — repeat until `next_cursor` is null.
 
         Without `order_by` the cursor is keyset-stable (rows created meanwhile don't
         shift the paging). With `order_by` it pages by offset instead, since an

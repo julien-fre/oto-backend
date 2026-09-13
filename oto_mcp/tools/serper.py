@@ -475,30 +475,32 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Récupère une page web via le scraper de Serper.
 
-        Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +
-        métadonnées. Plus robuste qu'un fetch brut face aux anti-bot rudimentaires.
-
         ⚠️ **Le rendu JS n'est pas garanti.** Un site rendu côté client rend
         HTTP 200 et un corps quasi vide, sans la moindre erreur : un corps très
         court ne prouve donc PAS que la page est vide. Regarde sa longueur avant
         d'en tirer un fait sur l'entreprise.
 
         ⚠️ **Un appel attend au plus 15 secondes**, puis rend une expiration —
-        y compris sur un domaine qui n'existe pas, que rien ne vérifie avant
-        l'envoi. Une expiration est un échec NORMAL, pas une panne : sur les
-        appels mesurés, la moitié des échecs portait sur des adresses fabriquées
-        à partir d'un nom de société. **Pars d'une URL constatée**, et ne réessaie
-        pas la même : ce n'est pas la lenteur qui coûte, c'est ce qu'elle emporte
-        — pendant que tu attends, ton propre contexte se refacture.
+        y compris sur un domaine qui n'existe pas. Une expiration est un échec
+        NORMAL, pas une panne. **Pars d'une URL constatée**, et ne réessaie pas
+        la même.
 
-        ⚠️ **Les adresses obfusquées ne survivent pas au rendu.** Trois motifs
-        courants (`joomla-hidden-mail` en base64, `mailto:` en entités HTML,
-        `cloudflare-email-protection`) portent une adresse LISIBLE dans le HTML
-        et INVISIBLE dans le markdown. Quand la page servie n'en montre aucune,
-        l'outil va relire le HTML et rend `adresses_obfusquees` — et colle la
-        même chose en bas du contenu. Un `motifs_obfuscation` sans adresses veut
-        dire « il y a un contact ici, non décodé » : reprends en format="html".
-        `sonde_obfuscation` dit pourquoi la relecture n'a rien conclu.
+        ⚠️ **Les adresses obfusquées ne survivent pas au rendu** (`mailto:` en
+        entités HTML, base64, protection Cloudflare) : une adresse LISIBLE dans
+        le HTML est INVISIBLE dans le markdown. Un `motifs_obfuscation` sans
+        adresses veut dire « il y a un contact ici, non décodé » : reprends en
+        format="html".
+
+        Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +
+        métadonnées. Plus robuste qu'un fetch brut face aux anti-bot rudimentaires.
+
+        Sur les appels mesurés, la moitié des expirations portait sur des adresses
+        fabriquées à partir d'un nom de société : ce n'est pas la lenteur qui
+        coûte, c'est ce qu'elle emporte — pendant que tu attends, ton propre
+        contexte se refacture. Quand la page servie ne montre aucune adresse,
+        l'outil relit le HTML de lui-même et rend `adresses_obfusquees` — il colle
+        la même chose en bas du contenu ; `sonde_obfuscation` dit pourquoi la
+        relecture n'a rien conclu.
 
         Args:
             url: URL de la page à récupérer — refusée si elle relève des

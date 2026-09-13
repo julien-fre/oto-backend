@@ -339,9 +339,12 @@ def register(mcp: FastMCP) -> None:
         """Chaîne capitalistique d'une entreprise française — qualifier son
         INDÉPENDANCE, ou inventorier un groupe.
 
-        Pourquoi : `categorie_entreprise` (PME/ETI/GE) est calculée par l'INSEE sur le
-        périmètre GROUPE, jamais sur l'entité — une filiale minuscule sort en "GE".
-        Ce tool sépare les deux.
+        ⚠️ `confiance="indeterminee"` (aucun mandataire personne morale) ne veut PAS
+        dire « indépendante » : le registre des bénéficiaires effectifs est fermé au
+        public depuis le 31/07/2024, donc l'actionnaire d'une SAS n'est pas publié.
+        Aucune filiale / aucun parent est une RÉPONSE, pas une erreur.
+        ⚠️ En descendant, l'amont plafonne à 25 résultats/page et 10 000 au total :
+        `candidats_tronques=true` signale un échantillon, pas un inventaire.
 
         `op`:
         - **"ascendant"** (défaut) : remonte les mandataires personnes morales, en
@@ -349,19 +352,16 @@ def register(mcp: FastMCP) -> None:
           `{tetes, liens, confiance, cycle, tronque}`.
         - **"descendant"** : entités contrôlées par ce SIREN — un appel au lieu de N.
 
+        Pourquoi : `categorie_entreprise` (PME/ETI/GE) est calculée par l'INSEE sur le
+        périmètre GROUPE, jamais sur l'entité — une filiale minuscule sort en "GE".
+        Ce tool sépare les deux.
+
         `confiance` par lien : **forte** = la qualité implique la détention (associé
         commandité / indéfiniment responsable) · **moyenne** = mandat social (président,
         administrateur, gérant) : gouvernance prouvée, contrôle suggéré · **faible** =
         ni l'un ni l'autre (membre de GIE, liquidateur) · **inconnue** = qualité non
         répertoriée. Seuls forte et moyenne sont traversés. Le contrôle légal des
         comptes est exclu (commissaire OU contrôleur, comptés dans `exclus`).
-
-        ⚠️ `confiance="indeterminee"` (aucun mandataire personne morale) ne veut PAS
-        dire « indépendante » : le registre des bénéficiaires effectifs est fermé au
-        public depuis le 31/07/2024, donc l'actionnaire d'une SAS n'est pas publié.
-        ⚠️ En descendant, l'amont plafonne à 25 résultats/page et 10 000 au total :
-        `candidats_tronques=true` signale un échantillon, pas un inventaire.
-        Aucune filiale / aucun parent est une RÉPONSE, pas une erreur.
 
         Args:
             siren: SIREN de l'entreprise (9 chiffres).

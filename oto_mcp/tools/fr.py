@@ -367,6 +367,14 @@ def register(mcp: FastMCP) -> None:
         + recent BODACC legal events. Aggregates 3 open data sources in parallel.
         Use this as first call when investigating a company.
 
+        ⚠️ **`latest_bilan` = LITTÉRALEMENT le dernier exercice déposé, qui ne porte
+        pas nécessairement de chiffre d'affaires** — un bilan simplifié n'a pas de
+        case « CA total ». Pour un CA, remonter les exercices : `fr_bilans(siren)`
+        les rend du plus récent au plus ancien avec leur `chiffre_d_affaires`, il
+        faut prendre le premier qui en porte un. Ne pas conclure « pas de chiffre
+        d'affaires » sur le seul `latest_bilan`. Vu sur Norauto : dernier exercice
+        (simplifié) muet, 974 718 176 € à l'exercice précédent.
+
         BATCH: pass `sirens=[…]` (max 20 per call, chunk beyond) to qualify a
         LIST in one call — returns `{profiles: […], count}`, one profile per
         SIREN in input order; per-SIREN failures degrade to `{error, siren}`
@@ -376,14 +384,6 @@ def register(mcp: FastMCP) -> None:
         `latest_bilan` is trimmed to 7 B2B-relevant ratios (CA, résultat net,
         EBE, marge EBE, autonomie financière, taux d'endettement, liquidité).
         For the full ratio set, call `fr_bilan(siren, date_cloture)`.
-
-        ⚠️ **`latest_bilan` = LITTÉRALEMENT le dernier exercice déposé, qui ne porte
-        pas nécessairement de chiffre d'affaires** — un bilan simplifié n'a pas de
-        case « CA total ». Pour un CA, remonter les exercices : `fr_bilans(siren)`
-        les rend du plus récent au plus ancien avec leur `chiffre_d_affaires`, il
-        faut prendre le premier qui en porte un. Vu sur Norauto : dernier exercice
-        (simplifié) muet, 974 718 176 € à l'exercice précédent. Ne pas conclure
-        « pas de chiffre d'affaires » sur le seul `latest_bilan`.
 
         Resilient to per-source failures: a timeout or error on INPI (bilan) or
         BODACC (events) degrades gracefully — the available blocks are returned
@@ -438,20 +438,6 @@ def register(mcp: FastMCP) -> None:
         en_echec, erreurs, not_found, synthese}`, one entry per SIREN in input
         order.
 
-        ⚠️ **`count` counts the records OBTAINED, not the lines returned.** A batch
-        of 50 where 21 calls failed returns `count: 29`, `en_echec: 21` and names
-        those 21 SIRENs in `erreurs` — at the top level, like `not_found`, because
-        a hundred-line list is not re-read to find them. Reading `count` and
-        `not_found` alone used to say "50 records, none missing" while 21 companies
-        silently dropped out of the deliverable.
-
-        ⚠️ **An `error` other than `not_found` is an upstream failure, not a fact
-        about the company** — and it is RETRYABLE. The batch paces itself and
-        retries the upstream quota (429, honouring `Retry-After`), so what reaches
-        you has already been given a second chance; a SIREN still in `erreurs` says
-        the upstream is busy, never that the company has no director. Ask for those
-        SIRENs again, later or in a smaller batch.
-
         ⚠️ An empty `dirigeants` has THREE meanings, told apart by `registre`:
         the SIREN is unknown (`error: "not_found"`), the legal form is not
         registered so it declares nobody (`hors_registre` — association,
@@ -460,6 +446,22 @@ def register(mcp: FastMCP) -> None:
         as "no director" without reading `registre`. `personnes_physiques`
         counts the NAMED natural persons — a company whose only director is
         another company scores 0.
+
+        ⚠️ **`count` counts the records OBTAINED, not the lines returned** —
+        `en_echec` and `erreurs` name what is missing, at the top level.
+        ⚠️ **An `error` other than `not_found` is an upstream failure, not a fact
+        about the company** — and it is RETRYABLE.
+
+        A batch of 50 where 21 calls failed returns `count: 29`, `en_echec: 21`
+        and names those 21 SIRENs in `erreurs` — at the top level, like
+        `not_found`, because a hundred-line list is not re-read to find them.
+        Reading `count` and `not_found` alone used to say "50 records, none
+        missing" while 21 companies silently dropped out of the deliverable.
+        The batch paces itself and retries the upstream quota (429, honouring
+        `Retry-After`), so what reaches you has already been given a second
+        chance; a SIREN still in `erreurs` says the upstream is busy, never that
+        the company has no director. Ask for those SIRENs again, later or in a
+        smaller batch.
 
         Args:
             siren: SIREN number (9 digits) — single-company mode.
