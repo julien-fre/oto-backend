@@ -57,7 +57,6 @@ oto_mcp/
 deploy/
 ├── oto-mcp.service    # systemd unit (port 9103)
 ├── *.timer/*.service  # maintenance and call-journal archiving units
-├── Caddyfile.snippet  # reverse-proxy snippet to :9103
 └── *.sh               # deploy, blue/green, drain and data-refresh scripts
 ```
 

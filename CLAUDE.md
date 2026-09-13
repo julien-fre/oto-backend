@@ -33,7 +33,7 @@ oto_mcp/   server.py (FastMCP + uvicorn, montage /api + tools) · config.py (req
   providers/ le REGISTRE, 1 déclaration/connecteur, reste PUR · tools/ 1 module/connecteur · fod/ clients FOD (ADR 0028)
   datastore/ le spine de records typés · middleware/ la chaîne MCP — l'ORDRE d'enregistrement est un contrat
   access/ rôles, contexte, cascade, quotas (surface plate) · org_store/ le palier ORG · db/ le store PG (surface plate)
-deploy/    unités et timers systemd (/opt/oto-mcp, :9103), Caddyfile.snippet, scripts de déploiement et d'ingestion
+deploy/    unités et timers systemd (/opt/oto-mcp, :9103), scripts de déploiement et d'ingestion
 ```
 ⚠️ **Le dossier d'un fichier EST son domaine** : ≥ 4 fichiers au même marqueur → package, `tests/` en miroir, jamais de
 ré-export à l'ancien chemin (`docs/conventions.md` §Où vit un fichier). **4 couches à sens unique** (ADR 0004) :
