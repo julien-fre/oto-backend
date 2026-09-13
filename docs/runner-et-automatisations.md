@@ -602,6 +602,95 @@ barreau tenant (`credentials_store.TENANT`) — une clé posée sur un tenant n'
 aucun run. Ce lot-là demandera un repli org → tenant à la remise, et l'estampille de la
 clé qui a payé chaque travail.
 
+### Ce qu'un déroulé a COÛTÉ, et où ça se garde (13/09/2026)
+
+Mesurer d'abord, encadrer ensuite : ce lot ne refuse RIEN. Il pose le fait sur
+lequel les plafonds et la refacturation s'appuieront — et il le pose ailleurs que
+là où on l'aurait cru.
+
+**Une ligne par TENTATIVE de travail**, dans `runner_job_cost`. Le travail est
+l'unité atomique d'exécution et la seule chose qui rende un compte de jetons ;
+« run », « agent » et « passage » n'en sont que des regroupements :
+
+| on veut savoir | on regroupe sur |
+|---|---|
+| ce qu'un run a coûté | `run_id` — **plusieurs travaux** quand il a été continué |
+| ce qu'un agent a coûté | `trigger_id` |
+| ce qu'un passage a coûté | `fleet_id` |
+| ce qu'une org a coûté | `org_id` — la ligne qu'on facturera |
+
+⚠️ **Un run n'est pas UN travail.** Un `continue` se rattache à un `run_id`
+existant et y ajoute des tours. Lire un seul travail et l'appeler « le coût du
+run » sous-compte exactement les déroulés longs — ceux qu'on veut voir.
+
+#### Pourquoi une table à part, sans aucune clé étrangère
+
+`runner_jobs.run_id` est déclaré `REFERENCES runs(run_id) ON DELETE CASCADE`, et
+`prune_orphan_runs` efface un run un mois après que son journal a été élagué : les
+travaux partent AVEC, et les jetons qu'ils portaient dans `result` avec eux. **Le
+coût d'un mois s'effaçait donc le trentième jour** — et on ne refacture pas un mois
+dont la preuve a disparu. Conséquence déjà vivante avant ce lot :
+`runner_fleets.state` somme `result->>'usage_tokens'` et rend zéro pour tout
+passage plus vieux que la fenêtre d'élagage.
+
+`runner_job_cost` n'a donc de clé étrangère vers rien, n'est élaguée par rien, et
+survit au travail qui l'a produite (banc à l'appui).
+
+#### Les quatre postes, et le prix figé
+
+Le worker déclare déjà les quatre comptes que les fournisseurs tarifent
+différemment : entrée non cachée, sortie, écriture de cache, lecture de cache.
+Ils sont stockés séparément — `usage_tokens` (entrée + sortie) ne suffit pas,
+puisque écrire du cache coûte **plus** que l'entrée et en lire coûte le dixième.
+
+⚠️ **Le montant se fige à l'écriture, avec le nom de son barème**
+(`runner_prix`). Tarifer à la lecture réécrirait le passé au premier changement de
+prix : un déroulé de février se mettrait à coûter le tarif de mars, et un mois déjà
+facturé changerait tout seul. Un barème s'AJOUTE, il ne se modifie jamais.
+
+⚠️ **`NULL` n'est pas `0`.** Jetons `NULL` = non mesurés (un worker mort avant de
+conclure) ; `0` = mesurés et nuls. Montant `NULL` = modèle non tarifé, jamais
+« gratuit ». Toute lecture rend donc `incomplete`, et un écran qui affiche un
+montant sans le lire présentera un total amputé comme un total.
+
+#### Les trois moments où ça s'écrit
+
+| moment | ce qui est écrit |
+|---|---|
+| réservation | `runner_jobs.key_source` — QUI paiera, noté au seul instant où c'est certain |
+| conclusion, **succès comme échec** | la ligne de coût, dans la même transaction |
+| bail expiré | une ligne `lost`, jetons `NULL` — la seule trace d'une dépense hors livre |
+
+⚠️ **L'échec compte autant que le succès.** Un travail qui échoue a dépensé des
+jetons, et il peut recommencer à chaque tentative jusqu'à `max_attempts` — d'où la
+clé `(job_id, attempt)`. La branche d'échec de `complete_job` jetait le résultat
+que le worker envoyait : c'était le trou le plus coûteux, parce qu'il ampute
+précisément les déroulés qui partent en vrille.
+
+⚠️ Le coût ne fait JAMAIS échouer une conclusion : un défaut de mesure laisserait
+sinon un travail `claimed` jusqu'à l'expiration de son bail. On journalise.
+
+#### Ce que ça ne fait pas
+
+Aucun plafond, aucune refacturation — un autre chantier, qui lira cette table sans
+la changer. Rien non plus sur la dépense de modèle **hors agents hébergés**
+(plongements, recherche, un connecteur qui appelle un modèle) : d'autres
+dimensions, un autre propriétaire, et surtout pas à replier ici en douce. Les
+règles de prix et de crédits de Tulina restent dans `usage/` ; ici, une mesure
+neutre.
+
+⚠️ **Sur la clé d'une org, le montant est une ESTIMATION au tarif public** : nous
+ne voyons ni son tarif négocié ni ses remises. Pour qu'un client réconcilie
+lui-même, qu'il émette sa clé dans un **espace de travail dédié** chez son
+fournisseur : son propre relevé isole alors la dépense d'oto, sans rien nous
+confier.
+
+**Ce qui manque encore** : le worker n'envoie PAS son résultat quand un déroulé
+échoue (`oto-runner`, `conclusion.en_echec` appelle `complete(ok=False)` sans
+`result`, et l'usage accumulé meurt avec l'exception). Le serveur sait désormais le
+recevoir et l'écrire ; tant que le worker ne l'envoie pas, une ligne `failed` porte
+des jetons `NULL`. C'est un lot dans l'autre dépôt.
+
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 
 Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait

@@ -19,9 +19,12 @@ Quatre invariants, gravés ici parce qu'une réécriture distraite les casserait
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Optional
 
 from ._conn import _connect
+
+logger = logging.getLogger(__name__)
 
 # Backoff linéaire simple : un échec renvoie le job dans la file à +30 s × tentatives.
 # Pas d'exponentiel en V1 — les échecs attendus (amont LLM en vrac) se lissent, et un
@@ -204,6 +207,17 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                 """,
                 (org_id, worker_sub),
             )
+        # ⚠️ Les épaves d'abord RELEVÉES, puis marquées : après l'UPDATE elles ne
+        # se distinguent plus d'un échec ordinaire, et leur coût serait perdu.
+        epaves = conn.execute(
+            """
+            SELECT id, org_id, sub, run_id, payload, fleet_id, attempts, key_source
+              FROM runner_jobs
+             WHERE (%s::bigint IS NULL OR org_id = %s) AND status = 'claimed'
+               AND lease_until < NOW() AND attempts >= max_attempts
+            """,
+            (org_id, org_id),
+        ).fetchall()
         conn.execute(
             """
             UPDATE runner_jobs
@@ -215,6 +229,24 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             """,
             (org_id, org_id),
         )
+        # ⚠️ Une épave a dépensé des jetons chez le fournisseur et n'a JAMAIS rendu
+        # de compte — personne n'a appelé `complete`. La ligne est écrite avec des
+        # jetons NULL : c'est la seule trace qu'il existe une dépense hors livre,
+        # et c'est ce qui rend le total de l'org honnêtement INCOMPLET plutôt que
+        # faussement exact.
+        if epaves:
+            from .runner_job_cost import LOST, enregistrer
+            for e in epaves:
+                try:
+                    enregistrer(conn, job_id=e["id"],
+                                attempt=int(e.get("attempts") or 1),
+                                org_id=e["org_id"], sub=e.get("sub"),
+                                run_id=e.get("run_id"), payload=e.get("payload"),
+                                fleet_id=e.get("fleet_id"),
+                                key_source=e.get("key_source"),
+                                outcome=LOST, resultat=None)
+                except Exception:  # noqa: SILENT — journalisé, jamais avalé
+                    logger.exception("coût de l'épave %s non enregistré", e["id"])
         row = conn.execute(
             """
             UPDATE runner_jobs j
@@ -236,10 +268,18 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                       FOR UPDATE SKIP LOCKED
                     LIMIT 1)
             RETURNING id, kind, run_id, payload, attempts, max_attempts,
-                      lease_until, sub, org_id
+                      lease_until, sub, org_id, fleet_id
             """,
             (worker_sub, int(lease_seconds), org_id, org_id, depot or ""),
         ).fetchone()
+        if row is not None:
+            # ⚠️ QUI paiera, décidé ICI et nulle part ailleurs. La clé de l'org
+            # n'est servie que si elle est déposée ET que le worker nomme son
+            # dépôt ; le relire à la conclusion lirait le dépôt tel qu'il est
+            # ALORS, qui n'est pas forcément ce qui a payé. La capacité remplace
+            # cette valeur par `org` quand elle sert effectivement la clé.
+            conn.execute("UPDATE runner_jobs SET key_source = 'platform' "
+                         "WHERE id = %s AND key_source IS NULL", (row["id"],))
     return dict(row) if row else None
 
 
@@ -359,7 +399,8 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                        run_id = COALESCE(%s, run_id), last_error = NULL,
                        result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-                RETURNING status, run_id
+                RETURNING status, run_id, org_id, sub, payload, fleet_id,
+                          attempts, key_source
                 """,
                 (run_id, json.dumps(result) if result is not None else None,
                  job_id, worker_sub),
@@ -378,11 +419,33 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                        lease_until = NULL, claimed_by = NULL,
                        last_error = %s
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-                RETURNING status, run_id
+                RETURNING status, run_id, org_id, sub, payload, fleet_id,
+                          attempts, key_source
                 """,
                 (_BACKOFF_S, (error or 'échec non détaillé')[:500], job_id, worker_sub),
             ).fetchone()
-    return dict(row) if row else None
+        # ⚠️ Le coût s'écrit sur LES DEUX issues, dans la MÊME transaction que la
+        # conclusion. Un travail qui échoue a dépensé des jetons exactement comme
+        # un travail qui réussit — et il peut le refaire à chaque tentative,
+        # jusqu'à `max_attempts`. Ne compter que les succès sous-compterait
+        # précisément les déroulés qui partent en vrille.
+        #
+        # ⚠️ Le coût ne fait jamais échouer la conclusion : s'il levait, un travail
+        # resterait `claimed` jusqu'à l'expiration de son bail pour un défaut de
+        # MESURE. On journalise et on rend la conclusion, qui est le service.
+        if row:
+            from .runner_job_cost import DONE, FAILED, enregistrer
+            try:
+                enregistrer(conn, job_id=job_id, attempt=int(row.get("attempts") or 1),
+                            org_id=row["org_id"], sub=row.get("sub"),
+                            run_id=row.get("run_id"), payload=row.get("payload"),
+                            fleet_id=row.get("fleet_id"),
+                            key_source=row.get("key_source"),
+                            outcome=DONE if ok else FAILED, resultat=result)
+            except Exception:  # noqa: SILENT — journalisé, jamais avalé
+                logger.exception("coût du travail %s non enregistré", job_id)
+    return {k: v for k, v in dict(row).items()
+            if k in ("status", "run_id")} if row else None
 
 
 # D'OÙ vient un travail, en SQL. Le discriminant existe déjà dans la table : la

@@ -261,6 +261,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # tomberait au TICK, pas au boot, donc loin de sa cause.
     # `sub` (02/09) : l'identité que l'agent porte en exécutant ce travail.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS sub TEXT")
+    # QUI paiera les appels de modèle (13/09/2026). Sur une base qui existe déjà,
+    # le CREATE TABLE est sauté : seule la colonne manque. NULL = réservé avant ce
+    # lot — distinct de `platform`, qui est une réponse.
+    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS key_source TEXT")
     _poser_domaine(conn, "runner_jobs", "runner_jobs_status_check", "status",
                    ("pending", "claimed", "done", "failed", "expired"))
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé

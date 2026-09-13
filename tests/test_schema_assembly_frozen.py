@@ -352,8 +352,14 @@ from oto_mcp.db import _schema, schema
 # CREATE TABLE. La base partagée la reçoit par `db/revision.py` (ALTER, fonction, et le
 # déclencheur posé seulement s'il manque). Additif : le code du tag précédent ne lit pas
 # `rev`, et ses écritures la font avancer. 153 174 → 153 796.
-EMPREINTE = "cbe344b8cea8525a50efd6abf0e84876a9a4b6e9deca3e7401660d5cb31b752c"
-LONGUEUR = 153796
+# 2026-09-13 — le COÛT par travail : la table `runner_job_cost` (+ ses quatre index)
+# et la colonne `runner_jobs.key_source`. ⚠️ La table n'a AUCUNE clé étrangère, et
+# c'est sa raison d'être : `runner_jobs.run_id` est `ON DELETE CASCADE` vers `runs`,
+# qu'on élague — la trace de coût doit survivre au travail qui l'a produite, sans
+# quoi on ne peut pas refacturer un mois dont la preuve a été supprimée. Additif :
+# le code du tag précédent n'écrit ni ne lit rien de tout ça.
+EMPREINTE = "920f844c345499c0660a74c72465df81f18e4bc322088f5b8ca057c1e80a00d1"
+LONGUEUR = 157766
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

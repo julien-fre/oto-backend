@@ -225,6 +225,11 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     -- sans corréler des horodatages à la main. NULL = job isolé (déclencheur, appel
     -- direct) — la file sert les deux et ne les distingue qu'ici.
     fleet_id BIGINT REFERENCES runner_fleets(id) ON DELETE SET NULL,
+    -- QUI paiera les appels de modèle de ce travail (13/09/2026) : `org` si la
+    -- clé déposée par l'organisation lui a été servie à la réservation,
+    -- `platform` sinon. Posé au CLAIM et jamais relu depuis le dépôt, qui peut
+    -- changer entre-temps. NULL = travail réservé avant ce lot.
+    key_source TEXT,
     -- QUI a demandé ce travail. C'est l'identité que l'agent porte en
     -- l'exécutant : par défaut celle du créateur du déclencheur, paramétrable
     -- vers un autre membre (direction du 02/09).
@@ -343,6 +348,75 @@ ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS label TEXT;
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS secret_hash TEXT UNIQUE;
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+
+-- 13/09/2026 : le COÛT d'un travail, gardé POUR LUI-MÊME.
+--
+-- ⚠️⚠️ **Aucune clé étrangère, ni vers `runs` ni vers `runner_jobs`, et c'est LA
+-- raison d'être de cette table.** `runner_jobs.run_id` est déclaré
+-- `REFERENCES runs(run_id) ON DELETE CASCADE`, et `prune_orphan_runs` efface un
+-- run un mois après que son journal a été élagué : les travaux partent AVEC, et
+-- les jetons qu'ils portaient dans `result` avec eux. Une trace de coût qui
+-- s'efface avec son travail ne peut fonder aucune facture — on ne refacture pas
+-- un mois dont la preuve a été supprimée le trentième jour. (Conséquence déjà
+-- vivante : `runner_fleets.state` somme `result->>'usage_tokens'` et rend donc
+-- ZÉRO pour tout passage plus vieux que la fenêtre d'élagage.)
+--
+-- Cette table n'est donc élaguée par rien. Elle est petite — une ligne par
+-- tentative de travail, quelques dizaines d'octets — et le coût de la perdre est
+-- une facture qu'on ne peut plus défendre.
+--
+-- ⚠️ Une ligne par TENTATIVE, pas par travail : un travail qui échoue est REMIS
+-- en file et rejoué jusqu'à `max_attempts`, et chaque tentative dépense des
+-- jetons. Ne garder que la dernière sous-compterait tout travail rejoué —
+-- exactement les travaux qui coûtent le plus cher.
+--
+-- ⚠️ Les comptes de jetons sont NULLABLES, et c'est un fait, pas un défaut :
+-- `NULL` = non mesuré (travail mort sans rien rendre), `0` = mesuré et nul. Les
+-- confondre ferait passer un total incomplet pour un total.
+CREATE TABLE IF NOT EXISTS runner_job_cost (
+    job_id     BIGINT NOT NULL,
+    attempt    INT    NOT NULL,
+    org_id     BIGINT NOT NULL,
+    sub        TEXT,                 -- l'identité au nom de laquelle il a tourné
+    run_id     TEXT,                 -- le RUN : plusieurs travaux si continué
+    trigger_id BIGINT,               -- l'AGENT
+    fleet_id   BIGINT,               -- le PASSAGE
+    -- D'où vient le travail, même vocabulaire que `runner_jobs._SOURCES` :
+    -- manual | scheduled | hook | batch.
+    source     TEXT   NOT NULL,
+    modele     TEXT,
+    famille    TEXT,
+    -- QUI a payé : `org` quand l'organisation avait déposé sa clé et qu'elle a
+    -- été servie à la réservation, `platform` sinon. Écrit au CLAIM, parce que
+    -- c'est le seul moment où la réponse est certaine — le dépôt peut changer
+    -- entre la réservation et la conclusion.
+    key_source TEXT   NOT NULL,
+    -- done | failed | lost. `lost` = le bail a expiré sans que personne ne
+    -- rende de compte : les jetons ont été dépensés chez le fournisseur et
+    -- restent hors livre. C'est la seule trace qu'il en existe.
+    outcome    TEXT   NOT NULL,
+    input_tokens       BIGINT,
+    output_tokens      BIGINT,
+    cache_write_tokens BIGINT,
+    cache_read_tokens  BIGINT,
+    -- Le montant FIGÉ à l'écriture, en nano-dollars (10⁻⁹ USD), et le BARÈME qui
+    -- l'a produit. Tarifer à la lecture réécrirait le passé au premier changement
+    -- de prix (cf. `runner_prix`). NULL = modèle non tarifé, jamais « gratuit ».
+    nano_usd   BIGINT,
+    bareme     TEXT,
+    steps      INT,
+    finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT runner_job_cost_pkey PRIMARY KEY (job_id, attempt)
+);
+-- Les trois lectures de l'énoncé — « ce qu'a coûté ce run / cet agent / ce
+-- passage » — plus celle qui sera facturée.
+CREATE INDEX IF NOT EXISTS idx_job_cost_run ON runner_job_cost(run_id);
+CREATE INDEX IF NOT EXISTS idx_job_cost_agent
+    ON runner_job_cost(trigger_id, finished_at DESC);
+CREATE INDEX IF NOT EXISTS idx_job_cost_fleet ON runner_job_cost(fleet_id);
+CREATE INDEX IF NOT EXISTS idx_job_cost_org
+    ON runner_job_cost(org_id, finished_at DESC);
+
 
 -- 12/09/2026 : la présence d'un worker de plateforme PAR FAMILLE de modèle — le
 -- dépôt qu'il nomme au claim (`anthropic`, `mistral`). Une table à part, et non

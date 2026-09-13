@@ -505,6 +505,13 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     # elle se verrait serait la facture de l'org.
     logger.info("clé de modèle `%s` remise à %s pour l'org %s (travail %s)",
                 depot, appelant, job["org_id"], job.get("id"))
+    # ⚠️ QUI PAIE, noté au seul moment où la réponse est certaine : la clé part
+    # d'ici. Le relire à la conclusion lirait le dépôt tel qu'il est ALORS — une
+    # org qui retire sa clé pendant un déroulé verrait sa dépense attribuée à la
+    # plateforme, et inversement. Ce que la facturation devra savoir, c'est ce
+    # qui a été SERVI, pas ce qui est déposé maintenant.
+    if job.get("id"):
+        db.marquer_paye_par_l_org(job["id"])
     return {**job, "model_key": cle}
 
 

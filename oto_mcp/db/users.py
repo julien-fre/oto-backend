@@ -378,6 +378,14 @@ _SUB_COLUMNS = [
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :
     ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
+    # Le COÛT d'un travail porte l'identité au nom de laquelle il a tourné
+    # (13/09). Même raisonnement, et c'est le tripwire de l'inventaire qui l'a
+    # posé : sans clé étrangère, ne pas repointer ne « préserverait » pas une
+    # trace historique — l'étape 4 supprime l'ancien compte et la ligne
+    # désignerait un mort. Le TOTAL ne bouge pas (il se compte par `org_id`,
+    # que la fusion ne touche pas) ; ce qui se répare, c'est « qui a dépensé »,
+    # pour une personne dont les deux comptes n'en font qu'un.
+    ("runner_job_cost", "sub"),
     # `runner_fleets.sub` = qui a DÉCLARÉ le passage (R4). Même raison que les
     # déclencheurs : une flotte rattachée à un identifiant mort devient invisible au
     # compte fusionné, et son auteur n'est plus lisible dans l'audit d'un passage.

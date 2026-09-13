@@ -38,6 +38,8 @@ def _reglages(monkeypatch, poses=None):
             return None
         return poses.get((portee, fournisseur))
     monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting", lire)
+    # La remise NOTE qui paie (13/09) — une écriture en base, hors sujet ici.
+    monkeypatch.setattr("oto_mcp.db.marquer_paye_par_l_org", lambda job_id: True)
 
 
 def _poses(**kw):

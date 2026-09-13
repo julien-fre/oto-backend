@@ -61,6 +61,10 @@ def _coffre(monkeypatch):
 
     monkeypatch.setattr(credentials_store, "get_credential", _get)
     monkeypatch.setattr(credentials_store, "has_credential", _has)
+    # La remise NOTE désormais qui paie (13/09) : ces bancs tournent sans base, et
+    # c'est un geste de traçabilité, pas l'objet du fichier.
+    from oto_mcp import db
+    monkeypatch.setattr(db, "marquer_paye_par_l_org", lambda job_id: True)
     return demandes
 
 
