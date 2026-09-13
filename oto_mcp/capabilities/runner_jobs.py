@@ -54,6 +54,14 @@ class JobsInput(BaseModel):
     # ⚠️ C'est aussi la FAMILLE de modèles qu'il sert : il ne réserve que les
     # travaux de cette famille, et ceux qui n'en portent aucune.
     provider: Optional[str] = None
+    # claim — le worker ne tient AUCUNE clé de modèle à lui (13/09/2026) : il ne
+    # tourne que sur la clé que l'organisation du travail a déposée. Deux effets,
+    # tous deux nécessaires : il ne réserve que les travaux de SA famille (jamais
+    # ceux d'un agent posé sans modèle, que les workers existants servent), et un
+    # travail dont l'org n'a pas déposé cette clé est ARRÊTÉ à la réservation,
+    # raison écrite — jamais remis sans clé à un worker qui n'en a pas.
+    # ⚠️ Exige `provider` : sans dépôt nommé, il n'y a aucune clé à attendre.
+    org_key_only: bool = False
     # claim / extend —
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
@@ -429,7 +437,7 @@ def _charge_servie(job: dict) -> dict:
 
 
 def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
-              worker: bool) -> dict:
+              worker: bool, org_key_only: bool = False) -> dict:
     """Le travail, augmenté de la clé de modèle de son org — à la RÉSERVATION.
 
     Le worker fait partie du backend et a le droit de lire les clés que les orgs
@@ -479,6 +487,14 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
             return _refuser_sans_cle(job, appelant, _SANS_DEPOT)
         return job
     cle = _cle_de_modele(job["org_id"], depot)
+    if not cle and org_key_only:
+        # ⚠️ Un worker SANS clé de plateforme : le remettre sans clé, c'est un
+        # travail qui échouera chez le fournisseur — ou, pire, qui trouvera une
+        # clé oubliée dans l'environnement du worker et la fera payer. Arrêté
+        # ici, raison écrite, que le réglage `runner.org_key_required` soit posé
+        # ou non : ce n'est pas une politique de l'org, c'est ce que le worker
+        # est capable de faire.
+        return _refuser_sans_cle(job, appelant, _SANS_CLE_DEPOSEE.format(depot=depot))
     if not cle:
         # ⚠️ Lu APRÈS la lecture du coffre, et non sur la seule présence du dépôt :
         # un coffre qui ne rend pas la clé (`_cle_de_modele` rend None et le
@@ -501,6 +517,13 @@ _SANS_DEPOT = (
     "propre environnement, et cette organisation exige que ses agents tournent sur "
     "la sienne. Travail non exécuté — il doit être servi par un worker qui nomme son "
     "dépôt (OTO_RUNNER_PROVIDER / OTO_RUNNER_OPENAI_BASE côté oto-runner).")
+
+
+_SANS_CLE_DEPOSEE = (
+    "ce travail demande un modèle `{depot}`, et les agents `{depot}` ne tournent que "
+    "sur la clé déposée par l'organisation — celle-ci n'en a pas déposé. Travail non "
+    "exécuté. Dépose une clé `{depot}` (Connecteurs, ou la fiche de l'agent), puis "
+    "rallume l'agent.")
 
 
 def _refuser_sans_cle(job: dict, appelant: str, raison: str) -> dict:
@@ -831,9 +854,15 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 "fleet_id": res.get("fleet_id"), "sub": res.get("sub")}
 
     if inp.op == "claim":
+        if inp.org_key_only and not inp.provider:
+            raise AuthzDenied(
+                400, "org_key_only_without_provider",
+                "`org_key_only` exige `provider` : un worker qui ne tourne que sur "
+                "la clé de l'organisation doit nommer QUEL dépôt il consomme — "
+                "sans lui, il n'y a aucune clé à attendre et rien à servir.")
         bail = max(30, min(inp.lease_seconds, 3600))
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                depot=inp.provider)
+                                depot=inp.provider, famille_seule=inp.org_key_only)
         if job is None:
             # ⚠️ La file vide n'est pas la fin de l'histoire : une CAMPAGNE en
             # cours est une règle qui produit des travaux, et c'est ici qu'on
@@ -848,7 +877,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # déjà lieu en boucle.
             panne = _produire_pour_une_campagne(ctx.org_id, bail)
             job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                    depot=inp.provider)
+                                    depot=inp.provider,
+                                    famille_seule=inp.org_key_only)
             if job is None and panne:
                 # « Rien à faire » et « je n'ai pas pu regarder » ne se disent
                 # pas de la même façon. Les confondre a coûté des jours de
@@ -860,7 +890,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # ensuite voit l'org et les outils que l'agent recevra.
         return {"job": _avec_cle(
             _delegue(_charge_servie(job), bail, ctx.sub), inp.provider,
-            ctx.sub, worker=ctx.platform_worker)}
+            ctx.sub, worker=ctx.platform_worker, org_key_only=inp.org_key_only)}
 
     if inp.op == "list":
         # Surveillance (page Automatisations) : lecture org-scopée, jamais un
@@ -940,6 +970,9 @@ CAPABILITIES += [
         # capacité entreront avec leur rejeu, pas avant : une déclaration sans rejeu
         # promet un statut que le serveur ne rend peut-être pas.
         errors=(
+            DeclaredError(400, "org_key_only_without_provider",
+                          "`claim` avec `org_key_only` mais sans `provider` : un "
+                          "worker sans clé propre doit nommer le dépôt qu'il consomme"),
             DeclaredError(404, "fleet_not_found",
                           "`enqueue fleet_id=` désignant une flotte qui n'est pas "
                           "celle de l'org du porteur"),

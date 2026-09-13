@@ -654,6 +654,40 @@ barreau tenant (`credentials_store.TENANT`) — une clé posée sur un tenant n'
 aucun run. Ce lot-là demandera un repli org → tenant à la remise, et l'estampille de la
 clé qui a payé chaque travail.
 
+### Un worker sans clé propre : ouvrir une famille aux clés clients (13/09/2026)
+
+Pour qu'une organisation fasse tourner ses agents sur **sa** clé Anthropic sans que
+la plateforme finance un seul jeton, il faut un worker qui ne tient **aucune** clé
+de modèle à lui. Le claim le déclare : `op=claim, provider=anthropic,
+org_key_only=true` (côté oto-runner : `OTO_RUNNER_ORG_KEYS_ONLY=1`).
+
+Deux effets, et chacun ferme un défaut différent :
+
+1. **il ne réserve que les travaux de SA famille** — `payload->>'model_family' =
+   provider`, jamais un travail sans famille. Un travail sans famille est celui
+   d'un agent posé sans modèle, que les workers existants servent sur LEUR modèle.
+   Sans ce filtre, le pool Anthropic volerait les agents historiques, leur ferait
+   changer de fournisseur en silence, et — faute de clé de plateforme — les ferait
+   échouer ; avec `runner.org_key_required` allumé, il les **arrêterait
+   définitivement** pour toutes les orgs sans clé Anthropic ;
+2. **un travail dont l'org n'a pas déposé la clé est ARRÊTÉ à la réservation**,
+   raison écrite (« dépose une clé… »), **que le réglage soit posé ou non** : ce
+   n'est pas une politique de l'org, c'est ce que le worker sait faire.
+
+⚠️ `org_key_only` sans `provider` est refusé (`org_key_only_without_provider`) :
+sans dépôt nommé, il n'y a aucune clé à attendre.
+
+⚠️ **Ordre de déploiement** : le backend d'abord. Un worker ordinaire n'envoie pas
+le champ ; seul un worker `OTO_RUNNER_ORG_KEYS_ONLY=1` l'envoie, et une route qui ne
+le déclare pas répondrait `unknown_fields` à chaque réservation (incident du 04/09
+sur `provider`).
+
+**Pour ouvrir Anthropic aux clés clients**, dans l'ordre : ce lot déployé, un pool
+de workers `OTO_RUNNER_PROVIDER=anthropic` + `OTO_RUNNER_ORG_KEYS_ONLY=1` sur la
+box (sans `ANTHROPIC_API_KEY`), puis `runner.org_key_required=true` pour
+`anthropic` — qui fait refuser la pose d'un agent Claude sans clé, au moment où
+l'on peut encore la déposer, plutôt qu'à la réservation.
+
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 
 Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait
