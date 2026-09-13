@@ -40,6 +40,20 @@ logger = logging.getLogger(__name__)
 _CORPS_MAX = runner_hook.CORPS_MAX
 
 
+async def _lire_borne(request: Request) -> bytes | None:
+    """Le corps, ou None dès qu'il dépasse le plafond — sans lire la suite."""
+    declare = request.headers.get("content-length")
+    if declare and declare.isdigit() and int(declare) > _CORPS_MAX:
+        return None
+    morceaux, total = [], 0
+    async for morceau in request.stream():
+        total += len(morceau)
+        if total > _CORPS_MAX:
+            return None
+        morceaux.append(morceau)
+    return b"".join(morceaux)
+
+
 def _refus(statut: int, code: str, message: str, **extra) -> JSONResponse:
     return JSONResponse({"error": code, "detail": message, **extra},
                         status_code=statut)
@@ -60,21 +74,23 @@ async def fire(request: Request) -> JSONResponse:
         trigger_id = int(request.path_params["trigger_id"])
     except (KeyError, TypeError, ValueError):
         return _refus(404, "hook_not_found", "déclencheur inconnu")
-
     secret = runner_hook.secret_du_porteur(request.headers.get("authorization"))
 
-    # ⚠️ La TAILLE avant le PARSE. Un corps énorme refusé après désérialisation
-    # aurait déjà coûté la mémoire qu'on cherchait à ne pas dépenser.
-    brut = await request.body()
-    if len(brut) > _CORPS_MAX:
+    # ⚠️ La TAILLE avant le PARSE, et en FLUX : `request.body()` bufferise tout
+    # avant de rendre la main, donc un corps de cent mégaoctets serait entièrement
+    # en mémoire au moment où on le refuse — sur une route qu'un inconnu peut
+    # appeler sans credential. On lit morceau par morceau et on s'arrête au
+    # premier octet de trop ; le reste n'est jamais lu.
+    brut = await _lire_borne(request)
+    if brut is None:
         # Le propriétaire est le seul à pouvoir réparer une source trop bavarde :
         # la trace part, hors boucle comme tout le reste.
         await run_in_threadpool(runner_hook.noter_corps_trop_gros, trigger_id,
                                 secret, (request.headers.get("user-agent") or "")[:200])
         return _refus(413, "payload_too_large",
-                      f"corps de {len(brut)} octets pour un plafond de "
-                      f"{_CORPS_MAX}. Passe une RÉFÉRENCE (un identifiant que "
-                      "l'agent rechargera), pas l'enregistrement entier.")
+                      f"corps au-delà du plafond de {_CORPS_MAX} octets. Passe "
+                      "une RÉFÉRENCE (un identifiant que l'agent rechargera), pas "
+                      "l'enregistrement entier.")
 
     corps = None
     if brut.strip():

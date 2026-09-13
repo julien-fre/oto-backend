@@ -129,6 +129,21 @@ def test_un_webhook_est_INVISIBLE_au_tick(live):
         "un déclencheur webhook ne doit JAMAIS être sélectionné par le tick")
 
 
+def test_un_webhook_NAIT_sans_echeance_ni_cron(live):
+    """⚠️ La propriété qui protège la fenêtre de déploiement, tenue DIRECTEMENT.
+
+    `due_triggers` filtre désormais par genre, donc le banc ci-dessus passerait
+    même si une ligne webhook portait une échéance — et l'ANCIEN code de prod, qui
+    ne connaît pas le genre, la verrait. Ce qui le protège est `next_due IS NULL`,
+    et c'est ce qu'on lit ici, dans la colonne."""
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="veille-nue")
+    with db._connect() as conn:
+        r = conn.execute("SELECT cron, next_due FROM runner_triggers WHERE id = %s",
+                         (t["id"],)).fetchone()
+    assert r["cron"] is None and r["next_due"] is None
+
+
 def test_un_agent_programme_reste_VU_par_le_tick(live):
     """Le bord opposé : sans lui, le banc ci-dessus passerait si le tick ne voyait
     plus rien du tout."""
@@ -138,6 +153,30 @@ def test_un_agent_programme_reste_VU_par_le_tick(live):
     t = db.create_trigger(ORG, "alexis", procedure="programme-du", cron="5 6 * * *",
                           tz="UTC", tools=["a"], next_due=hier)
     assert t["id"] in [d["id"] for d in db.due_triggers(limit=500)]
+
+
+def test_un_webhook_qui_RECEVRAIT_une_echeance_reste_invisible_au_tick(live):
+    """La garde est le GENRE, pas l'échéance NULL. Si une échéance atterrit sur
+    un webhook par un chemin oublié, il ne doit pas partir à l'horloge."""
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="veille-echeance-fantome")
+    with db._connect() as conn:
+        conn.execute("UPDATE runner_triggers SET next_due = NOW() - INTERVAL '1 hour' "
+                     "WHERE id = %s", (t["id"],))
+    assert t["id"] not in [d["id"] for d in db.due_triggers(limit=500)]
+
+
+def test_update_trigger_ECRIT_payload_fields_en_jsonb(live):
+    """Un dict nu ne s'adapte pas : psycopg refusait, et toute retouche qui le
+    portait échouait. Le chemin capacité ne l'appelait pas — jusqu'à ce lot."""
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="veille-fields-jsonb")
+    lu = db.update_trigger(t["id"], ORG, {"payload_mode": "fields",
+                                          "payload_fields": {"lead": "$.id"}})
+    assert lu["payload_fields"] == {"lead": "$.id"}
+    lu = db.update_trigger(t["id"], ORG, {"payload_mode": "ignore",
+                                          "payload_fields": {}})
+    assert lu["payload_fields"] is None, "vide se range en NULL, pas en `{}`"
 
 
 # ── 3. la fenêtre de lissage ──────────────────────────────────────────────────

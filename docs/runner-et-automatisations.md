@@ -618,6 +618,19 @@ l'allowlist d'`update_trigger`). Basculer un agent d'un coup d'envoi à l'autre
 laisserait derrière soit un cron orphelin, soit un secret qui ouvre une porte que
 plus personne ne regarde.
 
+**Ce qu'une retouche peut toucher dépend du genre.** Sur un webhook, `cron` et
+`tz` sont refusés (`invalid_schedule`) — sans cette garde, un cron posé lui
+donnait une échéance et il partait à l'horloge EN PLUS de l'événement ; et le
+rallumer ne recalcule aucune échéance (recalculer sur un `cron` NULL rendait 500
+sur le geste le plus ordinaire : remettre en marche). Les réglages du webhook
+(`payload_mode`, `payload_fields`, `max_per_hour`, `freshness_seconds`) se
+retouchent par `update`, jugés **fusionnés avec l'état stocké** ; sur un agent
+programmé ils sont refusés (`not_a_webhook`). Le tick, lui, filtre par **genre**
+(`kind = 'schedule'`) et non par la seule échéance NULL — le genre est la garde,
+l'échéance n'est que la conséquence. Tout ceci relevé à la revue d'avant
+déploiement du 13/09, pas par un banc : ces chemins existaient avant le lot et
+recevaient une ligne qu'ils ne savaient pas lire.
+
 **Un objet porte un agent de CHAQUE genre**, pas un seul. La règle du 03/09 (« un
 objet ne porte qu'un agent ») visait deux réponses à la même question ; une veille
 du matin et une réaction à un événement sont deux automatisations différentes de la
@@ -694,6 +707,9 @@ l'envoyeur ne rejouerait jamais.
 
 ⚠️ Tout passe par `run_in_threadpool` : mono-loop + psycopg synchrone, une rafale
 de webhooks ressemblerait sinon à une panne de plateforme (`docs/event-loop-perf.md`).
+Et le corps se lit **en flux, coupé au premier octet de trop** (`Content-Length`
+d'abord, puis le flux) : `request.body()` aurait tout bufferisé avant le refus,
+sur une route qu'un inconnu appelle sans credential.
 
 #### La migration, sur une base partagée
 

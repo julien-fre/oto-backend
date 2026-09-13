@@ -98,6 +98,11 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
         if k == "tools":
             sets.append("tools = %s::jsonb")
             vals.append(json.dumps(list(v), ensure_ascii=False))
+        elif k == "payload_fields":
+            # Un dict nu ne s'adapte pas en jsonb (psycopg refuse `dict`) : le
+            # passer tel quel faisait échouer TOUTE mise à jour qui le portait.
+            sets.append("payload_fields = %s::jsonb")
+            vals.append(json.dumps(v, ensure_ascii=False) if v else None)
         else:
             sets.append(f"{k} = %s")
             vals.append(v)
@@ -241,7 +246,13 @@ def due_triggers(limit: int = 50) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             f"SELECT {_COLS} FROM runner_triggers "
-            f"WHERE enabled AND next_due <= NOW() ORDER BY next_due LIMIT %s",
+            # ⚠️ `kind = 'schedule'` en plus de l'échéance : un déclencheur webhook
+            # n'a pas d'échéance, mais s'il en recevait une par erreur (une
+            # colonne posée à la main, un chemin d'écriture oublié), le tick le
+            # ferait partir à l'horloge EN PLUS de l'événement. Le genre est la
+            # garde ; l'échéance NULL n'est que la conséquence.
+            f"WHERE enabled AND kind = 'schedule' AND next_due <= NOW() "
+            f"ORDER BY next_due LIMIT %s",
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]

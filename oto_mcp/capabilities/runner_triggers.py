@@ -254,37 +254,52 @@ def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
     return tool_registry.ref_names(g.get("body_md") or "")
 
 
-def _valide_le_webhook(inp: TriggerInput) -> None:
-    """Les réglages du webhook, refusés à la POSE plutôt qu'ignorés en silence.
+_REGLAGES_WEBHOOK = ("payload_mode", "payload_fields", "max_per_hour",
+                     "freshness_seconds")
+
+
+def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None:
+    """Les réglages du webhook, refusés à la POSE plutôt qu'ignorés en silence —
+    à la création (`actuel` absent) comme à la retouche (`actuel` = l'état
+    stocké, avec lequel l'entrée se FUSIONNE avant d'être jugée).
 
     ⚠️ Un réglage accepté puis inerte est le défaut que ce dépôt a payé plusieurs
     fois (`provider`/`model` d'une flotte, servis et ignorés pendant deux
     semaines) : on le croit posé, et le seul endroit où l'écart se voit est le
-    comportement qu'on n'obtient pas.
+    comportement qu'on n'obtient pas. Ce lot l'a REFAIT une fois : les quatre
+    réglages étaient acceptés par `update` et jamais écrits — relevé à la revue
+    d'avant déploiement, pas par un banc.
+
+    ⚠️ Jugé sur les valeurs EFFECTIVES, jamais sur la seule entrée : poser
+    `payload_mode=fields` sur un agent qui a déjà ses `payload_fields` est valide,
+    et poser `payload_fields` seul sur un agent déjà en `fields` aussi. Juger
+    l'entrée isolée refuserait les deux.
     """
-    genre = inp.kind or "schedule"
+    genre = (actuel.get("kind") if actuel else inp.kind) or "schedule"
     if genre != "webhook":
         # Les réglages du webhook sur un déclencheur programmé ne s'appliqueraient
         # à rien. Les refuser NOMME l'erreur au lieu de la laisser dormir.
-        poses = [c for c in ("payload_mode", "payload_fields", "max_per_hour",
-                             "freshness_seconds") if getattr(inp, c) is not None]
+        poses = [c for c in _REGLAGES_WEBHOOK if getattr(inp, c) is not None]
         if poses:
             raise AuthzDenied(
                 400, "not_a_webhook",
                 f"{', '.join(poses)} ne s'applique qu'à un déclencheur `webhook` — "
                 "un agent programmé n'a pas de corps reçu ni de source à lisser.")
         return
-    mode = inp.payload_mode or runner_hook.IGNORE
-    if mode == runner_hook.FIELDS and not inp.payload_fields:
+    stocke = actuel or {}
+    mode = inp.payload_mode or stocke.get("payload_mode") or runner_hook.IGNORE
+    champs = (inp.payload_fields if inp.payload_fields is not None
+              else stocke.get("payload_fields"))
+    if mode == runner_hook.FIELDS and not champs:
         raise AuthzDenied(
             400, "missing_fields",
             "`payload_mode=fields` sans `payload_fields` ne transmettrait rien : "
             "nomme ce qu'il faut extraire (`{\"lead_id\": \"$.data.id\"}`), ou "
             "choisis `inline` pour tout joindre.")
-    if inp.payload_fields and mode != runner_hook.FIELDS:
+    if champs and mode != runner_hook.FIELDS:
         raise AuthzDenied(
             400, "not_a_webhook",
-            f"`payload_fields` n'est lu qu'en `payload_mode=fields` (reçu "
+            f"`payload_fields` n'est lu qu'en `payload_mode=fields` (effectif : "
             f"`{mode}`) — posé ici, il serait inerte.")
     for champ, valeur in (("max_per_hour", inp.max_per_hour),
                           ("freshness_seconds", inp.freshness_seconds)):
@@ -481,11 +496,46 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.model is not None:
         famille = _modele.famille_declaree(inp.model)
         champs["model"] = inp.model or None
-    actuel = None
-    if inp.cron is not None or inp.tz is not None:
-        actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
-        if not actuel:
+
+    # ⚠️ Le déclencheur se lit PARESSEUSEMENT, et seulement là où son GENRE ou son
+    # état décident : l'ordre des refus est un contrat (« aucun runner » avant
+    # « inconnu » sur un rallumage nu — voir plus bas), et un banc le tient en
+    # ne doublant PAS `get_trigger` sur les gestes qui n'ont pas à lire.
+    lu: dict[str, Any] = {}
+
+    def _actuel() -> Optional[dict]:
+        if "t" not in lu:
+            lu["t"] = db.get_trigger(inp.trigger_id, ctx.org_id)
+        return lu["t"]
+
+    def _est_webhook() -> bool:
+        return ((_actuel() or {}).get("kind") or "schedule") == "webhook"
+
+    if any(getattr(inp, c) is not None for c in _REGLAGES_WEBHOOK):
+        if not _actuel():
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+        # Jugés FUSIONNÉS avec l'état stocké, puis ÉCRITS. Avant ce lot ils
+        # étaient acceptés et jamais écrits — un réglage inerte de plus.
+        _valide_le_webhook(inp, _actuel())
+        for c, col in (("payload_mode", "payload_mode"),
+                       ("payload_fields", "payload_fields"),
+                       ("max_per_hour", "max_per_hour"),
+                       ("freshness_seconds", "fraicheur_s")):
+            v = getattr(inp, c)
+            if v is not None:
+                champs[col] = v
+    if inp.cron is not None or inp.tz is not None:
+        if not _actuel():
+            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+        if _est_webhook():
+            # Sans cette garde, un `cron` posé sur un webhook lui donnait une
+            # échéance — et il partait à l'HORLOGE en plus de l'événement ; un
+            # `tz` seul faisait valider un cron NULL et rendait 500.
+            raise AuthzDenied(
+                400, "invalid_schedule",
+                "un déclencheur `webhook` n'a pas de cadencement : c'est la source "
+                "qui décide quand. `cron` et `tz` ne s'y retouchent pas.")
+        actuel = _actuel()
         cron = inp.cron if inp.cron is not None else actuel["cron"]
         tz = inp.tz if inp.tz is not None else actuel["tz"]
         try:
@@ -520,9 +570,13 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # là où le serveur répond aujourd'hui « aucun runner » — deux diagnostics
         # opposés pour la même org, et celui qu'on retirerait est le seul qui dit
         # quoi faire.
-        if actuel is None:
-            actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
-        if actuel and not actuel["enabled"] and "next_due" not in champs:
+        #
+        # ⚠️ Un WEBHOOK rallumé n'a pas d'échéance à reprendre : il repart à la
+        # prochaine livraison. Recalculer ici sur un `cron` NULL rendait 500 sur
+        # le geste le plus ordinaire qui soit — remettre en marche.
+        actuel = _actuel()
+        if (actuel and not actuel["enabled"] and "next_due" not in champs
+                and not _est_webhook()):
             champs["next_due"] = runner_tick.next_due(actuel["cron"], actuel["tz"])
         # Rallumer promet aussi un MODÈLE : celui qu'on pose dans cet appel, sinon
         # celui qui est stocké. Un déclencheur éteint pendant qu'une famille
@@ -532,8 +586,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     elif famille and inp.enabled is None:
         # Changer le modèle d'un déclencheur ALLUMÉ, c'est promettre ce modèle dès
         # l'occurrence suivante. Éteint, rien n'est promis : la retouche passe.
-        if actuel is None:
-            actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
+        actuel = _actuel()
         if not actuel:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
         if actuel["enabled"]:
@@ -541,7 +594,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-    return {"trigger": t}
+    return {"trigger": _avec_hook(ctx.org_id, t)}
 
 
 CAPABILITIES += [

@@ -437,6 +437,98 @@ def test_le_GENRE_ne_se_change_pas_par_update():
     assert '"kind"' not in src.split("autorises")[1].split("}")[0]
 
 
+# ── 5b. la RETOUCHE d'un webhook (relevé à la revue d'avant déploiement) ──────
+
+@pytest.fixture
+def retouche(monkeypatch):
+    """Un webhook en base, et ce qu'`update` écrit."""
+    vu = {}
+    stocke = {"id": 5, "org_id": ORG, "kind": "webhook", "enabled": False,
+              "cron": None, "tz": "UTC", "model": None,
+              "payload_mode": "ignore", "payload_fields": None}
+    monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(stocke))
+    monkeypatch.setattr(RT.db, "update_trigger",
+                        lambda i, o, champs: vu.update(champs) or {"id": i, **champs})
+    vu["stocke"] = stocke
+    return vu
+
+
+def test_RALLUMER_un_webhook_en_pause_ne_recalcule_aucune_echeance(retouche):
+    """⚠️ Le bogue qui aurait touché le geste le plus ordinaire : remettre en
+    marche. `next_due(cron=None, …)` levait AttributeError — un 500 sur un clic."""
+    _appel(op="update", trigger_id=5, enabled=True)
+    assert retouche.get("enabled") is True
+    assert "next_due" not in retouche, "un webhook n'a pas d'échéance à reprendre"
+
+
+def test_un_cron_sur_un_webhook_est_REFUSE_pas_ecrit(retouche):
+    """Sinon le webhook recevait une échéance et partait à l'HORLOGE en plus de
+    l'événement — deux coups d'envoi sur un agent qui n'en déclare qu'un."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="update", trigger_id=5, cron="*/10 * * * *")
+    assert (e.value.status, e.value.code) == (400, "invalid_schedule")
+    assert "cron" not in retouche and "next_due" not in retouche
+
+
+def test_un_tz_seul_sur_un_webhook_est_refuse_pas_500(retouche):
+    """`validate_cron(None, tz)` levait AttributeError."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="update", trigger_id=5, tz="Europe/Paris")
+    assert e.value.code == "invalid_schedule"
+
+
+def test_les_reglages_du_webhook_sont_ECRITS_par_update(retouche):
+    """⚠️ Avant ce banc ils étaient acceptés par le schéma et jamais écrits —
+    exactement le « champ inerte » que ce dépôt a déjà payé sur `provider`."""
+    _appel(op="update", trigger_id=5, payload_mode="fields",
+           payload_fields={"lead_id": "$.data.id"}, max_per_hour=10,
+           freshness_seconds=0)
+    assert retouche["payload_mode"] == "fields"
+    assert retouche["payload_fields"] == {"lead_id": "$.data.id"}
+    assert retouche["max_per_hour"] == 10
+    assert retouche["fraicheur_s"] == 0, "le nom servi se traduit en colonne"
+
+
+def test_la_retouche_se_juge_FUSIONNEE_avec_l_etat_stocke(retouche):
+    """Poser `payload_fields` seul sur un agent déjà en `fields` est valide ;
+    juger l'entrée isolée le refuserait (« fields sans mode »)."""
+    retouche["stocke"].update(payload_mode="fields", payload_fields={"a": "$.a"})
+    _appel(op="update", trigger_id=5, payload_fields={"b": "$.b"})
+    assert retouche["payload_fields"] == {"b": "$.b"}
+
+
+def test_passer_en_fields_quand_les_champs_sont_deja_stockes_est_valide(retouche):
+    """L'autre sens de la fusion : `payload_mode=fields` seul, sur un agent qui
+    porte déjà ses champs. Une épreuve de chute a montré qu'un seul sens ne
+    suffit pas à distinguer « fusionné » de « jugé sur l'entrée »."""
+    retouche["stocke"].update(payload_mode="ignore", payload_fields={"a": "$.a"})
+    _appel(op="update", trigger_id=5, payload_mode="fields")
+    assert retouche["payload_mode"] == "fields"
+
+
+def test_passer_en_fields_sans_champs_ni_stock_est_refuse(retouche):
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="update", trigger_id=5, payload_mode="fields")
+    assert e.value.code == "missing_fields"
+    assert "payload_mode" not in retouche
+
+
+def test_les_reglages_de_webhook_sur_un_PROGRAMME_sont_refuses_a_la_retouche(retouche):
+    retouche["stocke"].update(kind="schedule", cron="5 6 * * *")
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="update", trigger_id=5, max_per_hour=10)
+    assert e.value.code == "not_a_webhook"
+
+
+def test_une_retouche_ordinaire_ne_LIT_pas_le_declencheur(monkeypatch):
+    """Le contrat que `test_runner_trigger_sans_worker.py` tient : renommer ne
+    lit rien — et la garde du genre ne doit pas l'avoir cassé."""
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: (_ for _ in ()).throw(AssertionError("lu")))
+    monkeypatch.setattr(RT.db, "update_trigger", lambda i, o, c: {"id": i, **c})
+    _appel(op="update", trigger_id=5, label="renommé")
+
+
 # ── 6. ce que l'écran lit ─────────────────────────────────────────────────────
 
 def test_un_webhook_sert_son_URL_jamais_son_secret(monkeypatch):

@@ -167,6 +167,26 @@ def test_un_id_NON_NUMERIQUE_rend_404_pas_500(client):
     assert r.status_code == 404
 
 
+def test_un_id_HORS_BIGINT_rend_404_pas_500(client):
+    """`int()` accepte ce que la colonne ne porte pas. Vérifié à la revue : le
+    pilote compare sans lever, donc c'est un 404 SANS garde dédiée — une garde
+    écrite « au cas où » a été retirée après qu'une épreuve de chute l'a montrée
+    sans effet. Ce banc tient la propriété, pas le mécanisme."""
+    for mauvais in ("99999999999999999999999999", "0", "-5"):
+        r = client.post(f"/api/hooks/{mauvais}",
+                        headers={"Authorization": "Bearer otoh_x"}, content=b"{}")
+        assert r.status_code == 404, mauvais
+
+
+def test_un_corps_TROP_GROS_annonce_par_content_length_est_coupe_sans_etre_lu(client, agent):
+    """La longueur annoncée suffit : on n'attend même pas les octets."""
+    r = client.post(ROUTE.format(agent["id"]),
+                    headers={"Authorization": f"Bearer {agent['secret']}",
+                             "Content-Length": str(runner_hook.CORPS_MAX + 1)},
+                    content=b"{}")
+    assert r.status_code == 413
+
+
 def test_un_jeton_de_COMPTE_ne_passe_pas(client, agent, org):
     """`oto_…` est un credential d'une autre surface. L'accepter ici serait le
     début d'une confusion de credentials."""
