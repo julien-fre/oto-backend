@@ -37,17 +37,38 @@ import html as _html
 import re
 from typing import Optional
 
+# ⚠️ Ces motifs lisent une page NON FIABLE, dans un thread de travail qui tient
+# le GIL : un motif qui cesse d'être LINÉAIRE affame la boucle d'événements et
+# gèle tout le processus. C'est arrivé le 13/09/2026 — un `+` libre sur la partie
+# locale rendait `search` quadratique sur une longue suite de caractères admis, et
+# un seul `serper_scrape` a figé la prod plusieurs heures. D'où deux règles :
+# chaque suite est BORNÉE, et aucune suite libre n'est suivie d'un élément qui
+# obligerait la recherche à revenir sur chaque caractère (banc :
+# tests/test_mail_obfuscation_bornes.py).
+
 # Une adresse « visible » — sert à décider si la page montre DÉJÀ un contact
 # (auquel cas on ne dépense pas de requête) et à valider ce qu'on décode.
-ADRESSE_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+# Bornes : 64 pour la partie locale (RFC 5321), 63 par libellé (RFC 1035).
+ADRESSE_RE = re.compile(
+    r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63}){0,10}\.[A-Za-z]{2,24}")
 
-_JOOMLA_RE = re.compile(r"<joomla-hidden-mail\b([^>]*)>", re.I)
-_ATTR_RE = re.compile(r'([A-Za-z\-]+)\s*=\s*"([^"]*)"')
+# La balise se lit sans exiger son `>` : `[^>]*>` repartait de chaque ouverture
+# jusqu'au bout de la page quand le `>` manquait.
+_JOOMLA_RE = re.compile(r"<joomla-hidden-mail\b([^>]{0,4096})", re.I)
+# Un nom d'attribut ne démarre qu'en début de mot : sinon chaque lettre d'une
+# longue suite relançait la lecture du nom.
+_ATTR_RE = re.compile(r'(?<![A-Za-z\-])([A-Za-z\-]{1,64})\s*=\s*"([^"]*)"')
 # Un `mailto:` qui porte au moins une entité numérique. Une adresse en clair
-# n'est pas obfusquée : elle est déjà dans le rendu, rien à récupérer.
-_MAILTO_ENTITE_RE = re.compile(r"mailto:([^\"'\s<>]*&\#[^\"'\s<>]*)", re.I)
+# n'est pas obfusquée : elle est déjà dans le rendu, rien à récupérer. La suite
+# est prise d'un bloc et l'entité se cherche après : `[^…]*&\#[^…]*` revenait
+# sur chaque caractère d'une suite de `mailto:` sans entité.
+_MAILTO_RE = re.compile(r"mailto:([^\"'\s<>]{1,2000})", re.I)
 _CF_RE = re.compile(
     r'(?:data-cfemail="|/cdn-cgi/l/email-protection\#)([0-9a-fA-F]{6,})')
+
+
+def _mailtos_en_entites(page: str) -> list:
+    return [brut for brut in _MAILTO_RE.findall(page) if "&#" in brut]
 
 
 def contient_adresse(texte: Optional[str]) -> bool:
@@ -92,7 +113,7 @@ def _entites(page: str) -> list:
 
     `html.unescape` couvre les deux formes ; le `?subject=…` éventuel tombe."""
     trouvees = []
-    for brut in _MAILTO_ENTITE_RE.findall(page):
+    for brut in _mailtos_en_entites(page):
         clair = _html.unescape(brut).split("?")[0].strip()
         if ADRESSE_RE.fullmatch(clair):
             trouvees.append(clair)
@@ -118,9 +139,9 @@ def _cloudflare(page: str) -> list:
 # dire — « le pire n'est pas de ne pas décoder, c'est que la page semble ne rien
 # contenir » (#681). C'est la demande n°2 du signal, celle du repli.
 _MOTIFS = (
-    ("joomla-hidden-mail", _JOOMLA_RE, _joomla),
-    ("mailto en entités HTML", _MAILTO_ENTITE_RE, _entites),
-    ("cloudflare-email-protection", _CF_RE, _cloudflare),
+    ("joomla-hidden-mail", _JOOMLA_RE.search, _joomla),
+    ("mailto en entités HTML", _mailtos_en_entites, _entites),
+    ("cloudflare-email-protection", _CF_RE.search, _cloudflare),
 )
 
 
@@ -132,7 +153,7 @@ def lire(page: Optional[str]) -> dict:
     page = page or ""
     adresses, motifs = [], []
     for nom, presence, decode in _MOTIFS:
-        if not presence.search(page):
+        if not presence(page):
             continue
         motifs.append(nom)
         for adresse in decode(page):
