@@ -124,6 +124,10 @@ async def upload_form(request: Request) -> Response:
     au GET (seulement au POST du fichier). Autoportée (aucun asset externe)."""
     from .. import upload_tokens
     payload = upload_tokens.verify(request.path_params.get("token", ""))
+    headers = {"Cache-Control": "private", "Referrer-Policy": "no-referrer"}
     if payload is None:
-        return HTMLResponse(_upload_page_html(None), status_code=401)
-    return HTMLResponse(_upload_page_html(upload_tokens.target_label(payload["target"])))
+        return HTMLResponse(_upload_page_html(None), status_code=401, headers=headers)
+    return HTMLResponse(
+        _upload_page_html(upload_tokens.target_label(payload["target"])),
+        headers=headers
+    )

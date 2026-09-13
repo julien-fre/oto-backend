@@ -183,10 +183,13 @@ def _client_ip(scope, headers: dict) -> str:
 async def _send_html(send, body: str, status: int = 200) -> None:
     data = body.encode("utf-8")
     # max-age court : l'UI navigable reflète des données live (datastore/docs) → pas de
-    # cache long qui montrerait du périmé.
+    # cache long qui montrerait du périmé. Private + Referrer-Policy : la page porte l'URL
+    # du projet (qui peut inclure un slug secret) et un jeton, ne doit pas être cachée
+    # en cache partagé ni laisser fuir le Referer.
     await send({"type": "http.response.start", "status": status,
                 "headers": [(b"content-type", b"text/html; charset=utf-8"),
-                            (b"cache-control", b"public, max-age=60")]})
+                            (b"cache-control", b"private, max-age=60"),
+                            (b"referrer-policy", b"no-referrer")]})
     await send({"type": "http.response.body", "body": data})
 
 

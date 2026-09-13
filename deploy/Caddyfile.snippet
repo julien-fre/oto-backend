@@ -15,11 +15,17 @@
 
 # --- prod (grey CF + ACME direct box) ---
 mcp.oto.cx {
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+	header X-Content-Type-Options "nosniff"
+	header X-Frame-Options "DENY"
 	reverse_proxy localhost:9103
 }
 
 # --- preprod (ex-prod .ninja avant cutover) ---
 mcp.oto.ninja {
 	tls /etc/caddy/origin-certs/oto-ninja.pem /etc/caddy/origin-certs/oto-ninja.key
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+	header X-Content-Type-Options "nosniff"
+	header X-Frame-Options "DENY"
 	reverse_proxy localhost:9105
 }

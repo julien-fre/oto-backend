@@ -312,7 +312,10 @@ async def public_doc_view(request: Request) -> Response:
                      headers={"Cache-Control": "public, max-age=300"})
     html_page = public_doc_page.render(title=title, body_md=body_md,
                                        updated_at=doc.get("updated_at"))
-    return HTMLResponse(html_page, headers={"Cache-Control": "public, max-age=300"})
+    return HTMLResponse(html_page, headers={
+        "Cache-Control": "private, max-age=300",
+        "Referrer-Policy": "no-referrer"
+    })
 
 
 async def outreach_unsubscribe(request: Request) -> Response:
