@@ -37,6 +37,15 @@ def _appel(**kw):
 
 
 @pytest.fixture(autouse=True)
+def _aucune_cle_exigee(monkeypatch):
+    """Le réglage `runner.org_key_required` (#940) éteint, comme en production :
+    il se lit en BASE à chaque pose, et ces bancs tournent sans base. Éteint = le
+    comportement d'avant #940, qui est celui que ce fichier décrit."""
+    monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting",
+                        lambda portee, ident, fournisseur, cle: None)
+
+
+@pytest.fixture(autouse=True)
 def _dans_la_beta(monkeypatch):
     """La population bêta, ouverte pour ces bancs : ils parlent du webhook, pas de
     la porte qui en règle le déploiement (tenue plus bas, à elle seule)."""
