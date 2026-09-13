@@ -23,9 +23,8 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import (access, call_axes, calllog, db, deprecations, error_taxonomy, guide_run,
-                outils_retires, providers, redaction, run_org, session_org, tool_alias,
-                tool_registry)
+from .. import (access, call_axes, calllog, db, deprecations, guide_run, outils_retires,
+                providers, redaction, run_org, session_org, tool_alias, tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
@@ -542,21 +541,11 @@ def register(mcp: FastMCP) -> None:
                       "errors": e.errors()}))
         # noqa: SILENT — l'échec de l'outil appelé est rendu dans ok/err au demandeur
         except Exception as e:  # noqa: BLE001 — l'erreur de la cible EST un résultat
-            # Classifie l'erreur (ADR 0036 §2 : parité avec ErrorEnvelopeMiddleware) —
-            # même code/retryable/message que via le middleware MCP, au lieu du brut str(e).
-            info = error_taxonomy.classify(e)
-            ok, err = False, info.message
-            error_payload = {
-                "code": info.code,
-                "retryable": info.retryable,
-                "message": info.message,
-            }
-            if info.hint:
-                error_payload["hint"] = info.hint
+            ok, err = False, str(e)
             # `tool` reprend le nom DEMANDÉ : l'agent le relit pour réessayer, et un
             # nom qu'il n'a jamais tapé le ferait douter de sa propre requête. Le
             # journal, lui, écrit le canonique (`_trace_target_call` juste dessous).
-            return {"tool": demande, "ok": False, "error": error_payload}
+            return {"tool": demande, "ok": False, "error": str(e)}
         finally:
             # Org et run de la CIBLE, lus AVANT de défaire les axes : après le reset,
             # `current_org` rend l'org maison de l'appelant, pas celle où la cible a
