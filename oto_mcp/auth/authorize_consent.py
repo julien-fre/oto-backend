@@ -26,6 +26,9 @@ scope) suit exactement le parcours d'avant, avec un saut de redirection en plus.
 ⚠️ **Les hôtes d'un tenant ne passent pas par ici.** Délivrer des jetons de
 rafraîchissement aux utilisateurs d'un partenaire est SA décision : sa métadonnée continue
 d'annoncer son propre point d'autorisation, et la façade refuse cette route sur son hôte.
+Quand son host est RELAYÉ (`auth/relay.py`), son autorisation traverse la façade par un
+autre chemin, et arrive chez son annuaire SANS `consent` ajouté
+(`redirection(..., consentement=False)`).
 """
 from __future__ import annotations
 
@@ -72,20 +75,23 @@ def avec_consentement(requete: str) -> str:
     return "&".join(segment if _cle(s) == "prompt" else s for s in requete.split("&"))
 
 
-def redirection(emetteur_oidc: str, requete: str) -> Response:
+def redirection(emetteur_oidc: str, requete: str, *, consentement: bool = True) -> Response:
     """302 vers `<émetteur>/auth`, sans cache, requête recopiée APRÈS le `?`.
 
     `requete` est la chaîne BRUTE reçue (`scope["query_string"]` décodé en latin-1) : pas
     de `RedirectResponse`, qui répond 307 par défaut et ré-encode l'adresse — les octets
     du client n'arriveraient plus intacts. Un caractère de contrôle n'a rien à faire dans
     une requête : il est refusé en le nommant, jamais recopié dans un en-tête.
+
+    `consentement=False` = l'annuaire d'un TENANT (cf. l'en-tête du module) : la requête
+    passe sans que `consent` y soit ajouté.
     """
     if any(ord(c) < 0x21 or ord(c) == 0x7F for c in requete):
         return JSONResponse({"error": "invalid_request",
                              "error_description": "caractère de contrôle dans la requête "
                                                   "d'autorisation"}, status_code=400)
     cible = f"{emetteur_oidc.rstrip('/')}/auth"
-    demande = avec_consentement(requete)
+    demande = avec_consentement(requete) if consentement else requete
     if demande != requete:
         client = dict(parse_qsl(requete, keep_blank_values=True)).get("client_id")
         logger.info("autorisation : consent ajouté pour offline_access (client %r)", client)
