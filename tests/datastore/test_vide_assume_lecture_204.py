@@ -129,14 +129,17 @@ def test_une_vraie_valeur_fait_tomber_le_marqueur(existant, nouveau, attendu):
     assert _merge_column(existant, nouveau) == attendu
 
 
-@pytest.mark.parametrize("existant, nouveau", [
+@pytest.mark.parametrize("existant, mot", [
     (None, dsl.VIDE_DELIBERE), ("Directrice", dsl.VIDE_DELIBERE),
     (None, {"valeur": dsl.VIDE_DELIBERE, "comment": "rien trouvé"}),
 ])
-def test_l_etape_1_n_emet_jamais_le_marqueur(existant, nouveau):
-    """`@empty` se résout toujours en `""` dans cette étape. L'émission du marqueur est
-    l'étape 2, qui ne touche `main` qu'une fois celle-ci servie en production."""
-    _aucune_trace(_merge_column(existant, nouveau))
+def test_depuis_l_etape_2_empty_emet_le_marqueur_et_clear_non(existant, mot):
+    """L'étape 1 n'émettait rien ; l'étape 2 (oto#204·2) fait poser le marqueur par
+    `@empty`. `@clear`, au même endroit, vide sans l'émettre."""
+    assert dsl.vide_assume(_merge_column(existant, mot))
+    efface = (dsl.EFFACEMENT if isinstance(mot, str)
+              else {**mot, "valeur": dsl.EFFACEMENT})
+    _aucune_trace(_merge_column(existant, efface))
 
 
 # ── un client n'écrit pas la clé interne ─────────────────────────────────────

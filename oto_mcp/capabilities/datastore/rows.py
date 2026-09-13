@@ -51,7 +51,8 @@ from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBi
 from .common import EntreeDatastore, HORODATAGE, ns_not_found
 from .lot import refuser_un_lot
 from ..registry import CAPABILITIES
-from ._forme import _LAYERS, _VERSIONS, _layers, _versions
+from ._forme import (_EMPTIES, _LAYERS, _REFUS_DE_FORME, _VERSIONS, _layers,
+                     _relais_empties, _versions)
 
 
 def _tolerant_int(v):
@@ -87,6 +88,7 @@ class ListRowsInput(EntreeDatastore):
     filters: Optional[str] = None
     layers: str = _LAYERS
     versions: Optional[list[str] | str] = _VERSIONS
+    empties: str = _EMPTIES
 
     _coerce = field_validator("offset", "limit", mode="before")(_tolerant_int)
 
@@ -135,6 +137,7 @@ class GetRowInput(RowRefInput):
     la suppression, qui n'a pas de forme à choisir."""
     layers: str = _LAYERS
     versions: Optional[list[str] | str] = _VERSIONS
+    empties: str = _EMPTIES
 
     @field_validator("versions", mode="after")
     @classmethod
@@ -440,13 +443,16 @@ def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
     filter_eq = _json_param(inp.filter, "invalid_filter", expect=dict)
     filters = _json_param(inp.filters, "invalid_filters", expect=list)
     layers = _layers(inp.layers)
+    # Validé AVANT le `try` : son refus est `invalid_empties`, pas le `invalid_filters`
+    # que la clause ci-dessous rend à toute `ValueError` du store.
+    empties = _relais_empties(inp.empties)
     store = make_store(ctx.sub)
     try:
         page = store.page_rows(
             ns, offset=offset, limit=limit,
             order_by=inp.order_by or None, order_dir=inp.order_dir,
             q=inp.q or None, filter=filter_eq, filters=filters, layers=layers,
-            versions=_versions(inp.versions))
+            versions=_versions(inp.versions), **empties)
         return {**page, **identite.numero(store.dernier_tableau)}
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
@@ -493,9 +499,10 @@ def _queue(ctx: ResolvedCtx, inp: DatastoreRefInput) -> dict:
 def _get_row(ctx: ResolvedCtx, inp: GetRowInput) -> dict:
     ns, rid = _adresse(inp.datastore, inp.row_id)
     layers = _layers(inp.layers)
+    empties = _relais_empties(inp.empties)
     try:
         return make_store(ctx.sub).get_row(ns, rid, layers=layers,
-                                           versions=_versions(inp.versions))
+                                           versions=_versions(inp.versions), **empties)
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
     except RowNotFound:
@@ -698,6 +705,7 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,  # `data_rows` tient déjà la face agent
         rest=RestBinding(verb="GET", path=_NS + "/rows"),
+        errors=_REFUS_DE_FORME,
         description=("Page de lignes d’un tableau (tri, recherche, filtres serveur). "
                      "Pagination par `offset` + `limit` avec `total` du jeu filtré, "
                      "pas de curseur — la fin se calcule. Toute colonne déclarée est "
@@ -734,6 +742,7 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,
         rest=RestBinding(verb="GET", path=_NS + "/rows/{row_id}"),
+        errors=_REFUS_DE_FORME,
         description="Lit une ligne par son `_id` (deep-link de fiche).",
     ),
     Capability(

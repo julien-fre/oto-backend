@@ -126,7 +126,8 @@ class FileDeTravailMixin:
                    trace: Optional[dict] = None,
                    perimetre: Optional[dict] = None,
                    layers: str = dsl.DEFAUT,
-                   filters: Optional[list] = None) -> Optional[dict]:
+                   filters: Optional[list] = None,
+                   empties: str = dsl.EMPTIES_DEFAUT) -> Optional[dict]:
         """Pick + claim atomique de la prochaine row claimable (bail NULL ou
         expiré), `FOR UPDATE SKIP LOCKED` — N workers drainent sans collision.
         `filter` = `{col: val}`, ou `{col: {op: val}}` pour un opérateur (même
@@ -178,12 +179,16 @@ class FileDeTravailMixin:
         # modèle de ce qu'il réécrira — servir `champ.comment` à plat, c'est lui
         # montrer une forme qu'il transformera en `champ_comment` faute de savoir
         # qu'un point est adressable.
-        return self._row_to_dict(row, schema, layers=layers) if row else None
+        # oto#204 : `empties` pour la même raison — c'est cette ligne qu'une boucle
+        # réécrit, et un vide assumé servi `""` y revient refusé.
+        return (self._row_to_dict(row, schema, layers=layers, empties=empties)
+                if row else None)
 
     def claim_row(self, datastore: str, row_id: str, *, worker: str,
                   lease_s: int = 900, warnings: Optional[list] = None,
                   trace: Optional[dict] = None,
-                  layers: str = dsl.DEFAUT) -> dict:
+                  layers: str = dsl.DEFAUT,
+                  empties: str = dsl.EMPTIES_DEFAUT) -> dict:
         """Réserve une row NOMMÉE — la file pilotée par un humain (il choisit qui
         appeler), là où `claim_next` sert un worker qui draine.
 
@@ -212,7 +217,7 @@ class FileDeTravailMixin:
                 raise RowOutsideClaimable(row_id, declare)
             raise RowClaimed(row_id, existing.get("claimed_by"), existing.get("claimed_until"))
         self._after_claim(ns_id, warnings=warnings, trace=trace, ns=ns)
-        return self._row_to_dict(row, schema, layers=layers)
+        return self._row_to_dict(row, schema, layers=layers, empties=empties)
 
     def _after_claim(self, ns_id: int, *, warnings: Optional[list],
                      trace: Optional[dict], ns: Optional[dict] = None) -> None:

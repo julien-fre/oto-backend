@@ -86,7 +86,11 @@ def test_AUCUN_mot_reserve_n_atteint_le_stockage_par_une_liste():
 @pytest.mark.parametrize("pose,attendu", [
     ([{"nom": "G", "commentaire": {"valeur": "x", "comment": dsl.VIDE_DELIBERE}}],
      {"valeur": "x", "comment": ""}),
+    # oto#204, décision du plan : `@empty` sur la VALEUR assume le vide — le marqueur est
+    # posé ; `@clear` efface sans l'assumer, et rend ce qu'`@empty` rendait avant.
     ([{"nom": "G", "commentaire": {"valeur": dsl.VIDE_DELIBERE}}],
+     {"valeur": "", dsl.VIDE_ASSUME: True}),
+    ([{"nom": "G", "commentaire": {"valeur": dsl.EFFACEMENT}}],
      {"valeur": ""}),
 ])
 def test_vider_delibrement_fonctionne_dans_un_element(pose, attendu):

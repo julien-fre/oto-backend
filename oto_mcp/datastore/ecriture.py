@@ -26,9 +26,12 @@ from .columns import (
     _merge_column,
     _refuse_mixed_layers,
     arbitrer_les_vides,
+    mots_resolus_a_la_creation,
     refuser_cles_internes,
     refuser_geste_sans_effet,
+    refuser_les_mots_mal_places,
     sans_les_nulls_sans_effet,
+    vides_assumes_perdus,
 )
 from .controles import _relever_origine_module
 from .errors import DatastoreNotFound, RowNotFound, RowValidationError
@@ -114,6 +117,7 @@ class EcritureMixin:
             self.off_notices.add(fdn.avertissement(vises))
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
+        refuser_les_mots_mal_places(schema, user_data)
         _refuse_mixed_layers(schema, user_data)
         # #586 : la couche d'origine d'un champ système ne s'écrit pas, création
         # comprise — jugée sur le payload seul (le readonly, lui, se juge contre la
@@ -173,14 +177,21 @@ class EcritureMixin:
         # fichier dénonce ailleurs sur la même famille de règles : une garde posée sur
         # les chemins auxquels on pense, absente de celui qu'on croyait couvert parce
         # qu'il ressemble aux autres.
+        # oto#204 (et le trou de #183) : la CRÉATION ne passe pas par la fusion, donc les
+        # mots réservés se résolvent ICI, AVANT la capture d'origine (qui prendrait
+        # `"@empty"` pour une valeur remise) et avant la validation (qui le prendrait pour
+        # un texte satisfaisant `required`). Sur une COPIE : si la course est perdue
+        # ci-dessous, la fusion reçoit le geste d'origine et le résout elle-même — lui
+        # passer un marqueur le ferait refuser comme clé interne.
+        a_creer = mots_resolus_a_la_creation(schema, user_data)
         if donnees_d_origine:
-            poser_les_deux_versions(user_data, schema=schema)
+            poser_les_deux_versions(a_creer, schema=schema)
         # `creation=True` : c'est ici qu'une colonne parasite NAÎT (#117). Un patch par
         # `id` vise une ligne existante et peut légitimement ne toucher qu'une colonne
         # libre — la garde n'y a rien à faire.
-        self._check_row(schema, user_data, creation=True)
+        self._check_row(schema, a_creer, creation=True)
         try:
-            row = db.datastore_insert_row(ns_id, _new_id(), user_data)
+            row = db.datastore_insert_row(ns_id, _new_id(), a_creer)
         except UniqueViolation:
             # Course perdue sous l'index UNIQUE de clé métier (#109 ch.3) : un write
             # concurrent a inséré la même clé entre le lookup et l'insert — le doublon
@@ -189,10 +200,13 @@ class EcritureMixin:
                            if key and kv is not None else None)
             if existing_id is None:
                 raise  # violation inexpliquée → erreur franche, pas de repli muet
+            # `donnees_d_origine` voyage ici : le geste d'origine n'a pas été touché
+            # ci-dessus, la fusion pose donc elle-même les deux versions (cf. `lots.py`).
             return self._row_to_dict(
                 self._merge_into_row(ns_id, existing_id, user_data, schema=schema,
                                      forcage=forcage,
-                                     origine_override=origine_override),
+                                     origine_override=origine_override,
+                                     donnees_d_origine=donnees_d_origine),
                 schema)
         return self._row_to_dict(row, schema)
 
@@ -228,6 +242,7 @@ class EcritureMixin:
                 (db.datastore_get_row(ns_id, row_id) or {}).get("data") or {}))
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
+        refuser_les_mots_mal_places(schema, user_data)
         _refuse_mixed_layers(schema, user_data)
         sk = (dsv2.status_field(schema) or {}).get("key")
 
@@ -275,6 +290,12 @@ class EcritureMixin:
             for _k, _v in pose.items():
                 merged[_k] = _merge_column(merged.get(_k), _v,
                                            dsv2.champ_declare(schema, _k))
+            # oto#204 : un vide ASSUMÉ redevenu vide ordinaire par le remplacement d'une
+            # liste se relève. Sur un requis, `_check_row` refuse juste après ; ailleurs
+            # il tomberait sans un mot.
+            for _k, _v in pose.items():
+                vidages.extend(vides_assumes_perdus((current or {}).get(_k),
+                                                    merged.get(_k), _k, row_id, _v))
             # #586/#606 : ce que l'appelant n'écrit pas — jugé sur le geste ENTIER
             # (payload, ligne en place, résultat), sous le verrou, avant que quoi
             # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.
@@ -323,6 +344,7 @@ class EcritureMixin:
         user_data = ranger_les_couches(schema, user_data)
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
+        refuser_les_mots_mal_places(schema, user_data)
         _refuse_mixed_layers(schema, user_data)
         valide = dsv2.validation_active(schema) or dsv2.lifecycle_of(schema)
         reserves = bool(dsv2.readonly_fields(schema)
@@ -339,6 +361,9 @@ class EcritureMixin:
                                     agent=aga.appel_d_agent())
             _relever_origine_module(self, ns_id, complet, prev_data, schema=schema,
                                     declare=origine_override)
+        # oto#204 : le REMPLACEMENT ne fusionne pas — les mots réservés se résolvent ici,
+        # contre rien, avant la validation et l'écriture (cf. `append_row`).
+        user_data = mots_resolus_a_la_creation(schema, user_data)
         if valide:
             sk = (dsv2.status_field(schema) or {}).get("key")
             prev_status = (prev_data or {}).get(sk) if sk else None

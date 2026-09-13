@@ -164,9 +164,15 @@ def test_le_mot_pose_sur_TOUTE_la_case_est_resolu_aussi():
 def test_vider_toute_la_case_par_le_mot_nu():
     """⚠️ Le point de DÉPART survit, et c'est toute sa raison d'être : vider la valeur
     courante n'efface pas ce que la cliente avait remis. Mon premier banc l'exigeait
-    vide — il était faux, pas le code."""
+    vide — il était faux, pas le code.
+
+    oto#204, décision du plan : `@empty` ASSUME le vide — la case vidée porte le marqueur ;
+    `@clear` efface sans l'assumer, et rend ce qu'`@empty` rendait avant."""
     assert _merge_column(_base(), dsl.VIDE_DELIBERE) == {"valeur": "",
-                                                         "origine": "DUPONT"}
+                                                         "origine": "DUPONT",
+                                                         dsl.VIDE_ASSUME: True}
+    assert _merge_column(_base(), dsl.EFFACEMENT) == {"valeur": "",
+                                                      "origine": "DUPONT"}
 
 
 @pytest.mark.parametrize("texte", [

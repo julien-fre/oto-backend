@@ -273,7 +273,8 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
     @staticmethod
     def _row_to_dict(row: dict, schema: Optional[dict] = None, *,
                      bail_echu: str = "taire", layers: str = dsl.DEFAUT,
-                     versions: tuple = dsver.DEFAUT) -> dict:
+                     versions: tuple = dsver.DEFAUT,
+                     empties: str = dsl.EMPTIES_DEFAUT) -> dict:
         """Ligne `datastore_rows` → row API (`_id`/`_created_at`/`_updated_at` à
         plat + champs user). Le bail de claim (ADR 0046 D) n'apparaît que s'il est
         posé (une ligne libre n'a aucune des trois clés `_claimed_*` → absentes,
@@ -285,6 +286,10 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
 
         `versions` (oto#140) : les VERSIONS servies — `current` (ce qu'on a établi) et
         `origine` (ce que la cliente a remis). Le défaut vit dans `versions.DEFAUT`.
+
+        `empties` (oto#204) : la forme d'une case au vide ASSUMÉ — `plain` (défaut) la
+        sert `""`, `sentinel` la sert `"@empty"`, le mot qui la réécrit. Le défaut vit
+        dans `layers.EMPTIES_DEFAUT`.
 
         ⚠️ **Le NOM NU rend toujours la version courante, quelle que soit la demande.**
         Faire porter deux sens à `champ` selon un paramètre serait exactement le piège
@@ -355,17 +360,18 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                     continue
                 couches_servies.update(dsv2.flat_layers(k, v))
 
+        sentinelle = empties == dsl.SENTINEL
         for k, v in data.items():
             if k in _META_COLS or k in cachees:
                 continue
             # `layers="nested"` (oto#53) : la cellule revient comme elle s'écrit,
             # `{valeur, origine, comment, link}` — rien n'est aplati à côté.
             if layers == dsl.NESTED:
-                out[k] = dsl.nested_value(v)
+                out[k] = dsl.nested_value(v, sentinelle=sentinelle)
                 continue
             # `served_value` descend dans une colonne-tableau : chaque attribut d'item
             # est une feuille, rendue comme telle (oto#22 §1).
-            servie = dsv2.served_value(v)
+            servie = dsv2.served_value(v, sentinelle=sentinelle)
             if not (k in couches_servies and dsv2.est_vide(servie)):
                 out[k] = servie
             # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée

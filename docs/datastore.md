@@ -2306,7 +2306,8 @@ une version qui ignore le marqueur ne doit jamais en lire un.
 
 Ce que fait l'étape 1 :
 
-- **servi `""`, jamais le marqueur** : MCP (`data_rows`, `data_claim_next`), REST `flat` et
+- **servi `""` par défaut, `"@empty"` sur `empties=sentinel` (étape 2), jamais le marqueur** :
+  MCP (`data_rows`, `data_claim_next`), REST `flat` et
   `nested` — donc l'export CSV du tableau de bord, bâti sur elles —, et la page publique d'un
   tableau partagé, qui lit la base brute (`share_ui._lisible`) ;
 - **`required` satisfait** par le marqueur, en colonne comme en sous-champ de `list.of` ;
@@ -2320,10 +2321,110 @@ Ce que fait l'étape 1 :
 ⚠️ **Limite : une liste SANS `of.key` se remplace en bloc** (#120). La réémettre telle que servie
 fait du `""` d'un sous-champ marqué un vide ordinaire : l'écriture est REFUSÉE (« champ requis
 manquant »), sans perte. Sur une liste à clé, la fusion élément par élément garde le marqueur.
-Pour réécrire un vide assumé dans une liste sans clé, le geste est `@empty`.
+Pour réécrire un vide assumé dans une liste sans clé, le geste est `@empty` — et l'étape 2 le
+relit sous cette forme (`empties=sentinel`, section suivante).
 
 ⚠️ Un `null` écrit sur une cellule marquée ne l'efface pas : sa valeur est vide, et un `null` sans
-valeur en place n'est pas écrit (oto#182).
+valeur en place n'est pas écrit (oto#182). Le geste qui démarque est `@clear` (étape 2).
 
 Bancs : `tests/datastore/test_vide_assume_lecture_204.py` et `…_204_live.py`.
+
+## Le vide ASSUMÉ — étape 2 : `@empty` l'émet, `@clear` l'efface, `empties=sentinel` le relit (oto#204, 13/09/2026)
+
+**Le défaut fermé.** Une liste sans `of.key` se remplace en bloc (#120). Relue au défaut puis
+renvoyée, une case au vide assumé revenait `""`, un vide ORDINAIRE. Sur un requis, l'écriture
+était refusée — sans perte, mais sans issue honnête : les deux vides se servaient pareil, donc le
+client inventait une valeur, ou posait `@empty` sur un vide que personne n'avait cherché. Sur un
+non requis, le marqueur tombait sans un mot. Arbitrage du plan (option 2) : la lecture EXPOSE
+l'intention sous la forme qui la réécrit. Ni identité inventée par le rang, ni `required`
+assoupli, ni obligation de clé.
+
+⚠️ **Ce lot ÉMET le marqueur** : il ne touche `main` qu'une fois l'étape 1 servie en production,
+préprod et prod partageant la base.
+
+### Les trois mots
+
+| mot | sur la VALEUR d'une case | sur une COUCHE (`comment`, `link`) |
+|---|---|---|
+| `@keep` | tient ce qui est en place ; sur une case neuve, rien | tient la couche |
+| `@empty` | vide ASSUMÉ : valeur `""`, marqueur posé — satisfait `required` | vide la couche seule |
+| `@clear` | efface SANS assumer : valeur `""`, marqueur retiré — refusé sur un requis | vide la couche seule |
+
+`""` garde son comportement : le `""` servi, renvoyé sur une case marquée, ne change rien ; sur
+une valeur en place il est écarté (#608). Formes acceptées : `"champ": "@clear"` et
+`"champ": {"valeur": "@clear", …}`, au premier niveau et sur les cellules des éléments de liste.
+
+**Une table, un résolveur** : `columns._MOTS`, lue par la fusion (`_merge_column`, `_merge_items`,
+`_sentinelles_dans_les_items`) et par la création (`columns.mots_resolus_a_la_creation`, appelée
+par `append_row` sans clé métier, la ligne neuve d'un lot et `upsert_row`, avant la capture
+d'origine et la validation). Un mot de plus = une entrée ici et son nom dans
+`couches.SENTINELLES` (`test_la_table_couvre_tout_le_vocabulaire`).
+
+Couches et origine suivent les règles existantes (bancs `test_4a…`, `test_4b…`, `test_4c…`) :
+
+- `{"valeur": "@empty", "comment": …}` sur une case DÉJÀ vide : la valeur ne change pas, donc un
+  `link` non envoyé reste ; sur une valeur en place, `comment` et `link` non envoyés tombent et
+  `origine` survit ;
+- un mot dans une couche ne vide que cette couche : ni la valeur ni le marqueur ne bougent ;
+- une `origine` renvoyée inchangée ne change rien au geste ;
+- `@clear` sur une case marquée qui porte un `comment` : le marqueur part, le `comment` reste
+  (la valeur, `""`, ne change pas) ;
+- `{"valeur": "@clear", "comment": "@keep"}` : le commentaire est tenu, le `link` tombe.
+
+**Deux trous fermés.** À la création, `"@empty"` partait en base comme texte et satisfaisait
+`required` (#183). Dans une liste à clé, un élément NOUVEAU entrait tel quel (`_merge_items`),
+mots compris : il se résout désormais comme une liste sans identité, et `@keep` y est refusé.
+
+### Où un mot se pose
+
+Sur une CASE : une colonne, ou l'attribut d'une fiche dans une liste, chacune avec ses couches.
+Ailleurs, refus `row_invalid` qui nomme le chemin, rien n'est écrit
+(`columns.refuser_les_mots_mal_places`, sur les cinq points d'entrée) :
+
+- l'identité d'un élément (`of.key`) — ni `@empty`, ni `@clear`, ni `@keep` ;
+- un élément d'une liste de valeurs (`tags[1]`) ;
+- un sous-champ d'objet, le contenu d'une colonne `json`, le contenu d'un attribut.
+
+### La lecture `empties`
+
+`plain` (défaut) sert le vide assumé `""` ; `sentinel` le sert `"@empty"`, et un `""` ordinaire
+reste `""`. À plat : `"fonction": "@empty"`, couches à côté. Imbriqué :
+`{"valeur": "@empty", …couches}`, même sans autre couche, au premier niveau comme dans un élément.
+Surfaces : REST `GET …/rows`, `GET …/rows/{id}`, `POST …/claim_next`, `POST …/rows/{id}/claim` ;
+MCP `data_rows`, `data_claim_next`. Une valeur inconnue rend `400 invalid_empties` (MCP :
+`INVALID_PARAMS`), qui nomme `plain` et `sentinel`. Cliquet de parité : toute lecture qui accepte
+`layers` accepte `empties` — dans le source, dans l'OpenAPI servi et dans le schéma MCP.
+
+⚠️ Une face ne passe `empties` au store que s'il vaut `sentinel` (patron `claim._lease`) : le
+défaut appartient au store, et deux doublures de banc figent la signature d'avant.
+
+Inchangés : le défaut, la page publique d'un tableau partagé (base brute sans clé interne),
+l'export CSV du tableau de bord (bâti sur le défaut), les réponses d'écriture.
+
+Le geste qui réécrit une liste : lire en `sentinel`, renvoyer chaque élément tel qu'il est venu.
+Réordonnée, éléments identiques, élément retiré : le mot voyage dans l'élément, aucune identité
+n'est inventée.
+
+### Refus et relevés
+
+- **Requis** : `row_invalid`, dont le message nomme le chemin (`contacts[0].fonction`), `@empty`
+  et la relecture `empties=sentinel`. Atomique : base et `_revision` intactes.
+- **Relecture périmée** : `expected_revision` rend `409 revision_conflict`, rien n'est écrit.
+- **Relique pointée** : `@clear` est un effacement comme `null` et `@empty` (`reliques._efface`) ;
+  sur une relique qui porte une valeur, refusé.
+- **`valeurs_effacees`** : `@clear` et `@empty` sur une valeur en place la nomment, comme `null`.
+  Les valeurs rendues le sont sans clé interne.
+- **Vide assumé non requis rendu ordinaire** : `couches_effacees`, couche `@empty`
+  (`columns.vides_assumes_perdus`), jugé après la fusion, par attribut et par COMPTE — un
+  marqueur de moins ET un vide ordinaire de plus. Pas relevés, délibérément : une vraie valeur,
+  un `@clear` écrit à cette place, un élément retiré, une liste réordonnée renvoyée en
+  `sentinel`. Le chemin est celui de la liste ÉCRITE.
+
+OpenAPI : `invalid_layers` et `invalid_empties` déclarés sur les quatre lectures.
+⚠️ `row_invalid` et `row_locked`, bien rendus par `POST …/rows` et `PATCH …/rows/{id}`, ne sont
+PAS déclarés : `_write_refusal` les RETOURNE (`raise _write_refusal(e)`), le cliquet
+d'atteignabilité (`tests/_refus_atteignables.py`) ne voit que les `raise AuthzDenied(…)`, et
+cinq bancs figent ce retour.
+
+Bancs : `tests/datastore/test_vide_assume_reemission_204.py` et `…_204_live.py`.
 

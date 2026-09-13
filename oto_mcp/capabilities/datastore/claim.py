@@ -46,7 +46,7 @@ from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .common import EntreeDatastore
 from ..registry import CAPABILITIES
-from ._forme import _LAYERS, _layers
+from ._forme import _EMPTIES, _LAYERS, _REFUS_DE_FORME, _layers, _relais_empties
 
 
 class ClaimNextInput(EntreeDatastore):
@@ -55,6 +55,9 @@ class ClaimNextInput(EntreeDatastore):
     # et c'était le seul à ne pas porter la forme. Réutilise le champ des lectures —
     # même nom, même défaut, même refus nommé sur une valeur inconnue.
     layers: str = _LAYERS
+    # oto#204 : la forme du vide assumé, pour la même raison — ce qu'on réserve, on le
+    # réécrit.
+    empties: str = _EMPTIES
     # Défaut vide plutôt que champ requis : un `worker` manquant mérite un refus qui
     # DIT ce qu'est un worker (le `invalid_input` de pydantic ne le dirait pas).
     worker: str = ""
@@ -72,6 +75,7 @@ class ClaimRowInput(EntreeDatastore):
     datastore: Adresse
     row_id: str
     layers: str = _LAYERS
+    empties: str = _EMPTIES
     worker: str = ""
     lease_s: Optional[int] = None
 
@@ -125,7 +129,7 @@ def _claim_next(ctx: ResolvedCtx, inp: ClaimNextInput) -> dict:
             inp.datastore, worker=worker, filter=inp.filter,
             max_claims=inp.max_claims, warnings=warnings, trace=trace,
             perimetre=perimetre, layers=_layers(inp.layers), filters=inp.filters,
-            **_lease(inp))
+            **_relais_empties(inp.empties), **_lease(inp))
     except DatastoreNotFound:
         raise AuthzDenied(404, "datastore_not_found")
     except DatastoreReadOnly:
@@ -160,7 +164,7 @@ def _claim_row(ctx: ResolvedCtx, inp: ClaimRowInput) -> dict:
         row = store.claim_row(
             inp.datastore, inp.row_id, worker=worker,
             warnings=warnings, trace=trace, layers=_layers(inp.layers),
-            **_lease(inp))
+            **_relais_empties(inp.empties), **_lease(inp))
     except DatastoreNotFound:
         raise AuthzDenied(404, "datastore_not_found")
     except DatastoreReadOnly:
@@ -197,6 +201,7 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,  # `data_claim_next` tient déjà la face agent
         rest=RestBinding(verb="POST", path="/api/datastores/{datastore}/claim_next"),
+        errors=_REFUS_DE_FORME,
         description=("Réserve atomiquement la prochaine ligne libre d'un tableau (file de travail). "
                      "Toute colonne déclarée est servie, `null` sans valeur."),
     ),
@@ -209,6 +214,7 @@ CAPABILITIES += [
         mcp=None,  # geste d'un humain qui choisit sa ligne ; l'agent draine
         rest=RestBinding(verb="POST",
                          path="/api/datastores/{datastore}/rows/{row_id}/claim"),
+        errors=_REFUS_DE_FORME,
         description="Réserve une ligne nommée d'un tableau (409 si déjà sous bail d'un autre).",
     ),
 ]

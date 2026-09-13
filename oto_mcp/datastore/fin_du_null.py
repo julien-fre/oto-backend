@@ -6,11 +6,12 @@ valeur ». **Le même jeton dit donc une chose et son contraire selon l'endroit*
 c'est le genre d'ambiguïté qui ne se paie pas à l'écriture mais trois semaines plus
 tard, sur une donnée absente que personne n'a voulu détruire.
 
-Le contrat le remplace par deux gestes qui se distinguent :
+Le contrat le remplace par des gestes qui se distinguent :
 
 | ce que l'agent envoie | ce que ça veut dire |
 |---|---|
-| `@empty`  | je le vide, DÉLIBÉRÉMENT |
+| `@clear` | je l'efface, sans rien affirmer (oto#204) |
+| `@empty` | le vide est ASSUMÉ : aucune source ne donne cette valeur (oto#204) |
 | l'omission (ou `@keep`) | je n'y touche pas |
 
 ## Pourquoi un préavis, et pas un retrait
@@ -28,11 +29,13 @@ procédures, pas chez celui qui les exécute.
 
 ## Ce que le refus devra dire, quand il tombera
 
-**Nommer `@empty`, jamais interpréter en silence.** Un `null` traduit en `@empty`
-« pour rendre service » ferait effacer une valeur à un agent qui voulait dire « rien
-trouvé » — c'est-à-dire exactement le dégât que ce lot existe pour empêcher, commis par
-la correction elle-même. Demandé explicitement par la campagne, et c'est la bonne
-demande.
+**Nommer les deux gestes, jamais interpréter en silence.** Un `null` traduit d'office
+« pour rendre service » se tromperait dans les deux sens : en `@clear`, il effacerait
+une valeur chez un agent qui voulait dire « rien trouvé » — exactement le dégât que ce
+lot existe pour empêcher, commis par la correction elle-même ; en `@empty`, il
+affirmerait un vide que l'agent n'a peut-être jamais cherché (oto#204). Le refus dit
+`@clear` pour effacer et `@empty` pour un vide assumé, et l'agent choisit. Demandé
+explicitement par la campagne, et c'est la bonne demande.
 """
 from __future__ import annotations
 
@@ -100,10 +103,12 @@ def _les_deux_gestes() -> str:
     """Les deux issues, côte à côte — le CORPS que l'avertissement et le refus
     PARTAGENT. Partagé et non recopié : celui qui s'est préparé pendant le préavis ne
     doit pas découvrir au moment du refus qu'on lui demandait autre chose."""
-    return (f"Pour vider délibérément : `{dsl.VIDE_DELIBERE}`. Pour ne pas toucher : "
-            f"omets le champ, ou `{dsl.GARDE}`. ⚠️ Si `null` voulait dire « cherché, "
-            f"rien trouvé » — c'est l'usage le plus courant — alors le geste juste est "
-            f"l'OMISSION : ne rien trouver n'est pas effacer.")
+    return (f"Pour effacer sans rien affirmer : `{dsl.EFFACEMENT}`. Pour un vide ASSUMÉ "
+            f"— aucune source ne donne cette valeur — : `{dsl.VIDE_DELIBERE}`. Pour ne pas "
+            f"toucher : omets le champ, ou `{dsl.GARDE}`. ⚠️ Si `null` voulait dire "
+            f"« cherché, rien trouvé » — c'est l'usage le plus courant — alors, sur une "
+            f"valeur en place, le geste juste est l'OMISSION : ne rien trouver n'est pas "
+            f"effacer ; sur une case vide, c'est `{dsl.VIDE_DELIBERE}`.")
 
 
 def avertissement(colonnes: list[str]) -> Optional[str]:

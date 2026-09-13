@@ -38,7 +38,9 @@ from .columns import (
     arbitrer_les_vides,
     refuser_cles_internes,
     refuser_geste_sans_effet,
+    refuser_les_mots_mal_places,
     sans_les_nulls_sans_effet,
+    vides_assumes_perdus,
 )
 from .controles import _relever_origine_module
 from .donnees_d_origine import poser_les_deux_versions
@@ -116,6 +118,7 @@ class EcritureParIdMixin:
                 self.off_notices.add(fdn.avertissement(vises))
             _refuse_dotted_names(corps)
             refuser_cles_internes(corps)
+            refuser_les_mots_mal_places(schema, corps)
             _refuse_mixed_layers(schema, corps)
             prev_status = data.get(status_key) if status_key else None
             self._trace(trace, ns_id, ns, prev_status=prev_status)
@@ -142,6 +145,11 @@ class EcritureParIdMixin:
                 # MÊME fusion que le batch : l'origine survit ici aussi.
                 data[k] = _merge_column(data.get(k), v, dsv2.champ_declare(schema, k))
                 written.add(k)
+            # oto#204 : MÊME relevé que la fusion — le vide assumé qu'un remplacement de
+            # liste rend ordinaire ne tombe pas sans un mot.
+            for k in written:
+                vidages.extend(vides_assumes_perdus(avant.get(k), data.get(k), k, row_id,
+                                                    pose.get(k)))
             # #586/#606 : MÊME garde que la fusion — le patch par `id` est le geste le
             # plus courant d'un agent, et celui qui a écrasé les quatorze valeurs.
             refuser_champs_reserves(schema, pose, avant=avant,

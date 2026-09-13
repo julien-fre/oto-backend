@@ -17,7 +17,13 @@ from psycopg.errors import UniqueViolation
 from .. import db
 from . import acces_agent as aga
 from . import schema as dsv2
-from .columns import _META_COLS, refuser_cles_internes, sans_les_nulls_sans_effet
+from .columns import (
+    _META_COLS,
+    mots_resolus_a_la_creation,
+    refuser_cles_internes,
+    refuser_les_mots_mal_places,
+    sans_les_nulls_sans_effet,
+)
 from .controles import _relever_origine_module
 from .errors import BusinessKeyRequired, RowLocked, RowValidationError
 from .outils import _new_id, _refus_de_creation
@@ -114,6 +120,7 @@ class LotsMixin:
                     self.off_notices.add(fdn.avertissement(vises))
                 _refuse_dotted_names(user_data)
                 refuser_cles_internes(user_data)
+                refuser_les_mots_mal_places(schema, user_data)
                 # ⚠️ DÉBALLÉ : une clé métier ANNOTÉE désigne la même ligne qu'une clé nue.
                 # `{"code": {"valeur": "A", "comment": "fichier source"}}` et
                 # `{"code": "A"}` sont la MÊME identité — enrichir la provenance ne
@@ -154,14 +161,18 @@ class LotsMixin:
                 # CRÉATION : pas de ligne en base, donc rien à préserver — mais la
                 # règle « une origine déjà posée ne se réécrit pas » vaut quand même,
                 # car l'appelant peut avoir écrit `origine` lui-même (chemin déclaré).
+                # oto#204 : la ligne NEUVE d'un lot ne passe pas par la fusion — ses mots
+                # réservés se résolvent ici, sur une copie (cf. `append_row`) : la course
+                # perdue ci-dessous fusionne le geste d'origine.
+                a_creer = mots_resolus_a_la_creation(schema, user_data)
                 if donnees_d_origine:
-                    poser_les_deux_versions(user_data, schema=schema)
+                    poser_les_deux_versions(a_creer, schema=schema)
                 # `lot=True` : le refus de l'`id` nu doit nommer un geste qui
                 # ABOUTIT en mode lot — cf. #72, 22 cas sur 29 suivaient le conseil
                 # du refus précédent, lequel échouait ici.
-                self._check_row(schema, user_data, lot=True, creation=True)
+                self._check_row(schema, a_creer, lot=True, creation=True)
                 try:
-                    row = db.datastore_insert_row(ns_id, _new_id(), user_data)
+                    row = db.datastore_insert_row(ns_id, _new_id(), a_creer)
                 except UniqueViolation:
                     # Course perdue sous l'index UNIQUE de clé métier (#109 ch.3) : un
                     # write concurrent vient d'insérer la même clé entre le lookup et

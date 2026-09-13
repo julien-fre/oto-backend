@@ -22,8 +22,8 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
-from .couches import (_is_empty, CLES_INTERNES, LAYER_KEYS, layer_value, split_layer,
-                      unknown_layers, unwrap, vide_assume)
+from .couches import (_is_empty, CLES_INTERNES, LAYER_KEYS, VIDE_DELIBERE, layer_value,
+                      split_layer, unknown_layers, unwrap, vide_assume)
 from .options_declarees import hors_des_options, montrable
 from .motifs import _pattern_re
 from .declaration import _fields, max_length_of, pattern_of, status_field, validation_active
@@ -154,6 +154,15 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
     return _conformite_scalaire(value, ftype, path) or _hors_options(value, options, path, hors)
 
 
+#: oto#204 : ce qu'un refus de requis dit du vide ASSUMÉ. Deux gestes, et le second ferme
+#: le défaut du lot : une liste relue au défaut puis renvoyée rend `""` là où la lecture
+#: avait un vide assumé — le refus doit dire comment le relire, pas seulement quoi écrire.
+_CLAUSE_VIDE_ASSUME = (
+    f" — si aucune source ne donne cette valeur, écris `{VIDE_DELIBERE}` ; si tu renvoies "
+    f"une ligne lue, relis-la avec `empties=sentinel` : un vide déjà assumé y revient "
+    f"`{VIDE_DELIBERE}`, à renvoyer tel quel")
+
+
 def _row_errors(fields: list, data: dict, path: str,
                 written: Optional[set] = None, *,
                 strict: bool = False, closed: bool = False,
@@ -266,7 +275,7 @@ def _row_errors(fields: list, data: dict, path: str,
                 # coup d'après).
                 errors.append(f"{fpath}: champ requis manquant{cause} — "
                               f"elle attend {_forme_attendue(f)}"
-                              + _clause_aiguillage(fields, rw))
+                              + _clause_aiguillage(fields, rw) + _CLAUSE_VIDE_ASSUME)
                 if details is not None:
                     details.setdefault("expected_column", str(key))
             continue

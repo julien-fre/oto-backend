@@ -230,10 +230,18 @@ une chose et son contraire selon l'endroit, et c'est ce qu'on retire.
 
 | ce que tu veux | ce que tu écris |
 |---|---|
-| vider délibérément | `{"champ": {"valeur": "@empty"}}` |
+| effacer, sans rien affirmer | `{"champ": "@clear"}` — refusé sur un champ requis |
+| dire que le vide est ASSUMÉ (aucune source ne donne la valeur) | `{"champ": "@empty"}` — il satisfait un champ requis |
 | ne pas y toucher | **omets le champ** (ou `@keep`) |
 
-⚠️ **`@keep` et `@empty` doivent être la valeur ENTIÈRE du sous-champ, seuls.** Mélangés
+Les deux mots valent aussi en couches (`{"champ": {"valeur": "@empty", "comment": …}}`) et
+sur le champ d'un élément de liste (`{"contacts": [{"nom": …, "fonction": "@empty"}]}`).
+Posés sur une couche (`comment`, `link`), ils ne vident que cette couche. Un vide assumé
+se relit `""` par défaut, et `"@empty"` avec `empties=sentinel` : c'est la lecture à
+faire avant de renvoyer une liste sans `of.key`, qui se remplace entière. Ils sont
+refusés sur l'identité d'un élément (`of.key`), dans une liste de valeurs et dans un objet.
+
+⚠️ **`@keep`, `@empty` et `@clear` doivent être la valeur ENTIÈRE du sous-champ, seuls.** Mélangés
 à une phrase, ce ne sont plus que du texte, stocké tel quel — `"@keep ; trouvé sur les
 mentions légales"` atterrit dans la case, et une cliente le lit dans son livrable. Pour
 garder ce qui est là ET ajouter quelque chose, il faut choisir : garder, ou remplacer.
@@ -245,9 +253,9 @@ d'une sous-chaîne — `contact@keepcool.fr` en ferait les frais. Mieux vaut ser
 chaîne visible qu'exécuter une intention devinée.
 
 ⚠️ **Si `null` voulait dire « cherché, rien trouvé » chez toi — c'est l'usage le plus
-courant — alors le geste juste est l'OMISSION, pas `@empty`.** Ne rien trouver n'est
-pas effacer. Traduire mécaniquement tes `null` en `@empty` détruirait des valeurs que
-tu voulais seulement laisser en place.
+courant — alors, sur une valeur en place, le geste juste est l'OMISSION.** Ne rien trouver
+n'est pas effacer. Sur une case vide, c'est `@empty`. Traduire mécaniquement tes `null`
+en `@empty` ou en `@clear` détruirait des valeurs que tu voulais seulement laisser en place.
 
 Jusqu'à la date, `null` efface encore et la réponse porte un avertissement. Après, il
 est **refusé** — jamais interprété en silence, parce qu'un `null` traduit « pour rendre

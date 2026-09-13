@@ -42,13 +42,14 @@ class LectureMixin:
 
     def get_row(self, datastore: str, row_id: str, *,
                 layers: str = dsl.DEFAUT,
-                versions: tuple = dsver.DEFAUT) -> dict:
+                versions: tuple = dsver.DEFAUT,
+                empties: str = dsl.EMPTIES_DEFAUT) -> dict:
         ns_id = self._resolve(datastore)
         row = db.datastore_get_row(ns_id, row_id)
         if not row:
             raise RowNotFound(row_id)
         return self._row_to_dict(row, self._schema_of(ns_id), layers=layers,
-                                 versions=versions)
+                                 versions=versions, empties=empties)
 
     def list_rows(
         self,
@@ -84,6 +85,7 @@ class LectureMixin:
         filters: Optional[list] = None,
         layers: str = dsl.DEFAUT,
         versions: tuple = dsver.DEFAUT,
+        empties: str = dsl.EMPTIES_DEFAUT,
     ) -> dict:
         """Page pour l'agent (chemin MCP `data_rows`), filtre/recherche/tri poussés en
         SQL. Renvoie `{rows, next_cursor}` — `next_cursor` non nul ⇒ il reste des lignes
@@ -120,7 +122,8 @@ class LectureMixin:
                            if len(rows) == limit else None)
             if sch is None and rows:
                 sch = self._schema_of(ns_id)
-            out = {"rows": [self._row_to_dict(r, sch, layers=layers, versions=versions) for r in rows],
+            out = {"rows": [self._row_to_dict(r, sch, layers=layers, versions=versions,
+                                              empties=empties) for r in rows],
                    "next_cursor": next_cursor,
             # ⚠️ La réponse DÉCLARE ce qu'elle sert (oto#140). Sans elle, « je ne
             # l'ai pas demandée » et « elle n'existe pas sur cette case » se lisent
@@ -139,7 +142,8 @@ class LectureMixin:
             ns_id, after_row_id=after, limit=limit, q=q, filters=filters)
         if sch is None and rows:
             sch = self._schema_of(ns_id)
-        out = [self._row_to_dict(r, sch, layers=layers, versions=versions) for r in rows]
+        out = [self._row_to_dict(r, sch, layers=layers, versions=versions, empties=empties)
+               for r in rows]
         next_cursor = _encode_cursor(rows[-1]["row_id"]) if len(rows) == limit else None
         # ⚠️ SECOND retour de cette méthode — le chemin du curseur simple. Le premier
         # (trié) le déclarait déjà ; celui-ci non. Une fonction à deux sorties est une
@@ -187,6 +191,7 @@ class LectureMixin:
         filters: Optional[list] = None,
         layers: str = dsl.DEFAUT,
         versions: tuple = dsver.DEFAUT,
+        empties: str = dsl.EMPTIES_DEFAUT,
     ) -> dict:
         """Page server-side (tri/recherche/filtres SQL) + total — pour le dashboard.
         Deux formes de filtre CUMULABLES, comme `aggregate` : `filter` exact
@@ -215,7 +220,8 @@ class LectureMixin:
             order_dir=order_dir, q=q, filters=clauses,
             order_type=otype, order_options=oopts)
         out = {
-            "rows": [self._row_to_dict(r, sch, layers=layers, versions=versions) for r in rows],
+            "rows": [self._row_to_dict(r, sch, layers=layers, versions=versions,
+                                       empties=empties) for r in rows],
             # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la
             # pagination du dashboard annonce des lignes qu'elle ne servira jamais.
             "total": db.datastore_count_rows(ns_id, q=q, filters=clauses),

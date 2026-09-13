@@ -754,26 +754,38 @@ def register(mcp: FastMCP) -> None:
         (`oto_guide op=read slug=datastore-semantics`).
 
         ⚠️ **Writing a value DROPS the `comment` and `link` that came with it** —
-        they described the OLD value. Two reserved words let you say otherwise,
-        without having to read the cell back first:
+        they described the OLD value. Reserved words let you say otherwise, without
+        having to read the cell back first:
 
             "raison_sociale": {"valeur": "ACME SAS", "comment": "@keep"}
 
-        `"@keep"` = leave that sub-field exactly as it is. `"@empty"` = empty it ON
-        PURPOSE, which is NOT the same as leaving it out: an empty `comment` says
-        "looked, found nothing", an absent one says "never looked".
+        `"@keep"` = leave that sub-field exactly as it is.
+        `"@empty"` = the empty is ASSUMED: you looked, and no source gives it. It
+        satisfies `required` (a plain `""` does not) and reads back `""` — or
+        `"@empty"` with `empties="sentinel"`.
+        `"@clear"` = empty it WITHOUT assuming anything: the value goes, and an
+        assumed empty goes with it. On a `required` field it is refused.
+        On a layer (`comment`, `link`), `@empty` and `@clear` only empty that layer:
+        the value and an assumed empty stay.
 
-        ⚠️ **Both words must be the ENTIRE sub-field, alone.** Mixed into a sentence
+        ⚠️ **These words must be the ENTIRE sub-field, alone.** Mixed into a sentence
         they are just text and get stored as such — `"@keep ; found on the imprint"`
         lands in the cell verbatim, and a client reads it in their deliverable. To
         keep what is there AND add something, you cannot do both in one write: keep
         it (`"@keep"`) or replace it, but do not write the word next to your prose.
 
-        ⚠️ **`@empty` does not mean "I found nothing".** It means "what is there must
-        go" — it ERASES a value already in place. To record a fruitless search
+        ⚠️ **On a cell that HOLDS a value, `@empty` does not mean "I found nothing".**
+        Like `@clear`, it ERASES the value in place. To record a fruitless search
         without destroying anything, write the layers ALONE, with no `valeur` key:
         `{"field": {"comment": "searched on …, nothing"}}`. The value survives, the
         trace is added beside it.
+
+        In a list, the word goes on the element's field:
+        `{"contacts": [{"nom": "Alice", "fonction": "@empty"}]}`. A list whose schema
+        declares no `of.key` is REPLACED by what you send: read the row with
+        `empties="sentinel"` and send each element back as it came, so an assumed
+        empty stays `"@empty"`. Refused on an element's identity (`of.key`), in a list
+        of plain values, and inside an object or a `json` column.
 
         **Use `@keep` whenever you fix a value without re-establishing where it came
         from** — a typo, a formatting change, a case correction. Retyping the
@@ -1042,7 +1054,8 @@ def register(mcp: FastMCP) -> None:
                         # agent répète le PLUS : la bascule l'aurait laissée derrière,
                         # et le défaut aurait divergé là où ça se voit le moins.
                         layers: str = dsl.DEFAUT,
-                        filters: Optional[list] = None) -> dict:
+                        filters: Optional[list] = None,
+                        empties: str = dsl.EMPTIES_DEFAUT) -> dict:
         """Atomically claim the NEXT unprocessed row of a datastore (work queue).
 
         The primitive for draining a table with N parallel (sub-)agents without
@@ -1113,6 +1126,12 @@ def register(mcp: FastMCP) -> None:
         loses the whole row. This is the only read that feeds a WRITE loop, so it is
         the one where the shape matters.
 
+        `empties="sentinel"` serves a cell emptied ON PURPOSE (written `@empty`) as
+        `"@empty"` instead of `""` — an ordinary `""` stays `""`. Claim that way when
+        you will re-send a list: sent back as is, `@empty` keeps the deliberate empty,
+        where `""` on a required field is refused. It is not a value: never copy it
+        into a deliverable. `plain` (default) serves `""`.
+
         Every column DECLARED in the schema is on the row, `null` when no value is in
         place — `null` means "nothing here yet": find it if your task needs it, never
         make it up. Sending such a `null` back changes nothing (a `null` only erases a
@@ -1138,7 +1157,8 @@ def register(mcp: FastMCP) -> None:
             row = store.claim_next(datastore, worker=worker, filter=filter,
                                    lease_s=lease_s, max_claims=max_claims,
                                    warnings=warnings, perimetre=perimetre,
-                                   layers=dsl.check(layers), filters=filters)
+                                   layers=dsl.check(layers), filters=filters,
+                                   **dsl.relayer_empties(dsl.check_empties(empties)))
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except DatastoreNotFound as e:
@@ -1200,12 +1220,18 @@ def register(mcp: FastMCP) -> None:
         # ⚠️ `dsver.DEFAUT`, jamais un littéral — même promesse que `layers.DEFAUT` :
         # le défaut se lit à un seul endroit pour qu'une bascule soit un seul geste.
         versions: Optional[list[str]] = None,
+        empties: str = dsl.EMPTIES_DEFAUT,
     ) -> dict:
         """Read rows. WITH `id` = the single row (by `_id`). WITHOUT `id` = one PAGE
         of rows (`filter`/`q` narrow it, `order_by` sorts it) with a stable cursor.
 
         Layers come back FLAT by default (`champ.origine` beside the bare name);
         `layers="nested"` returns the shape you write — guide `datastore-semantics`.
+
+        `empties="sentinel"` serves a cell emptied ON PURPOSE (written `@empty`) as
+        `"@empty"` instead of `""`; an ordinary `""` stays `""`. Read that way before
+        re-sending a list: `@empty` sent back keeps the deliberate empty, `""` on a
+        required field is refused.
 
         `versions=["current","origine"]` picks which VERSIONS of each cell you get:
         `current` is what we established, `origine` what the client handed over.
@@ -1309,12 +1335,18 @@ def register(mcp: FastMCP) -> None:
                 a field name only exists in `flat`. The default WILL switch to
                 `nested`, with dated notice: pass `layers` explicitly if you depend
                 on one shape.
+            empties: how a cell emptied ON PURPOSE (written `@empty`) comes back.
+                `plain` (default): `""`, like any empty cell. `sentinel`:
+                `"@empty"`, the word that writes it — top level, nested
+                (`{"valeur": "@empty", …}`) and inside list elements alike. It is not
+                a value: never copy it into a deliverable. Any other value is refused.
         """
         store = _acting_store()
         datastore, id = _adresse(datastore, id)
         try:
             jetons.verifier_champs(fields=fields, filter=filter, filters=filters)
             layers = dsl.check(layers)
+            empties = dsl.check_empties(empties)
             # Refus qui NOMME le paramètre, la valeur reçue et ce qui est admis — il
             # traverse en INVALID_PARAMS comme les autres refus d'adresse, au seul
             # moment où l'appelant peut encore corriger.
@@ -1325,7 +1357,7 @@ def register(mcp: FastMCP) -> None:
                 return {"total": total, **identite.numero(store.dernier_tableau)}
             if id is not None:
                 row = store.get_row(datastore, id, layers=layers,
-                                    versions=vers)
+                                    versions=vers, **dsl.relayer_empties(empties))
                 # ⚠️ Le NUMÉRO ne s'ajoute PAS ici, et c'est délibéré : cette remise
                 # n'a pas d'enveloppe, son corps EST la ligne — et c'est exactement
                 # l'objet que la plateforme invite à relire puis republier tel quel
@@ -1337,7 +1369,8 @@ def register(mcp: FastMCP) -> None:
             page = store.cursor_rows(datastore, filter=filter, limit=limit,
                                      cursor=cursor, q=q, filters=filters,
                                      order_by=order_by, order_dir=order_dir,
-                                     layers=layers, versions=vers)
+                                     layers=layers, versions=vers,
+                                     **dsl.relayer_empties(empties))
             rows = [_project_row(r, fields) for r in page["rows"]] if fields else page["rows"]
             out = {"rows": rows, "count": len(rows),
                    "next_cursor": page["next_cursor"],

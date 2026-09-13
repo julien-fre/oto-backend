@@ -80,9 +80,14 @@ VALUE_BOUND_LAYERS = tuple(k for k in LAYER_KEYS if k != ORIGIN_LAYER)
 # production ne commence par lui.
 GARDE = "@keep"
 VIDE_DELIBERE = "@empty"
+#: oto#204 : vider SANS assumer — la valeur part, le vide assumé éventuel avec elle. Le
+#: pendant de `@empty`, qui, lui, pose le marqueur : sans ce mot, après le refus de
+#: `null`, plus rien n'effacerait une valeur sans affirmer « aucune source ne la donne ».
+EFFACEMENT = "@clear"
 
-#: Les deux, pour un test d'appartenance lisible.
-SENTINELLES = (GARDE, VIDE_DELIBERE)
+#: Tout le vocabulaire, pour un test d'appartenance lisible. Ce que fait chacun vit dans
+#: UNE table, `columns._MOTS` — un mot de plus est une entrée là et son nom ici.
+SENTINELLES = (GARDE, VIDE_DELIBERE, EFFACEMENT)
 
 #: Le marqueur interne du vide ASSUMÉ (oto#204), rangé dans l'enveloppe de la cellule :
 #: `{"valeur": "", "oto.vide_assume": true}`. Il distingue « aucune source ne donne ce
@@ -381,7 +386,7 @@ def layer_address(name: Any):
     return base, couche
 
 
-def served_value(value: Any) -> Any:
+def served_value(value: Any, *, sentinelle: bool = False) -> Any:
     """Ce qu'un LECTEUR reçoit pour cette colonne (oto#22 §1-2).
 
     `unwrap` rend la valeur d'UNE colonne ; celle-ci descend d'un cran quand cette
@@ -397,20 +402,26 @@ def served_value(value: Any) -> Any:
     `item["email.origine"]`.
 
     Un item non-dict traverse tel quel — une liste de scalaires reste une liste de
-    scalaires."""
+    scalaires.
+
+    `sentinelle` (`empties=sentinel`, oto#204) : une case au vide ASSUMÉ est servie
+    `"@empty"` — à ce niveau comme dans les fiches d'une liste — au lieu du `""` qui la
+    confond avec un vide ordinaire. Sans lui, rien ne change."""
+    if sentinelle and vide_assume(value):
+        return VIDE_DELIBERE
     v = unwrap(value)
     if isinstance(v, list):
-        return [_served_item(item) for item in v]
+        return [_served_item(item, sentinelle=sentinelle) for item in v]
     return v
 
 
-def _served_item(item: Any) -> Any:
+def _served_item(item: Any, *, sentinelle: bool = False) -> Any:
     """Un item de liste est une FICHE : chacun de ses attributs est une feuille."""
     if not isinstance(item, dict):
         return item
     out: dict = {}
     for k, v in item.items():
-        out[k] = served_value(v)
+        out[k] = served_value(v, sentinelle=sentinelle)
         out.update(flat_layers(k, v))
     return out
 
