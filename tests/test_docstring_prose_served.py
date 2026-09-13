@@ -6,7 +6,7 @@ bloc `Args:`, et toute section `Returns:`/`Examples:`/`Note:`, sont JETÉS en
 silence. Mesuré le 2026-09-01 : 61 outils sur 637 perdaient de la prose (~9 600
 caractères), dont `oto_call` — dont le paragraphe des jetons `_group`/`_project`/
 `_instance`/`_account`/`_run_id` n'a jamais atteint aucun agent (trouvaille de la
-session movinmotion-bridge), `fr_search`, `run_start` et `oto_list_my_tools` ; et
+session d'un client), `fr_search`, `run_start` et `oto_list_my_tools` ; et
 15 autres perdaient leur section `Returns:` depuis toujours.
 
 La règle de maison qui en sort : dans un docstring d'outil, TOUTE la prose vit

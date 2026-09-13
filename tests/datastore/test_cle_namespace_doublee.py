@@ -101,7 +101,7 @@ def test_AUCUNE_reponse_du_datastore_ne_sert_encore_l_ancien_nom():
     }
     # (c) MÊME SENS, AUTRE PORTEUR — c'est bien un tableau du datastore, et ça devra
     #     basculer ; ce n'est simplement pas ce lot-ci qui le porte. Signalé à la
-    #     session `fleet` le 10/09/2026, après que la session Audiens a mesuré que la
+    #     session `fleet` le 10/09/2026, après qu'une session cliente a mesuré que la
     #     réponse `runner/fleets` sert un `namespace` qui désigne une table de campagne
     #     (`make_store(...).count_rows(f["namespace"], …)` le prouve). La colonne
     #     `runner_fleets.namespace` et le `payload` des jobs sont persistés : la bascule
