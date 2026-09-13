@@ -158,7 +158,16 @@ def test_target_error_returned_as_data(oto_call_fn, monkeypatch):
     target = _FakeTool("foncier_dpe", exc=RuntimeError("upstream 500"))
 
     out = _call(oto_call_fn, [target], name="foncier_dpe", arguments={})
-    assert out == {"tool": "foncier_dpe", "ok": False, "error": "upstream 500"}
+    # Erreur classifiée : code (interne), retryable (non), message (scrubbé), pas de stacktrace
+    assert out["tool"] == "foncier_dpe"
+    assert out["ok"] is False
+    error = out["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "internal"
+    assert error["retryable"] is False
+    assert error["message"] == "Erreur interne du serveur."
+    # Pas de stacktrace brute « upstream 500 » — c'est l'asymétrie qu'on corrige
+    assert "500" not in error["message"]
 
 
 def test_unknown_tool_raises(oto_call_fn, monkeypatch):
@@ -298,3 +307,65 @@ def test_dispatch_strips_nonapplicable_axis(oto_call_fn, monkeypatch):
     _call(oto_call_fn, [target], name="folk_record",
           arguments={"query": "acme", "_account": "nope"})
     assert target.args_seen == {"query": "acme"}     # `_account` écarté, cible propre
+
+
+# --- 8. oto-backend#566 : parité d'enveloppe d'erreur avec middleware --------
+
+def test_oto_call_error_classified_like_middleware(oto_call_fn, monkeypatch):
+    """Parité ErrorEnvelopeMiddleware : l'erreur remontée par oto_call (dispatch
+    universel) doit être classifiée identiquement au middleware MCP. Détecte toute
+    future asymétrie — une erreur brute str() exposerait des détails internes."""
+    from oto_mcp import error_taxonomy
+
+    monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
+
+    # Trois catégories d'erreur : amont (4xx/5xx), config user, interne
+    test_cases = [
+        (RuntimeError("upstream server error"), "internal"),  # non-structuré → internal
+        (ValueError("missing parameter"), "internal"),  # ValueError → internal (pas McpError)
+    ]
+
+    for exc, expected_code in test_cases:
+        target = _FakeTool("fr_ccn_search", exc=exc)
+        result = _call(oto_call_fn, [target], name="fr_ccn_search", arguments={})
+
+        assert result["ok"] is False
+        error = result["error"]
+        assert isinstance(error, dict), f"erreur non-classifiée : {error}"
+        assert error["code"] == expected_code, f"exc={exc}, code={error['code']}"
+        assert "retryable" in error, "manque retryable"
+        assert "message" in error, "manque message"
+        # Pas de stacktrace ou détail interne brut dans le message
+        assert str(exc) not in error["message"], \
+            f"message brut exposé : {error['message']}"
+
+
+def test_upstream_error_via_oto_call_vs_direct_call(oto_call_fn, monkeypatch):
+    """Une même erreur amont, appelée directement ou via oto_call, produit le même
+    contrat d'erreur. Valide que la classification dans oto_call et dans
+    ErrorEnvelopeMiddleware reste synchronisée (régression #566)."""
+    from oto_mcp import error_taxonomy
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
+
+    # Exception amont typée (simule une vraie erreur du connecteur) — status 429
+    upstream_exc = UpstreamHTTPError(429, {"error": "Rate limited"}, service="test_api")
+
+    # Classification directe (hors dispatch)
+    direct_info = error_taxonomy.classify(upstream_exc)
+
+    # Simule ce qu'oto_call ferait — même classification
+    target = _FakeTool("test_upstream", exc=upstream_exc)
+    result = _call(oto_call_fn, [target], name="test_upstream", arguments={})
+
+    assert result["ok"] is False
+    error = result["error"]
+    assert isinstance(error, dict)
+    # Les deux chemins (direct + via dispatch) produisent le même code/retryable
+    assert error["code"] == direct_info.code
+    assert error["retryable"] == direct_info.retryable
+    assert error["message"] == direct_info.message
+    # Pour 429, on attend rate_limited/retryable
+    assert error["code"] == "rate_limited"
+    assert error["retryable"] is True
