@@ -280,6 +280,23 @@ def test_au_dela_du_debit_la_livraison_est_RETARDEE_pas_refusee(client, org):
     assert db.get_job(second.json()["job_id"], org["id"])["status"] == "pending"
 
 
+def test_SANS_fraicheur_declaree_une_rafale_n_est_jamais_refusee(client, org):
+    """⚠️ Le défaut tranché le 13/09 : rien ne périme. Débit 1, aucune fraîcheur :
+    la seconde livraison est RETARDÉE d'une heure, jamais refusée, et son travail
+    ne porte aucune péremption."""
+    from oto_mcp import db
+    t = db.create_trigger(org["id"], org["membre"], procedure="veille-defaut",
+                          tz="UTC", tools=["oto_doc"], kind="webhook",
+                          input="x", max_per_hour=1)
+    secret, hache = runner_hook.nouveau_secret()
+    db.poser_secret_de_hook(t["id"], org["id"], hache)
+    _post(client, t["id"], secret, {})
+    r = _post(client, t["id"], secret, {})
+    assert r.status_code == 202, r.text
+    assert r.json()["delayed_seconds"] >= 3500
+    assert "_perime_apres_s" not in db.get_job(r.json()["job_id"], org["id"])["payload"]
+
+
 def test_une_file_au_dela_de_sa_FRAICHEUR_rend_429(client, org):
     from oto_mcp import db
     t = db.create_trigger(org["id"], org["membre"], procedure="veille-perimee",

@@ -67,7 +67,8 @@ class TriggerInput(BaseModel):
     #: Le débit de LISSAGE, par heure. Au-delà, une livraison est acceptée et son
     #: travail part plus tard — jamais refusée.
     max_per_hour: Optional[int] = None
-    #: Au-delà de ce délai, un travail lissé ne part plus (`0` = jamais périmé).
+    #: Au-delà de ce délai, un travail lissé ne part plus. Absent ou `0` = JAMAIS
+    #: (le défaut) : un événement reçu part, même tard.
     freshness_seconds: Optional[int] = None
     #: `deliveries` : combien de livraisons rendre.
     limit: Optional[int] = None

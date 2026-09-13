@@ -20,12 +20,15 @@ Il est séparé de la route pour la même raison que `runner_tick` l'est du life
    événement perdu — un lead qui n'arrive jamais, sans que personne ne le voie ;
    un webhook retardé est un lead traité en retard, ce qui se rattrape.
 
-3. **Ce qui a trop attendu PÉRIME.** Un travail lissé porte une échéance de
-   fraîcheur : passé ce délai, il ne part pas. C'est la règle que les
-   déclencheurs programmés tiennent déjà — « une veille quotidienne exécutée
-   treize jours plus tard ne rend pas un résultat en retard, elle rend un
-   résultat FAUX » — et c'est elle qui empêche un lissage de devenir un arriéré
-   qui se déverse un jour plus tard.
+3. **Rien ne périme par défaut** (tranché le 13/09/2026). Un événement reçu est
+   un événement qui PARTIRA, même tard : c'est la même décision que « retarder
+   plutôt que refuser », poussée à son terme. La péremption existe, mais elle se
+   DÉCLARE sur l'agent (`fraicheur_s`) — pour les cas où un événement joué trop
+   tard rend un résultat faux plutôt qu'un résultat tardif.
+   ⚠️ Conséquence assumée : la file d'un déclencheur n'a pas de plafond. Une
+   source qui envoie plus que son débit, durablement, construit un arriéré qui
+   ne se résorbe que lorsqu'elle ralentit. Le frein est la PAUSE, qui périme tout
+   ce qui attend ; le plafond de dépense est un autre chantier.
 """
 from __future__ import annotations
 
@@ -51,11 +54,15 @@ HOOK_SECRET_PREFIX = "otoh_"
 DEBIT_PAR_HEURE_DEFAUT = 60
 _FENETRE_S = 3600
 
-#: Au-delà, un travail lissé ne part plus. Une heure : assez pour absorber une
-#: rafale ordinaire, assez court pour qu'un agent ne traite jamais un événement
-#: d'hier en croyant qu'il est d'aujourd'hui. `0` = jamais périmé (déclaré par
-#: l'agent, pour les cas où tard vaut mieux que jamais).
-FRAICHEUR_S_DEFAUT = 3600
+#: Au-delà de cette durée, un travail lissé ne part plus. **`0` = jamais, et c'est
+#: le DÉFAUT** (tranché le 13/09/2026) : un événement reçu part, même tard. La
+#: fraîcheur se déclare sur l'agent quand un événement joué trop tard rendrait un
+#: résultat FAUX. Une heure par défaut, jusqu'au 13/09, perdait tout événement
+#: reçu pendant une panne du runner de plus d'une heure.
+#:
+#: ⚠️ Ce défaut ne s'applique qu'à la LECTURE (`fraicheur_s IS NULL` → jamais) :
+#: aucune ligne n'est réécrite, et un agent qui a déclaré une fraîcheur la garde.
+FRAICHEUR_S_DEFAUT = 0
 
 #: Le corps accepté, en octets. Le même plafond que `routine_fire` applique au
 #: contexte d'un run, et pour la même raison : au-delà, on demande une RÉFÉRENCE.
@@ -253,12 +260,10 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
             # ensemble — le lissage serait inerte exactement quand il sert.
             db.verrouiller_le_declencheur(conn, trigger_id)
             debit = int(t.get("max_per_hour") or DEBIT_PAR_HEURE_DEFAUT)
-            deja = db.compter_dans_la_fenetre(conn, trigger_id, _FENETRE_S)
             # Le LISSAGE. Au-delà du débit, le travail ne part pas tout de suite :
-            # il part à la seconde où la fenêtre se libère. Rien n'est refusé,
-            # rien n'est perdu — la source ne voit qu'un délai annoncé.
-            retard_s = (0 if deja < debit
-                        else max(1, int(_FENETRE_S * (deja - debit + 1) / debit)))
+            # il prend le prochain créneau libre, DERRIÈRE ceux qui attendent déjà.
+            # Rien n'est refusé, rien n'est perdu — la source ne voit qu'un délai.
+            retard_s = db.retard_de_lissage(conn, trigger_id, debit, _FENETRE_S)
 
             fraicheur = t.get("fraicheur_s")
             fraicheur = FRAICHEUR_S_DEFAUT if fraicheur is None else int(fraicheur)
@@ -303,14 +308,16 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                     conn=conn)
                 db.enregistrer(conn, trigger_id, t["org_id"],
                                db.DELAYED if retard_s else db.QUEUED,
-                               job_id=job["id"], source=source)
+                               job_id=job["id"], source=source,
+                               # Le créneau RÉSERVÉ, lu sur le travail même : c'est
+                               # lui que la livraison suivante lira pour se placer.
+                               due_at=job.get("due_at"))
 
     if refus is not None:
         raise refus
 
     if retard_s:
-        logger.info("webhook %s (org %s) : travail %s LISSÉ de %s s (%s livraisons "
-                    "dans l'heure, débit %s/h)", trigger_id, t["org_id"], job["id"],
-                    retard_s, deja, debit)
+        logger.info("webhook %s (org %s) : travail %s LISSÉ de %s s (débit %s/h)",
+                    trigger_id, t["org_id"], job["id"], retard_s, debit)
     return {"ok": True, "job_id": job["id"], "trigger_id": trigger_id,
             "delayed_seconds": retard_s or None}

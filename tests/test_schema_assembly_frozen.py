@@ -361,8 +361,12 @@ from oto_mcp.db import _schema, schema
 # dont `next_due` est NULL.
 # ⚠️ Empreinte RECALCULÉE sur le résultat FUSIONNÉ (rebase du 13/09 sur `revision`) :
 # recopier l'une des deux aurait validé un DDL que personne n'a servi.
-EMPREINTE = "bc5dea444e1e894cc65c34dde17e20b19a8d25ed086232650885c36b7016d7f2"
-LONGUEUR = 156477
+# 2026-09-13 : `runner_hook_deliveries.due_at` + l'index partiel des CRÉNEAUX. Le
+# lissage se juge sur les créneaux réservés et non plus sur les réceptions : dès que
+# rien ne périme par défaut, un retard dure des jours et la fenêtre des réceptions ne
+# dit plus rien de la file. Table NEUVE, jamais déployée — CREATE seul, aucun ALTER.
+EMPREINTE = "948694a4475e9984242c7f43124cb51c3bd855c9842fbc84653b878bbba01b92"
+LONGUEUR = 157280
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -4,8 +4,8 @@ qu'on en a fait.
 Une ligne par appel, accepté ou non. Trois lecteurs, un seul écrivain (la route
 `/api/hooks`) :
 
-1. le **lissage** — combien de livraisons dans l'heure écoulée, pour savoir si
-   celle-ci part tout de suite ou plus tard ;
+1. le **lissage** — les CRÉNEAUX déjà réservés (`due_at`), pour savoir si
+   celle-ci part tout de suite ou derrière la file ;
 2. l'**écran** — qui a appelé, quand, et quel déroulé en est sorti. Sans lui, une
    source mal configurée est un mystère plutôt qu'un diagnostic : c'est la leçon
    de `expired_count` sur un déclencheur programmé, où quarante-et-une occurrences
@@ -25,7 +25,8 @@ détour : une coupure réseau après notre écriture fait un second déroulé.
 """
 from __future__ import annotations
 
-from typing import Optional
+import math
+from typing import Any, Optional
 
 from ._conn import _connect
 
@@ -60,32 +61,93 @@ def verrouiller_le_declencheur(conn, trigger_id: int) -> None:
                  (trigger_id,)).fetchone()
 
 
-def compter_dans_la_fenetre(conn, trigger_id: int, secondes: int) -> int:
-    """Combien de livraisons ENFILÉES ce déclencheur a produites dans la fenêtre.
+def retard_de_lissage(conn, trigger_id: int, debit: int, fenetre_s: int = 3600) -> int:
+    """Dans combien de secondes le travail de CETTE livraison peut partir. `0` =
+    maintenant.
 
-    ⚠️ Prend la connexion de l'appelant : cette lecture et l'écriture qui la suit
-    vivent dans UNE transaction — et l'appelant a pris `verrouiller_le_declencheur`
-    AVANT, sans quoi deux livraisons simultanées liraient toutes deux le même
-    compte périmé.
+    La règle, en deux lignes :
+    - **au plus `debit` départs dans toute heure glissante**, jugé sur les créneaux
+      RÉSERVÉS (`due_at`), pas sur les réceptions ;
+    - **au-delà, en file** : chaque travail part au moins `fenetre_s / debit` après
+      le précédent, et jamais AVANT lui.
 
-    ⚠️ Ne compte que ce qui a ENFILÉ (`queued`/`delayed`) : un refus n'a rien
-    coûté, et le faire compter dans le lissage ferait retarder des travaux
-    légitimes à cause d'une source qui présente un mauvais secret.
+    ⚠️ **Pourquoi les créneaux, et plus les réceptions** (13/09/2026). Le premier
+    lot comptait les livraisons REÇUES dans l'heure. Ça tenait tant qu'un retard
+    ne pouvait pas dépasser une heure — la fraîcheur par défaut refusait au-delà.
+    Le jour où rien ne périme, un retard dure des jours ; une heure après la
+    rafale, la fenêtre des réceptions est VIDE, et une livraison neuve partait
+    tout de suite, DEVANT un arriéré encore en attente : débit non tenu, ordre
+    d'arrivée non tenu. Les créneaux futurs, eux, restent visibles tant qu'ils
+    n'ont pas eu lieu.
+
+    ⚠️ Prend la connexion de l'appelant, qui a pris `verrouiller_le_declencheur`
+    AVANT : sans le verrou, deux livraisons simultanées liraient les mêmes
+    créneaux et réserveraient le même.
+
+    ⚠️ `NOW()` est lu dans la transaction, jamais sur l'horloge du process : c'est
+    la même horloge que `enqueue_job` utilise pour poser `due_at`, et deux boxes
+    (prod, preprod) partagent la base sans partager d'horloge.
+
+    Borné : l'index `(trigger_id, due_at DESC)` et `LIMIT debit` — la lecture ne
+    grandit pas avec l'arriéré.
     """
+    debit = max(1, int(debit))
     row = conn.execute(
         """
-        SELECT COUNT(*)::int AS n FROM runner_hook_deliveries
-         WHERE trigger_id = %s
-           AND outcome IN (%s, %s)
-           AND received_at > NOW() - make_interval(secs => %s)
+        SELECT COUNT(*)::int AS n,
+               EXTRACT(EPOCH FROM (MAX(due_at) - NOW()))::float8 AS dernier_s,
+               EXTRACT(EPOCH FROM (MIN(due_at) - NOW()))::float8 AS kieme_s
+          FROM (SELECT due_at FROM runner_hook_deliveries
+                 WHERE trigger_id = %s AND due_at IS NOT NULL
+                   AND due_at > NOW() - make_interval(secs => %s)
+                 ORDER BY due_at DESC
+                 LIMIT %s) recents
         """,
-        (trigger_id, QUEUED, DELAYED, secondes),
+        (trigger_id, fenetre_s, debit),
     ).fetchone()
-    return int(row["n"]) if row else 0
+    if not row or not row["n"]:
+        return 0
+    # Tout est en secondes RELATIVES au `NOW()` de la transaction — `0` est
+    # maintenant, un nombre positif un créneau à venir. Pas de datetime en Python :
+    # la fabrique de lignes du pool les rend en TEXTE (`_str_dict_row`).
+    dernier = row["dernier_s"]
+    # Le `debit`-ième créneau le plus récent : le prochain ne peut pas tomber moins
+    # d'une heure après lui, sinon cette heure-là en porterait `debit + 1`.
+    plancher = row["kieme_s"] + fenetre_s if row["n"] >= debit else None
+    file_en_attente = dernier > 0
+    if not file_en_attente and (plancher is None or plancher <= 0):
+        return 0
+    echeance = max(x for x in (0.0, dernier + fenetre_s / debit, plancher)
+                   if x is not None)
+    # Arrondi VERS LE HAUT : `enqueue_job` compte en secondes entières, et tronquer
+    # ferait partir chaque travail une fraction de seconde trop tôt — assez, sur
+    # une file longue, pour qu'une heure en porte un de trop.
+    return max(1, math.ceil(echeance))
+
+
+def liberer_les_creneaux(trigger_id: int) -> int:
+    """Rend les créneaux FUTURS d'un déclencheur — appelé quand on l'éteint.
+
+    Éteindre périme ce qui attendait (`perimer_travaux_du_declencheur`). Sans ce
+    geste, les créneaux de ces travaux morts restaient réservés : rallumé, l'agent
+    aurait fait attendre ses livraisons neuves derrière une file qui n'existe
+    plus — des heures, pour rien, sur un agent qu'on vient justement de réparer.
+
+    Seuls les créneaux FUTURS : un créneau passé a pu donner un départ réel, et il
+    compte toujours dans l'heure glissante.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE runner_hook_deliveries SET due_at = NULL "
+            "WHERE trigger_id = %s AND due_at > NOW()",
+            (trigger_id,),
+        )
+        return cur.rowcount or 0
 
 
 def enregistrer(conn, trigger_id: int, org_id: int, outcome: str,
-                job_id: Optional[int] = None, source: Optional[str] = None) -> int:
+                job_id: Optional[int] = None, source: Optional[str] = None,
+                due_at: Any = None) -> int:
     """Écrit la livraison. Rend son id.
 
     Prend aussi la connexion de l'appelant : la livraison et le travail qu'elle
@@ -95,11 +157,12 @@ def enregistrer(conn, trigger_id: int, org_id: int, outcome: str,
     """
     row = conn.execute(
         """
-        INSERT INTO runner_hook_deliveries (trigger_id, org_id, outcome, job_id, source)
-             VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO runner_hook_deliveries (trigger_id, org_id, outcome, job_id,
+                                            source, due_at)
+             VALUES (%s, %s, %s, %s, %s, %s::timestamptz)
           RETURNING id
         """,
-        (trigger_id, org_id, outcome, job_id, (source or None)),
+        (trigger_id, org_id, outcome, job_id, (source or None), due_at),
     ).fetchone()
     return int(row["id"])
 

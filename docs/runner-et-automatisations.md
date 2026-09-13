@@ -661,18 +661,42 @@ Au-delà du débit déclaré (`max_per_hour`, 60/h par défaut), la livraison es
 événement sans témoin — un lead qui n'arrive jamais ; retarder, c'est un lead
 traité en retard, ce qui se rattrape.
 
+La règle : **au plus `max_per_hour` départs dans toute heure glissante, puis en
+file**, espacés de `3600 / max_per_hour` secondes, **jamais avant un travail arrivé
+plus tôt**. Elle se juge sur les **créneaux réservés** (`runner_hook_deliveries.due_at`),
+pas sur les réceptions : le premier lot comptait les livraisons reçues dans l'heure,
+ce qui tenait tant qu'aucun retard ne dépassait l'heure. Dès qu'un retard dure des
+jours, la fenêtre des réceptions se vide une heure après la rafale et une livraison
+neuve partait **devant** l'arriéré — ni le débit ni l'ordre n'étaient tenus.
+
+⚠️ **Relever `max_per_hour` ne replanifie pas ce qui attend.** Les travaux déjà
+enfilés gardent leur `due_at` ; seules les livraisons suivantes se serrent, et
+toujours derrière la file. Pour vider un arriéré plus vite, il n'y a pas de geste
+aujourd'hui — éteindre le périme, ce qui n'est pas la même chose.
+
 ⚠️ Le lisseur n'est **pas** un plafond de dépense. Un budget est un autre chantier ;
 celui-ci empêche seulement deux cents lignes importées de lancer deux cents agents
 dans la même seconde.
 
-⚠️ **Ce qui a trop attendu PÉRIME.** Un travail lissé porte sa fraîcheur dans sa
-charge (`_perime_apres_s`, 1 h par défaut, `0` = jamais) et la **réservation**
-l'applique : passé le délai, il passe `expired` au lieu de partir. C'est la règle
-de la section suivante (#814) appliquée à l'autre coup d'envoi — sans elle, un
-lissage devient un arriéré qui se déverse le lendemain, et « une veille exécutée
-treize jours plus tard rend un résultat FAUX ». Une livraison qui partirait déjà
-après sa péremption est refusée à la source (429 + `Retry-After`), plutôt que
-d'enfiler une exécution qui n'aura pas lieu.
+⚠️ **Par défaut, rien ne périme** (tranché le 13/09/2026). Un événement reçu part,
+même tard — la même décision que « retarder plutôt que refuser », poussée à son
+terme. Le défaut d'une heure du premier lot perdait tout événement reçu pendant une
+panne du runner de plus d'une heure.
+
+La péremption reste disponible, **déclarée sur l'agent** (`freshness_seconds`) quand
+un événement joué trop tard rend un résultat FAUX et non tardif (la règle de #814) :
+le travail porte alors `_perime_apres_s` et la **réservation** l'applique ; une
+livraison qui partirait déjà après sa péremption est refusée à la source (429 +
+`Retry-After`) plutôt que d'enfiler une exécution qui n'aura pas lieu. Le défaut se
+lit (`fraicheur_s IS NULL` → jamais) : aucune ligne n'est réécrite.
+
+⚠️⚠️ **Conséquence assumée : la file n'a pas de plafond.** Une source qui envoie
+durablement plus que son débit construit un arriéré qui ne se résorbe que quand elle
+ralentit — 10 000 événements à 60/h, c'est une semaine de file, et une semaine
+d'exécutions d'agent. **Le frein est la PAUSE** : éteindre l'agent périme tout ce
+qui attend et rend ses créneaux (`liberer_les_creneaux`), de sorte qu'une fois
+rallumé il ne fait pas attendre ses livraisons neuves derrière une file morte. Le
+plafond de dépense est un autre chantier.
 
 #### Le corps reçu est une DONNÉE, jamais une instruction
 

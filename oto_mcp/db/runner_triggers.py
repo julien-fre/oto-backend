@@ -123,6 +123,10 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
             trigger_id, org_id,
             raison="déclencheur désactivé : ses occurrences en attente ne seront "
                    "jamais exécutées.")
+        # Et leurs créneaux avec : sinon, rallumé, un webhook ferait attendre ses
+        # livraisons neuves derrière la file de travaux qu'on vient de périmer.
+        from .runner_hooks import liberer_les_creneaux
+        liberer_les_creneaux(trigger_id)
     return dict(row) if row else None
 
 

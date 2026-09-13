@@ -179,41 +179,131 @@ def test_update_trigger_ECRIT_payload_fields_en_jsonb(live):
     assert lu["payload_fields"] is None, "vide se range en NULL, pas en `{}`"
 
 
-# ── 3. la fenêtre de lissage ──────────────────────────────────────────────────
+# ── 3. le lissage, sur les CRÉNEAUX réservés ─────────────────────────────────
 
-def test_la_fenetre_compte_les_livraisons_ENFILEES(live):
+def _livrer(t, secret, n=1):
+    """`n` livraisons réelles par `declencher` ; rend leurs retards annoncés."""
+    from oto_mcp import runner_hook
+    return [runner_hook.declencher(t["id"], secret, None)["delayed_seconds"] or 0
+            for _ in range(n)]
+
+
+def _creneaux(trigger_id):
+    """Les créneaux réservés, dans l'ORDRE D'ARRIVÉE (id de livraison), en
+    secondes epoch — le pool rend les datetimes en texte."""
     from oto_mcp import db
-    t, _ = _webhook(db, procedure="veille-fenetre")
     with db._connect() as conn:
-        for _ in range(3):
-            db.enregistrer(conn, t["id"], ORG, db.QUEUED, job_id=1)
-        db.enregistrer(conn, t["id"], ORG, db.DELAYED, job_id=2)
-        # Un refus n'a rien coûté : le faire compter retarderait des travaux
-        # légitimes à cause d'une source qui présente un mauvais secret.
-        db.enregistrer(conn, t["id"], ORG, db.REFUSE_PAUSED)
-        assert db.compter_dans_la_fenetre(conn, t["id"], 3600) == 4
+        rows = conn.execute("SELECT EXTRACT(EPOCH FROM due_at)::float8 AS e "
+                            "FROM runner_hook_deliveries "
+                            "WHERE trigger_id = %s AND due_at IS NOT NULL "
+                            "ORDER BY id", (trigger_id,)).fetchall()
+    return [r["e"] for r in rows]
 
 
-def test_la_fenetre_ne_voit_pas_au_dela_de_son_horizon(live):
+def _reculer(trigger_id, heures):
+    """Fait comme si tout était arrivé `heures` plus tôt — réceptions ET créneaux."""
     from oto_mcp import db
-    t, _ = _webhook(db, procedure="veille-horizon")
     with db._connect() as conn:
-        db.enregistrer(conn, t["id"], ORG, db.QUEUED, job_id=1)
-        conn.execute("UPDATE runner_hook_deliveries SET received_at = NOW() - "
-                     "INTERVAL '2 hours' WHERE trigger_id = %s", (t["id"],))
-        assert db.compter_dans_la_fenetre(conn, t["id"], 3600) == 0
-        assert db.compter_dans_la_fenetre(conn, t["id"], 10800) == 1
+        conn.execute("UPDATE runner_hook_deliveries SET "
+                     "received_at = received_at - make_interval(hours => %s), "
+                     "due_at = due_at - make_interval(hours => %s) "
+                     "WHERE trigger_id = %s", (heures, heures, trigger_id))
 
 
-def test_la_fenetre_est_par_DECLENCHEUR(live):
-    """Le lissage d'un agent ne doit pas retarder celui d'un autre."""
+def test_sous_le_debit_tout_part_tout_de_suite(live):
     from oto_mcp import db
-    a, _ = _webhook(db, procedure="veille-a")
-    b, _ = _webhook(db, procedure="veille-b")
+    t, secret = _webhook(db, procedure="lissage-sous", max_per_hour=5)
+    assert _livrer(t, secret, 5) == [0, 0, 0, 0, 0]
+
+
+def test_une_heure_glissante_ne_porte_JAMAIS_plus_que_le_debit(live):
+    """La promesse de `max_per_hour`, lue sur les créneaux réels : pour tout i, le
+    créneau i+débit tombe au moins une heure après le créneau i."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="lissage-glissant", max_per_hour=3)
+    retards = _livrer(t, secret, 12)
+    assert retards[:3] == [0, 0, 0] and all(r > 0 for r in retards[3:])
+    c = _creneaux(t["id"])
+    assert c == sorted(c), "l'ordre d'arrivée est l'ordre de départ"
+    for i in range(len(c) - 3):
+        # EXACT, à la précision du flottant près : l'arrondi vers le haut rend le
+        # plancher d'une heure strict. Une tolérance d'une seconde laissait passer
+        # un arrondi vers le bas (épreuve de chute du 13/09).
+        assert c[i + 3] - c[i] >= 3600 - 1e-4, (
+            f"les créneaux {i}..{i + 3} tiennent dans moins d'une heure")
+
+
+def test_une_livraison_TARDIVE_ne_double_pas_la_file(live):
+    """⚠️ LE bogue que « rien ne périme » a révélé. L'ancien lissage comptait les
+    RÉCEPTIONS de l'heure écoulée : deux heures après une rafale, cette fenêtre
+    est vide, et une livraison neuve partait tout de suite — DEVANT un arriéré qui
+    attendait encore. Ici l'arriéré court encore deux heures ; la neuve doit
+    passer derrière lui."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="lissage-tardif", max_per_hour=2)
+    _livrer(t, secret, 10)                  # créneaux jusqu'à ~+4 h
+    _reculer(t["id"], 2)                    # …on est deux heures plus tard
+    avant = max(_creneaux(t["id"]))
+    assert _livrer(t, secret)[0] > 0, "une file attend : la neuve ne part pas devant"
+    assert _creneaux(t["id"])[-1] > avant, "elle prend le créneau APRÈS la file"
+
+
+def test_RELEVER_le_debit_ne_fait_pas_doubler_la_file(live):
+    """Le cas où la file en attente décide seule. Débit 1 : quatre créneaux à une
+    heure d'écart. On relève à 10 : dans l'heure glissante il y a de la place, le
+    plancher horaire ne dit plus rien — et une livraison neuve partirait tout de
+    suite, DEVANT trois heures de file.
+
+    ⚠️ Ce que le banc n'affirme PAS : relever le débit ne REPLANIFIE pas ce qui
+    attend déjà. Les créneaux posés restent posés ; seuls les suivants se serrent.
+    (Relevé par une épreuve de chute : le banc de la livraison tardive ne
+    distinguait pas les deux termes.)"""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="lissage-releve", max_per_hour=1)
+    _livrer(t, secret, 4)
+    db.update_trigger(t["id"], ORG, {"max_per_hour": 10})
+    avant = max(_creneaux(t["id"]))
+    assert _livrer(t, secret)[0] > 0
+    assert _creneaux(t["id"])[-1] > avant, "derrière la file, jamais devant"
+
+
+def test_une_fois_la_file_ecoulee_on_repart_tout_de_suite(live):
+    """Le bord opposé : le lissage ne doit pas garder une mémoire au-delà de
+    l'heure glissante."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="lissage-ecoule", max_per_hour=2)
+    _livrer(t, secret, 6)
+    _reculer(t["id"], 48)
+    assert _livrer(t, secret) == [0]
+
+
+def test_ETEINDRE_rend_les_creneaux_de_la_file_perimee(live):
+    """⚠️ Le frein d'une file sans plafond est la pause, qui périme ce qui attend.
+    Sans rendre les créneaux, l'agent rallumé ferait attendre ses livraisons
+    neuves derrière une file de travaux morts — des heures, pour rien."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="lissage-pause", max_per_hour=1)
+    _livrer(t, secret, 4)                   # créneaux jusqu'à ~+3 h
+    db.update_trigger(t["id"], ORG, {"enabled": False})
     with db._connect() as conn:
-        for _ in range(5):
-            db.enregistrer(conn, a["id"], ORG, db.QUEUED, job_id=1)
-        assert db.compter_dans_la_fenetre(conn, b["id"], 3600) == 0
+        statuts = {r["status"] for r in conn.execute(
+            "SELECT status FROM runner_jobs WHERE payload->>'trigger_id' = %s "
+            "AND due_at > NOW()", (str(t["id"]),)).fetchall()}
+    assert statuts == {"expired"}, "éteindre périme ce qui attend"
+    db.update_trigger(t["id"], ORG, {"enabled": True})
+    # Le premier créneau (passé, il a pu partir) compte encore dans l'heure :
+    # la neuve attend l'heure, pas les trois heures de file morte.
+    retard = _livrer(t, secret)[0]
+    assert retard <= 3600, f"rallumé, l'agent attend encore {retard} s une file morte"
+
+
+def test_le_lissage_est_par_DECLENCHEUR(live):
+    """La file d'un agent ne doit pas retarder celle d'un autre."""
+    from oto_mcp import db
+    a, sa = _webhook(db, procedure="lissage-a", max_per_hour=1)
+    b, sb = _webhook(db, procedure="lissage-b", max_per_hour=1)
+    _livrer(a, sa, 5)
+    assert _livrer(b, sb) == [0]
 
 
 def test_les_livraisons_se_lisent_et_se_comptent(live):
@@ -240,15 +330,16 @@ def test_les_livraisons_d_une_AUTRE_org_sont_invisibles(live):
     assert db.comptage_livraisons(t["id"], ORG + 1)["recues_24h"] == 0
 
 
-def test_deux_livraisons_SIMULTANEES_ne_lisent_pas_le_meme_compte(live):
+def test_deux_livraisons_SIMULTANEES_ne_reservent_pas_le_meme_creneau(live):
     """⚠️ Le banc qu'aucun test mono-fil ne peut rendre.
 
     Une rafale est CONCURRENTE par définition. Sans le verrou sur la ligne du
-    déclencheur, deux livraisons simultanées lisent en READ COMMITTED le même
-    compte (zéro), se croient toutes deux sous le débit, et partent ensemble : le
+    déclencheur, deux livraisons simultanées lisent en READ COMMITTED les mêmes
+    créneaux, se croient toutes deux sous le débit, et partent ensemble : le
     lissage serait inerte exactement au moment où il sert.
 
-    Ici : A prend le verrou et écrit ; B doit ATTENDRE, puis voir le travail de A.
+    Ici, débit 1 : A prend le verrou et réserve ; B doit ATTENDRE, puis voir le
+    créneau de A et passer une heure plus tard.
     """
     import threading
     from oto_mcp import db
@@ -256,17 +347,17 @@ def test_deux_livraisons_SIMULTANEES_ne_lisent_pas_le_meme_compte(live):
 
     vus, erreurs = [], []
     depart = threading.Barrier(2)
-    a_ecrit = threading.Event()
 
     def livrer(tag, lent):
         try:
             with db._connect() as conn:
                 db.verrouiller_le_declencheur(conn, t["id"])
                 depart.wait(timeout=5) if lent else None
-                vus.append((tag, db.compter_dans_la_fenetre(conn, t["id"], 3600)))
-                db.enregistrer(conn, t["id"], ORG, db.QUEUED, job_id=1)
-                if lent:
-                    a_ecrit.set()
+                retard = db.retard_de_lissage(conn, t["id"], 1, 3600)
+                vus.append((tag, retard))
+                maintenant = conn.execute("SELECT NOW() AS n").fetchone()["n"]
+                db.enregistrer(conn, t["id"], ORG, db.QUEUED, job_id=1,
+                               due_at=maintenant)
         except Exception as e:  # noqa: SILENT — relayé par l'assert final
             erreurs.append(f"{tag}: {e!r}")
 
@@ -278,10 +369,10 @@ def test_deux_livraisons_SIMULTANEES_ne_lisent_pas_le_meme_compte(live):
     A.join(timeout=10); B.join(timeout=10)
 
     assert not erreurs, erreurs
-    comptes = sorted(n for _, n in vus)
-    assert comptes == [0, 1], (
-        f"les deux livraisons ont lu {comptes} — sans sérialisation elles "
-        "liraient toutes deux 0 et la rafale passerait entière")
+    retards = sorted(r for _, r in vus)
+    assert retards[0] == 0 and retards[1] >= 3500, (
+        f"les deux livraisons ont lu {retards} — sans sérialisation elles "
+        "partiraient toutes deux tout de suite")
 
 
 # ── 4. le retard et la péremption, à la réservation ───────────────────────────

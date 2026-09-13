@@ -173,7 +173,7 @@ class _Conn:
 
 @pytest.fixture
 def file(monkeypatch):
-    vu = {"livraisons": [], "deja": 0}
+    vu = {"livraisons": [], "retard": 0}
     t = {"id": 5, "org_id": ORG, "sub": "alexis", "procedure": "veille",
          "tools": ["a"], "input": "fais la veille", "enabled": True,
          "kind": "webhook", "payload_mode": "ignore", "payload_fields": None,
@@ -182,10 +182,12 @@ def file(monkeypatch):
     vu["trigger"] = t
     monkeypatch.setattr(runner_hook.db, "trigger_par_secret", lambda i, h: dict(t))
     monkeypatch.setattr(runner_hook.db, "_connect", lambda: _Conn())
-    monkeypatch.setattr(runner_hook.db, "compter_dans_la_fenetre",
-                        lambda c, t_, s: vu["deja"])
+    # Le créneau se CALCULE en base (`test_declencheur_webhook_db.py` le tient) ;
+    # ici on ne décide que de ce que `declencher` fait du retard qu'on lui rend.
+    monkeypatch.setattr(runner_hook.db, "retard_de_lissage",
+                        lambda c, t_, debit, fenetre: vu["retard"])
     monkeypatch.setattr(runner_hook.db, "enregistrer",
-                        lambda c, t_, o, outcome, job_id=None, source=None:
+                        lambda c, t_, o, outcome, job_id=None, source=None, due_at=None:
                         vu["livraisons"].append((outcome, job_id)) or 1)
     monkeypatch.setattr(runner_hook.db, "enqueue_job",
                         lambda org, kind, **kw: vu.update(enfile=kw) or {"id": 900})
@@ -207,7 +209,7 @@ def test_sous_le_debit_le_travail_part_TOUT_DE_SUITE(file):
 def test_au_dela_du_debit_le_travail_est_RETARDE_jamais_perdu(file):
     """⚠️ LE banc du lot. Un webhook refusé est un événement perdu que personne ne
     voit ; retardé, il est seulement en retard."""
-    file["deja"] = 60
+    file["retard"] = 60
     out = _tirer(file, max_per_hour=60, fraicheur_s=0)
     assert out["job_id"] == 900, "un travail est bien enfilé"
     assert out["delayed_seconds"] and out["delayed_seconds"] > 0
@@ -215,18 +217,32 @@ def test_au_dela_du_debit_le_travail_est_RETARDE_jamais_perdu(file):
     assert file["enfile"]["delai_s"] == out["delayed_seconds"]
 
 
-def test_le_retard_CROIT_avec_la_file(file):
-    file["deja"] = 60
-    court = _tirer(file, max_per_hour=60, fraicheur_s=0)["delayed_seconds"]
-    file["deja"] = 180
-    long = _tirer(file, max_per_hour=60, fraicheur_s=0)["delayed_seconds"]
-    assert long > court, "plus la file est longue, plus la livraison attend"
+def test_par_DEFAUT_rien_ne_perime_meme_une_semaine_plus_tard(file):
+    """⚠️ Tranché le 13/09/2026 : un événement reçu PART, même tard. Le défaut
+    d'une heure perdait tout événement reçu pendant une panne du runner. Ici : un
+    agent qui n'a rien déclaré, derrière une semaine de file — enfilé, sans
+    péremption, jamais refusé."""
+    file["retard"] = 7 * 86400
+    out = _tirer(file)                      # fraicheur_s = None
+    assert out["delayed_seconds"] == 7 * 86400
+    assert file["enfile"]["perime_apres_s"] is None
+    assert file["livraisons"] == [(runner_hook.db.DELAYED, 900)]
+
+
+def test_le_debit_declare_est_celui_qu_on_passe_au_lissage(file, monkeypatch):
+    vu = {}
+    monkeypatch.setattr(runner_hook.db, "retard_de_lissage",
+                        lambda c, t_, debit, fenetre: vu.update(debit=debit) or 0)
+    _tirer(file, max_per_hour=7)
+    assert vu["debit"] == 7
+    _tirer(file, max_per_hour=None)
+    assert vu["debit"] == runner_hook.DEBIT_PAR_HEURE_DEFAUT
 
 
 def test_ce_qui_partirait_APRES_sa_peremption_ne_part_pas(file):
     """Enfiler un travail qu'on sait déjà périmé, c'est promettre une exécution
     qui n'aura pas lieu — le défaut de #814 sous un autre coup d'envoi."""
-    file["deja"] = 600
+    file["retard"] = 600
     with pytest.raises(runner_hook.HookRefus) as e:
         _tirer(file, max_per_hour=60, fraicheur_s=60)
     assert (e.value.statut, e.value.code) == (429, "hook_rate_limited")

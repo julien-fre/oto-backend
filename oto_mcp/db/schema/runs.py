@@ -357,8 +357,8 @@ ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS revoked_at TIMESTAM
 -- Ce qu'un DÉCLENCHEUR WEBHOOK a reçu (12/09/2026) — une ligne par livraison,
 -- acceptée ou non. Trois lecteurs, un seul écrivain (la route `/api/hooks`) :
 --
---   1. le LISSAGE — compter les livraisons de l'heure écoulée pour savoir si
---      celle-ci part tout de suite ou plus tard ;
+--   1. le LISSAGE — lire les CRÉNEAUX déjà réservés (`due_at`) pour savoir si
+--      celle-ci part tout de suite ou derrière la file ;
 --   2. l'ÉCRAN — « qui m'a appelé, quand, et quel déroulé en est sorti » ; sans
 --      lui, une source mal configurée est un mystère plutôt qu'un diagnostic
 --      (même raison que `expired_count` sur un déclencheur programmé) ;
@@ -378,18 +378,30 @@ CREATE TABLE IF NOT EXISTS runner_hook_deliveries (
     org_id BIGINT NOT NULL,
     received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- `queued` (enfilé, immédiat) | `delayed` (enfilé, retardé par le lissage)
-    -- | `refused_paused` | `refused_secret` | `refused_too_large`
+    -- | `refused_paused` | `refused_too_large` | `refused_rate`
+    -- (un mauvais secret ne s'écrit PAS : le journaliser ferait de la route un
+    -- oracle sur les déclencheurs qui existent)
     outcome TEXT NOT NULL,
     job_id BIGINT,
+    -- Le CRÉNEAU réservé : quand le travail de cette livraison peut partir. NULL
+    -- pour un refus, et remis à NULL quand on éteint le déclencheur (ses travaux
+    -- sont périmés, leurs créneaux rendus). C'est ce que le lissage lit — pas
+    -- `received_at`, qui ne dit plus rien d'une file dès qu'un retard dépasse
+    -- l'heure.
+    due_at TIMESTAMPTZ,
     -- Ce que la source a dit d'elle-même (User-Agent, tronqué). Pas une garde :
     -- de quoi reconnaître l'appelant sur l'écran quand deux sources partagent
     -- un déclencheur.
     source TEXT
 );
--- L'index du LISSAGE : compter les livraisons récentes d'un déclencheur. C'est
--- la seule lecture sur le chemin chaud, et elle tourne à chaque POST.
+-- L'index de l'ÉCRAN : les livraisons récentes d'un déclencheur, comptées sur 24 h.
 CREATE INDEX IF NOT EXISTS idx_hook_deliveries_fenetre
     ON runner_hook_deliveries(trigger_id, received_at DESC);
+-- L'index du LISSAGE : les créneaux réservés d'un déclencheur, du plus lointain au
+-- plus proche. La seule lecture sur le chemin chaud — elle tourne à chaque POST, et
+-- `LIMIT debit` la borne quelle que soit la longueur de la file.
+CREATE INDEX IF NOT EXISTS idx_hook_deliveries_creneaux
+    ON runner_hook_deliveries(trigger_id, due_at DESC) WHERE due_at IS NOT NULL;
 
 
 -- 12/09/2026 : la présence d'un worker de plateforme PAR FAMILLE de modèle — le
