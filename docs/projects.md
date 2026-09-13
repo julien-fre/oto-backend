@@ -175,23 +175,17 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > n'a pas disparu, il se DIT : `owner_type='org'|'group'` + `owner_id`, gardé par
 > l'appartenance comme `op=create`. Une copie perso garde son `context_org_id` : elle
 > reste rangée dans l'org où on travaille sans y être partagée — sans quoi on aurait
-> remplacé un excès de partage par une disparition. **L'import ci-dessous n'est PAS
-> concerné** : `me.import_project` est REST-only (aucun agent ne l'appelle), et forker
-> dans l'org active y est le geste demandé, par un humain, depuis le dashboard.
+> remplacé un excès de partage par une disparition.
 >
-> **« Ajouter à mon Oto » — import d'un projet publié par slug.** Capacité `me.import_project`
-> (REST-only `POST /api/me/projects/import`, `ORG_MEMBER`) : **forke** un projet PUBLIÉ
-> (`mcp_access ∈ {anonymous, secret}`, résolu par `get_project_by_mcp_slug` — le slug non
-> devinable = consentement) dans l'**org active** de l'appelant via `duplicate_project`
-> (structure only : brief + docs + liens + fichiers ; une **procédure** d'une autre org est
-> **copiée** dans l'org cible et le lien repointé — sinon il pendrait sur l'org source ; un
-> tableau d'une autre org est re-provisionné à vide ; **jamais** de credentials).
-> **Idempotent** : colonne
-> `projects.copied_from` + `find_copied_project` → si l'org a déjà forké la source, on la
-> RÉCUPÈRE (pas de doublon) ; si la source appartient déjà à l'org active, on l'ouvre.
-> ⚠️ **Sans appelant connu depuis le 13/09/2026** : l'écran `/import` du dashboard
-> (oto#192) puis le CTA de la page de partage qui y menait ont été retirés ; ni
-> oto-dashboard ni oto-frontend n'appellent plus la route, qui reste servie.
+> **« Ajouter à mon Oto » — import d'un projet publié par slug : RETIRÉ le 13/09/2026
+> (oto#192).** La capacité REST-only `me.import_project` (`POST /api/me/projects/import`)
+> n'avait plus d'appelant — l'écran `/import` du dashboard puis le CTA de la page de
+> partage qui y menait avaient été retirés — et le journal `tool_calls` n'en montrait
+> aucun `POST` depuis son ouverture (29/07/2026). Sont partis avec elle
+> `find_copied_project` et les paramètres `copied_from` de `create_project` et
+> `track_source` de `duplicate_project`. ⚠️ La colonne `projects.copied_from` et son index
+> `idx_projects_copied_from` restent en base (vides en prod le 13/09/2026, aucune DDL dans
+> ce retrait) : plus rien ne les écrit ni ne les lit. Copier un projet passe par `op=copy`.
 
 > **Endpoint MCP par projet — `<slug>.mcp.oto.cx` (ADR 0032, amende #44).** Un projet
 > se **publie** comme serveur MCP dédié sur son propre sous-domaine (le « preset » de
@@ -386,6 +380,6 @@ warning ; annuaire oto.ninja/apps. (Le partage public **chiffré** `/p/p` a ét�
 supplanté par ce partage navigable live.) La page navigable (`share_ui`) est un **canal
 d'acquisition** : hero « brancher », connecteurs en pastilles (logo + tooltip + lien fiche),
 tableau riche (recherche/tri/filtres). Son CTA « Ajouter à mon Oto » a été retiré le
-13/09/2026 (oto#192) ; la capacité `me.import_project` (`POST /api/me/projects/import`) qu'il
-servait reste, sans appelant connu.
+13/09/2026 (oto#192), et avec lui la capacité `me.import_project`
+(`POST /api/me/projects/import`) qu'il servait.
 **Détail : `docs/projects.md`**.
