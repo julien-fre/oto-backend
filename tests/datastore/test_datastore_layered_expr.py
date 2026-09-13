@@ -61,8 +61,9 @@ def test_a_json_null_is_null(conn):
 
 def test_an_object_without_valeur_falls_back_to_its_text(conn):
     """Un champ `json` LÉGITIME qui se trouve être un objet reste opaque : on rend
-    son texte, comme avant. C'est ce qui permet au critère de reconnaissance d'être
-    le TYPE DÉCLARÉ et non la forme observée — l'expression, elle, ne devine pas."""
+    son texte, comme avant. Ce qui le distingue d'une case à couches est la forme,
+    comme dans `unwrap` : il porte au moins une clé hors du vocabulaire des couches.
+    Une case faite de couches SEULES, elle, vaut NULL (oto#163, banc dédié)."""
     out = _read(conn, '{"f": {"a": 1}}')
     assert out is not None and "a" in out
 
@@ -74,31 +75,38 @@ def test_an_empty_string_is_not_swallowed_by_the_coalesce(conn):
     assert _read(conn, '{"f": {"valeur": "", "source": "s"}}') == ""
 
 
-# --- l'identité textuelle index ↔ lookup ---------------------------------------
+# --- l'expression de l'index, épinglée ------------------------------------------
 
-def test_the_index_and_the_lookup_share_one_expression():
+def test_the_index_expression_is_pinned_to_V1():
     """Exigence ③ de la revue : pour que le planner serve le lookup d'upsert PAR
     l'index, l'expression du WHERE doit être TEXTUELLEMENT celle de l'index.
 
+    Depuis oto#163, la règle de valeur (`field_value_sql`) a changé et l'index, lui,
+    ne doit PAS suivre : ses `ds_bkey_<ns_id>` sont déjà construits sur une base
+    partagée. `bkey_index_expr` ne délègue donc plus — et ce texte, au caractère
+    près, est ce qui le garde. Rétablir la délégation fait rougir ce test.
+
     Le mode d'échec d'un écart ne casse rien de visible — la déduplication
-    continuerait de marcher, chaque lookup passerait simplement en seq scan. C'est
-    la panne silencieuse type : on ne la voit qu'au moment où le datastore est assez
-    gros pour que ça coûte. D'où ce test, qui compare les deux chaînes plutôt que
-    leurs effets."""
-    assert (dsdb.field_value_sql("siren").as_string(None)
-            == dsdb.bkey_index_expr("siren").as_string(None))
+    continuerait de marcher, chaque lookup passerait simplement en seq scan. La
+    définition enregistrée et le plan du vrai lookup sont éprouvés contre PostgreSQL
+    dans `test_cle_metier_v1_figee_163.py`."""
+    assert (dsdb.bkey_index_expr("siren").as_string(None)
+            == "COALESCE(data->'siren'->>'valeur', data->>'siren')")
 
 
-def test_a_hostile_field_name_stays_inside_a_literal():
+@pytest.mark.parametrize("lecteur", ["field_value_sql", "bkey_index_expr"])
+def test_a_hostile_field_name_stays_inside_a_literal(lecteur):
     """Le nom de champ vient d'un schéma utilisateur : il est ÉCHAPPÉ, pas nettoyé.
 
     On ne restreint pas le jeu de caractères d'une clé — ce serait un changement de
     comportement sur des schémas déjà posés, donc un risque réel échangé contre un
     risque hypothétique. Ce qui protège est l'échappement, et il est vérifié ici sur
-    la charge qu'un attaquant écrirait."""
-    out = dsdb.field_value_sql("x'; DROP TABLE datastore_rows; --").as_string(None)
+    la charge qu'un attaquant écrirait — à CHAQUE endroit où la règle lit le champ."""
+    charge = "x'; DROP TABLE datastore_rows; --"
+    out = getattr(dsdb, lecteur)(charge).as_string(None)
     assert "''; DROP TABLE" in out, "l'apostrophe doit être DOUBLÉE"
-    assert out.count("COALESCE") == 1 and out.endswith(")")
+    assert "x'; DROP TABLE" not in out.replace("x''; DROP TABLE", ""), (
+        "une lecture du champ au moins a échappé au littéral")
 
 
 # --- le blob lu en TEXTE (recherche, extrait, embedding) -----------------------

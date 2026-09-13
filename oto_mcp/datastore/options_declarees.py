@@ -5,7 +5,7 @@ Trois lecteurs posent la même question et doivent recevoir la même réponse :
 - le REFUS du régime strict (`validation._hors_options`) ;
 - le SIGNALEMENT du régime souple (`non_applique.unenforced_options`) ;
 - le relevé SQL de l'existant à la pose (`db.datastore_offending_enum_values`, qui
-  compare `data->>champ`).
+  compare la valeur lue par `db.paths.field_value_sql`, jumelle d'`unwrap`).
 
 Jusqu'au 10/09/2026, les deux premiers ne la posaient que sur `enum`, et chacun avec
 sa formule (`value not in allowed` d'un côté, `str(v) not in opts` de l'autre). Sur les

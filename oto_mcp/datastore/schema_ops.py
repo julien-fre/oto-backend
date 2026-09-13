@@ -73,7 +73,8 @@ class SchemaOpsMixin:
         """Pose (ou retire si None) le schéma typé d'un datastore. Exige le droit
         d'écriture. SOFT pour les champs (schéma de rendu, pas de validation des
         rows) — SAUF `schema.key` (#109 ch.3) : la clé métier déclarée devient une
-        CONTRAINTE (index UNIQUE partiel `data->>key`) → dédup concurrent-safe et
+        CONTRAINTE (index UNIQUE partiel sur `bkey_index_expr`, expression V1 figée
+        par oto#163) → dédup concurrent-safe et
         lookup indexé. Des doublons existants sur la clé = REFUS actionnable (on ne
         pose pas un UNIQUE sur des données sales en silence).
 

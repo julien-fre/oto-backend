@@ -74,6 +74,13 @@ def test_aggregate_combines_exact_filter_and_rich_filters(monkeypatch):
 # ── construction SQL pure (_build_aggregate), sans PG ──
 
 from oto_mcp.db import datastore as DB  # noqa: E402
+from oto_mcp.db.paths import field_read_sql  # noqa: E402
+
+
+def P(champ: str) -> list:
+    """Les paramètres d'une lecture de ce champ — rendus par `paths.py`, jamais comptés
+    ici : leur nombre appartient à la règle de valeur (oto#163)."""
+    return field_read_sql(champ)[1]
 
 
 def test_build_global_count_default():
@@ -89,11 +96,10 @@ def test_build_group_by_sum_then_count_param_order():
         7, "departement",
         [{"op": "sum", "field": "kwc"}, {"op": "count"}],
         None, None, 500)
-    # Ordre des %s — chaque champ compte DOUBLE depuis #318 (un `%s` par branche
-    # du COALESCE qui lit une colonne plate ou à couches) : group ×2,
-    # (sum : champ ×2, regex, champ ×2), WHERE ns_id, LIMIT.
-    assert params == ["departement"] * 2 + ["kwc"] * 2 + [DB._NUMERIC_RE] \
-        + ["kwc"] * 2 + [7, 500]
+    # Ordre des %s : la lecture du groupe, (sum : lecture du champ, regex, lecture du
+    # champ), WHERE ns_id, LIMIT.
+    assert params == P("departement") + P("kwc") + [DB._NUMERIC_RE] \
+        + P("kwc") + [7, 500]
     assert "GROUP BY grp ORDER BY m0 DESC NULLS LAST, grp ASC" in sql
     assert names == [("m0", "sum_kwc"), ("m1", "count")]
     # champ jamais interpolé en dur → pas de nom de colonne dans le SQL
@@ -104,9 +110,10 @@ def test_build_filter_params_after_select():
     filters = [{"field": "statut", "op": "eq", "value": "qualified"}]
     sql, params, names = DB._build_aggregate(
         7, None, [{"op": "avg", "field": "score"}], None, filters, 1000)
-    # select params (score ×4 + regex, cf. #318) puis ns_id puis filter puis limit
-    assert params[:5] == ["score"] * 2 + [DB._NUMERIC_RE] + ["score"] * 2
-    assert params[5] == 7
+    # select params (lecture, regex, lecture) puis ns_id puis filter puis limit
+    select = P("score") + [DB._NUMERIC_RE] + P("score")
+    assert params[:len(select)] == select
+    assert params[len(select)] == 7
     assert "qualified" in params and params[-1] == 1000
 
 

@@ -21,9 +21,10 @@ entre, parce que c'est le même geste.
 ⚠️ **Mesuré avant d'être choisi, et c'est l'inverse de ce qui semblait économique.**
 Une case qui ne porterait QUE son origine se lit `None` — la règle est dans `unwrap`
 (« pas de `valeur`, mais que des couches connues ⟹ la valeur n'est pas encore posée »),
-et elle a un JUMEAU SQL dont dépendent les filtres, les agrégats et l'index de clé
-métier. Les lignes d'un import paraîtraient donc vides, sauf à modifier cette règle
-dans deux langages pour économiser du stockage.
+et son JUMEAU SQL (`db/paths.py`, aligné sur elle par oto#163) la tient pour les
+filtres, le tri, les agrégats et les contrôles de schéma. Les lignes d'un import
+paraîtraient donc vides, sauf à modifier cette règle dans deux langages pour économiser
+du stockage.
 
 Donc les deux versions sont écrites, avec les mêmes couches. **Ce n'est pas une
 redondance : ce sont deux faits distincts qui se trouvent égaux le premier jour.** L'un

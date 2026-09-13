@@ -101,7 +101,11 @@ def test_le_patron_est_celui_du_nom_NU(live):
     """La lecture d'un nom nu regardait les deux endroits DEPUIS TOUJOURS. Le défaut
     n'était pas une idée manquante, c'était une idée non étendue — et c'est ce qui le
     rendait invisible : le voisin immédiat faisait déjà la bonne chose."""
-    from oto_mcp.db.paths import FIELD_VALUE_PARAM_SQL, LAYER_VALUE_PARAM_SQL
+    from oto_mcp.db.paths import FIELD_VALUE_PARAM_SQL, LAYER_VALUE_PARAM_SQL, VALUE_LAYER
 
-    assert FIELD_VALUE_PARAM_SQL.startswith("COALESCE(")
+    # Le nom nu lit toujours ses deux endroits — l'enveloppe (`->>'valeur'`) et la
+    # forme plate (`data->>%s`) — même depuis qu'il suit la règle d'`unwrap`
+    # (oto#163) plutôt qu'un `COALESCE`. C'est l'axe que ce banc garde, pas le mot.
+    assert f"->>'{VALUE_LAYER}'" in FIELD_VALUE_PARAM_SQL
+    assert "ELSE data->>%s END" in FIELD_VALUE_PARAM_SQL
     assert LAYER_VALUE_PARAM_SQL.startswith("COALESCE(")

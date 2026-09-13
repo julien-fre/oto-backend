@@ -1623,11 +1623,26 @@ d'écriture (`data_write`, `POST/PATCH …/rows`), `queue`, `claim_next`, `data_
 vue nœud restent plates : l'option ne couvre que les deux lectures nommées.
 
 **La table reste MIXTE pour toujours** (personne ne réécrira les lignes existantes) :
-tout lecteur adressé par champ passe donc par `db.field_value_sql` /
-`field_read_sql` — filtres, tri, agrégats, clé métier, contrôles de schéma — et aucun
-ne recopie l'expression. L'index d'unicité de clé métier est un index d'EXPRESSION :
-il doit matcher la chaîne du lookup au caractère près, d'où le littéral échappé plutôt
-qu'un paramètre sur ce seul chemin.
+tout lecteur SQL adressé par champ passe donc par `db.field_value_sql` /
+`field_read_sql` — filtres, tri, agrégats, contrôles de schéma — et aucun ne recopie
+l'expression.
+
+**Cette expression est le jumeau d'`unwrap`** (oto#163, `db/paths.py`). Pour une case :
+un objet qui porte `valeur` rend cette valeur (un `null` reste NULL) ; un objet non vide
+fait de couches seules (`origine`, `comment`, `link`, dérivées de `LAYER_KEYS`) vaut
+NULL ; tout le reste — scalaire, liste, objet métier (une clé hors couches), `{}` — rend
+son texte. Une case `{"comment": "à vérifier"}` est donc trouvée par `empty`, ignorée par
+`not_empty`, `eq` et `contains`, regroupée et triée comme une case vide, jamais signalée
+« hors options » à la pose d'un enum, et comptée par l'avertissement d'un champ
+`required` ; son commentaire reste lisible par `champ.comment`. Avant oto#163, le SQL
+retombait sur le texte de l'enveloppe, et ces cinq lectures comptaient la case remplie.
+
+**L'index d'unicité de clé métier garde son expression V1** (`bkey_index_expr`,
+`COALESCE(data->'k'->>'valeur', data->>'k')`) et ne suit PAS la règle ci-dessus. C'est un
+index d'EXPRESSION déjà construit : le lookup ne le sert qu'à chaîne identique, d'où le
+littéral échappé et le texte figé. Le lookup ne cherche qu'une clé déballée et non vide,
+sur laquelle V1 et la règle coïncident. Changer ce texte obligerait à reconstruire les
+index hors démarrage.
 
 **Écrire : l'écriture ne touche QUE ce qu'elle nomme** (`_merge_column`). Une règle,
 dont découlent les deux défauts payés :

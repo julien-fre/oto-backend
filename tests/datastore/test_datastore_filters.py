@@ -11,9 +11,15 @@ import pytest
 from oto_mcp import db
 
 # L'expression polymorphe (#318) — référencée, jamais recopiée : ces tests
-# portent sur la COMPOSITION (quel opérateur, combien de paramètres), pas sur la
-# forme de la lecture, qui évoluera encore.
+# portent sur la COMPOSITION (quel opérateur, dans quel ordre), pas sur la forme de
+# la lecture. Le nombre de fois qu'un champ se passe appartient à la règle de valeur
+# (oto#163) : il se DEMANDE à `field_read_sql`, il ne se compte pas ici.
 V = db.FIELD_VALUE_PARAM_SQL
+
+
+def P(champ: str) -> list:
+    """Les paramètres qu'une lecture de ce champ consomme, tels que `paths.py` les rend."""
+    return db.field_read_sql(champ)[1]
 
 
 def test_no_filters_is_noop():
@@ -30,27 +36,25 @@ def test_contains_eq_in():
         {"field": "offre", "op": "in", "value": ["sante_prevoyance", "titres_restaurant"]},
     ])
     assert clauses[0] == f"{V} ILIKE %s"
-    assert params[0:3] == ["secteur", "secteur", "%santé%"]
     assert clauses[1] == f"{V} = %s"
-    assert params[3:6] == ["statut", "statut", "retenu"]
     assert clauses[2] == f"{V} = ANY(%s)"
-    assert params[6:8] == ["offre", "offre"]
-    assert params[8] == ["sante_prevoyance", "titres_restaurant"]
+    assert params == (P("secteur") + ["%santé%"] + P("statut") + ["retenu"]
+                      + P("offre") + [["sante_prevoyance", "titres_restaurant"]])
 
 
 def test_numeric_comparison_casts_and_guards():
-    # Valeur numérique → cast ::numeric gardé (champ apparaît 2× : regex + cast).
+    # Valeur numérique → cast ::numeric gardé (la lecture apparaît 2× : regex + cast).
     clauses, params = db._ds_filter_clauses([{"field": "effectif", "op": "gte", "value": "50"}])
     assert "::numeric >= %s::numeric" in clauses[0]
     assert "~ '^-?[0-9]+" in clauses[0]
-    assert params == ["effectif"] * 4 + ["50"]
+    assert params == P("effectif") * 2 + ["50"]
 
 
 def test_date_comparison_stays_textual():
     # Valeur non numérique (ISO date) → comparaison texte (lexicographique = chrono).
     clauses, params = db._ds_filter_clauses([{"field": "date_depot", "op": "lt", "value": "2024-01-01"}])
     assert clauses[0] == f"{V} < %s"
-    assert params == ["date_depot", "date_depot", "2024-01-01"]
+    assert params == P("date_depot") + ["2024-01-01"]
 
 
 def test_empty_not_empty():
@@ -59,9 +63,8 @@ def test_empty_not_empty():
         {"field": "phone", "op": "not_empty", "value": None},
     ])
     assert clauses[0] == f"({V} IS NULL OR {V} = '')"
-    assert params[0:4] == ["email"] * 4
     assert clauses[1] == f"({V} IS NOT NULL AND {V} <> '')"
-    assert params[4:8] == ["phone"] * 4
+    assert params == P("email") * 2 + P("phone") * 2
 
 
 def test_field_is_always_parameterized_no_injection():
@@ -155,7 +158,7 @@ class TestMetaColumns:
         clauses, params = db._ds_filter_clauses(
             [{"field": "updated_at", "op": "eq", "value": "2026-08-05"}])
         assert clauses[0] == f"{V} = %s"
-        assert params == ["updated_at", "updated_at", "2026-08-05"]
+        assert params == P("updated_at") + ["2026-08-05"]
 
 
 def test_where_merges_q_and_filters_in_order():
@@ -169,4 +172,4 @@ def test_where_merges_q_and_filters_in_order():
     # provenance (`q=hunter` sur une ligne dont l'email VIENT de Hunter).
     assert where == (f"WHERE ns_id = %s AND {_fold(db.ROW_VALUES_TEXT_SQL)} ILIKE "
                      f"'%%' || {_fold('%s')} || '%%' AND {V} = %s")
-    assert params == [7, "marseille", "statut", "statut", "retenu"]  # les % vivent dans le SQL
+    assert params == [7, "marseille"] + P("statut") + ["retenu"]  # les % vivent dans le SQL

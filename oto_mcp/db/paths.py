@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 
-from ..datastore.schema import VALUE_LAYER, split_layer  # noqa: F401 — ré-export
+from ..datastore.schema import LAYER_KEYS, VALUE_LAYER, split_layer  # noqa: F401 — ré-export
 
 __all__ = [
     "FIELD_VALUE_PARAM_SQL", "LAYER_VALUE_PARAM_SQL", "ROW_VALUES_TEXT_SQL",
@@ -30,27 +30,67 @@ __all__ = [
 ]
 
 
+# ── La VALEUR d'une case, en SQL : le jumeau d'`unwrap` (oto#163) ─────────────────
+#
+# `unwrap` (`datastore/couches.py`) rend `None` pour une case faite UNIQUEMENT de
+# couches connues, sans `valeur` : « la valeur n'est pas encore posée ». Le SQL, lui,
+# retombait sur le TEXTE de l'enveloppe — `{"origine": ""}` était compté rempli par
+# `not_empty`, comparé par `eq` et `contains`, trié et regroupé comme une valeur, et
+# la pose d'un enum le déclarait « hors options ». Sur un tableau de campagne : 537
+# lignes mal classées sur 1 243, sans une erreur.
+#
+# La règle, dans cet ordre, pour une case `c` :
+#   - objet qui porte `valeur`               → cette valeur ; un `null` reste NULL, il
+#                                              ne retombe plus sur l'enveloppe ;
+#   - objet NON VIDE fait de couches seules  → NULL ;
+#   - tout le reste                          → le texte de la case : scalaire, liste,
+#                                              objet métier (une clé hors couches),
+#                                              et `{}` (#165, traité à part).
+#
+# ⚠️ La garde `jsonb_typeof = 'object'` n'est pas décorative : `?` répond VRAI sur la
+# chaîne "valeur" et sur la liste ["valeur"]. Sans elle, ces deux cases se liraient
+# comme des enveloppes. Et aucune sous-requête : la règle reste une expression pure.
+#
+# Le tableau des couches est DÉRIVÉ de `LAYER_KEYS` : une couche ajoutée au
+# vocabulaire entre ici sans recopie, et le banc porte un témoin par entrée.
+_COUCHES_SQL = "ARRAY[" + ", ".join(f"'{c}'" for c in LAYER_KEYS) + "]::text[]"
+_OBJET_VIDE_SQL = "'{}'::jsonb"
+
+_REGLE_VALEUR = (
+    "CASE WHEN jsonb_typeof({c}) = 'object' AND {c} ? {v} THEN {c}->>{v}"
+    " WHEN jsonb_typeof({c}) = 'object' AND {c} <> {vide}"
+    " AND ({c} - {couches}) = {vide} THEN NULL"
+    " ELSE {f} END")
+
+#: Combien de fois la règle lit la case, donc combien de fois le champ se passe.
+#: Compté sur la règle elle-même : aucun appelant n'a à le savoir.
+_LECTURES = _REGLE_VALEUR.count("{c}") + _REGLE_VALEUR.count("{f}")
+
+
+def _regle_texte(cellule: str, plat: str) -> str:
+    """La règle rendue en texte, pour la case que lit `cellule` (en jsonb) et dont
+    `plat` lit le texte. Sert les formes PARAMÉTRÉES ; la forme littérale compose
+    la même règle sans quitter psycopg (`field_value_sql`)."""
+    return _REGLE_VALEUR.format(c=cellule, f=plat, v=f"'{VALUE_LAYER}'",
+                                vide=_OBJET_VIDE_SQL, couches=_COUCHES_SQL)
+
+
 def field_value_sql(key: str) -> str:
-    """SQL qui rend la VALEUR d'une colonne, qu'elle soit plate ou à couches (#318).
+    """SQL qui rend la VALEUR d'une colonne, plate ou à couches — le jumeau d'`unwrap`.
 
-    Une colonne peut porter `{"valeur": …, "source": …, "origine": …}` au lieu d'un
-    scalaire. Personne ne réécrira les 43 782 lignes existantes : **la table reste
-    mixte pour toujours**, ce n'est pas un état de transition. Tout lecteur adressé
-    par champ passe donc par ici — filtres, tri, agrégats, clé métier, contrôles de
-    schéma — et **aucun ne recopie l'expression** : c'est le contrat que la bascule
-    du modèle de contenu transportera, et il n'existe qu'à un endroit.
+    Une colonne peut porter `{"valeur": …, "comment": …, "origine": …}` au lieu d'un
+    scalaire. Personne ne réécrira les lignes existantes : **la table reste mixte pour
+    toujours**. Tout lecteur SQL adressé par champ passe donc par ici ou par
+    `field_read_sql` — filtres, tri, agrégats, contrôles de schéma — et **aucun ne
+    recopie la règle** (ci-dessus, `_REGLE_VALEUR`).
 
-    Le `COALESCE` ne se déclenche que sur NULL, donc une `valeur` vide ("") reste
-    une valeur et ne retombe pas sur l'objet entier. Un champ `json` légitime qui
-    se trouve être un objet sans `valeur` rend son texte, comme avant : l'expression
-    ne DEVINE pas — c'est le type déclaré au schéma qui dit ce qui porte des couches,
-    jamais la forme observée.
+    Une `valeur` vide ("") reste une valeur. Un objet sans `valeur` qui porte au moins
+    une clé hors couches est une donnée `json` métier : il rend son texte. Seul un
+    objet fait de couches connues, et d'elles seules, vaut NULL — comme en Python.
 
-    ⚠️ Le champ est un **littéral** échappé (`psycopg.sql.Literal`), pas un
-    paramètre : l'index d'unicité de clé métier est un index d'EXPRESSION, et le
-    planner ne le sert au lookup que si le `WHERE` porte la MÊME chaîne. Un écart
-    ne casserait rien de visible — la déduplication marcherait, chaque lookup
-    partirait en seq scan.
+    ⚠️ **L'index d'unicité de clé métier ne passe PAS par ici** depuis oto#163 : son
+    expression est figée dans `bkey_index_expr`. Le littéral échappé reste la forme
+    des contrôles de schéma, qui composent leur requête autour.
     """
     from psycopg import sql as _sql
     k = _sql.Literal(str(key))
@@ -60,18 +100,19 @@ def field_value_sql(key: str) -> str:
     # la correction reposerait alors sur ce seul échappement, sans filet : une
     # édition future qui retirerait le `Literal` passerait sans que rien ne crie.
     # Signalé par la revue de sécurité automatique, et le durcissement est gratuit.
-    return _sql.SQL(
-        "COALESCE(data->{k}->>{v}, data->>{k})"
-    ).format(k=k, v=_sql.Literal(VALUE_LAYER))
+    return _sql.SQL(_REGLE_VALEUR).format(
+        c=_sql.Composed([_sql.SQL("(data->"), k, _sql.SQL(")")]),
+        f=_sql.Composed([_sql.SQL("data->>"), k]),
+        v=_sql.Literal(VALUE_LAYER), vide=_sql.SQL(_OBJET_VIDE_SQL),
+        couches=_sql.SQL(_COUCHES_SQL))
 
 
-# Même expression, forme PARAMÉTRÉE — le champ passe en `%s` (deux fois) au lieu
-# d'être inscrit dans le SQL. C'est la forme des filtres, du tri et des agrégats :
-# eux n'ont aucun index d'expression à servir, donc rien n'exige le littéral, et
-# l'invariant anti-injection du module (« le champ est TOUJOURS paramétré ») reste
-# intact. Seul le chemin CLÉ MÉTIER prend `field_value_sql`, parce que lui doit
-# matcher son index à la chaîne près.
-FIELD_VALUE_PARAM_SQL = f"COALESCE(data->%s->>'{VALUE_LAYER}', data->>%s)"
+# Même règle, forme PARAMÉTRÉE — le champ passe en `%s` à chaque lecture de la case
+# au lieu d'être inscrit dans le SQL. C'est la forme des filtres, du tri et des
+# agrégats, et l'invariant anti-injection du module (« le champ est TOUJOURS
+# paramétré ») reste intact. La liste des paramètres vient de `field_read_sql` :
+# un appelant qui la compterait à la main casserait au prochain changement de règle.
+FIELD_VALUE_PARAM_SQL = _regle_texte("(data->%s)", "data->>%s")
 
 # Les COUCHES adressables d'une colonne (#318). `valeur` n'en fait pas partie : elle
 # EST la colonne, on l'atteint par son nom nu — c'est ce qui garde le contrat de
@@ -173,8 +214,10 @@ def leaf_read_sql(base_sql: str, base_params: list, field: str) -> tuple:
     base, layer = split_layer(field)
     if layer:
         return f"{base_sql}->%s->>%s", base_params + [base, layer]
-    return (f"COALESCE({base_sql}->%s->>'{VALUE_LAYER}', {base_sql}->>%s)",
-            base_params + [base] + base_params + [base])
+    # Chaque lecture de la case réécrit la base PUIS le champ : la liste se répète
+    # autant de fois que la règle lit la case, dans l'ordre même du texte rendu.
+    return (_regle_texte(f"({base_sql}->%s)", f"{base_sql}->>%s"),
+            (list(base_params) + [base]) * _LECTURES)
 
 
 def field_read_sql(field: str) -> tuple:
@@ -204,13 +247,30 @@ def field_read_sql(field: str) -> tuple:
     if layer:
         # Le nom COMPLET en troisième paramètre : c'est la relique littérale.
         return LAYER_VALUE_PARAM_SQL, [base, layer, field]
-    return FIELD_VALUE_PARAM_SQL, [base, base]
+    return FIELD_VALUE_PARAM_SQL, [base] * _LECTURES
 
 
 def bkey_index_expr(key: str) -> str:
-    """Expression indexée pour la clé métier — LA MÊME que celle du lookup.
+    """Expression de l'index d'unicité de clé métier — ET de son lookup, qui la prend ici.
 
-    Délègue plutôt que de recopier : la dérive entre les deux est impossible par
-    construction, et le test qui compare les deux chaînes garde l'invariant si
-    quelqu'un rompt un jour cette délégation."""
-    return field_value_sql(key)
+    ⚠️ **FIGÉE au texte V1 depuis oto#163, et elle ne délègue plus à `field_value_sql`.**
+    Les index `ds_bkey_<ns_id>` sont des index d'EXPRESSION déjà construits en base,
+    partagée entre préprod et prod. Si ce texte bougeait, le lookup
+    (`db.datastore_find_row_id_by_key`) ne correspondrait plus à l'index au caractère
+    près : aucune erreur, la déduplication continuerait, et chaque lookup partirait en
+    parcours séquentiel. Le changer exigerait de reconstruire tous les index — un acte
+    hors démarrage, pas un effet de bord de la règle de valeur.
+
+    Pourquoi V1 suffit ici : le lookup ne cherche qu'une clé DÉBALLÉE et non vide
+    (`ecriture.py`, `lots.py`, `controles.py`). Sur une telle clé, V1 et la règle de
+    `field_value_sql` rendent la même chose ; ils ne divergent que sur une case sans
+    valeur, qu'aucun lookup ne cherche.
+
+    Deux épreuves la tiennent : son texte au caractère près, et le `pg_get_indexdef`
+    comparé à une chaîne fixe, avec l'`EXPLAIN` du vrai lookup qui doit porter
+    `Index Cond`."""
+    from psycopg import sql as _sql
+    k = _sql.Literal(str(key))
+    return _sql.SQL(
+        "COALESCE(data->{k}->>{v}, data->>{k})"
+    ).format(k=k, v=_sql.Literal(VALUE_LAYER))

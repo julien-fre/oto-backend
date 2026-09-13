@@ -66,7 +66,10 @@ def test_filtering_a_bare_name_still_reads_the_value():
     au chemin nu, qui porte tout l'existant."""
     clause, params = _clause("email")
     assert clause == f"{db.FIELD_VALUE_PARAM_SQL} = %s"
-    assert params == ["email", "email", "x"]
+    # Autant de fois le nom nu que la règle de valeur lit la case (oto#163) — la liste
+    # vient de `paths.py`, et elle ne porte QUE le nom nu.
+    assert params == db.field_read_sql("email")[1] + ["x"]
+    assert set(params[:-1]) == {"email"}
 
 
 def test_the_question_that_matters_is_expressible():

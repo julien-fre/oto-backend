@@ -74,7 +74,8 @@ def test_numeric_comparisons_still_cast():
     clauses, params = db._ds_filter_clauses([
         {"field": "ca", "op": "gte", "value": 1000000}])
     assert "::numeric >= %s::numeric" in clauses[0]
-    assert params == ["ca"] * 4 + ["1000000"]
+    # La lecture du champ deux fois (regex + cast) ; sa liste vient de `paths.py`.
+    assert params == db.field_read_sql("ca")[1] * 2 + ["1000000"]
 
 
 # --- les autres opérateurs qui passaient par la même conversion ----------------
