@@ -281,6 +281,58 @@ symptôme lu depuis le produit serait « l'ordonnanceur est mort » — un diagn
 faux posé sur une cause invisible. Le refus du worker reste, en dernier ressort ;
 il n'est plus le seul filet.
 
+### La procédure se LIT par MCP, la plateforme n'en injecte aucune copie (13/09/2026)
+
+Le modèle, redit par Alexis : **le runner est une boucle agentique avec un client
+MCP**, et l'instruction de départ se borne à « va lire la procédure X »
+(`_instruction`, ci-dessus). L'agent l'obtient par `oto_procedure`, avec les droits
+de son porteur, en local comme en hébergé.
+
+De la v1.244.0 au 13/09/2026, la réservation joignait EN PLUS le texte de la
+procédure au travail (`system`, que le worker posait en cadre). Retiré :
+
+```
+une seconde copie   lue par la plateforme dans UN magasin (`org_instructions`, palier
+                    org, version courante) — pas forcément la portée ni la version
+                    que l'agent relisait : la même consigne vivait à deux endroits
+un contrat masqué   absente ou archivée, elle partait sans texte après un simple
+                    avertissement, et l'agent retombait sur sa lecture, ou sur rien
+```
+
+⚠️ **Ce que l'injection masquait : l'outil de lecture manquait.** Le worker sert
+EXACTEMENT `payload.tools` (fail-closed) et ignore ce qu'est une procédure ; une
+liste DÉDUITE ne cite que les `<tool:…>` de la procédure, jamais `oto_procedure`.
+Sans texte injecté, l'agent ne pouvait pas lire sa consigne et concluait sans elle
+— vécu du 04 au 06/09. **Au claim, la liste SERVIE reçoit `oto_procedure` quand
+`payload.procedure` est déclaré** (`_avec_outil_de_lecture`) : une seule fois, AVANT
+la délégation. La liste stockée ne bouge pas, et un travail sans procédure est servi
+à l'octet près. ⚠️ Ce n'est pas un droit : l'outil reste soumis aux droits du porteur
+et à la visibilité de son org (il n'est pas dans `PROTECTED_TOOLS`) — un refus y
+reste un refus nommé, côté MCP.
+
+⚠️ **Et l'org DU TRAVAIL est servie avec elle** (`payload.org_id` = `job.org_id`). Le
+worker l'impose en `_org` à chaque appel qui déclare l'axe ; sans elle, chaque appel se
+résout dans l'org ACTIVE du porteur, et `run_start` y ouvre le run. Les campagnes la
+posaient, les déclencheurs et l'appel direct non. Rejoué sur vraie base le 13/09/2026
+avec un porteur de deux orgs et une procédure homonyme : l'agent d'un déclencheur de
+l'org B lisait la procédure de son org active A — et écrivait donc là aussi. Une valeur
+contradictoire de la charge est remplacée par celle du travail, et journalisée ; le
+travail stocké ne change pas. Ce n'est pas un droit : l'org servie est celle où la
+délégation a vérifié le porteur, et hors appartenance l'appel est refusé, jamais replié
+sur l'org active. Un `org` explicite passé par l'agent garde son contrat (gardé par
+appartenance). Bancs : `tests/test_procedure_lue_par_mcp.py` (montage MCP réel).
+
+**Ce que ça coûte, et c'est accepté** : le tour de chargement revient. Mesuré le
+08/09/2026 sur une passe réelle, la consigne chargée au premier tour pesait la moitié
+d'un déroulé (20 603 jetons sur 41 204), facturée plein tarif au deuxième tour.
+
+⚠️ **Reste ouvert : un déclencheur déduit ses outils des GUIDES**
+(`runner_triggers._outils_de_la_procedure`), alors qu'`oto_procedure` lit
+`org_instructions`. Posé sur un slug qui n'existe qu'en guide, il reçoit l'outil,
+mais la lecture rend « introuvable » — une erreur MCP explicite, pas un texte absent.
+L'injection lisait déjà `org_instructions` : ce cas n'est pas une régression du
+retrait. Bancs : `tests/test_runner_jobs.py`, section « La procédure se LIT par MCP ».
+
 ### Le verrou du tick porte sur l'ÉLIGIBILITÉ, pas sur l'échéance relue (#839, 03/09/2026)
 
 Le compare-and-swap qui empêche deux environnements de jouer la même échéance

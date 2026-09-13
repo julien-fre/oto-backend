@@ -26,7 +26,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from . import _cle_exigee, _modele
-from .. import db, org_store, runner_consigne, runner_models
+from .. import db, runner_consigne, runner_models
 from ._authz import WORKER_OR_ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding, cap_limit)
@@ -386,58 +386,46 @@ def _depot_pose(org_id: int, depot: str) -> bool:
         return False
 
 
-def _avec_procedure(job: dict) -> dict:
-    """Le travail, augmenté du TEXTE de sa procédure — à la RÉSERVATION.
+#: L'outil par lequel l'agent lit la procédure que son instruction lui désigne.
+_OUTIL_DE_LECTURE = "oto_procedure"
 
-    ⚠️ Pourquoi ici et pas dans le worker. Le prompt système du runner a déjà
-    porté une section « Procédure » qu'il remplissait lui-même ; on l'a retirée
-    parce qu'un worker qui va CHERCHER un objet d'Oto cesse d'être un client
-    pur — c'est un concept du backend dans le transport (ADR 0064). Rien n'a
-    changé à cela : le worker ne cherche toujours rien. Il reçoit du texte à
-    poser en cadre, exactement comme il reçoit déjà une clé de modèle et un
-    jeton délégué, et il ignore ce qu'est une procédure.
 
-    ⚠️ Joint à la réservation, JAMAIS stocké dans le travail : une consigne
-    métier pèse une vingtaine de milliers de caractères, et cent travaux la
-    porteraient cent fois en base pour rien. Même raison que la clé et le jeton.
+def _charge_servie(job: dict) -> dict:
+    """Le travail SERVI : sa charge, complétée du contexte d'exécution que l'agent
+    ne peut pas déduire. Une COPIE — le travail stocké ne change jamais.
 
-    Ce que ça achète, mesuré le 08/09/2026 sur une passe réelle : la consigne
-    chargée par l'agent au premier tour est FACTURÉE plein tarif au deuxième —
-    20 603 jetons sur les 41 204 d'un déroulé, la moitié, avec un cache à zéro
-    sur ce tour-là. Servie dans le cadre, elle entre dans le préfixe stable :
-    lue en cache dès le premier tour, et le tour de chargement disparaît.
+    **L'org du travail** (`payload.org_id` = `job.org_id`). Le worker l'impose en
+    `_org` à chaque appel qui déclare l'axe ; sans elle, chaque appel se résout
+    dans l'org ACTIVE du porteur, et `run_start` y ouvre le run. Les campagnes la
+    posaient, les déclencheurs et l'appel direct non. Constaté le 13/09/2026 sur
+    un porteur de deux orgs : l'agent d'un déclencheur de l'org B lisait la
+    procédure homonyme de son org active A — et écrivait donc là aussi. ⚠️ Une
+    valeur contradictoire de la charge est REMPLACÉE, et le dit : la charge est
+    écrite par un appelant, l'org du travail est ce que la file a gardé, et c'est
+    elle que la délégation vérifie (`_identite_invalide`).
 
-    Absente ou illisible, on ne joint rien : l'agent la chargera lui-même comme
-    avant. C'est une accélération, jamais une condition."""
-    p = job.get("payload") or {}
-    slug, org = p.get("procedure"), job.get("org_id")
-    if not slug or not org:
-        return job
-    # ⚠️ La procédure se lit où `oto_procedure` la lit : `org_instructions`. Cette
-    # jonction lisait `get_guide_db`, qui ne sert que les guides À LA DEMANDE — un
-    # autre magasin. Mesuré le 12/09/2026 sur la production : `None` pour les six
-    # procédures d'une chaîne d'enrichissement que `oto_procedure` rendait en
-    # version 10 à 18. La jonction n'avait donc jamais rien joint à ces passes, et
-    # rien ne le disait : l'agent rechargeait la consigne, et payait le tour.
-    try:
-        procedure = org_store.get_instruction("org", org, slug)
-    except Exception:  # noqa: BLE001
-        logger.warning("procédure `%s` illisible pour l'org %s — le travail part "
-                       "sans, l'agent la chargera", slug, org, exc_info=True)
-        return job
-    if not procedure:
-        logger.warning("procédure `%s` introuvable dans l'org %s — le travail part "
-                       "sans, l'agent la chargera", slug, org)
-        return job
-    if procedure.get("archived_at"):
-        # Une procédure retirée ne se sert pas en cadre : la lecture par slug ne
-        # filtre pas l'archivage (#857), c'est à l'appelant de ne pas la joindre.
-        logger.warning("procédure `%s` ARCHIVÉE dans l'org %s — non jointe", slug, org)
-        return job
-    corps = procedure.get("body_md") or ""
-    if not corps:
-        return job
-    return {**job, "system": corps}
+    **L'outil de lecture de la procédure.** La plateforme compose « lis la
+    procédure X » (`_instruction`), et l'agent la lit par `oto_procedure`. Le
+    worker sert EXACTEMENT `payload.tools` (fail-closed) et ignore ce qu'est une
+    procédure ; or une liste DÉDUITE ne cite que les `<tool:…>` de la procédure.
+    Sans cet ajout, l'agent ne peut pas lire sa consigne et conclut sans elle —
+    vécu du 04 au 06/09/2026, puis masqué par l'injection du texte dans le cadre
+    (`system`, v1.244.0), retirée le 13/09/2026.
+
+    ⚠️ Rien de tout cela n'est un droit : l'org servie est celle où le porteur a
+    été vérifié, et un appel hors de ses droits reste un refus nommé, jamais un
+    repli sur son org active. Une liste d'outils qui n'est pas une liste n'est pas
+    réparée ici."""
+    p = dict(job.get("payload") or {})
+    org_id = job["org_id"]
+    if "org_id" in p and p["org_id"] != org_id:
+        logger.warning("travail %s : `payload.org_id` %r contredit l'org du travail %s — "
+                       "servi avec celle du travail", job.get("id"), p["org_id"], org_id)
+    p["org_id"] = org_id
+    outils = p.get("tools") if "tools" in p else []
+    if p.get("procedure") and isinstance(outils, list) and _OUTIL_DE_LECTURE not in outils:
+        p["tools"] = [*outils, _OUTIL_DE_LECTURE]
+    return {**job, "payload": p}
 
 
 def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
@@ -868,9 +856,11 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 return {"job": None, "campaign_error": panne}
         if job is None:
             return {"job": None}
-        return {"job": _avec_procedure(
-            _avec_cle(_delegue(job, bail, ctx.sub), inp.provider, ctx.sub,
-                      worker=ctx.platform_worker))}
+        # La charge servie est composée AVANT la délégation : tout ce qui se décide
+        # ensuite voit l'org et les outils que l'agent recevra.
+        return {"job": _avec_cle(
+            _delegue(_charge_servie(job), bail, ctx.sub), inp.provider,
+            ctx.sub, worker=ctx.platform_worker)}
 
     if inp.op == "list":
         # Surveillance (page Automatisations) : lecture org-scopée, jamais un

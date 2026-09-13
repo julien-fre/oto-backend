@@ -475,99 +475,126 @@ def test_les_campagnes_epuisees_sont_arretees_AVANT_d_en_servir_une(monkeypatch,
 
 
 
-# ── La consigne servie DANS le cadre, pas chargée par l'agent ────────────────
-# Mesuré le 08/09/2026 sur une passe réelle : la consigne que l'agent charge au
-# premier tour est FACTURÉE plein tarif au deuxième — 20 603 jetons sur 41 204,
-# la moitié du déroulé, avec un cache à zéro sur ce tour-là. Jointe au travail à
-# la réservation, elle entre dans le préfixe stable : lue en cache dès le
-# premier tour, et le tour de chargement disparaît.
-#
-# ⚠️ Jointe, JAMAIS stockée : une consigne pèse ~20 000 caractères, et cent
-# travaux la porteraient cent fois en base. Même raison que la clé de modèle.
+# ── La procédure se LIT par MCP : aucune copie injectée (13/09/2026) ─────────
+# L'instruction dit « lis la procédure X » et l'agent la lit par `oto_procedure`,
+# avec les droits de son porteur — comme un agent qui travaille avec le connecteur
+# branché. La plateforme servait EN PLUS le texte dans le cadre (`system`, de la
+# v1.244.0 au 13/09/2026) : une seconde copie, lue depuis un magasin et une portée
+# qui n'étaient pas forcément celles que l'agent relisait. Retirée. Ces bancs
+# prouvent l'absence de copie ET la présence de l'outil de lecture — sans lui, le
+# worker (fail-closed sur `payload.tools`) laisserait l'agent sans consigne.
 
-# ⚠️ Doublée sur `org_store.get_instruction`, la lecture de `oto_procedure`. Ces
-# bancs doublaient `get_guide_db` — la mauvaise table — et restaient verts : ils
-# prouvaient que la jonction pose ce qu'on lui rend, jamais qu'elle lit là où
-# vivent les procédures. Mesuré le 12/09/2026 en production : rien de joint.
-
-def test_le_travail_reserve_porte_le_TEXTE_de_sa_procedure(monkeypatch, espion):
-    monkeypatch.setattr(RJ.org_store, "get_instruction",
-                        lambda owner_type, owner_id, slug, version=None:
-                        {"body_md": "LA CONSIGNE", "archived_at": None})
-    monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: {
-        "id": 7, "org_id": 226, "sub": "demandeur",
-        "payload": {"procedure": "passe-registre"}})
-
-    job = _appel(_ctx(), op="claim")["job"]
-
-    assert job["system"] == "LA CONSIGNE", (
-        "le worker reçoit du TEXTE à poser en cadre — il ne va rien chercher, "
-        "et il ignore ce qu'est une procédure")
+@pytest.fixture
+def magasins_interdits(monkeypatch):
+    """Toute lecture de procédure ou de guide au claim fait tomber le banc."""
+    for cible in ("oto_mcp.org_store.get_instruction", "oto_mcp.db.get_guide_db"):
+        monkeypatch.setattr(cible, lambda *a, **k: pytest.fail(
+            "aucune lecture de magasin au claim : l'agent lit la procédure par MCP"))
 
 
-def test_une_procedure_ABSENTE_ne_fait_pas_echouer_la_reservation(monkeypatch, espion):
-    """L'agent la chargera lui-même, comme avant. C'est une accélération,
-    jamais une condition — un travail ne se perd pas parce qu'un texte manque."""
-    monkeypatch.setattr(RJ.org_store, "get_instruction",
-                        lambda owner_type, owner_id, slug, version=None: None)
-    monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: {
-        "id": 7, "org_id": 226, "sub": "demandeur",
-        "payload": {"procedure": "jamais-posee"}})
-
-    job = _appel(_ctx(), op="claim")["job"]
-
-    assert "system" not in job
-    assert job["id"] == 7, "le travail est servi quand même"
-
-
-def test_une_lecture_de_procedure_qui_LEVE_ne_perd_pas_le_travail(monkeypatch, espion):
-    """Le pendant du précédent, et le plus important des trois : la base peut
-    tousser. Un travail réservé qui se perdrait ici laisserait sa ligne sous
-    bail jusqu'à expiration."""
-    def _explose(owner_type, owner_id, slug, version=None):
-        raise RuntimeError("base indisponible")
-    monkeypatch.setattr(RJ.org_store, "get_instruction", _explose)
-    monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: {
-        "id": 7, "org_id": 226, "sub": "demandeur",
-        "payload": {"procedure": "passe-registre"}})
-
-    job = _appel(_ctx(), op="claim")["job"]
-
-    assert "system" not in job and job["id"] == 7
-
-
-def test_une_procedure_ARCHIVEE_n_est_pas_jointe(monkeypatch, espion):
-    """La lecture par slug sert une procédure retirée comme une procédure en
-    service (#857) : la jonction ne la pose pas en cadre."""
-    monkeypatch.setattr(RJ.org_store, "get_instruction",
-                        lambda owner_type, owner_id, slug, version=None:
-                        {"body_md": "RETIRÉE", "archived_at": "2026-09-01"})
-    monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: {
-        "id": 7, "org_id": 226, "sub": "demandeur",
-        "payload": {"procedure": "passe-retiree"}})
-
-    job = _appel(_ctx(), op="claim")["job"]
-
-    assert "system" not in job and job["id"] == 7
-
-
-def test_la_jonction_lit_la_table_des_PROCEDURES_pas_les_guides(monkeypatch, espion):
-    """La couture elle-même : slug et org du TRAVAIL, portée org, table de
-    `oto_procedure`. Un retour à `get_guide_db` lirait la vraie base depuis ce
-    banc et ne joindrait rien."""
+@pytest.fixture
+def reserve(monkeypatch, espion, magasins_interdits):
+    """Pose le travail que la base rend au claim ; capte ce que reçoit la délégation."""
     vu = {}
-    def _lue(owner_type, owner_id, slug, version=None):
-        vu.update(owner_type=owner_type, owner_id=owner_id, slug=slug)
-        return {"body_md": "CONSIGNE", "archived_at": None}
-    monkeypatch.setattr(RJ.org_store, "get_instruction", _lue)
-    monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: {
-        "id": 7, "org_id": 226, "sub": "demandeur",
-        "payload": {"procedure": "passe-registre"}})
+
+    def _poser(payload):
+        stocke = {"id": 7, "org_id": 226, "sub": "demandeur", "payload": payload}
+        monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: stocke)
+        return stocke
+
+    def _delegue(job, bail, claimant):
+        vu["delegue"] = job
+        return {**job, "delegated_token": "jeton"}
+    monkeypatch.setattr(RJ, "_delegue", _delegue)
+    vu["poser"] = _poser
+    return vu
+
+
+def test_un_travail_qui_declare_une_procedure_n_en_recoit_AUCUNE_copie(reserve):
+    consigne = "Lis la procédure `passe-registre` et applique-la."
+    reserve["poser"]({"procedure": "passe-registre", "tools": ["data_write"],
+                      "input": consigne})
 
     job = _appel(_ctx(), op="claim")["job"]
 
-    assert vu == {"owner_type": "org", "owner_id": 226, "slug": "passe-registre"}
-    assert job["system"] == "CONSIGNE"
+    assert "system" not in job, "la procédure se lit par MCP, jamais injectée"
+    assert (job["payload"]["procedure"], job["payload"]["input"]) == (
+        "passe-registre", consigne), "la référence et l'instruction restent intactes"
+
+
+def test_l_outil_de_lecture_est_SERVI_quand_la_liste_ne_le_cite_pas(reserve):
+    stocke = reserve["poser"]({"procedure": "passe-registre",
+                               "tools": ["data_claim_next", "data_write"]})
+
+    job = _appel(_ctx(), op="claim")["job"]
+
+    assert job["payload"]["tools"] == ["data_claim_next", "data_write", "oto_procedure"]
+    assert reserve["delegue"]["payload"]["tools"] == job["payload"]["tools"], (
+        "complété AVANT la délégation, pas après")
+    assert stocke["payload"]["tools"] == ["data_claim_next", "data_write"], (
+        "la liste stockée — écrite ou déduite par l'auteur — ne bouge pas")
+
+
+def test_une_procedure_sans_liste_d_outils_recoit_l_outil_de_lecture(reserve):
+    reserve["poser"]({"procedure": "passe-registre"})
+    assert _appel(_ctx(), op="claim")["job"]["payload"]["tools"] == ["oto_procedure"]
+
+
+def test_l_outil_de_lecture_deja_cite_n_est_pas_DOUBLE(reserve):
+    reserve["poser"]({"procedure": "passe-registre",
+                      "tools": ["oto_procedure", "data_write"]})
+    assert _appel(_ctx(), op="claim")["job"]["payload"]["tools"] == [
+        "oto_procedure", "data_write"]
+
+
+def test_un_travail_SANS_procedure_ne_recoit_que_l_org_du_travail(reserve):
+    stocke = reserve["poser"]({"tools": ["data_write"], "input": "fais ceci"})
+
+    job = _appel(_ctx(), op="claim")["job"]
+
+    assert job == {**stocke, "payload": {**stocke["payload"], "org_id": 226},
+                   "delegated_token": "jeton"}
+    assert stocke["payload"] == {"tools": ["data_write"], "input": "fais ceci"}
+
+
+# ── L'org DU TRAVAIL est servie, le worker l'impose en `_org` (13/09/2026) ───
+# Sans elle, chaque appel de l'agent se résout dans l'org ACTIVE de son porteur, et
+# `run_start` y ouvre le run : l'agent d'un déclencheur de l'org B lisait — et
+# écrivait — dans l'org A d'un porteur de deux orgs. Preuve de bout en bout, sur
+# vraie base et par le middleware : `test_procedure_lue_par_mcp.py`.
+
+def test_l_org_du_travail_est_SERVIE_quand_la_charge_n_en_porte_pas(reserve):
+    stocke = reserve["poser"]({"procedure": "veille", "tools": ["data_write"],
+                               "trigger_id": 9})
+
+    job = _appel(_ctx(), op="claim")["job"]
+
+    assert job["payload"]["org_id"] == 226
+    assert reserve["delegue"]["payload"]["org_id"] == 226, "servie AVANT la délégation"
+    assert "org_id" not in stocke["payload"], "le travail stocké ne change pas"
+
+
+def test_une_org_CONTRADICTOIRE_de_la_charge_est_remplacee_par_celle_du_travail(
+        reserve, caplog):
+    stocke = reserve["poser"]({"input": "fais ceci", "org_id": 999})
+
+    with caplog.at_level("WARNING", logger=RJ.logger.name):
+        job = _appel(_ctx(), op="claim")["job"]
+
+    assert job["payload"]["org_id"] == 226
+    assert stocke["payload"]["org_id"] == 999, "le travail stocké ne change pas"
+    assert [r for r in caplog.records
+            if r.name == RJ.logger.name and "999" in r.getMessage()], (
+        "remplacée, et DITE — jamais gardée ni corrigée en silence")
+
+
+def test_une_charge_de_CAMPAGNE_est_servie_inchangee(reserve):
+    """Une campagne pose déjà l'org du travail ; si sa liste cite l'outil de lecture,
+    rien ne change à l'octet près."""
+    stocke = reserve["poser"]({"procedure": "passe", "org_id": 226, "namespace": "file",
+                               "tools": ["data_claim_next", "oto_procedure"],
+                               "input": "consigne de file"})
+    assert _appel(_ctx(), op="claim")["job"]["payload"] == stocke["payload"]
 
 
 # ── Le worker de PLATEFORME : aucune org, et ce n'est pas un manque ──────────
