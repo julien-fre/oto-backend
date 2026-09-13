@@ -170,17 +170,21 @@ def test_le_404_ne_revele_pas_letat_du_runner(monkeypatch):
 
 @pytest.fixture(scope="module")
 def base_bootee(pg_dsn):
-    """Une base jetable portant le FRAGMENT `runs` — celui que ce lot modifie.
+    """Une base jetable portant les FRAGMENTS `usage` puis `runs`, dans l'ordre de
+    `_SCHEMA`.
 
-    ⚠️ Le fragment est joué tel quel, jamais recopié : c'est lui qui doit créer
-    `runner_workers`, et un test qui poserait sa propre table prouverait que le
-    SQL de lecture marche sans rien dire du DDL SERVI. Ses FK sont toutes
-    internes (`runs`, `runner_fleets`), donc il tient debout seul — le boot
-    complet demanderait `pgvector`, qui n'apprendrait rien de plus ici et que
-    `test_schema_assembly_frozen` + le rejeu de boot couvrent déjà."""
+    ⚠️ Les fragments sont joués tels quels, jamais recopiés : c'est `runs` qui doit
+    créer `runner_workers`, et un test qui poserait sa propre table prouverait que
+    le SQL de lecture marche sans rien dire du DDL SERVI. `usage` est là parce que
+    la réservation LIT le journal : un `start` dont le run est clos se sert sans
+    run, et la clôture est le fait `run_finish` de `tool_calls`. Aucune FK hors
+    de ces deux fragments — le boot complet demanderait `pgvector`, qui
+    n'apprendrait rien de plus ici et que `test_schema_assembly_frozen` + le rejeu
+    de boot couvrent déjà."""
     psycopg = pytest.importorskip("psycopg")
     from oto_mcp.db import _conn as dbconn
     from oto_mcp.db.schema import runs as fragment_runs
+    from oto_mcp.db.schema import usage as fragment_usage
 
     nom = "oto_worker_vu_" + uuid.uuid4().hex[:8]
     root = psycopg.connect(pg_dsn, autocommit=True)
@@ -192,6 +196,7 @@ def base_bootee(pg_dsn):
     dbconn._pool = None
     try:
         with dbconn._connect() as c:
+            c.execute(fragment_usage.USAGE)
             c.execute(fragment_runs.RUNS)
         yield dsn
     finally:

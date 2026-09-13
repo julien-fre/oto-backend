@@ -36,6 +36,31 @@ _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le to
 # indiscernable d'une file épuisée.
 JOBS_PAGE_MAX = 200
 
+# Clé RÉSERVÉE de `payload` : ce que la PLATEFORME écrit sur un travail, jamais qui
+# l'enfile (`enqueue_job` la retire). `runs_detaches` y tient l'historique COMPLET
+# des runs clos détachés à la réservation (`claim_next_job`), une entrée par run
+# (dédupliquée sur `run_id`) : `{run_id, tentative, raison: "run_clos", a}`, où
+# `tentative` est celle qui tenait le run et `a` l'instant du détachement. C'est le
+# seul chemin d'un travail vers ses runs passés : `runs` ne porte aucun lien vers le
+# travail, et le `bind_run` suivant écrase `run_id`. Le worker ne la lit pas.
+_CHAMP_PLATEFORME = "_plateforme"
+
+# L'entrée ajoutée à la trace — SQL évalué dans l'UPDATE de la réservation, donc sur
+# les valeurs d'AVANT (`j.run_id`, `j.attempts`). Un run déjà tracé ne l'est pas deux fois.
+_TRACE_RUN_CLOS = f"""
+    COALESCE(j.payload, '{{}}'::jsonb) || jsonb_build_object('{_CHAMP_PLATEFORME}',
+        COALESCE(j.payload->'{_CHAMP_PLATEFORME}', '{{}}'::jsonb) || jsonb_build_object(
+            'runs_detaches',
+            COALESCE(j.payload->'{_CHAMP_PLATEFORME}'->'runs_detaches', '[]'::jsonb)
+            || CASE WHEN COALESCE(j.payload->'{_CHAMP_PLATEFORME}'->'runs_detaches',
+                                  '[]'::jsonb)
+                         @> jsonb_build_array(jsonb_build_object('run_id', j.run_id))
+                    THEN '[]'::jsonb
+                    ELSE jsonb_build_array(jsonb_build_object(
+                             'run_id', j.run_id, 'tentative', j.attempts,
+                             'raison', 'run_clos', 'a', NOW()))
+               END))"""
+
 
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 run_id: Optional[str] = None, max_attempts: int = 3,
@@ -59,7 +84,13 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     garantit que la flotte EXISTE, pas qu'elle soit celle de cette org. Rattacher
     un travail à la flotte d'autrui ferait entrer son coût et son avancement dans
     l'état d'un passage étranger.
+
+    ⚠️ `_plateforme` (`_CHAMP_PLATEFORME`) est RETIRÉ de la charge : le serveur seul
+    l'écrit, à la réservation. Retiré plutôt que refusé, comme la capacité retire
+    `model_family` : une `ValueError` d'ici sortirait en 500, pas en refus nommé.
     """
+    if payload is not None and _CHAMP_PLATEFORME in payload:
+        payload = {k: v for k, v in payload.items() if k != _CHAMP_PLATEFORME}
     with _connect() as conn:
         row = conn.execute(
             """
@@ -215,30 +246,56 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             """,
             (org_id, org_id),
         )
+        # ⚠️ Un `start` dont le run lié est CLOS se sert SANS run : le worker lit
+        # `run_id` absent comme « ouvre un run neuf », et reprendrait sinon un fil
+        # clos dont l'historique tient des lignes déjà libérées. La clôture se lit
+        # du FAIT `run_finish` (`_run_closure`, la vérité de `run_closed_at`) : il
+        # s'inscrit en tâche de fond APRÈS la réponse, donc pas lisible au
+        # `complete` qui suit — ici, backoff ou bail mort lui ont laissé le temps.
+        # Sans fait inscrit, rien n'est détaché. Jamais un `continue` (il EST la
+        # reprise d'un fil), jamais un bail repris sur un run ouvert. La trace
+        # (`_CHAMP_PLATEFORME`) s'écrit dans la MÊME écriture que le détachement.
+        from .usage import _run_closure
         row = conn.execute(
-            """
+            f"""
+            WITH pris AS (
+                SELECT id, kind, run_id FROM runner_jobs
+                 WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
+                   AND (status = 'pending'
+                        OR (status = 'claimed' AND lease_until < NOW()))
+                   AND attempts < max_attempts
+                   -- ⚠️ `''` et jamais NULL pour « aucun dépôt » : `= ''` rend
+                   -- FAUX, `= NULL` rend INCONNU. Même tri dans cette forme,
+                   -- mais la première réécriture qui NIE la clause (`NOT …`)
+                   -- ferait de l'inconnu une exclusion muette.
+                   AND (payload->>'model_family' IS NULL
+                        OR payload->>'model_family' = %s)
+                 ORDER BY due_at
+                   FOR UPDATE SKIP LOCKED
+                 LIMIT 1
+            ), clos AS (
+                -- Le DERNIER `run_start` du run, et sa clôture : même lecture que
+                -- `run_closed_at` (une clôture antérieure à l'ouverture ne compte pas).
+                SELECT f.created_at AS a
+                  FROM pris
+                  JOIN tool_calls s ON s.tool = 'run_start' AND s.run_id = pris.run_id
+                  {_run_closure("s")}
+                 WHERE pris.kind = 'start'
+                 ORDER BY s.created_at DESC
+                 LIMIT 1
+            )
             UPDATE runner_jobs j
                SET status = 'claimed', claimed_by = %s, attempts = j.attempts + 1,
-                   lease_until = NOW() + make_interval(secs => %s)
-             WHERE j.id = (
-                   SELECT id FROM runner_jobs
-                    WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
-                      AND (status = 'pending'
-                           OR (status = 'claimed' AND lease_until < NOW()))
-                      AND attempts < max_attempts
-                      -- ⚠️ `''` et jamais NULL pour « aucun dépôt » : `= ''` rend
-                      -- FAUX, `= NULL` rend INCONNU. Même tri dans cette forme,
-                      -- mais la première réécriture qui NIE la clause (`NOT …`)
-                      -- ferait de l'inconnu une exclusion muette.
-                      AND (payload->>'model_family' IS NULL
-                           OR payload->>'model_family' = %s)
-                    ORDER BY due_at
-                      FOR UPDATE SKIP LOCKED
-                    LIMIT 1)
-            RETURNING id, kind, run_id, payload, attempts, max_attempts,
-                      lease_until, sub, org_id
+                   lease_until = NOW() + make_interval(secs => %s),
+                   run_id  = CASE WHEN clos.a IS NULL THEN j.run_id END,
+                   payload = CASE WHEN clos.a IS NULL THEN j.payload
+                                  ELSE {_TRACE_RUN_CLOS} END
+              FROM pris LEFT JOIN clos ON TRUE
+             WHERE j.id = pris.id
+            RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
+                      j.lease_until, j.sub, j.org_id
             """,
-            (worker_sub, int(lease_seconds), org_id, org_id, depot or ""),
+            (org_id, org_id, depot or "", worker_sub, int(lease_seconds)),
         ).fetchone()
     return dict(row) if row else None
 
@@ -366,7 +423,8 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
             ).fetchone()
         else:
             # Échec : au plafond → failed VISIBLE ; sinon retour en file, backoff
-            # linéaire, la trace d'erreur conservée pour l'audit.
+            # linéaire, la trace d'erreur conservée pour l'audit. `result` s'écrit
+            # comme au succès — la conclusion suivante l'écrase, rien ne s'additionne.
             row = conn.execute(
                 """
                 UPDATE runner_jobs
@@ -376,11 +434,14 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                                           THEN NOW() ELSE NULL END,
                        due_at   = NOW() + make_interval(secs => %s * attempts),
                        lease_until = NULL, claimed_by = NULL,
-                       last_error = %s
+                       last_error = %s,
+                       result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
                 RETURNING status, run_id
                 """,
-                (_BACKOFF_S, (error or 'échec non détaillé')[:500], job_id, worker_sub),
+                (_BACKOFF_S, (error or 'échec non détaillé')[:500],
+                 json.dumps(result) if result is not None else None,
+                 job_id, worker_sub),
             ).fetchone()
     return dict(row) if row else None
 
