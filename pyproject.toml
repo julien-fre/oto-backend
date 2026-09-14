@@ -318,6 +318,9 @@ dependencies = [
     # déclaré direct car on en dépend au runtime d'une route publique.
     "markdown-it-py>=3.0",
     "psycopg[binary]>=3.2",
+    # Migrations : le registre de ce qui a déjà tourné, l'ordre, l'essai à blanc.
+    # Pas d'ORM — les migrations sont du SQL écrit à la main (cf. docs/migrations-versionnees.md).
+    "alembic>=1.13",
     "psycopg-pool>=3.2",
     "croniter>=2.0",           # déclencheurs du runner (R3) : next_due depuis le cron, dans le fuseau du déclencheur
     # france-opendata : plus de dép DIRECTE (ADR 0028 extraction totale — foncier/fr/

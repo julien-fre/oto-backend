@@ -406,6 +406,42 @@ change avec aucune des trois options, et il en découle trois invariants :
 > *(Il n'y a plus de §5 : les numéros des sections suivantes sont conservés tels
 > quels pour ne pas casser les renvois existants.)*
 
+## 5. L'outil est posé — Alembic, sans ORM (14/09/2026)
+
+Le registre n'est plus à écrire : c'est **Alembic**, l'outil standard, en mode SQL. Ce
+qu'on lui prend, c'est ce qu'on n'a pas envie d'écrire soi-même — le registre de ce qui
+a déjà tourné, l'ordre garanti quand deux branches ajoutent une migration la même
+semaine, l'essai à blanc, et la pose d'un point de départ sur une base vivante.
+
+**Ce qu'on ne lui prend pas** : l'ORM. Il n'y a pas de métadonnées cibles, donc pas de
+détection automatique — chaque migration s'écrit en SQL, à la main. La détection
+n'aurait de toute façon su qu'ajouter des colonnes, et c'est déjà le travail du boot.
+
+| fichier | ce qu'il porte |
+|---|---|
+| `alembic.ini` | l'emplacement des révisions. **Aucun DSN** |
+| `oto_mcp/db/migrations/env.py` | la connexion, lue dans `DATABASE_URL` comme le pool applicatif, et le **verrou consultatif** |
+| `oto_mcp/db/migrations/versions/` | une révision par changement |
+| `tests/test_migrations_registre.py` | la file reste unique : un seul point de départ, une seule fin, chaque révision décrite |
+
+**Le verrou n'est pas fourni par l'outil** : Alembic n'en pose aucun. `env.py` prend un
+verrou consultatif PostgreSQL avant d'écrire et le rend ensuite. Ce n'est pas une
+précaution théorique — la base est partagée entre la préproduction et la production, et
+le déploiement est bleu/vert.
+
+Les commandes, depuis la racine du dépôt, avec l'environnement chargé :
+
+```bash
+.venv/bin/python -m alembic upgrade head --sql   # l'essai à blanc : imprime, n'écrit rien
+.venv/bin/python -m alembic upgrade head         # applique
+.venv/bin/python -m alembic revision -m "ce que ça fait"
+.venv/bin/python -m alembic current              # où en est CETTE base
+```
+
+⚠️ **Un geste reste à faire sur la base**, une seule fois : `alembic stamp head`. Il
+écrit que le point de départ est atteint, sans rien rejouer. C'est une écriture sur la
+base de production — elle passe par la procédure de production, pas par un déploiement.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà
