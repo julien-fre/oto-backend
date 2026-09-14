@@ -110,6 +110,31 @@ def test_l_etat_declare_le_vide_au_lieu_de_rendre_des_zeros():
     assert not champs["pending"].is_required()
 
 
+def test_l_etat_porte_la_file_que_voit_l_ordonnanceur_et_pourquoi_elle_manque(monkeypatch):
+    """Décision du 14/09/2026 : le superviseur lit ce que l'ordonnanceur voit. Sans
+    le motif, un `null` ne dirait pas si la campagne ne vise rien ou si le compte a
+    échoué."""
+    from oto_mcp import db
+    flotte = {"id": 7, "org_id": 2, "sub": "alexis", "namespace": "t",
+              "row_filter": {"passe": "2"}}
+    monkeypatch.setattr(db, "fleet_state", lambda fid, org: {
+        "fleet": dict(flotte), "state": {"jobs_total": 3, "no_jobs_attached": False}})
+    for comptes, attendu in (({7: 12}, (12, None)), ({7: None}, (None, "no_table")),
+                             ({}, (None, "count_failed"))):
+        monkeypatch.setattr(RF._lignes_reservables, "lignes_reservables",
+                            lambda _c, comptes=comptes: comptes)
+        rendu = _appel(_ctx(), op="state", fleet_id=7)
+        etat = RF.FleetOut.model_validate(rendu).state
+        assert (etat.reservable_rows, etat.reservable_rows_unavailable) == attendu
+
+
+def test_l_issue_des_travaux_est_declaree_au_contrat_et_facultative():
+    champs = RF.FleetState.model_fields
+    for nom in ("empty_jobs", "stopped_after_write", "reservation_unmeasured",
+                "usage_unknown", "reservable_rows", "reservable_rows_unavailable"):
+        assert nom in champs and not champs[nom].is_required(), nom
+
+
 def test_aucun_modele_servi_ne_porte_de_monnaie():
     """Les tarifs changent et diffèrent par fournisseur : une valeur monétaire figée
     en base devient fausse sans que rien ne le dise. Et un NUMERIC servi tel quel

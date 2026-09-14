@@ -241,6 +241,22 @@ def test_une_campagne_a_file_vide_n_est_pas_servie_et_l_est_des_qu_une_ligne_arr
     assert servie is not None and servie["id"] == f["id"]
 
 
+def test_le_superviseur_lit_la_vue_de_l_ordonnanceur_et_pourquoi_elle_manque(declarant):
+    """Décision du 14/09/2026 : `oto_fleet op=state` rend ce compte à qui supervise."""
+    from oto_mcp.capabilities._lignes_reservables import pour_le_superviseur
+    _, ns, _, _ = _table(declarant, _schema(), [_ligne(), _ligne(), _ligne(passe="1")])
+    avec = _campagne(declarant, ns, {"lot": "L", "passe": "2"})
+    sans = _campagne(declarant, None, None)
+    introuvable = _campagne(declarant, "aucun-" + uuid.uuid4().hex[:6], None)
+
+    assert pour_le_superviseur(avec) == {"reservable_rows": 2,
+                                         "reservable_rows_unavailable": None}
+    assert pour_le_superviseur(sans) == {"reservable_rows": None,
+                                         "reservable_rows_unavailable": "no_table"}
+    assert pour_le_superviseur(introuvable) == {"reservable_rows": None,
+                                                "reservable_rows_unavailable": "count_failed"}
+
+
 # ══ un scan par tableau, et ce qui ne se compte pas ════════════════════════════
 
 def test_deux_campagnes_du_meme_tableau_partagent_un_seul_scan(declarant, monkeypatch):

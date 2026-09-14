@@ -56,9 +56,9 @@ import hashlib
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import _cle_exigee, _instruction, _modele
+from . import _cle_exigee, _instruction, _lignes_reservables, _modele
 from .. import access, db, output_projection, runner_models
 from ..tool_visibility import BETA_OPTION
 
@@ -200,8 +200,22 @@ class FleetState(BaseModel):
     done: Optional[int] = None
     failed: Optional[int] = None
     abandoned: Optional[int] = None
+    # L'issue des travaux TERMINÉS (oto#243), à côté de `done` : là où l'on regarde.
+    empty_jobs: Optional[int] = Field(None, description=(
+        "Finished jobs that called `data_claim_next` and got no row."))
+    stopped_after_write: Optional[int] = Field(None, description=(
+        "Finished jobs stopped by `max_tokens`/`max_steps` after a successful write."))
+    reservation_unmeasured: Optional[int] = Field(None, description=(
+        "Finished jobs whose run has no reservation count (no run, or opened before "
+        "the measure) — never counted as empty."))
     usage_tokens: Optional[int] = None
     heaviest_row_tokens: Optional[int] = None
+    usage_unknown: Optional[int] = Field(None, description=(
+        "Finished jobs whose `usage_tokens` is unknown: the total leaves them out."))
+    reservable_rows: Optional[int] = Field(None, description=(
+        "Rows the scheduler still sees as reservable for this pass (at most 15 s "
+        "old); `null` with `reservable_rows_unavailable` saying why."))
+    reservable_rows_unavailable: Optional[Literal["no_table", "count_failed"]] = None
     last_finished: Optional[str] = None
     no_jobs_attached: bool
 
@@ -489,6 +503,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         etat = db.fleet_state(inp.fleet_id, ctx.org_id)
         if not etat:
             raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        # La file telle que l'ordonnanceur la voit, pour qui SUPERVISE la campagne
+        # (14/09/2026) — jamais pour l'agent qui travaille (`_lignes_reservables`).
+        etat["state"].update(_lignes_reservables.pour_le_superviseur(etat["fleet"]))
         return etat
 
     # update — partiel, et jamais sur la cible ni sur l'état.
@@ -631,7 +648,9 @@ CAPABILITIES += [
             "serves: its jobs would wait forever. "
             "op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "
-            "consumed, heaviest single row — and says `no_jobs_attached` "
+            "consumed, heaviest single row, `empty_jobs` (finished with no row), "
+            "`stopped_after_write` — plus `reservable_rows`, what the scheduler still "
+            "sees to serve — and says `no_jobs_attached` "
             "explicitly rather than returning zeros you would read as 'nothing "
             "happened'. The TARGET is frozen at declaration: redirecting a running "
             "pass to another table is what declaring exists to prevent; the "

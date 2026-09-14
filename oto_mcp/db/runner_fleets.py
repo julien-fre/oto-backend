@@ -527,11 +527,44 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
                    -- SUM ne réintroduise pas la panne — et il est nommé pour ce
                    -- qu'il est, parce qu'une protection qu'on n'a jamais vue mordre
                    -- ne doit pas se faire passer pour une garde éprouvée.
-                   COALESCE(SUM((result->>'usage_tokens')::bigint), 0)::bigint
+                   -- Le CASE ne lit que les nombres : un `usage_tokens` mal formé
+                   -- levait sur le cast et faisait tomber l'état entier (14/09/2026).
+                   COALESCE(SUM(CASE WHEN jsonb_typeof(result->'usage_tokens') = 'number'
+                                     THEN (result->'usage_tokens')::numeric END), 0)::bigint
                        AS usage_tokens,
-                   MAX((result->>'usage_tokens')::bigint)::bigint
+                   MAX(CASE WHEN jsonb_typeof(result->'usage_tokens') = 'number'
+                            THEN (result->'usage_tokens')::numeric END)::bigint
                        AS heaviest_row_tokens,
-                   MAX(finished_at)                                    AS last_finished
+                   MAX(finished_at)                                    AS last_finished,
+                   -- Ce que les travaux TERMINÉS disent de leur issue (14/09/2026,
+                   -- oto#243) : `done` recouvrait « une ligne traitée » et « rien
+                   -- trouvé ». Comparé en JSONB, jamais casté — un résultat mal formé
+                   -- ne doit pas faire tomber l'état de toute la flotte.
+                   -- À vide = a appelé la file (compte d'appels tel que le worker le
+                   -- déclare) ET son run n'a reçu aucune ligne (compté par la
+                   -- plateforme à la réservation, `runs.lignes_reservees`).
+                   COUNT(*) FILTER (WHERE status IN ('done', 'failed')
+                       AND jsonb_typeof(result->'tool_counts'->'data_claim_next') = 'number'
+                       AND result->'tool_counts'->'data_claim_next' > '0'::jsonb
+                       AND EXISTS (SELECT 1 FROM runs r
+                                    WHERE r.run_id = runner_jobs.run_id
+                                      AND r.lignes_reservees = 0))       AS empty_jobs,
+                   COUNT(*) FILTER (WHERE status IN ('done', 'failed')
+                       AND result->>'stopped' IN ('max_tokens', 'max_steps')
+                       AND jsonb_typeof(result->'tool_counts'->'data_write') = 'number'
+                       AND result->'tool_counts'->'data_write' > '0'::jsonb)
+                                                                       AS stopped_after_write,
+                   -- Le NON MESURÉ se compte, il ne se lit pas comme un zéro : travail
+                   -- sans run, ou run ouvert avant la mesure (oto#244 pour l'usage :
+                   -- SUM ignore les inconnus en silence).
+                   COUNT(*) FILTER (WHERE status IN ('done', 'failed')
+                       AND NOT EXISTS (SELECT 1 FROM runs r
+                                        WHERE r.run_id = runner_jobs.run_id
+                                          AND r.lignes_reservees IS NOT NULL))
+                                                                       AS reservation_unmeasured,
+                   COUNT(*) FILTER (WHERE status IN ('done', 'failed')
+                       AND jsonb_typeof(result->'usage_tokens') IS DISTINCT FROM 'number')
+                                                                       AS usage_unknown
               FROM runner_jobs
              WHERE fleet_id = %s AND org_id = %s
             """,

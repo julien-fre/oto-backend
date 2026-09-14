@@ -213,11 +213,15 @@ def insert_run(
     ⚠️ Ce n'est pas « persister le run » : le run est ses faits (cf. le bloc ci-dessus).
     Cette ligne existe pour porter `project_id` — le projet actif gelé à l'ouverture
     (ADR 0032 §5/§6, B3), qu'aucune colonne de `tool_calls` ne porte ; NULL hors projet.
-    `label`/`doctrine` y sont écrits par héritage et ne sont plus lus."""
+    `label`/`doctrine` y sont écrits par héritage et ne sont plus lus.
+
+    `lignes_reservees` part à 0 : un run né après la mesure est MESURÉ dès sa naissance,
+    et la file l'incrémente à chaque ligne rendue (`rowlock.datastore_claim_next`)."""
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO runs (run_id, sub, org_id, project_id, label, doctrine) "
-            "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (run_id) DO NOTHING",
+            "INSERT INTO runs (run_id, sub, org_id, project_id, label, doctrine, "
+            "lignes_reservees) "
+            "VALUES (%s, %s, %s, %s, %s, %s, 0) ON CONFLICT (run_id) DO NOTHING",
             (run_id, sub, org_id, project_id, label, guide),
         )
 

@@ -6,10 +6,14 @@ tirage sur cinq, comme une passe à 2 lignes — ou une passe VIDE, qui fabriqua
 des travaux à vide. Mesuré sur une chaîne de passes : la file du milieu grossissait
 (148 → 171 lignes en 26 minutes), l'amont s'y déversant plus vite qu'elle n'était tirée.
 
-⚠️ **Interne, et c'est ce qui le sépare de la décision du 13/09/2026** (« la plateforme
-ne compte pas à la place de l'agent ») : ce compte n'est servi à AUCUN agent, par
-aucune capacité MCP ou REST. Il sert l'ordonnanceur seul. Le promouvoir en surface
-rouvrirait la question tranchée ce jour-là.
+⚠️ **Jamais à l'agent qui travaille — c'est ce qui le sépare de la décision du
+13/09/2026** (« la plateforme ne compte pas à la place de l'agent ») : ce compte n'entre
+dans aucune consigne et ne part avec aucun travail. Il sert l'ordonnanceur et, depuis
+le 14/09/2026 (décision produit), le SUPERVISEUR d'une campagne, qui le lit dans
+`oto_fleet op=state` (`pour_le_superviseur`). Sans lui, une campagne dont le filtre ne
+recoupe jamais le tableau restait `armed` sans travail ni signal, puisque sautée à
+chaque sondage. Un passage ne le lirait que s'il déclarait lui-même `oto_fleet` dans
+ses outils.
 
 ⚠️ **Le même périmètre que la réservation, à la clause près** : les clauses viennent de
 `perimetre_de_reservation`, que `claim_next` appelle aussi, et
@@ -85,6 +89,21 @@ def _echec(fid: int, sig: str, e: Exception, maintenant: float) -> bool:
         return False
     _SIGNALE[fid] = (cause, maintenant)
     return True
+
+
+def pour_le_superviseur(f: dict) -> dict:
+    """Le compte que l'ordonnanceur voit pour UNE campagne, rendu à qui la supervise :
+    `reservable_rows`, et quand il manque, POURQUOI — `no_table` (elle ne vise aucun
+    tableau) ou `count_failed` (le compte a échoué, la cause est au journal). Même
+    fenêtre de 15 s que l'ordonnanceur : c'est SA vue, pas une seconde lecture qui
+    pourrait la contredire."""
+    fid = int(f["id"])
+    comptes = lignes_reservables([f])
+    if fid not in comptes:
+        return {"reservable_rows": None, "reservable_rows_unavailable": "count_failed"}
+    if comptes[fid] is None:
+        return {"reservable_rows": None, "reservable_rows_unavailable": "no_table"}
+    return {"reservable_rows": comptes[fid], "reservable_rows_unavailable": None}
 
 
 def lignes_reservables(candidates: list[dict], *,

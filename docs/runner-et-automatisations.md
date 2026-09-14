@@ -386,8 +386,24 @@ retirerait. Il fait un scan par tableau pour toutes ses campagnes
 par processus. Mesuré sur base éphémère, pour 6 à 10 campagnes : 67 à 98 ms sur
 8 910 lignes larges, 0,6 à 0,9 s sur 89 100 lignes.
 
-⚠️ **Interne.** Aucune capacité MCP ou REST ne sert ce compte : pour les agents, la
-décision du 13/09 (« la plateforme ne compte pas à la place de l'agent ») tient.
+⚠️ **Jamais à l'agent qui travaille.** Ce compte n'entre dans aucune consigne et ne part
+avec aucun travail : pour l'agent, la décision du 13/09 (« la plateforme ne compte pas
+à la place de l'agent ») tient. Il est lu par l'ordonnanceur et, depuis le 14/09
+(décision produit), par le superviseur d'une campagne dans `oto_fleet op=state`
+(`reservable_rows`, et `reservable_rows_unavailable` quand il manque). Sans lui, une
+campagne dont le filtre ne recoupe jamais le tableau restait `armed` sans travail ni
+signal, puisque sautée à chaque sondage.
+
+**L'issue des travaux se lit dans l'état du passage** (oto#243, oto#244), sans nouveau
+statut — un travail reste `done` ou `failed` :
+- `empty_jobs` : le travail a appelé `data_claim_next` et son run n'a reçu aucune ligne.
+  C'est la PLATEFORME qui compte ce qu'elle rend, dans la transaction de la réservation
+  (`runs.lignes_reservees`, décision du 14/09) : le worker ne sait pas ce qu'est une
+  ligne (oto-runner f082336). Les runs d'avant la colonne restent `null`, non mesurés ;
+- `stopped_after_write` : arrêté par `max_tokens` ou `max_steps` après une écriture
+  réussie, le travail est fait mais la dépense a été payée jusqu'à la borne ;
+- `reservation_unmeasured` et `usage_unknown` : ce qui n'est pas mesuré se compte, il
+  ne se lit jamais comme un zéro.
 
 Trois régimes se sont succédé :
 - la plus ancienne armée d'abord : une chaîne de passes armée d'un coup restait

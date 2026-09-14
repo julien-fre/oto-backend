@@ -352,8 +352,13 @@ from oto_mcp.db import _schema, schema
 # CREATE TABLE. La base partagée la reçoit par `db/revision.py` (ALTER, fonction, et le
 # déclencheur posé seulement s'il manque). Additif : le code du tag précédent ne lit pas
 # `rev`, et ses écritures la font avancer. 153 174 → 153 796.
-EMPREINTE = "cbe344b8cea8525a50efd6abf0e84876a9a4b6e9deca3e7401660d5cb31b752c"
-LONGUEUR = 153796
+# 14/09/2026 — les lignes que la FILE rend à un run (fragment RUNS, oto#243) : la colonne
+# `runs.lignes_reservees` et son commentaire dans le CREATE TABLE. La base partagée la
+# reçoit par l'ALTER de `_init.py`, sans défaut (les runs d'avant restent NULL, non
+# mesurés). Additif : le code du tag précédent ne la lit ni ne l'écrit — ses runs restent
+# NULL. 153 796 → 153 900.
+EMPREINTE = "ce6a5d18f106412fa39bc8e2afafcd4d7bf1952b5414d83c5872eae19b13c1f2"
+LONGUEUR = 153900
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

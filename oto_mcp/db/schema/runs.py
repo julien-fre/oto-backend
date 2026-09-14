@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS runs (
     outcome TEXT,                               -- done|abandoned|failed|blocked ; NULL = ouvert
     note TEXT,
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    finished_at TIMESTAMPTZ
+    finished_at TIMESTAMPTZ,
+    lignes_reservees INT                        -- rendues par la file ; NULL = non mesuré (cf. _init)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_sub_org ON runs(sub, org_id, started_at DESC);
 -- idx_runs_project est créé dans `_init` APRÈS l'ADD COLUMN project_id : sur une table

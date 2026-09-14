@@ -64,10 +64,11 @@ def _perimetre_reclamable(ns_id: int, filters: Optional[list]) -> tuple:
 
     ⚠️ Un comptage « ce que la file servirait » a existé du 09/09 au 13/09/2026, jamais
     branché, et retiré sur décision : « la plateforme ne compte pas à la place de
-    l'agent ». **Renversé le 14/09/2026 pour un appelant INTERNE** — l'ordonnanceur des
-    campagnes hébergées, qui tirait au hasard entre une file de 171 lignes et une file
-    vide (`datastore_compter_reservables`, juste en dessous). Il reste interne : aucun
-    agent, aucune capacité MCP ou REST ne le sert.
+    l'agent ». **Renversé le 14/09/2026** pour l'ordonnanceur des campagnes hébergées,
+    qui tirait au hasard entre une file de 171 lignes et une file vide
+    (`datastore_compter_reservables`, juste en dessous), puis pour le superviseur d'une
+    campagne (`oto_fleet op=state`). Il ne part jamais avec un travail ni dans une
+    consigne : l'agent qui réserve découvre toujours la file en réservant.
     """
     fclauses, fparams = _ds_filter_clauses(filters)
     where = "WHERE " + _LIBRE_ET_EN_FILE
@@ -163,6 +164,19 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
             + _RENDU,
             (str(worker), int(lease_seconds), run_id, ns_id, picked["row_id"]),
         ).fetchone()
+        if row is not None and run_id:
+            # Ce que la FILE a rendu à ce run (oto#243) — compté ICI, par la plateforme
+            # qui sert la ligne : le worker ne sait pas ce qu'est une ligne (oto-runner
+            # f082336). `+ 1` SANS COALESCE : `NULL + 1` reste NULL, donc un run ouvert
+            # avant la colonne reste « non mesuré » au lieu d'un compte partiel qui se
+            # lirait complet. `datastore_claim_row` ne compte pas : il RENOUVELLE aussi
+            # un bail, et c'est la file pilotée à la main.
+            # Ordre des verrous : ligne du tableau PUIS ligne du run. Aucune transaction
+            # ne prend un run puis une ligne de tableau — `finish_run` n'écrit que le
+            # run, la libération que les lignes, la purge des runs ni l'un ni l'autre
+            # d'un tableau —, donc aucun cycle possible.
+            conn.execute("UPDATE runs SET lignes_reservees = lignes_reservees + 1 "
+                         "WHERE run_id = %s", (run_id,))
         return dict(row) if row else None
 
 

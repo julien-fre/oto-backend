@@ -877,6 +877,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # ADR 0032 §5/§6 (B3) : un run est rattaché au projet actif gelé à son ouverture.
     conn.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS project_id BIGINT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, started_at DESC)")
+    # Les lignes que la FILE a rendues à ce run (14/09/2026, oto#243), comptées par
+    # `rowlock.datastore_claim_next` dans sa transaction. SANS défaut, exprès : les runs
+    # d'avant restent NULL, « non mesurés » — un DEFAULT 0 fabriquerait des zéros sur tout
+    # l'historique. Métadonnée seule, aucune réécriture ; l'attente du verrou est bornée
+    # par le `lock_timeout` posé en tête de cette transaction.
+    conn.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS lignes_reservees INT")
     # Discriminateur d'événement (ADR 0017, « un seul flux ») : 'mcp' (défaut,
     # cas historique) / 'rest' / 'connector'. Les lignes existantes deviennent
     # 'mcp' par le DEFAULT → les lectures kind='mcp' restent iso (canari no-op).
