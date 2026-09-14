@@ -196,7 +196,15 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Deploy preprod (build serveur via script root-restreint)
-        run: sudo /opt/deploy/oto-backend-canari.sh
+        # oto-backend#948 (14/09/2026) : sans argument, le script installait
+        # `origin/main` — la POINTE du tronc au moment où il s'exécute, pas le sha
+        # que CE run vient de valider. Entre le début du run et son `deploy-preprod`
+        # (`needs: test`), d'autres commits peuvent arriver sur main ; le déploiement
+        # servait alors un sha dont AUCUNE CI n'avait été vue verte — 3 occurrences
+        # mesurées le 14/09. Préprod et prod partagent la même base : un DDL ou une
+        # semence non vérifiés s'y jouaient au boot. `github.sha` fige ce que ce run
+        # a réellement testé.
+        run: sudo /opt/deploy/oto-backend-canari.sh ${{ github.sha }}
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Le front de JB (`otomata-tech/oto-frontend`, servi sur dashboard.oto.ninja) épingle

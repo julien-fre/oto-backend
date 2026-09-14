@@ -137,7 +137,11 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 
 # Deploy — modèle tronc unique (refonte 2026-07-20, ADR 0020) :
 #   push `main`  → PREPROD (« Deploy preprod », deploy-canari.yml, script serveur
-#                  oto-backend-canari.sh : git reset --hard origin/main → preprod)
+#                  oto-backend-canari.sh <sha> : git reset --hard <sha du run> →
+#                  preprod. ⚠️ Le sha, jamais `origin/main` — oto-backend#948,
+#                  14/09/2026 : un `$1` absent y défaillait vers la pointe du
+#                  tronc au moment de l'exécution, pas le sha que LE RUN venait de
+#                  tester. Script sans repli depuis, comme oto-backend.sh)
 #   tag  `v*`    → PROD    (« Deploy prod », deploy.yml, script serveur
 #                  oto-backend.sh <tag> : git reset --hard <tag> → prod)
 # Le deploy (les deux) = SSH box dédiée via runner self-hosted : reset au ref +
