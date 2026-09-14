@@ -195,13 +195,26 @@ def _uri_canonique(uri: str):
     return p
 
 
+_SEGMENT = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _prefixe_borne(chemin: str, prefixe: str, *, suffixe_requis: bool = True) -> bool:
+    """`chemin` = `prefixe`, suivi d'AU PLUS un segment (`[A-Za-z0-9_-]+`) — jamais un
+    préfixe sans borne : `/connector/oauth/x/../../ailleurs` ou `/auth_callbackXYZ` ne
+    passent pas. `suffixe_requis` : le segment est obligatoire (identifiant du connecteur)."""
+    if chemin == prefixe:
+        return not suffixe_requis
+    reste = chemin[len(prefixe):] if chemin.startswith(prefixe + "/") else None
+    return reste is not None and bool(_SEGMENT.match(reste[1:]))
+
+
 def _redirect_ok(uri: str) -> bool:
     p = _uri_canonique(uri)
     if p is None:
         return False
     host = (p.hostname or "").lower().rstrip(".")
     if p.scheme == "https" and host in (_ALLOWED_HTTPS_HOSTS | _extra_https_hosts()) \
-            and p.path.startswith(_CALLBACK_PATH):
+            and _prefixe_borne(p.path, _CALLBACK_PATH, suffixe_requis=False):
         return True
     # ChatGPT (connecteurs MCP) : DEUX formes de rappel, toutes deux documentées
     # par OpenAI (developers.openai.com/plugins/build/auth). Ce n'est pas le mode de
@@ -214,12 +227,12 @@ def _redirect_ok(uri: str) -> bool:
     # ininstallable, sans qu'aucune trace ne survive plus de 19 h.
     # Garde-fou réel = l'app Logto (redirect enregistré, exact).
     if p.scheme == "https" and host == "chatgpt.com" and (
-            p.path.startswith("/connector/oauth/")
+            _prefixe_borne(p.path, "/connector/oauth")
             or p.path == "/connector_platform_oauth_redirect"):
         return True
     # Mistral (Le Chat, connecteurs MCP) : redirect FIXE callback.mistral.ai.
     if p.scheme == "https" and host == "callback.mistral.ai" \
-            and p.path.startswith("/v1/integrations_auth/"):
+            and _prefixe_borne(p.path, "/v1/integrations_auth"):
         return True
     if p.scheme == "http" and host in _ALLOWED_LOCAL_HOSTS:
         return True
@@ -802,6 +815,9 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             else:
                 await run_in_threadpool(lambda: _register_redirects(
                     app_id, poser, directory, cors_uris=requested))
+            # Le relais compare le rappel d'un client aux rappels RELUS : le client qui
+            # s'enregistre puis autorise dans la foulée doit trouver le sien.
+            relay.oublier_rappels(directory, app_id)
         except RedirectRegistrationFailed:
             _log.exception("DCR: enregistrement Logto échoué (redirects=%r)", requested)
             return JSONResponse(

@@ -169,17 +169,22 @@ def banc(request, monkeypatch):
     monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "secret-de-banc")
     monkeypatch.setenv("LOGTO_ACME_MGMT_ID", "cid")
     monkeypatch.setenv("LOGTO_ACME_MGMT_SECRET", "csec")
+    monkeypatch.setenv("OTO_MCP_LOGTO_M2M_ID", "cid")          # annuaire administré
+    monkeypatch.setenv("OTO_MCP_LOGTO_M2M_SECRET", "csec")
     monkeypatch.setenv("OTO_MCP_OAUTH_RELAY_HOSTS", scenario.mcp)
     logto = _LogtoStrict(scenario)
     aiguillage = _Aiguillage({scenario.mcp: _serveur_mcp(logto, scenario),
                               scenario.annuaire: logto.app()})
     monkeypatch.setattr(facade, "_register_redirects", logto.poser)
+    # le relais compare le rappel du client à ceux que l'application porte VRAIMENT
+    monkeypatch.setattr(facade, "_redirect_uris", lambda app_id, d=None: sorted(logto.rappels))
 
     # l'échange de jeton sort par le VRAI `relay._poster` : seul le transport est branché
     async def _client_http():
         return httpx.AsyncClient(transport=httpx.ASGITransport(app=aiguillage))
     monkeypatch.setattr(relay, "_client_http", _client_http)
     relay._seaux.clear()
+    relay._rappels.clear()
     avant = tenancy.current()
     tenancy.install(tenancy.IssuerRegistry(tenancy.build(
         "https://auth.oto.test/oidc",

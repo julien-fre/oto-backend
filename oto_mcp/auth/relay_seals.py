@@ -23,7 +23,9 @@ import time
 from typing import Optional
 
 CODE_MARQUE = "oto1"
-ETAT_TTL = 3600     # connexion par code e-mail : plusieurs minutes, pas plusieurs heures
+# Un sceau s'obtient sans connexion : il ne doit rester rejouable que le temps d'une
+# connexion réelle (code e-mail compris), pas une heure.
+ETAT_TTL = 600
 
 
 def secret() -> Optional[bytes]:

@@ -264,51 +264,83 @@ métadonnée annonce `authorization_endpoint = <host>/oauth/relay/authorize` et
 
 - l'autorisation ne réécrit que `redirect_uri` (→ `<host>/oauth/callback`, UN rappel posé sur
   l'application partagée de l'annuaire) et `state` (qui scelle, sous HMAC
-  `OTO_MCP_OAUTH_STATE_SECRET`, le rappel du client, son `state`, le host et l'heure — 1 h) ;
+  `OTO_MCP_OAUTH_STATE_SECRET`, le rappel du client, son `state`, le host et l'heure — **10 min** :
+  un sceau s'obtient sans connexion, il ne doit rester rejouable que le temps d'une connexion) ;
   PKCE et le reste arrivent chez Logto à l'octet près, `consent` ajouté pour NOTRE annuaire
   seulement (oto#202) ;
 - le retour vérifie le sceau et, quand il est présent, l'`iss` de Logto (un émetteur que cet
   annuaire ne signe pas ⟹ 400, sans redirection), puis renvoie le client sur son rappel —
-  paramètres de réponse REMPLACÉS, jamais ajoutés — avec `iss` = l'`issuer` servi ;
+  paramètres de réponse REMPLACÉS, le reste de sa requête à l'octet près — avec `iss` =
+  l'`issuer` servi ;
 - l'échange de jeton remet le rappel de la façade pour un code MARQUÉ (`oto1.<étiquette>.<code>`,
-  qui lie le code au rappel du client : la vérification que Logto faisait avant) et transmet le
-  reste tel quel, segment par segment. Logto émet et signe comme avant ; rien n'est stocké.
+  qui lie le code au rappel du client) et transmet le reste tel quel, segment par segment. Logto
+  émet et signe comme avant ; rien n'est stocké.
 
-**Ce qui ne change PAS, et pourquoi c'est tenu :**
+**Le relais n'élargit rien de ce que Logto aurait accepté** (revue de la PR, 14/09) :
+
+- **rappel enregistré à l'octet près.** Le `redirect_uri` du client est comparé aux rappels
+  RELUS sur l'application (Management API, cache de 60 s, lecture bornée à 10 s hors boucle) —
+  pas au filtre `_redirect_ok`, qui reste une garde en plus. Chaque DCR oublie ce cache : le
+  client qui s'enregistre puis autorise dans la foulée trouve son rappel. D'où une condition :
+  **le relais exige un annuaire que la plateforme administre** (`tenants.logto_mgmt` + credential
+  présent pour un tenant, `OTO_MCP_LOGTO_M2M_*` pour le nôtre) ;
+- **l'échange ne sert que le client de l'application** : `client_id` exigé une fois et égal à
+  l'application partagée, aucun en-tête `Authorization` accepté ni relayé (la métadonnée
+  n'annonce que `token_endpoint_auth_methods_supported: none`), `redirect_uri` exigé pour un code ;
+- **sur un host non déclaré**, `/oauth/token` refuse tout, sauf l'échange d'un code déjà relayé
+  (marqué), que rien d'autre ne saurait échanger.
+
+**Il ne se contourne pas en silence** : ce qu'il ne relaie pas reçoit une erreur NOMMÉE, jamais le
+trajet direct —
+
+| cas | réponse |
+|---|---|
+| host non déclaré | 400 `invalid_request` (« relancer la découverte ») |
+| requête hors forme : sans PKCE S256, `response_type` ≠ `code`, `response_mode` ≠ `query`, objet `request`, paramètre répété | 400 `invalid_request`, cause nommée |
+| client ≠ application partagée | 400 `invalid_client` |
+| rappel hors `_redirect_ok`, ou rappel de la façade | 400 `invalid_request` |
+| rappel non enregistré sur l'application | 400 `invalid_request` (« l'enregistrer par /oauth/register ») |
+| annuaire non administré / application illisible | 503 `temporarily_unavailable` |
+
+— et **un host déclaré sans `OTO_MCP_OAUTH_STATE_SECRET` empêche le démarrage** (`server.main`,
+avant la base et les boucles de fond), au lieu d'un relais dégradé dit par une ligne de journal.
+
+**Ce qui ne change pas :**
 
 - **un host non déclaré** sert la métadonnée, `/oauth/authorize` et la DCR d'avant (les bancs de
-  la façade passent inchangés). Ce qui vaut PARTOUT dès le déploiement, déclaré ou non : les trois
-  routes du relais répondent (le jeton y est transmis tel quel, sous les freins ci-dessous), la
-  garde `_redirect_ok` durcie (DCR et shim anonyme compris) et l'écriture Logto qui n'envoie que
-  la colonne qui change ;
+  la façade passent inchangés) ;
 - **`/oauth/authorize` ne relaie jamais** : un client qui a lu la métadonnée d'oto#202 garde
   « autorisation là, jeton chez Logto », et Logto refuserait un code relayé ;
-- **aucun drapeau RFC 9207 n'est annoncé** : le trajet direct reste possible (requête qu'on ne
-  réécrit pas sans risque — sans PKCE S256, `response_mode` autre que `query`, objet `request`,
-  paramètre répété —, client qui n'est pas celui de l'annuaire, rappel hors liste). Un client qui
-  exige `iss` sur la foi du drapeau (ChatGPT/Codex d'après leur doc ; le parcours « tableau de
-  bord » d'un agent, qui ne transmet pas `iss`) y casserait là où il marche aujourd'hui ;
-- **`_redirect_ok` est durci**, parce qu'il devient la SEULE garde du rappel (Logto ne voit plus
-  que celui de la façade) : ASCII imprimable, aucune barre oblique inverse, autorité réduite à
-  `host[:port]` (ni `user@`, ni `%`), aucun segment qui se décode en `.`/`..`, aucun fragment,
-  un port valide. `http://evil\@127.0.0.1/cb` est local pour Python et part chez `evil` dans un
-  navigateur ; `…/auth_callback\..\..\x` sort du chemin autorisé pour la même raison.
+- **aucun drapeau RFC 9207 n'est annoncé** : un client qui exige `iss` sur la foi du drapeau
+  (ChatGPT/Codex d'après leur doc ; le parcours « tableau de bord » d'un agent, qui ne transmet pas
+  `iss`) casserait sur tout trajet qui ne l'estampille pas.
+
+**Ce qui vaut partout dès le déploiement, déclaré ou non :**
+
+- **`_redirect_ok` durci** (DCR et shim anonyme compris) : ASCII imprimable, aucune barre oblique
+  inverse, autorité réduite à `host[:port]` (ni `user@`, ni `%`), aucun segment qui se décode en
+  `.`/`..`, aucun fragment, un port valide, et **chaque préfixe borné à un segment**
+  (`…/auth_callback` ou `…/auth_callback/<segment>`, `/connector/oauth/<segment>`,
+  `/v1/integrations_auth/<segment>`). `http://evil\@127.0.0.1/cb` est local pour Python et part
+  chez `evil` dans un navigateur ; `…/auth_callback\..\..\x` sort du chemin pour la même raison ;
+- **l'écriture Logto n'envoie que la colonne qui change** (`_register_redirects`) ;
+- **les trois routes du relais répondent** (et refusent en le disant) ;
+- **le journal d'accès** ne garde plus `code` ni `state` sur `/oauth/callback`
+  (`relay.FiltreJournalAcces`, posé sur `uvicorn.access` au démarrage).
 
 **Mettre un host en service — dans cet ordre :**
 
 1. déployer la version qui porte le relais (les trois routes sont servies partout, rien n'est
    annoncé) ;
 2. ajouter le host à `OTO_MCP_OAUTH_RELAY_HOSTS` dans le `.env` de la box — ⚠️ **la liste
-   s'ÉTEND, ne se remplace jamais** ; vérifier que `OTO_MCP_OAUTH_STATE_SECRET` y est
-   (sans lui, le host n'est ni annoncé ni relayé, et le journal le dit une fois). **Ne pas
-   redémarrer encore** ;
+   s'ÉTEND, ne se remplace jamais** ; vérifier que `OTO_MCP_OAUTH_STATE_SECRET` y est (sans lui,
+   le service ne démarrera pas). **Ne pas redémarrer encore** ;
 3. `oto-mcp maintenance oauth-relay-callbacks` (même `.env` chargé, cf. `docs/commands.md`) :
    À BLANC, il constate `présent`/`absent` ; avec `--apply`, il pose
    `https://<host>/oauth/callback` sur l'application de l'annuaire et RELIT l'application pour
    rendre `posé` (ou `NON CONSTATÉ après écriture`). Chaque host est tenté et rendu, `échec :
-   <type>` compris ; une base illisible fait échouer la commande plutôt que de rendre les tenants
-   « inconnus ». Un tenant dont nous n'administrons pas l'annuaire rend `manuel` avec le rappel
-   exact à faire poser par son administrateur ;
+   <type>` compris ; une base illisible fait échouer la commande. Un host dont nous n'administrons
+   pas l'annuaire rend `refusé` : le relais y est impossible ;
 4. redémarrer, puis prouver avec un VRAI client strict (un venv jetable, `mcp==2.0.0`) :
    connexion complète jusqu'à un appel `/mcp` authentifié.
 
@@ -317,13 +349,13 @@ chaque écriture, sans contrôle de concurrence (une DCR d'un autre environnemen
 application, une sauvegarde dans la console). Deux parades : `_register_redirects` n'écrit plus
 que la colonne qui change ; et chaque DCR sur un host relayé REPOSE le rappel de la façade. Pas
 de verrou : il retiendrait un fil du pool partagé pendant toute la file, sur une route non
-authentifiée. Symptôme s'il manque : la page d'erreur `invalid_redirect_uri`
-de Logto, sans retour chez nous — rejouer l'étape 3.
+authentifiée. Symptôme s'il manque : la page d'erreur `invalid_redirect_uri` de Logto, sans
+retour chez nous — rejouer l'étape 3.
 
-⚠️ **Une fois un host déclaré, ne jamais revenir à une version antérieure au relais** : un client
-garde la métadonnée qu'il a lue, et ses échanges de jeton iraient sur une route disparue (un SDK
-efface ses jetons sur un rafraîchissement non-200). L'interrupteur est la déclaration : la
-retirer arrête d'annoncer et de relayer, et les routes continuent de servir qui les a lues.
+⚠️ **Retirer une déclaration n'est pas anodin** : un client qui a lu la métadonnée du relais la
+garde, et reçoit alors une erreur nommée (autorisation et rafraîchissement) jusqu'à sa prochaine
+découverte. **Revenir à une version antérieure au relais** lui rendrait des 404 — un SDK efface
+ses jetons sur un rafraîchissement non-200.
 
 **Limites connues :**
 
@@ -331,31 +363,30 @@ retirer arrête d'annoncer et de relayer, et les routes continuent de servir qui
   seulement RFC 9207) le refuserait — ce n'est pas une régression, et ça ne se relaie pas ;
 - le rafraîchissement passe désormais par la boucle du serveur : un gel de boucle
   (`docs/event-loop-perf.md`) coupe aussi les rafraîchissements ;
-- le code d'autorisation apparaît dans le journal d'accès du retour (`GET /oauth/callback?code=`),
-  comme pour les rappels OAuth des connecteurs : usage unique, courte durée, lié à PKCE ;
 - le jeton part vers l'ORIGINE de notre annuaire (`LOGTO_ENDPOINT`), pas vers le domaine public
   (même jeton, sans le pare-feu applicatif) ; 30 s au plus, jamais de nouvel essai (un code ou
-  un jeton de rafraîchissement rejoué fait révoquer toute la délégation), 504 au-delà. Deux freins
-  sur `/oauth/token` : un seau de 120/min par IP OBSERVÉE — le dernier segment de
-  `X-Forwarded-For`, que Caddy pose, jamais `CF-Connecting-IP`, que personne n'écrase sur un host
-  qui n'est pas derrière Cloudflare — et 32 échanges en vol au plus (503 au-delà).
+  un jeton de rafraîchissement rejoué fait révoquer toute la délégation), 504 au-delà. Freins sur
+  `/oauth/token` : corps borné à 64 Ko (`Content-Length` puis lecture en flux, 413 au-delà), un
+  seau de 120/min par IP — le pair TCP, ou le dernier segment de `X-Forwarded-For` quand le pair
+  est le proxy de la box (boucle locale), jamais `CF-Connecting-IP` — et 32 échanges en vol au
+  plus (503).
 
 **Lire le relais en production** : `journalctl … | grep oauth.relay` (les valeurs écrites par le
 client sont entre guillemets, `%r` : un saut de ligne n'y forge pas de ligne) —
-- `authorize mode=relay|direct reason=<not_declared|foreign_client|redirect_not_allowed|pkce|response_mode|param_shape|request_object> client='…' redirect_host='…'` ;
+- `authorize mode=relay host=… redirect_host='…'`, ou
+  `authorize refused reason=<not_declared|request_object|param_shape|response_mode|pkce|foreign_client|redirect_not_allowed|redirect_not_registered|directory_unreadable> client='…'` ;
 - `callback outcome='code'|'error:<e>' redirect_host='…' age_s=`, ou, refusé :
   `outcome=bad_state:<sig|ttl|host|format|no_secret>`, `outcome=iss_mismatch`, `outcome=empty` ;
-- `token grant=<authorization_code|refresh_token> code=<marked|unmarked|-> upstream=<statut> error=<champ|-> ms=`,
+- `token grant=<authorization_code|refresh_token> code=<marked|unmarked|-> upstream=<statut> error='<champ>|-' ms=`,
   ou, refusé ou en panne : `code=tag_mismatch`, `code=mark_stripped`,
   `upstream=<timeout|saturated|NomDeLException>`.
 
-Les `code=unmarked` disent qui passe encore par le trajet direct.
-
-- Bancs : `tests/auth/test_authorization_relay.py` (routes, sceaux, déclaration, repli) et
-  `tests/auth/test_authorization_relay_client_mcp.py` (parcours complet par
+- Bancs : `tests/auth/test_authorization_relay.py` (routes, sceaux, déclaration, refus nommés,
+  gardes), `tests/auth/test_authorization_relay_client_mcp.py` (parcours complet par
   `OAuthClientProvider` contre un Logto factice strict, tenant et plateforme, avec le témoin
-  sans déclaration). Le SDK épinglé (1.x) ne compare pas `iss` : le banc le fait à sa place, et
-  passe le même fichier sous `mcp==2.0.0` dans un venv jetable.
+  sans déclaration) et `tests/auth/test_facade_routes_table_frozen.py` (la table des routes de la
+  façade, figée comme celle de `/api/*`). Le SDK épinglé (1.x) ne compare pas `iss` : le banc le
+  fait à sa place, et passe le même fichier sous `mcp==2.0.0` dans un venv jetable.
 
 ## MFA par org (« une org impose le 2ᵉ facteur à ses membres »)
 

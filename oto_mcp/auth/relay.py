@@ -1,43 +1,34 @@
 """Le relais d'autorisation : l'émetteur ANNONCÉ devient celui qui ESTAMPILLE la réponse
-(RFC 9207).
+(RFC 9207). Contrat complet : docs/auth-logto.md §relais.
 
-**Le défaut mesuré (08/09/2026).** La façade s'annonce serveur d'autorisation (`issuer` = le
-host, RFC 8414 §3.3), mais la réponse d'autorisation sortait de Logto, estampillée `iss` =
-SON émetteur. Le SDK MCP Python 2.0 compare cet `iss` à l'`issuer` découvert et refuse le
-flux juste après la connexion (« Authorization response iss mismatch »), avant tout jeton —
-deux fois en production, sur le host d'un tenant. §2.4 impose la validation dès que `iss`
-est PRÉSENT : ne rien annoncer ne protège de rien.
+**Le défaut (08/09/2026).** La façade s'annonce serveur d'autorisation (`issuer` = le host),
+mais la réponse sortait de Logto, estampillée de SON émetteur : le SDK MCP Python 2.0 compare
+`iss` à l'`issuer` découvert (§2.4, dès que `iss` est PRÉSENT) et refusait le flux avant tout
+jeton.
 
-**Ce que fait le relais.** Sur un host DÉCLARÉ (`relais_actif`), la métadonnée annonce
-`/oauth/relay/authorize` et `/oauth/token` :
-- l'autorisation réécrit DEUX segments de la requête — `redirect_uri` devient le rappel de
-  la façade (`<as_base>/oauth/callback`, UN rappel posé sur l'application partagée) et
-  `state` scelle le rappel et le `state` du client (`relay_seals`). Le reste, PKCE compris,
-  arrive chez Logto à l'octet près ;
-- le retour vérifie le sceau et l'`iss` de Logto, puis renvoie le client sur SON rappel,
-  paramètres de réponse REMPLACÉS, avec `iss` = l'`issuer` annoncé ;
-- l'échange de jeton remet le rappel de la façade pour un code MARQUÉ et transmet le reste
-  tel quel. Logto émet et signe comme avant ; rien n'est stocké.
+**Le relais**, sur un host DÉCLARÉ : l'autorisation ne réécrit que `redirect_uri` (→ le rappel
+de la façade) et `state` (scellé, `relay_seals`) ; le retour rend le client à son rappel avec
+`iss` = l'`issuer` servi ; l'échange de jeton remet le rappel de la façade pour un code
+MARQUÉ. Logto émet et signe comme avant ; rien n'est stocké.
 
-**Ce qui ne change pas, et pourquoi.** Un host non déclaré sert la métadonnée d'avant, à
-l'octet près ; `/oauth/authorize` (oto#202) garde son comportement — un client qui a lu la
-métadonnée d'avant (autorisation là, jeton chez Logto) ne recevra jamais un code relayé que
-Logto refuserait. `authorization_response_iss_parameter_supported` n'est PAS annoncé : le
-trajet direct reste possible (repli), et un client qui exige `iss` sur la foi de ce drapeau
-(ChatGPT/Codex, le parcours tableau de bord de certains agents) casserait là où il marche.
-⚠️ **Une fois un host déclaré, ces trois routes ne se retirent plus** : un client garde la
-métadonnée qu'il a lue. Retirer la déclaration arrête d'annoncer et de relayer ; revenir à
-une version antérieure à ce module casserait ces clients.
+**Il n'élargit rien de ce que Logto aurait accepté** : rappel enregistré À L'OCTET PRÈS sur
+l'application (relu, cache court), annuaire administré, échange pour le seul client de
+l'application sans authentification client relayée. **Il ne se contourne pas en silence** :
+ce qu'il ne relaie pas reçoit une erreur NOMMÉE ; un host déclaré sans secret empêche le
+démarrage. `/oauth/authorize` (oto#202) ne relaie jamais, et aucun drapeau RFC 9207 n'est
+annoncé. ⚠️ Retirer une déclaration rend des erreurs nommées aux clients qui ont lu la
+métadonnée du relais, jusqu'à leur prochaine découverte.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import parse_qsl, quote, unquote_plus, urlencode, urlparse, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote_plus, urlencode, urlparse, urlsplit
 
 import httpx
 from pydantic import AnyHttpUrl
@@ -56,45 +47,44 @@ _log = logging.getLogger("oto_mcp.oauth_facade")
 AUTHORIZE_PATH = "/oauth/relay/authorize"
 CALLBACK_PATH = "/oauth/callback"
 TOKEN_PATH = "/oauth/token"
-_HOSTS_ENV = "OTO_MCP_OAUTH_RELAY_HOSTS"
+HOSTS_ENV = "OTO_MCP_OAUTH_RELAY_HOSTS"
 # ≥ au délai d'un client : si le relais abandonnait le premier, Logto consommerait quand
 # même le code (ou ferait tourner le jeton de rafraîchissement), et le rejeu du client
 # ferait RÉVOQUER toute la délégation. Jamais de nouvel essai côté relais.
 _JETON_TIMEOUT = 30.0
+_LECTURE_TIMEOUT = 10.0   # relire les rappels de l'application, sur le chemin d'autorisation
+_RAPPELS_TTL = 60.0
 _CORPS_MAX = 64 * 1024
 _GRANTS = frozenset({"authorization_code", "refresh_token"})
 _CLES_DE_REPONSE = frozenset({"code", "state", "iss", "error", "error_description", "error_uri"})
-# Deux freins sur l'échange de jeton, sans lesquels n'importe qui ferait frapper Logto
-# depuis l'IP de la box : un seau par IP OBSERVÉE (large à dessein — un client hébergé
-# rafraîchit tous ses utilisateurs depuis quelques IP) et un plafond d'échanges en vol,
-# qui garde le client HTTP partagé disponible pour les vrais rafraîchissements.
+# Deux freins sur l'échange de jeton : un seau par IP OBSERVÉE (large à dessein — un client
+# hébergé rafraîchit tous ses utilisateurs depuis quelques IP) et un plafond d'échanges en
+# vol, qui garde le client HTTP partagé disponible pour les vrais rafraîchissements.
 _SEAU_PAR_MIN, _SEAU_RAFALE, _SEAUX_MAX = 120.0, 60.0, 50_000
 _EN_VOL_MAX = 32
+# Le seul proxy dont on lit `X-Forwarded-For` : celui de la box, qui écoute en boucle locale.
+_PROXIES_DE_CONFIANCE = frozenset({"127.0.0.1", "::1"})
 _seaux: dict = {}
+_rappels: dict = {}
 _en_vol = 0
-_sans_secret_signale: set = set()
 
 
 def hosts_declares() -> frozenset:
-    raw = os.environ.get(_HOSTS_ENV, "")
+    raw = os.environ.get(HOSTS_ENV, "")
     return frozenset(h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip())
 
 
+def verifier_configuration() -> None:
+    """Au démarrage : un host déclaré sans secret de sceau n'est PAS un relais dégradé,
+    c'est une configuration incomplète — le process refuse de démarrer en la nommant."""
+    if hosts_declares() and secret() is None:
+        raise RuntimeError(
+            f"{HOSTS_ENV} déclare {sorted(hosts_declares())} mais OTO_MCP_OAUTH_STATE_SECRET "
+            "est absent : le relais d'autorisation ne peut pas sceller son état")
+
+
 def relais_actif(host: str) -> bool:
-    """Le host est déclaré ET le process peut sceller. Une déclaration sans secret ne
-    s'annonce pas (sinon chaque autorisation se replierait sous une métadonnée qui promet
-    le relais) — et le dit, une fois par host."""
-    host = (host or "").lower().rstrip(".")
-    if host not in hosts_declares():
-        return False
-    if secret() is None:
-        if host not in _sans_secret_signale:
-            _sans_secret_signale.add(host)
-            _log.error("relais d'autorisation : %s est déclaré dans %s mais "
-                       "OTO_MCP_OAUTH_STATE_SECRET est absent — non annoncé, non relayé",
-                       host, _HOSTS_ENV)
-        return False
-    return True
+    return (host or "").lower().rstrip(".") in hosts_declares() and secret() is not None
 
 
 @dataclass(frozen=True)
@@ -146,6 +136,15 @@ def _cle(segment: str) -> str:
     return unquote_plus(segment.split("=", 1)[0])
 
 
+_REFUS_DEMANDE = {
+    "request_object": "les objets `request` / `request_uri` ne sont pas pris en charge",
+    "param_shape": "client_id, redirect_uri, response_type, code_challenge et "
+                   "code_challenge_method sont requis une fois chacun ; state au plus une fois",
+    "response_mode": "seuls response_type=code et le mode de réponse `query` sont pris en charge",
+    "pkce": "PKCE est requis, avec code_challenge_method=S256",
+}
+
+
 def lire_demande(requete: str) -> tuple[Optional[dict], str]:
     """`(demande, "")` si la requête se relaie, `(None, raison)` sinon.
 
@@ -189,12 +188,30 @@ def reecrire(requete: str, remplacements: dict, ajouter: Optional[dict] = None) 
 
 
 def retour(rappel_client: str, parametres: list) -> str:
-    """Le rappel du client, paramètres de réponse REMPLACÉS, jamais ajoutés : un `iss`
-    glissé d'avance dans ce rappel survivrait sinon à côté du nôtre (mix-up)."""
-    p = urlsplit(rappel_client)
-    garde = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
-             if k not in _CLES_DE_REPONSE]
-    return urlunsplit((p.scheme, p.netloc, p.path, urlencode(garde + list(parametres)), ""))
+    """Le rappel du client, paramètres de réponse REMPLACÉS (un `iss` glissé d'avance
+    survivrait sinon à côté du nôtre — mix-up), et le reste de SA requête laissé à l'octet
+    près : `a=b%20c` ne devient pas `a=b+c`."""
+    base, _, requete = rappel_client.partition("?")
+    garde = [s for s in requete.split("&") if s and _cle(s) not in _CLES_DE_REPONSE]
+    return f"{base}?{'&'.join(garde + [urlencode(parametres)])}"
+
+
+async def rappels_enregistres(c: Cible) -> frozenset:
+    """Les rappels posés sur l'application de l'annuaire — relus, en cache court. La DCR
+    l'oublie après chaque écriture (`oublier_rappels`) : un client qui s'enregistre puis
+    autorise dans la foulée trouve son rappel."""
+    cle = (getattr(c.directory, "key", None), c.app_id)
+    en_cache = _rappels.get(cle)
+    if en_cache is not None and en_cache[1] > time.monotonic():
+        return en_cache[0]
+    uris = await asyncio.wait_for(run_in_threadpool(facade._redirect_uris, c.app_id, c.directory),
+                                  timeout=_LECTURE_TIMEOUT)
+    _rappels[cle] = (frozenset(uris), time.monotonic() + _RAPPELS_TTL)
+    return _rappels[cle][0]
+
+
+def oublier_rappels(directory, app_id: str) -> None:
+    _rappels.pop((getattr(directory, "key", None), app_id), None)
 
 
 # ── l'échange de jeton ────────────────────────────────────────────────────────
@@ -219,16 +236,19 @@ async def _poster(url: str, corps: bytes, headers: dict) -> httpx.Response:
 
 
 def ip_observee(request: Request) -> str:
-    """L'adresse qu'a VUE le relais le plus proche, jamais une valeur que le client écrit.
+    """L'adresse qu'a VUE le proxy de la box, jamais une valeur que le client écrit.
 
-    ⚠️ Pas `CF-Connecting-IP` (`client_trace.pick_ip`) : le host de production n'est pas
-    derrière Cloudflare, et un en-tête que personne n'écrase se forge à chaque requête —
-    un seau clefé dessus ne freine rien. Caddy ignore le `X-Forwarded-For` reçu d'un
-    client non approuvé et y pose l'adresse du pair TCP : son DERNIER segment est donc ce
-    que le relais a observé (derrière Cloudflare, l'arête — plus grossier, jamais forgé)."""
-    xff = request.headers.get("x-forwarded-for", "")
-    dernier = xff.split(",")[-1].strip() if xff else ""
-    return dernier or (request.client.host if request.client else "") or "unknown"
+    `X-Forwarded-For` n'est lu que si le pair TCP est un proxy de confiance (la boucle
+    locale : Caddy sur la box), et seulement son DERNIER segment — celui que ce proxy a posé.
+    Tout autre pair est pris tel quel. Jamais `CF-Connecting-IP` : sur un host qui n'est pas
+    derrière Cloudflare, personne ne l'écrase, et un seau clefé dessus ne freine rien."""
+    pair = request.client.host if request.client else ""
+    if pair in _PROXIES_DE_CONFIANCE:
+        xff = request.headers.get("x-forwarded-for", "")
+        dernier = xff.split(",")[-1].strip() if xff else ""
+        if dernier:
+            return dernier
+    return pair or "unknown"
 
 
 def _seau_ok(cle: str, maintenant: float) -> bool:
@@ -240,6 +260,22 @@ def _seau_ok(cle: str, maintenant: float) -> bool:
     return jetons >= 1.0
 
 
+async def _corps_borne(request: Request) -> Optional[bytes]:
+    """Le corps, ou None s'il dépasse `_CORPS_MAX` — annoncé par `Content-Length` ou constaté
+    en lisant : on ne met jamais en mémoire plus que la borne."""
+    try:
+        if int(request.headers.get("content-length") or 0) > _CORPS_MAX:
+            return None
+    except ValueError:
+        return None
+    lu = bytearray()
+    async for morceau in request.stream():
+        lu.extend(morceau)
+        if len(lu) > _CORPS_MAX:
+            return None
+    return bytes(lu)
+
+
 def _refus(code: str, detail: str, statut: int = 400, cors: bool = False, **headers):
     h = {"cache-control": "no-store", **headers, **(_cors() if cors else {})}
     return JSONResponse({"error": code, "error_description": detail}, status_code=statut,
@@ -249,40 +285,75 @@ def _refus(code: str, detail: str, statut: int = 400, cors: bool = False, **head
 def _cors() -> dict:
     return {"Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "authorization, content-type"}
+            "Access-Control-Allow-Headers": "content-type"}
+
+
+class FiltreJournalAcces(logging.Filter):
+    """Retire la valeur de `code` et de `state` des lignes du journal d'accès qui visent le
+    retour du relais : le code d'autorisation brut n'a rien à faire dans journald."""
+
+    _MOTIF = re.compile(r"(^|[?&])(code|state)=[^&\s]*")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str) \
+                and args[2].startswith(CALLBACK_PATH):
+            record.args = args[:2] + (self._MOTIF.sub(r"\1\2=…", args[2]),) + args[3:]
+        return True
 
 
 def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
-    """Montées par la façade sur TOUT host : une déclaration retirée arrête d'annoncer et de
-    relayer, jamais de servir un client qui a lu la métadonnée du relais."""
+    """Montées par la façade sur TOUT host ; sur un host non déclaré, elles refusent en le
+    disant (sauf l'échange d'un code déjà relayé, que rien d'autre ne saurait échanger)."""
 
     def cible(request: Request) -> Cible:
         return cible_pour_host(facade._host_of(request), public_url, claude_app_id)
 
+    def refus_autorisation(c: Cible, raison: str, code: str, detail: str, statut: int = 400,
+                           client=None):
+        # %r sur ce que le client écrit : une valeur décodée peut porter un saut de ligne.
+        _log.warning("oauth.relay authorize refused reason=%s host=%s client=%r",
+                     raison, c.host, client)
+        return _refus(code, detail, statut)
+
     async def authorize(request: Request) -> Response:
         c = cible(request)
         requete = request.scope.get("query_string", b"").decode("latin-1")
-        demande, raison = lire_demande(requete)
         if not relais_actif(c.host):
-            raison = "not_declared"
-        elif demande is not None and (not c.app_id or demande["client_id"] != c.app_id):
-            raison = "foreign_client"
-        elif demande is not None and not facade._redirect_ok(demande["redirect_uri"]):
-            raison = "redirect_not_allowed"
-        # Le host du rappel, pour le journal seulement — lu par la garde, qui ne lève
-        # jamais : un `redirect_uri` que `urlsplit` refuse doit se replier, pas rendre 500.
-        canon = facade._uri_canonique(demande["redirect_uri"]) if demande else None
-        rappel_host = canon.hostname if canon is not None else None
-        if raison:
-            # %r sur tout ce que le client écrit : une valeur décodée peut porter un saut
-            # de ligne et forger une ligne `oauth.relay` dans le journal.
-            _log.info("oauth.relay authorize mode=direct reason=%s host=%s client=%r "
-                      "redirect_host=%r", raison, c.host, demande and demande["client_id"],
-                      rappel_host)
-            return redirection(c.oidc_public, requete, consentement=c.consentement)
-        etat = sceller_etat(secret(), c.as_base, demande["redirect_uri"], demande["state"])
-        _log.info("oauth.relay authorize mode=relay host=%s client=%r redirect_host=%r",
-                  c.host, c.app_id, rappel_host)
+            return refus_autorisation(c, "not_declared", "invalid_request",
+                                      "le relais d'autorisation n'est pas actif sur ce host : "
+                                      "relancer la découverte (/.well-known/oauth-authorization-server)")
+        demande, raison = lire_demande(requete)
+        if demande is None:
+            return refus_autorisation(c, raison, "invalid_request", _REFUS_DEMANDE[raison])
+        if not c.app_id or demande["client_id"] != c.app_id:
+            return refus_autorisation(c, "foreign_client", "invalid_client",
+                                      "client inconnu de ce serveur d'autorisation",
+                                      client=demande["client_id"])
+        if c.directory is None:
+            _log.error("oauth.relay authorize host=%s déclaré mais annuaire non administré "
+                       "(logto_mgmt ou credential absent) : relais impossible", c.host)
+            return _refus("temporarily_unavailable", "le serveur d'autorisation de ce host "
+                          "n'est pas administrable par la plateforme", 503)
+        rappel = demande["redirect_uri"]
+        if not facade._redirect_ok(rappel):     # le rappel de la façade n'y passe jamais
+            return refus_autorisation(c, "redirect_not_allowed", "invalid_request",
+                                      "redirect_uri non autorisé", client=demande["client_id"])
+        try:
+            enregistres = await rappels_enregistres(c)
+        except Exception as exc:
+            _log.warning("oauth.relay authorize refused reason=directory_unreadable host=%s "
+                         "(%s)", c.host, type(exc).__name__)
+            return _refus("temporarily_unavailable", "l'application du serveur d'autorisation "
+                          "est illisible — réessayer", 503)
+        if rappel not in enregistres:
+            return refus_autorisation(c, "redirect_not_registered", "invalid_request",
+                                      "redirect_uri non enregistré pour ce client : l'enregistrer "
+                                      "(/oauth/register) avant d'autoriser",
+                                      client=demande["client_id"])
+        etat = sceller_etat(secret(), c.as_base, rappel, demande["state"])
+        _log.info("oauth.relay authorize mode=relay host=%s redirect_host=%r",
+                  c.host, facade._uri_canonique(rappel).hostname)
         return redirection(c.oidc_public,
                            reecrire(requete, {"redirect_uri": c.rappel, "state": etat},
                                     ajouter={"state": etat}),
@@ -299,11 +370,8 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             return _refus("invalid_request", "état d'autorisation invalide ou expiré : "
                                              "recommencer la connexion depuis le client")
         rappel_client, etat_client, age = ouvert
-        rappel_host = urlsplit(rappel_client).hostname
         iss = p.get("iss")
         if iss is not None and iss.rstrip("/") not in c.emetteurs:
-            # Journal seul : un événement de suivi d'erreurs partirait avec l'adresse de
-            # la requête, donc avec le code d'autorisation qu'elle porte.
             _log.warning("oauth.relay callback outcome=iss_mismatch host=%s iss=%r "
                          "attendus=%r", c.host, iss, sorted(c.emetteurs))
             return _refus("invalid_request", "réponse d'autorisation d'un émetteur inattendu")
@@ -321,7 +389,7 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             parametres.append(("state", etat_client))
         parametres.append(("iss", c.issuer))
         _log.info("oauth.relay callback outcome=%r host=%s redirect_host=%r age_s=%d",
-                  issue, c.host, rappel_host, age)
+                  issue, c.host, urlsplit(rappel_client).hostname, age)
         return Response(status_code=302, headers={
             "location": retour(rappel_client, parametres), "cache-control": "no-store"})
 
@@ -336,49 +404,56 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
                 "application/x-www-form-urlencoded"):
             return _refus("invalid_request", "corps attendu en "
                           "application/x-www-form-urlencoded (RFC 6749 §4.1.3)", cors=True)
-        brut = await request.body()
-        if len(brut) > _CORPS_MAX:
-            return _refus("invalid_request", "corps trop volumineux", cors=True)
+        if request.headers.get("authorization"):
+            return _refus("invalid_client", "authentification client non prise en charge : "
+                          "token_endpoint_auth_method=none", cors=True)
+        brut = await _corps_borne(request)
+        if brut is None:
+            return _refus("invalid_request", "corps trop volumineux", 413, cors=True)
         corps = brut.decode("utf-8", "replace")
         paires = parse_qsl(corps, keep_blank_values=True)
         cles, v = [k for k, _ in paires], dict(paires)
         if cles.count("grant_type") != 1 or v["grant_type"] not in _GRANTS:
             return _refus("unsupported_grant_type", "seuls authorization_code et "
                           "refresh_token sont servis", cors=True)
+        if cles.count("client_id") != 1 or not c.app_id or v["client_id"] != c.app_id:
+            return _refus("invalid_client", "client_id absent ou inconnu de ce serveur "
+                          "d'autorisation", cors=True)
+        marque = v["grant_type"] == "authorization_code" and cles.count("code") == 1 \
+            and v["code"].startswith(CODE_MARQUE + ".")
+        if not relais_actif(c.host) and not marque:
+            return _refus("invalid_request", "le relais d'autorisation n'est pas actif sur ce "
+                          "host : relancer la découverte", cors=True)
         forme = "-"
         if v["grant_type"] == "authorization_code":
-            if cles.count("code") != 1 or cles.count("redirect_uri") > 1:
-                return _refus("invalid_request", "code et redirect_uri : une fois chacun",
-                              cors=True)
-            marque = v["code"].startswith(CODE_MARQUE + ".")
+            if cles.count("code") != 1 or cles.count("redirect_uri") != 1:
+                return _refus("invalid_request", "code et redirect_uri sont requis, une fois "
+                              "chacun", cors=True)
             forme = "marked" if marque else "unmarked"
             if marque:
                 cle = secret()
-                code = lire_code(cle, c.as_base, v.get("redirect_uri"), v["code"]) if cle \
-                    else None
+                code = lire_code(cle, c.as_base, v["redirect_uri"], v["code"]) if cle else None
                 if code is None:
                     _log.warning("oauth.relay token grant=authorization_code code=tag_mismatch "
                                  "host=%s", c.host)
                     return _refus("invalid_grant", "le code ne correspond pas au redirect_uri "
                                   "de la demande d'autorisation", cors=True)
                 corps = reecrire(corps, {"code": code, "redirect_uri": c.rappel})
-            elif v.get("redirect_uri") == c.rappel:
+            elif v["redirect_uri"] == c.rappel:
                 # Un client légitime n'envoie JAMAIS le rappel de la façade : c'est un code
                 # relayé dont on a retiré la marque pour sauter sa vérification.
                 _log.warning("oauth.relay token grant=authorization_code code=mark_stripped "
                              "host=%s", c.host)
                 return _refus("invalid_grant", "le code ne correspond pas au redirect_uri "
                               "de la demande d'autorisation", cors=True)
-        headers = {"Content-Type": "application/x-www-form-urlencoded",
-                   "Accept": "application/json", "User-Agent": facade._UA}
-        if request.headers.get("authorization"):
-            headers["Authorization"] = request.headers["authorization"]
         global _en_vol
         if _en_vol >= _EN_VOL_MAX:
             _log.warning("oauth.relay token grant=%s code=%s upstream=saturated host=%s",
                          v["grant_type"], forme, c.host)
             return _refus("temporarily_unavailable", "trop d'échanges en cours — réessayer",
                           503, cors=True, **{"retry-after": "5"})
+        headers = {"Content-Type": "application/x-www-form-urlencoded",
+                   "Accept": "application/json", "User-Agent": facade._UA}
         debut = time.monotonic()
         _en_vol += 1
         try:
@@ -403,7 +478,7 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             # noqa: SILENT — la raison n'est qu'une étiquette de journal, le corps part tel quel
             except Exception:
                 erreur = "?"
-        _log.info("oauth.relay token grant=%s code=%s upstream=%d error=%s ms=%d host=%s",
+        _log.info("oauth.relay token grant=%s code=%s upstream=%d error=%r ms=%d host=%s",
                   v["grant_type"], forme, amont.status_code, erreur or "-", ms, c.host)
         if amont.status_code >= 500 or not json_amont:
             return _refus("server_error", "réponse inattendue du serveur d'autorisation", 502,
@@ -417,53 +492,3 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
     return [Route(AUTHORIZE_PATH, authorize, methods=["GET"]),
             Route(CALLBACK_PATH, callback, methods=["GET"]),
             Route(TOKEN_PATH, token, methods=["POST", "OPTIONS"])]
-
-
-# ── maintenance : poser le rappel de la façade sur les hosts déclarés ─────────
-
-def poser_les_rappels(*, dry_run: bool = True) -> dict:
-    """`oto-mcp maintenance oauth-relay-callbacks [--apply]` — la mise en service d'un host.
-
-    ⚠️ **Le host doit DÉJÀ figurer dans `OTO_MCP_OAUTH_RELAY_HOSTS`** du `.env` que la
-    commande charge — c'est la seule liste qu'elle parcourt —, et le service ne pas encore
-    avoir redémarré : il n'annoncera le relais qu'au redémarrage, rappel posé.
-
-    Pose `<as_base>/oauth/callback` sur l'application partagée de l'annuaire de chaque host
-    déclaré, puis RELIT l'application pour le constater (Logto remplace la liste entière à
-    chaque écriture, sans contrôle de concurrence : une écriture promise ne vaut pas une
-    écriture constatée). À blanc par défaut (constate seulement), `--apply` écrit. Chaque
-    host est tenté et rendu, même si un autre échoue. Un host dont la plateforme
-    n'administre pas l'annuaire est rendu `manuel`, avec le rappel exact à faire poser."""
-    from .. import db, server, tenancy
-    declares = sorted(hosts_declares())
-    if not declares:
-        return {"(aucun)": f"{_HOSTS_ENV} est vide dans cet environnement : rien à poser"}
-    # Une base illisible ferait passer chaque tenant pour « inconnu » (le registre du boot
-    # l'avale) : ici elle doit ÉCHOUER, pas rendre un diagnostic faux.
-    db.list_tenant_issuers()
-    registre, _ = server._registry_and_issuers()
-    tenancy.install(registre)
-    public_url = os.environ.get("OTO_MCP_PUBLIC_URL", "")
-    app_plateforme = os.environ.get("OTO_MCP_CLAUDE_APP_ID", "")
-    rendu = {}
-    for host in declares:
-        c = cible_pour_host(host, public_url, app_plateforme)
-        if c.host != host:
-            rendu[host] = "inconnu : ni le domaine de la plateforme, ni celui d'un tenant"
-            continue
-        if not c.app_id or c.directory is None:
-            rendu[host] = f"manuel : poser {c.rappel} sur l'application {c.app_id or '?'}"
-            continue
-        try:
-            if not dry_run:
-                facade._register_redirects(c.app_id, [c.rappel], c.directory, cors_uris=[])
-            present = c.rappel in facade._redirect_uris(c.app_id, c.directory)
-        except Exception as exc:
-            _log.warning("oauth.relay maintenance host=%s échec", host, exc_info=True)
-            rendu[host] = f"échec : {type(exc).__name__}"
-            continue
-        if dry_run:
-            rendu[host] = "présent" if present else f"absent : {c.rappel} (rejouer avec --apply)"
-        else:
-            rendu[host] = "posé" if present else "NON CONSTATÉ après écriture"
-    return rendu

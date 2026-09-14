@@ -444,11 +444,11 @@ def instagram_tokens(*, dry_run: bool = False) -> dict:
 
 def oauth_relay_callbacks(*, dry_run: bool = False) -> dict:
     """Constate, ou pose avec `--apply`, le rappel du relais d'autorisation sur les hosts
-    déjà inscrits dans `OTO_MCP_OAUTH_RELAY_HOSTS` — cf. `auth.relay.poser_les_rappels`.
+    déjà inscrits dans `OTO_MCP_OAUTH_RELAY_HOSTS` — cf. `auth.relay_maintenance`.
     Un ACTE (il écrit dans l'application Logto que prod et preprod partagent) : à blanc par
     défaut, hors `all`, hors timer."""
-    from .auth import relay
-    return relay.poser_les_rappels(dry_run=dry_run)
+    from .auth import relay_maintenance
+    return relay_maintenance.poser_les_rappels(dry_run=dry_run)
 
 
 _TRAVAUX: dict[str, Callable[..., dict]] = {
