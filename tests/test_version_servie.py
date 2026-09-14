@@ -57,7 +57,10 @@ def test_letiquette_porte_le_tag_ET_le_commit():
 
 
 @pytest.mark.parametrize("ref, commit, attendu", [
-    ("origin/main", "6d5bf16b1234", "origin/main+6d5bf16b"),  # préprod : une branche
+    ("origin/main", "6d5bf16b1234", "origin/main+6d5bf16b"),  # un ref-nom-de-branche
+    # quelconque — plus ce que préprod envoie depuis oto-backend#948 (14/09/2026,
+    # `oto-backend-canari.sh <sha>`), gardé pour prouver que la fonction ne
+    # spécialise pas sur la FORME du ref, quelle que soit son origine
     ("v1.2.3", None, "v1.2.3"),                               # pas de SHA relevé
     (None, "6d5bf16b1234", "6d5bf16b"),                       # pas de ref
     (None, None, "unknown"),                                  # rien : on le DIT
