@@ -48,14 +48,25 @@ class ProviderStatus(BaseModel):
     user_key_configured: bool = False
     group_secret_configured: bool = False
     org_secret_configured: bool = False
-    # Le libellé de la clé plateforme quand c'est elle qui résout — `null` sinon.
+    # Le libellé de la clé plateforme ATTEIGNABLE — pas « celle qui résout ».
+    # Drapeau de NIVEAU : servi même quand une clé plus proche répond, parce que
+    # « ce sur quoi tu retomberais » est une information juste (le front l'affiche
+    # depuis v1.12.0). À ne PAS confondre avec les champs de quota ci-dessous, qui
+    # décrivent l'effet COURANT et se taisent hors barreau plateforme.
     platform_key_label: Optional[str] = None
     # L'équipe dont la clé serait ATTEIGNABLE pour ce connecteur, quand il y en a une.
     team_key_group: Optional[int] = None
 
-    # ── Le quota, quand la clé qui résout en porte un ─────────────────────────
-    quota_used_today: int = 0
-    # `null` = pas de quota sur ce chemin d'accès (ce n'est pas « zéro autorisé »).
+    # ── Le quota, quand la clé qui RÉPOND en porte un ─────────────────────────
+    # Les deux se lisent sur le barreau GAGNANT, jamais sur la seule présence d'un
+    # barreau plateforme dans la cascade : hors de ce barreau, le quota n'est ni
+    # compté (`record_platform_usage` est sous `if is_platform`) ni opposé
+    # (`resolve_api_key` rend avant `_win_quota`). `null` des deux côtés = ce
+    # chemin d'accès n'a pas de quota — PAS « zéro autorisé ».
+    # ⚠️ `quota_used_today` était `int = 0` : servir `null` sur un connecteur sans
+    # plafond levait alors une ValidationError sur la route entière, pas un champ
+    # vide. Le rendre Optional fait partie du même correctif, pas d'un nettoyage.
+    quota_used_today: Optional[int] = None
     quota_daily: Optional[int] = None
 
     # ── Familles `cookie` et `oauth` : une session, pas une clé ───────────────

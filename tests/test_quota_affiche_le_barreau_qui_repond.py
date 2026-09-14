@@ -77,3 +77,42 @@ def test_le_plafond_reste_annonce_quand_la_plateforme_repond(fiche):
     st = fiche(_PLATEFORME)
     assert st["mode"] == "platform"
     assert st["quota_daily"] == 200      # default_quota du registre pour serper
+    assert st["quota_used_today"] == 0   # compteur servi, lui aussi, sur ce barreau
+
+
+# ── le cliquet : la LISTE des champs d'effet, pas un champ nommé ──────────────
+
+# Tout champ qui décrit l'EFFET COURANT du barreau plateforme. Il se lit sur le
+# GAGNANT, jamais sur la seule présence d'un barreau dans `hits`.
+#
+# ⚠️ Ce tuple est le cliquet : un champ d'effet ajouté à `status_for` sans être
+# gaté fait échouer le test ci-dessous DÈS qu'il est ajouté ici — et l'oublier
+# ici est exactement ce qui a produit le défaut d'origine. Le réflexe à garder :
+# un champ neuf décrit-il ce qui SERT MAINTENANT (→ ce tuple, et `winner`), ou ce
+# qui EXISTE autour (→ `hits`, comme `platform_key_label`) ?
+CHAMPS_D_EFFET_PLATEFORME = ("quota_daily", "quota_used_today")
+
+
+@pytest.mark.parametrize("gagnant", [
+    access.CascadeRung("tenant", "tenant", "pilote", True),
+    access.CascadeRung("org", "org", "269", True),
+    access.CascadeRung("group", "group", "3", True),
+    access.CascadeRung("user", "member", "269:u1", True),
+])
+@pytest.mark.parametrize("champ", CHAMPS_D_EFFET_PLATEFORME)
+def test_aucun_champ_d_effet_plateforme_hors_du_barreau_plateforme(fiche, gagnant, champ):
+    """Le cliquet de la CLASSE, pas du seul bug vécu : sur chaque barreau plus
+    proche, aucun champ d'effet plateforme n'est servi — le barreau plateforme
+    restant pourtant présent dans les hits (free tier)."""
+    st = fiche(gagnant, _PLATEFORME)
+    assert st[champ] is None, (
+        f"`{champ}` servi à un appelant servi par sa clé `{st['mode']}` — "
+        "champ d'effet lu sur les hits au lieu du gagnant")
+
+
+def test_tous_les_champs_d_effet_sont_servis_sur_le_barreau_plateforme(fiche):
+    """Le pendant : le cliquet ne doit pas pouvoir être satisfait en TAISANT
+    partout. Chaque champ listé est bien rendu quand la plateforme répond."""
+    st = fiche(_PLATEFORME)
+    for champ in CHAMPS_D_EFFET_PLATEFORME:
+        assert st[champ] is not None, f"`{champ}` tu sur le barreau plateforme"
