@@ -97,3 +97,13 @@ def test_a_mermaid_block_is_not_this_grammar():
 def test_a_body_with_no_drawing_is_the_old_warning():
     said = diagram_check("# Just prose\n\nNothing drawn here.")["diagram_warning"]
     assert said is not None and "NOT render" not in said
+
+
+def test_a_rejoining_lane_is_legal():
+    """`▷` — la voie qui repart et revient — ne doit pas passer pour de la prose."""
+    assert lint_du_trace(
+        "┌──────────┐\n└─────┬────┘\n"
+        "      ├───────▶  ▷ known account    straight to the recap\n"
+        "      ▼  cold or partner\n┌──────────┐\n└──────────┘\n"
+        "  ▷ known account   rejoins at the recap"
+    ) == []

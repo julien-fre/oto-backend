@@ -186,6 +186,10 @@ def avec_le_dessin(body_md: str, courant_md: str) -> str:
 
 _FLECHE = "▼"
 _PUCE = "▪"
+# La voie qui repart et REVIENT plus bas. Comme `_PUCE`, elle peut porter une
+# ligne de légende sans glyphe de tracé, que le parseur laisse tomber — la
+# compter comme de la prose égarée serait un faux positif sur un dessin correct.
+_RETOUR = "▷"
 _BOITE = set("┌┐└┘│╔╗╚╝║")
 # « la ligne appartient encore au tracé » — même classe que `STRUCTURAL` du front.
 _STRUCTUREL = re.compile(r"[─-╿▶▼]")
@@ -221,8 +225,8 @@ def lint_du_trace(block: str) -> list[dict]:
                            "(`\u251c\u2500\u2500\u2500\u25b6  \u25aa reason`)",
                 })
             continue
-        if (une_boite_vue and ligne.strip()
-                and not _STRUCTUREL.search(ligne) and _PUCE not in ligne):
+        if (une_boite_vue and ligne.strip() and not _STRUCTUREL.search(ligne)
+                and _PUCE not in ligne and _RETOUR not in ligne):
             fautes.append({"line": i, "rule": "loose-text",
                            "says": "a line of prose inside the drawing",
                            "fix": "move it into a box, or into the margin of one"})
