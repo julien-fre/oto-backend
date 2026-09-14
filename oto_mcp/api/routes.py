@@ -128,7 +128,7 @@ def _parse_view_user(request: Request) -> str | None:
 # DELETE sans op (= action/upload) — est une écriture, rejetée. Deny-by-default :
 # élargir cette liste si une vraie lecture op-aware manque.
 _READ_OPS = frozenset({
-    "list", "get", "search", "revisions", "list_changes", "inventory",
+    "list", "get", "search", "revisions", "inventory",
     "list_templates", "preview", "describe", "status",
 })
 

@@ -55,17 +55,6 @@ def test_group_header_without_name(monkeypatch):
     assert "## README de ton équipe\n\nGRP" in out  # pas de suffixe " (…)"
 
 
-def test_resolved_proposals_surface_to_proposer(monkeypatch):
-    # Retour au proposeur (Ship 3, #77) : les propositions traitées apparaissent au bloc C.
-    ctx = dict(_CTX, proposals=[
-        {"doc_title": "Plan Q3", "status": "accepted"},
-        {"proposed_title": "Idée", "doc_title": None, "status": "rejected"},
-    ])
-    _wire(monkeypatch, {"platform": "SAUCE"}, ctx)
-    out = I.compose_session("u1", 42)
-    assert "- Tes propositions traitées : « Plan Q3 » acceptée · « Idée » refusée" in out
-
-
 def test_session_layers_reconstruct_compose(monkeypatch):
     # Invariant de la vue de transparence (/api/me/agent-context) : la concaténation
     # "\n\n" des couches == l'artefact injecté, octet à octet.

@@ -90,6 +90,11 @@ signature ne bouge, et les six noms déplacés (`get_instruction_by_id`,
 `test_aucun_nom_perdu` prouve ici. Le seul changement de forme est interne : les
 références croisées passent désormais par `instructions.<nom>`, la seule forme
 que `test_aucun_frere_importe_a_plat` admet.
+
+⚠️ **Mise à jour du 14/09/2026 (oto#191)** — `list_pending_invitations_for_email` est
+RETIRÉ : son seul appelant était l'inbox d'accueil, retirée avec la boucle de
+propositions de docs. Il portait le seul usage de `orgs` dans `invitations` : l'import
+part avec lui, et l'arête `invitations → orgs` quitte `EXPECTED_EDGES`.
 """
 from __future__ import annotations
 
@@ -115,7 +120,7 @@ EXPECTED_EDGES = {
     "instructions_cycle": {"instructions"},
     "instruction_ownership": {"instructions"},
     "personal": {"orgs", "members"},
-    "invitations": {"orgs", "members"},
+    "invitations": {"members"},
     "library": {"instructions"},
 }
 
@@ -144,7 +149,7 @@ FROZEN = (
     'list_group_invitations', 'list_instruction_bodies',
     'list_instruction_versions', 'list_instructions',
     'list_invitations', 'list_library', 'list_org_members', 'list_org_secrets',
-    'list_orgs_for_user', 'list_pending_invitations_for_email',
+    'list_orgs_for_user',
     'list_platform_invitations', 'list_scheduled_emails', 'logging', 'logodev',
     'normalize_domain', 'normalize_slug', 'org_email_quiet_hours', 'org_front',
     'preview_invitation', 'preview_invitation_by_code', 'publish_guide', 're',
@@ -222,7 +227,6 @@ FROZEN_SIGNATURES = {
     'list_org_members': "(org_id: 'int') -> 'list[dict]'",
     'list_org_secrets': "(org_id: 'int') -> 'list[dict]'",
     'list_orgs_for_user': "(sub: 'str') -> 'list[dict]'",
-    'list_pending_invitations_for_email': "(email: 'str') -> 'list[dict]'",
     'list_platform_invitations': "() -> 'list[dict]'",
     'list_scheduled_emails': "(org_id: 'int', status: 'str' = 'pending') -> 'list[dict]'",
     'normalize_domain': "(raw: 'str') -> 'Optional[str]'",

@@ -159,9 +159,9 @@ def _visible_to(row: dict) -> str:
        URL non devinable, sans expiration ni rotation. La phrase annonçait « TOUS les
        membres de l'org » sur un projet lisible par n'importe qui.
     2. ~~Une proposition sur un projet perso notifiait les org_admin~~ — **corrigé le
-       04/09 même (ADR 0068)** : `docs/notify.py` suit désormais la PROPRIÉTÉ du projet
-       et non son `context_org_id`, donc un projet perso ne prévient que son
-       propriétaire. La réserve que cette phrase avait dû porter quelques heures est
+       04/09 même (ADR 0068)**, puis la boucle de propositions et ses e-mails ont été
+       retirés (oto#191) : plus aucun e-mail ne porte le corps d'une page proposée.
+       La réserve que cette phrase avait dû porter quelques heures est
        retirée : un texte servi qui inquiète pour rien ment autant qu'un texte qui
        rassure à tort."""
     otype = str(row.get("owner_type") or "user")

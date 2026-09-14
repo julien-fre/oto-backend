@@ -4,7 +4,7 @@ type: reference
 description: >-
   `oto_search` : un seul chemin de code (RRF lexical + sémantique), les grains matchés (page
    / ligne / tableau / fichier), l'invariant « cherchable ⇔ lisible » et son tripwire, les e
-  mbeddings Mistral, l'épine de projet, les backlinks et les propositions de modification.
+  mbeddings Mistral, l'épine de projet et les backlinks.
 ---
 
 # Recherche transverse & KB projets (`oto_search`)
@@ -48,7 +48,7 @@ gracieuse** : sans `MISTRAL_API_KEY` ou sur échec → lexical seul, jamais un p
 pgvector 0.8.2 sur otomata-main (`CREATE EXTENSION vector` AVANT `_SCHEMA` car halfvec en
 dépend). Le **golden set** cale désormais la QUALITÉ (plus le *si*).
 
-## Se repérer : chapô, ordre curé, épine, backlinks, propositions
+## Se repérer : chapô, ordre curé, épine, backlinks
 
 **Se repérer** : `docs.description` (chapô ; fallback DÉRIVÉ À LA LECTURE `derive_description`,
 jamais stocké) + `docs.position` (ordre curé, entiers ×16 ; `move_doc(parent?, position=INDEX)`
@@ -89,7 +89,7 @@ or 'create' », qui n'apprend rien. ⚠️ **Ce verbe est le seul qui pose l'anc
 possible. Toute vue de projet porte `visible_to`, en clair, la portée réelle.
 Le lien `project_links.target_type='doc'` est RETIRÉ ; relier des pages =
 les **backlinks `[[…]]`** (Ship 4, LIVE) : résolus À L'ÉCRITURE (hook `db.create/update/
-delete_doc` — JAMAIS capacité, `resolve_change` appelle db en direct), précédence projet >
+delete_doc` — JAMAIS capacité), précédence projet >
 KB (`db/backlinks.py`), table dérivée `doc_links` (CASCADE 2 côtés), `oto_doc op=backlinks`
 = « Cité par » filtré accès.
 ⚠️ **Le graphe n'est PAS symétrique, et ce n'est pas un bug d'index (#611, 03/09).** La
@@ -124,12 +124,10 @@ DISENT désormais — hint d'écriture, description servie — et le cran est en
 réorganisation, réécrire les pages qui citent et lire leur `citations_sans_cible`. Banc :
 `tests/test_backlinks.py::test_un_lien_STOCKE_survit_au_deplacement_de_sa_cible_et_reste_rendu`
 (base PG dédiée, chemin servi).
-**Propositions modif+création + inbox** (Ship 3, LIVE) : « les
-lecteurs proposent » — un viewer (lecture sans écriture) qui crée/modifie obtient une
-PROPOSITION (`doc_change_requests`, `doc_id` nullable + `project_id` + emplacement + CHECK) ;
-le dispatch `docs/core.py` route resolve/list/create-proposal sur request_id/project_id **AVANT
-le gate doc_id** (une création doc_id NULL était sinon inatteignable) ; `me.inbox`
-(`GET /api/me/inbox`, 2 voies À traiter/Récent, 200-vide sans org).
+**Propositions modif+création + inbox** : RETIRÉES le 14/09/2026 (oto#191), mortes à
+l'usage. Un lecteur sans écriture qui crée une page prend un 403 au lieu d'une
+proposition ; l'accueil du tableau de bord lit `GET /api/me/recent-changes`. La table des
+propositions reste jusqu'à sa suppression, en lot séparé.
 
 ### Le classement est un cache, pas une seconde source
 

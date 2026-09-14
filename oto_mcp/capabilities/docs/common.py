@@ -17,7 +17,7 @@ from .._types import AuthzDenied
 PROJECT_RTYPE = "project"
 
 # Ops servies au destinataire d'un projet publié : LECTURE seule. Tout le reste
-# (création, édition, déplacement, publication de page, propositions) exige un `sub`
+# (création, édition, déplacement, publication de page) exige un `sub`
 # — même posture que les tools de gouvernance du datastore.
 # `search` en est ABSENT : il délègue à `search_mod.search(sub, …)`, dont le scoping
 # est bâti sur un `sub` (projets accessibles). Le destinataire lit l'arbre (`list`)

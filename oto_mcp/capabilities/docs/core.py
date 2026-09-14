@@ -5,10 +5,9 @@ projet — pas d'ownership propre). Le `brief_md` du projet reste la page d'entr
 Docs sont les pages, en arbre via `parent_id`. kind ∈ {doc (humain), note (agent),
 source (import)}. CRUD + move, co-déclaré MCP+REST.
 
-⚠️ **L'ORDRE des branches de `_doc` est un contrat, pas une mise en page.** Trois d'entre
-elles se résolvent AVANT le gate `doc_id` — les propositions (une proposition de création
-porte `doc_id=NULL`) et les deux lectures par projet. Les remonter ou les descendre change
-ce qui est atteignable ; c'est la raison pour laquelle le dispatcher reste ici, entier et
+⚠️ **L'ORDRE des branches de `_doc` est un contrat, pas une mise en page.** Les créations
+et les deux lectures par projet (`list`, `search`) se résolvent AVANT le gate `doc_id`. Les
+remonter ou les descendre change ce qui est atteignable ; c'est la raison pour laquelle le dispatcher reste ici, entier et
 lisible d'un coup, pendant que les corps vivent dans les modules du domaine.
 """
 from __future__ import annotations
@@ -22,16 +21,15 @@ from .._authz import PROJECT_SHARED_READ
 from .. import _portee, _publication
 from .._types import Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
-from . import changes, common, history, patch, reads, view, writes
+from . import common, history, patch, reads, view, writes
 from .common import require
 
 
 class DocInput(BaseModel):
     op: Literal["create", "bulk_create", "list", "search", "get", "update", "patch",
-                "delete", "move", "revisions", "revert", "request_change", "list_changes",
-                "resolve_change", "set_public", "backlinks"]
+                "delete", "move", "revisions", "revert", "set_public", "backlinks"]
     project_id: Optional[int] = None   # create / list / search
-    doc_id: Optional[int] = None       # get / update / delete / move / request_change / list_changes
+    doc_id: Optional[int] = None       # get / update / delete / move
     query: Optional[str] = None        # search : termes recherchés dans titre + corps
     parent_id: Optional[int] = None    # create / move (None = 1er niveau sous le projet)
     title: Optional[str] = None
@@ -39,9 +37,6 @@ class DocInput(BaseModel):
     kind: Optional[Literal["doc", "note", "source"]] = None
     description: Optional[str] = None  # chapô (Ship 2) — '' efface (fallback dérivé)
     position: Optional[int] = None     # move : INDEX cible (0-based) dans la fratrie
-    request_id: Optional[int] = None   # resolve_change
-    message: Optional[str] = None      # request_change : note libre du demandeur
-    accept: Optional[bool] = None      # resolve_change : True = accepter (applique), False = refuser
     public: Optional[bool] = None      # set_public : True = partager publiquement, False = retirer
     expected_rev: Optional[str] = None  # update/patch : rev (ETag) lue par le client → conflit optimiste
     section: Optional[str] = None       # patch : titre (heading markdown) de la section ciblée
@@ -104,18 +99,6 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     if inp.op == "bulk_create":
         return writes.bulk_create(sub, inp)
 
-    # ── Propositions (Ship 3) — AVANT le gate doc_id : une proposition de CRÉATION a
-    # doc_id=NULL, elle serait inatteignable sinon. On résout le projet par request_id
-    # (resolve) / project_id (create-proposal, list) / doc_id (modif, legacy).
-    if inp.op == "resolve_change":
-        return changes.resolve(sub, inp)
-
-    if inp.op == "list_changes" and inp.project_id is not None:
-        return changes.list_by_project(sub, inp)
-
-    if inp.op == "request_change" and inp.doc_id is None:
-        return changes.propose_create(sub, inp)
-
     if inp.op == "list":
         return reads.liste(sub, inp)
 
@@ -148,12 +131,6 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                 ctx, "cette page",
                 "Elle se partage depuis le dashboard, sur la page elle-même.")
         return writes.set_public(sub, inp, row, pid)
-
-    if inp.op == "request_change":
-        return changes.propose_update(sub, inp, row, pid)
-
-    if inp.op == "list_changes":
-        return changes.list_by_doc(sub, inp, pid)
 
     if inp.op == "update":
         return writes.update(sub, inp, row, pid)
@@ -269,9 +246,7 @@ CAPABILITIES += [
             "opposite moves, so the second is never reported as the first. The COUNT "
             "of hidden ones is deliberately not given: it would tell you how many "
             "pages exist in projects that are closed to you. Every write says which of its `[[…]]` "
-            "found nothing, under `citations_sans_cible` / request_change (read-only "
-            "users propose a new body_md/title + message) / list_changes (owner: pending "
-            "requests) / resolve_change (request_id + accept: true applies it, false rejects) "
+            "found nothing, under `citations_sans_cible` "
             "/ set_public (public: true → shareable public read-only link to THIS PAGE "
             "ALONE: the reader gets its title and body, and nothing else — not the "
             "project, not the sibling pages, not this page's own sub-pages, which each "

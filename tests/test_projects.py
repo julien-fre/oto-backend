@@ -929,13 +929,10 @@ def test_un_projet_NON_publie_ne_prefixe_rien():
 def test_un_projet_perso_ne_porte_PLUS_la_reserve_des_propositions():
     """La réserve a vécu quelques heures, le 04/09 : `docs/notify.py` envoyait le corps
     d'une page proposée aux `org_admin` de l'org de CONTEXTE, même pour un projet
-    perso. Le défaut corrigé (ADR 0068), la phrase doit repartir — sinon elle inquiète
-    pour un chemin qui n'existe plus, et un texte servi qui inquiète pour rien ment
-    autant qu'un texte qui rassure à tort.
-
-    ⚠️ Ce banc est le pendant de `test_une_proposition_sur_un_projet_PERSO_n_alerte_pas_
-    les_org_admin` (tests/test_docs.py) : si quelqu'un remettait la notification, c'est
-    LÀ que ça rougirait — ici on garde seulement le texte aligné sur le code."""
+    perso. Le défaut corrigé (ADR 0068), puis la boucle de propositions retirée avec ses
+    e-mails (oto#191), la phrase doit rester partie — sinon elle inquiète pour un
+    chemin qui n'existe plus, et un texte servi qui inquiète pour rien ment autant
+    qu'un texte qui rassure à tort. Ici on garde seulement le texte aligné sur le code."""
     dit = P._visible_to({"owner_type": "user", "context_org_id": "35"})
     assert "administrateurs de ton org" in dit, "le cas nominal tient toujours"
     assert "PROPOSÉE" not in dit and "e-mail" not in dit

@@ -105,8 +105,8 @@ class KbView(BaseModel):
     l'intersection commune (garde-fou `test_kb_output_holds_for_every_op`).
 
     Ce que la réponse ne contient PAS : les pages elles-mêmes. `project_id` est
-    l'entrée — l'arbre, les versions, le partage public et les propositions de
-    modification se lisent et s'écrivent avec `oto_doc` (`POST /api/me/docs`)."""
+    l'entrée — l'arbre, les versions et le partage public se lisent et s'écrivent avec
+    `oto_doc` (`POST /api/me/docs`)."""
     project_id: Optional[int]  # le projet dédié, ou None : op="get" sur une org qui
                                # n'a PAS encore de KB (op="create" la crée)
     name: str                # son nom courant — renommable, l'ancre est l'id ;

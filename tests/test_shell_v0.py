@@ -227,11 +227,10 @@ def test_le_corps_valide_l_Output_declare(seams):
     S.ShellOut(**S._compose(CTX))
 
 
-def test_les_compteurs_absents_valent_mieux_que_faux(monkeypatch):
-    monkeypatch.setattr(S, "_inbox", None, raising=False)
-    monkeypatch.setattr("oto_mcp.capabilities.inbox._inbox",
-                        lambda ctx, inp: (_ for _ in ()).throw(RuntimeError("DB")))
-    assert S._compteurs(CTX) == {}      # pas `{"home": 0}`, qui affirmerait « rien »
+def test_les_compteurs_absents_valent_mieux_que_faux():
+    # `home` comptait l'inbox, retirée (oto#191) : rien n'est compté, donc aucune clé —
+    # jamais `{"home": 0}`, qui affirmerait « rien ne t'attend ».
+    assert S._compteurs(CTX) == {}
 
 
 # ── Le moule : chaque adaptateur traduit la sentinelle dans SON transport ───────

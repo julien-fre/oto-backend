@@ -167,17 +167,6 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         except Exception:
             pass
 
-    # Retour au proposeur (Ship 3) : mes propositions RÉCEMMENT traitées (acceptées /
-    # refusées) — sinon l'agent qui a proposé ne voit jamais la résolution côté MCP
-    # (le suivi ne vit que dans l'inbox du dashboard). Fenêtre courte = anti-répétition.
-    proposals: list[dict] = []
-    if sub:
-        try:
-            proposals = db.list_change_requests_by_requester(sub, since_days=7)[:5]
-        # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
-        except Exception:
-            pass
-
     # Fiche « situation avec oto » (ce que l'agent sait de l'utilisateur, entretenu via
     # `oto_profile`) — réinjectée pour personnaliser l'aide. Best-effort.
     profile: dict = {}
@@ -191,7 +180,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     return {
         "org_name": org_name, "user_name": user_name, "role": role,
         "group_name": group_name, "group_id": group_id, "connectors": connectors,
-        "projects": projects, "runs": runs, "proposals": proposals, "profile": profile,
+        "projects": projects, "runs": runs, "profile": profile,
     }
 
 
@@ -240,13 +229,6 @@ def _format_context(ctx: dict) -> str:
             # handshake et croyait reprendre un travail que personne ne menait plus.
             bits.append(f"{label}{doc} {run_status.describe(r)}")
         lines.append(f"- Derniers déroulés : {' · '.join(bits)}")
-    if ctx.get("proposals"):
-        bits = []
-        for cr in ctx["proposals"]:
-            title = cr.get("doc_title") or cr.get("proposed_title") or "?"
-            verdict = "acceptée" if cr.get("status") == "accepted" else "refusée"
-            bits.append(f"« {title} » {verdict}")
-        lines.append(f"- Tes propositions traitées : {' · '.join(bits)}")
     return "\n".join(lines)
 
 

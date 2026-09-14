@@ -75,38 +75,6 @@ def test_resource_transferred_email_en(monkeypatch):
     assert "propriétaire" not in sent["html"]
 
 
-# ── send_change_request_email ────────────────────────────────────────────────
-
-def test_change_request_email_en(monkeypatch):
-    sent = _captured(monkeypatch)
-    email.send_change_request_email(
-        "a@b.c", project_name="P", doc_title="D", proposer="Alice",
-        is_create=False, app_url="https://app", brand="oto", locale="en")
-    assert sent["subject"] == "proposal to review on oto — P"
-    assert "Alice is proposing a change to" in sent["html"]
-    assert ">review and decide<" in sent["html"]
-    assert "valider" not in sent["html"]
-
-
-# ── send_change_request_resolved_email ───────────────────────────────────────
-
-def test_change_request_resolved_email_en_accepted(monkeypatch):
-    sent = _captured(monkeypatch)
-    email.send_change_request_resolved_email(
-        "a@b.c", project_name="P", doc_title="D", accepted=True,
-        app_url="https://app", brand="oto", locale="en")
-    assert sent["subject"] == "proposal accepted on oto — P"
-    assert "was <strong>accepted</strong>" in sent["html"]
-
-
-def test_change_request_resolved_email_en_declined(monkeypatch):
-    sent = _captured(monkeypatch)
-    email.send_change_request_resolved_email(
-        "a@b.c", project_name=None, doc_title=None, accepted=False, locale="en")
-    assert "declined" in sent["subject"]
-    assert "acceptée" not in sent["html"] and "refusée" not in sent["html"]
-
-
 # ── send_signal_digest_email ─────────────────────────────────────────────────
 
 def test_signal_digest_email_en(monkeypatch):

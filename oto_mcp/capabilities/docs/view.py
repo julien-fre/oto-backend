@@ -86,8 +86,8 @@ def projected(row: dict, sub: Optional[str], fields: Optional[list[str]], *,
     **La décision de forme, et son pourquoi (signaux #461, #506, #525, #530) :**
 
     - Une **LECTURE** (`op=get`) rend la page ENTIÈRE par défaut : livrer le contenu EST
-      son travail, et le dashboard en dépend (la revue de proposition affiche le `body_md`
-      de cette réponse). Elle honore `fields` quand on lui en donne — le cas courant étant
+      son travail, et le dashboard en dépend. Elle honore `fields` quand on lui en donne —
+      le cas courant étant
       « relis-moi juste le `rev` avant de patcher », que `update`/`patch` exigent.
     - Une **ÉCRITURE** (`create`/`update`/`patch`/`move`) rend un **ACCUSÉ** par défaut :
       identité, titre, `rev`, `updated_at`, et la TAILLE du corps. L'appelant vient

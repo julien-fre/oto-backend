@@ -17,9 +17,9 @@ les anciennes le pouvaient. La portée est maintenant la même partout, sans anc
   frontière de l'org n'est jamais franchie, et un projet d'org étant lisible de tous
   ses membres, la résolution ne dit rien que ses membres ne voient déjà.
 
-**Hook au niveau `db`** (pas capacité) : `resolve_change` appelle `db.update_doc`
-en direct → un hook posé au niveau capacité raterait les acceptations. Ce module
-est appelé par `db.create_doc`/`update_doc`/`delete_doc`.
+**Hook au niveau `db`** (pas capacité) : posé au niveau capacité, il raterait tout
+chemin qui écrit une page en appelant `db` en direct. Ce module est appelé par
+`db.create_doc`/`update_doc`/`delete_doc`.
 
 Ambiguïté ≠ inexistence (plan E1) : N=0 = lien-souche (rendu côté UI, aucune ligne
 stockée, dit dans `citations_sans_cible`). Un titre porté par des pages de PLUSIEURS

@@ -51,7 +51,7 @@ DEFAULT_PATHS: dict[str, str] = {
     # page d'accueil en se faisant passer pour la page demandée. Il n'a jamais eu
     # d'appelant, ce qui l'a gardé invisible — et c'est très exactement le lien mort
     # que ce module existe pour interdire, posé chez nous. Le VRAI chemin d'une page,
-    # celui que le front lui-même écrit (`searchNav.ts`, `InboxCard.vue`,
+    # celui que le front lui-même écrit (`searchNav.ts`,
     # `ProjectDetailView`), l'ouvre DANS son projet : une page n'a pas d'écran à elle.
     # Conséquence : ce patron réclame `project_id`, et un appel qui ne le passe pas ne
     # rend aucun lien (garde de `_render`) — jamais une adresse à trous.

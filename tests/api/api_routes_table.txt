@@ -579,8 +579,6 @@ POST /api/me/kb -> _handler
 OPTIONS /api/me/kb -> options_handler
 GET,HEAD /api/me/search -> _handler
 OPTIONS /api/me/search -> options_handler
-GET,HEAD /api/me/inbox -> _handler
-OPTIONS /api/me/inbox -> options_handler
 GET,HEAD /api/me/shell -> _handler
 OPTIONS /api/me/shell -> options_handler
 POST /api/me/nodes/edit -> _handler

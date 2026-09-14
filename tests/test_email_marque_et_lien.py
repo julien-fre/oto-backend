@@ -30,19 +30,6 @@ def test_avec_lien_le_bouton_et_lurl_en_clair():
     assert "<a href=" in html
 
 
-def test_la_proposition_part_sans_bouton_quand_le_tenant_na_pas_la_vue(monkeypatch):
-    envoye = {}
-    monkeypatch.setattr(email, "_send",
-                        lambda to, subject, html, **k: envoye.update(
-                            to=to, subject=subject, html=html) or True)
-    email.send_change_request_email(
-        "qui@acme.test", project_name="P", doc_title="D", proposer="A",
-        is_create=False, app_url=None, brand="Acme")
-    assert "<a href=" not in envoye["html"]
-    # la nouvelle reste utile sans lien
-    assert "validation est attendue" in envoye["html"]
-
-
 def test_la_marque_du_destinataire_remplace_oto_partout(monkeypatch):
     envoye = {}
     monkeypatch.setattr(email, "_send",

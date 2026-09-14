@@ -95,8 +95,8 @@ def accessible_project_ids(sub: str, org_id: Optional[int],
                            want: str = "read") -> list[int]:
     """Ids des projets accessibles DANS l'org active — le scoping ENSEMBLISTE
     d'`op=list` factorisé (lot 3) : owned par le contexte (org + pôles) ∪ partagés
-    aux principals du contexte. Sert la recherche (`want='read'`) et l'inbox
-    (`want='write'` : seuls les grants write s'ajoutent). **Jamais `can_access`**
+    aux principals du contexte. Sert la recherche et l'îlot « Dernières
+    modifications » (`want='read'`) ; `want='write'` n'ajoute que les grants write. **Jamais `can_access`**
     (cross-org par construction) — cf. invariants du plan lot 3."""
     owners = project_scope_owners(sub, org_id)
     if not owners:

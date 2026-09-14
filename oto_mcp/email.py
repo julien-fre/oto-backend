@@ -159,15 +159,13 @@ def _bouton(app_url: str | None, libelle: str, brand: str = "oto") -> str:
     return _charte.bouton(_charte.marque(brand), app_url, libelle)
 
 
-# Les 6 gabarits transactionnels (texte + locale FR/EN) vivent dans
+# Les 4 gabarits transactionnels (texte + locale FR/EN) vivent dans
 # `email_templates.py` — extraits pour tenir sous 500 lignes une fois la
 # version anglaise ajoutée (oto-backend#700). Réexposés ICI pour que
 # `email.send_invite_email` etc. restent des attributs du module `email`
 # (c'est ce que les tests monkeypatchent) — import placé APRÈS `_send`,
 # `_esc` et `_bouton` ci-dessus, dont `email_templates` dépend.
 from .email_templates import (  # noqa: E402,F401 — réexport intentionnel
-    send_change_request_email,
-    send_change_request_resolved_email,
     send_invite_email,
     send_resource_shared_email,
     send_resource_transferred_email,

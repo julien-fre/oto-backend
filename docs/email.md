@@ -185,9 +185,9 @@ son dashboard en anglais recevait quand même ses invitations et notifications e
 français — trouvé en préparant une campagne d'onboarding (14 mails FR à des adresses
 en partie non francophones).
 
-- **Les 6 gabarits** (`send_invite_email`, `send_resource_shared_email`,
-  `send_resource_transferred_email`, `send_change_request_email`,
-  `send_change_request_resolved_email`, `send_signal_digest_email`) prennent
+- **Les 4 gabarits** (`send_invite_email`, `send_resource_shared_email`,
+  `send_resource_transferred_email`, `send_signal_digest_email` — les deux e-mails de
+  proposition sont retirés depuis le 14/09/2026, oto#191) prennent
   `locale: str | None = None`. `'en'` sert la version anglaise ; toute autre valeur
   (dont `None`, `users.locale IS NULL`) sert le FR **à l'octet près** — comportement
   inchangé pour un compte sans préférence. Comparaison directe (`locale == "en"`),
@@ -196,10 +196,10 @@ en partie non francophones).
 - **Extraites dans `oto_mcp/email_templates.py`** : `email.py` frôlait déjà 500
   lignes, et une deuxième langue par gabarit l'aurait fait déborder. Le TRANSPORT
   (`_send`, l'anti-injection d'en-tête, les envois BYO) reste dans `email.py` ; le
-  TEXTE des 6 gabarits vit dans `email_templates.py`, qui y accède par
+  TEXTE des 4 gabarits vit dans `email_templates.py`, qui y accède par
   `import email as _email` (jamais `from .email import _send` — un import de nom
   capturerait une copie figée qu'un `monkeypatch.setattr(email, "_send", ...)` ne
-  toucherait pas). `email.py` réexpose les six fonctions
+  toucherait pas). `email.py` réexpose les quatre fonctions
   (`from .email_templates import ...`) pour que `email.send_invite_email` etc.
   restent des attributs valides du module `email`, ce que les tests monkeypatchent.
 - **Les appelants lisent `users.locale` du DESTINATAIRE, pas de l'émetteur** :
@@ -218,9 +218,6 @@ en partie non francophones).
     dériver `dest_sub`/le front. `type_label` (« projet »/« project ») est choisi
     ICI, à la source (`_TYPE_LABELS` / `_TYPE_LABELS_EN`) : le gabarit ne traduit
     JAMAIS un mot qu'on lui donne.
-  - `capabilities/docs/notify.py::cr_created` / `cr_resolved` — `db.get_user(sub)` par
-    destinataire (`_locale_of`, même patron que `_email_of`/`_brand_of`) : chaque
-    validateur ou proposeur peut vivre sous une langue différente.
   - `usage.py::_notify_reporters` — jointe UNE fois dans
     `db.pending_signal_notices()` (`LEFT JOIN users`, colonne `u.locale` à côté de
     `u.email`/`u.name`) : pas d'aller-retour supplémentaire, une propriété du

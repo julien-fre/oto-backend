@@ -60,7 +60,7 @@ def _tous_les_envois(brand: str, locale: str | None = None) -> list:
     """Un appel par gabarit transactionnel, tous paramètres nominaux — la liste que
     parcourt chaque propriété ci-dessous. Elle est écrite ici plutôt que dans un
     `parametrize` de haut niveau pour qu'un gabarit ajouté sans être ajouté ICI se
-    voie : `test_les_sept_gabarits_sont_couverts` compte les fonctions du module."""
+    voie : `test_les_cinq_gabarits_sont_couverts` compte les fonctions du module."""
     return [
         lambda: E.send_invite_email("q@e.test", "Acme", _URL, "alex",
                                     brand=brand, locale=locale),
@@ -70,14 +70,6 @@ def _tous_les_envois(brand: str, locale: str | None = None) -> list:
         lambda: E.send_resource_transferred_email("q@e.test", type_label="projet",
                                                   name="Plan", app_url=_URL, sharer="alex",
                                                   brand=brand, locale=locale),
-        lambda: E.send_change_request_email("q@e.test", project_name="Plan",
-                                            doc_title="page", proposer="alex",
-                                            is_create=False, app_url=_URL,
-                                            brand=brand, locale=locale),
-        lambda: E.send_change_request_resolved_email("q@e.test", project_name="Plan",
-                                                     doc_title="page", accepted=True,
-                                                     app_url=_URL, brand=brand,
-                                                     locale=locale),
         lambda: E.send_signal_digest_email(
             "q@e.test", items=[{"status": "resolved", "target": "oto_call",
                                 "created_at": "2026-08-30 10:00:00", "body": "ça coince",
@@ -220,10 +212,11 @@ def test_le_bouton_n_offre_aucun_guillemet_nu_a_une_url_d_agent():
     assert bouton.count("&quot;") == 6, "3 guillemets de l'URL × 2 rendus"
 
 
-def test_les_sept_gabarits_sont_couverts():
+def test_les_cinq_gabarits_sont_couverts():
     """Un gabarit ajouté sans être ajouté à `_tous_les_envois` échapperait à TOUTES les
-    propriétés ci-dessus, en silence. Le compte est donc vérifié, pas supposé."""
-    assert len(_tous_les_envois("oto")) == 7
+    propriétés ci-dessus, en silence. Le compte est donc vérifié, pas supposé. Cinq
+    depuis le retrait des deux e-mails de proposition (oto#191)."""
+    assert len(_tous_les_envois("oto")) == 5
 
 
 # --- l'email libre d'un agent part à la marque de CELUI QUI ENVOIE --------------

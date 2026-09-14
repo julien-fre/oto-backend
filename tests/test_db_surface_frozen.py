@@ -30,7 +30,7 @@ _SURFACE = """
     NODES_TEXT NODE_DIRTY_SQL NODE_KIND Optional PROJECTS_TEXT RANKED_SOURCES
     RANK_VECTOR_COLUMN ROW_VALUES_TEXT_SQL SUBSCRIPTION_STATUSES Sequence
     TERMINAL_PAYMENT_STATUSES VALUE_LAYER activation_funnel
-    active_subscription_plans add_doc_change_request add_group_disabled_tool
+    active_subscription_plans add_group_disabled_tool
     add_org_disabled_tool add_project_file add_project_link
     add_user_disabled_tool add_user_enabled_tool aggregate_gaps
     aggregate_tool_feedback annotations archive_project aux_embed
@@ -67,7 +67,7 @@ _SURFACE = """
     get_account_profile get_all_connector_schemas get_aux_embedding_sha
     get_billing_payment_by_ref get_connector_schema get_datastore
     get_datastore_by_id get_doc_by_id get_doc_by_public_token
-    get_doc_change_request get_doc_embedding_sha get_extracted_text
+    get_doc_embedding_sha get_extracted_text
     get_google_oauth get_guide_db get_init_guide_db get_legal_acceptances
     get_member_api_key get_operated_account get_org_subscription
     get_org_unipile_limit get_platform_instruction get_project_by_id
@@ -82,10 +82,9 @@ _SURFACE = """
     is_comp_subscription is_tool_disabled_for json keys leaf_read_sql legal
     list_account_grants_by_owner list_account_grants_to
     list_all_datastores list_all_projects list_api_tokens
-    list_billing_payments list_change_requests_by_project
-    list_change_requests_by_requester list_connector_access
+    list_billing_payments list_connector_access
     list_datastores_for_owners list_datastores_granted_to
-    list_dirty_aux list_dirty_docs list_dirty_rows list_doc_change_requests
+    list_dirty_aux list_dirty_docs list_dirty_rows
     list_doc_revisions list_docs_for_project list_google_accounts
     list_grants_for_user list_group_connector_access list_group_disabled_tools
     list_guides_db list_member_projects list_option_comps
@@ -112,7 +111,7 @@ _SURFACE = """
     remove_user_disabled_tool remove_user_enabled_tool
     rename_datastore_by_id reparent_datastore
     reparent_project replace_doc_chunk_embeddings resolve_datastore_ns
-    resolve_doc_change_request resolve_sub resolve_unipile_pending
+    resolve_sub resolve_unipile_pending
     resource_ids_with_edges rest_call_stats
     retry_billing_at revoke_edges revoke_resource_grant save_extracted_text
     schedule_next_billing search search_briefs_semantic
@@ -146,6 +145,12 @@ _RETIRES = {
     "datastore_count_claimable": (
         "13/09/2026 — le comptage « ce que la file servirait » n'avait aucun appelant ; "
         "la plateforme ne compte pas à la place de l'agent"),
+    **{nom: ("14/09/2026 — la boucle de propositions de docs est retirée avec l'inbox "
+             "(oto#191) : plus aucun appelant. La table reste jusqu'à sa suppression, "
+             "lot séparé")
+       for nom in ("add_doc_change_request", "get_doc_change_request",
+                   "list_change_requests_by_project", "list_change_requests_by_requester",
+                   "list_doc_change_requests", "resolve_doc_change_request")},
 }
 
 

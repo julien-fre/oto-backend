@@ -1,9 +1,10 @@
-"""Les 6 gabarits transactionnels de `email.py` — extraits d'ici pour deux
-raisons (oto-backend#700).
+"""Les 4 gabarits transactionnels de `email.py` — extraits d'ici pour deux
+raisons (oto-backend#700). Six à l'extraction ; les deux e-mails de proposition sont
+retirés depuis le 14/09/2026 (oto#191).
 
 **Place.** `email.py` frôlait déjà 500 lignes ; ajouter une deuxième langue par
 gabarit l'aurait fait déborder. Le TRANSPORT (`_send`, l'anti-injection d'en-tête,
-les envois BYO Resend/Scaleway TEM) reste dans `email.py` ; le TEXTE des 6
+les envois BYO Resend/Scaleway TEM) reste dans `email.py` ; le TEXTE des 4
 gabarits vit ici.
 
 **Le TEXTE, pas le DESSIN.** Les couleurs, le gabarit de page et le bouton vivent
@@ -22,7 +23,7 @@ toucherait jamais — le test patcherait `email._send`, ce module continuerait
 d'appeler l'ancien. Un import de MODULE reste une référence partagée : patcher
 un attribut sur `email` est vu par `email_templates` immédiatement. C'est aussi
 ce qui rend l'import circulaire inoffensif dans les deux sens : `email.py`
-réexpose ces six fonctions (`from .email_templates import ...`) pour que
+réexpose ces quatre fonctions (`from .email_templates import ...`) pour que
 `email.send_invite_email` etc. restent des attributs valides du module `email`
 — c'est ce que les tests monkeypatchent (`monkeypatch.setattr(email,
 "send_invite_email", ...)`, `D.email.send_...`, `R.email.send_...`) — et
@@ -150,71 +151,6 @@ def send_resource_transferred_email(to: str, *, type_label: str, name: str | Non
         contenu = (f'<p style="{_charte.PARA}">{who} la propriété de '
                    f'<strong>{_email._esc(titre)}</strong> sur {_email._esc(m.nom)} — '
                    f'vous en êtes désormais propriétaire.</p>'
-                   + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
-    return _email._send(to, subject, _charte.page(
-        m, contenu, preheader=apercu,
-        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
-
-
-def send_change_request_email(to: str, *, project_name: str | None, doc_title: str | None,
-                              proposer: str | None, is_create: bool,
-                              app_url: str | None = None, brand: str = "oto",
-                              locale: str | None = None) -> bool:
-    """Email à un VALIDATEUR : une proposition de modification attend sa décision
-    (« les lecteurs proposent / les auteurs valident », oto/#6). Best-effort. Voix
-    funnel dans les deux langues : vouvoiement/« you » + minuscules."""
-    m = _charte.marque(brand)
-    if locale == "en":
-        what = ("a new page" if is_create else
-                f"a change to “{doc_title}”" if doc_title else "a change")
-        where = f" in “{project_name}”" if project_name else ""
-        who = f"{_email._esc(proposer)} is proposing" if proposer else "someone is proposing"
-        subject = f"proposal to review on {m.nom}{f' — {project_name}' if project_name else ''}"
-        apercu = f"{proposer or 'someone'} is waiting on your review"
-        contenu = (f'<p style="{_charte.PARA}">{who} {_email._esc(what)}'
-                   f'{_email._esc(where)} on {_email._esc(m.nom)} — your review is '
-                   f'needed.</p>'
-                   + _email._bouton(app_url, "review and decide", brand))
-    else:
-        what = ("une nouvelle page" if is_create else
-                f"une modification de « {doc_title} »" if doc_title else "une modification")
-        where = f" dans « {project_name} »" if project_name else ""
-        who = f"{_email._esc(proposer)} propose" if proposer else "on propose"
-        subject = f"proposition à valider sur {m.nom}{f' — {project_name}' if project_name else ''}"
-        apercu = f"{proposer or 'quelqu’un'} attend votre décision"
-        contenu = (f'<p style="{_charte.PARA}">{who} {_email._esc(what)}'
-                   f'{_email._esc(where)} sur {_email._esc(m.nom)} — votre validation '
-                   f'est attendue.</p>'
-                   + _email._bouton(app_url, "revoir et décider", brand))
-    return _email._send(to, subject, _charte.page(
-        m, contenu, preheader=apercu,
-        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
-
-
-def send_change_request_resolved_email(to: str, *, project_name: str | None, doc_title: str | None,
-                                       accepted: bool, app_url: str | None = None,
-                                       brand: str = "oto",
-                                       locale: str | None = None) -> bool:
-    """Email au PROPOSEUR : sa proposition a été acceptée ou refusée (oto/#6).
-    Best-effort. Voix funnel dans les deux langues : vouvoiement/« you » + minuscules."""
-    m = _charte.marque(brand)
-    if locale == "en":
-        verdict = "accepted" if accepted else "declined"
-        what = f"your proposal on “{doc_title}”" if doc_title else "your proposal"
-        where = f" in “{project_name}”" if project_name else ""
-        subject = f"proposal {verdict} on {m.nom}{f' — {project_name}' if project_name else ''}"
-        apercu = f"the page you proposed was {verdict}"
-        contenu = (f'<p style="{_charte.PARA}">{_email._esc(what)}{_email._esc(where)} '
-                   f'was <strong>{verdict}</strong> on {_email._esc(m.nom)}.</p>'
-                   + _email._bouton(app_url, f"open in {m.nom}", brand))
-    else:
-        verdict = "acceptée" if accepted else "refusée"
-        what = f"votre proposition sur « {doc_title} »" if doc_title else "votre proposition"
-        where = f" dans « {project_name} »" if project_name else ""
-        subject = f"proposition {verdict} sur {m.nom}{f' — {project_name}' if project_name else ''}"
-        apercu = f"la page que vous proposiez a été {verdict}"
-        contenu = (f'<p style="{_charte.PARA}">{_email._esc(what)}{_email._esc(where)} '
-                   f'a été <strong>{verdict}</strong> sur {_email._esc(m.nom)}.</p>'
                    + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
     return _email._send(to, subject, _charte.page(
         m, contenu, preheader=apercu,

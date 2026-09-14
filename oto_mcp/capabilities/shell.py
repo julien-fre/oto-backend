@@ -440,18 +440,14 @@ def _nom_de(sub: Optional[str]) -> Optional[str]:
 
 
 def _compteurs(ctx: ResolvedCtx) -> dict:
-    """Ce qui ATTEND la personne. `home` seul — les autres ABSENTS, jamais à zéro.
+    """Ce qui ATTEND la personne — rien n'est compté aujourd'hui : aucune clé, jamais un zéro.
 
     Un `0` affirme « rien ne t'attend » ; une clé absente dit « on ne sait pas encore
-    compter ça ». `agents` et `connectors` naîtront avec les surfaces qui savent les
-    compter (accord du 16/08), pas avant.
+    compter ça ». `home` comptait l'inbox, retirée avec elle (oto#191) ; `agents` et
+    `connectors` naîtront avec les surfaces qui savent les compter (accord du 16/08),
+    pas avant. La map reste servie, VIDE : un front la lit sans garde.
     """
-    try:
-        from .inbox import InboxInput, _inbox
-        return {"home": int(_inbox(ctx, InboxInput()).get("count") or 0)}
-    except Exception:      # un compteur indisponible ne fait pas tomber le chrome
-        logger.warning("shell: compteur home indisponible", exc_info=True)
-        return {}
+    return {}
 
 
 async def _shell(ctx: ResolvedCtx, inp: ShellInput):
@@ -475,7 +471,8 @@ CAPABILITIES += [
         description=(
             "The application CHROME in one call: company, user, the rail in ordered "
             "SECTIONS (everyone / one per team / private / shared-when-not-empty), "
-            "counters of things AWAITING you, and a short connector index for the "
+            "`counters` of things AWAITING you (nothing is counted today, so it is `{}` — a "
+            "missing key means « not counted », never zero), and a short connector index for the "
             "command palette. Read-only, never paginated — depth is capped instead "
             "(`more` counts what was cut). Pass `rev` from a previous answer for a "
             "conditional read: unchanged returns `{not_modified: true, rev}` (HTTP 304 "

@@ -3,7 +3,7 @@
 MCP `oto_search` + REST `GET /api/me/search` : un seul chemin de code
 (`oto_mcp/search.py`), le dashboard (popup ⌘K / page /search) consomme la face
 REST. Erreurs (plan Ship 1 §3) : pas d'org active → 400 `no_active_org`
-(invocation DÉLIBÉRÉE — ≠ l'inbox de Ship 3, qui rendra des listes vides) ;
+(invocation DÉLIBÉRÉE — ≠ un îlot d'accueil chargé d'office, qui rend 200 et vide) ;
 `scope='project'` sans `project` → 400 ; projet hors contexte → refus neutre.
 """
 from __future__ import annotations

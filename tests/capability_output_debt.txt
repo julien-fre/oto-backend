@@ -20,9 +20,7 @@
 #                      les écartant, `lint` nomme sa cible `project_id` là où les 12
 #                      autres ops par-id rendent `id`.
 #   me.doc           — `bulk_create` ne rend que {created, count} ; `revisions`/
-#                      `backlinks`/`list_changes` nomment `doc_id` quand la vue de
-#                      page nomme `id` ; `create` par un LECTEUR (proposition, ADR
-#                      0032 « les lecteurs proposent ») rend {status, request}.
+#                      `backlinks` nomment `doc_id` quand la vue de page nomme `id`.
 # Le dénominateur commun de ces deux blocages est le même défaut, à signaler sans
 # le corriger ici (une réponse servie en prod ne se re-façonne pas pour arranger un
 # schéma) : la CIBLE d'un appel est nommée `id` dans une op et `project_id`/`doc_id`

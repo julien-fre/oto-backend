@@ -11,24 +11,14 @@ from __future__ import annotations
 from typing import Optional
 
 from ... import db
-from . import common, notify, view
+from . import common, view
 from .common import require
 
 
 def create(sub: Optional[str], inp) -> dict:
     require(inp.project_id is not None, "missing_project", "`project_id` requis.")
     require(inp.title and inp.title.strip(), "missing_title", "`title` requis.")
-    # « Les lecteurs proposent » (Ship 3) : un viewer (lecture SANS écriture) qui
-    # crée obtient une PROPOSITION de création, pas la page.
-    if not common.can(sub, inp.project_id, "write"):
-        require(common.can(sub, inp.project_id, "read"), "forbidden", "Accès refusé.", 403)
-        req = db.add_doc_change_request(
-            sub, project_id=int(inp.project_id), proposed_parent_id=inp.parent_id,
-            proposed_kind=(inp.kind or "doc"),
-            proposed_title=inp.title.strip(), proposed_body_md=inp.body_md or "",
-            message=inp.message)
-        notify.cr_created(int(inp.project_id), sub, is_create=True, doc_title=None)
-        return {"status": "proposal_created", "request": req}
+    require(common.can(sub, inp.project_id, "write"), "forbidden", "Écriture refusée.", 403)
     if inp.parent_id is not None:
         parent = db.get_doc_by_id(int(inp.parent_id))
         require(parent and parent["project_id"] == inp.project_id, "bad_parent",

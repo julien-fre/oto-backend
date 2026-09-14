@@ -11,7 +11,7 @@ Deux gestes NÉGATIFS, à ne pas confondre — c'est la distinction que #654 a f
 naître : la **révocation** (`ORG_ADMIN_OF`) est l'émetteur qui retire ce qu'il a
 émis, le **refus** (`SUB_ONLY` + adresse confrontée) est l'invité qui dit non.
 Jusqu'au 2026-09-01 seul le premier existait : une personne qui ne voulait pas
-rejoindre gardait dans son inbox un badge qu'elle ne pouvait pas éteindre.
+rejoindre n'avait aucun moyen de le dire, et son invitation restait en attente.
 """
 from __future__ import annotations
 
@@ -154,8 +154,7 @@ class InvitationRevoked(BaseModel):
 
 class InvitationDeclined(BaseModel):
     """Invitation REFUSÉE (oto-backend#654). L'invitation est fermée : elle quitte
-    l'inbox de l'invité, la file de l'émetteur et le compte `counters.home`, et plus
-    aucun chemin ne peut la consommer (ni `accept`, ni la reprise automatique au
+    la file de l'émetteur, et plus aucun chemin ne peut la consommer (ni `accept`, ni la reprise automatique au
     signup par l'email).
 
     ⚠️ **Refuser n'est pas quitter.** Aucune appartenance n'est créée ni retirée : si
@@ -352,13 +351,13 @@ def _invite_reject(ctx: ResolvedCtx, inp: InviteRejectInput) -> dict:
     secret DÉTRUIT l'invitation d'un tiers — un code partagé par erreur deviendrait
     une porte pour annuler l'onboarding de quelqu'un d'autre, sans appartenance créée
     donc sans trace visible. On exige donc que l'invitation soit ADRESSÉE à l'adresse
-    du compte appelant. Ce n'est pas un rétrécissement du besoin : le badge que cette
-    issue existe pour éteindre est lui-même indexé par l'email (`me.inbox` passe par
-    `list_pending_invitations_for_email`), donc quiconque le voit passe cette garde.
+    du compte appelant. Ce n'est pas un rétrécissement du besoin : une invitation
+    nominative est adressée à CETTE adresse (c'est elle que le mail vise), donc la
+    personne invitée, connectée avec elle, passe cette garde.
 
     Corollaire assumé : une invitation ANONYME (émise sans email, code à partager
-    soi-même) ne se refuse pas — elle n'est adressée à personne, elle n'allume aucun
-    badge, et la retirer est le geste de son émetteur (révocation).
+    soi-même) ne se refuse pas — elle n'est adressée à personne, et la retirer est le
+    geste de son émetteur (révocation).
 
     Les gardes sont dans l'ORDRE où elles s'appliquent — c'est un contrat, le premier
     refus qui mord est celui qui est rendu."""

@@ -1,6 +1,7 @@
 """`GET /api/me/recent-changes` — les dernières pages et procédures modifiées (oto#191).
 
-La source de l'îlot « Dernières modifications » de l'accueil, qui remplace l'inbox.
+La source de l'îlot « Dernières modifications » de l'accueil, qui a remplacé l'inbox
+(retirée, oto#191).
 **Dérivée, jamais dupliquée** : deux `updated_at` existants, une requête
 (`db/recent_changes.py`), aucun journal ni table nouvelle.
 
@@ -16,7 +17,7 @@ Le périmètre est celui de la LECTURE, et pas plus large :
   `ownership.project_scope_owners` + la personne, la règle du rail.
 
 **Sans org active : 200 et une liste vide**, jamais un 400 — l'accueil charge cet
-îlot d'office, un refus casserait l'écran (même contrat que l'inbox qu'il remplace).
+îlot d'office, un refus casserait l'écran (le contrat qu'avait l'inbox remplacée).
 
 **Pas de face MCP** dans ce lot : la question est celle d'un écran, et un agent qui
 veut « ce qui a bougé » a `oto_search` et les listes de projet. L'ouvrir plus tard

@@ -5,7 +5,7 @@ monkeypatche db + ownership.
 """
 import pytest
 
-from oto_mcp import db, email, org_store, ownership
+from oto_mcp import db, ownership
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.capabilities.docs import core as D
 
@@ -33,20 +33,6 @@ def seams(monkeypatch):
                         lambda did: rec["delete"].append(did) or 0)
     monkeypatch.setattr(db, "move_doc", lambda did, p, position=None: rec["move"].append((did, p)))
     monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
-    # gap #4b — demandes de modif
-    rec["cr_add"], rec["cr_resolve"] = [], []
-    monkeypatch.setattr(db, "add_doc_change_request",
-                        lambda by, *, doc_id=None, project_id=None, proposed_parent_id=None,
-                        proposed_kind=None, proposed_title=None, proposed_body_md="", message=None:
-                        rec["cr_add"].append((doc_id, by, proposed_title, proposed_body_md, message))
-                        or {"id": 5, "status": "pending"})
-    monkeypatch.setattr(db, "list_doc_change_requests",
-                        lambda did, only_pending=True: [{"id": 5, "proposed_body_md": "new", "status": "pending"}])
-    monkeypatch.setattr(db, "get_doc_change_request",
-                        lambda rid: {"id": rid, "doc_id": 3, "status": "pending",
-                                     "proposed_title": "T", "proposed_body_md": "new"})
-    monkeypatch.setattr(db, "resolve_doc_change_request",
-                        lambda rid, status, by: rec["cr_resolve"].append((rid, status, by)))
     rec["set_public"] = []
     monkeypatch.setattr(db, "set_doc_public",
                         lambda did, public: rec["set_public"].append((did, public)) or ("tok123" if public else None))
@@ -76,6 +62,18 @@ def test_create_forbidden(seams, monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="create", project_id=7, title="X"))
     assert e.value.code == "forbidden"
+
+
+def test_un_lecteur_qui_cree_prend_403_et_rien_n_est_ecrit(seams, monkeypatch):
+    """oto#191 : « les lecteurs proposent » est retiré. Un compte qui LIT le projet sans
+    pouvoir y écrire n'obtient plus une proposition à la place de la page : il est
+    refusé, et rien n'est écrit."""
+    monkeypatch.setattr(ownership, "can_access",
+                        lambda sub, t, rid, want="read": want == "read")
+    with pytest.raises(AuthzDenied) as e:
+        D._doc(CTX, D.DocInput(op="create", project_id=7, title="Idée"))
+    assert (e.value.status, e.value.code) == (403, "forbidden")
+    assert seams["create"] == []
 
 
 def test_create_missing_title(seams):
@@ -127,79 +125,6 @@ def test_patch_passes_expected_rev_for_conflict(seams, monkeypatch):
 def test_update_passes_expected_rev(seams):
     D._doc(CTX, D.DocInput(op="update", doc_id=3, body_md="new", expected_rev="abc123"))
     assert seams["update"][0][5] == "abc123"   # le token de conflit optimiste est transmis
-
-
-def test_cr_created_notifies_admins_not_proposer(seams, monkeypatch):
-    # Proposition de modif (viewer) → notifie les org_admins de l'org du projet + le
-    # propriétaire user, JAMAIS le proposeur ni les simples membres (oto/#6).
-    monkeypatch.setattr(ownership, "can_access",
-                        lambda sub, t, rid, want="read": want == "read")  # lecture seule → propose
-    monkeypatch.setattr(db, "get_project_by_id",
-                        lambda pid: {"id": pid, "name": "P", "context_org_id": 7,
-                                     "owner_type": "org", "owner_id": "7"})
-    monkeypatch.setattr(org_store, "list_org_members", lambda org: [
-        {"sub": "admin1", "org_role": "org_admin"},
-        {"sub": "u1", "org_role": "org_admin"},      # le proposeur (CTX.sub) — exclu
-        {"sub": "member1", "org_role": "org_member"},  # simple membre — exclu
-    ])
-    emails = {"admin1": "a1@x.fr", "u1": "prop@x.fr", "member1": "m1@x.fr"}
-    monkeypatch.setattr(db, "get_user",
-                        lambda sub: {"email": emails.get(sub), "name": sub})
-    sent = []
-    monkeypatch.setattr(email, "send_change_request_email",
-                        lambda to, **k: sent.append(to) or True)
-    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
-    assert sent == ["a1@x.fr"]   # admin1 seul ; ni le proposeur ni le membre
-
-
-def test_cr_created_passes_admin_locale(seams, monkeypatch):
-    """oto-backend#700 : la préférence `users.locale` du VALIDATEUR suit jusqu'au
-    gabarit — chacun peut vivre sous une langue différente."""
-    monkeypatch.setattr(ownership, "can_access",
-                        lambda sub, t, rid, want="read": want == "read")
-    monkeypatch.setattr(db, "get_project_by_id",
-                        lambda pid: {"id": pid, "name": "P", "context_org_id": 7,
-                                     "owner_type": "org", "owner_id": "7"})
-    monkeypatch.setattr(org_store, "list_org_members", lambda org: [
-        {"sub": "admin1", "org_role": "org_admin"},
-    ])
-    users = {"u1": {"email": "prop@x.fr", "name": "u1"},
-             "admin1": {"email": "a1@x.fr", "name": "admin1", "locale": "en"}}
-    monkeypatch.setattr(db, "get_user", lambda sub: users.get(sub, {}))
-    sent = {}
-    monkeypatch.setattr(email, "send_change_request_email",
-                        lambda to, **k: sent.update(to=to, **k) or True)
-    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
-    assert sent["to"] == "a1@x.fr" and sent["locale"] == "en"
-
-
-def test_cr_resolved_notifies_proposer(seams, monkeypatch):
-    monkeypatch.setattr(db, "get_doc_change_request",
-                        lambda rid: {"id": rid, "doc_id": 3, "project_id": 7, "status": "pending",
-                                     "proposed_title": "T", "proposed_body_md": "new",
-                                     "requested_by": "bob", "project_name": "P", "doc_title": "Page"})
-    monkeypatch.setattr(db, "get_user", lambda sub: {"email": "bob@x.fr"} if sub == "bob" else {})
-    got = {}
-    monkeypatch.setattr(email, "send_change_request_resolved_email",
-                        lambda to, **k: got.update(to=to, accepted=k.get("accepted")) or True)
-    D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=True))
-    assert got == {"to": "bob@x.fr", "accepted": True}   # le proposeur, verdict accepté
-
-
-def test_cr_resolved_passes_proposer_locale(seams, monkeypatch):
-    """oto-backend#700 : la préférence de langue du PROPOSEUR (pas celle de qui
-    tranche) suit jusqu'au gabarit de résolution."""
-    monkeypatch.setattr(db, "get_doc_change_request",
-                        lambda rid: {"id": rid, "doc_id": 3, "project_id": 7, "status": "pending",
-                                     "proposed_title": "T", "proposed_body_md": "new",
-                                     "requested_by": "bob", "project_name": "P", "doc_title": "Page"})
-    monkeypatch.setattr(db, "get_user",
-                        lambda sub: {"email": "bob@x.fr", "locale": "en"} if sub == "bob" else {})
-    got = {}
-    monkeypatch.setattr(email, "send_change_request_resolved_email",
-                        lambda to, **k: got.update(to=to, **k) or True)
-    D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=True))
-    assert got["to"] == "bob@x.fr" and got["locale"] == "en"
 
 
 def test_update_conflict_is_409(seams, monkeypatch):
@@ -283,86 +208,3 @@ def test_capability_registered():
     from oto_mcp.capabilities.registry import CAPABILITIES
     cap = next((c for c in CAPABILITIES if c.key == "me.doc"), None)
     assert cap is not None and cap.mcp == "oto_doc" and cap.rest.path == "/api/me/docs"
-
-
-def test_request_change_with_read_only(seams, monkeypatch):
-    # Lecture seule (can_access read True, write False) → la demande passe quand même.
-    monkeypatch.setattr(ownership, "can_access",
-                        lambda sub, t, rid, want="read": want == "read")
-    out = D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new", message="svp"))
-    assert out["ok"] is True
-    assert seams["cr_add"] == [(3, "u1", None, "new", "svp")]
-
-
-def test_list_changes_needs_write(seams, monkeypatch):
-    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": want == "read")
-    with pytest.raises(AuthzDenied) as e:
-        D._doc(CTX, D.DocInput(op="list_changes", doc_id=3))
-    assert e.value.code == "forbidden"
-
-
-def test_resolve_change_accept_applies(seams):
-    out = D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=True))
-    assert out["accepted"] is True
-    assert seams["update"] == [(3, "T", "new", None, "u1", None)]      # contenu proposé appliqué
-    assert seams["cr_resolve"] == [(5, "accepted", "u1")]
-
-
-def test_resolve_change_reject(seams):
-    D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=False))
-    assert seams["update"] == []                                  # rien appliqué
-    assert seams["cr_resolve"] == [(5, "rejected", "u1")]
-
-
-# ── ADR 0068 : la notification suit la PROPRIÉTÉ, pas le contexte ─────────────
-
-def _perso(monkeypatch, owner="alice", membres=None):
-    """Projet PERSO rangé dans le contexte de l'org 7, avec des admins dans cette org."""
-    monkeypatch.setattr(ownership, "can_access",
-                        lambda sub, t, rid, want="read": want == "read")
-    monkeypatch.setattr(db, "get_project_by_id",
-                        lambda pid: {"id": pid, "name": "P", "context_org_id": 7,
-                                     "owner_type": "user", "owner_id": owner})
-    monkeypatch.setattr(org_store, "list_org_members", lambda org: membres if membres
-                        is not None else [{"sub": "admin1", "org_role": "org_admin"}])
-    monkeypatch.setattr(db, "get_user", lambda sub: {
-        "alice": {"email": "alice@x.fr", "name": "Alice"},
-        "admin1": {"email": "a1@x.fr", "name": "admin1"},
-        "u1": {"email": "prop@x.fr", "name": "u1"},
-    }.get(sub, {}))
-    sent = []
-    monkeypatch.setattr(email, "send_change_request_email",
-                        lambda to, **k: sent.append(to) or True)
-    return sent
-
-
-def test_une_proposition_sur_un_projet_PERSO_n_alerte_pas_les_org_admin(seams, monkeypatch):
-    """Le cas qui manquait, et il n'était pas théorique : l'e-mail porte le CORPS
-    proposé. Un projet perso partagé en lecture à une personne envoyait donc son
-    contenu à des administrateurs auxquels `oto_project` promet, en toutes lettres,
-    que « ni les administrateurs de ton org ne le voient ».
-
-    La cause : la notification lisait `context_org_id`, qui dit où le projet est RANGÉ
-    et jamais qui peut le lire (ADR 0030 amendé). Même confusion contexte/visibilité
-    qu'à l'autre bout du produit, le même jour."""
-    sent = _perso(monkeypatch)
-    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
-    assert "a1@x.fr" not in sent, "un org_admin n'a rien à voir dans un projet perso"
-    assert sent == ["alice@x.fr"], "le propriétaire, et lui seul, tranche chez lui"
-
-
-def test_un_projet_PERSO_sans_proprietaire_joignable_ne_notifie_PERSONNE(seams, monkeypatch):
-    """⚠️ Le comportement voulu, pas un trou : mieux vaut une proposition qui attend
-    qu'un corps envoyé à qui n'a pas à le lire. Le repli d'hier — « à défaut, préviens
-    les admins » — est exactement ce qu'on retire."""
-    sent = _perso(monkeypatch, owner="fantome")
-    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
-    assert sent == []
-
-
-def test_le_PROPOSEUR_proprietaire_ne_se_notifie_pas_lui_meme(seams, monkeypatch):
-    """Inchangé, et vérifié ici parce que la branche a bougé : proposer chez soi
-    n'envoie pas d'e-mail à soi-même."""
-    sent = _perso(monkeypatch, owner=CTX.sub)
-    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
-    assert sent == []

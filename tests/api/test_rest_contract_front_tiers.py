@@ -258,25 +258,22 @@ def _sub(nom: str) -> str:
     return nom
 
 
-def test_l_invite_refuse_et_l_invitation_quitte_les_deux_cotes(client, org):
-    """Le cas de l'issue, bout en bout : le badge s'éteint chez l'invité ET la file
-    de l'émetteur se vide — sans que personne ne rejoigne quoi que ce soit."""
+def test_l_invite_refuse_et_l_invitation_quitte_la_file_de_l_emetteur(client, org):
+    """Le cas de l'issue, bout en bout : la file de l'émetteur se vide — sans que
+    personne ne rejoigne quoi que ce soit."""
     from oto_mcp import org_store
     oid, admin = org["id"], org["admin"]
     invite = _sub("usr_ft_refuseur")
     code = _invite(client, oid, admin, "usr_ft_refuseur@front-tiers.invalid")
 
-    avant = client.get("/api/me/inbox", headers=_h(invite)).json()
-    assert [i["code"] for i in avant["invitations"]] == [code]
-    assert avant["count"] == 1
+    assert "usr_ft_refuseur@front-tiers.invalid" in [
+        i["email"] for i in _file(client, oid, admin)]
 
     r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(invite))
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True, "declined": True, "scope": "org", "org_id": oid,
                         "group_id": None, "name": "Org du front tiers"}
 
-    apres = client.get("/api/me/inbox", headers=_h(invite)).json()
-    assert apres["invitations"] == [] and apres["count"] == 0
     assert "usr_ft_refuseur@front-tiers.invalid" not in [
         i["email"] for i in _file(client, oid, admin)]
     # Refuser n'est pas rejoindre à l'envers : aucune appartenance n'a été touchée.

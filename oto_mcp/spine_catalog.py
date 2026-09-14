@@ -128,10 +128,10 @@ SPINE_FAMILIES: tuple[SpineFamily, ...] = (
         "d'accès interne, comptes connectés sous lesquels agir",
     ),
     SpineFamily(
-        "email_send / oto_scheduled_emails / oto_inbox",
-        ("email_send", "oto_scheduled_emails", "oto_inbox"),
+        "email_send / oto_scheduled_emails",
+        ("email_send", "oto_scheduled_emails"),
         "email & boîte : envoi per-org rendu à la charte (différé, heures calmes), file "
-        "des envois programmés, demandes qui attendent ta décision",
+        "des envois programmés",
     ),
     SpineFamily(
         "run_* / feedback / oto_run_thread",

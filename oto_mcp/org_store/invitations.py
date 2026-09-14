@@ -10,8 +10,8 @@ non, aucune appartenance créée), **expirée** (`expires_at`), **révoquée** (
 est SUPPRIMÉE, geste de l'émetteur). Le prédicat `_PENDING` est la définition
 unique de « encore en attente » ; toute requête qui filtre l'état passe par lui.
 
-Étage 1 du package : consomme `members` (adhésion + maison) et `orgs` (nom d'org
-dans l'inbox). Les paliers voisins (`roles`, `group_store`) restent en import
+Étage 1 du package : consomme `members` (adhésion + maison). Les paliers
+voisins (`roles`, `group_store`) restent en import
 PARESSEUX au point d'appel — c'est ce qui évite le cycle.
 """
 from __future__ import annotations
@@ -20,7 +20,6 @@ import secrets
 from typing import Optional
 
 from . import members
-from . import orgs
 from ..db import _connect, _hash_token
 
 
@@ -82,7 +81,7 @@ def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str
 # « EN ATTENTE » — la définition, écrite UNE fois (#654). ⚠️ Elle était recopiée dans
 # six requêtes : y ajouter le refus en en oubliant une, c'était une invitation refusée
 # encore acceptable (`_get_invitation`), ou ré-acceptée toute seule au signup
-# (`reconcile_signup_with_invitation`), ou encore allumée dans l'inbox.
+# (`reconcile_signup_with_invitation`).
 _PENDING = "accepted_at IS NULL AND declined_at IS NULL AND expires_at > NOW()"
 _PENDING_I = ("i.accepted_at IS NULL AND i.declined_at IS NULL "
               "AND i.expires_at > NOW()")
@@ -435,27 +434,6 @@ def _accept_invitation_row(inv: dict, sub: str) -> dict:
     # annonce « tu es org_member » à quelqu'un qui vient de rester org_admin.
     return {"org_id": org_id, "org_role": org_role,
             "group_id": group_id, "group_role": group_role}
-
-
-def list_pending_invitations_for_email(email: str) -> list[dict]:
-    """Invitations en attente ADRESSÉES à cet email (inbox « À traiter », Ship 3 G1) —
-    lecture seule, sans accepter. Cross-org par construction (une invitation à rejoindre
-    une org vise quelqu'un qui n'en est pas encore membre) → hors scope org active."""
-    email = (email or "").strip().lower()
-    if "@" not in email:
-        return []
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, org_id, group_id, invited_by, created_at, code "
-            f"FROM org_invitations WHERE {_PENDING} "
-            "AND lower(email) = %s ORDER BY created_at DESC", (email,)).fetchall()
-        out = []
-        for r in rows:
-            d = dict(r)
-            o = orgs.get_org(int(d["org_id"])) if d.get("org_id") else None
-            d["org_name"] = o["name"] if o else None
-            out.append(d)
-        return out
 
 
 def reconcile_signup_with_invitation(sub: str, email: str) -> Optional[dict]:
