@@ -205,7 +205,9 @@ Un groupe **gouverne 3 ressources** par délégation de l'org (⚠️ **substrat
 grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = playbook
 **`docs/live-migrations.md`**) :
 - **secrets partagés** — coffre `connector_credentials` (entity_type='group') ;
-  cascade `resolve_api_key` = **user_key > secret groupe actif > secret org active > grant plateforme**.
+  le secret de groupe passe **après** le personnel et **avant** celui de l'org ; l'ordre
+  complet des barreaux (dont perso cross-org et tenant) est dans
+  [`roles-and-resolution.md`](roles-and-resolution.md), qui l'énonce seul.
 - **procédures** — table UNIFIÉE `org_instructions` (`owner_type='group'`,
   `owner_id=group_id`, `org_id`=org parente ; ex-jumelle `org_group_instructions`
   DROPpée) et, depuis le 31/08/2026 (#681), **store unifié** aussi :

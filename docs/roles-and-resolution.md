@@ -44,8 +44,15 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 1. Clé **membre** (sub, org de contexte — ADR 0033) → directe, sans quota.
 2. Instance **personnelle cross-org** (#172, providers `personal_cross_org`).
 3. Secret d'**équipe active**, puis d'**org active** (providers org-shareables).
-4. Instance **plateforme** (grant/free-tier, ADR 0044 §F) avec quota.
-5. Rien → McpError actionnable + **instances à portée** (voir walker ci-dessous).
+4. Secret de **tenant** (coffre `entity_type='tenant'`, ADR 0052 ; barreau livré le
+   29/08/2026 avec L-clés) — sert toutes les orgs du tenant qui n'ont rien de plus proche.
+5. Instance **plateforme** (grant/free-tier, ADR 0044 §F) avec quota.
+6. Rien → McpError actionnable + **instances à portée** (voir walker ci-dessous).
+
+> **Cet énoncé est le seul.** La source est le walker `access/cascade.py` ; la cascade
+> était recopiée dans trois autres documents, et **trois sur quatre ignoraient l'étage
+> tenant** cinq semaines après sa livraison — dont celui qui s'intitule « résolution ».
+> Ajouter un barreau = éditer le walker, puis cette liste. Nulle part ailleurs.
 
 > **Multi-compte par défaut (2026-08-26, reprise #399 ; étendu #409 le 27/08).** Tout
 > connecteur dont le credential se **POSE** (`method=secret` — clé simple

@@ -28,7 +28,7 @@ Pour qu'un connecteur **marche** pour un utilisateur, les **trois** doivent êtr
 | # | Couche | Question | Substrat |
 |---|--------|----------|----------|
 | 1 | **Disponibilité** | le connecteur est-il exposé ? | `connector_activation` (master ± override org) + `availability` |
-| 2 | **Authentification** | avec quelle clé appelle-t-il l'API ? | cascade `resolve_api_key` (user→groupe→org→tenant→clé plateforme) |
+| 2 | **Authentification** | avec quelle clé appelle-t-il l'API ? | cascade `resolve_api_key` — ordre complet dans [`roles-and-resolution.md`](roles-and-resolution.md) |
 | 3 | **Option** *(options gatées only)* | l'option est-elle débloquée ? | `option_open(sub, connector)` = **BYO** ∪ `has_option` (comp admin user\|org **OU abonnement d'org**) |
 
 La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à option gatée**

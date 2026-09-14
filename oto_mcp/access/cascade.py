@@ -1,6 +1,6 @@
 """Le WALKER unique de la cascade de credentials (ADR 0024/0044).
 
-La cascade `perso > cross-org > équipe active > org > plateforme` était écrite à
+La cascade `perso > cross-org > équipe active > org > tenant > plateforme` était écrite à
 la main à six endroits ; elle vit ici, et nulle part ailleurs. Le walker est
 paramétré par une SONDE (`CascadeProbe`) : présence (aucun déchiffrement),
 fetch (ne déchiffre que le gagnant), ou préchargée (les mêmes réponses en
@@ -212,7 +212,7 @@ def _resolve_platform_grant(sub, provider, active_org) -> "dict | None":
 
 
 # ── Walker de cascade unique ───────────────────────────────────────────────────
-# La cascade `perso > cross-org > équipe active > org > plateforme` était écrite à
+# La cascade `perso > cross-org > équipe active > org > tenant > plateforme` était écrite à
 # la main à 6 endroits (résolution, mode, status ×2, anonyme, sonde de publication)
 # — chaque barreau nouveau devait être reporté N fois, et chaque oubli faisait
 # MENTIR une surface (vécu 2026-07-16 : boucle fields de status_for restée
