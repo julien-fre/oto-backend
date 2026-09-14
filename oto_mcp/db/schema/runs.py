@@ -131,6 +131,9 @@ CREATE TABLE IF NOT EXISTS runner_fleets (
     -- d'env s'applique à tout le monde sans distinction et ne se lit nulle part.
     -- NULL = on n'envoie rien, le fournisseur applique son défaut.
     temperature REAL,
+    -- Ce que l'agent LIT des outils (oto#241) : {defaut, entieres}, figé comme le reste du
+    -- contexte d'exécution. NULL = rien ne part, le worker garde son défaut.
+    descriptions_outils JSONB,
     -- LES BORNES : ce qui arrête un passage, et rien d'autre. ⚠️ Le budget se
     -- compte en JETONS, jamais en monnaie — les tarifs changent, diffèrent par
     -- fournisseur, et une valeur monétaire figée en base devient fausse sans que

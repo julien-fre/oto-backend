@@ -357,8 +357,12 @@ from oto_mcp.db import _schema, schema
 # reçoit par l'ALTER de `_init.py`, sans défaut (les runs d'avant restent NULL, non
 # mesurés). Additif : le code du tag précédent ne la lit ni ne l'écrit — ses runs restent
 # NULL. 153 796 → 153 900.
-EMPREINTE = "ce6a5d18f106412fa39bc8e2afafcd4d7bf1952b5414d83c5872eae19b13c1f2"
-LONGUEUR = 153900
+# 14/09/2026 — ce que l'agent lit des outils (fragment RUNS, oto#241) : la colonne
+# `runner_fleets.descriptions_outils` et son commentaire dans le CREATE TABLE. La base
+# partagée la reçoit par l'ALTER de `_init.py`, sans défaut (NULL = rien ne part avec le
+# travail). Additif : le code du tag précédent ne la lit ni ne l'écrit. 153 900 → 154 101.
+EMPREINTE = "6b07334faa689d47df4065bfa4c9a2d49fa664c5531c8a82b5f8ebc7854bf95d"
+LONGUEUR = 154101
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -135,6 +135,62 @@ def test_l_issue_des_travaux_est_declaree_au_contrat_et_facultative():
         assert nom in champs and not champs[nom].is_required(), nom
 
 
+# ── ce que l'agent lit des outils : déclaré, validé, figé (oto#241) ──────────
+
+def _creer(monkeypatch, **kw):
+    from oto_mcp import db
+    vu = {}
+    monkeypatch.setattr(db, "create_fleet", lambda *a, **k: vu.update(k) or {"id": 1})
+    _appel(_ctx(), op="create", label="essai", procedure="p",
+           tools=["data_claim_next", "data_rows", "data_write"], **kw)
+    return vu
+
+
+def test_descriptions_outils_valide_part_a_la_creation(monkeypatch):
+    reglage = {"defaut": 1024, "entieres": ["data_write", "data_claim_next", "data_rows"]}
+    assert _creer(monkeypatch, descriptions_outils=reglage)["descriptions_outils"] == reglage
+
+
+def test_sans_descriptions_outils_rien_ne_part(monkeypatch):
+    assert _creer(monkeypatch)["descriptions_outils"] is None
+
+
+@pytest.mark.parametrize("fautif", [
+    {"defaut": "1024"},                            # un texte n'est pas un entier
+    {"defaut": 0},                                 # borne nulle
+    {"defaut": True},                              # un booléen n'est pas un entier
+    {"entieres": "data_rows"},                     # pas une liste
+    {"defaut": 1024, "coupees": ["data_rows"]},    # clé inconnue
+    {"entieres": ["serper_scrape"]},               # outil hors de `tools`
+])
+def test_descriptions_outils_fautif_est_refuse_et_nomme(monkeypatch, fautif):
+    with pytest.raises(AuthzDenied) as e:
+        _creer(monkeypatch, descriptions_outils=fautif)
+    assert e.value.code == "invalid_descriptions_outils"
+
+
+def test_descriptions_outils_ne_se_modifie_pas():
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="update", fleet_id=1, descriptions_outils={"defaut": 2048})
+    assert e.value.code == "context_is_frozen"
+
+
+def test_retirer_de_tools_un_outil_que_le_reglage_nomme_est_refuse(monkeypatch):
+    from oto_mcp import db
+    monkeypatch.setattr(db, "get_fleet", lambda fid, org: {
+        "id": fid, "descriptions_outils": {"entieres": ["data_rows", "data_write"]}})
+    monkeypatch.setattr(db, "update_fleet", lambda fid, org, champs: {"id": fid, **champs})
+
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="update", fleet_id=1, tools=["data_write", "data_claim_next"])
+    assert e.value.code == "invalid_descriptions_outils"
+    assert "data_rows" in e.value.message
+
+    rendu = _appel(_ctx(), op="update", fleet_id=1,
+                   tools=["data_rows", "data_write", "fr_get"])
+    assert rendu["fleet"]["tools"] == ["data_rows", "data_write", "fr_get"]
+
+
 def test_aucun_modele_servi_ne_porte_de_monnaie():
     """Les tarifs changent et diffèrent par fournisseur : une valeur monétaire figée
     en base devient fausse sans que rien ne le dise. Et un NUMERIC servi tel quel
@@ -450,7 +506,8 @@ def _ligne(**surcharges) -> dict:
         "project_id": 9, "tools": ["data_rows", "data_write"],
         "input": "Lis la procédure `p` et applique-la.", "max_steps": 40,
         "namespace": "vivier", "row_filter": {"lot": "a"}, "provider": "mistral",
-        "model": "mistral-large-2512", "temperature": 0.0, "workers": 3, "max_rows": 100,
+        "model": "mistral-large-2512", "temperature": 0.0, "descriptions_outils": None,
+        "workers": 3, "max_rows": 100,
         "max_tokens": 1_000_000, "max_consecutive_failures": 5,
         "max_tokens_per_row": 50_000, "status": "running", "stop_reason": None,
         "armed_at": "2026-09-13 08:00:00", "started_at": "2026-09-13 08:00:05",

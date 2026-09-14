@@ -354,6 +354,20 @@ def test_une_campagne_SANS_modele_produit_le_travail_d_avant(campagne):
     assert "model_family" not in campagne["payload"]
 
 
+def test_ce_que_l_agent_lit_des_outils_part_avec_le_travail(monkeypatch, campagne):
+    """oto#241 : le réglage déclaré sur la campagne voyage ; sans lui, rien ne part."""
+    reglage = {"defaut": 1024, "entieres": ["data_write", "data_claim_next"]}
+    monkeypatch.setattr(RJ.db, "campagne_a_servir",
+                        lambda org_id, _ordonner: {**CAMPAGNE, "descriptions_outils": reglage})
+    _appel(_ctx(), op="claim")
+    assert campagne["payload"]["descriptions_outils"] == reglage
+
+
+def test_sans_reglage_de_descriptions_le_travail_n_en_porte_aucun(campagne):
+    _appel(_ctx(), op="claim")
+    assert "descriptions_outils" not in campagne["payload"]
+
+
 def test_la_borne_PAR_LIGNE_part_avec_le_travail(campagne):
     """⚠️ C'est ICI que la borne par ligne devient réelle, et nulle part ailleurs.
 

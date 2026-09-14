@@ -276,6 +276,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # tourne sur le sien, comme avant.
     conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS model TEXT")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS temperature REAL")
+    # oto#241 : la borne des descriptions d'outils déclarée par la campagne. Sans défaut :
+    # NULL = rien ne part avec le travail, le worker garde le sien.
+    conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS descriptions_outils JSONB")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS rows_at_launch INT")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ")

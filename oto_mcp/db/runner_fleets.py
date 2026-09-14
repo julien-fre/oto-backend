@@ -34,7 +34,8 @@ from ._conn import _connect
 # produit — son modèle `Output` DÉCRIT la réponse, il ne la filtre pas —, donc la retirer
 # d'ici est la seule façon de cesser de la servir sur tous les verbes à la fois.
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
-         "namespace, row_filter, provider, model, temperature, workers, max_rows, "
+         "namespace, row_filter, provider, model, temperature, descriptions_outils, "
+         "workers, max_rows, "
          "max_tokens, max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
          "armed_at, started_at, stopping_at, heartbeat_at, stopped_at, created_at")
 
@@ -62,7 +63,8 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                  workers: int = 1, max_rows: Optional[int] = None,
                  max_tokens: Optional[int] = None,
                  max_consecutive_failures: Optional[int] = None,
-                 max_tokens_per_row: Optional[int] = None) -> dict:
+                 max_tokens_per_row: Optional[int] = None,
+                 descriptions_outils: Optional[dict] = None) -> dict:
     with _connect() as conn:
         row = conn.execute(
             f"""
@@ -70,9 +72,9 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                    (org_id, sub, label, procedure, project_id, tools, input,
                     max_steps, namespace, row_filter, provider, model, temperature, workers,
                     max_rows, max_tokens, max_consecutive_failures,
-                    max_tokens_per_row)
+                    max_tokens_per_row, descriptions_outils)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s,
-                    %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s::jsonb)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
@@ -80,7 +82,9 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
              namespace,
              json.dumps(row_filter, ensure_ascii=False) if row_filter is not None else None,
              provider, model, temperature, workers, max_rows, max_tokens,
-             max_consecutive_failures, max_tokens_per_row),
+             max_consecutive_failures, max_tokens_per_row,
+             json.dumps(descriptions_outils, ensure_ascii=False)
+             if descriptions_outils is not None else None),
         ).fetchone()
     return dict(row)
 

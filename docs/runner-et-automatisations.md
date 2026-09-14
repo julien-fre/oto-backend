@@ -411,6 +411,22 @@ Trois régimes se sont succédé :
 - le hasard égal, le 13/09 : la passe du milieu est devenue le goulot ;
 - depuis le 14/09, ce tirage pondéré.
 
+### Ce que l'agent lit des outils se déclare sur la campagne (oto#241, 14/09/2026)
+
+Le worker coupe chaque description d'outil à 1 024 caractères, sauf `data_write`
+(`oto_runner/descriptions.py`). Une campagne hébergée peut désormais le régler :
+`descriptions_outils: {defaut: <entier ≥ 1>, entieres: [<outil>, …]}` sur
+`oto_fleet op=create`, puis le réglage part avec chaque travail.
+- La grammaire est recopiée de celle du runner, qui valide aussi les déclarations
+  locales (`capabilities/_descriptions_outils.py`).
+- Un outil d'`entieres` doit figurer dans `tools`.
+- Le réglage est **figé** à la déclaration, comme le modèle. Un `update` de `tools`
+  qui retirerait un outil nommé est refusé.
+
+Mesuré sur une passe de 14 outils : servir entières `data_claim_next` et `data_rows`
+ajoute 1 539 jetons par tour, lus à 99,5 % en cache, contre la perte des règles de
+réservation.
+
 ### Le worker est un SERVEUR de boucles agentiques (05/09/2026)
 
 Le modèle, dit par Alexis et désormais tenu par le code : **le worker héberge des

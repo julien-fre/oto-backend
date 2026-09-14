@@ -95,6 +95,17 @@ def test_campagne_armee_est_servie(org_neuve):
     assert servie["id"] == f["id"]
 
 
+def test_le_reglage_des_descriptions_s_ecrit_et_se_relit(org_neuve):
+    """oto#241 : la colonne JSONB, en SQL réel — l'INSERT et `_COLS` la portent."""
+    from oto_mcp import db
+    reglage = {"defaut": 2048, "entieres": ["data_rows"]}
+    f = _flotte(org_neuve["org"], org_neuve["sub"], descriptions_outils=reglage)
+    sans = _flotte(org_neuve["org"], org_neuve["sub"])
+
+    assert db.get_fleet(f["id"], org_neuve["org"])["descriptions_outils"] == reglage
+    assert db.get_fleet(sans["id"], org_neuve["org"])["descriptions_outils"] is None
+
+
 def test_campagne_en_brouillon_nest_pas_servie(org_neuve):
     """Le pendant : sans armement, rien ne sort. Il tient la garde du haut —
     un `draft` qui se mettrait à produire du travail serait pire que le bug."""

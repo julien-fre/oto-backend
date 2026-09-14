@@ -58,7 +58,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from . import _cle_exigee, _instruction, _lignes_reservables, _modele
+from . import _cle_exigee, _descriptions_outils, _instruction, _lignes_reservables, _modele
 from .. import access, db, output_projection, runner_models
 from ..tool_visibility import BETA_OPTION
 
@@ -125,6 +125,10 @@ class FleetInput(BaseModel):
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
+    descriptions_outils: Optional[dict] = Field(None, description=(
+        "What the agent reads of each tool description: {defaut: chars served per "
+        "description (≥ 1), entieres: [tools served uncut]}. Frozen at creation; "
+        "omitted, the worker's default applies."))
     # stop — la raison est ÉCRITE : « arrêtée » sans raison oblige à rouvrir les
     # journaux pour savoir si c'était un incident, un budget ou une décision.
     reason: Optional[str] = None
@@ -150,6 +154,7 @@ class Fleet(BaseModel):
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
+    descriptions_outils: Optional[dict] = None
     status: Optional[str] = None
     stop_reason: Optional[str] = None
     armed_at: Optional[str] = None
@@ -329,6 +334,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # famille DE CE MODÈLE compte (14/09/2026) — un passage sans modèle
         # n'exige rien.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        descriptions = _descriptions_outils.valider(inp.descriptions_outils, inp.tools)
         return {"fleet": db.create_fleet(
             ctx.org_id, ctx.sub, label=inp.label, procedure=inp.procedure,
             tools=inp.tools, namespace=inp.namespace, row_filter=inp.row_filter,
@@ -339,7 +345,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             temperature=inp.temperature, workers=inp.workers or 1,
             max_rows=inp.max_rows, max_tokens=inp.max_tokens,
             max_consecutive_failures=inp.max_consecutive_failures,
-            max_tokens_per_row=inp.max_tokens_per_row)}
+            max_tokens_per_row=inp.max_tokens_per_row,
+            descriptions_outils=descriptions)}
 
     if inp.op == "list":
         cartes, projection = _cartes(db.list_fleets(ctx.org_id, inp.status))
@@ -522,6 +529,12 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             "le contexte d'exécution ne se modifie pas — `provider` et `model` sont "
             "figés à la déclaration. Les changer en vol rendrait FAUSSE l'attribution "
             "des lignes déjà écrites sous ce passage. Déclare une autre flotte.")
+    if inp.descriptions_outils is not None:
+        raise AuthzDenied(
+            400, "context_is_frozen",
+            "`descriptions_outils` ne se modifie pas — ce que l'agent lit des outils est "
+            "du contexte d'exécution, figé à la déclaration comme le modèle. Le changer "
+            "en vol rendrait incomparables les lignes déjà écrites. Déclare une autre flotte.")
     # ⚠️ `status` figure dans l'entrée parce qu'il FILTRE `list`. Le laisser tomber
     # en silence ici rendrait 200 avec la flotte inchangée — et c'est précisément le
     # geste qu'un agent privé de `stop` tenterait, en lisant un succès dans la
@@ -556,6 +569,18 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             "à la création et ne se retouchent pas — une autre valeur, c'est une "
             "autre flotte. Les champs modifiables sont : "
             f"{', '.join(db.CHAMPS_MODIFIABLES)}.")
+    # `tools` reste modifiable, `descriptions_outils` non : une allowlist qui retirerait un
+    # outil que le réglage nomme le rendrait inerte sans un mot (oto#241).
+    if inp.tools is not None:
+        actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
+        retires = _descriptions_outils.outils_nommes_retires(
+            (actuelle or {}).get("descriptions_outils"), inp.tools)
+        if retires:
+            raise AuthzDenied(
+                400, _descriptions_outils.CODE,
+                f"`tools` retirerait {', '.join(retires)}, que `descriptions_outils."
+                "entieres` nomme : le réglage de cette flotte cesserait d'agir. Garde ces "
+                "outils, ou déclare une autre flotte.")
     f = db.update_fleet(inp.fleet_id, ctx.org_id, champs)
     if not f:
         raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")

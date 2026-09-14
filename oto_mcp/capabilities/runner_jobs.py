@@ -678,6 +678,10 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
                      "fleet": f.get("label"),
                      "max_steps": f.get("max_steps"),
                      "max_tokens": f.get("max_tokens_per_row"),
+                     # Ce que l'agent lit des outils, si la campagne l'a déclaré (oto#241) ;
+                     # sinon rien ne part et le worker garde son défaut.
+                     **({"descriptions_outils": f["descriptions_outils"]}
+                        if f.get("descriptions_outils") else {}),
                      # Le contexte d'exécution déclaré par le passage. `None` =
                      # on n'envoie rien et le fournisseur applique son défaut —
                      # c'est le comportement d'avant, et il reste possible.
