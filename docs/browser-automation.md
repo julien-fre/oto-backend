@@ -1,3 +1,8 @@
+---
+title: Browser automation — substrat hébergé Browserbase (ADR 0026)
+type: reference
+---
+
 # Browser automation — substrat hébergé Browserbase (ADR 0026)
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.

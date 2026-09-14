@@ -1,3 +1,8 @@
+---
+title: Perf event-loop — le serveur est MONO-LOOP (les 5 modes de gel)
+type: explanation
+---
+
 # Perf event-loop — le serveur est MONO-LOOP (les 5 modes de gel)
 
 > ⚠️ Ce titre a dit « les 2 modes » jusqu'au 2026-08-27, « les 3 » jusqu'au

@@ -1,3 +1,8 @@
+---
+title: Mettre un compte en pause — neutraliser sans détruire
+type: explanation
+---
+
 # Mettre un compte en pause — neutraliser sans détruire
 
 > Le cran qui manquait entre « vivant » et « supprimé ». Posé le **2026-09-03**.

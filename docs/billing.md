@@ -1,3 +1,8 @@
+---
+title: Facturation par org (ADR 0043) — le modèle, la TVA, le consentement, les factures, et le double débit du 25/08
+type: reference
+---
+
 # Facturation par org (ADR 0043) — le modèle, la TVA, le consentement, les factures, et le double débit du 25/08
 
 ## Ce que Mollie voit, et ce qu'il ne voit pas

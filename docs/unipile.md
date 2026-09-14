@@ -1,3 +1,8 @@
+---
+title: Unipile — le compte, et ses six connexions
+type: reference
+---
+
 # Unipile — le compte, et ses six connexions
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.

@@ -1,3 +1,8 @@
+---
+title: Email — envoi per-org, par connecteur
+type: reference
+---
+
 # Email — envoi per-org, par connecteur
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.

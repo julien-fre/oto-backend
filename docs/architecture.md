@@ -1,3 +1,8 @@
+---
+title: Architecture — l'arbre des modules, les 4 couches, les deux faces
+type: reference
+---
+
 # Architecture — l'arbre des modules, les 4 couches, les deux faces
 
 > Le détail que le `CLAUDE.md` portait jusqu'au 2026-08-31. La carte, elle, y reste :

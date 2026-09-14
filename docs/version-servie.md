@@ -1,3 +1,8 @@
+---
+title: La version servie — dater un changement de comportement
+type: explanation
+---
+
 # La version servie — dater un changement de comportement
 
 > **Le fait à retenir** : la version que la plateforme annonce désigne **ce que le

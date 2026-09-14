@@ -1,3 +1,8 @@
+---
+title: Propriété de ressource — primitive `ownership` (ADR 0030)
+type: reference
+---
+
 # Propriété de ressource — primitive `ownership` (ADR 0030)
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.

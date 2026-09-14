@@ -1,3 +1,8 @@
+---
+title: Migrations vivantes sur la DB partagée canari/prod — le playbook
+type: how-to
+---
+
 # Migrations vivantes sur la DB partagée canari/prod — le playbook
 
 > Extrait des chantiers du cadrage objets/visibilité (2026-07-10) : Phase H datastore,

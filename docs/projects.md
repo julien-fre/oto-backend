@@ -1,3 +1,8 @@
+---
+title: Projet — couche d'organisation (ADR 0030/0032)
+type: reference
+---
+
 # Projet — couche d'organisation (ADR 0030/0032)
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.

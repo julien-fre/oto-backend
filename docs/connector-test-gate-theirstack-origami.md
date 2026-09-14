@@ -1,3 +1,8 @@
+---
+title: Porte de test locale — connecteurs TheirStack + Origami
+type: how-to
+---
+
 # Porte de test locale — connecteurs TheirStack + Origami
 
 Ce document est la **porte de test** qu'un connecteur *keyed* doit passer en local avant d'être poussé.

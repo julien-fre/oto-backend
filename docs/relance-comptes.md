@@ -1,3 +1,8 @@
+---
+title: Relance des comptes jamais actifs (2026-09-02)
+type: reference
+---
+
 # Relance des comptes jamais actifs (2026-09-02)
 
 `oto_admin_outreach` (MCP) + `POST /api/admin/outreach` (REST). Le code : capacité

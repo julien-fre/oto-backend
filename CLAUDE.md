@@ -189,6 +189,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `tool-visibility.md` — denylist, `PROTECTED_TOOLS`
 - `auth-logto.md` — Logto, DCR, jetons `oto_`
 - `tenants.md` — l'identité au-dessus des orgs
+- `comptes-en-pause.md` — neutraliser un compte sans le détruire : un seul état, aucune
+  résurrection automatique
 - `rest-api.md` — endpoints, OpenAPI, jetons, CORS
 - `version-servie.md` — dater un changement : les 3 surfaces, les 3 coordonnées qui mentent
 - `noeuds.md` — le NOUVEL univers de contenu : page/tableau/ligne, `props` vs `data`, les deux
