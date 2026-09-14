@@ -160,3 +160,21 @@ def test_un_continue_relit_le_modele_du_START_de_son_run(live):
         "model": "claude-opus-5", "model_family": "anthropic"}
     assert db.modele_du_run("run-banc", 9105) == {}, "le run d'une AUTRE org ne se lit pas"
     assert db.modele_du_run("run-sans-modele", 9104) == {}
+
+
+def test_un_continue_relit_l_effort_ET_le_plafond_du_START(live):
+    """Relevé en revue le 14/09/2026 : la charge du `start` porte `max_output_tokens`, et
+    la reprise ne relisait que `effort`. Le worker lève sur un effort qui raisonne sans
+    plafond : chaque reprise d'un run Medium aurait échoué. Les deux voyagent ensemble,
+    et le plafond revient ENTIER (`->>` rend du texte)."""
+    from oto_mcp import db, runner_models
+    from oto_mcp.db._conn import _connect
+    with _connect() as c:
+        c.execute("INSERT INTO runs (run_id, sub, org_id, label) VALUES (%s, %s, %s, %s)",
+                  ("run-medium", "banc", 9106, "banc du plafond"))
+        c.commit()
+    db.enqueue_job(9106, "start", run_id="run-medium",
+                   payload={"procedure": "p", **runner_models.charge("mistral-medium-2604")})
+    assert db.modele_du_run("run-medium", 9106) == {
+        "model": "mistral-medium-2604", "model_family": "mistral", "effort": "high",
+        "max_output_tokens": 16000}

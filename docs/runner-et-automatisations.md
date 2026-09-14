@@ -652,14 +652,51 @@ agent existant n'est réécrit.
 
 ⚠️ **La famille se déduit, elle ne se déclare pas** : un `enqueue` manuel qui en
 porte une se la voit retirer et recalculer depuis `model`. Et **un `continue` garde
-le modèle du `start` de son run** — un fil ouvert sur la voie Conversations ne se
-poursuit pas dans une boucle Messages.
+le modèle du `start` de son run**, avec son effort et son plafond (section suivante) — un
+fil ouvert sur la voie Conversations ne se poursuit pas dans une boucle Messages.
 
 **Ce qui n'est pas ici** : le runner qui LIT `payload.model` (otomata-tech/oto-runner).
 Tant qu'il ne le lit pas, le travail part bien vers un worker de la bonne famille,
 mais tourne sur le modèle de son environnement. Et la SOURCE de la clé (l'org ou la
 plateforme), qui conditionne toute refacturation des jetons, n'est toujours tracée
 nulle part — un lot à part.
+
+### L'effort et le plafond de complétion appartiennent au MODÈLE (14/09/2026)
+
+Le catalogue porte, par modèle, l'effort de réflexion (`effort`) et le plafond de
+complétion d'un tour (`max_output_tokens`). `runner_models.charge()` n'envoie avec le
+travail que ce que le modèle déclare :
+
+| Modèle | `effort` | `max_output_tokens` |
+|---|---|---|
+| `claude-sonnet-5`, `claude-opus-5` | — (celui du worker) | — (celui du worker) |
+| `claude-haiku-4-5` | `none` | — |
+| `mistral-large-2512` | — | 8 192 |
+| `mistral-medium-2604` | `high` | 16 000 |
+| `mistral-small-2603` | `high` | 16 000 |
+
+⚠️ **Un modèle qui raisonne déclare son plafond.** Le raisonnement se compte dans la
+complétion et partage le plafond avec la réponse : mesuré au banc,
+`mistral-medium-2604` en `high` monte à 6 964 jetons de complétion par tour. Le worker
+lève sur un effort de travail qui raisonne sans plafond porté (oto-runner
+`agent_llm_openai.plafond_de_sortie`), et `test_modele_de_l_agent` tient la règle sur
+tout le catalogue. Ces plafonds reprennent ceux que les workers servaient déjà, et
+remplacent la variable d'hôte `OTO_RUNNER_MAX_TOKENS_EFFORT`.
+
+⚠️ **`none` ne raisonne pas, et chaque voie le dit à sa façon.** Côté Anthropic, il
+n'envoie aucun effort : Haiku 4.5 refuse `output_config.effort` (400), que le worker
+envoie sinon à chaque tour. Côté Mistral, il part tel quel (`reasoning_effort: "none"`),
+car c'est une valeur de l'API : `mistral-medium-2604` n'accepte que `high` et `none`
+(400 sur `medium`, mesuré le 14/09/2026), et l'omettre laisserait le défaut du
+fournisseur.
+
+⚠️ **Un `continue` relit l'effort et le plafond du `start`**, jamais le catalogue
+courant (`db.modele_du_run`). Les deux voyagent ensemble : relire l'effort sans le
+plafond faisait lever toute reprise d'un run qui raisonne (relevé en revue).
+
+⚠️ **Le backend se déploie avant le runner.** Un worker d'avant ce lot ignore
+`max_output_tokens` et applique sa variable d'hôte ; un worker d'après lève sur un
+travail avec effort produit par un backend d'avant.
 
 ### Un agent tourne sur la clé de SON org — ou ne tourne pas (12/09/2026)
 

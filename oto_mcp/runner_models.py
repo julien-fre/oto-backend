@@ -29,9 +29,16 @@ class Modele(NamedTuple):
     label: str
     family: str
     #: L'effort de réflexion — propriété du MODÈLE catalogué, pas un réglage
-    #: par campagne ni par déclencheur (14/09/2026, ordonnancement Audiens).
+    #: par campagne ni par déclencheur (14/09/2026).
     #: `None` = le fournisseur applique son défaut, comme avant ce champ.
     effort: Optional[str] = None
+    #: Le plafond de COMPLÉTION d'un tour — propriété du modèle comme l'effort, parce que
+    #: le raisonnement partage ce plafond avec la réponse (14/09/2026). Mesuré au
+    #: banc : mistral-medium-2604 en `high` monte à 6 964 jetons de
+    #: complétion par tour (p90 3 968). `None` = le worker garde le sien.
+    #: ⚠️ Un modèle qui RAISONNE (un effort autre que `none`) en déclare un : le worker
+    #: lève sans lui (oto-runner `agent_llm_openai.plafond_de_sortie`).
+    max_output_tokens: Optional[int] = None
 
 
 #: ⚠️ L'ORDRE est la préférence : le modèle proposé par défaut est le premier
@@ -39,10 +46,19 @@ class Modele(NamedTuple):
 MODELES: tuple[Modele, ...] = (
     Modele("claude-sonnet-5", "Claude Sonnet 5", "anthropic"),
     Modele("claude-opus-5", "Claude Opus 5", "anthropic"),
-    Modele("claude-haiku-4-5", "Claude Haiku 4.5", "anthropic"),
+    # ⚠️ `none` : Haiku 4.5 refuse `output_config.effort` (400, mesuré le 14/09/2026), que
+    # le worker Anthropic envoie sinon à chaque tour. Avec `none`, il n'en envoie aucun.
+    Modele("claude-haiku-4-5", "Claude Haiku 4.5", "anthropic", effort="none"),
     # La voie Conversations des workers de production (cf. oto-runner).
-    Modele("mistral-large-2512", "Mistral Large", "mistral"),
-    Modele("mistral-medium-2604", "Mistral Medium", "mistral", effort="high"),
+    Modele("mistral-large-2512", "Mistral Large", "mistral", max_output_tokens=8192),
+    Modele("mistral-medium-2604", "Mistral Medium", "mistral", effort="high",
+           max_output_tokens=16000),
+    # Demandé par l'opérateur des campagnes le 14/09/2026, pour la passe F après que Medium
+    # a été écarté pour son coût : au banc, en effort haut, 37/42 sur la priorité contre
+    # 32/42 pour Large, pour environ la moitié du coût de Large, et 3 769 jetons de sortie
+    # par tour au plus. Même plafond que Medium : le raisonnement le partage avec la réponse.
+    Modele("mistral-small-2603", "Mistral Small", "mistral", effort="high",
+           max_output_tokens=16000),
 )
 
 _PAR_ID = {m.id: m for m in MODELES}
@@ -59,9 +75,9 @@ def famille(model: Optional[str]) -> Optional[str]:
 
 def charge(model: Optional[str]) -> dict:
     """Ce qu'un travail emporte de son modèle : `{model, model_family}`, plus
-    `effort` (14/09/2026) SI le modèle catalogué en déclare un — mistral-medium-2604
-    tourne en effort HAUT, les autres modèles n'émettent rien de plus qu'avant :
-    une requête sans effort porté est inchangée à l'octet près.
+    `effort` et `max_output_tokens` (14/09/2026) SI le modèle catalogué les déclare —
+    mistral-medium-2604 tourne en effort HAUT sous 16 000 jetons de complétion,
+    claude-haiku-4-5 sans effort. Une clé que le modèle ne déclare pas ne part pas.
 
     ⚠️ Un modèle que le catalogue ne connaît pas ne part PAS : sans famille, il
     atteindrait un worker quelconque qui tenterait de l'appeler chez un
@@ -73,6 +89,8 @@ def charge(model: Optional[str]) -> dict:
     charge = {"model": model, "model_family": m.family}
     if m.effort:
         charge["effort"] = m.effort
+    if m.max_output_tokens:
+        charge["max_output_tokens"] = m.max_output_tokens
     return charge
 
 

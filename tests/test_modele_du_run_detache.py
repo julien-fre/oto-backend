@@ -20,7 +20,7 @@ SUB = "worker-modele-detache"
 OPUS = {"procedure": "p", "model": "claude-opus-5", "model_family": "anthropic"}
 MISTRAL = {"procedure": "p", "model": "mistral-large-latest", "model_family": "mistral"}
 MISTRAL_MEDIUM = {"procedure": "p", "model": "mistral-medium-2604",
-                  "model_family": "mistral", "effort": "high"}
+                  "model_family": "mistral", "effort": "high", "max_output_tokens": 16000}
 
 
 @pytest.fixture(scope="module")
@@ -131,15 +131,15 @@ def test_un_run_detache_rend_le_modele_d_avant_son_detachement(live):
 
 
 def test_l_effort_du_modele_survit_lui_aussi_au_detachement(live):
-    """`effort` (14/09/2026) suit la MÊME règle que `model`/`model_family` — posé
-    au `start`, jamais recalculé depuis le catalogue courant. Un `continue` sur
-    un run mistral-medium-2604 doit repartir en effort HAUT, pas sur le défaut
-    du fournisseur."""
+    """`effort` et `max_output_tokens` (14/09/2026) suivent la MÊME règle que
+    `model`/`model_family` — posés au `start`, jamais recalculés depuis le catalogue
+    courant. Un `continue` sur un run mistral-medium-2604 doit repartir en effort HAUT
+    sous son plafond : le worker lève sur l'un sans l'autre."""
     from oto_mcp import db
     org = 9208
     job_id, run, avant = _vol_puis_detachement(org, MISTRAL_MEDIUM)
     assert avant == {"model": "mistral-medium-2604", "model_family": "mistral",
-                     "effort": "high"}, avant
+                     "effort": "high", "max_output_tokens": 16000}, avant
     assert db.modele_du_run(run, org) == avant
 
 

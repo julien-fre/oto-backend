@@ -66,23 +66,55 @@ def test_la_famille_se_deduit_du_modele_et_l_inconnu_n_en_a_pas():
 def test_un_modele_inconnu_ne_part_PAS_avec_le_travail():
     """Sans famille, rien ne sait le router : l'envoyer le ferait appeler par un
     worker quelconque chez un fournisseur qui ne le sert peut-être pas."""
-    assert runner_models.charge("claude-haiku-4-5") == {
-        "model": "claude-haiku-4-5", "model_family": "anthropic"}
+    assert runner_models.charge("claude-opus-5") == {
+        "model": "claude-opus-5", "model_family": "anthropic"}
     assert runner_models.charge("un-modele-libre") == {}
     assert runner_models.charge(None) == {}
 
 
 def test_effort_est_une_propriete_du_modele_pas_un_reglage_global():
-    """14/09/2026, ordonnancement Audiens : mistral-medium-2604 tourne en effort
+    """14/09/2026 : mistral-medium-2604 tourne en effort
     HAUT — c'est le catalogue qui le porte, pas un réglage par campagne. Un
-    modèle qui n'en déclare aucun (tous les autres) ne doit RIEN émettre de
-    plus qu'avant : une requête Large reste inchangée à l'octet près."""
+    modèle qui n'en déclare aucun n'en émet aucun."""
     assert runner_models.charge("mistral-medium-2604") == {
-        "model": "mistral-medium-2604", "model_family": "mistral", "effort": "high"}
-    assert runner_models.charge("mistral-large-2512") == {
-        "model": "mistral-large-2512", "model_family": "mistral"}, (
-        "Large ne porte aucun effort — sa charge doit rester à deux clés")
+        "model": "mistral-medium-2604", "model_family": "mistral", "effort": "high",
+        "max_output_tokens": 16000}
+    assert "effort" not in runner_models.charge("mistral-large-2512"), (
+        "Large ne porte aucun effort")
     assert "effort" not in runner_models.charge("claude-sonnet-5")
+
+
+def test_small_raisonne_en_effort_haut_sous_son_plafond():
+    """14/09/2026 : l'opérateur des campagnes le choisit pour la passe F en effort haut.
+    Il vient APRÈS Large dans l'ordre : le défaut proposé aux orgs ne change pas."""
+    assert runner_models.charge("mistral-small-2603") == {
+        "model": "mistral-small-2603", "model_family": "mistral", "effort": "high",
+        "max_output_tokens": 16000}
+    ids = [m.id for m in runner_models.MODELES]
+    assert ids.index("mistral-large-2512") < ids.index("mistral-small-2603")
+
+
+def test_haiku_part_sans_effort():
+    """14/09/2026 : Haiku 4.5 refuse `output_config.effort` (400), que le worker Anthropic
+    envoie sinon à chaque tour. `none` lui dit de n'en envoyer aucun."""
+    assert runner_models.charge("claude-haiku-4-5")["effort"] == "none"
+
+
+def test_un_modele_qui_raisonne_declare_son_plafond_de_completion():
+    """Le raisonnement partage le plafond de complétion avec la réponse, et le worker
+    lève sur un effort sans plafond. La garde porte sur le catalogue ENTIER : un modèle
+    ajouté demain ne doit pas échouer à son premier tour."""
+    sans = [m.id for m in runner_models.MODELES
+            if m.effort not in (None, "none") and not m.max_output_tokens]
+    assert sans == []
+
+
+def test_le_plafond_part_avec_le_travail_seulement_s_il_est_declare():
+    """8 192 pour Large : le plafond que ses workers servaient déjà, désormais écrit
+    au catalogue plutôt que dans l'environnement d'un hôte."""
+    assert runner_models.charge("mistral-large-2512")["max_output_tokens"] == 8192
+    assert "max_output_tokens" not in runner_models.charge("claude-sonnet-5"), (
+        "sans plafond déclaré, le worker garde le sien")
 
 
 @pytest.mark.parametrize("familles, attendu", [
@@ -262,7 +294,7 @@ def test_list_sert_le_catalogue_marque(monkeypatch):
     servis = {m["id"]: m["served"] for m in runner["models"]}
     assert servis == {"claude-sonnet-5": True, "claude-opus-5": True,
                       "claude-haiku-4-5": True, "mistral-large-2512": False,
-                      "mistral-medium-2604": False}
+                      "mistral-medium-2604": False, "mistral-small-2603": False}
     assert [m["id"] for m in runner["models"] if m["default"]] == ["claude-sonnet-5"]
     # Servi par la seule famille des workers de production : le défaut la suit.
     _runner(monkeypatch, familles=("mistral",))
