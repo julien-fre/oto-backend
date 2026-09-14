@@ -890,6 +890,11 @@ def main():
     from .sentry_setup import init_sentry
     init_sentry()
 
+    # Un refus attendu d'outil (McpError INVALID_PARAMS/INVALID_REQUEST) tient sur une
+    # ligne de journal au lieu d'un cadre de trace. Cf. `refus_journal`.
+    from . import refus_journal
+    refus_journal.installer()
+
     # Surveillance des gels d'event loop (serveur mono-loop) : chaque callback
     # bloquant ≥1s est attribué dans le journal, ≥10s → event Sentry. AVANT le
     # démarrage de la loop (patch global de Handle._run). Cf. loop_watch.
