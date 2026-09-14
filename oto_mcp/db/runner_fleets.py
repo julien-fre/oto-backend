@@ -25,6 +25,7 @@ la conversion appartient à qui lit, avec un tarif daté.
 from __future__ import annotations
 
 import json
+import random
 from typing import Any, Optional
 
 from ._conn import _connect
@@ -103,6 +104,17 @@ def list_fleets(org_id: int, statut: Optional[str] = None) -> list[dict]:
 _VERROU_CAMPAGNE = 0x0704_0C41   # « oto campagne »
 
 
+# Les critères d'ÉLIGIBILITÉ de `campagne_a_servir`, hors verrou — partagés par la
+# lecture (sans verrou, pour choisir QUI tirer) et le pick (avec verrou, sur la
+# candidate tirée). Toucher l'un sans l'autre les ferait diverger en silence.
+_ELIGIBLE = ("f.status IN ('armed', 'running') "
+            "AND NOT EXISTS (SELECT 1 FROM runner_jobs j "
+            "                 WHERE j.fleet_id = f.id AND j.status = 'pending') "
+            "AND (f.max_rows IS NULL "
+            "     OR (SELECT COUNT(*) FROM runner_jobs j2 "
+            "          WHERE j2.fleet_id = f.id) < f.max_rows)")
+
+
 def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
     """La campagne de l'org pour laquelle il faut produire un travail — ou None.
 
@@ -131,7 +143,30 @@ def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
     dans le cas le plus fréquent. L'agent le découvre lui-même en réservant, et
     un travail qui ne trouve rien se conclut en quelques secondes — bien moins
     cher que de le demander à chaque battement de chaque worker.
-    """
+
+    ⚠️ **Tirée AU HASARD parmi les éligibles, plus « la plus ancienne d'abord »
+    (13/09/2026, ordonnancement Audiens).** Une chaîne A→F armée d'un coup, tout
+    le pool converge sur la plus ancienne tant qu'elle a de la place — même
+    VIDÉE de tout travail réel, puisque ce module ne le regarde pas (juste
+    au-dessus). Mesuré cette nuit-là : 860 travaux à vide sur A, B à F jamais
+    servies tant qu'A restait éligible, 27 min de chaîne totalement figée.
+    Le tirage au hasard ne réduit PAS ce gaspillage en fin de passe — assumé,
+    décision d'Alexis — mais il empêche qu'UNE flotte monopolise le pool : sur
+    N éligibles, chacune a sa chance à chaque sondage, donc B à F avancent
+    pendant qu'A tourne encore, et plus aucune ne peut geler la chaîne entière.
+
+    ⚠️ **Pourquoi DEUX requêtes, et pas `ORDER BY random()`.** Le verrou est
+    dans le `WHERE` : avec l'ancien tri déterministe, Postgres pouvait s'arrêter
+    au premier candidat verrouillable sans toucher aux autres (scan dans l'ordre
+    de l'index, LIMIT 1 court-circuite). Un tri aléatoire n'a pas cet appui — pour
+    trier, Postgres doit d'abord matérialiser TOUTES les lignes qui passent le
+    `WHERE`, donc appeler `pg_try_advisory_xact_lock` sur CHAQUE éligible, pas
+    seulement la gagnante : autant de verrous pris pour rien à chaque sondage, et
+    autant de contention en plus pour les workers concurrents qui visaient une
+    AUTRE flotte au même instant. D'où la séparation : la première requête ne
+    verrouille rien (elle ne fait que LIRE qui est éligible), le tirage se fait
+    en Python, et seule la candidate tirée est ensuite verrouillée — une par
+    tentative, jamais toutes."""
     with _connect() as conn:
         # ⚠️ VERROU par campagne, le temps de la transaction. Sans lui, deux
         # workers qui sondent au même instant lisent tous deux « aucun travail
@@ -141,33 +176,45 @@ def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
         # arrive pendant qu'un autre produit n'attend pas, il repart les mains
         # vides et re-sondera : c'est un sondage, pas une file d'attente.
         conn.execute("SET LOCAL lock_timeout = '200ms'")
-        return conn.execute(
+        candidates = conn.execute(
             f"""
-            SELECT {_COLS}
+            SELECT f.id
               FROM runner_fleets f
              -- Org nulle = worker de PLATEFORME : n'importe quelle campagne en
-             -- cours, la plus anciennement armée d'abord. (Pas de marqueur de
-             -- paramètre dans ce commentaire : psycopg les compte AUSSI ici.)
+             -- cours de n'importe quelle org. (Pas de marqueur de paramètre
+             -- dans ce commentaire : psycopg les compte AUSSI ici.)
              WHERE (%s::bigint IS NULL OR f.org_id = %s)
-               -- `f.id::int` et non `f.id` : la colonne est BIGSERIAL, et
-               -- Postgres n'offre que `(bigint)` ou `(int, int)` — jamais
-               -- `(int, bigint)`. Sans le cast, la requête LÈVE
-               -- `UndefinedFunction`, le `try` de l'appelant l'avale, et le
-               -- sondage rend « aucun travail » pour toujours : mesuré le
-               -- 07/09/2026 sur le canari, la production de travail n'avait
-               -- jamais pu s'exécuter une seule fois.
-               AND pg_try_advisory_xact_lock(%s, f.id::int)
-               AND f.status IN ('armed', 'running')
-               AND NOT EXISTS (SELECT 1 FROM runner_jobs j
-                                WHERE j.fleet_id = f.id AND j.status = 'pending')
-               AND (f.max_rows IS NULL
-                    OR (SELECT COUNT(*) FROM runner_jobs j2
-                         WHERE j2.fleet_id = f.id) < f.max_rows)
-             ORDER BY f.armed_at NULLS LAST, f.id
-             LIMIT 1
+               AND {_ELIGIBLE}
             """,
-            (org_id, org_id, _VERROU_CAMPAGNE),
-        ).fetchone()
+            (org_id, org_id),
+        ).fetchall()
+        ordre = [c["id"] for c in candidates]
+        random.shuffle(ordre)
+        for fid in ordre:
+            # Réévalue L'ÉLIGIBILITÉ ENTIÈRE, pas seulement l'existence : entre
+            # la lecture ci-dessus et cette tentative, un autre sondage a pu
+            # produire un travail pour cette flotte (elle n'a alors plus sa
+            # place) — un verrou pris sur un id qui ne serait plus éligible
+            # rendrait quand même la ligne, silencieusement faux.
+            row = conn.execute(
+                f"""
+                SELECT {_COLS}
+                  FROM runner_fleets f
+                 -- `f.id::int` et non `f.id` : la colonne est BIGSERIAL, et
+                 -- Postgres n'offre que `(bigint)` ou `(int, int)` — jamais
+                 -- `(int, bigint)`. Sans le cast, la requête LÈVE
+                 -- `UndefinedFunction`, le `try` de l'appelant l'avale, et le
+                 -- sondage rend « aucun travail » pour toujours : mesuré le
+                 -- 07/09/2026 sur le canari, la production de travail n'avait
+                 -- jamais pu s'exécuter une seule fois.
+                 WHERE f.id = %s AND pg_try_advisory_xact_lock(%s, f.id::int)
+                   AND {_ELIGIBLE}
+                """,
+                (fid, _VERROU_CAMPAGNE),
+            ).fetchone()
+            if row is not None:
+                return row
+        return None
 
 
 def accuser_arrets_effectifs(org_id: Optional[int]) -> list[int]:
