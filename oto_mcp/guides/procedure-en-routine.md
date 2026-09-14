@@ -9,7 +9,7 @@ Une **routine Claude Code** est un agent hébergé par Anthropic : un prompt fig
 
 Le montage tient en une phrase : **le prompt de la routine est un pointeur, jamais une copie.** Le savoir-faire reste dans la procédure — versionnée, éditable, partageable, lue à chaque run. Le prompt fait trois lignes et ne bouge plus.
 
-Recopier la procédure dans le prompt est l'erreur qui coûte le plus cher : deux sources de vérité qui divergent en silence, et une correction de doctrine qui n'atteint jamais l'agent.
+Recopier la procédure dans le prompt est l'erreur qui coûte le plus cher : deux sources de vérité qui divergent en silence, et une correction de procédure qui n'atteint jamais l'agent.
 
 ## Monter la routine
 
