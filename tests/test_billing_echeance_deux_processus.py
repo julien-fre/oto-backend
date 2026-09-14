@@ -197,7 +197,27 @@ if os.environ.get("BANC_SANS_RESERVATION") == "1":
     from oto_mcp.db import billing_reservation
     billing_reservation.reserver_echeance = lambda ligne: nullcontext(ligne)
 
+
 lignes = [l for l in db_billing.due_subscriptions() if l["org_id"] == org]
+if not lignes:
+    # Rouge intermittent le 14/09/2026 sous CI parallèle (pytest-xdist -n 4) :
+    # `test_sans_reservation_la_meme_cle_ne_debite_qu_une_fois[perime]` a lu 0 ici.
+    # ⚠️ Un premier correctif (une boucle de poll) a été écarté par relecture (cd,
+    # 14/09) : il SUPPOSAIT une ligne pas encore visible, alors que le parent la
+    # committe avant le `Popen` — une absence à cet instant n'est donc PAS un
+    # « pas encore là », et une boucle qui la masquerait cacherait un défaut RÉEL
+    # sans jamais le nommer. Ce qui suit ne corrige rien : ça consigne, pour que
+    # le PROCHAIN rouge s'explique de lui-même au lieu de rouvrir la même enquête.
+    with psycopg.connect(dsn, autocommit=True) as c:
+        horloge = c.execute("SELECT NOW()").fetchone()[0]
+        brute = c.execute(
+            "SELECT status, next_billing_at, current_period_end FROM "
+            "org_subscriptions WHERE org_id = %s", (org,)).fetchone()
+    (rdv / f"diag-{nom}.json").write_text(json.dumps({
+        "pid": os.getpid(), "org": org, "dsn": dsn,
+        "now_transaction_enfant": str(horloge),
+        "ligne_brute_org_subscriptions": list(brute) if brute else None,
+    }, default=str))
 (rdv / f"lu-{nom}").write_text(str(len(lignes)))
 limite = time.monotonic() + 90
 while not (rdv / f"go-{nom}").exists():
@@ -286,8 +306,11 @@ def _jouer(dsn, rdv, *, ordre, sans_reservation=False):
                             f"{p.communicate()[1][-4000:]}")
         assert time.monotonic() < limite, "un processus n'a jamais lu ses échéances"
         time.sleep(0.02)
+    diagnostics = {n: (rdv / f"diag-{n}.json").read_text()
+                  for n in procs if (rdv / f"diag-{n}.json").exists()}
     assert [(rdv / f"lu-{n}").read_text() for n in procs] == ["1", "1"], (
-        "chacun doit avoir sélectionné l'échéance avant que l'autre ne la tire")
+        "chacun doit avoir sélectionné l'échéance avant que l'autre ne la tire"
+        + (f" — diagnostic : {diagnostics}" if diagnostics else ""))
     if ordre == "simultane":
         (rdv / "go-A").touch()
         (rdv / "go-B").touch()
