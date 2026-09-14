@@ -25,7 +25,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import _cle_exigee, _modele
+from . import _cle_exigee, _lignes_reservables, _modele, _ordre_de_service
 from .. import db, runner_consigne, runner_models
 from ._authz import WORKER_OR_ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -577,20 +577,14 @@ def _id_du_tableau_vise(f: dict) -> Optional[int]:
     travaux ENFILÉS AVANT ce changement — la charge utile est persistée, elle ne se
     réécrit pas. L'écran doit donc savoir vivre sans, et ne pas prétendre ouvrir un
     tableau qu'il ne sait pas désigner."""
-    ns = (f.get("namespace") or "").strip()
-    if not ns or not f.get("sub"):
-        return None
     try:
-        from .. import group_store
-        org = int(f["org_id"])
-        groupes = [int(g["group_id"])
-                   for g in group_store.list_groups_for_user(f["sub"], org)]
-        row = db.resolve_datastore_ns(ns, sub=f["sub"], org_ids=[org],
-                                      group_ids=groupes)
+        # La résolution vit avec le comptage des lignes réservables, qui en a besoin
+        # aussi : une seule façon de dire quel tableau une campagne vise.
+        row = _lignes_reservables.tableau_vise(f)
         return int(row["id"]) if row else None
     except Exception:  # noqa: BLE001 — voir le fail-open ci-dessus
         logger.warning("campagne %s : tableau « %s » non résolu — le travail part sans "
-                       "son identifiant", f.get("id"), ns, exc_info=True)
+                       "son identifiant", f.get("id"), f.get("namespace"), exc_info=True)
         return None
 
 
@@ -665,7 +659,7 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
         for fid in db.accuser_arrets_effectifs(org_id):
             logger.info("campagne %s arrêtée pour de bon : plus aucun travail "
                         "en attente ni en cours", fid)
-        f = db.campagne_a_servir(org_id)
+        f = db.campagne_a_servir(org_id, _ordre_de_service.ordonner)
         if not f or not f.get("sub"):
             return None
         message = runner_consigne.composer(f)

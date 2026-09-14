@@ -25,8 +25,7 @@ la conversion appartient à qui lit, avec un tarif daté.
 from __future__ import annotations
 
 import json
-import random
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ._conn import _connect
 
@@ -115,7 +114,8 @@ _ELIGIBLE = ("f.status IN ('armed', 'running') "
             "          WHERE j2.fleet_id = f.id) < f.max_rows)")
 
 
-def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
+def campagne_a_servir(org_id: Optional[int],
+                      ordonner: Callable[[list[dict]], list[int]]) -> Optional[dict]:
     """La campagne de l'org pour laquelle il faut produire un travail — ou None.
 
     ⚠️ C'est le cœur du modèle « oto décide, le runner demande ». Un worker ne
@@ -138,22 +138,20 @@ def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
       pour ce passage. Appliquée ici, elle ne se contourne pas : il n'existe
       plus d'autre chemin pour enfiler.
 
-    Ce qu'elle NE regarde PAS : s'il reste des lignes dans le tableau. Ce compte
-    coûte une requête sur une table cliente à chaque sondage à vide, c'est-à-dire
-    dans le cas le plus fréquent. L'agent le découvre lui-même en réservant, et
-    un travail qui ne trouve rien se conclut en quelques secondes — bien moins
-    cher que de le demander à chaque battement de chaque worker.
+    ⚠️ **La FILE se juge ailleurs : `ordonner` rend les candidates à tenter, dans
+    l'ordre** (couche capacités, `capabilities/_ordre_de_service.py` — ce module
+    reste ignorant du datastore). Trois régimes se sont succédé, chacun né du défaut
+    du précédent :
 
-    ⚠️ **Tirée AU HASARD parmi les éligibles, plus « la plus ancienne d'abord »
-    (13/09/2026, ordonnancement Audiens).** Une chaîne A→F armée d'un coup, tout
-    le pool converge sur la plus ancienne tant qu'elle a de la place — même
-    VIDÉE de tout travail réel, puisque ce module ne le regarde pas (juste
-    au-dessus). Mesuré cette nuit-là : 860 travaux à vide sur A, B à F jamais
-    servies tant qu'A restait éligible, 27 min de chaîne totalement figée.
-    Le tirage au hasard ne réduit PAS ce gaspillage en fin de passe — assumé,
-    décision d'Alexis — mais il empêche qu'UNE flotte monopolise le pool : sur
-    N éligibles, chacune a sa chance à chaque sondage, donc B à F avancent
-    pendant qu'A tourne encore, et plus aucune ne peut geler la chaîne entière.
+    - jusqu'au 13/09/2026, la plus ancienne armée d'abord, sans regarder la file :
+      une chaîne de passes armée d'un coup voyait tout le pool converger sur la
+      première, même VIDÉE (860 travaux à vide, 27 min de chaîne figée) ;
+    - le 13/09, un tirage au hasard à chance égale : plus de monopole, mais une file
+      de 171 lignes tirée une fois sur cinq, comme une file vide qui fabriquait des
+      travaux à vide — la passe du milieu est devenue le goulot ;
+    - depuis le 14/09, `ordonner` écarte les campagnes sans ligne réservable et
+      pondère le tirage par la file, avec un plancher contre la famine. Le compte
+      coûte un scan par tableau, gardé 15 s (`_lignes_reservables`).
 
     ⚠️ **Pourquoi DEUX requêtes, et pas `ORDER BY random()`.** Le verrou est
     dans le `WHERE` : avec l'ancien tri déterministe, Postgres pouvait s'arrêter
@@ -164,9 +162,27 @@ def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
     seulement la gagnante : autant de verrous pris pour rien à chaque sondage, et
     autant de contention en plus pour les workers concurrents qui visaient une
     AUTRE flotte au même instant. D'où la séparation : la première requête ne
-    verrouille rien (elle ne fait que LIRE qui est éligible), le tirage se fait
-    en Python, et seule la candidate tirée est ensuite verrouillée — une par
+    verrouille rien (elle ne fait que LIRE qui est éligible), l'ordre se décide hors
+    SQL (`ordonner`), et seule la candidate tentée est verrouillée — une par
     tentative, jamais toutes."""
+    with _connect() as conn:
+        candidates = [dict(c) for c in conn.execute(
+            f"""
+            SELECT {_COLS}
+              FROM runner_fleets f
+             -- Org nulle = worker de PLATEFORME : n'importe quelle campagne en
+             -- cours de n'importe quelle org. (Pas de marqueur de paramètre
+             -- dans ce commentaire : psycopg les compte AUSSI ici.)
+             WHERE (%s::bigint IS NULL OR f.org_id = %s)
+               AND {_ELIGIBLE}
+            """,
+            (org_id, org_id),
+        ).fetchall()]
+    if not candidates:
+        return None
+    # Hors de la connexion ci-dessus : le compte des files ouvre les siennes, et
+    # tenir celle-ci pendant ce temps priverait le pool d'une connexion pour rien.
+    ordre = ordonner(candidates)
     with _connect() as conn:
         # ⚠️ VERROU par campagne, le temps de la transaction. Sans lui, deux
         # workers qui sondent au même instant lisent tous deux « aucun travail
@@ -176,20 +192,6 @@ def campagne_a_servir(org_id: Optional[int]) -> Optional[dict]:
         # arrive pendant qu'un autre produit n'attend pas, il repart les mains
         # vides et re-sondera : c'est un sondage, pas une file d'attente.
         conn.execute("SET LOCAL lock_timeout = '200ms'")
-        candidates = conn.execute(
-            f"""
-            SELECT f.id
-              FROM runner_fleets f
-             -- Org nulle = worker de PLATEFORME : n'importe quelle campagne en
-             -- cours de n'importe quelle org. (Pas de marqueur de paramètre
-             -- dans ce commentaire : psycopg les compte AUSSI ici.)
-             WHERE (%s::bigint IS NULL OR f.org_id = %s)
-               AND {_ELIGIBLE}
-            """,
-            (org_id, org_id),
-        ).fetchall()
-        ordre = [c["id"] for c in candidates]
-        random.shuffle(ordre)
         for fid in ordre:
             # Réévalue L'ÉLIGIBILITÉ ENTIÈRE, pas seulement l'existence : entre
             # la lecture ci-dessus et cette tentative, un autre sondage a pu

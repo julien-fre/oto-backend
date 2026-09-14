@@ -364,6 +364,37 @@ encore due** (le tick filtrait avant, donc la garde ne tenait pas seule).
 qui rend des secondes rondes. *Une garantie qui tient par la propriété d'une
 bibliothèque tierce n'est pas une garantie.*
 
+### Quelle campagne un sondage sert : la file compte, avec un plancher (14/09/2026)
+
+Un worker qui trouve la file vide fait produire UN travail à une campagne
+(`runner_jobs._produire_pour_une_campagne`). `db.campagne_a_servir` lit les éligibles
+(armées, sans travail en attente, sous `max_rows`) et tente de les verrouiller dans
+l'ordre que rend `capabilities/_ordre_de_service.ordonner` :
+
+- **une campagne sans ligne réservable n'est pas servie** : elle est sautée, jamais
+  arrêtée. Une campagne sans tableau reste servable ; une campagne dont le compte
+  échoue ne l'est pas, et le journal le dit ;
+- **le tirage est pondéré par la file** : P_i = α/K + (1 − α)·n_i/Σn, avec α = 0,2
+  comme plancher contre la famine. Au débit mesuré (~9 travaux distribués par
+  minute), l'attente d'une file d'une ligne reste bornée par K/(α·D), soit ~5 min à
+  K = 10.
+
+Le compte (`capabilities/_lignes_reservables.py`) prend les clauses mêmes de
+`claim_next` (`perimetre_de_reservation`) et exclut ce que sa passe d'abandon
+retirerait. Il fait un scan par tableau pour toutes ses campagnes
+(`db.datastore_compter_reservables`, `data` détoasté une fois par ligne), gardé 15 s
+par processus. Mesuré sur base éphémère, pour 6 à 10 campagnes : 67 à 98 ms sur
+8 910 lignes larges, 0,6 à 0,9 s sur 89 100 lignes.
+
+⚠️ **Interne.** Aucune capacité MCP ou REST ne sert ce compte : pour les agents, la
+décision du 13/09 (« la plateforme ne compte pas à la place de l'agent ») tient.
+
+Trois régimes se sont succédé :
+- la plus ancienne armée d'abord : une chaîne de passes armée d'un coup restait
+  figée sur la première, même vide ;
+- le hasard égal, le 13/09 : la passe du milieu est devenue le goulot ;
+- depuis le 14/09, ce tirage pondéré.
+
 ### Le worker est un SERVEUR de boucles agentiques (05/09/2026)
 
 Le modèle, dit par Alexis et désormais tenu par le code : **le worker héberge des

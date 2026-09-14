@@ -28,7 +28,7 @@ from typing import Optional
 
 from ._conn import _connect
 from .query import _ds_filter_clauses
-from .rowabandon import abandonner_les_lignes_a_bout
+from .rowabandon import abandonner_les_lignes_a_bout, plafond_de
 
 # Les colonnes rendues avec une ligne réservée : son bail — À QUI, JUSQU'À QUAND et
 # POUR QUEL RUN —, et ce que la file sait d'elle : combien de fois elle a été prise
@@ -48,6 +48,12 @@ _RENDU = ("RETURNING row_id, created_at, updated_at, data, rev, claimed_by, "
           "    AS claim_active")
 
 
+# Ce que le tableau a le DROIT de servir, quel que soit le filtre — partagé par le pick
+# et par le comptage de l'ordonnanceur, qui ne doivent jamais diverger.
+_LIBRE_ET_EN_FILE = ("ns_id = %s AND abandon_reason IS NULL "
+                     "AND (claimed_until IS NULL OR claimed_until < NOW())")
+
+
 def _perimetre_reclamable(ns_id: int, filters: Optional[list]) -> tuple:
     """Le périmètre réclamable de `claim_next`.
 
@@ -56,19 +62,71 @@ def _perimetre_reclamable(ns_id: int, filters: Optional[list]) -> tuple:
     filtre sur rien. Le filtre dit ce que l'appelant VEUT ; ceci dit ce que le tableau
     a le DROIT de servir.
 
-    ⚠️ Un second appelant a existé du 09/09 au 13/09/2026 : un comptage « ce que la file
-    servirait », écrit pour qu'une campagne cesse de fabriquer des travaux sur une file
-    vide. Il n'a jamais été branché, et il levait sur tout tableau qui déclare un plafond
-    de reprises. Retiré sur décision : la plateforme ne compte pas à la place de
-    l'agent, qui découvre une file vide en réservant.
+    ⚠️ Un comptage « ce que la file servirait » a existé du 09/09 au 13/09/2026, jamais
+    branché, et retiré sur décision : « la plateforme ne compte pas à la place de
+    l'agent ». **Renversé le 14/09/2026 pour un appelant INTERNE** — l'ordonnanceur des
+    campagnes hébergées, qui tirait au hasard entre une file de 171 lignes et une file
+    vide (`datastore_compter_reservables`, juste en dessous). Il reste interne : aucun
+    agent, aucune capacité MCP ou REST ne le sert.
     """
     fclauses, fparams = _ds_filter_clauses(filters)
-    where = ("WHERE ns_id = %s AND abandon_reason IS NULL "
-             "AND (claimed_until IS NULL OR claimed_until < NOW())")
+    where = "WHERE " + _LIBRE_ET_EN_FILE
     params: list = [ns_id, *fparams]
     for c in fclauses:
         where += f" AND {c}"
     return where, params
+
+
+def datastore_compter_reservables(ns_id: int, perimetres: dict) -> dict:
+    """`{clé: lignes que claim_next servirait}` pour plusieurs périmètres d'UN tableau,
+    en UN scan. Ne réserve rien, n'écrit rien.
+
+    `perimetres` = `{clé: filtres}`, les filtres étant ceux que `claim_next` passerait
+    (`datastore/file_de_travail.perimetre_de_reservation`).
+
+    ⚠️ **La passe d'abandon n'est pas appelée — un comptage qui écrit serait un piège —
+    mais son effet est reproduit** : `claim_next` verse d'abord dans l'état d'abandon
+    les lignes libres à `claims ≥ plafond`, qui sortent alors de la file. Les compter
+    sur-estimerait exactement ce qu'on veut savoir. D'où `claims < plafond`, avec le
+    plafond DÉCLARÉ au schéma : le paramètre `max_claims` d'un appel ne peut que
+    l'assouplir (`rowabandon.plafond_de`), le compte est donc un plancher dans ce cas.
+    Un schéma au plafond mal déclaré LÈVE ici comme il lève à la réservation.
+
+    ⚠️ **Un scan par tableau, et `data` détoasté UNE fois par ligne.** Mesuré sur 8 910
+    lignes larges, base au schéma servi : un compte par campagne coûte ~150 ms (et la
+    file VIDE est la plus chère, le scan va au bout). Grouper les campagnes d'un tableau
+    en `count(*) FILTER` ne suffit pas : chaque `data ->> champ` de chaque filtre
+    redétoaste le JSONB — 6 campagnes, 406 ms. La sous-requête le matérialise une fois
+    (`data || '{}'`, `OFFSET 0` pour qu'elle ne soit pas aplatie) : 67 ms, mêmes
+    comptes. Elle expose aussi les colonnes réelles que les filtres méta visent
+    (`row_id`, `created_at`, `updated_at` — `query._DS_META_*_COLS`).
+
+    Le chiffre est une PHOTO : entre le comptage et la réservation, un autre worker
+    peut prendre la dernière ligne."""
+    if not perimetres:
+        return {}
+    cles = list(perimetres)
+    colonnes, params = [], []
+    for i, cle in enumerate(cles):
+        fclauses, fparams = _ds_filter_clauses(perimetres[cle])
+        colonnes.append(f"count(*) FILTER (WHERE {' AND '.join(fclauses) or 'TRUE'}) AS n{i}")
+        params.extend(fparams)
+    where = _LIBRE_ET_EN_FILE
+    params.append(ns_id)
+    politique = plafond_de(ns_id)
+    if politique is not None:
+        where += " AND claims < %s"
+        params.append(politique.valeur)
+    with _connect() as conn:
+        # `rev` n'est lu par aucun filtre : il suit l'invariant « une projection de
+        # ligne porte sa révision » (`test_revision_de_ligne.py`), plus simple à tenir
+        # sans exception qu'avec une.
+        row = conn.execute(
+            f"SELECT {', '.join(colonnes)} FROM ("
+            "  SELECT row_id, created_at, updated_at, data || '{}'::jsonb AS data, rev"
+            f"    FROM datastore_rows WHERE {where} OFFSET 0) lignes",
+            tuple(params)).fetchone()
+    return {cle: int(row[f"n{i}"]) for i, cle in enumerate(cles)}
 
 
 def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,

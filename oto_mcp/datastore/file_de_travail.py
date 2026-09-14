@@ -21,6 +21,23 @@ from .errors import RowClaimed, RowLocked, RowNotFound
 from .outils import _backquote, _current_run, _filter_clauses
 
 
+def perimetre_de_reservation(schema: Optional[dict], ns_id: int,
+                             filter: Optional[dict] = None,
+                             filters: Optional[list] = None) -> tuple[Optional[dict], list]:
+    """`(périmètre déclaré, clauses)` d'une réservation sur ce tableau — la SOURCE UNIQUE.
+
+    Le périmètre déclaré au tableau (`lifecycle.claimable`, #517) passe DEVANT le
+    filtre de l'appelant, en ET : celui-ci resserre, il n'élargit jamais.
+
+    ⚠️ **Deux lecteurs, une seule fonction** (14/09/2026) : `claim_next` pioche avec ces
+    clauses, et l'ordonnanceur des campagnes hébergées compte avec elles ce que la file
+    servirait (`capabilities/_lignes_reservables.py`). Le comptage de 09/09 a divergé
+    de la réservation parce qu'il recomposait ce périmètre à sa façon ; ici il n'y a
+    rien à recomposer."""
+    declare = dsv2.claimable_of(schema, ns_id)
+    return declare, claimable.clauses(declare) + _filter_clauses(filter, filters)
+
+
 class FileDeTravailMixin:
     """La file de travail du store. Composé par `DatastorePg`."""
 
@@ -165,10 +182,9 @@ class FileDeTravailMixin:
         ns_id = self._resolve(datastore, write=True)
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
-        declare = dsv2.claimable_of(schema, ns_id)
+        declare, clauses = perimetre_de_reservation(schema, ns_id, filter, filters)
         if perimetre is not None and declare:
             perimetre.update(declare)
-        clauses = claimable.clauses(declare) + _filter_clauses(filter, filters)
         row = db.datastore_claim_next(ns_id, worker=worker,
                                       lease_seconds=int(lease_s), filters=clauses,
                                       run_id=_current_run(), max_claims=max_claims)

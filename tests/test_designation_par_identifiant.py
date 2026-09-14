@@ -99,7 +99,7 @@ def test_la_charge_utile_EMPORTE_l_identifiant(monkeypatch):
     enfiles: list[dict] = []
     monkeypatch.setattr(cap.db, "arreter_campagnes_epuisees", lambda org: [])
     monkeypatch.setattr(cap.db, "accuser_arrets_effectifs", lambda org: [])
-    monkeypatch.setattr(cap.db, "campagne_a_servir", lambda org: {
+    monkeypatch.setattr(cap.db, "campagne_a_servir", lambda org, _ordonner: {
         "id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "clients",
         "procedure": "relance", "tools": ["data_rows"], "label": "vivier",
         "input": "traite {namespace}", "project_id": None, "max_steps": 8,

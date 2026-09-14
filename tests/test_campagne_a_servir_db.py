@@ -73,6 +73,13 @@ def _flotte(org: int, sub: str, **surcharges):
     return db.create_fleet(org, sub, **champs)
 
 
+def _dans_l_ordre(candidates):
+    """L'ordre le plus simple, celui de la lecture. Ces bancs éprouvent la REQUÊTE ; ce
+    qu'`ordonner` décide s'éprouve dans `test_ordre_de_service.py` (la loi) et
+    `test_lignes_reservables_db.py` (les files)."""
+    return [c["id"] for c in candidates]
+
+
 def test_campagne_armee_est_servie(org_neuve):
     """Le cas nominal — celui qui ne s'est JAMAIS produit en production.
 
@@ -82,7 +89,7 @@ def test_campagne_armee_est_servie(org_neuve):
     f = _flotte(org_neuve["org"], org_neuve["sub"])
     db.armer(f["id"], org_neuve["org"])
 
-    servie = db.campagne_a_servir(org_neuve["org"])
+    servie = db.campagne_a_servir(org_neuve["org"], _dans_l_ordre)
 
     assert servie is not None, "une campagne armée doit être servie au sondage"
     assert servie["id"] == f["id"]
@@ -93,7 +100,7 @@ def test_campagne_en_brouillon_nest_pas_servie(org_neuve):
     un `draft` qui se mettrait à produire du travail serait pire que le bug."""
     from oto_mcp import db
     _flotte(org_neuve["org"], org_neuve["sub"])
-    assert db.campagne_a_servir(org_neuve["org"]) is None
+    assert db.campagne_a_servir(org_neuve["org"], _dans_l_ordre) is None
 
 
 def test_campagne_au_plafond_de_lignes_nest_plus_servie(org_neuve):
@@ -104,24 +111,16 @@ def test_campagne_au_plafond_de_lignes_nest_plus_servie(org_neuve):
     db.armer(f["id"], org_neuve["org"])
     db.enqueue_job(org_neuve["org"], "start", fleet_id=f["id"], sub=org_neuve["sub"])
 
-    assert db.campagne_a_servir(org_neuve["org"]) is None, (
+    assert db.campagne_a_servir(org_neuve["org"], _dans_l_ordre) is None, (
         "au plafond de lignes, plus aucun travail ne doit être produit")
 
 
-# ── Tirage au hasard parmi les éligibles (13/09/2026, ordonnancement Audiens) ─
-# Avant : la plus ancienne armée gagnait TOUJOURS tant qu'elle avait de la
-# place — une chaîne A→F armée ensemble voyait A monopoliser tout le pool,
-# même vidée de tout travail réel (ce module ne le regarde pas, cf. le
-# docstring de `campagne_a_servir`), jusqu'à geler la chaîne entière (860
-# travaux à vide, 27 min de chaîne figée, mesuré la nuit du 13/09). Ces bancs
-# prouvent la PROPRIÉTÉ qui compte — aucune éligible n'est jamais écartée
-# indéfiniment — sans jamais fixer le tirage : une assertion sur une graine
-# figerait l'algorithme, pas le comportement qu'on demande.
+# ── L'ordre vient d'`ordonner`, l'éligibilité se revérifie sous verrou ────────
+# Depuis le 14/09/2026, `campagne_a_servir` ne décide plus de l'ordre : elle tente
+# les candidates dans celui qu'`ordonner` rend, et n'en sert aucune qu'il écarte.
+# La loi du tirage (file, plancher contre la famine) ne vit plus ici.
 
-def test_deux_flottes_eligibles_ont_CHACUNE_leur_chance(org_neuve):
-    """La régression qu'on ferme : sur assez de sondages, la plus RÉCENTE
-    (B) doit sortir au moins une fois — avec l'ancien tri déterministe, elle
-    ne sortait JAMAIS tant que la plus ancienne (A) restait éligible."""
+def test_l_ordre_rendu_par_ordonner_est_suivi(org_neuve):
     from oto_mcp import db
     org, sub = org_neuve["org"], org_neuve["sub"]
     a = _flotte(org, sub, label="A")
@@ -129,16 +128,36 @@ def test_deux_flottes_eligibles_ont_CHACUNE_leur_chance(org_neuve):
     b = _flotte(org, sub, label="B")
     db.armer(b["id"], org)
 
-    vus = {db.campagne_a_servir(org)["id"] for _ in range(40)}
-
-    assert vus == {a["id"], b["id"]}, (
-        f"les deux flottes éligibles doivent sortir sur 40 sondages, obtenu : {vus}")
+    assert db.campagne_a_servir(org, lambda _c: [b["id"], a["id"]])["id"] == b["id"]
+    assert db.campagne_a_servir(org, lambda _c: [a["id"], b["id"]])["id"] == a["id"]
 
 
-def test_une_flotte_hors_eligibilite_ne_sort_jamais_meme_tiree(org_neuve):
-    """La contre-épreuve : une flotte au plafond reste écartée quel que soit
-    le tirage, même mêlée à une éligible — l'éligibilité se REVÉRIFIE au
-    moment du verrou, pas seulement à la lecture initiale des candidates."""
+def test_une_campagne_qu_ordonner_ecarte_n_est_pas_servie(org_neuve):
+    from oto_mcp import db
+    f = _flotte(org_neuve["org"], org_neuve["sub"])
+    db.armer(f["id"], org_neuve["org"])
+
+    assert db.campagne_a_servir(org_neuve["org"], lambda _c: []) is None
+
+
+def test_ordonner_recoit_la_declaration_complete_des_candidates(org_neuve):
+    """Le compte des files a besoin du tableau visé, du déclarant et du filtre."""
+    from oto_mcp import db
+    f = _flotte(org_neuve["org"], org_neuve["sub"], row_filter={"passe": "2"})
+    db.armer(f["id"], org_neuve["org"])
+    vues: list = []
+
+    db.campagne_a_servir(org_neuve["org"], lambda c: vues.extend(c) or _dans_l_ordre(c))
+
+    (vue,) = [c for c in vues if c["id"] == f["id"]]
+    assert (vue["namespace"], vue["sub"], vue["row_filter"]) == (
+        "t", org_neuve["sub"], {"passe": "2"})
+
+
+def test_une_flotte_hors_eligibilite_ne_sort_jamais_meme_tentee_la_premiere(org_neuve):
+    """La contre-épreuve : une flotte au plafond reste écartée même quand
+    `ordonner` la place en tête — l'éligibilité se REVÉRIFIE au moment du verrou,
+    pas seulement à la lecture initiale des candidates."""
     from oto_mcp import db
     org, sub = org_neuve["org"], org_neuve["sub"]
     epuisee = _flotte(org, sub, max_rows=1)
@@ -147,11 +166,10 @@ def test_une_flotte_hors_eligibilite_ne_sort_jamais_meme_tiree(org_neuve):
     servable = _flotte(org, sub)
     db.armer(servable["id"], org)
 
-    for _ in range(20):
-        servie = db.campagne_a_servir(org)
-        assert servie is not None
-        assert servie["id"] == servable["id"], (
-            "la flotte au plafond ne doit jamais sortir, même tirée")
+    servie = db.campagne_a_servir(org, lambda _c: [epuisee["id"], servable["id"]])
+
+    assert servie is not None and servie["id"] == servable["id"], (
+        "la flotte au plafond ne doit jamais sortir, même tentée la première")
 
 
 def test_arreter_campagnes_epuisees_sexecute(org_neuve):
@@ -224,9 +242,9 @@ def test_sans_org_on_sert_la_campagne_d_une_AUTRE_organisation(org_neuve):
     f = _flotte(ailleurs, org_neuve["sub"])
     db.armer(f["id"], ailleurs)
 
-    assert db.campagne_a_servir(org_neuve["org"]) is None, (
+    assert db.campagne_a_servir(org_neuve["org"], _dans_l_ordre) is None, (
         "une org fraîche n'a aucune campagne — c'est le point de comparaison")
-    assert db.campagne_a_servir(None) is not None, (
+    assert db.campagne_a_servir(None, _dans_l_ordre) is not None, (
         "sans org, le worker sert une campagne en cours, quel qu'en soit le client")
 
 

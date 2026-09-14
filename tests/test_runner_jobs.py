@@ -285,7 +285,7 @@ CAMPAGNE = {"id": 12, "org_id": 7, "sub": "celui-qui-a-declare", "label": "passa
 @pytest.fixture
 def campagne(monkeypatch, espion):
     monkeypatch.setattr(RJ.db, "campagne_a_servir",
-                        lambda org_id: espion.update(cherchee=org_id) or CAMPAGNE)
+                        lambda org_id, _ordonner: espion.update(cherchee=org_id) or CAMPAGNE)
     monkeypatch.setattr(RJ.db, "marquer_demarree",
                         lambda fid: espion.update(demarree=fid))
     return espion
@@ -301,7 +301,7 @@ def test_une_file_vide_fait_produire_le_travail_de_la_campagne(campagne):
 def test_la_consigne_commandee_ne_porte_AUCUN_marqueur_en_litteral(campagne, monkeypatch):
     """La couture, pas le module : le travail enfilé pour une campagne porte la
     consigne COMPOSÉE. Le 12/09/2026, `{date_du_jour}` partait tel quel."""
-    monkeypatch.setattr(RJ.db, "campagne_a_servir", lambda org_id: dict(
+    monkeypatch.setattr(RJ.db, "campagne_a_servir", lambda org_id, _ordonner: dict(
         CAMPAGNE, input="file {namespace} filtre {filter} du {date_du_jour}"))
     _appel(_ctx(), op="claim")
     servi = campagne["payload"]["input"]
@@ -341,7 +341,7 @@ def test_le_claim_passe_au_filtre_le_depot_que_nomme_le_worker(espion):
 
 def test_le_travail_d_une_campagne_emporte_son_modele_et_sa_famille(monkeypatch, campagne):
     monkeypatch.setattr(RJ.db, "campagne_a_servir",
-                        lambda org_id: {**CAMPAGNE, "model": "mistral-large-2512"})
+                        lambda org_id, _ordonner: {**CAMPAGNE, "model": "mistral-large-2512"})
     rendu = _appel(_ctx(), op="claim")
     assert "campaign_error" not in rendu, rendu.get("campaign_error")
     assert campagne["payload"]["model"] == "mistral-large-2512"
@@ -379,7 +379,7 @@ def test_sans_borne_le_travail_ne_porte_AUCUN_plafond_de_jetons(monkeypatch, esp
     contexte, ou sur `max_steps`. Poser un défaut ici fabriquerait une borne que
     personne n'a déclarée."""
     monkeypatch.setattr(RJ.db, "campagne_a_servir",
-                        lambda org_id: {**CAMPAGNE, "max_tokens_per_row": None})
+                        lambda org_id, _ordonner: {**CAMPAGNE, "max_tokens_per_row": None})
     monkeypatch.setattr(RJ.db, "marquer_demarree", lambda fid: None)
     _appel(_ctx(), op="claim")
     assert espion["payload"]["max_tokens"] is None
@@ -391,7 +391,7 @@ def test_la_campagne_passe_a_running_au_premier_travail(campagne):
 
 
 def test_sans_campagne_le_sondage_rend_simplement_rien(monkeypatch, espion):
-    monkeypatch.setattr(RJ.db, "campagne_a_servir", lambda org_id: None)
+    monkeypatch.setattr(RJ.db, "campagne_a_servir", lambda org_id, _ordonner: None)
     monkeypatch.setattr(RJ.db, "marquer_demarree", lambda fid: None)
     assert _appel(_ctx(), op="claim") == {"job": None}
     assert "fleet" not in espion, "aucun travail ne doit être fabriqué"
@@ -401,7 +401,7 @@ def test_une_campagne_illisible_ne_casse_PAS_le_sondage(monkeypatch, espion):
     """Fail-open : le sondage des workers est le chemin le plus fréquent de toute
     la plateforme. Une campagne mal formée ne doit pas l'arrêter pour l'org —
     le passage attendra le sondage suivant."""
-    def _explose(org_id):
+    def _explose(org_id, _ordonner):
         raise RuntimeError("colonne manquante")
     monkeypatch.setattr(RJ.db, "campagne_a_servir", _explose)
 
@@ -421,7 +421,7 @@ def test_file_vide_ne_porte_aucune_panne(monkeypatch, espion):
     """Le pendant, sans lequel le champ ne prouve rien : une file réellement
     vide ne doit porter AUCUN signalement. Un champ toujours présent redevient
     du bruit, et on aurait juste déplacé le silence."""
-    monkeypatch.setattr(RJ.db, "campagne_a_servir", lambda org_id: None)
+    monkeypatch.setattr(RJ.db, "campagne_a_servir", lambda org_id, _ordonner: None)
     assert _appel(_ctx(), op="claim") == {"job": None}
 
 
@@ -431,7 +431,7 @@ def test_une_campagne_cassee_ne_journalise_QU_UNE_fois(monkeypatch, espion, capl
     noyé ne se lit pas, ce qui revient à ne rien dire. On veut le contraire :
     une ligne qui se voit."""
     RJ._CAMPAGNE_MUETTE.clear()
-    def _explose(org_id):
+    def _explose(org_id, _ordonner):
         raise RuntimeError("colonne manquante")
     monkeypatch.setattr(RJ.db, "campagne_a_servir", _explose)
     with caplog.at_level("WARNING"):
@@ -446,7 +446,7 @@ def test_une_cause_DIFFERENTE_se_dit(monkeypatch, espion, caplog):
     information neuve, et l'étouffer ferait manquer la seconde."""
     RJ._CAMPAGNE_MUETTE.clear()
     causes = iter(["colonne manquante", "colonne manquante", "table absente"])
-    def _explose(org_id):
+    def _explose(org_id, _ordonner):
         raise RuntimeError(next(causes))
     monkeypatch.setattr(RJ.db, "campagne_a_servir", _explose)
     with caplog.at_level("WARNING"):
@@ -465,7 +465,7 @@ def test_les_campagnes_epuisees_sont_arretees_AVANT_d_en_servir_une(monkeypatch,
     monkeypatch.setattr(RJ.db, "arreter_campagnes_epuisees",
                         lambda org_id: ordre.append("arret") or [77])
     monkeypatch.setattr(RJ.db, "campagne_a_servir",
-                        lambda org_id: ordre.append("service") or None)
+                        lambda org_id, _ordonner: ordre.append("service") or None)
     monkeypatch.setattr(RJ.db, "marquer_demarree", lambda fid: None)
     with caplog.at_level("WARNING"):
         _appel(_ctx(), op="claim")
