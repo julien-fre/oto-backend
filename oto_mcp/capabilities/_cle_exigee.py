@@ -94,13 +94,34 @@ def raison_du_refus(fournisseurs: list[str]) -> str:
             "l'agent), puis rallume l'agent.")
 
 
-def exiger_a_la_pose(org_id: int) -> None:
+def exiger_a_la_pose(org_id: int, famille: Optional[str] = None) -> None:
     """Le refus LISIBLE, au moment de poser un agent. Lève `model_key_required`.
 
-    ⚠️ Toutes les familles exigées sont regardées, pas une seule : à la pose, on ne
-    sait pas encore quel worker réservera le travail, donc pas quelle clé il
-    demandera. Exiger toutes celles qui sont allumées est la lecture qui ne laisse
-    rien passer — une seule allumée (le cas réel), une seule vérifiée."""
-    absentes = manquantes(org_id)
+    `famille` = celle du modèle DÉCLARÉ sur cet agent, telle que
+    `runner_models.famille`/`_modele.famille_declaree` la rend. **Seule elle est
+    vérifiée** — jamais toutes les familles exigées à la fois.
+
+    ⚠️ **Corrigé le 14/09/2026 — la lecture d'avant regardait TOUTES les familles
+    exigées, pas celle du modèle posé.** Le raisonnement tenu alors (« à la pose,
+    on ne sait pas encore quel worker réservera le travail ») ne tenait déjà plus
+    depuis que le modèle se DÉCLARE sur l'agent (12/09/2026, oto#81) : quand il est
+    posé, sa famille est CONNUE, et c'est la seule que la réservation demandera.
+    Mesuré en production le 14/09 : `runner.org_key_required=true` posé pour
+    `anthropic` a refusé la pose de flottes déclarées `mistral-large-2512`, dans
+    une org qui n'avait — à raison — déposé aucune clé Anthropic.
+
+    `famille=None` (agent sans modèle, ou modèle hors catalogue) : **rien n'est
+    exigé**. Un travail sans famille est servi par un worker ORDINAIRE sur son
+    propre modèle — jamais par un worker « clés clients seules »
+    (`famille_seule`, capabilities/runner_jobs.py), qui ne prend jamais un
+    travail sans famille. Aucune clé d'org n'est donc jamais en jeu pour lui.
+
+    ⚠️ La garde à la RÉSERVATION (`refuser_pour_identite`, arrêt définitif) reste
+    la vraie garantie et n'est PAS touchée par ce lot : elle juge le travail
+    produit, avec sa famille déjà écrite dedans — jamais un ensemble de familles
+    « peut-être demandées »."""
+    if not famille:
+        return
+    absentes = manquantes(org_id, [famille])
     if absentes:
         raise AuthzDenied(400, "model_key_required", raison_du_refus(absentes))

@@ -308,6 +308,13 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # promettrait une attribution fausse. `provider` ne choisit plus rien, il
         # se déduit du modèle ; fourni, il doit le confirmer.
         famille = _modele.famille_declaree(inp.model, inp.provider)
+        # Un runner armé ne suffit pas quand l'org doit tourner sur SA clé : sans
+        # elle, le travail serait arrêté à la réservation. La création est l'un
+        # des trois moments de POSE (module `_cle_exigee`) : le dire ICI, avant
+        # même qu'un passage existe, plutôt qu'à son armement seulement. Seule la
+        # famille DE CE MODÈLE compte (14/09/2026) — un passage sans modèle
+        # n'exige rien.
+        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
         return {"fleet": db.create_fleet(
             ctx.org_id, ctx.sub, label=inp.label, procedure=inp.procedure,
             tools=inp.tools, namespace=inp.namespace, row_filter=inp.row_filter,
@@ -353,10 +360,6 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
                 403, "not_from_a_run",
                 "un déroulé ne lance pas de passage — un agent qui se relance "
                 "lui-même dépense en boucle.")
-        # ⚠️ Avant d'armer, et avant la réparation de l'instruction : un refus
-        # n'écrit rien. Armé sans la clé exigée, le passage passerait `running` au
-        # premier travail — arrêté aussitôt à la réservation — puis au suivant.
-        _cle_exigee.exiger_a_la_pose(ctx.org_id)
         # ⚠️ Une campagne déclarée avant que la plateforme compose — ou par une
         # surface qui a laissé le champ vide — n'a pas d'instruction. L'armer
         # telle quelle la rend MUETTE au premier passage : le worker refuse de
@@ -364,13 +367,19 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # depuis le produit est « l'ordonnanceur est mort » — un diagnostic faux
         # posé sur une cause invisible. On répare AVANT d'armer, jamais après.
         avant = db.get_fleet(inp.fleet_id, ctx.org_id)
+        famille = runner_models.famille((avant or {}).get("model"))
+        # ⚠️ Avant d'armer, et avant la réparation de l'instruction : un refus
+        # n'écrit rien. Armé sans la clé exigée, le passage passerait `running` au
+        # premier travail — arrêté aussitôt à la réservation — puis au suivant.
+        # Seule la famille DE CE MODÈLE compte (14/09/2026) — un passage sans
+        # modèle (ou d'un modèle hors catalogue) n'exige rien.
+        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
         # ⚠️ Armer un passage dont AUCUN worker vivant ne sert le modèle le laisse
         # `running` pour toujours : `campagne_a_servir` produit un travail, le
         # claim le filtre, et plus rien n'est produit tant qu'il attend. Refusé
         # AVANT la réparation de l'instruction — un refus n'écrit rien.
         # Un passage sans modèle (ou d'un modèle hors catalogue) n'est pas jugé :
         # n'importe quel worker le sert.
-        famille = runner_models.famille((avant or {}).get("model"))
         if famille:
             _modele.exige_servi(db.runner_arme(ctx.org_id), famille)
         if avant and avant.get("procedure") and not (avant.get("input") or "").strip():

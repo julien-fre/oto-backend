@@ -235,8 +235,9 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         _modele.exige_servi(etat, famille)
         # Un runner armé ne suffit pas quand l'org doit tourner sur SA clé : sans
         # elle, le travail serait arrêté à la réservation. Le dire ICI, au moment où
-        # l'on peut encore la déposer, plutôt qu'à la première occurrence.
-        _cle_exigee.exiger_a_la_pose(ctx.org_id)
+        # l'on peut encore la déposer, plutôt qu'à la première occurrence. Seule la
+        # famille DE CE MODÈLE compte (14/09/2026) — pas toutes celles exigées.
+        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
         # ⚠️ UN SEUL agent programmé par objet (tranché le 03/09). L'agent est une
         # PROPRIÉTÉ de la procédure, pas une collection : deux agents sur le même
         # objet, c'est deux réponses à « est-ce que ça tourne ? », et l'écran
@@ -314,7 +315,20 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # déclencheur mort deviendrait impossible à ranger.
     if champs.get("enabled") is True:
         etat = _exige_un_runner(ctx.org_id)
-        _cle_exigee.exiger_a_la_pose(ctx.org_id)
+        # ⚠️ Lu APRÈS `_exige_un_runner`, jamais avant : l'ordre des refus est un
+        # contrat. Lire le déclencheur d'abord ferait répondre « inconnu » (404)
+        # là où le serveur répond aujourd'hui « aucun runner » — deux diagnostics
+        # opposés pour la même org, et celui qu'on retirerait est le seul qui dit
+        # quoi faire.
+        if actuel is None:
+            actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
+        # La famille EFFECTIVE de ce rallumage : celle posée DANS cet appel s'il
+        # y en a une, sinon celle déjà en base — c'est elle, et seulement elle,
+        # que la clé exigée (14/09/2026) et `exige_servi` doivent juger, jamais
+        # toutes les familles exigées à la fois.
+        famille_pose = (famille if inp.model is not None
+                        else runner_models.famille((actuel or {}).get("model")))
+        _cle_exigee.exiger_a_la_pose(ctx.org_id, famille_pose)
         # ⚠️ **RALLUMER REPREND LE RYTHME, ça ne rembobine pas** (arbitré le
         # 02/09, #826). Une échéance figée pendant l'extinction est restée dans
         # le PASSÉ : sans ce recalcul, le tick voyait le déclencheur dû à la
@@ -330,21 +344,12 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # qui ne mord qu'au passage à éteint. Recalculer sur un déclencheur déjà
         # allumé donnerait un moyen de repousser son échéance indéfiniment, en
         # répétant un geste qui n'est pas censé rien changer.
-        #
-        # ⚠️ Lu APRÈS `_exige_un_runner`, jamais avant : l'ordre des refus est un
-        # contrat. Lire le déclencheur d'abord ferait répondre « inconnu » (404)
-        # là où le serveur répond aujourd'hui « aucun runner » — deux diagnostics
-        # opposés pour la même org, et celui qu'on retirerait est le seul qui dit
-        # quoi faire.
-        if actuel is None:
-            actuel = db.get_trigger(inp.trigger_id, ctx.org_id)
         if actuel and not actuel["enabled"] and "next_due" not in champs:
             champs["next_due"] = runner_tick.next_due(actuel["cron"], actuel["tz"])
         # Rallumer promet aussi un MODÈLE : celui qu'on pose dans cet appel, sinon
         # celui qui est stocké. Un déclencheur éteint pendant qu'une famille
         # disparaissait ne doit pas se rallumer sur une promesse morte.
-        _modele.exige_servi(etat, famille if inp.model is not None
-                            else runner_models.famille((actuel or {}).get("model")))
+        _modele.exige_servi(etat, famille_pose)
     elif famille and inp.enabled is None:
         # Changer le modèle d'un déclencheur ALLUMÉ, c'est promettre ce modèle dès
         # l'occurrence suivante. Éteint, rien n'est promis : la retouche passe.

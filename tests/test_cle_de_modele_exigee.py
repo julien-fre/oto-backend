@@ -165,15 +165,19 @@ def _ctx():
 
 
 def test_poser_un_agent_sans_la_cle_exigee_est_refuse_LISIBLEMENT(monkeypatch):
+    """Le modèle DÉCLARÉ est de la famille exigée (anthropic) : c'est le vrai
+    positif que la garde doit toujours tenir, modèle déclaré compris."""
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
     monkeypatch.setattr(RT.db, "runner_arme",
-                        lambda org: {"armed": True, "workers": 1, "last_seen": None})
+                        lambda org: {"armed": True, "workers": 1, "last_seen": None,
+                                     "families": ["anthropic"]})
     monkeypatch.setattr(RT.db, "create_trigger",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:
         RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
-                                             cron="5 6 * * *", tools=["a"]))
+                                             cron="5 6 * * *", tools=["a"],
+                                             model="claude-opus-5"))
     assert (e.value.status, e.value.code) == (400, "model_key_required")
     assert "anthropic" in e.value.message
 
@@ -182,7 +186,10 @@ def test_rallumer_sans_la_cle_exigee_est_refuse(monkeypatch):
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
     monkeypatch.setattr(RT.db, "runner_arme",
-                        lambda org: {"armed": True, "workers": 1, "last_seen": None})
+                        lambda org: {"armed": True, "workers": 1, "last_seen": None,
+                                     "families": ["anthropic"]})
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda tid, org: {"model": "claude-opus-5"})
     monkeypatch.setattr(RT.db, "update_trigger",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:
@@ -197,10 +204,75 @@ def test_armer_un_passage_sans_la_cle_exigee_est_refuse(monkeypatch):
     monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
+    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, org: {"model": "claude-opus-5"})
     monkeypatch.setattr(RF.db, "armer", lambda *a, **k: pytest.fail("un refus n'arme rien"))
     with pytest.raises(AuthzDenied) as e:
         RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=1))
     assert e.value.code == "model_key_required"
+
+
+def test_creer_un_passage_ANTHROPIC_sans_sa_cle_est_refuse(monkeypatch):
+    """La CRÉATION (14/09/2026) est l'un des trois moments de pose que le module
+    documente — jusqu'ici sans la moindre garde. Nouveau chemin, nouveau banc."""
+    _reglages(monkeypatch, _poses(platform__anthropic="true"))
+    monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
+    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
+    monkeypatch.setattr(RF.db, "create_fleet",
+                        lambda *a, **k: pytest.fail("un refus n'écrit rien"))
+    with pytest.raises(AuthzDenied) as e:
+        RF._fleets(_ctx(), RF.FleetInput(op="create", label="p", procedure="p",
+                                         tools=["a"], model="claude-opus-5"))
+    assert e.value.code == "model_key_required"
+
+
+# ── 6. seule la famille DU MODÈLE DÉCLARÉ compte, jamais « tout ce qui est
+#      exigé » ────────────────────────────────────────────────────────────────
+# Régression de production, mesurée le 14/09/2026 : `runner.org_key_required=
+# true` posé pour `anthropic` a refusé la pose de flottes déclarées
+# `mistral-large-2512` (146 à 150 d'Audiens), dans une org qui n'avait — à
+# raison — déposé aucune clé Anthropic. `exiger_a_la_pose` regardait TOUTES les
+# familles exigées, pas celle du modèle qu'on posait réellement.
+
+def test_seule_la_famille_du_modele_declare_est_verifiee(monkeypatch):
+    """L'épreuve de chute : remplacer le corps de `exiger_a_la_pose` par
+    `manquantes(org_id)` (sans borner à `[famille]`, comme avant le 14/09) fait
+    ROUGIR ce banc sur la ligne `mistral` — la preuve qu'il exerce la
+    régression, pas une autre."""
+    _reglages(monkeypatch, _poses(platform__anthropic="true"))
+    monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)  # aucune clé, nulle part
+    # anthropic EST exigée et absente : la famille déclarée en pâtit.
+    with pytest.raises(AuthzDenied) as e:
+        CE.exiger_a_la_pose(ORG, "anthropic")
+    assert e.value.code == "model_key_required"
+    # mistral n'est PAS exigée : la déclarer ne lève pas, même sans AUCUNE clé
+    # déposée pour aucun fournisseur — c'est exactement le cas Audiens.
+    CE.exiger_a_la_pose(ORG, "mistral")
+
+
+def test_sans_modele_declare_rien_n_est_exige(monkeypatch):
+    """Un agent sans modèle (ou d'un modèle hors catalogue) est servi par un
+    worker ORDINAIRE sur le sien — jamais par un worker « clés clients seules »,
+    qui ne prend aucun travail sans famille. Aucune clé d'org n'est en jeu."""
+    _reglages(monkeypatch, _poses(platform__anthropic="true"))
+    monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
+    CE.exiger_a_la_pose(ORG, None)
+
+
+def test_un_declencheur_MISTRAL_se_pose_meme_sans_cle_anthropic(monkeypatch):
+    """Le cas exact de la régression, de bout en bout par la capacité — pas
+    seulement la fonction isolée : un agent Mistral se pose dans une org qui
+    n'a AUCUNE clé déposée, sous un réglage `anthropic` allumé."""
+    _reglages(monkeypatch, _poses(platform__anthropic="true"))
+    monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
+    monkeypatch.setattr(RT.db, "runner_arme",
+                        lambda org: {"armed": True, "workers": 1, "last_seen": None,
+                                     "families": ["mistral"]})
+    monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
+    monkeypatch.setattr(RT.db, "create_trigger", lambda *a, **k: {"id": 1})
+    # Ne lève PAS : seul `anthropic` est exigé, l'agent déclare `mistral`.
+    RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
+                                         cron="5 6 * * *", tools=["a"],
+                                         model="mistral-large-2512"))
 
 
 def test_eteint_poser_un_agent_sans_cle_passe(monkeypatch):
