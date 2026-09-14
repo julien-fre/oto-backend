@@ -495,13 +495,30 @@ def account_status(provider: str = "LINKEDIN") -> dict:
     `connected` ≠ `alive` : un compte reste LIÉ en base alors que sa session est
     morte (checkpoint, cookie tourné — #236), et c'est précisément l'état où une
     carte verte trompe le plus. `alive=None` = sonde indisponible, pas « morte ».
+
+    **Ça LIE, comme `GET /api/me/unipile`.** Il n'y a plus de webhook (#581) : un
+    compte fraîchement connecté n'est rattaché que par `reconcile_pending`, sous le
+    sub qui a demandé le lien. La face REST le fait à chaque lecture de statut ; la
+    face agent ne le faisait NULLE PART — un onboarding lancé par
+    `unipile_connect_start` ne pouvait donc aboutir que si la personne rouvrait sa
+    carte dans un tableau de bord dans l'heure (vécu : org 270, 2026-09-03/14). No-op
+    sans pending (aucun appel réseau), jamais fatal. Quand rien n'a été lié, le motif
+    établi remonte dans `binding` — `no_candidate` était jusqu'ici muet partout.
     """
+    from .. import unipile_connect
     from ..connectors import identities as connector_identities
     from ..connectors import readiness as connector_readiness
 
     sub = access.current_user_sub_or_raise()
     org = access.current_org(sub)
     front = {p: f for f, p in UNIPILE_CHANNELS.items()}.get(provider, provider.lower())
+
+    binding = None
+    try:
+        binding = unipile_connect.reconcile_pending(sub)
+    except Exception:  # noqa: BLE001 — réconciliation opportuniste, jamais bloquante
+        logger.warning("unipile account_status : reconcile best-effort échoué",
+                       exc_info=True)
 
     try:
         account_id = connector_identities.resolve_operated_account_id(sub, provider)
@@ -534,6 +551,18 @@ def account_status(provider: str = "LINKEDIN") -> dict:
     out = {"connected": account_id is not None, "account_id": account_id,
            "account_name": label, "channel": provider, "alive": alive}
 
+    if account_id is None and isinstance(binding, dict) and not binding.get("bound"):
+        # Le motif de CE canal : une demande WhatsApp en échec ne se raconte pas sur le
+        # statut LinkedIn. Les motifs sans canal (clé, fournisseur injoignable) valent
+        # pour tous ; `no_pending` n'est pas une panne.
+        motif = next((m for m in binding.get("pendings") or []
+                      if (m.get("provider") or "").upper() == provider), None)
+        if motif is None and binding.get("reason") in ("no_credential",
+                                                         "provider_unreachable"):
+            motif = binding
+        if motif is not None:
+            out["binding"] = {"reason": motif.get("reason"),
+                              "detail": motif.get("detail")}
     if account_id is None:
         # Le geste manquant vient du seam PARTAGÉ (option fermée ? aucune clé ? juste
         # un canal à lier ?) — la même réponse que la carte connecteur, pas une
@@ -785,11 +814,17 @@ def unipile_client(provider: str = "LINKEDIN"):
     ):
         account_id = pinned
     if not account_id:
+        # La page vient du PRODUIT du compte : un client d'un tenant tiers envoyé
+        # chez nous s'y crée un second compte, et plus rien ne se lie (cf.
+        # `unipile_connect.connections_page`). Sans page déclarée, pas d'adresse —
+        # le geste agent, lui, existe partout.
+        from .. import unipile_connect
+        page = unipile_connect.connections_page(sub, org)
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=f"Connecte ton compte {provider.title()} sur "
-                    "https://manage.oto.cx/console/connections "
-                    "avant d'utiliser ces outils."))
+            message=f"Connecte ton compte {provider.title()}"
+                    + (f" sur {page}" if page else "")
+                    + " (ou via `unipile_connect_start`) avant d'utiliser ces outils."))
     # DSN tiré de la config du credential résolu (défaut api.unipile.com côté
     # oto-core). Clé plateforme → DSN env/défaut (instance Otomata).
     dsn = None if rc.is_platform else rc.config.get("dsn")
@@ -898,10 +933,14 @@ def register(mcp: FastMCP) -> None:
         défaut) et renvoie une **`url`** d'auth Unipile à transmettre à l'utilisateur.
 
         L'utilisateur ouvre l'URL, se connecte à son compte (login/2FA/captcha —
-        tout se passe dans cette page hébergée) ; la liaison se **finalise
-        automatiquement** côté serveur (webhook), rien d'autre à appeler ensuite.
-        Vérifie l'état avec `oto_instance(op='verify', connector='unipile')`. C'est LE
-        point d'entrée d'onboarding messagerie depuis l'agent (feedback #131).
+        tout se passe dans cette page hébergée), puis revient sur la page de
+        connexions de SON produit. ⚠️ Il n'y a PAS de webhook (#581) : le compte est
+        LIÉ par réconciliation, sous ton identité, dans l'heure qui suit ce lien.
+        Pour LinkedIn, c'est `linkedin_unipile_account(op="status")` qui la déclenche
+        — appelle-le quand la personne dit avoir terminé (`binding` dit pourquoi rien
+        n'a été lié). Pour les autres canaux, la liaison se fait quand la personne
+        rouvre sa page de connexions. C'est LE point d'entrée d'onboarding messagerie
+        depuis l'agent (feedback #131).
 
         Un compte de messagerie est PAR-PERSONNE : s'il est déjà connecté dans une
         autre de tes orgs, il te suit ici (inutile de reconnecter) et cet appel
@@ -945,10 +984,14 @@ def register(mcp: FastMCP) -> None:
                 "d'être activé pour cette org — rien d'autre à faire, les outils sont "
                 "utilisables immédiatement.")
             return out
+        ch = out.get("channel", channel)
         out["instructions"] = (
-            f"Transmets `url` à l'utilisateur : il ouvre le lien, connecte son compte "
-            f"{out.get('channel', channel)}, et la liaison se finalise seule "
-            "(webhook). Vérifie ensuite avec oto_instance(op='verify', connector='unipile').")
+            f"Transmets `url` à l'utilisateur : il ouvre le lien (valable 1 h) et connecte "
+            f"son compte {ch} jusqu'au bout. Aucun webhook ne lie le compte : "
+            + ("quand il a terminé, appelle linkedin_unipile_account(op='status') — "
+               "c'est ce qui le LIE ; `binding` dit pourquoi si rien ne l'a été."
+               if str(ch).lower() == "linkedin" else
+               "la liaison se fait quand il rouvre sa page de connexions, dans l'heure."))
         return out
 
     # ---- helpers de dispatch (patron `op=`, ADR 0047) --------------------

@@ -179,3 +179,54 @@ def test_une_liaison_REUSSIE_ne_porte_aucune_raison(monkeypatch):
     out = uc.reconcile_pending("u1")
     assert out["bound"] is True
     assert "reason" not in out and "detail" not in out
+
+
+# ── Indice de retour et demandes doublons (retour de revue, 2026-09-14) ──────
+# Sur une clé PARTAGÉE, « le plus récent compte non lié créé après le pending » peut
+# être celui d'un tiers qui connecte dans la même heure. Le front qui reçoit le retour
+# connaît l'`account_id` rendu par Unipile : il restreint la liaison à ce compte.
+
+def test_account_id_restreint_la_liaison_a_ce_compte(monkeypatch):
+    accounts = [_acc("acc_mine", "Moi", created="2026-07-16 12:45:00+00"),
+                _acc("acc_theirs", "Un tiers", created="2026-07-16 12:50:00+00")]
+    calls = _setup(monkeypatch, [_pend()], accounts)
+    out = uc.reconcile_pending("sub1", account_id="acc_mine")
+    assert out["bound"] is True and out["accounts"][0]["account_id"] == "acc_mine"
+    assert calls["set"][0][0][:2] == ("sub1", "acc_mine")
+
+
+def test_account_id_ne_leve_aucune_garde(monkeypatch):
+    """Un identifiant forgé ne désigne qu'un compte que la sélection aurait pu retenir :
+    déjà lié ou antérieur au pending, il reste refusé."""
+    calls = _setup(monkeypatch, [_pend()], [_acc("acc_x", "Pris")], bound={"acc_x"})
+    assert uc.reconcile_pending("sub1", account_id="acc_x")["bound"] is False
+    calls = _setup(monkeypatch, [_pend()],
+                   [_acc("acc_old", "Vieux", created="2026-07-01 09:00:00+00")])
+    assert uc.reconcile_pending("sub1", account_id="acc_old")["bound"] is False
+    assert calls["set"] == []
+
+
+def test_account_id_inconnu_ne_lie_rien(monkeypatch):
+    calls = _setup(monkeypatch, [_pend()], [_acc("acc_new", "Moi")])
+    out = uc.reconcile_pending("sub1", account_id="acc_ailleurs")
+    assert out["bound"] is False and out["reason"] == "no_candidate" and calls["set"] == []
+
+
+def test_une_liaison_consomme_les_demandes_doublons_du_meme_canal(monkeypatch):
+    """Double clic sur « Connecter » : deux pendings LinkedIn. Le premier lie ; le second
+    ne doit pas rester une heure prêt à lier le prochain compte d'un tiers."""
+    pendings = [_pend(nonce="N1"), _pend(nonce="N2"), _pend(nonce="W", provider="WHATSAPP")]
+    calls = _setup(monkeypatch, pendings,
+                   [_acc("acc_li", "Moi"), _acc("acc_wa", "+33", provider="whatsapp")])
+    out = uc.reconcile_pending("sub1")
+    assert sorted(a["account_id"] for a in out["accounts"]) == ["acc_li", "acc_wa"]
+    assert calls["resolved"].count("N1") == 1 and "N2" in calls["resolved"]
+    assert "W" in calls["resolved"]
+    assert len([s for s in calls["set"] if s[0][1] == "acc_li"]) == 1
+
+
+def test_le_motif_ne_revele_pas_le_nombre_de_comptes_de_la_cle(monkeypatch):
+    _setup(monkeypatch, [_pend()], [_acc("A", "vieux", created="2026-07-01 09:00:00+00")] * 3)
+    out = uc.reconcile_pending("u1")
+    assert "compte(s) chez le fournisseur" not in out["detail"]
+    assert not any(ch.isdigit() for ch in out["detail"].split(":")[0])

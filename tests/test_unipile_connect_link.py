@@ -231,6 +231,64 @@ def test_no_app_keeps_the_historic_dashboard_destination(monkeypatch):
     assert "/org/" not in url
 
 
+@pytest.fixture
+def tenants():
+    """Deux tenants FICTIFS : `acme` déclare sa page de connecteurs (portée par l'org),
+    `beta` ne déclare rien."""
+    from oto_mcp import tenancy
+    avant = tenancy.current()
+    tenancy.install(tenancy.IssuerRegistry(tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "acme", "issuer": "https://auth.acme.test/oidc",
+                  "dashboard_url": "https://app.acme.test",
+                  "link_paths": {"connectors": "/org/{org}/connectors"}},
+                 {"slug": "beta", "issuer": "https://auth.beta.test/oidc"}])))
+    yield
+    tenancy.install(avant)
+
+
+def test_no_app_returns_a_partner_account_to_its_own_product(monkeypatch, tenants):
+    """Face MCP (pas d'`app`) pour un compte d'un tenant TIERS : retour sur SA page de
+    connecteurs, dérivée du sub — jamais sur notre dashboard. Vécu le 2026-09-03 : le
+    client y a créé un second compte, et la réconciliation a tourné sous ce sub-là."""
+    _wire(monkeypatch, org=270)
+    _run(hosted_auth_url("acme:u1", "linkedin"))
+    kw = _FakeClient.last_kwargs
+    assert kw["success_redirect_url"] == (
+        "https://app.acme.test/org/270/connectors?unipile=connected&channel=linkedin")
+    assert kw["failure_redirect_url"] == (
+        "https://app.acme.test/org/270/connectors?unipile=failed&channel=linkedin")
+
+
+def test_partner_without_connectors_page_still_lands_somewhere(monkeypatch, tenants):
+    """Une redirection doit aboutir : tenant tiers sans patron ⟹ destination historique."""
+    _wire(monkeypatch)
+    _run(hosted_auth_url("beta:u1", "linkedin"))
+    assert _FakeClient.last_kwargs["success_redirect_url"].endswith(
+        "/console/connections?unipile=connected&channel=linkedin")
+
+
+def test_app_still_wins_over_the_tenant_page(monkeypatch, tenants, front_tiers):
+    _wire(monkeypatch, org=3)
+    _run(hosted_auth_url("acme:u1", "linkedin", app="acme-preprod"))
+    assert _FakeClient.last_kwargs["success_redirect_url"] == (
+        "https://acme.oto.zone/org/3/connectors?unipile=connected&channel=linkedin")
+
+
+def test_connections_page_joins_an_existing_query(monkeypatch):
+    monkeypatch.setattr(unipile_connect, "connections_page",
+                        lambda sub, org_id: "https://app.acme.test/c?tab=msg")
+    assert unipile_connect._return_to(None, 1, "?unipile=connected", "acme:u1") == (
+        "https://app.acme.test/c?tab=msg&unipile=connected")
+
+
+def test_connections_page_primary_is_the_historic_page(tenants):
+    assert unipile_connect.connections_page("u1", 5).endswith("/console/connections")
+    assert unipile_connect.connections_page("acme:u1", 5) == (
+        "https://app.acme.test/org/5/connectors")
+    assert unipile_connect.connections_page("beta:u1", 5) is None
+
+
 @pytest.mark.parametrize("hostile", ["https://evil.test", "oto", "", "ACME",
                                      "app.acme.test", "acme-preprod-x"])
 def test_unknown_app_never_becomes_a_redirect(monkeypatch, hostile, front_tiers):

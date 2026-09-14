@@ -51,7 +51,28 @@ def _default_limit() -> int:
         return 5
 
 
-def _return_to(app: "str | None", org_id: "int | None", suffix: str) -> str:
+def connections_page(sub: "str | None", org_id: "int | None") -> "str | None":
+    """La page où CE compte connecte sa messagerie hébergée — chez SON produit.
+
+    Compte du tenant primaire ⟹ `/console/connections` du dashboard, à l'octet près.
+    Compte d'un tenant TIERS ⟹ le patron `connectors` que son tenant déclare
+    (`links.link_for`), ou `None` s'il n'en déclare pas : jamais NOTRE chemin sous son
+    domaine, ni notre domaine tout court — c'est un produit qu'il n'a pas.
+
+    ⚠️ Vécu le 2026-09-03 puis le 2026-09-14 (tristan@koncile.ai, tenant tulina) : le
+    refus « connecte ton compte » codait `https://manage.oto.cx/console/connections`
+    en dur, et la fin de wizard de la face MCP y renvoyait aussi. La personne, qui n'a
+    pas de compte chez nous, s'en est CRÉÉ un (autre sub) pour passer l'écran de
+    connexion — et la réconciliation qui a suivi a tourné sous ce sub-là, sans pending :
+    rien n'a été lié (signal #689)."""
+    if sub and config.tenant_slug_for(sub):
+        from . import links
+        return links.link_for("connectors", sub=sub, org=org_id)
+    return f"{config.dashboard_url()}/console/connections"
+
+
+def _return_to(app: "str | None", org_id: "int | None", suffix: str,
+               sub: "str | None" = None) -> str:
     """Où Unipile dépose la personne à la fin du wizard hébergé.
 
     Le hosted-auth sort du site : c'est la SEULE chose qui décide sur quel front
@@ -61,12 +82,23 @@ def _return_to(app: "str | None", org_id: "int | None", suffix: str) -> str:
     JWT du front d'arrivée. Atterrir sur le mauvais front, c'est réconcilier sous
     un AUTRE sub, donc ne rien lier du tout (vécu le 2026-08-22).
 
-    `app` inconnu ou absent ⟹ destination historique, à l'octet près. On ne fait
-    JAMAIS confiance à une valeur de client au-delà d'un lookup dans la liste
-    fermée `RETURN_APPS` (`resolve_return_app` s'en charge)."""
+    `app` connu ⟹ le front qui a demandé. On ne fait JAMAIS confiance à une valeur
+    de client au-delà d'un lookup dans la liste fermée `RETURN_APPS`
+    (`resolve_return_app` s'en charge).
+
+    `app` inconnu ou absent (face MCP : un agent n'a pas de front) ⟹ la page de
+    connexions du PRODUIT DU COMPTE (`connections_page`), dérivée du sub — donc du
+    jeton, jamais d'une valeur de client. Tenant primaire : destination historique,
+    à l'octet près. Tenant tiers sans patron `connectors` : on retombe sur la nôtre,
+    parce qu'une redirection doit aboutir (cf. `links.redirect_for`)."""
     from .auth import flow as oauth_flow
     if oauth_flow.resolve_return_app(app):
         return oauth_flow.return_url(app, suffix, org=org_id)
+    page = connections_page(sub, org_id)
+    if page:
+        if "?" in page and suffix.startswith("?"):
+            return f"{page}&{suffix[1:]}"
+        return f"{page}{suffix}"
     return f"{config.dashboard_url()}/console/connections{suffix}"
 
 
@@ -264,8 +296,8 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
                 client.hosted_auth_link,
                 name=nonce,
                 providers=[provider],
-                success_redirect_url=_return_to(app, org_id, f"?unipile=connected&channel={ch}"),
-                failure_redirect_url=_return_to(app, org_id, f"?unipile=failed&channel={ch}"),
+                success_redirect_url=_return_to(app, org_id, f"?unipile=connected&channel={ch}", sub),
+                failure_redirect_url=_return_to(app, org_id, f"?unipile=failed&channel={ch}", sub),
                 # produit premium demandé → `config.linkedin` (+ cookies au wizard,
                 # recommandé par Unipile pour ces produits)
                 premium=premium,
@@ -317,10 +349,18 @@ def _rien(reason: str, detail: str) -> dict:
     return {"bound": False, "accounts": [], "reason": reason, "detail": detail}
 
 
-def reconcile_pending(sub: str) -> dict:
+def reconcile_pending(sub: str, account_id: "str | None" = None) -> dict:
     """Lie le(s) compte(s) fraîchement connecté(s) par `sub` sans dépendre du
     webhook. No-op si pas de pending / pas de clé / pas de nouveau compte.
-    Renvoie `{bound: bool, accounts: [{account_id, name, org_id}]}`."""
+    Renvoie `{bound: bool, accounts: [{account_id, name, org_id}]}`.
+
+    `account_id` = l'identifiant qu'Unipile ajoute à `redirect_uri` au succès, relu
+    par le front qui reçoit le retour. Il RESTREINT les candidats à ce seul compte —
+    il n'élargit rien : toutes les gardes (provider, tiers, déjà pris, floor, sonde)
+    s'appliquent comme sans lui. Sans lui, la sélection par fenêtre de temps reste la
+    seule (face agent, lecture de statut) : sur une clé PARTAGÉE, elle peut choisir le
+    compte qu'un autre vient de connecter dans la même heure — l'indice la ferme pour
+    le chemin qui en dispose."""
     from datetime import timedelta
     pendings = db.list_unipile_pending_for_sub(sub)
     if not pendings:
@@ -356,8 +396,11 @@ def reconcile_pending(sub: str) -> dict:
     foreign = db.foreign_unipile_account_ids(sub)
     bound: list = []
     motifs: list = []
+    done: set = set()   # providers liés pendant CE passage
     for pend in pendings:
         provider = (pend.get("provider") or "LINKEDIN").upper()
+        if provider in done:
+            continue
         floor = _parse_dt(pend.get("created_at"))
         # Rebind DÉTERMINISTE : Unipile RÉUTILISE le compte existant à la reconnexion
         # (même account_id) — une ligne soft-déconnectée du MÊME sub est la preuve de
@@ -368,6 +411,8 @@ def reconcile_pending(sub: str) -> dict:
         for a in accounts:
             aid = a.get("id")
             if not aid:
+                continue
+            if account_id and aid != account_id:
                 continue
             if (a.get("provider") or a.get("type") or "").upper() != provider:
                 continue
@@ -390,8 +435,10 @@ def reconcile_pending(sub: str) -> dict:
             motifs.append({
                 "nonce": pend.get("nonce"), "provider": provider,
                 "reason": "no_candidate",
-                "detail": (f"{len(accounts)} compte(s) chez le fournisseur, aucun "
-                           f"éligible pour {provider} : soit le parcours n'a créé "
+                # Pas le NOMBRE de comptes : sur la clé plateforme, c'est l'inventaire
+                # de tous les tenants, et ce motif est servi à l'utilisateur final.
+                "detail": (f"Aucun compte éligible pour {provider} chez le "
+                           "fournisseur : soit le parcours n'a créé "
                            "aucun compte (abandonné avant la fin), soit le compte "
                            "existait DÉJÀ avant la demande (il est alors plus ancien "
                            "que le pending), soit il appartient à quelqu'un d'autre. "
@@ -435,6 +482,14 @@ def reconcile_pending(sub: str) -> dict:
                                      "liaison a été refusée à son point de garde."})
             continue
         db.resolve_unipile_pending(pend["nonce"])
+        # Les AUTRES demandes du même canal (double clic sur « Connecter », lien
+        # redemandé) sont consommées avec : laissées vivantes, elles resteraient une
+        # heure à même de lier le prochain compte qu'un tiers connecte sur la clé.
+        for other in pendings:
+            if (other is not pend
+                    and (other.get("provider") or "LINKEDIN").upper() == provider):
+                db.resolve_unipile_pending(other["nonce"])
+        done.add(provider)
         taken.add(chosen["id"])
         bound.append({"account_id": chosen["id"], "name": chosen.get("name"),
                       "org_id": pend["org_id"]})

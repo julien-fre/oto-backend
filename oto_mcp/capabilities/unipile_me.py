@@ -66,7 +66,11 @@ class UnipileConnectInput(BaseModel):
 
 
 class UnipileReconcileInput(BaseModel):
-    """Aucun paramètre : on lie ce que CE compte vient de connecter."""
+    """On lie ce que CE compte vient de connecter. `account_id` (facultatif) = celui
+    qu'Unipile a ajouté à l'adresse de retour : il RESTREINT la liaison à ce compte,
+    sans lever aucune garde — un identifiant forgé ne peut désigner qu'un compte que
+    la sélection aurait de toute façon pu retenir."""
+    account_id: Optional[str] = None
 
 
 class UnipileStatusInput(BaseModel):
@@ -124,9 +128,16 @@ class UnipileConnectView(BaseModel):
 
 
 class UnipileReconcileView(BaseModel):
-    """`bound: false` avec `accounts: []` = rien à lier, pas une panne (aucun pending)."""
+    """`bound: false` avec `accounts: []` = rien à lier, pas une panne (aucun pending).
+
+    Quand rien n'a été lié, `reason` porte le motif établi (`no_pending`,
+    `no_candidate`, `candidates_dead`, `no_credential`, `provider_unreachable`) et
+    `detail` la phrase qui l'explique. Le front de Tulina les affiche au retour du
+    parcours hébergé : c'est la seule surface où `no_candidate` cesse d'être muet."""
     bound: bool
     accounts: list[Any]
+    reason: Optional[str] = None
+    detail: Optional[str] = None
 
 
 class UnipileDisconnected(BaseModel):
@@ -164,6 +175,9 @@ async def _reconcile(ctx: ResolvedCtx, inp: UnipileReconcileInput) -> dict:
     """Poll-and-bind explicite (webhook v2 non livré) : lie le compte que `sub` vient
     de connecter. Le dashboard peut l'appeler au retour du hosted-auth. Idempotent."""
     from .. import unipile_connect
+    hint = (inp.account_id or "").strip()
+    if hint:
+        return await asyncio.to_thread(unipile_connect.reconcile_pending, ctx.sub, hint)
     return await asyncio.to_thread(unipile_connect.reconcile_pending, ctx.sub)
 
 
