@@ -198,27 +198,36 @@ if os.environ.get("BANC_SANS_RESERVATION") == "1":
     billing_reservation.reserver_echeance = lambda ligne: nullcontext(ligne)
 
 
+def _ecrit_atomique(chemin, texte: str) -> None:
+    """`write_text` seul CRÉE le fichier puis écrit : entre les deux, `.exists()` est
+    déjà vrai et `.read_text()` rend `''`. Cause RÉELLE du rouge intermittent du
+    14/09/2026 (établi par cd sur le journal CI, `['1', ''] == ['1', '1']` — le
+    second enfant n'avait PAS lu 0, son fichier était juste encore vide au moment où
+    le parent l'a lu) : sous `-n 4`, la fenêtre entre création et écriture s'élargit
+    assez pour qu'un parent qui poll `.exists()` la traverse. `os.replace` est
+    atomique côté POSIX : le fichier temporaire n'est jamais vu à mi-écriture, et le
+    renommage fait apparaître le nom final déjà complet, ou pas du tout."""
+    tmp = chemin.with_name(chemin.name + f".tmp-{os.getpid()}")
+    tmp.write_text(texte)
+    os.replace(tmp, chemin)
+
+
 lignes = [l for l in db_billing.due_subscriptions() if l["org_id"] == org]
 if not lignes:
-    # Rouge intermittent le 14/09/2026 sous CI parallèle (pytest-xdist -n 4) :
-    # `test_sans_reservation_la_meme_cle_ne_debite_qu_une_fois[perime]` a lu 0 ici.
-    # ⚠️ Un premier correctif (une boucle de poll) a été écarté par relecture (cd,
-    # 14/09) : il SUPPOSAIT une ligne pas encore visible, alors que le parent la
-    # committe avant le `Popen` — une absence à cet instant n'est donc PAS un
-    # « pas encore là », et une boucle qui la masquerait cacherait un défaut RÉEL
-    # sans jamais le nommer. Ce qui suit ne corrige rien : ça consigne, pour que
-    # le PROCHAIN rouge s'explique de lui-même au lieu de rouvrir la même enquête.
+    # Diagnostic (14/09/2026) : gardé pour le jour où un VRAI 0 arrivera — la cause
+    # trouvée cette fois était différente (voir `_ecrit_atomique` ci-dessus), mais
+    # rien ne dit qu'aucune autre n'existe.
     with psycopg.connect(dsn, autocommit=True) as c:
         horloge = c.execute("SELECT NOW()").fetchone()[0]
         brute = c.execute(
             "SELECT status, next_billing_at, current_period_end FROM "
             "org_subscriptions WHERE org_id = %s", (org,)).fetchone()
-    (rdv / f"diag-{nom}.json").write_text(json.dumps({
+    _ecrit_atomique(rdv / f"diag-{nom}.json", json.dumps({
         "pid": os.getpid(), "org": org, "dsn": dsn,
         "now_transaction_enfant": str(horloge),
         "ligne_brute_org_subscriptions": list(brute) if brute else None,
     }, default=str))
-(rdv / f"lu-{nom}").write_text(str(len(lignes)))
+_ecrit_atomique(rdv / f"lu-{nom}", str(len(lignes)))
 limite = time.monotonic() + 90
 while not (rdv / f"go-{nom}").exists():
     if time.monotonic() > limite:
