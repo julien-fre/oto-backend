@@ -199,8 +199,11 @@ def test_publish_and_fork_carry_the_warning(monkeypatch):
     part avec elle, donc le signal aussi."""
     from oto_mcp.capabilities import guide_library as dl
 
+    # Seul un super_admin publie ; le rôle se pose à sa source, d'où dérivent les deux
+    # prédicats plateforme.
+    monkeypatch.setattr(dl.access, "get_user_role", lambda sub: "super_admin")
     monkeypatch.setattr(dl, "_require_org_admin", lambda ctx, verb: 7)
-    monkeypatch.setattr(dl, "_author_for", lambda ctx: ("org", 7, "Acme"))
+    monkeypatch.setattr(dl, "_author_for", lambda ctx: ("otomata", None, "Otomata"))
     monkeypatch.setattr(dl.org_store, "get_instruction",
                         lambda otype, oid, slug: {"body_md": "Sans dessin.", "title": "t",
                                                   "description": "d", "slots": []})

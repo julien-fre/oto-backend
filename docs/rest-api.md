@@ -404,11 +404,26 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - **Bibliothèque publique de guides** (marketplace de skills, table `doctrine_library`) :
   capacités `library.*` (`capabilities/guide_library.py`, montage auto MCP+REST) —
   `library.list/get` (`SUB_ONLY`, MCP `oto_procedure` op=library_list/library_get + REST
-  `GET /api/me/guide-library[/{slug}]`), `library.publish`/`library.fork` (`ORG_MEMBER` +
-  gate org_admin en handler, MCP `oto_procedure` op=publish/fork + REST
-  `POST /api/me/guide-library/{publish,fork}`), `library.unpublish` (auteur/PLATFORM_ADMIN,
-  `DELETE /api/me/guide-library/{id}`). **Auteur** = `otomata` si publieur platform-operator,
-  sinon l'`org`. **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. Surface
+  `GET /api/me/guide-library[/{slug}]`), `library.publish` (`LIBRARY_PUBLISHER` :
+  **super_admin plateforme seulement**, depuis le 14/09/2026 — MCP `oto_procedure` op=publish +
+  REST `POST /api/me/guide-library/publish`), `library.fork` (`ORG_MEMBER` + gate org_admin
+  en handler, MCP `oto_procedure` op=fork + REST `POST /api/me/guide-library/fork`),
+  `library.unpublish` (auteur/PLATFORM_ADMIN, `DELETE /api/me/guide-library/{id}`).
+  **Qui publie** : la bibliothèque publique est une vitrine éditée par la plateforme, donc
+  seul un `super_admin` y publie. La règle est DÉCLARÉE (`_authz.LIBRARY_PUBLISHER`, plancher
+  `super`) sur les deux entrées qui mènent à `_publish` — `library.publish` et la branche
+  `publish` d'`oto_procedure` — pour que `capacite_autorise` annonce le droit par la même
+  condition que celle qui refuse (#695) ; `_publish` garde un filet qui lève le même refus.
+  Un org_admin ou un opérateur `admin` reçoit 403 `publication_reservee_a_la_plateforme`,
+  AVANT l'exigence d'org active et toute lecture de la procédure source ; le refus dit ce qui
+  reste ouvert — ses procédures personnelles, et le fork pour un org_admin. Un super_admin
+  sans org active reçoit 400 `no_active_org` (le corps publié s'y lit). ⚠️ Côté MCP la règle
+  d'autz tourne avant le handler : hors super_admin, le refus de plateforme parle le premier ;
+  pour un super_admin, la garde d'agent `publication_reservee_a_l_humain` (inchangée) le
+  renvoie au dashboard.
+  **Auteur** = `otomata`. Une entrée signée par une `org` reste possédée par elle : la
+  plateforme ne la reprend pas (409 `slug_taken`), son org_admin peut la dépublier.
+  **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. Surface
   ANONYME pour la vitrine : routes écrites à la main `GET /api/guide-library[/{slug}]`
   (deny-by-default `visibility='public'`, l'adaptateur capacité authentifie toujours).
   ⚠️ **Deny-by-default aussi sur les CHAMPS** (`_VITRINE_META` / `_VITRINE_ENTREE` dans
@@ -419,7 +434,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   tant qu'on ne l'y a pas nommée. La face authentifiée `/api/me/guide-library`, elle,
   sert la ligne entière — `library.fork`/`library.unpublish` visent une entrée par `id`.
   ⚠️ **`/api/guide-library` ≠ `/api/guides/library`** : le premier est le MARCHÉ des guides
-  publiés par les orgs (forkables), le second les guides PLATEFORME. Deux objets, deux
+  publiés dans la bibliothèque (forkables), le second les guides PLATEFORME. Deux objets, deux
   tables — la ressemblance des noms est ancienne, elle ne dit pas une parenté.
   ⚠️ Ces chemins s'appelaient `/api/[me/]doctrines/…` jusqu'au 2026-08-28 (#519) ; les
   anciens répondent **308** jusqu'au retrait — cf. `docs/alias-deprecies.md`.

@@ -199,11 +199,56 @@ def SUPER_ADMIN(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
                        role=access.get_user_role(sub))
 
 
-# Les deux SEULES règles dont l'exigence est purement plateforme : elles se déclarent
+def _refus_publication_bibliotheque() -> AuthzDenied:
+    """LE refus « publier dans la bibliothèque publique est réservé à la plateforme »
+    — une seule phrase, que lèvent la règle `LIBRARY_PUBLISHER` et le filet de
+    `guide_library._publish` : le même mur ne se dit pas de deux façons.
+
+    Il dit ce qui reste ouvert ET à qui : les procédures personnelles le sont à tout
+    compte, le fork demande org_admin. Promettre le fork sans sa condition enverrait
+    un simple membre vers un second refus (#632 : le fait, puis au plus une
+    condition)."""
+    return AuthzDenied(
+        403, "publication_reservee_a_la_plateforme",
+        "Publier dans la bibliothèque publique est réservé aux super-administrateurs de "
+        "la plateforme : c'est une vitrine éditée par la plateforme. Ce qui reste "
+        "ouvert : tes procédures personnelles, et — si tu es org_admin — forker une "
+        "entrée de la bibliothèque dans ton org.")
+
+
+def LIBRARY_PUBLISHER(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+    """Publier dans la bibliothèque publique de guides : un super_admin plateforme,
+    depuis une org active.
+
+    La bibliothèque publique est une vitrine éditée par la plateforme — ses entrées
+    sont signées Otomata. Le rôle se vérifie dans la règle que la capacité DÉCLARE,
+    pas seulement dans le handler : c'est la règle que lisent `platform_floor` et
+    `capacite_autorise` pour annoncer le droit, et un droit annoncé par une autre
+    condition que celle qui refuse finit par dériver en silence (#695).
+
+    Ordre des refus : le rôle AVANT l'org active. Quand deux refus se disputent une
+    entrée, celui qui n'ouvre aucune porte parle en premier (#632) — dire « choisis
+    une org » à qui ne peut pas publier ne mènerait qu'à ce même refus, une étape plus
+    loin. L'org reste requise pour le super_admin : le corps publié se lit dans une
+    procédure de l'org active, injectée depuis l'état serveur comme `ORG_MEMBER`
+    (jamais d'un param client)."""
+    sub = _require_sub(raw)
+    if not access.is_super_admin(sub):
+        raise _refus_publication_bibliotheque()
+    org_id = access.current_org(sub)
+    if org_id is None:
+        raise AuthzDenied(400, "no_active_org",
+                          "Aucune org active — choisis-en une avec oto_use_org.")
+    return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
+
+
+# Les règles dont AUCUN appel n'aboutit sans un rôle plateforme : elles se déclarent
 # ici, à côté de leur définition, pour qu'un changement de garde et son plancher ne
-# puissent pas partir chacun de leur côté.
+# puissent pas partir chacun de leur côté. `LIBRARY_PUBLISHER` exige en plus une org
+# active, mais son plancher de rôle reste `super`.
 PLATFORM_ADMIN.platform_floor = "operator"
 SUPER_ADMIN.platform_floor = "super"
+LIBRARY_PUBLISHER.platform_floor = "super"
 
 
 def ADMIN_BY_OP(by_op: dict, *, field: str = "op"):

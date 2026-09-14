@@ -7,13 +7,16 @@ org). Co-déclarées MCP + REST (ADR 0009) :
 - lecture (`library.list`/`library.get`) = tout user authentifié (`SUB_ONLY`) ;
   la surface ANONYME pour la vitrine est servie à part par des routes écrites à
   la main dans `api.routes` (l'adaptateur REst des capacités authentifie toujours).
-- publication / fork = org_admin de l'**org active** (injectée par `ORG_MEMBER`,
-  jamais d'un param client → verrou IDOR ; l'org est REQUISE même pour un
-  platform-operator, cf. `_require_org_admin`) ; un publieur **platform-operator**
-  publie au nom d'**Otomata**.
+- publication = **super_admin plateforme** seulement, déclaré dans la règle
+  d'autz `LIBRARY_PUBLISHER` (403 `publication_reservee_a_la_plateforme`) : la
+  bibliothèque publique est une vitrine éditée par la plateforme, ses entrées sont
+  signées **Otomata**. Le corps se lit dans l'**org active**, donc l'org reste
+  REQUISE — la règle l'exige APRÈS le rôle.
+- fork = org_admin de l'**org active** (injectée par `ORG_MEMBER`, jamais d'un
+  param client → verrou IDOR ; l'org est REQUISE même pour un platform-operator).
 - publier est **borné à l'auteur** : le slug public est unique (c'est l'adresse de
   l'entrée, toute l'API adresse par slug) et POSSÉDÉ — republier le sien
-  incrémente sa version, viser celui d'une autre org est refusé (409 `slug_taken`,
+  incrémente sa version, viser celui d'un autre auteur est refusé (409 `slug_taken`,
   message non-disclosant : un slug `unlisted` est un lien secret).
 - dépublication = l'auteur (org_admin de l'org auteur) ou un admin plateforme.
 
@@ -27,7 +30,8 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 from .. import access, deprecations, org_store, procedure_diagram, roles
-from ._authz import ORG_MEMBER, SUB_ONLY
+from ._authz import (LIBRARY_PUBLISHER, ORG_MEMBER, SUB_ONLY,
+                     _refus_publication_bibliotheque)
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -176,14 +180,14 @@ class LibraryEntry(BaseModel):
 
 class PublishResult(BaseModel):
     """Accusé de publication. Une entrée déjà publiée sous le même slug public par
-    TON org est REMPLACÉE (corps, titre) et sa version incrémentée — publier n'est
-    donc pas toujours une création. Le slug d'une entrée appartenant à une AUTRE
-    org (ou à la plateforme) est refusé, jamais repris : 409 `slug_taken`."""
+    la plateforme est REMPLACÉE (corps, titre) et sa version incrémentée — publier
+    n'est donc pas toujours une création. Le slug d'une entrée appartenant à une
+    org est refusé, jamais repris : 409 `slug_taken`."""
     published: bool = Field(description="Toujours `true` : un échec ne rend pas "
-                                        "`published:false`, il lève (404 guide "
-                                        "absente, 403 sans org_admin, 409 nom déjà "
-                                        "pris par une autre org). Ne pas le tester "
-                                        "comme un booléen d'issue.")
+                                        "`published:false`, il lève (403 hors "
+                                        "super_admin plateforme, 404 guide absente, "
+                                        "409 nom déjà pris par une org). Ne pas le "
+                                        "tester comme un booléen d'issue.")
     id: int = Field(description="Identifiant de l'entrée publiée — à conserver, c'est "
                                 "ce qu'attend library.unpublish.")
     slug: str = Field(description="Slug public RÉELLEMENT retenu, après normalisation : "
@@ -292,6 +296,16 @@ def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
 
 
 def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
+    # Qui publie se DÉCLARE dans la règle d'autz des deux capacités qui mènent ici
+    # (`LIBRARY_PUBLISHER` : `library.publish`, `oto_procedure op=publish`) : c'est
+    # elle qui refuse sur les faces servies, avant ce handler. Ce contrôle n'est qu'un
+    # filet pour un appelant qui câblerait `_publish` sous une autre règle — même
+    # refus, même source, jamais une seconde phrase. L'entrée est signée Otomata
+    # (`_author_for`).
+    if not access.is_super_admin(ctx.sub):
+        raise _refus_publication_bibliotheque()
+    # Super_admin ⊂ platform-operator : le gate ne garde ici que l'org active, où
+    # se lit le corps à publier.
     org_id = _require_org_admin(ctx, "Publier")
     src = org_store.get_instruction("org", org_id, inp.slug)
     if not src:
@@ -369,12 +383,17 @@ CAPABILITIES += [
         rest=RestBinding("GET", "/api/me/guide-library/{slug}"),
     ),
     Capability(
-        key="library.publish", handler=_publish, Input=PublishInput, authz=ORG_MEMBER,
-        description="Publish one of your org's named guides (skills) to the PUBLIC library "
-                    "so others can find and fork it. Requires org_admin of your active org. "
+        key="library.publish", handler=_publish, Input=PublishInput,
+        authz=LIBRARY_PUBLISHER,
+        description="Publish a named guide (skill) of your active org to the PUBLIC library "
+                    "so others can find and fork it. Reserved to platform super_admin "
+                    "accounts (403 publication_reservee_a_la_plateforme): the library is "
+                    "curated by the platform and its entries are signed Otomata. Still open: "
+                    "your personal procedures, and — if you are org_admin — forking a library "
+                    "entry into your org. Needs an active org (the body is read from it). "
                     "slug = the org skill to publish ; visibility = public | unlisted. "
-                    "Public names are unique and OWNED: re-publishing your own entry bumps its "
-                    "version, a name held by someone else is refused (409) — pick another "
+                    "Public names are unique and OWNED: re-publishing a platform entry bumps "
+                    "its version, a name held by an org is refused (409) — pick another "
                     "public_slug.",
         Output=PublishResult,
         rest=RestBinding("POST", "/api/me/guide-library/publish"),

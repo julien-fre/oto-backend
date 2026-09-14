@@ -23,8 +23,8 @@ from pydantic import BaseModel
 
 from . import guide_library
 from .orgs import instructions as orgs_instructions
-from ._authz import (BY_OP, GROUP_ADMIN_OPT, GROUP_MEMBER_OPT, ORG_ADMIN_OPT,
-                     ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY)
+from ._authz import (BY_OP, GROUP_ADMIN_OPT, GROUP_MEMBER_OPT, LIBRARY_PUBLISHER,
+                     ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY)
 from . import _publication
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
@@ -234,7 +234,10 @@ CAPABILITIES += [
             "create": _ECRIRE, "set": _ECRIRE, "describe": _ECRIRE,
             "delete": _SUPPRIMER,
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
-            "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
+            # `publish` porte la règle de `library.publish` (super_admin plateforme) :
+            # elle tourne AVANT le handler, donc avant la garde d'agent — un compte
+            # qui ne publiera nulle part n'est pas renvoyé vers le dashboard.
+            "publish": LIBRARY_PUBLISHER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
         }),
         description=(
             "Your org's procedures (named guides / skills) + the public library. The base "

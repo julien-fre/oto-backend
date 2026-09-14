@@ -9,13 +9,21 @@ propriétaire de l'entrée d'une autre, qui perdait jusqu'au droit de la dépubl
 
 Ce que ces tests figent :
 - republier LA SIENNE marche comme avant (version + corps remplacé) ;
-- publier sous le nom d'une AUTRE org est refusé, et le refus est
+- publier sous le nom d'un AUTRE auteur est refusé — une org sur une autre org, la
+  plateforme sur une org, une org sur la plateforme — et le refus est
   **non-disclosant** (ne nomme ni l'org, ni le titre, ni le fait que ce soit
   « le guide de quelqu'un ») ;
 - l'upsert ne peut pas transférer l'appartenance même si le garde sautait
   (`author_kind`/`author_org_id` absents du `DO UPDATE SET`) ;
 - une org active est exigée AVANT l'escalade plateforme (sinon : 500 au fork,
-  message faux à la publication) et l'entrée ne part jamais sans auteur affichable.
+  message faux à la publication) et une entrée d'org ne part jamais sans auteur
+  affichable.
+
+Publier est réservé au super_admin plateforme
+(`tests/test_publication_reservee_a_la_plateforme.py`) : `_publish` signe donc
+toujours Otomata. Les entrées signées par une ORG s'écrivent ici par le store
+lui-même — c'est son contrat, quel que soit l'appelant, et ce sont elles que la
+plateforme ne doit jamais reprendre.
 """
 from __future__ import annotations
 
@@ -94,7 +102,8 @@ def _org_ctx(sub: str, org_id: int) -> ResolvedCtx:
 @pytest.fixture
 def surface(monkeypatch):
     """La surface `library.publish` avec ses seuls voisins stubbés : le store de
-    guides d'org, les orgs, les rôles. `publish_guide` reste le vrai."""
+    guides d'org, les orgs, le rôle plateforme (super_admin — le seul qui publie).
+    `publish_guide` reste le vrai."""
     store = _Library()
     monkeypatch.setattr(org_store, "_connect", lambda: store)
     monkeypatch.setattr(org_store, "get_instruction",
@@ -102,8 +111,9 @@ def surface(monkeypatch):
                                                      "title": f"T{org_id}", "slots": []})
     monkeypatch.setattr(org_store, "get_org",
                         lambda org_id: {"id": org_id, "name": f"Org {org_id}"})
-    monkeypatch.setattr(lib.access, "is_platform_operator", lambda sub: False)
-    monkeypatch.setattr(lib.roles, "is_org_admin", lambda sub, org_id: True)
+    # Le rôle se pose à sa SOURCE : `is_super_admin` et `is_platform_operator` en
+    # dérivent tous deux, comme dans le système.
+    monkeypatch.setattr(lib.access, "get_user_role", lambda sub: "super_admin")
     return store
 
 
@@ -111,15 +121,32 @@ def _publish(sub, org_id, slug="veille-concurrence", **kw):
     return lib._publish(_org_ctx(sub, org_id), lib.PublishInput(slug=slug, **kw))
 
 
+def _entree_d_org(org_id, slug="veille-concurrence", **kw):
+    """Une entrée signée par une org, écrite par le vrai `publish_guide`."""
+    return org_store.publish_guide(slug=slug, body_md=f"# corps org {org_id}",
+                                   author_kind="org", author_org_id=org_id,
+                                   author_display=f"Org {org_id}", **kw)
+
+
 def test_une_autre_org_ne_peut_pas_publier_sous_un_nom_pris(surface):
-    first = _publish("admin-a", 1)
+    first = _entree_d_org(1)
     assert (first["version"], first["slug"]) == (1, "veille-concurrence")
 
-    with pytest.raises(AuthzDenied) as e:
-        _publish("admin-b", 2)
-    assert (e.value.status, e.value.code) == (409, "slug_taken")
+    with pytest.raises(org_store.LibrarySlugTaken):
+        _entree_d_org(2)
 
     # L'entrée de l'org 1 est INTACTE : corps, auteur, version.
+    row = surface.rows["veille-concurrence"]
+    assert (row["author_kind"], row["author_org_id"]) == ("org", 1)
+    assert row["body_md"] == "# corps org 1" and row["version"] == 1
+
+
+def test_la_plateforme_ne_reprend_pas_une_entree_d_org(surface):
+    _entree_d_org(1)
+    with pytest.raises(AuthzDenied) as e:
+        _publish("ops", 5)
+    assert (e.value.status, e.value.code) == (409, "slug_taken")
+
     row = surface.rows["veille-concurrence"]
     assert (row["author_kind"], row["author_org_id"]) == ("org", 1)
     assert row["body_md"] == "# corps org 1" and row["version"] == 1
@@ -128,9 +155,9 @@ def test_une_autre_org_ne_peut_pas_publier_sous_un_nom_pris(surface):
 def test_le_refus_ne_dit_pas_a_qui_est_le_nom(surface):
     """Un slug `unlisted` tient lieu de lien secret : le refus ne doit pas
     confirmer l'existence d'une entrée, ni nommer son propriétaire (ADR 0023)."""
-    _publish("admin-a", 1, visibility="unlisted", title="Plan de bataille")
+    _entree_d_org(1, visibility="unlisted", title="Plan de bataille")
     with pytest.raises(AuthzDenied) as e:
-        _publish("admin-b", 2)
+        _publish("ops", 5)
     msg = e.value.message.lower()
     assert "n'est pas disponible" in msg
     for divulgation in ("org 1", "appartient", "plan de bataille", "existe", "auteur"):
@@ -138,12 +165,12 @@ def test_le_refus_ne_dit_pas_a_qui_est_le_nom(surface):
 
 
 def test_republier_la_sienne_marche_comme_avant(surface):
-    assert _publish("admin-a", 1)["version"] == 1
-    again = _publish("admin-a", 1, title="Titre v2", description="d2")
+    assert _publish("ops", 1)["version"] == 1
+    again = _publish("ops", 1, title="Titre v2", description="d2")
     assert again["version"] == 2
     row = surface.rows["veille-concurrence"]
     assert (row["title"], row["description"]) == ("Titre v2", "d2")
-    assert (row["author_kind"], row["author_org_id"]) == ("org", 1)
+    assert (row["author_kind"], row["author_org_id"]) == ("otomata", None)
 
 
 def test_une_org_ne_reprend_pas_une_entree_de_la_plateforme(surface):
@@ -151,9 +178,8 @@ def test_une_org_ne_reprend_pas_une_entree_de_la_plateforme(surface):
         "id": 7, "version": 3, "author_kind": "otomata", "author_org_id": None,
         "body_md": "# officiel", "slug": "socle-prospection",
     }
-    with pytest.raises(AuthzDenied) as e:
-        _publish("admin-a", 1, slug="socle-prospection")
-    assert e.value.code == "slug_taken"
+    with pytest.raises(org_store.LibrarySlugTaken):
+        _entree_d_org(1, slug="socle-prospection")
     assert surface.rows["socle-prospection"]["body_md"] == "# officiel"
 
 
@@ -170,7 +196,7 @@ def test_operateur_plateforme_sans_org_active_recoit_un_refus_lisible(monkeypatc
     atteignait `fork_into_org` (colonne NOT NULL → 500) et rendait à la
     publication un 404 « absente de ton org active » — alors qu'il n'y a
     justement pas d'org active."""
-    monkeypatch.setattr(lib.access, "is_platform_operator", lambda sub: True)
+    monkeypatch.setattr(lib.access, "get_user_role", lambda sub: "super_admin")
     monkeypatch.setattr(org_store, "fork_into_org",
                         lambda **k: (_ for _ in ()).throw(AssertionError("ne doit PAS écrire")))
     ctx = ResolvedCtx(sub="ops", org_id=None, role="super_admin")
@@ -183,14 +209,17 @@ def test_operateur_plateforme_sans_org_active_recoit_un_refus_lisible(monkeypatc
 
 def test_pas_de_publication_sans_auteur_affichable(monkeypatch, surface):
     """`author_display` est le seul axe de confiance du catalogue : une org sans
-    nom (ou introuvable) ne publie pas d'entrée anonyme."""
+    nom (ou introuvable) ne signe pas d'entrée anonyme. `_publish` signe Otomata
+    depuis que publier est réservé à la plateforme ; la branche d'org de
+    `_author_for` demeure, et c'est elle que ce test exerce."""
+    monkeypatch.setattr(lib.access, "get_user_role", lambda sub: "member")
     monkeypatch.setattr(org_store, "get_org", lambda org_id: {"id": org_id, "name": "  "})
     with pytest.raises(AuthzDenied) as e:
-        _publish("admin-a", 1)
+        lib._author_for(_org_ctx("admin-a", 1))
     assert e.value.code == "unnamed_org"
 
     monkeypatch.setattr(org_store, "get_org", lambda org_id: None)
     with pytest.raises(AuthzDenied) as e:
-        _publish("admin-a", 1)
+        lib._author_for(_org_ctx("admin-a", 1))
     assert e.value.code == "unknown_org"
     assert surface.rows == {}, "rien ne doit être publié"

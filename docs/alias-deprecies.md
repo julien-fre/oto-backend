@@ -136,7 +136,7 @@ qu'aucun `$ref` ne peut viser. Le renommer n'engage personne ; publier un alias
 pour lui inventerait un contrat qui n'a jamais existé.
 
 ⚠️ **`/api/guide-library` n'est PAS `/api/guides/library`.** Le premier est le
-**marché** des guides publiés par les orgs (forkables, table `doctrine_library`) ; le
+**marché** des guides publiés dans la bibliothèque (forkables, table `doctrine_library`) ; le
 second, les guides **plateforme**. Les deux existaient déjà côte à côte sous des noms
 qui se ressemblent ; c'est ce qui interdisait de renommer `/api/doctrines/library` en
 `/api/guides/library` — le nom était pris par un autre objet.
