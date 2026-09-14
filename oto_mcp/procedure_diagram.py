@@ -161,14 +161,124 @@ def avec_le_dessin(body_md: str, courant_md: str) -> str:
     return _MARQUEUR.sub(lambda _m: dessin, body_md)
 
 
+# ── Le dessin est là, mais il ne se dessinera pas ────────────────────────────
+#
+# `WARNING` couvre « rien de dessiné ». Il reste le cas qui coûte le plus cher :
+# l'auteur A dessiné, le bloc passe `is_drawing`, et le parseur du front le refuse
+# quand même — la page rend alors les caractères bruts, un pavé gris là où la
+# procédure devait montrer ses cartes. Le parseur compose pourtant une phrase
+# exacte sur ce qu'il n'a pas su lire, puis la jette. L'auteur (une IA, presque
+# toujours) ne l'apprend jamais et réécrit la même faute à la version suivante.
+#
+# ⚠️ Même compromis que `GLYPHS`/`MIN_GLYPHS` plus haut, et mêmes limites : on ne
+# reparse RIEN. On ne porte que les règles LIGNE À LIGNE — celles qui ne demandent
+# aucun état du parseur, et qui sont chacune le décalque d'un `bail()` précis de
+# `ascii-diagram.ts`. Elles sont choisies pour être un SOUS-ENSEMBLE STRICT : ce
+# qui est signalé ici est toujours refusé là-bas, jamais l'inverse. Les 72
+# procédures publiques qui se dessinent aujourd'hui servent de garde (cf.
+# `tests/test_procedure_diagram_lint.py`) — un lint qui crie sur un dessin correct
+# apprendrait à l'auteur à ignorer TOUS les avertissements.
+#
+# Ce que ça ne promet pas, et qui est dit dans la réponse (`"checked": "lines"`) :
+# un lint propre ne garantit pas que le schéma se dessine. Les refus structurels
+# — une branche qui saute en avant, une boîte que rien n'atteint — demandent le
+# graphe, donc le parseur, donc le front.
+
+_FLECHE = "▼"
+_PUCE = "▪"
+_BOITE = set("┌┐└┘│╔╗╚╝║")
+# « la ligne appartient encore au tracé » — même classe que `STRUCTURAL` du front.
+_STRUCTUREL = re.compile(r"[─-╿▶▼]")
+
+
+def lint_du_trace(block: str) -> list[dict]:
+    """Les fautes visibles ligne à ligne. `[]` = rien de LOCALEMENT faux."""
+    fautes: list[dict] = []
+    une_boite_vue = False
+    for i, ligne in enumerate(block.split("\n"), start=1):
+        # `prepare()` refuse le dessin entier à la première tabulation : elle rend
+        # faux tout index de colonne, donc fausse toute attribution.
+        if "\t" in ligne:
+            fautes.append({"line": i, "rule": "tab",
+                           "says": "a tab makes every column index a lie",
+                           "fix": "indent the drawing with spaces only"})
+            continue
+        if any(c in _BOITE for c in ligne):
+            une_boite_vue = True
+            continue          # une ligne de boîte est lue par une autre branche
+        if _FLECHE in ligne:
+            derniere = ligne.rfind(_FLECHE)
+            # Seul le texte APRÈS la dernière flèche est une étiquette. Entre deux
+            # flèches, il serait rattaché au mauvais arc : le parseur refuse la
+            # ligne, et avec elle le schéma entier.
+            if ligne[:derniere].replace(_FLECHE, "").strip():
+                fautes.append({
+                    "line": i, "rule": "text-between-arrows",
+                    "says": "text sits between two flow arrows, so it cannot be told "
+                            "which branch it labels",
+                    "fix": "label only after the LAST arrow on the row — or, for a "
+                           "branch that leaves the lane, draw a named exit "
+                           "(`\u251c\u2500\u2500\u2500\u25b6  \u25aa reason`)",
+                })
+            continue
+        if (une_boite_vue and ligne.strip()
+                and not _STRUCTUREL.search(ligne) and _PUCE not in ligne):
+            fautes.append({"line": i, "rule": "loose-text",
+                           "says": "a line of prose inside the drawing",
+                           "fix": "move it into a box, or into the margin of one"})
+    return fautes
+
+
+def _trace_et_offset(body_md: str) -> tuple[str, int] | None:
+    """Le tracé rendu par la page, et la ligne du corps où il commence."""
+    etendue = trouver_le_dessin(body_md or "")
+    if etendue is None:
+        return None
+    debut, fin = etendue
+    # `trouver_le_dessin` rend l'étendue FENCES COMPRISES. Le lint ne doit voir
+    # que le tracé : la ligne d'ouverture porte le ``` et la fermante est une
+    # ligne sans glyphe, que `loose-text` prendrait pour de la prose égarée.
+    lignes = body_md[debut:fin].split("\n")[1:]
+    while lignes and lignes[-1].strip().startswith("```"):
+        lignes.pop()
+    return "\n".join(lignes), (body_md or "").count("\n", 0, debut) + 2
+
+
+# Au plus deux fautes nommées : la première est presque toujours la cause, et un
+# mur d'avertissements se lit comme du bruit.
+_MAX_FAUTES = 2
+
+
+def _phrase(fautes: list[dict]) -> str:
+    """Les fautes, dites comme les autres avertissements de ce module : une phrase."""
+    dites = "; ".join(f"line {f['line']}: {f['says']} — {f['fix']}"
+                      for f in fautes[:_MAX_FAUTES])
+    reste = len(fautes) - _MAX_FAUTES
+    et_le_reste = f" (+{reste} more)" if reste > 0 else ""
+    return ("the drawing will NOT render as the flow figure, the page will show the "
+            f"raw characters instead — {dites}{et_le_reste}. Line-level checks only: "
+            "a clean result is not a promise it renders, see the "
+            "`procedure-flowchart` guide for the shapes the grammar cannot say.")
+
+
 def diagram_check(body_md: str) -> dict:
     """Check croisé à l'écriture, dans la forme des autres (`slots_check`,
     `write_check`) : la clé est TOUJOURS présente, `None` = le check a tourné et
     n'a rien trouvé à dire. Best-effort — un check ne casse jamais une écriture."""
     try:
         combien = compter_les_dessins(body_md)
-        return {"diagram_warning": WARNING if combien == 0
-                else DOUBLE if combien > 1 else None}
+        if combien == 0:
+            return {"diagram_warning": WARNING}
+        if combien > 1:
+            return {"diagram_warning": DOUBLE}
+        # Un seul dessin : reste à dire s'il se dessinera.
+        trouve = _trace_et_offset(body_md)
+        fautes = lint_du_trace(trouve[0]) if trouve else []
+        if not fautes:
+            return {"diagram_warning": None}
+        for f in fautes:
+            f["line"] += trouve[1] - 1        # ligne du CORPS, pas du bloc
+        return {"diagram_warning": _phrase(fautes)}
     # noqa: SILENT — contrôle de forme optionnel : pas d'avertissement plutôt qu'un faux
     except Exception:  # noqa: BLE001 — cf. `slots_check`
         return {"diagram_warning": None}
