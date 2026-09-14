@@ -157,7 +157,23 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
             "quota_used_today": used,
             # limit 0 = illimité (convention default_quota) → None pour que l'UI
             # affiche « ∞ », pas « /0 » (qui se lit comme un quota épuisé).
-            "quota_daily": (limit or None) if grant else None,
+            #
+            # ⚠️ Gaté sur le barreau QUI RÉPOND, pas sur l'existence d'un barreau
+            # plateforme. `grant` est le premier barreau `platform` des `hits`, et
+            # les hits portent TOUTE la cascade, pas le seul gagnant : pour un
+            # connecteur `platform_key_open` (free tier, ouvert à tous), il est donc
+            # TOUJOURS non-None — même chez qui est servi par sa propre clé, celle
+            # de son org ou celle de son tenant. Le rendre suffisant faisait annoncer
+            # un plafond à des gens à qui il ne s'applique pas : `resolve_api_key`
+            # rend AVANT `_win_quota` dès que `win.mode != "platform"`, et
+            # `record_platform_usage` n'est appelé que sous `if is_platform` — donc
+            # ni compté ni opposé. Vécu sur une org servie par une clé de TENANT :
+            # « 0/200 aujourd'hui » sur un connecteur sans le moindre plafond.
+            # Le plafond d'une clé de tenant, lui, vit sur l'arête tenant→org
+            # (`tenant_budget`, 0 = illimité) et n'a pas encore de champ ici.
+            "quota_daily": ((limit or None)
+                            if grant and winner is not None and winner.mode == "platform"
+                            else None),
             # Clé d'équipe « à portée » (membre d'une équipe qui a le secret, sans
             # l'avoir active) : rien ne résout mais une clé existe → l'UI doit le
             # dire au lieu d'un « pas de clé » sec.
