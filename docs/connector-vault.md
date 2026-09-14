@@ -303,7 +303,7 @@ Enveloppe **AES-256-GCM**, **obligatoire** (`set_credential`/`_pk_encrypt` chiff
 
 ## Palier org
 
-Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitlements` ; `org_store/` (`orgs.py` la fiche, `members.py` l'appartenance, `vault.py` les secrets) ; 12 meta-tools `oto_admin_*` (`tools/orgs.py`). Entité = **user ET org, 2 niveaux** (perso prime sur org).
+Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitlements` ; `org_store/` (`orgs.py` la fiche, `members.py` l'appartenance, `vault.py` les secrets). ⚠️ Le credential d'org se pose désormais **uniquement** par `PUT /api/orgs/{id}/secrets/{provider}` (`capabilities/orgs/secrets.py`) : les 12 meta-tools `oto_admin_*` de `tools/orgs.py` ont été retirés le 2026-06-13 (ADR 0009 barreau 2), le module n'existe plus. Entité = **user ET org, 2 niveaux** (perso prime sur org).
 
 ## Folds des secrets de session (cible : coffre unique)
 
