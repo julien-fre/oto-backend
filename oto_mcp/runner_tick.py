@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 
 from . import db, runner_models
+from .capabilities import _instruction
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +80,24 @@ def _tick() -> int:
             "procedure": t["procedure"],
             "project_id": t["project_id"],
             "tools": t.get("tools") or [],
-            "input": t.get("input"),
+            # ⚠️ DÉRIVÉE quand le déclencheur n'en porte pas. Sans cette ligne
+            # le travail part sans instruction de départ, et le worker le refuse
+            # — il exécute une instruction, il n'en compose pas (_instruction.py,
+            # tranché le 02/09). Constaté en production le 14/09 : les six
+            # déclencheurs de l'org 196 portent `input = NULL`, donc CHACUNE de
+            # leurs occurrences échouait, silencieusement, depuis qu'un défaut
+            # vivait dans le runner et en a été retiré.
+            #
+            # `create` compose bien la sienne (`inp.input or derivee(...)`) —
+            # mais c'est le SEUL site qui le fait : tout déclencheur né avant ce
+            # jour-là n'en a jamais reçu, et aucune mise à jour ne lui en donne.
+            # Réparer ici plutôt que par une migration couvre d'un coup les rangs
+            # anciens ET le cas où quelqu'un vide l'invite depuis le produit.
+            #
+            # ⚠️ Toujours par `_instruction`, jamais rédigée sur place : une
+            # variante écrite ici rouvrirait le « second domicile du métier » que
+            # ce module existe pour fermer.
+            "input": t.get("input") or _instruction.derivee(t["procedure"]),
             "label": t.get("label") or f"planifié — {t['procedure']}",
             "max_steps": t.get("max_steps"),
             "trigger_id": t["id"],
