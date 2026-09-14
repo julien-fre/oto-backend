@@ -389,7 +389,6 @@ def armement(monkeypatch):
     monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF, "_lignes_visees", lambda *a, **k: None)
     vu = {"stockee": {"id": 1, "status": "draft", "procedure": "p", "input": "x",
                       "model": "mistral-large-2512"}}
     monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: dict(vu["stockee"]))

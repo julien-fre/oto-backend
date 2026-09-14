@@ -66,7 +66,6 @@ from .rowlock import (  # noqa: F401
     datastore_claim_next,
     datastore_claim_row,
     datastore_claimed_rows,
-    datastore_count_claimable,
     datastore_release_by_run,
     datastore_release_claim,
     datastore_row_within,

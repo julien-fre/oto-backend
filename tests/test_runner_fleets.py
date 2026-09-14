@@ -121,7 +121,7 @@ def test_aucun_modele_servi_ne_porte_de_monnaie():
     `max_cost_usd`. Un test qui vise le bon principe et le mauvais objet est vert et
     inutile. Il balaie maintenant TOUS les modèles servis."""
     monnaie = ("usd", "cost", "euro", "eur", "price", "prix")
-    for modele in (RF.Fleet, RF.FleetState, RF.FleetInput, RF.FleetOut):
+    for modele in (RF.Fleet, RF.FleetCard, RF.FleetState, RF.FleetInput, RF.FleetOut):
         fautifs = [c for c in modele.model_fields if any(m in c for m in monnaie)]
         assert not fautifs, f"{modele.__name__} porte de la monnaie : {fautifs}"
     assert "usage_tokens" in RF.FleetState.model_fields
@@ -343,7 +343,6 @@ def test_l_armement_MONTRE_le_pire_cas(monkeypatch):
     from oto_mcp import db, roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF, "_lignes_visees", lambda *a, **k: 0)
     monkeypatch.setattr(db, "get_fleet", lambda *a, **k: {
         "id": 1, "status": "draft", "procedure": "p", "input": "x"})
     monkeypatch.setattr(db, "armer", lambda *a, **k: {
@@ -358,7 +357,6 @@ def test_sans_borne_le_pire_cas_est_NULL_et_non_un_nombre(monkeypatch):
     from oto_mcp import db, roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF, "_lignes_visees", lambda *a, **k: 0)
     monkeypatch.setattr(db, "get_fleet", lambda *a, **k: {
         "id": 1, "status": "draft", "procedure": "p", "input": "x"})
     monkeypatch.setattr(db, "armer", lambda *a, **k: {
@@ -405,3 +403,91 @@ def test_la_temperature_ne_se_change_PAS_en_vol():
     laquelle vient de quel régime."""
     from oto_mcp.db.runner_fleets import CHAMPS_MODIFIABLES
     assert "temperature" not in CHAMPS_MODIFIABLES
+
+
+# ── op=list rend la CARTE, get la déclaration (13/09/2026) ────────────────────
+# Relevé par l'opérateur des campagnes : une vingtaine de passages, chacun rendu avec
+# son instruction complète (~2 Ko) et son allowlist, dans une liste qui ne sert qu'à
+# choisir quoi ouvrir. Le détail reste à `get`, inchangé.
+
+_CARTE = {"id", "label", "status", "procedure", "namespace", "row_filter", "max_rows",
+          "model", "stop_reason", "armed_at", "started_at", "stopping_at", "stopped_at",
+          "created_at", "input_sha256"}
+
+
+def _ligne(**surcharges) -> dict:
+    """Une flotte telle que la base la rend : EXACTEMENT les colonnes du SELECT servi.
+    Une doublure qui porterait d'autres colonnes éprouverait la projection d'une ligne
+    qui n'existe pas."""
+    from oto_mcp.db import runner_fleets as dbf
+    ligne = {
+        "id": 41, "org_id": 2, "sub": "alexis", "label": "vague", "procedure": "p",
+        "project_id": 9, "tools": ["data_rows", "data_write"],
+        "input": "Lis la procédure `p` et applique-la.", "max_steps": 40,
+        "namespace": "vivier", "row_filter": {"lot": "a"}, "provider": "mistral",
+        "model": "mistral-large-2512", "temperature": 0.0, "workers": 3, "max_rows": 100,
+        "max_tokens": 1_000_000, "max_consecutive_failures": 5,
+        "max_tokens_per_row": 50_000, "status": "running", "stop_reason": None,
+        "armed_at": "2026-09-13 08:00:00", "started_at": "2026-09-13 08:00:05",
+        "stopping_at": None, "heartbeat_at": None, "stopped_at": None,
+        "created_at": "2026-09-12 17:00:00"}
+    assert set(ligne) == {c.strip() for c in dbf._COLS.split(",")}, (
+        "la doublure ne porte plus les colonnes du SELECT servi")
+    ligne.update(surcharges)
+    return ligne
+
+
+def _lister(monkeypatch, lignes) -> dict:
+    monkeypatch.setattr(RF.db, "list_fleets",
+                        lambda org_id, statut=None: [dict(l) for l in lignes])
+    return _appel(_ctx(), op="list")
+
+
+def test_list_rend_la_CARTE_et_rien_d_autre(monkeypatch):
+    (carte,) = _lister(monkeypatch, [_ligne()])["fleets"]
+    assert set(carte) == _CARTE
+    assert "input" not in carte and "tools" not in carte
+    assert set(RF.FleetCard.model_fields) == _CARTE, (
+        "le schéma servi de la carte et ce que le handler garde sont le même ensemble")
+
+
+def test_l_empreinte_est_celle_du_texte_que_get_rend(monkeypatch):
+    import hashlib
+    ligne = _ligne()
+    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, oid: dict(ligne))
+    get = _appel(_ctx(), op="get", fleet_id=41)["fleet"]
+    (carte,) = _lister(monkeypatch, [ligne])["fleets"]
+    assert carte["input_sha256"] == hashlib.sha256(get["input"].encode("utf-8")).hexdigest()
+
+
+def test_deux_instructions_se_distinguent_et_l_absence_n_a_pas_d_empreinte(monkeypatch):
+    """Même texte ⟹ même empreinte ; un caractère d'écart ⟹ une autre ; aucune
+    instruction (`null`) ⟹ `null`."""
+    cartes = _lister(monkeypatch, [_ligne(id=1, input="A"), _ligne(id=2, input="A"),
+                                   _ligne(id=3, input="A."), _ligne(id=4, input=None)]
+                     )["fleets"]
+    e = {c["id"]: c["input_sha256"] for c in cartes}
+    assert e[1] == e[2] != e[3]
+    assert e[4] is None
+
+
+def test_la_projection_NOMME_ce_que_la_carte_ecarte_et_ou_le_lire(monkeypatch):
+    out = _lister(monkeypatch, [_ligne()])
+    ecartes = set(_ligne()) - _CARTE
+    assert set(out["projection"]["omitted"]) == ecartes
+    assert {"input", "tools"} <= ecartes
+    indice = out["projection"]["hint"]
+    assert "op=get" in indice
+    assert "fields" not in indice, (
+        "l'indice par défaut du seam prescrit `fields=[\"*\"]`, que cette capacité "
+        "n'accepte pas : un agent qui le suivrait se ferait refuser")
+
+
+def test_get_rend_la_declaration_telle_quelle(monkeypatch):
+    ligne = _ligne()
+    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, oid: dict(ligne))
+    assert _appel(_ctx(), op="get", fleet_id=41) == {"fleet": ligne}
+
+
+def test_une_liste_vide_ne_fabrique_pas_de_notice(monkeypatch):
+    assert _lister(monkeypatch, []) == {"fleets": [], "projection": None}

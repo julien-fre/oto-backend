@@ -164,6 +164,49 @@ def test_la_flotte_elle_meme_se_serialise_sur_list_et_get(client, org, flotte):
     assert any(f["id"] == flotte["id"] for f in lot)
 
 
+# ── op=list rend la CARTE, get la déclaration — sur la route (13/09/2026) ─────
+
+def test_list_rend_la_carte_et_get_la_declaration_sur_la_route(client, org, flotte):
+    """La projection et l'empreinte rejouées là où elles se sérialisent : une clé
+    rendue par le handler peut très bien ne pas atteindre le client."""
+    import hashlib
+    from oto_mcp.capabilities.runner_fleets import FleetCard
+    h = _h(org["membre"])
+    r = client.post(ROUTE, headers=h, json={"op": "list"})
+    assert r.status_code == 200, r.text
+    corps = r.json()
+    carte = next(f for f in corps["fleets"] if f["id"] == flotte["id"])
+    assert set(carte) == set(FleetCard.model_fields)
+    get = client.post(ROUTE, headers=h,
+                      json={"op": "get", "fleet_id": flotte["id"]}).json()["fleet"]
+    assert get["input"] and get["tools"] == ["oto_kb"], "get rend la déclaration entière"
+    assert carte["input_sha256"] == hashlib.sha256(get["input"].encode("utf-8")).hexdigest()
+    assert {"input", "tools"} <= set(corps["projection"]["omitted"])
+    assert "op=get" in corps["projection"]["hint"]
+    assert "rows_at_launch" not in carte and "rows_at_launch" not in get
+
+
+def test_armer_n_ecrit_ni_ne_sert_plus_le_denominateur(client, org):
+    """La colonne reste en base, sans écrivain ni lecteur : une valeur posée avant le
+    retrait SURVIT à l'armement (ni recompte ni remise à NULL) et n'est pas rendue."""
+    from oto_mcp.db._conn import _connect
+    h = _h(org["membre"])
+    fid = client.post(ROUTE, headers=h, json={
+        "op": "create", "label": "sans-denominateur", "procedure": "p",
+        "tools": ["oto_kb"], "namespace": "un-tableau"}).json()["fleet"]["id"]
+    with _connect() as c:
+        c.execute("UPDATE runner_fleets SET rows_at_launch = 12 WHERE id = %s", (fid,))
+        c.commit()
+    r = client.post(ROUTE, headers=h, json={"op": "launch", "fleet_id": fid})
+    assert r.status_code == 200, r.text
+    assert r.json()["fleet"]["status"] == "armed"
+    assert "rows_at_launch" not in r.json()["fleet"]
+    with _connect() as c:
+        reste = c.execute("SELECT rows_at_launch FROM runner_fleets WHERE id = %s",
+                          (fid,)).fetchone()
+    assert reste["rows_at_launch"] == 12
+
+
 # ── les refus DÉCLARÉS, rejoués sur la route servie ──────────────────────────
 
 def _refus(client, org, corps: dict) -> tuple[int, str]:

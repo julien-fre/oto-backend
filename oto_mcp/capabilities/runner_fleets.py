@@ -52,13 +52,14 @@ ne pouvait lire, et une campagne annoncée « en arrêt » continuait de dépens
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from . import _cle_exigee, _instruction, _modele
-from .. import access, db, runner_models
+from .. import access, db, output_projection, runner_models
 from ..tool_visibility import BETA_OPTION
 
 logger = logging.getLogger(__name__)
@@ -145,15 +146,6 @@ class Fleet(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     workers: Optional[int] = None
-    rows_at_launch: Optional[int] = Field(
-        None,
-        description=(
-            "Combien de lignes visaient le passage au moment de l'armement — le "
-            "DÉNOMINATEUR de son avancement, relu à chaque armement. Ce n'est pas "
-            "une borne (`max_rows` est le plafond déclaré) : c'est ce que la table "
-            "contenait vraiment. `null` = pas de cible, ou compte illisible — "
-            "« inconnu », jamais zéro."),
-    )
     max_rows: Optional[int] = None
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
@@ -166,6 +158,33 @@ class Fleet(BaseModel):
     heartbeat_at: Optional[str] = None
     stopped_at: Optional[str] = None
     created_at: Optional[str] = None
+
+
+class FleetCard(BaseModel):
+    """La CARTE d'une flotte, telle que `op=list` la sert : de quoi adresser, trier et
+    écarter un passage sans l'ouvrir. La déclaration complète — l'instruction, les
+    outils, les bornes de dépense, le contexte d'exécution — se lit par `op=get`.
+
+    `input_sha256` tient lieu d'instruction : deux passages à la même empreinte portent
+    le même texte. `null` = aucune instruction.
+
+    ⚠️ Ses champs SONT la projection : le handler garde exactement ceux-ci, et le schéma
+    servi les annonce — les deux ne peuvent pas diverger."""
+    id: int
+    label: Optional[str] = None
+    status: Optional[str] = None
+    procedure: Optional[str] = None
+    namespace: Optional[str] = None
+    row_filter: Optional[dict] = None
+    max_rows: Optional[int] = None
+    model: Optional[str] = None
+    stop_reason: Optional[str] = None
+    armed_at: Optional[str] = None
+    started_at: Optional[str] = None
+    stopping_at: Optional[str] = None
+    stopped_at: Optional[str] = None
+    created_at: Optional[str] = None
+    input_sha256: Optional[str] = None
 
 
 class FleetState(BaseModel):
@@ -194,7 +213,10 @@ class FleetOut(BaseModel):
     # lecteur, et l'arrêt resterait une intention.
     stop_requested: Optional[bool] = None
     beat_taken: Optional[bool] = None
-    fleets: Optional[list[Fleet]] = None
+    # `list` : une CARTE par flotte, et `projection` qui NOMME les champs écartés et
+    # le verbe qui les rend (`op=get`). `null` sur une liste vide : rien n'a été écarté.
+    fleets: Optional[list[FleetCard]] = None
+    projection: Optional[dict] = None
     state: Optional[FleetState] = None
     # `launch` : le PIRE CAS du passage, `max_rows × max_tokens_per_row`, dit au
     # moment où l'on engage la dépense. `null` quand une des deux bornes manque —
@@ -205,36 +227,28 @@ class FleetOut(BaseModel):
     budget_max_tokens: Optional[int] = None
 
 
-def _lignes_visees(ctx: ResolvedCtx, fleet_id: int) -> Optional[int]:
-    """Combien de lignes le passage vise MAINTENANT — lu sur la table, avec le
-    `row_filter` figé à la déclaration, au moment de l'armer.
+# La phrase servie dans `projection.hint`. ⚠️ Pas l'indice par défaut du seam : il
+# prescrit `fields=["*"]`, un paramètre que cette capacité n'a pas — un agent qui le
+# suivrait se ferait refuser son appel.
+_INDICE_CARTE = ("Carte de tri : `op=get` avec `fleet_id` rend la déclaration complète "
+                 "(`input`, `tools`, bornes, contexte d'exécution).")
 
-    C'est le seul instant où ce compte est vrai : les agents le font baisser dès
-    la première ligne traitée, donc personne ne peut le reconstituer après coup.
 
-    ⚠️ Fail-OPEN, et tracé. Une table supprimée ou un filtre devenu invalide ne
-    doit pas empêcher d'armer : le passage part avec un dénominateur inconnu, ce
-    que l'écran sait dire. Refuser ici transformerait un défaut d'affichage en
-    panne de lancement.
+def _cartes(fleets: list[dict]) -> tuple[list[dict], Optional[dict]]:
+    """`op=list` : une CARTE par flotte, et la notice qui nomme ce qu'elle écarte.
 
-    ⚠️ Compté sous l'identité de QUI ARME, pas de l'agent qui travaillera — ce
-    sont deux regards différents sur la même table (filtres de champs, partages).
-    Le compte dit donc « ce que voyait celui qui a lancé », et c'est suffisant
-    pour un dénominateur d'écran ; ça ne le serait pas pour une borne, et c'est
-    une des raisons pour lesquelles il n'en est pas une (cf. le banc qui sépare
-    `rows_at_launch` de `max_rows`).
-    """
-    f = db.get_fleet(fleet_id, ctx.org_id)
-    if not f or not f.get("namespace"):
-        return None
-    try:
-        from ..datastore.core import make_store
-        return make_store(ctx.sub).count_rows(f["namespace"],
-                                              filter=f.get("row_filter") or None)
-    except Exception:
-        logger.warning("compte de lignes illisible pour la flotte %s (table %s)",
-                       fleet_id, f.get("namespace"), exc_info=True)
-        return None
+    Relevé par l'opérateur des campagnes sur une org réelle : une vingtaine de
+    passages, chacun rendu avec son instruction complète (~2 Ko) et son allowlist,
+    dans une liste qui ne sert qu'à choisir quoi ouvrir. La projection passe par le
+    seam commun, qui NOMME ce qu'il retire ; l'empreinte est prise AVANT, sur le texte
+    exact que `get` rend."""
+    avec_empreinte = [
+        dict(f, input_sha256=(None if f.get("input") is None else
+                              hashlib.sha256(f["input"].encode("utf-8")).hexdigest()))
+        for f in fleets]
+    return output_projection.summarize(
+        avec_empreinte, body_fields=(), fields=tuple(FleetCard.model_fields),
+        always=("id",), hint=_INDICE_CARTE)
 
 
 def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
@@ -307,7 +321,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             max_tokens_per_row=inp.max_tokens_per_row)}
 
     if inp.op == "list":
-        return {"fleets": db.list_fleets(ctx.org_id, inp.status)}
+        cartes, projection = _cartes(db.list_fleets(ctx.org_id, inp.status))
+        return {"fleets": cartes, "projection": projection}
 
     if inp.fleet_id is None:
         raise AuthzDenied(400, "missing_fields", f"{inp.op} exige `fleet_id`")
@@ -361,16 +376,16 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if avant and avant.get("procedure") and not (avant.get("input") or "").strip():
             db.update_fleet(inp.fleet_id, ctx.org_id, {"input": _instruction.de_file(
                 avant["procedure"], avant.get("namespace"), avant.get("row_filter"))})
-        # ⚠️ UN SEUL armement, qui porte le dénominateur (#836). La fusion des deux
-        # lots en avait produit deux : #873 arme après avoir réparé, #836 arme avec
-        # `rows_at_launch` — les garder tous les deux armait avant ET après la
-        # réparation, ce qui défait précisément l'ordre que #873 existe pour tenir.
+        # ⚠️ UN SEUL armement, APRÈS la réparation : l'ordre que #873 existe pour tenir.
+        # Il ne compte plus les lignes visées (13/09/2026) : ce compte ne voyait que le
+        # `row_filter`, pas le périmètre déclaré du tableau, et annonçait du travail
+        # qu'aucune réservation ne servait. La plateforme ne compte pas à la place de
+        # l'agent, qui découvre une file vide en réservant.
         # ⚠️ La borne se vérifie ICI aussi, et sur la flotte EN BASE — pas sur
         # l'entrée. Une campagne déclarée avant cette garde, ou modifiée depuis,
         # n'a rien qui l'arrête ; et c'est l'armement qui engage la dépense, pas
         # la déclaration. Le refus nomme sa destination : `op=update`.
-        f = db.armer(inp.fleet_id, ctx.org_id,
-                     rows_at_launch=_lignes_visees(ctx, inp.fleet_id))
+        f = db.armer(inp.fleet_id, ctx.org_id)
         if not f:
             actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
             if not actuelle:
@@ -579,7 +594,9 @@ CAPABILITIES += [
             "deduced from it; omitted, the worker runs its own —, and "
             "limits `max_rows` / `max_tokens` / `max_consecutive_failures` / "
             "`max_tokens_per_row` — budgets are counted in TOKENS, never money) / "
-            "list (optionally filtered by `status`) / get / "
+            "list (optionally filtered by `status`; one CARD per fleet — `input_sha256` "
+            "in place of `input`, and `projection` names what it leaves out) / get (the "
+            "full declaration) / "
             "state / update. "
             # ⚠️ CE PARAGRAPHE EXISTE PARCE QUE LE NOM DU VERBE INDUIT EN ERREUR
             # TOUT SEUL. « launch » invite à écrire « lance » — trois personnes

@@ -139,6 +139,25 @@ _SURFACE = """
     upsert_row_embedding upsert_user usage users verify_api_token visibility
 """.split()
 
+# Retraits VOLONTAIRES, déclarés avec leur raison. Un nom né APRÈS le relevé ci-dessus
+# n'y figure pas : sans cette table, son retrait ne laisserait aucune trace ici, et le
+# diff ne dirait pas ce qu'on a fait.
+_RETIRES = {
+    "datastore_count_claimable": (
+        "13/09/2026 — le comptage « ce que la file servirait » n'avait aucun appelant ; "
+        "la plateforme ne compte pas à la place de l'agent"),
+}
+
+
+def test_un_retrait_declare_est_effectif_et_ne_contredit_pas_l_inventaire():
+    """Déclarer un retrait engage deux choses : le nom a quitté `db.<nom>`, et il ne
+    figure pas dans l'inventaire figé — sinon ce fichier affirmerait les deux à la fois.
+    Un nom qui REVIENT fait rougir : on retire alors sa déclaration, en le sachant."""
+    import oto_mcp.db as db
+    revenus = sorted(n for n in _RETIRES if hasattr(db, n))
+    assert not revenus, f"retrait déclaré mais nom toujours atteignable : {revenus}"
+    assert not set(_RETIRES) & set(_SURFACE)
+
 
 def test_no_public_name_disappears():
     import oto_mcp.db as db

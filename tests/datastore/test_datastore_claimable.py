@@ -354,6 +354,52 @@ def test_un_perimetre_a_null_est_une_absence():
     assert S.claimable_of(_schema(PERIMETRE)) == PERIMETRE
 
 
+# ── relogés du banc du comptage réservable, supprimé le 13/09/2026 ────────────
+# Trois garanties qui ne parlaient pas de compter : elles gardent la réservation
+# elle-même, et elles EXÉCUTENT le code — aucune ne lit un source.
+
+def test_le_perimetre_de_la_reservation_porte_ses_composantes():
+    """Le tableau visé, le filet de PLATEFORME (`abandon_reason IS NULL`, indépendant du
+    filtre du client), les baux actifs, et le filtre de l'appelant — chaque marqueur
+    avec sa valeur."""
+    from oto_mcp.db import rowlock
+    where, params = rowlock._perimetre_reclamable(
+        7, [{"field": "statut", "op": "eq", "value": "a_faire"}])
+    assert "ns_id = %s" in where and params[0] == 7
+    assert "abandon_reason IS NULL" in where
+    assert "claimed_until IS NULL OR claimed_until < NOW()" in where
+    assert "a_faire" in params
+    assert where.count("%s") == len(params), "un marqueur sans valeur, ou l'inverse"
+
+
+def test_un_perimetre_illisible_accuse_le_SCHEMA_et_dit_de_ne_pas_reessayer():
+    """⚠️ Incident du 09/09/2026 : un tableau portait `claimable: ["a_traiter"]`, une
+    liste là où la grammaire attend `{col: val}`. La réservation levait un
+    `AttributeError` nu, et dix agents ont conclu que leur APPEL était fautif : 60 refus
+    sur 81 appels, jusqu'au plafond de tours, sans une écriture.
+
+    Un refus qui décrit la forme attendue d'un paramètre fait chercher la faute chez qui
+    appelle. Ici elle est dans une déclaration qu'il ne contrôle pas : c'est la PHRASE
+    qu'on éprouve — où est la faute, qui la corrige, et ne pas insister."""
+    from oto_mcp.datastore import claimable
+    with pytest.raises(ValueError) as exc:
+        claimable.clauses(["a_traiter"])
+    msg = str(exc.value)
+    assert "SCHÉMA" in msg, "le refus doit nommer le coupable, pas la forme attendue"
+    assert "Ton appel n'y est pour rien" in msg, "sans ça, l'agent varie sa formulation"
+    assert "data_patch_schema" in msg, "le refus doit dire par quel geste on corrige"
+
+
+def test_un_perimetre_bien_forme_se_traduit_en_clause_et_son_absence_en_rien():
+    """Traduit par le moteur de filtre que le pick emploie, jusqu'à la valeur liée."""
+    from oto_mcp.datastore import claimable
+    from oto_mcp.db.query import _ds_filter_clauses
+    clauses = claimable.clauses({"statut": "a_traiter"})
+    sql, params = _ds_filter_clauses(clauses)
+    assert sql and "a_traiter" in params
+    assert claimable.clauses(None) == []
+
+
 def test_la_pose_refuse_sur_le_tableau_reel(live):
     st, ns, _, _ = _table(_schema())
     with pytest.raises(ValueError) as e:

@@ -5,11 +5,13 @@ Deux manques, tous deux découverts en dessinant l'écran plutôt qu'en lisant l
 code — et tous deux du même genre : une donnée qui n'est vraie qu'à un instant
 et que personne ne notait.
 
-1. **Le DÉNOMINATEUR d'un passage.** « 1 240 lignes faites » ne se lit pas sans
-   « sur 2 000 ». Le compte des lignes visées n'est vrai qu'à l'armement : dès la
-   première ligne traitée, les agents le font baisser. Le reconstituer après coup
-   est impossible — et diviser par `max_rows` (un PLAFOND) a déjà produit un coût
-   par ligne faux d'un facteur 46 sur un passage de démo.
+1. **Le DÉNOMINATEUR d'un passage — RETIRÉ le 13/09/2026.** `rows_at_launch` comptait
+   à l'armement les lignes du `row_filter`, et rien d'autre : ni le périmètre déclaré
+   du tableau (`lifecycle.claimable`), ni les baux, ni les lignes sorties de la file.
+   Une campagne dont le filtre contredisait ce périmètre annonçait douze lignes pendant
+   que chacune de ses réservations rendait `null`. Décision : la plateforme ne compte
+   pas à la place de l'agent. Le compte n'est plus calculé, ni écrit, ni servi ; la
+   colonne reste en base. Les bancs ci-dessous gardent ce RETRAIT.
 2. **D'où vient un travail.** La file mélange trois origines et ne les
    distinguait qu'implicitement. Trier côté client ne marche PAS : la file est
    paginée sur `id DESC` et un passage de 2 000 lignes remplit la première page à
@@ -49,78 +51,71 @@ def _ctx(sub="alexis", org_id=2):
     return ResolvedCtx(sub=sub, org_id=org_id)
 
 
-# ── le dénominateur ───────────────────────────────────────────────────────────
+# ── le dénominateur : RETIRÉ ──────────────────────────────────────────────────
 
-def test_armer_compte_les_lignes_visees_et_les_passe_a_la_transition(monkeypatch):
-    """Le compte est lu AU MOMENT d'armer, avec le filtre figé de la flotte."""
-    vus = {}
+def test_le_denominateur_n_est_plus_servi_nulle_part():
+    """Ni la ligne que rendent les verbes (le SELECT de `db/runner_fleets`), ni le
+    schéma servi de la flotte, ni sa carte de liste. Un champ resté au schéma sans
+    être rendu promettrait un compte que plus personne ne calcule."""
+    from oto_mcp.db import runner_fleets as dbf
+    assert "rows_at_launch" not in {c.strip() for c in dbf._COLS.split(",")}
+    for modele in (RF.Fleet, RF.FleetCard, RF.FleetOut):
+        assert "rows_at_launch" not in modele.model_fields, modele.__name__
+    assert "rows_at_launch" not in RF.db.CHAMPS_MODIFIABLES
+
+
+def test_armer_n_ecrit_plus_le_compte(monkeypatch):
+    """L'UPDATE tel qu'il part vers la base : aucune écriture de la colonne — ni un
+    compte, ni un NULL qui effacerait l'ancienne valeur."""
+    import inspect
+    from oto_mcp.db import runner_fleets as dbf
+    vu = {}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, params=()):
+            vu["sql"], vu["params"] = sql, params
+            return self
+
+        def fetchone(self):
+            return {"id": 7, "status": "armed"}
+
+    monkeypatch.setattr(dbf, "_connect", lambda: _Conn())
+    assert dbf.armer(7, 2) == {"id": 7, "status": "armed"}
+    assert "rows_at_launch" not in vu["sql"]
+    assert vu["params"] == (7, 2)
+    assert list(inspect.signature(dbf.armer).parameters) == ["fleet_id", "org_id"]
+
+
+def test_lancer_ne_compte_rien_et_arme_avec_la_flotte_et_son_org_seules(monkeypatch):
+    """`launch` n'ouvre plus le tableau visé. La doublure d'`armer` épingle sa signature
+    À DESSEIN : un argument de compte réintroduit ferait lever l'appel au lieu de
+    passer inaperçu."""
+    def _jamais(*a, **k):
+        raise AssertionError("l'armement a ouvert le tableau visé pour y compter")
+
+    monkeypatch.setattr("oto_mcp.datastore.core.make_store", _jamais)
     monkeypatch.setattr(RF.db, "get_fleet", lambda fid, oid: {
-        "id": fid, "namespace": "prospects", "row_filter": {"statut": "a_traiter"}})
-
-    class _Store:
-        def count_rows(self, ns, *, filter=None):
-            vus["ns"], vus["filter"] = ns, filter
-            return 2000
-
-    monkeypatch.setattr("oto_mcp.datastore.core.make_store", lambda sub: _Store())
-    # ⚠️ `update`, pas `setdefault` : `setdefault` REND la valeur posée, donc
-    # `2000 or {...}` rendait 2000 et la doublure servait un int à la place de la
-    # flotte. Inerte tant que le handler ne relisait pas son retour ; depuis qu'il
-    # y calcule le pire cas (`70f9ecb6`), il explose. Une doublure qui rend autre
-    # chose que son original ne prouve rien — elle attend le premier lecteur.
-    monkeypatch.setattr(RF.db, "armer", lambda fid, oid, rows_at_launch=None:
-                        vus.update(rows=rows_at_launch) or {"id": fid, "status": "armed"})
-    monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
-    monkeypatch.setattr(RF, "_run_courant", lambda: None)
-
-    RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=7))
-    assert vus["ns"] == "prospects"
-    assert vus["filter"] == {"statut": "a_traiter"}
-    assert vus["rows"] == 2000
-
-
-def test_une_table_illisible_n_empeche_PAS_d_armer(monkeypatch):
-    """Fail-OPEN : le passage part avec un dénominateur inconnu (`None`), jamais
-    zéro — un zéro se lirait « la table est vide », ce qui est une autre affirmation.
-    Refuser ici transformerait un défaut d'affichage en panne de lancement."""
-    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, oid: {
-        "id": fid, "namespace": "table-supprimee", "row_filter": None})
-
-    class _Store:
-        def count_rows(self, ns, *, filter=None):
-            raise RuntimeError("datastore inconnu")
-
-    monkeypatch.setattr("oto_mcp.datastore.core.make_store", lambda sub: _Store())
+        "id": fid, "status": "draft", "procedure": "p", "input": "x",
+        "namespace": "prospects", "row_filter": {"statut": "a_traiter"}})
     recu = {}
-    monkeypatch.setattr(RF.db, "armer", lambda fid, oid, rows_at_launch=None:
-                        recu.update(rows=rows_at_launch) or {"id": fid, "status": "armed"})
+
+    def _armer(fid, oid):
+        recu["args"] = (fid, oid)
+        return {"id": fid, "status": "armed", "max_rows": None, "max_tokens_per_row": None}
+
+    monkeypatch.setattr(RF.db, "armer", _armer)
     monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
 
     out = RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=7))
+    assert recu["args"] == (7, 2)
     assert out["fleet"]["status"] == "armed"
-    assert recu["rows"] is None
-
-
-def test_une_flotte_sans_cible_arme_sans_denominateur(monkeypatch):
-    monkeypatch.setattr(RF.db, "get_fleet", lambda fid, oid: {"id": fid, "namespace": None})
-    recu = {}
-    monkeypatch.setattr(RF.db, "armer", lambda fid, oid, rows_at_launch=None:
-                        recu.update(rows=rows_at_launch) or {"id": fid, "status": "armed"})
-    monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
-    monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=7))
-    assert recu["rows"] is None
-
-
-def test_le_denominateur_est_SERVI_et_n_est_pas_une_borne():
-    """`rows_at_launch` (un compte) et `max_rows` (un plafond) coexistent : les
-    confondre est précisément le défaut qu'on corrige."""
-    champs = RF.Fleet.model_fields
-    assert "rows_at_launch" in champs and "max_rows" in champs
-    assert champs["rows_at_launch"].default is None
-    assert "rows_at_launch" not in RF.db.CHAMPS_MODIFIABLES, (
-        "le dénominateur se pose en armant, jamais par une retouche de configuration")
 
 
 # ── l'origine d'un travail ────────────────────────────────────────────────────

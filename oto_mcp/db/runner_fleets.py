@@ -29,8 +29,12 @@ from typing import Any, Optional
 
 from ._conn import _connect
 
+# ⚠️ `rows_at_launch` n'est plus projetée (13/09/2026) : la colonne reste en base, sans
+# lecteur ni écrivain. Chaque verbe de la capacité rend la ligne telle que ce SELECT la
+# produit — son modèle `Output` DÉCRIT la réponse, il ne la filtre pas —, donc la retirer
+# d'ici est la seule façon de cesser de la servir sur tous les verbes à la fois.
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
-         "namespace, row_filter, provider, model, temperature, workers, rows_at_launch, max_rows, "
+         "namespace, row_filter, provider, model, temperature, workers, max_rows, "
          "max_tokens, max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
          "armed_at, started_at, stopping_at, heartbeat_at, stopped_at, created_at")
 
@@ -317,8 +321,7 @@ def set_status(fleet_id: int, org_id: int, statut: str,
 # Rendre `False` quand la transition n'était pas permise laisse l'appelant DIRE
 # qu'il n'a rien changé, au lieu de croire qu'il a agi.
 
-def armer(fleet_id: int, org_id: int,
-          rows_at_launch: Optional[int] = None) -> Optional[dict]:
+def armer(fleet_id: int, org_id: int) -> Optional[dict]:
     """`draft`/`stopped`/`done`/`failed` → `armed` : on DEMANDE que ça tourne.
 
     ⚠️ Ce n'est PAS `running`. Une intention déclarée et un fait constaté ne
@@ -326,19 +329,19 @@ def armer(fleet_id: int, org_id: int,
     PRISE et donne signe. Une flotte armée que personne n'a réclamée doit se lire
     « armée, personne ne l'a prise » — pas « en cours ».
 
-    `rows_at_launch` est le compte des lignes visées À CET INSTANT (l'appelant le
-    lit sur la table ; cf. la capacité). Il est réécrit à chaque armement — un
-    passage relancé vise une table qui a bougé — et `None` l'efface plutôt que de
-    laisser en place le dénominateur d'un armement précédent, qui serait faux.
+    ⚠️ N'écrit plus `rows_at_launch` (13/09/2026). Ce compte ne voyait que le
+    `row_filter` de la flotte — ni le périmètre déclaré du tableau, ni les baux — et
+    annonçait du travail qu'aucune réservation ne servait. La colonne garde, sans
+    lecteur, la valeur posée par un armement antérieur.
     """
     with _connect() as conn:
         row = conn.execute(
             f"UPDATE runner_fleets SET status = 'armed', armed_at = NOW(), "
-            f"    rows_at_launch = %s, stop_reason = NULL, stopping_at = NULL "
+            f"    stop_reason = NULL, stopping_at = NULL "
             f"WHERE id = %s AND org_id = %s "
             f"  AND status IN ('draft', 'stopped', 'done', 'failed') "
             f"RETURNING {_COLS}",
-            (None if rows_at_launch is None else int(rows_at_launch), fleet_id, org_id),
+            (fleet_id, org_id),
         ).fetchone()
     return dict(row) if row else None
 

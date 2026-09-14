@@ -80,7 +80,7 @@ def test_campagne_armee_est_servie(org_neuve):
     sur `UndefinedFunction` au lieu de laisser passer un sondage muet."""
     from oto_mcp import db
     f = _flotte(org_neuve["org"], org_neuve["sub"])
-    db.armer(f["id"], org_neuve["org"], rows_at_launch=2)
+    db.armer(f["id"], org_neuve["org"])
 
     servie = db.campagne_a_servir(org_neuve["org"])
 
@@ -101,7 +101,7 @@ def test_campagne_au_plafond_de_lignes_nest_plus_servie(org_neuve):
     Exercé en SQL parce que le compte vit dans une sous-requête corrélée."""
     from oto_mcp import db
     f = _flotte(org_neuve["org"], org_neuve["sub"], max_rows=1)
-    db.armer(f["id"], org_neuve["org"], rows_at_launch=1)
+    db.armer(f["id"], org_neuve["org"])
     db.enqueue_job(org_neuve["org"], "start", fleet_id=f["id"], sub=org_neuve["sub"])
 
     assert db.campagne_a_servir(org_neuve["org"]) is None, (
