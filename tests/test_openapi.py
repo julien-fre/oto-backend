@@ -51,14 +51,16 @@ def test_path_params_are_lifted_out_of_the_body():
     doc = openapi.build()
     item = doc["paths"].get("/api/me/guides/{scope}/{slug}")
     assert item, "capacité à paramètres de chemin absente"
-    names = {p["name"] for p in item["get"]["parameters"] if p["in"] == "path"}
+    # `.get` : un paramètre peut être une RÉFÉRENCE de composant (l'en-tête de run,
+    # oto#227), qui ne porte ni `name` ni `in`.
+    names = {p["name"] for p in item["get"]["parameters"] if p.get("in") == "path"}
     assert names == {"scope", "slug"}
 
 
 def test_get_capabilities_document_query_params():
     """Un GET de capacité lit sa query string : les champs doivent s'y retrouver."""
     params = openapi.build()["paths"]["/api/me/search"]["get"]["parameters"]
-    assert {p["name"] for p in params if p["in"] == "query"}
+    assert {p["name"] for p in params if p.get("in") == "query"}
 
 
 def test_admin_surface_is_not_published():
@@ -128,5 +130,58 @@ def test_the_error_envelope_is_a_component_every_refusal_references():
     # Les refus déclarés : l'énuméré `error` porte les codes, par statut.
     codes = {s: r["content"]["application/json"]["schema"]["allOf"][1]["properties"]["error"]["enum"]
              for s, r in op["responses"].items() if s in ("404", "409")}
-    assert codes == {"404": ["unknown_org", "not_a_member"],
-                     "409": ["personal_org", "last_org_admin"]}
+    # Les refus de `X-Oto-Run` (oto#227) entrent dans la MÊME fusion, après les déclarés.
+    assert codes == {"404": ["unknown_org", "not_a_member", "run_not_found"],
+                     "409": ["personal_org", "last_org_admin", "run_closed"]}
+
+
+# ── L'en-tête de run (oto#227) : déclaré là où il peut survenir, et nulle part ailleurs ─
+
+def _operations(doc):
+    return [(p, m, o) for p, item in doc["paths"].items() for m, o in item.items()]
+
+
+def test_l_en_tete_de_run_est_UN_composant_reference_par_chaque_operation_de_capacite():
+    """Seul l'adaptateur des capacités lit `X-Oto-Run` : une route écrite à la main ou un
+    alias 308 ne peut ni le lire ni rendre ses refus, et ne doit pas le déclarer."""
+    doc = openapi.build([_FakeRoute("/api/upload/{token}", ["GET"])])
+    param = doc["components"]["parameters"]["XOtoRun"]
+    assert (param["name"], param["in"], param["required"]) == ("X-Oto-Run", "header", False)
+    ref = {"$ref": "#/components/parameters/XOtoRun"}
+    capacites = 0
+    for chemin, verbe, op in _operations(doc):
+        if op["tags"][0] in ("_legacy", "_deprecated"):
+            assert ref not in op.get("parameters", []), (chemin, verbe)
+        else:
+            capacites += 1
+            assert op["parameters"].count(ref) == 1, (chemin, verbe)
+    assert capacites, "aucune opération de capacité : le banc ne vérifie plus rien"
+
+
+def test_les_refus_de_l_en_tete_sont_FUSIONNES_jamais_substitues():
+    """Sur chaque opération de capacité, les trois refus de l'en-tête sont dits ; là où
+    le statut portait déjà des refus déclarés, ceux-ci restent dans l'énuméré ; et la 403
+    reste le texte générique, sans énuméré."""
+    from oto_mcp.capabilities.run_thread import REFUS_DECLARES_DE_L_EN_TETE as REFUS
+    doc = openapi.build()
+    for chemin, verbe, op in _operations(doc):
+        if op["tags"][0] in ("_legacy", "_deprecated"):
+            continue
+        for e in REFUS:
+            assert f"`{e.code}`" in op["responses"][str(e.status)]["description"], (
+                chemin, verbe, e.code)
+
+    fusions = [(cap, b, e) for cap in registry.CAPABILITIES if cap.is_exposed()
+               for b in cap.rest_bindings() if not b.path.startswith("/api/admin/")
+               for e in cap.errors if e.status in {r.status for r in REFUS}]
+    assert fusions, "aucun refus déclaré sur 400/404/409 : la fusion n'est plus éprouvée"
+    for cap, b, e in fusions:
+        op = doc["paths"][openapi._openapi_path(b.path)][b.verb.lower()]
+        schema = op["responses"][str(e.status)]["content"]["application/json"]["schema"]
+        enum = set(schema["allOf"][1]["properties"]["error"]["enum"])
+        assert {e.code} | {r.code for r in REFUS if r.status == e.status} <= enum, (
+            b.path, e.code)
+
+    ouvrir = doc["paths"]["/api/me/runs"]["post"]
+    assert ouvrir["responses"]["403"]["content"]["application/json"]["schema"] == \
+        {"$ref": "#/components/schemas/Erreur"}

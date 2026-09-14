@@ -178,7 +178,29 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                                     request.headers.get("x-forwarded-for"),
                                     request.client.host if request.client else None),
             user_agent=request.headers.get("user-agent"))
+        # Le RUN de la requête (oto#227), porté par `X-Oto-Run` — le seul titulaire qu'une
+        # garde de bail reconnaisse. Jugé HORS de la boucle et AVANT la capacité (une
+        # requête SQL, refus nommé sans écriture), puis posé là où le MCP pose `_run_id` :
+        # claim, écriture et libération le lisent sans rien savoir du transport. Même
+        # `finally` que l'empreinte client : une ContextVar non reset fuit sur la requête
+        # suivante servie par la même tâche. Import paresseux : le module des runs
+        # DÉCLARE ses capacités à l'import, et l'ordre fixe celui de la table de routes.
+        run_demande = (request.headers.get("X-Oto-Run") or "").strip()
+        poses_run: list = []
         try:
+            if run_demande:
+                from starlette.concurrency import run_in_threadpool
+
+                from .. import session_org
+                from . import run_thread
+                org_du_run = await run_in_threadpool(run_thread.run_de_l_en_tete, sub,
+                                                     run_demande)
+                poses_run.append((session_org.reset_call_run,
+                                  session_org.set_call_run(run_demande)))
+                if org_du_run is not None:
+                    poses_run.append((session_org.reset_call_run_org,
+                                      session_org.set_call_run_org(org_du_run)))
+
             def _amont():
                 """Autz + handler SYNC — le bloc qui touche la base, en un thread.
 
@@ -212,6 +234,8 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                                   details=d.details)
             return json_error(request, d.status, d.code, d.message or None)
         finally:
+            for reset, jeton in reversed(poses_run):
+                reset(jeton)
             client_trace.reset(jeton_client)
         if isinstance(result, NotModified):
             # 304 : **sans corps**, c'est la spec et c'est tout l'intérêt — le client

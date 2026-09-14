@@ -76,7 +76,7 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As, X-Oto-Run",
             # Sans cette ligne, `X-Oto-Version` (oto#33) part sur le fil mais reste
             # ILLISIBLE au dashboard : un navigateur ne donne à `fetch` que les
             # en-têtes de réponse explicitement exposés. Un en-tête qu'aucun de nos
@@ -244,6 +244,10 @@ async def _authenticate(
                     "portée : gouvernance d'un tableau (créer, supprimer, renommer, "
                     "partager) et tout ce qui sort du datastore. Il demande une "
                     f"session interactive du propriétaire. {ouvre}")
+            elif cause == "ecriture":
+                detail = (
+                    "Ouvrir ou clore un run demande un jeton qui ÉCRIT au moins un "
+                    f"tableau : un run ne sert qu'à réserver puis écrire des lignes. {ouvre}")
             else:
                 detail = (
                     f"« {quoi} » n'est pas dans la portée de ce jeton, ou pas avec "

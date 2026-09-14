@@ -28,7 +28,21 @@ logger = logging.getLogger(__name__)
 _OUTCOMES = run_status.OUTCOMES
 
 
-def _procedure_version(sub: str | None, slug: str) -> int | None:
+def liberer_les_lignes_du_run(run_id: str) -> int | None:
+    """Rend à la file les lignes que ce run tenait encore — la troisième voie de
+    libération (#317), partagée par `run_finish` et la clôture REST (oto#227). Le compte
+    est TOUJOURS rendu (#633) : `0` écrit, `None` si la base a toussé (journalisé).
+    Best-effort — libérer est un service, jamais une condition de la clôture. Sync :
+    appelée hors boucle."""
+    from .. import db
+    try:
+        return db.datastore_release_by_run(run_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("libération des lignes du run %s échouée (best-effort)", run_id)
+        return None
+
+
+def version_de_procedure(sub: str | None, slug: str) -> int | None:
     """Version COURANTE de la procédure `slug`, lue dans l'ordre où
     `oto_procedure(op='get')` la sert : l'org active d'abord, l'équipe active en
     complément. None si le slug ne désigne aucune procédure — un run ad-hoc, une
@@ -71,7 +85,7 @@ async def _note_procedure_version(guide: str | None) -> int | None:
         from .. import session_org
         from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
-        version = await asyncio.to_thread(_procedure_version, sub, guide)
+        version = await asyncio.to_thread(version_de_procedure, sub, guide)
     except Exception:
         logger.warning("version de procédure indisponible pour %r (best-effort)",
                        guide, exc_info=True)
@@ -184,12 +198,7 @@ def register(mcp: FastMCP) -> None:
         # Le compte est TOUJOURS écrit (#633) : un poste de flotte distingue « zéro
         # ligne rendue » (0) de « rien n'a été tenté » (null — la base a toussé, le
         # journal le dit) ; un champ absent ne disait ni l'un ni l'autre.
-        liberees: int | None = None
-        try:
-            from starlette.concurrency import run_in_threadpool
-            from .. import db
-            liberees = await run_in_threadpool(db.datastore_release_by_run, run_id)
-        except Exception:  # noqa: BLE001
-            logger.warning("libération des lignes du run %s échouée (best-effort)", run_id)
+        from starlette.concurrency import run_in_threadpool
+        liberees = await run_in_threadpool(liberer_les_lignes_du_run, run_id)
         return {"ok": True, "run_id": run_id, "outcome": outcome,
                 "was_open": removed is not None, "rows_released": liberees}

@@ -1,4 +1,5 @@
-"""Capacité « le fil d'un run » — append/read, op-aware (chantier runner R1).
+"""Capacités « le run » — son fil (append/read, op-aware, chantier runner R1) et son
+CYCLE en REST (ouvrir, clore — oto#227).
 
 Le fil est l'état d'exécution d'un run HÉBERGÉ (ADR 0064 du blueprint) : la suite
 des tours — messages et segments provider — que le worker recharge pour continuer,
@@ -18,17 +19,28 @@ le fil (il est purgé court, cf. `db.prune_run_messages`).
 **Le tour est borné à l'écriture** (`_MAX_MESSAGE_CHARS`) : un résultat d'outil
 géant se tronque à la source (leçon #384) — le fil n'est pas un déversoir, et un
 plafond découvert à la lecture serait un plafond découvert trop tard.
+
+**Le cycle en REST (oto#227).** Un consommateur REST qui réservait une ligne ne pouvait
+pas y écrire : la garde du bail ne reconnaît le titulaire QUE par son run, et ouvrir ou
+clore un run n'existait qu'en MCP (`run_start`/`run_finish`). Les deux routes ci-dessous
+écrivent les MÊMES faits au journal que le MCP — un run se reconstruit de ses faits,
+jamais de `runs` (`db.usage`) — et l'en-tête `X-Oto-Run` (`run_de_l_en_tete`, posé par
+`_rest_adapter`) porte ensuite le run sur réservation, écriture et libération, qui ne
+changent pas. ⚠️ Un run n'est ni une identité ni un droit : il ne distingue pas deux
+sessions d'un même jeton. C'est au consommateur de lier SON run à SA session, et de ne
+jamais reprendre un `_claimed_run` lu sur une ligne.
 """
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import db, roles
-from ._authz import ORG_MEMBER
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .. import access, db, roles, run_status, session_org
+from ._authz import ORG_MEMBER, SUB_ONLY
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 # Un tour = projection neutre + segment provider (thinking compris). 256 k chars
@@ -101,6 +113,133 @@ def _thread(ctx: ResolvedCtx, inp: ThreadInput) -> dict:
     return {"run_id": inp.run_id, "messages": messages}
 
 
+# ── Le cycle du run en REST (oto#227) ─────────────────────────────────────────
+
+#: Les refus que l'en-tête peut rendre, DÉCLARÉS ici, à côté du contrôle qui les lève, et
+#: relus par le générateur OpenAPI sur toute opération de capacité (#217 : un refus se
+#: déclare là où il peut survenir). Le porteur non membre de l'org du run n'y figure pas :
+#: il reçoit la 403 `forbidden` générique, déjà déclarée sur chaque opération.
+_RUN_INCONNU = DeclaredError(
+    404, "run_not_found", "`X-Oto-Run` désigne un run inconnu, ou le run d'un autre compte")
+_RUN_ORG_CONTREDITE = DeclaredError(
+    400, "run_org_mismatch", "`X-Oto-Org` désigne une autre org que celle du run de `X-Oto-Run`")
+_RUN_CLOS = DeclaredError(409, "run_closed", "le run de `X-Oto-Run` est clos")
+REFUS_DECLARES_DE_L_EN_TETE = (_RUN_ORG_CONTREDITE, _RUN_INCONNU, _RUN_CLOS)
+
+
+def run_de_l_en_tete(sub: Optional[str], run_id: str) -> Optional[int]:
+    """Juge l'en-tête `X-Oto-Run` d'une requête REST — sync (threadpool), UNE requête SQL
+    (`db.usage.run_pour_en_tete`). Rend l'org du run à poser (None : run hors org), ou
+    lève un refus NOMMÉ, avant que la capacité ne touche quoi que ce soit :
+
+    - run inconnu, ou run d'un AUTRE compte → 404 `run_not_found`, sans oracle (même
+      refus que le fil). ⚠️ Plus strict que l'axe MCP, qui ne garde que l'appartenance :
+      en REST il n'y a pas de pile de session, le run est tout ce qui désigne le titulaire ;
+    - porteur non membre de l'org du run → 403 `forbidden`, jamais un repli sur son org ;
+    - `X-Oto-Org` qui désigne une autre org → 400 `run_org_mismatch` : l'org du run prime
+      sur la consultation (`access.current_org`), et l'ignorer en silence ferait écrire
+      ailleurs que là où l'appelant croit écrire ;
+    - run CLOS (fait `run_finish`) → 409 `run_closed`.
+
+    L'appartenance est celle de `roles.effective_org_role` — rôle dans l'org, ou escalade
+    super_admin (de base ou d'amorçage) — relue des colonnes que rend la requête unique."""
+    from ..db import usage as db_usage
+    run = db_usage.run_pour_en_tete(run_id, sub or "")
+    if not run or not sub or run["sub"] != sub:
+        raise AuthzDenied(_RUN_INCONNU.status, _RUN_INCONNU.code,
+                          "run inconnu — ouvre le tien avec `POST /api/me/runs`.")
+    org = run["org_id"]
+    if org is not None:
+        org = int(org)
+        super_admin = (run["role"] == access.SUPER_ADMIN
+                       or sub == os.environ.get("OTO_MCP_ADMIN_SUB"))
+        if run["org_role"] is None and not super_admin:
+            raise AuthzDenied(403, "forbidden",
+                              f"Le run se déroule dans l'org #{org}, dont tu n'es pas membre.")
+        vue = session_org.current_view_org()
+        if vue is not None and vue != org:
+            raise AuthzDenied(
+                _RUN_ORG_CONTREDITE.status, _RUN_ORG_CONTREDITE.code,
+                f"`X-Oto-Org` désigne l'org #{vue}, et le run se déroule dans l'org #{org} "
+                "— aligne les deux en-têtes, ou retire `X-Oto-Org`.")
+    if run["clos"]:
+        raise AuthzDenied(_RUN_CLOS.status, _RUN_CLOS.code,
+                          "run clos — ouvre-en un nouveau avec `POST /api/me/runs`.")
+    return org
+
+
+class RunOuvertureInput(BaseModel):
+    label: str
+    guide: Optional[str] = None
+
+
+class RunClotureInput(BaseModel):
+    run_id: str
+    outcome: str
+    note: Optional[str] = None
+
+
+class RunCycleOut(BaseModel):
+    run_id: str
+    org_id: Optional[int] = None
+    label: Optional[str] = None
+    guide: Optional[str] = None
+    guide_version: Optional[int] = None
+    outcome: Optional[str] = None
+    rows_released: Optional[int] = None
+
+
+def _fait(sub: str, tool: str, run_id: str, org_id: Optional[int], args: dict) -> None:
+    """Le FAIT de journal, écrit comme le MCP l'écrit. ⚠️ Sans lui le run n'existe pas :
+    le suivi et la clôture se lisent des faits `run_start`/`run_finish`, et une requête
+    REST n'est journalisée que sous sa route.
+
+    ⚠️ Les arguments passent par `calllog.truncated_args`, comme ceux du calllog MCP :
+    c'est elle qui tronque et masque, et une écriture directe ferait mentir les deux
+    surfaces qui lisent ces arguments (`tests/test_timeline_args_declare.py`)."""
+    from .. import calllog
+    db.insert_tool_call({"kind": "rest", "sub": sub, "tool": tool, "run_id": run_id,
+                         "org_id": org_id, "ok": True,
+                         "args": calllog.truncated_args(args, tool=tool)})
+
+
+def _ouvrir(ctx: ResolvedCtx, inp: RunOuvertureInput) -> dict:
+    from .. import guide_run as pile
+    from ..db import usage as db_usage
+    from ..tools import guide_run as outils_run
+    label = inp.label.strip()
+    if not label:
+        raise AuthzDenied(400, "missing_fields", "`label` dit ce que fait le run")
+    run_id = pile.new_run_id()
+    version = outils_run.version_de_procedure(ctx.sub, inp.guide) if inp.guide else None
+    # Les clés sont celles que lit la reconstruction du run (`db.usage`), prises à sa
+    # constante plutôt que réécrites : elles voyagent dans le journal.
+    _fait(ctx.sub, "run_start", run_id, ctx.org_id,
+          {"label": label, db_usage._ARG_PROCEDURE: inp.guide,
+           db_usage._ARG_PROCEDURE + "_version": version})
+    # L'index APRÈS le fait : c'est lui que lit l'en-tête `X-Oto-Run`, et un run sans fait
+    # serait un titulaire que le suivi ne montrerait jamais.
+    db.insert_run(run_id, sub=ctx.sub, org_id=ctx.org_id, label=label, guide=inp.guide)
+    return {"run_id": run_id, "org_id": ctx.org_id, "label": label, "guide": inp.guide,
+            "guide_version": version}
+
+
+def _clore(ctx: ResolvedCtx, inp: RunClotureInput) -> dict:
+    from ..tools import guide_run as outils_run
+    head = db.get_run_head(inp.run_id)
+    if not head or head.get("sub") != ctx.sub:
+        raise AuthzDenied(404, "run_not_found", "run inconnu")
+    if inp.outcome not in run_status.OUTCOMES:
+        raise AuthzDenied(400, "invalid_outcome",
+                          f"`outcome` vaut {' | '.join(run_status.OUTCOMES)}")
+    _fait(ctx.sub, "run_finish", inp.run_id, head.get("org_id"),
+          {"run_id": inp.run_id, "outcome": inp.outcome, "note": inp.note})
+    db.finish_run(inp.run_id, inp.outcome, inp.note, sub=ctx.sub)
+    # Un run clos ne tient plus rien : ses lignes reviennent à la file, comme à `run_finish`.
+    return {"run_id": inp.run_id, "org_id": head.get("org_id"), "outcome": inp.outcome,
+            "rows_released": outils_run.liberer_les_lignes_du_run(inp.run_id)}
+
+
 CAPABILITIES += [
     Capability(
         key="runs.thread",
@@ -119,6 +258,36 @@ CAPABILITIES += [
             "nothing in the product may REQUIRE it — cross-agent resume reads the "
             "run's journal instead. Turns are size-capped at write time: truncate "
             "huge tool results at the source, the thread is not a spillway."
+        ),
+    ),
+    Capability(
+        key="runs.open",
+        handler=_ouvrir,
+        Input=RunOuvertureInput,
+        Output=RunCycleOut,
+        authz=ORG_MEMBER,
+        mcp=None,   # le MCP a `run_start`
+        rest=RestBinding(verb="POST", path="/api/me/runs", status=201),
+        description=(
+            "Open a RUN over REST, in the active org (or `X-Oto-Org`). The run is the "
+            "only holder a row lease recognises: send its id as `X-Oto-Run` on "
+            "claim_next / claim / PATCH row / release so the lease and the write are "
+            "yours. A run is not an identity: bind it to YOUR session, never reuse a "
+            "`_claimed_run` read on a row."
+        ),
+    ),
+    Capability(
+        key="runs.close",
+        handler=_clore,
+        Input=RunClotureInput,
+        Output=RunCycleOut,
+        authz=SUB_ONLY,
+        mcp=None,   # le MCP a `run_finish`
+        rest=RestBinding(verb="PATCH", path="/api/me/runs/{run_id}"),
+        description=(
+            "Close YOUR run: `outcome` done | failed | blocked, optional `note`. The rows "
+            "it still held go back to the queue (`rows_released`, 0 written). A closed "
+            "run is refused as `X-Oto-Run` (409 run_closed)."
         ),
     ),
 ]

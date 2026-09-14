@@ -645,6 +645,10 @@ POST /api/me/automations/fire -> _handler
 OPTIONS /api/me/automations/fire -> options_handler
 POST /api/me/runs/thread -> _handler
 OPTIONS /api/me/runs/thread -> options_handler
+POST /api/me/runs -> _handler
+OPTIONS /api/me/runs -> options_handler
+PATCH /api/me/runs/{run_id} -> _handler
+OPTIONS /api/me/runs/{run_id} -> options_handler
 POST /api/me/runner/jobs -> _handler
 OPTIONS /api/me/runner/jobs -> options_handler
 POST /api/me/runner/triggers -> _handler

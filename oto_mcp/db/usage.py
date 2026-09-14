@@ -281,6 +281,43 @@ def run_closed_at(run_id: str) -> Optional[datetime]:
     return row["finished_at"] if row else None
 
 
+def run_pour_en_tete(run_id: str, sub: str) -> Optional[dict]:
+    """Ce qu'un en-tête REST `X-Oto-Run` doit savoir de son run — en UNE requête (oto#227).
+
+    `None` : le run est inconnu de `runs`. Sinon `{sub, org_id, org_role, role, clos}` :
+    le PROPRIÉTAIRE et l'org du run (index `runs`), le rôle du porteur dans cette org
+    (`org_members`, ce que lit `org_store.get_org_role`), son rôle plateforme (`users`,
+    l'escalade super_admin de `roles.effective_org_role`) et la CLÔTURE — lue du fait
+    `run_finish` par `_run_closure`, jamais de `runs.finished_at`.
+
+    ⚠️ Une requête et pas quatre : ce contrôle se paie sur CHAQUE requête REST qui porte
+    l'en-tête (réserver, écrire, libérer), et `get_run_head` + rôle d'org + rôle
+    plateforme + `run_closed_at` en coûtaient quatre. Bornée au run : `runs` par sa clé,
+    l'ouverture par `idx_tool_calls_run`, la clôture par `idx_tool_calls_run_finish_ref`.
+    Le JUGEMENT (propriétaire, membre, clos) reste à l'appelant, avec les règles de
+    `roles` — un banc confronte les deux."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT r.sub, r.org_id, m.org_role, u.role,
+                   (f.created_at IS NOT NULL) AS clos
+              FROM runs r
+              LEFT JOIN org_members m ON m.org_id = r.org_id AND m.sub = %s
+              LEFT JOIN users u ON u.sub = %s
+              LEFT JOIN LATERAL (
+                  SELECT o.run_id, o.created_at, o.sub
+                    FROM tool_calls o
+                   WHERE o.tool = 'run_start' AND o.run_id = r.run_id
+                   ORDER BY o.created_at DESC
+                   LIMIT 1
+              ) s ON TRUE{_run_closure("s")}
+             WHERE r.run_id = %s
+            """,
+            (sub, sub, run_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
     """Les `limit` derniers runs d'un (sub, org), plus récent d'abord — l'anticipation
     du contexte injecté (#50 bloc C) + la boucle d'usage.

@@ -731,6 +731,41 @@ cette URL. Un champ liste neuf sans exemple fait rouge — c'est cette ligne qui
 taper l'URL une fois, l'étape qui a manqué à #367. Trois champs concernés au 28/08 :
 `me.project_read.include`, `me.search.kinds`, `me.node.rows.filter`, tous atteignables.
 
+## Le run d'une requête — `X-Oto-Run`, `POST /api/me/runs`, `PATCH /api/me/runs/{run_id}` (oto#227, 13/09/2026)
+
+Un consommateur REST qui réservait une ligne ne pouvait pas y écrire. La garde du bail
+ne reconnaît le titulaire QUE par son **run** — ni le compte, ni le libellé `worker` —,
+la réservation REST en posait un vide, et ouvrir un run n'existait qu'en MCP
+(`run_start`). Le parcours :
+
+```
+POST  /api/me/runs {label, guide?}                → 201 {run_id, org_id, guide_version}
+POST  /api/datastores/{ds}/claim_next             X-Oto-Run: <run_id>   → row._claimed_run, row._revision
+PATCH /api/datastores/{ds}/rows/{id}?expected_revision=<_revision>   X-Oto-Run: <run_id>
+POST  /api/datastores/{ds}/rows/{id}/release {worker}                X-Oto-Run: <run_id>
+PATCH /api/me/runs/{run_id} {outcome, note?}       → {outcome, rows_released}
+```
+
+- **L'en-tête est jugé avant la capacité** (`capabilities/run_thread.run_de_l_en_tete`, en
+  UNE requête SQL — `db.usage.run_pour_en_tete`), refus nommés et rien d'écrit : run
+  inconnu ou d'un autre compte `404 run_not_found` ; org du run dont le porteur n'est pas
+  membre `403 forbidden` ; `X-Oto-Org` contradictoire `400 run_org_mismatch` (l'org du run
+  primerait en silence) ; run clos `409 run_closed`. Il est posé comme le MCP pose
+  `_run_id`, puis remis à zéro en fin de requête. Réservation, écriture et libération ne
+  changent pas : elles lisent le contexte.
+- **Le run existe par ses FAITS** : ouvrir et clore écrivent les faits `run_start` et
+  `run_finish` au journal, comme le MCP — un run se reconstruit du journal, jamais de
+  `runs`. Clore rend les lignes que le run tenait encore (`rows_released`, `0` écrit), et
+  seul le propriétaire clôt.
+- **Jeton porté** : ouvrir et clore relèvent de la famille des tableaux — il faut écrire au
+  moins un tableau (`403 token_scope_forbidden` sinon). Aucune famille ni identité nouvelle.
+- ⚠️ **Un run n'est ni une identité ni un droit.** Deux sessions d'un même jeton ont le
+  même compte : c'est au consommateur de lier SON run à SA session, et de ne jamais
+  reprendre un `_claimed_run` lu sur une ligne. ⚠️ `_run_id` dans le CORPS d'un PATCH est
+  refusé `400 jeton_mal_place` : le run se passe en en-tête.
+
+Bancs : `tests/api/test_runs_rest.py` (vraie base, routes montées).
+
 ## Descriptif OpenAPI — `GET /openapi.json` (aussi `/api/openapi.json`)
 
 **Sans auth**, comme `/api/mcp/catalog` : un descriptif décrit des FORMES, aucune valeur.

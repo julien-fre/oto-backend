@@ -85,6 +85,30 @@ _ERREUR = {
 }
 _ERREUR_REF = {"$ref": "#/components/schemas/Erreur"}
 
+# L'en-tête de RUN d'une requête (oto#227) — UN composant, référencé par les opérations de
+# CAPACITÉS et par elles seules : l'adaptateur des capacités est le seul à le lire. Une
+# route écrite à la main ou un alias 308 ne peut ni le lire ni rendre ses refus, et le
+# leur déclarer dirait faux (un refus se déclare là où il peut survenir, #217).
+_PARAM_RUN = "XOtoRun"
+_PARAM_RUN_REF = {"$ref": f"#/components/parameters/{_PARAM_RUN}"}
+def _parametres() -> dict:
+    return {_PARAM_RUN: {
+        "name": "X-Oto-Run", "in": "header", "required": False,
+        "schema": {"type": "string"},
+        "description": (
+            "Le run de la requête (`POST /api/me/runs`) — le seul titulaire qu'un bail "
+            "de ligne reconnaisse. Jugé AVANT l'opération, refus nommés sans rien "
+            "écrire : run inconnu ou d'un autre compte, porteur non membre de l'org du "
+            "run (403 générique), `X-Oto-Org` contradictoire, run clos.")}}
+
+
+def _refus_de_l_en_tete() -> tuple:
+    """Les refus que `X-Oto-Run` peut rendre sur TOUTE opération de capacité, déclarés
+    une fois à côté du contrôle qui les lève. Import paresseux : le module des runs
+    DÉCLARE ses capacités à l'import, et l'ordre fixe celui de la table de routes."""
+    from .capabilities.run_thread import REFUS_DECLARES_DE_L_EN_TETE
+    return REFUS_DECLARES_DE_L_EN_TETE
+
 
 def _reponse_erreur(description: str, codes: Optional[list[str]] = None) -> dict:
     """Une réponse d'erreur : l'enveloppe, et l'énuméré des `error` possibles quand
@@ -100,12 +124,20 @@ def _reponses(cap: Capability, heureuse: tuple[str, dict]) -> dict:
     refus DÉCLARÉS (`Capability.errors`) regroupés par statut — deux codes sur un même
     409 font UNE réponse dont l'énuméré porte les deux. Un refus déclaré sur un statut
     générique (403) s'AJOUTE à la description, il ne remplace pas le générique : le
-    `forbidden` de l'autz reste possible."""
+    `forbidden` de l'autz reste possible.
+
+    ⚠️ Les refus de l'en-tête `X-Oto-Run` (oto#227) entrent dans la MÊME fusion, sur toute
+    capacité : le contrôle se joue avant chaque opération de l'adaptateur. Un code déjà
+    déclaré par la capacité n'est pas doublé."""
     out = {heureuse[0]: heureuse[1],
            "401": _reponse_erreur("jeton absent ou invalide"),
            "403": _reponse_erreur("refus d'autorisation (ou hors portée du jeton)")}
     par_statut: dict[int, list] = {}
-    for e in cap.errors:
+    vus: set = set()
+    for e in (*cap.errors, *_refus_de_l_en_tete()):
+        if (e.status, e.code) in vus:
+            continue
+        vus.add((e.status, e.code))
         par_statut.setdefault(e.status, []).append(e)
     for statut, errs in sorted(par_statut.items()):
         phrase = " ; ".join(f"`{e.code}` — {e.when}" for e in errs)
@@ -360,6 +392,8 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
             if binding.path.startswith(_ADMIN_PREFIX):
                 continue
             op, defs = _operation(cap, binding)
+            # L'en-tête de run : LA passe qui le référence, sur les capacités et elles seules.
+            op["parameters"] = [*op.get("parameters", []), _PARAM_RUN_REF]
             schemas.update(defs)
             item = paths.setdefault(_openapi_path(binding.path), {})
             item[binding.verb.lower()] = op          # la capacité prime sur le legacy
@@ -387,6 +421,7 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
                  "description": _DESCRIPTION},
         "paths": dict(sorted(paths.items())),
         "components": {
+            "parameters": _parametres(),
             "securitySchemes": {
                 "bearerAuth": {"type": "http", "scheme": "bearer",
                                "description": "JWT Logto ou jeton API `oto_…`"},

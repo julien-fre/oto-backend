@@ -87,6 +87,24 @@ _ALLOWED_RUNNER: tuple[tuple[re.Pattern, frozenset], ...] = (
     (re.compile(r"^/api/me/runs/thread$"), frozenset({"POST"})),
 )
 
+# Le CYCLE du run en REST (oto#227) : l'ouvrir, le clore. Ces deux routes ne désignent
+# aucun tableau dans leur chemin, mais elles n'ont de raison d'être que pour réserver
+# puis écrire des lignes — la même famille que `claim_next` et `release`. Elles
+# s'ouvrent donc au jeton qui ÉCRIT au moins un tableau, et à lui seul : ni famille
+# nouvelle, ni identité nouvelle (décision du 13/09/2026 : pas de second jeton de bail).
+# ⚠️ Un run ne donne AUCUN droit sur une ligne : la portée par tableau et la garde du
+# bail restent seules juges de chaque réservation et de chaque écriture.
+_ALLOWED_CYCLE_DU_RUN: tuple[tuple[re.Pattern, frozenset], ...] = (
+    (re.compile(r"^/api/me/runs$"), frozenset({"POST"})),
+    (re.compile(r"^/api/me/runs/[^/]+$"), frozenset({"PATCH"})),
+)
+
+
+def _ecrit_un_tableau(scopes: dict) -> bool:
+    """Le jeton porte-t-il le droit d'écrire sur au moins un tableau ?"""
+    return any(WRITE in _IMPLIES[droit]
+               for droit in (scopes.get(NAMESPACES) or {}).values())
+
 # La ressource nommée par la portée, capturée dans l'URL : un nom de tableau, ou
 # l'id d'un projet. C'est ce que la requête ADRESSE — d'où la règle : ce qu'un
 # jeton porté peut atteindre doit se lire dans le chemin, jamais dans le corps.
@@ -247,6 +265,9 @@ def authorize(scopes: Optional[dict], method: str, path: str) -> bool:
         # Pas de `return False` ici : un jeton peut porter `runner` ET des
         # tableaux (un ordonnanceur compte des lignes). La boucle ci-dessous
         # tranche le reste, et ce qui n'y figure pas reste refusé.
+    for motif, methodes in _ALLOWED_CYCLE_DU_RUN:
+        if method in methodes and motif.match(path):
+            return _ecrit_un_tableau(scopes)
     for pattern, methods, needed, family in _ALLOWED:
         if method not in methods:
             continue
@@ -273,6 +294,9 @@ def motif_du_refus(scopes: Optional[dict], method: str, path: str) -> tuple[str,
     """
     method = (method or "").upper()
     path = (path or "").rstrip("/") or "/"
+    for motif, methodes in _ALLOWED_CYCLE_DU_RUN:
+        if method in methodes and motif.match(path):
+            return "ecriture", ""
     for pattern, methods, _needed, _family in _ALLOWED:
         if method in methods and (m := pattern.match(path)):
             return "ressource", unquote(m.group("res"))
