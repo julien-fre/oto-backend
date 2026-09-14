@@ -73,6 +73,17 @@ def wired(monkeypatch):
 
     import oto.tools.unipile as core
     monkeypatch.setattr(core, "make_unipile_client", lambda **kw: _Cli())
+    # La réconciliation (poll-and-bind) est stubée : rien à lier par défaut. Un test
+    # la remplace par `state["reconcile"]` pour simuler un compte fraîchement connecté.
+    from oto_mcp import unipile_connect
+    state["reconciled"] = []
+
+    def _reconcile(sub):
+        state["reconciled"].append(sub)
+        return state.get("reconcile", lambda s: {"bound": False, "accounts": [],
+                                                  "reason": "no_pending",
+                                                  "detail": "rien en attente"})(sub)
+    monkeypatch.setattr(unipile_connect, "reconcile_pending", _reconcile)
     return state
 
 
@@ -126,3 +137,69 @@ def test_sonde_indisponible_nest_pas_une_session_morte(wired, monkeypatch):
 def test_op_inconnue_leve_toujours(wired):
     with pytest.raises(McpError):
         _tool("linkedin_unipile_account")(op="wat")
+
+
+# ── La face agent LIE (plus de webhook depuis #581) ─────────────────────────
+# Vécu org 270 (2026-09-03/14) : un onboarding lancé par `unipile_connect_start` ne
+# pouvait aboutir que si la personne rouvrait sa carte dans un tableau de bord — la
+# face agent ne réconciliait nulle part, et le tool promettait un webhook disparu.
+
+def test_op_status_lie_le_compte_fraichement_connecte(wired):
+    """`op='status'` réconcilie AVANT de résoudre : le compte que la personne vient de
+    connecter est lié, et le statut le dit dans le même appel."""
+    wired["accounts"] = []
+
+    def _bind(sub):
+        wired["accounts"].append({"provider": "LINKEDIN", "account_id": "acc_new",
+                                  "account_name": "Tristan", "org_id": 196,
+                                  "platform_seat": True, "connected_at": None})
+        return {"bound": True, "accounts": [{"account_id": "acc_new"}]}
+    wired["reconcile"] = _bind
+    out = _tool("linkedin_unipile_account")(op="status")
+    assert wired["reconciled"] == ["u1"]
+    assert out["connected"] is True and out["account_id"] == "acc_new"
+    assert "binding" not in out
+
+
+def test_op_status_dit_pourquoi_rien_na_ete_lie(wired):
+    """`no_candidate` était muet partout (log absent, motif jeté par la face REST) :
+    quand rien n'est lié, le motif établi remonte à l'agent."""
+    wired["accounts"] = []
+    wired["reconcile"] = lambda sub: {
+        "bound": False, "accounts": [], "reason": "no_candidate", "detail": "aucun éligible",
+        "pendings": [{"nonce": "N", "provider": "LINKEDIN", "reason": "no_candidate",
+                      "detail": "aucun éligible"}]}
+    out = _tool("linkedin_unipile_account")(op="status")
+    assert out["connected"] is False
+    assert out["binding"] == {"reason": "no_candidate", "detail": "aucun éligible"}
+
+
+def test_op_status_ne_raconte_pas_lechec_dun_autre_canal(wired):
+    wired["accounts"] = []
+    wired["reconcile"] = lambda sub: {
+        "bound": False, "accounts": [], "reason": "no_candidate", "detail": "whatsapp",
+        "pendings": [{"nonce": "W", "provider": "WHATSAPP", "reason": "no_candidate",
+                      "detail": "whatsapp"}]}
+    out = _tool("linkedin_unipile_account")(op="status")
+    assert "binding" not in out
+
+
+def test_op_status_dit_une_panne_sans_canal(wired):
+    wired["accounts"] = []
+    wired["reconcile"] = lambda sub: {"bound": False, "accounts": [],
+                                      "reason": "provider_unreachable", "detail": "réessaie"}
+    out = _tool("linkedin_unipile_account")(op="status")
+    assert out["binding"]["reason"] == "provider_unreachable"
+
+
+def test_op_status_sans_pending_ne_bavarde_pas(wired):
+    """Aucun lien demandé : pas de `binding` — ce n'est pas une panne à signaler."""
+    wired["accounts"] = []
+    out = _tool("linkedin_unipile_account")(op="status")
+    assert out["connected"] is False and "binding" not in out
+
+
+def test_une_reconciliation_qui_casse_ne_casse_pas_le_statut(wired):
+    wired["reconcile"] = lambda sub: (_ for _ in ()).throw(RuntimeError("amont"))
+    out = _tool("linkedin_unipile_account")(op="status")
+    assert out["connected"] is True

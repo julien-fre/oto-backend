@@ -143,6 +143,19 @@ def test_rien_a_lier_n_est_pas_une_panne(monkeypatch, socle):
     assert (code, out) == (200, {"bound": False, "accounts": []})
 
 
+def test_reconcile_transmet_lindice_de_retour(monkeypatch, socle):
+    """Le front relit l'`account_id` qu'Unipile ajoute au retour : il voyage jusqu'à la
+    réconciliation, qui restreint la liaison à ce compte."""
+    stub_authz(monkeypatch)
+    vus = []
+    monkeypatch.setattr(unipile_connect, "reconcile_pending",
+                        lambda sub, account_id=None: vus.append((sub, account_id))
+                        or {"bound": False, "accounts": []})
+    call("me.unipile.reconcile", body={"account_id": " acc_1 "})
+    call("me.unipile.reconcile")
+    assert [a for _, a in vus] == ["acc_1", None]
+
+
 # --- Lire le statut ---------------------------------------------------------
 
 def test_le_statut_reconcilie_avant_de_repondre(monkeypatch, socle):
