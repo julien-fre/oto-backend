@@ -17,8 +17,9 @@ description: >-
 > trois options avec leurs risques. **Le choix est fait depuis** — ADR 0065 du
 > 2026-08-27, option C — et son **lot 0 est livré** (oto-backend#426, 2026-08-28) :
 > la §1 ci-dessous décrit donc un état RÉVOLU, conservé parce qu'il explique
-> pourquoi ; la §1.3 dit ce que le boot fait maintenant. Le reste (§2 à §5) reste
-> l'inventaire du régime en place, que les lots 1 et 2 attaqueront.
+> pourquoi ; la §1.3 dit ce que le boot fait maintenant. Le reste (§2 et §3) reste
+> l'inventaire du régime en place, que les lots 1 et 2 attaqueront ; **les options et
+> les six questions ouvertes sont parties au chantier** (§4).
 >
 > Rédigé le 2026-08-27, en marge du lot qui a découpé `db/_schema.py` par domaine
 > (déplacement pur, DDL inchangé au caractère près). Ce lot n'a **pas** touché
@@ -57,7 +58,7 @@ est précisément ce que les trois incidents ci-dessus interdisent.
 **La conclusion utile n'est pas « on ne peut pas ranger `_init.py` »**, c'est : le
 rangement de `_init.py` n'est pas un problème de fichiers. C'est le symptôme d'un
 mécanisme qui rejoue tout l'historique à chaque démarrage parce qu'il n'a aucune
-notion de « déjà fait ». C'est ce que les trois options adressent.
+notion de « déjà fait ». C'est ce que le chantier adresse (§4).
 
 ## 1. Le boot : ce qu’il faisait, ce que ça coûtait, ce qu’il fait depuis le lot 0
 
@@ -325,7 +326,7 @@ porteur de la colonne. Une base restaurée depuis une sauvegarde antérieure à
 l'ALTER, ou un environnement oublié qui n'a pas booté depuis, ne rattrapera plus
 jamais la colonne — et le symptôme sera une `UndefinedColumn` à l'exécution, pas au
 boot. La vérification doit donc couvrir **toutes** les bases servies, pas seulement
-celle de production. C'est aussi, exactement, l'auto-réparation dont §4.2 dit
+celle de production. C'est aussi, exactement, l'auto-réparation dont l'option B du chantier dit
 qu'on la perd : la retirer ici en est le premier acompte.
 
 ### 2.6 Les 30 ordres non additifs
@@ -392,124 +393,18 @@ change avec aucune des trois options, et il en découle trois invariants :
    décalage entre les deux redémarrages, comme aujourd'hui.
 3. **Un rollback ne rembobine pas le DDL.** `oto-backend.sh` rollback en
    redéployant le tag précédent ; la base, elle, reste migrée. C'est déjà vrai, et
-   c'est ce qui rend la porte de version de l'option A coûteuse (§4.1).
+   c'est ce qui rend la porte de version de l'option A coûteuse (au chantier, §4).
 
-## 4. Trois options
+## 4. Le régime de migration — au chantier
 
-### 4.1 Option A — le deploy migre, le boot vérifie
-
-Un répertoire `oto_mcp/db/migrations/NNNN_<slug>.sql|py`, une table
-`schema_migrations(version, applied_at, checksum)`, un point d'entrée
-`python -m oto_mcp.db.migrate` que `oto-backend.sh` appelle **avant** le restart.
-Le boot ne migre plus du tout : il lit la version courante, la compare à celle
-qu'attend le code, et **refuse de démarrer** si elle est en retard.
-
-- **Ce que ça donne.** Le travail de migration sort de la fenêtre de healthcheck
-  (le smoke ne mesure plus que le démarrage applicatif) ; un fichier par migration
-  rend le domaine lisible et la revue possible ; l'ordre est explicite et gelé ; le
-  boot redevient O(1). C'est la seule option qui donne aussi un endroit naturel où
-  reloger les travaux périodiques de §1.1.
-- **Risque n° 1, sévère : la porte de version transforme un rollback automatique en
-  panne dure.** Si la migration `N` passe et que le smoke échoue, le rollback
-  redéploie le code `N-1` — qui refuse alors de démarrer, la base étant en version
-  `N`. Aujourd'hui ce cas dégrade en « le vieux code tourne sur une base en
-  avance », ce qui **marche** tant que les migrations sont additives. La porte
-  échange une classe de bug silencieux contre une classe de panne bruyante ; c'est
-  peut-être le bon échange, mais c'en est un, et il se paie le jour d'un incident.
-- **Risque n° 2 : la migration sort de la protection de l'advisory lock du boot.**
-  Il faut le reprendre dans le migrateur, sinon deux deploys concurrents (prod +
-  preprod) exécutent du DDL en parallèle sur la même base — le `DeadlockDetected`
-  déjà vécu, mais sans le retry qui l'absorbe aujourd'hui.
-- **Risque n° 3 : le script de deploy vit hors dépôt** (`/opt/deploy/oto-backend.sh`,
-  sudo NOPASSWD). L'option A le modifie sur la box, pour prod **et** preprod, et ce
-  changement n'est ni revu ni testé par la CI. C'est le maillon le moins observable
-  de la chaîne, et l'option en fait le maillon critique.
-- **Coût d'entrée** : poser le ledger sur l'existant (marquer les 142 ordres comme
-  déjà appliqués sans les rejouer), sinon le premier `migrate` réexécute tout.
-
-### 4.2 Option B — le boot migre encore, mais seulement ce qui n'a jamais tourné
-
-Même répertoire de migrations et même table `schema_migrations`, mais le migrateur
-reste **dans `init_db`**, en tête de boot. La chaîne de déploiement ne change pas
-d'une ligne : c'est un changement interne au backend.
-
-- **Ce que ça donne.** Le boot passe de 297 ordres à *zéro* en régime stable (une
-  lecture de `schema_migrations`), et à `k` ordres le jour où un lot ajoute `k`
-  migrations. Les backfills de §2.4 cessent de rebalayer les tables à chaque
-  redémarrage. `_init.py` devient découpable par domaine *pour de vrai*, puisque
-  chaque migration devient un fichier autonome et daté — ce que §0 dit impossible
-  aujourd'hui.
-- **Risque n° 1 : la fenêtre de healthcheck reste sur le chemin.** Une migration
-  lourde la consomme toujours, exactement comme aujourd'hui, et les quatre travaux
-  de maintenance de §1.1 ne sont pas concernés du tout. L'option améliore le cas
-  nominal (redémarrage sans nouveau code) et ne change rien au pire cas — qui est
-  celui qui rollback.
-- **Risque n° 2 : perte de l'auto-réparation.** Le régime actuel est brutal mais
-  auto-cicatrisant : quel que soit l'état d'une base, un boot la ramène à l'état
-  attendu. Avec un ledger, une base dont le ledger ment (restauration partielle,
-  ligne semée à tort) reste cassée et le boot ne la répare plus. Une commande de
-  **re-vérification** (rejouer les ordres idempotents en mode audit) devient une
-  pièce nécessaire, pas un confort.
-- **Risque n° 3 : deux boots concurrents** — couvert tel quel par l'advisory lock
-  existant, à condition que lecture et écriture du ledger restent **dans la même
-  transaction** que les migrations. Seul point d'attention technique, et il est
-  petit.
-- **Coût d'entrée** : identique à A (poser le ledger sur l'existant), sans toucher
-  au script de deploy ni à la CI.
-
-### 4.3 Option C — deux étages : DDL déclaratif au boot, one-shots versionnés hors boot
-
-On assume que le mécanisme actuel a une vraie qualité — il est **déclaratif** et
-auto-réparateur — et on ne sort du boot **que ce qui n'a rien à y faire** : les
-ordres qui touchent des données (§2.4), les 30 non additifs (§2.6) et les quatre
-travaux de maintenance (§1.1). Les 106 `ADD COLUMN IF NOT EXISTS` restent au boot,
-idempotents et bornés.
-
-- **Ce que ça donne.** Le poste dangereux — celui dont le coût suit la taille de la
-  base — quitte la fenêtre de healthcheck ; le poste inoffensif garde son
-  auto-réparation et son ergonomie (ajouter une colonne reste une ligne). C'est
-  aussi l'option qui colle le mieux à la danse en N lots : un lot destructif EST
-  déjà un acte manuel séquencé, le versionner ne fait que lui donner un nom, une
-  trace et une garantie de non-rejeu. Et c'est la seule qui traite explicitement la
-  rétention du journal comme ce qu'elle est : un travail périodique, pas une
-  migration.
-- **Risque n° 1 : deux mécanismes coexistent**, donc une frontière à tenir — « ceci
-  va au boot, cela va en migration ». Une frontière de ce genre dérive dès qu'elle
-  n'est pas mécanisée : il faut un garde-fou CI qui refuse un `UPDATE`/`DELETE`/
-  `DROP`/`RENAME` dans `_init.py`, sinon la règle ne survit pas à trois lots.
-- **Risque n° 2 : ça ne range pas `_init.py`.** Les 106 `ADD COLUMN` restants sont
-  toujours chronologiques et toujours dans une fonction unique — moins de la moitié
-  du fichier disparaît. Si l'objectif est la lisibilité autant que le boot, cette
-  option ne le sert qu'à moitié.
-- **Risque n° 3 : la migration hors boot doit être rejouable à la main** (un lot de
-  la danse en N lots se pilote entre deux promotions). Il faut donc une commande,
-  sa doc et ses droits sur la box — l'outillage de l'option A, mais pour ~55 ordres
-  au lieu de 142.
-- **Coût d'entrée** : le plus faible des trois pour le gain sur la fenêtre ; le plus
-  élevé en discipline continue.
-
-## 5. Ce que le choix devra trancher
-
-Aucune de ces questions n'a de réponse évidente, et chacune décide en partie de
-l'option :
-
-1. **Que doit-il se passer quand le code est en retard sur la base ?** Refuser de
-   démarrer (sûr, mais casse le rollback automatique) ou continuer (souple, mais
-   c'est le bug silencieux d'aujourd'hui). C'est la question la plus structurante :
-   elle sépare A de B et C.
-2. **Qu'est-ce qui répare une base dont le ledger ment ?** Le régime actuel n'a pas
-   besoin de réponse ; les trois options en ont besoin.
-3. **Les travaux périodiques (§1.1) restent-ils au boot ?** Ils n'y ont leur place
-   dans aucune des trois lectures, et ils sont la première cause probable d'un
-   dépassement futur de la fenêtre. C'est peut-être le lot à faire en premier,
-   indépendamment du régime de migration.
-4. **Le script de deploy hors dépôt entre-t-il dans le périmètre ?** Sans lui,
-   l'option A est impossible ; avec lui, une partie de la chaîne de production
-   devient revue et testée — ce qui est souhaitable indépendamment.
-5. **Les 79 ALTER inertes : on les retire quand ?** Lot à part entière, sans rapport
-   avec le choix de régime, et qui vaut la peine dans les trois cas.
-6. **Que fait-on des 6 ordres hors forme** (générés en boucle, `ADD PRIMARY KEY`
-   gardés en Python) ? Ils ne se convertissent pas mécaniquement en fichiers SQL.
+> Les **trois options** du 27/08 avec leurs risques (ex-§4) et les **six questions**
+> que le choix devait trancher (ex-§5) vivent dans `oto-private`,
+> `docs/chantiers/chantier-migrations-versionnees.md`, avec l'ordre des lots qui
+> restent et l'état de chaque question. Le choix est fait — **ADR 0065, option C** —
+> et son lot 0 est livré (§1.3).
+>
+> *(Il n'y a plus de §5 : les numéros des sections suivantes sont conservés tels
+> quels pour ne pas casser les renvois existants.)*
 
 ## 6. Références
 

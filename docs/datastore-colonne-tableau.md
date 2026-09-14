@@ -106,6 +106,13 @@ lecteur de chaque attribut, est servie sur `GET /api/datastore/schema/keys`.
   inconnues). À faire traverser jusqu'aux consommateurs, sinon scout n'a rien à
   afficher sous un intitulé.
 
+> **Correction de fait (revue du 13/08, hors amendement)** : « `description` sera enfin
+> servie » ne change RIEN au premier niveau — les descriptions traversaient déjà (schéma
+> stocké et rendu tel quel), l'étape 2 (l'ordre d'implémentation est au chantier) n'a fait
+> que FIGER l'existant par un test. L'exposition de descriptions écrites pour des agents
+> sur des écrans clients est PRÉEXISTANTE — c'est une relecture ÉDITORIALE côté mission,
+> pas un gate de plateforme.
+
 **Sur un tableau `strict`, `of.fields` FERME la fiche (#544, 29/08/2026).** C'est le
 principe de la FEUILLE appliqué au référentiel : ce qui vaut au premier niveau vaut un
 cran plus bas — à ceci près que le sens s'y **inverse**, et il faut le dire. En tête de
@@ -253,105 +260,16 @@ machinerie de chemins, et la nommer autrement serait fabriquer un second vocabul
 pour la même idée. Question ouverte, à trancher avant que les pages n'inventent leur
 forme.
 
-## 8. Ce que je tranche ici sans mandat explicite
+## 8. Les arbitrages, l'ordre d'implémentation et les revues — au chantier
 
-À retourner en une ligne, ce sont des choix de FORME :
-
-1. **couches d'item aplaties DANS l'item** (`item["email.origine"]`) plutôt qu'un
-   chemin global `contacts.0.email.origine` — parce que le consommateur applique une
-   règle qu'il connaît déjà, et que l'aplat global explose en largeur ;
-2. **rangs 0-indexés à l'adressage, 1-indexés à l'export** — la machine compte comme
-   la machine, l'humain lit « contact1 ». C'est une incohérence assumée : l'inverse
-   ferait mentir l'une des deux faces. **Elle ne survit que documentée AUX DEUX
-   BOUTS** : la fiche d'écriture dit « rangs 0-indexés ; l'export les nomme
-   1-indexés », et la réponse d'export le rappelle. Non écrite quelque part, elle
-   devient un piège au lieu d'un choix ;
-3. ~~**`flat_alias` déclaré** comme réponse à la migration (§6)~~ — retiré le
-   07/09/2026, cf. §6 ;
-4. **couches exclues de l'export par défaut** ;
-5. **`max_items` porte double sens** (borne d'écriture + largeur d'export) plutôt que
-   deux clés — une seule chose à déclarer, et elle est vraie des deux côtés.
-
-## 9. Ordre d'implémentation
-
-Ce qui débloque la migration d'abord, l'exhaustivité ensuite :
-
-1. `unwrap` en profondeur + forme servie (§1, §2) — **rien ne marche sans ça** ;
-2. schéma : `max_items`, `description` servie, refus de clé métier sur liste (§3, §4) ;
-3. ~~projection `flat_alias` en lecture + refus d'écriture dessus (§6)~~ — fait le
-   13/08, retiré le 07/09 sans avoir jamais servi (§6) ;
-4. existence/agrégat `contacts[].attr` (§5.1) ;
-5. écriture par rang (§5.2) ;
-6. export à plat déterministe (§5.3) — le plus gros, il n'existe rien à étendre.
-
-
----
-
-## 10. Amendements de revue (13/08 soir — superviseur + scout, consignés par le superviseur)
-
-La revue scout rend **GO**, tous les tranchages du §8 acceptés, avec cinq points qui amendent ce document :
-
-1. **(§6) La conversion nomme une étape « PRÉVENIR LES CONSOMMATEURS », et le retrait du double-service est un geste DISTINCT et annoncé** — jamais la suite mécanique de la purge. Fait mesuré qui l'impose : scout garde par tableau CINQ listes qui nomment des colonnes (`default_columns`, `hidden_fields`, `hidden_facets`, `composition`, `field_roles`) — au retrait de l'alias elles pointeraient dans le vide EN SILENCE (le piège payé à une migration client antérieure, ×5). Scout bascule ses listes lui-même ; l'étape doit être dans le chemin instruit, pas dans une mémoire.
-2. **(§5.1) Les DEUX comptes sont SERVIS sur les chemins de liste** : `count` (occurrences) ET `count_rows` (fiches) — comme au barreau 1 multi-colonnes. Exigence BLOQUANTE de scout : ses facettes affichent `count` comme un nombre de fiches — une fiche à deux DRH compterait double, le chiffre serait plausible et faux. À figer par un test à l'étape 4.
-3. **(§5.3) PAS de gabarit par défaut : le gabarit est OBLIGATOIRE dès qu'on migre.** Le défaut proposé (`{key}{n}_{attr}`) ne produit pas son propre exemple (`contacts` → `contacts1_nom` ≠ `contact1_nom`) — un défaut qui singularise la clé serait une devinette, ce que ce document interdit. Celui qui migre déclare, toujours.
-4. **(§6) L'alias PROJETTAIT les couches** (retiré le 07/09 avec le double-service) : `contact1_email.comment` se résout vers `contacts[0].email.comment` — l'alias mappe le préfixe de chemin, le suffixe de couche compose. Sans ça, les marques de provenance disparaîtraient des écrans pendant toute la fenêtre, sans message.
-5. **(§8.2) L'asymétrie 0/1 avait TROIS bouts, pas deux** : l'écriture (0-indexée), l'export (1-indexé), et le `{n}` du gabarit de migration (1-indexé — c'est l'humain qui le déclare et c'est là que la confusion coûterait le plus). Le troisième est parti avec le double-service le 07/09 ; les deux autres restent, documentés.
-
-Revue superviseur (déjà intégrée au corps par `f3f60aa`) : le sort des colonnes plates (copier → vérifier ligne à ligne → PURGER), le rang vide servi `{}` jamais `null`, l'asymétrie documentée dans les fiches au moment où les surfaces existent.
-
-
-## 11. Amendements de seconde revue (13/08, scout — passe 2)
-
-6. **(§1) L'ORDRE des items est un CONTRAT écrit, plus une propriété du moteur** : l'ordre servi est l'ordre d'écriture, stable d'une lecture à l'autre (jsonb le garantit, le contrat l'ÉCRIT — un consommateur affiche « le premier rang renseigné » comme cible d'appel : un ordre instable ferait appeler quelqu'un d'autre entre deux ouvertures de la même fiche). Réordonner = réécrire la liste ENTIÈRE, explicitement — jamais un effet de bord.
-7. **(§5.2) Un verbe d'AJOUT sans index : `contacts[+].email`** (ou l'écriture d'un item entier en `contacts[+]`) — étend la liste ATOMIQUEMENT en queue. Sans lui, « lire la longueur puis écrire le rang » fait viser le même rang à deux agents parallèles, le second écrasant le premier — la course est structurelle. L'adressage par rang reste pour les CORRECTIONS (idéalement sous bail) ; l'ajout se fait par `[+]`. Refus au-delà de `max_items`, comme le rang nommé.
-8. **(§3/§5.2) La borne de longueur juge les FEUILLES ÉCRITES, jamais la ligne ni l'item entier** — la transposition exacte du correctif #383 (vérifié sur les deux chemins du premier niveau : patch ET fusion batch passent `written=<clés posées>`) : écrire `contacts[2].email` ne re-juge pas la longueur de `contacts[3].fonction`. Figé par un test à l'étape 5. (Corrige au passage une prémisse de revue : les lignes existantes trop longues ne « gèlent » PAS — seule la valeur qu'on POSE est jugée.)
-9. **(§7) Témoignage consommateur consigné** : côté scout, un écran EST déjà des feuilles répétées (la composition d'une fiche = liste de groupes, chaque groupe une liste d'éléments) — la question des pages a donc un précédent de consommateur, et la nommer autrement fabriquerait le second vocabulaire qu'on refuse. La question reste ouverte côté pages, son coût de mauvaise réponse est maintenant documenté.
-
-**Correction de fait (hors amendement)** : « `description` sera enfin servie » (§3) ne change RIEN au premier niveau — les descriptions traversaient déjà (schéma stocké et rendu tel quel), l'étape 2 n'a fait que FIGER l'existant par un test. L'exposition de descriptions écrites pour des agents sur des écrans clients est PRÉEXISTANTE — c'est une relecture ÉDITORIALE côté mission, pas un gate de plateforme.
-
-## 12. Arbitrage — `match` joint les cibles, jamais les items (13/08)
-
-`match` voulait dire deux choses selon le niveau, et le croisement n'était pas défini.
-Au barreau 1 il joint plusieurs COLONNES (`any` : une suffit ; `all` : toutes) ; §5.1
-lui faisait joindre les ITEMS d'une liste. Chacun est clair seul. Ensemble, non :
-
-```jsonc
-{"fields": ["contacts[].fonction", "dirigeant_fonction"],
- "op": "in", "value": ["DRH"], "match": "all"}
-```
-
-« les deux cibles satisfont, un contact suffit » ou « les deux satisfont, et TOUS les
-contacts sont DRH » ? Deux lectures plausibles, aucune devinable par l'appelant — donc
-le pire cas : sur un contrôle de complétude, un résultat crédible et faux, dans les
-deux sens.
-
-**Tranché** : `match` joint les **CIBLES DÉCLARÉES**, jamais les items. La notation
-`[]` porte l'existence **intrinsèquement** — `contacts[].fonction` signifie toujours
-« il existe un contact dont la fonction… ». « Tous les items » n'existe pas tant
-qu'aucun usage réel ne le demande ; et tout croisement non défini est **REFUSÉ en le
-nommant**, jamais servi sur une sémantique devinée.
-
-Deux raisons, la première étant la plus profonde :
-
-- **un mot qui change de sens selon la FORME de sa cible est de l'interprétation** —
-  sur un paramètre au lieu d'un nom, mais la même maladie que la famille `contact*`
-  qu'on a refusé de deviner ;
-- les questions réelles sont « a un contact RH » et « n'a aucun contact ». La seconde
-  s'écrit déjà (`empty` + `match: all` sur des colonnes). « Tous les contacts sont
-  DRH » n'a aucun demandeur : on ne construit pas sa syntaxe par symétrie.
-
-
-## 12. Le patron d'aplatissement de référence (étape 6 — décrit par le consommateur qui l'a construit, 13/08)
-
-L'export scout-side est livré et éprouvé sur tableau réel ; son patron devient LA référence de l'export natif. L'idée structurelle : **deux fonctions, et la première ne voit AUCUNE ligne** —
-
-```
-colonnes(schéma, options) → [ {entête, source} ]   ← ne reçoit pas les lignes
-ligne(row, colonnes)      → [ valeurs ]            ← ne décide de rien
-```
-
-Le déterminisme est STRUCTUREL, pas promis : ce qui ne reçoit pas le contenu ne peut pas varier avec lui. `source` = `{champ}` ou `{item, rang, attribut}` — le dépliage est décidé une fois, à la construction, jamais dans la boucle des lignes.
-
-Les règles : largeur = `max_items` (à défaut mesurée = la SEULE entorse, annoncée dans le fichier, et SEULEMENT pour les listes réellement exportées) · rangs 1-indexés au nom de colonne / 0 à l'adressage, documenté aux deux bouts · couches exclues par défaut, sautées À LA CONSTRUCTION (pas filtrées après) · **une cellule ne porte jamais de structure** — une valeur composite au rendu vaut VIDE (une cellule vide se voit, un blob JSON se subit) · **un trou d'item ne décale pas** (dépliage par `(rang, attribut)`, jamais par itération sur le contenu) · l'ordre des colonnes suit l'ÉCRAN quand l'appelant fournit sa liste retenue.
-
-Le format : un vrai classeur (jamais CSV — la locale Windows coupe sur le séparateur, les données portent des points-virgules) ; première ligne = les colonnes, JAMAIS un titre (le filtre auto et toute relecture script en dépendent) ; le contexte (source, filtre, largeurs mesurées) va dans une SECONDE feuille. Test d'acceptation : écrire, RELIRE avec la même bibliothèque, vérifier items aux bonnes colonnes, nombre resté nombre, fiche sans contacts sans décalage.
+> Les **choix de forme** tranchés sans mandat (ex-§8), l'**ordre d'implémentation** en six
+> étapes (ex-§9), les **amendements des deux revues du 13/08** (ex-§10 et ex-§11) et les
+> deux arbitrages qui suivaient (ex-§12 et ex-§12 — la spec en portait **deux** du même
+> numéro : `match` joint les cibles, et le patron d'aplatissement de référence) vivent
+> dans `oto-private`, `docs/chantiers/chantier-colonne-tableau.md`.
+>
+> ⚠️ **Ces amendements amendent les sections ci-dessus** — l'ordre des items (§1), le
+> gabarit d'export **obligatoire**, sans défaut (§5.3), le verbe d'ajout `contacts[+]`
+> (§5.2), la borne de longueur qui ne juge que les feuilles écrites (§3 et §5.2) : les
+> lire au chantier **avant** d'implémenter une étape. Ce qu'une étape livrée rend vrai
+> revient ici, dans le même commit.
