@@ -16,7 +16,7 @@ from mcp.types import ErrorData, INVALID_PARAMS, INVALID_REQUEST
 
 from .. import access, output_projection, session_org, url_perimeter
 from ..connectors import verify as connector_verify
-from . import mail_obfuscation
+from . import images_base64, mail_obfuscation
 
 # Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
 # de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
@@ -493,6 +493,8 @@ def register(mcp: FastMCP) -> None:
 
         Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +
         métadonnées. Plus robuste qu'un fetch brut face aux anti-bot rudimentaires.
+        Les images incluses en base64 sont retirées du contenu (une trace dit leur type
+        et leur taille, `images_base64_retirees` les compte) ; `format="html"` les garde.
 
         Sur les appels mesurés, la moitié des expirations portait sur des adresses
         fabriquées à partir d'un nom de société : ce n'est pas la lenteur qui
@@ -553,6 +555,9 @@ def register(mcp: FastMCP) -> None:
             # pas reconstituer, donc les retirer perdrait quelque chose.
             if format == "markdown" and res.get("markdown"):
                 res.pop("text", None)
+            # oto#246 : une image incluse en base64 ne se lit pas, elle se paie à chaque
+            # tour qui relit la page — jusqu'à 91 % d'une page d'accueil mesurée.
+            images_base64.alleger(res)
             mail_obfuscation.completer(res, url, per)
             return res
         except RuntimeError as e:
