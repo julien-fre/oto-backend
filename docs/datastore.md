@@ -4,8 +4,9 @@ type: reference
 description: >-
   Référence du spine de stockage structuré per-user de oto-backend : tables PG
   user_datastores + datastore_rows (JSONB natif, uuid7, _created/_updated_at auto),
-  chargé hors gate d'activation (provider=None, ADR 0011), partage DB-only via
-  datastore_shares, deep-link dashboard via data_url. Couvre les surfaces MCP data_*
+  chargé hors gate d'activation (provider=None, ADR 0011), partage par la chaîne
+  d'octrois `resource_grants` (ADR 0030 ; l'ex-table `datastore_shares` est DROPpée),
+  deep-link dashboard via data_url. Couvre les surfaces MCP data_*
   et REST /api/datastore/*, la file de travail (bail, plafond de reprises), l'auth double (JWT Logto ou API token oto_*), l'OAuth
   Google per-user multi-compte (flux /api/google/oauth/*, refresh token chiffré,
   scopes Sheets/Drive/Gmail/Tasks et gotcha CASA gmail.modify restricted), et la
@@ -44,9 +45,9 @@ plat : `_id` (uuid7-like), `_created_at`, `_updated_at`.
 **Datastore = spine plateforme** (`provider=None`, ADR 0011), PAS un connecteur
 Google : chargé explicitement dans `register_all` (à côté de meta/orgs),
 donc **hors gate d'activation** et **sans dépendance externe** — marche sans
-connecter Google (plus de `412 google_not_connected`). Le partage est **DB-only**
-(`datastore_shares` ; le destinataire lit via son propre `sub`, plus de
-permission Drive). `data_url` renvoie un **deep-link dashboard** (`/console/data`),
+connecter Google (plus de `412 google_not_connected`). Le partage est **DB-only** : il passe par la chaîne d'octrois `resource_grants`
+(ADR 0030) — l'ex-table `datastore_shares` a été remplacée puis **DROPpée**, et rien
+ne la lit plus. Le destinataire lit via son propre `sub`, sans permission Drive. `data_url` renvoie un **deep-link dashboard** (`/console/data`),
 pas une URL de Sheet. Code : `datastore/core.py` (`DatastorePg`) + `tools/datastore.py`
 (face MCP) + `capabilities/datastore/*.py` (face REST, depuis #302 — plus
 `api/datastore.py`, qui n'en porte plus rien) + fonctions `db.datastore_*`.
