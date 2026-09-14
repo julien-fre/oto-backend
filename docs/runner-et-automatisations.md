@@ -560,6 +560,15 @@ nommerait : il choisit le dépôt, jamais à qui il appartient. Un travail déj�
 refusé pour identité n'en reçoit aucune — lui en remettre une armerait un travail
 qui ne doit pas tourner.
 
+⚠️ **Une clé d'ORGANISATION Anthropic part avec son workspace** (14/09/2026). Créée
+pour toute l'organisation Anthropic et non dans un workspace, elle fait refuser
+chaque requête qui ne nomme pas le workspace à facturer (en-tête
+`anthropic-workspace-id`). Le workspace se dépose avec la clé (champ `workspace_id`,
+non secret, rangé dans `meta` de la même ligne — cf. `connector-vault.md`) et part
+au claim en `job["model_workspace"]`, seulement s'il est posé, par la **même
+lecture** que la clé. Seul un champ déclaré sort de `meta` ; il n'entre dans aucune
+trace. Une clé de workspace s'en passe : champ vide, rien ne part.
+
 ⚠️ **Ce que les journaux en voient : rien**, et c'est tenu par des cliquets, pas
 par une promesse. `tool_calls` ne garde aucune réponse (la clé part dans la
 réponse au claim, pas dans ses arguments — le masque de #558/#564 ne la couvre

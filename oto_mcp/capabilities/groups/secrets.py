@@ -99,13 +99,11 @@ def _set_secret(ctx: ResolvedCtx, inp: SetGroupSecretInput) -> dict:
     # Écriture PARTIELLE (#448) : les champs absents du corps sont complétés par le
     # coffre, côté serveur — le secret ne repasse jamais par le client. C'est ce qui
     # permet à un admin d'équipe de repointer une `base_url` sans détenir le bearer.
-    fields = inp.fields
-    if fields is not None:
-        fields = credentials_store.merge_with_existing(
-            "group", str(inp.group_id), inp.provider, account, fields)
-    # Mono-champ (api_key) ou multi-champs (fields packés) — source unique.
+    # Mono-champ (api_key) ou multi-champs (fields packés), et les champs rangés dans
+    # `meta` (`in_meta`) — source unique, `credentials_store.preparer_pose`.
     try:
-        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, fields)
+        secret, meta_champs = credentials_store.preparer_pose(
+            "group", str(inp.group_id), inp.provider, account, inp.api_key, inp.fields)
     except ValueError as e:
         # Refus NOMMÉ quand la validation en porte un (#449) : « champ(s) requis
         # vide(s) : Nom du header » vaut mieux qu'un « incomplet » à deviner.
@@ -120,7 +118,8 @@ def _set_secret(ctx: ResolvedCtx, inp: SetGroupSecretInput) -> dict:
         raise AuthzDenied(409, "account_required", str(e))
     except credentials_store.SingleAccountConnector as e:
         raise AuthzDenied(400, "single_account_connector", str(e))
-    group_store.set_group_secret(inp.group_id, inp.provider, secret, set_by=ctx.sub, meta=meta, account=account)
+    group_store.set_group_secret(inp.group_id, inp.provider, secret, set_by=ctx.sub,
+                                 meta={**(meta or {}), **meta_champs} or None, account=account)
     return {"ok": True, "group_id": inp.group_id, "provider": inp.provider}
 
 

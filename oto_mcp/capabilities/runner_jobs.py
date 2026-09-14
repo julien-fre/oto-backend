@@ -181,6 +181,12 @@ class Job(BaseModel):
             "drop it — it is the org's secret, not yours, and it is never written "
             "to a log or a thread. Absent means the org deposited none: fall back "
             "to the platform key."))
+    model_workspace: Optional[str] = Field(
+        None, description=(
+            "The provider WORKSPACE deposited with `model_key`, returned by op=claim "
+            "only, when the org set one. An organisation-level Anthropic key requires "
+            "it on every request (header `anthropic-workspace-id`). Not a secret, but "
+            "never written to a log either. Absent: send no workspace."))
     delegation_refusee: Optional[str] = Field(
         None, description=(
             "WHY this job cannot run: the account that scheduled it no longer "
@@ -337,8 +343,15 @@ def _identite_invalide(sub_porteur: str, org_id: int) -> Optional[str]:
     return None
 
 
-def _cle_de_modele(org_id: int, depot: str) -> Optional[str]:
-    """La clé de modèle DÉPOSÉE PAR L'ORG, ou None si elle n'en a pas posé.
+def _cle_de_modele(org_id: int, depot: str) -> tuple[Optional[str], Optional[str]]:
+    """La clé de modèle DÉPOSÉE PAR L'ORG et son workspace : `(clé, workspace)`, ou
+    `(None, None)` si elle n'en a pas posé.
+
+    ⚠️ Le workspace (14/09/2026) : une clé d'ORGANISATION Anthropic fait refuser toute
+    requête qui ne nomme pas le workspace à facturer (en-tête `anthropic-workspace-id`).
+    Il vit dans `meta` de la MÊME ligne (champ déclaré `in_meta`) et se lit par la MÊME
+    lecture que la clé — aucun chemin de plus vers le secret. Seul un champ DÉCLARÉ sort
+    (`meta_fields`) : les satellites de service de `meta` ne partent pas au worker.
 
     ⚠️ La garde tient au TYPE, pas au nom du connecteur. Un worker qui pourrait
     nommer n'importe quel dépôt tirerait le secret Folk ou Salesforce de l'org au
@@ -355,16 +368,20 @@ def _cle_de_modele(org_id: int, depot: str) -> Optional[str]:
     from .. import credentials_store, providers
     c = providers.connector_for_provider(depot)
     if not c or c.kind != "credential":
-        return None
+        return None, None
     try:
-        return credentials_store.get_credential("org", str(org_id), depot) or None
+        ligne = credentials_store.get_credential_with_meta("org", str(org_id), depot)
     except Exception:
         # Un coffre qui ne rend pas la clé n'empêche pas le travail : le worker
         # retombe sur la clé de la plateforme. Mais le silence, lui, est refusé —
         # une org qui a déposé sa clé et qu'on facture sur la nôtre doit se voir.
         logger.warning("clé de modèle `%s` illisible pour l'org %s",
                        depot, org_id, exc_info=True)
-        return None
+        return None, None
+    if not ligne or not ligne.get("secret"):
+        return None, None
+    workspace = credentials_store.meta_fields(depot, ligne.get("meta") or {}).get("workspace_id")
+    return ligne["secret"], (workspace or None)
 
 
 # La marque qui dit « ce compte EST un de nos workers ». Un admin plateforme la
@@ -486,7 +503,7 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         if exigees:
             return _refuser_sans_cle(job, appelant, _SANS_DEPOT)
         return job
-    cle = _cle_de_modele(job["org_id"], depot)
+    cle, workspace = _cle_de_modele(job["org_id"], depot)
     if not cle and org_key_only:
         # ⚠️ Un worker SANS clé de plateforme : le remettre sans clé, c'est un
         # travail qui échouera chez le fournisseur — ou, pire, qui trouvera une
@@ -509,7 +526,9 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     # elle se verrait serait la facture de l'org.
     logger.info("clé de modèle `%s` remise à %s pour l'org %s (travail %s)",
                 depot, appelant, job["org_id"], job.get("id"))
-    return {**job, "model_key": cle}
+    # Le workspace part À CÔTÉ de la clé, s'il est posé — et reste hors de la trace
+    # ci-dessus comme elle.
+    return {**job, "model_key": cle, **({"model_workspace": workspace} if workspace else {})}
 
 
 _SANS_DEPOT = (

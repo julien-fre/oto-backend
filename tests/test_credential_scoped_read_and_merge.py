@@ -106,9 +106,9 @@ def test_rien_de_pose_a_ce_palier_le_dit_par_palier(monkeypatch, coffre):
 
 @pytest.fixture()
 def au_coffre(monkeypatch):
-    monkeypatch.setattr(credentials_store, "get_credential",
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta",
                         lambda et, eid, con, account="":
-                        credentials_store.pack_secret("http", PONT))
+                        {"secret": credentials_store.pack_secret("http", PONT), "meta": {}})
 
 
 def test_changer_lurl_ne_touche_pas_a_la_cle(au_coffre):
@@ -143,8 +143,9 @@ def test_le_changement_de_mode_ne_ressuscite_pas_un_champ_mort(monkeypatch):
     ancien = {"base_url": "https://api.test", "auth_mode": "oauth2",
               "token_url": "https://api.test/token", "client_id": "CID",
               "client_secret": "CSEC"}
-    monkeypatch.setattr(credentials_store, "get_credential",
-                        lambda *a, **k: credentials_store.pack_secret("http", ancien))
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta",
+                        lambda *a, **k: {"secret": credentials_store.pack_secret("http", ancien),
+                                         "meta": {}})
     merged = credentials_store.merge_with_existing(
         "org", str(ORG), "http", "", {"auth_mode": "bearer", "token": "T"})
     kept = credentials_store.validate_fields("http", merged)
@@ -157,14 +158,14 @@ def test_un_coffre_illisible_ne_bloque_pas_une_repose_complete(monkeypatch):
     Ce n'est pas une raison d'interdire de la RÉÉCRIRE en entier."""
     def _boom(*a, **k):
         raise ValueError("InvalidTag")
-    monkeypatch.setattr(credentials_store, "get_credential", _boom)
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta", _boom)
     complet = {"base_url": "https://api.test", "auth_mode": "bearer", "token": "NEUF"}
     assert credentials_store.merge_with_existing(
         "group", str(GROUP), "http", "", complet) == complet
 
 
 def test_un_connecteur_mono_champ_na_rien_a_completer(monkeypatch):
-    monkeypatch.setattr(credentials_store, "get_credential",
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta",
                         lambda *a, **k: pytest.fail("aucune lecture attendue"))
     assert credentials_store.merge_with_existing(
         "org", str(ORG), "serper", "", {"key": "K"}) == {"key": "K"}

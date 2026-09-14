@@ -337,6 +337,8 @@ def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
     if not row or not row.get("secret"):
         raise AuthzDenied(404, "not_configured", _NOT_CONFIGURED.get(scope, _NOT_CONFIGURED["member"]))
     fields = credentials_store.unpack_secret(inp.provider, row["secret"])
+    # Un champ `in_meta` ne vit pas dans le chiffré : sa valeur se lit dans `meta`.
+    fields.update(credentials_store.meta_fields(inp.provider, row.get("meta") or {}))
     out: dict = {"provider": inp.provider, "configured": True}
     empreintes: dict = {}
     for f in c.secret_fields:
@@ -444,6 +446,8 @@ async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
     if verified:
         from datetime import datetime, timezone
         meta = {"verified_at": datetime.now(timezone.utc).isoformat()}
+    # Les champs rangés dans `meta` (`in_meta`) : `pack_secret` les a laissés hors du chiffré.
+    meta = {**(meta or {}), **credentials_store.meta_fields(inp.provider, fields)} or None
     credentials_store.set_credential(
         credentials_store.MEMBER, eid, inp.provider, secret, set_by=ctx.sub,
         account=account, meta=meta)

@@ -69,6 +69,22 @@ class CredentialField:
     # silencieusement : une valeur hors liste est refusée à l'ÉCRITURE, avec le jeu
     # attendu dans le message.
     choices: tuple[str, ...] = ()
+    # True = la valeur vit dans `connector_credentials.meta`, EN CLAIR, et non dans le
+    # chiffré (14/09/2026). Pour un champ NON secret ajouté à un connecteur dont des
+    # credentials sont déjà posés : la forme du chiffré ne dépend que des champs qui y
+    # vivent (`Connector.vault_fields`), donc une clé stockée brute reste brute — aucune
+    # ligne à reconditionner, et l'ancien code comme le nouveau relisent la même ligne
+    # de la base partagée prod/préprod. Cas fondateur : le workspace d'une clé
+    # d'organisation Anthropic.
+    in_meta: bool = False
+
+    def __post_init__(self):
+        # ⚠️ `meta` sort en clair vers les écrans de statut et de listing (`public_meta`) :
+        # un champ secret qui y vivrait sortirait avec. Refusé à l'import, pas à l'usage.
+        if self.in_meta and self.secret:
+            raise TypeError(
+                f"CredentialField `{self.name}` : `in_meta` exige `secret=False` — "
+                "`meta` est rendu en clair aux écrans de statut et de listing.")
 
 
 @dataclass(frozen=True)
@@ -477,6 +493,14 @@ class Connector:
                     CredentialField("password", "Mot de passe", secret=True,
                                     whitespace_significant=True))
         return ()
+
+    @property
+    def vault_fields(self) -> tuple[CredentialField, ...]:
+        """Les champs rangés DANS le chiffré : `secret_fields` moins ceux qui vivent dans
+        `meta` (`in_meta`). C'est leur nombre, et lui seul, qui décide de la forme du
+        blob (`credentials_store.pack_secret`) — ajouter un champ `in_meta` ne la change
+        pas."""
+        return tuple(f for f in self.secret_fields if not f.in_meta)
 
     @property
     def config_fields(self) -> tuple[CredentialField, ...]:

@@ -57,7 +57,7 @@ def test_sans_cle_deposee_le_travail_est_ARRETE_meme_reglage_eteint(monkeypatch,
     le travail partirait sans clé vers un worker qui n'en a pas — il échouerait
     chez le fournisseur, ou trouverait une clé oubliée dans l'environnement et la
     ferait payer."""
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     rendu = _remise(org_key_only=True)
     assert arret["job"] == 9, "arrêté pour de bon, pas relâché dans la file"
     assert "anthropic" in rendu["delegation_refusee"]
@@ -67,7 +67,7 @@ def test_sans_cle_deposee_le_travail_est_ARRETE_meme_reglage_eteint(monkeypatch,
 
 
 def test_avec_cle_deposee_la_cle_part_avec_le_travail(monkeypatch, arret):
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: "sk-ant-de-l-org")
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: ("sk-ant-de-l-org", None))
     rendu = _remise(org_key_only=True)
     assert rendu["model_key"] == "sk-ant-de-l-org"
     assert "delegation_refusee" not in rendu and not arret
@@ -76,7 +76,7 @@ def test_avec_cle_deposee_la_cle_part_avec_le_travail(monkeypatch, arret):
 def test_un_worker_ORDINAIRE_sans_cle_deposee_garde_le_comportement_d_avant(monkeypatch, arret):
     """Rien ne change pour les workers existants : sans clé et sans réglage, le
     travail part sans clé et le worker tourne sur la sienne."""
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     rendu = _remise(org_key_only=False)
     assert "delegation_refusee" not in rendu and not arret
     assert rendu["delegated_token"] == "otd_x"
@@ -85,7 +85,7 @@ def test_un_worker_ORDINAIRE_sans_cle_deposee_garde_le_comportement_d_avant(monk
 def test_un_MEMBRE_qui_reserve_n_est_jamais_arrete(monkeypatch, arret):
     """La garde vise le worker de plateforme : un membre ne reçoit jamais de clé,
     il n'y a donc rien à attendre ni à refuser."""
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     rendu = _remise(org_key_only=True, worker=False)
     assert "delegation_refusee" not in rendu and not arret
 
@@ -141,7 +141,7 @@ def test_la_capacite_REMET_le_mode_a_la_remise_de_cle(monkeypatch):
     monkeypatch.setattr(RJ.db, "claim_next_job", lambda *a, **k: dict(job))
     monkeypatch.setattr(RJ, "_charge_servie", lambda j: j)
     monkeypatch.setattr(RJ, "_delegue", lambda j, bail, sub: {**j, "delegated_token": "otd_x"})
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     monkeypatch.setattr(RJ.db, "arreter_definitivement",
                         lambda job_id, sub, raison: arrete.update(job=job_id) or True)
     rendu = RJ._jobs(ResolvedCtx(sub="worker:banc", org_id=ORG, platform_worker=True),

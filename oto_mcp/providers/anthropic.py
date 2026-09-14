@@ -5,7 +5,7 @@ décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
 """
 from __future__ import annotations
 
-from ._model import _c
+from ._model import CredentialField, _c
 
 # ⚠️ `kind="credential"` : AUCUN outil. Cet objet ne sert qu'à porter la clé
 # que la plateforme utilise POUR LE COMPTE de l'org — un agent programmé la
@@ -22,7 +22,20 @@ CONNECTOR = _c(
     # Un passage tourne sur UNE clé — deux dépôts pour la même org, ce serait deux
     # factures pour un même travail, et le worker n'a aucun critère pour trancher.
     cardinality="mono",
-    secret_kind="api_key", label="Anthropic",
+    # `fields` (14/09/2026) : la clé, et le WORKSPACE d'une clé d'organisation. Une
+    # clé créée pour toute l'organisation Anthropic, et non dans un workspace, fait
+    # refuser chaque requête qui ne nomme pas le workspace à facturer (en-tête
+    # `anthropic-workspace-id`). Le workspace n'est pas secret et vit dans `meta`
+    # (`in_meta`) : le chiffré garde la clé BRUTE, et les clés déjà déposées se
+    # relisent à l'identique. Le worker le reçoit au claim, à côté de la clé.
+    secret_kind="fields", label="Anthropic",
+    credential_fields=(
+        CredentialField("key", "Clé d'API", secret=True),
+        CredentialField(
+            "workspace_id", "Workspace", secret=False, required=False, in_meta=True,
+            help="Seulement pour une clé d'ORGANISATION (créée hors d'un workspace) : "
+                 "l'identifiant du workspace à facturer. Vide pour une clé de workspace."),
+    ),
     help="Clé de modèle Anthropic — utilisée par les agents programmés de l'organisation, jamais par un outil",
     href="https://console.anthropic.com/settings/keys",
 )

@@ -46,20 +46,28 @@ def _servi(job, depot, appelant=_WORKER):
     return RJ._avec_cle(job, depot, appelant, worker=(appelant == _WORKER))
 
 
+class _Demandes(list):
+    """Les lectures du coffre, dans l'ordre — et le `meta` que chaque ligne rendra."""
+    meta: dict
+
+
 @pytest.fixture
 def _coffre(monkeypatch):
-    """Un coffre qui note CE QU'ON LUI DEMANDE — l'entité autant que le dépôt."""
+    """Un coffre qui note CE QU'ON LUI DEMANDE — l'entité autant que le dépôt. Il se lit
+    comme la remise le lit : la ligne entière, secret et `meta` (`_coffre.meta[dépôt]`)."""
     from oto_mcp import credentials_store
-    demandes = []
+    demandes = _Demandes()
+    demandes.meta = {}
 
     def _get(entity_type, entity_id, connector, account=""):
         demandes.append((entity_type, entity_id, connector))
-        return {"anthropic": "sk-de-l-org", "folk": "secret-folk-de-l-org"}.get(connector)
+        secret = {"anthropic": "sk-de-l-org", "folk": "secret-folk-de-l-org"}.get(connector)
+        return {"secret": secret, "meta": dict(demandes.meta.get(connector, {}))} if secret else None
 
     def _has(entity_type, entity_id, connector, account=None):
         return connector in ("anthropic", "folk")
 
-    monkeypatch.setattr(credentials_store, "get_credential", _get)
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta", _get)
     monkeypatch.setattr(credentials_store, "has_credential", _has)
     return demandes
 
@@ -308,3 +316,49 @@ def test_la_remise_a_un_worker_laisse_une_trace_sans_la_cle(_coffre, caplog):
     assert job["model_key"] == "sk-de-l-org"
     assert "remise" in caplog.text and "org 42" in caplog.text
     assert "sk-de-l-org" not in caplog.text
+
+
+# ── le workspace d'une clé d'organisation (14/09/2026) ────────────────────────
+# Une clé Anthropic créée pour toute l'organisation fait refuser chaque requête qui ne
+# nomme pas son workspace (en-tête `anthropic-workspace-id`). Il se dépose avec la clé,
+# dans `meta` de la même ligne, et part avec elle — par la même lecture.
+
+def test_le_workspace_depose_part_a_cote_de_la_cle(_coffre):
+    _coffre.meta["anthropic"] = {"workspace_id": "wrkspc_01banc"}
+    job = _servi({"id": 1, "org_id": 42}, "anthropic")
+    assert (job["model_key"], job["model_workspace"]) == ("sk-de-l-org", "wrkspc_01banc")
+    assert _coffre == [("org", "42", "anthropic")], "une seule lecture, la même ligne"
+
+
+def test_sans_workspace_depose_aucun_champ_ne_part(_coffre):
+    assert "model_workspace" not in _servi({"id": 1, "org_id": 42}, "anthropic")
+
+
+def test_seul_un_champ_declare_sort_de_meta(_coffre):
+    """`meta` porte aussi des satellites de service : aucun ne part au worker."""
+    _coffre.meta["anthropic"] = {"health_reason": "sonde KO", "verified_at": "2026-09-14"}
+    job = _servi({"id": 1, "org_id": 42}, "anthropic")
+    assert "model_workspace" not in job and "health_reason" not in str(job)
+
+
+def test_un_membre_ordinaire_ne_recoit_pas_le_workspace_non_plus(_coffre):
+    _coffre.meta["anthropic"] = {"workspace_id": "wrkspc_01banc"}
+    job = _servi({"id": 1, "org_id": 42}, "anthropic", appelant=_MEMBRE)
+    assert "model_workspace" not in job and "model_key" not in job
+
+
+def test_le_workspace_n_entre_dans_aucune_ligne_de_journal(_coffre, caplog):
+    """Exigé à la mise en production : l'absence se LIT dans le journal réellement écrit
+    — la trace de remise ET le refus d'un membre existent, et aucun ne porte le numéro."""
+    _coffre.meta["anthropic"] = {"workspace_id": "wrkspc_01banc"}
+    with caplog.at_level("DEBUG"):
+        servi = _servi({"id": 3, "org_id": 42}, "anthropic")
+        _servi({"id": 4, "org_id": 42}, "anthropic", appelant=_MEMBRE)
+    assert servi["model_workspace"] == "wrkspc_01banc"
+    assert "remise" in caplog.text and "REFUSÉE" in caplog.text
+    assert "wrkspc_01banc" not in caplog.text and "sk-de-l-org" not in caplog.text
+
+
+def test_le_contrat_dit_que_le_workspace_ne_sort_que_du_claim():
+    d = RJ.Job.model_fields["model_workspace"].description
+    assert "op=claim only" in d and "never written to a log" in d

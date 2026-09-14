@@ -416,10 +416,13 @@ def pack_secret(connector: str, fields: dict) -> str:
         return base64.b64encode(
             f"{fields.get('email', '')}:{fields.get('password', '')}".encode()
         ).decode()
-    schema = c.secret_fields if c is not None else ()
+    schema = c.vault_fields if c is not None else ()
+    # Les champs `in_meta` ne vont pas dans le chiffré (cf. `preparer_pose`) : jamais pris
+    # pour la valeur brute — sinon un workspace serait stocké à la place de la clé.
+    dans_le_chiffre = {k: v for k, v in fields.items() if k not in _noms_en_meta(c)}
     if len(schema) <= 1:
-        return next(iter(fields.values()), "") if fields else ""
-    return json.dumps(fields)
+        return next(iter(dans_le_chiffre.values()), "") if dans_le_chiffre else ""
+    return json.dumps(dans_le_chiffre)
 
 
 class SecretUnpackError(RuntimeError):
@@ -441,7 +444,7 @@ def unpack_secret(connector: str, secret: str) -> dict:
     **Lève `SecretUnpackError` si le secret ne se relit pas** — jamais `{}`, qui
     produirait un client sans identifiants (cf. la classe ci-dessus)."""
     c = providers.REGISTRY.get(connector)
-    schema = c.secret_fields if c is not None else ()
+    schema = c.vault_fields if c is not None else ()
     if c is not None and c.secret_kind == "basic_auth":
         import base64
         try:
@@ -466,6 +469,18 @@ def unpack_secret(connector: str, secret: str) -> dict:
             f"credential `{connector}` illisible : le blob multi-champs stocké est un "
             f"`{type(loaded).__name__}` JSON, pas un objet de champs.")
     return loaded
+
+
+def _noms_en_meta(c) -> frozenset:
+    return frozenset(f.name for f in (c.secret_fields if c is not None else ()) if f.in_meta)
+
+
+def meta_fields(connector: str, values: dict) -> dict:
+    """Les champs DÉCLARÉS `in_meta` parmi `values` (une saisie validée, ou le `meta` d'une
+    ligne) — et rien d'autre : `meta` porte aussi des satellites de service
+    (`health_reason`, `verified_at`…), qui ne sont pas des champs du credential."""
+    noms = _noms_en_meta(providers.REGISTRY.get(connector))
+    return {k: v for k, v in (values or {}).items() if k in noms}
 
 
 def split_secret_config(connector: str, fields: dict) -> tuple[dict, dict]:
@@ -566,7 +581,7 @@ def merge_with_existing(entity_type: str, entity_id: str, connector: str,
     if len(declared) < 2 or declared <= set(provided):
         return dict(provided)          # mono-champ, ou saisie déjà complète
     try:
-        existing = get_credential(entity_type, entity_id, connector, account)
+        ligne = get_credential_with_meta(entity_type, entity_id, connector, account)
     except Exception:
         # Une ligne illisible (écrite sous une clé de chiffrement périmée) ne doit pas
         # interdire de la RÉÉCRIRE en entier — mais elle se journalise : c'est un fait
@@ -575,9 +590,12 @@ def merge_with_existing(entity_type: str, entity_id: str, connector: str,
                        "— saisie prise telle quelle",
                        entity_type, entity_id, connector, account, exc_info=True)
         return dict(provided)
-    if not existing:
+    if not ligne or not ligne.get("secret"):
         return dict(provided)
-    prior = unpack_secret(connector, existing)
+    # Le chiffré ET les champs `in_meta` de la même ligne : un champ rangé dans `meta` se
+    # conserve à la repose comme un champ du chiffré.
+    prior = {**unpack_secret(connector, ligne["secret"]),
+             **meta_fields(connector, ligne.get("meta") or {})}
     return {**{k: v for k, v in prior.items() if k in declared and k not in provided},
             **provided}
 
@@ -604,6 +622,32 @@ def secret_from_input(
     if not key:
         raise CredentialFieldsInvalid("empty_api_key", "clé d'API vide.")
     return key
+
+
+def preparer_pose(entity_type: str, entity_id: str, connector: str, account: str,
+                  api_key: Optional[str] = None,
+                  fields: Optional[dict] = None) -> tuple[str, dict]:
+    """La pose d'un palier PARTAGÉ (org, équipe, tenant) : `(secret à chiffrer, patch de
+    meta)` — SOURCE UNIQUE des trois capacités, qui fusionnent le patch dans le `meta`
+    qu'elles écrivent (`_upsert` REMPLACE `meta`).
+
+    Sans champ `in_meta`, rien ne change : écriture partielle (#448) puis
+    `secret_from_input`, le patch est vide. Avec (14/09/2026) :
+    - le chiffré ne reçoit que ses champs (`pack_secret`), le patch porte les autres ;
+    - une clé posée SEULE par `api_key` — la forme d'avant l'ajout du champ, que des
+      fronts envoient encore — se lit comme le champ unique du chiffré, et l'écriture
+      partielle conserve le champ `in_meta` déjà posé au lieu de l'effacer ;
+    - un champ `in_meta` envoyé VIDE s'efface, comme tout champ (#448)."""
+    c = providers.REGISTRY.get(connector)
+    en_meta = _noms_en_meta(c)
+    if fields is None and en_meta and (api_key or "").strip():
+        fields = {c.vault_fields[0].name: api_key}
+    if fields is not None:
+        fields = merge_with_existing(entity_type, entity_id, connector, account, fields)
+    if not en_meta:
+        return secret_from_input(connector, api_key, fields), {}
+    retenus = validate_fields(connector, fields or {})
+    return pack_secret(connector, retenus), meta_fields(connector, retenus)
 
 
 def _aad(entity_type: str, entity_id: str, connector: str, account: str = "") -> str:

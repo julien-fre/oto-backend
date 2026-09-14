@@ -104,12 +104,9 @@ def _set_key(ctx: ResolvedCtx, inp: TenantKeySetInput) -> dict:
     if code:
         raise AuthzDenied(400, code, f"Provider/base_url invalide : {code}.")
     account = (inp.account or "").strip()
-    fields = inp.fields
-    if fields is not None:
-        fields = credentials_store.merge_with_existing(
-            credentials_store.TENANT, slug, inp.provider, account, fields)
     try:
-        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, fields)
+        secret, meta_champs = credentials_store.preparer_pose(
+            credentials_store.TENANT, slug, inp.provider, account, inp.api_key, inp.fields)
     except ValueError as e:
         raise AuthzDenied(400, getattr(e, "code", str(e)),
                           getattr(e, "message", "Credential incomplet ou vide."))
@@ -124,7 +121,8 @@ def _set_key(ctx: ResolvedCtx, inp: TenantKeySetInput) -> dict:
         raise AuthzDenied(400, "single_account_connector", str(e))
     try:
         tenant_vault.set_tenant_secret(slug, inp.provider, secret, set_by=ctx.sub,
-                                       meta=meta, account=account)
+                                       meta={**(meta or {}), **meta_champs} or None,
+                                       account=account)
     except tenant_vault.PrimaryTenantKeyRefused as e:
         raise AuthzDenied(400, "primary_tenant_key", str(e))
     return {"ok": True, "slug": slug, "provider": inp.provider}

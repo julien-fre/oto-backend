@@ -78,13 +78,11 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
     account = (inp.account or "").strip()
     # Écriture PARTIELLE (#448) : mêmes règles qu'au palier équipe — les champs
     # absents sont complétés par le coffre, côté serveur ; un champ vide efface.
-    fields = inp.fields
-    if fields is not None:
-        fields = credentials_store.merge_with_existing(
-            "org", str(inp.org_id), inp.provider, account, fields)
-    # Mono-champ (api_key) ou multi-champs (fields packés) — source unique.
+    # Mono-champ (api_key) ou multi-champs (fields packés), et les champs rangés dans
+    # `meta` (`in_meta`) — source unique, `credentials_store.preparer_pose`.
     try:
-        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, fields)
+        secret, meta_champs = credentials_store.preparer_pose(
+            "org", str(inp.org_id), inp.provider, account, inp.api_key, inp.fields)
     except ValueError as e:
         # Refus NOMMÉ quand la validation en porte un (#449) : « champ(s) requis
         # vide(s) : Nom du header » vaut mieux qu'un « incomplet » à deviner.
@@ -99,7 +97,8 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
         raise AuthzDenied(409, "account_required", str(e))
     except credentials_store.SingleAccountConnector as e:
         raise AuthzDenied(400, "single_account_connector", str(e))
-    org_store.set_org_secret(inp.org_id, inp.provider, secret, set_by=ctx.sub, meta=meta, account=account)
+    org_store.set_org_secret(inp.org_id, inp.provider, secret, set_by=ctx.sub,
+                             meta={**(meta or {}), **meta_champs} or None, account=account)
     return {"ok": True, "org_id": inp.org_id, "provider": inp.provider}
 
 

@@ -92,7 +92,7 @@ def test_exigee_et_absente_le_travail_est_ARRETE_pour_de_bon(monkeypatch, arret)
     """⚠️ LE banc du lot. Sans lui, le travail partirait sans clé et le worker
     tournerait sur la nôtre."""
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     rendu = _reserver("anthropic")
     assert arret["job"] == 9, "marqué failed en base, pas relâché dans la file"
     assert rendu["delegation_refusee"] and "anthropic" in rendu["delegation_refusee"]
@@ -102,7 +102,7 @@ def test_exigee_et_absente_le_travail_est_ARRETE_pour_de_bon(monkeypatch, arret)
 
 def test_exigee_et_deposee_la_cle_part_avec_le_travail(monkeypatch, arret):
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: "sk-de-l-org")
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: ("sk-de-l-org", None))
     rendu = _reserver("anthropic")
     assert rendu["model_key"] == "sk-de-l-org"
     assert "delegation_refusee" not in rendu and not arret
@@ -112,7 +112,7 @@ def test_un_coffre_qui_ne_rend_pas_la_cle_ARRETE_aussi(monkeypatch, arret):
     """La présence du dépôt ne suffit pas : c'est la LECTURE qui dit si la clé part.
     Un coffre muet laisserait sinon filer un travail sur notre clé."""
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: True)
     assert _reserver("anthropic")["delegation_refusee"]
 
@@ -120,7 +120,7 @@ def test_un_coffre_qui_ne_rend_pas_la_cle_ARRETE_aussi(monkeypatch, arret):
 def test_eteint_rien_ne_change(monkeypatch, arret):
     """Le comportement d'avant, à l'octet : sans clé, le travail part sans clé."""
     _reglages(monkeypatch)
-    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: None)
+    monkeypatch.setattr(RJ, "_cle_de_modele", lambda org, depot: (None, None))
     rendu = _reserver("anthropic")
     assert "delegation_refusee" not in rendu and "model_key" not in rendu and not arret
     assert rendu["delegated_token"] == "otd_x"
