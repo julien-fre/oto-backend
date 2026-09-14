@@ -364,14 +364,19 @@ def test_expiration_ne_declenche_aucun_repli(monte):
 
     Elle a déjà consommé le budget de l'appelant ; #662 a mesuré que ce qu'une
     attente emporte (le cache de contexte qui expire) coûte plus cher que la
-    page qu'on espère. Le repli sert les REFUS, qui sont immédiats."""
+    page qu'on espère. Le repli sert les REFUS, qui sont immédiats.
+
+    Depuis le 14/09/2026, l'expiration sort en refus nommé plutôt qu'en exception
+    nue (`test_serper_scrape_delai.py`) : c'est ce qui sort qui change, pas l'absence
+    de repli que ce banc tient."""
     fn, etat = monte
     import requests
     etat["scrape"] = requests.Timeout("read timeout")
     etat["html"] = HTML_JOOMLA
 
-    with pytest.raises(requests.Timeout):
+    with pytest.raises(McpError) as refus:
         fn("https://acme.test/lente")
+    assert "n'a pas répondu" in refus.value.error.message
     assert etat["fetchs"] == []
 
 

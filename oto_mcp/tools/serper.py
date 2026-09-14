@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from typing import Literal, Optional
 
+import requests
+
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INVALID_REQUEST
@@ -196,6 +198,14 @@ def register(mcp: FastMCP) -> None:
         if timeout_s is None:
             return mail_obfuscation.LECTURE_DELAI_S
         return max(1, min(int(timeout_s), mail_obfuscation.LECTURE_DELAI_S))
+
+    def _delai_scrape(timeout_s: Optional[int]) -> int:
+        """Le délai de lecture que le scraper a réellement attendu : le défaut du client
+        (oto-core `_SCRAPE_TIMEOUT`), ou `timeout_s` ramené dans ses bornes (1 à 60)."""
+        from oto.tools.serper.client import _SCRAPE_TIMEOUT
+        if timeout_s is None:
+            return _SCRAPE_TIMEOUT[1]
+        return max(1, min(int(timeout_s), 60))
 
     # Verticale → (méthode du client, chemin des items, params acceptés en plus du socle).
     # Le socle commun est `query` + `num` + `page` + `country` + `language` : c'est ce
@@ -480,7 +490,7 @@ def register(mcp: FastMCP) -> None:
         court ne prouve donc PAS que la page est vide. Regarde sa longueur avant
         d'en tirer un fait sur l'entreprise.
 
-        ⚠️ **Un appel attend au plus 15 secondes**, puis rend une expiration —
+        ⚠️ **Un appel attend au plus 15 secondes**, puis rend un refus qui le dit —
         y compris sur un domaine qui n'existe pas. Une expiration est un échec
         NORMAL, pas une panne. **Pars d'une URL constatée**, et ne réessaie pas
         la même.
@@ -560,6 +570,19 @@ def register(mcp: FastMCP) -> None:
             images_base64.alleger(res)
             mail_obfuscation.completer(res, url, per)
             return res
+        except requests.Timeout:
+            # Le site n'a pas répondu dans le délai (14/09/2026). Un échec NORMAL, pas une
+            # panne : oto-core le documente ainsi (`SerperClient.scrape_page`), et #662 a
+            # mesuré que ce qu'une attente emporte coûte plus cher que la page — d'où aucun
+            # repli ici. Il sortait en erreur avec trace, remontait à Sentry, et l'agent
+            # lisait « réessaie dans un instant » : 32 délais en 40 minutes mesurés ce
+            # jour-là. En refus, il tient sur une ligne et dit de ne pas réessayer.
+            raise McpError(ErrorData(
+                code=INVALID_REQUEST,
+                message=(f"Scrape impossible pour cette URL ({url}) : le site n'a pas "
+                         f"répondu en {_delai_scrape(timeout_s)} s. Une expiration est un "
+                         "échec normal, pas une panne : ne réessaie pas cette adresse."),
+            )) from None
         except RuntimeError as e:
             m = _SERPER_STATUS.search(str(e))
             code = int(m.group(1)) if m else None
