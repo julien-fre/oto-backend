@@ -4,7 +4,7 @@ Le fait est posé au RÉSOLVEUR UNIQUE (ADR 0024), pas dans les tools : c'est ce
 le rend vrai pour les ~15 connecteurs keyed sans travail par connecteur, et vrai
 gratuitement pour celui qu'on ajoutera demain. Ces bancs tiennent ce contrat.
 
-Ce que le mode décide, côté consommateur (tulina-usage) : seul `platform` est
+Ce que le mode décide, côté consommateur (la facturation du partenaire) : seul `platform` est
 facturé. Un client sur SA propre clé paie déjà le fournisseur — lui compter des
 crédits en plus n'aurait pas de sens.
 """

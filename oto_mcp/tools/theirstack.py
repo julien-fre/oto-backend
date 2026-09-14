@@ -110,15 +110,16 @@ def _project(result: Any, fields: tuple, full: bool) -> Any:
 
 
 def _trace_quantity(result: Any) -> None:
-    """Métrage par unité (billing Tulina, 21/08) — le nombre de records RENDUS
+    """Métrage par unité (facturation du partenaire, 21/08) — le nombre de records RENDUS
     dans `data`, avant projection (`_project` ne change jamais la longueur de
     la liste, seulement les clés de chaque item). C'est ce que TheirStack
     facture réellement : 1 crédit API/offre sur jobs/search, 3/entreprise sur
     companies/search — voir le docstring du module. Les deux tools résolvent
     au MÊME connecteur (`namespace_of` = premier token, "theirstack" pour les
     deux : aucun préfixe multi-token "theirstack_jobs"/"theirstack_companies"
-    n'est déclaré au registre) — c'est `tulina_usage/pricing.py` qui doit
-    donc distinguer les deux TAUX par nom de TOOL, pas par connecteur."""
+    n'est déclaré au registre) — c'est la grille de prix du consommateur de
+    facturation du partenaire (dépôt externe) qui doit donc distinguer les deux
+    TAUX par nom de TOOL, pas par connecteur."""
     if isinstance(result, dict) and isinstance(result.get("data"), list):
         session_org.note_call_trace(quantity=len(result["data"]))
 
@@ -132,7 +133,7 @@ def _record_platform_usage(result, is_platform: bool) -> None:
     - `note_call_trace(quantity=…)` ci-dessus est INCONDITIONNEL — c'est le
       métrage, et `tool_calls.key_mode` dit séparément sous quelle clé l'appel
       est passé, ce que le consommateur de facturation lit pour ne facturer que
-      la clé Tulina.
+      la clé du partenaire.
     Compté au nombre de records RENDUS, pas au nombre d'appels : TheirStack nous
     facture au record (1 crédit/offre, 3/entreprise), donc un appel qui rend 50
     offres coûte 50, et une page vide coûte 0."""

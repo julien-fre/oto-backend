@@ -5,8 +5,8 @@ que le destinataire VOIT. Trois choses le justifient, et aucune n'est cosmétiqu
 
 **1. La marque n'était qu'un mot.** Depuis 7d10a798 les six gabarits écrivent le
 nom du produit du destinataire (`orgs.front_brand` / `config.front_for`) — mais la
-couleur, elle, restait celle d'oto pour tout le monde. Un client de Tulina lisait
-« sur tulina » en brun otomata, puis cliquait vers une application blanc-et-ardoise :
+couleur, elle, restait celle d'oto pour tout le monde. Un client du partenaire lisait
+« sur <sa marque> » en brun otomata, puis cliquait vers une application blanc-et-ardoise :
 le mot suivait le tenant, le dessin non. Une marque est ici un **jeu de jetons**
 (`Marque`), indexé par le MÊME slug que le texte, et il n'y a plus d'endroit où
 l'un puisse suivre le tenant sans l'autre.
@@ -33,7 +33,7 @@ D'où ce qui suit, qui n'est pas un goût mais une contrainte de client :
 - **`color-scheme: light` déclaré** : les couleurs ci-dessous sont des valeurs claires
   littérales ; sans la déclaration, Outlook mobile et Apple Mail repeignent le fond en
   sombre et laissent le texte en place — c'est exactement l'accident qu'a connu la
-  page de connexion Logto de Tulina (cf. `logto/custom.css` côté front).
+  page de connexion Logto du partenaire (cf. `logto/custom.css` côté front).
 """
 from __future__ import annotations
 

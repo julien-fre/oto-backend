@@ -352,8 +352,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # le tableau de bord aurait affiché des vides qu'on aurait lus « ces outils ne
     # servent rien ». Un banc joue désormais ce scénario (DROP COLUMN puis init_db).
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS result_size INTEGER")
-    # Métrage par UNITÉ traitée (2026-08-21, consommateur de facturation
-    # tulina-usage) : un appel bulk (linkedin_aiark_search jusqu'à 100 résultats,
+    # Métrage par UNITÉ traitée (2026-08-21, consommateur de facturation du
+    # partenaire) : un appel bulk (linkedin_aiark_search jusqu'à 100 résultats,
     # fullenrich_enrich_linkedin jusqu'à 100 contacts soumis, theirstack_*_search)
     # vaut plus qu'UN appel. Additif, NULL sur tout l'historique (non
     # reconstructible — le compte n'existait dans aucune donnée déjà écrite).

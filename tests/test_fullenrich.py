@@ -1,4 +1,4 @@
-"""FullEnrich — métrage par unité (billing Tulina, 21/08): `fullenrich_enrich_linkedin`
+"""FullEnrich — métrage par unité (facturation du partenaire, 21/08): `fullenrich_enrich_linkedin`
 must trace the number of contacts SUBMITTED (not enriched/found — that count only
 exists later, inside `fullenrich_result`, a separate call/journal row) via
 `session_org.note_call_trace(quantity=…)`, regardless of platform vs BYO key —

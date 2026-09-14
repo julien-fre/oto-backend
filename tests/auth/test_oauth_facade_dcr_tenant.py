@@ -1,7 +1,7 @@
 """Façade DCR sur le host d'un TENANT — enregistrer chez lui, ou dire qu'on ne l'a
 pas fait.
 
-Mesuré le 2026-09-08 en production : `POST mcp.tulina.ai/oauth/register` rendait
+Mesuré le 2026-09-08 en production : `POST <domaine MCP du partenaire>/oauth/register` rendait
 **201 avec un client_id sans avoir rien enregistré**. `_register_redirects` n'était
 appelé que sur le host de la plateforme, et un tenant porteur d'un `oauth_client_id`
 n'avait même pas d'avertissement : le client recevait un succès, puis

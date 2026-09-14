@@ -63,7 +63,7 @@ DECIDE = "data_review_decide"
 # actions). Au-delà, c'est `data_app` qu'il faut ouvrir.
 _MAX_CHAMPS = 4
 
-# La carte suit la charte Tulina (hairlines, pastilles, 13 px) mais PEINT avec les
+# La carte suit la charte du partenaire (hairlines, pastilles, 13 px) mais PEINT avec les
 # variables du host (SEP-1865 `styles.variables`) : les valeurs de repli ne servent qu'à
 # un host qui n'en fournit pas, en clair comme en sombre. ⚠️ TOUTE couleur passe par une
 # variable du host, accent compris : un host peut servir des fonds sombres sans poser

@@ -453,12 +453,12 @@ _SERVER_INSTRUCTIONS = instructions.render()
 # la question a été posée et fermée en connaissance de cause. Le « qui » n'est pas
 # répété ici : le sink stampe déjà `sub` et `org_id`.
 #
-# `quantity` (21/08, billing Tulina) utilise le MÊME seam (`note_call_trace`) mais
+# `quantity` (21/08, facturation du partenaire) utilise le MÊME seam (`note_call_trace`) mais
 # N'EST PAS dans cette liste : elle a SA PROPRE colonne (`tool_calls.quantity`),
 # posée directement par `_calllog_sink` ci-dessous — voir ce bloc, pas ici.
 #
-# `found_work_emails` / `found_personal_emails` / `found_phones` (11/09/2026, billing
-# Tulina) — sur un relevé FullEnrich TERMINÉ, le nombre de CONTACTS du job où au moins
+# `found_work_emails` / `found_personal_emails` / `found_phones` (11/09/2026, facturation
+# du partenaire) — sur un relevé FullEnrich TERMINÉ, le nombre de CONTACTS du job où au moins
 # une valeur de chaque sorte a été trouvée. Trois entiers, pas une colonne chacun : le
 # métrage les lit par `org.usage.calls` (`found`, liste fermée
 # `db.usage.BILLABLE_FOUND_ARGS`), aucune requête chaude ne les somme. Versés ici, ils

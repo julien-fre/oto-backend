@@ -20,7 +20,7 @@ def _stub_orgs(monkeypatch, rows):
 
 def test_beta_est_calcule_par_org_avec_org_explicite(monkeypatch):
     rows = [
-        {"org_id": 196, "name": "Tulina", "org_role": "org_admin", "is_active": True},
+        {"org_id": 9196, "name": "Partenaire", "org_role": "org_admin", "is_active": True},
         {"org_id": 269, "name": "Client", "org_role": "org_member", "is_active": False},
     ]
     _stub_orgs(monkeypatch, rows)
@@ -28,13 +28,13 @@ def test_beta_est_calcule_par_org_avec_org_explicite(monkeypatch):
 
     def _has_option(sub, option, *, org=None):
         vus.append((sub, option, org))
-        return org == 196
+        return org == 9196
 
     monkeypatch.setattr(R.access, "has_option", _has_option)
-    out = R._list_my_orgs(ResolvedCtx(sub="julien", org_id=196), R.NoInput())
+    out = R._list_my_orgs(ResolvedCtx(sub="membre", org_id=9196), R.NoInput())
     by_id = {o["id"]: o for o in out["orgs"]}
-    assert by_id[196]["beta"] is True and by_id[269]["beta"] is False
-    assert sorted(vus) == [("julien", "beta", 196), ("julien", "beta", 269)]
+    assert by_id[9196]["beta"] is True and by_id[269]["beta"] is False
+    assert sorted(vus) == [("membre", "beta", 269), ("membre", "beta", 9196)]
     # Le modèle déclaré (OpenAPI dérivé) porte le champ — un front typé le lit.
-    assert R.MyOrgEntry(**by_id[196]).beta is True
+    assert R.MyOrgEntry(**by_id[9196]).beta is True
     assert R.MyOrgEntry.model_fields["beta"].default is False

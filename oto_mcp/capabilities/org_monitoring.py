@@ -128,7 +128,7 @@ class CallRow(BaseModel):
     # vers le traceback. None sur un appel réussi (et sur une erreur gérée).
     sentry_event_id: Optional[str] = None
     arg_keys: list[str] = []
-    # Nombre d'items TRAITÉS par cet appel (billing Tulina, 21/08) — `None` = non
+    # Nombre d'items TRAITÉS par cet appel (facturation du partenaire, 21/08) — `None` = non
     # tracé pour ce tool (l'écrasante majorité), à traiter comme 1 par un
     # consommateur, JAMAIS comme 0. Posé aujourd'hui par `linkedin_aiark_search`
     # (résultats rendus) et `fullenrich_enrich_linkedin` (contacts soumis) —

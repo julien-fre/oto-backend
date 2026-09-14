@@ -28,7 +28,7 @@ from oto_mcp import deprecations
 from oto_mcp.api import alias_routes
 from oto_mcp.api.base import _cors_headers
 
-ORIGINE = "https://app.tulina.ai"
+ORIGINE = "https://app.oto.ninja"
 ANCIEN_ROW = "/api/datastore/namespaces/leads/rows/42"
 
 

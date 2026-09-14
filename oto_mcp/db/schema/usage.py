@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     -- comme 0). Posé via le même seam que `_TRACED_ARGS`
     -- (`session_org.note_call_trace(quantity=N)`), mais dans SA PROPRE colonne
     -- plutôt que fondu dans `args` : c'est une donnée de premier ordre pour un
-    -- consommateur de facturation (tulina-usage), pas une trace de debug —
+    -- consommateur de facturation (celui du partenaire), pas une trace de debug —
     -- une colonne INTEGER indexable bat une extraction JSONB pour ce qu'un tel
     -- consommateur en fait (sommer/filtrer par org/période).
     quantity INTEGER,

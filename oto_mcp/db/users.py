@@ -730,7 +730,7 @@ def get_user_by_email(email: str) -> Optional[dict]:
     """Le premier compte portant cette adresse — ⚠️ une adresse n'est PAS unique.
 
     Un même email peut porter plusieurs comptes : le nôtre et celui d'un tenant
-    tiers (`tulina:…`), qualifiés par émetteur (ADR 0052). `fetchone()` en rend
+    tiers (`<slug>:…`), qualifiés par émetteur (ADR 0052). `fetchone()` en rend
     un, dans un ordre que rien ne fixe. Pour DÉCIDER (résoudre une cible,
     suspendre, changer un rôle), passer par `get_users_by_email` et refuser
     l'ambiguïté — cf. `capabilities/orgs/members._resolve_target`.

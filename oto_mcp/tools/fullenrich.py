@@ -8,7 +8,7 @@ consommés. Désormais : `fullenrich_enrich_linkedin` SOUMET le job (~1s, bulk
 jusqu'à 100 contacts) et `fullenrich_result` relève le statut/le résultat —
 le polling appartient à l'agent.
 
-Métrage (billing Tulina) : des faits distincts, aucun prix. La soumission trace les
+Métrage (facturation du partenaire) : des faits distincts, aucun prix. La soumission trace les
 contacts SOUMIS. Le relevé d'un job terminé trace :
 - en `quantity`, les crédits que FullEnrich a DÉDUITS (`cost.credits`, rendu par
   oto-core en `cost_credits`) — le chiffre de rapprochement avec l'amont ;
@@ -109,10 +109,10 @@ def register(mcp: FastMCP) -> None:
             # NOMBRE de contacts, comptée en un seul geste (l'ancienne boucle faisait
             # une requête par contact — jusqu'à 100 par job).
             access.record_platform_usage("fullenrich", len(contacts))
-        # Métrage par unité (billing Tulina, 21/08) — INCONDITIONNEL (platform key
+        # Métrage par unité (facturation du partenaire, 21/08) — INCONDITIONNEL (platform key
         # OU BYO), contrairement à `record_platform_usage` ci-dessus (qui ne compte
         # que le quota interne oto sur la clé plateforme) : `tool_calls.quantity`
-        # sert un consommateur EXTERNE (tulina-usage) qui facture l'org quel que
+        # sert un consommateur EXTERNE (celui du partenaire) qui facture l'org quel que
         # soit le mode de clé. Compte les contacts SOUMIS, pas ceux effectivement
         # enrichis/trouvés — ce dernier chiffre n'existe qu'après coup, dans
         # `fullenrich_result` (job async), une ligne de journal SÉPARÉE.
@@ -144,7 +144,7 @@ def register(mcp: FastMCP) -> None:
                 "status": res["status"],
                 "next_step": "Still running — call fullenrich_result again in ~20-30s.",
             }
-        # Métrage (billing Tulina), INCONDITIONNEL (clé plateforme OU BYO), comme
+        # Métrage (facturation du partenaire), INCONDITIONNEL (clé plateforme OU BYO), comme
         # `fullenrich_enrich_linkedin` : le consommateur filtre sur `key_mode`.
         #   • `quantity` = les crédits que FULLENRICH a déduits pour ce job —
         #     `cost_credits`, son `cost.credits` relu par oto-core : le chiffre de

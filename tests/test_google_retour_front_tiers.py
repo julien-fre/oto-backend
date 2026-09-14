@@ -28,7 +28,16 @@ import pytest
 from starlette.requests import Request
 
 from oto_mcp.api import datastore as datastore_routes
+from oto_mcp.auth import flow as oauth_flow
 from oto_mcp.auth import google as google_oauth
+
+
+@pytest.fixture(autouse=True)
+def _front_tiers_fictif(monkeypatch):
+    """Un front tiers FICTIF dans la liste fermée : ces épreuves tiennent le
+    mécanisme du retour, jamais les coordonnées d'un front réel."""
+    monkeypatch.setitem(oauth_flow.RETURN_APPS, "acme",
+                        ("https://app.acme.test", "/org/{org}/connectors"))
 
 
 def _requete(query: str) -> Request:
@@ -60,8 +69,8 @@ def _callback():
 # --- le state porte le front, et seulement s'il est connu -------------------
 
 def test_le_state_porte_le_front_demandeur():
-    etat = google_oauth.make_state("sub-1", 42, "tulina")
-    assert google_oauth.verify_state(etat) == ("sub-1", 42, "tulina")
+    etat = google_oauth.make_state("sub-1", 42, "acme")
+    assert google_oauth.verify_state(etat) == ("sub-1", 42, "acme")
 
 
 def test_un_front_inconnu_est_reduit_a_rien():
@@ -98,8 +107,8 @@ def test_le_flux_transmet_la_cle_cachee_du_front(monkeypatch):
     class _Ctx:
         sub = "sub-1"
 
-    google_oauth._start_flow(_Ctx(), {"app": "tulina"})
-    assert vu["app"] == "tulina"
+    google_oauth._start_flow(_Ctx(), {"app": "acme"})
+    assert vu["app"] == "acme"
 
 
 def test_l_url_de_consentement_filtre_le_front_avant_de_signer(monkeypatch):
@@ -119,9 +128,9 @@ def test_l_url_de_consentement_filtre_le_front_avant_de_signer(monkeypatch):
     assert google_oauth.verify_state(etat)[2] == "", (
         "une valeur hors de la liste fermée ne doit jamais entrer dans le state")
 
-    url_ok = google_oauth.build_auth_url("sub-1", "tulina")
+    url_ok = google_oauth.build_auth_url("sub-1", "acme")
     etat_ok = urllib.parse.parse_qs(urllib.parse.urlsplit(url_ok).query)["state"][0]
-    assert google_oauth.verify_state(etat_ok)[2] == "tulina"
+    assert google_oauth.verify_state(etat_ok)[2] == "acme"
 
 
 # --- le retour, sur le vrai handler ----------------------------------------
@@ -133,10 +142,10 @@ def _echange_ok(monkeypatch):
 
 
 def test_le_callback_ramene_au_front_tiers(_echange_ok):
-    etat = google_oauth.make_state("sub-1", 42, "tulina")
+    etat = google_oauth.make_state("sub-1", 42, "acme")
     reponse = asyncio.run(_callback()(_requete(f"code=c&state={etat}")))
     url = reponse.headers["location"]
-    assert url.startswith("https://app.tulina.ai/"), url
+    assert url.startswith("https://app.acme.test/"), url
     assert "connect=connected" in url, "la convention de retour de #670 doit tenir"
 
 
@@ -153,7 +162,7 @@ def test_le_callback_sans_front_declare_ramene_sur_une_route_QUI_EXISTE(_echange
     url = asyncio.run(_callback()(_requete(f"code=c&state={etat}"))).headers["location"]
     chemin = urllib.parse.urlsplit(url).path
     assert chemin == "/connectors", chemin
-    assert "console" not in url and "tulina" not in url
+    assert "console" not in url and "acme" not in url
     assert "connect=connected" in url
 
 
@@ -165,9 +174,9 @@ def test_un_echec_ramene_AUSSI_au_front_tiers(monkeypatch):
         raise RuntimeError("Google a refusé")
 
     monkeypatch.setattr(google_oauth, "exchange_code", _boom)
-    etat = google_oauth.make_state("sub-1", 42, "tulina")
+    etat = google_oauth.make_state("sub-1", 42, "acme")
     url = asyncio.run(_callback()(_requete(f"code=c&state={etat}"))).headers["location"]
-    assert url.startswith("https://app.tulina.ai/"), url
+    assert url.startswith("https://app.acme.test/"), url
     assert "connect=error" in url
 
 
@@ -185,7 +194,7 @@ def test_les_deux_fronts_ne_partagent_que_le_suffixe(_echange_ok):
     front. Vérifier les deux ensemble évite de croire qu'un seul suffit."""
     q = urllib.parse.urlsplit
     tiers = asyncio.run(_callback()(_requete(
-        f"code=c&state={google_oauth.make_state('s', 42, 'tulina')}"))).headers["location"]
+        f"code=c&state={google_oauth.make_state('s', 42, 'acme')}"))).headers["location"]
     nous = asyncio.run(_callback()(_requete(
         f"code=c&state={google_oauth.make_state('s', 42)}"))).headers["location"]
     assert q(tiers).netloc != q(nous).netloc, "la base doit suivre le front"

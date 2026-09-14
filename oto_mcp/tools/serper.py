@@ -166,7 +166,7 @@ def register(mcp: FastMCP) -> None:
             raise
         # Même séparation que theirstack/aiark : le MÉTRAGE est inconditionnel
         # (`tool_calls.key_mode` dit à part sous quelle clé l'appel est passé, et la
-        # facturation ne lit que la clé Tulina) ; le QUOTA interne d'oto ne compte que
+        # facturation ne lit que la clé du partenaire) ; le QUOTA interne d'oto ne compte que
         # notre clé. Les deux au nombre de crédits Serper déduits, pas à 1 par appel :
         # un recensement Maps coûtait jusqu'à 54 crédits pour un seul « appel ».
         credits = credits_consumed(method, result)

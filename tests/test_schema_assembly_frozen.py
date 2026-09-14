@@ -314,7 +314,7 @@ from oto_mcp.db import _schema, schema
 # fusionné. C'est exactement le cas que l'avertissement ci-dessus vise.
 # 2026-09-09 (facturation par clé) : `tool_calls.key_mode` — sous quelle clé
 # l'appel est passé (`user|group|org|tenant|platform`), pour que le consommateur
-# de facturation ne compte QUE ce qui passe par une clé Tulina : un client sur sa
+# de facturation ne compte QUE ce qui passe par la clé du partenaire : un client sur sa
 # propre clé paie déjà le fournisseur. ADDITIVE et NULLABLE, posée par l'ALTER
 # d'`init_db` sur la base PARTAGÉE sans réécrire une ligne. Pas d'index.
 # ⚠️ Arithmétique vérifiée à nouveau : le fragment `USAGE` grandit de 838 caractères
@@ -361,8 +361,12 @@ from oto_mcp.db import _schema, schema
 # `runner_fleets.descriptions_outils` et son commentaire dans le CREATE TABLE. La base
 # partagée la reçoit par l'ALTER de `_init.py`, sans défaut (NULL = rien ne part avec le
 # travail). Additif : le code du tag précédent ne la lit ni ne l'écrit. 153 900 → 154 101.
-EMPREINTE = "6b07334faa689d47df4065bfa4c9a2d49fa664c5531c8a82b5f8ebc7854bf95d"
-LONGUEUR = 154101
+# 14/09/2026 — le consommateur de facturation nommé par sa CLASSE (fragment USAGE) : le
+# commentaire de `tool_calls.quantity` dans le CREATE TABLE ne nomme plus le dépôt
+# externe. Commentaire SQL seulement, aucun effet sur la base : un `--` n'est pas
+# stocké. 154 101 → 154 108.
+EMPREINTE = "63f25b605c4488b5e7bd9d83999b0db92ef05592e296f02154da8b04fed4330a"
+LONGUEUR = 154108
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -9,7 +9,7 @@ vit dans la requête et ce test rougit si elle en sort.
 **Deux axes, deux comptes-témoins.** Le filtre est une UNION, et chacune de ses moitiés
 a son angle mort :
 
-- `tulina:…` — le sub QUALIFIÉ. C'est l'axe évident.
+- `acme:…` — le sub QUALIFIÉ. C'est l'axe évident.
 - `sub-invite` — un sub NU (inscrit chez nous), membre uniquement d'orgs de partenaire.
   Il passe le premier axe sans encombre. Mesuré à zéro en prod le 2026-09-02, ce qui ne
   dit rien de demain — et c'est précisément la population que la seconde moitié couvre.
@@ -82,11 +82,11 @@ def _peupler() -> None:
         ("sub-invite", "invite@exemple.test", None),          # sub NU, orgs de partenaire
         ("sub-orgs-tenant-id", "tid@exemple.test", None),     # org portant tenant_id tiers
         ("sub-sans-org", "sansorg@exemple.test", None),       # aucune appartenance
-        ("tulina:sub-partenaire", "partenaire@exemple.test", None),
+        ("acme:sub-partenaire", "partenaire@exemple.test", None),
         # Qualifié chez le partenaire, invité dans une org à NOUS. Il ne prouve
         # rien sur la qualification du sub (voir plus bas : cet axe est redondant) —
         # il documente la CONTAGION, avec son voisin.
-        ("tulina:sub-croise", "croise@exemple.test", None),
+        ("acme:sub-croise", "croise@exemple.test", None),
         ("sub-voisin-du-croise", "voisin@exemple.test", None),
         # ── quatre BOÎTES à deux comptes chacune (une personne, deux inscriptions) ──
         # La casse diffère exprès : c'est la même boîte, et le regroupement normalise.
@@ -103,10 +103,10 @@ def _peupler() -> None:
         conn.execute("INSERT INTO tenants (slug, name, issuer) VALUES "
                      "('oto', 'oto', NULL) ON CONFLICT (slug) DO NOTHING")
         conn.execute("INSERT INTO tenants (slug, name, issuer) VALUES "
-                     "('tulina', 'Partenaire', 'https://auth.exemple.test') "
+                     "('acme', 'Partenaire', 'https://auth.exemple.test') "
                      "ON CONFLICT (slug) DO NOTHING")
         tid_partenaire = conn.execute(
-            "SELECT id FROM tenants WHERE slug = 'tulina'").fetchone()["id"]
+            "SELECT id FROM tenants WHERE slug = 'acme'").fetchone()["id"]
 
         for sub, email, locale in comptes:
             conn.execute("INSERT INTO users (sub, email, locale) VALUES (%s, %s, %s)",
@@ -121,7 +121,7 @@ def _peupler() -> None:
             return row["id"]
 
         maison = org("Maison")
-        chez_le_partenaire = org("Chez le partenaire", brand="tulina")
+        chez_le_partenaire = org("Chez le partenaire", brand="acme")
         par_tenant_id = org("Rattachée par tenant_id", tenant_id=tid_partenaire)
         # Une org à NOUS (aucune marque, tenant primaire) où l'on a invité un compte
         # qualifié chez le partenaire. Isolée exprès de « Maison » : sans ça elle
@@ -136,9 +136,9 @@ def _peupler() -> None:
                 cible = chez_le_partenaire
             elif sub == "sub-orgs-tenant-id":
                 cible = par_tenant_id
-            elif sub == "tulina:sub-partenaire":
+            elif sub == "acme:sub-partenaire":
                 cible = chez_le_partenaire
-            elif sub in ("tulina:sub-croise", "sub-voisin-du-croise"):
+            elif sub in ("acme:sub-croise", "sub-voisin-du-croise"):
                 cible = maison_bis
             conn.execute("INSERT INTO org_members (org_id, sub) VALUES (%s, %s)",
                          (cible, sub))
@@ -191,7 +191,7 @@ def test_aucun_compte_de_partenaire_n_entre_dans_une_audience(live):
     contrôle qui protège les clients d'un tiers."""
     for statut in ("jamais_actif", "silencieux"):
         selection = _subs(statut=statut, silence_days=30)
-        assert not {"tulina:sub-partenaire", "tulina:sub-croise"} & selection, (
+        assert not {"acme:sub-partenaire", "acme:sub-croise"} & selection, (
             f"[{statut}] un compte au sub QUALIFIÉ sous un tenant tiers est entré "
             "dans l'audience — on s'apprête à écrire aux clients d'un partenaire.")
         assert "sub-invite" not in selection, (
@@ -219,7 +219,7 @@ def test_un_membre_QUALIFIE_rend_toute_son_org_partenaire_donc_ses_voisins_sorte
     pas parce qu'elle mord seule."""
     selection = _subs()
     assert "sub-voisin-du-croise" not in selection
-    assert "tulina:sub-croise" not in selection
+    assert "acme:sub-croise" not in selection
 
 
 def test_un_compte_sans_aucune_appartenance_est_ECARTE(live):
@@ -401,7 +401,7 @@ def test_sans_AUCUNE_des_deux_moities_le_partenaire_ENTRE(live):
     le compte du partenaire arrive bien dans la sélection. Sans ce test, toutes les
     assertions « n'est pas dans l'audience » pourraient être vertes pour la mauvaise
     raison — un fixture qui ne contient personne d'atteignable."""
-    assert "tulina:sub-partenaire" in _audience_sans(
+    assert "acme:sub-partenaire" in _audience_sans(
         ("t.slug = %(primary)s", "TRUE"), (_CEINTURE, "AND TRUE"))
 
 

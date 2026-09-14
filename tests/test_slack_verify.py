@@ -13,12 +13,12 @@ from oto_mcp.tools.slack import _verify
 #: Ce que Slack rend vraiment sur `auth.test`, par jeton. Deux corps DISTINCTS :
 #: c'est tout l'objet du lot — le jeton bot et le jeton utilisateur n'identifient pas
 #: la même chose, et c'est l'app du bot qui porte les appartenances de canaux.
-AUTH_BOT = {"ok": True, "url": "https://tulina.slack.com/", "team": "Tulina",
-            "team_id": "T0BKVM3QDCL", "user": "oto", "user_id": "U0C08H55P60",
-            "bot_id": "B0C04SRRE58", "app_id": "A0BV3GCL9K9",
+AUTH_BOT = {"ok": True, "url": "https://acme.slack.com/", "team": "Acme",
+            "team_id": "T0FAKETEAM1", "user": "oto", "user_id": "U0FAKEBOTU1",
+            "bot_id": "B0FAKEBOT01", "app_id": "A0FAKEAPP01",
             "is_enterprise_install": False}
-AUTH_USER = {"ok": True, "url": "https://tulina.slack.com/", "team": "Tulina",
-             "team_id": "T0BKVM3QDCL", "user": "yahya", "user_id": "U0BQG9E34H1"}
+AUTH_USER = {"ok": True, "url": "https://acme.slack.com/", "team": "Acme",
+             "team_id": "T0FAKETEAM1", "user": "membre", "user_id": "U0FAKEUSER1"}
 
 
 class _FakeClient:
@@ -84,7 +84,7 @@ def test_legacy_raw_bot_token_routed_by_prefix():
 
 
 # --------------------------------------------------------------------------
-# L'identité de l'app — signaux 802/814 (org 196 et 249, 3→8 septembre 2026).
+# L'identité de l'app — signaux 802/814 (deux orgs, 3→8 septembre 2026).
 #
 # `auth.test` était appelée puis JETÉE. Conséquence mesurée : un credential
 # remplacé par les jetons d'une AUTRE app Slack perd toutes ses appartenances de
@@ -101,9 +101,9 @@ def test_la_sonde_rend_l_identite_de_l_app_du_bot():
     """Le corps d'`auth.test` n'est plus jeté : app, bot, équipe, compte."""
     mesures = _verify({"bot_token": "xoxb-ok"})
     assert mesures["identity"]["bot"] == {
-        "app_id": "A0BV3GCL9K9", "bot_id": "B0C04SRRE58", "team": "Tulina",
-        "team_id": "T0BKVM3QDCL", "url": "https://tulina.slack.com/",
-        "user": "oto", "user_id": "U0C08H55P60"}
+        "app_id": "A0FAKEAPP01", "bot_id": "B0FAKEBOT01", "team": "Acme",
+        "team_id": "T0FAKETEAM1", "url": "https://acme.slack.com/",
+        "user": "oto", "user_id": "U0FAKEBOTU1"}
 
 
 def test_chaque_jeton_pose_est_identifie_par_LE_SIEN():
@@ -113,8 +113,8 @@ def test_chaque_jeton_pose_est_identifie_par_LE_SIEN():
     mesures = _verify({"bot_token": "xoxb-ok", "user_token": "xoxp-ok"})
     assert _FakeClient.calls["auth_calls"] == ["bot", "user"], (
         "les deux jetons doivent être sondés, chacun avec le sien")
-    assert mesures["identity"]["bot"]["bot_id"] == "B0C04SRRE58"
-    assert mesures["identity"]["user"]["user_id"] == "U0BQG9E34H1"
+    assert mesures["identity"]["bot"]["bot_id"] == "B0FAKEBOT01"
+    assert mesures["identity"]["user"]["user_id"] == "U0FAKEUSER1"
     assert "bot_id" not in mesures["identity"]["user"]
 
 
@@ -135,7 +135,7 @@ def test_l_identite_TRAVERSE_le_seam_des_mesures():
     from oto_mcp.connectors import verify as V
 
     mesures = asyncio.run(V.executer(_verify, {"bot_token": "xoxb-ok"}, {}, None))
-    assert mesures["identity"]["bot"]["app_id"] == "A0BV3GCL9K9"
+    assert mesures["identity"]["bot"]["app_id"] == "A0FAKEAPP01"
 
 
 # --------------------------------------------------------------------------
@@ -157,7 +157,7 @@ def test_l_identite_arrive_dans_le_PAYLOAD_de_la_capacite(monkeypatch):
     from oto_mcp.connectors import verify as V
 
     class _RC:
-        mode, entity_type, entity_id = "org", "org", "249"
+        mode, entity_type, entity_id = "org", "org", "9249"
         fields, config = {"bot_token": "xoxb-ok"}, {}
 
     monkeypatch.setattr(access, "resolve_credential", lambda *a, **k: _RC())
@@ -167,14 +167,14 @@ def test_l_identite_arrive_dans_le_PAYLOAD_de_la_capacite(monkeypatch):
     V.register("slack", _verify)
 
     class _Ctx:
-        sub, org_id = "tulina:maty2kudvpu6", 249
+        sub, org_id = "acme:abc123def456", 9249
 
     class _Inp:
         provider, level = "slack", "auto"
 
     out = asyncio.run(cv._verify(_Ctx(), _Inp()))
     assert out["ok"] is True
-    assert out["identity"]["bot"]["app_id"] == "A0BV3GCL9K9", (
+    assert out["identity"]["bot"]["app_id"] == "A0FAKEAPP01", (
         "la sonde la rend, la capacité doit la servir")
 
 

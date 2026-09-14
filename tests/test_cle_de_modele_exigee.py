@@ -229,7 +229,7 @@ def test_creer_un_passage_ANTHROPIC_sans_sa_cle_est_refuse(monkeypatch):
 #      exigé » ────────────────────────────────────────────────────────────────
 # Régression de production, mesurée le 14/09/2026 : `runner.org_key_required=
 # true` posé pour `anthropic` a refusé la pose de flottes déclarées
-# `mistral-large-2512` (146 à 150 d'Audiens), dans une org qui n'avait — à
+# `mistral-large-2512` (cinq campagnes de l'opérateur des campagnes), dans une org qui n'avait — à
 # raison — déposé aucune clé Anthropic. `exiger_a_la_pose` regardait TOUTES les
 # familles exigées, pas celle du modèle qu'on posait réellement.
 
@@ -245,7 +245,7 @@ def test_seule_la_famille_du_modele_declare_est_verifiee(monkeypatch):
         CE.exiger_a_la_pose(ORG, "anthropic")
     assert e.value.code == "model_key_required"
     # mistral n'est PAS exigée : la déclarer ne lève pas, même sans AUCUNE clé
-    # déposée pour aucun fournisseur — c'est exactement le cas Audiens.
+    # déposée pour aucun fournisseur — c'est exactement le cas de l'opérateur des campagnes.
     CE.exiger_a_la_pose(ORG, "mistral")
 
 

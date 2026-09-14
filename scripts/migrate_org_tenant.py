@@ -46,7 +46,7 @@ Idempotent : le prédicat ne retient que les lignes dont le rattachement DIFFÈR
 dérivation. Un second passage n'a plus rien à toucher et le dit.
 
 **JOUÉ EN PRODUCTION le 2026-09-03** (`--apply`, tag servi v1.186.0) : 65 orgs
-repointées vers `tulina` — 48 vivantes, 17 archivées — le compteur `orgs_desalignees`
+repointées vers le tenant du partenaire — 48 vivantes, 17 archivées — le compteur `orgs_desalignees`
 tombé de 48 à 0, et le passage suivant rendu « rien à faire ». Les deux refus n'ont
 tiré ni l'un ni l'autre. Ce qui précède décrit donc l'état d'AVANT ce geste ; la
 commande reste, elle resservira au prochain tenant, et son décompte à blanc est la

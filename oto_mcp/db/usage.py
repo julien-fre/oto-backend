@@ -85,10 +85,10 @@ def insert_tool_call(row: dict) -> None:
                 # pas été mesurée : les échecs (le middleware ne la calcule que sur le
                 # chemin heureux) et les gestes REST, qui ne passent pas par lui.
                 row.get("result_size"),
-                # Métrage par unité (billing Tulina) — NULL = non tracé pour ce
+                # Métrage par unité (facturation du partenaire) — NULL = non tracé pour ce
                 # tool, un consommateur doit le traiter comme 1, pas 0.
                 row.get("quantity"),
-                # Mode du credential (billing Tulina) — NULL = non attribuable,
+                # Mode du credential (facturation du partenaire) — NULL = non attribuable,
                 # donc non facturable ; l'inverse de la règle de `quantity`.
                 row.get("key_mode"),
             ),

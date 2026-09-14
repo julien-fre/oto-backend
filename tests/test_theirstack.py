@@ -168,7 +168,7 @@ def test_companies_search_empty_result_is_not_an_error():
     assert out == {"metadata": {"total_results": 0, "truncated_results": 0}, "data": []}
 
 
-# --- métrage par unité (billing Tulina, 21/08) ────────────────────────────────
+# --- métrage par unité (facturation du partenaire, 21/08) ─────────────────────
 
 def test_jobs_search_traces_the_returned_job_count():
     with patch("oto_mcp.tools.theirstack.session_org.note_call_trace") as trace, \
@@ -281,7 +281,7 @@ def test_une_cle_du_CLIENT_ne_debite_jamais_notre_quota(monkeypatch):
 def test_le_metrage_lui_est_INCONDITIONNEL(monkeypatch):
     """`quantity` est tracé dans les deux modes — c'est `tool_calls.key_mode`,
     posé au résolveur, qui dit sous quelle clé l'appel est passé. Séparer les
-    deux est ce qui permet à la facturation de ne retenir que la clé Tulina sans
+    deux est ce qui permet à la facturation de ne retenir que la clé du partenaire sans
     que le tool ait à connaître la règle de facturation."""
     for platform in (True, False):
         _, trace = _search_returning(7, monkeypatch, is_platform=platform)

@@ -205,7 +205,8 @@ class Directory:
     l'endpoint PRINCIPAL ; l'inverse rend `401 aud check_failed`. Sur notre annuaire
     les deux coïncident, ce qui est précisément ce qui a permis de vivre longtemps
     avec une seule variable — et ce qui l'aurait rendue fausse en silence au premier
-    annuaire où ils diffèrent (`auth.tulina.ai` / `logto-tulina.oto.zone`).
+    annuaire où ils diffèrent (celui du partenaire : un domaine public à sa marque, un
+    hôte d'administration chez nous).
 
     ⚠️ `credential` est le NOM d'un couple de variables d'environnement, jamais une
     valeur : rien de secret n'entre dans cet objet, donc rien de secret ne peut sortir

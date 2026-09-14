@@ -43,7 +43,7 @@ def _row(key="k1", provider="LINKEDIN", seat=True, **extra):
 
 def test_la_lentille_ne_rend_aucune_identite(monkeypatch):
     # ce que le store pourrait laisser fuiter, et que la projection doit ignorer
-    _fake(monkeypatch, [_row(sub="tulina:abc", email="x@y.z", account_id="acc_1")])
+    _fake(monkeypatch, [_row(sub="acme:abc", email="x@y.z", account_id="acc_1")])
     out = om._connections(CTX, om.OrgConnectionsInput(org_id=7))
     assert out == {"connections": [{"connection_key": "k1", "provider": "LINKEDIN",
                                     "platform_seat": True,
@@ -63,7 +63,7 @@ def test_la_requete_ne_filtre_pas_sur_la_cle(monkeypatch):
 
     class _Res:
         def fetchall(self):
-            return [{"sub": "tulina:a", "provider": "LINKEDIN", "platform_seat": False,
+            return [{"sub": "acme:a", "provider": "LINKEDIN", "platform_seat": False,
                      "connected_at": "2026-09-01T10:00:00Z", "disconnected_at": None}]
 
     class _Conn:
@@ -102,12 +102,12 @@ def test_un_since_qui_n_est_pas_une_date_est_refuse_avant_la_base():
 
 
 def test_la_cle_est_stable_par_connexion_et_ne_nomme_pas_le_membre():
-    k = db_unipile.unipile_connection_key(7, "tulina:abc", "LINKEDIN")
-    assert k == db_unipile.unipile_connection_key(7, "tulina:abc", "LINKEDIN")
-    assert k != db_unipile.unipile_connection_key(8, "tulina:abc", "LINKEDIN")
-    assert k != db_unipile.unipile_connection_key(7, "tulina:abc", "WHATSAPP")
-    assert k != db_unipile.unipile_connection_key(7, "tulina:xyz", "LINKEDIN")
-    assert len(k) == 24 and "tulina" not in k
+    k = db_unipile.unipile_connection_key(7, "acme:abc", "LINKEDIN")
+    assert k == db_unipile.unipile_connection_key(7, "acme:abc", "LINKEDIN")
+    assert k != db_unipile.unipile_connection_key(8, "acme:abc", "LINKEDIN")
+    assert k != db_unipile.unipile_connection_key(7, "acme:abc", "WHATSAPP")
+    assert k != db_unipile.unipile_connection_key(7, "acme:xyz", "LINKEDIN")
+    assert len(k) == 24 and "acme" not in k
 
 
 def test_capacite_membre_en_rest_jamais_en_mcp():

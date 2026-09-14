@@ -392,7 +392,7 @@ def register(mcp: FastMCP) -> None:
         else:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message="op doit être 'people' ou 'companies'"))
-        # Métrage par unité (billing Tulina, 21/08) : le nombre de records RENDUS
+        # Métrage par unité (facturation du partenaire, 21/08) : le nombre de records RENDUS
         # dans cette page, pas `size` demandé (une page en fin de résultat peut en
         # rendre moins). C'est ce qu'AI Ark facture réellement ("BILLS CREDITS per
         # returned record", docstring ci-dessus) — le même axe que ce tool doit

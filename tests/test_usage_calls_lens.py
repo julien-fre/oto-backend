@@ -48,7 +48,7 @@ def test_la_lentille_ne_rend_QUE_ce_qu_un_metrage_somme(monkeypatch):
         "id": 9, "tool": "linkedin_aiark_search", "created_at": "2026-09-01T09:00:00.000000Z",
         "quantity": 47, "key_mode": "platform",
         # ce que le store pourrait laisser fuiter, et que la projection doit ignorer
-        "sub": "tulina:abc", "email": "x@y.z", "error": "boom"}])
+        "sub": "acme:abc", "email": "x@y.z", "error": "boom"}])
     out = om._billable_calls(CTX, om.OrgBillableCallsInput(org_id=7, tool="linkedin_aiark_search"))
     assert out["calls"] == [{"call_id": 9, "tool": "linkedin_aiark_search",
                              "created_at": "2026-09-01T09:00:00.000000Z",

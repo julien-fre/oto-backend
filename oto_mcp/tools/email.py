@@ -206,7 +206,7 @@ def register(mcp: FastMCP) -> None:
             raise _err(str(e))
 
         sub, route = _resolve_route((from_email or "").strip() or None)
-        # La marque de CELUI QUI ENVOIE : un client de Tulina dont l'agent écrit à un
+        # La marque de CELUI QUI ENVOIE : un client du partenaire dont l'agent écrit à un
         # prospect signait « oto, par otomata · oto.cx » en pied — le pied d'un
         # produit qu'il n'a jamais vu, sous son propre nom de domaine d'envoi.
         #

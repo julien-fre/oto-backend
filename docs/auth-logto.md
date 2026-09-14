@@ -97,7 +97,7 @@ l'annuaire visé est le sien. Deux choses en découlent, et il a manqué les deu
 - **le client rendu est celui du tenant** (`tenants.oauth_client_id`) — c'est là que
   l'utilisateur va s'authentifier ;
 - **le rappel doit être enregistré dans SON annuaire.** `_register_redirects` n'était
-  appelé que sur le host de la plateforme : sur `mcp.tulina.ai` la façade rendait **201
+  appelé que sur le host de la plateforme : sur le domaine MCP du partenaire la façade rendait **201
   sans avoir rien posé**, et le client se faisait refuser deux secondes plus tard à
   l'`/authorize` (`oidc.invalid_redirect_uri`), sans indice.
 

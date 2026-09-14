@@ -366,7 +366,7 @@ def test_la_description_servie_dit_qu_un_echec_n_est_pas_une_absence():
     assert "retryable: true" in d               # le verdict machine, nommé
     assert "bill a second credit" in d          # le coût de la reprise, assumé
 
-# --- métrage par unité (billing Tulina, 21/08) ────────────────────────────────
+# --- métrage par unité (facturation du partenaire, 21/08) ─────────────────────
 
 def _tool(name):
     from fastmcp import FastMCP

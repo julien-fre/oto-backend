@@ -1,7 +1,7 @@
 """Le plan d'oto n'écrit pas le plafond de messagerie d'une org hébergée par un tenant
 TIERS. Ce plafond appartient à la facturation du partenaire, qui le pose lui-même
 (`PUT /api/admin/orgs/{id}/unipile-limit`) : un `oto_admin_set_plan` sur son org le
-remettait au défaut de la plateforme, dans son dos (Tulina, 2026-09-11)."""
+remettait au défaut de la plateforme, dans son dos (le partenaire, 2026-09-11)."""
 from __future__ import annotations
 
 from oto_mcp import billing, tenancy
@@ -34,13 +34,13 @@ def test_une_cliente_directe_recoit_le_plafond_de_son_plan(monkeypatch):
 
 
 def test_le_plan_force_sur_l_org_d_un_partenaire_n_ecrase_pas_son_plafond(monkeypatch):
-    s = _wire(monkeypatch, "tulina")
+    s = _wire(monkeypatch, "acme")
     billing.admin_set_plan(7, "business", granted_by="admin")
     assert s["limits"] == []
 
 
 def test_retirer_le_plan_comp_d_un_partenaire_laisse_son_plafond(monkeypatch):
-    s = _wire(monkeypatch, "tulina")
+    s = _wire(monkeypatch, "acme")
     billing.admin_clear_plan(7)
     assert s["limits"] == []
 
