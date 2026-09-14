@@ -1,7 +1,7 @@
 # oto-mcp
 
 The **central, deployable Oto product** (SaaS or on-premise): an MCP server, over
-Streamable HTTP, that exposes the [oto-core](https://github.com/otomata-tech/oto-core)
+Streamable HTTP, that exposes the [oto-core](https://github.com/otomata-tech/connectors)
 connectors (`oto.tools.*`) as tools to Claude — plus a REST API for the
 [dashboard](https://github.com/otomata-tech/oto-dashboard). Imports oto-core directly;
 no CLI dependency.
