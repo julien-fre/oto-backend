@@ -14,7 +14,15 @@ production, et le déploiement est bleu/vert (deux arbres, deux services).
 Il n'y a pas de métadonnées cibles : **aucun ORM**. Les migrations s'écrivent en SQL,
 à la main, comme le reste du schéma. La détection automatique est donc inopérante —
 et c'est voulu : elle ne saurait de toute façon qu'ajouter des colonnes.
-"""
+
+⚠️ **Ce fichier est le SCRIPT qu'Alembic exécute, pas une bibliothèque.** Sous la
+commande `alembic`, `context` porte une configuration réelle. Importé autrement — un
+outil qui balaie `oto_mcp/` pour vérifier que tout s'importe (`scripts/arbre-
+importable.py`) en fait partie, puisque ce module vit DANS le paquet — `context` est
+vide et `context.config` lève `AttributeError` (vécu le 14/09/2026, à la pose
+d'Alembic). Un import n'a le droit d'exiger RIEN de l'environnement
+(docs/commands.md) ; `_sous_alembic()` en est la garde, pour que la même contrainte
+tienne ici comme partout ailleurs dans le paquet."""
 from __future__ import annotations
 
 import os
@@ -26,8 +34,17 @@ from sqlalchemy import create_engine, text
 # seconde file qui ignorerait la première.
 VERROU = 0x07050065
 
-config = context.config
 target_metadata = None
+
+
+def _sous_alembic() -> bool:
+    """Vrai seulement si CE fichier tourne sous `alembic` — jamais lors d'un import
+    générique, où `context` n'a reçu aucune configuration."""
+    try:
+        context.config
+    except AttributeError:
+        return False
+    return True
 
 
 def _url() -> str:
@@ -61,6 +78,14 @@ def run_migrations_online() -> None:
     engine = create_engine(_url(), pool_pre_ping=True)
     with engine.connect() as connection:
         connection.execute(text("SELECT pg_advisory_lock(:cle)"), {"cle": VERROU})
+        # ⚠️ Ce commit n'est PAS décoratif, et il a coûté un essai pour le voir.
+        # Prendre le verrou ouvre une transaction implicite ; Alembic voit alors une
+        # transaction déjà en cours, sa propre `begin_transaction()` ne fait plus rien,
+        # et TOUT ce qu'il écrit est annulé à la fermeture de la connexion — sans une
+        # erreur, code de sortie zéro. Le succès déguisé parfait. On referme donc la
+        # transaction du verrou tout de suite : le verrou, lui, vit au niveau de la
+        # SESSION et survit au commit.
+        connection.commit()
         try:
             context.configure(connection=connection)
             with context.begin_transaction():
@@ -69,9 +94,11 @@ def run_migrations_online() -> None:
             # Le verrou tombe aussi à la fermeture de la connexion ; on le rend
             # explicitement pour que le cas « la connexion vit encore » soit couvert.
             connection.execute(text("SELECT pg_advisory_unlock(:cle)"), {"cle": VERROU})
+            connection.commit()
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+if _sous_alembic():
+    if context.is_offline_mode():
+        run_migrations_offline()
+    else:
+        run_migrations_online()

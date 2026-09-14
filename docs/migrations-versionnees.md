@@ -438,6 +438,17 @@ Les commandes, depuis la racine du dépôt, avec l'environnement chargé :
 .venv/bin/python -m alembic current              # où en est CETTE base
 ```
 
+**Le banc : `scripts/essai_migrations.sh`.** Il monte un PostgreSQL 17 jetable dans un
+conteneur, applique pour de vrai, pose une migration, la défait, et vérifie qu'une
+migration concurrente **attend** le verrou. Il ne touche à aucune base réelle.
+
+> **Pourquoi ce banc existe, et ce qu'il a déjà attrapé.** L'essai à blanc n'ouvre
+> aucune connexion : il a rendu un SQL parfait alors que l'application réelle
+> **n'écrivait rien**, sortait avec un code zéro et laissait la base intacte. La cause :
+> prendre le verrou ouvrait une transaction implicite, Alembic voyait une transaction
+> déjà en cours, sa propre transaction ne faisait plus rien, et tout était annulé à la
+> fermeture de la connexion. Le succès déguisé parfait — invisible sans une vraie base.
+
 ⚠️ **Un geste reste à faire sur la base**, une seule fois : `alembic stamp head`. Il
 écrit que le point de départ est atteint, sans rien rejouer. C'est une écriture sur la
 base de production — elle passe par la procédure de production, pas par un déploiement.
