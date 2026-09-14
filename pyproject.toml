@@ -321,6 +321,13 @@ dependencies = [
     # Migrations : le registre de ce qui a déjà tourné, l'ordre, l'essai à blanc.
     # Pas d'ORM — les migrations sont du SQL écrit à la main (cf. docs/migrations-versionnees.md).
     "alembic>=1.13",
+    # Importé DIRECTEMENT par l'amorçage des migrations (moteur + advisory lock).
+    # Alembic le tire aujourd'hui ; on ne dépend pas d'une dépendance transitive.
+    "sqlalchemy>=2.0",
+    # Tirée transitivement par alembic, mais `env.py` l'importe DIRECT
+    # (`create_engine`, `text`) pour le pool de la migration — donc déclarée
+    # (garde `tests/test_dependances_declarees.py`, cf. ff2a64ac).
+    "sqlalchemy>=2.0",
     "psycopg-pool>=3.2",
     "croniter>=2.0",           # déclencheurs du runner (R3) : next_due depuis le cron, dans le fuseau du déclencheur
     # france-opendata : plus de dép DIRECTE (ADR 0028 extraction totale — foncier/fr/
