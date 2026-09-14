@@ -268,7 +268,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         lus = (db.triggers_for_procedure(ctx.org_id, inp.procedure) if inp.procedure
                else db.list_triggers(ctx.org_id))
         return {"triggers": [_avec_pertes(ctx.org_id, t) for t in lus],
-                "runner": _modele.etat_servi(db.runner_arme(ctx.org_id))}
+                "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.trigger_id is None:
         raise AuthzDenied(400, "missing_fields", f"{inp.op} exige `trigger_id`")
@@ -278,7 +278,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         if not t:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
         return {"trigger": _avec_pertes(ctx.org_id, t),
-                "runner": _modele.etat_servi(db.runner_arme(ctx.org_id))}
+                "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):

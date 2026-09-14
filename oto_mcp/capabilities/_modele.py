@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .. import runner_models
+from . import _cle_exigee
 from ._types import AuthzDenied
 
 
@@ -77,10 +78,17 @@ def exige_servi(etat: dict, famille: Optional[str]) -> None:
         "le worker tourne alors sur le sien.")
 
 
-def etat_servi(etat: dict) -> dict:
+def etat_servi(etat: dict, org_id: Optional[int] = None) -> dict:
     """L'état du runner tel que servi : présence, familles, et le catalogue marqué
     de ce qui est servi — ce dont un écran a besoin pour proposer un modèle sans
-    proposer celui qui serait refusé."""
+    proposer celui qui serait refusé.
+
+    ⚠️ Avec `org_id`, le défaut proposé écarte les familles servies dont l'org n'a
+    pas déposé la clé EXIGÉE : les proposer, c'est proposer un refus
+    `model_key_required` à la pose. Lu seulement quand des familles sont servies — la
+    lecture du réglage est froide, et un état sans famille n'a rien à écarter."""
     familles = list(etat.get("families") or [])
+    sans_cle = (_cle_exigee.manquantes(org_id, familles)
+                if org_id is not None and familles else [])
     return {**etat, "families": familles,
-            "models": runner_models.catalogue(familles)}
+            "models": runner_models.catalogue(familles, sans_cle)}

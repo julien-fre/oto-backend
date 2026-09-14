@@ -63,7 +63,7 @@ def charge(model: Optional[str]) -> dict:
     return {"model": model, "model_family": f} if f else {}
 
 
-def catalogue(familles_servies) -> list[dict]:
+def catalogue(familles_servies, familles_sans_cle=()) -> list[dict]:
     """Le catalogue tel qu'un écran le propose : chaque modèle, s'il est SERVI —
     une famille dont un worker a sondé la file dans la fenêtre de présence — et
     celui à proposer par DÉFAUT.
@@ -78,9 +78,19 @@ def catalogue(familles_servies) -> list[dict]:
     premier du catalogue, qui proposerait un modèle refusé. L'absence se lit avec
     `families: []`, et le geste est alors de ne nommer aucun modèle : le worker
     tourne sur le sien. Le défaut ne s'écrit nulle part : un agent posé sans modèle
-    reste NULL, et un modèle choisi n'est jamais changé."""
+    reste NULL, et un modèle choisi n'est jamais changé.
+
+    ⚠️ **Le défaut écarte les familles que l'org ne peut pas payer** (14/09/2026) :
+    `familles_sans_cle` = celles dont la clé est EXIGÉE et que l'org n'a pas déposée
+    (`capabilities/_cle_exigee.manquantes`). Un modèle de ces familles reste `served`
+    — un worker le sert, et l'org peut déposer sa clé puis le choisir — mais il n'est
+    jamais PROPOSÉ. Le premier worker Anthropic « clés clients seules » avait fait de
+    `claude-sonnet-5` le défaut de toutes les orgs, dont aucune n'avait de clé : un agent
+    qui le suivait se faisait refuser `model_key_required`. Si toutes les familles
+    servies sont écartées, aucun défaut — jamais un repli sur un modèle refusé."""
     servies = set(familles_servies or ())
-    defaut = next((m.id for m in MODELES if m.family in servies), None)
+    proposables = servies - set(familles_sans_cle or ())
+    defaut = next((m.id for m in MODELES if m.family in proposables), None)
     return [{"id": m.id, "label": m.label, "family": m.family,
              "default": m.id == defaut, "served": m.family in servies}
             for m in MODELES]
