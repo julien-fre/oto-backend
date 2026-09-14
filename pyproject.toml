@@ -349,6 +349,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "pytest-xdist>=3.6",  # `-n 4` en CI, docs/commands.md §Suite parallèle en CI
 ]
 
 [project.scripts]

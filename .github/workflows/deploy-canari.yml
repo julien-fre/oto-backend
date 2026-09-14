@@ -128,7 +128,17 @@ jobs:
         # gelé le tronc six heures. Ce tableau est le préalable gratuit à cette
         # décision. (Les attentes fixes de la suite ne pèsent que quelques secondes :
         # ce qu'on cherche ici, ce sont les fixtures et les sous-processus.)
-        run: pytest -q --durations=25
+        #
+        # `-n 4` (14/09/2026) : le nombre vient du job `empreinte-collecte` ci-dessous,
+        # PAS d'un chiffre recopié — c'est la leçon du gel de 6 h inscrite juste au-dessus.
+        # `OTO_TEST_PG_PLACES=4` (docs/commands.md §Suite parallèle en CI) : la garde de
+        # `_jeton_de_suite.py` (2 places) protège le poste de DEV partagé entre sessions
+        # concurrentes ; ce job tourne seul dans un conteneur CI isolé, où elle ne fait que
+        # bloquer/chronométrer à vide 2 des 4 workers sur leur propre fixture — vérifié
+        # localement (`-n 4` nu : 921 s et 414 erreurs en cascade, contre 668 s en série).
+        env:
+          OTO_TEST_PG_PLACES: "4"
+        run: pytest -q -n 4 --durations=25
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CE QUE PÈSE UNE COLLECTE, SUR LA MACHINE QUI L'EXÉCUTE.

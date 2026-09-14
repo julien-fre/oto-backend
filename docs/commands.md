@@ -87,6 +87,35 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 # `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
 # au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
 
+# ── Suite parallèle en CI (`-n 4`, pytest-xdist) ──────────────────────────────
+# Mesuré le 14/09/2026 sur le job `test` : 668,31 s / 13245 tests, `--durations=25`
+# montre une charge DIFFUSE (le plus lent item à 16,91 s, aucun fichier ni fixture
+# dominant) — pas un point chaud à corriger, un candidat légitime à la parallélisation.
+# Le nombre de workers N'EST PAS deviné : `empreinte-collecte` (ce même workflow) mesure
+# ce que pèse une collecte SUR LA MACHINE qui exécute et dérive un nombre — 4, borné par
+# les cœurs du runner (4 vCPU), la mémoire n'étant pas le facteur limitant. C'est la leçon
+# du 07/09 (quatre workers calibrés sur un poste à 28 cœurs → OOM killer, tronc rouge 6 h)
+# appliquée : ne pas recopier un chiffre d'ailleurs, le lire sur CETTE machine.
+#
+# ⚠️ **`-n 4` nu casse la suite — vérifié, pas supposé.** `pg_box` (fixture `pg_dsn`,
+# session-scopée) passe par `_jeton_de_suite.py`, qui borne à `OTO_TEST_PG_PLACES=2`
+# places PG simultanées — pensé pour le POSTE PARTAGÉ (plusieurs sessions d'agents qui se
+# gênent, #07/09). Sous xdist, chaque WORKER est son propre process, donc sa propre
+# session : dès que 2 des 4 workers touchent une base, ils tiennent leurs 2 places pour
+# TOUTE leur durée de vie (scope session), et les 2 autres restent bloqués dans
+# `jeton.prendre()` dès qu'ils ont eux aussi un test à base à jouer — jusqu'à ce qu'un des
+# deux premiers workers épuise sa file entière. Reproduit le 14/09/2026 sur un clone
+# jetable : 921 s (PLUS LENT que la suite série) et 414 erreurs en cascade (toute
+# collecte de tests à base qui suit, dans le worker bloqué, échoue à la même fixture).
+#
+# Le job CI **relève `OTO_TEST_PG_PLACES=4`** pour l'étape `Tests` seule (`env:` du step,
+# pas une variable globale du workflow). C'est sûr ICI et nulle part ailleurs : un job CI
+# est un conteneur ISOLÉ — mes 4 workers sont les SEULS acteurs sur cette base jetable,
+# il n'y a pas de voisine à protéger. Relever la même valeur sur le poste de dev partagé
+# serait faux : là, la garde protège contre une VRAIE contention inter-sessions que la
+# capacité de la machine ne change pas (cf. `_jeton_de_suite.py`). **Ne jamais relever
+# `OTO_TEST_PG_PLACES` par défaut, seulement dans le `env:` de ce step CI.**
+
 # ── AVANT DE POUSSER : l'arbre du COMMIT s'importe-t-il ? ────────────────────
 # Une référence poussée SANS SON OBJET (`from . import x` commité, `x.py` jamais
 # `git add`é) est invisible pour son auteur et visible pour tous les autres : son
