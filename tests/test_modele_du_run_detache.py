@@ -19,6 +19,8 @@ import pytest
 SUB = "worker-modele-detache"
 OPUS = {"procedure": "p", "model": "claude-opus-5", "model_family": "anthropic"}
 MISTRAL = {"procedure": "p", "model": "mistral-large-latest", "model_family": "mistral"}
+MISTRAL_MEDIUM = {"procedure": "p", "model": "mistral-medium-2604",
+                  "model_family": "mistral", "effort": "high"}
 
 
 @pytest.fixture(scope="module")
@@ -126,6 +128,19 @@ def test_un_run_detache_rend_le_modele_d_avant_son_detachement(live):
     assert db.modele_du_run(run, org) == avant, (
         "« Continuer » sur l'ancien run reste sur sa voie — `{}` le lancerait sur le "
         "modèle du worker")
+
+
+def test_l_effort_du_modele_survit_lui_aussi_au_detachement(live):
+    """`effort` (14/09/2026) suit la MÊME règle que `model`/`model_family` — posé
+    au `start`, jamais recalculé depuis le catalogue courant. Un `continue` sur
+    un run mistral-medium-2604 doit repartir en effort HAUT, pas sur le défaut
+    du fournisseur."""
+    from oto_mcp import db
+    org = 9208
+    job_id, run, avant = _vol_puis_detachement(org, MISTRAL_MEDIUM)
+    assert avant == {"model": "mistral-medium-2604", "model_family": "mistral",
+                     "effort": "high"}, avant
+    assert db.modele_du_run(run, org) == avant
 
 
 # ── ② le run courant est inchangé, et l'association courante prime ─────────────

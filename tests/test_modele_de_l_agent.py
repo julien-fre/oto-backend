@@ -72,6 +72,19 @@ def test_un_modele_inconnu_ne_part_PAS_avec_le_travail():
     assert runner_models.charge(None) == {}
 
 
+def test_effort_est_une_propriete_du_modele_pas_un_reglage_global():
+    """14/09/2026, ordonnancement Audiens : mistral-medium-2604 tourne en effort
+    HAUT — c'est le catalogue qui le porte, pas un réglage par campagne. Un
+    modèle qui n'en déclare aucun (tous les autres) ne doit RIEN émettre de
+    plus qu'avant : une requête Large reste inchangée à l'octet près."""
+    assert runner_models.charge("mistral-medium-2604") == {
+        "model": "mistral-medium-2604", "model_family": "mistral", "effort": "high"}
+    assert runner_models.charge("mistral-large-2512") == {
+        "model": "mistral-large-2512", "model_family": "mistral"}, (
+        "Large ne porte aucun effort — sa charge doit rester à deux clés")
+    assert "effort" not in runner_models.charge("claude-sonnet-5")
+
+
 @pytest.mark.parametrize("familles, attendu", [
     ((), None),
     (("mistral",), "mistral-large-2512"),
@@ -248,7 +261,8 @@ def test_list_sert_le_catalogue_marque(monkeypatch):
     assert runner["families"] == ["anthropic"]
     servis = {m["id"]: m["served"] for m in runner["models"]}
     assert servis == {"claude-sonnet-5": True, "claude-opus-5": True,
-                      "claude-haiku-4-5": True, "mistral-large-2512": False}
+                      "claude-haiku-4-5": True, "mistral-large-2512": False,
+                      "mistral-medium-2604": False}
     assert [m["id"] for m in runner["models"] if m["default"]] == ["claude-sonnet-5"]
     # Servi par la seule famille des workers de production : le défaut la suit.
     _runner(monkeypatch, familles=("mistral",))

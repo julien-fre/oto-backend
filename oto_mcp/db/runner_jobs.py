@@ -357,11 +357,16 @@ def arreter_definitivement(job_id: int, worker_sub: str, raison: str) -> bool:
 
 
 def modele_du_run(run_id: str, org_id: int) -> dict:
-    """Le modèle sous lequel un run a DÉMARRÉ — `{model, model_family}`, ou `{}`.
+    """Le modèle sous lequel un run a DÉMARRÉ — `{model, model_family}`, plus
+    `effort` s'il en portait un, ou `{}`.
 
     Lu sur le travail `start` du run (lié par `bind_run`). Un `continue` le reprend :
     un fil ouvert sur une voie ne se poursuit pas sur une autre — la voie
-    Conversations et la boucle Messages n'ont pas le même fil.
+    Conversations et la boucle Messages n'ont pas le même fil. `effort` (14/09/2026)
+    suit la MÊME règle que `model`/`model_family` : celui posé au `start`, jamais
+    recalculé depuis le catalogue courant — un catalogue qui changerait entre le
+    départ et la reprise ne doit pas faire continuer le fil sur un autre réglage
+    que celui sous lequel il a commencé.
 
     ⚠️ Un run CLOS est détaché de son travail à la reprise (`claim_next_job`) : son
     `run_id` n'y figure plus. À défaut d'association courante — qui prime, comme
@@ -374,7 +379,8 @@ def modele_du_run(run_id: str, org_id: int) -> dict:
         row = conn.execute(
             """
             SELECT payload->>'model' AS model,
-                   payload->>'model_family' AS model_family
+                   payload->>'model_family' AS model_family,
+                   payload->>'effort' AS effort
               FROM runner_jobs
              WHERE run_id = %s AND org_id = %s AND kind = 'start'
              ORDER BY id
@@ -387,12 +393,13 @@ def modele_du_run(run_id: str, org_id: int) -> dict:
                 f"""
                 SELECT payload->>'model' AS model,
                        payload->>'model_family' AS model_family,
+                       payload->>'effort' AS effort,
                        array_agg(id ORDER BY id) AS travaux
                   FROM runner_jobs
                  WHERE org_id = %s AND kind = 'start'
                    AND payload->'{_CHAMP_PLATEFORME}'->'runs_detaches'
                        @> jsonb_build_array(jsonb_build_object('run_id', %s::text))
-                 GROUP BY 1, 2
+                 GROUP BY 1, 2, 3
                 """,
                 (org_id, run_id),
             ).fetchall()
@@ -405,7 +412,10 @@ def modele_du_run(run_id: str, org_id: int) -> dict:
             row = couples[0] if couples else None
     if not row or not row["model_family"]:
         return {}
-    return {"model": row["model"], "model_family": row["model_family"]}
+    out = {"model": row["model"], "model_family": row["model_family"]}
+    if row.get("effort"):
+        out["effort"] = row["effort"]
+    return out
 
 
 def bind_job_run(job_id: int, worker_sub: str, run_id: str) -> bool:

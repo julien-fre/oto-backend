@@ -28,6 +28,10 @@ class Modele(NamedTuple):
     id: str
     label: str
     family: str
+    #: L'effort de réflexion — propriété du MODÈLE catalogué, pas un réglage
+    #: par campagne ni par déclencheur (14/09/2026, ordonnancement Audiens).
+    #: `None` = le fournisseur applique son défaut, comme avant ce champ.
+    effort: Optional[str] = None
 
 
 #: ⚠️ L'ORDRE est la préférence : le modèle proposé par défaut est le premier
@@ -38,6 +42,7 @@ MODELES: tuple[Modele, ...] = (
     Modele("claude-haiku-4-5", "Claude Haiku 4.5", "anthropic"),
     # La voie Conversations des workers de production (cf. oto-runner).
     Modele("mistral-large-2512", "Mistral Large", "mistral"),
+    Modele("mistral-medium-2604", "Mistral Medium", "mistral", effort="high"),
 )
 
 _PAR_ID = {m.id: m for m in MODELES}
@@ -53,14 +58,22 @@ def famille(model: Optional[str]) -> Optional[str]:
 
 
 def charge(model: Optional[str]) -> dict:
-    """Ce qu'un travail emporte de son modèle : `{model, model_family}`, ou rien.
+    """Ce qu'un travail emporte de son modèle : `{model, model_family}`, plus
+    `effort` (14/09/2026) SI le modèle catalogué en déclare un — mistral-medium-2604
+    tourne en effort HAUT, les autres modèles n'émettent rien de plus qu'avant :
+    une requête sans effort porté est inchangée à l'octet près.
 
     ⚠️ Un modèle que le catalogue ne connaît pas ne part PAS : sans famille, il
     atteindrait un worker quelconque qui tenterait de l'appeler chez un
     fournisseur qui ne le sert peut-être pas. Ne rien envoyer rend le travail au
     comportement d'avant — le worker tourne sur son propre modèle."""
-    f = famille(model)
-    return {"model": model, "model_family": f} if f else {}
+    m = _PAR_ID.get(model or "")
+    if not m:
+        return {}
+    charge = {"model": model, "model_family": m.family}
+    if m.effort:
+        charge["effort"] = m.effort
+    return charge
 
 
 def catalogue(familles_servies, familles_sans_cle=()) -> list[dict]:
