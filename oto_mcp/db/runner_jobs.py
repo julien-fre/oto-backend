@@ -173,7 +173,8 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
 
 def claim_next_job(org_id: Optional[int], worker_sub: str,
                    lease_seconds: int = _LEASE_DEFAULT_S,
-                   depot: Optional[str] = None) -> Optional[dict]:
+                   depot: Optional[str] = None,
+                   famille_seule: bool = False) -> Optional[dict]:
     """Le prochain job, bail posé — ou None (file vide).
 
     ⚠️ `depot` = le dépôt de clé que le worker nomme, c'est-à-dire la FAMILLE de
@@ -182,6 +183,15 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
     servi par n'importe qui, sur son propre modèle, comme avant le 12/09/2026.
     Sans dépôt, il ne prend QUE les travaux sans famille : un worker qui ne dit
     pas ce qu'il sert ne reçoit jamais un modèle qu'il ne saurait pas appeler.
+
+    ⚠️ `famille_seule` (13/09/2026) : le worker ne prend QUE les travaux de sa
+    famille — jamais ceux qui n'en portent aucune. C'est ce que demande un worker
+    qui ne tient AUCUNE clé de modèle à lui (`org_key_only` côté capacité) : un
+    travail sans famille est celui d'un agent posé sans modèle, que les workers
+    existants servent sur LEUR modèle. Le prendre lui ferait changer de
+    fournisseur en silence — et, faute de clé de plateforme, échouer. Sans ce
+    filtre, ouvrir un pool Anthropic « clés clients seules » aurait volé et cassé
+    les agents historiques des organisations qui n'ont pas déposé de clé.
 
     Marque d'abord `failed` les épaves (bail mort + tentatives épuisées) : elles
     deviennent VISIBLES au lieu d'être re-servies pour rien.
@@ -268,8 +278,13 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                    -- FAUX, `= NULL` rend INCONNU. Même tri dans cette forme,
                    -- mais la première réécriture qui NIE la clause (`NOT …`)
                    -- ferait de l'inconnu une exclusion muette.
-                   AND (payload->>'model_family' IS NULL
-                        OR payload->>'model_family' = %s)
+                   -- ⚠️ La négation porte sur le BOOLÉEN `famille_seule`, jamais
+                   -- sur la clause de famille : un worker « famille seule » perd
+                   -- les travaux sans famille, et rien d'autre ne bouge. (Pas de
+                   -- marqueur de paramètre dans ce commentaire : psycopg les compte
+                   -- aussi dans les commentaires SQL.)
+                   AND (payload->>'model_family' = %s
+                        OR (payload->>'model_family' IS NULL AND NOT %s))
                  ORDER BY due_at
                    FOR UPDATE SKIP LOCKED
                  LIMIT 1
@@ -295,7 +310,8 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
                       j.lease_until, j.sub, j.org_id
             """,
-            (org_id, org_id, depot or "", worker_sub, int(lease_seconds)),
+            (org_id, org_id, depot or "", bool(famille_seule), worker_sub,
+             int(lease_seconds)),
         ).fetchone()
     return dict(row) if row else None
 
