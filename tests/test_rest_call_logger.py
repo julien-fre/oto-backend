@@ -33,7 +33,7 @@ def _req(headers: dict):
     return Request({"type": "http", "headers": raw, "query_string": b""})
 
 
-def _run_mw(monkeypatch, *, path, method="GET", status=200):
+def _run_mw(monkeypatch, *, path, method="GET", status=200, headers: dict | None = None):
     """Exécute le middleware sur une requête simulée ; renvoie la ligne loggée (ou None)."""
     captured = {}
 
@@ -47,7 +47,8 @@ def _run_mw(monkeypatch, *, path, method="GET", status=200):
         await send({"type": "http.response.body", "body": b"{}"})
 
     mw = ar.RestCallLogger(downstream)
-    scope = {"type": "http", "path": path, "method": method, "headers": [], "query_string": b""}
+    raw_headers = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+    scope = {"type": "http", "path": path, "method": method, "headers": raw_headers, "query_string": b""}
     sent = []
 
     async def send(m):
@@ -127,3 +128,19 @@ def test_une_route_sans_jeton_n_ecrit_aucun_args(monkeypatch):
     _routes_declarees()
     row, _ = _run_mw(monkeypatch, path="/api/orgs/7/members", method="POST", status=201)
     assert row["args"] is None
+
+
+# ── La cible du « voir en tant que » (#572 point 4) ──────────────────────────
+# Le journal REST enregistre déjà l'org de consultation revendiquée (header,
+# best-effort — même statut que `sub`/`_claimed_sub`) mais pas la cible d'un
+# « voir en tant que ». On sait qu'un opérateur a consulté, pas au nom de qui.
+
+def test_logs_view_as_target_header(monkeypatch):
+    row, _ = _run_mw(monkeypatch, path="/api/me",
+                      headers={"x-oto-view-as": "sub-cible-42"})
+    assert row["view_as_sub"] == "sub-cible-42"
+
+
+def test_view_as_target_absent_by_default(monkeypatch):
+    row, _ = _run_mw(monkeypatch, path="/api/me")
+    assert row["view_as_sub"] is None

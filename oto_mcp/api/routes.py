@@ -323,6 +323,16 @@ class RestCallLogger:
 
         request = Request(scope, receive)  # headers/query only → ne consomme pas le body
         org = _parse_view_org(request)  # org de consultation revendiquée (header), best-effort
+        # Cible du « voir en tant que » revendiquée (header `X-Oto-View-As`), même
+        # statut best-effort que `org` ci-dessus : `ViewAsMiddleware` a déjà validé
+        # (opérateur + cible existe) AVANT ce middleware dans la chaîne ASGI (il
+        # l'enveloppe), mais son contextvar est déjà remis à plat quand on arrive
+        # ICI — ce middleware est le PLUS externe, son `finally` tourne après que
+        # celui de `ViewAsMiddleware` a fait le sien. Re-parser le header est donc
+        # la seule façon de le voir depuis ce point, comme pour `org`. Le journal
+        # n'attestait que l'OPÉRATEUR réel (#572 point 4) : on sait qu'il a
+        # consulté, jamais au nom de qui — ce champ referme la moitié manquante.
+        view_as = _parse_view_user(request)
         started = time.monotonic()
         try:
             await self.app(scope, receive, _send)
@@ -356,6 +366,9 @@ class RestCallLogger:
                 "token_id": principal.get("token_id"),
                 "token_kind": principal.get("token_kind"),
                 "org_id": org,
+                # Jamais un remplacement de `sub` (l'opérateur réel reste le sub de
+                # la ligne, volontairement) : un champ EN PLUS, à côté.
+                "view_as_sub": view_as,
                 "ok": 200 <= code < 400,
                 "error": (f"HTTP {code}" if code >= 400 else None),
                 "duration_ms": int((time.monotonic() - started) * 1000),
