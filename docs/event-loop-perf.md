@@ -238,6 +238,41 @@ et d'autre du seul `await` — aucune des deux ne lit ni n'écrit de ContextVar 
 `test_user_disabled_tools_on_initialize_ne_touche_pas_la_base_dans_la_boucle`) — 6 accès
 DB depuis le thread de la boucle avant correctif, 0 après.
 
+✅ **Traité le 2026-09-15** : `SentryToolErrorMiddleware.on_call_tool`
+(`oto_mcp/sentry_setup.py`) — pas du DB cette fois, mais le même mode : `capture_exception`
+tournait nûment dans la boucle sur le chemin d'erreur de **chaque** appel de tool.
+Diagnostiqué sur les timeouts urllib3/`requests` de `linkedin_aiark_person` (2 tentatives
+de 30 s, `_appel_avec_reprise`) : sur 30 échecs en production, les 30 portaient un
+`sentry_event_id` (donc 30 captures dans la boucle), mais seulement 5 dans la même fenêtre
+ont mesuré un gel ≥1 s — le coût de la capture VARIE, il fallait le chiffrer plutôt que le
+supposer. Chiffré sur la VRAIE chaîne d'exception (un socket qui pend pour de vrai,
+`requests.exceptions.ReadTimeout` dont `__context__` est un authentique
+`urllib3.exceptions.ReadTimeoutError` — vérifié, pas fabriqué à la main), Sentry en DSN
+vide (`transport=None`, donc `Client.capture_event` construit l'event ENTIER — pile,
+filtrage in-app, `linecache` pour le contexte source de chaque frame — et ne court-circuite
+que la dernière ligne, l'envoi) : médiane 6-9 ms, un appel « à froid » (1ᵉʳ après boot,
+`linecache` lit chaque fichier une fois) jusqu'à ~50-70 ms sur
+`tests/test_sentry_capture_hors_boucle.py`. **Ce chiffre, à lui seul, n'explique pas des
+gels ≥1 s** — l'ordre de grandeur est trop petit ; les gels mesurés en prod tiennent
+probablement à la coïncidence avec d'autre I/O sync sur la même boucle au même instant.
+Mais c'est quand même de l'I/O disque synchrone posée nûment dans la boucle, sur le
+chemin d'erreur de CHAQUE tool — la règle mono-loop ne se négocie pas au chiffre moyen.
+
+Remède : seul `sentry_sdk.capture_exception(e)` part en `run_in_threadpool` — la création
+du scope et la pose des tags/user (`mcp.tool`, `mcp.client`, `user.id`) restent dans le
+contexte ASYNC, avant l'entrée dans le thread. Vérifié EMPIRIQUEMENT (pas supposé) que le
+scope Sentry — porté par une ContextVar interne au SDK — survit à la copie de contexte que
+fait `run_in_threadpool` (anyio) : un event réel, capturé DANS un thread du pool via un
+transport collecteur (aucun réseau), porte bien les tags posés dans le contexte appelant
+avant l'`await`
+(`tests/test_sentry_capture_hors_boucle.py::test_le_tag_pose_avant_le_thread_est_sur_levent_capture_dans_le_thread`).
+`_LAST_EVENT_ID.set(...)` (la ContextVar OTO, jamais celle du SDK) reste posée dans le
+contexte ASYNC, après le retour du thread — même piège que documenté pour
+`session_visibility.py` la veille : une écriture faite DANS le thread ne remonterait pas.
+Garde-fou rouge→vert :
+`tests/test_sentry_capture_hors_boucle.py::test_capture_exception_tourne_hors_du_thread_de_la_boucle`
+(même mouchard que les autres — thread observé, pas le source), plus son contrôle qui mord.
+
 ## Mode n°3 — la requête est au BON endroit, mais elle est lente (incident du 27/08)
 
 Les deux modes ci-dessus sont des erreurs de **placement** : du I/O sync là où il ne

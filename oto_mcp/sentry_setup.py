@@ -35,6 +35,7 @@ import sentry_sdk
 from fastmcp.server.middleware import Middleware
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.integrations.mcp import MCPIntegration
+from starlette.concurrency import run_in_threadpool
 
 from .auth.hooks import current_client_id_from_token, current_user_sub_from_token
 # Classifieurs partagés (D2, #124) : source unique de la taxonomie d'exceptions,
@@ -136,7 +137,35 @@ class SentryToolErrorMiddleware(Middleware):
     No-op si Sentry n'est pas initialisé (`capture_exception` ne fait rien). Sur le
     chemin nominal, ce middleware ne fait que déléguer — aucun surcoût. Une **erreur
     gérée** (4xx amont OU refus d'entrée/config user) n'est PAS capturée (cf. module).
-    """
+
+    ⚠️ **`capture_exception` hors boucle (2026-09-14/15)** : `on_call_tool` est
+    `async def`, donc tout ce qu'il fait nûment tourne sur le thread mono-loop du
+    serveur (docs/event-loop-perf.md, mode n°2). `capture_exception` construit
+    l'event EN ENTIER (extraction de la pile, filtrage in-app, lecture du contexte
+    source de chaque frame via `linecache` — de la lecture DISQUE, synchrone) avant
+    de le mettre en file pour le transport (qui, lui, envoie déjà en tâche de fond,
+    hors sujet ici). Diagnostiqué sur `linkedin_aiark_person` : 30 timeouts
+    urllib3/requests en production, 30 `sentry_event_id` posés (donc 30 captures
+    dans la boucle), mais seulement 5 ont mesuré un gel ≥1 s au même moment — le
+    coût VARIE (mesuré : médiane ~5-9 ms, une capture « à froid » jusqu'à ~70 ms
+    sur `tests/test_sentry_capture_hors_boucle.py`, premier appel après boot —
+    `linecache` lit chaque fichier source une fois). Ce n'est à soi seul ni la
+    cause unique ni systématique des gels ≥1 s observés (l'ordre de grandeur mesuré
+    est trop petit pour ça isolément) — mais c'est bien de l'I/O sync nu dans la
+    boucle, sur le chemin d'erreur de CHAQUE appel d'outil : la règle mono-loop
+    s'applique, indépendamment du chiffre moyen.
+
+    Seul `capture_exception` part en `run_in_threadpool` — la création du scope et
+    la pose des tags/user restent dans le contexte ASYNC, `run_in_threadpool`
+    (anyio) exécute sur une COPIE de ce contexte : le scope Sentry est porté par
+    une ContextVar interne au SDK, donc les tags posés avant l'entrée dans le
+    thread sont bien présents sur l'event capturé DEDANS (vérifié empiriquement,
+    event réel à transport collecteur —
+    `tests/test_sentry_capture_hors_boucle.py::test_le_tag_pose_avant_le_thread_est_sur_levent_capture_dans_le_thread`).
+    `_LAST_EVENT_ID.set(...)` (la ContextVar OTO, pas celle du SDK) reste dans le
+    contexte ASYNC, posée APRÈS le retour du thread — une écriture faite depuis le
+    thread ne remonterait pas à l'appelant (même piège que documenté pour
+    `session_visibility.py` le 14/09/2026)."""
 
     async def on_call_tool(self, context, call_next):
         # Remise à zéro par appel : sans elle, un event capturé plus tôt dans la même
@@ -161,9 +190,12 @@ class SentryToolErrorMiddleware(Middleware):
                         client = current_client_id_from_token()
                         if client:
                             scope.set_tag("mcp.client", client)
-                        # L'id retourné (None si Sentry est off ou l'event droppé par
-                        # `before_send`) devient le lien journal → traceback.
-                        _LAST_EVENT_ID.set(sentry_sdk.capture_exception(e))
+                        # Hors boucle : construction de l'event (pile, in-app,
+                        # linecache) sur un thread du pool. L'id retourné (None si
+                        # Sentry est off ou l'event droppé par `before_send`)
+                        # devient le lien journal → traceback.
+                        event_id = await run_in_threadpool(sentry_sdk.capture_exception, e)
+                        _LAST_EVENT_ID.set(event_id)
                 # noqa: SILENT — la capture ne doit jamais masquer l'erreur d'origine
                 except Exception:
                     # La capture ne doit jamais masquer l'erreur d'origine.
