@@ -15,6 +15,9 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
 jobs:
   # Chaque job porte un `timeout-minutes` : sans lui, le défaut de GitHub est de SIX
   # heures. Ce workflow part à chaque poussée sur le tronc ET à chaque PR — c'est le

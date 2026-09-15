@@ -47,6 +47,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   # Chaque job porte un `timeout-minutes` : sans lui, le défaut de GitHub est de SIX
   # heures. Le 07/09, un job de tests s'est suspendu sur un runner hébergé et n'a plus
