@@ -68,6 +68,19 @@ description: >-
 >   simplement non testé** — n'en déclarer un qu'avec ce qui l'utilise.
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
+> - **La page publique d'un projet partagé suit la marque de son PROPRIÉTAIRE**
+>   (15/09/2026). Son destinataire n'est pas authentifié : ni compte, ni session, ni org
+>   — c'est ce qui la sépare des autres surfaces, qui tiennent toutes un `sub`. Le tenant
+>   s'y résout donc par la DONNÉE : projet → org → `db.org_tenant_slug`. Pas par l'hôte,
+>   qui ne dit que par où le visiteur est arrivé — et un lien frappé sur le mauvais
+>   domaine rendrait un hôte qui ment. La marque vient d'`email_brand.marque`, même cas
+>   exactement (un rendu HTML pour un non-authentifié, dont le tenant vient d'un objet),
+>   avec le NOM d'affichage repris au registre : `marque()` est écrite pour
+>   `orgs.front_brand`, où l'argument est déjà un mot de marque, pas un identifiant.
+>   ⚠️ **Nos couleurs ne partent jamais** : un tenant sans palette déclarée prend les gris
+>   du système à son nom, jamais notre saffran — une palette est une marque. Les jetons
+>   que `Marque` ne couvre pas (papiers, accents) ne sont PAS dérivés : dériver produit un
+>   dessin que personne n'a dessiné, et il ne se verrait qu'à l'arrivée.
 > - **Les guides à la demande aussi**, depuis le 15/09/2026 — même colonne, même clé.
 >   `read_guide_scoped` cherche **tenant → plateforme → org → user**, et le catalogue
 >   REMPLACE notre entrée de même slug au lieu de s'y ajouter (deux lignes pour un slug

@@ -17,6 +17,10 @@ _LINKS = [
 
 
 def _wire(monkeypatch, *, links=None):
+    # La page résout la marque de son propriétaire (`marque_du_projet`) : un projet
+    # d'org interroge le tenant de cette org. Déclaré ici, sinon la lecture touche une
+    # vraie base pour une question de marque.
+    monkeypatch.setattr(db, "org_tenant_slug", lambda org_id: "oto")
     monkeypatch.setattr(db, "list_project_links", lambda pid: list(links if links is not None else _LINKS))
     monkeypatch.setattr(db, "list_docs_for_project", lambda pid: [{"id": 44, "title": "Notes internes"}])
 

@@ -54,28 +54,116 @@ _DASHBOARD = config.dashboard_url()
 _FAVICON_LINK = brand.FAVICON_LINK
 
 
+# ── À qui appartient cette page ? ────────────────────────────────────────────
+
+# Les jetons de la page au-delà des sept d'une `Marque` : accents et papiers propres à
+# NOTRE charte. On ne les DÉRIVE pas pour un partenaire — dériver des couleurs produit un
+# rendu approximatif qu'on servirait à ses clients en son nom. Ils prennent les gris du
+# système, comme le gabarit neutre des emails.
+_JETONS_NEUTRES = {"paper2": "#f1f1f4", "paper3": "#f9f9fb", "ink_soft": "#2b3036",
+                   "mute": "#60646c", "faint": "#8b8d98", "hair_soft": "#e8e8ec",
+                   "primary_soft": "#e8e8ec", "primary_ink": "#1c2024",
+                   "accent": "#3358d4", "ink_deep": "#111113",
+                   "ombre": "rgba(28,32,36,.04)", "ombre2": "rgba(28,32,36,.14)"}
+
+# NOTRE charte, à l'octet — les valeurs qui étaient écrites dans le shell avant le
+# 15/09/2026. Elles restent ici, et nulle part ailleurs : une page de partenaire ne les
+# atteint plus.
+_JETONS_OTO = {"paper2": "#f4ecd2", "paper3": "#faf5e6", "ink_soft": "#4a3a23",
+               "mute": "#6c5e44", "faint": "#8a7b5c", "hair_soft": "#ede1bd",
+               "primary_soft": "#fbe7a8", "primary_ink": "#5a3b03",
+               "accent": "#2a87d8", "ink_deep": "#241a0e",
+               "ombre": "rgba(44,33,18,.04)", "ombre2": "rgba(44,33,18,.14)"}
+
+
+def marque_du_projet(project: dict):
+    """La marque sous laquelle CE projet est partagé — celle de son propriétaire.
+
+    **La donnée décide, pas l'hôte.** Le contenu partagé appartient à un projet, qui
+    appartient à une org, qui relève d'un tenant : cette chaîne est vraie quel que soit
+    le chemin d'entrée du visiteur. L'hôte, lui, ne dit que par où la personne est
+    arrivée — et un lien frappé sur le mauvais domaine rendrait un hôte qui ment.
+
+    Le destinataire n'est pas authentifié : il n'a ni compte, ni session, ni org. C'est
+    ce qui sépare cette surface des cinq déjà tenant-isées, qui tiennent toutes un `sub`.
+
+    Un projet SANS org relève de la plateforme, et c'est une déclaration : `marque(None)`
+    rend la nôtre explicitement, par le même chemin que les autres — pas par une branche
+    par défaut. Même contrat que `orgs.front_brand`, dont NULL veut dire « la
+    plateforme ».
+    """
+    from . import db, email_brand, tenancy
+    slug = None
+    if project.get("owner_type") == "org" and project.get("owner_id") is not None:
+        slug = db.org_tenant_slug(int(project["owner_id"]))
+    m = email_brand.marque(slug)
+    if not m.slug or m.slug == tenancy.PRIMARY_SLUG:
+        return m
+    # Le NOM d'affichage vient du registre, pas du slug. `email_brand.marque` est écrite
+    # pour `orgs.front_brand`, où l'argument est déjà un mot de marque ; ici c'est un
+    # identifiant de tenant, et servir « acme » là où le partenaire s'appelle « Acme »
+    # serait le montrer en minuscules à ses propres clients. Même résolution que le socle
+    # d'accueil (`instructions._socle_for`).
+    nom = next((e.name for e in tenancy.current().entries()
+                if e.slug == m.slug and e.name), m.nom)
+    return m if nom == m.nom else type(m)(**{**m.__dict__, "nom": nom})
+
+
+def _jetons(marque) -> dict:
+    """Les jetons CSS de cette marque. Les nôtres à l'octet si la page est à nous."""
+    if not marque.slug or marque.slug == "oto":
+        return {"bg": "#fefcf5", "surface": "#fff", "ink": "#2c2112", "hair": "#dccfa8",
+                "primary": "#f0b41e", **_JETONS_OTO}
+    return {"bg": marque.fond, "surface": marque.surface, "ink": marque.encre,
+            "hair": marque.filet, "primary": marque.bouton_fond, **_JETONS_NEUTRES}
+
+
 # ── Shell HTML charté (mêmes tokens que public_doc_page) ──────────────────────
 def _shell(*, title: str, inner: str, home_url: Optional[str] = None,
-           wide: bool = False, extra_head: str = "", extra_body: str = "") -> str:
+           wide: bool = False, extra_head: str = "", extra_body: str = "",
+           marque=None) -> str:
+    """`marque=None` ⟹ la nôtre : le défaut sert les appelants qui n'ont pas de projet
+    sous la main (page d'erreur hors contexte), jamais un partenaire — `build_page` la
+    résout toujours depuis la donnée."""
+    from . import email_brand
+    m = marque or email_brand.marque(None)
+    j = _jetons(m)
+    nous = not m.slug or m.slug == "oto"
     safe_title = html.escape(title or "Projet")
+    nom = html.escape(m.nom or "")
+    # Le pied nomme le produit qui partage. Sans site déclaré, pas de lien : on
+    # n'invente pas l'adresse de quelqu'un (même règle que le pied des emails).
+    if nous:
+        pied = ('Partagé via <a href="https://oto.cx">Oto</a> — la boîte à outils '
+                "d'automatisation pour agents IA.")
+    elif m.site:
+        pied = f'Partagé via <a href="https://{html.escape(m.site)}">{nom}</a>.'
+    else:
+        pied = f"Partagé via {nom}." if nom else "Projet partagé."
+    titre_suffixe = " · Oto" if nous else (f" · {nom}" if nom else "")
+    descr = ("Projet partagé via Oto." if nous
+             else (f"Projet partagé via {nom}." if nom else "Projet partagé."))
+    # Le favicon est un dessin de marque : il ne suit pas un partenaire tant qu'il n'en
+    # a pas déclaré un. Rien vaut mieux que le nôtre sur sa page.
+    favicon = _FAVICON_LINK if nous else ""
     crumb = (f'<a class=back href="{html.escape(home_url)}">← Retour au projet</a>'
              if home_url else "")
     wrap_cls = "wrap wide" if wide else "wrap"
     return f"""<!DOCTYPE html>
 <html lang=fr><head>
 <meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
-<title>{safe_title} · Oto</title>
-{_FAVICON_LINK}
-<meta name=description content="Projet partagé via Oto.">
+<title>{safe_title}{titre_suffixe}</title>
+{favicon}
+<meta name=description content="{descr}">
 <meta name=robots content="noindex">
 <link rel=preconnect href="https://fonts.googleapis.com">
 <link rel=preconnect href="https://fonts.gstatic.com" crossorigin>
 <link rel=stylesheet href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  :root{{--bg:#fefcf5;--surface:#fff;--paper2:#f4ecd2;--paper3:#faf5e6;--ink:#2c2112;--ink-soft:#4a3a23;
-    --mute:#6c5e44;--faint:#8a7b5c;--hair:#dccfa8;--hair-soft:#ede1bd;--primary:#f0b41e;
-    --primary-soft:#fbe7a8;--primary-ink:#5a3b03;--accent:#2a87d8;--ink-deep:#241a0e;
-    --shadow-card:0 1px 2px rgba(44,33,18,.04),0 8px 24px -12px rgba(44,33,18,.14)}}
+  :root{{--bg:{j['bg']};--surface:{j['surface']};--paper2:{j['paper2']};--paper3:{j['paper3']};--ink:{j['ink']};--ink-soft:{j['ink_soft']};
+    --mute:{j['mute']};--faint:{j['faint']};--hair:{j['hair']};--hair-soft:{j['hair_soft']};--primary:{j['primary']};
+    --primary-soft:{j['primary_soft']};--primary-ink:{j['primary_ink']};--accent:{j['accent']};--ink-deep:{j['ink_deep']};
+    --shadow-card:0 1px 2px {j['ombre']},0 8px 24px -12px {j['ombre2']}}}
   *{{box-sizing:border-box}}
   body{{margin:0;background:var(--bg);color:var(--ink);font-family:'Hanken Grotesk',system-ui,sans-serif;
     line-height:1.6;-webkit-font-smoothing:antialiased}}
@@ -210,7 +298,7 @@ def _shell(*, title: str, inner: str, home_url: Optional[str] = None,
 <body><div class="{wrap_cls}">
 {crumb}
 {inner}
-  <footer>Partagé via <a href="https://oto.cx">Oto</a> — la boîte à outils d'automatisation pour agents IA.</footer>
+  <footer>{pied}</footer>
 </div>{extra_body}</body></html>"""
 
 
@@ -279,7 +367,7 @@ def _connectors_card(connectors: list[dict]) -> str:
 # ── Rendus de page ────────────────────────────────────────────────────────────
 def render_index(*, name: str, brief_md: str, procedures: list[dict], tables: list[dict],
                  docs: list[dict], connect_url: str, connectors: Optional[list[dict]] = None,
-                 loose_tools: Optional[list[str]] = None) -> str:
+                 loose_tools: Optional[list[str]] = None, marque=None) -> str:
     brief_html = (f'<div class=card><article>{_MD.render(brief_md)}</article></div>'
                   if (brief_md or "").strip()
                   else '<p class="empty">Projet partagé, en lecture seule.</p>')
@@ -308,17 +396,18 @@ def render_index(*, name: str, brief_md: str, procedures: list[dict], tables: li
     if loose_tools:
         chips = "".join(f"<span class=toolchip>{html.escape(t)}</span>" for t in loose_tools)
         loose = (f'<div class=card><h2>Autres outils</h2><div class=toolchips>{chips}</div></div>')
-    inner = (f'  <div class=eyebrow>Projet partagé · Oto</div>\n'
+    _nom = (marque.nom if marque and marque.slug and marque.slug != "oto" else "Oto")
+    inner = (f'  <div class=eyebrow>Projet partagé · {html.escape(_nom)}</div>\n'
              f'  <h1>{html.escape(name or "Projet")}</h1>\n'
              f'  {brief_html}\n'
              f'  {_hero_connect(connect_url)}\n'
              f'  {conns}\n'
              f'  {sections}\n  {loose}')
-    return _shell(title=name, inner=inner)
+    return _shell(title=name, inner=inner, marque=marque)
 
 
 def render_prose(*, name: str, title: str, body_md: str, kind_label: str,
-                 role: Optional[str] = None) -> str:
+                 role: Optional[str] = None, marque=None) -> str:
     """Page d'une prose liée (procédure, doc). `role` = pourquoi elle est dans CE projet
     (`project_links.role`) — rendu sous le titre : le lecteur d'un partage arrive sur un
     déroulé opératoire sans savoir ce qu'il vient y chercher (oto-dashboard#119)."""
@@ -328,11 +417,11 @@ def render_prose(*, name: str, title: str, body_md: str, kind_label: str,
              f'  <h1>{html.escape(title or kind_label)}</h1>\n'
              f'{role_html}'
              f'  <div class=card><article>{body_html}</article></div>')
-    return _shell(title=title, inner=inner, home_url="/")
+    return _shell(title=title, inner=inner, home_url="/", marque=marque)
 
 
 def render_data(*, name: str, namespace: str, columns: list[str], rows: list[dict],
-                total: int, offset: int) -> str:
+                total: int, offset: int, marque=None) -> str:
     if columns and rows:
         head_cells = []
         for i, c in enumerate(columns):
@@ -369,14 +458,16 @@ def render_data(*, name: str, namespace: str, columns: list[str], rows: list[dic
     pager = f'<div class=pager>{"".join(pager_bits)}</div>' if total else ""
     inner = (f'  <div class=eyebrow>Tableau · {html.escape(name or "Projet")}</div>\n'
              f'  <h1>{html.escape(namespace)}</h1>\n  {table}\n  {pager}')
-    return _shell(title=namespace, inner=inner, home_url="/", wide=True, extra_body=script)
+    return _shell(title=namespace, inner=inner, home_url="/", wide=True,
+                  extra_body=script, marque=marque)
 
 
-def render_not_found(*, name: str = "") -> str:
-    inner = ('  <div class=eyebrow>Oto</div>\n  <h1>Introuvable</h1>\n'
+def render_not_found(*, name: str = "", marque=None) -> str:
+    _nom = (marque.nom if marque and marque.slug and marque.slug != "oto" else "Oto")
+    inner = (f'  <div class=eyebrow>{html.escape(_nom)}</div>\n  <h1>Introuvable</h1>\n'
              '  <div class=card><p class="empty">Cette page n\'existe pas ou n\'est plus '
              'partagée dans ce projet.</p></div>')
-    return _shell(title="Introuvable", inner=inner, home_url="/")
+    return _shell(title="Introuvable", inner=inner, home_url="/", marque=marque)
 
 
 # JS de tableau : recherche globale + filtres par colonne + tri 3 états. Opère sur le
@@ -624,6 +715,9 @@ def build_page(project: dict, path: str, *, offset: int = 0,
 
     pid = int(project["id"])
     p = (path or "/").rstrip("/") or "/"
+    # Résolue UNE fois, ici : la page entière parle d'un seul produit, et une lecture
+    # par rendu ferait payer le visiteur d'un partenaire pour chaque section.
+    marque = marque_du_projet(project)
     # Le consentement du propriétaire, lu UNE fois, au même endroit que la face MCP.
     show_data = project_exposure.datastore_exposed(project)
     show_docs = project_exposure.docs_exposed(project)
@@ -647,7 +741,7 @@ def build_page(project: dict, path: str, *, offset: int = 0,
         return render_index(
             name=project.get("name") or "", brief_md=project.get("brief_md") or "",
             procedures=procedures, tables=tables, docs=docs, connect_url=connect_url,
-            connectors=connectors, loose_tools=loose), 200
+            connectors=connectors, loose_tools=loose, marque=marque), 200
 
     parts = p.strip("/").split("/")
     if len(parts) == 2 and parts[1].isdigit():
@@ -666,22 +760,22 @@ def build_page(project: dict, path: str, *, offset: int = 0,
                          and int(l["target_ref"]) == rid), None)
             instr = org_store.get_instruction_by_id(rid) if link else None
             if not instr:
-                return render_not_found(), 404
+                return render_not_found(marque=marque), 404
             return render_prose(name=project.get("name") or "",
                                 title=link.get("label") or instr.get("title") or "",
                                 body_md=instr.get("body_md") or "", kind_label="Procédure",
-                                role=link.get("role")), 200
+                                role=link.get("role"), marque=marque), 200
 
         if section == "data":
             allowed = {t["id"] for t in _tableau_entries(project, links)}
             ns = db.get_datastore_by_id(rid) if (show_data and rid in allowed) else None
             if not ns:
-                return render_not_found(), 404
+                return render_not_found(marque=marque), 404
             total = db.datastore_count_rows(rid)
             rows = db.datastore_list_rows(rid, offset=max(0, offset), limit=_DATA_PAGE)
             columns = _derive_columns(ns.get("schema"), rows)
             return render_data(name=project.get("name") or "", namespace=ns.get("datastore") or "tableau",
-                               columns=columns, rows=rows, total=total, offset=max(0, offset)), 200
+                               columns=columns, rows=rows, total=total, offset=max(0, offset), marque=marque), 200
 
         if section == "docs":
             # Sans l'opt-in : 404 AVANT toute lecture (fail-closed, aucune I/O sur une
@@ -690,11 +784,11 @@ def build_page(project: dict, path: str, *, offset: int = 0,
             # Autorisé si le doc appartient à CE projet (héritage d'accès). Le lien
             # `doc` cross-projet a été retiré (lot 3 chantier 0.4).
             if not doc or int(doc.get("project_id") or 0) != pid:
-                return render_not_found(), 404
+                return render_not_found(marque=marque), 404
             return render_prose(name=project.get("name") or "", title=doc.get("title") or "",
-                                body_md=doc.get("body_md") or "", kind_label="Document"), 200
+                                body_md=doc.get("body_md") or "", kind_label="Document", marque=marque), 200
 
-        return render_not_found(), 404
+        return render_not_found(marque=marque), 404
 
     return None, 0
 
