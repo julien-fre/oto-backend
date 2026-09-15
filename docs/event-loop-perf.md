@@ -732,19 +732,23 @@ supposer) :
 - le geste côté boucle (`beat()`, une écriture de flottant) : **~0,1 µs/appel** —
   sans commune mesure avec un tour de boucle asyncio ;
 - le réveil périodique du thread watchdog lui-même, sous une charge SYNTHÉTIQUE qui
-  sature la boucle (pas un repos total) : de l'ordre de **quelques % à l'intervalle par
-  défaut (1 s)**, mesuré sur ce poste de développement où plusieurs sessions tournent
-  en parallèle sur le même tree — un ORDRE DE GRANDEUR, pas une décimale précise, et
-  BRUITÉ par la machine partagée (confirmé ci-dessous) ;
-- **le même coût, isolé** (`/proc/self/task/<tid>/stat`, demande de la session de
-  déploiement le 15/09/2026, avant d'activer par défaut en prod) : au seuil réel de
-  prod (`OTO_SLOW_CALLBACK_WARN=1.0s`, ni surchargé ni absent des `.env` vérifiés),
-  fenêtre de 180s, 360 réveils du watchdog — **0,020s de CPU (utime+stime) sur 180s,
-  soit 0,011 % d'un cœur**. Les « quelques % » de la mesure sous charge synthétique
-  étaient donc bien du bruit de la machine de dev partagée, pas un coût réel du
-  mécanisme. Sans commune mesure avec le coût d'un aller-retour réseau ou DB qu'un
-  vrai handler paierait de toute façon (cf. le chiffrage `capture_exception` du même
-  jour, 6-9 ms).
+  sature la boucle (pas un repos total) : le coût SUIT LA FRÉQUENCE DE RÉVEIL — pas
+  du bruit de machine, un coût réel et attendu du mécanisme à haute fréquence.
+  `tests/test_hang_watch.py::test_cout_du_thread_watchdog_sous_charge_simulee` pose
+  volontairement un intervalle resserré (10 ms, donc un réveil toutes les 5 ms —
+  `interval/2`) pour exagérer la fréquence et rendre le coût mesurable, très loin du
+  seuil de prod. Mesuré isolément à ce réveil de 10 ms : **12,7 % de CPU pour le
+  thread sur 10s, et le débit de la boucle perd 9 %** ;
+- **le même coût, au seuil réel de prod** (`/proc/self/task/<tid>/stat`, demande de
+  la session de déploiement le 15/09/2026, avant d'activer par défaut en prod) :
+  `OTO_SLOW_CALLBACK_WARN=1.0s` (ni surchargé ni absent des `.env` vérifiés), soit un
+  réveil toutes les 500 ms — 100× moins fréquent qu'au banc ci-dessus —, fenêtre de
+  180s, 360 réveils du watchdog — **0,020s de CPU (utime+stime) sur 180s, soit
+  0,011 % d'un cœur**. Le coût suit la fréquence de réveil : moins de réveils par
+  seconde, moins de travail pour le thread, rien de mystérieux — et c'est CE
+  chiffre-là, au seuil qui tourne réellement en prod, qui est sans commune mesure
+  avec le coût d'un aller-retour réseau ou DB qu'un vrai handler paierait de toute
+  façon (cf. le chiffrage `capture_exception` du même jour, 6-9 ms).
 
 **Preuve empirique du garde-fou** (pas un banc vert de circonstance) :
 `tests/test_hang_watch.py` provoque un VRAI blocage (`time.sleep` synchrone dans la

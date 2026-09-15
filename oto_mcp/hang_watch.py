@@ -32,13 +32,16 @@ Adapté ici, sur le même patron mais pas la même sortie :
   preuve le jour où elle sert. Actif par défaut est défendable seulement parce que le
   coût, lui, est mesuré (pas supposé) : `tests/test_hang_watch.py` chiffre le coût de
   la tâche qui bat le timestamp (~0,1 µs/appel — négligeable). Le coût du thread
-  watchdog lui-même, isolé (`/proc/self/task/<tid>/stat`, seuil de prod 1,0s, fenêtre
-  de 180s, 360 réveils, demande de la session de déploiement le 15/09/2026) :
-  **0,020s CPU sur 180s, soit 0,011 % d'un cœur** — la première mesure, par
-  différence de débit sur ce tree de dev partagé, avait rendu 2-10 % : bruit de la
-  machine, pas du mécanisme. Sans commune mesure avec le coût d'un aller-retour réseau
-  ou DB qu'un vrai handler paierait de toute façon. Le nom suit le patron déjà en
-  place pour les boucles de fond
+  watchdog lui-même SUIT LA FRÉQUENCE DE RÉVEIL — pas du bruit de machine, un coût
+  réel et attendu du mécanisme à haute fréquence : mesuré dans le test à un réveil
+  de 10 ms (réveil toutes les 5 ms, `interval/2`) : **12,7 % de CPU pour le thread
+  sur 10s, et le débit de la boucle perd 9 %**. Au seuil réel de prod
+  (`OTO_SLOW_CALLBACK_WARN=1.0s`, réveil toutes les 500 ms — 100× moins fréquent),
+  isolé (`/proc/self/task/<tid>/stat`, fenêtre de 180s, 360 réveils, demande de la
+  session de déploiement le 15/09/2026) : **0,020s CPU sur 180s, soit 0,011 % d'un
+  cœur**. Sans commune mesure avec le coût d'un aller-retour réseau ou DB qu'un vrai
+  handler paierait de toute façon. Le nom suit le patron déjà en place pour les
+  boucles de fond
   (`OTO_SCHEDULER_ENABLED`, `OTO_BILLING_RUNNER_ENABLED`… — `boucles_de_fond.py`),
   pas celui de `OTO_SLOW_CALLBACK_WARN`/`_SENTRY` (des seuils, pas des interrupteurs).
 
