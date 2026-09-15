@@ -49,12 +49,15 @@ from oto_mcp.hang_watch import HangWatch
 
 LOGGER_NAME = "oto_mcp.loop"
 
-# Seuil court pour que la suite reste rapide, avec assez de marge contre le bruit
-# d'ordonnancement d'une CI chargée (le thread watchdog se réveille toutes les
-# `interval/2` — plusieurs cycles de marge à chaque blocage provoqué ci-dessous).
-_INTERVAL = 0.12
-_BLOCK_S = 0.45   # > 3× l'intervalle : plusieurs cycles de vérification PENDANT le gel
-_GAP_S = 0.4      # assez pour que la résorption soit vue et l'épisode réarmé
+# Seuil court pour que la suite reste rapide, avec une marge ÉLARGIE contre le bruit
+# d'ordonnancement d'un runner CI chargé (le thread watchdog se réveille toutes les
+# `interval/2` : à 0,12s, la marge avant faux positif n'était que d'un battement
+# manqué de 0,06s — trop serré, un vrai risque de faux rouge de scheduling sous
+# charge. 0,25s porte cette marge à ~0,125s, plusieurs cycles à chaque blocage
+# provoqué ci-dessous).
+_INTERVAL = 0.25
+_BLOCK_S = 0.9    # > 3× l'intervalle : plusieurs cycles de vérification PENDANT le gel
+_GAP_S = 0.8      # assez pour que la résorption soit vue et l'épisode réarmé
 
 _SECRET_QUI_NE_DOIT_JAMAIS_PARAITRE = "sk-test-ne-doit-jamais-etre-loggue-000111"
 
