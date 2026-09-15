@@ -4,7 +4,7 @@ Deux garde-fous : le tiers ne reçoit JAMAIS le socle plateforme (vocabulaire in
 outils qu'il n'a pas), et publier depuis un environnement de test le DIT au lieu de
 laisser distribuer une URL dont le certificat sera refusé.
 """
-import importlib
+import pytest
 
 from oto_mcp import config, instructions
 
@@ -55,11 +55,15 @@ def test_c_est_la_DECLARATION_qui_rend_une_URL_distribuable(monkeypatch):
     assert config.project_domain_is_production() is False, "sans déclaration, on avertit"
 
 
-def test_le_domaine_des_projets_a_pour_defaut_le_notre(monkeypatch):
+def test_le_domaine_des_projets_est_obligatoire(monkeypatch):
+    """Décision du 15/09/2026 : plus de défaut muet vers `oto.cx` — chaque instance
+    déclare son domaine, prod comprise (même raison que `project_domain_is_production`
+    juste au-dessus : un défaut qui pointe chez nous engage une instance tierce sans
+    le dire)."""
     monkeypatch.delenv("OTO_PROJECT_DOMAIN", raising=False)
-    importlib.reload(config)
+    with pytest.raises(RuntimeError):
+        config.project_domain()
+    monkeypatch.setenv("OTO_PROJECT_DOMAIN", "oto.cx")
     assert config.project_domain() == "oto.cx"
     monkeypatch.setenv("OTO_PROJECT_DOMAIN", "oto.ninja")
     assert config.project_domain() == "oto.ninja"
-    monkeypatch.delenv("OTO_PROJECT_DOMAIN", raising=False)
-    importlib.reload(config)

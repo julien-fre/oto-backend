@@ -25,10 +25,10 @@ d'Alembic). Un import n'a le droit d'exiger RIEN de l'environnement
 tienne ici comme partout ailleurs dans le paquet."""
 from __future__ import annotations
 
-import os
-
 from alembic import context
 from sqlalchemy import create_engine, text
+
+from ...config import require_env
 
 # Clé du verrou consultatif. Arbitraire, mais FIGÉE : la changer ouvrirait une
 # seconde file qui ignorerait la première.
@@ -48,9 +48,7 @@ def _sous_alembic() -> bool:
 
 
 def _url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL not set (managed PG connection string)")
+    url = require_env("DATABASE_URL")
     # libpq accepte `postgres://`, SQLAlchemy veut son pilote nommé.
     if url.startswith("postgres://"):
         return "postgresql+psycopg://" + url[len("postgres://"):]

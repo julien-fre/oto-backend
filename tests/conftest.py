@@ -106,6 +106,21 @@ def _adresse_publique_de_l_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTO_MCP_PUBLIC_URL", _ADRESSE_DE_GREEMENT)
 
 
+# ── Le domaine des endpoints de projet, gréé lui aussi (`config.project_domain()`,
+# devenue `require_env` le 15/09/2026) ──────────────────────────────────────────────
+#
+# Décoy délibérément ÉVITÉ ici, contrairement à l'adresse publique juste au-dessus :
+# des dizaines de bancs (`test_subdomain_project.py` en tête) affirment sur la forme
+# littérale `*.mcp.oto.cx` / `*.share.oto.cx` — c'est le comportement de PROD qu'ils
+# vérifient, pas une fuite vers notre domaine. Un décoy ici rendrait ces bancs
+# aveugles à une vraie régression au lieu de les réparer. La valeur gréée reste donc
+# la nôtre ; un banc qui teste explicitement PREPROD (`oto.ninja`) ou l'absence de
+# déclaration continue de le poser lui-même via `monkeypatch`.
+@pytest.fixture(autouse=True)
+def _domaine_des_projets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTO_PROJECT_DOMAIN", "oto.cx")
+
+
 # **Comment vérifier que ce gréement ne CACHE rien** — à refaire après tout changement
 # qui touche la fabrication des liens publics.
 #

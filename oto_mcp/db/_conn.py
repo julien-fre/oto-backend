@@ -16,6 +16,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from .. import providers
+from ..config import require_env
 
 def _normalize_value(v: Any) -> Any:
     # Match the string shape SQLite returned ("YYYY-MM-DD HH:MM:SS") so downstream
@@ -53,10 +54,7 @@ _pool: Optional[ConnectionPool] = None
 
 
 def _database_url() -> str:
-    url = os.environ.get("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL not set (managed PG connection string)")
-    return url
+    return require_env("DATABASE_URL")
 
 
 def _connect_options() -> str:
