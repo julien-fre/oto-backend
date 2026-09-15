@@ -14,3 +14,11 @@ updates:
     groups:
       python-deps:
         patterns: ["*"]
+    ignore:
+      # Le plafond de fastmcp (pyproject.toml) est délibéré : une montée hors de
+      # `<3.5` a déjà fait disparaître `fastmcp.tools.tool` en amont, cassant un
+      # middleware qui l'importe (PR #950, 15/09/2026). Monter le plafond est un
+      # acte volontaire — l'essayer, lancer la suite, corriger, border plus haut —
+      # pas une proposition automatique. Les patchs `3.4.x` restent bienvenus.
+      - dependency-name: "fastmcp"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
