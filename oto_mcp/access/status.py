@@ -85,16 +85,29 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     #
     # Elle suit la même règle que ses aînées : bâtie sur `active_org`/`member_groups`,
     # donc sur le SUJET du snapshot, jamais sur le requérant.
+    #
+    # ⚠️ **Deux `try` séparés, pas un seul englobant (oto#522).** Un unique bloc
+    # jetait la carte d'équipes même quand SA construction avait réussi, dès que
+    # l'AUTRE préchargement (la sonde) tombait ensuite — 3 lectures payées pour
+    # rien, puis ~200 lectures unitaires sur le hint `team_key_group` (une par
+    # connecteur `forbidden`, cf. `reachable_team_key`) alors que la carte les
+    # évitait déjà. Séparer les deux échecs ramène ce chemin dégradé de ~380 à
+    # ~180 requêtes (mesuré en revue de #518, 81 connecteurs, 3 équipes) sans
+    # toucher au double-échec : les deux replis restent ce qu'ils étaient.
     try:
         secrets_par_equipe = cascade.group_secret_map(member_groups)
-        sonde = cascade.preloaded_presence_probe(sub, org=active_org, groups=member_groups)
     except Exception:      # une accélération, jamais un prérequis
-        logger.warning("status_for: préchargement des credentials indisponible",
+        logger.warning("status_for: préchargement de la carte d'équipes indisponible",
                        exc_info=True)
-        sonde = cascade.PRESENCE_PROBE
         # None (et pas {}) : une carte vide FERAIT TAIRE le hint sur des équipes qui
         # détiennent la clé. Le repli doit relire, pas répondre « aucune ».
         secrets_par_equipe = None
+    try:
+        sonde = cascade.preloaded_presence_probe(sub, org=active_org, groups=member_groups)
+    except Exception:      # une accélération, jamais un prérequis
+        logger.warning("status_for: préchargement de la sonde de présence indisponible",
+                       exc_info=True)
+        sonde = cascade.PRESENCE_PROBE
     try:
         quotas_du_jour = db.usage_today_map(sub)
     except Exception:

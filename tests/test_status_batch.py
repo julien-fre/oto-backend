@@ -138,3 +138,99 @@ def test_une_sonde_prechargee_en_PANNE_retombe_sur_la_sonde_unitaire(monkeypatch
     monkeypatch.setattr(access.providers, "REGISTRY", {})
     # Ne lève pas : l'accélération est facultative, le snapshot ne l'est pas.
     assert "providers" in access.status_for("u1")
+
+
+# ── Le repli DEUX try (oto#522) : un préchargement ne doit plus en jeter un autre ──
+def _wire_un_forbidden(monkeypatch, *, group_secret_map, preloaded_presence_probe):
+    """Câble `status_for` pour qu'il traite UN provider `forbidden` via `KEY_PROVIDERS`,
+    sans toucher de vraie base : `resolution_rungs` est coupé à vide (aucun hit ⟹
+    `mode='forbidden'` pour tout provider), ce qui déclenche systématiquement le hint
+    `team_key_group` — c'est LUI qu'on observe : quel `secrets_by_group` reçoit-il, et
+    quelle sonde `resolution_rungs` reçoit-il en retour ?"""
+    probe_recus: list = []
+    map_recues: list = []
+    monkeypatch.setattr(access, "get_user_role", lambda sub: "member")
+    monkeypatch.setattr(access.group_store, "list_groups_for_user", lambda s, o: [])
+    monkeypatch.setattr(access.db, "usage_today_map", lambda sub: {})
+    monkeypatch.setattr(access.db, "KEY_PROVIDERS", ("zoho",))
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
+    # Org-partageable de force : indépendant du registre réel, on ne teste que le
+    # câblage des deux préchargements, pas la liste des connecteurs partageables.
+    monkeypatch.setattr(access.cascade, "ORG_SHAREABLE_PROVIDERS", frozenset({"zoho"}))
+    monkeypatch.setattr(access, "group_secret_map", group_secret_map)
+    monkeypatch.setattr(access, "preloaded_presence_probe", preloaded_presence_probe)
+
+    def _sans_hit(sub, provider, *, org, group, probe, want="auto"):
+        probe_recus.append(probe)
+        return iter(())  # aucun hit ⟹ winner=None ⟹ mode='forbidden'
+    # `chain_shadow` n'est pas dans `_MODULES` de la façade `access` (status.py
+    # l'importe en direct) : on patche le sous-module, pas le nom plat.
+    monkeypatch.setattr(access.chain_shadow, "resolution_rungs", _sans_hit)
+
+    def _hint(sub, org, provider, groups=None, secrets_by_group=None):
+        map_recues.append(secrets_by_group)
+        return None
+    monkeypatch.setattr(access, "reachable_team_key", _hint)
+    return probe_recus, map_recues
+
+
+def test_la_sonde_en_panne_laisse_la_carte_d_equipes_construite_intacte(monkeypatch):
+    """(a) La carte d'équipes a fini de se construire ; SEULE la sonde tombe ensuite.
+
+    Avant #522, les deux préchargements partageaient un `try` unique : cet échec-là
+    jetait aussi la carte, pourtant valide, et le hint `team_key_group` retombait sur
+    ~200 lectures unitaires qu'elle existait déjà pour éviter."""
+    carte = {2: {"zoho"}}
+
+    def _boom(sub, *, org, groups=None):
+        raise RuntimeError("sonde indisponible")
+    probe_recus, map_recues = _wire_un_forbidden(
+        monkeypatch, group_secret_map=lambda groups=None: carte,
+        preloaded_presence_probe=_boom)
+
+    access.status_for("u1", org=999, group=None)
+
+    assert map_recues == [carte], "la carte construite avec succès doit atteindre le hint"
+    assert probe_recus == [access.PRESENCE_PROBE], "seule la sonde en échec doit retomber"
+
+
+def test_la_carte_en_panne_laisse_la_sonde_prechargee_intacte(monkeypatch):
+    """Symétrique de (a) : SEULE la carte d'équipes tombe, la sonde a réussi.
+
+    Avant #522, le même `try` unique aurait aussi jeté la sonde préchargée — payant
+    à nouveau les ~180 sondes unitaires (member/org) que #518 avait retirées."""
+    sonde_ok = access.CascadeProbe(
+        member=lambda s, o, p: None, member_cross=lambda s, o, p: None,
+        legacy_user=lambda s, p: None,
+        group=lambda g, p: None, org=lambda o, p: None, tenant=lambda t, p: None,
+        platform=lambda s, p, o: None)
+
+    def _boom(groups=None):
+        raise RuntimeError("carte indisponible")
+    probe_recus, map_recues = _wire_un_forbidden(
+        monkeypatch, group_secret_map=_boom,
+        preloaded_presence_probe=lambda sub, *, org, groups=None: sonde_ok)
+
+    access.status_for("u1", org=999, group=None)
+
+    assert map_recues == [None], "carte en échec ⟹ None (pas {}), le hint doit relire"
+    assert probe_recus == [sonde_ok], "la sonde préchargée avec succès doit être utilisée"
+
+
+def test_double_panne_retombe_comme_avant_522(monkeypatch):
+    """(b) Les deux préchargements tombent : le double repli reste EXACTEMENT celui
+    d'avant le lot — carte `None`, sonde `PRESENCE_PROBE` — le lot ne change que le
+    cas où un seul des deux échoue."""
+    def _boom_carte(groups=None):
+        raise RuntimeError("carte indisponible")
+
+    def _boom_sonde(sub, *, org, groups=None):
+        raise RuntimeError("sonde indisponible")
+    probe_recus, map_recues = _wire_un_forbidden(
+        monkeypatch, group_secret_map=_boom_carte, preloaded_presence_probe=_boom_sonde)
+
+    out = access.status_for("u1", org=999, group=None)
+
+    assert map_recues == [None]
+    assert probe_recus == [access.PRESENCE_PROBE]
+    assert "providers" in out
