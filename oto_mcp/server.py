@@ -1055,6 +1055,9 @@ def main():
             host=host,
             port=port,
             log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+            # Revue de sécurité 2026-08-29 (oto-backend#572, point informatif n°9) :
+            # ne pas annoncer la pile en clair sur chaque réponse anonyme.
+            server_header=False,
         )
         return
 
