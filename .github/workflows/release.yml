@@ -26,6 +26,11 @@ on:
 
 permissions:
   contents: write          # créer le tag
+  # Lu par « Refuser de publier un tronc rouge » (gh api .../actions/runs, ci-dessous)
+  # ET par le job `deploy` du `deploy.yml` appelé plus bas (garde_preprod_verte.py) :
+  # un workflow_call ne peut recevoir que ce que SON appelant accorde déjà — sans
+  # cette ligne, les deux échouent en 403, dès la première étape après le tag posé.
+  actions: read
 
 jobs:
   tag:
