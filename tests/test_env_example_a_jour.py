@@ -9,7 +9,13 @@ dernier maillon.
 """
 from __future__ import annotations
 
-from scripts.generer_env_example import CIBLE, generer
+import pathlib
+import sys
+
+RACINE = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RACINE))
+
+from scripts.generer_env_example import CIBLE, generer  # noqa: E402
 
 
 def test_env_example_est_derive_de_l_inventaire():
