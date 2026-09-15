@@ -15,6 +15,10 @@ Ils sont ici, chacun nommé, chacun jouable seul :
     oto-mcp maintenance instagram-tokens  renouvellement des autorisations
                                           Instagram avant leur terme
     oto-mcp maintenance check-boot    rejoue l'ordre du boot en transaction ANNULÉE
+    oto-mcp maintenance oauth-relay-callbacks  constate (À BLANC) ou pose (`--apply`) le
+                                          rappel du relais d'autorisation sur les hosts
+                                          DÉJÀ inscrits dans OTO_MCP_OAUTH_RELAY_HOSTS,
+                                          avant de redémarrer le service
     oto-mcp maintenance all           ceux du timer quotidien, dans l'ordre
 
     oto-mcp maintenance key-index-rebuild   (#421 — voir plus bas, PAS dans `all`)
@@ -438,6 +442,15 @@ def instagram_tokens(*, dry_run: bool = False) -> dict:
     return ig.renouveler_les_jetons(dry_run=dry_run)
 
 
+def oauth_relay_callbacks(*, dry_run: bool = False) -> dict:
+    """Constate, ou pose avec `--apply`, le rappel du relais d'autorisation sur les hosts
+    déjà inscrits dans `OTO_MCP_OAUTH_RELAY_HOSTS` — cf. `auth.relay_maintenance`.
+    Un ACTE (il écrit dans l'application Logto que prod et preprod partagent) : à blanc par
+    défaut, hors `all`, hors timer."""
+    from .auth import relay_maintenance
+    return relay_maintenance.poser_les_rappels(dry_run=dry_run)
+
+
 _TRAVAUX: dict[str, Callable[..., dict]] = {
     "retention": retention,
     "blocks": blocks,
@@ -449,10 +462,11 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "portee-observation": portee_observation,
     "alertes-credential": alertes_credential,
     "instagram-tokens": instagram_tokens,
+    "oauth-relay-callbacks": oauth_relay_callbacks,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
 # c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.
-_ACTES = ("journal-tokens", "residu-projete")
+_ACTES = ("journal-tokens", "residu-projete", "oauth-relay-callbacks")
 # ⚠️ `alertes-credential` est dans `_ALL` — donc dans le timer quotidien — ET son
 # envoi est fermé par `OTO_ALERTE_CREDENTIAL`. Les deux ensemble sont le dispositif :
 # le mécanisme tourne dès le tag (on voit ce qui partirait), l'effet attend une

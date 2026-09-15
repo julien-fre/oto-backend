@@ -226,6 +226,11 @@ sudo -E env $(cat /opt/oto-mcp/.env | xargs) \
 #                                               Le timer ne tourne qu'en PROD :
 #                                               une connexion posée en preprod
 #                                               n'est renouvelée qu'à l'usage.
+#   oauth-relay-callbacks [--apply]             ACTE, à blanc par défaut : constate, ou
+#                                               pose avec --apply, le rappel du relais
+#                                               d'autorisation sur les hosts DÉJÀ inscrits
+#                                               dans OTO_MCP_OAUTH_RELAY_HOSTS — avant de
+#                                               redémarrer (docs/auth-logto.md §relais)
 #   check-boot                                  rejoue l'ORDRE du boot en transaction
 #                                               ANNULÉE — un diagnostic sans effet,
 #                                               jouable contre la base servie

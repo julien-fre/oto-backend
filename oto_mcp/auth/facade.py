@@ -11,6 +11,10 @@ augmentée (un `registration_endpoint` à nous et, pour NOTRE annuaire, l'autori
 oto#202, `authorize_consent` ; tous les autres endpoints = ceux de Logto), et un endpoint DCR qui renvoie un client Logto **pré-créé partagé**. Les
 tokens restent émis et signés par Logto ; on ne fait que les vérifier.
 
+Sur un host DÉCLARÉ (`OTO_MCP_OAUTH_RELAY_HOSTS`), l'autorisation et l'échange de jeton
+sont RELAYÉS par la façade (`auth/relay.py`) : c'est ce qui fait porter à la réponse
+d'autorisation `iss` = l'`issuer` annoncé (RFC 9207), qu'un client strict exige.
+
 Le redirect URI de claude.ai est fixe et déjà enregistré sur l'app Logto pré-créée
 (`Claude (oto MCP)`), donc on peut renvoyer le même `client_id` à chaque
 enregistrement sans risque.
@@ -25,9 +29,10 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
@@ -64,7 +69,7 @@ def _logto_public_oidc() -> str:
     return f"{public}/oidc" if public else _logto_issuer()
 
 
-def as_metadata(public_url: str, logto: str = "") -> dict:
+def as_metadata(public_url: str, logto: str = "", *, relais: bool = False) -> dict:
     """Métadonnée RFC 8414 servie sur NOTRE domaine : issuer = nous, le
     `registration_endpoint` est à nous, le jeton et les clés sont ceux de Logto.
 
@@ -79,15 +84,27 @@ def as_metadata(public_url: str, logto: str = "") -> dict:
     (RemoteAuthProvider, server.py), qui NORMALISE en ajoutant un slash final
     (`https://x` → `https://x/`). On normalise l'issuer par le MÊME `AnyHttpUrl` →
     égalité byte-à-byte garantie. Sans ça, un client strict (Mistral) rejette le
-    discovery pour issuer mismatch (claude.ai, lui, tolère le slash). Vécu 2026-06-25."""
+    discovery pour issuer mismatch (claude.ai, lui, tolère le slash). Vécu 2026-06-25.
+
+    `relais=True` (host déclaré, cf. `relay.relais_actif`) : l'autorisation et le jeton
+    passent par le relais, tenant compris — la réponse porte alors `iss` = cet `issuer`.
+    ⚠️ Un chemin d'autorisation NEUF (`/oauth/relay/authorize`), jamais `/oauth/authorize` :
+    un client qui a lu la métadonnée d'avant garde « autorisation ici, jeton chez Logto », et
+    un code relayé présenté à Logto serait refusé. Et `authorization_response_iss_parameter_
+    supported` n'est PAS annoncé : le repli sur le trajet direct reste possible, et un client
+    qui exige `iss` sur la foi du drapeau y casserait."""
     annuaire_tiers = bool(logto)
     logto = logto or _logto_public_oidc()
-    autorisation = (f"{logto}/auth" if annuaire_tiers
-                    else f"{str(public_url).rstrip('/')}/oauth/authorize")
+    base = str(public_url).rstrip("/")
+    if relais:
+        autorisation, jeton = f"{base}/oauth/relay/authorize", f"{base}/oauth/token"
+    else:
+        autorisation = f"{logto}/auth" if annuaire_tiers else f"{base}/oauth/authorize"
+        jeton = f"{logto}/token"
     return {
         "issuer": str(AnyHttpUrl(public_url)),
         "authorization_endpoint": autorisation,
-        "token_endpoint": f"{logto}/token",
+        "token_endpoint": jeton,
         "jwks_uri": f"{logto}/jwks",
         "registration_endpoint": f"{public_url}/oauth/register",
         "response_types_supported": ["code"],
@@ -98,7 +115,7 @@ def as_metadata(public_url: str, logto: str = "") -> dict:
     }
 
 
-def as_oidc_metadata(public_url: str, logto: str = "") -> dict:
+def as_oidc_metadata(public_url: str, logto: str = "", *, relais: bool = False) -> dict:
     """OIDC Discovery 1.0 servie sur NOTRE domaine (`/.well-known/openid-configuration`).
 
     Certains clients OAuth 2.1 (dont Mistral) sondent l'OIDC discovery EN PLUS de
@@ -107,7 +124,7 @@ def as_oidc_metadata(public_url: str, logto: str = "") -> dict:
     (`subject_types_supported`, `id_token_signing_alg_values_supported` = ES384, ce
     que Logto self-hosted signe) + `userinfo_endpoint`. Même issuer (normalisé) →
     pas de mismatch."""
-    base = as_metadata(public_url, logto)  # l'argument BRUT : il dit si l'annuaire est tiers
+    base = as_metadata(public_url, logto, relais=relais)  # l'argument BRUT : il dit si l'annuaire est tiers
     logto = logto or _logto_public_oidc()
     return {
         **base,
@@ -146,17 +163,58 @@ def _extra_https_hosts() -> set[str]:
     return {h.strip().lower().rstrip(".") for h in extra.split(",") if h.strip()}
 
 
-def _redirect_ok(uri: str) -> bool:
-    if not isinstance(uri, str):
-        return False
+# L'autorité d'un rappel : un host (nom ou IPv6 entre crochets) et un port, RIEN d'autre —
+# ni `user@`, ni `%`, ni barre oblique inverse.
+_AUTORITE = re.compile(r"^(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::[0-9]{1,5})?$")
+
+
+def _uri_canonique(uri: str):
+    """Le découpage de `uri` si Python et un NAVIGATEUR y lisent le même host, sinon None.
+
+    ⚠️ **Cette liste juge ce que `urlsplit` lit ; le navigateur, lui, suit WHATWG**, et les
+    deux divergent : `http://evil.example\\@127.0.0.1/cb` est un rappel LOCAL pour Python
+    (ce qui précède `@` est une identité) et part chez `evil.example` dans un navigateur (la
+    barre oblique inverse y sépare le chemin). Or c'est cette fonction qui décide de ce que la
+    DCR écrit dans Logto, et, sur un host relayé (`auth/relay.py`), elle est la SEULE garde
+    du rappel — Logto n'y voit plus que celui de la façade. D'où : ASCII imprimable sans
+    barre oblique inverse ni fragment, autorité réduite à host[:port], aucun segment `.` ou
+    `..` (encodé ou non), que le navigateur résoudrait vers un autre chemin."""
+    if not isinstance(uri, str) or not uri or "#" in uri \
+            or any(c <= " " or c > "~" or c == "\\" for c in uri):
+        return None
     try:
-        p = urlparse(uri)
+        p = urlsplit(uri)
+        p.port  # un port hors bornes lève
     # noqa: SILENT — fail-closed : un redirect_uri douteux est refusé, sans dire pourquoi
     except Exception:
+        return None
+    if not _AUTORITE.match(p.netloc):
+        return None
+    if any(unquote(seg) in (".", "..") for seg in p.path.split("/")):
+        return None
+    return p
+
+
+_SEGMENT = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _prefixe_borne(chemin: str, prefixe: str, *, suffixe_requis: bool = True) -> bool:
+    """`chemin` = `prefixe`, suivi d'AU PLUS un segment (`[A-Za-z0-9_-]+`) — jamais un
+    préfixe sans borne : `/connector/oauth/x/../../ailleurs` ou `/auth_callbackXYZ` ne
+    passent pas. `suffixe_requis` : le segment est obligatoire (identifiant du connecteur)."""
+    if chemin == prefixe:
+        return not suffixe_requis
+    reste = chemin[len(prefixe):] if chemin.startswith(prefixe + "/") else None
+    return reste is not None and bool(_SEGMENT.match(reste[1:]))
+
+
+def _redirect_ok(uri: str) -> bool:
+    p = _uri_canonique(uri)
+    if p is None:
         return False
     host = (p.hostname or "").lower().rstrip(".")
     if p.scheme == "https" and host in (_ALLOWED_HTTPS_HOSTS | _extra_https_hosts()) \
-            and p.path.startswith(_CALLBACK_PATH):
+            and _prefixe_borne(p.path, _CALLBACK_PATH, suffixe_requis=False):
         return True
     # ChatGPT (connecteurs MCP) : DEUX formes de rappel, toutes deux documentées
     # par OpenAI (developers.openai.com/plugins/build/auth). Ce n'est pas le mode de
@@ -169,12 +227,12 @@ def _redirect_ok(uri: str) -> bool:
     # ininstallable, sans qu'aucune trace ne survive plus de 19 h.
     # Garde-fou réel = l'app Logto (redirect enregistré, exact).
     if p.scheme == "https" and host == "chatgpt.com" and (
-            p.path.startswith("/connector/oauth/")
+            _prefixe_borne(p.path, "/connector/oauth")
             or p.path == "/connector_platform_oauth_redirect"):
         return True
     # Mistral (Le Chat, connecteurs MCP) : redirect FIXE callback.mistral.ai.
     if p.scheme == "https" and host == "callback.mistral.ai" \
-            and p.path.startswith("/v1/integrations_auth/"):
+            and _prefixe_borne(p.path, "/v1/integrations_auth"):
         return True
     if p.scheme == "http" and host in _ALLOWED_LOCAL_HOSTS:
         return True
@@ -413,41 +471,68 @@ class RedirectRegistrationFailed(RuntimeError):
     injoignable, où l'état reste inconnu — cf. `dcr`."""
 
 
+def _application(app_id: str, d: "Directory") -> tuple[dict, dict]:
+    import requests
+    tok = _mgmt_token(d)
+    r = requests.get(f"{d.api_endpoint}/api/applications/{app_id}",
+                     headers={"Authorization": f"Bearer {tok}", "User-Agent": _UA}, timeout=15)
+    r.raise_for_status()
+    app = r.json()
+    return (app.get("oidcClientMetadata", {}) or {}), (app.get("customClientMetadata", {}) or {})
+
+
+def _redirect_uris(app_id: str, directory: "Directory | None" = None) -> list:
+    """Les rappels posés sur l'application, relus — une écriture ne se constate que là."""
+    meta, _ = _application(app_id, directory or _primary_directory())
+    return list(meta.get("redirectUris", []))
+
+
 def _register_redirects(app_id: str, redirect_uris: list,
-                        directory: "Directory | None" = None) -> None:
+                        directory: "Directory | None" = None, *,
+                        cors_uris: "list | None" = None) -> None:
     """Ajoute les `redirect_uris` (déjà validés) à l'app Logto `app_id` (dédup) +
-    l'origine CORS https correspondante. Idempotent ; no-op si tout est déjà là.
+    l'origine CORS https de `cors_uris` (défaut : les mêmes ; `[]` pour le rappel du
+    relais, qu'aucun code navigateur ne sert). Idempotent ; no-op si tout est déjà là.
     Lève si la Management API échoue (l'appelant décide quoi en faire) —
     `RedirectRegistrationFailed` quand l'échec porte sur l'écriture elle-même.
+
+    ⚠️ N'écrit QUE la colonne qui change : Logto remplace chaque colonne JSON entière, et
+    renvoyer `customClientMetadata` inchangé effacerait un réglage posé entre-temps dans la
+    console (rotation, durée des jetons de rafraîchissement, CORS). Deux écritures croisées
+    sur la liste des rappels restent possibles (aucun contrôle de concurrence chez Logto) :
+    pas de verrou ici — il retiendrait un fil du pool partagé le temps de TOUS les appels
+    en file, pour une route non authentifiée. Le rappel du relais se repose à chaque DCR et
+    se constate par `oto-mcp maintenance oauth-relay-callbacks`.
 
     ⚠️ `app_id` et `directory` sont un COUPLE : une app d'un annuaire patchée dans un
     autre vise, au mieux, une application inexistante. L'appelant les choisit
     ensemble, ce module ne les rapproche jamais par défaut."""
     import requests
     d = directory or _primary_directory()
-    base, tok = d.api_endpoint, _mgmt_token(d)
-    h = {"Authorization": f"Bearer {tok}", "User-Agent": _UA, "Content-Type": "application/json"}
-    data = requests.get(f"{base}/api/applications/{app_id}", headers=h, timeout=15)
-    data.raise_for_status()
-    app = data.json()
-    meta = app.get("oidcClientMetadata", {}) or {}
-    custom = app.get("customClientMetadata", {}) or {}
+    meta, custom = _application(app_id, d)
     cur = list(meta.get("redirectUris", []))
-    cors = list(custom.get("corsAllowedOrigins", []))
+    avant = list(custom.get("corsAllowedOrigins", []) or [])
+    cors = list(avant)
     new = [u for u in redirect_uris if u not in cur]
-    for u in redirect_uris:
+    for u in (redirect_uris if cors_uris is None else cors_uris):
         pp = urlparse(u)
         origin = f"{pp.scheme}://{pp.netloc}"
         if pp.scheme == "https" and origin not in cors:
             cors.append(origin)
-    if not new and set(cors) == set(custom.get("corsAllowedOrigins", []) or []):
+    corps = {}
+    if new:
+        meta["redirectUris"] = cur + new
+        corps["oidcClientMetadata"] = meta
+    if set(cors) != set(avant):
+        custom["corsAllowedOrigins"] = cors
+        corps["customClientMetadata"] = custom
+    if not corps:
         return
-    meta["redirectUris"] = cur + new
-    custom["corsAllowedOrigins"] = cors
+    h = {"Authorization": f"Bearer {_mgmt_token(d)}", "User-Agent": _UA,
+         "Content-Type": "application/json"}
     try:
-        p = requests.patch(f"{base}/api/applications/{app_id}",
-                           json={"oidcClientMetadata": meta, "customClientMetadata": custom},
-                           headers=h, timeout=15)
+        p = requests.patch(f"{d.api_endpoint}/api/applications/{app_id}",
+                           json=corps, headers=h, timeout=15)
         p.raise_for_status()
     except Exception as exc:
         raise RedirectRegistrationFailed(
@@ -603,7 +688,9 @@ def _refus_annuaire(entry, directory: "Directory | None", requested: list):
 
 
 def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
+    from . import relay       # relay lit ce module : l'importer au chargement serait circulaire
     public_url = public_url.rstrip("/")
+    public_host = (urlparse(public_url).hostname or "").lower()
 
     async def as_meta(request: Request) -> JSONResponse:
         # Servie sur le host d'un tenant : l'issuer est CE host (la façade), et les
@@ -612,8 +699,9 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         host = _host_of(request)
         entry = tenant_for_host(host)
         if entry is not None:
-            return JSONResponse(as_metadata(f"https://{host}", entry.issuer))
-        return JSONResponse(as_metadata(public_url))
+            return JSONResponse(as_metadata(f"https://{host}", entry.issuer,
+                                            relais=relay.relais_actif(host)))
+        return JSONResponse(as_metadata(public_url, relais=relay.relais_actif(public_host)))
 
     async def authorize(request: Request):
         # oto#202 — la destination est NOTRE annuaire, résolu ici, jamais la requête :
@@ -630,8 +718,10 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         host = _host_of(request)
         entry = tenant_for_host(host)
         if entry is not None:
-            return JSONResponse(as_oidc_metadata(f"https://{host}", entry.issuer))
-        return JSONResponse(as_oidc_metadata(public_url))
+            return JSONResponse(as_oidc_metadata(f"https://{host}", entry.issuer,
+                                                 relais=relay.relais_actif(host)))
+        return JSONResponse(as_oidc_metadata(public_url,
+                                             relais=relay.relais_actif(public_host)))
 
     async def prm(request: Request):
         host = (request.headers.get("host") or "").split(":")[0].strip().lower()
@@ -700,7 +790,8 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # c'est là que l'utilisateur va s'authentifier. Rendre le nôtre enverrait le
         # client se présenter chez l'un avec l'identité de l'autre — refus au
         # `/authorize`, et un message qui n'accuse pas la bonne cause.
-        entry = tenant_for_host(_host_of(request))
+        host = _host_of(request)
+        entry = tenant_for_host(host)
         if entry is None:
             app_id, directory = claude_app_id, _primary_directory()
         else:
@@ -708,11 +799,25 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             refus = _refus_annuaire(entry, directory, requested)
             if refus is not None:
                 return refus
+        # Host relayé : le rappel de la façade voyage avec l'écriture — c'est ce qui le
+        # REPOSE si une écriture concurrente (autre DCR, autre environnement sur la même
+        # application, console) l'a effacé. Sans CORS : aucun code navigateur ne le sert.
+        poser = list(requested)
+        cible = relay.cible_pour_host(host, public_url, claude_app_id)
+        if relay.relais_actif(cible.host) and cible.rappel not in poser:
+            poser.append(cible.rappel)
         try:
             # Hors boucle : la Management API est un appel HTTP synchrone (15 s), et
             # cette route est `async def` — nûment, elle fige tout le processus le
             # temps de la réponse (oto-backend#867).
-            await run_in_threadpool(_register_redirects, app_id, requested, directory)
+            if poser == requested:
+                await run_in_threadpool(_register_redirects, app_id, requested, directory)
+            else:
+                await run_in_threadpool(lambda: _register_redirects(
+                    app_id, poser, directory, cors_uris=requested))
+            # Le relais compare le rappel d'un client aux rappels RELUS : le client qui
+            # s'enregistre puis autorise dans la foulée doit trouver le sien.
+            relay.oublier_rappels(directory, app_id)
         except RedirectRegistrationFailed:
             _log.exception("DCR: enregistrement Logto échoué (redirects=%r)", requested)
             return JSONResponse(
@@ -757,4 +862,7 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         Route("/oauth/register", dcr, methods=["POST", "OPTIONS"]),
         # oto#202 : l'autorisation annoncée par la métadonnée de NOTRE annuaire passe par ici.
         Route("/oauth/authorize", authorize, methods=["GET"]),
+        # Relais RFC 9207 (`auth/relay.py`) : montées sur TOUT host, annoncées sur les seuls
+        # hosts déclarés — une déclaration retirée ne doit pas casser qui les a lues.
+        *relay.make_routes(public_url, claude_app_id),
     ]

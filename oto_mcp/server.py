@@ -914,6 +914,13 @@ def main():
     # le cas-limite sub=None disparaît. L'usage local passe par la CLI `oto`.
     transport = os.environ.get("MCP_TRANSPORT", "streamable_http")
 
+    # Relais d'autorisation : un host déclaré sans secret de sceau est une configuration
+    # INCOMPLÈTE — refuser de démarrer en la nommant, avant d'avoir rien écrit. Et le code
+    # d'autorisation qui passe par son retour ne s'écrit pas en clair au journal d'accès.
+    from .auth import relay as oauth_relay
+    oauth_relay.verifier_configuration()
+    logging.getLogger("uvicorn.access").addFilter(oauth_relay.FiltreJournalAcces())
+
     # Les boucles de fond, composées AVANT de préparer la base : un process qui ne sait
     # pas s'il est la production refuse de démarrer ICI, sans avoir rien écrit (plus
     # loin, un démarrage avorté a déjà joué init_db et les backfills). Hors production,
