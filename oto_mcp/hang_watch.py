@@ -31,11 +31,12 @@ Adapté ici, sur le même patron mais pas la même sortie :
   (`docs/event-loop-perf.md`) — le désactiver par défaut reviendrait à se priver de la
   preuve le jour où elle sert. Actif par défaut est défendable seulement parce que le
   coût, lui, est mesuré (pas supposé) : `tests/test_hang_watch.py` chiffre le coût de
-  la tâche qui bat le timestamp (~0,1 µs/appel — négligeable) et, séparément, celui du
-  réveil périodique du thread watchdog sous charge simulée — de l'ordre de quelques
-  % sur une boucle synthétique SATURÉE de petits calculs à l'intervalle par défaut
-  (mesure bruitée par le tree de développement partagé, donc un ordre de grandeur
-  plutôt qu'une décimale), sans commune mesure avec le coût d'un aller-retour réseau
+  la tâche qui bat le timestamp (~0,1 µs/appel — négligeable). Le coût du thread
+  watchdog lui-même, isolé (`/proc/self/task/<tid>/stat`, seuil de prod 1,0s, fenêtre
+  de 180s, 360 réveils, demande de la session de déploiement le 15/09/2026) :
+  **0,020s CPU sur 180s, soit 0,011 % d'un cœur** — la première mesure, par
+  différence de débit sur ce tree de dev partagé, avait rendu 2-10 % : bruit de la
+  machine, pas du mécanisme. Sans commune mesure avec le coût d'un aller-retour réseau
   ou DB qu'un vrai handler paierait de toute façon. Le nom suit le patron déjà en
   place pour les boucles de fond
   (`OTO_SCHEDULER_ENABLED`, `OTO_BILLING_RUNNER_ENABLED`… — `boucles_de_fond.py`),

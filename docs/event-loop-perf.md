@@ -734,9 +734,17 @@ supposer) :
 - le réveil périodique du thread watchdog lui-même, sous une charge SYNTHÉTIQUE qui
   sature la boucle (pas un repos total) : de l'ordre de **quelques % à l'intervalle par
   défaut (1 s)**, mesuré sur ce poste de développement où plusieurs sessions tournent
-  en parallèle sur le même tree — donc un ORDRE DE GRANDEUR, pas une décimale précise.
-  Sans commune mesure avec le coût d'un aller-retour réseau ou DB qu'un vrai handler
-  paierait de toute façon (cf. le chiffrage `capture_exception` du même jour, 6-9 ms).
+  en parallèle sur le même tree — un ORDRE DE GRANDEUR, pas une décimale précise, et
+  BRUITÉ par la machine partagée (confirmé ci-dessous) ;
+- **le même coût, isolé** (`/proc/self/task/<tid>/stat`, demande de la session de
+  déploiement le 15/09/2026, avant d'activer par défaut en prod) : au seuil réel de
+  prod (`OTO_SLOW_CALLBACK_WARN=1.0s`, ni surchargé ni absent des `.env` vérifiés),
+  fenêtre de 180s, 360 réveils du watchdog — **0,020s de CPU (utime+stime) sur 180s,
+  soit 0,011 % d'un cœur**. Les « quelques % » de la mesure sous charge synthétique
+  étaient donc bien du bruit de la machine de dev partagée, pas un coût réel du
+  mécanisme. Sans commune mesure avec le coût d'un aller-retour réseau ou DB qu'un
+  vrai handler paierait de toute façon (cf. le chiffrage `capture_exception` du même
+  jour, 6-9 ms).
 
 **Preuve empirique du garde-fou** (pas un banc vert de circonstance) :
 `tests/test_hang_watch.py` provoque un VRAI blocage (`time.sleep` synchrone dans la
