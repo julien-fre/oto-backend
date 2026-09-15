@@ -52,18 +52,6 @@ def _signed(row: dict) -> dict:
     return row
 
 
-async def project_files_list(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
-    sub, err = await _authenticate(request, verifier)
-    if err:
-        return err
-    pid = int(request.path_params["project_id"])
-    if not db.get_project_by_id(pid):
-        return _json_error(request, 404, "unknown_project")
-    if (e := _project_org_context_error(request, sub, pid)):
-        return e
-    return _json(request, {"files": [_signed(r) for r in db.list_project_files(pid)]})
-
-
 async def project_files_upload(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
     sub, err = await _authenticate(request, verifier)
     if err:
@@ -96,66 +84,6 @@ async def project_files_upload(request: Request, *, verifier: JWTVerifier) -> JS
                               size_bytes=len(data), title=title,
                               description=description, created_by=sub)
     db.log_project_activity(pid, sub, "project.file_add", title or filename)
-    return _json(request, {"ok": True, "file": _signed(row)})
-
-
-async def project_file_delete(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
-    sub, err = await _authenticate(request, verifier)
-    if err:
-        return err
-    from .. import ownership, media_store
-    pid = int(request.path_params["project_id"])
-    file_id = int(request.path_params["file_id"])
-    existing = db.get_project_file(file_id)
-    if not existing or existing["project_id"] != pid:
-        return _json_error(request, 404, "unknown_file")
-    if (e := _project_org_context_error(request, sub, pid)):
-        return e
-    if not ownership.can_access(sub, "project", str(pid), "write"):
-        return _json_error(request, 403, "forbidden")
-    db.delete_project_file(file_id)
-    media_store.delete_by_key(existing["s3_key"])
-    db.log_project_activity(pid, sub, "project.file_delete",
-                            existing.get("title") or existing.get("filename"))
-    return _json(request, {"ok": True})
-
-
-async def project_file_public(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
-    """Bascule le partage public d'un fichier (ADR 0032 §3, B4b) : ACL S3
-    public-read ↔ private, URL publique permanente persistée."""
-    sub, err = await _authenticate(request, verifier)
-    if err:
-        return err
-    from .. import ownership, media_store
-    pid = int(request.path_params["project_id"])
-    file_id = int(request.path_params["file_id"])
-    existing = db.get_project_file(file_id)
-    if not existing or existing["project_id"] != pid:
-        return _json_error(request, 404, "unknown_file")
-    if (e := _project_org_context_error(request, sub, pid)):
-        return e
-    if not ownership.can_access(sub, "project", str(pid), "write"):
-        return _json_error(request, 403, "forbidden")
-    try:
-        body = await request.json()
-    except Exception:
-        return _json_error(request, 400, "invalid_json")
-    make_public = bool(isinstance(body, dict) and body.get("public"))
-    # La bascule S3 d'ABORD, la base ENSUITE : la ligne ne dit « public » ou « privé »
-    # que si l'ACL a effectivement bougé. Les deux sens lèvent la même `MediaError`
-    # (cf. `media_store.make_private`) — une ACL refusée est un refus rendu au client,
-    # jamais un `{"ok": true}` sur un fichier resté ouvert.
-    try:
-        if make_public:
-            public_url = media_store.make_public(existing["s3_key"])
-        else:
-            public_url = None
-            media_store.make_private(existing["s3_key"])
-    except media_store.MediaError as e:
-        return _json_error(request, e.status, e.code)
-    row = db.set_project_file_public(file_id, make_public, public_url)
-    db.log_project_activity(pid, sub, "project.file_public",
-                            f"{existing.get('title') or existing.get('filename')}:{make_public}")
     return _json(request, {"ok": True, "file": _signed(row)})
 
 

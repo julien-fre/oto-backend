@@ -52,18 +52,6 @@ async def avatar_save(request: Request, *, verifier: JWTVerifier) -> JSONRespons
     return _json(request, {"ok": True, "avatar_url": url})
 
 
-async def avatar_clear(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
-    sub, err = await _authenticate(request, verifier)
-    if err:
-        return err
-    old = (db.get_user(sub) or {}).get("avatar_url")
-    db.set_avatar_url(sub, None)
-    if old:
-        from .. import media_store
-        media_store.delete_by_url(old)
-    return _json(request, {"ok": True})
-
-
 def _org_logo_gate(request: Request, sub: str):
     """Renvoie (org_id, err). 400 id invalide, 404 org inconnue, 403 non-admin."""
     from .. import roles
@@ -98,18 +86,3 @@ async def org_logo_save(request: Request, *, verifier: JWTVerifier) -> JSONRespo
     if old and old != url:
         media_store.delete_by_url(old)
     return _json(request, {"ok": True, "logo_url": url})
-
-
-async def org_logo_clear(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
-    sub, err = await _authenticate(request, verifier)
-    if err:
-        return err
-    org_id, err = _org_logo_gate(request, sub)
-    if err:
-        return err
-    old = (org_store.get_org(org_id) or {}).get("logo_url")
-    org_store.set_org_logo(org_id, None)
-    if old:
-        from .. import media_store
-        media_store.delete_by_url(old)
-    return _json(request, {"ok": True})
