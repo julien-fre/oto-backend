@@ -1,0 +1,103 @@
+name: Couverture
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CE QUE LES 13 245 TESTS COUVRENT RÉELLEMENT.
+#
+# La suite pèse 180 773 lignes pour 177 981 lignes de prod — une ligne de test par
+# ligne de code — et jusqu'au 15/09/2026 RIEN ne mesurait ce qu'elle couvre :
+# `pytest-cov` n'était ni installé, ni configuré, ni lancé nulle part. On ajoutait
+# donc des tests sans jamais savoir ce qu'ils ajoutaient, et on ne pouvait ni en
+# retirer (lequel ?) ni combler un trou (où ?) autrement qu'en devinant.
+#
+# Ce que ça a coûté, le 15/09 : un audit de la suite a désigné trois « angles morts »
+# — le périmètre d'URL, le chargement de la master key, la chaîne de migrations.
+# Les TROIS étaient faux. `url_perimeter.py` a 1 005 lignes de test pour 332 de prod
+# (ratio 3,0, et une sonde AST qui vérifie que chaque handler appelle la couture en
+# premier) ; `tests/test_crypto.py` couvre déjà hex/base64, la longueur ≠ 32 octets et
+# l'absence de clé ; et la seule révision Alembic est VIDE par conception, le schéma
+# d'une base neuve venant du boot. Trois fois sur trois, l'instrument a regardé à côté
+# — parce qu'il n'y avait pas d'instrument, seulement des noms de fichiers.
+#
+# D'où ce workflow. Il ne garde rien, ne barre rien, ne tourne pas dans le chemin
+# critique : il se lance À LA MAIN quand on veut décider quoi élaguer ou quoi couvrir,
+# et il rend un chiffre au lieu d'une intuition.
+on:
+  workflow_dispatch:
+    inputs:
+      cible:
+        description: "Paquet à mesurer (défaut : tout oto_mcp)"
+        required: false
+        default: "oto_mcp"
+
+permissions:
+  contents: read
+
+jobs:
+  couverture:
+    runs-on: ubuntu-latest
+    # Le job `test` de deploy-canari.yml tient en 20 min ; l'instrumentation de
+    # coverage.py ralentit l'exécution, d'où la marge.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (deps + dev + pytest-cov)
+        # `pytest-cov` n'est PAS dans les deps dev : il ne sert qu'ici, et l'ajouter à
+        # `[dev]` le ferait installer à chaque run de CI sans que personne s'en serve.
+        run: pip install -e ".[dev]" pytest-cov
+      - name: Mesure
+        env:
+          # Même raison que le job `test` : ce conteneur est isolé, la garde à 2 places
+          # de `_jeton_de_suite.py` ne protège ici aucune session voisine.
+          OTO_TEST_PG_PLACES: "4"
+        # `--cov-report=term-missing:skip-covered` ne liste QUE les modules qui ont des
+        # lignes non couvertes : c'est exactement la question posée ici, et ça évite de
+        # noyer la réponse sous 709 fichiers à 100 %.
+        run: |
+          pytest -q -n 4 \
+            --cov=${{ inputs.cible || 'oto_mcp' }} \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml \
+            --cov-report=json \
+            | tee couverture.txt
+      - name: Résumé
+        if: always()
+        # Le chiffre atterrit dans le récapitulatif du run : on vient le lire, on ne le
+        # télécharge pas. Les modules les moins couverts d'abord — c'est ce qu'on cherche.
+        run: |
+          {
+            echo "## Couverture — \`${{ inputs.cible || 'oto_mcp' }}\`"
+            echo
+            if [ -f coverage.json ]; then
+              python3 - <<'PY'
+          import json
+          d = json.load(open("coverage.json"))
+          t = d["totals"]
+          print(f"**{t['percent_covered']:.1f} %** — {t['covered_lines']} lignes couvertes "
+                f"sur {t['num_statements']}, {t['missing_lines']} manquantes.\n")
+          fichiers = sorted(
+              ((f, m["summary"]) for f, m in d["files"].items() if m["summary"]["num_statements"]),
+              key=lambda kv: kv[1]["percent_covered"],
+          )
+          print("### Les 30 modules les moins couverts\n")
+          print("| module | couvert | lignes |")
+          print("|---|---:|---:|")
+          for f, s in fichiers[:30]:
+              print(f"| `{f}` | {s['percent_covered']:.0f} % | {s['num_statements']} |")
+          PY
+            else
+              echo "_Pas de rapport : la suite n'est pas allée au bout._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: couverture
+          path: |
+            coverage.xml
+            coverage.json
+            couverture.txt
+          if-no-files-found: warn
