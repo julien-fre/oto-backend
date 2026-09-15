@@ -109,6 +109,7 @@ _DECLARATIONS: tuple[str, ...] = (
     # --- byo_user à credential multi-champs (hors resolve_api_key) -----------
     "silae",
     "forager",
+    "lucca",
     # --- gocardless : keyed BYO self-serve -----------------------------------
     "gocardless",
     # `planity` reste ICI, à la place qu'il occupait quand il était fédéré : cet
