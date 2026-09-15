@@ -124,16 +124,47 @@ def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():
         # `api/base.py` depuis le 2026-08-27 : la liste d'origines CORS
         # (`_allowed_origins`) a suivi les primitives partagées hors d'`api/routes.py`
         # lors de la découpe par domaine. Même raison, autre fichier.
-        "api/base.py", "public_doc_page.py",
+        # `public_doc_page.py` a quitté cette liste le 15/09/2026 : sa page suit
+        # désormais la marque du propriétaire du doc, et son seul lien en dur est celui
+        # de NOTRE pied — servi uniquement quand la page est à nous.
+        "api/base.py",
     }
+    import ast
+
+    def _lignes_de_prose(source: str, chemin: str) -> set[int]:
+        """Les lignes appartenant à une docstring — module, classe ou fonction.
+
+        Le tripwire excluait déjà les commentaires `#` : son intention est de viser ce
+        que le code REND, pas ce qu'il explique. Une docstring est de la prose au même
+        titre, et l'oublier force à contourner le contrôle en appauvrissant une note —
+        `public_doc_page` explique légitimement sur quelle ORIGINE sa page sort, ce qui
+        est l'argument de son mode de rendu sûr. Une garde qui pousse à effacer une
+        explication juste se retourne contre ce qu'elle protège.
+        """
+        lignes: set[int] = set()
+        arbre = ast.parse(source, filename=chemin)
+        for n in ast.walk(arbre):
+            if not isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                  ast.AsyncFunctionDef)):
+                continue
+            corps = getattr(n, "body", None)
+            if (corps and isinstance(corps[0], ast.Expr)
+                    and isinstance(corps[0].value, ast.Constant)
+                    and isinstance(corps[0].value.value, str)):
+                d = corps[0]
+                lignes.update(range(d.lineno, (d.end_lineno or d.lineno) + 1))
+        return lignes
+
     fautifs = []
     racine = pathlib.Path("oto_mcp")
     for f in racine.rglob("*.py"):
         if f.relative_to(racine).as_posix() in autorises:
             continue
-        for n, ligne in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+        source = f.read_text(encoding="utf-8")
+        prose = _lignes_de_prose(source, str(f))
+        for n, ligne in enumerate(source.splitlines(), 1):
             nu = ligne.strip()
-            if "dashboard.oto.ninja" in nu and not nu.startswith("#"):
+            if "dashboard.oto.ninja" in nu and not nu.startswith("#") and n not in prose:
                 fautifs.append(f"{f}:{n}")
     assert not fautifs, (
         "adresse de tableau de bord écrite en dur :\n  " + "\n  ".join(fautifs)

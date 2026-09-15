@@ -55,25 +55,10 @@ _FAVICON_LINK = brand.FAVICON_LINK
 
 
 # ── À qui appartient cette page ? ────────────────────────────────────────────
-
-# Les jetons de la page au-delà des sept d'une `Marque` : accents et papiers propres à
-# NOTRE charte. On ne les DÉRIVE pas pour un partenaire — dériver des couleurs produit un
-# rendu approximatif qu'on servirait à ses clients en son nom. Ils prennent les gris du
-# système, comme le gabarit neutre des emails.
-_JETONS_NEUTRES = {"paper2": "#f1f1f4", "paper3": "#f9f9fb", "ink_soft": "#2b3036",
-                   "mute": "#60646c", "faint": "#8b8d98", "hair_soft": "#e8e8ec",
-                   "primary_soft": "#e8e8ec", "primary_ink": "#1c2024",
-                   "accent": "#3358d4", "ink_deep": "#111113",
-                   "ombre": "rgba(28,32,36,.04)", "ombre2": "rgba(28,32,36,.14)"}
-
-# NOTRE charte, à l'octet — les valeurs qui étaient écrites dans le shell avant le
-# 15/09/2026. Elles restent ici, et nulle part ailleurs : une page de partenaire ne les
-# atteint plus.
-_JETONS_OTO = {"paper2": "#f4ecd2", "paper3": "#faf5e6", "ink_soft": "#4a3a23",
-               "mute": "#6c5e44", "faint": "#8a7b5c", "hair_soft": "#ede1bd",
-               "primary_soft": "#fbe7a8", "primary_ink": "#5a3b03",
-               "accent": "#2a87d8", "ink_deep": "#241a0e",
-               "ombre": "rgba(44,33,18,.04)", "ombre2": "rgba(44,33,18,.14)"}
+#
+# La résolution vit dans `brand`, partagée avec la page de doc publique : les deux
+# surfaces posent la même question sans avoir de compte sous la main. Ici on ne garde
+# que l'adaptation « un projet » → « un propriétaire ».
 
 
 def marque_du_projet(project: dict):
@@ -86,54 +71,13 @@ def marque_du_projet(project: dict):
 
     Le destinataire n'est pas authentifié : il n'a ni compte, ni session, ni org. C'est
     ce qui sépare cette surface des cinq déjà tenant-isées, qui tiennent toutes un `sub`.
-
-    Un projet SANS org relève de la plateforme, et c'est une déclaration : `marque(None)`
-    rend la nôtre explicitement, par le même chemin que les autres — pas par une branche
-    par défaut. Même contrat que `orgs.front_brand`, dont NULL veut dire « la
-    plateforme ».
     """
-    from . import db, email_brand, tenancy
-    slug = None
-    if project.get("owner_type") == "org" and project.get("owner_id") is not None:
-        slug = db.org_tenant_slug(int(project["owner_id"]))
-    m = email_brand.marque(slug)
-    if not m.slug or m.slug == tenancy.PRIMARY_SLUG:
-        return m
-    # Le NOM d'affichage vient du registre, pas du slug. `email_brand.marque` est écrite
-    # pour `orgs.front_brand`, où l'argument est déjà un mot de marque ; ici c'est un
-    # identifiant de tenant, et servir « acme » là où le partenaire s'appelle « Acme »
-    # serait le montrer en minuscules à ses propres clients. Même résolution que le socle
-    # d'accueil (`instructions._socle_for`).
-    nom = next((e.name for e in tenancy.current().entries()
-                if e.slug == m.slug and e.name), m.nom)
-    return m if nom == m.nom else type(m)(**{**m.__dict__, "nom": nom})
+    return brand.marque_du_proprietaire(project.get("owner_type"), project.get("owner_id"))
 
 
 def _jetons(marque) -> dict:
-    """Les jetons CSS de cette marque. Les nôtres à l'octet si la page est à nous.
-
-    ⚠️ **Ces valeurs sont injectées dans un bloc `<style>` complet** — le sink est le
-    parseur CSS du navigateur, pas le HTML, donc `html.escape` n'y protégerait de rien.
-    Ce qui protège est la validation de `email_brand._declaree`, qui refuse une palette
-    déclarée dès qu'une teinte n'est pas `#rgb`/`#rrggbb` **et la refuse ENTIÈRE** : une
-    valeur hostile ne ressort pas amputée, elle ne ressort pas du tout.
-
-    On ne revalide donc PAS ici — deux vérités sur la même question valent moins qu'une
-    seule, et la source unique est celle qui lit la base. Mais la dépendance est réelle
-    et silencieuse : assouplir cette expression ailleurs ouvrirait cette page sans que
-    rien ne le dise. C'est pourquoi elle a une garde mécanique à elle, qui joue la charge
-    utile de bout en bout (`tests/test_share_ui_tenant.py`).
-
-    À savoir si on y touche : l'exigence d'ici est **plus stricte** que celle qui a
-    motivé la validation. Les emails injectent dans un attribut `style=` ; une accolade
-    fermante y est inerte, alors qu'ici elle terminerait la règle et ouvrirait un
-    sélecteur arbitraire.
-    """
-    if not marque.slug or marque.slug == "oto":
-        return {"bg": "#fefcf5", "surface": "#fff", "ink": "#2c2112", "hair": "#dccfa8",
-                "primary": "#f0b41e", **_JETONS_OTO}
-    return {"bg": marque.fond, "surface": marque.surface, "ink": marque.encre,
-            "hair": marque.filet, "primary": marque.bouton_fond, **_JETONS_NEUTRES}
+    """Les jetons CSS de cette marque — voir `brand.jetons` pour l'invariant de sûreté."""
+    return brand.jetons(marque)
 
 
 # ── Shell HTML charté (mêmes tokens que public_doc_page) ──────────────────────

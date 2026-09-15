@@ -81,6 +81,17 @@ description: >-
 >   du système à son nom, jamais notre saffran — une palette est une marque. Les jetons
 >   que `Marque` ne couvre pas (papiers, accents) ne sont PAS dérivés : dériver produit un
 >   dessin que personne n'a dessiné, et il ne se verrait qu'à l'arrivée.
+> - **La page publique d'un DOC partagé suit la même règle** (15/09/2026), et c'est la
+>   surface la plus exposée : n'importe qui avec le jeton, sans authentification, sans
+>   même un sous-domaine qui dirait de qui il s'agit. Son handler ne recevait QUE le
+>   jeton — `get_doc_by_public_token` joint désormais `projects` pour remonter le
+>   propriétaire, en `LEFT JOIN` : un doc dont le projet a disparu reste servi sous la
+>   marque de la plateforme, parce que perdre le document parce qu'on ne sait plus à qui
+>   il est punirait le lecteur d'un défaut qui ne le concerne pas. La page **introuvable**
+>   porte la marque elle aussi : c'est celle qu'un jeton périmé sert, donc la plus vue
+>   depuis l'extérieur. La résolution commune aux deux pages vit dans `brand`
+>   (`marque_du_proprietaire`, `jetons`, `nom_affiche`) — la laisser dans l'une ferait
+>   dépendre la page de doc de l'UI de partage.
 > - **Les guides à la demande aussi**, depuis le 15/09/2026 — même colonne, même clé.
 >   `read_guide_scoped` cherche **tenant → plateforme → org → user**, et le catalogue
 >   REMPLACE notre entrée de même slug au lieu de s'y ajouter (deux lignes pour un slug

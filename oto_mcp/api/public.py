@@ -299,6 +299,13 @@ async def public_doc_view(request: Request) -> Response:
     doc = db.get_doc_by_public_token(token) if token else None
     accept = request.headers.get("accept", "").lower()
     wants_json = "application/json" in accept
+    # La marque du PROPRIÉTAIRE, résolue depuis la donnée que la lecture remonte —
+    # le lecteur n'a ni compte ni session, et le jeton seul ne dit rien de qui partage.
+    # Jeton inconnu ⟹ pas de propriétaire ⟹ la nôtre : on ne peut rien déduire d'un
+    # jeton qui ne désigne rien, et supposer serait pire que dire « nous ».
+    from .. import brand
+    marque = (brand.marque_du_proprietaire(doc.get("owner_type"), doc.get("owner_id"))
+              if doc else None)
     if not doc:
         if wants_json:
             return _json_error(request, 404, "not_found")
@@ -312,7 +319,7 @@ async def public_doc_view(request: Request) -> Response:
         return _file(request, md, media_type="text/markdown; charset=utf-8",
                      headers={"Cache-Control": "public, max-age=300"})
     html_page = public_doc_page.render(title=title, body_md=body_md,
-                                       updated_at=doc.get("updated_at"))
+                                       updated_at=doc.get("updated_at"), marque=marque)
     return HTMLResponse(html_page, headers={
         "Cache-Control": "private, max-age=300",
         "Referrer-Policy": "no-referrer"

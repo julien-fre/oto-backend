@@ -677,10 +677,24 @@ def set_doc_public(doc_id: int, public: bool) -> Optional[str]:
 
 
 def get_doc_by_public_token(token: str) -> Optional[dict]:
-    """Lecture publique d'un doc par son token (gap #4a) — title/body_md/updated_at."""
+    """Lecture publique d'un doc par son token (gap #4a) — son contenu ET son
+    PROPRIÉTAIRE.
+
+    La jointure sur `projects` n'est pas un confort : c'est la seule information de
+    tenant disponible sur cette surface. Le lecteur d'un lien partagé n'est pas
+    authentifié — ni compte, ni session, ni org — et le jeton, seul, ne dit rien de qui
+    partage. Sans `owner_type`/`owner_id`, la page retombe sur NOTRE marque et la sert au
+    client d'un partenaire (15/09/2026).
+
+    `LEFT JOIN` : un doc dont le projet a disparu reste servi, sans propriétaire — donc
+    sous la marque de la plateforme. Perdre le document parce qu'on ne sait plus à qui il
+    est serait punir le lecteur d'un défaut d'intégrité qui ne le concerne pas.
+    """
     with _connect() as conn:
         row = conn.execute(
-            "SELECT title, body_md, updated_at FROM docs WHERE public_token = %s",
+            "SELECT d.title, d.body_md, d.updated_at, p.owner_type, p.owner_id "
+            "FROM docs d LEFT JOIN projects p ON p.id = d.project_id "
+            "WHERE d.public_token = %s",
             (token,),
         ).fetchone()
         return dict(row) if row else None

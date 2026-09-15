@@ -23,21 +23,53 @@ from . import brand
 _MD = MarkdownIt("commonmark", {"html": False})
 
 
-def _shell(*, title: str, inner: str) -> str:
+def _MARQUE_OTO_():
+    from . import email_brand
+    return email_brand.marque(None)
+
+
+def _nom(marque) -> str:
+    """Le nom à afficher — le nôtre quand la page est à nous."""
+    return "Oto" if _nous(marque) else (marque.nom or "")
+
+
+def _nous(marque) -> bool:
+    return marque is None or not marque.slug or marque.slug == "oto"
+
+
+def _shell(*, title: str, inner: str, marque=None) -> str:
+    """`marque=None` ⟹ la nôtre : le défaut sert les appelants sans contenu sous la
+    main, jamais un partenaire — le handler la résout toujours depuis la donnée."""
+    j = brand.jetons(marque) if marque is not None else brand.jetons(_MARQUE_OTO_())
+    nous = _nous(marque)
+    nom = html.escape(_nom(marque))
+    if nous:
+        pied = ('Partagé via <a href="https://oto.cx">Oto</a> — la boîte à outils '
+                "d'automatisation.")
+    elif marque.site:
+        pied = f'Partagé via <a href="https://{html.escape(marque.site)}">{nom}</a>.'
+    else:
+        pied = f"Partagé via {nom}." if nom else "Document partagé."
+    titre_suffixe = " · Oto" if nous else (f" · {nom}" if nom else "")
+    descr = ("Document partagé via Oto." if nous
+             else (f"Document partagé via {nom}." if nom else "Document partagé."))
+    # Le favicon est un dessin de marque : il ne suit pas un partenaire tant qu'il n'en
+    # a pas déclaré un. Rien vaut mieux que le nôtre sur sa page.
+    favicon = brand.FAVICON_LINK if nous else ""
     safe_title = html.escape(title or "Document")
     return f"""<!DOCTYPE html>
 <html lang=fr><head>
 <meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
-<title>{safe_title} · Oto</title>
-{brand.FAVICON_LINK}
-<meta name=description content="Document partagé via Oto.">
+<title>{safe_title}{titre_suffixe}</title>
+{favicon}
+<meta name=description content="{descr}">
 <meta name=robots content="noindex">
 <link rel=preconnect href="https://fonts.googleapis.com">
 <link rel=preconnect href="https://fonts.gstatic.com" crossorigin>
 <link rel=stylesheet href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-  :root{{--bg:#fefcf5;--surface:#fff;--paper2:#f4ecd2;--ink:#2c2112;--ink-soft:#4a3a23;
-    --mute:#6c5e44;--hair:#dccfa8;--primary:#f0b41e;--accent:#2a87d8}}
+  :root{{--bg:{j['bg']};--surface:{j['surface']};--paper2:{j['paper2']};--ink:{j['ink']};--ink-soft:{j['ink_soft']};
+    --mute:{j['mute']};--hair:{j['hair']};--primary:{j['primary']};--accent:{j['accent']}}}
   *{{box-sizing:border-box}}
   body{{margin:0;background:var(--bg);color:var(--ink);font-family:'Hanken Grotesk',system-ui,sans-serif;
     line-height:1.6;-webkit-font-smoothing:antialiased}}
@@ -68,24 +100,27 @@ def _shell(*, title: str, inner: str) -> str:
 </style></head>
 <body><div class=wrap>
 {inner}
-  <footer>Partagé via <a href="https://oto.cx">Oto</a> — la boîte à outils d'automatisation.</footer>
+  <footer>{pied}</footer>
 </div></body></html>"""
 
 
-def render(*, title: str, body_md: str, updated_at: object = None) -> str:
+def render(*, title: str, body_md: str, updated_at: object = None, marque=None) -> str:
     body_html = _MD.render(body_md or "")
     meta = (f'<div class=meta>Mis à jour le {html.escape(str(updated_at)[:10])}</div>'
             if updated_at else "")
-    inner = (f'  <div class=eyebrow>Document · Oto</div>\n'
+    inner = (f'  <div class=eyebrow>Document · {html.escape(_nom(marque))}</div>\n'
              f'  <h1>{html.escape(title or "Document")}</h1>\n'
              f'  {meta}\n'
              f'  <div class=card><article>{body_html}</article></div>')
-    return _shell(title=title, inner=inner)
+    return _shell(title=title, inner=inner, marque=marque)
 
 
-def render_missing() -> str:
-    inner = ('  <div class=eyebrow>Oto</div>\n'
+def render_missing(*, marque=None) -> str:
+    """⚠️ Elle se rend AVANT toute lecture réussie — c'est la page qu'un jeton périmé
+    sert, donc la plus vue depuis l'extérieur. L'oublier laisserait notre marque sur
+    l'écran le plus fréquent de cette surface."""
+    inner = (f'  <div class=eyebrow>{html.escape(_nom(marque))}</div>\n'
              '  <h1>Document introuvable</h1>\n'
              '  <div class=card><article><p>Ce document n\'existe pas ou n\'est plus '
              'partagé.</p></article></div>')
-    return _shell(title="Document introuvable", inner=inner)
+    return _shell(title="Document introuvable", inner=inner, marque=marque)
