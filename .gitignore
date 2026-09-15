@@ -15,3 +15,6 @@ build/
 
 # uv non utilisé par la CI/deploy (pip install -e) — lock local seulement
 uv.lock
+
+# Mémoires d'agent : locales au poste, jamais versionnées (peuvent charrier un secret).
+.claude/agent-memory/
