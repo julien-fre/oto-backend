@@ -353,16 +353,16 @@ def test_un_projet_sans_nom_garde_un_nom_de_fichier(client, monkeypatch):
     assert 'filename=""' not in r.headers["content-disposition"]
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "MESURÉ le 15/09/2026, non corrigé : `me_project_export` est la seule route "
-    "projet PAR-ID de ce module à ne PAS appeler `_project_org_context_error`. Elle "
-    "s'en tient à `can_access(read)`, que la docstring d'`ownership.visible_in_org` "
-    "qualifie explicitement de « trop large pour une lecture par-id » — union de "
-    "TOUTES les orgs de l'acteur. Conséquence : la KB entière d'un projet d'une autre "
-    "de mes orgs s'exporte depuis un contexte de consultation où le même projet est "
-    "404 sur `GET .../files`. Correctif hors périmètre de ce lot (aucun fichier de "
-    "production touché) ; ce test PASSE au vert le jour où le gate est posé, et fait "
-    "alors ROUGIR la suite pour qu'on retire ce marqueur."))
+# MESURÉ le 15/09/2026 : `me_project_export` était la seule route projet PAR-ID de ce
+# module à ne PAS appeler `_project_org_context_error` — elle s'en tenait à
+# `can_access(read)`, que la docstring d'`ownership.visible_in_org` qualifie de « trop
+# large pour une lecture par-id » (union de TOUTES les orgs de l'acteur). La KB entière
+# d'un projet d'une AUTRE de mes orgs s'exportait donc depuis un contexte où le même
+# projet rendait 404 sur `GET .../files`. Ce banc a d'abord été posé en `xfail(strict)`,
+# le temps d'établir la portée exacte : l'acteur avait bien un droit sur la ressource
+# (ce n'était pas une fuite entre organisations), mais la bascule d'org ne bornait pas
+# l'export. Le gate est posé, le marqueur retiré — ce test garde les cinq routes
+# alignées.
 def test_l_export_devrait_lui_aussi_etre_borne_a_l_org_de_consultation(client,
                                                                       monkeypatch):
     monkeypatch.setattr(ownership, "visible_in_org", lambda *a: False)

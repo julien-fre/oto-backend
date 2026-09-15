@@ -170,6 +170,14 @@ async def me_project_export(request: Request, *, verifier: JWTVerifier) -> Respo
         pid = int(request.path_params["id"])
     except (KeyError, ValueError):
         return _json_error(request, 400, "bad_project")
+    # Le gate de CONTEXTE, comme les quatre autres routes par-id de ce module. Il
+    # manquait ici : `can_access` seul est l'union de TOUTES les orgs de l'acteur, si
+    # bien qu'un projet d'une AUTRE de mes orgs s'exportait depuis un contexte où
+    # `GET .../files` rendait déjà 404. L'acteur y avait bien droit — ce n'est pas une
+    # fuite entre organisations — mais la bascule d'org ne bornait pas l'export, et
+    # une route par-id qui échappe au gate est celle par laquelle l'écart revient.
+    if (e := _project_org_context_error(request, sub, pid)):
+        return e
     if not ownership.can_access(sub, "project", str(pid), "read"):
         return _json_error(request, 403, "forbidden")
     proj = db.get_project_by_id(pid) or {}

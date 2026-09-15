@@ -136,6 +136,13 @@ def test_lexport_zip_dun_projet_porte_le_meme_cors(monkeypatch, sans_liste_env):
 
     monkeypatch.setattr(api_projects, "_authenticate", _auth)
     monkeypatch.setattr(ownership, "can_access", lambda *a, **k: True)
+    # Ce banc éprouve le CORS, pas l'autorisation : il ouvre les DEUX portes de la
+    # route pour atteindre le corps, comme il double déjà `_authenticate`. La seconde
+    # est le gate de contexte d'org posé le 15/09/2026, qui aligne l'export sur les
+    # quatre autres routes projet par-id. Il est doublé ICI plutôt que sa dépendance
+    # `visible_in_org`, parce qu'il lit aussi le contexte en base : sans base, la
+    # route rendrait 500 et le banc mesurerait des en-têtes d'erreur, pas ceux du ZIP.
+    monkeypatch.setattr(api_projects, "_project_org_context_error", lambda *a, **k: None)
     monkeypatch.setattr(db, "get_project_by_id", lambda pid: {"id": pid, "name": "Ma KB"})
     monkeypatch.setattr(db, "list_docs_for_project", lambda pid: [])
     monkeypatch.setattr(doc_export, "build_export", lambda docs, racine: b"PK\x03\x04zip")
