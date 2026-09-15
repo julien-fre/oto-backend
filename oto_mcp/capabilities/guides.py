@@ -26,7 +26,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import guide_store
+from .. import guide_store, tool_alias
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -265,7 +265,23 @@ def _get(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
         where = f" (scope {inp.scope})" if inp.scope else ""
         raise AuthzDenied(404, "not_found",
                           f"Guide `{inp.slug}`{where} introuvable — liste-les avec op=list.")
-    return g
+    # Les outils CITÉS dans le corps, au nom du produit de ce compte. Le socle le fait
+    # depuis toujours (`instructions.session_layers`), les descriptions d'outils et les
+    # messages d'erreur aussi — pas le texte d'un guide, alors que c'est le texte que le
+    # socle prescrit d'aller lire. Sans ça le renommage se retourne contre lui-même : la
+    # notice prescrit `oto_doc`, l'agent l'appelle (le serveur l'accepte), et le client
+    # réaffiche `Oto doc` — le nom qu'on voulait faire disparaître, à l'endroit exact où
+    # il se voit.
+    #
+    # ⚠️ Portée : les NOMS D'OUTILS, pas le nom du produit. Un guide qui écrit « la
+    # boîte à outils oto » en toutes lettres continuera de le dire — la prose d'un guide
+    # est du contenu, et la réécrire par substitution serait réécrire le texte de
+    # quelqu'un. Le remède de ce cas-là est l'étage tenant ci-dessus : un partenaire que
+    # notre prose gêne écrit la sienne.
+    prefix = tool_alias.prefix_for(ctx.sub)
+    if not prefix:
+        return g
+    return {**g, "body_md": tool_alias.rewrite_prose(g["body_md"], prefix)}
 
 
 def _set(ctx: ResolvedCtx, inp: GuideSetInput) -> dict:

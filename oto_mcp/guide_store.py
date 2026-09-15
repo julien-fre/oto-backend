@@ -183,6 +183,24 @@ def _slug_ok(slug: str) -> bool:
     return bool(_SLUG_RE.match(slug or ""))
 
 
+def _tenant_de(sub: Optional[str]) -> Optional[str]:
+    """Le slug du tenant de ce compte, ou None s'il relève de la plateforme.
+
+    **Pas de filet ici, et c'est délibéré.** Le socle d'accueil, lui, avale tout
+    (`instructions._socle_for`, fail-open à trois détentes) parce qu'il s'exécute à
+    CHAQUE ouverture de session : une exception y coûterait la connexion entière. Lire
+    un guide est un appel d'outil ordinaire — un registre illisible doit s'y dire, pas
+    se traduire en « tiens, la notice de quelqu'un d'autre ». Servir notre prose à un
+    partenaire parce qu'une lecture a échoué est précisément le silence qu'on ferme
+    partout ailleurs.
+    """
+    if not sub:
+        return None
+    from . import tenancy
+    slug = tenancy.current().tenant_of(sub)
+    return None if not slug or slug == tenancy.PRIMARY_SLUG else slug
+
+
 def list_guides_for(sub: Optional[str] = None, org_id: Optional[int] = None) -> list[dict]:
     """Guides on-demand VISIBLES par le caller : plateforme ∪ org active ∪ user —
     tout en DB. Chaque entrée porte son `scope`. Sans les corps."""
@@ -192,10 +210,19 @@ def list_guides_for(sub: Optional[str] = None, org_id: Optional[int] = None) -> 
     # (fichier sans ligne) resterait invisible, donc introuvable.
     en_db = {g["slug"]: g for g in db.list_guides_db("platform", PLATFORM_OWNER)}
     fichiers = {g["slug"]: g for g in list_file_guides()}
-    out = [{"slug": slug, "scope": "platform",
-            "title": (en_db.get(slug) or fichiers[slug])["title"],
-            "description": (en_db.get(slug) or fichiers[slug])["description"]}
-           for slug in sorted(set(en_db) | set(fichiers))]
+    par_slug = {slug: {"slug": slug, "scope": "platform",
+                       "title": (en_db.get(slug) or fichiers[slug])["title"],
+                       "description": (en_db.get(slug) or fichiers[slug])["description"]}
+                for slug in sorted(set(en_db) | set(fichiers))}
+    # Le tenant REMPLACE notre entrée de même slug, il ne s'y ajoute pas : deux lignes
+    # pour un slug feraient choisir l'agent entre deux guides dont un seul lui sera
+    # rendu — le catalogue mentirait sur la lecture, exactement ce que l'union
+    # ci-dessus évite pour le repli fichier.
+    if (slug_tenant := _tenant_de(sub)):
+        for g in db.list_guides_db("tenant", slug_tenant):
+            par_slug[g["slug"]] = {"slug": g["slug"], "scope": "tenant",
+                                   "title": g["title"], "description": g["description"]}
+    out = [par_slug[slug] for slug in sorted(par_slug)]
     if org_id is not None:
         out += [{"slug": g["slug"], "scope": "org", "title": g["title"],
                  "description": g["description"]} for g in db.list_guides_db("org", str(org_id))]
@@ -207,11 +234,22 @@ def list_guides_for(sub: Optional[str] = None, org_id: Optional[int] = None) -> 
 
 def read_guide_scoped(slug: str, *, scope: Optional[str] = None,
                       org_id: Optional[int] = None, sub: Optional[str] = None) -> Optional[dict]:
-    """Lit un guide on-demand. `scope` explicite, sinon cherche plateforme → org → user
-    (1er match). Renvoie `{slug, scope, title, description, body_md}` ou None."""
+    """Lit un guide on-demand. `scope` explicite, sinon cherche tenant → plateforme →
+    org → user (1er match). Renvoie `{slug, scope, title, description, body_md}` ou
+    None."""
     from . import db
-    for sc in ([scope] if scope else ["platform", "org", "user"]):
-        if sc == "platform":
+    # `tenant` EN TÊTE : un partenaire qui a rédigé son guide doit servir le sien, pas
+    # le nôtre. C'est le même cran que le socle d'accueil (`instructions._socle_for`,
+    # 13/08) — sans lui, le texte le plus lu après le socle reste au niveau plateforme
+    # alors qu'il décrit un produit.
+    for sc in ([scope] if scope else ["tenant", "platform", "org", "user"]):
+        if sc == "tenant":
+            slug_tenant = _tenant_de(sub)
+            g = db.get_guide_db("tenant", slug_tenant, slug) if slug_tenant else None
+            if g:
+                return {"slug": slug, "scope": "tenant", "title": g["title"],
+                        "description": g["description"], "body_md": g["body_md"]}
+        elif sc == "platform":
             g = db.get_guide_db("platform", PLATFORM_OWNER, slug)
             if not g:
                 # Repli sur le SEED fichier — comme le bloc A retombe sur sa constante.

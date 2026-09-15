@@ -68,6 +68,13 @@ description: >-
 >   simplement non testé** — n'en déclarer un qu'avec ce qui l'utilise.
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
+> - **Les guides à la demande aussi**, depuis le 15/09/2026 — même colonne, même clé.
+>   `read_guide_scoped` cherche **tenant → plateforme → org → user**, et le catalogue
+>   REMPLACE notre entrée de même slug au lieu de s'y ajouter (deux lignes pour un slug
+>   feraient choisir l'agent entre deux guides dont un seul lui serait rendu). Le socle
+>   PRESCRIT d'aller les lire : les tenant-iser à moitié laissait le texte le plus lu
+>   après lui au niveau plateforme. ⚠️ **Rien ne change tant que personne n'a rédigé** —
+>   un tenant sans guide propre reçoit le nôtre, à l'octet.
 > - ⚠️ **Le socle ne suffisait pas : les OUTILS aussi portaient notre nom.** Dans la
 >   conversation d'un client du partenaire, chaque appel s'affichait `Oto doc`,
 >   `Oto project`… — le nom d'un outil n'est pas de la prose, il est réaffiché à chaque
@@ -78,7 +85,11 @@ description: >-
 >   les refs `<tool:slug>` des procédures ne connaissent toujours qu'UN nom par outil —
 >   rien à migrer. Les deux formes sont acceptées à l'appel (la prose déjà écrite cite
 >   les canoniques). Sont traduits : `tools/list` (noms + descriptions), l'artefact de
->   session, le contrat d'erreur, et les cinq tools qui prennent un nom en argument
+>   session, **le corps d'un guide servi** (15/09/2026 — le socle prescrit `oto_guide
+>   op=read`, et ce qu'on y lisait prescrivait à son tour des outils que le compte n'a
+>   pas ; la portée est les NOMS D'OUTILS, jamais le nom du produit, qui relève de la
+>   prose et donc de l'étage tenant), le contrat d'erreur, et les cinq tools qui
+>   prennent un nom en argument
 >   (`oto_call`, `oto_tool_schema`, `oto_list_my_tools`, `oto_{disable,enable}_tool`) —
 >   sinon le catalogue et le dispatch parleraient deux langues. **Seul le namespace `oto`
 >   bouge** : `data_*`, `run_*`/`feedback` et les connecteurs nomment une capacité ou un
