@@ -502,7 +502,9 @@ rien ne rendait navigable et que rien ne tenait.
   capacité à la main : le seam le fait pour toutes). Quatre modes de gel vécus +
   garde-fous CI, pool borné (`timeout=5`), **DDL à chaud borné**
   (`lock_timeout`/`statement_timeout` sur `_connect_autocommit`), observabilité
-  (loop_watch/aiodebug, py-spy box, Kuma timeout 30s).
+  (loop_watch/aiodebug — nomme un callback lent mais jamais la ligne ; hang_watch —
+  capture la VRAIE pile PENDANT un blocage, débit limité, thread principal seul,
+  zéro variable locale — py-spy box, Kuma timeout 30s).
   ⚠️ **TROIS garde-fous, de natures différentes, parce que chacun échappe aux
   précédents** : `test_no_blocking_async_handlers` lit le source des `@mcp.tool` (async
   sans `await` = rejeté) — or un middleware n'est pas un tool ET doit `await

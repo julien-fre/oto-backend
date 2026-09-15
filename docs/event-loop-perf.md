@@ -677,3 +677,73 @@ copiées vers le thread ; les faits produits par l'autorisation reviennent dans
 sur les deux faces, compte une autorisation, observe le thread des stores et
 celui du manifeste, et vérifie le contexte et les refus. Il ne mesure aucune
 latence de production.
+
+## Observabilité — capturer la VRAIE pile d'un blocage, pendant qu'il a lieu (`hang_watch.py`, 15/09)
+
+`loop_watch.py` (aiodebug `log_slow_callbacks`) nomme un callback bloquant et sa durée,
+mais jamais QUELLE LIGNE de code tenait la boucle — le nom rendu est générique
+(`TaskHandle._run_coro()`), inutilisable pour diagnostiquer. La raison tient au patron
+lui-même : `on_slow_callback` est appelé **après** que le callback a fini — la pile
+intéressante s'est déjà déroulée, `sys._current_frames()` à ce moment-là ne montrerait
+que la sonde elle-même.
+
+`aiodebug` porte un second mécanisme, `hang_inspection`, jamais branché ici. Il résout
+le problème par un **thread séparé** qui surveille un timestamp partagé, mis à jour par
+une tâche minuscule de la boucle : si le délai dépasse le seuil, la boucle est bloquée
+**en ce moment**, et c'est ce thread — qui tourne PENDANT le blocage, pas après — qui
+dump la vraie pile. Adapté dans `oto_mcp/hang_watch.py`, sur le même patron mais pas la
+même sortie ni le même filtre :
+
+- **journalise** (logger `oto_mcp.loop`, comme `loop_watch.py`) plutôt qu'écrire des
+  fichiers `stacktrace-*.txt` sur la box (le patron d'origine) ;
+- filtre au **seul thread principal** (celui qui fait tourner la boucle asyncio) — les
+  autres threads du process sont le threadpool, jamais la boucle ;
+- **aucune variable locale** (`traceback.extract_stack`, jamais `format_exc`) — même
+  famille de risque que le fix Sentry du 2026-09-15 (#564, `include_local_variables=
+  False`) : un secret déchiffré qui traînerait dans une frame ne doit jamais atteindre
+  un journal ;
+- **débit limité** : un état d'ÉPISODE (armé tant que le délai reste dépassé, réarmé à
+  la résorption) garantit UN dump par blocage continu, et un plafond de **3 dumps par
+  minute toutes causes confondues** évite qu'une salve de blocages courts et rapprochés
+  (nuit du 14-15/09 : ~6 en une minute, suite à une bascule) ne remplisse le journal de
+  piles redondantes du même incident — au-delà du plafond, le refus se DIT
+  (« dump ignoré (plafond de N/min atteint) »), jamais en silence ;
+- même seuil que l'existant : `OTO_SLOW_CALLBACK_WARN` (déf. 1.0s), pas un second réglage
+  à tenir à jour séparément ;
+- **interrupteur dédié `OTO_HANG_WATCH_ENABLED`** (déf. **actif**) : coupe le mécanisme
+  par un redémarrage du process, sans redéployer. Actif par défaut parce que le
+  mécanisme EST la réponse aux gels non identifiés de ce document — le désactiver par
+  défaut reviendrait à se priver de la preuve le jour où elle sert ; défendable
+  seulement parce que le coût est mesuré, pas supposé (ci-dessous). Nom aligné sur le
+  patron des boucles de fond (`OTO_SCHEDULER_ENABLED`…), pas sur celui des seuils.
+
+**Câblage** : `hang_watch.run_heartbeat_loop` est déclarée comme une `Boucle` de
+`boucles_de_fond.py` (`tiers=False`, armée par `hang_watch.enabled()`) plutôt que
+composée à la main dans `server.main` — pas parce qu'elle drainerait du travail en
+base (elle n'en draine aucun), mais parce que `server.main` ne démarre **rien** qui ne
+passe par ce registre (`tests/test_boucles_de_fond.py::test_server_main_ne_compose_
+rien_hors_du_module`) : ajouter une tâche de fond, c'est l'ajouter là, un seul endroit
+pour lire le roster complet de ce qui tourne. `tiers=False` sans nuance : elle ne
+touche jamais un tiers, donc elle tourne dans TOUS les environnements — préprod
+comprise, exactement là où le prochain gel non identifié peut survenir.
+
+**Coûts, mesurés** (`tests/test_hang_watch.py`, doctrine du projet : chiffrer, pas
+supposer) :
+- le geste côté boucle (`beat()`, une écriture de flottant) : **~0,1 µs/appel** —
+  sans commune mesure avec un tour de boucle asyncio ;
+- le réveil périodique du thread watchdog lui-même, sous une charge SYNTHÉTIQUE qui
+  sature la boucle (pas un repos total) : de l'ordre de **quelques % à l'intervalle par
+  défaut (1 s)**, mesuré sur ce poste de développement où plusieurs sessions tournent
+  en parallèle sur le même tree — donc un ORDRE DE GRANDEUR, pas une décimale précise.
+  Sans commune mesure avec le coût d'un aller-retour réseau ou DB qu'un vrai handler
+  paierait de toute façon (cf. le chiffrage `capture_exception` du même jour, 6-9 ms).
+
+**Preuve empirique du garde-fou** (pas un banc vert de circonstance) :
+`tests/test_hang_watch.py` provoque un VRAI blocage (`time.sleep` synchrone dans la
+boucle, pas une exception fabriquée) et vérifie que le dump journalisé montre la
+ligne exacte du `time.sleep`, sans aucune variable locale ; qu'un fonctionnement
+normal (boucle occupée mais jamais bloquée au-delà du seuil) ne déclenche jamais de
+dump ; qu'un blocage continu observé à plusieurs cycles de vérification ne produit
+qu'UN dump ; que deux blocages séparés par une vraie résorption en produisent bien
+DEUX (le réarmement) ; et qu'une salve au-delà du plafond par minute est refusée en
+le disant.

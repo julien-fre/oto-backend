@@ -110,6 +110,16 @@ def _facturation() -> Fonction:
     return billing_runner.run_billing_loop
 
 
+def _hang_watch_armee() -> bool:
+    from . import hang_watch
+    return hang_watch.enabled()
+
+
+def _hang_watch() -> Fonction:
+    from . import hang_watch
+    return hang_watch.run_heartbeat_loop
+
+
 BOUCLES: tuple[Boucle, ...] = (
     # Envoie les emails programmés (Resend, Scaleway TEM, relais) à leurs destinataires.
     Boucle(nom="scheduler", tiers=True,
@@ -137,6 +147,13 @@ BOUCLES: tuple[Boucle, ...] = (
     # via Mollie. Armée par le drapeau billing ET son interrupteur propre.
     Boucle(nom="billing_runner", tiers=True,
            armee=_facturation_armee, fonction=_facturation),
+    # Watchdog de blocage d'event loop (`hang_watch.py`, `docs/event-loop-perf.md`) :
+    # ne draine rien en base, aucun effet chez un tiers — `tiers=False` au sens le
+    # plus net du mot, elle tourne dans TOUS les environnements, préprod comprise,
+    # exactement là où le prochain gel non identifié peut survenir. Son interrupteur
+    # propre (`OTO_HANG_WATCH_ENABLED`, défaut actif) vit dans `hang_watch.py`.
+    Boucle(nom="hang_watch", tiers=False,
+           armee=_hang_watch_armee, fonction=_hang_watch),
 )
 # (L'index BOAMP/ACCO est passé au service FOD, ADR 0028 B2b : plus de boucle ici.)
 

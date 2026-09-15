@@ -14,7 +14,8 @@ from oto_mcp import boucles_de_fond, config
 
 _INTERRUPTEURS = ("OTO_SCHEDULER_ENABLED", "OTO_EMBED_WORKER_ENABLED",
                   "OTO_FILE_EXTRACT_WORKER_ENABLED", "OTO_RANK_BACKFILL_ENABLED",
-                  "OTO_RUNNER_TICK_ENABLED", "OTO_BILLING_RUNNER_ENABLED")
+                  "OTO_RUNNER_TICK_ENABLED", "OTO_BILLING_RUNNER_ENABLED",
+                  "OTO_HANG_WATCH_ENABLED")
 _PROD = "https://mcp.oto.cx"
 _PREPROD = "https://mcp.oto.ninja"
 
@@ -51,11 +52,11 @@ def test_la_preprod_ne_compose_aucune_boucle_tierce(env):
     assert set(composees) == _toutes(tiers=False)
 
 
-def test_la_production_compose_les_six(env):
+def test_la_production_compose_les_sept(env):
     env.setenv("OTO_MCP_PUBLIC_URL", _PROD)
     env.setenv("OTO_SENTRY_ENV", "production")
     composees = boucles_de_fond.composer()
-    assert len(composees) == len(boucles_de_fond.BOUCLES) == 6
+    assert len(composees) == len(boucles_de_fond.BOUCLES) == 7
     assert set(composees) == _toutes()
 
 
