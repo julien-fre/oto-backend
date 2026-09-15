@@ -97,9 +97,31 @@ def test_materialize_doc_create(monkeypatch):
     target = {"kind": "doc", "op": "create", "project_id": 5, "parent_id": None,
               "title": "T", "doc_kind": "source"}
     res = ut.materialize("u1", target, b"# hello\nverbatim", None)
-    assert res == {"ok": True, "kind": "doc", "op": "create", "doc_id": 77,
-                   "project_id": 5, "bytes": 16, "chars": 16}
+    # oto#86 : allow-list — l'accusé anonyme ne porte plus doc_id/project_id.
+    assert res == {"ok": True, "kind": "doc", "op": "create", "bytes": 16, "chars": 16}
     assert calls["create"][2]["body_md"] == "# hello\nverbatim"
+
+
+def test_materialize_doc_receipt_ne_fuite_aucun_identifiant_interne(monkeypatch):
+    """oto#86 (suite) — trouvé par fleet : la branche `project_file` avait reçu
+    l'allow-list, pas la branche `doc`, alors que c'est la MÊME route anonyme.
+    `update` ET `create` doivent tenir le même verdict que `target_label`."""
+    import oto_mcp.db as db
+    monkeypatch.setattr(db, "update_doc", lambda *a, **k: None)
+    monkeypatch.setattr(db, "get_doc_by_id", lambda did: {"project_id": 5, "title": "T"})
+    monkeypatch.setattr(db, "create_doc", lambda *a, **k: 77)
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
+
+    res_update = ut.materialize(
+        "u1", {"kind": "doc", "op": "update", "doc_id": 991827}, b"x", None)
+    assert res_update == {"ok": True, "kind": "doc", "op": "update", "bytes": 1, "chars": 1}, (
+        f"l'accusé sert doc_id ou un champ de plus — oto#86 : {res_update!r}")
+
+    res_create = ut.materialize(
+        "u1", {"kind": "doc", "op": "create", "project_id": 553201,
+              "title": "T", "doc_kind": "source"}, b"x", None)
+    assert res_create == {"ok": True, "kind": "doc", "op": "create", "bytes": 1, "chars": 1}, (
+        f"l'accusé sert doc_id/project_id ou un champ de plus — oto#86 : {res_create!r}")
 
 
 def test_materialize_doc_rejects_non_utf8(monkeypatch):

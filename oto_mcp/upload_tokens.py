@@ -248,20 +248,25 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
             body_md = data.decode("utf-8")
         except UnicodeDecodeError:
             raise UploadError(400, "not_utf8", "Une page Documents doit être du texte UTF-8.")
+        # oto#86 : même verdict que la branche project_file, trouvé incomplet par
+        # fleet — cette branche rendait `doc_id` (et `project_id` sur `create`) à
+        # l'anonyme porteur du lien, alors que le libellé HTML de la MÊME route
+        # (`target_label`) a été corrigé pour ne JAMAIS les porter. Les deux
+        # verdicts ne peuvent pas coexister : l'accusé ne porte que ce qui suit.
         if target.get("op") == "update":
             did = int(target["doc_id"])
             db.update_doc(did, body_md=body_md, edited_by=sub)
             row = db.get_doc_by_id(did)
             db.log_project_activity(row["project_id"], sub, "doc.update", row.get("title"))
-            return {"ok": True, "kind": "doc", "op": "update", "doc_id": did,
+            return {"ok": True, "kind": "doc", "op": "update",
                     "bytes": len(data), "chars": len(body_md)}
         pid = int(target["project_id"])
         did = db.create_doc(pid, target["title"], parent_id=target.get("parent_id"),
                             body_md=body_md, kind=target.get("doc_kind") or "source",
                             created_by=sub)
         db.log_project_activity(pid, sub, "doc.create", target["title"])
-        return {"ok": True, "kind": "doc", "op": "create", "doc_id": did,
-                "project_id": pid, "bytes": len(data), "chars": len(body_md)}
+        return {"ok": True, "kind": "doc", "op": "create",
+                "bytes": len(data), "chars": len(body_md)}
 
     if kind == "project_file":
         pid = int(target["project_id"])
