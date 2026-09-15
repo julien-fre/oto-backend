@@ -101,3 +101,42 @@ def test_une_page_de_PROSE_suit_la_meme_marque(chez_acme):
     if status == 200:
         for mot in NOS_MARQUES:
             assert mot not in html, f"« {mot} » dans une page de prose de partenaire"
+
+
+# ── La palette est du texte injecté dans du CSS ──────────────────────────────
+
+@pytest.mark.parametrize("charge, ou", [
+    ("#fff}</style><script>alert(1)</script><style>{", "fond"),
+    ("red;}body{display:none", "encre"),
+    ("url(https://exfil.test/?c=)", "surface"),
+])
+def test_une_palette_HOSTILE_n_atteint_jamais_le_bloc_style(seams, charge, ou):
+    """Le sink est le parseur CSS du navigateur, pas le HTML : aucun échappement HTML
+    n'y protégerait. Ce qui protège est la validation de la palette déclarée, qui vit
+    dans `email_brand` — **un autre module**, sur lequel cette page s'appuie en
+    silence. Cette garde joue la charge utile de bout en bout, pour qu'assouplir la
+    validation là-bas fasse rougir ici.
+
+    Une palette partielle est refusée ENTIÈRE : la teinte hostile n'est pas remplacée
+    dans un dessin par ailleurs conservé — sinon on servirait au visiteur d'un
+    partenaire un mélange de deux chartes que personne n'a dessiné."""
+    from oto_mcp import db, email_brand, share_ui, tenancy
+
+    palette = {"fond": "#faf6ec", "surface": "#ffffff", "encre": "#2c2112",
+               "discret": "#7a6c50", "filet": "#ece4d0", "bouton_fond": "#2c2112",
+               "bouton_encre": "#fefcf5", ou: charge}
+    seams.setattr(db, "org_tenant_slug", lambda org_id: "mechant")
+    avant = tenancy.current()
+    tenancy.install(tenancy.IssuerRegistry(tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "mechant", "name": "Méchant",
+                  "issuer": "https://auth.m.test/oidc", "brand": palette}])))
+    try:
+        jetons = share_ui._jetons(email_brand.marque("mechant"))
+        assert charge not in "".join(jetons.values()), "la charge atteint le CSS"
+        html, _ = share_ui.build_page(_PROJECT, "/", connect_url="u")
+        assert charge not in html
+        for interdit in ("</style", "<script", "}body{", "url("):
+            assert interdit not in html.split("</style>")[0], f"« {interdit} » dans le style"
+    finally:
+        tenancy.install(avant)

@@ -110,7 +110,25 @@ def marque_du_projet(project: dict):
 
 
 def _jetons(marque) -> dict:
-    """Les jetons CSS de cette marque. Les nôtres à l'octet si la page est à nous."""
+    """Les jetons CSS de cette marque. Les nôtres à l'octet si la page est à nous.
+
+    ⚠️ **Ces valeurs sont injectées dans un bloc `<style>` complet** — le sink est le
+    parseur CSS du navigateur, pas le HTML, donc `html.escape` n'y protégerait de rien.
+    Ce qui protège est la validation de `email_brand._declaree`, qui refuse une palette
+    déclarée dès qu'une teinte n'est pas `#rgb`/`#rrggbb` **et la refuse ENTIÈRE** : une
+    valeur hostile ne ressort pas amputée, elle ne ressort pas du tout.
+
+    On ne revalide donc PAS ici — deux vérités sur la même question valent moins qu'une
+    seule, et la source unique est celle qui lit la base. Mais la dépendance est réelle
+    et silencieuse : assouplir cette expression ailleurs ouvrirait cette page sans que
+    rien ne le dise. C'est pourquoi elle a une garde mécanique à elle, qui joue la charge
+    utile de bout en bout (`tests/test_share_ui_tenant.py`).
+
+    À savoir si on y touche : l'exigence d'ici est **plus stricte** que celle qui a
+    motivé la validation. Les emails injectent dans un attribut `style=` ; une accolade
+    fermante y est inerte, alors qu'ici elle terminerait la règle et ouvrirait un
+    sélecteur arbitraire.
+    """
     if not marque.slug or marque.slug == "oto":
         return {"bg": "#fefcf5", "surface": "#fff", "ink": "#2c2112", "hair": "#dccfa8",
                 "primary": "#f0b41e", **_JETONS_OTO}
