@@ -111,31 +111,9 @@ jobs:
       - name: Importer l'arbre du commit, extrait de git
         run: python scripts/arbre-importable.py
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # LA SUITE, EN TROIS PARTS PARALLÈLES.
-  #
-  # `empreinte-collecte` (ci-dessous) mesure que la mémoire du runner tiendrait 37
-  # workers et que ce sont les CŒURS qui en bornent 4. Le temps ne tient donc ni au
-  # nombre de tests ni à leur contenu : il tient à la taille de la machine. Trois
-  # jobs `ubuntu-latest` en parallèle donnent 12 cœurs pour le prix d'un — chacun
-  # dans son propre conteneur, donc sans contention PostgreSQL entre eux (c'est
-  # aussi pourquoi chaque part relève `OTO_TEST_PG_PLACES`, comme le faisait le job
-  # unique).
-  #
-  # ⚠️ **Le risque d'un découpage n'est pas d'être mal équilibré, c'est d'être
-  # TROUÉ.** Un fichier qui n'appartient à aucune part n'est jamais joué et la CI
-  # reste verte : elle ne rougit pas, elle devient aveugle. D'où deux garde-fous —
-  # la répartition est CALCULÉE à chaque run depuis la collecte réelle (jamais une
-  # liste figée que quelqu'un devrait penser à mettre à jour quand il ajoute un
-  # fichier), et le job `test` ci-dessous prouve que l'union des parts est
-  # exactement l'ensemble collecté avant de conclure.
-  test-part:
-    strategy:
-      fail-fast: false        # une part rouge ne doit pas masquer l'état des autres
-      matrix:
-        part: [0, 1, 2]
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 20  # max observé 9 min 58 s — le plus long de la chaîne
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -144,54 +122,26 @@ jobs:
           cache: pip
       - name: Install (deps + dev)
         run: pip install -e ".[dev]"
-      - name: Tests (part ${{ matrix.part }}/3)
-        # `-n 4` : le nombre vient d'`empreinte-collecte`, mesuré SUR CETTE MACHINE,
-        # pas recopié — c'est la leçon du gel de six heures du 07/09/2026, où quatre
-        # workers calibrés sur un poste à 28 cœurs ont fait tuer `pytest` par l'OOM
-        # killer sept fois de suite. Le découpage change le nombre de MACHINES, pas
-        # le nombre de workers par machine.
+      - name: Tests
+        # `--durations=25` n'ajoute qu'un tableau en fin de sortie : aucune sélection,
+        # aucun comportement changé, aucune seconde de plus. Il est là parce que
+        # personne ne sait OÙ passent les ~9 min de cette étape. On a discuté de la
+        # paralléliser sans jamais regarder si elle est lente partout ou lente à
+        # quelques endroits — et la seule tentative, calibrée sur un chiffre deviné, a
+        # gelé le tronc six heures. Ce tableau est le préalable gratuit à cette
+        # décision. (Les attentes fixes de la suite ne pèsent que quelques secondes :
+        # ce qu'on cherche ici, ce sont les fixtures et les sous-processus.)
+        #
+        # `-n 4` (14/09/2026) : le nombre vient du job `empreinte-collecte` ci-dessous,
+        # PAS d'un chiffre recopié — c'est la leçon du gel de 6 h inscrite juste au-dessus.
+        # `OTO_TEST_PG_PLACES=4` (docs/commands.md §Suite parallèle en CI) : la garde de
+        # `_jeton_de_suite.py` (2 places) protège le poste de DEV partagé entre sessions
+        # concurrentes ; ce job tourne seul dans un conteneur CI isolé, où elle ne fait que
+        # bloquer/chronométrer à vide 2 des 4 workers sur leur propre fixture — vérifié
+        # localement (`-n 4` nu : 921 s et 414 erreurs en cascade, contre 668 s en série).
         env:
           OTO_TEST_PG_PLACES: "4"
-        run: |
-          set -euo pipefail
-          python scripts/repartir_suite.py --parts 3 --part ${{ matrix.part }} > part.txt
-          echo "$(wc -l < part.txt) fichiers dans cette part"
-          # `-x` : si la liste ne tenait pas en une invocation, xargs en lancerait
-          # PLUSIEURS et le code de sortie serait celui de la dernière — un échec dans
-          # la première partirait vert. Avec `-x`, il refuse au lieu de découper.
-          xargs -x -a part.txt pytest -q -n 4 --durations=10
-
-  # Le job dont la conclusion fait foi. Il DOIT s'appeler `test` :
-  # `scripts/garde_preprod_verte.py` exige un job de ce nom exact
-  # (`JOB_EXIGE = "test"`, comparé par égalité) pour autoriser une mise en
-  # production. Une matrice nomme ses jobs `test-part (0)`, `test-part (1)`… —
-  # aucun ne s'appellerait `test`, et la garde refuserait TOUT déploiement.
-  test:
-    needs: test-part
-    if: always()              # sinon un `needs` rouge rend ce job `skipped`, et
-    runs-on: ubuntu-latest    # `skipped` n'est pas `failure` : la garde verrait un
-    timeout-minutes: 10       # trou au lieu d'un refus.
-    steps:
-      - name: Toutes les parts sont vertes
-        # `needs.test-part.result` agrège la matrice : `success` seulement si TOUTES
-        # ont réussi. On refuse explicitement tout le reste — `skipped` compris, qui
-        # est le cas silencieux qu'on ne verrait pas passer.
-        run: |
-          resultat='${{ needs.test-part.result }}'
-          echo "parts : $resultat"
-          [ "$resultat" = "success" ] || { echo "::error::la suite n'est pas verte ($resultat)"; exit 1; }
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install (deps + dev)
-        run: pip install -e ".[dev]"
-      - name: Aucun fichier de test n'est tombé entre les parts
-        # Trois parts vertes ne prouvent rien si un fichier n'est dans aucune. Cette
-        # vérification est ICI, dans le job que la garde de préproduction interroge :
-        # une suite trouée doit bloquer la production, pas la traverser en silence.
-        run: python scripts/repartir_suite.py --parts 3 --verifier
+        run: pytest -q -n 4 --durations=25
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CE QUE PÈSE UNE COLLECTE, SUR LA MACHINE QUI L'EXÉCUTE.
