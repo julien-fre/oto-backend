@@ -516,9 +516,10 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
         # REJETÉE par tout client MCP réel. Le dire ICI, pas au client à qui on
         # vient d'envoyer le lien (vécu, feedback #308).
         warnings.append(
-            f"URL d'environnement de TEST ({config.project_domain()}) : son certificat "
-            "TLS n'est pas reconnu publiquement, un client MCP refusera la connexion. "
-            "Ne la transmets pas à un tiers — republie depuis la production.")
+            "cette instance ne se déclare pas comme la production (OTO_ENV) : le "
+            f"certificat TLS de {config.project_domain()} n'y est pas reconnu "
+            "publiquement, un client MCP refusera la connexion. Ne transmets pas cette "
+            "URL à un tiers — republie depuis la production.")
     if not (db.get_project_by_id(project_id) or {}).get("mcp_instructions_md"):
         warnings.append(
             "aucune instruction publiée : l'agent du destinataire se branchera sans "

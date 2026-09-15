@@ -19,16 +19,18 @@ from oto_mcp.capabilities import billing as cap_billing
 from oto_mcp.capabilities._types import AuthzDenied
 from oto_mcp.db import billing as db_billing
 
-# Les déclarations relevées sur les processus servis le 10/09/2026.
-PROD = ("https://mcp.oto.cx", "production")
-PREPROD = ("https://mcp.oto.ninja", "canari")
+# Les déclarations relevées sur les processus servis le 10/09/2026 — chaque
+# environnement se nommait alors par son URL publique ; c'est `OTO_ENV` qui le porte
+# depuis le 15/09, et Sentry reste le second témoin qu'on recoupe.
+PROD = (config.PROD, "production")
+PREPROD = (config.PREPROD, "canari")
 
 
-def _env(monkeypatch, url, sentry=None):
-    if url is None:
-        monkeypatch.delenv("OTO_MCP_PUBLIC_URL", raising=False)
+def _env(monkeypatch, declare, sentry=None):
+    if declare is None:
+        monkeypatch.delenv("OTO_ENV", raising=False)
     else:
-        monkeypatch.setenv("OTO_MCP_PUBLIC_URL", url)
+        monkeypatch.setenv("OTO_ENV", declare)
     if sentry is None:
         monkeypatch.delenv("OTO_SENTRY_ENV", raising=False)
     else:

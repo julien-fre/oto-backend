@@ -16,8 +16,7 @@ _INTERRUPTEURS = ("OTO_SCHEDULER_ENABLED", "OTO_EMBED_WORKER_ENABLED",
                   "OTO_FILE_EXTRACT_WORKER_ENABLED", "OTO_RANK_BACKFILL_ENABLED",
                   "OTO_RUNNER_TICK_ENABLED", "OTO_BILLING_RUNNER_ENABLED",
                   "OTO_HANG_WATCH_ENABLED")
-_PROD = "https://mcp.oto.cx"
-_PREPROD = "https://mcp.oto.ninja"
+_PROD, _PREPROD = config.PROD, config.PREPROD
 
 
 @pytest.fixture
@@ -26,7 +25,7 @@ def env(monkeypatch):
     for var in _INTERRUPTEURS:
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("OTO_BILLING_ENABLED", "1")
-    monkeypatch.delenv("OTO_MCP_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("OTO_ENV", raising=False)
     monkeypatch.delenv("OTO_SENTRY_ENV", raising=False)
     return monkeypatch
 
@@ -41,8 +40,9 @@ def _toutes(tiers=None):
 
 
 def test_la_preprod_ne_compose_aucune_boucle_tierce(env):
-    # La configuration relevée sur la préprod servie le 10/09/2026.
-    env.setenv("OTO_MCP_PUBLIC_URL", _PREPROD)
+    # La configuration relevée sur la préprod servie le 10/09/2026 — elle se déclarait
+    # alors par son URL publique ; c'est `OTO_ENV` qui la porte depuis le 15/09.
+    env.setenv("OTO_ENV", _PREPROD)
     env.setenv("OTO_SENTRY_ENV", "canari")
     composees = boucles_de_fond.composer()
     from oto_mcp import billing_runner, scheduler
@@ -53,26 +53,28 @@ def test_la_preprod_ne_compose_aucune_boucle_tierce(env):
 
 
 def test_la_production_compose_les_sept(env):
-    env.setenv("OTO_MCP_PUBLIC_URL", _PROD)
+    env.setenv("OTO_ENV", _PROD)
     env.setenv("OTO_SENTRY_ENV", "production")
     composees = boucles_de_fond.composer()
     assert len(composees) == len(boucles_de_fond.BOUCLES) == 7
     assert set(composees) == _toutes()
 
 
-@pytest.mark.parametrize("url", [None, "", "mcp.oto.cx"],
-                         ids=["absente", "vide", "sans-schema-donc-sans-hote"])
-def test_un_environnement_indeterminable_refuse_de_demarrer(env, url):
-    if url is not None:
-        env.setenv("OTO_MCP_PUBLIC_URL", url)
+@pytest.mark.parametrize("declare", [None, "", "staging", "mcp.oto.cx"],
+                         ids=["absente", "vide", "valeur-inconnue", "un-hote-nest-pas-un-env"])
+def test_un_environnement_indeterminable_refuse_de_demarrer(env, declare):
+    # Absente, on ne suppose pas ; renseignée de travers, on n'interprète pas. `staging`
+    # n'est ni `prod` ni `preprod`, et personne ne tranche à la place de qui déploie.
+    if declare is not None:
+        env.setenv("OTO_ENV", declare)
     with pytest.raises(config.EnvironnementAmbigu):
         boucles_de_fond.composer()
 
 
-@pytest.mark.parametrize("url, sentry", [(_PROD, "canari"), (_PREPROD, "production"),
-                                         (_PREPROD, "PRODUCTION")])
-def test_deux_declarations_qui_se_contredisent_refusent(env, url, sentry):
-    env.setenv("OTO_MCP_PUBLIC_URL", url)
+@pytest.mark.parametrize("declare, sentry", [(_PROD, "canari"), (_PREPROD, "production"),
+                                             (_PREPROD, "PRODUCTION")])
+def test_deux_declarations_qui_se_contredisent_refusent(env, declare, sentry):
+    env.setenv("OTO_ENV", declare)
     env.setenv("OTO_SENTRY_ENV", sentry)
     with pytest.raises(config.EnvironnementAmbigu):
         boucles_de_fond.composer()
@@ -80,9 +82,9 @@ def test_deux_declarations_qui_se_contredisent_refusent(env, url, sentry):
 
 def test_sentry_absent_ne_vote_pas(env):
     # Son défaut côté Sentry (`production`) n'est pas une déclaration.
-    env.setenv("OTO_MCP_PUBLIC_URL", _PREPROD)
+    env.setenv("OTO_ENV", _PREPROD)
     assert config.est_la_production() is False
-    env.setenv("OTO_MCP_PUBLIC_URL", _PROD)
+    env.setenv("OTO_ENV", _PROD)
     assert config.est_la_production() is True
 
 
@@ -93,10 +95,10 @@ def test_sans_boucle_tierce_armee_la_question_nest_pas_posee(env):
 
 
 def test_un_interrupteur_eteint_partout_et_n_allume_jamais_hors_production(env):
-    env.setenv("OTO_MCP_PUBLIC_URL", _PROD)
+    env.setenv("OTO_ENV", _PROD)
     env.setenv("OTO_SCHEDULER_ENABLED", "0")
     assert _fonction("scheduler") not in boucles_de_fond.composer()
-    env.setenv("OTO_MCP_PUBLIC_URL", _PREPROD)
+    env.setenv("OTO_ENV", _PREPROD)
     env.setenv("OTO_SCHEDULER_ENABLED", "1")
     env.setenv("OTO_BILLING_RUNNER_ENABLED", "1")
     composees = boucles_de_fond.composer()

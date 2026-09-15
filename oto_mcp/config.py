@@ -22,20 +22,33 @@ def project_domain() -> str:
     return os.environ.get("OTO_PROJECT_DOMAIN", _PROD_PROJECT_DOMAIN).strip().lower().lstrip(".")
 
 
-# Domaine de projet de PRODUCTION : le seul dont les sous-domaines obtiennent un vrai
-# certificat (Caddy ACME on-demand sur `*.mcp.oto.cx` / `*.share.oto.cx`). Hors prod,
-# Caddy sert sa CA interne — pratique pour tester, rejeté par tout client MCP réel.
+# NOTRE domaine de projet de production, et rien de plus qu'un défaut : ses sous-domaines
+# obtiennent un vrai certificat (Caddy ACME on-demand sur `*.mcp.oto.cx` /
+# `*.share.oto.cx`) là où notre préprod sert sa CA interne — pratique pour tester, rejeté
+# par tout client MCP réel. Ce n'est PAS ce qui dit si l'instance est la production :
+# celle-là se déclare (`OTO_ENV`).
 _PROD_PROJECT_DOMAIN = "oto.cx"
 
 
 def project_domain_is_production() -> bool:
-    """L'URL d'un projet publié ici est-elle distribuable à un tiers ? Faux en preprod :
-    le certificat de `*.share.<D>` y est interne, donc un lien envoyé à un client sera
-    refusé par son client MCP (feedback #308 — découvert en livrant un vrai client)."""
-    return project_domain() == _PROD_PROJECT_DOMAIN
+    """L'URL d'un projet publié ici est-elle distribuable à un tiers ? Faux hors
+    production : le certificat de `*.share.<D>` y est interne, donc un lien envoyé à un
+    client sera refusé par son client MCP (feedback #308 — découvert en livrant un vrai
+    client).
+
+    **Lit la déclaration, plus le domaine.** Cette fonction comparait `project_domain()`
+    à notre domaine de production : elle reposait donc la question « suis-je la
+    production ? » une seconde fois, depuis une autre source. Sur une instance servie
+    ailleurs, elle étiquetait « environnement de test » chaque URL publiée — alors que
+    son certificat est parfaitement réel. Deux vérités sur une même question sont pires
+    qu'une seule fausse (ADR 0070).
+
+    Inconnu vaut faux : sans déclaration, on avertit plutôt que de promettre."""
+    return origine_du_process() == PROD
 
 
-# Les deux origines possibles d'une écriture sur la base PARTAGÉE prod/preprod.
+# Les deux valeurs d'`OTO_ENV` — et les deux origines possibles d'une écriture sur la
+# base que prod et preprod PARTAGENT.
 PROD, PREPROD = "prod", "preprod"
 
 
@@ -43,28 +56,27 @@ def origine_du_process() -> Optional[str]:
     """**Quel environnement ce process sert-il ?** `prod`, `preprod`, ou None s'il ne
     peut pas le savoir (dev, tests) — auquel cas on n'invente rien.
 
-    Prod et preprod partagent la MÊME base : sans cette réponse, ce que les deux
-    écrivent se mélange et l'on ne peut plus lire une fenêtre « en prod ». Le besoin
-    est né le 2026-08-29, en lisant le premier compteur de la fenêtre L7.
+    **Déclaré par `OTO_ENV`, jamais déduit.** Le domaine ne vote plus. Il votait : on
+    comparait l'hôte de `OTO_MCP_PUBLIC_URL` à une chaîne écrite dans ce module, et
+    toute instance servie ailleurs que chez nous était classée `preprod` **en silence**
+    — donc sans prélèvement, sans boucle sortante et avec tout paiement refusé, sans
+    qu'aucune erreur ne le dise. C'est le défaut que l'ADR 0070 ferme : une instance
+    déclare ce qu'elle est, elle ne le devine pas à l'endroit où elle tourne. Même
+    principe que `tenants.hosts`, où l'hôte est lu d'une déclaration, jamais comparé
+    à un littéral.
 
-    **Dérivé de `OTO_MCP_PUBLIC_URL`, et c'est le choix qui compte.** C'est l'URL que
-    ce process annonce de lui-même, elle est `require_env` (donc jamais absente là où
-    ça compte) et elle diffère par environnement — `mcp.oto.cx` en prod,
-    `mcp.oto.ninja` en preprod. **Surtout, elle ne peut pas se DÉFAUTER** : c'est ce
-    qui la sépare de `project_domain()`, dont le défaut est le domaine de PRODUCTION
-    et qui n'est posé qu'en preprod. Un environnement qui oublierait la variable y
-    serait classé « prod » en silence ; ici il est classé « inconnu », et un inconnu
-    se voit.
-
-    Aucun nouveau réglage à poser à la main : on lit ce que le process sait déjà."""
-    url = os.environ.get("OTO_MCP_PUBLIC_URL")
-    if not url:
+    Une valeur inconnue **lève** au lieu de retomber sur une supposition : `staging`
+    n'est pas `preprod`, et personne ne doit décider à la place de celui qui déploie.
+    Absente, elle rend None — le cas du poste de développement et des tests, où rien
+    n'engage un tiers."""
+    declare = (os.environ.get("OTO_ENV") or "").strip().lower()
+    if not declare:
         return None
-    from urllib.parse import urlparse
-    host = (urlparse(url).hostname or "").strip().lower()
-    if not host:
-        return None
-    return PROD if host == f"mcp.{_PROD_PROJECT_DOMAIN}" else PREPROD
+    if declare not in (PROD, PREPROD):
+        raise EnvironnementAmbigu(
+            f"OTO_ENV vaut {declare!r} : les seules valeurs sont {PROD!r} et {PREPROD!r}. "
+            "Corrige la déclaration de cette instance — ce process ne devine pas.")
+    return declare
 
 
 class EnvironnementAmbigu(RuntimeError):
@@ -83,28 +95,27 @@ def est_la_production() -> bool:
     par une valeur par défaut.
 
     Deux déclarations déjà posées, qui doivent CONCORDER :
-    - `origine_du_process()`, dérivée de `OTO_MCP_PUBLIC_URL` : prod SEULEMENT si l'hôte
-      est exactement `mcp.oto.cx` ;
+    - `origine_du_process()`, lue de `OTO_ENV` : ce que l'instance DÉCLARE être ;
     - `OTO_SENTRY_ENV` quand il est posé (`production` en prod, `canari` en préprod,
       relevés le 10/09/2026). Absent, il ne vote pas : son défaut côté Sentry
       (`production`) n'est pas une déclaration.
 
-    Une URL sans hôte, ou deux déclarations qui se contredisent, lèvent. Le cas visé :
-    un renommage de domaine qui changerait l'une sans l'autre. La prod refuse alors de
-    démarrer (le bleu/vert garde l'ancienne couleur) au lieu de cesser de prélever en
-    silence.
+    Une déclaration absente, ou deux déclarations qui se contredisent, lèvent. Le cas
+    visé : une instance qu'on redéploie ailleurs en ne changeant qu'une des deux. La
+    prod refuse alors de démarrer (le bleu/vert garde l'ancienne couleur) au lieu de
+    cesser de prélever en silence.
     """
     origine = origine_du_process()
     if origine is None:
         raise EnvironnementAmbigu(
-            "impossible de dire si ce process est la production : OTO_MCP_PUBLIC_URL "
-            f"est absente ou sans hôte ({os.environ.get('OTO_MCP_PUBLIC_URL')!r}). "
-            "Pose-la (https://mcp.oto.cx en production), ou éteins les boucles qui "
-            "agissent sur un tiers (OTO_SCHEDULER_ENABLED=0, OTO_BILLING_RUNNER_ENABLED=0).")
+            "impossible de dire si ce process est la production : OTO_ENV est absente. "
+            f"Pose-la ({PROD!r} ou {PREPROD!r}) sur cette instance, ou éteins les boucles "
+            "qui agissent sur un tiers (OTO_SCHEDULER_ENABLED=0, "
+            "OTO_BILLING_RUNNER_ENABLED=0).")
     sentry = os.environ.get("OTO_SENTRY_ENV", "").strip().lower()
     if sentry and (sentry == "production") != (origine == PROD):
         raise EnvironnementAmbigu(
-            f"OTO_MCP_PUBLIC_URL désigne {origine!r} mais OTO_SENTRY_ENV vaut {sentry!r} : "
+            f"OTO_ENV déclare {origine!r} mais OTO_SENTRY_ENV vaut {sentry!r} : "
             "les deux déclarations de l'environnement se contredisent. Corrige celle qui "
             "ment, ce process ne choisit pas entre elles.")
     return origine == PROD

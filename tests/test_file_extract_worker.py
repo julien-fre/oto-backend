@@ -149,7 +149,7 @@ def test_the_loop_is_registered_independently_of_the_embed_worker(monkeypatch):
     « factorisons les deux boucles » doit faire rougir quelque chose."""
     from oto_mcp import boucles_de_fond, embed_worker
 
-    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.cx")
+    monkeypatch.setenv("OTO_ENV", "prod")
     monkeypatch.delenv("OTO_SENTRY_ENV", raising=False)
     monkeypatch.delenv("OTO_FILE_EXTRACT_WORKER_ENABLED", raising=False)
     monkeypatch.setenv("OTO_EMBED_WORKER_ENABLED", "0")

@@ -53,7 +53,7 @@ class _Db:
 def _production(monkeypatch):
     """Ces épreuves jouent la PRODUCTION, où un paiement `live` ouvre un droit ; hors
     d'elle aucun n'en ouvre (`billing_mode`, 10/09/2026)."""
-    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.cx")
+    monkeypatch.setenv("OTO_ENV", "prod")
     monkeypatch.delenv("OTO_SENTRY_ENV", raising=False)
 
 

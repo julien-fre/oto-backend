@@ -64,27 +64,24 @@ def _lignes():
     return db_shadow.read_shadow(days=1)
 
 
-# ── L'origine est DÉRIVÉE, jamais posée à la main ─────────────────────────────
+# ── L'origine est celle que le process DÉCLARE, jamais posée à la main ────────
 
-@pytest.mark.parametrize("url,attendu", [
-    ("https://mcp.oto.cx", "prod"),
-    ("https://mcp.oto.ninja", "preprod"),
-])
-def test_l_origine_se_derive_de_l_url_publique_du_process(live, monkeypatch, url, attendu):
+@pytest.mark.parametrize("declare", ["prod", "preprod"])
+def test_l_origine_est_celle_que_le_process_declare(live, monkeypatch, declare):
     from oto_mcp.db import access_shadow as db_shadow
 
-    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", url)
+    monkeypatch.setenv("OTO_ENV", declare)
     db_shadow.bump_shadow("serper", 7, "accord", 1)
-    assert [l["origine"] for l in _lignes()] == [attendu]
+    assert [l["origine"] for l in _lignes()] == [declare]
 
 
-def test_sans_url_publique_l_origine_reste_INCONNUE(live, monkeypatch):
-    """Un environnement qui ne peut pas se nommer ne se devine pas. C'est ce qui
-    sépare cette dérivation de `project_domain()`, dont le défaut est le domaine de
-    PRODUCTION : une variable oubliée y serait classée « prod » en silence."""
+def test_sans_declaration_l_origine_reste_INCONNUE(live, monkeypatch):
+    """Un environnement qui ne se nomme pas ne se devine pas. C'est ce qui sépare cette
+    lecture de `project_domain()`, dont le défaut est le domaine de PRODUCTION : une
+    variable oubliée y serait classée « prod » en silence."""
     from oto_mcp.db import access_shadow as db_shadow
 
-    monkeypatch.delenv("OTO_MCP_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("OTO_ENV", raising=False)
     db_shadow.bump_shadow("serper", 7, "accord", 1)
     assert [l["origine"] for l in _lignes()] == [None]
 

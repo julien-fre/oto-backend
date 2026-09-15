@@ -17,7 +17,10 @@ détruisant que ce que le code prod COURANT ne référence plus.
 **Le même fait vaut pour les boucles de fond** : une boucle qui tourne en préprod draine
 le travail de la prod. Celles qui agissent sur un tiers (prélèvement, email) ne sont
 composées qu'en production (`boucles_de_fond.py`), et un process qui ne sait pas s'il est
-la production refuse de démarrer (`config.est_la_production`).
+la production refuse de démarrer (`config.est_la_production`). Il le sait parce que
+l'instance le DÉCLARE — `OTO_ENV=prod|preprod`, recoupée avec `OTO_SENTRY_ENV` ; ça ne se
+déduit plus de l'URL publique, qui ne dit rien de l'environnement sur une instance servie
+ailleurs que chez nous.
 
 ## La danse en N lots
 

@@ -38,14 +38,28 @@ def test_unknown_project_falls_open(monkeypatch):
     assert instructions.compose_published_project(999999) is None
 
 
-def test_production_domain_is_the_only_distributable_one(monkeypatch):
+def test_c_est_la_DECLARATION_qui_rend_une_URL_distribuable(monkeypatch):
+    """Et plus le domaine. Une instance servie ailleurs que chez nous publie des URL
+    parfaitement distribuables : son certificat est réel. L'ancienne règle comparait
+    `project_domain()` à `oto.cx` et étiquetait donc « environnement de test » tout ce
+    qu'un tiers publie sur son propre domaine."""
+    monkeypatch.setenv("OTO_ENV", config.PROD)
+    assert config.project_domain_is_production() is True
+    monkeypatch.setenv("OTO_PROJECT_DOMAIN", "partenaire.example")
+    assert config.project_domain_is_production() is True, "un autre domaine reste servi en prod"
+
+    monkeypatch.setenv("OTO_ENV", config.PREPROD)
+    assert config.project_domain_is_production() is False
+
+    monkeypatch.delenv("OTO_ENV", raising=False)
+    assert config.project_domain_is_production() is False, "sans déclaration, on avertit"
+
+
+def test_le_domaine_des_projets_a_pour_defaut_le_notre(monkeypatch):
     monkeypatch.delenv("OTO_PROJECT_DOMAIN", raising=False)
     importlib.reload(config)
     assert config.project_domain() == "oto.cx"
-    assert config.project_domain_is_production() is True
-
     monkeypatch.setenv("OTO_PROJECT_DOMAIN", "oto.ninja")
-    importlib.reload(config)
-    assert config.project_domain_is_production() is False
+    assert config.project_domain() == "oto.ninja"
     monkeypatch.delenv("OTO_PROJECT_DOMAIN", raising=False)
     importlib.reload(config)

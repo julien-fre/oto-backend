@@ -264,7 +264,7 @@ def test_runner_loop_registered_at_boot(monkeypatch):
     # base et porte la clé Mollie de test (cf. tests/test_boucles_de_fond.py).
     from oto_mcp import boucles_de_fond
 
-    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.cx")
+    monkeypatch.setenv("OTO_ENV", "prod")
     monkeypatch.delenv("OTO_SENTRY_ENV", raising=False)
     monkeypatch.setenv("OTO_BILLING_ENABLED", "1")
     monkeypatch.delenv("OTO_BILLING_RUNNER_ENABLED", raising=False)

@@ -213,7 +213,7 @@ def _wire_confirm(monkeypatch, *, payment, mandate=None, sub=None, age=None):
                         lambda org, **k: state.setdefault("upsert", (org, k)))
     # Le PSP simulé répond comme en production — mode `live` — et l'environnement est
     # déclaré : hors production, aucun paiement n'ouvre de droit (`billing_mode`).
-    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.cx")
+    monkeypatch.setenv("OTO_ENV", "prod")
     monkeypatch.delenv("OTO_SENTRY_ENV", raising=False)
     monkeypatch.setattr(billing.mollie_client, "get_payment",
                         lambda i: {"mode": "live", **payment})
