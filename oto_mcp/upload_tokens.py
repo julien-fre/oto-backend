@@ -122,14 +122,22 @@ def verify(token: str) -> Optional[dict]:
 
 
 def target_label(target: dict) -> str:
-    """Libellé humain de la cible (page d'upload GET). Pas de secret, pas de contenu."""
+    """Libellé humain de la cible (page d'upload GET, servie SANS authentification).
+    Pas de secret, pas de contenu — et depuis oto#86, plus aucun IDENTIFIANT
+    INTERNE (`doc_id`/`project_id`) : la docstring promettait déjà « pas de secret,
+    pas de contenu », mais interpolait ces deux id bruts dans le HTML servi à
+    n'importe qui porte le lien. Choix délibéré : on n'ajoute PAS de résolution en
+    base (nom de projet/titre du doc) pour les remplacer — un aller-retour DB de
+    plus sur un chemin anonyme pour un gain d'ergonomie seul ne le vaut pas ici ;
+    le libellé s'appuie donc uniquement sur ce que le jeton porte déjà (titre,
+    nom de fichier), sans jamais l'id brut."""
     k = target.get("kind")
     if k == "doc":
         if target.get("op") == "update":
-            return f"mise à jour de la page Documents #{target.get('doc_id')}"
-        return f"nouvelle page « {target.get('title')} » (projet #{target.get('project_id')})"
+            return "mise à jour d'une page Documents"
+        return f"nouvelle page « {target.get('title')} »"
     if k == "project_file":
-        return f"fichier « {target.get('filename')} » (projet #{target.get('project_id')})"
+        return f"fichier « {target.get('filename')} »"
     if k == "datastore":
         # ⚠️ `namespace` et non `datastore` : cette cible est SCELLÉE dans un jeton
         # d'upload signé. Les jetons déjà émis portent l'ancienne clé, et un jeton ne se
@@ -268,8 +276,15 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
                                   title=target.get("title"),
                                   description=target.get("description"), created_by=sub)
         db.log_project_activity(pid, sub, "project.file_add", target.get("title") or filename)
-        row.pop("s3_key", None)
-        return {"ok": True, "kind": "project_file", "file": row, "bytes": len(data)}
+        # Allow-list, pas retrait (oto#86) : la ligne de base porte, entre autres,
+        # l'identifiant du compte déposant (`created_by`), l'id interne de la ligne
+        # et du projet, l'état de publication — un `row.pop("s3_key")` n'en retirait
+        # qu'UN. Ce lien est CONÇU pour être transmis à un tiers sans shell
+        # (docstring du module) : il n'a besoin de savoir que c'est passé, la
+        # taille, et le nom du fichier.
+        from . import redaction
+        return {"ok": True, "kind": "project_file",
+                **redaction.champs_autorises(row, "filename"), "bytes": len(data)}
 
     if kind == "datastore":
         from .datastore import core as ds  # lazy : évite tout cycle d'import au boot

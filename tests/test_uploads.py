@@ -125,9 +125,36 @@ def test_materialize_project_file_ignores_curl_default_ct(monkeypatch):
     target = {"kind": "project_file", "project_id": 5, "filename": "r.pdf",
               "title": None, "description": None, "content_type": None}
     # curl --data-binary pose application/x-www-form-urlencoded → ne doit PAS coller au PDF
-    res = ut.materialize("u1", target, b"%PDF-1.7 ...", "application/x-www-form-urlencoded")
+    body = b"%PDF-1.7 ..."
+    res = ut.materialize("u1", target, body, "application/x-www-form-urlencoded")
     assert seen["ctype"] == "application/octet-stream"
-    assert "s3_key" not in res["file"]              # la clé S3 ne fuite jamais
+    # oto#86 : allow-list, pas retrait — l'accusé anonyme ne porte QUE ce qui suit,
+    # jamais la clé S3, jamais l'id de ligne, jamais `created_by`.
+    assert res == {"ok": True, "kind": "project_file", "filename": "r.pdf", "bytes": len(body)}
+
+
+def test_materialize_project_file_receipt_ne_fuite_aucun_identifiant_interne(monkeypatch):
+    """oto#86 fuite 1 — l'accusé servait la ligne de base ENTIÈRE (moins la clé S3
+    via un `pop()` ponctuel) : l'id de ligne, l'id de projet, `created_by` (le
+    compte DÉPOSANT, forme `<tenant>:<sub>`), l'état de publication… à un TIERS
+    anonyme porteur du lien — cas d'usage documenté (claude.ai sans shell transmet
+    l'URL à un humain). Le tiers n'a besoin que de savoir que c'est passé."""
+    import oto_mcp.db as db
+    import oto_mcp.media_store as ms
+    monkeypatch.setattr(ms, "upload_object", lambda *a, **k: "project-files/5/deadbeef/r.pdf")
+    monkeypatch.setattr(db, "add_project_file", lambda *a, **k: {
+        "id": 42, "project_id": 5, "s3_key": "project-files/5/deadbeef/r.pdf",
+        "filename": "r.pdf", "mime": "application/pdf", "size_bytes": 4,
+        "title": None, "description": None, "summary": None, "public": False,
+        "public_url": None, "created_by": "tenant-x:sub-y",
+        "created_at": "2026-09-15 00:00:00",
+    })
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
+    target = {"kind": "project_file", "project_id": 5, "filename": "r.pdf",
+              "title": None, "description": None, "content_type": "application/pdf"}
+    res = ut.materialize("u1", target, b"%PDF", "application/pdf")
+    assert res == {"ok": True, "kind": "project_file", "filename": "r.pdf", "bytes": 4}, (
+        f"l'accusé sert un champ de plus que ok/kind/filename/bytes — oto#86 : {res!r}")
 
 
 def test_parse_rows_ndjson_and_csv():
@@ -214,15 +241,33 @@ def test_target_label():
     assert "r.pdf" in ut.target_label({"kind": "project_file", "filename": "r.pdf", "project_id": 5})
 
 
+def test_target_label_ne_porte_aucun_identifiant_interne():
+    """oto#86 fuite 2 — `target_label` interpolait `doc_id`/`project_id` dans le
+    libellé de la page GET, servie SANS authentification à quiconque a le lien ;
+    sa propre docstring promettait pourtant « pas de secret, pas de contenu »."""
+    label = ut.target_label({"kind": "doc", "op": "update", "doc_id": 991827})
+    assert "991827" not in label, f"l'id interne du doc fuite — oto#86 ({label!r})"
+
+    label = ut.target_label({"kind": "doc", "op": "create", "title": "Transcript",
+                             "project_id": 553201})
+    assert "553201" not in label, f"l'id de projet fuite (doc create) — oto#86 ({label!r})"
+
+    label = ut.target_label({"kind": "project_file", "filename": "r.pdf",
+                             "project_id": 553201})
+    assert "553201" not in label, f"l'id de projet fuite (project_file) — oto#86 ({label!r})"
+
+
 def test_materialize_project_file_prefers_declared_ct(monkeypatch):
     seen = {}
     import oto_mcp.db as db
     import oto_mcp.media_store as ms
     monkeypatch.setattr(ms, "upload_object",
                         lambda *a, **k: seen.setdefault("ctype", a[3]) or "k/x/f")
-    monkeypatch.setattr(db, "add_project_file", lambda *a, **k: {"id": 1, "s3_key": "k/x/f"})
+    monkeypatch.setattr(db, "add_project_file",
+                        lambda *a, **k: {"id": 1, "s3_key": "k/x/f", "filename": "r.csv"})
     monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
     target = {"kind": "project_file", "project_id": 5, "filename": "r.csv",
               "title": None, "description": None, "content_type": "text/csv"}
-    ut.materialize("u1", target, b"a,b,c", "application/x-www-form-urlencoded")
+    res = ut.materialize("u1", target, b"a,b,c", "application/x-www-form-urlencoded")
     assert seen["ctype"] == "text/csv"
+    assert res == {"ok": True, "kind": "project_file", "filename": "r.csv", "bytes": 5}

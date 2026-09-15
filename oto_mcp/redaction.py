@@ -15,6 +15,16 @@ non-structuré = passe-through (sentinelle `PASSTHROUGH`).
 Ce module porte aussi le **rendu du VIDE** (`is_empty_payload`/`render_empty`) :
 un résultat sans aucun résultat se sert au modèle **en phrase**, jamais en
 structure nue. Cf. `EMPTY_MESSAGES` pour la règle et son incident fondateur.
+
+**La face REST n'a AUCUNE de ces deux couches (oto#86).** `FieldRedactionMiddleware`
+et `EmptyResultMiddleware` ne s'accrochent qu'à `on_call_tool`, un concept MCP —
+la face REST ne les traverse jamais. Pour une route AUTHENTIFIÉE ce n'est pas un
+défaut (l'autz gouverne déjà ce qui est lu) ; pour une route **anonyme** qui
+réutilise un magasin écrit pour un appelant authentifié, la liste de colonnes du
+magasin DEVIENT l'unique contrôle. `champs_autorises` est le premier geste vers
+une couche de rédaction REST : une allow-list explicite, posée à la main sur
+chaque route anonyme qui en a besoin (pas encore un middleware générique — cf.
+`docs/redaction.md` §Face REST pour la portée assumée de ce lot).
 """
 from __future__ import annotations
 
@@ -31,6 +41,19 @@ PASSTHROUGH = object()
 
 class RedactionWithheld(Exception):
     """La rédaction d'une policy EXISTANTE a échoué → sortie retenue (fail-closed)."""
+
+
+def champs_autorises(payload: dict, *noms: str) -> dict:
+    """Projette `payload` sur les champs NOMMÉS, et seulement eux — allow-list,
+    jamais une liste de retraits (oto#86, patron de #43 sur les portées de jeton
+    d'API : deny-by-default). Pensée pour une route REST **anonyme** qui réutilise
+    un magasin écrit pour un appelant authentifié : ce qu'elle a le droit de
+    rendre se déclare ICI, une fois, plutôt que par une suite de `pop()` — une
+    colonne ajoutée demain au magasin reste refusée sans que personne y pense,
+    l'exact inverse d'un retrait ponctuel qui ne protège que de ce qu'on a déjà
+    vu. Une clé nommée absente de `payload` est OMISE, jamais rendue `None` : on
+    ne fabrique pas une valeur qui n'existait pas."""
+    return {n: payload[n] for n in noms if n in payload}
 
 
 def _resolve_field_filter(service: str):
