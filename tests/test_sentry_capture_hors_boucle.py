@@ -121,6 +121,14 @@ def test_capture_exception_cout_mesure_sur_la_vraie_chaine_timeout_aiark(monkeyp
         # pour les tests suivants du fichier (les intégrations restent actives
         # une fois posées, même après restauration du client).
         disabled_integrations=[MCPIntegration()],
+        # `default_integrations=False` en plus de `disabled_integrations` : si ce
+        # test fait le tout premier `sentry_sdk.init()` de la suite pytest complète
+        # (pas seulement de ce fichier), les intégrations par défaut du SDK
+        # resteraient patchées pour TOUT LE PROCESS ensuite — aucune ne se
+        # désinstalle entre deux tests. Ce banc mesure `capture_exception` brut, pas
+        # une intégration tierce : aucune des intégrations par défaut n'a de raison
+        # d'être active ici.
+        default_integrations=False,
     )
     client = sentry_sdk.get_client()
     assert client.options.get("include_local_variables") is False, (
@@ -264,6 +272,7 @@ def sentry_local():
         traces_sample_rate=0,
         before_send=sentry_setup._before_send,
         disabled_integrations=[MCPIntegration()],  # cf. commentaire du banc plus haut
+        default_integrations=False,  # idem : ne pas laisser une intégration par défaut coller au process
     )
     try:
         yield collector
