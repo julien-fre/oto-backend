@@ -123,38 +123,6 @@ def test_seule_la_description_de_run_id_change_sur_un_outil_qui_le_porte():
 
 # ── ③ le refus enseigne : `_run_id` omis, nommé quand c'est prouvé ───────────
 
-@pytest.fixture(scope="module")
-def live(pg_dsn):
-    """Base jetable PROPRE — jamais `init_db()` dans la base partagée du conteneur
-    (elle y laisse ~67 tables et fait rougir des tests étrangers)."""
-    import os
-
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    name = "oto_547_" + uuid.uuid4().hex[:8]
-    root = psycopg.connect(pg_dsn, autocommit=True)
-    root.execute(f'CREATE DATABASE "{name}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
-
-    prev_url, prev_pool = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = prev_pool
-        if prev_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = prev_url
-        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        root.close()
-
 
 @pytest.fixture
 def table(live):

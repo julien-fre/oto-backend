@@ -155,34 +155,6 @@ def test_un_curseur_d_une_AUTRE_org_est_refuse(monkeypatch):
 
 # ── Le store : total et page décrivent le MÊME jeu, contre un vrai PostgreSQL ──
 
-@pytest.fixture(scope="module")
-def live(pg_dsn):
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    nom = "oto_audit770_" + uuid.uuid4().hex[:8]
-    racine = psycopg.connect(pg_dsn, autocommit=True)
-    racine.execute(f'CREATE DATABASE "{nom}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + nom
-
-    url_avant, pool_avant = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = pool_avant
-        if url_avant is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = url_avant
-        racine.execute(f'DROP DATABASE IF EXISTS "{nom}" WITH (FORCE)')
-        racine.close()
-
 
 def _poser(sub, org_id, *, quand, kind="mcp", tool="fr_get"):
     """Une ligne de journal à un instant CHOISI. `insert_tool_call` date à `now()` :

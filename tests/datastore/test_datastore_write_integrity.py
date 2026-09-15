@@ -37,41 +37,6 @@ import uuid
 import pytest
 
 
-@pytest.fixture(scope="module")
-def live(pg_dsn):
-    """Un PostgreSQL RÉEL, jetable. Un banc qui reconstitue le magasin mesure la
-    représentation qu'on s'en fait — et c'est exactement ce qui a laissé passer
-    ces défauts : le retour de l'appel était crédible, c'est la base qu'il fallait
-    interroger."""
-    import os
-
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    name = "oto_wint_" + uuid.uuid4().hex[:8]
-    root = psycopg.connect(pg_dsn, autocommit=True)
-    root.execute(f'CREATE DATABASE "{name}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
-
-    prev_url, prev_pool = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = prev_pool
-        if prev_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = prev_url
-        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        root.close()
-
-
 # Le tableau des signaux, réduit à ce qui porte les règles : la clé métier `siren`
 # et le format strict d'`edition-vivier`, plus les deux champs de l'incident.
 #

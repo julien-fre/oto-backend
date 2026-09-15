@@ -22,38 +22,6 @@ import uuid
 import pytest
 
 
-@pytest.fixture(scope="module")
-def live(pg_dsn):
-    """Une base JETABLE, le VRAI `init_db()`, le vrai pool."""
-    import os
-
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    name = "oto_pft_" + uuid.uuid4().hex[:8]
-    root = psycopg.connect(pg_dsn, autocommit=True)
-    root.execute(f'CREATE DATABASE "{name}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
-
-    previous_url, previous_pool = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = previous_pool
-        if previous_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = previous_url
-        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        root.close()
-
-
 @pytest.fixture
 def projet(live):
     from oto_mcp import db

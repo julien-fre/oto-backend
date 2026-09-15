@@ -51,37 +51,6 @@ def _h(sub: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def live(pg_dsn):
-    """Une base JETABLE et le vrai `init_db()` — jamais la base partagée du conteneur."""
-    import os
-
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    name = "oto_args634_" + uuid.uuid4().hex[:8]
-    root = psycopg.connect(pg_dsn, autocommit=True)
-    root.execute(f'CREATE DATABASE "{name}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
-    previous_url, previous_pool = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = previous_pool
-        if previous_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = previous_url
-        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        root.close()
-
-
-@pytest.fixture(scope="module")
 def client(live):
     from oto_mcp.api import routes as api_routes
     return TestClient(Starlette(routes=api_routes.make_routes(_Verifier(), mcp_instance=None)))

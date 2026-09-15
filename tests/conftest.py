@@ -300,3 +300,38 @@ def pg_module_dsn(pg_dsn: str) -> Iterator[str]:
         dbconn._pool = pool_avant
         root.execute(f'DROP DATABASE IF EXISTS "{nom}" WITH (FORCE)')
         root.close()
+
+
+@pytest.fixture(scope="module")
+def live(pg_module_dsn):
+    """Le schéma réel sur la base neuve du module (`pg_module_dsn`), pointé par
+    `DATABASE_URL`.
+
+    Une vraie base plutôt qu'un double : ce qu'on vérifie ici, c'est ce que le
+    STOCKAGE porte — un simulacre rendrait ce qu'on lui a appris à rendre.
+
+    ⚠️ **Ce harnais existait en 106 exemplaires recopiés à la main** (mesuré le
+    15/09/2026 : 120 fixtures `live` dans la suite, dont 14 seulement s'appuyaient
+    sur `pg_module_dsn`), sous 37 formes qui avaient divergé. Chacune refaisait le
+    `CREATE DATABASE`, le détournement de `DATABASE_URL` et la remise à neuf du pool
+    — soit, à chaque fois, les trois endroits où se tromper. `pg_module_dsn` avait
+    justement été remonté ici « pour qu'il n'existe qu'un seul exemplaire à
+    corriger » ; le travail s'était arrêté à mi-chemin. Il n'y a plus qu'un
+    exemplaire : celui-ci.
+
+    La création et la destruction de la base vivent une étape plus haut, dans
+    `pg_module_dsn` : ce harnais-ci n'est plus que le branchement du code sur elle.
+    """
+    pytest.importorskip("psycopg")
+
+    url_avant = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = pg_module_dsn
+    try:
+        from oto_mcp.db import init_db
+        init_db()
+        yield
+    finally:
+        if url_avant is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = url_avant

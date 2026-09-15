@@ -247,35 +247,6 @@ def test_la_reception_d_un_upload_ne_lit_AUCUN_parametre_de_requete():
 
 # ── ce que ça fait vraiment, sur une base ─────────────────────────────────────
 
-@pytest.fixture(scope="module")
-def live(pg_dsn):
-    import os
-
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    nom = "oto_org_" + uuid.uuid4().hex[:8]
-    root = psycopg.connect(pg_dsn, autocommit=True)
-    root.execute(f'CREATE DATABASE "{nom}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + nom
-    url_avant, pool_avant = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = pool_avant
-        if url_avant is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = url_avant
-        root.execute(f'DROP DATABASE IF EXISTS "{nom}" WITH (FORCE)')
-        root.close()
-
 
 #: Sans format déclaré : le cas SUSPECT, celui où la plateforme ne pose jamais
 #: d'origine — donc celle-ci ne peut venir que de l'écrivain (64 cellules mesurées).

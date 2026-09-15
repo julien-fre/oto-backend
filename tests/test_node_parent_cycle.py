@@ -31,46 +31,6 @@ import uuid
 import pytest
 
 
-@pytest.fixture()
-def live(pg_dsn):
-    """Une base à SOI sur le conteneur partagé, plafonnée en temporaire.
-
-    ⚠️ Jamais `init_db()` dans la base du conteneur : `pg_dsn` est session-scopé et un
-    boot complet y laisse ~67 tables, ce qui fait rougir des tests étrangers qui
-    recréent deux tables autonomes. C'est la recette du repo (cf.
-    `test_write_by_id_effect.py`), plus les deux plafonds.
-    """
-    psycopg = pytest.importorskip("psycopg")
-    from oto_mcp.db import _conn as dbconn
-
-    name = "oto_cycle_" + uuid.uuid4().hex[:8]
-    root = psycopg.connect(pg_dsn, autocommit=True)
-    root.execute(f'CREATE DATABASE "{name}"')
-    # Les deux garde-fous du banc. `temp_file_limit` est celui qui mord en premier sur
-    # une récursion sans borne : la worktable spille, et le plafond la tue.
-    root.execute(f"ALTER DATABASE \"{name}\" SET temp_file_limit = '64MB'")
-    root.execute(f"ALTER DATABASE \"{name}\" SET statement_timeout = '20s'")
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
-
-    prev_url, prev_pool = os.environ.get("DATABASE_URL"), dbconn._pool
-    os.environ["DATABASE_URL"] = dsn
-    dbconn._pool = None
-    try:
-        from oto_mcp.db import init_db
-        init_db()
-        yield
-    finally:
-        if dbconn._pool is not None:
-            dbconn._pool.close()
-        dbconn._pool = prev_pool
-        if prev_url is None:
-            os.environ.pop("DATABASE_URL", None)
-        else:
-            os.environ["DATABASE_URL"] = prev_url
-        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
-        root.close()
-
-
 OWNER = {"owner_type": "org", "owner_id": "1"}
 
 
