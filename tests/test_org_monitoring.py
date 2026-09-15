@@ -105,6 +105,25 @@ def test_run_scopes_and_404s_when_empty(monkeypatch):
     assert om._console(CTX, _inp(op="run", run_id="r1"))["run_id"] == "r1"
 
 
+def test_call_et_run_ne_rendent_jamais_args(monkeypatch):
+    """oto-backend#563, décision d'Alexis du 15/09/2026 : les arguments complets d'un
+    appel restent à la supervision PLATEFORME seule, jamais à l'org_admin de l'org
+    émettrice. La garde RÉELLE est ici — dans ce que le handler renvoie — pas dans le
+    modèle `Output=`, qui ne filtre rien à l'exécution (`api/base.py::_json` sert le
+    dict du handler tel quel). Source (mockée) porte `args` : si le handler ne le
+    retire pas explicitement, ce test le voit ressortir."""
+    monkeypatch.setattr(om.db, "get_tool_call", lambda cid: {
+        "id": cid, "org_id": 35, "tool": "data_write",
+        "args": {"row": {"email": "personne@exemple.test"}}})
+    out = om._console(CTX, _inp(op="call", call_id=7))
+    assert "args" not in out["call"], out["call"]
+
+    monkeypatch.setattr(om.db, "get_run", lambda rid, **kw: [
+        {"id": 1, "tool": "email_send", "args": {"to": "personne@exemple.test"}}])
+    out = om._console(CTX, _inp(op="run", run_id="r1"))
+    assert all("args" not in c for c in out["calls"]), out["calls"]
+
+
 # ── 3. dispatch ─────────────────────────────────────────────────────────────
 
 def test_required_params():

@@ -160,12 +160,14 @@ class OrgCalls(BaseModel):
 
 class CallDetail(BaseModel):
     """La ligne complète du journal, noms BRUTS (`tool`, `created_at` — pas les alias
-    de la liste). `args` = les arguments **tels que journalisés** : tronqués à
-    l'écriture (`truncated_args`, 300 caractères par valeur, les valeurs composées
-    stringifiées) et masqués (#582 : un jeton part en empreinte `#…`, jamais en clair).
-    `null` = l'appel n'en portait aucun. C'est la seule clé qui porte les arguments —
-    il n'y a pas d'`arguments` : un lecteur qui la cherche avec un défaut `{}` fabrique
-    lui-même l'objet vide (vécu le 29/08/2026, #634)."""
+    de la liste).
+
+    ⚠️ **Pas de champ `args` ici** — décision d'Alexis du 15/09/2026 (oto-backend#563) :
+    les arguments complets d'un appel (peuvent porter des PII — contenu de
+    `data_write`, destinataire d'`email_send`) restent à la supervision PLATEFORME
+    seule, jamais à l'org_admin de l'org émettrice. Le handler (`_call`) retire la clé
+    du dict AVANT de le renvoyer — c'est LÀ qu'est la garde réelle, ce modèle ne fait
+    que documenter fidèlement ce qui est servi."""
     id: int
     kind: Optional[str] = None
     server: Optional[str] = None
@@ -173,7 +175,6 @@ class CallDetail(BaseModel):
     email: Optional[str] = None
     name: Optional[str] = None
     tool: Optional[str] = None
-    args: Optional[dict] = None
     ok: Optional[bool] = None
     error: Optional[str] = None
     duration_ms: Optional[int] = None
@@ -294,11 +295,10 @@ class OrgRuns(BaseModel):
 class RunCall(BaseModel):
     """Un appel de la timeline d'un déroulé.
 
-    ⚠️ **Même ligne de journal que `CallDetail`, donc mêmes arguments** : la timeline
-    et la fiche d'un appel lisent la même colonne, écrite par la même fonction. Ce qui
-    vaut là-bas vaut ici, et le contrat le disait d'un seul côté jusqu'au 01/09/2026 —
-    un client prudent affichait « arguments journalisés » sans savoir de quoi il
-    parlait.
+    ⚠️ **Même ligne de journal que `CallDetail`, donc même retrait** : `args` n'est PAS
+    un champ de ce modèle (oto-backend#563, décision d'Alexis du 15/09/2026) — la
+    timeline et la fiche d'un appel lisent la même colonne, le handler (`_run`) retire
+    `args` du dict pour la même raison que `_call`.
     """
     id: Optional[int] = Field(default=None, description=(
         "L'identifiant de CET appel — celui que prend `GET …/monitoring/calls/"
@@ -308,13 +308,6 @@ class RunCall(BaseModel):
         "la même ligne de journal, elles la nomment donc pareil."))
     created_at: Optional[str] = None
     tool: Optional[str] = None
-    args: Optional[dict] = Field(default=None, description=(
-        "Les arguments **tels que journalisés**, jamais l'appel d'origine : tronqués "
-        "à l'écriture (300 caractères par valeur, les valeurs composées stringifiées) "
-        "et masqués (un argument déclaré secret pour cet outil part en empreinte "
-        "`#…`, jamais en clair — y compris à travers le dispatch universel). `null` = "
-        "l'appel n'en portait aucun. Identique à `CallDetail.args` : même colonne, "
-        "même voie d'écriture."))
     ok: Optional[bool] = None
     error: Optional[str] = None
     duration_ms: Optional[int] = None
@@ -438,12 +431,20 @@ def _calls(ctx: ResolvedCtx, inp: OrgCallsInput) -> dict:
 def _call(ctx: ResolvedCtx, inp: OrgCallInput) -> dict:
     """Fiche d'un appel — l'id est un entier séquentiel, donc devinable : la garde
     d'org N'EST PAS une formalité. Un appel d'une autre org rend le MÊME 404 qu'un id
-    inexistant (ne pas confirmer son existence)."""
+    inexistant (ne pas confirmer son existence).
+
+    ⚠️ `args` est RETIRÉ ici, dans le dict — décision d'Alexis du 15/09/2026
+    (oto-backend#563) : les arguments complets d'un appel (peuvent porter des PII —
+    contenu de `data_write`, destinataire d'`email_send`) restent à la supervision
+    PLATEFORME seule (`monitoring.py::_call`, chemin séparé, inchangé), pas à
+    l'org_admin de l'org émettrice. Le modèle `Output=` ne filtre RIEN à l'exécution
+    (`api/base.py::_json` sert le dict tel quel, `Output=` n'est que la doc OpenAPI) —
+    retirer le champ de `CallDetail` seul aurait laissé la fuite réelle intacte."""
     row = db.get_tool_call(inp.call_id)
     if row is None or row.get("org_id") != inp.org_id:
         raise AuthzDenied(404, "unknown_call",
                           f"Aucun appel id={inp.call_id} dans cette org.")
-    return {"call": row}
+    return {"call": {k: v for k, v in row.items() if k != "args"}}
 
 
 def _connectors(ctx: ResolvedCtx, inp: OrgWindowInput) -> dict:
@@ -461,11 +462,15 @@ def _runs(ctx: ResolvedCtx, inp: OrgRunsInput) -> dict:
 
 def _run(ctx: ResolvedCtx, inp: OrgRunInput) -> dict:
     """Timeline d'un déroulé. Un run_id d'une autre org rend une timeline vide côté
-    db → 404 ici (même raisonnement que `_call`, sur une clé opaque cette fois)."""
+    db → 404 ici (même raisonnement que `_call`, sur une clé opaque cette fois).
+
+    ⚠️ `args` retiré de CHAQUE appel de la timeline, même raison que `_call`
+    (oto-backend#563) — même ligne de journal, mêmes arguments, même restriction."""
     calls = db.get_run(inp.run_id, org_id=inp.org_id)
     if not calls:
         raise AuthzDenied(404, "unknown_run",
                           f"Aucun déroulé `{inp.run_id}` dans cette org.")
+    calls = [{k: v for k, v in c.items() if k != "args"} for c in calls]
     return {"run_id": inp.run_id, "calls": calls}
 
 
