@@ -154,9 +154,24 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
         limit = (grant.get("daily_quota") if grant else None) or quotas.quota_for(provider)
 
         winner = hits[0] if hits else None
+        # ⚠️ LA distinction de cette projection, et la seule cause du défaut qu'elle
+        # a porté : `hits` porte TOUTE la cascade, `winner` le seul barreau qui
+        # RÉPOND. Les deux sont légitimes et ne disent pas la même chose —
+        #   • un drapeau « existe-t-il une clé à ce niveau » (`*_configured`,
+        #     `platform_key_label`) se lit sur `hits` : « ce sur quoi tu
+        #     retomberais » est une information juste ;
+        #   • tout ce qui décrit l'EFFET COURANT (plafond, compteur, épuisement) se
+        #     lit sur `winner`, sinon on annonce une contrainte que rien n'oppose.
+        # `status_for` est la SEULE fonction du module à garder tous les barreaux
+        # (les autres prennent le gagnant et sortent : `credential_mode_for`,
+        # `platform_quota_hint`, `_win_quota`) — donc le seul endroit où cette
+        # confusion peut naître. D'où ce booléen NOMMÉ plutôt qu'une condition
+        # réécrite à chaque champ : un champ d'effet ajouté plus tard le lit, et
+        # `test_quota_affiche_le_barreau_qui_repond` échoue s'il ne le fait pas.
+        plateforme_repond = winner is not None and winner.mode == "platform"
         if winner is None:
             mode = "forbidden"
-        elif winner.mode == "platform" and limit and used >= limit:
+        elif plateforme_repond and limit and used >= limit:
             mode = "over_quota"
         else:
             mode = winner.mode
@@ -166,11 +181,26 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
             "user_key_configured": user_has,
             "group_secret_configured": group_has,
             "org_secret_configured": org_has,
+            # Drapeau de NIVEAU (lu sur `hits`) : « ce sur quoi tu retomberais ».
+            # Servi même hors barreau plateforme, délibérément — le front l'affiche
+            # depuis v1.12.0, et c'est vrai.
             "platform_key_label": grant["label"] if grant else None,
-            "quota_used_today": used,
+            # Champs d'EFFET (lus sur `winner`) : le compteur de la clé plateforme
+            # et son plafond. Hors barreau plateforme, ni l'un ni l'autre n'a de
+            # sens — `resolve_api_key` rend AVANT `_win_quota` dès que
+            # `win.mode != "platform"`, et les outils n'appellent
+            # `record_platform_usage` que sous `if is_platform`. Un plafond annoncé
+            # là serait donc FANTÔME dans les deux sens : ni compté (d'où le « 0 »
+            # perpétuel au numérateur), ni opposable. Vécu sur une org servie par
+            # une clé de TENANT : « 0/200 aujourd'hui » sur un connecteur sans le
+            # moindre plafond.
+            # ⚠️ Le plafond d'une clé de tenant, lui, vit sur l'arête tenant→org
+            # (`tenant_budget`, 0 ou absent = illimité) et n'a AUCUN champ ici :
+            # une org qui en a un n'en voit rien. Trou connu, lot à part.
+            "quota_used_today": used if plateforme_repond else None,
             # limit 0 = illimité (convention default_quota) → None pour que l'UI
             # affiche « ∞ », pas « /0 » (qui se lit comme un quota épuisé).
-            "quota_daily": (limit or None) if grant else None,
+            "quota_daily": (limit or None) if (grant and plateforme_repond) else None,
             # Clé d'équipe « à portée » (membre d'une équipe qui a le secret, sans
             # l'avoir active) : rien ne résout mais une clé existe → l'UI doit le
             # dire au lieu d'un « pas de clé » sec.

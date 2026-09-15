@@ -23,6 +23,23 @@ def _sonde_muette() -> access.CascadeProbe:
         platform=lambda s, p, o: {"label": "plat", "daily_quota": 100})
 
 
+def _registre(*noms: str) -> dict:
+    """Le registre RÉDUIT aux connecteurs sous test — au lieu de `{}`.
+
+    ⚠️ Un registre VIDE ne se contente pas d'alléger la boucle : il coupe le
+    barreau plateforme lui-même (`walk_cascade` le gate sur
+    `"platform" in con.auth_modes`, et `connector_for_provider` rend None). Les
+    fiches sortaient donc en `forbidden`, et ces tests lisaient `quota_used_today`
+    sur une fiche où RIEN ne résout — un port d'observation sur `_used()`, pas le
+    contrat servi. Ça a tenu tant que le champ était inconditionnel ; il ne l'est
+    plus (un champ d'EFFET plateforme se tait hors barreau plateforme), et le
+    préchargement qu'ils gardent — 24 % du coût de /api/me — serait parti avec.
+    On fait donc RÉPONDRE le barreau : le préchargement est mesuré là où son
+    résultat est servi."""
+    from oto_mcp import providers as _p
+    return {n: _p.REGISTRY[n] for n in noms}
+
+
 # ── LA garde : le snapshot d'un TIERS se calcule sur SON contexte ──────────────
 def test_le_prechargement_suit_le_SUJET_jamais_le_REQUERANT(monkeypatch):
     """La fuite qu'on a déjà fermée une fois, et qu'un préchargement pourrait rouvrir.
@@ -95,9 +112,14 @@ def test_un_outil_ABSENT_de_la_map_vaut_zero_pas_None(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda s: 2)
     monkeypatch.setattr(access, "current_group", lambda s: None)
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ("serper", "hunter"))
-    monkeypatch.setattr(access.providers, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", _registre("serper", "hunter"))
     out = access.status_for("u1")
+    # `hunter` est absent de la map préchargée : 0, pas None — sinon un None
+    # remonterait dans une comparaison de quota. Servi parce que le barreau
+    # plateforme RÉPOND ici (cf. `_registre`).
+    assert out["providers"]["hunter"]["mode"] == "platform"
     assert out["providers"]["hunter"]["quota_used_today"] == 0
+    assert out["providers"]["serper"]["quota_used_today"] == 5
 
 
 # ── Le repli : mieux vaut payer que mentir ─────────────────────────────────────
@@ -119,9 +141,10 @@ def test_un_prechargement_de_quotas_en_PANNE_retombe_sur_la_lecture_unitaire(mon
     monkeypatch.setattr(access, "current_org", lambda s: 2)
     monkeypatch.setattr(access, "current_group", lambda s: None)
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ("serper",))
-    monkeypatch.setattr(access.providers, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", _registre("serper"))
     out = access.status_for("u1")
     assert appels == ["serper"]
+    assert out["providers"]["serper"]["mode"] == "platform"
     assert out["providers"]["serper"]["quota_used_today"] == 42
 
 

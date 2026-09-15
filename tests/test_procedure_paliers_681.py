@@ -290,13 +290,23 @@ def test_le_palier_equipe_nest_pas_atteignable_par_une_surface_dorg(monde):
     from oto_mcp.capabilities.orgs import instructions as oi
     assert access.current_group("u-chef") == monde["equipe"], (
         "sans équipe ACTIVE, ce test passerait pour la mauvaise raison")
+    # ⚠️ Le test POSE sa propre procédure, sous un slug à lui. Il lisait
+    # `cloture-mensuelle`, qu'écrit un AUTRE test (le témoin, plus haut) : vert en
+    # série dans l'ordre du fichier, rouge dès qu'il tourne seul — et rouge en CI,
+    # où `pytest -n 4` (répartition `load`) peut l'envoyer sur un autre worker que
+    # le témoin, donc sur une autre base `monde`. Réutiliser le slug du témoin ne
+    # suffirait pas : celui-ci asserte `version == 1`, qu'une pose antérieure
+    # casserait à son tour. Même idiome que `destructible` : poser, refuser, relire.
+    _appel("u-chef", op="set", scope="group", slug="verrou-palier-equipe", body_md=_CORPS)
     ctx = ResolvedCtx(sub="u-chef", org_id=monde["org"])   # group_id NON injecté
     with pytest.raises(AuthzDenied) as refus:
         oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
-            slug="cloture-mensuelle", scope="group"))
+            slug="verrou-palier-equipe", scope="group"))
     assert refus.value.status == 403
     # …et la procédure est toujours là : le refus tombe AVANT l'écriture.
-    assert org_store.get_instruction("group", monde["equipe"], "cloture-mensuelle")
+    assert org_store.get_instruction("group", monde["equipe"], "verrou-palier-equipe")
+    # Rendue par le chemin servi, pour ne rien laisser aux tests suivants du module.
+    assert _appel("u-chef", op="delete", scope="group", slug="verrou-palier-equipe")["deleted"]
 
 
 def test_aucune_entree_dequipe_nest_gardee_par_une_regle_qui_ignore_scope():
