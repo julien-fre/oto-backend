@@ -750,6 +750,21 @@ supposer) :
   avec le coût d'un aller-retour réseau ou DB qu'un vrai handler paierait de toute
   façon (cf. le chiffrage `capture_exception` du même jour, 6-9 ms).
 
+**Limite connue : le watchdog détecte un délai, pas une cause — la pile capturée
+peut être un témoin innocent.** Une boucle SATURÉE par de nombreux petits callbacks
+qui s'enchaînent sans qu'aucun ne dépasse seul le seuil retarde le battement du
+timestamp exactement comme le ferait un vrai blocage long : le délai cumulé finit
+par dépasser `OTO_SLOW_CALLBACK_WARN`, un dump part — mais la pile qu'il montre est
+celle du callback qui tourne AU MOMENT du dump, pas la somme des callbacks qui ont
+saturé la boucle avant lui. Ce callback-là n'est coupable de rien ; il était juste
+de passage. Ce n'est pas hypothétique : c'est le régime probable au palier de
+charge actuel de la prod (0,8-0,9 cœur), où plusieurs handlers courts peuvent
+s'enchaîner sans qu'aucun ne soit individuellement lent. Le lecteur d'un prochain
+dump doit se poser la question avant de désigner un coupable : la pile capturée
+EST-elle la cause d'un seul long blocage, ou seulement le témoin pris dans un
+embouteillage de callbacks courts qui, ensemble, ont fait dériver le battement
+au-delà du seuil ?
+
 **Preuve empirique du garde-fou** (pas un banc vert de circonstance) :
 `tests/test_hang_watch.py` provoque un VRAI blocage (`time.sleep` synchrone dans la
 boucle, pas une exception fabriquée) et vérifie que le dump journalisé montre la
