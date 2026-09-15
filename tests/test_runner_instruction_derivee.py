@@ -147,6 +147,59 @@ def test_une_campagne_qui_parle_deja_n_est_pas_reecrite(monkeypatch):
 
 # ── un seul domicile, pour toute la classe ────────────────────────────────────
 
+# ── 4. le TICK : ce qui part vraiment ────────────────────────────────────────
+#
+# ⚠️ Constaté en production le 14/09/2026. `create` compose bien l'instruction —
+# mais c'est le SEUL site qui le fasse, et il n'existe que depuis le 02/09. Les
+# six déclencheurs de l'org 196 sont nés avant : ils portent `input = NULL`, et
+# CHACUNE de leurs occurrences partait donc sans instruction de départ, pour se
+# faire refuser par le worker (« il exécute une instruction, il n'en compose
+# pas »). Un agent actif, un runner vivant, un modèle servi — et rien qui marche,
+# sans que rien ne le dise.
+#
+# Aucune mise à jour ne répare la colonne : réparer AU TICK couvre d'un coup les
+# rangs anciens et le jour où quelqu'un vide l'invite depuis le produit.
+
+def _tick_avec(monkeypatch, **declencheur):
+    from oto_mcp import runner_tick
+
+    enfile = {}
+    t = {"id": 5, "org_id": 2, "cron": "5 6 * * *", "tz": "Europe/Paris",
+         "next_due": "2026-09-12 04:05:00", "procedure": "veille-du-matin",
+         "project_id": None, "tools": ["data_write"], "input": None,
+         "label": None, "max_steps": None, "model": None, **declencheur}
+    monkeypatch.setattr(runner_tick.db, "due_triggers", lambda limit=50: [t])
+    monkeypatch.setattr(runner_tick.db, "consume_due", lambda i, vu, p: True)
+    monkeypatch.setattr(runner_tick.db, "perimer_travaux_du_declencheur",
+                        lambda t, o: 0)
+    monkeypatch.setattr(runner_tick.db, "enqueue_job",
+                        lambda org, kind, payload=None, **_: enfile.update(payload))
+    assert runner_tick._tick() == 1
+    return enfile
+
+
+def test_un_declencheur_sans_instruction_en_recoit_une_au_tick(monkeypatch):
+    charge = _tick_avec(monkeypatch, input=None)
+    assert charge.get("input"), (
+        "sans instruction le worker REFUSE le travail : un déclencheur né avant "
+        "que `create` en compose une échouerait à chacune de ses occurrences")
+    assert "veille-du-matin" in charge["input"], (
+        "l'instruction dérivée POINTE la procédure — elle ne la réécrit pas")
+
+
+def test_une_instruction_ecrite_part_intacte(monkeypatch):
+    charge = _tick_avec(monkeypatch, input="Ne regarde que les appels d'hier.")
+    assert charge["input"] == "Ne regarde que les appels d'hier.", (
+        "composer ne se substitue à personne : ce qui est écrit est servi")
+
+
+def test_une_invite_videe_depuis_le_produit_ne_casse_pas_l_agent(monkeypatch):
+    # Le produit efface l'invite par une chaîne VIDE (un NULL serait jeté par
+    # `update_trigger`). Sans la dérivation, ce geste rendait l'agent muet.
+    charge = _tick_avec(monkeypatch, input="")
+    assert charge.get("input"), "une invite vidée retombe sur l'instruction dérivée"
+
+
 def test_aucune_autre_capacite_ne_redige_sa_propre_instruction():
     """Deux surfaces déclarent un agent (flotte, déclencheur) ; une troisième
     viendra. Si chacune rédige sa variante, la même règle vit à plusieurs
