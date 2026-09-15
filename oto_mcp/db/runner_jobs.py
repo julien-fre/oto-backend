@@ -92,6 +92,15 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     l'écrit, à la réservation. Retiré plutôt que refusé, comme la capacité retire
     `model_family` : une `ValueError` d'ici sortirait en 500, pas en refus nommé.
 
+    ⚠️ **`_perime_apres_s` est retiré de la charge de l'appelant pour la MÊME
+    raison, et son oubli a coûté un incident** (15/09/2026) : la réservation caste
+    ce champ (`(payload->>'_perime_apres_s')::int`) à CHAQUE `claim_next_job`, y
+    compris pour un worker de PLATEFORME (`org_id IS NULL`, donc sans filtre
+    d'org). Une charge fournie par un seul appelant portant une valeur non-entière
+    (ou hors bornes `int`) y faisait lever une exception PostgreSQL — arrêtant la
+    réservation de TOUTE la flotte, pas seulement de l'org fautive. Le champ ne
+    doit avoir qu'un seul écrivain : ce paramètre, jamais la charge reçue.
+
     `delai_s` (12/09/2026) : le travail ne devient réservable que dans N secondes.
     C'est ce qui rend le LISSAGE d'une rafale de webhooks possible sans rien
     perdre — au-delà du débit déclaré, la livraison est acceptée et son travail
@@ -110,8 +119,9 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     transaction. La route des webhooks écrit la livraison et le travail ensemble
     ou pas du tout.
     """
-    if payload is not None and _CHAMP_PLATEFORME in payload:
-        payload = {k: v for k, v in payload.items() if k != _CHAMP_PLATEFORME}
+    if payload is not None:
+        payload = {k: v for k, v in payload.items()
+                  if k not in (_CHAMP_PLATEFORME, "_perime_apres_s")}
     charge = dict(payload) if payload is not None else None
     if perime_apres_s:
         charge = charge or {}
