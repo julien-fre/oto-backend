@@ -37,7 +37,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from .. import credentials_store, db
+from .. import config, credentials_store, db
 from . import flow as oauth_flow
 from ..connectors import flow as connector_flow
 from ..connectors import health as connector_health
@@ -91,8 +91,7 @@ def _state_secret() -> bytes:
 
 
 def _redirect_uri() -> str:
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/api/google/oauth/callback"
+    return f"{config.public_base_url()}/api/google/oauth/callback"
 
 
 def _b64url(data: bytes) -> str:

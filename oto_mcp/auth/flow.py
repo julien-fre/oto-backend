@@ -115,9 +115,9 @@ def read_state(audience: str, state: Optional[str], *,
 # --- URI de redirection --------------------------------------------------------
 
 def redirect_uri(path: str) -> str:
-    """URL publique + `path`. À enregistrer AU BYTE PRÈS chez le fournisseur."""
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/{path.lstrip('/')}"
+    """URL publique + `path`. À enregistrer AU BYTE PRÈS chez le fournisseur — donc
+    jamais devinée : `config.public_base_url()` lève plutôt que de rendre un défaut."""
+    return f"{config.public_base_url()}/{path.lstrip('/')}"
 
 
 # --- retour vers le front qui a demandé la connexion ----------------------------

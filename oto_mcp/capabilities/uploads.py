@@ -9,12 +9,11 @@ dashboard (le dashboard a déjà l'upload multipart humain).
 """
 from __future__ import annotations
 
-import os
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import upload_tokens
+from .. import config, upload_tokens
 from ..datastore import schema as dsv2
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx
@@ -114,8 +113,7 @@ def _upload_url(ctx: ResolvedCtx, inp: UploadUrlInput) -> dict:
         raise AuthzDenied(e.status, e.code, e.message)
 
     token, exp = upload_tokens.sign(sub, ctx.org_id, target)
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    url = f"{base}/api/upload/{token}"
+    url = f"{config.public_base_url()}/api/upload/{token}"
     _CT_BY_KIND = {"doc": "text/markdown; charset=utf-8",
                    "datastore": ("text/csv" if target.get("format") == "csv"
                                  else "application/x-ndjson")}

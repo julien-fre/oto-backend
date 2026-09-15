@@ -25,6 +25,10 @@ SUB = "sub-quelqu-un"
 @pytest.fixture(autouse=True)
 def secret(monkeypatch):
     monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "s" * 40)
+    # Un lien de désinscription a besoin de DEUX choses, et aucune ne se devine : de quoi
+    # signer, et où pointer. L'adresse n'a plus de repli (elle retombait sur notre
+    # préproduction) ; le banc la déclare comme il déclare déjà le secret.
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.exemple.test")
 
 
 def test_le_jeton_fait_l_aller_retour():

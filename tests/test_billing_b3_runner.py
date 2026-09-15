@@ -35,6 +35,10 @@ def _wire(monkeypatch, *, attempts_before=0, payment=None, payment_exc=None,
           identity=IDENTITE_FR):
     state = {"journal": [], "updates": [], "schedule": None, "retry": None,
              "status": None, "blocked": []}
+    # Chaque prélèvement porte l'adresse de rappel du prestataire, et elle n'a plus de
+    # repli : sans déclaration, on refuse d'émettre plutôt que de faire rappeler Mollie
+    # à une adresse devinée.
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.exemple.test")
     monkeypatch.setattr(db_billing, "get_billing_identity", lambda org: identity)
     # La réservation obtenue, rien n'a bougé entre la sélection et le verrou : la ligne
     # relue est celle qu'on passe. Le vrai verrou est éprouvé par le banc à deux

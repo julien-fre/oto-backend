@@ -13,6 +13,9 @@ from oto_mcp import subdomain_org, session_org, access, org_store, roles, group_
 @pytest.fixture(autouse=True)
 def _wire(monkeypatch):
     subdomain_org._CACHE.clear()
+    # Le suffixe `--<host>` n'a plus de repli : sans cette déclaration, l'instance
+    # refuse d'épingler une org plutôt que de le faire sur un domaine deviné.
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
     monkeypatch.setattr(org_store, "list_all_orgs",
                         lambda: [{"id": 42, "name": "acme"},
                                  {"id": 2, "name": "Otomata Admin"}])

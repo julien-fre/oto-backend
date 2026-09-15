@@ -18,9 +18,20 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 os.environ.setdefault("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
-os.environ.setdefault("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
 
 from oto_mcp.auth import salesforce as salesforce_oauth  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _adresse_de_l_instance(monkeypatch):
+    """L'adresse publique, posée pour CE fichier seulement.
+
+    ⚠️ Elle l'était par `os.environ.setdefault` au niveau module — donc dès la COLLECTE,
+    et pour toute la suite. Mesuré le 15/09/2026 : les bancs qui construisaient un lien
+    sans déclarer d'adresse passaient au vert en suite complète et rougissaient lancés
+    seuls. Un vert obtenu par la fuite d'un voisin ne mesure rien, et c'est le genre de
+    vert qui cache exactement ce qu'on cherche."""
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
 
 
 # --- state round-trip ---------------------------------------------------------

@@ -43,6 +43,8 @@ import json
 import os
 from typing import Optional
 
+from . import config
+
 _TYP = "optout"                  # relance de plateforme (oto_admin_outreach) — inchangé
 _TYP_DIGEST = "digest_optout"    # digest de signaux (send_signal_digest_email, oto#150)
 
@@ -123,17 +125,19 @@ def lien(sub: str) -> str:
     Sur le BACKEND (`OTO_MCP_PUBLIC_URL`), pas sur le dashboard : la désinscription
     doit fonctionner sans session, sans JavaScript et sans que le front soit déployé —
     c'est le même argument que la page publique d'un doc partagé (`/p/d/<token>`).
+
+    L'adresse se DÉCLARE et ne se devine pas : `config.public_base_url()` lève plutôt
+    que de retomber sur un domaine. Un lien de désinscription envoyé mort ne se rattrape
+    pas — le destinataire ne le reclique pas, il classe l'expéditeur.
     """
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/o/u/{_sign(sub, _TYP)}"
+    return f"{config.public_base_url()}/o/u/{_sign(sub, _TYP)}"
 
 
 def lien_digest(sub: str) -> str:
     """L'adresse complète servie dans le pied du DIGEST de signaux (oto#150) —
     même forme que `lien()`, route et `typ` distincts (cf. l'en-tête du module) :
     ce lien ne désinscrit jamais des relances, quoi qu'il arrive."""
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/o/d/{_sign(sub, _TYP_DIGEST)}"
+    return f"{config.public_base_url()}/o/d/{_sign(sub, _TYP_DIGEST)}"
 
 
 # La page rendue au destinataire. Server-rendered, sans JS, sans marque tierce : elle

@@ -80,6 +80,60 @@ _SOCKET_CONNECT_ORIGINAL = socket.socket.connect
 socket.socket.connect = _connexion_gardee
 
 
+# ── L'adresse publique de l'instance, gréée pour toute la suite ──────────────
+# Le code refuse de fabriquer une adresse qu'il n'a pas : `config.public_base_url()`
+# lève au lieu de retomber sur un domaine (redirection OAuth, rappel de paiement, jeton
+# de téléversement, lien de désinscription). Soixante-dix bancs n'ont pas à connaître
+# les entrailles de ce qu'ils appellent pour autant — un banc de TVA ne devrait pas
+# savoir qu'un prélèvement porte une adresse de rappel.
+#
+# ⚠️ Elle était posée par `os.environ.setdefault` au niveau module dans un fichier
+# d'authentification, donc dès la COLLECTE et pour tout ce que pytest importait ensuite.
+# Mesuré le 15/09/2026 : des bancs qui ne la déclaraient pas passaient au vert en suite
+# complète et rougissaient lancés seuls — un vert FABRIQUÉ par un voisin, la forme la
+# plus trompeuse, puisqu'elle ne cache pas un échec mais en invente un succès. La
+# différence ici est qu'une fixture se déclare, se voit et s'annule (`delenv`), là où
+# un effet de bord d'import dépendait de l'ordre alphabétique des fichiers.
+#
+# L'adresse posée n'est PAS l'une des nôtres, et c'est délibéré : un banc qui affirme
+# quelque chose sur `mcp.oto.ninja` sans l'avoir déclaré doit rougir ici, pas en
+# production sur l'instance d'un partenaire.
+_ADRESSE_DE_GREEMENT = "https://mcp.exemple.test"
+
+
+@pytest.fixture(autouse=True)
+def _adresse_publique_de_l_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", _ADRESSE_DE_GREEMENT)
+
+
+# **Comment vérifier que ce gréement ne CACHE rien** — à refaire après tout changement
+# qui touche la fabrication des liens publics.
+#
+# Gréer une adresse répare le montage des bancs qui en fabriquent une sans le savoir.
+# Ça ne dit rien de ceux qui affirmaient quelque chose SUR elle : ceux-là ne seraient
+# pas réparés, ils seraient RENDUS VIDES — ils continueraient de passer en affirmant sur
+# l'adresse de gréement ce qu'ils croyaient affirmer sur la production.
+#
+# La mesure : jouer la suite DEUX fois, avec deux adresses gréées différentes, et
+# comparer les verdicts. Pas de substitution en cours de route — la valeur change ici,
+# à la racine, donc tout ce qui en dérive change aussi, y compris ce qu'une fixture a
+# construit à son setup.
+#
+#     vert dans les deux passes → l'adresse n'est qu'un décor pour ce banc
+#     vert puis ROUGE           → ce banc AFFIRME sur l'adresse : qu'il déclare la sienne
+#
+# Mesuré le 15/09/2026, les deux passes rendant le même unique rouge (sans rapport) :
+# AUCUN banc n'affirme sur l'adresse gréée. Le gréement ne masque rien.
+#
+# ⚠️ Deux pièges, tous deux rencontrés en construisant cette mesure. La passe qui
+# substitue doit PROUVER qu'elle a substitué : une passe qui ne change rien rend un vert
+# parfait et se lit comme « aucun banc ne dépend de l'adresse ». Et la preuve ne peut pas
+# porter sur le premier test venu — un banc qui déclare sa propre adresse la surcharge
+# légitimement, et l'exiger de lui fabriquerait un rouge dans la passe même qui compte
+# les rouges. Elle porte sur la session : la valeur substituée doit avoir été vue
+# quelque part.
+
+
 @pytest.fixture(autouse=True)
 def _garde_reseau_sortant(request: pytest.FixtureRequest) -> Iterator[None]:
     marker = request.node.get_closest_marker(_MARQUEUR_RESEAU)

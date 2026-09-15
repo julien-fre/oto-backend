@@ -1,6 +1,7 @@
 """Env-var helper. Keep secrets out of the repo."""
 import os
 from typing import Optional
+from urllib.parse import urlparse
 
 
 def require_env(name: str) -> str:
@@ -11,6 +12,42 @@ def require_env(name: str) -> str:
             f"(systemd EnvironmentFile in prod, .env in dev)."
         )
     return val
+
+
+def public_base_url() -> str:
+    """**L'adresse publique de CETTE instance**, sans barre finale — la seule source des
+    liens qu'on donne à un tiers : redirection OAuth enregistrée au byte près chez un
+    fournisseur, rappel de paiement, jeton de téléversement, suffixe d'hôte qui épingle
+    une org.
+
+    Elle LÈVE si la variable manque, et c'est tout l'intérêt. Sept endroits écrivaient
+    `os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")` — le même littéral,
+    recopié de voisin en voisin, le septième exemplaire daté du 15/09/2026. Sans la
+    variable, chacun rendait une adresse chez NOUS avec l'assurance d'une adresse juste :
+    une instance servie ailleurs aurait envoyé son fournisseur d'identité et son
+    prestataire de paiement frapper à notre porte, sans qu'aucune erreur ne le dise.
+
+    Corriger cinq lignes n'aurait rien réglé : le défaut se propage par imitation, donc
+    ce qu'il faut supprimer c'est le littéral à recopier. **Lève à l'appel, pas à
+    l'import** — seul celui qui fabrique un lien doit échouer ; un script qui importe ce
+    module sans construire d'adresse n'a rien à payer.
+
+    La barre finale est retirée ICI : les cinq sites la retiraient chacun de leur côté,
+    et un accord sur un détail est un accord qu'on finit par rompre."""
+    return require_env("OTO_MCP_PUBLIC_URL").rstrip("/")
+
+
+def public_host() -> str:
+    """Le HOST de `public_base_url()` — ce que cette instance annonce d'elle-même, sans
+    schéma ni chemin. Lève comme elle, et pour la même raison : un hôte deviné épingle
+    l'org d'un client sur le domaine de quelqu'un d'autre."""
+    hote = urlparse(public_base_url()).hostname
+    if not hote:
+        raise RuntimeError(
+            "OTO_MCP_PUBLIC_URL n'a pas d'hôte "
+            f"({os.environ.get('OTO_MCP_PUBLIC_URL')!r}) : attendu une URL absolue, "
+            "schéma compris (https://mcp.exemple.tld).")
+    return hote
 
 
 def project_domain() -> str:

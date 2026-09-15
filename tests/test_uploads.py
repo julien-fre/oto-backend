@@ -19,6 +19,9 @@ CTX = ResolvedCtx(sub="u1", org_id=42)
 @pytest.fixture
 def seams(monkeypatch):
     monkeypatch.setattr(ut, "check_target_access", lambda sub, target: None)  # autz OK par défaut
+    # L'URL signée n'a plus de repli : un jeton émis pour une adresse devinée serait
+    # un téléversement envoyé chez quelqu'un d'autre.
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
     return monkeypatch
 
 
@@ -235,7 +238,7 @@ def test_materialize_datastore_batch(monkeypatch):
                    "hors_schema": ["actualite_sociale"], "hors_schema_hint": "…"}
 
 
-def test_mint_datastore_seals_resolved_ns_id(monkeypatch):
+def test_mint_datastore_seals_resolved_ns_id(monkeypatch, seams):
     class FakeStore:
         def resolve_ns_id_for_write(self, ns): return 42
         def declared_key(self, ns): return "email"

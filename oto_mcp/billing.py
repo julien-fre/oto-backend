@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from . import billing_consent, billing_grants, billing_vat, mollie_client
+from . import billing_consent, billing_grants, billing_vat, config, mollie_client
 from . import billing_mode
 from . import db
 from .db import billing as db_billing
@@ -189,8 +189,7 @@ def webhook_url() -> str:
     """URL publique que Mollie rappelle à chaque changement d'état d'un paiement
     (base = `OTO_MCP_PUBLIC_URL`, cf. Logto/Google OAuth). Portée par chaque
     paiement créé → réconciliation événementielle en complément du polling."""
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/api/billing/webhook"
+    return f"{config.public_base_url()}/api/billing/webhook"
 
 
 # ── TVA : le seam unique entre l'identité de l'org et un montant ─────────────

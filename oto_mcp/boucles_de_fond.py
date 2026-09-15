@@ -166,9 +166,13 @@ def composer() -> list[Fonction]:
     armees = [b for b in BOUCLES if b.armee()]
     tierces = [b.nom for b in armees if b.tiers]
     if tierces and not config.est_la_production():
-        log.info("boucles de fond : %s NON démarrée(s) — cette instance n'est pas la "
-                 "production (%s) et elles agissent sur un tiers. La base est partagée : "
-                 "c'est la production qui draine son travail vers l'extérieur.",
-                 ", ".join(tierces), os.environ.get("OTO_MCP_PUBLIC_URL"))
+        # Le journal nomme CE QUI A DÉCIDÉ. Il affichait l'URL publique, du temps où
+        # l'environnement s'en déduisait ; depuis qu'il se déclare (`OTO_ENV`), montrer
+        # l'URL enverrait l'opérateur vérifier la mauvaise variable.
+        log.info("boucles de fond : %s NON démarrée(s) — cette instance déclare servir "
+                 "%r (OTO_ENV), pas la production, et elles agissent sur un tiers. La "
+                 "base est partagée : c'est la production qui draine son travail vers "
+                 "l'extérieur.",
+                 ", ".join(tierces), config.origine_du_process())
         armees = [b for b in armees if not b.tiers]
     return [b.fonction() for b in armees]

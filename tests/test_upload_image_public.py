@@ -57,9 +57,11 @@ def s3(monkeypatch):
 
 # --- mint -------------------------------------------------------------------
 
-def test_le_mint_scelle_une_cible_sans_parametre_et_annonce_la_borne_image():
+def test_le_mint_scelle_une_cible_sans_parametre_et_annonce_la_borne_image(monkeypatch):
     """Ni projet ni nom de fichier : la clé dérive du contenu. Et la borne annoncée est
     celle qui MORD (2 Mo, `upload_image`), pas le plafond générique de 25 Mo."""
+    # L'URL signée n'a plus de repli : l'adresse de l'instance se déclare.
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
     out = U._upload_url(CTX, U.UploadUrlInput(target="image"))
     p = ut.verify(out["url"].rsplit("/", 1)[1])
     assert p["target"] == {"kind": "image"} and p["sub"] == "u1"
