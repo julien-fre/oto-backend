@@ -55,4 +55,31 @@ CREATE TABLE IF NOT EXISTS outreach_optouts (
     source TEXT NOT NULL DEFAULT 'link',    -- 'link' (le destinataire) | 'operator'
     opted_out_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Désinscription du DIGEST de signaux (`send_signal_digest_email`, oto#150) — PAR
+-- COMPTE et pour TOUTE désinscription, comme `outreach_optouts` juste au-dessus et
+-- pour la même raison : ce refus vise un CANAL, pas un signal (donc pas une colonne
+-- sur `usage_signals`, qui survivrait mal à un ré-arbitrage) ni une identité (donc pas
+-- une colonne sur `users` : elle porte sa propre date et sa provenance, un DELETE la
+-- lève sans toucher au compte).
+-- ⚠️ Table DISTINCTE d'`outreach_optouts`, délibérément (décision d'Alexis, oto#150) :
+-- le digest de signaux et les relances de plateforme sont deux canaux, donc deux
+-- refus — se désinscrire de l'un ne désinscrit pas de l'autre, et une table commune
+-- aurait recréé le raccourci que la décision refuse. Lue par `pending_signal_notices`
+-- (exclusion EN AMONT, même patron que `_AUDIENCE_SQL` côté relances) ; posée par le
+-- lien signé du pied de `send_signal_digest_email` (jeton `outreach_optout.lien_digest`,
+-- même FORME que celui des relances — HMAC scellant un `sub` — mais `typ` et route
+-- distincts) ou par un opérateur.
+-- ⚠️ Vit ICI (fragment `outreach`, pas `usage`) bien que posée par un mécanisme
+-- d'usage (`pending_signal_notices`) : elle référence `users(sub)`, et le fragment
+-- `usage` est mounté SEUL par `tests/test_runner_trigger_sans_worker.py` (sans
+-- `users`) — l'y poser a rougi ce banc en CI le 15/09/2026 (`UndefinedTable`). Un
+-- fragment mounté seul doit rester auto-suffisant ; `outreach_optouts` n'a jamais eu
+-- ce problème car rien ne mounte `outreach` seul — la garde ajoutée par ce commit
+-- (`test_usage_fragment_seul_sur_base_vierge.py`) empêche la récidive.
+CREATE TABLE IF NOT EXISTS signal_digest_optouts (
+    sub TEXT PRIMARY KEY REFERENCES users(sub) ON DELETE CASCADE,
+    source TEXT NOT NULL DEFAULT 'link',    -- 'link' (le destinataire) | 'operator'
+    opted_out_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """

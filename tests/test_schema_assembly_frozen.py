@@ -400,8 +400,19 @@ from oto_mcp.db import _schema, schema
 # lecteur que `pending_signal_notices` (exclusion ajoutée dans la MÊME PR, côté
 # `db/usage.py`, hors DDL) ; la prod qui tourne l'ancien code ne la voit pas.
 # 158 012 → 159 376 (+1 364, commentaire du fragment compris).
-EMPREINTE = "ddcaf91312014d90e3ec623cfaaad2d50862fd18698b1ea7cab2afd67c5516a7"
-LONGUEUR = 159376
+# 15/09/2026 (suite, correctif du trouble ci-dessus) — `signal_digest_optouts`
+# DÉPLACÉE du fragment `usage` (`schema/usage.py`) vers le fragment `outreach`
+# (`schema/outreach.py`), auprès de sa sœur `outreach_optouts` : elle référence
+# `users(sub)`, et `tests/test_runner_trigger_sans_worker.py` mounte le fragment
+# `usage` SEUL (sans `users`) — ce que `outreach` n'a jamais subi, puisque rien ne
+# le mounte isolément. Trunk rouge (`UndefinedTable: relation "users" does not
+# exist`) signalé par oto cd ; correctif + nouvelle garde
+# (`test_usage_fragment_seul_sur_base_vierge.py`) dans ce commit. Même DDL, nouveau
+# domicile : la longueur bouge quand même (commentaire réécrit, la référence
+# croisée à `outreach.py` devenant interne au fichier qui la porte désormais).
+# 159 376 → 159 935 (+559).
+EMPREINTE = "4f9284a5b65d8fb1b4587f4c331d883056cb8a2db969fdd813262e3038eb8d33"
+LONGUEUR = 159935
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
