@@ -64,10 +64,12 @@ exemple) — ça viendra, séparément, avec son propre feu vert (lot b2 de l'is
 
 ⚠️ **Corrigé le 2026-08-29 (#558) — le journal en portait.** La réduction de route
 (`api/routes._normalize_route`) était une **allowlist de FORMES** : numérique ou UUID →
-`:id`, tout le reste passe. Or quatre routes servies portent leur secret DANS le chemin
-(`/api/upload/{token}`, `/api/public/docs/{token}`, `/api/invitations/{token}`,
-`/api/invitations/code/{code}`) et aucun de ces secrets n'a la forme d'un identifiant.
-Ils partaient donc en clair dans `tool_calls.tool`, sur toute la fenêtre de rétention,
+`:id`, tout le reste passe. Or les routes servies portent leur secret DANS le chemin
+(`/api/upload/{token}`, `/api/public/docs/{token}`, `/api/invitations/{token}`, et
+jusqu'au 15/09/2026 `/api/invitations/code/{code}` — retirée depuis avec le code court
+d'invitation lui-même, oto-backend#560) et aucun de ces secrets n'a la forme d'un
+identifiant. Ils partaient donc en clair dans `tool_calls.tool`, sur toute la fenêtre de
+rétention,
 relus par les trois étages de lentilles — **y compris le jeton d'invitation, que le
 modèle de données refuse explicitement de persister ainsi** (`org_store/invitations.py`
 n'enregistre que son empreinte). Un middleware transverse défaisait cette précaution.
@@ -83,10 +85,11 @@ La règle qui remplace la forme, source unique `oto_mcp/journal_secrets.py` :
   une empreinte par jeton ferait exploser sa cardinalité. L'empreinte va dans `args`, où
   elle répond à « le même jeton a-t-il été rejoué ? » sans dire lequel ;
 - **le masque est un HMAC clé (`#` + 12 hex), pas « les N derniers » ni un sha256 nu** —
-  un code d'invitation fait 7 caractères sur un alphabet de 30 (~34 bits) : ses 8
-  derniers caractères SONT le code entier, et un sha256 nu se casse par force brute en
-  quelques secondes pour qui lit le journal. La clé est celle des jetons signés
-  (`OTO_MCP_OAUTH_STATE_SECRET`), donc le masque reste stable d'un boot à l'autre ;
+  garder les N derniers caractères d'un secret court en exposerait une part lisible, et
+  un sha256 nu se casse par force brute en quelques secondes pour qui lit le journal
+  (même un token long de 256 bits ne protège rien si sa réduction, elle, est courte et
+  devinable). La clé est celle des jetons signés (`OTO_MCP_OAUTH_STATE_SECRET`), donc le
+  masque reste stable d'un boot à l'autre ;
 - **la même propriété sur l'autre face** — le jeton d'invitation arrive aussi par
   `oto_org op=accept_invite`. Un argument de **capacité** portant un de ces noms est
   masqué (`truncated_args(..., tool=)`), y compris via `oto_call` (⚠️ **seulement depuis
@@ -478,9 +481,14 @@ pas d'une seconde liste qui divergerait.
 ⚠️ **À blanc par défaut, hors timer et hors `all`** (comme `key-index-rebuild`, #421) :
 elle réécrit des lignes servies aux lentilles de supervision, sur une base **partagée
 prod/preprod**. La lancer est une décision, pas un effet de bord de sortie de maintenance.
-Le piège qu'elle évite, et qui justifie son test contre un vrai PostgreSQL : la passe
-générique `/api/invitations/` écraserait la route réduite par la passe spécifique
-`/api/invitations/code/` si les préfixes plus spécifiques n'étaient pas exclus.
+Le piège qu'elle évite, et qui justifie son test contre un vrai PostgreSQL : si deux
+routes à secret déclarées partagent un préfixe, la passe d'une route GÉNÉRIQUE
+écraserait la route réduite par la passe d'une route plus SPÉCIFIQUE sous le même
+préfixe, si les préfixes plus spécifiques n'étaient pas exclus — l'exemple concret qui
+illustrait ce piège, `/api/invitations/` face à `/api/invitations/code/`, a disparu
+avec le code court d'invitation lui-même (15/09/2026, oto-backend#560) ; le mécanisme
+générique décrit ici reste valide pour toute paire future de routes qui se
+chevaucheraient (ex. `/api/upload/{token}` sous un préfixe plus spécifique).
 
 ## Error tracking (Sentry)
 

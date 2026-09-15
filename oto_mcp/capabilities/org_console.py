@@ -51,7 +51,6 @@ class OrgInput(BaseModel):
     role: Optional[str] = None             # invite : org_member (défaut) | org_admin
     send_email: bool = True                # invite
     token: Optional[str] = None            # accept_invite / reject_invite
-    code: Optional[str] = None             # accept_invite / reject_invite
     carrier: Optional[str] = None          # accept_invite
 
 
@@ -61,12 +60,12 @@ def _org(ctx: ResolvedCtx, inp: OrgInput) -> dict:
             name=_need(inp.name, "missing_name", "`name` requis pour create.")))
     if inp.op == "accept_invite":
         return orgs_invites._invite_accept(ctx, orgs_invites.InviteAcceptInput(
-            token=inp.token, code=inp.code, carrier=inp.carrier))
+            token=inp.token, carrier=inp.carrier))
     if inp.op == "reject_invite":
         # Même handler que `POST /api/me/invitations/reject` — pas une copie : les
         # deux faces doivent refuser aux mêmes conditions (#654).
         return orgs_invites._invite_reject(ctx, orgs_invites.InviteRejectInput(
-            token=inp.token, code=inp.code))
+            token=inp.token))
     oid = _need(inp.org_id, "missing_org", f"`org_id` requis pour {inp.op}.")
     if inp.op == "update":
         return orgs_update._update_org(ctx, orgs_update.UpdateOrgInput(
@@ -220,8 +219,8 @@ CAPABILITIES += [
             "update (`org_id` + name/description/domain/industry/location; empty string "
             "clears a field) / archive (`org_id`) / invite (`org_id`, optional `email` + "
             "`role` org_member|org_admin, send_email=false returns the link only) / "
-            "accept_invite (`token` or `code`) / reject_invite (`token` or `code` — "
-            "declines it without joining; only the invited address may decline). "
+            "accept_invite (`token`) / reject_invite (`token` — declines it without "
+            "joining; only the invited address may decline). "
             "To switch org, use oto_use_org."),
         mcp="oto_org",
     ),

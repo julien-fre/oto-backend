@@ -16,9 +16,11 @@ pas, il la laisse décider — d'où le banc en **deux moitiés indissociables**
 correctif qui protégerait la maison établie mais n'en poserait plus à qui n'en a pas
 serait PIRE que le défaut (l'invité retomberait sur un espace perso vide).
 
-Chaque moitié est jouée sur les **trois entrées** (lien mail, code court,
-réconciliation de signup). Elles convergent vers le même corps, mais c'est la leçon de
-#280 : un test qui n'exerce qu'un chemin passe au vert en laissant le trou ouvert.
+Chaque moitié est jouée sur les **deux entrées** (lien mail, réconciliation de
+signup — le code court partageable, troisième entrée d'origine, a été RETIRÉ le
+15/09/2026, oto-backend#560). Elles convergent vers le même corps, mais c'est la
+leçon de #280 : un test qui n'exerce qu'un chemin passe au vert en laissant le
+trou ouvert.
 
 Palier ÉQUIPE inclus : `group_store.set_active_group` écrit lui aussi
 `org_members.is_active` (invariant ADR 0012, groupe actif ⊂ org active) — appelé nu, il
@@ -63,34 +65,29 @@ def _org(nom: str, sub: str, role: str = "org_admin") -> int:
 
 
 def _invitation(org_id: int, email: str, *, group_id=None, group_role=None):
-    """Rend (token, code) d'une invitation nominative fraîche."""
+    """Rend le token d'une invitation nominative fraîche."""
     from oto_mcp import org_store
-    _id, token, code = org_store.create_invitation(
+    _id, token = org_store.create_invitation(
         org_id, email, "org_member", "u-161-emetteur",
         group_id=group_id, group_role=group_role)
-    return token, code
+    return token
 
 
-# Les trois entrées d'acceptation, avec la MÊME intention : « <sub> accepte ».
-def _via_token(sub, token, code, email):
+# Les deux entrées d'acceptation, avec la MÊME intention : « <sub> accepte ».
+def _via_token(sub, token, email):
     from oto_mcp import org_store
     return org_store.accept_invitation(token, sub)
 
 
-def _via_code(sub, token, code, email):
-    from oto_mcp import org_store
-    return org_store.accept_invitation_by_code(code, sub)
-
-
-def _via_signup(sub, token, code, email):
+def _via_signup(sub, token, email):
     """Le chemin SANS CLIC : la réconciliation par email au premier insert du user."""
     from oto_mcp import org_store
     return org_store.reconcile_signup_with_invitation(sub, email)
 
 
 ENTREES = pytest.mark.parametrize(
-    "accepte", [_via_token, _via_code, _via_signup],
-    ids=["lien mail", "code court", "signup sans clic"])
+    "accepte", [_via_token, _via_signup],
+    ids=["lien mail", "signup sans clic"])
 
 
 # ── Moitié 1 : une maison ÉTABLIE ne bouge pas ───────────────────────────────
@@ -108,7 +105,7 @@ def test_une_invitation_acceptee_ne_deplace_pas_une_maison_reelle(live, accepte)
     assert org_store.get_active_org(sub) == maison
     invitante = _org(f"Invitante 161 {sub}", "u-161-emetteur")
 
-    res = accepte(sub, *_invitation(invitante, email), email)
+    res = accepte(sub, _invitation(invitante, email), email)
 
     assert res and res["org_id"] == invitante
     # L'adhésion a bien eu lieu — le correctif ne coupe pas l'invitation.
@@ -129,9 +126,9 @@ def test_lecho_servi_annonce_la_maison_REELLE_pas_lorg_invitante(live):
     email = f"{sub}@x.tld"
     maison = _org("Maison 161 echo", sub)
     invitante = _org("Invitante 161 echo", "u-161-emetteur")
-    _token, code = _invitation(invitante, email)
+    token = _invitation(invitante, email)
 
-    out = cap._invite_accept(SimpleNamespace(sub=sub), cap.InviteAcceptInput(code=code))
+    out = cap._invite_accept(SimpleNamespace(sub=sub), cap.InviteAcceptInput(token=token))
 
     assert out["org_id"] == invitante          # ce qu'il a rejoint
     assert out["active_org"] == maison, (      # où ses appels tombent VRAIMENT
@@ -151,7 +148,7 @@ def test_une_invitation_acceptee_pose_la_maison_a_qui_nen_a_pas(live, accepte):
     invitante = _org(f"Invitante 161 nue {sub}", "u-161-emetteur")
     assert org_store.get_active_org(sub) is None
 
-    res = accepte(sub, *_invitation(invitante, email), email)
+    res = accepte(sub, _invitation(invitante, email), email)
 
     assert res and res["org_id"] == invitante
     assert org_store.get_active_org(sub) == invitante, (
@@ -173,7 +170,7 @@ def test_lespace_perso_silencieux_cede_toujours_la_place(live, accepte):
     assert perso and org_store.get_active_org(sub) == perso
     invitante = _org(f"Invitante 161 perso {sub}", "u-161-emetteur")
 
-    accepte(sub, *_invitation(invitante, email), email)
+    accepte(sub, _invitation(invitante, email), email)
 
     assert org_store.get_active_org(sub) == invitante, (
         "la promotion perso → org réelle a été perdue")
@@ -191,9 +188,9 @@ def test_une_invitation_dequipe_ne_deplace_pas_la_maison_non_plus(live):
     maison = _org("Maison 161 equipe", sub)
     invitante = _org("Invitante 161 equipe", "u-161-emetteur")
     gid = group_store.create_group(invitante, "Equipe 161", created_by="u-161-emetteur")
-    _token, code = _invitation(invitante, email, group_id=gid, group_role="group_member")
+    token = _invitation(invitante, email, group_id=gid, group_role="group_member")
 
-    res = org_store.accept_invitation_by_code(code, sub)
+    res = org_store.accept_invitation(token, sub)
 
     assert res["group_id"] == gid
     assert group_store.get_group_role(gid, sub) == "group_member"  # l'équipe est rejointe
@@ -213,9 +210,9 @@ def test_une_invitation_dequipe_pose_maison_et_equipe_a_qui_na_rien(live):
     invitante = _org("Invitante 161 equipe nue", "u-161-emetteur")
     gid = group_store.create_group(invitante, "Equipe 161 nue", created_by="u-161-emetteur")
     assert org_store.get_active_org(sub) is None
-    _token, code = _invitation(invitante, email, group_id=gid, group_role="group_member")
+    token = _invitation(invitante, email, group_id=gid, group_role="group_member")
 
-    org_store.accept_invitation_by_code(code, sub)
+    org_store.accept_invitation(token, sub)
 
     assert org_store.get_active_org(sub) == invitante
     assert group_store.get_active_group(sub) == gid

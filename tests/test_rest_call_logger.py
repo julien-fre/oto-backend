@@ -96,7 +96,7 @@ def test_options_preflight_skipped(monkeypatch):
 # ── Les jetons du chemin d'URL (#558) ────────────────────────────────────────
 
 def _routes_declarees():
-    """La VRAIE table servie : c'est elle qui déclare `{token}` / `{code}`."""
+    """La VRAIE table servie : c'est elle qui déclare `{token}`."""
     ar.make_routes(object(), mcp_instance=None)
 
 
@@ -113,13 +113,6 @@ def test_un_appel_sur_une_route_a_jeton_laisse_un_journal_masque(monkeypatch):
     # L'empreinte, elle, va dans `args` : « le même jeton a-t-il été rejoué ? » se
     # répond, « lequel était-ce » non. Et `tool` garde une cardinalité agrégeable.
     assert row["args"]["token"].startswith("#")
-
-
-def test_le_code_court_dinvitation_aussi(monkeypatch):
-    _routes_declarees()
-    row, _ = _run_mw(monkeypatch, path="/api/invitations/code/ABC1234", status=200)
-    assert "ABC1234" not in str(row)
-    assert row["tool"] == "GET /api/invitations/code/:code"
 
 
 def test_une_route_sans_jeton_n_ecrit_aucun_args(monkeypatch):

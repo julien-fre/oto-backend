@@ -163,24 +163,24 @@ class _RowConn:
         return type("R", (), {"fetchone": lambda s: self._row})()
 
 
-def test_accept_by_code_idempotent_same_sub(monkeypatch):
-    monkeypatch.setattr(org_store, "get_invitation_by_code", lambda code: None)  # consommée
+def test_accept_by_token_idempotent_same_sub(monkeypatch):
+    monkeypatch.setattr(org_store, "get_invitation_by_token", lambda token: None)  # consommée
     monkeypatch.setattr(org_store, "_connect",
                         lambda: _RowConn({"org_id": 7, "org_role": "org_member",
                                           "group_id": None, "group_role": None,
                                           "accepted_sub": "u1"}))
-    assert org_store.accept_invitation_by_code("ABC", "u1") == {
+    assert org_store.accept_invitation("tok", "u1") == {
         "org_id": 7, "org_role": "org_member", "group_id": None, "group_role": None}
 
 
-def test_accept_by_code_not_idempotent_other_sub(monkeypatch):
-    monkeypatch.setattr(org_store, "get_invitation_by_code", lambda code: None)
+def test_accept_by_token_not_idempotent_other_sub(monkeypatch):
+    monkeypatch.setattr(org_store, "get_invitation_by_token", lambda token: None)
     monkeypatch.setattr(org_store, "_connect",
                         lambda: _RowConn({"org_id": 7, "org_role": "org_member", "accepted_sub": "someone_else"}))
-    assert org_store.accept_invitation_by_code("ABC", "u1") is None
+    assert org_store.accept_invitation("tok", "u1") is None
 
 
-def test_accept_by_code_none_when_absent(monkeypatch):
-    monkeypatch.setattr(org_store, "get_invitation_by_code", lambda code: None)
+def test_accept_by_token_none_when_absent(monkeypatch):
+    monkeypatch.setattr(org_store, "get_invitation_by_token", lambda token: None)
     monkeypatch.setattr(org_store, "_connect", lambda: _RowConn(None))
-    assert org_store.accept_invitation_by_code("ABC", "u1") is None
+    assert org_store.accept_invitation("tok", "u1") is None

@@ -1,9 +1,12 @@
-"""Surface d'invitation (feature cascade plateforme/org/équipe + code court).
+"""Surface d'invitation (feature cascade plateforme/org/équipe).
 
 Niveau contrat (sans DB) : présence des capacités MCP/REST consommées par
 oto-dashboard et la forme des inputs (toggle mail, email optionnel, accept
-par token/code). Cf. capabilities/{orgs,groups,platform}_invites.py.
-"""
+par token). Cf. capabilities/{orgs,groups,platform}_invites.py.
+
+Le code court partageable (lien `/invitation/<code>`) a existé et a été RETIRÉ
+le 15/09/2026 (oto-backend#560 : 7 caractères, ~34 bits, brute-forçable) — le
+token long (256 bits) est désormais l'UNIQUE façon d'entrer."""
 import pytest
 
 from oto_mcp import org_store
@@ -68,26 +71,26 @@ def test_team_invite_requires_parent_org():
 def test_send_email_toggle_defaults_true_email_optional():
     f = oi.InviteCreateInput.model_fields
     assert f["send_email"].default is True
-    # email optionnel (None autorisé) → émission « code à partager soi-même »
+    # email optionnel (None autorisé) → émission « lien à partager soi-même »
     assert f["email"].default is None
 
 
-def test_accept_input_multiform():
+def test_accept_input_is_token_only():
     f = oi.InviteAcceptInput.model_fields
-    assert {"token", "code"} <= set(f)
-    assert all(f[k].default is None for k in ("token", "code"))
+    assert set(f) == {"token"}
+    assert f["token"].default is None
 
 
 # --- Refus par l'invité (#654) ----------------------------------------------
 
 def test_reject_input_est_symetrique_de_accept():
-    """La demande du front tiers était la SYMÉTRIE : mêmes façons de désigner
+    """La demande du front tiers était la SYMÉTRIE : même façon de désigner
     l'invitation, un chemin de plus, et surtout aucune retouche à `accept` — dont la
     forme est épinglée par le contrat du front."""
     f = oi.InviteRejectInput.model_fields
-    assert set(f) == {"token", "code"}
-    assert all(f[k].default is None for k in ("token", "code"))
-    assert set(oi.InviteAcceptInput.model_fields) == {"token", "code"}
+    assert set(f) == {"token"}
+    assert f["token"].default is None
+    assert set(oi.InviteAcceptInput.model_fields) == {"token"}
 
 
 def test_reject_est_une_capacite_sub_only_avec_ses_refus_declares():
@@ -111,7 +114,7 @@ def test_org_console_has_reject_invite_op():
 
 def test_une_invitation_anonyme_n_est_adressee_a_personne():
     """La comparaison d'adresses qui décide du droit de refuser. Une invitation sans
-    email (code à partager) n'égale AUCUN compte — pas même un compte sans adresse,
+    email (lien à partager) n'égale AUCUN compte — pas même un compte sans adresse,
     sinon deux absences se reconnaîtraient l'une l'autre."""
     assert oi._same_address("Invitee@Org.Test ", " invitee@org.test") is True
     assert oi._same_address(None, "invitee@org.test") is False
@@ -132,7 +135,7 @@ def test_emit_invitation_sends_email(monkeypatch):
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(org_store, "create_invitation",
-                        lambda *a, **k: (1, "tok", "CODE1234"))
+                        lambda *a, **k: (1, "TOK1234"))
     monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
     # Adresse jamais vue : pas de ligne `users` ⟹ locale=None, comportement FR
@@ -146,7 +149,7 @@ def test_emit_invitation_sends_email(monkeypatch):
                              target_name="acme")
     assert out["emailed"] is True
     assert sent["to"] == "invitee@org.test" and sent["name"] == "acme"
-    assert out["code"] == "CODE1234" and "/invitation/CODE1234" in out["invite_url"]
+    assert "code" not in out and "/invitation/TOK1234" in out["invite_url"]
 
 
 # --- Front qui héberge l'org (colonnes `orgs.front_*`) ----------------------
@@ -169,13 +172,13 @@ def test_nominal_url_skips_magic_link_for_third_party_front(monkeypatch):
     def _boom(*a, **k):
         raise AssertionError("magic_url ne doit pas être appelé sous un front tiers")
     monkeypatch.setattr(oi.oauth_facade, "magic_url", _boom)
-    url = oi._nominal_url("CODE1234", "invitee@org.test", front_base="https://app.acme.test")
-    assert url == "https://app.acme.test/invitation/CODE1234"
+    url = oi._nominal_url("TOK1234", "invitee@org.test", front_base="https://app.acme.test")
+    assert url == "https://app.acme.test/invitation/TOK1234"
 
 
 def test_nominal_url_keeps_magic_link_for_oto(monkeypatch):
     monkeypatch.setattr(oi.oauth_facade, "magic_url", lambda url, email: f"{url}?otl=stub")
-    assert oi._nominal_url("CODE1234", "invitee@org.test").endswith("?otl=stub")
+    assert oi._nominal_url("TOK1234", "invitee@org.test").endswith("?otl=stub")
 
 
 def test_emit_invitation_derives_front_from_org(monkeypatch):
@@ -186,7 +189,7 @@ def test_emit_invitation_derives_front_from_org(monkeypatch):
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(org_store, "create_invitation",
-                        lambda *a, **k: (1, "tok", "CODE1234"))
+                        lambda *a, **k: (1, "TOK1234"))
     monkeypatch.setattr(org_store, "org_front",
                         lambda org_id: ("https://app.acme.test", "acme"))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
@@ -197,8 +200,8 @@ def test_emit_invitation_derives_front_from_org(monkeypatch):
     out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=178, email="invitee@org.test",
                              send_email=True, source="org_admin", role="org_member",
                              target_name="globex")
-    assert out["invite_url"] == "https://app.acme.test/invitation/CODE1234"
-    assert sent["url"] == "https://app.acme.test/invitation/CODE1234"  # pas d'OTT
+    assert out["invite_url"] == "https://app.acme.test/invitation/TOK1234"
+    assert sent["url"] == "https://app.acme.test/invitation/TOK1234"  # pas d'OTT
     assert sent["brand"] == "acme"
 
 
@@ -210,7 +213,7 @@ def test_emit_invitation_passes_recipient_locale(monkeypatch):
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(org_store, "create_invitation",
-                        lambda *a, **k: (1, "tok", "CODE1234"))
+                        lambda *a, **k: (1, "tok"))
     monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
     monkeypatch.setattr(db, "get_user_by_email",
@@ -232,7 +235,7 @@ def test_emit_invitation_locale_none_for_unknown_email(monkeypatch):
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(org_store, "create_invitation",
-                        lambda *a, **k: (1, "tok", "CODE1234"))
+                        lambda *a, **k: (1, "tok"))
     monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
     monkeypatch.setattr(db, "get_user_by_email", lambda e: None)

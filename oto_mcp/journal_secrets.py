@@ -20,14 +20,15 @@ propriétés se lisent mieux côte à côte que dans deux modules.
 Le journal (`tool_calls`, ADR 0017) porte deux colonnes alimentées par des données
 d'appelant : `tool` (pour un geste REST : `MÉTHODE /route`) et `args`. Jusqu'au
 2026-08-29, la réduction de `tool` (`api/routes._normalize_route`) était une
-**allowlist de FORMES** — numérique ou UUID → `:id`, tout le reste passe. Or quatre
-routes servies portent leur secret DANS le chemin (`/api/upload/{token}`,
-`/api/public/docs/{token}`, `/api/invitations/{token}`, `/api/invitations/code/{code}`),
-et aucun de ces secrets n'a la forme d'un identifiant : ils partaient donc en clair
-dans une table lue par les surfaces de supervision (#558). Pour l'invitation, le
-modèle de données refuse explicitement de persister le jeton en clair
-(`org_store/invitations.py` n'enregistre que son empreinte) — un middleware
-transverse défaisait cette précaution.
+**allowlist de FORMES** — numérique ou UUID → `:id`, tout le reste passe. Or les
+routes servies portaient leur secret DANS le chemin (`/api/upload/{token}`,
+`/api/public/docs/{token}`, `/api/invitations/{token}`, et jusqu'au 15/09/2026
+`/api/invitations/code/{code}` — retirée depuis avec le code court d'invitation
+lui-même, oto-backend#560), et aucun de ces secrets n'a la forme d'un identifiant :
+ils partaient donc en clair dans une table lue par les surfaces de supervision
+(#558). Pour l'invitation, le modèle de données refuse explicitement de persister
+le jeton en clair (`org_store/invitations.py` n'enregistre que son empreinte) — un
+middleware transverse défaisait cette précaution.
 
 **La propriété qui remplace la forme** : un segment lié à un PARAMÈTRE DE ROUTE dont
 le nom est déclaré secret ici est réduit, quelle que soit son allure. La liste des
@@ -41,13 +42,14 @@ argument de CAPACITÉ portant un de ces noms est masqué ; un argument de CONNEC
 qui s'appelle pareil ne l'est pas (`droit_article(code='CT')` n'est pas un secret,
 et un journal qui le cache coûte une lecture sans rien protéger).
 
-⚠️ **Le masque est un HMAC, pas « les 8 derniers » ni un sha256 nu.** Un code
-d'invitation fait 7 caractères sur un alphabet de 30 (~34 bits) : garder ses 8
-derniers caractères le rendrait ENTIER, et un sha256 nu se retrouve par force brute
-en quelques secondes pour qui lit le journal. La clé est celle qui signe déjà les
-jetons d'upload (`OTO_MCP_OAUTH_STATE_SECRET`) — le masque reste donc stable d'un
-boot à l'autre, ce qui est tout son intérêt : deux lignes portant le même masque
-disent « le même jeton, rejoué », sans jamais dire lequel.
+⚠️ **Le masque est un HMAC, pas « les 8 derniers » ni un sha256 nu.** Garder les 8
+derniers caractères d'un secret court le rendrait en partie ENTIER, et un sha256 nu
+se retrouve par force brute en quelques secondes pour qui lit le journal — même un
+token long (256 bits) ne protège rien si sa réduction, elle, est courte et devinable.
+La clé est celle qui signe déjà les jetons d'upload (`OTO_MCP_OAUTH_STATE_SECRET`) —
+le masque reste donc stable d'un boot à l'autre, ce qui est tout son intérêt : deux
+lignes portant le même masque disent « le même jeton, rejoué », sans jamais dire
+lequel.
 """
 from __future__ import annotations
 
@@ -174,9 +176,12 @@ def declare_routes(routes: Iterable) -> int:
         if secrets_a and tuple(gabarit) not in vus:
             vus.add(tuple(gabarit))
             trouve.append((tuple(gabarit), secrets_a))
-    # Le plus SPÉCIFIQUE d'abord : `/api/invitations/code/{code}` doit primer sur
-    # `/api/invitations/{token}`, sinon le code court serait lu comme un jeton et
-    # la route perdrait son nom dans l'agrégation.
+    # Le plus SPÉCIFIQUE d'abord : si deux routes à secret partagent un préfixe
+    # (ex. `/api/invitations/{token}` et `/api/invitations/code/{code}`, jusqu'au
+    # 15/09/2026 — cette paire n'existe plus, oto-backend#560), le gabarit le plus
+    # court (plus générique) ne doit jamais matcher en premier un chemin qui
+    # appartient en réalité au plus long : la route la plus spécifique perdrait
+    # son nom dans l'agrégation.
     trouve.sort(key=lambda e: len(e[0]), reverse=True)
     _SECRET_ROUTES[:] = trouve
     return len(trouve)
@@ -298,9 +303,10 @@ def journal_purge_plans() -> list[tuple[str, str, list[str]]]:
     `(préfixe littéral, route réduite, préfixes plus spécifiques à exclure)`.
 
     Dérivé de la même déclaration que le masquage à l'écriture — pas d'une seconde
-    liste qui divergerait. L'exclusion est ce qui empêche la passe générique
-    (`/api/invitations/`) d'écraser ce que la passe spécifique
-    (`/api/invitations/code/`) vient de réduire."""
+    liste qui divergerait. L'exclusion est ce qui empêche la passe d'une route
+    générique d'écraser ce que la passe d'une route plus spécifique sous le même
+    préfixe vient de réduire (exemple historique : `/api/invitations/` face à
+    `/api/invitations/code/`, jusqu'au 15/09/2026 — oto-backend#560)."""
     plans = []
     prefixes = []
     for gabarit, secrets_a in _SECRET_ROUTES:

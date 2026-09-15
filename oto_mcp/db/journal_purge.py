@@ -32,9 +32,11 @@ def _conditions(prefixe: str, reduit: str, plus_specifiques: Iterable[str]):
     """Les lignes REST dont la route porte encore un secret en clair.
 
     `tool` vaut `MÉTHODE /route`, d'où le `'% '` en tête de chaque motif. Les
-    préfixes plus spécifiques sont EXCLUS : sans ça, la passe générique
-    (`/api/invitations/`) écraserait ce que la passe spécifique
-    (`/api/invitations/code/`) vient de réduire, et le nom de la route serait perdu.
+    préfixes plus spécifiques sont EXCLUS : sans ça, la passe d'une route générique
+    écraserait ce que la passe d'une route plus spécifique sous le même préfixe
+    vient de réduire, et le nom de cette dernière serait perdu (exemple historique :
+    `/api/invitations/` face à `/api/invitations/code/`, jusqu'au 15/09/2026 —
+    oto-backend#560).
     """
     ou = ["kind = 'rest'", "tool LIKE %s", "tool NOT LIKE %s"]
     params: list = [f"% {prefixe}%", f"% {reduit}"]

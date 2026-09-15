@@ -55,16 +55,15 @@ def project_domain() -> str:
     anonymous) et `<slug>.share.<D>` (partage navigable, mode secret). **PROD = `oto.cx`,
     PREPROD = `oto.ninja`** (cutover ADR 0040) : sans ça le routing par Host et les URLs
     dérivées restaient figés sur la prod (`.oto.cx`), rendant les endpoints de projet
-    injoignables en preprod. Env `OTO_PROJECT_DOMAIN` (défaut `oto.cx`)."""
-    return os.environ.get("OTO_PROJECT_DOMAIN", _PROD_PROJECT_DOMAIN).strip().lower().lstrip(".")
+    injoignables en preprod.
 
-
-# NOTRE domaine de projet de production, et rien de plus qu'un défaut : ses sous-domaines
-# obtiennent un vrai certificat (Caddy ACME on-demand sur `*.mcp.oto.cx` /
-# `*.share.oto.cx`) là où notre préprod sert sa CA interne — pratique pour tester, rejeté
-# par tout client MCP réel. Ce n'est PAS ce qui dit si l'instance est la production :
-# celle-là se déclare (`OTO_ENV`).
-_PROD_PROJECT_DOMAIN = "oto.cx"
+    **Obligatoire** (`OTO_PROJECT_DOMAIN`, décision du 15/09/2026) : ce domaine mint des
+    URLs distribuées à des tiers (sous-domaines de projet, liens de partage) — un défaut
+    muet vers `oto.cx` aurait le même défaut que l'ancien vote par hôte de
+    `project_domain_is_production()` (ADR 0070) : une instance servie ailleurs se
+    verrait quand même attribuer NOTRE domaine sans le dire. Chaque instance déclare le
+    sien, prod comprise."""
+    return require_env("OTO_PROJECT_DOMAIN").strip().lower().lstrip(".")
 
 
 def project_domain_is_production() -> bool:

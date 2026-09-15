@@ -163,9 +163,8 @@ _KNOWN: dict[str, str] = {
     # par déplacement de ce chemin.
     "/api/connectors": NATURE,
     # Aperçu d'invitation AVANT création de compte : par construction, il n'y a pas
-    # encore de `sub` à autoriser. Le jeton (ou le code) EST le secret.
+    # encore de `sub` à autoriser. Le jeton EST le secret.
     "/api/invitations/{token}": NATURE,
-    "/api/invitations/code/{code}": NATURE,
     # Partage public d'un doc par token — lecture seule, le token EST le secret.
     # `/p/d/…` rend du HTML server-rendered (lisible par un agent sans JS), pas du
     # JSON : ce n'est même pas la forme d'une capacité.

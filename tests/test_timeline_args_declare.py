@@ -1,4 +1,4 @@
-"""La timeline d'un déroulé sert les mêmes arguments que la fiche d'un appel — et le dit.
+"""La timeline d'un déroulé et la fiche d'un appel ne servent plus `args` à un org_admin.
 
 Question posée par le dashboard produit le 31/08/2026, restée sans réponse : « `RunCall.
 args` subit-il la même troncature et le même masquage que `CallDetail.args`, qui le
@@ -7,14 +7,23 @@ mesure qui vaille — les deux surfaces lisent la même colonne. Seul le contrat
 d'un côté, d'où un front qui affichait « arguments journalisés » prudemment, faute de
 savoir.
 
-Deux choses tenues ici, et la seconde est celle qui protège la promesse :
+⚠️ **Le champ `args` a été RETIRÉ des deux modèles le 15/09/2026** (oto-backend#563,
+décision d'Alexis) : les arguments complets d'un appel restent à la supervision
+PLATEFORME seule, jamais à l'org_admin de l'org émettrice — cf.
+`test_org_monitoring.py::test_call_et_run_ne_rendent_jamais_args` pour la garde RÉELLE
+(le handler retire la clé du dict ; le modèle `Output=` ne filtre rien à l'exécution,
+`api/base.py::_json` sert le dict tel quel). Ce fichier garde ce qui n'a PAS changé :
+la promesse de masquage/troncature À L'ÉCRITURE tient toujours, pour la même raison
+qu'avant (#413 veut le verbatim intégral, la plateforme continue de le lire).
 
-1. `RunCall.args` porte une description, et elle nomme les deux traitements ;
+Deux choses tenues ici :
+
+1. `RunCall` et `CallDetail` ne portent PLUS de champ `args` du tout ;
 2. **aucune écriture d'arguments d'outil n'échappe à `truncated_args`.** C'est elle
    qui tronque (300 caractères par valeur) et qui masque (un argument déclaré secret
-   part en empreinte). Une écriture directe ferait mentir la description **des deux
-   surfaces à la fois**, sans qu'aucun test de masquage existant ne bouge : ils
-   exercent la fonction, pas le fait qu'on l'appelle partout.
+   part en empreinte). Une écriture directe ferait mentir cette promesse, sans
+   qu'aucun test de masquage existant ne bouge : ils exercent la fonction, pas le
+   fait qu'on l'appelle partout.
 
 ⚠️ **Le point 2 n'a d'abord regardé qu'un seul module, et c'est ce qui l'a laissé
 passer.** La première version de ce banc scannait `calllog` — le domicile déclaré du
@@ -144,16 +153,16 @@ def _exempte(valeur: ast.AST, arbre: ast.Module) -> bool:
             or _est_l_empreinte_de_route(valeur, arbre))
 
 
-def test_les_deux_surfaces_disent_ce_qu_elles_servent():
-    """`CallDetail` le disait dans son docstring, `RunCall` ne disait rien. Les deux
-    doivent nommer les deux traitements — un client qui lit l'une et l'autre ne doit
-    pas conclure qu'elles diffèrent."""
-    champ = RunCall.model_json_schema()["properties"]["args"].get("description") or ""
-    assert champ.strip(), "`RunCall.args` est servi sans description"
-    assert "masqu" in champ.lower() and "tronqu" in champ.lower(), champ
-    detail = ((CallDetail.model_json_schema().get("description") or "")
-              + (CallDetail.model_json_schema()["properties"]["args"].get("description") or ""))
-    assert "masqu" in detail.lower() and "tronqu" in detail.lower(), detail
+def test_les_deux_surfaces_ne_declarent_plus_args():
+    """oto-backend#563 (15/09/2026) : `args` n'est plus un champ de `CallDetail` ni de
+    `RunCall` — retiré des DEUX à la fois, pour que rien ne laisse croire qu'une des
+    deux surfaces org le sert encore quand l'autre non."""
+    assert "args" not in CallDetail.model_fields, (
+        "CallDetail porte encore `args` — la fiche d'appel org_admin resservirait les "
+        "arguments complets (oto-backend#563)")
+    assert "args" not in RunCall.model_fields, (
+        "RunCall porte encore `args` — la timeline d'un run resservirait les "
+        "arguments complets (oto-backend#563)")
 
 
 def test_aucune_ecriture_d_arguments_n_echappe_a_la_fabrique():

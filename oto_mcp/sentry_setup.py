@@ -93,7 +93,13 @@ def init_sentry() -> bool:
         return False
     sentry_sdk.init(
         dsn=dsn,
-        environment=os.environ.get("OTO_SENTRY_ENV", "production"),
+        # oto-backend#968 : jamais deviné — un défaut "production" ici aurait pu
+        # étiqueter un process preprod/tiers comme prod si l'exploitant oublie la
+        # variable, faussant ses alertes. Cohérent avec config.py (même variable,
+        # même défaut vide) ; `verifier_repli_identite_dev`-like : la cohérence
+        # avec `OTO_ENV`, quand les deux sont posées, reste vérifiée ailleurs
+        # (config.py:152-156).
+        environment=os.environ.get("OTO_SENTRY_ENV", ""),
         release=os.environ.get("OTO_SENTRY_RELEASE") or None,
         # RGPD : pas d'IP / cookies / headers auto-collectés.
         send_default_pii=False,
@@ -127,7 +133,7 @@ def init_sentry() -> bool:
     # elle double `SentryToolErrorMiddleware` sans rien ajouter (pas de tag, pas
     # d'utilisateur) — l'événement du middleware suffit.
     ignore_logger("fastmcp.server.server")
-    logger.info("Sentry actif (env=%s)", os.environ.get("OTO_SENTRY_ENV", "production"))
+    logger.info("Sentry actif (env=%s)", os.environ.get("OTO_SENTRY_ENV", "") or "(non déclaré)")
     return True
 
 

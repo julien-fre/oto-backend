@@ -411,8 +411,14 @@ from oto_mcp.db import _schema, schema
 # domicile : la longueur bouge quand même (commentaire réécrit, la référence
 # croisée à `outreach.py` devenant interne au fichier qui la porte désormais).
 # 159 376 → 159 935 (+559).
-EMPREINTE = "4f9284a5b65d8fb1b4587f4c331d883056cb8a2db969fdd813262e3038eb8d33"
-LONGUEUR = 159935
+# 15/09/2026 (oto-backend#560, retrait du code court d'invitation) — même DDL
+# (`code TEXT` reste posé dans `CREATE TABLE org_invitations`, la colonne n'est
+# pas droppée), commentaire du fragment `orgs.py` réécrit : le code court est
+# retiré du produit au profit du seul token long, `code`/son index sont désormais
+# documentés comme LEGACY plutôt que comme le mécanisme de partage courant.
+# 159 935 → 160 173 (+238).
+EMPREINTE = "ddf4542a10875172a7b921f4d77b598eae147528de9301c62d19311757e108a3"
+LONGUEUR = 160173
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

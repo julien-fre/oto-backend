@@ -14,7 +14,7 @@ de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 - `GET /api/connectors`                    → catalogue des connecteurs (auth OPTIONNELLE)
 - `GET /api/guide-library[/{slug}]`        → bibliothèque publique de guides (marketplace)
 - `GET /api/guides/library[/{slug}]`       → guides PLATEFORME
-- `GET /api/invitations/{token}` + `/code/{code}` → aperçu d'invitation (le jeton EST le secret)
+- `GET /api/invitations/{token}`            → aperçu d'invitation (le jeton EST le secret)
 - `GET /api/public/docs/{token}`           → doc partagé (JSON)
 - `GET /p/d/{token}`                       → le même, server-rendered (lisible par un agent sans JS)
 - `GET /o/u/{token}`                       → désinscription d'une relance (le jeton EST le secret)
@@ -265,14 +265,6 @@ async def invite_preview(request: Request) -> JSONResponse:
     Alimente la page d'accueil « vous êtes invité·e » avant la création de
     compte : email visé + inviteur, pour accompagner l'onboarding."""
     p = org_store.preview_invitation(request.path_params.get("token", ""))
-    if not p:
-        return _json_error(request, 404, "invalid_or_expired")
-    return _json(request, p)
-
-
-async def invite_preview_by_code(request: Request) -> JSONResponse:
-    """Aperçu PUBLIC d'une invitation d'org par code court (/invitation/<code>)."""
-    p = org_store.preview_invitation_by_code(request.path_params.get("code", ""))
     if not p:
         return _json_error(request, 404, "invalid_or_expired")
     return _json(request, p)

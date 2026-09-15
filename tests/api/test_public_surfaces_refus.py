@@ -99,8 +99,6 @@ def client(monkeypatch, journal):
     monkeypatch.setattr(guide_store, "read_guide_scoped", _read_scoped)
     monkeypatch.setattr(org_store, "preview_invitation",
                         lambda tok: {"email": "invite@exemple.invalid"} if tok == "bon-jeton" else None)
-    monkeypatch.setattr(org_store, "preview_invitation_by_code",
-                        lambda code: {"email": "invite@exemple.invalid"} if code == "ABC123" else None)
     monkeypatch.setattr(db, "get_doc_by_public_token",
                         lambda tok: {"title": "Partagé", "body_md": "# corps",
                                      "updated_at": "2026-09-01T10:00:00Z"}
@@ -119,8 +117,6 @@ def client(monkeypatch, journal):
               methods=["GET"]),
         Route("/api/guides/library", public.guides_library_public, methods=["GET"]),
         Route("/api/guides/library/{slug}", public.guides_library_public_get,
-              methods=["GET"]),
-        Route("/api/invitations/code/{code}", public.invite_preview_by_code,
               methods=["GET"]),
         Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
@@ -329,13 +325,11 @@ def test_l_activation_et_la_cardinalite_parlent_de_la_MEME_org(client, catalogue
 
 # ── 4. les jetons qui SONT le secret : invitation, doc partagé ───────────────
 
-@pytest.mark.parametrize("chemin", ["/api/invitations/inconnu",
-                                    "/api/invitations/code/ZZZZZZ"])
-def test_une_invitation_inconnue_rend_404_sans_dire_pourquoi(client, chemin):
+def test_une_invitation_inconnue_rend_404_sans_dire_pourquoi(client):
     """Ni « jeton inconnu » ni « invitation expirée » : le même refus pour les deux,
     sinon la route devient un oracle qui distingue un jeton qui a existé d'un jeton
     inventé."""
-    r = client.get(chemin)
+    r = client.get("/api/invitations/inconnu")
     assert r.status_code == 404 and r.json()["error"] == "invalid_or_expired"
 
 
@@ -345,14 +339,6 @@ def test_un_jeton_valide_rend_l_apercu_sans_rien_demander_de_plus(client):
     à l'exact moment où elle sert."""
     r = client.get("/api/invitations/bon-jeton")
     assert r.status_code == 200 and r.json() == {"email": "invite@exemple.invalid"}
-
-
-def test_un_code_court_n_est_pas_accepte_comme_jeton_long(client):
-    """Deux chemins, deux stores : le code d'org (court, devinable) et le jeton long
-    n'ouvrent pas la même porte. Les confondre rendrait le jeton aussi faible que le
-    code."""
-    assert client.get("/api/invitations/ABC123").status_code == 404
-    assert client.get("/api/invitations/code/ABC123").status_code == 200
 
 
 def test_un_jeton_de_doc_inconnu_rend_404_sur_les_deux_faces(client):

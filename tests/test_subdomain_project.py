@@ -531,6 +531,45 @@ async def test_host_dispatch_rate_limits_anon(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_host_dispatch_rate_limits_anon_branche_html(monkeypatch):
+    """oto-backend#561 : la branche navigateur (`Accept: text/html`, `share_ui.build_page`)
+    est le chemin le plus COÛTEUX (lectures DB synchrones en threadpool) — posée APRÈS le
+    token-bucket, elle le contournait entièrement. Même scénario que
+    `test_host_dispatch_rate_limits_anon`, mais avec l'en-tête qui emprunte cette branche :
+    sans le fix (bucket consulté après le rendu HTML), `build_page` serait appelé 2 fois et
+    aucun 429 ne sortirait jamais de ce chemin."""
+    monkeypatch.setenv("OTO_ANON_RATE_PER_MIN", "60")
+    monkeypatch.setenv("OTO_ANON_RATE_BURST", "1")
+    sp._BUCKETS.clear()
+    calls = {"build_page": 0, "status": []}
+
+    async def _authed(scope, receive, send): pass
+    async def _anon(scope, receive, send): pass
+
+    async def _send(msg):
+        if msg["type"] == "http.response.start":
+            calls["status"].append(msg["status"])
+
+    monkeypatch.setattr(sp, "resolve_project", lambda host: {
+        "id": 7, "owner_type": "org", "owner_id": "99",
+        "mcp_access": "anonymous", "mcp_tools": ["frenchtech_evenements"]})
+
+    def _build_page(project, path, *, offset=0, connect_url=""):
+        calls["build_page"] += 1
+        return "<html>ok</html>", 200
+
+    monkeypatch.setattr("oto_mcp.share_ui.build_page", _build_page)
+    disp = sp.HostDispatch(_authed, _anon)
+    scope = {"type": "http", "method": "GET",
+             "headers": [(b"host", b"ft.mcp.oto.cx"), (b"accept", b"text/html")],
+             "client": ("1.2.3.4", 1)}
+    await disp(scope, None, _send)   # 1er : passe, build_page appelé
+    await disp(scope, None, _send)   # 2e : 429 AVANT build_page
+    assert calls["build_page"] == 1, "le bucket doit refuser AVANT le rendu HTML"
+    assert calls["status"] == [200, 429]
+
+
+@pytest.mark.asyncio
 async def test_host_dispatch_canonical_passthrough(monkeypatch):
     seen = {}
 
