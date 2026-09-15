@@ -137,13 +137,20 @@ class HangWatch(threading.Thread):
             self._safe_log(logging.WARNING, "event loop débloquée après %.1fs", duration)
 
     def _maybe_dump(self, delay: float) -> None:
+        """`delay` est mesuré depuis le dernier `beat()` — qui a lieu toutes les
+        `interval/2` — pas depuis le début réel d'un éventuel blocage : le vrai
+        blocage a pu commencer jusqu'à `interval/2` APRÈS le `delay` rapporté ici.
+        D'où le libellé « sans battement depuis » plutôt que « bloquée » : ce
+        nombre peut SURESTIMER le temps de blocage réel, jusqu'à `interval/2`
+        (0,5s au seuil de prod) — ce n'est pas une mesure exacte du blocage, juste
+        de l'absence de battement."""
         now = time.monotonic()
         self._dump_times = [t for t in self._dump_times if now - t < 60.0]
         if len(self._dump_times) >= self._max_dumps_per_min:
             self._safe_log(
                 logging.WARNING,
-                "event loop bloquée ≥%.1fs — dump ignoré (plafond de %d/min atteint, "
-                "probablement la même salve)",
+                "event loop sans battement depuis %.1fs — dump ignoré (plafond de "
+                "%d/min atteint, probablement la même salve)",
                 delay, self._max_dumps_per_min,
             )
             return
@@ -151,7 +158,7 @@ class HangWatch(threading.Thread):
         stack = self._main_thread_stack_text()
         self._safe_log(
             logging.WARNING,
-            "event loop bloquée ≥%.1fs — pile du thread principal:\n%s",
+            "event loop sans battement depuis %.1fs — pile du thread principal:\n%s",
             delay, stack,
         )
 
