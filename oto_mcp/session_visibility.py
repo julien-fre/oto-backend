@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from fastmcp.server.transforms.visibility import disable_components, reset_visibility
+from starlette.concurrency import run_in_threadpool
 
 from . import access, providers, credentials_store, db, org_store
 from .connectors import activation as connector_activation
@@ -75,7 +76,39 @@ async def compute_hidden_layers(ctx, sub: str, *, org=_DERIVE_ORG) -> dict[str, 
     comportement handshake/bascule à chaud MCP). À passer quand la vue doit
     refléter une org CONSULTÉE précise plutôt que re-dériver le contexte de
     l'acteur — ex. la carte contexte du dashboard, qui affichait sinon la
-    sélection GLOBALE (org 0) au lieu de l'org consultée (oto/#5.3)."""
+    sélection GLOBALE (org 0) au lieu de l'org consultée (oto/#5.3).
+
+    ⚠️ **DB SYNC, hors boucle (14/09/2026)** : le corps est coupé en deux moitiés
+    SYNC (`_resolve_toggle_context`, `_compute_couches`) de part et d'autre de
+    l'unique `await` réellement asynchrone (`ctx.fastmcp.list_tools`), chacune
+    appelée via `run_in_threadpool` — même patron que
+    `middleware/dynamic_instructions.py`. Sans ça, ce hook (appelé à CHAQUE
+    handshake `initialize` par `UserDisabledToolsMiddleware`) gèle tout le serveur
+    mono-loop le temps d'une bonne dizaine de lectures/écritures PG : mode n°2 de
+    `docs/event-loop-perf.md`, même classe que la composition d'instructions du
+    15/08, restée ouverte ici faute d'un garde-fou qui la voie."""
+    active_org, prof_org, disabled, enabled_override, role_plateforme = (
+        await run_in_threadpool(_resolve_toggle_context, sub, org))
+    try:
+        all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
+        all_names = {t.name for t in all_tools}
+    except Exception as e:
+        logger.warning("Cannot list tools for %s: %s", sub, e)
+        # repli FAIL-CLOSED : disabled explicites + masqués-par-défaut
+        # (sinon ils resteraient visibles, denylist incomplète).
+        all_names = disabled | DEFAULT_HIDDEN_TOOLS
+    return await run_in_threadpool(
+        _compute_couches, sub, active_org, prof_org, role_plateforme,
+        disabled, enabled_override, all_names)
+
+
+def _resolve_toggle_context(sub: str, org):
+    """1ʳᵉ moitié SYNC (DB) de `compute_hidden_layers` — résolution d'org puis
+    toggles perso + rôle plateforme. Extraite À L'IDENTIQUE (même fail-open) pour
+    être appelée via `run_in_threadpool` ; ne PAS y lire ni écrire de ContextVar
+    (`access.current_org`/`current_group` ne font que LIRE celles de
+    `session_org.py`, vérifié le 14/09/2026 — leur copie par `run_in_threadpool`
+    suffit, cf. docs/event-loop-perf.md mode n°4)."""
     try:
         # Les toggles perso sont scopés par org → on lit ceux de l'org active.
         active_org = access.current_org(sub) if org is _DERIVE_ORG else org
@@ -92,14 +125,20 @@ async def compute_hidden_layers(ctx, sub: str, *, org=_DERIVE_ORG) -> dict[str, 
         logger.warning("Cannot read tool visibility for %s: %s", sub, e)
         disabled, enabled_override, role_plateforme = set(), set(), "member"
         active_org, prof_org = None, 0
-    try:
-        all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
-        all_names = {t.name for t in all_tools}
-    except Exception as e:
-        logger.warning("Cannot list tools for %s: %s", sub, e)
-        # repli FAIL-CLOSED : disabled explicites + masqués-par-défaut
-        # (sinon ils resteraient visibles, denylist incomplète).
-        all_names = disabled | DEFAULT_HIDDEN_TOOLS
+    return active_org, prof_org, disabled, enabled_override, role_plateforme
+
+
+def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
+                      disabled: set[str], enabled_override: set[str],
+                      all_names: set[str]) -> dict[str, set[str]]:
+    """2ᵉ moitié SYNC (DB) de `compute_hidden_layers`, jouée APRÈS le seul `await`
+    du calcul (`ctx.fastmcp.list_tools`, résolu dans `all_names`) — extraite À
+    L'IDENTIQUE (même fail-open par couche) pour être appelée via
+    `run_in_threadpool` ; aucune écriture de ContextVar ici non plus (vérifié
+    14/09/2026 : `connector_activation`/`connector_selection`/`org_store` ne
+    touchent aucune ContextVar — `connector_selection.seed_active` ÉCRIT en base,
+    pas en ContextVar, une écriture DB depuis un thread est déjà le régime commun
+    du reste de la plateforme, ADR 0004)."""
     # Denylist ADMIN (org + équipe active) : gouvernance de visibilité au grain
     # TOOL, PAS une barrière de sécurité (ADR 0031) — l'override perso positif lu
     # ci-dessus (`enabled_override`) la lève toujours, `effective_disabled` en

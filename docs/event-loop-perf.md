@@ -210,19 +210,33 @@ vient du thread de la boucle. Profondeur quelconque, aucune whitelist. Un test d
 contrôle vérifie que la garde MORD (le même travail appelé nûment dans la boucle est
 bien attrapé).
 
-⚠️ **Restent à traiter, MÊME classe, non couverts** (nommés plutôt que balayés en pleine
-nuit d'incident) : `DynamicInstructionsMiddleware.on_list_tools` (org + index guide +
-index guides, sync), `UserDisabledToolsMiddleware.on_initialize` →
-`session_visibility.compute_hidden_tools` (`async def` qui fait 3 requêtes sync avant son
-premier await), le combinateur d'autz `ORG_MEMBER` de `capabilities/_authz.py` appelé
-depuis `_rest_adapter._handler` (`current_org` sync, relevé py-spy). Chacun est UNE
-requête ou trois, là où la composition en faisait des dizaines — d'où l'ordre de
-traitement.
+⚠️ **Reste à traiter, MÊME classe, non couvert** : le combinateur d'autz `ORG_MEMBER` de
+`capabilities/_authz.py` appelé depuis `_rest_adapter._handler` (`current_org` sync,
+relevé py-spy) — UNE requête, là où la composition en faisait des dizaines, d'où l'ordre
+de traitement qui l'a laissé pour la fin.
 
-✅ **Traité le 2026-09-09** : le sink du calllog `server._calllog_sink` →
+✅ **Traité le 2026-09-09** (`DynamicInstructionsMiddleware.on_list_tools`, org + index
+guide + index guides, sync) et le sink du calllog `server._calllog_sink` →
 `auth.hooks.current_user_sub_from_token` → `db.upsert_user` (écriture + commit dans la
 boucle). ⚠️ Ce reste-à-traiter était **sous-estimé d'un facteur cinq** : le sink n'était
 qu'UN des sept demandeurs de la même identité dans le même appel. Cf. le mode n°5.
+
+✅ **Traité le 2026-09-14** : `UserDisabledToolsMiddleware.on_initialize` →
+`session_visibility.compute_hidden_layers` (`async def` qui faisait, DE PART ET D'AUTRE
+de son unique `await` réel — `ctx.fastmcp.list_tools`, laissé dans la boucle,
+légitimement async —, une bonne dizaine de lectures/écritures PG synchrones : toggles
+perso, rôle plateforme, denylists admin/équipe, activation connecteur, RBAC org et
+équipe, sélection marketplace avec son seed en écriture, option bêta). Rejoué sur un
+`initialize` complet plutôt qu'un appel isolé, py-spy aurait montré le même patron que
+`compose_session` le 15/08 : chaque handshake gèle le serveur entier le temps du calcul.
+Remède identique au reste du mode n°2 : le corps sync est coupé en deux fonctions pures
+(`_resolve_toggle_context`, `_compute_couches`), appelées via `run_in_threadpool` de part
+et d'autre du seul `await` — aucune des deux ne lit ni n'écrit de ContextVar (vérifié :
+`access.current_org`/`current_group` ne font que LIRE celles de `session_org.py`,
+`connector_selection.seed_active` ÉCRIT en base, jamais en ContextVar). Garde-fou :
+`tests/middleware/test_no_blocking_db_in_middleware.py` (nouveau test,
+`test_user_disabled_tools_on_initialize_ne_touche_pas_la_base_dans_la_boucle`) — 6 accès
+DB depuis le thread de la boucle avant correctif, 0 après.
 
 ## Mode n°3 — la requête est au BON endroit, mais elle est lente (incident du 27/08)
 

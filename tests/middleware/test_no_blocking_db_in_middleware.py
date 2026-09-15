@@ -33,6 +33,7 @@ import types
 import pytest
 
 from oto_mcp.middleware import dynamic_instructions as mw
+from oto_mcp.middleware import disabled_tools as dis_mw
 from oto_mcp.db import _conn
 
 
@@ -171,3 +172,32 @@ def test_on_call_tool_avec_un_run_ne_touche_pas_la_base_dans_la_boucle(mouchard,
 
     boucle = _joue(go)
     _assert_hors_boucle(mouchard, boucle, "CallContextMiddleware.on_call_tool (_run_id)")
+
+
+def test_user_disabled_tools_on_initialize_ne_touche_pas_la_base_dans_la_boucle(
+        mouchard, monkeypatch):
+    """`UserDisabledToolsMiddleware.on_initialize` → `session_visibility.
+    compute_hidden_layers` : résolution d'org, deux listes de toggles, le rôle
+    plateforme, puis (après le seul `await` du calcul, `ctx.fastmcp.list_tools`)
+    les denylists admin/équipe, l'activation connecteur, le RBAC org et équipe, la
+    sélection marketplace (qui peut ÉCRIRE le seed) et l'option bêta — une bonne
+    dizaine de lectures/écritures SQL synchrones, sur le hook joué à CHAQUE
+    handshake `initialize`. Nommé « reste à traiter » dans `docs/event-loop-perf.md`
+    (mode n°2) depuis le 15/08 ; c'est le même mode de gel que
+    `DynamicInstructionsMiddleware`, resté ouvert parce que ce hook-ci n'était
+    couvert par aucun des deux garde-fous existants."""
+    monkeypatch.setattr(dis_mw, "current_user_sub_from_token", lambda: "u-perf")
+
+    async def _list_tools(*, run_middleware=False):
+        return []
+
+    fastmcp_ctx = types.SimpleNamespace(
+        fastmcp=types.SimpleNamespace(list_tools=_list_tools))
+    context = types.SimpleNamespace(fastmcp_context=fastmcp_ctx)
+
+    async def call_next(ctx):
+        return types.SimpleNamespace()
+
+    boucle = _joue(
+        lambda: dis_mw.UserDisabledToolsMiddleware().on_initialize(context, call_next))
+    _assert_hors_boucle(mouchard, boucle, "UserDisabledToolsMiddleware.on_initialize")
