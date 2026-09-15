@@ -76,7 +76,8 @@ def _public_id_derive(famille: str, legacy_id: str) -> str:
     Si la formule bouge, les deux bougent — d'où le test qui compare les deux
     implémentations sur les mêmes entrées plutôt que de figer une constante.
     """
-    return "nod_" + hashlib.md5(f"{famille}:{legacy_id}".encode()).hexdigest()[:24]
+    return "nod_" + hashlib.md5(
+        f"{famille}:{legacy_id}".encode(), usedforsecurity=False).hexdigest()[:24]
 
 
 def nodes_for_owners(owners: Iterable[tuple[str, str]]) -> list[dict]:

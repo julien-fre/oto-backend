@@ -750,7 +750,7 @@ def doc_rev(title: Optional[str], body_md: Optional[str]) -> str:
     """Jeton de version dérivé du CONTENU (titre+corps) — un ETag. Robuste sans
     colonne de version ni migration ; insensible à la troncature seconde d'`updated_at`
     (le row factory perd les sous-secondes). Deux écritures au même contenu = même rev."""
-    h = hashlib.md5()
+    h = hashlib.md5(usedforsecurity=False)
     h.update((title or "").encode("utf-8"))
     h.update(b"\x00")
     h.update((body_md or "").encode("utf-8"))

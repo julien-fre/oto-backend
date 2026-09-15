@@ -352,7 +352,7 @@ def write_node_blocks(conn, node_id: int, body: str) -> int:
         f"UPDATE nodes SET props = (props - '{_MARKER_PERIME}') "
         f"|| jsonb_build_object('{_MARKER}', %s::text) "
         "WHERE id = %s",
-        (hashlib.md5(body.encode("utf-8")).hexdigest(), node_id))
+        (hashlib.md5(body.encode("utf-8"), usedforsecurity=False).hexdigest(), node_id))
     return len(parsed)
 
 
