@@ -113,13 +113,78 @@ def test_une_adresse_seule_ne_suffit_pas_a_faire_un_lien(registre, env_propre):
     assert public_doc_url("tok", "bn01jfy76a5n") == f"{config.dashboard_url()}/p/d/tok"
 
 
+import ast
+import pathlib
+
+
+def _lignes_de_prose(source: str, chemin: str = "<source>") -> set[int]:
+    """Les lignes appartenant à une docstring — module, classe ou fonction.
+
+    Le tripwire excluait déjà les commentaires `#` : son intention est de viser ce que
+    le code REND, pas ce qu'il explique. Une docstring est de la prose au même titre, et
+    l'oublier force à contourner le contrôle en appauvrissant une note —
+    `public_doc_page` explique légitimement sur quelle ORIGINE sa page sort, ce qui est
+    l'argument de son mode de rendu sûr. Une garde qui pousse à effacer une explication
+    juste se retourne contre ce qu'elle protège.
+    """
+    lignes: set[int] = set()
+    arbre = ast.parse(source, filename=chemin)
+    for n in ast.walk(arbre):
+        if not isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                              ast.AsyncFunctionDef)):
+            continue
+        corps = getattr(n, "body", None)
+        if (corps and isinstance(corps[0], ast.Expr)
+                and isinstance(corps[0].value, ast.Constant)
+                and isinstance(corps[0].value.value, str)):
+            d = corps[0]
+            lignes.update(range(d.lineno, (d.end_lineno or d.lineno) + 1))
+    return lignes
+
+
+def _hotes_de_tableau_de_bord() -> set[str]:
+    """Les hôtes que ce contrôle surveille — **dérivés, pas gravés**.
+
+    Le principal vient de la source elle-même : l'hôte du défaut de
+    `config.dashboard_url()`. Une liste écrite à la main vieillirait exactement comme
+    l'adresse qu'elle surveille.
+
+    ⚠️ **L'ancien tripwire ne cherchait que `dashboard.oto.ninja`** — la PRÉPRODUCTION.
+    Il avait été écrit contre l'incident du 13/08 (« la prod a servi la preprod ») et
+    visait donc la chaîne de cet incident, pas l'axe : il gardait le sens dans lequel on
+    s'était trompé une fois et laissait l'autre grand ouvert. Neuf endroits écrivaient
+    `manage.oto.cx` en dur sans qu'il bronche, dont six dans des messages SERVIS à
+    l'agent. C'est le défaut de garde le plus courant, et il est d'autant plus tenace
+    qu'il a une histoire : chacun sait pourquoi la garde existe, donc personne ne se
+    demande contre quoi elle devrait exister.
+    """
+    from urllib.parse import urlparse
+    hotes = {urlparse(config.dashboard_url()).hostname}
+    # L'ancienne adresse de préproduction : elle a été le défaut jusqu'au 13/08, donc
+    # elle peut encore être recopiée de mémoire ou d'un vieux fichier.
+    hotes.add("dashboard.oto.ninja")
+    return {h for h in hotes if h}
+
+
+def adresses_en_dur(source: str, hotes: set[str], chemin: str = "<source>") -> list[int]:
+    """Les lignes de CODE (ni commentaire, ni docstring) qui écrivent un de ces hôtes.
+
+    Extraite du test pour être éprouvable **à rebours** : une garde qu'on élargit sans
+    l'avoir vue rougir sur son élargissement n'est pas prouvée."""
+    prose = _lignes_de_prose(source, chemin)
+    return [n for n, ligne in enumerate(source.splitlines(), 1)
+            if any(h in ligne for h in hotes)
+            and not ligne.strip().startswith("#") and n not in prose]
+
+
 def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():
     """TRIPWIRE — une adresse en dur redevient invisible à la première relecture, et
-    c'est exactement comme ça que la prod a servi la preprod."""
-    import pathlib
-    # Chemins RELATIFS à `oto_mcp/` : depuis le rangement par domaine, un nom de
-    # fichier ne dit plus de quel module il s'agit (`base.py` en désignerait
-    # plusieurs).
+    c'est exactement comme ça que la prod a servi la preprod.
+
+    Depuis le 15/09/2026 il vise **toute** adresse de tableau de bord, production
+    comprise : voir `_hotes_de_tableau_de_bord` pour ce que l'ancienne version laissait
+    passer.
+    """
     autorises = {  # commentaires, listes d'origines CORS : jamais un lien rendu
         # `api/base.py` depuis le 2026-08-27 : la liste d'origines CORS
         # (`_allowed_origins`) a suivi les primitives partagées hors d'`api/routes.py`
@@ -128,44 +193,33 @@ def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():
         # désormais la marque du propriétaire du doc, et son seul lien en dur est celui
         # de NOTRE pied — servi uniquement quand la page est à nous.
         "api/base.py",
+        # `config.py` PORTE le défaut : c'est la source dont tout le reste dérive.
+        "config.py",
     }
-    import ast
-
-    def _lignes_de_prose(source: str, chemin: str) -> set[int]:
-        """Les lignes appartenant à une docstring — module, classe ou fonction.
-
-        Le tripwire excluait déjà les commentaires `#` : son intention est de viser ce
-        que le code REND, pas ce qu'il explique. Une docstring est de la prose au même
-        titre, et l'oublier force à contourner le contrôle en appauvrissant une note —
-        `public_doc_page` explique légitimement sur quelle ORIGINE sa page sort, ce qui
-        est l'argument de son mode de rendu sûr. Une garde qui pousse à effacer une
-        explication juste se retourne contre ce qu'elle protège.
-        """
-        lignes: set[int] = set()
-        arbre = ast.parse(source, filename=chemin)
-        for n in ast.walk(arbre):
-            if not isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                                  ast.AsyncFunctionDef)):
-                continue
-            corps = getattr(n, "body", None)
-            if (corps and isinstance(corps[0], ast.Expr)
-                    and isinstance(corps[0].value, ast.Constant)
-                    and isinstance(corps[0].value.value, str)):
-                d = corps[0]
-                lignes.update(range(d.lineno, (d.end_lineno or d.lineno) + 1))
-        return lignes
-
+    hotes = _hotes_de_tableau_de_bord()
     fautifs = []
     racine = pathlib.Path("oto_mcp")
     for f in racine.rglob("*.py"):
         if f.relative_to(racine).as_posix() in autorises:
             continue
         source = f.read_text(encoding="utf-8")
-        prose = _lignes_de_prose(source, str(f))
-        for n, ligne in enumerate(source.splitlines(), 1):
-            nu = ligne.strip()
-            if "dashboard.oto.ninja" in nu and not nu.startswith("#") and n not in prose:
-                fautifs.append(f"{f}:{n}")
+        fautifs += [f"{f}:{n}" for n in adresses_en_dur(source, hotes, str(f))]
     assert not fautifs, (
         "adresse de tableau de bord écrite en dur :\n  " + "\n  ".join(fautifs)
         + "\n→ passer par `config.dashboard_url_for(sub)`.")
+
+
+@pytest.mark.parametrize("source, attendu, quoi", [
+    ('URL = "https://manage.oto.cx/console"\n', True, "un littéral de PRODUCTION"),
+    ('def f(s):\n    return f"Va sur https://manage.oto.cx/ ({s})"\n', True,
+     "une f-string servie"),
+    ('X = "https://dashboard.oto.ninja/p"\n', True, "l'ancienne préproduction"),
+    ('"""La page sort sur manage.oto.cx."""\nX = 1\n', False, "une docstring"),
+    ('# voir https://manage.oto.cx\nX = 1\n', False, "un commentaire"),
+])
+def test_le_tripwire_MORD_sur_son_nouvel_axe(source, attendu, quoi):
+    """Éprouvé à rebours : une garde élargie qui n'a jamais rougi sur son élargissement
+    n'est pas prouvée. Avant le 15/09/2026, les deux premiers cas passaient — c'est
+    exactement ce que neuf endroits du code servi faisaient sans être vus."""
+    trouve = bool(adresses_en_dur(source, _hotes_de_tableau_de_bord()))
+    assert trouve is attendu, f"{quoi} : dénoncé={trouve}, attendu={attendu}"

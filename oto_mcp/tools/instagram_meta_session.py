@@ -66,12 +66,21 @@ def _date_fr(horodatage: Optional[str]) -> str:
 
 
 def _message_expire(expires_at: Optional[str]) -> str:
+    """⚠️ **Sans adresse, et c'est délibéré.** Ce message citait notre tableau de bord en
+    dur ; servi à l'agent d'un partenaire, il l'envoyait chez nous pour un geste qu'il
+    doit faire chez lui. Le bon lien dépend du COMPTE (`config.dashboard_url_for`) —
+    or ni cette fonction ni les deux autres sites de ce module ne tiennent le `sub` :
+    ils sont appelés depuis le marquage de santé et depuis le traducteur de refus, qui
+    ne portent qu'une entité. Propager le compte jusqu'ici serait une refonte sans
+    rapport avec le défaut ; nommer la page sans l'adresser dit la même chose à un agent
+    et n'envoie personne au mauvais endroit. Ne pas « remettre le lien » sans le `sub`.
+    """
     quand = _date_fr(expires_at)
     return (
         f"Ton autorisation Instagram a expiré{f' le {quand}' if quand else ''} — "
         "elle vaut 60 jours et ne peut plus être renouvelée une fois passée. "
-        "Reconnecte ton compte depuis ta page connecteurs (https://manage.oto.cx/, "
-        "connecteur « Instagram (statistiques) »).")
+        "Reconnecte ton compte depuis ta page connecteurs, connecteur « Instagram "
+        "(statistiques) ».")
 
 
 def resolve_token(sub: str) -> tuple[str, str]:
@@ -89,9 +98,10 @@ def resolve_token(sub: str) -> tuple[str, str]:
     entity_type, entity_id = _scope(org_id, sub)
     row = _row(org_id, sub)
     if not row or not row.get("secret"):
+        from .. import config
         raise RuntimeError(
             "Aucun compte Instagram connecté. Autorise oto depuis ta page "
-            "connecteurs (https://manage.oto.cx/, connecteur « Instagram "
+            f"connecteurs ({config.dashboard_url_for(sub)}/, connecteur « Instagram "
             "(statistiques) ») — la connexion se fait avec ton compte Instagram, "
             "sans Facebook.")
     meta = row.get("meta") or {}
@@ -322,8 +332,7 @@ async def appeler(geste: str, fn, *args):
         raise _bad(
             "Instagram ne reconnaît plus l'autorisation de ce compte : elle a été "
             "révoquée, ou le compte a changé. Reconnecte-le depuis ta page "
-            "connecteurs (https://manage.oto.cx/, connecteur « Instagram "
-            "(statistiques) »).") from e
+            "connecteurs, connecteur « Instagram (statistiques) ».") from e
     except (coeur.InstagramApiError, ValueError) as e:
         raise _bad(f"Instagram n'a pas pu servir {geste} : {e}") from e
     except Exception as e:

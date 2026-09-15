@@ -34,6 +34,14 @@ from __future__ import annotations
 
 import asyncio
 
+
+def _tableau_de_bord(sub) -> str:
+    """Le tableau de bord de CE compte — celui de son produit, pas le nôtre.
+
+    Import tardif, comme tout le reste de ce module."""
+    from .. import config
+    return config.dashboard_url_for(sub)
+
 # oto-backend#867 — délai DÉFENDABLE pour UN appel HTTP Unipile hors boucle,
 # borné côté backend (le client oto-core n'expose pas de `timeout` par appel :
 # son défaut est `(10, 120)` — 120s de LECTURE, mesuré responsable d'un gel de
@@ -184,7 +192,7 @@ def resolve_operated_account_id(sub: str, provider: str) -> str | None:
             f"Le compte {provider.title()} qui t'était accordé n'est plus opérable "
             "(autorisation révoquée ou compte déconnecté par son propriétaire). "
             "Resélectionne ton identité (oto_identity(op='set') ou "
-            "https://manage.oto.cx/console/connectors).")
+            f"{_tableau_de_bord(sub)}/console/connectors).")
     return _own_unipile_account_id(sub, provider)
 
 

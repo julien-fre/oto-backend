@@ -282,7 +282,16 @@ class GoogleReauthRequired(RuntimeError):
     ne lui disait rien."""
 
 
-_RECONNECTER = "https://manage.oto.cx/ (section Google)"
+def _reconnecter(sub) -> str:
+    """Où CE compte va reconnecter son Google — le tableau de bord de SON produit.
+
+    C'était une constante pointant le nôtre. Servie telle quelle, elle envoyait l'agent
+    d'un partenaire chez nous pour un geste qu'il doit faire chez lui : le défaut du
+    socle d'accueil (13/08), retrouvé dans un recoin qu'aucune garde ne regardait —
+    le tripwire des adresses en dur ne surveillait alors que la préproduction.
+    """
+    from .. import config
+    return f"{config.dashboard_url_for(sub)}/ (section Google)"
 
 
 def _refresh_access_token(refresh_token: str) -> dict:
@@ -324,7 +333,7 @@ def _no_account_message(sub: str, org_id: Optional[int], account: Optional[str])
     # noqa: SILENT — message d'aide : liste de comptes connectés absente plutôt que fausse
     except Exception:      # jamais transformer une erreur d'entrée en panne
         connectes = []
-    dash = _RECONNECTER
+    dash = _reconnecter(sub)
     if not account:
         return (f"Aucun compte Google connecté. Connecte-en un sur {dash}."
                 if not connectes else
@@ -387,7 +396,7 @@ def credentials_for(sub: str, account: Optional[str] = None):
             raise GoogleReauthRequired(
                 f"Le jeton du compte Google {account or '(sans email)'} est expiré ou "
                 "révoqué (Google répond invalid_grant) : reconnecte ce compte sur "
-                f"{_RECONNECTER}. Rien n'a été fait.") from e
+                f"{_reconnecter(sub)}. Rien n'a été fait.") from e
         access_token = resp["access_token"]
         expires_in = int(resp.get("expires_in", 0) or 0)
         new_exp = datetime.fromtimestamp(time.time() + expires_in, tz=timezone.utc).isoformat()
