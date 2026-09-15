@@ -365,6 +365,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # NULL sur tout l'historique — non reconstructible. Pas d'index : même
     # raisonnement que `quantity`, agrégat périodique et non chemin chaud.
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS key_mode TEXT")
+    # oto-backend#572 point 4 : la cible du « voir en tant que » (sub consulté),
+    # posée par `RestCallLogger` à côté de `sub` (l'OPÉRATEUR réel — volontaire,
+    # ne change pas). Sans elle le journal disait qu'un opérateur avait consulté,
+    # jamais au nom de qui. NULL = pas de consultation en cours, ou ligne
+    # antérieure à cette colonne (non reconstructible). Pas d'index : lecture
+    # d'enquête, pas un chemin chaud — même raisonnement que `key_mode` ci-dessus.
+    conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS view_as_sub TEXT")
     # #493 : le journal de paiement porte le customer Mollie de la tentative. Le
     # miroir `org_subscriptions` n'est posé qu'à `confirm` — entre deux clics de
     # souscription il n'y avait donc RIEN à relire, et un second customer Mollie

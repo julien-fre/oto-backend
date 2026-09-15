@@ -63,9 +63,9 @@ def insert_tool_call(row: dict) -> None:
                 (server, kind, sub, email, tool, args, ok, error, duration_ms, session_id,
                  run_id, org_id, client_id, sentry_event_id,
                  request_id, call_uid, effective_sub, error_kind,
-                 token_id, token_kind, result_size, quantity, key_mode)
+                 token_id, token_kind, result_size, quantity, key_mode, view_as_sub)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 row.get("server") or "oto", row.get("kind") or "mcp",
@@ -91,6 +91,10 @@ def insert_tool_call(row: dict) -> None:
                 # Mode du credential (facturation du partenaire) — NULL = non attribuable,
                 # donc non facturable ; l'inverse de la règle de `quantity`.
                 row.get("key_mode"),
+                # #572 point 4 — cible du « voir en tant que » (REST uniquement,
+                # `RestCallLogger` seul la pose). NULL = pas de consultation en
+                # cours, ou ligne antérieure à cette colonne (non reconstructible).
+                row.get("view_as_sub"),
             ),
         )
 
