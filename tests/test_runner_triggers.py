@@ -153,7 +153,13 @@ def test_le_tick_enfile_quand_il_gagne_le_cas(monkeypatch):
     assert enfile["org"] == 2 and enfile["kind"] == "start"
     assert enfile["payload"]["procedure"] == "veille-linkedin"
     assert enfile["payload"]["trigger_id"] == 5
-    assert "input" not in enfile["payload"], "les champs None ne voyagent pas"
+    # La règle tient toujours — mais `input` n'en est plus l'exemple : il est
+    # désormais COMPOSÉ quand le déclencheur n'en porte pas (14/09/2026), sans
+    # quoi le worker refuse le travail. `max_steps` est resté nullable.
+    assert "max_steps" not in enfile["payload"], "les champs None ne voyagent pas"
+    assert enfile["payload"]["input"], (
+        "un travail sans instruction de départ se fait refuser par le worker : "
+        "le tick en dérive une quand le déclencheur n'en a pas")
 
 
 def test_le_tick_passe_quand_le_cas_est_perdu(monkeypatch):
