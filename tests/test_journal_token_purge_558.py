@@ -3,10 +3,18 @@
 Ce que le masquage à l'écriture ne peut pas faire : les lignes posées AVANT lui
 portent leurs jetons en clair sur toute la fenêtre de rétention. Le seul instrument
 qui prouve quoi que ce soit ici est la base : les prédicats de la passe sont du SQL
-(`LIKE` avec exclusion des routes plus spécifiques), et c'est très exactement là que
-la version naïve se trompe — la passe générique `/api/invitations/` écrase le travail
-de la passe spécifique `/api/invitations/code/` et fait perdre son nom à la route.
-"""
+(`LIKE` avec exclusion des routes plus spécifiques).
+
+⚠️ Jusqu'au 15/09/2026, ce banc prouvait le piège du préfixe générique/spécifique sur
+`/api/invitations/{token}` VS `/api/invitations/code/{code}` — la passe générique
+`/api/invitations/` aurait écrasé le travail de la passe spécifique
+`/api/invitations/code/` et fait perdre son nom à la route. Cette paire a disparu avec
+le code court d'invitation (oto-backend#560, retrait entier du mécanisme) : à date,
+aucune autre paire de routes secrètes déclarées ne se chevauche dans la table servie
+(vérifié : `upload`, `public/docs`, `invitations`, `p/d`, `o/u`, `o/d` ont chacune un
+préfixe distinct). Le banc documente donc désormais la propriété plus simple qui
+reste réellement exercée : chaque route déclarée est purgée sans toucher au nom d'une
+AUTRE route."""
 from __future__ import annotations
 
 import pytest
@@ -51,7 +59,6 @@ def base(pg_dsn):
 
 JETON = "eyJ0eXAiOiJ1cGxvYWQiLCJqdGkiOiJhYmMifQ.c2lnbmF0dXJl"
 INVITE = "inv_Zm9vYmFyQmF6UXV1eA"
-CODE = "ABC1234"
 
 
 @pytest.fixture
@@ -64,10 +71,9 @@ def journal(base):
             ("rest", f"GET /api/upload/{JETON}", None),
             ("rest", f"GET /api/public/docs/{INVITE}", None),
             ("rest", f"GET /api/invitations/{INVITE}", None),
-            ("rest", f"GET /api/invitations/code/{CODE}", None),
             ("rest", "POST /api/orgs/:id/members", None),      # rien à réparer
             ("rest", "PUT /api/upload/:token", None),          # déjà réparée
-            ("mcp", "oto_org", '{"op":"accept_invite","code":"%s"}' % CODE),
+            ("mcp", "oto_org", '{"op":"accept_invite","token":"%s"}' % INVITE),
             ("mcp", "oto_org", '{"op":"invite","email":"a@b.c"}'),  # rien à masquer
         ]:
             c.execute(
@@ -97,23 +103,19 @@ def test_a_blanc_la_purge_compte_et_n_ecrit_rien(journal):
         "/api/upload/:token": 2,
         "/api/public/docs/:token": 1,
         "/api/invitations/:token": 1,
-        "/api/invitations/code/:code": 1,
     }
     assert out["args"]["rows"] == 1
     assert _tools(journal) == avant, "une passe à blanc a écrit"
 
 
-def test_la_purge_reduit_les_routes_sans_perdre_la_plus_specifique(journal):
+def test_la_purge_reduit_chaque_route_independamment_sans_les_confondre(journal):
     from oto_mcp import maintenance
     maintenance.journal_tokens(dry_run=False)
     tools = _tools(journal)
     assert JETON not in " ".join(tools)
     assert INVITE not in " ".join(tools)
-    assert CODE not in " ".join(tools)
-    # Le piège : sans exclusion, la passe `/api/invitations/` aurait réécrit la
-    # ligne du code court en `/api/invitations/:token` et la route aurait disparu.
-    assert "GET /api/invitations/code/:code" in tools
     assert "GET /api/invitations/:token" in tools
+    assert "GET /api/public/docs/:token" in tools
     assert tools.count("PUT /api/upload/:token") == 2
     assert "POST /api/orgs/:id/members" in tools     # intacte
 
@@ -122,7 +124,7 @@ def test_la_purge_masque_aussi_le_meme_secret_passe_en_argument(journal):
     from oto_mcp import maintenance
     maintenance.journal_tokens(dry_run=False)
     args = _args_oto_org(journal)
-    assert args[0]["code"].startswith("#") and CODE not in args[0]["code"]
+    assert args[0]["token"].startswith("#") and INVITE not in args[0]["token"]
     assert args[0]["op"] == "accept_invite"          # l'intention reste lisible
     assert args[1] == {"op": "invite", "email": "a@b.c"}   # rien touché
 

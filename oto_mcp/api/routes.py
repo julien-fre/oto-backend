@@ -486,8 +486,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/guides/library", options_handler, methods=["OPTIONS"]),
         Route("/api/guides/library/{slug}", public.guides_library_public_get, methods=["GET"]),
         Route("/api/guides/library/{slug}", options_handler, methods=["OPTIONS"]),
-        Route("/api/invitations/code/{code}", public.invite_preview_by_code, methods=["GET"]),
-        Route("/api/invitations/code/{code}", options_handler, methods=["OPTIONS"]),
         Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/invitations/{token}", options_handler, methods=["OPTIONS"]),
         Route("/api/me/avatar", bind(media.avatar_save, verifier=verifier), methods=["POST"]),

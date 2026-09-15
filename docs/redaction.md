@@ -289,13 +289,15 @@ un magasin conçu pour un appelant authentifié, relu en anonyme sans projection
   secret, pas de contenu ». Corrigé en retirant l'identifiant du libellé, sans
   lui substituer un aller-retour base (choix délibéré : un aperçu anonyme ne
   vaut pas une résolution DB de plus rien que pour l'ergonomie).
-- l'aperçu d'invitation (`org_store._PREVIEW_SELECT`, deux routes anonymes par
-  token et par code) projetait `COALESCE(nom, email)` : nommer l'inviteur est
-  intentionnel (accompagner l'accueil avant création de compte), mais le REPLI
-  vers son adresse — quand son profil n'a pas de nom déclaré — ne l'était pas.
-  Corrigé en retirant l'email du repli ; le champ reste optionnel côté client
-  (`inviter: string | null`), qui dégrade déjà correctement vers un message
-  générique quand il est absent.
+- l'aperçu d'invitation (`org_store._PREVIEW_SELECT`, à l'époque deux routes
+  anonymes, par token et par code court — la route par code a été RETIRÉE le
+  15/09/2026 avec le mécanisme lui-même, oto-backend#560 ; une seule route
+  anonyme, par token, sert désormais l'aperçu) projetait `COALESCE(nom, email)` :
+  nommer l'inviteur est intentionnel (accompagner l'accueil avant création de
+  compte), mais le REPLI vers son adresse — quand son profil n'a pas de nom
+  déclaré — ne l'était pas. Corrigé en retirant l'email du repli ; le champ reste
+  optionnel côté client (`inviter: string | null`), qui dégrade déjà correctement
+  vers un message générique quand il est absent.
 
 **Le principe retenu, pas encore un mécanisme générique.** `redaction.
 champs_autorises(payload, *noms)` est une allow-list explicite — le patron déjà
@@ -310,16 +312,19 @@ véritable middleware REST — parité avec `FieldRedactionMiddleware` sur `/api
 reste à faire si une prochaine fuite de la même famille apparaît ; il ne s'est
 pas imposé pour trois routes.
 
-⚠️ **Rate-limit vérifié, pas ajouté.** Les deux routes d'invitation sont écrites
-à la main précisément parce que l'adaptateur REST des capacités authentifie
-TOUJOURS — l'argument « single-use + TTL + rate-limit côté capacité » qui
-justifie la longueur du code court ne s'applique donc PAS à elles. Confirmé en
-lisant la chaîne de middlewares Starlette (`server.py`) : le seul token-bucket du
-dépôt est posé par `subdomain_project.py`, clé `(IP, projet)`, et ne couvre QUE
-les sous-domaines MCP de projet. Aucun limiteur applicatif ne garde
-`/api/invitations/{token}` ni `/code/{code}` — seul un limiteur de PROXY,
-hors de ce dépôt, pourrait les couvrir. Pas ajouté dans ce lot (hors périmètre
-demandé) ; à nommer si un prochain audit y revient.
+⚠️ **Rate-limit vérifié, pas ajouté.** La route d'invitation est écrite à la main
+précisément parce que l'adaptateur REST des capacités authentifie TOUJOURS.
+Jusqu'au 15/09/2026, l'absence de garde applicative s'appuyait en partie sur
+« single-use + TTL + rate-limit côté capacité » pour justifier la longueur du
+code court (7 caractères, ~34 bits) — cet argument a disparu avec lui
+(oto-backend#560) : le raisonnement est désormais plus simple, puisque le seul
+secret d'accès est le token long (256 bits), déjà hors de portée d'un
+brute-force par simple absence de rate-limit. Confirmé en lisant la chaîne de
+middlewares Starlette (`server.py`) : le seul token-bucket du dépôt est posé par
+`subdomain_project.py`, clé `(IP, projet)`, et ne couvre QUE les sous-domaines
+MCP de projet. Aucun limiteur applicatif ne garde `/api/invitations/{token}` —
+seul un limiteur de PROXY, hors de ce dépôt, pourrait la couvrir. Pas ajouté
+dans ce lot (hors périmètre demandé) ; à nommer si un prochain audit y revient.
 
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,

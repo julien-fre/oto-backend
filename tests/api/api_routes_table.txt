@@ -18,8 +18,6 @@ GET,HEAD /api/guides/library -> guides_library_public
 OPTIONS /api/guides/library -> options_handler
 GET,HEAD /api/guides/library/{slug} -> guides_library_public_get
 OPTIONS /api/guides/library/{slug} -> options_handler
-GET,HEAD /api/invitations/code/{code} -> invite_preview_by_code
-OPTIONS /api/invitations/code/{code} -> options_handler
 GET,HEAD /api/invitations/{token} -> invite_preview
 OPTIONS /api/invitations/{token} -> options_handler
 POST /api/me/avatar -> avatar_save

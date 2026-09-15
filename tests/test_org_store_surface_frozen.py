@@ -95,6 +95,17 @@ que `test_aucun_frere_importe_a_plat` admet.
 RETIRÉ : son seul appelant était l'inbox d'accueil, retirée avec la boucle de
 propositions de docs. Il portait le seul usage de `orgs` dans `invitations` : l'import
 part avec lui, et l'arête `invitations → orgs` quitte `EXPECTED_EDGES`.
+
+⚠️ **Mise à jour du 15/09/2026 (oto-backend#560)** — le CODE COURT d'invitation (7
+caractères, ~34 bits, brute-forçable) est ENTIÈREMENT retiré au profit du seul token
+long (256 bits). Cinq noms quittent la surface : `_CODE_ALPHABET` et `_gen_code`
+(génération du code), `accept_invitation_by_code`, `get_invitation_by_code` et
+`preview_invitation_by_code` (lecture/acceptation par code). Retrait DÉLIBÉRÉ, pas
+un oubli : la ligne quitte `FROZEN` dans le même commit que les
+call-sites (`org_store/invitations.py`, `api/public.py`, `api/routes.py`,
+`capabilities/orgs/invites.py`). `create_invitation` perd un élément de tuple
+(`(id, token, code)` → `(id, token)`) et `peek_invitation` perd son paramètre `code`
+— les deux sont donc aussi mis à jour dans `FROZEN_SIGNATURES`.
 """
 from __future__ import annotations
 
@@ -126,22 +137,22 @@ EXPECTED_EDGES = {
 
 # ── la surface d'avant la découpe, relevée sur `main` (commit 3a40ee0) ───────
 FROZEN = (
-    'BASE_SLUG', 'LibrarySlugTaken', 'ORG_ROLES', 'Optional', '_CODE_ALPHABET',
+    'BASE_SLUG', 'LibrarySlugTaken', 'ORG_ROLES', 'Optional',
     '_DOMAIN_RE', '_EMAIL_CONNECTORS_ORDER', '_INV_LIST_SELECT', '_LIBRARY_COLS',
     '_LIBRARY_META_COLS', '_PREVIEW_SELECT', '_PRIMARY_TENANT', '_SLUG_RE',
     '_accept_invitation_row', '_connect', '_email_connectors_in_order',
-    '_free_instruction_slug', '_gen_code', '_get_invitation', '_hash_token',
+    '_free_instruction_slug', '_get_invitation', '_hash_token',
     '_idempotent_accept', '_list_invitations', '_log', '_mark_invitation_accepted',
     '_personal_label', '_preview_from_row', '_reclaim_or_create_personal',
     '_scope_of', '_snippet', '_sync_mfa_mirror', 'accept_invitation',
-    'accept_invitation_by_code', 'add_org_member', 'annotations', 'archive_org',
+    'add_org_member', 'annotations', 'archive_org',
     'backfill_org_front', 'backfill_personal_orgs', 'cancel_scheduled_email',
     'claim_kb_project', 'clear_kb_project', 'config',
     'count_orgs_created_by', 'create_invitation',
     'create_org', 'credentials_store', 'db', 'delete_instruction',
     'delete_org_secret', 'effective_logo_url', 'ensure_personal_org',
     'fork_into_org', 'get_active_org', 'get_instruction', 'get_instruction_by_id',
-    'get_invitation_by_code', 'get_invitation_by_token', 'get_kb_project_id',
+    'get_invitation_by_token', 'get_kb_project_id',
     'get_library_entry', 'get_org', 'get_org_default_connectors',
     'get_org_email_settings', 'get_org_field_filters', 'get_org_mfa',
     'get_org_role', 'get_org_secret', 'get_personal_org', 'has_org_secret',
@@ -152,7 +163,7 @@ FROZEN = (
     'list_orgs_for_user',
     'list_platform_invitations', 'list_scheduled_emails', 'logging', 'logodev',
     'normalize_domain', 'normalize_slug', 'org_email_quiet_hours', 'org_front',
-    'preview_invitation', 'preview_invitation_by_code', 'publish_guide', 're',
+    'preview_invitation', 'publish_guide', 're',
     'reconcile_signup_with_invitation', 'remove_org_member',
     'resolve_org_for_user', 'resolve_sender', 'revoke_group_invitation',
     'revoke_invitation', 'revoke_platform_invitation', 'search_instructions',
@@ -170,7 +181,6 @@ FROZEN_SIGNATURES = {
     '_email_connectors_in_order': "(settings: 'dict') -> 'list[str]'",
     # #681 : la clé est la paire propriétaire, plus l'org — cf. l'en-tête.
     '_free_instruction_slug': "(conn, owner_type: 'str', owner_id: 'int | str', slug: 'str') -> 'str'",
-    '_gen_code': "(n: 'int' = 7) -> 'str'",
     '_get_invitation': "(pred: 'str', val) -> 'Optional[dict]'",
     '_hash_token': "(token: 'str') -> 'str'",
     '_idempotent_accept': "(pred: 'str', val, sub: 'str') -> 'Optional[dict]'",
@@ -183,7 +193,6 @@ FROZEN_SIGNATURES = {
     '_snippet': "(body: 'str', query: 'str', width: 'int' = 200) -> 'str'",
     '_sync_mfa_mirror': "(org_id: 'int') -> 'None'",
     'accept_invitation': "(token: 'str', sub: 'str') -> 'Optional[dict]'",
-    'accept_invitation_by_code': "(code: 'str', sub: 'str') -> 'Optional[dict]'",
     'add_org_member': "(org_id: 'int', sub: 'str', org_role: 'str' = 'org_member') -> 'None'",
     'archive_org': "(org_id: 'int') -> 'bool'",
     'backfill_org_front': "() -> 'dict'",
@@ -192,7 +201,7 @@ FROZEN_SIGNATURES = {
     'claim_kb_project': "(org_id: 'int', project_id: 'int') -> 'bool'",
     'clear_kb_project': "(org_id: 'int', expected_project_id: 'int') -> 'None'",
     'count_orgs_created_by': "(sub: 'str') -> 'int'",
-    'create_invitation': "(org_id: 'Optional[int]', email: 'Optional[str]', org_role: 'str', invited_by: 'str', ttl_days: 'int' = 7, source: 'Optional[str]' = None, group_id: 'Optional[int]' = None, group_role: 'Optional[str]' = None) -> 'tuple[int, str, str]'",
+    'create_invitation': "(org_id: 'Optional[int]', email: 'Optional[str]', org_role: 'str', invited_by: 'str', ttl_days: 'int' = 7, source: 'Optional[str]' = None, group_id: 'Optional[int]' = None, group_role: 'Optional[str]' = None) -> 'tuple[int, str]'",
     'create_org': "(name: 'str', created_by: 'Optional[str]' = None, front_base_url: 'Optional[str]' = None, front_brand: 'Optional[str]' = None, front_of: 'Optional[str]' = None) -> 'int'",
     'delete_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str') -> 'bool'",
     'delete_org_secret': "(org_id: 'int', provider: 'str', account: 'str' = '') -> 'bool'",
@@ -202,7 +211,6 @@ FROZEN_SIGNATURES = {
     'get_active_org': "(sub: 'str') -> 'Optional[int]'",
     'get_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', version: 'Optional[int]' = None) -> 'Optional[dict]'",
     'get_instruction_by_id': "(instruction_id: 'int') -> 'Optional[dict]'",
-    'get_invitation_by_code': "(code: 'str') -> 'Optional[dict]'",
     'get_invitation_by_token': "(token: 'str') -> 'Optional[dict]'",
     'get_kb_project_id': "(org_id: 'int') -> 'Optional[int]'",
     'get_library_entry': "(*, entry_id: 'Optional[int]' = None, slug: 'Optional[str]' = None, include_unlisted: 'bool' = False) -> 'Optional[dict]'",
@@ -234,7 +242,6 @@ FROZEN_SIGNATURES = {
     'org_email_quiet_hours': "(org_id: 'int', connector: 'str') -> 'Optional[dict]'",
     'org_front': "(org_id: 'Optional[int]') -> 'tuple[Optional[str], Optional[str]]'",
     'preview_invitation': "(token: 'str') -> 'Optional[dict]'",
-    'preview_invitation_by_code': "(code: 'str') -> 'Optional[dict]'",
     'publish_guide': "(*, slug: 'str', title: 'str' = '', description: 'str' = '', body_md: 'str', author_kind: 'str', author_org_id: 'Optional[int]' = None, author_display: 'str' = '', category: 'str' = '', tags: 'Optional[list]' = None, visibility: 'str' = 'public', source_org_id: 'Optional[int]' = None, source_slug: 'Optional[str]' = None, forked_from: 'Optional[int]' = None, published_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'dict'",
     'reconcile_signup_with_invitation': "(sub: 'str', email: 'str') -> 'Optional[dict]'",
     'remove_org_member': "(org_id: 'int', sub: 'str') -> 'bool'",

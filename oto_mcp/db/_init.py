@@ -1049,12 +1049,17 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE users DROP COLUMN IF EXISTS access_granted_at")
     conn.execute("DROP INDEX IF EXISTS idx_users_referral_code")
     conn.execute("ALTER TABLE users DROP COLUMN IF EXISTS referral_code")
-    # Invitation d'org : org_id nullable + source + code court partageable à la
-    # main (idempotent pour les DB créées avant). email nullable (émission sans
-    # envoi mail = code à partager soi-même).
+    # Invitation d'org : org_id nullable + source (idempotent pour les DB créées
+    # avant). email nullable (émission sans envoi mail = lien à partager soi-même).
     conn.execute("ALTER TABLE org_invitations ALTER COLUMN org_id DROP NOT NULL")
     conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS source TEXT")
     conn.execute("ALTER TABLE org_invitations ALTER COLUMN email DROP NOT NULL")
+    # `code` (le code court partageable) et son index : RETIRÉS du produit le
+    # 15/09/2026 (oto-backend#560 — 7 caractères, ~34 bits, brute-forçable ; le
+    # token long, 256 bits, est désormais l'UNIQUE façon d'entrer). La colonne et
+    # l'index restent posés ci-dessous pour les DB déjà créées : le boot est
+    # ADDITIF SEULEMENT, jamais de DROP (`docs/live-migrations.md`) — ils ne sont
+    # simplement plus écrits ni lus par le code applicatif.
     conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS code TEXT")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_org_invitations_code "
                  "ON org_invitations(code) WHERE code IS NOT NULL")

@@ -16,10 +16,9 @@ import pytest
 def test_le_jeton_dinvitation_ne_part_pas_en_clair_dans_les_args():
     from oto_mcp import calllog
     args = calllog.truncated_args(
-        {"op": "accept_invite", "token": "inv_Zm9vYmFyBAZ", "code": "ABC1234"},
+        {"op": "accept_invite", "token": "inv_Zm9vYmFyBAZ"},
         tool="oto_org")
     assert "inv_Zm9vYmFyBAZ" not in str(args)
-    assert "ABC1234" not in str(args)
     assert args["op"] == "accept_invite"          # l'intention reste lisible
     assert args["token"].startswith("#")
 

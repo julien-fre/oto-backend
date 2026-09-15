@@ -1,8 +1,12 @@
 """Les INVITATIONS — plateforme, org, équipe : émission, listing, acceptation, REFUS.
 
 Une seule table `org_invitations` porte les trois scopes de la cascade, dérivés
-des cibles posées (`org_id`/`group_id` ⇒ `_scope_of`). Un lien mail (token haché)
-et un code court partageable adressent la même invitation.
+des cibles posées (`org_id`/`group_id` ⇒ `_scope_of`). Un lien mail porte un
+token long (256 bits, seul son hash est persisté) — c'est l'UNIQUE façon d'entrer.
+Le code court partageable a existé (oto-backend#560 : 7 caractères, ~34 bits,
+brute-forçable) et a été RETIRÉ le 15/09/2026 sur arbitrage d'Alexis ; la colonne
+`code` et son index restent en base (boot additif seulement, jamais de DROP —
+`docs/live-migrations.md`), simplement plus écrits ni lus.
 
 Quatre façons d'en sortir, et elles ne se ressemblent pas : **acceptée**
 (`accepted_at`, l'invité rejoint), **refusée** (`declined_at`, #654 — l'invité dit
@@ -23,21 +27,10 @@ from . import members
 from ..db import _connect, _hash_token
 
 
-# Codes courts lisibles (code d'invitation d'org). Alphabet Crockford sans
-# caractères ambigus (pas de I/L/O/U, 0/1 retirés) → dictable à l'oral, sans
-# collision visuelle. 7 chars = ~34 bits ; single-use + TTL + rate-limit côté
-# capacité couvrent le brute-force.
-_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ"
-
-
-def _gen_code(n: int = 7) -> str:
-    return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(n))
-
-
 def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str, invited_by: str,
                       ttl_days: int = 7, source: Optional[str] = None,
                       group_id: Optional[int] = None,
-                      group_role: Optional[str] = None) -> tuple[int, str, str]:
+                      group_role: Optional[str] = None) -> tuple[int, str]:
     """Crée une invitation nominative. **Scope dérivé** des cibles (feature cascade
     plateforme/org/équipe, comme les connecteurs) :
     - `org_id=None, group_id=None` → invitation **plateforme** (onboarding pur : à
@@ -45,9 +38,8 @@ def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str
     - `org_id` seul → invitation **org** (rejoint l'org) ;
     - `org_id` + `group_id` → invitation **équipe** (rejoint l'org PUIS l'équipe avec
       `group_role`).
-    `email` est OPTIONNEL : sans email, l'émetteur partage le code lui-même (pas d'envoi
-    mail). Renvoie (id, token plaintext, code court) — token pour le lien mail legacy
-    (seul son hash est persisté), code pour le lien /invitation/<code> partageable."""
+    `email` est OPTIONNEL : sans email, l'émetteur partage le lien lui-même (pas d'envoi
+    mail). Renvoie (id, token plaintext) — seul son hash est persisté."""
     email = (email or "").strip().lower() or None
     if email is not None and "@" not in email:
         raise ValueError("email invalide")
@@ -57,25 +49,19 @@ def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str
         raise ValueError("une invitation d'équipe exige l'org parente (org_id)")
     token = "inv_" + secrets.token_urlsafe(32)
     with _connect() as conn:
-        for _ in range(8):
-            code = _gen_code()
-            if conn.execute(
-                "SELECT 1 FROM org_invitations WHERE code = %s", (code,)).fetchone():
-                continue
-            row = conn.execute(
-                """
-                INSERT INTO org_invitations
-                    (org_id, email, org_role, token_hash, code, invited_by, source,
-                     group_id, group_role, expires_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        NOW() + (%s || ' days')::interval)
-                RETURNING id
-                """,
-                (org_id, email, org_role, _hash_token(token), code, invited_by, source,
-                 group_id, group_role, str(int(ttl_days))),
-            ).fetchone()
-            return int(row["id"]), token, code
-        raise RuntimeError("impossible de générer un code d'invitation unique")
+        row = conn.execute(
+            """
+            INSERT INTO org_invitations
+                (org_id, email, org_role, token_hash, invited_by, source,
+                 group_id, group_role, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s,
+                    NOW() + (%s || ' days')::interval)
+            RETURNING id
+            """,
+            (org_id, email, org_role, _hash_token(token), invited_by, source,
+             group_id, group_role, str(int(ttl_days))),
+        ).fetchone()
+        return int(row["id"]), token
 
 
 # « EN ATTENTE » — la définition, écrite UNE fois (#654). ⚠️ Elle était recopiée dans
@@ -89,7 +75,7 @@ _PENDING_I = ("i.accepted_at IS NULL AND i.declined_at IS NULL "
 # Listing enrichi : chaque ligne porte de quoi afficher le scope (nom d'org/équipe)
 # + un `scope` dérivé ('platform'|'org'|'team'), commun aux 3 niveaux de la cascade.
 _INV_LIST_SELECT = f"""
-    SELECT i.id, i.email, i.code, i.org_role, i.group_role, i.org_id, i.group_id,
+    SELECT i.id, i.email, i.org_role, i.group_role, i.org_id, i.group_id,
            i.invited_by, i.source, i.created_at, i.expires_at,
            o.name AS org_name, g.name AS group_name
       FROM org_invitations i
@@ -139,7 +125,7 @@ def list_platform_invitations() -> list[dict]:
 def find_pending_invitation(org_id: int, email: str) -> Optional[dict]:
     """L'invitation d'ORG encore valide (non acceptée, non REFUSÉE, non expirée — une
     révoquée est SUPPRIMÉE) adressée à cet email, hors invitations d'équipe :
-    `{id, created_at, expires_at}`, sans le code. None s'il n'y en a pas. La plus
+    `{id, created_at, expires_at}`, sans le token. None s'il n'y en a pas. La plus
     récente si la file en porte plusieurs (possible pour les lignes d'avant le refus
     #622).
 
@@ -210,7 +196,7 @@ _PREVIEW_SELECT = f"""
 # ⚠️ oto#86 : `inviter` était `COALESCE(u.name, u.email)` — nommer l'invitant EST
 # intentionnel (accompagner l'accueil avant création de compte), mais le REPLI
 # vers son adresse ne l'était pas. Un compte frais sans nom déclaré servait donc
-# son email à un anonyme, sur les deux routes publiques ci-dessous. `inviter` est
+# son email à un anonyme, sur la route publique ci-dessous. `inviter` est
 # `string | null` côté contrat (`oto-dashboard/frontend/src/types/api.ts`) et le
 # client dégrade déjà vers un message générique quand il est absent — retirer le
 # repli n'a donc pas besoin d'un remplacement, juste de servir `None`.
@@ -228,31 +214,11 @@ def preview_invitation(token: str) -> Optional[dict]:
         return _preview_from_row(dict(row)) if row else None
 
 
-def preview_invitation_by_code(code: str) -> Optional[dict]:
-    """Aperçu PUBLIC par code court (lien /invitation/<code>)."""
-    code = (code or "").strip().upper()
-    if not code:
-        return None
-    with _connect() as conn:
-        row = conn.execute(
-            _PREVIEW_SELECT.format(pred="i.code = %s"), (code,)
-        ).fetchone()
-        return _preview_from_row(dict(row)) if row else None
-
-
 def get_invitation_by_token(token: str) -> Optional[dict]:
     """Invitation EN ATTENTE (cf. `_PENDING`) pour ce token, sinon None."""
     if not token:
         return None
     return _get_invitation("token_hash = %s", _hash_token(token))
-
-
-def get_invitation_by_code(code: str) -> Optional[dict]:
-    """Invitation EN ATTENTE (cf. `_PENDING`) pour ce code court, sinon None."""
-    code = (code or "").strip().upper()
-    if not code:
-        return None
-    return _get_invitation("code = %s", code)
 
 
 def _get_invitation(pred: str, val) -> Optional[dict]:
@@ -284,27 +250,20 @@ _PEEK_SELECT = """
 """
 
 
-def peek_invitation(*, token: Optional[str] = None,
-                    code: Optional[str] = None) -> Optional[dict]:
+def peek_invitation(*, token: Optional[str] = None) -> Optional[dict]:
     """La ligne visée par un secret d'invitation, **SANS filtre d'état**.
 
-    `get_invitation_by_*` ne rend que les invitations en attente : un None y confond
-    « ce code n'existe pas », « expirée », « déjà acceptée » et « tu l'as déjà
-    refusée ». Le refus doit les distinguer (succès idempotent au dernier cas, 410
-    aux autres) et lire l'adresse invitée avant d'autoriser quoi que ce soit. Cette
-    lecture sert donc à DÉCIDER ; ce n'est jamais elle qui autorise.
+    `get_invitation_by_token` ne rend que les invitations en attente : un None y
+    confond « ce token n'existe pas », « expirée », « déjà acceptée » et « tu l'as
+    déjà refusée ». Le refus doit les distinguer (succès idempotent au dernier cas,
+    410 aux autres) et lire l'adresse invitée avant d'autoriser quoi que ce soit.
+    Cette lecture sert donc à DÉCIDER ; ce n'est jamais elle qui autorise.
 
     Rend en plus `live` (non expirée), `scope` et `org_name`. None si le secret ne
     désigne aucune ligne — une révoquée en fait partie : elle est SUPPRIMÉE."""
-    if token:
-        pred, val = "i.token_hash = %s", _hash_token(token)
-    elif code:
-        code = code.strip().upper()
-        if not code:
-            return None
-        pred, val = "i.code = %s", code
-    else:
+    if not token:
         return None
+    pred, val = "i.token_hash = %s", _hash_token(token)
     with _connect() as conn:
         row = conn.execute(_PEEK_SELECT.format(pred=pred), (val,)).fetchone()
     if not row:
@@ -370,21 +329,9 @@ def accept_invitation(token: str, sub: str) -> Optional[dict]:
     return _idempotent_accept("token_hash = %s", _hash_token(token), sub)
 
 
-def accept_invitation_by_code(code: str, sub: str) -> Optional[dict]:
-    """Accepte une invitation d'org par code court. Idempotent si déjà acceptée
-    par le même sub ; None si code invalide/expiré/à autrui."""
-    code = (code or "").strip().upper()
-    if not code:
-        return None
-    inv = get_invitation_by_code(code)
-    if inv:
-        return _accept_invitation_row(inv, sub)
-    return _idempotent_accept("code = %s", code, sub)
-
-
 def _accept_invitation_row(inv: dict, sub: str) -> dict:
     """Cœur de l'acceptation d'une invitation à partir d'une ligne déjà résolue (par
-    token, code OU email lors d'une réconciliation de signup). Selon le scope :
+    token OU email lors d'une réconciliation de signup). Selon le scope :
     - **org** (org_id présent) → ajoute le membre d'org ; la MAISON n'est posée que
       par `add_org_member`, sous SA condition (voir plus bas) ;
     - **équipe** (group_id présent) → ajoute AUSSI l'équipe (avec `group_role`) et la

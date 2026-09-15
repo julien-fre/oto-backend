@@ -3,10 +3,10 @@ ANONYME. LA PLUS URGENTE des trois fuites de l'issue.
 
 `_PREVIEW_SELECT` (org_store/invitations.py) projetait `COALESCE(u.name, u.email)
 AS inviter` : nommer l'invitant est intentionnel et documenté (accompagner
-l'accueil avant la création de compte, sur `GET /api/invitations/{token}` et
-`GET /api/invitations/code/{code}`, SANS authentification — le jeton/code EST
-le secret). Le repli ne l'était pas : un compte invitant fraîchement créé, sans
-nom encore déclaré, servait son ADRESSE DE COURRIEL à un anonyme.
+l'accueil avant la création de compte, sur `GET /api/invitations/{token}`, SANS
+authentification — le jeton EST le secret). Le repli ne l'était pas : un compte
+invitant fraîchement créé, sans nom encore déclaré, servait son ADRESSE DE
+COURRIEL à un anonyme.
 
 Vrai PostgreSQL, base neuve pour ce module : ce banc n'a de valeur que sur la
 vraie requête de projection — une doublure qui la recopierait ne prouverait
@@ -47,17 +47,16 @@ def test_invitant_sans_nom_ne_sert_pas_son_email(live):
     upsert_user(emetteur, email=email_emetteur)  # compte frais, AUCUN nom déclaré
 
     oid = org_store.create_org("Org 86", created_by=emetteur)
-    _id, token, code = org_store.create_invitation(
+    _id, token = org_store.create_invitation(
         oid, "invite-86@x.tld", "org_member", emetteur)
 
-    for apercu in (org_store.preview_invitation(token),
-                   org_store.preview_invitation_by_code(code)):
-        assert apercu is not None
-        assert apercu["inviter"] != email_emetteur, (
-            f"l'aperçu ANONYME sert l'email de l'invitant faute de nom — "
-            f"oto#86 ({apercu!r})")
-        assert email_emetteur not in (apercu["inviter"] or ""), (
-            f"l'adresse de l'invitant fuite dans le libellé — oto#86 ({apercu!r})")
+    apercu = org_store.preview_invitation(token)
+    assert apercu is not None
+    assert apercu["inviter"] != email_emetteur, (
+        f"l'aperçu ANONYME sert l'email de l'invitant faute de nom — "
+        f"oto#86 ({apercu!r})")
+    assert email_emetteur not in (apercu["inviter"] or ""), (
+        f"l'adresse de l'invitant fuite dans le libellé — oto#86 ({apercu!r})")
 
 
 def test_invitant_avec_nom_reste_servi(live):
@@ -70,7 +69,7 @@ def test_invitant_avec_nom_reste_servi(live):
     upsert_user(emetteur, email=f"{emetteur}@x.tld", name="Jane Doe")
 
     oid = org_store.create_org("Org 86 bis", created_by=emetteur)
-    _id, token, _code = org_store.create_invitation(
+    _id, token = org_store.create_invitation(
         oid, "invite-86-bis@x.tld", "org_member", emetteur)
 
     apercu = org_store.preview_invitation(token)

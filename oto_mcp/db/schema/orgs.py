@@ -68,9 +68,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS org_members_one_active ON org_members(sub) WHE
 -- `org_id` NULLABLE (plateforme + héritage). `source` = provenance
 -- ('org_admin' | 'group_admin' | 'platform_admin').
 -- `email` NULLABLE : une invitation nominative cible un email, mais une émission
--- « code à partager soi-même » (sans envoi mail) peut être anonyme. `code` = code
--- court lisible (lien /invitation/<code>), saisi/partagé à la main ; c'est le
--- secret d'accès single-use (≠ token_hash legacy du lien mail).
+-- « lien à partager soi-même » (sans envoi mail) peut être anonyme.
+-- `code` = ANCIEN code court partageable (lien /invitation/<code>) : RETIRÉ du
+-- produit le 15/09/2026 (oto-backend#560 — 7 caractères, ~34 bits, brute-forçable).
+-- Colonne conservée non écrite/non lue (boot additif seulement, jamais de DROP) ;
+-- le token long (`token_hash`, 256 bits) est désormais l'UNIQUE secret d'accès.
 -- `declined_at`/`declined_sub` = le REFUS de l'invité (oto-backend#654), symétrique
 -- d'accepted_at/accepted_sub et surtout DISTINCT d'eux : une invitation refusée
 -- quitte la file d'attente sans créer d'appartenance. Écrire son refus dans
@@ -94,9 +96,10 @@ CREATE TABLE IF NOT EXISTS org_invitations (
     declined_sub TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_org_invitations_org ON org_invitations(org_id);
--- idx_org_invitations_code NON déclaré ici : `code` est ajouté par ALTER (DB
--- existantes) APRÈS ce _SCHEMA → l'index sur `code` vit dans le bloc migration,
--- après l'ADD COLUMN (sinon UndefinedColumn au boot sur une table préexistante).
+-- idx_org_invitations_code NON déclaré ici : `code` est une colonne LEGACY (le
+-- code court retiré le 15/09/2026, cf. plus haut), ajoutée par ALTER (DB
+-- existantes) APRÈS ce _SCHEMA → son index vit dans le bloc migration, après
+-- l'ADD COLUMN (sinon UndefinedColumn au boot sur une table préexistante).
 """
 
 # équipes et leurs membres

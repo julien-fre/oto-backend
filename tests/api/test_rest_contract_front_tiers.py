@@ -135,7 +135,7 @@ def _file(client, oid, admin) -> list[dict]:
 def test_inviter_une_adresse_deja_invitee_rend_409_et_l_invitation_existante(client, org):
     """Décision du 29/08/2026 (#622) : une invitation encore valide pour la même adresse
     est un refus, pas un deuxième secret porteur. `details.invitation` porte de quoi la
-    renvoyer (id, dates) — jamais son code. La comparaison est faite sur l'adresse
+    renvoyer (id, dates) — jamais son token. La comparaison est faite sur l'adresse
     normalisée (casse, espaces)."""
     oid, admin = org["id"], org["admin"]
     r1 = client.post(f"/api/orgs/{oid}/invitations",
@@ -156,8 +156,9 @@ def test_inviter_une_adresse_deja_invitee_rend_409_et_l_invitation_existante(cli
     assert inv["id"] == existante[0]["id"]
     assert inv["created_at"] == existante[0]["created_at"]
     assert inv["expires_at"] == existante[0]["expires_at"]
-    assert set(inv) == {"id", "created_at", "expires_at"}     # jamais le code
-    assert r1.json()["code"] not in r2.text
+    assert set(inv) == {"id", "created_at", "expires_at"}     # jamais le token
+    token = r1.json()["invite_url"].rsplit("/", 1)[-1]
+    assert token not in r2.text
     # Rien n'a été écrit : toujours UNE ligne pour cette adresse.
     assert [i["email"] for i in _file(client, oid, admin)].count(
         "deux.fois@front-tiers.invalid") == 1
@@ -223,13 +224,13 @@ def test_une_invitation_qui_ne_vaut_plus_ne_bloque_pas(client, org, sort):
     assert r.json()["ok"] is True
 
 
-def test_inviter_sans_adresse_reste_un_code_a_partager(client, org):
+def test_inviter_sans_adresse_reste_un_lien_a_partager(client, org):
     """Le refus ne vaut que pour une adresse : sans email, aucun doublon possible."""
     oid, admin = org["id"], org["admin"]
     r1 = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False}, headers=_h(admin))
     r2 = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False}, headers=_h(admin))
     assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
-    assert r1.json()["email"] is None and r1.json()["code"] != r2.json()["code"]
+    assert r1.json()["email"] is None and r1.json()["invite_url"] != r2.json()["invite_url"]
 
 
 # ── POST /api/me/invitations/reject : l'invité refuse (#654) ─────────────────
@@ -244,10 +245,12 @@ def test_inviter_sans_adresse_reste_un_code_a_partager(client, org):
 # accept|reject` aurait déformé une entrée servie. Un verbe = un chemin.
 
 def _invite(client, oid, admin, adresse) -> str:
+    """Émet une invitation nominative et rend le TOKEN de son lien (extrait de
+    `invite_url` — aucune surface ne le rend sous un autre nom)."""
     r = client.post(f"/api/orgs/{oid}/invitations",
                     json={"email": adresse, "send_email": False}, headers=_h(admin))
     assert r.status_code == 200, r.text
-    return r.json()["code"]
+    return r.json()["invite_url"].rsplit("/", 1)[-1]
 
 
 def _sub(nom: str) -> str:
@@ -264,12 +267,12 @@ def test_l_invite_refuse_et_l_invitation_quitte_la_file_de_l_emetteur(client, or
     from oto_mcp import org_store
     oid, admin = org["id"], org["admin"]
     invite = _sub("usr_ft_refuseur")
-    code = _invite(client, oid, admin, "usr_ft_refuseur@front-tiers.invalid")
+    token = _invite(client, oid, admin, "usr_ft_refuseur@front-tiers.invalid")
 
     assert "usr_ft_refuseur@front-tiers.invalid" in [
         i["email"] for i in _file(client, oid, admin)]
 
-    r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(invite))
+    r = client.post("/api/me/invitations/reject", json={"token": token}, headers=_h(invite))
     assert r.status_code == 200, r.text
     assert r.json() == {"ok": True, "declined": True, "scope": "org", "org_id": oid,
                         "group_id": None, "name": "Org du front tiers"}
@@ -283,10 +286,10 @@ def test_l_invite_refuse_et_l_invitation_quitte_la_file_de_l_emetteur(client, or
 def test_une_invitation_refusee_ne_peut_plus_etre_acceptee(client, org):
     oid, admin = org["id"], org["admin"]
     invite = _sub("usr_ft_regret")
-    code = _invite(client, oid, admin, "usr_ft_regret@front-tiers.invalid")
-    assert client.post("/api/me/invitations/reject", json={"code": code},
+    token = _invite(client, oid, admin, "usr_ft_regret@front-tiers.invalid")
+    assert client.post("/api/me/invitations/reject", json={"token": token},
                        headers=_h(invite)).status_code == 200
-    r = client.post("/api/me/invitations/accept", json={"code": code}, headers=_h(invite))
+    r = client.post("/api/me/invitations/accept", json={"token": token}, headers=_h(invite))
     assert (r.status_code, r.json()["error"]) == (410, "invalid_or_expired"), r.text
 
 
@@ -294,53 +297,54 @@ def test_refuser_deux_fois_rend_la_meme_reponse(client, org):
     """Idempotent comme l'acceptation : un double clic n'est pas une erreur."""
     oid, admin = org["id"], org["admin"]
     invite = _sub("usr_ft_double")
-    code = _invite(client, oid, admin, "usr_ft_double@front-tiers.invalid")
-    corps = {"code": code}
+    token = _invite(client, oid, admin, "usr_ft_double@front-tiers.invalid")
+    corps = {"token": token}
     r1 = client.post("/api/me/invitations/reject", json=corps, headers=_h(invite))
     r2 = client.post("/api/me/invitations/reject", json=corps, headers=_h(invite))
     assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
     assert r1.json() == r2.json()
 
 
-def test_detenir_le_code_ne_suffit_pas_a_refuser_l_invitation_d_un_autre(client, org):
-    """L'ASYMÉTRIE assumée avec l'acceptation. Accepter avec un code qu'on détient est
-    un geste sur soi ; refuser avec ce même code détruirait l'invitation d'un tiers —
-    un code partagé par erreur deviendrait une porte pour annuler l'onboarding de
+def test_detenir_le_token_ne_suffit_pas_a_refuser_l_invitation_d_un_autre(client, org):
+    """L'ASYMÉTRIE assumée avec l'acceptation. Accepter avec un token qu'on détient est
+    un geste sur soi ; refuser avec ce même token détruirait l'invitation d'un tiers —
+    un token partagé par erreur deviendrait une porte pour annuler l'onboarding de
     quelqu'un d'autre, et sans appartenance créée, sans trace visible. Donc : seule
     l'adresse invitée refuse. L'invitation, elle, doit rester intacte."""
     oid, admin = org["id"], org["admin"]
     cible = _sub("usr_ft_cible")
     porteur = _sub("usr_ft_porteur")
-    code = _invite(client, oid, admin, "usr_ft_cible@front-tiers.invalid")
+    token = _invite(client, oid, admin, "usr_ft_cible@front-tiers.invalid")
 
-    r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(porteur))
+    r = client.post("/api/me/invitations/reject", json={"token": token}, headers=_h(porteur))
     assert (r.status_code, r.json()["error"]) == (403, "not_the_invitee"), r.text
     assert r.json()["detail"]
     # Rien n'a été écrit : elle est toujours dans la file, et la CIBLE peut la refuser.
     assert "usr_ft_cible@front-tiers.invalid" in [i["email"] for i in _file(client, oid, admin)]
-    assert client.post("/api/me/invitations/reject", json={"code": code},
+    assert client.post("/api/me/invitations/reject", json={"token": token},
                        headers=_h(cible)).status_code == 200
 
 
 def test_une_invitation_anonyme_ne_se_refuse_pas(client, org):
-    """Émise sans adresse (« code à partager soi-même ») : elle n'est adressée à
+    """Émise sans adresse (« lien à partager soi-même ») : elle n'est adressée à
     personne, elle n'allume aucun badge, et la retirer est le geste de son émetteur."""
     oid, admin = org["id"], org["admin"]
     r = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False},
                     headers=_h(admin))
     assert r.status_code == 200, r.text
-    r = client.post("/api/me/invitations/reject", json={"code": r.json()["code"]},
+    token = r.json()["invite_url"].rsplit("/", 1)[-1]
+    r = client.post("/api/me/invitations/reject", json={"token": token},
                     headers=_h(_sub("usr_ft_curieux")))
     assert (r.status_code, r.json()["error"]) == (403, "not_the_invitee"), r.text
 
 
-def test_refuser_sans_token_ni_code_rend_400(client, org):
+def test_refuser_sans_token_rend_400(client, org):
     r = client.post("/api/me/invitations/reject", json={}, headers=_h(org["admin"]))
     assert (r.status_code, r.json()["error"]) == (400, "missing_token"), r.text
 
 
-def test_refuser_un_code_inconnu_rend_410(client, org):
-    r = client.post("/api/me/invitations/reject", json={"code": "ZZZZZZZ"},
+def test_refuser_un_token_inconnu_rend_410(client, org):
+    r = client.post("/api/me/invitations/reject", json={"token": "inv_inconnu"},
                     headers=_h(org["admin"]))
     assert (r.status_code, r.json()["error"]) == (410, "invalid_or_expired"), r.text
 
@@ -355,20 +359,19 @@ def test_le_refus_survit_a_l_inscription_par_la_meme_adresse(client, org):
     oid, admin = org["id"], org["admin"]
     adresse = "usr_ft_signup@front-tiers.invalid"
     invite = _sub("usr_ft_signup")
-    code = _invite(client, oid, admin, adresse)
-    assert client.post("/api/me/invitations/reject", json={"code": code},
+    token = _invite(client, oid, admin, adresse)
+    assert client.post("/api/me/invitations/reject", json={"token": token},
                        headers=_h(invite)).status_code == 200
     assert org_store.reconcile_signup_with_invitation("usr_ft_nouveau_compte", adresse) is None
 
 
 def test_le_refus_par_token_mail_marche_aussi(client, org):
-    """Les deux façons de désigner l'invitation, comme sur l'acceptation. Le token
-    n'est rendu par aucune surface (seul son hash est stocké) : on le prend à la
-    source, comme le fait le lien du mail."""
+    """Le token n'est rendu par aucune surface autre que le lien mail (seul son hash
+    est stocké) : on le prend à la source, comme le ferait qui clique le lien."""
     from oto_mcp import org_store
     oid, admin = org["id"], org["admin"]
     invite = _sub("usr_ft_token")
-    _, token, _code = org_store.create_invitation(
+    _, token = org_store.create_invitation(
         oid, "usr_ft_token@front-tiers.invalid", "org_member", invited_by=admin)
     r = client.post("/api/me/invitations/reject", json={"token": token}, headers=_h(invite))
     assert r.status_code == 200, r.text
@@ -388,7 +391,8 @@ def test_le_refus_d_une_invitation_d_equipe_ne_rejoint_ni_l_org_ni_l_equipe(clie
                     json={"email": "usr_ft_equipe@front-tiers.invalid", "send_email": False},
                     headers=_h(admin))
     assert r.status_code == 200, r.text
-    r = client.post("/api/me/invitations/reject", json={"code": r.json()["code"]},
+    token = r.json()["invite_url"].rsplit("/", 1)[-1]
+    r = client.post("/api/me/invitations/reject", json={"token": token},
                     headers=_h(invite))
     assert r.status_code == 200, r.text
     assert (r.json()["scope"], r.json()["org_id"], r.json()["group_id"]) == ("team", oid, gid)
@@ -402,12 +406,12 @@ def test_la_meme_capacite_refuse_sur_la_face_mcp_654(client, org):
     from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
     oid, admin = org["id"], org["admin"]
     invite = _sub("usr_ft_mcp")
-    code = _invite(client, oid, admin, "usr_ft_mcp@front-tiers.invalid")
+    token = _invite(client, oid, admin, "usr_ft_mcp@front-tiers.invalid")
     with pytest.raises(AuthzDenied) as e:
         oc._org(ResolvedCtx(sub=admin, org_id=oid),
-                oc.OrgInput(op="reject_invite", code=code))
+                oc.OrgInput(op="reject_invite", token=token))
     assert (e.value.status, e.value.code) == (403, "not_the_invitee")
-    out = oc._org(ResolvedCtx(sub=invite), oc.OrgInput(op="reject_invite", code=code))
+    out = oc._org(ResolvedCtx(sub=invite), oc.OrgInput(op="reject_invite", token=token))
     assert out["ok"] is True and out["declined"] is True and out["org_id"] == oid
 
 

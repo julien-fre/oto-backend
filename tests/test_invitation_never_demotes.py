@@ -15,10 +15,11 @@ aux DEUX paliers ; rétrograder reste possible par la route dédiée, elle-même
 (#273/#280). L'ordre des rôles est dérivé de `roles` (`max_org_role`/`max_group_role`),
 jamais recopié dans le store — un rang recopié diverge au premier rôle ajouté.
 
-**Chaque cas est joué sur les trois entrées** (lien mail, code court, réconciliation de
-signup). Elles convergent vers le même corps, mais c'est précisément la leçon de #280 :
-un test qui n'exerce qu'un chemin passe au vert en laissant le trou ouvert. On
-monkeypatche les stores (pas de PG).
+**Chaque cas est joué sur les deux entrées** (lien mail, réconciliation de signup — le
+code court partageable, troisième entrée d'origine, a été RETIRÉ le 15/09/2026,
+oto-backend#560). Elles convergent vers le même corps, mais c'est précisément la
+leçon de #280 : un test qui n'exerce qu'un chemin passe au vert en laissant le trou
+ouvert. On monkeypatche les stores (pas de PG).
 """
 import pytest
 
@@ -70,16 +71,11 @@ def _patch(monkeypatch, *, org_role=None, group_role=None):
     return written
 
 
-# Les trois entrées d'acceptation, appelées avec la MÊME intention métier :
+# Les deux entrées d'acceptation, appelées avec la MÊME intention métier :
 # « <sub> accepte cette invitation ».
 def _via_token(monkeypatch, inv, sub):
     monkeypatch.setattr(org_store, "get_invitation_by_token", lambda t: inv)
     return org_store.accept_invitation("tok", sub)
-
-
-def _via_code(monkeypatch, inv, sub):
-    monkeypatch.setattr(org_store, "get_invitation_by_code", lambda c: inv)
-    return org_store.accept_invitation_by_code("ABC123", sub)
 
 
 def _via_signup(monkeypatch, inv, sub):
@@ -87,8 +83,8 @@ def _via_signup(monkeypatch, inv, sub):
     return org_store.reconcile_signup_with_invitation(sub, "invitee@x.tld")
 
 
-ALL_PATHS = pytest.mark.parametrize("accept", [_via_token, _via_code, _via_signup],
-                                    ids=["lien mail", "code court", "signup"])
+ALL_PATHS = pytest.mark.parametrize("accept", [_via_token, _via_signup],
+                                    ids=["lien mail", "signup"])
 
 
 # ── Palier org : le cas armé en prod ─────────────────────────────────────────

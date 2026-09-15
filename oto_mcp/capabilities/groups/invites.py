@@ -45,8 +45,9 @@ class GroupInviteRevokeInput(BaseModel):
 
 class GroupInvitationEmitted(orgs_invites.InvitationEmitted):
     """Invitation d'ÉQUIPE créée. Même forme que l'invitation d'org — mêmes réserves
-    sur `emailed` (qui confond « pas demandé » et « échoué »), sur `invite_url` (lien
-    nu, jamais le magic-link) et sur `code` (**secret porteur** : le détenir suffit).
+    sur `emailed` (qui confond « pas demandé » et « échoué ») et sur `invite_url`
+    (lien nu, jamais le magic-link ; le token qu'il porte EST le secret porteur —
+    le détenir suffit à rejoindre).
 
     ⚠️ **`role` porte le rôle d'ÉQUIPE, et masque le rôle d'org accordé au passage.**
     Accepter cette invitation fait rejoindre l'org parente en `org_member` PUIS
@@ -73,8 +74,7 @@ class GroupInvitations(BaseModel):
     l'équipe), les **acceptées** et les **expirées**. C'est une file d'attente d'un
     seul palier, pas un historique de recrutement.
 
-    ⚠️ Chaque entrée porte `code`, donc le secret porteur : cette liste est du matériel
-    sensible, pas un journal. `scope` y vaut toujours `"team"`."""
+    ⚠️ `scope` y vaut toujours `"team"`."""
     invitations: list[orgs_invites.InvitationEntry]
 
 
@@ -108,7 +108,7 @@ CAPABILITIES += [
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupInvitationEmitted,
         description=("Invite someone to a team you lead (role: group_member|group_admin). "
                      "They join the parent org then the team on accept. send_email=true "
-                     "mails a link; false returns a short code to share yourself."),
+                     "mails a link; false returns the link to share yourself."),
         rest=RestBinding("POST", "/api/groups/{id}/invitations", _GID),
     ),
     Capability(

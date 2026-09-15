@@ -29,16 +29,18 @@ def test_la_table_de_routes_declare_ses_parametres_secrets():
     EN SILENCE (le middleware masquerait zéro segment sans qu'un test rougisse)."""
     declares = js.declared_secret_routes()
     chemins = {shape for shape, _ in declares}
-    assert len(declares) >= 4, (
+    assert len(declares) >= 3, (
         "La table de routes ne déclare plus aucun paramètre secret : le masquage du "
         "journal est devenu inerte. `make_routes` doit appeler `journal_secrets."
         "declare_routes` sur la table qu'elle sert.")
-    # Les quatre routes de #558, nommées : leur retrait doit se voir dans un diff.
+    # Trois des quatre routes de #558, nommées : leur retrait doit se voir dans un
+    # diff. La quatrième, `/api/invitations/code/{code}`, a été RETIRÉE le 15/09/2026
+    # avec le code court d'invitation lui-même (oto-backend#560) — il n'y a plus de
+    # route à déclarer pour elle.
     attendues = {
         ("", "api", "upload", None),
         ("", "api", "public", "docs", None),
         ("", "api", "invitations", None),
-        ("", "api", "invitations", "code", None),
     }
     assert attendues <= chemins, f"routes à secret manquantes : {attendues - chemins}"
 
@@ -53,14 +55,6 @@ def test_un_segment_lie_a_un_parametre_secret_est_reduit(chemin, attendu):
     route, secrets = js.route_and_secrets(chemin)
     assert route == attendu
     assert secrets and "token" in secrets
-
-
-def test_la_route_la_plus_specifique_gagne():
-    """`/api/invitations/{token}` et `/api/invitations/code/{code}` se chevauchent :
-    sans arbitrage, `code` serait lu comme le jeton et la route perdrait son nom."""
-    route, secrets = js.route_and_secrets("/api/invitations/code/ABC1234")
-    assert route == "/api/invitations/code/:code"
-    assert set(secrets) == {"code"}
 
 
 def test_la_reduction_par_forme_est_conservee():
@@ -94,10 +88,11 @@ def test_le_masque_est_stable_donc_correlable():
 
 
 def test_le_masque_est_CLE_donc_non_inversible(monkeypatch):
-    """Un code d'invitation fait 7 caractères sur un alphabet de 30 (~34 bits) : un
-    sha256 NU se retrouve par force brute en quelques secondes par quiconque lit le
-    journal. Le masque doit donc dépendre d'un secret du serveur — c'est aussi la
-    raison de ne PAS garder « les 8 derniers », qui exposeraient le code ENTIER."""
+    """Même un secret LONG (le token d'invitation fait 256 bits) se retrouve en clair
+    si le masque n'est qu'un sha256 nu appliqué à une valeur COURTE dérivée de lui —
+    et un masque sur « les 8 derniers caractères » en exposerait justement une part
+    lisible. Le masque doit donc dépendre d'un secret du serveur, jamais de la seule
+    valeur masquée."""
     import hashlib
     monkeypatch.setattr(js, "_KEY", None, raising=False)
     monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "cle-a")
@@ -115,7 +110,7 @@ def test_le_masque_est_CLE_donc_non_inversible(monkeypatch):
 def test_un_champ_de_capacite_declare_secret_est_connu_du_journal():
     """`oto_org op=accept_invite` porte le MÊME jeton d'invitation que la route —
     par l'autre face. La déclaration vit sur le champ, pas dans une liste d'outils."""
-    assert js.secret_arg_names("oto_org") == frozenset({"token", "code"})
+    assert js.secret_arg_names("oto_org") == frozenset({"token"})
 
 
 def test_un_argument_non_declare_reste_lisible():
