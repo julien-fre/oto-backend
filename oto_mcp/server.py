@@ -505,8 +505,12 @@ def _prepare_database() -> None:
     rejouable, c'est ainsi que les tests prouvent son idempotence (`init_db(); init_db()`
     = no-op). Ce qui ne doit pas se rejouer, c'est le CHEMIN DU BOOT — et il est ici.
 
-    Fail-open, étape par étape, comme avant : un backfill qui casse ne doit pas
-    empêcher le serveur de répondre.
+    Fail-open, étape par étape : un backfill qui casse ne doit pas empêcher le serveur
+    de répondre. **Sauf le schéma.** `init_db` n'est pas un rattrapage : s'il échoue, le
+    process sert des erreurs à chaque appel en ayant démarré vert. Il remonte donc, et
+    le boot s'arrête — en bleu/vert, l'ancienne couleur continue de servir, ce qui est
+    le bon résultat. L'ADR 0070 en fait une règle : un défaut doit devenir un refus de
+    démarrer, jamais un démarrage vert sur un socle incomplet.
     """
     global _PREPARED
     if _PREPARED:
@@ -515,10 +519,9 @@ def _prepare_database() -> None:
     debut = time.monotonic()
     # init_db idempotent — utile pour que les tables existent avant que
     # le middleware (per-user disabled_tools) ne les interroge.
-    try:
-        db.init_db()
-    except Exception as e:
-        logger.warning("init_db at boot failed: %s", e)
+    # Pas de filet ici, et c'est la seule étape qui n'en a pas : sans schéma, il n'y a
+    # rien à servir. Voir le banc `tests/test_boot_schema_refuse.py`.
+    db.init_db()
     # Suppression du perso : tout user existant sans org reçoit son espace maison
     # (one-shot idempotent, no-op aux boots suivants).
     try:
