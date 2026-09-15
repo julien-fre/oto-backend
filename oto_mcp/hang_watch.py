@@ -48,7 +48,7 @@ Adapté ici, sur le même patron mais pas la même sortie :
 Le seuil de déclenchement reste `OTO_SLOW_CALLBACK_WARN` (déf. 1.0s) — même sonde,
 même vocabulaire de "lent", pas un second seuil à régler séparément.
 
-⚠️ La sonde ne casse JAMAIS la boucle qu'elle observe (même doctrine que
+⚠️ La sonde ne casse JAMAIS la boucle qu'elle observe (même principe que
 `loop_watch.py`) : toute écriture de log est enveloppée dans un `try/except` qui ne
 peut jamais lever, et la tâche côté boucle qui bat le timestamp ne fait rien d'autre
 qu'écrire un flottant avant de redormir.
