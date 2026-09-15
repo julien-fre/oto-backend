@@ -885,6 +885,13 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Garde-fou (revue de sécurité 2026-08-29, oto-backend#572) : refuse de démarrer
+    # si le repli d'identité dev (`OTO_MCP_DEV_SUB`) est posé en même temps qu'un
+    # émetteur Logto réel (`LOGTO_ENDPOINT`) — AVANT tout autre sous-système, rien
+    # n'a encore tourné. Cf. `config.verifier_repli_identite_dev`.
+    from .config import verifier_repli_identite_dev
+    verifier_repli_identite_dev()
+
     # Error tracking Sentry — AVANT tout build d'app : l'intégration Starlette
     # patche au moment de l'init. No-op si OTO_SENTRY_DSN absent.
     from .sentry_setup import init_sentry

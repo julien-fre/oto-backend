@@ -110,6 +110,34 @@ def est_la_production() -> bool:
     return origine == PROD
 
 
+class ReplIdentiteDevDangereux(RuntimeError):
+    """`OTO_MCP_DEV_SUB` est posée EN MÊME TEMPS qu'un émetteur Logto réel."""
+
+
+def verifier_repli_identite_dev() -> None:
+    """**Refuse de démarrer** si le repli d'identité dev (`OTO_MCP_DEV_SUB`,
+    `auth/hooks.py`) est posé EN MÊME TEMPS qu'un émetteur Logto réel
+    (`LOGTO_ENDPOINT`).
+
+    `OTO_MCP_DEV_SUB` accorde une identité SANS jeton — documenté, opt-in, sans
+    effet tant que la variable n'est pas posée. Mais rien ne l'empêchait
+    MÉCANIQUEMENT de coexister avec un environnement servi sous un vrai émetteur :
+    un `.env` de dev copié en prod, ou l'inverse, aurait glissé un repli
+    d'authentification à côté d'un Logto qui authentifie pour de vrai, sans qu'aucun
+    des deux ne le sache (revue de sécurité du 2026-08-29, oto-backend#572, constat
+    basse sévérité n°1).
+
+    Chaque variable posée SEULE reste exactement ce qu'elle a toujours été — ce n'est
+    que leur croisement qui est refusé."""
+    if os.environ.get("OTO_MCP_DEV_SUB") and os.environ.get("LOGTO_ENDPOINT"):
+        raise ReplIdentiteDevDangereux(
+            "OTO_MCP_DEV_SUB est posée alors que LOGTO_ENDPOINT l'est aussi : le "
+            "repli d'identité de dev local (auth/hooks.py) ne doit jamais coexister "
+            "avec un émetteur Logto réel. Retire OTO_MCP_DEV_SUB pour démarrer contre "
+            "ce Logto, ou retire LOGTO_ENDPOINT pour rester en dev local sans auth."
+        )
+
+
 def mcp_audience_alts() -> frozenset[str]:
     """Audiences MCP canoniques SECONDAIRES (coexistence multi-domaine, ex.
     `https://mcp.oto.cx/mcp` en plus de `MCP_AUDIENCE`=`https://mcp.oto.ninja/mcp`).
