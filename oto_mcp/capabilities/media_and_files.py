@@ -204,12 +204,24 @@ def _file_public(ctx: ResolvedCtx, inp: ProjectFilePublicInput) -> dict:
     from .. import media_store
     existing = _fichier(ctx, inp.project_id, inp.file_id)
     make_public = bool(inp.public)
+    # La bascule S3 d'ABORD, la base ENSUITE : la ligne ne dit « public » ou « privé »
+    # que si l'ACL a effectivement bougé. Les DEUX sens lèvent la même `MediaError`
+    # (cf. `media_store.make_private`) — une ACL refusée est un refus rendu au client,
+    # jamais un `{"ok": true}` sur un fichier resté ouvert.
+    #
+    # ⚠️ La fermeture était hors du `try` (jusqu'au 15/09/2026). La propriété tenait
+    # quand même — l'exception coupe avant l'écriture — mais son échec remontait en
+    # ERREUR INTERNE au lieu d'un refus nommé. Sur un geste de confidentialité, c'est la
+    # pire réponse possible : celui qui referme un partage et n'y arrive pas ne sait pas
+    # ce qu'il laisse derrière lui. Banc : `tests/test_media_private_acl_bruyant.py`.
     try:
-        public_url = media_store.make_public(existing["s3_key"]) if make_public else None
+        if make_public:
+            public_url = media_store.make_public(existing["s3_key"])
+        else:
+            public_url = None
+            media_store.make_private(existing["s3_key"])
     except media_store.MediaError as e:
-        raise AuthzDenied(e.status, e.code)
-    if not make_public:
-        media_store.make_private(existing["s3_key"])
+        raise AuthzDenied(e.status, e.code, str(e))
     row = db.set_project_file_public(inp.file_id, make_public, public_url)
     db.log_project_activity(inp.project_id, ctx.sub, "project.file_public",
                             f"{existing.get('title') or existing.get('filename')}:{make_public}")
