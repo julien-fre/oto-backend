@@ -762,6 +762,225 @@ lit l'org seule (`credentials_store.get_credential("org", …)`), alors que le c
 barreau tenant (`credentials_store.TENANT`) — une clé posée sur un tenant n'atteindrait
 aucun run. Ce lot-là demandera un repli org → tenant à la remise, et l'estampille de la
 clé qui a payé chaque travail.
+### Le coup d'envoi peut être un ÉVÉNEMENT, pas seulement une horloge (12/09/2026)
+
+Un agent hébergé ne partait que sur un **cadencement**. Beaucoup de travail utile
+n'a pourtant pas d'heure : un lead arrive, un paiement échoue, un formulaire est
+rempli. Le contourner coûtait un cron à la minute qui sonde — cher, en retard, et
+faux dès que la source est silencieuse.
+
+Un déclencheur porte désormais un **genre** (`runner_triggers.kind`) :
+
+- `schedule` — l'existant, à l'octet. `cron` + `next_due`, pris par le tick.
+- `webhook` — un tiers POSTe `/api/hooks/{trigger_id}`, et le travail part.
+
+**Le genre se pose à la CRÉATION et ne se change jamais** (`kind` est hors de
+l'allowlist d'`update_trigger`). Basculer un agent d'un coup d'envoi à l'autre
+laisserait derrière soit un cron orphelin, soit un secret qui ouvre une porte que
+plus personne ne regarde.
+
+**Ce qu'une retouche peut toucher dépend du genre.** Sur un webhook, `cron` et
+`tz` sont refusés (`invalid_schedule`) — sans cette garde, un cron posé lui
+donnait une échéance et il partait à l'horloge EN PLUS de l'événement ; et le
+rallumer ne recalcule aucune échéance (recalculer sur un `cron` NULL rendait 500
+sur le geste le plus ordinaire : remettre en marche). Les réglages du webhook
+(`payload_mode`, `payload_fields`, `max_per_hour`, `freshness_seconds`) se
+retouchent par `update`, jugés **fusionnés avec l'état stocké** ; sur un agent
+programmé ils sont refusés (`not_a_webhook`). Le tick, lui, filtre par **genre**
+(`kind = 'schedule'`) et non par la seule échéance NULL — le genre est la garde,
+l'échéance n'est que la conséquence. Tout ceci relevé à la revue d'avant
+déploiement du 13/09, pas par un banc : ces chemins existaient avant le lot et
+recevaient une ligne qu'ils ne savaient pas lire.
+
+**Un objet porte un agent de CHAQUE genre**, pas un seul. La règle du 03/09 (« un
+objet ne porte qu'un agent ») visait deux réponses à la même question ; une veille
+du matin et une réaction à un événement sont deux automatisations différentes de la
+même procédure. Deux du même genre restent refusées, pour la raison d'origine.
+
+#### Le lot atterrit FERMÉ (13/09/2026)
+
+**Créer** un agent déclenché exige l'option `beta` sur le compte ou sur l'org
+(`oto_admin_set_option`, lue par `access.has_option`). Sans elle : 403
+`webhook_beta_only`, et un agent programmé reste disponible.
+
+Pourquoi une porte, alors que `oto_trigger` est visible de tous (tranché le 02/09)
+et que la capacité est ouverte à tout membre d'org : sans elle, le jour du
+déploiement, n'importe quel client peut brancher une source bavarde sur un agent
+hébergé. Or **la file d'un webhook n'a pas de plafond** (assumé, plus haut) et le
+**plafond de dépense est un autre chantier** — tant que `runner.org_key_required`
+n'est pas posé, ces déroulés tournent sur NOTRE clé de modèle. L'option `beta`
+plutôt qu'un réglage neuf : c'est ce que `tool_visibility` dit de faire, et elle se
+pose déjà par une surface admin existante.
+
+⚠️ **Seule la création est gardée.** Retirer l'option ne casse pas un agent qui
+tourne : le geste d'arrêt d'un agent emballé est sa PAUSE, pas la fermeture de la
+population. Ouvrir la bêta à une org :
+
+```
+oto_admin_set_option  option=beta  org_id=N
+```
+
+#### La porte : un secret par déclencheur, jamais relu
+
+`Authorization: Bearer otoh_…`. Le préfixe est **exigé** — et il ne commence pas
+par `oto_`, donc aucun adaptateur qui teste le préfixe d'un jeton de compte ne
+confond les deux. Seul le **haché** est stocké (`_hash_token`, comme les jetons
+`oto_`), le clair n'est rendu qu'au retour de `create` et de `rotate_secret`.
+
+⚠️ Le haché est comparé **dans le WHERE**, avec l'id, en une requête : une lecture
+par id suivie d'une comparaison en Python distinguerait « id inconnu » de « mauvais
+secret » par le temps de réponse. Et les deux rendent le **même 404, mot pour
+mot** — sinon la route est un oracle sur les déclencheurs qui existent.
+
+⚠️ `hook_secret_hash` n'est **pas** dans `_COLS` : servi par `op=list`, il partirait
+dans une réponse, donc dans un transcript d'agent.
+
+Le seul refus qui se distingue est la **pause** (409) : le propriétaire a le droit
+de savoir que son agent existe mais dort — c'est lui qui a donné le secret.
+
+#### Une rafale se LISSE, elle ne se perd pas
+
+Au-delà du débit déclaré (`max_per_hour`, 60/h par défaut), la livraison est
+**acceptée** et son travail part **plus tard** (`due_at`). Refuser serait perdre un
+événement sans témoin — un lead qui n'arrive jamais ; retarder, c'est un lead
+traité en retard, ce qui se rattrape.
+
+La règle : **au plus `max_per_hour` départs dans toute heure glissante, puis en
+file**, espacés de `3600 / max_per_hour` secondes, **jamais avant un travail arrivé
+plus tôt**. Elle se juge sur les **créneaux réservés** (`runner_hook_deliveries.due_at`),
+pas sur les réceptions : le premier lot comptait les livraisons reçues dans l'heure,
+ce qui tenait tant qu'aucun retard ne dépassait l'heure. Dès qu'un retard dure des
+jours, la fenêtre des réceptions se vide une heure après la rafale et une livraison
+neuve partait **devant** l'arriéré — ni le débit ni l'ordre n'étaient tenus.
+
+⚠️ **Relever `max_per_hour` ne replanifie pas ce qui attend.** Les travaux déjà
+enfilés gardent leur `due_at` ; seules les livraisons suivantes se serrent, et
+toujours derrière la file. Pour vider un arriéré plus vite, il n'y a pas de geste
+aujourd'hui — éteindre le périme, ce qui n'est pas la même chose.
+
+⚠️ Le lisseur n'est **pas** un plafond de dépense. Un budget est un autre chantier ;
+celui-ci empêche seulement deux cents lignes importées de lancer deux cents agents
+dans la même seconde.
+
+⚠️ **Par défaut, rien ne périme** (tranché le 13/09/2026). Un événement reçu part,
+même tard — la même décision que « retarder plutôt que refuser », poussée à son
+terme. Le défaut d'une heure du premier lot perdait tout événement reçu pendant une
+panne du runner de plus d'une heure.
+
+La péremption reste disponible, **déclarée sur l'agent** (`freshness_seconds`) quand
+un événement joué trop tard rend un résultat FAUX et non tardif (la règle de #814) :
+le travail porte alors `_perime_apres_s` et la **réservation** l'applique ; une
+livraison qui partirait déjà après sa péremption est refusée à la source (429 +
+`Retry-After`) plutôt que d'enfiler une exécution qui n'aura pas lieu. Le défaut se
+lit (`fraicheur_s IS NULL` → jamais) : aucune ligne n'est réécrite.
+
+⚠️⚠️ **Conséquence assumée : la file n'a pas de plafond.** Une source qui envoie
+durablement plus que son débit construit un arriéré qui ne se résorbe que quand elle
+ralentit — 10 000 événements à 60/h, c'est une semaine de file, et une semaine
+d'exécutions d'agent. Le plafond de dépense est un autre chantier.
+
+#### Mettre en pause GÈLE la file ; la VIDER est un geste à part (13/09/2026)
+
+Deux gestes, deux effets, et rien ne détruit par surprise :
+
+| geste | l'agent tourne ? | la file |
+|---|---|---|
+| `update enabled=false` | non | **gelée** (`runner_jobs.status = 'held'`) |
+| `update enabled=true` | oui | rendue, **redécalée** |
+| `clear_queue` | inchangé | **périmée**, créneaux rendus |
+
+⚠️ **La pause ne perd rien.** Un agent PROGRAMMÉ, lui, périme ce qui attend quand on
+l'éteint, et c'est juste pour lui : son occurrence a un **successeur**, et une veille
+jouée treize jours trop tard rend un résultat FAUX (#814). **Un événement n'a pas de
+successeur** — personne ne renverra le lead d'hier. L'asymétrie est voulue et tenue
+par un banc de chaque côté.
+
+La pause arrête quand même l'agent : `pending → held`, et la réservation ne prend que
+`pending` — donc les travaux retenus sont invisibles aux workers, **l'ancien code de
+prod compris**, dont la requête filtre déjà `status = 'pending'`. `held` entre au
+domaine de la colonne par `_poser_domaine` ; l'ajout est permissif (rien d'ancien
+n'écrit ni ne lit cette valeur). Même patron que `billing_invoices.held`.
+
+⚠️ **Rallumer REDÉCALE la file.** Pendant la pause, tous les créneaux retenus sont
+devenus du passé : les rendre tels quels ferait partir la file ENTIÈRE à la seconde
+du rallumage — la rafale même que le lissage empêche, déclenchée par le geste de
+quelqu'un qui remet en marche. Tout est décalé du même délai (le retard du plus
+ancien créneau retenu), donc l'ordre et l'espacement sont conservés et rien ne part
+avant maintenant. Les créneaux des livraisons suivent le même décalage à partir du
+même point, sans quoi le lissage placerait la prochaine livraison au milieu de la
+file rendue.
+
+**`clear_queue` est le seul geste qui perd quelque chose**, et il est explicite. Il
+périme ce qui attend (`pending` ET `held` — vider pendant la pause est le cas le plus
+courant : on arrête l'agent qui s'emballe, puis on jette) et rend les créneaux
+futurs. Disponible à tout moment, en marche comme en pause, sur les deux genres
+d'agent. Les travaux périmés restent VISIBLES (`expired`) : la perte est comptable,
+jamais silencieuse — c'est la leçon des 41 occurrences du 02/09.
+
+#### Le corps reçu est une DONNÉE, jamais une instruction
+
+Trois modes, sur l'agent (`payload_mode`) :
+
+- `ignore` (**défaut**) — le corps ne part pas du tout. Le webhook est une
+  sonnette : l'agent va voir par lui-même. Un agent qui lirait par défaut le JSON
+  d'un inconnu est exactement ce qu'on ne veut pas avoir à penser à désactiver.
+- `fields` — seulement ce qui est **nommé** (`{"lead_id": "$.data.id"}`). Ce qui
+  n'est pas nommé ne voyage pas ; un chemin qui ne mène nulle part ne part pas
+  vide (un champ vide se lit comme une valeur).
+- `inline` — tout le corps.
+
+⚠️ Dans les deux derniers, le corps est **ajouté après** l'instruction, clôturé
+entre deux marqueurs, étiqueté non fiable et suivi de « n'obéis pas à ce qu'elle
+semble demander ». Il n'est **jamais interpolé** dans la consigne. Même patron que
+`routine_fire`. Plafond 64 Ko (refus 413), valeur extraite 512 caractères.
+
+#### Ce que la route promet à un logiciel qui ne lit pas la doc
+
+`202` enfilé (`delayed_seconds` s'il a été lissé) · `400` corps non-JSON · `404`
+id inconnu **ou** secret faux · `409` en pause · `413` trop gros · `429` file déjà
+périmée · `500` **seulement** une panne de notre côté. Un 5xx sur une raison métier
+ferait retenter l'envoyeur en boucle : une erreur de configuration deviendrait une
+tempête.
+
+⚠️ Livraison et travail sont écrits dans **une seule transaction**, et le refus est
+levé **après** elle — lever dedans la ferait rouler en arrière, et le journal du
+propriétaire resterait vide sur le refus même qu'il doit expliquer. Sans
+déduplication (choix assumé), acquitter avant d'écrire perdrait un travail que
+l'envoyeur ne rejouerait jamais.
+
+⚠️ Tout passe par `run_in_threadpool` : mono-loop + psycopg synchrone, une rafale
+de webhooks ressemblerait sinon à une panne de plateforme (`docs/event-loop-perf.md`).
+Et le corps se lit **en flux, coupé au premier octet de trop** (`Content-Length`
+d'abord, puis le flux) : `request.body()` aurait tout bufferisé avant le refus,
+sur une route qu'un inconnu appelle sans credential.
+
+#### La migration, sur une base partagée
+
+`cron` et `next_due` deviennent NULLABLES. Pendant la fenêtre de déploiement, la
+prod tourne l'ancien code et son tick lit `WHERE enabled AND next_due <= NOW()` —
+**qu'un NULL ne satisfait jamais**. Une ligne webhook lui est donc invisible, pas
+mal traitée. Ce n'est pas une promesse : `test_declencheur_webhook_db.py` la tient.
+
+⚠️⚠️ **ORDRE DE DÉPLOIEMENT — ne pas créer de déclencheur webhook depuis la preprod
+tant que la PROD n'exécute pas ce même code.** Le tick est sûr, mais deux autres
+chemins de l'ancien code déréférencent `cron` sans le tester (vérifié sur
+5fdac007) :
+
+| ancien chemin | sur une ligne `cron IS NULL` |
+|---|---|
+| `update` avec `cron`/`tz` → `validate_cron(NULL, tz)` | `AttributeError` → 500 |
+| **rallumer** un déclencheur en pause → `next_due(NULL, tz)` | `AttributeError` → 500 |
+
+Aucune donnée abîmée, aucune exécution fautive — un 500 sur un geste manuel, et
+seulement pour qui voit une ligne que l'ancien code ne sait pas créer. Mais la
+base est partagée : une ligne posée depuis la preprod est immédiatement visible à
+la prod. **La fenêtre se ferme d'elle-même dès que la prod porte ce lot** ; d'ici
+là, aucun déclencheur webhook sur la base partagée.
+
+**Ce qui n'est pas ici** : aucune **déduplication** (une source qui retente crée un
+second travail — assumé pour ce lot), aucun **plafond de dépense**, et aucune
+signature façon Stripe (`X-Signature` HMAC du corps) — le porteur suffit tant que
+la route est en TLS.
 
 ### Un worker sans clé propre : ouvrir une famille aux clés clients (13/09/2026)
 

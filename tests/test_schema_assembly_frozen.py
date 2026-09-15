@@ -352,6 +352,24 @@ from oto_mcp.db import _schema, schema
 # CREATE TABLE. La base partagée la reçoit par `db/revision.py` (ALTER, fonction, et le
 # déclencheur posé seulement s'il manque). Additif : le code du tag précédent ne lit pas
 # `rev`, et ses écritures la font avancer. 153 174 → 153 796.
+# 12/09/2026 — le déclencheur par WEBHOOK (fragment RUNS) : six colonnes sur
+# `runner_triggers` (`kind`, `hook_secret_hash`, `payload_mode`, `payload_fields`,
+# `max_per_hour`, `fraicheur_s`), le relâchement de `cron`/`next_due` en NULLABLE,
+# et la table `runner_hook_deliveries` avec son index de fenêtre. La base partagée
+# reçoit tout par les ALTER de `_init.py`. Additif ET réversible : le code du tag
+# précédent écrit toujours `cron`/`next_due`, et son tick ne voit pas une ligne
+# dont `next_due` est NULL.
+# ⚠️ Empreinte RECALCULÉE sur le résultat FUSIONNÉ (rebase du 13/09 sur `revision`) :
+# recopier l'une des deux aurait validé un DDL que personne n'a servi.
+# 2026-09-13 : `runner_hook_deliveries.due_at` + l'index partiel des CRÉNEAUX. Le
+# lissage se juge sur les créneaux réservés et non plus sur les réceptions : dès que
+# rien ne périme par défaut, un retard dure des jours et la fenêtre des réceptions ne
+# dit plus rien de la file. Table NEUVE, jamais déployée — CREATE seul, aucun ALTER.
+# 2026-09-13 : `held` entre au domaine de `runner_jobs.status` — la file d'un agent
+# DÉCLENCHÉ est gelée par la pause au lieu d'être périmée (un événement n'a pas de
+# successeur). Ajout PERMISSIF : l'ancien code de prod n'écrit jamais cette valeur,
+# et sa réservation filtre `pending`, donc il ne peut ni la produire ni la servir.
+# 153 796 → 157 700 (fragment RUNS, branche webhook #942).
 # 14/09/2026 — les lignes que la FILE rend à un run (fragment RUNS, oto#243) : la colonne
 # `runs.lignes_reservees` et son commentaire dans le CREATE TABLE. La base partagée la
 # reçoit par l'ALTER de `_init.py`, sans défaut (les runs d'avant restent NULL, non
@@ -365,8 +383,17 @@ from oto_mcp.db import _schema, schema
 # commentaire de `tool_calls.quantity` dans le CREATE TABLE ne nomme plus le dépôt
 # externe. Commentaire SQL seulement, aucun effet sur la base : un `--` n'est pas
 # stocké. 154 101 → 154 108.
-EMPREINTE = "63f25b605c4488b5e7bd9d83999b0db92ef05592e296f02154da8b04fed4330a"
-LONGUEUR = 154108
+# ⚠️ 15/09/2026 — FUSION de la PR #942 (déclencheur webhook) sur ce tronc : les deux
+# branches divergent du MÊME socle commun (153 796, la révision de ligne), sur des
+# fragments distincts (`runner_triggers`/`runner_hook_deliveries` côté #942, `runs`/
+# `runner_fleets`/le commentaire `tool_calls.quantity` côté tronc) — le SQL fusionne
+# sans conflit, seules les deux constantes qui le gèlent se contredisaient.
+# Arithmétique : LONGUEUR(fusion) == LONGUEUR(socle commun) + Δ(#942) + Δ(tronc)
+#              = 153 796 + (157 700 − 153 796) + (154 108 − 153 796)
+#              = 153 796 + 3 904 + 312 = 158 012 — valeur obtenue, recalculée sur la
+# chaîne assemblée réellement fusionnée (pas recopiée d'un des deux côtés).
+EMPREINTE = "68f76bbd609da90373fa1c7dba4dc96861d3d8b699621c85de1d39096fe199ba"
+LONGUEUR = 158012
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

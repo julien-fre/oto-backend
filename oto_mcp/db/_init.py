@@ -261,8 +261,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # tomberait au TICK, pas au boot, donc loin de sa cause.
     # `sub` (02/09) : l'identité que l'agent porte en exécutant ce travail.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS sub TEXT")
+    # `held` (13/09/2026) : la file d'un agent déclenché, GELÉE par la pause au
+    # lieu d'être périmée. ⚠️ Ajout PERMISSIF au domaine — l'ancien code de prod
+    # n'écrit jamais cette valeur, et sa réservation filtre `pending`, donc il ne
+    # peut ni la produire ni la servir par erreur.
     _poser_domaine(conn, "runner_jobs", "runner_jobs_status_check", "status",
-                   ("pending", "claimed", "done", "failed", "expired"))
+                   ("pending", "held", "claimed", "done", "failed", "expired"))
     # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
     # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
     # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT
@@ -275,6 +279,27 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # déjà, le CREATE TABLE est sauté — seule la colonne manque. NULL = le worker
     # tourne sur le sien, comme avant.
     conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS model TEXT")
+    # Le DÉCLENCHEUR PAR WEBHOOK (12/09/2026). Sur une base qui existe déjà, le
+    # CREATE TABLE est sauté : seules ces colonnes manquent.
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS kind TEXT "
+                 "NOT NULL DEFAULT 'schedule'")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS hook_secret_hash TEXT")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS payload_mode TEXT "
+                 "NOT NULL DEFAULT 'ignore'")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS payload_fields JSONB")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS max_per_hour INT")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS fraicheur_s INT")
+    # ⚠️ Le RELÂCHEMENT de deux NOT NULL, et il est à sens unique : l'ancien code
+    # (la prod, pendant la fenêtre) écrit toujours les deux, et son tick filtre
+    # `next_due <= NOW()` — qu'un NULL ne satisfait jamais. Une ligne webhook lui
+    # est donc invisible plutôt que mal traitée. `IF EXISTS` sur la colonne : sur
+    # une base vierge le DDL les a déjà créées nullables.
+    for col in ("cron", "next_due"):
+        conn.execute(f"ALTER TABLE runner_triggers ALTER COLUMN {col} DROP NOT NULL")
+    # L'index du secret : la route le compare par HACHÉ, jamais en clair.
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runner_triggers_hook_secret "
+                 "ON runner_triggers(hook_secret_hash) "
+                 "WHERE hook_secret_hash IS NOT NULL")
     conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS temperature REAL")
     # oto#241 : la borne des descriptions d'outils déclarée par la campagne. Sans défaut :
     # NULL = rien ne part avec le travail, le worker garde le sien.

@@ -214,8 +214,14 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     -- Les confondre effacerait la seule distinction qui compte au diagnostic —
     -- « ça a échoué » envoie lire une erreur qui n'existe pas, quand le fait est
     -- « personne n'est venu le prendre ». Trois états, jamais deux.
+    --
+    -- `held` (13/09/2026) : RETENU, pas perdu. Mettre un agent déclenché en pause
+    -- gèle sa file au lieu de la périmer — un événement n'a pas de successeur, et
+    -- personne ne le renverra. La réservation ne prend que `pending`, donc un
+    -- travail retenu est invisible aux workers (l'ancien code de prod compris) ;
+    -- rallumer le rend à `pending`. Même patron que `billing_invoices.held`.
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'claimed', 'done', 'failed', 'expired')),
+        CHECK (status IN ('pending', 'held', 'claimed', 'done', 'failed', 'expired')),
     attempts INT NOT NULL DEFAULT 0,
     max_attempts INT NOT NULL DEFAULT 3,
     claimed_by TEXT,
@@ -288,10 +294,20 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
     -- 12/09/2026 : le modèle que l'agent DÉCLARE (catalogue `runner_models`).
     -- NULL = aucun : n'importe quel worker le sert, sur son propre modèle.
     model TEXT,
-    cron TEXT NOT NULL,
+    -- 12/09/2026 : CE QUI DÉCLENCHE. `schedule` = l'horloge (`cron`/`next_due`),
+    -- `webhook` = un tiers qui POSTe. Le reste de la ligne — procédure, outils,
+    -- modèle, identité — est le même objet : un agent ne change pas de nature
+    -- parce que son coup d'envoi change.
+    kind TEXT NOT NULL DEFAULT 'schedule',
+    -- ⚠️ `cron` et `next_due` deviennent NULLABLES pour le webhook, et c'est
+    -- SANS DANGER sur la base partagée : le tick de la prod (ancien code) lit
+    -- `WHERE enabled AND next_due <= NOW()`, et NULL ne satisfait aucune
+    -- comparaison — une ligne webhook lui est INVISIBLE, jamais mal traitée.
+    -- Le sens inverse tient aussi : l'ancien code écrit toujours les deux.
+    cron TEXT,
     tz TEXT NOT NULL DEFAULT 'Europe/Paris',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    next_due TIMESTAMPTZ NOT NULL,
+    next_due TIMESTAMPTZ,
     last_enqueued_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -347,6 +363,56 @@ ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS label TEXT;
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS secret_hash TEXT UNIQUE;
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+
+-- Ce qu'un DÉCLENCHEUR WEBHOOK a reçu (12/09/2026) — une ligne par livraison,
+-- acceptée ou non. Trois lecteurs, un seul écrivain (la route `/api/hooks`) :
+--
+--   1. le LISSAGE — lire les CRÉNEAUX déjà réservés (`due_at`) pour savoir si
+--      celle-ci part tout de suite ou derrière la file ;
+--   2. l'ÉCRAN — « qui m'a appelé, quand, et quel déroulé en est sorti » ; sans
+--      lui, une source mal configurée est un mystère plutôt qu'un diagnostic
+--      (même raison que `expired_count` sur un déclencheur programmé) ;
+--   3. le DÉBOGAGE d'un secret périmé : le refus est muet pour l'appelant
+--      (404 sans oracle), et VISIBLE ici pour le propriétaire.
+--
+-- ⚠️ AUCUNE contrainte d'unicité : la déduplication est hors de ce lot (décidé
+-- le 12/09). La colonne qui la porterait n'existe pas encore — l'ajouter plus
+-- tard est un ALTER plus un index, rien de ce qui est ici ne s'y oppose.
+--
+-- ⚠️ Le CORPS reçu n'est pas stocké ici. Il voyage dans la charge du travail
+-- (`runner_jobs.payload`), qui est déjà le domicile de ce qu'un travail emporte
+-- — le garder deux fois doublerait le volume et la surface de fuite.
+CREATE TABLE IF NOT EXISTS runner_hook_deliveries (
+    id BIGSERIAL PRIMARY KEY,
+    trigger_id BIGINT NOT NULL,
+    org_id BIGINT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- `queued` (enfilé, immédiat) | `delayed` (enfilé, retardé par le lissage)
+    -- | `refused_paused` | `refused_too_large` | `refused_rate`
+    -- (un mauvais secret ne s'écrit PAS : le journaliser ferait de la route un
+    -- oracle sur les déclencheurs qui existent)
+    outcome TEXT NOT NULL,
+    job_id BIGINT,
+    -- Le CRÉNEAU réservé : quand le travail de cette livraison peut partir. NULL
+    -- pour un refus, et remis à NULL quand on éteint le déclencheur (ses travaux
+    -- sont périmés, leurs créneaux rendus). C'est ce que le lissage lit — pas
+    -- `received_at`, qui ne dit plus rien d'une file dès qu'un retard dépasse
+    -- l'heure.
+    due_at TIMESTAMPTZ,
+    -- Ce que la source a dit d'elle-même (User-Agent, tronqué). Pas une garde :
+    -- de quoi reconnaître l'appelant sur l'écran quand deux sources partagent
+    -- un déclencheur.
+    source TEXT
+);
+-- L'index de l'ÉCRAN : les livraisons récentes d'un déclencheur, comptées sur 24 h.
+CREATE INDEX IF NOT EXISTS idx_hook_deliveries_fenetre
+    ON runner_hook_deliveries(trigger_id, received_at DESC);
+-- L'index du LISSAGE : les créneaux réservés d'un déclencheur, du plus lointain au
+-- plus proche. La seule lecture sur le chemin chaud — elle tourne à chaque POST, et
+-- `LIMIT debit` la borne quelle que soit la longueur de la file.
+CREATE INDEX IF NOT EXISTS idx_hook_deliveries_creneaux
+    ON runner_hook_deliveries(trigger_id, due_at DESC) WHERE due_at IS NOT NULL;
+
 
 -- 12/09/2026 : la présence d'un worker de plateforme PAR FAMILLE de modèle — le
 -- dépôt qu'il nomme au claim (`anthropic`, `mistral`). Une table à part, et non
