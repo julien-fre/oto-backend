@@ -22,7 +22,6 @@ import urllib.parse
 
 # Le state est signé : sans secret, rien ne se fabrique ni ne se relit. Posé à
 # l'import, comme les autres bancs qui touchent aux states OAuth.
-os.environ.setdefault("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
 
 import pytest
 from starlette.requests import Request
@@ -30,6 +29,18 @@ from starlette.requests import Request
 from oto_mcp.api import datastore as datastore_routes
 from oto_mcp.auth import flow as oauth_flow
 from oto_mcp.auth import google as google_oauth
+
+
+@pytest.fixture(autouse=True)
+def _secret_d_instance(monkeypatch):
+    """La clé qui signe, déclarée pour CE fichier.
+
+    ⚠️ Elle était posée par `os.environ.setdefault` au niveau module — donc dès la
+    collecte, et pour tout ce que pytest importait ensuite. Un banc qui signait sans
+    déclarer de clé héritait de celle-ci et passait en suite complète tout en rougissant
+    lancé seul (même motif que l'adresse publique, colmaté le 15/09/2026)."""
+    monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
+
 
 
 @pytest.fixture(autouse=True)

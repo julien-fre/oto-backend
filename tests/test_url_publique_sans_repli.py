@@ -24,9 +24,20 @@ import os
 
 import pytest
 
-os.environ.setdefault("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
 
 from oto_mcp import config
+
+
+@pytest.fixture(autouse=True)
+def _secret_d_instance(monkeypatch):
+    """La clé qui signe, déclarée pour CE fichier.
+
+    ⚠️ Elle était posée par `os.environ.setdefault` au niveau module — donc dès la
+    collecte, et pour tout ce que pytest importait ensuite. Un banc qui signait sans
+    déclarer de clé héritait de celle-ci et passait en suite complète tout en rougissant
+    lancé seul (même motif que l'adresse publique, colmaté le 15/09/2026)."""
+    monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
+
 
 NOS_DOMAINES = ("oto.ninja", "oto.cx", "oto.zone", "otomata.tech")
 _BASE = "https://mcp.partenaire.example"
