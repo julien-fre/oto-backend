@@ -32,7 +32,7 @@ import contextlib
 import pytest
 
 from _facturation import (SortieReseau, _abonnement, _document_emis,  # noqa: F401
-                          _identite, _org, _paiement, espionner_le_reseau, live)
+                          _identite, _org, _paiement, espionner_le_reseau)
 
 # La clé de la compta d'Otomata. Elle vivait dans le seam supprimé ; le banc la
 # nomme en toutes lettres parce qu'elle est POSÉE exprès : sans elle, un zéro

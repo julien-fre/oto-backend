@@ -28,7 +28,7 @@ from starlette.responses import JSONResponse
 
 from _datastore_rest import call, stub_authz
 from _facturation import (_abonnement, _document_emis, _identite,  # noqa: F401
-                          _org, _paiement, espionner_le_reseau, live)
+                          _org, _paiement, espionner_le_reseau)
 
 
 # ── la liste ─────────────────────────────────────────────────────────────────
