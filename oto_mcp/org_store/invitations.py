@@ -198,7 +198,7 @@ def _preview_from_row(r: dict) -> dict:
 
 _PREVIEW_SELECT = f"""
     SELECT i.email, i.org_id, i.group_id,
-           COALESCE(u.name, u.email) AS inviter,
+           u.name AS inviter,
            o.name AS org_name,
            g.name AS group_name
       FROM org_invitations i
@@ -207,6 +207,13 @@ _PREVIEW_SELECT = f"""
       LEFT JOIN org_groups g ON g.id  = i.group_id
      WHERE {{pred}} AND {_PENDING_I}
 """
+# ⚠️ oto#86 : `inviter` était `COALESCE(u.name, u.email)` — nommer l'invitant EST
+# intentionnel (accompagner l'accueil avant création de compte), mais le REPLI
+# vers son adresse ne l'était pas. Un compte frais sans nom déclaré servait donc
+# son email à un anonyme, sur les deux routes publiques ci-dessous. `inviter` est
+# `string | null` côté contrat (`oto-dashboard/frontend/src/types/api.ts`) et le
+# client dégrade déjà vers un message générique quand il est absent — retirer le
+# repli n'a donc pas besoin d'un remplacement, juste de servir `None`.
 
 
 def preview_invitation(token: str) -> Optional[dict]:
