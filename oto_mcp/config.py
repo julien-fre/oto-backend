@@ -134,7 +134,9 @@ def verifier_repli_identite_dev() -> None:
             "OTO_MCP_DEV_SUB est posée alors que LOGTO_ENDPOINT l'est aussi : le "
             "repli d'identité de dev local (auth/hooks.py) ne doit jamais coexister "
             "avec un émetteur Logto réel. Retire OTO_MCP_DEV_SUB pour démarrer contre "
-            "ce Logto, ou retire LOGTO_ENDPOINT pour rester en dev local sans auth."
+            "ce Logto. (LOGTO_ENDPOINT reste obligatoire pour démarrer — le stdio "
+            "local sans auth a été retiré le 2026-06-13 — donc le retirer NE lève "
+            "pas cette garde, `main()` échouera plus loin sur `require_env`.)"
         )
 
 
