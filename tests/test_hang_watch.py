@@ -27,17 +27,23 @@ Preuves, dans l'ordre de la tâche (oto-backend, gels de prod non identifiés,
    tâche journalise un échec et rend la main.
 9. `test_cout_du_battement_est_negligeable` — coût, MESURÉ, de `beat()` (la
    tâche côté boucle) : doit rester de l'ordre de la microseconde.
-10. `test_cout_du_thread_watchdog_sous_charge_simulee` — coût, MESURÉ (pas
-    supposé), du thread watchdog lui-même sous une charge qui garde la boucle
-    occupée normalement (pas au repos total) : le réveil périodique du thread
-    ne doit pas mesurablement ralentir le travail de la boucle.
+10. `test_cout_du_thread_watchdog_sous_charge_simulee` — signal INFORMATIF (pas
+    d'assertion, depuis le 15/09/2026) : un débit relatif face à une charge
+    synthétique concurrente dépend de la vitesse de la machine (12,7 % chez
+    fleet, 21,2 % sur un runner CI, 0 code changé) — ne peut pas gater la CI.
+11. `test_cout_isole_du_thread_watchdog_par_reveil` — la preuve qui COMPTE : coût
+    ABSOLU du thread watchdog (`/proc/self/task/<tid>/stat`, secondes CPU réelles
+    du thread SEUL), en µs/réveil — stable d'une machine à l'autre, contrairement
+    à une proportion de débit concurrent.
 """
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
+import os
 import statistics
+import sys
 import threading
 import time
 import timeit
@@ -292,12 +298,15 @@ def test_cout_du_battement_est_negligeable():
 
 @pytest.mark.asyncio
 async def test_cout_du_thread_watchdog_sous_charge_simulee():
-    """Coût du thread watchdog lui-même (le réveil `interval/2`, PAS `beat()`),
-    sous une charge qui garde la boucle occupée normalement — pas au repos total,
-    pour que le chiffre soit représentatif d'un serveur qui sert du trafic plutôt
-    que d'un process qui attend. Intervalle resserré (10 ms) pour exagérer la
-    fréquence de réveil du thread et rendre un éventuel coût MESURABLE plutôt que
-    noyé dans le bruit à l'intervalle réel (0.5-1 s)."""
+    """Signal INFORMATIF, pas une assertion : le débit d'une charge synthétique
+    compétant pour le GIL avec le thread watchdog dépend de la VITESSE DE LA
+    MACHINE qui exécute — mesuré 12,7 % chez fleet, 21,2 % sur un runner GitHub
+    CI, 0 % ailleurs, sans qu'aucun code n'ait changé (14-15/09/2026) : un seuil
+    sur cette proportion ne peut pas tenir sur un parc hétérogène. Le journal
+    imprimé reste utile à l'œil sur un poste de dev ; la preuve qui COMPTE et qui
+    ASSERTIONNE est `test_cout_isole_du_thread_watchdog_par_reveil`, ci-dessous,
+    qui mesure un coût ABSOLU (secondes CPU du thread lui-même) plutôt qu'un
+    débit relatif à une charge concurrente."""
 
     async def charge_simulee(duration_s: float) -> int:
         iterations = 0
@@ -338,13 +347,68 @@ async def test_cout_du_thread_watchdog_sous_charge_simulee():
         f"\n[hang_watch] itérations/{duration}s sans watchdog={sans_watchdog} "
         f"médiane={base:.0f} — avec watchdog (réveil {watchdog_interval*1000:.0f}ms, "
         f"y compris le battement)={avec_watchdog} médiane={avec:.0f} — "
-        f"surcoût mesuré={overhead_pct:.1f}%"
+        f"surcoût mesuré={overhead_pct:.1f}% (informatif, non gaté — voir docstring)"
     )
-    # Seuil large : ce test sanctionne un coût mesurable (10-100 ms de dérive/s de
-    # travail), pas le bruit ordinaire d'une CI partagée. Le battement lui-même est
-    # inclus dans "avec watchdog" (coût déjà chiffré séparément ci-dessus) : ce test
-    # isole surtout le réveil périodique du THREAD, qui prend le GIL sans travail
-    # asyncio à faire pendant les 3/4 de la durée du test.
-    assert overhead_pct < 20.0, (
-        f"le watchdog a coûté {overhead_pct:.1f}% du débit de la boucle — inattendu"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc est spécifique à Linux")
+@pytest.mark.asyncio
+async def test_cout_isole_du_thread_watchdog_par_reveil():
+    """Coût ABSOLU du thread watchdog, isolé de toute charge concurrente —
+    `/proc/self/task/<tid>/stat` (utime+stime du thread SEUL, pas une différence
+    de débit contre un travail synthétique qui, lui, dépend de la vitesse de la
+    machine — cf. la note de `test_cout_du_thread_watchdog_sous_charge_simulee`
+    ci-dessus, rouge à 21,2 % sur un runner CI le 15/09/2026 pour un mécanisme
+    dont le coût isolé, ce jour-là, tenait à 0,011 % d'un cœur au seuil réel de
+    prod (2 réveils/s). Ce test-ci assertionne sur le coût PAR RÉVEIL — une
+    quantité de travail fixe (un `time.monotonic()`, une soustraction, une
+    comparaison), donc stable d'une machine à l'autre à un ordre de grandeur
+    près, jamais à une proportion de débit concurrent près."""
+    interval = 0.01  # 10 ms : réveil toutes les 5 ms, pour accumuler du signal vite
+    window_s = 2.0
+
+    watch = HangWatch(interval=interval)
+    watch.start()
+    await asyncio.sleep(0.01)  # laisse native_id se poser
+
+    def cpu_ticks(tid: int) -> int:
+        with open(f"/proc/self/task/{tid}/stat") as f:
+            fields = f.read().split()
+        return int(fields[13]) + int(fields[14])  # utime + stime, en jiffies
+
+    hz = os.sysconf("SC_CLK_TCK")
+    tid = watch.native_id
+
+    async def heartbeat() -> None:
+        while True:
+            watch.beat()
+            await asyncio.sleep(interval / 2)
+
+    hb = asyncio.create_task(heartbeat())
+    t0_wall = time.monotonic()
+    t0_cpu = cpu_ticks(tid)
+    try:
+        await asyncio.sleep(window_s)
+    finally:
+        hb.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await hb
+    t1_wall = time.monotonic()
+    t1_cpu = cpu_ticks(tid)
+    _stop_and_join(watch)
+
+    wall = t1_wall - t0_wall
+    cpu_s = (t1_cpu - t0_cpu) / hz
+    wakeups = wall / (interval / 2)
+    per_wakeup_us = (cpu_s / wakeups) * 1_000_000 if wakeups else 0.0
+    print(
+        f"\n[hang_watch] coût isolé : {cpu_s:.4f}s CPU sur {wall:.2f}s "
+        f"({wakeups:.0f} réveils, interval={interval*1000:.0f}ms) "
+        f"= {per_wakeup_us:.2f} µs/réveil, {100*cpu_s/wall:.3f}% d'un cœur"
+    )
+    # Marge large (×10 au moins sur tout ce qui a été mesuré, dev comme CI) : ce
+    # test sanctionne une régression grossière du coût PAR RÉVEIL (un vrai travail
+    # ajouté dans `_check()`), pas le bruit de scheduling d'une machine partagée.
+    assert per_wakeup_us < 500.0, (
+        f"le watchdog a coûté {per_wakeup_us:.2f} µs/réveil — inattendu"
     )
