@@ -14,8 +14,11 @@ description: >-
   et le moteur FieldFilter d'oto-core (mask/pseudonym/generalize/hash/drop). Porte
   enfin la règle de rendu du VIDE (EmptyResultMiddleware) : un résultat sans aucun
   résultat se sert au modèle en PHRASE dans le canal texte, jamais en structure nue.
-  À lire pour configurer ou étendre la rédaction de PII dans une org, ou pour toucher
-  à la couche qui met en forme le résultat servi à l'agent.
+  Documente aussi (oto#86) l'absence de couche de rédaction sur la face REST — deux
+  middlewares MCP-only, une allow-list explicite `redaction.champs_autorises` posée
+  à la main sur les routes anonymes qui en ont besoin — et les trois fuites qu'elle
+  a fermées. À lire pour configurer ou étendre la rédaction de PII dans une org, ou
+  pour toucher à la couche qui met en forme le résultat servi à l'agent, MCP ou REST.
 ---
 
 # Rédaction de champs (anonymisation des sorties connecteurs)
@@ -260,9 +263,68 @@ qui réémettent les deux canaux en JSON (`tests/middleware/test_middleware_orde
 Banc : `tests/middleware/test_markdown_body.py` — dont « la rédaction a tourné avant,
 l'en-tête ne rend pas un champ rédigé ».
 
+## Face REST : allow-list explicite sur une route anonyme (oto#86)
+
+`FieldRedactionMiddleware` et `EmptyResultMiddleware` n'ont qu'un point d'accroche,
+`on_call_tool` — un concept MCP. La face REST ne le traverse jamais : **aucune
+couche n'y retire un champ**, la liste de colonnes du magasin de données EST
+l'unique contrôle. Pour une route **authentifiée** ce n'est pas un défaut (l'autz
+gouverne déjà ce qui est lu, comme pour le vide § ci-dessus). Pour une route
+**anonyme** qui réutilise un magasin écrit pour un appelant authentifié, c'est un
+défaut de classe : elle sert tout ce que le magasin sait, sans qu'aucun refus,
+avertissement ou trace ne s'allume.
+
+**Trois fuites mesurées et corrigées (oto#86)**, toutes de la même forme —
+un magasin conçu pour un appelant authentifié, relu en anonyme sans projection :
+
+- l'accusé d'un dépôt de fichier par lien (`upload_tokens.materialize`, branche
+  `project_file`) rendait la ligne de base entière (treize colonnes) moins UNE,
+  retirée par un `pop()` ponctuel — dont l'identifiant du compte qui a ÉMIS le
+  lien. Un tiers sans compte qui dépose son fichier apprenait donc qui le lui a
+  envoyé. Corrigé par une allow-list (`redaction.champs_autorises`) : l'accusé ne
+  porte plus que la confirmation, le nom de fichier et la taille.
+- le libellé de la page de dépôt (`upload_tokens.target_label`, servie SANS
+  authentification) interpolait un identifiant interne de ligne (document,
+  projet) dans le HTML — alors que sa propre docstring promettait déjà « pas de
+  secret, pas de contenu ». Corrigé en retirant l'identifiant du libellé, sans
+  lui substituer un aller-retour base (choix délibéré : un aperçu anonyme ne
+  vaut pas une résolution DB de plus rien que pour l'ergonomie).
+- l'aperçu d'invitation (`org_store._PREVIEW_SELECT`, deux routes anonymes par
+  token et par code) projetait `COALESCE(nom, email)` : nommer l'inviteur est
+  intentionnel (accompagner l'accueil avant création de compte), mais le REPLI
+  vers son adresse — quand son profil n'a pas de nom déclaré — ne l'était pas.
+  Corrigé en retirant l'email du repli ; le champ reste optionnel côté client
+  (`inviter: string | null`), qui dégrade déjà correctement vers un message
+  générique quand il est absent.
+
+**Le principe retenu, pas encore un mécanisme générique.** `redaction.
+champs_autorises(payload, *noms)` est une allow-list explicite — le patron déjà
+adopté par #43 (portées de jeton d'API, deny-by-default) — posée À LA MAIN sur
+la route qui en a besoin, pas un middleware qui intercepterait `on_request` pour
+toutes. Une liste de retraits ne protège que du passé (une colonne ajoutée demain
+au magasin fuit en silence) ; une allow-list refuse par défaut ce qu'elle n'a pas
+nommé. Portée assumée de ce lot : les trois routes fautives l'utilisent (ou son
+principe, pour le libellé qui ne recopie pas un magasin) ; les onze autres routes
+anonymes du dépôt ont été auditées sans trouvaille et n'ont pas été touchées. Un
+véritable middleware REST — parité avec `FieldRedactionMiddleware` sur `/api/*` —
+reste à faire si une prochaine fuite de la même famille apparaît ; il ne s'est
+pas imposé pour trois routes.
+
+⚠️ **Rate-limit vérifié, pas ajouté.** Les deux routes d'invitation sont écrites
+à la main précisément parce que l'adaptateur REST des capacités authentifie
+TOUJOURS — l'argument « single-use + TTL + rate-limit côté capacité » qui
+justifie la longueur du code court ne s'applique donc PAS à elles. Confirmé en
+lisant la chaîne de middlewares Starlette (`server.py`) : le seul token-bucket du
+dépôt est posé par `subdomain_project.py`, clé `(IP, projet)`, et ne couvre QUE
+les sous-domaines MCP de projet. Aucun limiteur applicatif ne garde
+`/api/invitations/{token}` ni `/code/{code}` — seul un limiteur de PROXY,
+hors de ce dépôt, pourrait les couvrir. Pas ajouté dans ce lot (hors périmètre
+demandé) ; à nommer si un prochain audit y revient.
+
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
-  **rendu du vide**), `middleware/field_redaction.py` + `middleware/empty_result.py`,
+  **rendu du vide**, l'allow-list REST `champs_autorises`),
+  `middleware/field_redaction.py` + `middleware/empty_result.py`,
   `connectors/schema_store.py`,
   `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connectors/field_schema.py`
   (curé, libellés), `capabilities/orgs/field_filters.py` (get/set/preview), `db.py`
