@@ -132,6 +132,11 @@ _REQUISES: tuple[Variable, ...] = (
              "reste correct et cesse seulement d'être corrélable entre deux boots.",
              ("oto_mcp/auth/flow.py:66", "oto_mcp/auth/google.py:87",
               "oto_mcp/outreach_optout.py:57", "oto_mcp/upload_tokens.py:72")),
+    Variable("OTO_MCP_OAUTH_RELAY_HOSTS", Classe.REGLAGE, "",
+             "Hosts déclarés du relais d'autorisation OAuth (RFC 9207, "
+             "`oto_mcp/auth/relay.py`), séparés par des virgules. Absente : aucun "
+             "relais actif, comportement d'origine — un opt-in par host, pas un "
+             "défaut qui pointerait chez nous.", ("oto_mcp/auth/relay.py:73",)),
     Variable("GOOGLE_WORKSPACE_CLIENT_ID", Classe.REQUISE, None,
              "Client OAuth Google Workspace. Obligatoire DE FAIT : lève nommé au "
              "premier appel de `_client_id()`.", ("oto_mcp/auth/google.py:73",)),
