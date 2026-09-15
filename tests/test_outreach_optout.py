@@ -162,3 +162,112 @@ def test_sans_secret_la_VERIFICATION_leve_au_lieu_de_dire_lien_invalide(monkeypa
     monkeypatch.delenv("OTO_MCP_OAUTH_STATE_SECRET", raising=False)
     with pytest.raises(O.OptOutSecretManquant):
         O.verify(jeton)
+
+
+# ── oto#150 : le DIGEST de signaux — même forme de jeton, deux canaux INDÉPENDANTS ──
+#
+# Le mécanisme complet (exclusion de `pending_signal_notices`, indépendance CÔTÉ
+# BASE des deux tables) est éprouvé sur PostgreSQL réel dans
+# `test_signal_digest_optout_db.py`. Ici : la primitive du jeton (un jeton de l'un
+# des deux canaux ne doit JAMAIS valoir pour l'autre) et la route publique.
+
+def test_le_lien_digest_pointe_le_BACKEND_sous_o_d(monkeypatch):
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.exemple.test/")
+    assert O.lien_digest(SUB).startswith("https://mcp.exemple.test/o/d/")
+
+
+def test_un_jeton_de_digest_ne_verifie_JAMAIS_comme_une_relance():
+    """La garantie centrale du lot : un lien reçu dans le pied du DIGEST, collé par
+    erreur (ou copié tel quel) sur la route des relances, ne doit désinscrire de
+    RIEN côté relances."""
+    jeton = O.lien_digest(SUB).rsplit("/", 1)[1]
+    assert O.verify(jeton) is None
+    assert O.verify_digest(jeton) == SUB
+
+
+def test_un_jeton_de_relance_ne_verifie_JAMAIS_comme_un_digest():
+    """Et réciproquement : le lien du pied d'une relance ne désinscrit pas du digest."""
+    jeton = O.lien(SUB).rsplit("/", 1)[1]
+    assert O.verify_digest(jeton) is None
+    assert O.verify(jeton) == SUB
+
+
+def test_page_confirmation_digest_ne_parle_pas_de_relance():
+    """La promesse tenue doit être la bonne : quelqu'un qui coupe le digest ne doit
+    pas lire qu'il a coupé les relances, ni l'inverse."""
+    corps_digest = O.page_confirmation(kind="digest")
+    corps_relance = O.page_confirmation(kind="relance")
+    assert "résumé" in corps_digest and "relance" not in corps_digest
+    assert "relance" in corps_relance and "résumé" not in corps_relance
+
+
+def _get_digest(token: str):
+    from oto_mcp.api import public
+    req = Request({"type": "http", "method": "GET", "path": f"/o/d/{token}",
+                   "headers": [], "query_string": b"",
+                   "path_params": {"token": token}})
+    return asyncio.run(public.digest_unsubscribe(req))
+
+
+@pytest.fixture
+def base_digest(monkeypatch):
+    """Le pendant de `base`, pour le canal DIGEST — une écriture distincte, jamais
+    dans `outreach_optouts`."""
+    from oto_mcp.api import public as _public  # noqa: F401 — force l'import du module
+    from oto_mcp.db import usage as db_usage
+    from oto_mcp import db
+    ecrits: list = []
+    monkeypatch.setattr(db_usage, "opt_out_signal_digest",
+                        lambda sub, source="link": ecrits.append((sub, source)))
+    monkeypatch.setattr(db, "get_user", lambda sub: {"locale": "en"})
+    return ecrits
+
+
+def test_un_lien_digest_valide_desinscrit_et_confirme(base_digest):
+    rep = _get_digest(O.lien_digest(SUB).rsplit("/", 1)[1])
+    assert rep.status_code == 200
+    assert base_digest == [(SUB, "link")]
+    assert b"Done" in rep.body
+
+
+def test_un_lien_digest_trafique_n_ecrit_rien(base_digest):
+    jeton = O.lien_digest(SUB).rsplit("/", 1)[1]
+    rep = _get_digest(jeton[:-4] + "aaaa")
+    assert rep.status_code == 400
+    assert base_digest == []
+    assert "Lien invalide" in rep.body.decode()
+
+
+def test_la_route_digest_est_MONTEE_et_sans_auth():
+    from oto_mcp.api import public, routes as api_routes
+    montees = {(r.path, tuple(sorted(r.methods or ())))
+               for r in api_routes.make_routes(object())
+               if getattr(r, "path", "").startswith("/o/d/")}
+    assert montees == {("/o/d/{token}", ("GET", "HEAD"))}
+    route = next(r for r in api_routes.make_routes(object())
+                 if getattr(r, "path", "") == "/o/d/{token}")
+    assert route.endpoint is public.digest_unsubscribe
+
+
+# ── L'indépendance des DEUX routes, prouvée ENSEMBLE ────────────────────────────
+#
+# C'est le cœur de la garantie d'oto#150 : un jeton valide pour l'un des deux
+# canaux ne doit JAMAIS agir sur l'autre, même présenté à sa route.
+
+def test_le_lien_du_digest_ne_desinscrit_pas_des_relances(base, base_digest):
+    """Le pied d'un mail de digest contient un lien `/o/d/...` — même s'il était
+    présenté à `/o/u/...` (lien copié, faute de frappe), rien ne doit se désinscrire
+    côté relances."""
+    jeton_digest = O.lien_digest(SUB).rsplit("/", 1)[1]
+    rep = _get(jeton_digest)  # _get() cible /o/u/<token> -> outreach_unsubscribe
+    assert rep.status_code == 400
+    assert base == [], "un jeton de digest ne désinscrit jamais des relances"
+
+
+def test_le_lien_de_relance_ne_desinscrit_pas_du_digest(base, base_digest):
+    """Et réciproquement : le lien d'une relance, présenté à la route du digest,
+    n'écrit rien dans `signal_digest_optouts`."""
+    jeton_relance = O.sign(SUB)
+    rep = _get_digest(jeton_relance)
+    assert rep.status_code == 400
+    assert base_digest == [], "un jeton de relance ne désinscrit jamais du digest"

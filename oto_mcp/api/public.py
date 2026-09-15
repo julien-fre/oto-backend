@@ -18,6 +18,7 @@ de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 - `GET /api/public/docs/{token}`           → doc partagé (JSON)
 - `GET /p/d/{token}`                       → le même, server-rendered (lisible par un agent sans JS)
 - `GET /o/u/{token}`                       → désinscription d'une relance (le jeton EST le secret)
+- `GET /o/d/{token}`                       → désinscription du DIGEST de signaux (oto#150), même régime, table distincte
 
 `/api/connectors` est la seule MIXTE : anonyme pour la vitrine, authentifiée pour
 le dashboard qui y scope son catalogue sur l'org active — d'où son `verifier`.
@@ -345,4 +346,30 @@ async def outreach_unsubscribe(request: Request) -> Response:
     # le refus est enregistré quand même, il ne dépend pas de l'existence d'une fiche.
     locale = (db.get_user(sub) or {}).get("locale")
     return HTMLResponse(outreach_optout.page_confirmation(locale),
+                        headers={"Cache-Control": "no-store"})
+
+
+async def digest_unsubscribe(request: Request) -> Response:
+    """Désinscription du DIGEST de signaux (oto#150) — route `/o/d/<token>`,
+    **sans auth**. Sœur d'`outreach_unsubscribe`, même régime (GET qui écrit,
+    server-rendered, idempotent, strictement soustractif) — voir son docstring pour
+    ce qui le justifie.
+
+    ⚠️ **Table distincte, jamais `db_outreach.desinscrire`** : ce jeton porte un
+    `typ` propre (`outreach_optout.verify_digest`, jamais `verify`), et l'écriture
+    va dans `signal_digest_optouts` (`db.usage.opt_out_signal_digest`) — décision
+    d'Alexis (oto#150), le digest de signaux et les relances sont deux canaux, deux
+    refus. Un jeton de relance présenté ici est refusé (mauvais `typ`), comme
+    l'inverse sur `/o/u/<token>`.
+    """
+    from .. import outreach_optout
+    from ..db import usage as db_usage
+    sub = outreach_optout.verify_digest(request.path_params.get("token", ""))
+    if not sub:
+        return HTMLResponse(outreach_optout.page_refus(), status_code=400)
+    db_usage.opt_out_signal_digest(sub, source="link")
+    # Même raisonnement que `outreach_unsubscribe` : la langue suit la préférence
+    # DÉCLARÉE du compte, et le refus se pose même si le compte est introuvable.
+    locale = (db.get_user(sub) or {}).get("locale")
+    return HTMLResponse(outreach_optout.page_confirmation(locale, kind="digest"),
                         headers={"Cache-Control": "no-store"})

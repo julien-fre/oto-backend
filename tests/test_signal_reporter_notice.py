@@ -36,12 +36,18 @@ def _signal(i, sub, *, status="resolved", email="a@b.c", target="x_tool", locale
 
 @pytest.fixture
 def bouchon(monkeypatch):
-    """Le mailer et la base, remplacés — on juge le REGROUPEMENT et les gestes."""
+    """Le mailer et la base, remplacés — on juge le REGROUPEMENT et les gestes.
+
+    `OTO_MCP_OAUTH_STATE_SECRET` : `_notify_reporters` calcule désormais le lien de
+    désinscription du digest (oto#150, `outreach_optout.lien_digest`) AVANT
+    d'appeler le mailer — sans secret d'instance, ce calcul lève, comme un envoi de
+    relance sans lien signable."""
+    monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "s" * 40)
     envois, marques = [], []
     monkeypatch.setattr(
         cap.mailer, "send_signal_digest_email",
-        lambda to, *, items, brand, locale=None:
-            (envois.append((to, len(items), brand, locale)), True)[1])
+        lambda to, *, items, brand, locale=None, unsubscribe_url=None:
+            (envois.append((to, len(items), brand, locale, unsubscribe_url)), True)[1])
     monkeypatch.setattr(cap.db, "mark_signals_notified", lambda ids: marques.append(list(ids)))
     monkeypatch.setattr(cap.config, "front_for", lambda sub: (None, None))
     return {"envois": envois, "marques": marques}
@@ -82,7 +88,7 @@ def test_l_apercu_n_envoie_rien_et_ne_marque_rien(monkeypatch, bouchon):
 def test_un_envoi_rate_ne_marque_pas(monkeypatch, bouchon):
     """Sinon un hoquet du mailer fait disparaître le retour, silencieusement."""
     monkeypatch.setattr(cap.mailer, "send_signal_digest_email",
-                        lambda to, *, items, brand, locale=None: False)
+                        lambda to, *, items, brand, locale=None, unsubscribe_url=None: False)
     monkeypatch.setattr(cap.db, "pending_signal_notices", lambda: [_signal(1, "sub-a")])
     out = cap._notify_reporters(CTX, cap.NotifyReportersInput(op="send"))
 

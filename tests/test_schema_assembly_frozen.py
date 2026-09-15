@@ -392,8 +392,16 @@ from oto_mcp.db import _schema, schema
 #              = 153 796 + (157 700 − 153 796) + (154 108 − 153 796)
 #              = 153 796 + 3 904 + 312 = 158 012 — valeur obtenue, recalculée sur la
 # chaîne assemblée réellement fusionnée (pas recopiée d'un des deux côtés).
-EMPREINTE = "68f76bbd609da90373fa1c7dba4dc96861d3d8b699621c85de1d39096fe199ba"
-LONGUEUR = 158012
+# 15/09/2026 (oto#150, désinscription du digest de signaux) — la table NEUVE
+# `signal_digest_optouts` dans le fragment USAGE (`schema/usage.py`), même forme que
+# `outreach_optouts` (PK `sub`, `source`, `opted_out_at`) mais table DISTINCTE :
+# décision d'Alexis, le digest de signaux et les relances de plateforme sont deux
+# canaux, deux refus — l'un ne désinscrit jamais de l'autre. ADDITIVE, sans autre
+# lecteur que `pending_signal_notices` (exclusion ajoutée dans la MÊME PR, côté
+# `db/usage.py`, hors DDL) ; la prod qui tourne l'ancien code ne la voit pas.
+# 158 012 → 159 376 (+1 364, commentaire du fragment compris).
+EMPREINTE = "ddcaf91312014d90e3ec623cfaaad2d50862fd18698b1ea7cab2afd67c5516a7"
+LONGUEUR = 159376
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

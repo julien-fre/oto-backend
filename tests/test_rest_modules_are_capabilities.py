@@ -63,6 +63,10 @@ _KNOWN: dict[str, str] = {
     # callback — et exiger une session la demanderait à celui-là même qui ne veut plus
     # rien avoir à faire avec nous. Le jeton signé EST l'autorisation.
     "/o/u/{token}": NATURE,
+    # --- Lien de DÉSINSCRIPTION du DIGEST de signaux (oto#150) : même nature que la
+    # ligne au-dessus (navigateur, sans auth, jeton signé = l'autorisation), route et
+    # `typ` de jeton distincts, table distincte (`signal_digest_optouts`).
+    "/o/d/{token}": NATURE,
     # --- APIs consommées par un PROGRAMME externe (oto-core / oto-cli), chemins
     # gelés par contrat : `SireneStock` HTTP client, repli CLI des accords quand le
     # transport MCP est indisponible. Un tool MCP existe en parallèle, mais c'est un

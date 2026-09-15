@@ -304,6 +304,15 @@ _PK_SUB_TABLES = (
     # la personne : ne pas le repointer la ré-abonnerait en silence à la fusion,
     # ce qui est exactement ce qu'un opt-out interdit.
     ("outreach_optouts", "sub", ()),
+    # Le refus de recevoir le digest de signaux (oto#150, 15/09/2026) — même
+    # raison, même forme (PK `sub` seul) que `outreach_optouts` juste au-dessus,
+    # et trouvé par la même garde qu'elle avait fermée : la colonne porte
+    # `ON DELETE CASCADE` vers `users(sub)`, donc sans repointage la ligne
+    # disparaissait en silence à l'étape 4 (`DELETE FROM users`) — une personne
+    # désinscrite se serait remise à recevoir des digests après une fusion de
+    # compte, sans erreur, sans trace. Un opt-out qui ne survit pas à une
+    # migration de compte est exactement le tort que ce lot existe pour fermer.
+    ("signal_digest_optouts", "sub", ()),
 )
 
 # Colonnes de sub sous un INDEX UNIQUE qui n'est PAS la clé primaire — partiel ou

@@ -233,6 +233,13 @@ est idempotente et strictement soustractive.
 Sans `OTO_MCP_OAUTH_STATE_SECRET`, `lien()` **lève** — plutôt qu'un lien mort dans le
 pied de page de dizaines de mails.
 
+⚠️ **Un jeton de RELANCE ne vaut désinscription que des relances (oto#150).** Le DIGEST
+de signaux (`send_signal_digest_email`, `docs/usage-loop.md`) porte depuis le
+15/09/2026 son propre lien de désinscription — même primitive (`outreach_optout`),
+`typ` et route distincts (`/o/d/{token}`), table distincte (`signal_digest_optouts`).
+Décision d'Alexis : deux canaux, deux refus — se désinscrire de l'un ne désinscrit pas
+de l'autre, et `outreach_optouts` (ici) ne connaît QUE les relances de plateforme.
+
 ## ⚠️ REST SEULE — ce qu'on a perdu en retirant le verbe conversationnel (2026-09-02)
 
 `oto_admin_outreach` **n'existe plus côté MCP** (`mcp=None`). Motif, mesuré : le verbe

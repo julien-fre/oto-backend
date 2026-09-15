@@ -118,6 +118,16 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
     qu'il signale encore.
   - ⚠️ La marque est celle du DESTINATAIRE (`config.front_for`) — écrire « oto » à
     l'utilisateur d'un partenaire est un faux, même quand tout le reste est juste.
+  - ⚠️ **Lien de désinscription porté depuis le 15/09/2026 (oto#150).** Un compte
+    rattaché à un tenant tiers reste une adresse légitime pour ce mail (déclaré dans
+    les CGU, décision d'Alexis) ; ce qui manquait était le REFUS. Le pied du mail
+    porte désormais un lien signé (`outreach_optout.lien_digest(sub)`, route
+    `/o/d/<token>`) qui écrit dans `signal_digest_optouts` — table **distincte** de
+    `outreach_optouts` (les relances de plateforme, `docs/relance-comptes.md`) : les
+    deux canaux ont chacun leur refus, se désinscrire de l'un ne désinscrit pas de
+    l'autre, même forme de jeton (HMAC scellant un `sub`), `typ` et route différents.
+    `pending_signal_notices()` exclut EN AMONT qui s'en est servi ; le signal reste
+    DÛ (jamais marqué notifié), donc lever le refus le fait réapparaître.
   - Les 331 signaux arbitrés AVANT ce lot sont marqués annoncés par la migration : leurs
     auteurs n'ont rien reçu, mais leur envoyer des nouvelles de décisions vieilles de deux
     mois n'aiderait personne. Le retour vaut pour ce qu'on arbitre à partir de là.

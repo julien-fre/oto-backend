@@ -33,6 +33,7 @@ GET,HEAD /api/upload/{token} -> upload_form
 OPTIONS /api/upload/{token} -> options_handler
 GET,HEAD /p/d/{token} -> public_doc_view
 GET,HEAD /o/u/{token} -> outreach_unsubscribe
+GET,HEAD /o/d/{token} -> digest_unsubscribe
 POST /api/orgs/{id}/logo -> org_logo_save
 OPTIONS /api/orgs/{id}/logo -> options_handler
 GET,HEAD /api/me/projects/{id}/export -> me_project_export

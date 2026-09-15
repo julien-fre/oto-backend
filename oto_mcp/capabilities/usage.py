@@ -16,7 +16,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
-from .. import config, db, email as mailer, org_store
+from .. import config, db, email as mailer, org_store, outreach_optout
 from ._authz import PLATFORM_ADMIN, SUB_ONLY
 from ._types import AuthzDenied, cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -370,7 +370,12 @@ def _notify_reporters(ctx: ResolvedCtx, inp: NotifyReportersInput) -> dict:
         elif inp.op == "send":
             ok = mailer.send_signal_digest_email(
                 g["email"], items=g["items"], brand=fiche["brand"],
-                locale=g.get("locale"))
+                locale=g.get("locale"),
+                # oto#150 : lien de désinscription DU DIGEST, propre à ce canal —
+                # `pending_signal_notices` (donc `_group_notices`) exclut déjà qui
+                # s'en est servi, ce n'est pas ce paramètre qui filtre quoi que ce
+                # soit ici, seulement ce qui PORTE le refus au prochain envoi.
+                unsubscribe_url=outreach_optout.lien_digest(g["sub"]))
             fiche["sent"] = bool(ok)
             if ok:
                 db.mark_signals_notified(fiche["signal_ids"])

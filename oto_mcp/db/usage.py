@@ -707,7 +707,13 @@ def pending_signal_notices() -> list[dict]:
     n'a plus d'adresse, et il vaut mieux le voir dans la file que découvrir un envoi
     silencieusement perdu. `u.locale` suit le même join (oto-backend#700) : c'est
     une propriété du DESTINATAIRE, pas du signal — inutile de la relire par un
-    aller-retour séparé côté appelant."""
+    aller-retour séparé côté appelant.
+
+    ⚠️ **Exclut qui s'est désinscrit du DIGEST** (`signal_digest_optouts`, oto#150),
+    en amont — même patron que `_AUDIENCE_SQL` côté relances (`db/outreach.py`) : le
+    refus vit dans la requête, pas dans une consigne côté appelant. Les signaux d'un
+    compte désinscrit restent `notified_at IS NULL` (ils restent DUS, comme ceux d'un
+    compte sans adresse) — se réinscrire les fait réapparaître ici, jamais les perdre."""
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             """
@@ -715,6 +721,7 @@ def pending_signal_notices() -> list[dict]:
                    s.body, s.created_at, s.status, s.resolution, s.resolved_at
             FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub
             WHERE s.status = ANY(%s) AND s.notified_at IS NULL AND s.sub IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM signal_digest_optouts o WHERE o.sub = s.sub)
             ORDER BY s.sub, s.created_at
             """,
             (list(SIGNAL_TERMINAL),),
@@ -735,6 +742,20 @@ def mark_signals_notified(signal_ids: list) -> int:
             "UPDATE usage_signals SET notified_at = NOW() WHERE id = ANY(%s)",
             (ids,),
         ).rowcount
+
+
+def opt_out_signal_digest(sub: str, *, source: str = "link") -> None:
+    """Désinscrit `sub` du DIGEST de signaux (`signal_digest_optouts`, oto#150).
+
+    Idempotent (`ON CONFLICT DO NOTHING`), comme `db.outreach.desinscrire` — même
+    forme, table DISTINCTE : ce refus ne touche jamais `outreach_optouts` (les
+    relances de plateforme), et réciproquement. Aucune vérification que le compte
+    existe : la FK s'en charge, et un jeton signé qui nomme un compte disparu ne
+    doit pas fabriquer une erreur au destinataire."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO signal_digest_optouts (sub, source) VALUES (%s, %s) "
+            "ON CONFLICT (sub) DO NOTHING", (sub, source))
 
 
 def count_usage_signals_by_status() -> dict:

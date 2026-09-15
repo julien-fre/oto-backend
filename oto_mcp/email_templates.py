@@ -172,8 +172,16 @@ _VERDICT_EN = {
 
 
 def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
-                             locale: str | None = None) -> bool:
+                             locale: str | None = None,
+                             unsubscribe_url: str | None = None) -> bool:
     """UN email pour TOUS les retours arbitrés d'une personne (#451). Best-effort.
+
+    `unsubscribe_url` (oto#150) = le lien SIGNÉ du destinataire
+    (`outreach_optout.lien_digest(sub)`), fourni par l'appelant — ce gabarit ne
+    signe rien lui-même, comme aucun des trois autres. `None` = pas de lien (rendu
+    identique à avant ce lot) ; sinon il rejoint le pied, À CÔTÉ de la mention
+    « répondez pour rouvrir un retour » — les deux cohabitent, ce ne sont pas la
+    même action.
 
     **Groupé par construction, et c'est la raison d'être de ce gabarit.** Mesuré le
     27/08 : 3 personnes portaient 168 des 204 signaux en attente, dont deux externes à
@@ -282,6 +290,12 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
                 "l\'un d\'eux mérite d\'être rouvert.")
     contenu = f'<p style="{_charte.PARA}">{intro}</p>' + "".join(lignes)
     # `pied` DIT pourquoi ce mail arrive : c'est la mention de pied du gabarit, pas
-    # un paragraphe de plus à la fin du corps.
+    # un paragraphe de plus à la fin du corps. Le lien de désinscription (oto#150),
+    # lui, passe par `desinscription` — son propre paramètre de `page()`, jamais
+    # dans `mention` (échappée : un lien qui y transiterait s'afficherait en clair).
+    desinscription = (
+        (unsubscribe_url, "stop these summaries" if en else "ne plus recevoir ces résumés")
+        if unsubscribe_url else None)
     return _email._send(to, subject, _charte.page(
-        m, contenu, preheader=apercu, mention=pied, locale=locale))
+        m, contenu, preheader=apercu, mention=pied, locale=locale,
+        desinscription=desinscription))

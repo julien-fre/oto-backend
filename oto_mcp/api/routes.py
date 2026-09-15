@@ -507,6 +507,9 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # Désinscription des relances (oto_admin_outreach) — jeton signé dans
         # l'URL, aucune session : c'est le lien du pied de page des mails.
         Route("/o/u/{token}", public.outreach_unsubscribe, methods=["GET"]),
+        # Désinscription du DIGEST de signaux (oto#150) — même régime, route et
+        # jeton (`typ`) distincts : jamais interchangeable avec la ligne au-dessus.
+        Route("/o/d/{token}", public.digest_unsubscribe, methods=["GET"]),
         Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs/instructions.py),
