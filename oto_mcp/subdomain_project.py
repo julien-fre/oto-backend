@@ -370,6 +370,14 @@ class HostDispatch:
         org_id = int(proj["owner_id"]) if proj.get("owner_type") == "org" else None
 
         if access_mode in ("anonymous", "secret"):
+            # Garde-fou anti-abus : token-bucket par (IP, projet) — AVANT TOUT TRAVAIL, y
+            # compris le rendu HTML ci-dessous (`share_ui.build_page`, le chemin le plus
+            # coûteux : plusieurs lectures DB SYNCHRONES en threadpool sur un serveur
+            # mono-loop). Vécu (oto-backend#561) : posée APRÈS la branche HTML, la garde ne
+            # couvrait pas le chemin qu'elle existe pour couvrir — un ordre d'instructions,
+            # pas une intention.
+            if not _check_bucket((_client_ip(scope, headers), int(proj["id"])), time.monotonic()):
+                return await _send_429(send)
             # `secret` = même chemin sans login que `anonymous` (aucun sub, credential de
             # l'org propriétaire) ; il n'en diffère QUE par l'annuaire (non listé) et un slug
             # non devinable — deux propriétés portées côté publication, transparentes ici.
@@ -393,9 +401,6 @@ class HostDispatch:
                     offset=_offset_from_query(scope), connect_url=_connect_url(host))
                 if html_out is not None:
                     return await _send_html(send, html_out, status)
-            # Garde-fou anti-abus : token-bucket par (IP, projet) avant tout travail.
-            if not _check_bucket((_client_ip(scope, headers), int(proj["id"])), time.monotonic()):
-                return await _send_429(send)
             ctx = AnonContext(int(proj["id"]), org_id,
                               frozenset(proj.get("mcp_tools") or []),
                               # opt-in datastore : honoré uniquement en `secret` (jamais
