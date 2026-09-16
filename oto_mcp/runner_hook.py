@@ -142,7 +142,8 @@ _AVERTISSEMENT = (
 
 
 def instruction_augmentee(instruction: str, corps: Any, mode: str,
-                          champs: Optional[dict]) -> str:
+                          champs: Optional[dict],
+                          trigger_id: Optional[int] = None) -> str:
     """L'instruction de l'agent, plus ce que le déclencheur a reçu — CLÔTURÉ.
 
     ⚠️ Le corps n'est JAMAIS interpolé dans l'instruction : il est ajouté après
@@ -162,6 +163,20 @@ def instruction_augmentee(instruction: str, corps: Any, mode: str,
         extraits = {nom: v for nom, chemin in (champs or {}).items()
                     if (v := _extraire(corps, str(chemin))) is not None}
         if not extraits:
+            if champs:
+                # ⚠️ Configuré mais RIEN n'a résolu : très probablement des
+                # chemins qui ne correspondent pas à la forme réelle du corps
+                # (piège vécu : poser un nom de TYPE — "string" — comme chemin
+                # au lieu d'une clé/chemin du corps reçu). Sans cette trace,
+                # l'agent tourne sans donnée et personne ne le voit — le même
+                # silence qu'un `payload_mode="ignore"` non voulu.
+                logger.warning(
+                    "webhook %s : payload_mode=fields configuré avec %d champ(s) "
+                    "(%s) mais AUCUN n'a résolu contre le corps reçu — l'agent "
+                    "part sans donnée, comme si le mode était `ignore`. Vérifier "
+                    "que les valeurs de payload_fields sont des CHEMINS dans le "
+                    "corps (ex. \"account_id\", ou \"data.id\"), pas des noms de "
+                    "type.", trigger_id, len(champs), ", ".join(champs))
             return instruction
         bloc = json.dumps(extraits, ensure_ascii=False, indent=2)
     else:
@@ -294,7 +309,8 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                     "hook": True,
                     "input": instruction_augmentee(
                         t.get("input") or "", corps,
-                        t.get("payload_mode") or IGNORE, t.get("payload_fields")),
+                        t.get("payload_mode") or IGNORE, t.get("payload_fields"),
+                        trigger_id=trigger_id),
                     **runner_models.charge(t.get("model")),
                 }
                 job = db.enqueue_job(
