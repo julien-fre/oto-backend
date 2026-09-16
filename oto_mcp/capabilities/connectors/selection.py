@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 from ... import access, org_store, providers, session_org, tool_registry
 from ...connectors import activation as connector_activation
@@ -95,12 +95,10 @@ class MyConnectorRow(BaseModel):
     treize clés de premier niveau que servait le mode verbeux sans les déclarer sont
     désormais nommées (cf. `catalog_card.py` pour les objets).
 
-    `extra="allow"` RESTE, et c'est provisoire : le retirer est le seul garde-fou
-    mécanique contre le prochain champ non déclaré, mais il faut d'abord que le
-    cliquet `tests/test_carte_connecteur_declaree.py` ait vécu — un champ oublié
-    disparaîtrait sinon du payload, ce qui casserait pour de bon ce que ce lot ne
-    fait que documenter."""
-    model_config = ConfigDict(extra="allow")
+    `extra="allow"` est retiré (oto-backend#742) : le cliquet
+    `tests/connectors/test_carte_connecteur_declaree.py`, posé par #738, a vécu —
+    c'est désormais lui le garde-fou mécanique contre le prochain champ non déclaré.
+    Un champ oublié disparaîtrait du payload plutôt que de rester toléré en silence."""
 
     name: str
     label: Optional[str] = None

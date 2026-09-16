@@ -8,9 +8,11 @@ défaut, et on l'a réparé pour UN champ.
 
 **Ce fichier est le garde-fou mécanique qui remplace la discipline.** Une règle qu'il
 faut tenir se perd ; ici, ajouter une clé au producteur (`providers/__init__.py::
-public_catalog`, `_model.Connector.auth`) sans la déclarer fait rougir la CI. C'est la
-condition posée pour pouvoir un jour retirer `extra="allow"` sans qu'un champ oublié
-disparaisse du payload.
+public_catalog`, `_model.Connector.auth`) sans la déclarer fait rougir la CI. C'était
+la condition posée pour pouvoir un jour retirer `extra="allow"` sans qu'un champ oublié
+disparaisse du payload — **retiré le 16/09/2026 (oto-backend#742)**, ce cliquet ayant
+vécu depuis le 01/09 : c'est désormais lui, seul, le garde-fou contre le prochain champ
+servi et non déclaré.
 
 ⚠️ **Le sens de la comparaison compte.** On part des clés SERVIES et on vérifie
 qu'elles sont déclarées — jamais l'inverse. Un modèle qui déclare un champ que
@@ -178,18 +180,19 @@ def test_le_free_tier_est_declare():
         f"clés de `free_tier` servies et non déclarées : {_resume(inconnues)}"
 
 
-def test_la_declaration_ne_valide_pas_donc_ne_peut_rien_retirer():
-    """La garantie qui rend ce lot sûr sur une surface déjà consommée : `Output`
-    DÉCRIT, il ne valide pas (cf. `capabilities/_types.py`). Le handler rend un
-    `dict`, personne ne le passe par le modèle — donc déclarer ne peut pas faire
-    disparaître un champ du payload. On l'éprouve plutôt que de l'affirmer : un
-    modèle qui laisserait tomber un extra ferait rougir ici."""
+def test_le_modele_ne_valide_pas_la_surface_reellement_servie():
+    """La garantie qui rendait ce lot sûr sur une surface déjà consommée, TOUJOURS
+    vraie après le retrait d'`extra="allow"` (#742) : `Output` DÉCRIT, il ne valide
+    pas (cf. `capabilities/_types.py`). Le handler rend un `dict`, personne ne le
+    passe par `MyConnectorRow` — la classe n'est instanciée NULLE PART en dehors des
+    tests (`grep MyConnectorRow\\( oto_mcp/` hors tests : un seul résultat, sa propre
+    déclaration). Retirer `extra="allow"` ne peut donc pas faire disparaître un champ
+    du payload RÉELLEMENT servi, quoi que fasse le modèle sur une instanciation
+    hypothétique."""
     ligne = dict(public_catalog()[0], state="active", recommended=False,
                  guide_ref_count=0, doctrine_ref_count=0, option_ok=True,
                  champ_jamais_declare="témoin")
     reconstruit = MyConnectorRow(**ligne).model_dump()
-    assert reconstruit.get("champ_jamais_declare") == "témoin", \
-        "`extra=allow` ne retient plus les champs non déclarés — retirer ce cran " \
-        "AVANT d'avoir tout déclaré ferait disparaître du payload ce qu'on a oublié"
-    assert set(ligne) <= set(reconstruit), \
-        f"clés perdues à la reconstruction : {set(ligne) - set(reconstruit)}"
+    assert "champ_jamais_declare" not in reconstruit, \
+        "`extra=allow` retiré (#742) : un champ non déclaré doit désormais " \
+        "disparaître d'une INSTANCE du modèle — s'il survit, le retrait n'a pas pris"
