@@ -290,6 +290,25 @@ def taille_servie(result) -> Optional[int]:
         return None
 
 
+def _oto_call_outcome(result) -> tuple[bool, Optional[str]]:
+    """`(ok, error)` de la cible RELAYÉE par `oto_call` (oto-backend#784) — lu dans
+    `structured_content`, la forme `{"tool": ..., "ok": bool, "error": str}` que
+    `tools/meta.py` rend en donnée sur l'échec d'une cible dispatchée.
+
+    Fail-open comme `taille_servie` : une forme illisible (résultat qui ne vient pas
+    de `oto_call`, ou dont le contrat change) rend `(True, None)` — le comportement
+    D'AVANT ce lot — plutôt que de faire mentir la mesure dans l'autre sens."""
+    try:
+        sc = getattr(result, "structured_content", None)
+        if not isinstance(sc, dict) or "ok" not in sc:
+            return True, None
+        ok = bool(sc["ok"])
+        error = None if ok else str(sc.get("error") or "")[:MAX_ERROR_CHARS]
+        return ok, error
+    except Exception:  # noqa: SILENT — une mesure ne casse jamais l'appel qu'elle observe ; forme illisible = comportement d'avant
+        return True, None
+
+
 class ToolCallLogger(Middleware):
     """Middleware FastMCP : journalise chaque on_call_tool via le sink fourni.
 
@@ -379,7 +398,16 @@ class ToolCallLogger(Middleware):
             self._record({**row, "ok": False, "error": str(e)[:MAX_ERROR_CHARS],
                           "error_kind": _error_kind(e)}, t0)
             raise
-        self._record({**row, "ok": True, "error": None,
+        ok, error = True, None
+        if context.message.name == "oto_call":
+            # `oto_call` (ADR 0036) ne lève JAMAIS sur l'échec de sa cible — il le
+            # rend en DONNÉE (`{"ok": False, "error": ...}`), donc sans ce rappel la
+            # ligne d'ENVELOPPE marquait `ok: true` même quand la cible avait échoué.
+            # Un filtre « erreurs » posé sur `oto_call` ne voyait alors rien de
+            # l'échec relayé (oto-backend#784). `ok` suit désormais la cible : c'est
+            # la lecture qu'un lecteur du journal suppose.
+            ok, error = _oto_call_outcome(result)
+        self._record({**row, "ok": ok, "error": error,
                       "result_size": taille_servie(result)}, t0)
         return result
 
