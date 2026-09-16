@@ -354,6 +354,23 @@ def test_un_chemin_qui_aboutit_VOYAGE(file):
     assert '"id": "42"' in file["enfile"]["payload"]["input"]
 
 
+def test_des_chemins_qui_ressemblent_a_des_TYPES_ne_voyagent_pas_et_avertissent(
+        file, caplog):
+    """Piège vécu (migration d'un client réel vers un webhook natif, 16/09) : poser
+    `{"company": "string"}` au lieu de `{"company": "company"}` — "string" n'est le
+    chemin de RIEN dans le corps reçu, donc aucun champ ne résout, et sans cette
+    trace l'agent partait sans donnée en silence, indistinguable d'un
+    `payload_mode="ignore"` voulu."""
+    with caplog.at_level("WARNING", logger="oto_mcp.runner_hook"):
+        _tirer(file, CORPS, payload_mode="fields",
+               payload_fields={"lead_id": "string", "kind": "string"})
+    assert file["enfile"]["payload"]["input"] == "fais la veille", (
+        "comportement inchangé : rien n'a résolu, rien ne voyage")
+    assert any("fields" in r.message and "AUCUN" in r.message
+               for r in caplog.records), (
+        "un fields mode configuré mais totalement inerte doit être journalisé")
+
+
 def test_le_mode_INLINE_joint_tout_mais_CLOTURE(file):
     _tirer(file, CORPS, payload_mode="inline")
     envoye = file["enfile"]["payload"]["input"]

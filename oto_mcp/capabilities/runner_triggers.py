@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import _cle_exigee, _instruction, _modele
 from .. import (access, db, runner_hook, runner_models, runner_tick, tool_alias,
@@ -68,9 +68,28 @@ class TriggerInput(BaseModel):
     kind: Optional[Literal["schedule", "webhook"]] = None
     #: Ce que l'agent fait du corps reçu. `ignore` (défaut) ne le transmet même
     #: pas ; `fields` n'en extrait que ce qui est nommé ; `inline` joint le tout.
-    payload_mode: Optional[Literal["ignore", "fields", "inline"]] = None
+    payload_mode: Optional[Literal["ignore", "fields", "inline"]] = Field(
+        default=None,
+        description=(
+            "What the agent gets from the received body. `ignore` (default) "
+            "passes nothing. `fields` extracts only the paths named in "
+            "`payload_fields`. `inline` joins the whole body (truncated to 64 KB)."
+        ))
     #: `{"lead_id": "$.data.id"}` — le mode `fields` et rien d'autre.
-    payload_fields: Optional[dict[str, str]] = None
+    payload_fields: Optional[dict[str, str]] = Field(
+        default=None,
+        description=(
+            "Only read when payload_mode='fields'. Maps a name the agent will "
+            "see to a PATH INTO THE INCOMING JSON BODY — not a type. For a flat "
+            "body {\"account_id\": \"0014x...\"}, use "
+            "{\"account_id\": \"account_id\"} (the key name IS the path); for a "
+            "nested body, a dotted path like \"data.id\" (an optional leading "
+            "\"$.\" is accepted and stripped). A path matching nothing in the "
+            "body is silently dropped for that field, and if EVERY declared "
+            "path fails to resolve, the agent receives no payload data at all "
+            "and nothing signals it — test paths against a real sample body "
+            "from the source before relying on this mode."
+        ))
     #: Le débit de LISSAGE, par heure. Au-delà, une livraison est acceptée et son
     #: travail part plus tard — jamais refusée.
     max_per_hour: Optional[int] = None
