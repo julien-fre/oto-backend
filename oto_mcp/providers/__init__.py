@@ -197,6 +197,8 @@ _DECLARATIONS: tuple[str, ...] = (
     "waalaxy",
     "airtable",
     "tally",
+    # --- signature électronique — câblé 2026-09-16 ---------------------------
+    "signwell",
     # --- prospection téléphonique — câblé 2026-08-31 -------------------------
     "minari",
     # --- forge logicielle — câblé 2026-09-02 ---------------------------------
