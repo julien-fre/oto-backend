@@ -917,6 +917,30 @@ futurs. Disponible à tout moment, en marche comme en pause, sur les deux genres
 d'agent. Les travaux périmés restent VISIBLES (`expired`) : la perte est comptable,
 jamais silencieuse — c'est la leçon des 41 occurrences du 02/09.
 
+#### Le journal des livraisons n'est PAS la file (16/09/2026)
+
+Deux choses différentes, servies séparément :
+
+| lu par | dit | bouge ? |
+|---|---|---|
+| `op=deliveries` → `outcome` | ce qui est arrivé **à la porte** (`queued`, `delayed`, `refused_*`) | **jamais** — une ligne par réception, écrite une fois |
+| `op=deliveries` → `job_status`, `run_id` | ce que le **travail** né de la livraison est devenu (`pending` · `held` · `claimed` · `done` · `failed` · `expired`) | à chaque lecture, **joint** sur `runner_jobs`, jamais recopié |
+| `queue_pending`, `queue_held` (sur le déclencheur webhook) | ce qui **attend maintenant** | à chaque lecture |
+
+⚠️ **`queued` veut dire « acceptée, travail enfilé », pas « encore en attente ».** Un
+écran qui affichait `outcome` seul, en vert, au-dessus du bouton « vider la file »,
+laissait lire le journal comme la file : des livraisons dont les déroulés étaient
+terminés depuis des heures passaient pour des événements en attente. D'où la lecture
+jointe plutôt qu'une réécriture de la livraison : garder `outcome` figé préserve le
+journal de la porte, et l'état du travail n'a qu'une source.
+
+`queue_pending`/`queue_held` comptent **exactement le prédicat de `clear_queue`**
+(`status IN ('pending','held')` pour ce déclencheur, dans cette org) — le nombre
+posé à côté du bouton est ce que le bouton périme. `held` est séparé parce qu'il
+n'attend pas un worker mais le rallumage. Un travail ne disparaît jamais de
+`runner_jobs` (une reprise réutilise la même ligne), donc `job_status` suit la
+livraison jusqu'à son issue ; `null` = refus (aucun travail) ou travail introuvable.
+
 #### Le corps reçu est une DONNÉE, jamais une instruction
 
 Trois modes, sur l'agent (`payload_mode`) :

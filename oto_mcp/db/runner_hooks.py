@@ -260,14 +260,26 @@ def livraisons(trigger_id: int, org_id: int, limit: int = 50) -> list[dict]:
 
     Org-scopé : un déclencheur d'une autre org rend une liste vide, jamais les
     livraisons d'autrui.
+
+    ⚠️ **`outcome` dit ce que la LIVRAISON est devenue, figé à la réception** —
+    `queued` veut dire « acceptée, son travail a été enfilé », pas « encore en
+    attente ». Rien ne réécrit cette ligne quand le travail tourne, et c'est voulu :
+    elle reste le journal de ce qui est arrivé à la porte. Ce que le travail est
+    devenu ENSUITE se lit sur le travail lui-même (`job_status`, `run_id`), joint
+    ici à la lecture, jamais recopié. Vécu le 16/09/2026 : deux livraisons dont les
+    déroulés étaient terminés depuis des heures s'affichaient « queued » en vert,
+    juste au-dessus du bouton « vider la file » — lues comme toujours en attente.
+    `job_status` est `NULL` pour un refus (aucun travail) ou un travail disparu.
     """
     with _connect() as conn:
         rows = conn.execute(
             """
-            SELECT id, trigger_id, received_at, outcome, job_id, source
-              FROM runner_hook_deliveries
-             WHERE trigger_id = %s AND org_id = %s
-             ORDER BY id DESC
+            SELECT d.id, d.trigger_id, d.received_at, d.outcome, d.job_id, d.source,
+                   j.status AS job_status, j.run_id
+              FROM runner_hook_deliveries d
+              LEFT JOIN runner_jobs j ON j.id = d.job_id AND j.org_id = d.org_id
+             WHERE d.trigger_id = %s AND d.org_id = %s
+             ORDER BY d.id DESC
              LIMIT %s
             """,
             (trigger_id, org_id, max(1, min(int(limit), 200))),

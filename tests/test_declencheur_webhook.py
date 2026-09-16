@@ -64,6 +64,8 @@ def _org_servie(monkeypatch):
     monkeypatch.setattr(RT.db, "comptage_livraisons",
                         lambda t, o: {"recues_24h": 0, "refusees_24h": 0,
                                       "derniere": None})
+    monkeypatch.setattr(RT.db, "file_du_declencheur",
+                        lambda t, o: {"pending": 0, "held": 0})
 
 
 # ── 1. le SECRET ──────────────────────────────────────────────────────────────
@@ -711,6 +713,35 @@ def test_un_agent_PROGRAMME_ne_porte_aucun_bloc_webhook(monkeypatch):
                         lambda i, o: {"id": i, "kind": "schedule"})
     monkeypatch.setattr(RT.db, "comptage_perime", lambda o, t: {})
     assert _appel(op="get", trigger_id=5)["trigger"].get("hook_url") is None
+
+
+def test_un_webhook_sert_ce_qui_ATTEND_a_part_du_journal(monkeypatch):
+    """Le bouton « vider la file » vit sous le journal des livraisons. Sans le
+    compte de ce qui attend vraiment, le journal se lit comme la file : deux
+    livraisons terminées depuis des heures y passaient pour deux événements en
+    attente (16/09/2026)."""
+    vu = {}
+    monkeypatch.setattr(RT.db, "get_trigger",
+                        lambda i, o: {"id": i, "kind": "webhook", "org_id": o})
+    monkeypatch.setattr(RT.db, "comptage_perime", lambda o, t: {})
+    monkeypatch.setattr(RT.db, "file_du_declencheur",
+                        lambda t, o: vu.update(t=t, o=o) or {"pending": 3, "held": 1})
+    out = _appel(op="get", trigger_id=5)["trigger"]
+    assert (out["queue_pending"], out["queue_held"]) == (3, 1)
+    assert vu == {"t": 5, "o": ORG}, "compté pour CE déclencheur, dans CETTE org"
+
+
+def test_la_sortie_typee_GARDE_l_etat_du_travail_et_la_file():
+    """Pydantic jette en silence un champ hors modèle : servi mais non déclaré,
+    `job_status` n'atteindrait jamais l'écran — et le badge resterait figé."""
+    out = RT.TriggerOut(**{
+        "trigger": {"id": 5, "kind": "webhook", "queue_pending": 2, "queue_held": 0},
+        "deliveries": [{"id": 1, "outcome": "queued", "job_id": 900,
+                        "job_status": "done", "run_id": "r-1"}],
+    }).model_dump()
+    assert (out["trigger"]["queue_pending"], out["trigger"]["queue_held"]) == (2, 0)
+    assert out["deliveries"][0]["job_status"] == "done"
+    assert out["deliveries"][0]["run_id"] == "r-1"
 
 
 def test_les_livraisons_se_lisent_org_scopees(monkeypatch):

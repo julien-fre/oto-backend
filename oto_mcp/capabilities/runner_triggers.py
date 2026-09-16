@@ -176,6 +176,11 @@ class Trigger(BaseModel):
     #: `None` = pas pu être calculé (hors serveur booté — en pratique jamais en
     #: production) ; `[]` = calculé, rien à signaler. Jamais stocké — cf. `ToolWarning`.
     tool_warnings: Optional[list[ToolWarning]] = None
+    #: Ce qui ATTEND maintenant — ce que `clear_queue` viderait. `queue_pending`
+    #: part dès qu'un worker passe ; `queue_held` attend qu'on rallume l'agent.
+    #: Servis sur un webhook ; `0` est un vrai zéro.
+    queue_pending: Optional[int] = None
+    queue_held: Optional[int] = None
 
 
 class RunnerArme(BaseModel):
@@ -221,9 +226,18 @@ class Delivery(BaseModel):
     #: `queued` | `delayed` (lissé) | `refused_paused` | `refused_secret` |
     #: `refused_too_large`. Un refus garde son MOTIF : c'est lui qui rend une
     #: source mal branchée réparable plutôt que mystérieuse.
+    #: ⚠️ Figé à la RÉCEPTION : `queued` = « acceptée, travail enfilé », jamais
+    #: « encore en attente ». Ce que le travail est devenu depuis, c'est `job_status`.
     outcome: Optional[str] = None
     job_id: Optional[int] = None
     source: Optional[str] = None
+    #: L'état ACTUEL du travail né de cette livraison, lu sur le travail à chaque
+    #: lecture : `pending` | `held` | `claimed` (en cours) | `done` | `failed` |
+    #: `expired`. `null` = aucun travail (refus) ou travail introuvable.
+    job_status: Optional[str] = None
+    #: Le déroulé du travail, une fois qu'un worker l'a ouvert — pour lier la
+    #: livraison à ce qui s'est réellement passé.
+    run_id: Optional[str] = None
 
 
 class TriggerOut(BaseModel):
@@ -386,11 +400,14 @@ def _avec_hook(org_id: int, t: dict) -> dict:
     import os
     base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
     compte = db.comptage_livraisons(t["id"], org_id)
+    file = db.file_du_declencheur(t["id"], org_id)
     return {**t,
             "hook_url": f"{base}/api/hooks/{t['id']}",
             "deliveries_24h": compte["recues_24h"],
             "deliveries_refused_24h": compte["refusees_24h"],
-            "last_delivery": str(compte["derniere"]) if compte["derniere"] else None}
+            "last_delivery": str(compte["derniere"]) if compte["derniere"] else None,
+            "queue_pending": file["pending"],
+            "queue_held": file["held"]}
 
 
 async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
