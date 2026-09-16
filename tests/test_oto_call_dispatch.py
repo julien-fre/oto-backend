@@ -151,14 +151,47 @@ def test_invalid_arguments_return_schema(oto_call_fn):
     assert data and data["input_schema"] == schema
 
 
-# --- 4. l'erreur de la cible est remontée en donnée -----------------------
+# --- 4. l'erreur de la cible est remontée en donnée, SCRUBBÉE (oto-backend#566) --
 
 def test_target_error_returned_as_data(oto_call_fn, monkeypatch):
+    """Une exception interne brute ne doit JAMAIS ressortir telle quelle — même
+    raison que `ErrorEnvelopeMiddleware`, hors de sa chaîne (cf. module)."""
     monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
     target = _FakeTool("foncier_dpe", exc=RuntimeError("upstream 500"))
 
     out = _call(oto_call_fn, [target], name="foncier_dpe", arguments={})
-    assert out == {"tool": "foncier_dpe", "ok": False, "error": "upstream 500"}
+    assert out == {"tool": "foncier_dpe", "ok": False,
+                   "error": "Erreur interne du serveur."}
+    assert "upstream 500" not in out["error"]
+
+
+class _Upstream(Exception):
+    """Mime UpstreamHTTPError (porte .status_code) — même double que
+    `tests/middleware/test_error_envelope.py`, pour comparer les deux chemins."""
+
+    def __init__(self, status_code, msg=""):
+        super().__init__(msg)
+        self.status_code = status_code
+
+
+def test_dispatch_error_matches_the_middleware_s_classification(oto_call_fn, monkeypatch):
+    """Deux chemins vers le même outil doivent rendre la même erreur (oto-backend#566) :
+    `oto_call` est HORS chaîne de middleware, donc ne peut pas être confronté à
+    `ErrorEnvelopeMiddleware` en le traversant réellement — mais les deux doivent
+    dériver de la MÊME classification (`error_taxonomy.classify`), pas de deux
+    lectures divergentes de la même exception. On le prouve par égalité au canonique,
+    pas en recalculant le même texte dans le test (ce qui passerait même si `oto_call`
+    n'appelait pas `classify` du tout)."""
+    from oto_mcp import error_taxonomy
+    monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
+    exc = _Upstream(503, "service indisponible")
+    target = _FakeTool("fr_ccn_search", exc=exc)
+
+    out = _call(oto_call_fn, [target], name="fr_ccn_search", arguments={})
+
+    attendu = error_taxonomy.classify(exc).message
+    assert out["error"] == attendu
+    assert "503" in attendu           # sanity : c'est bien le classifieur amont qui a joué
 
 
 def test_unknown_tool_raises(oto_call_fn, monkeypatch):
