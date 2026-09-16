@@ -12,6 +12,10 @@ lisent au même instant voient la même ligne libre et la traitent tous les deux
 
 Le datastore a la primitive qui règle ça côté serveur : **`data_claim_next`**.
 
+⚠️ Ce patron boucle DANS ta conversation, qui a un plafond de tours. Pour un vivier de
+plusieurs dizaines de lignes ou plus, lis d'abord le guide `fleet-fanout` — au-delà d'un
+certain volume, arme un fleet plutôt que de risquer un arrêt `blocked` à mi-file.
+
 ## Le principe : un bail, pas une liste d'exclusion
 
 `data_claim_next(datastore, worker, filter?, lease_s?)` prend **la prochaine ligne
