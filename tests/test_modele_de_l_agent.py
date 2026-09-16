@@ -18,6 +18,8 @@ base, dans `test_modele_de_l_agent_db.py`.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from oto_mcp import runner_models, runner_tick
@@ -44,7 +46,7 @@ def _ctx(sub="alexis", org_id=2):
 
 
 def _declencher(**kw):
-    return RT._triggers(_ctx(), RT.TriggerInput(**kw))
+    return asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(**kw)))
 
 
 def _runner(monkeypatch, familles=("anthropic",), armed=True):

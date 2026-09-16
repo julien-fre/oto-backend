@@ -14,6 +14,8 @@ partent d'un coup avec le contexte de leur époque).
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from oto_mcp import runner_tick
@@ -113,7 +115,7 @@ def test_le_declencheur_servi_porte_ce_qu_il_a_perdu(monkeypatch):
                         lambda org, tid: {"expired_count": 20,
                                           "expired_since": "2026-08-20 18:00:00",
                                           "expired_last": "2026-09-02 07:00:00"})
-    out = RT._triggers(_ctx(), RT.TriggerInput(op="list"))
+    out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="list")))
     t = out["triggers"][0]
     assert t["expired_count"] == 20
     # ⚠️ DEUX dates, pas une : « depuis quand » et « est-ce encore en cours » sont
@@ -133,7 +135,7 @@ def test_zero_perdu_est_un_vrai_zero_pas_une_absence(monkeypatch):
     monkeypatch.setattr(RT.db, "comptage_perime",
                         lambda org, tid: {"expired_count": 0, "expired_since": None,
                                           "expired_last": None})
-    out = RT._triggers(_ctx(), RT.TriggerInput(op="get", trigger_id=5))
+    out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="get", trigger_id=5)))
     assert out["trigger"]["expired_count"] == 0
     assert "expired_count" in out["trigger"]
 
@@ -181,7 +183,7 @@ def test_rallumer_repousse_l_echeance_dans_le_futur(monkeypatch):
     import datetime
 
     vu = _trigger_db(monkeypatch, enabled=False)
-    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True))
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True)))
     assert "next_due" in vu, "rallumer sans recalculer laisse une échéance périmée"
     assert vu["next_due"] > datetime.datetime.now(datetime.timezone.utc)
 
@@ -191,7 +193,7 @@ def test_rallumer_un_declencheur_deja_allume_ne_repousse_rien(monkeypatch):
     ne mord qu'au passage à éteint. Sinon répéter un geste qui n'est censé rien
     changer donnerait un moyen de repousser l'échéance indéfiniment."""
     vu = _trigger_db(monkeypatch, enabled=True)
-    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True))
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True)))
     assert "next_due" not in vu
 
 
@@ -199,7 +201,7 @@ def test_eteindre_ne_touche_pas_l_echeance(monkeypatch):
     """Éteindre ne promet rien et ne recalcule rien : c'est le rallumage qui
     reprend le rythme, et lui seul."""
     vu = _trigger_db(monkeypatch, enabled=True)
-    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=False))
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=False)))
     assert "next_due" not in vu and vu["enabled"] is False
 
 
@@ -207,7 +209,7 @@ def test_rallumer_avec_un_nouveau_cron_ne_calcule_qu_une_fois(monkeypatch):
     """Le cas combiné : le cadencement fourni fait autorité, et l'échéance vient
     de LUI — pas de l'ancien cron recalculé par-dessus."""
     vu = _trigger_db(monkeypatch, enabled=False, cron="0 18 * * *")
-    RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True,
-                                         cron="30 7 * * *", tz="UTC"))
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=6, enabled=True,
+                                         cron="30 7 * * *", tz="UTC")))
     assert vu["cron"] == "30 7 * * *"
     assert vu["next_due"].astimezone(__import__("datetime").timezone.utc).hour == 7

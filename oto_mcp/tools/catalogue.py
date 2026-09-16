@@ -45,9 +45,17 @@ LEGENDE = {
 }
 
 
-async def catalogue_avec_etat(ctx: Context, sub: str, prefix: str) -> list[dict]:
+async def catalogue_avec_etat(ctx: Context, sub: str, prefix: str,
+                              *, org=session_visibility._DERIVE_ORG) -> list[dict]:
     """Le catalogue ENTIER — le registre brut du `Provider`, le même que `_resolve_tool`
     (« including disabled ones ») — chaque outil avec son état pour (sub, org active).
+
+    `org` : dérivée de la session par défaut (`_DERIVE_ORG`), mais peut être posée
+    explicitement — un appelant qui vérifie un déclencheur d'une AUTRE org que la
+    sienne (`oto_trigger`, avertissements des outils déclarés) n'a pas de session
+    active dans cette org pour la dériver : la donner ici évite exactement le piège
+    qui a coûté un run muet (payload webhook lu contre l'org du délégué, pas celle
+    du travail — 16/09/2026).
 
     ⚠️ Jusqu'au 12/09/2026 le catalogue partait de la liste DÉJÀ FILTRÉE par la
     session (`list_tools(run_middleware=False)` après `apply_session_transforms`) :
@@ -67,7 +75,7 @@ async def catalogue_avec_etat(ctx: Context, sub: str, prefix: str) -> list[dict]
     # le pin est exact, et un déplacement casse ici au premier import, pas en silence.
     bruts = [t for t in await Provider.list_tools(ctx.fastmcp)
              if is_enabled(t) and not _is_backend_tool(t)]
-    couches = await session_visibility.compute_hidden_layers(ctx, sub)
+    couches = await session_visibility.compute_hidden_layers(ctx, sub, org=org)
     masques = set().union(*couches.values())
     non_appelables = set().union(*(noms for nom, noms in couches.items()
                                    if nom not in session_visibility.COUCHES_INSTALLABLES))

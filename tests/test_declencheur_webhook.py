@@ -17,6 +17,7 @@ change est ce qui l'allume, et **trois propriétés que rien d'autre ne tient** 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -33,7 +34,7 @@ def _ctx(sub="alexis", org_id=ORG):
 
 
 def _appel(**kw):
-    return RT._triggers(_ctx(), RT.TriggerInput(**kw))
+    return asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(**kw)))
 
 
 @pytest.fixture(autouse=True)

@@ -16,6 +16,8 @@ Ce que ces bancs tiennent :
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from oto_mcp import runner_models
@@ -104,8 +106,8 @@ def plateforme(monkeypatch):
 
 
 def _liste(org_id):
-    return RT._triggers(ResolvedCtx(sub="alexis", org_id=org_id),
-                        RT.TriggerInput(op="list"))
+    return asyncio.run(RT._triggers(ResolvedCtx(sub="alexis", org_id=org_id),
+                        RT.TriggerInput(op="list")))
 
 
 def test_la_liste_d_une_org_SANS_cle_anthropic_propose_mistral(plateforme):
