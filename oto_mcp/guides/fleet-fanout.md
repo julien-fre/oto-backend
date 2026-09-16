@@ -18,15 +18,14 @@ dans une seule conversation, c'est parier sur ce plafond avant même d'avoir vu 
 allowlist + cible), `op=launch` ARME — et c'est tout ce que tu as à faire. Aucun
 ordonnanceur à démarrer : dès qu'un worker interroge la file de l'org et n'a rien de
 prêt, oto lui **fabrique** le prochain travail du fleet armé, un par un, jusqu'à
-`max_rows` ou un arrêt. C'est le même modèle que `data_claim_next` (bail atomique,
-`FOR UPDATE SKIP LOCKED`) mais un cran au-dessus : chaque ligne devient un travail
-**séparé**, avec son propre budget de tours — donc le plafond d'une conversation ne
-s'applique plus à la file entière, seulement à chaque ligne.
+`max_rows` ou un arrêt. Chaque ligne devient un travail **séparé**, avec son propre
+budget de tours — donc le plafond d'une conversation ne s'applique plus à la file
+entière, seulement à chaque ligne.
 
-⚠️ Ne confonds pas avec le dashboard : la surface « déclarer une campagne puis la
-lancer » reste gelée côté produit (aucun bouton Launch n'y est promis). Ce que ce guide
-décrit est différent — c'est TOI, dans cette conversation, qui armes un fleet borné pour
-le travail qu'on te demande, pas un écran séparé qu'on expose à l'utilisateur.
+⚠️ **Tous les comptes n'y ont pas accès.** Si `oto_fleet` répond `beta_required`, ne
+réessaie pas : dis à l'utilisateur que les passages d'agents ne sont pas ouverts pour
+son org, et reviens au patron du guide `work-queue` — en découpant le travail en
+plusieurs conversations si le volume dépasse ce qu'une seule peut boucler.
 
 ## La procédure fait toujours autorité
 
@@ -38,8 +37,9 @@ ce cas, comme pour un run normal, écris-la comme si elle allait être relue (le
 
 ## Ne jamais armer sans un accord explicite, en clair
 
-Armer un fleet dépense réellement (le worker qui le sert tire sur la clé de l'org) et
-écrit dans un vrai tableau — sans qu'aucun bouton « Lancer » n'ait été cliqué nulle part.
+Armer un fleet dépense réellement — sur la clé de modèle déposée par l'org, ou sur la
+clé de la plateforme si l'org n'en a déposé aucune — et écrit dans un vrai tableau, sans
+qu'aucun humain ne le valide ailleurs.
 Avant `op=launch`, dis en une phrase ce qui va se passer : le nombre de lignes visées
 (compte réel via `data_rows` sur le `row_filter`, jamais une estimation), la procédure,
 les outils déclarés — et attends un oui. Ce n'est pas une formalité : c'est le seul
