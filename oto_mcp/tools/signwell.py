@@ -284,7 +284,7 @@ def register(mcp: FastMCP) -> None:
         if op in ("completed_pdf", "nom151_certificate"):
             _need(op, document_id=document_id)
             _hors_op(op, files=files, recipients=recipients, draft=draft, text_tags=text_tags,
-                     fields=fields, options=options, dry_run=dry_run, **explicites)
+                     fields=fields, options=options, dry_run=dry_run, full=full, **explicites)
             if op == "completed_pdf":
                 try:
                     res = _run(lambda: _client().get_completed_pdf(
@@ -311,7 +311,7 @@ def register(mcp: FastMCP) -> None:
             _need(op, document_id=document_id)
             _hors_op(op, files=files, recipients=recipients, draft=draft, text_tags=text_tags,
                      fields=fields, options=options, audit_page=audit_page,
-                     file_format=file_format, **explicites)
+                     file_format=file_format, full=full, **explicites)
             if dry_run:
                 courant = _run(lambda: _client().get_document(document_id))
                 return {"dry_run": True, "would_delete": vue_document(courant),
@@ -374,13 +374,13 @@ def register(mcp: FastMCP) -> None:
             _hors_op(op, template_ids=template_ids, files=files, placeholders=placeholders,
                      recipients=recipients, template_fields=template_fields, draft=draft,
                      text_tags=text_tags, fields=fields, options=options, dry_run=dry_run,
-                     **explicites)
+                     full=full, **explicites)
             return {"template": _run(lambda: _client().get_template(template_id))}
 
         if op == "create":
             _hors_op(op, template_id=template_id, template_ids=template_ids,
                      recipients=recipients, template_fields=template_fields,
-                     test_mode=test_mode, embedded_signing=embedded_signing)
+                     test_mode=test_mode, embedded_signing=embedded_signing, full=full)
             fichiers_valides(files)
             if not placeholders or any(not (p.get("id") and p.get("name")) for p in placeholders):
                 raise _bad("`placeholders` est requis : [{id, name}] (ex. {\"id\": \"1\", "
@@ -401,7 +401,7 @@ def register(mcp: FastMCP) -> None:
             _hors_op(op, template_ids=template_ids, files=files, placeholders=placeholders,
                      recipients=recipients, template_fields=template_fields,
                      text_tags=text_tags, fields=fields, test_mode=test_mode,
-                     embedded_signing=embedded_signing)
+                     embedded_signing=embedded_signing, full=full)
             extra = options_valides(op, options, _OPTIONS_TPL_UPDATE)
             patch = {k: v for k, v in {**explicites, "draft": draft, **extra}.items()
                      if v is not None}
@@ -418,7 +418,8 @@ def register(mcp: FastMCP) -> None:
             _need(op, template_id=template_id)
             _hors_op(op, template_ids=template_ids, files=files, placeholders=placeholders,
                      recipients=recipients, template_fields=template_fields, draft=draft,
-                     text_tags=text_tags, fields=fields, options=options, **explicites)
+                     text_tags=text_tags, fields=fields, options=options, full=full,
+                     **explicites)
             if dry_run:
                 return {"dry_run": True,
                         "would_delete": _run(lambda: _client().get_template(template_id))}

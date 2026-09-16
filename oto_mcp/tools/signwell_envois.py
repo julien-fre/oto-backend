@@ -82,7 +82,7 @@ def register(mcp: FastMCP) -> None:
                   validates the CSV and returns what would go out; pass
                   `dry_run=False` to actually send.
             csv: the filled CSV as plain text (or `csv_base64`, already encoded).
-            full: raw SignWell payload.
+            full: op="documents" only — raw SignWell documents instead of compact views.
             dry_run: op="create" only; defaults to True there.
         """
         reglages = dict(name=name, subject=subject, message=message,
@@ -95,7 +95,7 @@ def register(mcp: FastMCP) -> None:
 
         if op == "list":
             _hors_op(op, bulk_send_id=bulk_send_id, template_ids=template_ids, csv=csv,
-                     csv_base64=csv_base64, **reglages)
+                     csv_base64=csv_base64, full=full, **reglages)
             res = _run(lambda: _client().list_bulk_sends(
                 page=page, limit=limit, user_email=user_email,
                 api_application_id=api_application_id))
@@ -107,7 +107,7 @@ def register(mcp: FastMCP) -> None:
                      user_email=user_email, api_application_id=api_application_id,
                      **reglages)
             if op == "get":
-                _hors_op(op, page=page, limit=limit)
+                _hors_op(op, page=page, limit=limit, full=full)
                 return {"bulk_send": _run(lambda: _client().get_bulk_send(bulk_send_id))}
             res = _run(lambda: _client().get_bulk_send_documents(
                 bulk_send_id, page=page, limit=limit))
@@ -118,7 +118,7 @@ def register(mcp: FastMCP) -> None:
             _need(op, template_ids=template_ids)
             _hors_op(op, bulk_send_id=bulk_send_id, csv=csv, csv_base64=csv_base64,
                      page=page, limit=limit, user_email=user_email,
-                     api_application_id=api_application_id, **reglages)
+                     api_application_id=api_application_id, full=full, **reglages)
             res = _run(lambda: _client().get_bulk_send_csv_template(template_ids, base64=True))
             data = res.get("data") if isinstance(res, dict) else None
             texte = base64.b64decode(data).decode("utf-8", errors="replace") if data else None
@@ -128,7 +128,7 @@ def register(mcp: FastMCP) -> None:
         if op in ("validate_csv", "create"):
             _need(op, template_ids=template_ids)
             _hors_op(op, bulk_send_id=bulk_send_id, page=page, limit=limit,
-                     user_email=user_email)
+                     user_email=user_email, full=full)
             b64 = _csv_b64(csv, csv_base64)
             if op == "validate_csv":
                 _hors_op(op, api_application_id=api_application_id, **reglages)

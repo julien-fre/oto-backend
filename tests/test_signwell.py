@@ -396,3 +396,18 @@ def test_refusal_reads_meta_messages():
     e = UpstreamHTTPError(422, {"message": "Unprocessable", "meta": {
         "messages": ["recipients[0].email is invalid"]}}, service="signwell")
     assert "recipients[0].email is invalid" in refus(e)
+
+
+@pytest.mark.parametrize("tool,kwargs", [
+    ("signwell_document", dict(op="completed_pdf", document_id="d")),
+    ("signwell_document", dict(op="delete", document_id="d")),
+    ("signwell_template", dict(op="get", template_id="t")),
+    ("signwell_template", dict(op="delete", template_id="t")),
+    ("signwell_bulk_send", dict(op="list")),
+    ("signwell_bulk_send", dict(op="get", bulk_send_id="b")),
+])
+def test_full_is_refused_where_it_changes_nothing(tool, kwargs):
+    """`full` ne vaut que là où une vue resserrée existe ; ailleurs il laisserait
+    croire qu'il a rendu davantage."""
+    with pytest.raises(McpError, match="full"):
+        _call(tool, full=True, **kwargs)
