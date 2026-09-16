@@ -121,6 +121,27 @@ def _domaine_des_projets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTO_PROJECT_DOMAIN", "oto.cx")
 
 
+# ── L'adresse du tableau de bord (`config.dashboard_url()`, devenue `require_env`-
+# like le 16/09/2026, #968) — même raison que le domaine des projets ci-dessus : des
+# dizaines de bancs (`test_dashboard_url_par_tenant.py` en tête, 9 fichiers au total)
+# affirment sur la forme littérale `manage.oto.cx` — le comportement de PROD qu'ils
+# vérifient. La valeur gréée reste donc la nôtre.
+@pytest.fixture(autouse=True)
+def _adresse_du_tableau_de_bord(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTO_APP_URL", "https://manage.oto.cx")
+
+
+# ── Email transactionnel (`oto_mcp/email.py`, devenues REQUISE le 16/09/2026, #968) —
+# aucun banc n'affirme sur leur valeur littérale (les envois réels sont mockés/
+# court-circuités par l'absence d'`OTO_MAILER_SEND_BEARER` en test) : les anciens
+# défauts servent de valeur gréée, sans risque de masquer une régression.
+@pytest.fixture(autouse=True)
+def _email_transactionnel(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTO_MAILER_URL", "https://mailer.oto.zone/api/send")
+    monkeypatch.setenv("OTO_MAIL_FROM", "Oto <oto@otomata.tech>")
+    monkeypatch.setenv("OTO_CONTACT_TO", "alexis@otomata.tech")
+
+
 # **Comment vérifier que ce gréement ne CACHE rien** — à refaire après tout changement
 # qui touche la fabrication des liens publics.
 #

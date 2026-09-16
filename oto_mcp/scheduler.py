@@ -96,7 +96,7 @@ def _send_one(row: dict) -> None:
     """Envoie un email réclamé. Marque sent/failed (failed = retry tant que
     attempts < max, cf. db.mark_scheduled_failed)."""
     transport = row["transport"]
-    from_hdr = email.format_from(row.get("from_email"), row.get("from_name")) or email._MAIL_FROM
+    from_hdr = email.format_from(row.get("from_email"), row.get("from_name")) or email._mail_from()
     reply_to = row.get("reply_to")
     try:
         if transport == "resend":

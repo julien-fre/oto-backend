@@ -151,6 +151,32 @@ _REQUISES: tuple[Variable, ...] = (
     Variable("FOD_API_TOKEN", Classe.REQUISE, None,
              "Jeton du service FOD. Même mécanique que `FOD_BASE_URL`.",
              ("oto_mcp/fod/http.py:25", "oto_mcp/fod/http.py:42")),
+    # Basculées le 16/09/2026 (Alexis, #968) — la note du 15/09 ci-dessous
+    # (« ces variables se DOCUMENTENT, elles ne deviennent pas obligatoires »)
+    # ne tient plus pour ces quatre-là : elles pointaient chez NOUS en silence.
+    Variable("OTO_MAILER_URL", Classe.REQUISE, None,
+             "Relais d'envoi d'email (TEM). Résolue paresseusement, requise dès "
+             "qu'un envoi est tenté (bearer posé) — sans elle, le courrier "
+             "transiterait par NOTRE infra.", ("oto_mcp/email.py:21",)),
+    Variable("OTO_MAIL_FROM", Classe.REQUISE, None,
+             "Expéditeur par défaut des emails composés. Même mécanique.",
+             ("oto_mcp/email.py:25", "oto_mcp/scheduler.py:99",
+              "oto_mcp/tools/email.py:228")),
+    Variable("OTO_CONTACT_TO", Classe.REQUISE, None,
+             "Boîte de réception par défaut (reply-to) d'un email composé sans "
+             "`reply_to` explicite. Sans elle, le repli visait NOTRE boîte "
+             "personnelle.", ("oto_mcp/email.py:365",)),
+    Variable("OTO_APP_URL", Classe.REQUISE, None,
+             "Première variable de la cascade `dashboard_url()` — une seule des "
+             "trois suffit ; épuisées toutes les trois, le boot refuse plutôt que "
+             "d'offrir silencieusement NOTRE dashboard à sa place.",
+             ("oto_mcp/config.py:229", "oto_mcp/auth/flow.py:180")),
+    Variable("OTO_DASHBOARD_URL", Classe.REQUISE, None,
+             "Deuxième variable de la cascade `dashboard_url()` — voir `OTO_APP_URL`.",
+             ("oto_mcp/config.py:229",)),
+    Variable("OTO_DASHBOARD_BASE_URL", Classe.REQUISE, None,
+             "Troisième variable de la cascade `dashboard_url()` — voir `OTO_APP_URL`.",
+             ("oto_mcp/config.py:229",)),
 )
 
 
@@ -160,37 +186,28 @@ _REQUISES: tuple[Variable, ...] = (
 # Aucune garde de boot ici (Alexis, 15/09/2026) : ces variables se DOCUMENTENT, elles
 # ne deviennent pas obligatoires. Chaque défaut ci-dessous pointe explicitement chez
 # NOUS — à écraser pour toute instance qui ne l'est pas.
+#
+# Le 16/09/2026 (#968), quatre en sont sorties vers REQUISE (mail/contact/dashboard —
+# voir leur note dans `_REQUISES`). Restent ici deux cas délibérément NON basculés :
+# `OTO_INVITE_BASE_URL` (hors périmètre, chantier voisin sur ce fichier) et
+# `OTO_MCP_CORS_ORIGINS` (son défaut sert AUSSI de confort de développement local —
+# les ports `localhost` y sont mêlés à nos domaines de prod — donc « refuser de
+# démarrer sans elle » casserait le poste de tout développeur qui ne l'a pas posée,
+# pas seulement une instance tierce ; à reprendre séparément si voulu).
 
 _NOTRE_DEFAUT: tuple[Variable, ...] = (
-    Variable("OTO_MAILER_URL", Classe.NOTRE_DEFAUT, "https://mailer.oto.zone/api/send",
-             "NOTRE relais d'envoi (TEM) — à écraser pour une instance tierce sous "
-             "peine de faire transiter son courrier par notre infra.",
-             ("oto_mcp/email.py:18",)),
-    Variable("OTO_MAIL_FROM", Classe.NOTRE_DEFAUT, "Oto <oto@otomata.tech>",
-             "NOTRE expéditeur par défaut.", ("oto_mcp/email.py:19",)),
-    Variable("OTO_CONTACT_TO", Classe.NOTRE_DEFAUT, "alexis@otomata.tech",
-             "NOTRE boîte de réception du formulaire de contact.",
-             ("oto_mcp/email.py:349",)),
     Variable("OTO_INVITE_BASE_URL", Classe.NOTRE_DEFAUT, "https://oto.cx",
              "NOTRE domaine dans les liens d'invitation. Hors périmètre de ce lot "
              "(#968) — un autre chantier touche ce fichier, ne pas y toucher ici.",
              ("oto_mcp/capabilities/orgs/invites.py:41",)),
-    Variable("OTO_APP_URL", Classe.NOTRE_DEFAUT, "",
-             "Première variable de la cascade `dashboard_url()` — vide teste la "
-             "suivante ; les trois retombent, épuisées, sur NOTRE dashboard.",
-             ("oto_mcp/config.py:223", "oto_mcp/auth/flow.py:154")),
-    Variable("OTO_DASHBOARD_URL", Classe.NOTRE_DEFAUT, "",
-             "Deuxième variable de la cascade `dashboard_url()`.",
-             ("oto_mcp/config.py:223",)),
-    Variable("OTO_DASHBOARD_BASE_URL", Classe.NOTRE_DEFAUT, "",
-             "Troisième variable de la cascade `dashboard_url()` — épuisée, le "
-             "défaut final reste NOTRE dashboard (littéral porté par "
-             "`config.py` seul, jamais recopié ici).",
-             ("oto_mcp/config.py:223", "oto_mcp/config.py:227")),
     Variable("OTO_MCP_CORS_ORIGINS", Classe.NOTRE_DEFAUT, "",
              "Absente, la liste en dur ne sert QUE nos domaines `oto.*`/`ninja.*` "
-             "(+ 2 origines client marquées `noqa: CLIENT`). Un env-liste s'ÉTEND, "
-             "ne se remplace jamais (docs/auth-logto.md).",
+             "(+ 2 origines client marquées `noqa: CLIENT`) et une dizaine de ports "
+             "`localhost` de confort dev. Un env-liste s'ÉTEND, ne se remplace "
+             "jamais (docs/auth-logto.md). Volontairement NON basculée en REQUISE "
+             "(16/09/2026) : le défaut mélange un risque « pointe chez nous » et un "
+             "confort de dev local légitime — les deux n'appellent pas le même "
+             "traitement, à trancher séparément.",
              ("oto_mcp/api/base.py:43",)),
 )
 
