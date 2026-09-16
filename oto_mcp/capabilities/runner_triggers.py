@@ -100,6 +100,15 @@ class TriggerInput(BaseModel):
     freshness_seconds: Optional[int] = None
     #: `deliveries` : combien de livraisons rendre.
     limit: Optional[int] = None
+    waiting_only: Optional[bool] = Field(
+        default=None,
+        description=(
+            "op=deliveries only. true = only deliveries whose job has NOT run yet "
+            "(job status pending or held) — the queue, exactly what clear_queue "
+            "would expire — oldest first. Omitted = every delivery, newest first, "
+            "whose `outcome` is frozen at reception (`queued` means accepted, not "
+            "still waiting): read `job_status` for what the job became."
+        ))
 
 
 class ToolWarning(BaseModel):
@@ -235,9 +244,9 @@ class Delivery(BaseModel):
     #: lecture : `pending` | `held` | `claimed` (en cours) | `done` | `failed` |
     #: `expired`. `null` = aucun travail (refus) ou travail introuvable.
     job_status: Optional[str] = None
-    #: Le déroulé du travail, une fois qu'un worker l'a ouvert — pour lier la
-    #: livraison à ce qui s'est réellement passé.
-    run_id: Optional[str] = None
+    #: Quand le travail partira au plus tôt — dans le futur pour un travail LISSÉ
+    #: (`delayed`), déjà passé pour un travail qui n'attend qu'un worker.
+    job_due_at: Optional[str] = None
 
 
 class TriggerOut(BaseModel):
@@ -644,7 +653,8 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Org-scopé par la requête : un déclencheur d'une autre org rend une liste
         # vide, jamais les livraisons d'autrui.
         return {"deliveries": db.livraisons(inp.trigger_id, ctx.org_id,
-                                            limit=inp.limit or 50)}
+                                            limit=inp.limit or 50,
+                                            en_attente=bool(inp.waiting_only))}
 
     if inp.op == "clear_queue":
         # ⚠️ Disponible À TOUT MOMENT, en marche comme en pause — c'est tout

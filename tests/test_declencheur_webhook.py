@@ -736,20 +736,34 @@ def test_la_sortie_typee_GARDE_l_etat_du_travail_et_la_file():
     `job_status` n'atteindrait jamais l'écran — et le badge resterait figé."""
     out = RT.TriggerOut(**{
         "trigger": {"id": 5, "kind": "webhook", "queue_pending": 2, "queue_held": 0},
-        "deliveries": [{"id": 1, "outcome": "queued", "job_id": 900,
-                        "job_status": "done", "run_id": "r-1"}],
+        "deliveries": [{"id": 1, "outcome": "delayed", "job_id": 900,
+                        "job_status": "pending", "job_due_at": "2026-09-16 12:00:00"}],
     }).model_dump()
     assert (out["trigger"]["queue_pending"], out["trigger"]["queue_held"]) == (2, 0)
-    assert out["deliveries"][0]["job_status"] == "done"
-    assert out["deliveries"][0]["run_id"] == "r-1"
+    assert out["deliveries"][0]["job_status"] == "pending"
+    assert out["deliveries"][0]["job_due_at"] == "2026-09-16 12:00:00"
 
 
 def test_les_livraisons_se_lisent_org_scopees(monkeypatch):
     vu = {}
     monkeypatch.setattr(RT.db, "livraisons",
-                        lambda t, o, limit=50: vu.update(t=t, o=o, n=limit) or [])
+                        lambda t, o, limit=50, en_attente=False:
+                        vu.update(t=t, o=o, n=limit, attente=en_attente) or [])
     _appel(op="deliveries", trigger_id=5, limit=10)
-    assert vu == {"t": 5, "o": ORG, "n": 10}
+    assert vu == {"t": 5, "o": ORG, "n": 10, "attente": False}, (
+        "sans `waiting_only`, le journal entier — rien ne change pour l'appelant existant")
+
+
+def test_waiting_only_ne_demande_QUE_la_file(monkeypatch):
+    """L'écran ne liste plus que ce qui n'a pas tourné : ce qui a tourné se lit
+    dans les déroulés, et un journal complet sous « vider la file » se lisait
+    comme la file."""
+    vu = {}
+    monkeypatch.setattr(RT.db, "livraisons",
+                        lambda t, o, limit=50, en_attente=False:
+                        vu.update(attente=en_attente) or [])
+    _appel(op="deliveries", trigger_id=5, waiting_only=True)
+    assert vu == {"attente": True}
 
 
 def test_la_sortie_typee_accepte_ce_qui_est_servi():

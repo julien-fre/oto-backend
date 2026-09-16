@@ -924,7 +924,8 @@ Deux choses différentes, servies séparément :
 | lu par | dit | bouge ? |
 |---|---|---|
 | `op=deliveries` → `outcome` | ce qui est arrivé **à la porte** (`queued`, `delayed`, `refused_*`) | **jamais** — une ligne par réception, écrite une fois |
-| `op=deliveries` → `job_status`, `run_id` | ce que le **travail** né de la livraison est devenu (`pending` · `held` · `claimed` · `done` · `failed` · `expired`) | à chaque lecture, **joint** sur `runner_jobs`, jamais recopié |
+| `op=deliveries` → `job_status`, `job_due_at` | ce que le **travail** né de la livraison est devenu (`pending` · `held` · `claimed` · `done` · `failed` · `expired`), et quand il partira | à chaque lecture, **joint** sur `runner_jobs`, jamais recopié |
+| `op=deliveries waiting_only=true` | la **file** : les seules livraisons dont le travail n'a pas tourné (`pending`, `held`), de la plus ancienne à la plus récente | à chaque lecture |
 | `queue_pending`, `queue_held` (sur le déclencheur webhook) | ce qui **attend maintenant** | à chaque lecture |
 
 ⚠️ **`queued` veut dire « acceptée, travail enfilé », pas « encore en attente ».** Un
@@ -940,6 +941,12 @@ posé à côté du bouton est ce que le bouton périme. `held` est séparé parc
 n'attend pas un worker mais le rallumage. Un travail ne disparaît jamais de
 `runner_jobs` (une reprise réutilise la même ligne), donc `job_status` suit la
 livraison jusqu'à son issue ; `null` = refus (aucun travail) ou travail introuvable.
+
+**L'écran ne liste que la file** (`waiting_only=true`) : ce qui a déjà tourné se lit
+dans les déroulés de l'agent, et le répéter en journal sous le bouton faisait lire
+l'histoire comme de l'attente. Sans le drapeau, `op=deliveries` rend toujours le
+journal complet — c'est ce que lit la piste des agents, et un agent qui diagnostique
+une source mal branchée.
 
 #### Le corps reçu est une DONNÉE, jamais une instruction
 

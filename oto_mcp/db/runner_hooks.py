@@ -255,8 +255,9 @@ def enregistrer(conn, trigger_id: int, org_id: int, outcome: str,
     return int(row["id"])
 
 
-def livraisons(trigger_id: int, org_id: int, limit: int = 50) -> list[dict]:
-    """Ce que ce déclencheur a reçu, du plus récent au plus ancien — l'écran.
+def livraisons(trigger_id: int, org_id: int, limit: int = 50,
+               en_attente: bool = False) -> list[dict]:
+    """Ce que ce déclencheur a reçu — ou, `en_attente`, ce qui n'a PAS ENCORE tourné.
 
     Org-scopé : un déclencheur d'une autre org rend une liste vide, jamais les
     livraisons d'autrui.
@@ -265,21 +266,28 @@ def livraisons(trigger_id: int, org_id: int, limit: int = 50) -> list[dict]:
     `queued` veut dire « acceptée, son travail a été enfilé », pas « encore en
     attente ». Rien ne réécrit cette ligne quand le travail tourne, et c'est voulu :
     elle reste le journal de ce qui est arrivé à la porte. Ce que le travail est
-    devenu ENSUITE se lit sur le travail lui-même (`job_status`, `run_id`), joint
-    ici à la lecture, jamais recopié. Vécu le 16/09/2026 : deux livraisons dont les
-    déroulés étaient terminés depuis des heures s'affichaient « queued » en vert,
-    juste au-dessus du bouton « vider la file » — lues comme toujours en attente.
-    `job_status` est `NULL` pour un refus (aucun travail) ou un travail disparu.
+    devenu ENSUITE se lit sur le travail lui-même (`job_status`, `job_due_at`),
+    joint ici à la lecture, jamais recopié. `job_status` est `NULL` pour un refus
+    (aucun travail) ou un travail disparu.
+
+    **`en_attente`** ne garde que les livraisons dont le travail est `pending` ou
+    `held` — la FILE, exactement ce que `clear_queue` périme — de la plus ancienne à
+    la plus récente, dans l'ordre où elles partiront. Ce qui a déjà tourné se lit
+    dans les déroulés, pas ici : un journal qui répète la liste des runs sous un
+    bouton « vider la file » se lit comme la file (vécu le 16/09/2026 — deux
+    livraisons aux déroulés terminés depuis des heures, affichées « queued »).
     """
+    filtre = "AND j.status IN ('pending', 'held')" if en_attente else ""
+    ordre = "ASC" if en_attente else "DESC"
     with _connect() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT d.id, d.trigger_id, d.received_at, d.outcome, d.job_id, d.source,
-                   j.status AS job_status, j.run_id
+                   j.status AS job_status, j.due_at AS job_due_at
               FROM runner_hook_deliveries d
               LEFT JOIN runner_jobs j ON j.id = d.job_id AND j.org_id = d.org_id
-             WHERE d.trigger_id = %s AND d.org_id = %s
-             ORDER BY d.id DESC
+             WHERE d.trigger_id = %s AND d.org_id = %s {filtre}
+             ORDER BY d.id {ordre}
              LIMIT %s
             """,
             (trigger_id, org_id, max(1, min(int(limit), 200))),

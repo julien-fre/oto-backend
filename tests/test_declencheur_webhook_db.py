@@ -428,7 +428,6 @@ def test_la_livraison_reste_FIGEE_mais_l_etat_du_travail_SUIT(live):
     lue = db.livraisons(t["id"], ORG)[0]
     assert lue["outcome"] == db.QUEUED, "la ligne de livraison n'est JAMAIS réécrite"
     assert lue["job_status"] == "done", "l'état du travail est lu, pas recopié"
-    assert "run_id" in lue
 
 
 def test_un_REFUS_n_a_aucun_travail_donc_aucun_etat(live):
@@ -437,7 +436,28 @@ def test_un_REFUS_n_a_aucun_travail_donc_aucun_etat(live):
     with db._connect() as conn:
         db.enregistrer(conn, t["id"], ORG, db.REFUSE_PAUSED)
     lue = db.livraisons(t["id"], ORG)[0]
-    assert (lue["job_id"], lue["job_status"], lue["run_id"]) == (None, None, None)
+    assert (lue["job_id"], lue["job_status"]) == (None, None)
+    assert db.livraisons(t["id"], ORG, en_attente=True) == [], (
+        "un refus n'a pas de travail, donc n'est jamais dans la file")
+
+
+def test_en_attente_ne_rend_QUE_ce_qui_n_a_pas_tourne_du_plus_ancien(live):
+    """La file seule : `pending` et `held`, dans l'ordre où elles partiront.
+    Ce qui a tourné (terminé, échoué, en cours, périmé) se lit dans les déroulés."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="file-seulement-en-attente", max_per_hour=100)
+    _livrer(t, secret, 5)
+    ids = [l["job_id"] for l in db.livraisons(t["id"], ORG)][::-1]  # ordre d'arrivée
+    _poser_statut(ids[0], "done")
+    _poser_statut(ids[1], "claimed")
+    _poser_statut(ids[2], "held")
+    _poser_statut(ids[4], "expired")
+
+    file = db.livraisons(t["id"], ORG, en_attente=True)
+    assert [l["job_id"] for l in file] == [ids[2], ids[3]], "held + pending, plus ancien d'abord"
+    assert [l["job_status"] for l in file] == ["held", "pending"]
+    assert all(l["job_due_at"] for l in file), "l'échéance du travail est servie"
+    assert len(db.livraisons(t["id"], ORG)) == 5, "sans le filtre, le journal entier"
 
 
 def test_la_file_compte_ce_que_VIDER_viderait(live):
