@@ -23,8 +23,9 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import (access, call_axes, calllog, db, deprecations, guide_run, outils_retires,
-                providers, redaction, run_org, session_org, tool_alias, tool_registry)
+from .. import (access, call_axes, calllog, db, deprecations, error_taxonomy, guide_run,
+                outils_retires, providers, redaction, run_org, session_org, tool_alias,
+                tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
@@ -541,11 +542,20 @@ def register(mcp: FastMCP) -> None:
                       "errors": e.errors()}))
         # noqa: SILENT — l'échec de l'outil appelé est rendu dans ok/err au demandeur
         except Exception as e:  # noqa: BLE001 — l'erreur de la cible EST un résultat
-            ok, err = False, str(e)
+            # Deux publics, deux messages. Le JOURNAL garde le brut, tronqué — même
+            # convention que `calllog.py` (`str(e)[:MAX_ERROR_CHARS]`) pour un appel
+            # normal : c'est la trace d'exploitation, elle sert à déboguer. L'AGENT,
+            # lui, ne doit voir que le message SCRUBBÉ : hors chaîne de middleware
+            # (cf. plus haut), `ErrorEnvelopeMiddleware` ne nettoie pas ce chemin, donc
+            # on rejoue sa classification ici — sinon une exception brute (chemin
+            # interne, fragment d'URL amont, id technique) remontait telle quelle à
+            # l'agent, alors que le même outil appelé normalement voit son message
+            # scrubbé (oto-backend#566).
+            ok, err = False, str(e)[:calllog.MAX_ERROR_CHARS]
+            message = error_taxonomy.classify(e).message
             # `tool` reprend le nom DEMANDÉ : l'agent le relit pour réessayer, et un
-            # nom qu'il n'a jamais tapé le ferait douter de sa propre requête. Le
-            # journal, lui, écrit le canonique (`_trace_target_call` juste dessous).
-            return {"tool": demande, "ok": False, "error": str(e)}
+            # nom qu'il n'a jamais tapé le ferait douter de sa propre requête.
+            return {"tool": demande, "ok": False, "error": message}
         finally:
             # Org et run de la CIBLE, lus AVANT de défaire les axes : après le reset,
             # `current_org` rend l'org maison de l'appelant, pas celle où la cible a
