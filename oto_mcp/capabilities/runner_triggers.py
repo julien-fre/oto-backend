@@ -426,7 +426,7 @@ async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
     ⚠️ **Contre l'org du TRAVAIL, jamais celle du porteur.** C'est exactement le
     calcul qui manquait le 16/09/2026 : la visibilité d'une session hébergée se
     dérive à la POIGNÉE DE MAIN contre l'org MAISON du délégué, pas celle du
-    travail — un outil actif pour l'org 178 mais jamais sélectionné pour l'org
+    travail — un outil actif pour l'org du travail mais jamais sélectionné pour l'org
     maison du porteur disparaissait sans un mot. Ici on pose `org=t["org_id"]`
     explicitement (`catalogue_avec_etat` le lit désormais), donc CE calcul-là est
     juste — il ne corrige pas pour autant la poignée de main elle-même, qui reste

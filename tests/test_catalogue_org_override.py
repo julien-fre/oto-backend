@@ -37,8 +37,8 @@ async def test_org_explicite_voyage_jusqu_a_compute_hidden_layers(monkeypatch):
                         _faux_compute_hidden_layers)
 
     ctx = types.SimpleNamespace(fastmcp=None)
-    await catalogue.catalogue_avec_etat(ctx, "u1", "", org=178)
-    assert vu["org"] == 178, "l'org explicite doit atteindre compute_hidden_layers telle quelle"
+    await catalogue.catalogue_avec_etat(ctx, "u1", "", org=77)
+    assert vu["org"] == 77, "l'org explicite doit atteindre compute_hidden_layers telle quelle"
 
 
 @pytest.mark.asyncio
