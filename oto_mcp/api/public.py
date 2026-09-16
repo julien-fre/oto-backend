@@ -302,20 +302,28 @@ async def public_doc_view(request: Request) -> Response:
         if wants_json:
             return _json_error(request, 404, "not_found")
         return HTMLResponse(public_doc_page.render_missing(), status_code=404)
+    # Les trois variantes portent le MÊME secret d'URL (le jeton) : les en-têtes qui
+    # empêchent sa fuite (cache partagé, Referer, sniffing, cadre) doivent porter sur
+    # les trois, pas seulement sur celle qu'on a regardée en premier — c'est l'oubli
+    # qui a laissé passer markdown et JSON nus (oto-backend#565).
+    _entetes_page_a_jeton = {
+        "Cache-Control": "private, max-age=300",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
     title, body_md = doc["title"], doc.get("body_md") or ""
     if wants_json:
         return _json(request, {"title": title, "body_md": body_md,
-                               "updated_at": doc.get("updated_at")})
+                               "updated_at": doc.get("updated_at")},
+                     extra_headers=_entetes_page_a_jeton)
     if "text/markdown" in accept:
         md = f"# {title}\n\n{body_md}" if title else body_md
         return _file(request, md, media_type="text/markdown; charset=utf-8",
-                     headers={"Cache-Control": "public, max-age=300"})
+                     headers=_entetes_page_a_jeton)
     html_page = public_doc_page.render(title=title, body_md=body_md,
                                        updated_at=doc.get("updated_at"), marque=marque)
-    return HTMLResponse(html_page, headers={
-        "Cache-Control": "private, max-age=300",
-        "Referrer-Policy": "no-referrer"
-    })
+    return HTMLResponse(html_page, headers=_entetes_page_a_jeton)
 
 
 async def outreach_unsubscribe(request: Request) -> Response:

@@ -331,10 +331,12 @@ def _json_error(request: Request, status: int, code: str,
     )
 
 
-def _json(request: Request, payload: dict, status: int = 200) -> JSONResponse:
-    return JSONResponse(
-        payload, status_code=status, headers=_cors_headers(request.headers.get("origin"))
-    )
+def _json(request: Request, payload: dict, status: int = 200,
+          extra_headers: dict[str, str] | None = None) -> JSONResponse:
+    headers = _cors_headers(request.headers.get("origin"))
+    if extra_headers:
+        headers.update(extra_headers)
+    return JSONResponse(payload, status_code=status, headers=headers)
 
 
 def _file(request: Request, content, *, media_type: str,
