@@ -16,13 +16,15 @@ les échéances : une seule vérité.
 from __future__ import annotations
 
 import logging
+import types
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from . import _cle_exigee, _instruction, _modele
-from .. import (access, db, runner_hook, runner_models, runner_tick, tool_alias,
-                tool_registry, tool_visibility)
+from .. import (access, db, runner_hook, runner_models, runner_tick,
+                session_visibility, tool_alias, tool_registry, tool_visibility)
+from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
@@ -100,6 +102,27 @@ class TriggerInput(BaseModel):
     limit: Optional[int] = None
 
 
+class ToolWarning(BaseModel):
+    """Un outil déclaré dans `tools` qui pourrait ne pas être joignable au run.
+
+    Calculé à la LECTURE/ÉCRITURE du déclencheur, jamais stocké : la sélection, une
+    activation, une garde RBAC ou bêta changent sans que ce déclencheur ne soit
+    retouché — une valeur figée à la pose mentirait dès le lendemain (même régime
+    que `diagram_warning`, `oto_mcp/procedure_diagram.py`). Ne bloque RIEN : c'est
+    un signal pour qui pose ou relit le déclencheur, avant qu'il tourne à vide —
+    né du 16/09/2026, un déclencheur webhook dont deux outils déclarés (crédités,
+    actifs pour l'org) n'ont jamais atteint le modèle, et dont le run s'est clos
+    `done` sans un mot là-dessus."""
+    tool: str
+    #: Le même vocabulaire que `oto_list_my_tools` (`oto_mcp/tools/catalogue.py`),
+    #: jamais recopié : `installable` = masqué par une couche d'AFFICHAGE
+    #: seulement (`oto_call` l'atteint quand même) ; `not_exposed` = derrière une
+    #: garde d'APPEL — injoignable même par `oto_call` ; `unknown_tool` = ce nom
+    #: n'existe dans AUCUN registre (faute de frappe, ou outil retiré depuis).
+    issue: Literal["installable", "not_exposed", "unknown_tool"]
+    detail: str
+
+
 class Trigger(BaseModel):
     """Un déclencheur tel que servi (les colonnes de `_COLS`, db/runner_triggers) :
     la procédure à jouer, quand (cron + tz), avec quels outils, et l'état de
@@ -150,6 +173,9 @@ class Trigger(BaseModel):
     deliveries_24h: Optional[int] = None
     deliveries_refused_24h: Optional[int] = None
     last_delivery: Optional[str] = None
+    #: `None` = pas pu être calculé (hors serveur booté — en pratique jamais en
+    #: production) ; `[]` = calculé, rien à signaler. Jamais stocké — cf. `ToolWarning`.
+    tool_warnings: Optional[list[ToolWarning]] = None
 
 
 class RunnerArme(BaseModel):
@@ -367,6 +393,53 @@ def _avec_hook(org_id: int, t: dict) -> dict:
             "last_delivery": str(compte["derniere"]) if compte["derniere"] else None}
 
 
+async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
+    """Le déclencheur, augmenté de ce que ses outils déclarés risquent de ne pas
+    atteindre au run — jamais un refus, un signal.
+
+    ⚠️ **Contre l'org du TRAVAIL, jamais celle du porteur.** C'est exactement le
+    calcul qui manquait le 16/09/2026 : la visibilité d'une session hébergée se
+    dérive à la POIGNÉE DE MAIN contre l'org MAISON du délégué, pas celle du
+    travail — un outil actif pour l'org 178 mais jamais sélectionné pour l'org
+    maison du porteur disparaissait sans un mot. Ici on pose `org=t["org_id"]`
+    explicitement (`catalogue_avec_etat` le lit désormais), donc CE calcul-là est
+    juste — il ne corrige pas pour autant la poignée de main elle-même, qui reste
+    un chantier à part (session_visibility, plus sensible, pas repris ici).
+
+    Les handlers de capacité ne reçoivent qu'un `ResolvedCtx`, jamais l'instance
+    `fastmcp` dont `compute_hidden_layers` a besoin (`ctx.fastmcp.list_tools`) —
+    même impasse que `agent_toolbox`/`agent_context`, même détour : l'instance
+    BOUCLÉE au démarrage du serveur (`tool_registry.bound_instance()`), portée
+    dans un objet qui n'a que le seul attribut lu. `None` hors d'un serveur
+    booté (les bancs légers sans base) — fail-soft, jamais un refus."""
+    outils = t.get("tools") or []
+    if not outils:
+        return t
+    inst = tool_registry.bound_instance()
+    if inst is None:
+        return t
+    shim = types.SimpleNamespace(fastmcp=inst)
+    try:
+        catalogue = await tool_catalogue.catalogue_avec_etat(
+            shim, ctx.sub, "", org=t.get("org_id") or ctx.org_id)
+    except Exception as e:  # noqa: SILENT — journalisé, un avertissement manqué n'est pas un déclencheur cassé
+        logger.warning("tool_warnings indisponible pour le déclencheur %s : %s",
+                       t.get("id"), e)
+        return t
+    par_nom = {e["name"]: e for e in catalogue}
+    avertis = []
+    for nom in outils:
+        entree = par_nom.get(nom)
+        if entree is None:
+            avertis.append({"tool": nom, "issue": "unknown_tool",
+                            "detail": "ce nom n'existe dans aucun registre — "
+                                      "faute de frappe, ou outil retiré depuis."})
+        elif entree["state"] != "installed":
+            avertis.append({"tool": nom, "issue": entree["state"],
+                            "detail": tool_catalogue.LEGENDE[entree["state"]]})
+    return {**t, "tool_warnings": avertis}
+
+
 def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     """La déclaration aux noms d'outils CANONIQUES, avant tout le reste (`tool_alias`).
 
@@ -383,7 +456,7 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     return inp.model_copy(update=maj) if maj else inp
 
 
-def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
+async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les déclencheurs sont org-scopés")
     inp = _noms_canoniques(ctx, inp)
@@ -507,8 +580,9 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             db.poser_secret_de_hook(t["id"], ctx.org_id, hache)
             # Le secret en CLAIR, une seule fois. Il n'est pas stocké — seul son
             # haché l'est — donc ni une relecture ni un incident ne le rendront.
-            return {"trigger": _avec_hook(ctx.org_id, t), "hook_secret": secret}
-        return {"trigger": t}
+            return {"trigger": await _avec_tool_warnings(ctx, _avec_hook(ctx.org_id, t)),
+                   "hook_secret": secret}
+        return {"trigger": await _avec_tool_warnings(ctx, t)}
 
     if inp.op == "list":
         # ⚠️ Filtré par OBJET quand `procedure` est fourni : l'écran d'une
@@ -516,7 +590,8 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Filtrer côté client devient faux dès qu'il y a plus d'une page.
         lus = (db.triggers_for_procedure(ctx.org_id, inp.procedure) if inp.procedure
                else db.list_triggers(ctx.org_id))
-        return {"triggers": [_avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))
+        return {"triggers": [await _avec_tool_warnings(
+                                 ctx, _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)))
                              for t in lus],
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
@@ -527,7 +602,8 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-        return {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
+        return {"trigger": await _avec_tool_warnings(
+                            ctx, _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.op == "rotate_secret":
@@ -542,8 +618,9 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         logger.warning("secret de webhook RENOUVELÉ pour le déclencheur %s (org %s) "
                        "par %s — la source en place cessera d'être acceptée",
                        inp.trigger_id, ctx.org_id, ctx.sub)
-        return {"trigger": _avec_hook(ctx.org_id,
-                                      db.get_trigger(inp.trigger_id, ctx.org_id)),
+        return {"trigger": await _avec_tool_warnings(
+                            ctx, _avec_hook(ctx.org_id,
+                                           db.get_trigger(inp.trigger_id, ctx.org_id))),
                 "hook_secret": secret}
 
     if inp.op == "deliveries":
@@ -571,8 +648,9 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         logger.info("déclencheur %s (org %s) : file VIDÉE à la demande de %s — "
                     "%d travaux périmés", inp.trigger_id, ctx.org_id, ctx.sub, vides)
         return {"ok": True, "cleared": vides,
-                "trigger": _avec_hook(ctx.org_id,
-                                      db.get_trigger(inp.trigger_id, ctx.org_id))}
+                "trigger": await _avec_tool_warnings(
+                            ctx, _avec_hook(ctx.org_id,
+                                           db.get_trigger(inp.trigger_id, ctx.org_id)))}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):
@@ -693,7 +771,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-    return {"trigger": _avec_hook(ctx.org_id, t)}
+    return {"trigger": await _avec_tool_warnings(ctx, _avec_hook(ctx.org_id, t))}
 
 
 CAPABILITIES += [

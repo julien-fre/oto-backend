@@ -18,6 +18,8 @@ Ce que ces bancs tiennent :
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from oto_mcp.capabilities import _cle_exigee as CE
@@ -175,9 +177,9 @@ def test_poser_un_agent_sans_la_cle_exigee_est_refuse_LISIBLEMENT(monkeypatch):
     monkeypatch.setattr(RT.db, "create_trigger",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:
-        RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
+        asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
                                              cron="5 6 * * *", tools=["a"],
-                                             model="claude-opus-5"))
+                                             model="claude-opus-5")))
     assert (e.value.status, e.value.code) == (400, "model_key_required")
     assert "anthropic" in e.value.message
 
@@ -193,7 +195,7 @@ def test_rallumer_sans_la_cle_exigee_est_refuse(monkeypatch):
     monkeypatch.setattr(RT.db, "update_trigger",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:
-        RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=3, enabled=True))
+        asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="update", trigger_id=3, enabled=True)))
     assert e.value.code == "model_key_required"
 
 
@@ -270,9 +272,9 @@ def test_un_declencheur_MISTRAL_se_pose_meme_sans_cle_anthropic(monkeypatch):
     monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
     monkeypatch.setattr(RT.db, "create_trigger", lambda *a, **k: {"id": 1})
     # Ne lève PAS : seul `anthropic` est exigé, l'agent déclare `mistral`.
-    RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
                                          cron="5 6 * * *", tools=["a"],
-                                         model="mistral-large-2512"))
+                                         model="mistral-large-2512")))
 
 
 def test_eteint_poser_un_agent_sans_cle_passe(monkeypatch):
@@ -281,8 +283,8 @@ def test_eteint_poser_un_agent_sans_cle_passe(monkeypatch):
                         lambda org: {"armed": True, "workers": 1, "last_seen": None})
     monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
     monkeypatch.setattr(RT.db, "create_trigger", lambda *a, **k: {"id": 1})
-    RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
-                                         cron="5 6 * * *", tools=["a"]))
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
+                                         cron="5 6 * * *", tools=["a"])))
 
 
 # ── la console admin refuse ce que la réservation lirait de travers ──────────

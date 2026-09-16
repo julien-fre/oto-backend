@@ -8,6 +8,7 @@ un gagnant par échéance).
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 from zoneinfo import ZoneInfo
 
@@ -35,7 +36,7 @@ def _ctx(sub="alexis", org_id=2):
 
 
 def _appel(ctx, **kw):
-    return RT._triggers(ctx, RT.TriggerInput(**kw))
+    return asyncio.run(RT._triggers(ctx, RT.TriggerInput(**kw)))
 
 
 # ── la validation nomme le fautif ─────────────────────────────────────────────

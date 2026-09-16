@@ -18,6 +18,8 @@ Ces bancs tiennent les trois conséquences :
 """
 from __future__ import annotations
 
+import asyncio
+
 import pathlib
 
 import pytest
@@ -79,8 +81,8 @@ def test_un_declencheur_sans_instruction_pointe_sa_procedure(monkeypatch):
     monkeypatch.setattr(RT.db, "runner_arme", lambda org: {"armed": True, "workers": 1})
     monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda org, p: [])
     monkeypatch.setattr(RT, "_outils_de_la_procedure", lambda ctx, slug: ["oto_kb"])
-    RT._triggers(_ctx(), RT.TriggerInput(
-        op="create", procedure="veille-hebdo", cron="0 8 * * 1"))
+    asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(
+        op="create", procedure="veille-hebdo", cron="0 8 * * 1")))
     assert "`veille-hebdo`" in vus["input"]
 
 
