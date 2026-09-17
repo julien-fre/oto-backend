@@ -89,6 +89,41 @@ def _meme_site(demande: str, servi: str) -> bool:
     return a == b or a.endswith("." + b) or b.endswith("." + a)
 
 
+def _cible_avec_repli_www(url: str) -> tuple[str, bool]:
+    """`(url à lire, repli effectué)` — `www.` devant un domaine NU qui ne résout pas.
+
+    Beaucoup de sites n'ont d'enregistrement DNS que sur `www.` : lire `acme.fr`
+    échouait donc à la garde, en refus immédiat, sans que la forme usuelle soit
+    jamais essayée (oto#262, un des manques groupés dans #188).
+
+    ⚠️ **Le repli ne vaut QUE pour un nom qui ne résout pas.** Un nom qui résout
+    vers une adresse interne est un refus de SÉCURITÉ : il reste franc, et on
+    n'envoie pas de requête vers sa variante. Le discriminant est la résolution
+    elle-même (`egress.resolved_addresses`), pas le texte du refus, qui n'est pas
+    un contrat.
+
+    ⚠️ **Rien n'est contourné** : l'URL de repli repasse la garde complète au
+    moment d'être lue, comme toute autre cible. Résolution DNS bloquante, donc
+    appelée hors de la boucle."""
+    morceaux = urlsplit(url)
+    hote = morceaux.hostname or ""
+    if not hote or hote.lower().startswith("www.") or hote.replace(".", "").isdigit() \
+            or ":" in hote:
+        return url, False
+    port = morceaux.port or (443 if morceaux.scheme == "https" else 80)
+    try:
+        egress.resolved_addresses(hote, port)
+        return url, False              # il résout : la garde décidera normalement
+    except OSError:
+        pass
+    try:
+        egress.resolved_addresses("www." + hote, port)
+    except OSError:
+        return url, False              # aucune des deux : le refus d'origine sortira
+    netloc = morceaux.netloc.replace(hote, "www." + hote, 1)
+    return morceaux._replace(netloc=netloc).geturl(), True
+
+
 # ── garde SSRF (cran ① seulement) ────────────────────────────────────────────
 def check_url_public(url: str) -> None:
     """Lève (en nommant la raison) si `url` ne désigne pas une cible PUBLIQUE.
@@ -356,6 +391,11 @@ def register(mcp: FastMCP) -> None:
         # 11 lectures > 30 s, une à 57,5 s (docs/event-loop-perf.md, mode n°1).
         # Le garde-fou AST ne peut pas le voir : le handler `await` bien
         # quelque chose, plus bas. D'où `to_thread` ici (#491).
+        url, repli_www = await asyncio.to_thread(_cible_avec_repli_www, url)
+        if repli_www:
+            url_perimeter.refuse_if_excluded(url, per)
+            tentatives.append({"cran": "dns", "verdict": (
+                f"`{demande}` ne résout pas — repli sur `{urlsplit(url).hostname}`")})
         res = await asyncio.to_thread(_fetch_http, url)
         if res.get("ok"):
             texte, title = extract_text(res["html"])
