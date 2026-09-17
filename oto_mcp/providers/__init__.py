@@ -108,6 +108,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "silae",
     "forager",
     "lucca",
+    "inqom",
     # --- gocardless : keyed BYO self-serve -----------------------------------
     "gocardless",
     # `planity` reste ICI, à la place qu'il occupait quand il était fédéré : cet
@@ -212,6 +213,10 @@ _DECLARATIONS: tuple[str, ...] = (
     # Jeton PERSONNEL d'un administrateur de la marketplace (byo_user seul) ; le
     # seul connecteur du catalogue qui écrit dans un produit que nous opérons.
     "hellostock",
+    # --- gestion de clinique esthétique — câblé 2026-09-17 --------------------
+    # Côté administratif seulement (agenda, catalogue, devis, factures) : le
+    # contenu médical n'est pas servi, cf. `tools/nextmotion.py`.
+    "nextmotion",
     # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
     # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
     # servent aucun tool : le worker la consomme pour le compte de l'org.

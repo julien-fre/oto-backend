@@ -89,6 +89,10 @@ class ListRowsInput(EntreeDatastore):
     layers: str = _LAYERS
     versions: Optional[list[str] | str] = _VERSIONS
     empties: str = _EMPTIES
+    # Même sémantique que la face MCP `data_rows` (oto-backend#980, lot 2) : colonnes
+    # gardées + `_id` toujours présent, `["*"]` ou absent = ligne complète (contrat
+    # inchangé). Comma-separated pour la MÊME raison que `versions` juste au-dessus.
+    fields: Optional[list[str] | str] = None
 
     _coerce = field_validator("offset", "limit", mode="before")(_tolerant_int)
 
@@ -103,6 +107,15 @@ class ListRowsInput(EntreeDatastore):
 
         La virgule sépare une valeur unique ; la forme répétée (`?versions=a&versions=b`) arrive
         déjà en liste depuis l'adaptateur. Les deux se combinent."""
+        if v is None:
+            return None
+        brut = v if isinstance(v, list) else str(v).split(",")
+        return [m for m in (str(x).strip() for x in brut) if m]
+
+    @field_validator("fields", mode="after")
+    @classmethod
+    def _fields_en_liste(cls, v):
+        """Même patron que `_versions_en_liste` ci-dessus, même raison (#367)."""
         if v is None:
             return None
         brut = v if isinstance(v, list) else str(v).split(",")
@@ -452,7 +465,7 @@ def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
             ns, offset=offset, limit=limit,
             order_by=inp.order_by or None, order_dir=inp.order_dir,
             q=inp.q or None, filter=filter_eq, filters=filters, layers=layers,
-            versions=_versions(inp.versions), **empties)
+            versions=_versions(inp.versions), fields=inp.fields, **empties)
         return {**page, **identite.numero(store.dernier_tableau)}
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)

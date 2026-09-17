@@ -196,7 +196,8 @@ class ChainVerdict:
 
 
 def platform_rung(sub: Optional[str], provider: str,
-                  active_org: Optional[int]) -> Optional[ChainVerdict]:
+                  active_org: Optional[int], *,
+                  instances: "list[dict] | None" = None) -> Optional[ChainVerdict]:
     """Le barreau plateforme, vu par la chaîne. `None` = la chaîne n'a pas d'avis
     (connecteur non basculé, ou aucune arête n'a jamais visé cet appelant) ⟹
     l'appelant retombe sur l'ancien chemin, à l'identique.
@@ -205,7 +206,12 @@ def platform_rung(sub: Optional[str], provider: str,
     posées par le propriétaire plateforme. Le « min des contraintes le long de la
     chaîne » (0053-D5) est donc la contrainte de l'arête elle-même — la marche
     récursive arrive avec L7, quand des scopes intermédiaires (org → équipe → user)
-    existeront réellement."""
+    existeront réellement.
+
+    `instances` : les lignes PLATEFORME de ce `provider`, déjà lues — évite de
+    relire la même table que `_legacy_platform_grant_meta` (appelée juste après,
+    sur le même provider, par `_platform_grant_meta`). `None` = lit elle-même,
+    comme avant (repli, pas un défaut plus permissif)."""
     if not is_chained(provider) or not sub:
         return None
     scopes = grantee_scopes(sub, active_org)
@@ -214,7 +220,8 @@ def platform_rung(sub: Optional[str], provider: str,
     revoked_seen: Optional[ChainVerdict] = None
     # Ordre des instances = celui de l'ancien chemin (récente d'abord), pour que la
     # clé gagnante soit la même des deux côtés.
-    for inst in credentials_store.list_platform_instances(provider):
+    for inst in (instances if instances is not None
+                 else credentials_store.list_platform_instances(provider)):
         ref = instance_ref(inst["label"], provider)
         edges = db_grants.edges_for(ref, scopes)
         if not edges:

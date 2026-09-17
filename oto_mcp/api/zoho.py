@@ -59,17 +59,13 @@ def make_routes(
         retomber renverrait l'appelant historique sur `/connectors`.
 
         Convention unique de retour OAuth (oto-backend#670) : le suffixe vient
-        maintenant du fabricant partagé `oauth_flow.connector_return_suffix`, qui
-        DOUBLE l'ancienne forme `?<connector>=connected` / `?zoho=error` — encore
-        lue par le dashboard aujourd'hui — le temps du préavis. `connector` par
-        défaut à `"zoho"` : c'est la valeur historique servie quand le state est
-        illisible (avant ce lot, l'échec portait TOUJOURS `?zoho=error`, même pour
-        zohodesk/zohoanalytics) — un choix qu'on préserve pour la forme héritée
-        SEULEMENT ; la forme neuve porte, elle, le connecteur réellement connecté."""
+        du fabricant partagé `oauth_flow.connector_return_suffix`. L'ancienne
+        forme `?<connector>=connected` / `?zoho=error`, doublée le temps d'un
+        préavis, a été retirée le 17/09/2026 — plus aucun lecteur mesuré (le
+        dashboard lit `connect=` depuis le 04/09, et aucune connexion Zoho
+        chez le seul partenaire concerné, Tulina)."""
         from ..auth import flow as oauth_flow
-        legacy_cle = connector if etat == "connected" else "zoho"
-        suffix = oauth_flow.connector_return_suffix(
-            connector, etat, legacy=(legacy_cle, etat))
+        suffix = oauth_flow.connector_return_suffix(connector, etat)
         if oauth_flow.resolve_return_app(return_app):
             return oauth_flow.return_url(return_app, suffix, org=org_id)
         return f"{_app_url()}/console/connectors{suffix}"

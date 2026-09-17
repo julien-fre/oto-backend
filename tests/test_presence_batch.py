@@ -52,6 +52,10 @@ def coffre(monkeypatch):
         return []
 
     monkeypatch.setattr(cs, "list_credentials", _list_credentials)
+    # Barreau plateforme (17/09) : `preloaded_presence_probe` précharge désormais
+    # `list_all_platform_instances` — sans coffre réel, aucune instance nulle part,
+    # ce qui reste un différentiel juste (les DEUX sondes rendent `None`).
+    monkeypatch.setattr(cs, "list_all_platform_instances", lambda: {})
     monkeypatch.setattr(db, "has_member_api_key",
                         lambda s, o, p, account=None: p in etat["membre"])
     monkeypatch.setattr(db, "member_instance_suspended",
