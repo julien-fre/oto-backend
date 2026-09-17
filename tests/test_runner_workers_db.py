@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
+from unittest import mock
 
 import pytest
 
@@ -103,3 +105,58 @@ def test_la_presence_n_efface_pas_la_declaration(live):
     ligne = [x for x in db.list_platform_workers() if x["worker_sub"] == w["worker_sub"]][0]
     assert not str(ligne["last_seen_at"]).startswith("1970")
     assert ligne["label"] == "banc présence"
+
+
+def test_la_presence_ne_partage_pas_la_transaction_de_reservation(live):
+    """oto-backend, lot perf 17/09/2026 (mesuré par oto cd) : `runner_platform_workers`
+    ne porte qu'UNE ligne par worker, partagée par toutes les unités qui présentent
+    le même secret. Poser l'upsert de présence DANS la transaction de réservation
+    (`FOR UPDATE SKIP LOCKED`) tient le verrou de cette ligne pendant toute la
+    réservation — 12 unités passent alors une par une. La présence doit être sa
+    PROPRE connexion, committée AVANT que la réservation n'ouvre la sienne.
+
+    Banc structurel plutôt que temporel (pas de seuil de durée) : il rejoue
+    `claim_next_job` en espionnant `_connect()` et exige deux ouvertures
+    JAMAIS imbriquées — la présence se ferme avant que la réservation n'ouvre.
+    Il rougit si quelqu'un remet l'upsert dans la même transaction (une seule
+    ouverture) ou s'il en imbrique deux (une réservation ouverte pendant que la
+    présence l'est encore)."""
+    from oto_mcp.db import runner_jobs as RJ
+    from oto_mcp import db
+
+    w = db.create_platform_worker("banc ordre")
+
+    evenements = []
+    reel = RJ._connect
+
+    @contextmanager
+    def espion():
+        evenements.append("open")
+        with reel() as conn:
+            yield conn
+        evenements.append("close")
+
+    with mock.patch.object(RJ, "_connect", espion):
+        db.claim_next_job(None, w["worker_sub"], lease_seconds=60)
+
+    assert evenements == ["open", "close", "open", "close"], (
+        "la connexion de présence doit se FERMER avant que celle de réservation "
+        f"n'OUVRE — séquence observée : {evenements}")
+
+
+def test_la_marque_de_presence_est_evitee_sous_30s(live):
+    """Sous la granularité (30s), la seconde marque ne réécrit pas `last_seen_at` —
+    une écriture évitée ne prend aucun verrou. Comparaison de VALEUR, pas de
+    durée : deux sondages rapprochés doivent laisser la même valeur en base."""
+    from oto_mcp import db
+
+    w = db.create_platform_worker("banc granularité")
+    db.claim_next_job(None, w["worker_sub"], lease_seconds=60)
+    avant = [x for x in db.list_platform_workers()
+             if x["worker_sub"] == w["worker_sub"]][0]["last_seen_at"]
+
+    db.claim_next_job(None, w["worker_sub"], lease_seconds=60)
+    apres = [x for x in db.list_platform_workers()
+             if x["worker_sub"] == w["worker_sub"]][0]["last_seen_at"]
+
+    assert avant == apres, "sous 30s, la seconde marque ne doit pas réécrire last_seen_at"
