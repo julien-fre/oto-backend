@@ -225,9 +225,16 @@ def refresh_links(conn, from_doc: int, project_id: int, body_md: str,
 
 def backlinks_of(conn, doc_id: int) -> list[dict]:
     """Pages qui CITENT `doc_id` (« Cité par »), avec leur projet. Filtrage d'accès
-    = à l'appelant (capacité) : ici on rend tout, le call-site scope."""
+    = à l'appelant (capacité) : ici on rend tout, le call-site scope.
+
+    `kind`/`updated_at` (oto-backend#660) : déjà portés par la ligne `docs` jointe,
+    ajoutés sans requête de plus. `url` n'est PAS calculée ici — elle dépend du
+    tenant du lecteur (`links.link_for`), inconnu de ce module `db` ; c'est le
+    call-site capacité qui la pose, comme il le fait déjà pour une page lue seule
+    (`docs/view.py::doc_url`). `nod_id` et le verbe de relation restent hors
+    scope : voir #660 (dépend de #651, et d'une décision de modèle)."""
     rows = conn.execute(
-        "SELECT d.id, d.project_id, d.title FROM doc_links l "
+        "SELECT d.id, d.project_id, d.title, d.kind, d.updated_at FROM doc_links l "
         "JOIN docs d ON d.id = l.from_doc WHERE l.to_doc = %s ORDER BY d.title",
         (doc_id,)).fetchall()
     return [dict(r) for r in rows]
