@@ -51,6 +51,7 @@ class DocInput(BaseModel):
     revision_id: Optional[int] = None
     # delete (#657) : True = ne supprime RIEN, rend seulement ce que la suppression
     # emporterait (de quoi annoncer « ceci supprimera N pages » avant de la faire).
+    # patch (oto#171) : True = n'écrit rien, rend la région que le patch retirerait.
     dry_run: Optional[bool] = None
     # Projection de SORTIE, honorée par list/get/create/update/patch/move (`view.FIELDS_OPS`)
     # et REFUSÉE ailleurs. Omis : la liste rend son index, `get` la page entière, une
@@ -89,9 +90,9 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                 "`revision_id` ne s'applique qu'à op=revert (la version à restaurer). "
                 "Pour LIRE l'historique, c'est op=revisions, qui ne prend que `doc_id`.")
     if inp.dry_run is not None:
-        require(inp.op == "delete", "unsupported_dry_run",
-                "`dry_run` ne s'applique qu'à op=delete — les autres ops n'ont pas de "
-                "mode simulation et exécuteraient pour de bon. Retire-le.")
+        require(inp.op in ("delete", "patch"), "unsupported_dry_run",
+                "`dry_run` ne s'applique qu'à op=delete et op=patch — les autres ops "
+                "n'ont pas de mode simulation et exécuteraient pour de bon. Retire-le.")
 
     if inp.op == "create":
         return writes.create(sub, inp)
@@ -198,7 +199,11 @@ CAPABILITIES += [
             "SCOPE: a section runs to the next heading of EQUAL-OR-HIGHER level, so its "
             "NESTED sub-sections are part of it — replacing OR deleting a `###` also takes "
             "its `####` children (the response then lists `removed_subsections`). To keep "
-            "them, target the sub-heading itself or use mode=append) / "
+            "them, target the sub-heading itself or use mode=append. replace/delete "
+            "responses say what went under `removed` (line bounds, `line_count`, "
+            "`subsections`) — lines after a heading with no heading between belong to it; "
+            "`dry_run: true` writes nothing and returns that same `removed` plus the `rev` "
+            "to pass as `expected_rev`) / "
             "A SUCCESSFUL WRITE (create/update/patch/move) returns a RECEIPT, not the page: "
             "id, title, `url`, `rev`, `updated_at` and `body_md_length` — you just wrote the body, "
             'so it is not replayed back at you. Add `fields=["*"]` if you really want the '
