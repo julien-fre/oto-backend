@@ -453,6 +453,35 @@ migration concurrente **attend** le verrou. Il ne touche à aucune base réelle.
 écrit que le point de départ est atteint, sans rien rejouer. C'est une écriture sur la
 base de production — elle passe par la procédure de production, pas par un déploiement.
 
+### 5.1 Chaque révision suivante s'applique À LA MAIN, pas au déploiement (17/09/2026)
+
+**Rien n'appelle `alembic upgrade` automatiquement** : ni le pipeline de déploiement
+(`.github/`), ni le démarrage du serveur (`server.main`/`db._init`). C'est voulu — le
+chantier qui câblerait cet appel dans le déploiement **est en pause, sur décision
+d'Alexis** ; le poser par la bande à l'occasion d'une migration de perf serait rouvrir
+ce chantier sans l'avoir décidé.
+
+Donc, une révision au-delà du point de départ (ex. `0002_runner_jobs_index_vivant`) ne
+prend effet qu'après un geste D'EXPLOITATION, manuel, joué par qui déploie — la même
+procédure que `stamp head` ci-dessus : `alembic upgrade head` sur la box, avec le
+`.env` chargé.
+
+**L'ordre entre ce geste et le tag applicatif n'importe pas** — les deux sens sont
+sûrs, jamais cassants, seulement plus ou moins rapides (vérifié le 17/09/2026, sur
+vraie base PostgreSQL, avec un état préalable identique à la production : table
+peuplée, ancien index seul) :
+
+- code réécrit + ancien index (migration pas encore jouée) → le planificateur retombe
+  sur un `Seq Scan` (comme avant ce lot), pas d'erreur ;
+- ancien code + nouvel index (migration jouée avant le tag) → **PostgreSQL utilise
+  déjà le nouvel index partiel pour l'ancienne forme de la requête** (l'`OR` nu
+  implique le même `status IN ('pending','claimed')` que le nouveau prédicat partiel :
+  le planificateur le déduit tout seul). L'ancien code profite donc du gain de
+  vitesse avant même d'être remplacé.
+
+Aucune fenêtre où l'un des deux états casse l'autre — seulement une fenêtre plus lente
+tant que le geste manuel n'a pas été joué.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà
