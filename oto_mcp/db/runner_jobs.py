@@ -416,8 +416,15 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             WITH pris AS (
                 SELECT id, kind, run_id FROM runner_jobs
                  WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
-                   AND (status = 'pending'
-                        OR (status = 'claimed' AND lease_until < NOW()))
+                   -- ⚠️ La forme `status IN (...) AND (status = 'pending' OR ...)`
+                   -- n'est pas cosmétique : le `OR` nu d'avant (17/09/2026, cf.
+                   -- oto-backend#deadlock) empêchait le planificateur de se limiter
+                   -- à l'index partiel `idx_runner_jobs_live` — il ne peut se
+                   -- restreindre à un index PARTIEL que si le WHERE IMPLIQUE son
+                   -- prédicat, et une disjonction sur DEUX statuts écrite sans le
+                   -- dire explicitement ne le prouve pas au planificateur.
+                   AND status IN ('pending', 'claimed')
+                   AND (status = 'pending' OR lease_until < NOW())
                    AND attempts < max_attempts
                    -- ⚠️ `''` et jamais NULL pour « aucun dépôt » : `= ''` rend
                    -- FAUX, `= NULL` rend INCONNU. Même tri dans cette forme,
