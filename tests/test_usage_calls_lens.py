@@ -12,8 +12,9 @@ Ce qu'elle doit tenir, et pourquoi c'est une lentille à part :
    plafonne à 1000 EN SILENCE et sans curseur : une page tronquée y a l'air
    complète et sous-facture sans erreur. Un client à 3× le volume de l'org 196
    sur `linkedin_aiark_person` (334/mois) y perdait des lignes. Plus jamais.
-3. **Filtrée par outil et par succès** : un échec n'a rien consommé chez le
-   fournisseur, et le relevé se lit outil par outil.
+3. **Filtrée par outil et/ou par run, et par succès** : un échec n'a rien consommé
+   chez le fournisseur ; le relevé se lit outil par outil, ou run par run (ce qu'UN
+   agent hébergé a consommé), jamais sur tout le journal.
 """
 from __future__ import annotations
 
@@ -53,7 +54,7 @@ def test_la_lentille_ne_rend_QUE_ce_qu_un_metrage_somme(monkeypatch):
     assert out["calls"] == [{"call_id": 9, "tool": "linkedin_aiark_search",
                              "created_at": "2026-09-01T09:00:00.000000Z",
                              "quantity": 47, "key_mode": "platform", "job_id": None,
-                             "found": None}]
+                             "found": None, "run_id": None}]
     assert not {"sub", "email", "error"} & set(out["calls"][0])
 
 
@@ -71,7 +72,7 @@ def test_la_lentille_rend_le_job_d_un_releve_et_rien_d_autre_des_args(monkeypatc
     assert out["calls"] == [{"call_id": 11, "tool": "fullenrich_result",
                              "created_at": "2026-09-01T09:05:00.000000Z",
                              "quantity": 14, "key_mode": "platform", "job_id": "enr-0001",
-                             "found": trouve}]
+                             "found": trouve, "run_id": None}]
     assert not {"args", "contacts", "found_phones"} & set(out["calls"][0])
 
 
@@ -111,23 +112,48 @@ def test_le_curseur_et_la_fenetre_sont_transmis_tels_quels(monkeypatch):
     assert vu["limit"] == 250
 
 
-def test_l_outil_est_obligatoire():
-    """Le relevé se lit outil par outil — c'est ce qui borne la fenêtre."""
+def test_l_outil_ou_le_run_est_obligatoire():
+    """Le relevé se lit par outil ou par run — c'est ce qui borne la fenêtre."""
     with pytest.raises(Exception):
-        om.OrgBillableCallsInput(org_id=7)  # type: ignore[call-arg]
+        om.OrgBillableCallsInput(org_id=7)
+    om.OrgBillableCallsInput(org_id=7, tool="t")
+    om.OrgBillableCallsInput(org_id=7, run_id="r-1")
+
+
+def test_plusieurs_runs_en_une_lecture_et_une_borne():
+    """La forme répétée de la query string arrive en liste, la forme à virgule en
+    chaîne : les deux donnent la même liste, dédoublonnée. Au-delà de la borne,
+    refus — jamais une troncature silencieuse."""
+    assert om.OrgBillableCallsInput(org_id=7, run_id=["a", "b", "a"]).run_id == ["a", "b"]
+    assert om.OrgBillableCallsInput(org_id=7, run_id="a, b").run_id == ["a", "b"]
+    with pytest.raises(Exception):
+        om.OrgBillableCallsInput(org_id=7, run_id=[f"r{i}" for i in range(om.MAX_BILLABLE_RUNS + 1)])
+    with pytest.raises(Exception):
+        om.OrgBillableCallsInput(org_id=7, run_id=" , ")
+
+
+def test_le_run_est_transmis_et_rendu_sur_chaque_appel(monkeypatch):
+    """Ce qu'UN run a consommé : le filtre descend au store, et chaque ligne dit
+    de quel run elle relève."""
+    vu = _fake(monkeypatch, total=1, calls=[{
+        "id": 12, "tool": "linkedin_aiark_person", "created_at": "a",
+        "quantity": 1, "key_mode": "tenant", "run_id": "r-1"}])
+    out = om._billable_calls(CTX, om.OrgBillableCallsInput(org_id=7, run_id="r-1"))
+    assert vu["tool"] is None and vu["run_ids"] == ["r-1"]
+    assert out["calls"][0]["run_id"] == "r-1"
 
 
 # ── Le store, contre un vrai PostgreSQL ────────────────────────────────────────
 
 
 def _poser(sub, org_id, *, quand, tool="linkedin_aiark_search", ok=True,
-           quantity=None, key_mode=None, kind="mcp", args=None):
+           quantity=None, key_mode=None, kind="mcp", args=None, run_id=None):
     from oto_mcp import db
     from oto_mcp.db._conn import _connect
 
     db.insert_tool_call({"sub": sub, "kind": kind, "tool": tool, "ok": ok,
                          "org_id": org_id, "duration_ms": 3, "args": args,
-                         "quantity": quantity, "key_mode": key_mode})
+                         "quantity": quantity, "key_mode": key_mode, "run_id": run_id})
     with _connect() as conn:
         conn.execute(
             "UPDATE tool_calls SET created_at = %s::timestamptz WHERE id = ("
@@ -240,3 +266,43 @@ def test_la_borne_haute_est_gelee_quand_elle_est_omise(journal):
                                        since=journal["since"], limit=3)
     assert p["until_effectif"].endswith("Z")
     assert p["total"] == 8     # les 7 + celui du 25/08, avant l'instant gelé
+
+
+def test_le_store_rend_ce_qu_UN_run_a_consomme_tous_outils_confondus(live):
+    """Filtre run : tous les outils du run, sous l'org seulement, succès seulement —
+    et combinable avec l'outil."""
+    from oto_mcp import db, org_store
+
+    sub = "sub-run-" + uuid.uuid4().hex[:6]
+    org = org_store.create_org("Run credits", created_by=sub)
+    autre = org_store.create_org("Autre org", created_by=sub)
+    run, voisin = "run-" + uuid.uuid4().hex[:8], "run-" + uuid.uuid4().hex[:8]
+
+    _poser(sub, org, quand="2026-08-20T10:00:00+00:00", tool="linkedin_aiark_search",
+           quantity=25, key_mode="tenant", run_id=run)
+    _poser(sub, org, quand="2026-08-20T10:01:00+00:00", tool="fullenrich_result",
+           quantity=3, key_mode="platform", run_id=run)
+    _poser(sub, org, quand="2026-08-20T10:02:00+00:00", tool="serper_search",
+           ok=False, run_id=run)                                        # échec
+    _poser(sub, org, quand="2026-08-20T10:03:00+00:00", run_id=voisin)  # autre run
+    _poser(sub, org, quand="2026-08-20T10:04:00+00:00")                 # hors run
+    _poser(sub, autre, quand="2026-08-20T10:05:00+00:00", run_id=run)   # autre org
+
+    fenetre = {"since": "2026-08-10T00:00:00+00:00", "until": "2026-08-21T00:00:00+00:00"}
+    p = db.list_billable_calls_for_org(org, run_ids=[run], **fenetre)
+    assert p["total"] == len(p["calls"]) == 2 and p["next"] is None
+    assert {c["tool"] for c in p["calls"]} == {"linkedin_aiark_search", "fullenrich_result"}
+    assert {c["run_id"] for c in p["calls"]} == {run}
+
+    seul = db.list_billable_calls_for_org(org, "fullenrich_result", run_ids=[run], **fenetre)
+    assert [c["tool"] for c in seul["calls"]] == ["fullenrich_result"]
+
+    deux = db.list_billable_calls_for_org(org, run_ids=[run, voisin], **fenetre)
+    assert deux["total"] == 3 and {c["run_id"] for c in deux["calls"]} == {run, voisin}
+
+    hors = db.list_billable_calls_for_org(org, "linkedin_aiark_search", **fenetre)
+    assert {c["run_id"] for c in hors["calls"]} == {run, voisin, None}
+
+    with pytest.raises(ValueError):
+        db.list_billable_calls_for_org(org, **fenetre)
+

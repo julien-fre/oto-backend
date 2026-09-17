@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import db, deprecations
 from . import audit_log, monitoring
@@ -645,6 +645,11 @@ class BillableCallRow(BaseModel):
     # liste fermée `db.usage.BILLABLE_FOUND_ARGS`. `None` = rien de tel n'a été tracé
     # (autre outil, job non terminé, ligne antérieure).
     found: Optional[dict[str, int]] = None
+    # Le run (`run_start`) dont l'appel relève, quand il en porte un. Un agent hébergé
+    # le pose sur CHAQUE appel (`_run_id`, oto-runner) — c'est ce qui permet de dire ce
+    # qu'UN run a consommé. Un identifiant de travail, pas une personne. `None` =
+    # appel hors run.
+    run_id: Optional[str] = None
 
 
 class OrgBillableCalls(BaseModel):
@@ -665,23 +670,56 @@ class OrgBillableCalls(BaseModel):
     next_id: Optional[int] = None
 
 
+# Une page de runs côté app en montre 50 ; la borne laisse de la marge sans ouvrir
+# une lecture de tout le journal par une liste de runs interminable.
+MAX_BILLABLE_RUNS = 100
+
+
 class OrgBillableCallsInput(BaseModel):
     org_id: int
-    # OBLIGATOIRE : le relevé se lit outil par outil. Le volume facturable d'une
-    # org est petit, son volume total non — l'outil est ce qui borne la fenêtre.
-    tool: str
+    # Le relevé se lit outil par outil. Le volume facturable d'une org est petit,
+    # son volume total non — l'outil est ce qui borne la fenêtre.
+    tool: Optional[str] = None
+    # …ou run par run : ce qu'UN run a consommé, tous outils confondus. Un run est
+    # borné par nature (quelques dizaines d'appels), il borne la fenêtre aussi bien.
+    # Les deux se combinent. Toujours sous `org_id` : un membre ne lit que les appels
+    # émis sous SON org, quel que soit le run qu'il nomme.
+    # PLUSIEURS runs en une lecture (`?run_id=a&run_id=b`, ou `a,b`) : la liste des
+    # runs d'un agent en affiche 50, et 50 requêtes par rafraîchissement n'en sont
+    # pas une. `| str` = la forme réelle d'une query string (cf. `ProjectReadInput`).
+    run_id: Optional[list[str] | str] = None
     since: Optional[str] = None
     until: Optional[str] = None
     limit: Optional[int] = None
     before_at: Optional[str] = None
     before_id: Optional[int] = None
 
+    @field_validator("run_id", mode="after")
+    @classmethod
+    def _runs_en_liste(cls, v):
+        if v is None:
+            return None
+        brut = v if isinstance(v, list) else str(v).split(",")
+        runs = list(dict.fromkeys(m for m in (str(x).strip() for x in brut) if m))
+        if len(runs) > MAX_BILLABLE_RUNS:
+            raise ValueError(f"au plus {MAX_BILLABLE_RUNS} runs par lecture "
+                             f"({len(runs)} demandés)")
+        return runs or None
+
+    @model_validator(mode="after")
+    def _outil_ou_run(self):
+        # Ni l'un ni l'autre = tout le journal de l'org : ce que la lentille refuse.
+        if not self.tool and not self.run_id:
+            raise ValueError("`tool` ou `run_id` est requis : le relevé se lit par "
+                             "outil ou par run, jamais sur tout le journal")
+        return self
+
 
 def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
     before = ((inp.before_at, inp.before_id)
               if inp.before_at and inp.before_id is not None else None)
     page = db.list_billable_calls_for_org(
-        inp.org_id, inp.tool, since=inp.since, until=inp.until,
+        inp.org_id, inp.tool, run_ids=inp.run_id, since=inp.since, until=inp.until,
         limit=inp.limit or 1000, before=before)
     nxt = page["next"]
     return {
@@ -689,7 +727,8 @@ def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
         # si la requête gagne des colonnes demain.
         "calls": [{"call_id": r["id"], "tool": r["tool"], "created_at": r["created_at"],
                    "quantity": r.get("quantity"), "key_mode": r.get("key_mode"),
-                   "job_id": r.get("job_id"), "found": r.get("found")}
+                   "job_id": r.get("job_id"), "found": r.get("found"),
+                   "run_id": r.get("run_id")}
                   for r in page["calls"]],
         "total": page["total"],
         "until_effectif": page["until_effectif"],
