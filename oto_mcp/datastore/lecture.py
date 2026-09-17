@@ -86,6 +86,7 @@ class LectureMixin:
         layers: str = dsl.DEFAUT,
         versions: tuple = dsver.DEFAUT,
         empties: str = dsl.EMPTIES_DEFAUT,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Page pour l'agent (chemin MCP `data_rows`), filtre/recherche/tri poussés en
         SQL. Renvoie `{rows, next_cursor}` — `next_cursor` non nul ⇒ il reste des lignes
@@ -102,8 +103,13 @@ class LectureMixin:
 
         Repasser le curseur d'un régime dans l'autre lève `InvalidCursor` plutôt que de
         rendre une page fausse — un curseur d'offset relu comme un `row_id` cadrerait
-        silencieusement sur les mauvaises lignes."""
+        silencieusement sur les mauvaises lignes.
+
+        `fields` (oto-backend#980, lot 2) : projette CHAQUE ligne dès sa fabrication
+        (`_row_to_dict`), pas après coup — `["*"]` ou `None` = pas de projection,
+        la page sort inchangée."""
         ns_id = self._resolve(datastore)
+        proj = None if not fields or "*" in fields else frozenset(fields)
         filters = _filter_clauses(filter, filters)
         # ⚠️ Le schéma se lit une fois par PAGE, et seulement quand il y a quelque chose
         # à servir : le lire dès l'entrée ferait payer une requête à un appel qui va
@@ -123,7 +129,7 @@ class LectureMixin:
             if sch is None and rows:
                 sch = self._schema_of(ns_id)
             out = {"rows": [self._row_to_dict(r, sch, layers=layers, versions=versions,
-                                              empties=empties) for r in rows],
+                                              empties=empties, fields=proj) for r in rows],
                    "next_cursor": next_cursor,
             # ⚠️ La réponse DÉCLARE ce qu'elle sert (oto#140). Sans elle, « je ne
             # l'ai pas demandée » et « elle n'existe pas sur cette case » se lisent
@@ -142,7 +148,8 @@ class LectureMixin:
             ns_id, after_row_id=after, limit=limit, q=q, filters=filters)
         if sch is None and rows:
             sch = self._schema_of(ns_id)
-        out = [self._row_to_dict(r, sch, layers=layers, versions=versions, empties=empties)
+        out = [self._row_to_dict(r, sch, layers=layers, versions=versions, empties=empties,
+                                 fields=proj)
                for r in rows]
         next_cursor = _encode_cursor(rows[-1]["row_id"]) if len(rows) == limit else None
         # ⚠️ SECOND retour de cette méthode — le chemin du curseur simple. Le premier
@@ -192,6 +199,7 @@ class LectureMixin:
         layers: str = dsl.DEFAUT,
         versions: tuple = dsver.DEFAUT,
         empties: str = dsl.EMPTIES_DEFAUT,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Page server-side (tri/recherche/filtres SQL) + total — pour le dashboard.
         Deux formes de filtre CUMULABLES, comme `aggregate` : `filter` exact
@@ -208,8 +216,17 @@ class LectureMixin:
         chronologique. Les valeurs non conformes vont en QUEUE dans les deux
         sens (bloc alphabétique), les cases vides tout au bout — et quand il y
         en a, la réponse porte `order_health: {off_type, empty}` (compté sur le
-        jeu filtré entier, absent quand tout est conforme)."""
+        jeu filtré entier, absent quand tout est conforme).
+
+        `fields` (oto-backend#980, lot 2) : MÊME sémantique que côté MCP
+        `data_rows` — colonnes gardées + `_id` toujours présent, une colonne
+        déclarée sans valeur rendue `null`. Projette dès `_row_to_dict`, pas
+        après coup : un ramassage complet du vivier par cette route coûtait
+        ~10,5 s de calcul Python sur son aplatissement de couches (mesuré
+        17/09/2026), pour un usage qui ne lit souvent que 3-4 colonnes.
+        Absent (ou `["*"]`) = même payload qu'avant ce lot."""
         ns_id = self._resolve(datastore)
+        proj = None if not fields or "*" in fields else frozenset(fields)
         clauses = _filter_clauses(filter, filters) or None
         sch = self._schema_of(ns_id)
         # Le tri honore le TYPE déclaré (#336) — résolu ICI, où le schéma est connu :
@@ -221,7 +238,7 @@ class LectureMixin:
             order_type=otype, order_options=oopts)
         out = {
             "rows": [self._row_to_dict(r, sch, layers=layers, versions=versions,
-                                       empties=empties) for r in rows],
+                                       empties=empties, fields=proj) for r in rows],
             # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la
             # pagination du dashboard annonce des lignes qu'elle ne servira jamais.
             "total": db.datastore_count_rows(ns_id, q=q, filters=clauses),
