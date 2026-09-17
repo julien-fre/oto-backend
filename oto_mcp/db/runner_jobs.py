@@ -250,24 +250,41 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
 #: dessous d'`ARME_FENETRE_S` (15 min) : un lecteur de `runner_arme`/`families`
 #: (fenêtre de 15 min) ne voit jamais la différence entre « vu il y a 3 s » et
 #: « vu il y a 28 s ». Une écriture évitée sous ce seuil ne prend aucun verrou.
-#: Sœur exacte de `runner_workers._PRESENCE_GRANULARITE_S`.
+#: Seul point d'écriture de `runner_platform_workers.last_seen_at` (17/09/2026) —
+#: `verify_worker_secret` (`runner_workers.py`) est une lecture pure.
 _PRESENCE_GRANULARITE_S = 30
 
 
 def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> None:
-    """Marque la présence PAR FAMILLE d'un worker de PLATEFORME — SA PROPRE
-    connexion, courte, committée avant que `claim_next_job` n'ouvre sa
-    transaction de réservation.
+    """Marque la présence d'un worker de PLATEFORME — SA PROPRE connexion,
+    courte, committée avant que `claim_next_job` n'ouvre sa transaction de
+    réservation.
 
-    ⚠️ Ne touche PLUS `runner_platform_workers` (17/09/2026) : l'authentification
-    (`verify_worker_secret`, appelée avant que cette fonction ne le soit,
-    `api/base.py`) marque déjà cette ligne, bornée, dans sa propre connexion
-    (`runner_workers._touch_worker_presence`) — un deuxième upsert ici pour la
-    MÊME ligne serait un aller-retour de plus pour un no-op quasi systématique.
+    ⚠️ **C'est ICI, et seulement ici, que `runner_platform_workers` s'écrit**
+    (17/09/2026, revue oto cd) — PAS dans `verify_worker_secret` (lecture pure
+    depuis ce lot). Deux raisons de choisir ce point plutôt que l'authentification :
+    un worker à jeton d'ORG (`OTO_RUNNER_ARMED=1`, oto-runner) sonde `claim_next_job`
+    sans jamais passer par `verify_worker_secret`, réservé aux workers de
+    PLATEFORME (préfixe `otow_`) — une écriture posée côté auth resterait
+    invisible pour ces workers-là, et `runner_arme`/`no_runner_armed` les
+    verrait toujours absents. Et l'`INSERT … ON CONFLICT` ci-dessous CRÉE la
+    ligne si elle n'existe pas encore (`ON CONFLICT DO UPDATE`, avec la fenêtre
+    en `WHERE`), quand un `UPDATE` seul ne réagirait jamais à une ligne absente
+    — le cas exact d'un worker qui sonde avant d'avoir jamais été vu.
     `runner_platform_depots`, elle, est keyée `(worker_sub, depot)` : c'est une
-    ligne PAR dépôt, jamais touchée par l'authentification, qui ne connaît pas
-    le dépôt demandé."""
+    ligne PAR dépôt."""
     with _connect() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO runner_platform_workers (worker_sub, last_seen_at)
+                 VALUES (%s, NOW())
+            ON CONFLICT (worker_sub) DO UPDATE
+               SET last_seen_at = NOW()
+             WHERE runner_platform_workers.last_seen_at
+                   < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
+            """,
+            (worker_sub,),
+        )
         # La présence PAR FAMILLE — ce que `runner_arme` rend en `families`.
         # Seules les familles du catalogue se notent : `provider` est une
         # chaîne libre, et un dépôt que rien ne route n'a rien à promettre.

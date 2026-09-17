@@ -48,31 +48,6 @@ def create_platform_worker(label: str) -> dict:
     return {**dict(row), "secret": secret}
 
 
-#: Granularité de la marque de présence d'un worker de PLATEFORME — bien en
-#: dessous d'`ARME_FENETRE_S` (15 min, `runner_arme`) : un lecteur de cette
-#: fenêtre ne voit jamais la différence entre « vu il y a 3 s » et « vu il y a
-#: 28 s ». Sœur exacte de la granularité posée côté `claim_next_job`
-#: (`runner_jobs.py::_PRESENCE_GRANULARITE_S`) — même seuil, deux points
-#: d'écriture distincts sur la même ligne.
-_PRESENCE_GRANULARITE_S = 30
-
-
-def _touch_worker_presence(worker_sub: str) -> None:
-    """Marque `last_seen_at`, borné : n'écrit — donc ne verrouille — que si la
-    dernière marque a plus de `_PRESENCE_GRANULARITE_S`. Sa propre connexion,
-    courte, jamais dans la transaction de l'appelant."""
-    with _connect() as conn:
-        conn.execute(
-            f"""
-            UPDATE runner_platform_workers
-               SET last_seen_at = NOW()
-             WHERE worker_sub = %s
-               AND last_seen_at < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
-            """,
-            (worker_sub,),
-        )
-
-
 def verify_worker_secret(secret: str) -> Optional[dict]:
     """Le secret → le worker, ou None. Un worker révoqué n'existe plus pour
     l'authentification, quelle que soit la ligne qu'il garde en base.
@@ -83,10 +58,12 @@ def verify_worker_secret(secret: str) -> Optional[dict]:
     synchrone sur l'UNIQUE ligne que partagent toutes les unités d'une même
     machine (12 `oto-runner@N` sur un seul secret) — 31 attentes de verrou
     mesurées sur 150 instantanés de 30 s, indépendamment du lot déjà posé sur
-    `claim_next_job`. La décision d'authentifier ne dépend plus du nombre de
-    lignes écrites : un `SELECT`, puis une marque de présence BORNÉE et
-    séparée (`_touch_worker_presence`) qui n'écrit — donc ne verrouille — que
-    si la dernière marque date de plus de 30 s."""
+    `claim_next_job`. La marque de présence n'est PLUS posée ici : un worker
+    de plateforme finit toujours par sonder `claim_next_job`
+    (`runner_jobs.py::_touch_platform_worker_presence`, seul point d'écriture
+    de `runner_platform_workers` depuis ce lot — c'est aussi le seul chemin
+    commun à un worker à jeton d'ORG, qui n'appelle jamais cette fonction-ci).
+    Poser un second point d'écriture ici referait doublon avec lui."""
     if not secret or not secret.startswith(WORKER_SECRET_PREFIX):
         return None
     with _connect() as conn:
@@ -98,10 +75,7 @@ def verify_worker_secret(secret: str) -> Optional[dict]:
             """,
             (_hash_token(secret),),
         ).fetchone()
-    if not row:
-        return None
-    _touch_worker_presence(row["worker_sub"])
-    return dict(row)
+    return dict(row) if row else None
 
 
 def list_platform_workers() -> list[dict]:
