@@ -7,9 +7,9 @@ fetch (ne déchiffre que le gagnant), ou préchargée (les mêmes réponses en
 quelques lectures). Ajouter un barreau, c'est éditer `walk_cascade` — jamais un
 appelant.
 
-Ce module ne dépend que de `scope` (appartenance à un scope de partage, pour le
-palier plateforme). Il ne connaît ni les quotas, ni le RBAC, ni la résolution
-réelle : ce sont eux qui l'appellent.
+Le palier plateforme (appartenance à un scope de partage, quota, chaîne de
+grants) vit dans `platform_grant.py`, réexporté ici. Ce module-ci ne connaît ni
+les quotas, ni le RBAC, ni la résolution réelle : ce sont eux qui l'appellent.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import (providers, credentials_store, db, grants_chain, group_store, org_store,
                 tenant_vault)
 from ..connectors import cardinality
-from . import scope, secret_repr
+from . import platform_grant, secret_repr
 
 # DÉRIVÉ du registre source unique (package `providers/`) : providers dont le
 # secret peut être POSSÉDÉ par une org et partagé (auth_mode byo_org) — exclut
@@ -118,99 +118,6 @@ def personal_instance_org(sub: str, provider: str,
     return orgs[0]  # set_at DESC → la plus récente
 
 
-def _platform_grantee_scope(sub, active_org, scopes) -> "str | None":
-    """Le scope de `scopes` qui vise `sub` sur une instance PLATEFORME, ou None (ADR 0044
-    §F). `user:<sub>` prime (le plus spécifique) ; `org:<id>` gaté sur l'org **ACTIVE**
-    (mirroir EXACT de l'ancien `get_active_org_grant(active_org)` — un grant d'org est métré
-    per-contexte-d'org, pas per-appartenance : un membre de l'org X actif dans Y n'en profite
-    pas). Sert l'accès (closed) ET le quota (rate_limit_by)."""
-    if not scopes:
-        return None
-    if f"user:{sub}" in scopes:
-        return f"user:{sub}"
-    if active_org is not None and f"org:{active_org}" in scopes:
-        return f"org:{active_org}"
-    return None
-
-
-def _platform_instance_usable(sub, active_org, inst: dict) -> bool:
-    """Instance plateforme utilisable par `sub` ? (ADR 0044 §F, mode-aware). Un prêt
-    `share_side` autorise (membership, comme un prêt BYO). Sinon selon `share_mode` :
-    'open' = `share_down` vide (free-tier, ouvert à tous) OU `sub` grantee ; 'closed' =
-    `sub` grantee (défaut fermé)."""
-    down, side = inst.get("share_down") or [], inst.get("share_side") or []
-    if scope._sub_matches_scopes(sub, side):
-        return True
-    granted = _platform_grantee_scope(sub, active_org, down) is not None
-    if inst.get("share_mode") == "closed":
-        return bool(down) and granted
-    return (not down) or granted
-
-
-def _platform_quota(sub, active_org, meta: dict) -> "int | None":
-    """Quota/jour du bénéficiaire sur une instance plateforme : `rate_limit_by[scope de sub]`
-    (user prime > org active), sinon le défaut `rate_limit` de l'instance."""
-    rlb = (meta or {}).get("rate_limit_by") or {}
-    scope = _platform_grantee_scope(sub, active_org, list(rlb.keys()))
-    if scope is not None and scope in rlb:
-        return rlb[scope]
-    return (meta or {}).get("rate_limit")
-
-
-def _legacy_platform_grant_meta(sub, provider, active_org) -> "dict | None":
-    """Palier plateforme (ADR 0044 §F R3) SANS secret : {label, daily_quota} de l'instance
-    PLATEFORM utilisable par `sub` la plus récente, ou None. Base des miroirs `status_for`/
-    `credential_mode_for` (présence + quota, jamais de déchiffrement).
-
-    ⚠️ **L'ancien chemin, et il ne bouge pas d'un octet** (blueprint ADR 0053, lot L5) :
-    il reste le seul pour les neuf connecteurs non basculés, et le repli EXACT pour un
-    bénéficiaire que la chaîne ne connaît pas. Le préfixe `_legacy_` ne le déprécie pas —
-    il nomme l'une des deux voies de la fenêtre de double lecture."""
-    for inst in credentials_store.list_platform_instances(provider):
-        if _platform_instance_usable(sub, active_org, inst):
-            return {"label": inst["label"],
-                    "daily_quota": _platform_quota(sub, active_org, inst.get("meta"))}
-    return None
-
-
-def _platform_grant_meta(sub, provider, active_org) -> "dict | None":
-    """Le palier plateforme, **chaîne de grants d'abord** (blueprint ADR 0053, lot L5).
-
-    Trois issues, et la troisième est ce qui rend la fenêtre sûre :
-
-    - la chaîne ACCORDE → son verdict (clé + quota portés par l'arête) ;
-    - la chaîne REFUSE (des arêtes existent, toutes révoquées) → refus **sans repli** :
-      sinon révoquer une arête ne couperait rien, l'ancien chemin free-tier
-      re-accordant aussitôt ;
-    - la chaîne est MUETTE (connecteur non basculé, ou aucune arête n'a jamais visé cet
-      appelant) → l'ancien chemin, à l'identique.
-
-    Les deux voies sont lues pour un connecteur basculé — c'est le prix assumé de la
-    fenêtre (une lecture indexée de plus) et c'est ce qui produit le journal d'écart,
-    matière du verdict de fin de fenêtre."""
-    verdict = grants_chain.platform_rung(sub, provider, active_org)
-    if verdict is None:
-        return _legacy_platform_grant_meta(sub, provider, active_org)
-    legacy = _legacy_platform_grant_meta(sub, provider, active_org)
-    grants_chain.journal_resolution(provider, sub, active_org, verdict, legacy)
-    if not verdict.granted:
-        return None
-    return {"label": verdict.label, "daily_quota": verdict.quota}
-
-
-def _resolve_platform_grant(sub, provider, active_org) -> "dict | None":
-    """Palier plateforme AVEC secret : {label, secret, daily_quota} ou None. Remplace les 3
-    lectures legacy (get_active_grant/get_active_org_grant/get_platform_api_key). Le secret
-    n'est déchiffré QUE pour l'instance gagnante (chemin chaud)."""
-    g = _platform_grant_meta(sub, provider, active_org)
-    if not g:
-        return None
-    secret = credentials_store.get_credential(credentials_store.PLATFORM, g["label"], provider)
-    if secret is None:
-        return None
-    return {**g, "secret": secret}
-
-
 # ── Walker de cascade unique ───────────────────────────────────────────────────
 # La cascade `perso > cross-org > équipe active > org > tenant > plateforme` était écrite à
 # la main à 6 endroits (résolution, mode, status ×2, anonyme, sonde de publication)
@@ -274,7 +181,7 @@ PRESENCE_PROBE = CascadeProbe(
     group=lambda g, p: (True if group_store.has_group_secret(g, p) else None),
     org=lambda o, p: (True if org_store.has_org_secret(o, p) else None),
     tenant=lambda t, p: (True if tenant_vault.has_tenant_secret(t, p) else None),
-    platform=lambda s, p, o: _platform_grant_meta(s, p, o),
+    platform=lambda s, p, o: platform_grant._platform_grant_meta(s, p, o),
 )
 
 # ⚠️ Les sondes org/group de FETCH_PROBE lisent le compte MONO (`account=''`) : les
@@ -292,7 +199,7 @@ FETCH_PROBE = CascadeProbe(
     group=lambda g, p: group_store.get_group_secret(g, p),
     org=lambda o, p: org_store.get_org_secret(o, p),
     tenant=lambda t, p: tenant_vault.get_tenant_secret(t, p),
-    platform=lambda s, p, o: _resolve_platform_grant(s, p, o),
+    platform=lambda s, p, o: platform_grant._resolve_platform_grant(s, p, o),
 )
 
 
@@ -347,14 +254,17 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
 
     Mesuré (33 connecteurs installés, compte réel) : les cinq sondes coûtaient 425 ms
     en marchant une fois par connecteur. Ce qu'elle ne couvre PAS, et volontairement :
-    - le barreau **plateforme** garde la callable d'origine — il lit une chaîne de
-      grants avec journal d'écart (fenêtre de bascule 0053-L5), et le précharger
-      demanderait de rejouer cette logique ailleurs. Mesuré à 9 ms l'appel sur les
-      seuls connecteurs qui l'atteignent : le gain ne paie pas le risque ;
     - `personal_instance_org` est appelé par le WALKER, pas par la sonde (un appel,
       12 ms) — le précharger supposerait de toucher au walker, ce qu'on refuse.
 
-    """
+    ⚠️ **17/09 : le barreau plateforme n'est plus dans cette liste** — la note du
+    21/08 ci-dessus mesurait UN appel, pas le COMPTE sur un vrai compte : mesuré
+    depuis (oto cd, prod), `list_platform_instances` était lue 31 FOIS par
+    `status_for` (une par connecteur qui atteint ce barreau, doublée sur la chaîne
+    de grants — `grants_chain.platform_rung` relit la même table, 0053-L5). Le
+    calcul ne bouge pas (chaîne et legacy restent deux verdicts séparés) ; seule la
+    LECTURE est mutualisée, une fois pour tout `status_for` via
+    `list_all_platform_instances()`."""
     from .. import credentials_store as cs
 
     membre: set = set()
@@ -381,6 +291,10 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
     if slug is not None:
         tenant_secrets = {r["connector"] for r in cs.list_credentials(cs.TENANT, slug)}
 
+    # Barreau PLATEFORME (17/09, cf. note ci-dessus) : une lecture pour tous les
+    # providers, le calcul de `_platform_grant_meta` ne bouge pas.
+    instances_par_provider = cs.list_all_platform_instances()
+
     return CascadeProbe(
         member=lambda s, o, p: ((True, "") if p in membre and p not in suspendues
                                 else None),
@@ -392,7 +306,8 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
         group=lambda g, p: (True if p in par_groupe.get(int(g), ()) else None),
         org=lambda o, p: (True if p in org_secrets else None),
         tenant=lambda t, p: (True if p in tenant_secrets else None),
-        platform=PRESENCE_PROBE.platform,
+        platform=lambda s, p, o: platform_grant._platform_grant_meta(
+            s, p, o, instances=instances_par_provider.get(p, [])),
     )
 
 
