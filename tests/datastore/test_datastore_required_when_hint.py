@@ -183,6 +183,40 @@ def test_la_clause_est_muette_a_la_creation(_=None):
     assert "MÊME appel" not in msg
 
 
+def test_la_clause_se_tait_quand_l_appel_ECRIT_l_aiguillage(_=None):
+    """`data_write {retraitement: "injoignable", retraitement_motif: ""}` : l'appelant
+    VIENT d'écrire l'aiguillage, vers une valeur qui ARME la garde. Le refus reste juste
+    — le motif manque — mais lui conseiller de « mettre les deux dans le même appel »
+    est faux : il l'a fait, et c'est la valeur qu'il a choisie qui exige le motif."""
+    errs = S.validate_row(_SCHEMA,
+                          {"retraitement": "injoignable", "retraitement_motif": ""},
+                          written={"retraitement", "retraitement_motif"})
+    assert errs, "le motif manque : le refus reste"
+    msg = " ; ".join(errs)
+    assert "MÊME appel" not in msg, msg
+    assert "retraitement_motif" in msg and "requis" in msg
+
+
+def test_en_DEUX_appels_changer_l_aiguillage_D_ABORD_passe(_=None):
+    """La contrainte porte sur le VIDE tant que la garde tient, jamais sur le PLEIN
+    quand elle s'éteint : l'ordre n'est donc PAS indifférent, et aucun texte ne doit
+    promettre qu'il l'est. Aiguillage d'abord, vidage ensuite — les deux passent."""
+    schema = {"fields": [
+        {"key": "retraitement", "type": "enum",
+         "options": ["injoignable", "hors_cible", "doublon", "resolu"]},
+        {"key": "retraitement_motif", "type": "text", "max_length": 300,
+         "required_when": {"retraitement": ["injoignable", "hors_cible", "doublon"]}},
+    ]}
+    # 1) l'aiguillage seul : le motif reste rempli, la garde tombe — accepté.
+    assert S.validate_row(schema, {"retraitement": "resolu",
+                                   "retraitement_motif": "trois appels sans réponse"},
+                          written={"retraitement"}) == []
+    # 2) le vidage ensuite : la garde est déjà éteinte — accepté.
+    assert S.validate_row(schema, {"retraitement": "resolu",
+                                   "retraitement_motif": ""},
+                          written={"retraitement_motif"}) == []
+
+
 def test_le_store_porte_les_details_dans_son_refus(monkeypatch):
     """Le refus est levé par `DatastorePg._check_row` : sans le passage des détails
     là, `details` resterait une propriété du validateur que personne ne voit."""

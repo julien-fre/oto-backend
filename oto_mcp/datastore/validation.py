@@ -275,14 +275,19 @@ def _row_errors(fields: list, data: dict, path: str,
                 # exactement la séquence mesurée (35 refus sur 105, 27 rattrapés au
                 # coup d'après).
                 # #649 : la clause « un seul appel » n'a de sens que sur un PATCH qui
-                # cible ce champ explicitement (written is not None) — à la création
-                # (written=None), il n'y a pas d'état antérieur à quitter, donc rien
-                # à « revenir en arrière ».
+                # cible ce champ SANS toucher à l'aiguillage. À la création
+                # (written=None) il n'y a pas d'état antérieur à quitter ; et quand
+                # CE geste écrit déjà une clé de la condition, lui conseiller de
+                # « mettre les deux dans le même appel » est faux — il vient de le
+                # faire, c'est la valeur qu'il a choisie qui ARME la garde, et le
+                # refus juste est alors « le motif manque », rien de plus.
+                seul_appel = (written is not None and pose
+                              and isinstance(rw, dict) and rw
+                              and not (set(rw) & written))
                 errors.append(f"{fpath}: champ requis manquant{cause} — "
                               f"elle attend {_forme_attendue(f)}"
                               + _clause_aiguillage(fields, rw)
-                              + (_clause_un_seul_appel(rw)
-                                 if written is not None and pose else "")
+                              + (_clause_un_seul_appel(rw) if seul_appel else "")
                               + _CLAUSE_VIDE_ASSUME)
                 if details is not None:
                     details.setdefault("expected_column", str(key))

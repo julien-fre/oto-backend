@@ -735,16 +735,21 @@ changer, pas l'agent ». Un `retraitement` objet `{valeur, motif}` serait la voi
 Le message est la voie courte, prise parce qu'elle tient **sans consigne, sur toutes les
 missions** — même famille que le refus d'identifiant qui nomme la forme attendue (#517).
 
-**Vider un champ `required_when` et revenir à un état non-terminal tiennent dans UN SEUL
-appel (#649, 17/09/2026).** `required_when` se juge sur la ligne FINALE, aiguillage
-compris (#347) — pas sur une suite d'états intermédiaires. Un agent qui annule en deux
-temps (vider le champ, puis changer l'aiguillage — ou l'inverse) se fait refuser au
-premier des deux appels, quel que soit l'ordre choisi : au moment de ce premier appel,
-l'aiguillage porte encore l'ancienne valeur (ou le champ porte encore l'ancienne),
-donc la contrainte s'applique toujours. Ce n'est pas un défaut à corriger : les deux
-écritures doivent partager le même `data_write`. Le refus le dit désormais lui-même
-(`_clause_un_seul_appel`) et la description de `required_when` sur `data_set_schema` le
-prévient dès la déclaration.
+**Vider un champ `required_when` et changer l'aiguillage tiennent dans UN SEUL appel
+(#649, 17/09/2026).** `required_when` se juge sur la ligne MERGÉE, aiguillage compris
+(#347) — pas sur une suite d'états intermédiaires. Vider le champ gaté SEUL, pendant que
+l'aiguillage porte encore la valeur qui arme la garde, est refusé : la ligne finale viole
+toujours la contrainte. Le geste qui passe est un `data_write` unique portant les deux
+écritures — c'est ce que le refus dit désormais lui-même (`_clause_un_seul_appel`) et ce
+que la description de `required_when` sur `data_set_schema` prévient dès la déclaration.
+
+⚠️ **Ce n'est pas une indifférence à l'ordre, et aucun texte ne doit la promettre.** En
+DEUX appels, changer l'aiguillage d'abord passe (la garde s'éteint), et le vidage qui
+suit passe aussi : rien ne refuse un champ gaté resté rempli quand la garde tombe. La
+contrainte porte sur le VIDE tant que la garde tient, jamais sur le PLEIN quand elle
+s'éteint. Corollaire côté refus : la clause se TAIT quand l'appel écrit déjà une clé de
+la condition — l'appelant vient de choisir la valeur qui arme la garde, lui dire « les
+deux dans le même appel » serait lui décrire un geste qu'il a déjà fait.
 
 **Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
 `field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
