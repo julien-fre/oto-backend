@@ -18,7 +18,7 @@ from mcp.types import ErrorData, INVALID_PARAMS, INVALID_REQUEST
 
 from .. import access, output_projection, session_org, url_perimeter
 from ..connectors import verify as connector_verify
-from . import images_base64, mail_obfuscation
+from . import cesures, images_base64, mail_obfuscation
 
 # Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
 # de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
@@ -568,6 +568,9 @@ def register(mcp: FastMCP) -> None:
             # oto#246 : une image incluse en base64 ne se lit pas, elle se paie à chaque
             # tour qui relit la page — jusqu'à 91 % d'une page d'accueil mesurée.
             images_base64.alleger(res)
+            # oto#208 : la césure conditionnelle arrive au milieu des mots, noms propres
+            # compris. Retirée AVANT la complétion des adresses, qui relit le texte.
+            cesures.retirer_des_representations(res)
             mail_obfuscation.completer(res, url, per)
             return res
         except requests.Timeout:

@@ -44,6 +44,8 @@ from fastmcp import FastMCP
 from ..mcp_errors import McpError
 from mcp.types import INVALID_REQUEST, ErrorData
 
+from . import cesures
+
 from .. import access, browserbase, egress, url_perimeter
 
 _TIMEOUT = (10, 30)              # borne CHAQUE socket — pas la lecture entière
@@ -149,7 +151,8 @@ def extract_text(html_str: str) -> tuple:
     # noqa: SILENT — extraction de texte optionnelle : le HTML brut reste rendu
     except Exception:  # noqa: BLE001 — un HTML monstrueux ne casse pas la lecture
         pass
-    brut = "".join(p.parts)
+    # oto#208 : la césure conditionnelle, invisible, coupe les mots lus par l'agent.
+    brut = cesures.retirer("".join(p.parts))
     lignes = [l.strip() for l in brut.splitlines()]
     texte = "\n".join(l for i, l in enumerate(lignes)
                       if l or (i > 0 and lignes[i - 1]))
