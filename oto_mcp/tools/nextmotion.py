@@ -1,5 +1,6 @@
 """Nextmotion — logiciel de gestion de cliniques de médecine esthétique, côté
-ADMINISTRATIF : cliniques, praticiens, agenda, catalogue, devis, factures, stock.
+ADMINISTRATIF, en lecture (plus deux gestes d'agenda) : cliniques, praticiens, agenda,
+catalogue, ventes, leads, statistiques, stock, réglages.
 
 Wrappe `oto.tools.nextmotion.NextmotionClient` (Bearer, API « External » v4). keyed
 `api_key`, BYO (membre ou org) : une clé agit au nom de l'utilisateur qui l'a générée,
@@ -7,28 +8,27 @@ sur les cliniques dont il est employé — il n'y a pas de clé plateforme.
 
 ## Données de santé : ce que ce connecteur ne sert PAS
 
-Nextmotion porte des dossiers patients. Tout ce qui est contenu médical — dossier
-et antécédents, photos et médias, ordonnances, consentements, soins réalisés,
-consultations — est **hors périmètre** : le client oto-core n'a aucune méthode vers
-ces endpoints, et ce module n'en ajoute pas. Les ouvrir est une décision de
-gouvernance (RGPD art. 9, hébergement HDS), pas une extension de surface.
+Nextmotion porte des dossiers patients. Tout ce qui est contenu médical — dossier et
+antécédents, photos et médias, ordonnances, consentements, soins réalisés,
+consultations, visites (notes cliniques), questionnaires de santé, suivi post-soin —
+est **hors périmètre**, comme la liste et la fiche des patients et le chat : le client
+oto-core n'a aucune méthode vers ces endpoints, et ces modules n'en ajoutent pas. Les
+ouvrir est une décision de gouvernance (RGPD art. 9, hébergement HDS), pas une
+extension de surface.
 
-⚠️ **Trois ressources du périmètre EMBARQUENT quand même de la donnée patient** :
-un rendez-vous, un devis et une facture portent un objet `patient` complet (date de
-naissance, âge, sexe, commentaires du praticien, photo…) et des champs de texte
-libre (`notes`, `free_text`, `details`, `template_text`, `title`, `subject`) où un
-praticien peut écrire n'importe quoi, nom du patient compris. Ces trois ressources
-sont donc rendues par une **projection en LISTE BLANCHE** (`nextmotion_socle` :
-`_appointment`, `_quote`, `_invoice`) : seuls les champs nommés passent, un champ que l'API
-ajouterait demain reste dehors. **Le patient n'est servi que par son `id`** — ni
-nom, ni prénom, ni email, ni téléphone — pour qu'aucune paire personne × prestation
-ne transite. **Il n'existe aucune échappatoire vers le brut** (pas de
-`fields=["*"]`), et aucun outil ne résout un id patient en identité.
-
-⚠️ Ce qui reste en texte (libellés du catalogue, nom d'un praticien) → `nextmotion_socle`.
+⚠️ **Des ressources du périmètre EMBARQUENT quand même de la donnée personnelle** :
+rendez-vous, parcours, devis, factures et paiements portent un objet `patient` complet ;
+une demande de rendez-vous en ligne et un lead portent le nom, l'email et le téléphone
+de la personne ; beaucoup portent du texte libre. **Tout ce qui sort passe donc par une
+LISTE BLANCHE** (`nextmotion_socle`) : seuls les champs nommés passent, un champ que
+l'API ajouterait demain reste dehors. **Le patient n'est servi que par son `id`**, la
+personne d'une demande ou d'un lead pas du tout. **Il n'existe aucune échappatoire vers
+le brut** (`fields=["*"]` rend la vue par défaut), aucun outil ne résout un id patient
+en identité, et aucun filtre qui cherche sur le nom d'une personne n'est exposé.
 
 ## Surface (ADR 0047), verbe en `op`, défaut toujours en lecture
 
+Ce module :
 - `nextmotion_clinic` — découverte : les cliniques de la clé (seul, sans op).
 - `nextmotion_practitioner` — list | get.
 - `nextmotion_appointment` — list | get | reschedule | delete. Les deux écritures
@@ -36,11 +36,16 @@ ne transite. **Il n'existe aucune échappatoire vers le brut** (pas de
   l'état actuel du rendez-vous sans rien écrire.
 - `nextmotion_availability` — créneaux libres (params disjoints de l'agenda, d'où
   un tool à part) ; fournit l'`id` et le `time_slot` qu'exige `reschedule`.
-- `nextmotion_catalog` — le catalogue, `kind` × list | get.
 - `nextmotion_quote`, `nextmotion_invoice` — list | get ; filtre de période des
   factures appliqué CÔTÉ OUTIL → `nextmotion_periode` (pas sur les devis : `OApiQuote`
   n'a pas d'`invoiced_time`, son `issued_time` est nullable).
 - `nextmotion_product` — stock (lots), list | get, NON rattaché aux factures.
+
+Modules frères (même clé, même client, montés par `Connector.modules`) :
+`nextmotion_catalogue` (catalogue, forfaits, répartitions comptables, produits
+globaux), `nextmotion_agenda` (salles, appareils, plages, absences, demandes en ligne,
+parcours), `nextmotion_ventes` (paiements, statistiques, totaux d'un patient),
+`nextmotion_crm` (leads, réglages de la clinique).
 
 **Aucun argument n'est retenu au silence** (`is not None`) → `nextmotion_garde`.
 
@@ -54,35 +59,20 @@ from typing import Literal, Optional
 
 from fastmcp import FastMCP
 
-from .. import access
 from ..connectors import verify as connector_verify
 from . import nextmotion_periode as periode
-from .nextmotion_garde import _bad, _need, _paging, _refuse_ignored, _upstream_message, _verify
-from .nextmotion_socle import _appointment, _invoice, _one, _page, _product, _quote
+from .nextmotion_garde import (_NAME, _bad, _client, _need, _paging, _refuse_ignored, _run,
+                               _verify)
+from .nextmotion_socle import (_CLINIC, _COLLAB, _appointment, _invoice, _one, _page,
+                               _product, _quote, _shape)
 
-_NAME = "nextmotion"
+_clinic = _shape(_CLINIC)
+_collab = _shape(_COLLAB)
+_slot = _shape(("id", "type", "time_slot", "utc_offset"))
 
 
 def register(mcp: FastMCP) -> None:
-    from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.nextmotion import NextmotionClient
-
     connector_verify.register(_NAME, _verify)
-
-    def _client() -> NextmotionClient:
-        key, _ = access.resolve_api_key(_NAME)
-        if not isinstance(key, str) or not key.strip():
-            # Vide, le client irait chercher une clé dans l'environnement du serveur.
-            raise _bad("Nextmotion : aucune clé API posée pour ce connecteur.")
-        return NextmotionClient(api_key=key.strip())
-
-    def _run(fn):
-        try:
-            return fn()
-        except ValueError as e:
-            raise _bad(str(e))
-        except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e))
 
     @mcp.tool()
     def nextmotion_clinic(limit: Optional[int] = None, offset: Optional[int] = None,
@@ -97,7 +87,7 @@ def register(mcp: FastMCP) -> None:
         """
         c = _client()
         return _page(_run(lambda: c.list_clinics(**_paging(limit, offset))), "clinics",
-                     fields=fields)
+                     _clinic, fields=fields, withheld=None)
 
     @mcp.tool()
     def nextmotion_practitioner(
@@ -127,12 +117,13 @@ def register(mcp: FastMCP) -> None:
             _need(op, clinic_id=clinic_id)
             _refuse_ignored(op, doctor_id=doctor_id)
             return _page(_run(lambda: c.list_doctors(clinic_id, **_paging(limit, offset))),
-                         "practitioners", fields=fields)
+                         "practitioners", _collab, fields=fields, withheld=None)
         if op == "get":
             _need(op, doctor_id=doctor_id)
             _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset,
                             fields=fields)
-            return _one(_run(lambda: c.get_doctor(doctor_id)), "practitioner")
+            return _one(_run(lambda: c.get_doctor(doctor_id)), "practitioner", _collab,
+                        withheld=None)
         raise _bad("op doit être 'list' ou 'get'.")
 
     @mcp.tool()
@@ -251,85 +242,7 @@ def register(mcp: FastMCP) -> None:
             clinic_id, start_date=start_date, end_date=end_date,
             sub_visit_type_id=sub_visit_type_id, sub_visit_type_name=sub_visit_type_name,
             doctor_id=doctor_id, doctor_name=doctor_name))
-        return {"slots": (env or {}).get("data") or []}
-
-    _CATALOG = {
-        # kind: (list method, get method, plural, the kind's own list filter)
-        "visit_type": ("list_visit_types", "get_visit_type", "visit_types",
-                       "visit_type_category_id"),
-        "visit_type_category": ("list_visit_type_categories", "get_visit_type_category",
-                                "visit_type_categories", None),
-        "sub_visit_type": ("list_sub_visit_types", "get_sub_visit_type",
-                           "sub_visit_types", "visit_type_id"),
-        "treatment_type": ("list_treatment_types", "get_treatment_type",
-                           "treatment_types", "search"),
-        "treatment_pricing": ("list_treatment_pricings", "get_treatment_pricing",
-                              "treatment_pricings", "treatment_type_id"),
-    }
-
-    @mcp.tool()
-    def nextmotion_catalog(
-        kind: Literal["visit_type", "visit_type_category", "sub_visit_type",
-                      "treatment_type", "treatment_pricing"],
-        op: Literal["list", "get"] = "list",
-        clinic_id: Optional[str] = None,
-        item_id: Optional[str] = None,
-        visit_type_category_id: Optional[str] = None,
-        visit_type_id: Optional[str] = None,
-        treatment_type_id: Optional[str] = None,
-        search: Optional[str] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        fields: Optional[list] = None,
-    ) -> dict:
-        """The service catalogue of a Nextmotion clinic: what can be booked, and
-        at what price.
-
-        `kind`:
-        - "visit_type" — bookable appointment types (duration, price); filter
-          `visit_type_category_id`.
-        - "visit_type_category" — their categories.
-        - "sub_visit_type" — variants of a visit type; filter `visit_type_id`.
-        - "treatment_type" — treatments offered; filter `search`.
-        - "treatment_pricing" — prices and VAT of treatments; filter
-          `treatment_type_id`.
-
-        `op`: **"list"** (default, needs `clinic_id`) | **"get"** (`item_id`).
-        Each filter belongs to one kind only; the others refuse it.
-
-        Args:
-            kind: which catalogue.
-            op: list (default) | get.
-            clinic_id: op="list" — the clinic.
-            item_id: op="get" — the item of that kind.
-            visit_type_category_id / visit_type_id / treatment_type_id / search:
-                op="list" — the kind's filter (see above).
-            limit / offset: op="list" — pagination (limit 1..100, default 50).
-            fields: op="list" — keep only these keys per row (`id` always kept);
-                omitted or `["*"]` = the default view.
-        """
-        if kind not in _CATALOG:
-            raise _bad(f"kind inconnu : {kind!r}.")
-        list_m, get_m, plural, own = _CATALOG[kind]
-        filters = {"visit_type_category_id": visit_type_category_id,
-                   "visit_type_id": visit_type_id,
-                   "treatment_type_id": treatment_type_id, "search": search}
-        for name, value in filters.items():
-            if name != own and value is not None:
-                raise _bad(f"kind={kind!r} n'utilise pas `{name}`.")
-        c = _client()
-        if op == "list":
-            _need(op, clinic_id=clinic_id)
-            _refuse_ignored(op, item_id=item_id)
-            extra = {own: filters[own]} if own else {}
-            return _page(_run(lambda: getattr(c, list_m)(
-                clinic_id, **extra, **_paging(limit, offset))), plural, fields=fields)
-        if op == "get":
-            _need(op, item_id=item_id)
-            _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset,
-                            fields=fields, **({own: filters[own]} if own else {}))
-            return _one(_run(lambda: getattr(c, get_m)(item_id)), kind)
-        raise _bad("op doit être 'list' ou 'get'.")
+        return {"slots": [_slot(r) for r in (env or {}).get("data") or []]}
 
     @mcp.tool()
     def nextmotion_quote(
@@ -341,9 +254,10 @@ def register(mcp: FastMCP) -> None:
         offset: Optional[int] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """Quotes (devis) of a Nextmotion clinic — number, status, lines, totals,
-        follow-up. Health data, titles and free text are withheld; the patient
-        is served by their ID ONLY (no name, email or phone; no tool resolves it to a person).
+        """Quotes (devis) of a Nextmotion clinic — number, status, lines (with
+        sub-pricings, markup, accounting codes), totals, follow-up and channel.
+        Health data, titles and free text are withheld; the patient is served by
+        their ID ONLY (no name, email or phone; no tool resolves it to a person).
 
         Status codes: 1 NEW, 2 QUOTED, 3 ACCEPTED, 4 REJECTED, 5 INVOICED,
         6 ACQUAINTED.
@@ -403,8 +317,10 @@ def register(mcp: FastMCP) -> None:
         `complet: false` = the page cap cut the scan, the result is PARTIAL: call again
         with `offset=offset_suivant` and the same period. With a period, `limit` is
         refused and `offset` is where the scan starts in the upstream list.
-        Lines carry the act name, price and quantity only: no consumables nor lots
-        per invoice in the API (`nextmotion_product` is not linked to invoices).
+        Lines carry the act name, price, quantity, rebate, markup, VAT and their
+        sub-pricings (accounting code, clinic/provider split); no consumables nor
+        lots per invoice in the API (`nextmotion_product` is not linked to invoices).
+        Payments of an invoice: `nextmotion_payment(invoice_id=…)`.
 
         Args:
             op: list (default) | get.

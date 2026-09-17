@@ -214,8 +214,8 @@ _DECLARATIONS: tuple[str, ...] = (
     # seul connecteur du catalogue qui écrit dans un produit que nous opérons.
     "hellostock",
     # --- gestion de clinique esthétique — câblé 2026-09-17 --------------------
-    # Côté administratif seulement (agenda, catalogue, devis, factures) : le
-    # contenu médical n'est pas servi, cf. `tools/nextmotion.py`.
+    # Côté administratif seulement (agenda, catalogue, ventes, leads, réglages),
+    # en liste blanche : le contenu médical n'est pas servi, cf. `tools/nextmotion.py`.
     "nextmotion",
     # --- paie et RH, en lecture — câblé 2026-09-17 ----------------------------
     # Voisin de `nextmotion` par la SITUATION : un logiciel qui porte des données

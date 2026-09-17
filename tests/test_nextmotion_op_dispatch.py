@@ -1,7 +1,9 @@
 """Connecteur Nextmotion — dispatch `op=`, projection des données de santé, sonde.
 
 Ce que ce fichier verrouille :
-- la SURFACE (8 tools) et le routage de chaque op vers la bonne méthode du client ;
+- la SURFACE (15 tools, sur les cinq modules du connecteur) et le routage de chaque op
+  vers la bonne méthode du client — les ressources ajoutées le 2026-09-17 ont leur
+  propre fichier, `test_nextmotion_administratif.py` ;
 - un argument requis manquant nommé, un argument non pertinent REFUSÉ — « fourni » se
   lit `is not None`, donc `dry_run=False` et `offset=0` comptent ;
 - `dry_run` vaut True par défaut sur les deux écritures et n'atteint JAMAIS la méthode
@@ -41,11 +43,16 @@ def client(monkeypatch):
 
 
 def _mcp():
+    """Les outils de TOUS les modules que le registre monte pour ce connecteur : le
+    cliquet et la surface se jugent sur le montage réel, pas sur un module."""
+    import importlib
+
     from fastmcp import FastMCP
-    from oto_mcp.tools import nextmotion as N
+    from oto_mcp.providers.nextmotion import CONNECTOR
 
     m = FastMCP("t")
-    N.register(m)
+    for mod in CONNECTOR.modules:
+        importlib.import_module(f"oto_mcp.tools.{mod}").register(m)
     return m
 
 
@@ -53,11 +60,13 @@ def _tool(name: str):
     return asyncio.run(_mcp().get_tool(name)).fn
 
 
-def test_the_surface_is_exactly_eight_tools(client):
+def test_the_surface_is_exactly_fifteen_tools(client):
     assert sorted(t.name for t in asyncio.run(_mcp().list_tools())) == [
-        "nextmotion_appointment", "nextmotion_availability", "nextmotion_catalog",
-        "nextmotion_clinic", "nextmotion_invoice", "nextmotion_practitioner",
-        "nextmotion_product", "nextmotion_quote",
+        "nextmotion_appointment", "nextmotion_availability", "nextmotion_calendar",
+        "nextmotion_catalog", "nextmotion_clinic", "nextmotion_invoice",
+        "nextmotion_journey", "nextmotion_lead", "nextmotion_patient_stats",
+        "nextmotion_payment", "nextmotion_practitioner", "nextmotion_product",
+        "nextmotion_quote", "nextmotion_setting", "nextmotion_statistics",
     ]
 
 
