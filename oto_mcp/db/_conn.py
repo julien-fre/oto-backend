@@ -152,9 +152,26 @@ class _EmpruntParesseux:
             pool = _get_pool()
             self._cm = pool.connection()
             self._conn = self._cm.__enter__()
+            # AUTOCOMMIT le temps du prêt (oto cd, 17/09/2026, revue de ce
+            # lot) : sans lui, tout `status_for` tenait dans UNE SEULE
+            # transaction PostgreSQL — une requête en erreur (attrapée par
+            # l'appelant, ex. une clé illisible sur UN connecteur) mettait
+            # TOUTE la transaction en échec, et chaque lecture suivante
+            # levait `InFailedSqlTransaction` au lieu de simplement échouer,
+            # elle. `status_for` ne fait QUE lire (garanti par
+            # `reuse_connection`, ci-dessous) : chaque requête devient son
+            # propre commit implicite, une erreur reste locale à elle, et le
+            # `BEGIN`/`COMMIT` explicite disparaît (un aller-retour de moins
+            # par emprunt, en plus du gain déjà obtenu en n'empruntant
+            # qu'une fois). Remis à `False` dans `fermer()` avant que la
+            # connexion ne reparte au pool — jamais une connexion en
+            # autocommit ne doit atteindre un autre appelant.
+            self._conn.autocommit = True
         return self._conn
 
     def fermer(self) -> None:
+        if self._conn is not None:
+            self._conn.autocommit = False
         if self._cm is not None:
             self._cm.__exit__(None, None, None)
 
@@ -174,11 +191,19 @@ def reuse_connection() -> Iterator[None]:
     un appel, chacun payant son `BEGIN`/`COMMIT` propre au pool : ~3 allers-retours
     par emprunt plutôt qu'1).
 
-    ⚠️ **LECTURE SEULE.** La connexion n'est rendue (et donc commitée) qu'à la
-    sortie du bloc : une écriture posée dedans reste invisible aux AUTRES
-    connexions tant que le bloc n'est pas sorti — n'enveloppe jamais un chemin qui
-    écrit puis relit sa propre écriture par une voie externe. `status_for` est une
-    PROJECTION (aucune écriture sur son chemin) — c'est le seul appelant prévu.
+    ⚠️ **LECTURE SEULE, et désormais en AUTOCOMMIT** (revue oto cd, 17/09/2026) :
+    chaque requête empruntée valide seule, immédiatement — jamais toutes ensemble
+    à la sortie du bloc. Deux conséquences, dans le même sens : une écriture posée
+    dedans serait visible des AUTRES connexions immédiatement, pas seulement à la
+    sortie — n'enveloppe jamais un chemin qui écrit puis relit sa propre écriture
+    en supposant l'isolation d'une transaction commune ; et une requête en ERREUR,
+    attrapée par l'appelant, ne met en échec qu'ELLE-MÊME — les requêtes suivantes
+    dans le même bloc restent utilisables (sans autocommit, PostgreSQL aurait mis
+    TOUTE la transaction en échec, `InFailedSqlTransaction` sur la première lecture
+    suivante). `status_for` est une PROJECTION (aucune écriture sur son chemin,
+    vérifié : `journal_resolution` — la seule comparaison ADR 0053 posée sur ce
+    chemin — ne fait qu'un `logger.warning`, jamais une écriture) — c'est le seul
+    appelant prévu, et le seul pour lequel ces deux propriétés sont sûres.
 
     Ré-entrant : un `reuse_connection()` imbriqué dans un autre ne fait rien (la
     connexion déjà empruntée par le bloc englobant sert aux deux)."""

@@ -18,6 +18,7 @@ millisecondes.
 """
 from __future__ import annotations
 
+import types
 from contextlib import contextmanager
 
 from oto_mcp import access
@@ -26,7 +27,9 @@ from oto_mcp.db import _conn
 
 class _FauxPool:
     """Remplace `_get_pool()` : chaque entrée dans `.connection()` est un emprunt
-    compté — pas de vraie base, la connexion rendue est un objet inerte."""
+    compté — pas de vraie base, la connexion rendue est un objet inerte, mais
+    porte `.autocommit` (posé par `_EmpruntParesseux.obtenir`, 17/09/2026 — une
+    vraie connexion psycopg l'a toujours ; `object()` nu ne l'accepte pas)."""
 
     def __init__(self):
         self.emprunts = 0
@@ -34,7 +37,7 @@ class _FauxPool:
     @contextmanager
     def connection(self):
         self.emprunts += 1
-        yield object()
+        yield types.SimpleNamespace()
 
 
 def test_hors_reuse_connection_chaque_connect_emprunte_le_sien(monkeypatch):
