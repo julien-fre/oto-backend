@@ -36,7 +36,13 @@ _LINK_TYPES = ("tableau", "procedure", "connecteur")
 class ProjectInput(BaseModel):
     op: Literal["create", "list", "list_templates", "get", "update", "archive",
                 "copy", "handoff", "link", "unlink", "activity", "runs", "inventory",
-                "lint", "publish_mcp", "unpublish_mcp"]
+                "lint", "publish_mcp", "unpublish_mcp"] = Field(description=(
+        "Pour CHANGER LE PROPRIÉTAIRE d'un projet existant (ex. perso → org) SANS "
+        "dupliquer ni perdre l'historique (docs, activity, runs restent sur le MÊME "
+        "project_id) : ce n'est PAS un op d'ici — `op=copy` DUPLIQUE en un nouveau "
+        "projet. Utilise `oto_resource(op=\"transfer\", resource_type=\"project\", "
+        "resource_id=<id>, new_owner_org=<org_id>)` (ADR 0030) : garde le même id, "
+        "l'ancien propriétaire perso conserve un accès en écriture."))
     project_id: Optional[int] = Field(default=None, description=(
         "OMIT it on op=runs and you get YOUR OWN still-open runs instead, across every "
         "org, each with its `run_id` — that is how you find a run whose id you lost."))
