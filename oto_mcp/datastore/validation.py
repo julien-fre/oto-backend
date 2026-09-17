@@ -34,6 +34,7 @@ from .hors_schema import _unknown_subkey_refusal, _unknown_subkeys
 from .couches_exigees import couches_manquantes
 from .phrases_de_refus import (
     _forme_attendue, _gated_by, _cause_required_when, _clause_aiguillage,
+    _clause_un_seul_appel,
 )
 
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
@@ -273,9 +274,16 @@ def _row_errors(fields: list, data: dict, path: str,
                 # seconde fois, et paie deux allers-retours pour une seule ligne :
                 # exactement la séquence mesurée (35 refus sur 105, 27 rattrapés au
                 # coup d'après).
+                # #649 : la clause « un seul appel » n'a de sens que sur un PATCH qui
+                # cible ce champ explicitement (written is not None) — à la création
+                # (written=None), il n'y a pas d'état antérieur à quitter, donc rien
+                # à « revenir en arrière ».
                 errors.append(f"{fpath}: champ requis manquant{cause} — "
                               f"elle attend {_forme_attendue(f)}"
-                              + _clause_aiguillage(fields, rw) + _CLAUSE_VIDE_ASSUME)
+                              + _clause_aiguillage(fields, rw)
+                              + (_clause_un_seul_appel(rw)
+                                 if written is not None and pose else "")
+                              + _CLAUSE_VIDE_ASSUME)
                 if details is not None:
                     details.setdefault("expected_column", str(key))
             continue

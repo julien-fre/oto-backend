@@ -632,7 +632,11 @@ def register(mcp: FastMCP) -> None:
           contacts = list of {nom, titre, email}).
         - write validation: `field.required: true`, type conformity,
           `field.required_when: {"<field>": "<value>"}` (e.g. deliverables required
-          when status="qualified"), `field.max_length: <int>` on a SCALAR field, and
+          when status="qualified"). ⚠️ To UNDO — clear the gated field(s) AND leave
+          the triggering state — both must happen in the SAME `data_write` call: a
+          call that only clears the field while the state still matches is refused
+          (the gate still applies at that instant), and so is one written in the
+          other order. `field.max_length: <int>` on a SCALAR field, and
           `field.pattern: "<regex>"` for its SHAPE when the size does not separate
           anything (a code, a snake_case identifier) — `re.search`, so anchor it
           yourself (`^…$`). `pattern` REQUIRES `max_length` on the same field (≤1000):

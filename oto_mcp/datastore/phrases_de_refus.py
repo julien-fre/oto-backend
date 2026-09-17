@@ -92,6 +92,23 @@ def _cause_required_when(rw: Any) -> str:
     return " (requis quand " + " et ".join(bouts) + ")"
 
 
+def _clause_un_seul_appel(rw: Any) -> str:
+    """oto-backend#649 : POUR REVENIR EN ARRIÈRE, il ne suffit pas de vider ce champ.
+
+    `required_when` se juge sur la ligne FINALE, aiguillage compris (#347) : vider
+    ce champ pendant que l'aiguillage vaut encore la valeur qui l'exige refuse cet
+    appel-là, précisément parce que rien n'a changé côté aiguillage. Un agent qui
+    corrige en deux temps (vider, puis changer l'aiguillage — ou l'inverse) se fait
+    refuser au premier des deux, quel que soit l'ordre : c'est le MÊME appel qui
+    doit porter les deux écritures."""
+    if not isinstance(rw, dict) or not rw:
+        return ""
+    noms = ", ".join(f"`{c}`" for c in rw)
+    return (f" ; pour revenir en arrière, vide ce champ ET change {noms} dans le "
+            f"MÊME appel — vider l'un sans l'autre reste refusé, quel que soit "
+            f"l'ordre")
+
+
 def _clause_aiguillage(fields: list, rw: Any) -> str:
     """La PRÉVENTION du geste suivant : ne pas écrire le texte dans l'aiguillage.
 

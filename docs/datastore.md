@@ -735,6 +735,17 @@ changer, pas l'agent ». Un `retraitement` objet `{valeur, motif}` serait la voi
 Le message est la voie courte, prise parce qu'elle tient **sans consigne, sur toutes les
 missions** — même famille que le refus d'identifiant qui nomme la forme attendue (#517).
 
+**Vider un champ `required_when` et revenir à un état non-terminal tiennent dans UN SEUL
+appel (#649, 17/09/2026).** `required_when` se juge sur la ligne FINALE, aiguillage
+compris (#347) — pas sur une suite d'états intermédiaires. Un agent qui annule en deux
+temps (vider le champ, puis changer l'aiguillage — ou l'inverse) se fait refuser au
+premier des deux appels, quel que soit l'ordre choisi : au moment de ce premier appel,
+l'aiguillage porte encore l'ancienne valeur (ou le champ porte encore l'ancienne),
+donc la contrainte s'applique toujours. Ce n'est pas un défaut à corriger : les deux
+écritures doivent partager le même `data_write`. Le refus le dit désormais lui-même
+(`_clause_un_seul_appel`) et la description de `required_when` sur `data_set_schema` le
+prévient dès la déclaration.
+
 **Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
 `field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
 doit porter une ÉNUMÉRATION de catégories séparées par des points-virgules, pas une

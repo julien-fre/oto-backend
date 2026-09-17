@@ -147,6 +147,42 @@ def test_le_relevé_des_regles_EXECUTEES_est_intact(_=None):
 
 # ── le seam d'écriture porte les détails jusqu'aux surfaces ──────────────────
 
+# ── #649 : revenir en arrière tient dans UN SEUL appel ────────────────────────
+
+def test_vider_le_champ_SANS_changer_l_aiguillage_le_dit(_=None):
+    """Le patch ne cible QUE `retraitement_motif` (le vider) : `retraitement` reste
+    à sa valeur d'avant dans la row mergée, donc la contrainte s'applique encore —
+    et le refus doit dire qu'il faut les DEUX dans le même appel."""
+    errs = S.validate_row(_SCHEMA,
+                          {"retraitement": "injoignable", "retraitement_motif": ""},
+                          written={"retraitement_motif"})
+    assert errs, "le vidage seul doit rester refusé"
+    msg = " ; ".join(errs)
+    assert "MÊME appel" in msg
+    assert "change `retraitement`" in msg
+
+
+def test_vider_ET_changer_l_aiguillage_ENSEMBLE_passe(_=None):
+    """La row mergée ne satisfait plus la condition : plus de refus du tout — c'est
+    exactement le geste qu'un seul appel doit permettre."""
+    schema = {"fields": [
+        {"key": "retraitement", "type": "enum",
+         "options": ["injoignable", "hors_cible", "doublon", "resolu"]},
+        {"key": "retraitement_motif", "type": "text", "max_length": 300,
+         "required_when": {"retraitement": ["injoignable", "hors_cible", "doublon"]}},
+    ]}
+    assert S.validate_row(schema, {"retraitement": "resolu", "retraitement_motif": ""},
+                          written={"retraitement", "retraitement_motif"}) == []
+
+
+def test_la_clause_est_muette_a_la_creation(_=None):
+    """`written=None` (insert/remplacement) : il n'y a pas d'état antérieur à
+    quitter, donc pas de conseil de « revenir en arrière » — juste le refus
+    ordinaire de champ manquant."""
+    msg = _refus({"retraitement": "injoignable"})
+    assert "MÊME appel" not in msg
+
+
 def test_le_store_porte_les_details_dans_son_refus(monkeypatch):
     """Le refus est levé par `DatastorePg._check_row` : sans le passage des détails
     là, `details` resterait une propriété du validateur que personne ne voit."""
