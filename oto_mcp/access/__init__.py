@@ -97,11 +97,11 @@ import logging
 import sys
 import types
 
-from . import (scope, quotas, cascade, rbac, resolved_credential, tenant_budget,
-               resolve_anon, resolve, views, status)
+from . import (scope, quotas, cascade, platform_grant, rbac, resolved_credential,
+               tenant_budget, resolve_anon, resolve, views, status)
 
-_MODULES = (scope, quotas, cascade, rbac, resolved_credential, tenant_budget,
-            resolve_anon, resolve, views, status)
+_MODULES = (scope, quotas, cascade, platform_grant, rbac, resolved_credential,
+            tenant_budget, resolve_anon, resolve, views, status)
 
 # Ré-export plat (publics + privés à un underscore ; les dunder restent au
 # package) + carte `nom -> modules qui le définissent`, qui sert la propagation

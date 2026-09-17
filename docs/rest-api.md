@@ -268,13 +268,11 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   (`auth.flow.connector_return_suffix`/`connector_return_url`) plutôt que composée à la
   main dans chaque callback — c'était le cas avant ce lot, avec cinq formes différentes
   et deux replis cassés (une f-string à accolades doublées sur atlassian/folk, qui
-  rendait une chaîne littérale au lieu d'une URL). `zoho` et `google` servaient déjà un
-  suffixe LU par le dashboard (`?zoho=connected`, `?google=connected`) : il coexiste
-  avec le neuf dans la MÊME redirection, le temps d'un préavis distinct de celui du
-  renommage doctrine→guide (`deprecations.ANNONCE_RETOUR_OAUTH`/`RETRAIT_RETOUR_OAUTH`,
-  `docs/alias-deprecies.md`) — **la date de retrait n'est PAS encore fixée** : elle ne
-  peut être posée qu'au tag qui met ce lot en production (main = preprod), pas avant ;
-  tant qu'elle est absente, le doublage reste actif sans discontinuer. `atlassian` et
+  rendait une chaîne littérale au lieu d'une URL). `zoho` et `google` servaient un
+  suffixe LU par le dashboard (`?zoho=connected`, `?google=connected`) doublé le temps
+  d'un préavis ; **retiré le 2026-09-17, sans préavis** (décision d'Alexis, voir
+  `docs/alias-deprecies.md`) — mesuré : zéro lecteur (dashboard migré depuis le 04/09,
+  zéro connexion Zoho/Google chez le seul partenaire concerné). `atlassian` et
   `folkmcp` avaient gagné `connect=` en pur ajout (leur `connector=` déjà servi ne
   bougeait pas) ; ils ne servaient AUCUNE distinction succès/échec avant ce lot (le
   repli cassé rendait toujours la même destination), donc rien n'y avait de lecteur à
