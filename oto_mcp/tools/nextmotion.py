@@ -159,16 +159,19 @@ def register(mcp: FastMCP) -> None:
             raise _bad(_upstream_message(e))
 
     @mcp.tool()
-    def nextmotion_clinic(limit: Optional[int] = None, offset: Optional[int] = None) -> dict:
+    def nextmotion_clinic(limit: Optional[int] = None, offset: Optional[int] = None,
+                          fields: Optional[list] = None) -> dict:
         """The Nextmotion clinics the API key's user belongs to — start here: every
         other nextmotion tool needs a `clinic_id` from this list.
 
         Args:
             limit: 1..100 (default 50).
             offset: pagination start (default 0).
+            fields: keep only these keys per clinic (`id` always kept).
         """
         c = _client()
-        return _page(_run(lambda: c.list_clinics(**_paging(limit, offset))), "clinics")
+        return _page(_run(lambda: c.list_clinics(**_paging(limit, offset))), "clinics",
+                     fields=fields)
 
     @mcp.tool()
     def nextmotion_practitioner(
@@ -177,6 +180,7 @@ def register(mcp: FastMCP) -> None:
         doctor_id: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        fields: Optional[list] = None,
     ) -> dict:
         """Practitioners (doctors, staff) of a Nextmotion clinic.
 
@@ -189,16 +193,19 @@ def register(mcp: FastMCP) -> None:
             clinic_id: op="list" — the clinic.
             doctor_id: op="get" — the practitioner.
             limit / offset: op="list" — pagination (limit 1..100, default 50).
+            fields: op="list" — keep only these keys per row (`id` always kept);
+                omitted or `["*"]` = the default view.
         """
         c = _client()
         if op == "list":
             _need(op, clinic_id=clinic_id)
             _refuse_ignored(op, doctor_id=doctor_id)
             return _page(_run(lambda: c.list_doctors(clinic_id, **_paging(limit, offset))),
-                         "practitioners")
+                         "practitioners", fields=fields)
         if op == "get":
             _need(op, doctor_id=doctor_id)
-            _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset)
+            _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset,
+                            fields=fields)
             return _one(_run(lambda: c.get_doctor(doctor_id)), "practitioner")
         raise _bad("op doit être 'list' ou 'get'.")
 
@@ -214,6 +221,7 @@ def register(mcp: FastMCP) -> None:
         dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        fields: Optional[list] = None,
     ) -> dict:
         """Calendar appointments of a Nextmotion clinic — read the agenda, move or
         delete an appointment.
@@ -247,6 +255,8 @@ def register(mcp: FastMCP) -> None:
             time_slot: op="reschedule" — slot `time_slot` (date-time).
             dry_run: op="reschedule"/"delete" — default True.
             limit / offset: op="list" — pagination (limit 1..100, default 50).
+            fields: op="list" — keep only these keys per row (`id` always kept);
+                omitted or `["*"]` = the default view.
         """
         c = _client()
         if op == "list":
@@ -256,11 +266,11 @@ def register(mcp: FastMCP) -> None:
                             time_slot=time_slot, dry_run=dry_run)
             return _page(_run(lambda: c.list_appointments(
                 clinic_id, date=date, patient_id=patient_id, **_paging(limit, offset))),
-                "appointments", _appointment)
+                "appointments", _appointment, fields=fields)
         if op not in ("get", "reschedule", "delete"):
             raise _bad("op doit être 'list', 'get', 'reschedule' ou 'delete'.")
         _refuse_ignored(op, clinic_id=clinic_id, date=date, patient_id=patient_id,
-                        limit=limit, offset=offset)
+                        limit=limit, offset=offset, fields=fields)
         _need(op, appointment_id=appointment_id)
         if op == "get":
             _refuse_ignored(op, visit_type_opening_hour_id=visit_type_opening_hour_id,
@@ -344,6 +354,7 @@ def register(mcp: FastMCP) -> None:
         search: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        fields: Optional[list] = None,
     ) -> dict:
         """The service catalogue of a Nextmotion clinic: what can be booked, and
         at what price.
@@ -368,6 +379,8 @@ def register(mcp: FastMCP) -> None:
             visit_type_category_id / visit_type_id / treatment_type_id / search:
                 op="list" — the kind's filter (see above).
             limit / offset: op="list" — pagination (limit 1..100, default 50).
+            fields: op="list" — keep only these keys per row (`id` always kept);
+                omitted or `["*"]` = the default view.
         """
         if kind not in _CATALOG:
             raise _bad(f"kind inconnu : {kind!r}.")
@@ -384,11 +397,11 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, item_id=item_id)
             extra = {own: filters[own]} if own else {}
             return _page(_run(lambda: getattr(c, list_m)(
-                clinic_id, **extra, **_paging(limit, offset))), plural)
+                clinic_id, **extra, **_paging(limit, offset))), plural, fields=fields)
         if op == "get":
             _need(op, item_id=item_id)
             _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset,
-                            **({own: filters[own]} if own else {}))
+                            fields=fields, **({own: filters[own]} if own else {}))
             return _one(_run(lambda: getattr(c, get_m)(item_id)), kind)
         raise _bad("op doit être 'list' ou 'get'.")
 
@@ -400,6 +413,7 @@ def register(mcp: FastMCP) -> None:
         patient_id: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        fields: Optional[list] = None,
     ) -> dict:
         """Quotes (devis) of a Nextmotion clinic — number, status, lines, totals,
         follow-up. Health data, titles and free text are withheld; the patient
@@ -417,6 +431,8 @@ def register(mcp: FastMCP) -> None:
             quote_id: op="get" — the quote.
             patient_id: op="list" — only this patient's quotes.
             limit / offset: op="list" — pagination (limit 1..100, default 50).
+            fields: op="list" — keep only these keys per row (`id` always kept);
+                omitted or `["*"]` = the default view.
         """
         c = _client()
         if op == "list":
@@ -424,11 +440,11 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, quote_id=quote_id)
             return _page(_run(lambda: c.list_quotes(
                 clinic_id, patient_id=patient_id, **_paging(limit, offset))),
-                "quotes", _quote)
+                "quotes", _quote, fields=fields)
         if op == "get":
             _need(op, quote_id=quote_id)
             _refuse_ignored(op, clinic_id=clinic_id, patient_id=patient_id,
-                            limit=limit, offset=offset)
+                            limit=limit, offset=offset, fields=fields)
             return _one(_run(lambda: c.get_quote(quote_id)), "quote", _quote)
         raise _bad("op doit être 'list' ou 'get'.")
 
@@ -439,6 +455,7 @@ def register(mcp: FastMCP) -> None:
         invoice_id: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        fields: Optional[list] = None,
     ) -> dict:
         """Invoices of a Nextmotion clinic — number, status, lines, totals, payment
         methods. Health data, titles and free text are withheld; the patient
@@ -455,15 +472,18 @@ def register(mcp: FastMCP) -> None:
             clinic_id: op="list" — the clinic.
             invoice_id: op="get" — the invoice.
             limit / offset: op="list" — pagination (limit 1..100, default 50).
+            fields: op="list" — keep only these keys per row (`id` always kept);
+                omitted or `["*"]` = the default view.
         """
         c = _client()
         if op == "list":
             _need(op, clinic_id=clinic_id)
             _refuse_ignored(op, invoice_id=invoice_id)
             return _page(_run(lambda: c.list_invoices(clinic_id, **_paging(limit, offset))),
-                         "invoices", _invoice)
+                         "invoices", _invoice, fields=fields)
         if op == "get":
             _need(op, invoice_id=invoice_id)
-            _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset)
+            _refuse_ignored(op, clinic_id=clinic_id, limit=limit, offset=offset,
+                            fields=fields)
             return _one(_run(lambda: c.get_invoice(invoice_id)), "invoice", _invoice)
         raise _bad("op doit être 'list' ou 'get'.")

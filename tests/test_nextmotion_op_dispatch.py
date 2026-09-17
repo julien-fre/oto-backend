@@ -331,3 +331,35 @@ def test_probe_calls_get_me_with_the_posed_key(monkeypatch):
     N._verify({"key": "nm-test"})
     assert seen == {"api_key": "nm-test"}
     inst.get_me.assert_called_once_with()
+
+
+# --- projection des listes (cliquet `test_sorties_listes_projetees`) ----------------
+
+def test_fields_ne_garde_que_les_colonnes_demandees_et_l_id(client):
+    client.list_clinics.return_value = {"count": 1, "next": None, "data": [
+        {"id": C, "name": SENTINEL, "address": "adresse factice", "phone": "0"}]}
+    out = _tool("nextmotion_clinic")(fields=["name"])
+    assert out["clinics"] == [{"id": C, "name": SENTINEL}]
+    assert out["count"] == 1 and out["has_more"] is False
+
+
+def test_fields_etoile_rend_la_liste_blanche_jamais_le_brut(client):
+    client.list_appointments.return_value = {"count": 1, "next": None, "data": [
+        {"id": X, "status": 1, "patient": {"id": X, "last_name": "SENTINELLE-NOM",
+                                           "birth_date": "1900-01-01"}}]}
+    brut = json.dumps(_tool("nextmotion_appointment")(clinic_id=C, fields=["*"]))
+    assert "SENTINELLE-NOM" not in brut and "birth_date" not in brut
+
+
+def test_fields_sur_un_get_est_refuse(client):
+    with pytest.raises(McpError):
+        _tool("nextmotion_invoice")(op="get", invoice_id=X, fields=["id"])
+
+
+def test_chaque_outil_de_liste_satisfait_le_cliquet_de_projection(client):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_sorties_listes_projetees import _pagine, _projette
+    outils = asyncio.run(_mcp().list_tools())
+    assert [t.name for t in outils if _pagine(t) and not _projette(t)] == []

@@ -8,7 +8,9 @@ Le pourquoi (données de santé, textes libres) est dans la docstring de `nextmo
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
+
+from .. import output_projection
 
 _WITHHELD = ("patient anonymisé : servi par son seul id, sans nom ni coordonnées, et "
              "rien ne permet d'en retrouver l'identité ; données de santé et textes "
@@ -87,12 +89,20 @@ def _invoice(i: Any) -> Any:
                         "ref_quote_id"), "invoiced_treatments")
 
 
-def _page(env: Any, key: str, shape=None) -> dict:
+def _page(env: Any, key: str, shape=None, fields: Optional[list] = None) -> dict:
+    """Une page de liste. `shape` = la liste blanche d'une ressource qui embarque un
+    patient ; `fields` = les colonnes que l'appelant garde (l'`id` toujours).
+
+    ⚠️ `fields` s'applique APRÈS la liste blanche et ne peut que retirer : `["*"]`
+    rend la vue par défaut, jamais le brut de l'amont (aucune échappatoire vers les
+    données de santé)."""
     env = env if isinstance(env, dict) else {}
     rows = env.get("data") or []
     if shape is not None:
         rows = [shape(r) for r in rows]
     out = {"count": env.get("count"), "has_more": env.get("next") is not None, key: rows}
+    if fields is not None and output_projection.RAW not in fields:
+        out = output_projection.project(out, items_path=key, fields=set(fields) | {"id"})
     if shape is not None:
         out["withheld"] = _WITHHELD
     return out
