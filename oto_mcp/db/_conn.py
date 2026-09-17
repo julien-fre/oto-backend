@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from typing import Any, Iterator, Optional
 
@@ -136,8 +137,94 @@ def _get_pool() -> ConnectionPool:
     return _pool
 
 
+class _EmpruntParesseux:
+    """Emprunte au pool à la PREMIÈRE utilisation réelle, jamais avant — un bloc
+    `reuse_connection()` dont le chemin ne fait finalement aucune requête (chemin
+    entièrement mocké en test, ou tous les préchargements retombent en cache) ne
+    touche ni le pool ni `DATABASE_URL`."""
+
+    def __init__(self):
+        self._cm = None
+        self._conn: Optional[psycopg.Connection] = None
+
+    def obtenir(self) -> psycopg.Connection:
+        if self._conn is None:
+            pool = _get_pool()
+            self._cm = pool.connection()
+            self._conn = self._cm.__enter__()
+            # AUTOCOMMIT le temps du prêt (oto cd, 17/09/2026, revue de ce
+            # lot) : sans lui, tout `status_for` tenait dans UNE SEULE
+            # transaction PostgreSQL — une requête en erreur (attrapée par
+            # l'appelant, ex. une clé illisible sur UN connecteur) mettait
+            # TOUTE la transaction en échec, et chaque lecture suivante
+            # levait `InFailedSqlTransaction` au lieu de simplement échouer,
+            # elle. `status_for` ne fait QUE lire (garanti par
+            # `reuse_connection`, ci-dessous) : chaque requête devient son
+            # propre commit implicite, une erreur reste locale à elle, et le
+            # `BEGIN`/`COMMIT` explicite disparaît (un aller-retour de moins
+            # par emprunt, en plus du gain déjà obtenu en n'empruntant
+            # qu'une fois). Remis à `False` dans `fermer()` avant que la
+            # connexion ne reparte au pool — jamais une connexion en
+            # autocommit ne doit atteindre un autre appelant.
+            self._conn.autocommit = True
+        return self._conn
+
+    def fermer(self) -> None:
+        if self._conn is not None:
+            self._conn.autocommit = False
+        if self._cm is not None:
+            self._cm.__exit__(None, None, None)
+
+
+# Emprunt partagé par `reuse_connection()` pour toute une portée — vide en temps
+# normal, chaque `_connect()` emprunte alors la sienne au pool comme avant.
+_emprunt_partage: ContextVar[Optional[_EmpruntParesseux]] = ContextVar(
+    "_emprunt_partage", default=None)
+
+
+@contextmanager
+def reuse_connection() -> Iterator[None]:
+    """Emprunte AU PLUS UNE connexion au pool pour toute la portée du bloc — à la
+    première requête réelle, pas à l'entrée du bloc (cf. `_EmpruntParesseux`) — et
+    les `_connect()` imbriqués dedans la RÉUTILISENT au lieu d'en emprunter une
+    chacun (oto-backend, lot `status_for` N+1, 17/09/2026 — 53 emprunts mesurés sur
+    un appel, chacun payant son `BEGIN`/`COMMIT` propre au pool : ~3 allers-retours
+    par emprunt plutôt qu'1).
+
+    ⚠️ **LECTURE SEULE, et désormais en AUTOCOMMIT** (revue oto cd, 17/09/2026) :
+    chaque requête empruntée valide seule, immédiatement — jamais toutes ensemble
+    à la sortie du bloc. Deux conséquences, dans le même sens : une écriture posée
+    dedans serait visible des AUTRES connexions immédiatement, pas seulement à la
+    sortie — n'enveloppe jamais un chemin qui écrit puis relit sa propre écriture
+    en supposant l'isolation d'une transaction commune ; et une requête en ERREUR,
+    attrapée par l'appelant, ne met en échec qu'ELLE-MÊME — les requêtes suivantes
+    dans le même bloc restent utilisables (sans autocommit, PostgreSQL aurait mis
+    TOUTE la transaction en échec, `InFailedSqlTransaction` sur la première lecture
+    suivante). `status_for` est une PROJECTION (aucune écriture sur son chemin,
+    vérifié : `journal_resolution` — la seule comparaison ADR 0053 posée sur ce
+    chemin — ne fait qu'un `logger.warning`, jamais une écriture) — c'est le seul
+    appelant prévu, et le seul pour lequel ces deux propriétés sont sûres.
+
+    Ré-entrant : un `reuse_connection()` imbriqué dans un autre ne fait rien (la
+    connexion déjà empruntée par le bloc englobant sert aux deux)."""
+    if _emprunt_partage.get() is not None:
+        yield
+        return
+    emprunt = _EmpruntParesseux()
+    jeton = _emprunt_partage.set(emprunt)
+    try:
+        yield
+    finally:
+        _emprunt_partage.reset(jeton)
+        emprunt.fermer()
+
+
 @contextmanager
 def _connect() -> Iterator[psycopg.Connection]:
+    emprunt = _emprunt_partage.get()
+    if emprunt is not None:
+        yield emprunt.obtenir()
+        return
     pool = _get_pool()
     with pool.connection() as conn:
         yield conn

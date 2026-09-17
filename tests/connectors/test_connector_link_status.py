@@ -160,7 +160,10 @@ def test_la_boucle_du_test_est_bien_celle_du_code():
     donc les clés produites à celles du source."""
     import inspect
     from oto_mcp import access
-    src = inspect.getsource(access.status_for)
+    # `status_for` (17/09, lot connexion unique) n'est plus qu'une enveloppe fine
+    # (`with db.reuse_connection(): return _status_for_projection(...)`) — la
+    # vraie boucle vit dans `_status_for_projection`, son unique appelée.
+    src = inspect.getsource(access.status._status_for_projection)
     bloc = src[src.index("secret_kind != \"oauth\""):]
     for cle in _CLES_ATTENDUES:
         assert f'"{cle}"' in bloc, f"la 4e boucle du code n'émet plus « {cle} »"
