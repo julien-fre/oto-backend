@@ -100,6 +100,24 @@ def org(live):
     return {"id": oid, "membre": membre}
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _un_worker_de_plateforme_sonde(live, org):
+    """oto-runner#13 (17/09/2026) : `launch` refuse désormais si aucun worker n'est
+    joignable (`no_runner_armed`) — ce fichier teste le CYCLE d'une flotte, pas
+    cette précondition (couverte par `tests/test_runner_fleets_sans_worker.py`), donc
+    un worker de plateforme réellement présent est posé une fois pour tout le
+    module. Un worker de plateforme sert TOUTES les orgs (`db.runner_arme`), donc
+    une seule ligne suffit ; aucune famille n'est déclarée ici — les bancs de ce
+    fichier n'arment que des flottes sans `model`, sauf le dernier qui pose sa
+    propre présence Anthropic explicitement."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as c:
+        c.execute("INSERT INTO runner_platform_workers (worker_sub) "
+                  "VALUES ('worker:banc-flottes-rest') ON CONFLICT (worker_sub) "
+                  "DO UPDATE SET last_seen_at = NOW()")
+        c.commit()
+
+
 @pytest.fixture(scope="module")
 def flotte(client, org):
     """Une flotte déclarée PAR LA ROUTE — pas insérée en base à la main."""
