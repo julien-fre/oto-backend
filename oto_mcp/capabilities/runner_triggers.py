@@ -103,8 +103,10 @@ class TriggerInput(BaseModel):
     waiting_only: Optional[bool] = Field(
         default=None,
         description=(
-            "op=deliveries only. true = only deliveries whose job has NOT run yet "
-            "(job status pending or held) — the queue, exactly what clear_queue "
+            "op=deliveries only. true = only deliveries whose job is WAITING to run "
+            "(job status pending or held) — including a job that failed and was put "
+            "back for a retry, so waiting does not mean it never ran. The queue, "
+            "exactly what clear_queue "
             "would expire — oldest first. Omitted = every delivery, newest first, "
             "whose `outcome` is frozen at reception (`queued` means accepted, not "
             "still waiting): read `job_status` for what the job became."

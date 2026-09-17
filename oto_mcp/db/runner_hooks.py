@@ -257,7 +257,7 @@ def enregistrer(conn, trigger_id: int, org_id: int, outcome: str,
 
 def livraisons(trigger_id: int, org_id: int, limit: int = 50,
                en_attente: bool = False) -> list[dict]:
-    """Ce que ce déclencheur a reçu — ou, `en_attente`, ce qui n'a PAS ENCORE tourné.
+    """Ce que ce déclencheur a reçu — ou, `en_attente`, ce qui ATTEND de tourner.
 
     Org-scopé : un déclencheur d'une autre org rend une liste vide, jamais les
     livraisons d'autrui.
@@ -271,7 +271,9 @@ def livraisons(trigger_id: int, org_id: int, limit: int = 50,
     (aucun travail) ou un travail disparu.
 
     **`en_attente`** ne garde que les livraisons dont le travail est `pending` ou
-    `held` — la FILE, exactement ce que `clear_queue` périme — de la plus ancienne à
+    `held` — la FILE, exactement ce que `clear_queue` périme ; ⚠️ `pending` compte aussi
+    un travail ÉCHOUÉ remis en file pour une nouvelle tentative (`complete_job`), donc
+    « en attente » ne veut pas dire « n'a jamais tourné » — de la plus ancienne à
     la plus récente, dans l'ordre où elles partiront. Ce qui a déjà tourné se lit
     dans les déroulés, pas ici : un journal qui répète la liste des runs sous un
     bouton « vider la file » se lit comme la file (vécu le 16/09/2026 — deux
