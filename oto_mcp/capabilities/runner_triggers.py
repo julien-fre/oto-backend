@@ -100,6 +100,15 @@ class TriggerInput(BaseModel):
     freshness_seconds: Optional[int] = None
     #: `deliveries` : combien de livraisons rendre.
     limit: Optional[int] = None
+    waiting_only: Optional[bool] = Field(
+        default=None,
+        description=(
+            "op=deliveries only. true = only deliveries whose job has NOT run yet "
+            "(job status pending or held) — the queue, exactly what clear_queue "
+            "would expire — oldest first. Omitted = every delivery, newest first, "
+            "whose `outcome` is frozen at reception (`queued` means accepted, not "
+            "still waiting): read `job_status` for what the job became."
+        ))
 
 
 class ToolWarning(BaseModel):
@@ -176,6 +185,11 @@ class Trigger(BaseModel):
     #: `None` = pas pu être calculé (hors serveur booté — en pratique jamais en
     #: production) ; `[]` = calculé, rien à signaler. Jamais stocké — cf. `ToolWarning`.
     tool_warnings: Optional[list[ToolWarning]] = None
+    #: Ce qui ATTEND maintenant — ce que `clear_queue` viderait. `queue_pending`
+    #: part dès qu'un worker passe ; `queue_held` attend qu'on rallume l'agent.
+    #: Servis sur un webhook ; `0` est un vrai zéro.
+    queue_pending: Optional[int] = None
+    queue_held: Optional[int] = None
 
 
 class RunnerArme(BaseModel):
@@ -221,9 +235,18 @@ class Delivery(BaseModel):
     #: `queued` | `delayed` (lissé) | `refused_paused` | `refused_secret` |
     #: `refused_too_large`. Un refus garde son MOTIF : c'est lui qui rend une
     #: source mal branchée réparable plutôt que mystérieuse.
+    #: ⚠️ Figé à la RÉCEPTION : `queued` = « acceptée, travail enfilé », jamais
+    #: « encore en attente ». Ce que le travail est devenu depuis, c'est `job_status`.
     outcome: Optional[str] = None
     job_id: Optional[int] = None
     source: Optional[str] = None
+    #: L'état ACTUEL du travail né de cette livraison, lu sur le travail à chaque
+    #: lecture : `pending` | `held` | `claimed` (en cours) | `done` | `failed` |
+    #: `expired`. `null` = aucun travail (refus) ou travail introuvable.
+    job_status: Optional[str] = None
+    #: Quand le travail partira au plus tôt — dans le futur pour un travail LISSÉ
+    #: (`delayed`), déjà passé pour un travail qui n'attend qu'un worker.
+    job_due_at: Optional[str] = None
 
 
 class TriggerOut(BaseModel):
@@ -386,11 +409,14 @@ def _avec_hook(org_id: int, t: dict) -> dict:
     import os
     base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
     compte = db.comptage_livraisons(t["id"], org_id)
+    file = db.file_du_declencheur(t["id"], org_id)
     return {**t,
             "hook_url": f"{base}/api/hooks/{t['id']}",
             "deliveries_24h": compte["recues_24h"],
             "deliveries_refused_24h": compte["refusees_24h"],
-            "last_delivery": str(compte["derniere"]) if compte["derniere"] else None}
+            "last_delivery": str(compte["derniere"]) if compte["derniere"] else None,
+            "queue_pending": file["pending"],
+            "queue_held": file["held"]}
 
 
 async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
@@ -400,7 +426,7 @@ async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
     ⚠️ **Contre l'org du TRAVAIL, jamais celle du porteur.** C'est exactement le
     calcul qui manquait le 16/09/2026 : la visibilité d'une session hébergée se
     dérive à la POIGNÉE DE MAIN contre l'org MAISON du délégué, pas celle du
-    travail — un outil actif pour l'org 178 mais jamais sélectionné pour l'org
+    travail — un outil actif pour l'org du travail mais jamais sélectionné pour l'org
     maison du porteur disparaissait sans un mot. Ici on pose `org=t["org_id"]`
     explicitement (`catalogue_avec_etat` le lit désormais), donc CE calcul-là est
     juste — il ne corrige pas pour autant la poignée de main elle-même, qui reste
@@ -627,7 +653,8 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Org-scopé par la requête : un déclencheur d'une autre org rend une liste
         # vide, jamais les livraisons d'autrui.
         return {"deliveries": db.livraisons(inp.trigger_id, ctx.org_id,
-                                            limit=inp.limit or 50)}
+                                            limit=inp.limit or 50,
+                                            en_attente=bool(inp.waiting_only))}
 
     if inp.op == "clear_queue":
         # ⚠️ Disponible À TOUT MOMENT, en marche comme en pause — c'est tout

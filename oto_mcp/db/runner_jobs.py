@@ -194,6 +194,34 @@ def perimer_travaux_du_declencheur(trigger_id: int, org_id: int,
         return cur.rowcount or 0
 
 
+def file_du_declencheur(trigger_id: int, org_id: int) -> dict:
+    """Ce qui ATTEND maintenant pour ce déclencheur : `{pending, held}`.
+
+    ⚠️ **Exactement le prédicat de `perimer_travaux_du_declencheur`**, et c'est la
+    raison d'être de ce compte : il dit ce que « vider la file » viderait. Un écran
+    qui pose ce bouton sous le journal des livraisons, sans ce nombre, laisse lire
+    le journal comme la file — deux livraisons terminées depuis des heures y
+    passaient pour deux événements en attente (16/09/2026).
+
+    `held` est séparé de `pending` parce qu'ils ne disent pas la même chose :
+    `pending` part dès qu'un worker passe, `held` attend qu'on rallume l'agent.
+    `0` est un vrai zéro, jamais une absence de mesure.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+                   COUNT(*) FILTER (WHERE status = 'held')::int AS held
+              FROM runner_jobs
+             WHERE org_id = %s AND status IN ('pending', 'held')
+               AND payload->>'trigger_id' = %s
+            """,
+            (org_id, str(trigger_id)),
+        ).fetchone()
+    d = dict(row) if row else {}
+    return {"pending": d.get("pending") or 0, "held": d.get("held") or 0}
+
+
 def comptage_perime(org_id: int, trigger_id: int) -> dict:
     """Ce qu'un déclencheur a PERDU : combien d'occurrences, et depuis quand.
 

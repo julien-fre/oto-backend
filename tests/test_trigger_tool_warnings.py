@@ -30,7 +30,7 @@ from oto_mcp.capabilities import runner_triggers as RT
 from oto_mcp.capabilities._types import ResolvedCtx
 
 
-def _ctx(sub="alexis", org_id=178):
+def _ctx(sub="alexis", org_id=77):
     return ResolvedCtx(sub=sub, org_id=org_id)
 
 
@@ -96,7 +96,7 @@ def _catalogue_simule(monkeypatch):
 def test_un_outil_installable_ou_not_exposed_est_nomme_avec_le_texte_du_catalogue(
         monkeypatch, _catalogue_simule):
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {
-        "id": 4, "org_id": 178,
+        "id": 4, "org_id": 77,
         "tools": ["linkedin_aiark_search", "lusha_search_and_enrich",
                  "kaspr_enrich_linkedin"],
     })
@@ -111,7 +111,7 @@ def test_un_outil_installable_ou_not_exposed_est_nomme_avec_le_texte_du_catalogu
 
 def test_un_outil_installe_ne_produit_aucun_avertissement(monkeypatch, _catalogue_simule):
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {
-        "id": 5, "org_id": 178,
+        "id": 5, "org_id": 77,
         "tools": ["linkedin_aiark_search", "salesforce_record"],
     })
     out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="get", trigger_id=5)))
@@ -120,7 +120,7 @@ def test_un_outil_installe_ne_produit_aucun_avertissement(monkeypatch, _catalogu
 
 def test_un_nom_absent_du_registre_leve_unknown_tool(monkeypatch, _catalogue_simule):
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {
-        "id": 6, "org_id": 178,
+        "id": 6, "org_id": 77,
         "tools": ["linkedin_aiark_search", "un_outil_retire_depuis"],
     })
     out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="get", trigger_id=6)))
