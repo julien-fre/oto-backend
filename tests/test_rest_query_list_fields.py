@@ -55,6 +55,19 @@ EXEMPLES: dict[tuple[str, str], str] = {
     # pour exercer la reconnaissance du suffixe (`champ.origine`) dans la projection
     # en amont de `flat_layers`, pas juste une liste de noms de colonnes plates.
     ("me.datastore.list_rows", "fields"): "email,email.origine",
+    # Les crédits de deux runs d'un agent hébergé en une lecture — des ids tels que
+    # `guide_run.new_run_id` les frappe (uuid4 hex).
+    ("org.usage.calls", "run_id"): "3f2b9c0e8a7d4e6b9c1f2a3b4c5d6e7f,9a8b7c6d5e4f40312a1b0c9d8e7f6a5b",
+}
+
+# Le reste d'un appel MINIMAL, quand aucun champ n'est requis SEUL mais qu'un parmi
+# plusieurs l'est (validation `model_validator`) : le banc ne peut pas le deviner du
+# type. `(clé de capacité) -> query string`. Sans cette ligne, la capacité ferait
+# rouger le contrôle « appel minimal » pour une raison qui n'a rien à voir avec la
+# forme des listes.
+MINIMAUX: dict[str, dict[str, str]] = {
+    # `tool` OU `run_id` : le relevé ne se lit jamais sur tout le journal.
+    "org.usage.calls": {"tool": "linkedin_aiark_search"},
 }
 
 
@@ -105,7 +118,7 @@ def _valeur_plausible(annotation):
 
 def _requete(cap, binding, extra: dict[str, str]):
     """Query string + params de chemin d'un appel MINIMAL à cette capacité."""
-    query, path_params, chemin = dict(extra), {}, binding.path
+    query, path_params, chemin = {**MINIMAUX.get(cap.key, {}), **extra}, {}, binding.path
     for morceau in binding.path.split("/"):
         if not (morceau.startswith("{") and morceau.endswith("}")):
             continue
