@@ -35,7 +35,7 @@ import time
 from typing import Optional
 
 import requests
-from .. import config, deprecations
+from .. import config
 
 DEFAULT_STATE_TTL = 600   # 10 min — le temps de lire un écran de consentement
 
@@ -194,35 +194,26 @@ def return_url(app: Optional[str], suffix: str, *, org: Optional[int] = None) ->
 # `etat ∈ {connected, error, forbidden}` — devient LA convention, fabriquée ici
 # une fois plutôt que recopiée cinq fois.
 
-def connector_return_suffix(connector: str, etat: str, *,
-                            legacy: Optional[tuple] = None) -> str:
+def connector_return_suffix(connector: str, etat: str) -> str:
     """`?connector=<connector>&connect=<etat>`.
 
-    `legacy` — un couple `(clé, valeur)` — double une ANCIENNE forme encore LUE par
-    un consommateur aujourd'hui (le dashboard sur `?zoho=connected`/`?google=
-    connected`) : ajoutée à la suite, dans le MÊME suffixe, tant que
-    `deprecations.dans_le_preavis_retour_oauth()` le dit — jamais deux
-    redirections, une seule URL qui porte les deux jeux de clés. Ne rien passer
-    pour un connecteur dont l'ancien statut n'a JAMAIS eu de lecteur (les ex-fédérés,
-    folk, et les branches d'échec de google qui ne redirigeaient pas du tout) :
-    doubler une valeur que personne n'a jamais pu lire ne protège personne, et
-    grossit l'URL pour rien."""
-    suffix = f"?connector={connector}&connect={etat}"
-    if legacy and deprecations.dans_le_preavis_retour_oauth():
-        cle, valeur = legacy
-        suffix += f"&{cle}={valeur}"
-    return suffix
+    Retiré le 17/09/2026 (oto-backend#670) : l'ancienne forme doublée
+    (`?zoho=connected`/`?google=connected`) n'a plus aucun lecteur mesuré — le
+    dashboard lit `connect=` depuis le 04/09 (v1.55.0), et aucun compte ni
+    aucune org n'a de connexion Zoho ou Google chez le seul partenaire qui
+    aurait pu en dépendre (Tulina, mesuré à zéro). Décision d'Alexis : retrait
+    sans préavis plutôt que d'entretenir un doublage sans lecteur."""
+    return f"?connector={connector}&connect={etat}"
 
 
 def connector_return_url(app: Optional[str], connector: str, etat: str, *,
-                         org: Optional[int] = None,
-                         legacy: Optional[tuple] = None) -> str:
+                         org: Optional[int] = None) -> str:
     """URL de retour complète : base+chemin de `return_url` (app tierce connue,
     sinon défaut oto-dashboard) + `connector_return_suffix`. Le point d'entrée pour
     un connecteur dont le retour suit déjà le gabarit `return_url`/`RETURN_APPS`
     (salesforce, zoho, google) ; atlassian/folk résolvaient leur base autrement
     (`links.link_for`, patron par tenant) et utilisent `avec_connect` à la place."""
-    return return_url(app, connector_return_suffix(connector, etat, legacy=legacy), org=org)
+    return return_url(app, connector_return_suffix(connector, etat), org=org)
 
 
 def avec_connect(url: str, etat: str) -> str:
