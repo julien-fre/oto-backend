@@ -171,6 +171,28 @@ def list_platform_instances(provider: str) -> list[dict]:
              "meta": r["meta"] or {}} for r in rows]
 
 
+def list_all_platform_instances() -> dict[str, list[dict]]:
+    """`{provider: [instances]}` pour TOUT le scope PLATEFORME, en UNE lecture —
+    même forme que `list_platform_instances(provider)`, groupée. Destinée au
+    chemin `/api/me` (`status_for`) : la marche d'un compte y visite ~30 connecteurs
+    et lisait `list_platform_instances` autant de fois (une par provider atteignant
+    le barreau plateforme, doublé côté chaîne de grants — `grants_chain.platform_rung`
+    lit la même table). Ordre par connecteur puis récent d'abord, identique à
+    `list_platform_instances` (pas de garantie inter-provider)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT connector, entity_id AS label, share_mode, share_down, "
+            "share_side, meta FROM connector_credentials WHERE entity_type=%s "
+            "ORDER BY connector, set_at DESC", (PLATFORM,)).fetchall()
+    out: dict[str, list[dict]] = {}
+    for r in rows:
+        out.setdefault(r["connector"], []).append(
+            {"label": r["label"], "share_mode": r["share_mode"],
+             "share_down": r["share_down"] or [], "share_side": r["share_side"] or [],
+             "meta": r["meta"] or {}})
+    return out
+
+
 def list_platform_credentials(provider: "str | None" = None) -> list[dict]:
     """ADR 0044 §F : clés plateforme (instances scope PLATFORM), SANS secret — pour la
     surface admin (remplace db.list_platform_keys_meta)."""
