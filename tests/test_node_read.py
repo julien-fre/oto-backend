@@ -189,16 +189,18 @@ def test_la_remontee_du_fil_est_BORNEE():
 
 
 # ── Les poignées vers les autres surfaces (front tiers, 29/08) ─────────────────
-@pytest.mark.parametrize("famille", ["doc", "prj"])
-def test_une_ANCIENNE_COPIE_de_page_ou_de_projet_n_est_plus_servie(seams, famille):
-    """La recopie s'est arrêtée le 01/09/2026 : une copie restée dans `nodes` porte un
-    contenu figé. La page vivante se lit dans sa table, sous son propre identifiant
-    (`tests/test_projets_servis_en_noeuds_live.py`, qui tient aussi ses poignées)."""
-    seams["fiche"] = {**PAGE, "props": {"title": "Brief", "legacy": famille,
+def test_une_page_rend_son_doc_id_et_le_project_id_de_ses_props(seams):
+    seams["fiche"] = {**PAGE, "props": {"title": "Brief", "legacy": "doc",
                                         "legacy_id": 12, "project_id": 7}}
-    with pytest.raises(AuthzDenied) as refus:
-        N._compose(CTX, "nod_page")
-    assert refus.value.status == 404
+    out = N._compose(CTX, "nod_page")
+    assert (out["doc_id"], out["project_id"]) == (12, 7)
+
+
+def test_un_projet_rend_son_project_id_et_aucun_doc_id(seams):
+    seams["fiche"] = {**PAGE, "props": {"title": "Refonte", "legacy": "prj",
+                                        "legacy_id": 7, "pinned": True}}
+    out = N._compose(CTX, "nod_page")
+    assert (out["doc_id"], out["project_id"]) == (None, 7)
 
 
 def test_un_tableau_range_sous_un_projet_lit_le_projet_sur_le_fil(seams):
