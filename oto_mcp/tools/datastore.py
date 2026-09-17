@@ -750,7 +750,10 @@ def register(mcp: FastMCP) -> None:
         belongs to an import, not to a write of your own.
 
         Layers: `valeur`/`comment`/`link` are yours to write, `origine` is read
-        only. What a write destroys, what `readonly` and the business key protect,
+        only — write nested, `{"field": {"valeur": …, "comment": …, "link": …}}`,
+        never these as top-level keys of your own row. A misspelled layer name
+        (`"comnent"`) is REFUSED, never silently stored as a new business field.
+        What a write destroys, what `readonly` and the business key protect,
         and where the REST face differs: guide `datastore-semantics`
         (`oto_guide op=read slug=datastore-semantics`).
 

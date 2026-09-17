@@ -53,13 +53,15 @@ def test_un_nom_retire_dit_son_remplacant_la_valeur_et_l_outil():
 
 
 def test_une_cle_inconnue_sous_fastmcp_3_est_NOMMEE_comme_inconnue():
-    msg = T._arg_error_message(_refus(datastore="v", op="draft"))
-    assert "non reconnu" in msg and "op" in msg, msg
+    # `mode`, pas `op` : depuis #585, `op` sur `data_write` a son propre refus dédié
+    # (cf. test_confusions_de_forme_585.py) — ce banc-ci teste le refus GÉNÉRIQUE.
+    msg = T._arg_error_message(_refus(datastore="v", mode="draft"))
+    assert "non reconnu" in msg and "mode" in msg, msg
     assert "Unexpected keyword argument" not in msg
 
 
 def test_le_schema_nomme_l_outil_quand_l_erreur_vient_de_sa_signature():
-    msg = T._arg_error_message(_refus(datastore="v", op="draft"))
+    msg = T._arg_error_message(_refus(datastore="v", mode="draft"))
     assert 'oto_tool_schema(name="data_write")' in msg, msg
     assert "call[" not in msg, "le titre FastMCP se lit, il ne se recopie pas"
 

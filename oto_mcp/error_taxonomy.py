@@ -150,11 +150,17 @@ def _arg_error_message(exc) -> str:
     # Le titre d'un MODÈLE nomme une classe : jamais servi comme nom d'outil.
     m = _TITRE_D_OUTIL.match(err.title or "") if signature else None
     outil = m.group(1) if m else None
-    from . import deprecations  # tardif : la taxonomie est importée partout
+    from . import deprecations, tool_confusions  # tardif : la taxonomie est importée partout
     for cle in inconnus:
         refus = deprecations.refus_parametre_renomme(cle, valeurs.get(cle), outil)
         if refus:  # le nom neuf n'est alors pas « requis absent » : il est mal nommé
             return "Arguments invalides — " + refus
+        # oto-backend#585 — la clé reçue est celle d'un AUTRE outil du même domaine
+        # (ex. `op` de `data_rows`/ADR 0047 envoyé à `data_write`) : le nommer plutôt
+        # que de laisser un refus générique faire croire à un champ manquant.
+        confusion = tool_confusions.refus_forme_dun_autre_outil(outil, cle)
+        if confusion:
+            return "Arguments invalides — " + confusion
     bouts = []
     if inconnus:
         bouts.append(f"champ(s) non reconnu(s) : {', '.join(inconnus)}")
