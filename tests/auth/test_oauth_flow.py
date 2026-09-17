@@ -191,32 +191,19 @@ def test_connector_return_suffix_forme_de_base():
         "?connector=salesforce&connect=connected"
 
 
-def test_connector_return_suffix_double_pendant_le_preavis(monkeypatch):
-    """zoho/google servent déjà un suffixe LU par le dashboard : il doit coexister
-    avec le neuf dans la MÊME query string, pas dans une seconde redirection."""
-    monkeypatch.setattr(of.deprecations, "dans_le_preavis_retour_oauth", lambda: True)
-    suffix = of.connector_return_suffix("zoho", "connected", legacy=("zoho", "connected"))
-    assert suffix == "?connector=zoho&connect=connected&zoho=connected"
-
-
-def test_connector_return_suffix_arrete_de_doubler_apres_le_preavis(monkeypatch):
-    monkeypatch.setattr(of.deprecations, "dans_le_preavis_retour_oauth", lambda: False)
-    suffix = of.connector_return_suffix("zoho", "connected", legacy=("zoho", "connected"))
-    assert suffix == "?connector=zoho&connect=connected"
-
-
-def test_connector_return_suffix_sans_legacy_ne_double_rien():
-    """atlassian/folk : `connector=` existait déjà, `connect=` est un pur ajout —
-    rien à doubler, donc pas de `legacy` à passer."""
+def test_connector_return_suffix_ne_double_plus_lancienne_forme():
+    """Le doublage `?zoho=connected`/`?google=connected` a été retiré le
+    17/09/2026 (oto-backend#670, sans préavis) — plus aucun lecteur mesuré. La
+    fonction ne prend plus de paramètre `legacy` du tout."""
+    assert of.connector_return_suffix("zoho", "connected") == \
+        "?connector=zoho&connect=connected"
     assert of.connector_return_suffix("atlassian", "error") == \
         "?connector=atlassian&connect=error"
 
 
 def test_connector_return_url_compose_base_et_suffixe(front_tiers):
-    url = of.connector_return_url("acme", "zoho", "connected", org=7,
-                                  legacy=("zoho", "connected"))
-    assert url == ("https://app.acme.test/org/7/connectors"
-                   "?connector=zoho&connect=connected&zoho=connected")
+    url = of.connector_return_url("acme", "zoho", "connected", org=7)
+    assert url == "https://app.acme.test/org/7/connectors?connector=zoho&connect=connected"
 
 
 def test_avec_connect_ajoute_le_parametre_a_une_url_existante():

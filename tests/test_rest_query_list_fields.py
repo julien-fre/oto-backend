@@ -51,6 +51,10 @@ EXEMPLES: dict[tuple[str, str], str] = {
     # atomiques. Valeur métier, pas un `a,b` de façade.
     ("me.datastore.list_rows", "versions"): "current,origine",
     ("me.datastore.get_row", "versions"): "current,origine",
+    # oto-backend#980 lot 2 — une colonne nue et une colonne suffixée d'une couche,
+    # pour exercer la reconnaissance du suffixe (`champ.origine`) dans la projection
+    # en amont de `flat_layers`, pas juste une liste de noms de colonnes plates.
+    ("me.datastore.list_rows", "fields"): "email,email.origine",
 }
 
 

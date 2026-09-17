@@ -274,11 +274,26 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
     def _row_to_dict(row: dict, schema: Optional[dict] = None, *,
                      bail_echu: str = "taire", layers: str = dsl.DEFAUT,
                      versions: tuple = dsver.DEFAUT,
-                     empties: str = dsl.EMPTIES_DEFAUT) -> dict:
+                     empties: str = dsl.EMPTIES_DEFAUT,
+                     fields: Optional[frozenset] = None) -> dict:
         """Ligne `datastore_rows` → row API (`_id`/`_created_at`/`_updated_at` à
         plat + champs user). Le bail de claim (ADR 0046 D) n'apparaît que s'il est
         posé (une ligne libre n'a aucune des trois clés `_claimed_*` → absentes,
         pas None).
+
+        `fields` (oto-backend#980, lot 2) : projection descendue ICI depuis le
+        seul point qui fabrique les couches aplaties (`dsv2.flat_layers`) — la
+        payer pour une colonne qu'on va jeter juste après était le coût mesuré
+        (~38 000 appels sur une page de 500 lignes × ~90 colonnes déclarées,
+        pour un `fields` qui n'en demandait que quelques-unes). `None` = pas de
+        projection, comportement inchangé (tous les appelants existants). Sinon,
+        `_id` reste TOUJOURS servi (adressage de la ligne) ; toute autre clé —
+        colonnes déclarées, couches aplaties, métadonnées `_created_at`/
+        `_revision`/`_claimed_*`/`_claims`/`_abandon` — n'est produite QUE si son
+        nom exact figure dans `fields`, exactement le calcul que faisait
+        l'ancien filtrage a posteriori (`_project_row`), jamais un filtre plus
+        permissif : une couche (`champ.origine`) ne survit à la projection que
+        nommée elle-même, pas parce que `champ` l'est.
 
         `layers` (oto#53) : la forme des cellules à couches — `flat` (défaut) les
         aplatit à côté du nom nu, `nested` les rend comme elles s'écrivent. Le défaut
@@ -310,16 +325,17 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         # Lu une fois par ligne. Le prédicat court-circuite sur la face REST, où les
         # pages sont les plus grosses : rien n'est parcouru là où rien n'est masqué.
         cachees = aga.masquees(schema) if aga.appel_d_agent() else frozenset()
-        out = {
-            "_id": row["row_id"],
-            "_created_at": row["created_at"],
-            "_updated_at": row["updated_at"],
-        }
+        projette = fields is not None
+        out = {"_id": row["row_id"]}
+        if not projette or "_created_at" in fields:
+            out["_created_at"] = row["created_at"]
+        if not projette or "_updated_at" in fields:
+            out["_updated_at"] = row["updated_at"]
         # La RÉVISION (12/09/2026), en chaîne : ce que `expected_revision` recopie. Toute
         # requête de `db/` qui projette une ligne sélectionne `rev` — un cliquet le tient
         # (`tests/datastore/test_revision_de_ligne.py`). Servie si lue : une ligne sans
         # `rev` est un faux de banc, pas un chemin servi.
-        if "rev" in row:
+        if "rev" in row and (not projette or "_revision" in fields):
             out["_revision"] = str(row["rev"])
         # Toute colonne a des sous-champs (#318) — c'est le contrat du datastore, pas
         # une forme que certaines valeurs adoptent. Une colonne « plate » est une
@@ -352,27 +368,35 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         #
         # Le pré-calcul ne coûte que là où le danger existe : deux tableaux du parc
         # portent des reliques, tous les autres sortent sur le test de présence.
+        def _pertinente(k: str) -> bool:
+            """`k` (ou une de ses couches, `k.origine`…) est demandée — seul cas où
+            `flat_layers(k, …)` vaut la peine d'être calculée sous projection."""
+            return not projette or k in fields or any(
+                f.startswith(k + ".") for f in fields)
+
         couches_servies: set = set()
         if layers != dsl.NESTED and any(
                 isinstance(k, str) and "." in k for k in data):
             for k, v in data.items():
-                if k in _META_COLS or k in cachees:
+                if k in _META_COLS or k in cachees or not _pertinente(k):
                     continue
                 couches_servies.update(dsv2.flat_layers(k, v))
 
         sentinelle = empties == dsl.SENTINEL
         for k, v in data.items():
-            if k in _META_COLS or k in cachees:
+            if k in _META_COLS or k in cachees or not _pertinente(k):
                 continue
             # `layers="nested"` (oto#53) : la cellule revient comme elle s'écrit,
             # `{valeur, origine, comment, link}` — rien n'est aplati à côté.
             if layers == dsl.NESTED:
-                out[k] = dsl.nested_value(v, sentinelle=sentinelle)
+                if not projette or k in fields:
+                    out[k] = dsl.nested_value(v, sentinelle=sentinelle)
                 continue
             # `served_value` descend dans une colonne-tableau : chaque attribut d'item
             # est une feuille, rendue comme telle (oto#22 §1).
             servie = dsv2.served_value(v, sentinelle=sentinelle)
-            if not (k in couches_servies and dsv2.est_vide(servie)):
+            if (not projette or k in fields) and not (
+                    k in couches_servies and dsv2.est_vide(servie)):
                 out[k] = servie
             # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée
             # (import de socle sur un champ pas encore renseigné).
@@ -384,13 +408,19 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                 prefixe = f"{k}.{dsv2.ORIGIN_LAYER}"
                 plat = {n: val for n, val in plat.items()
                         if n != prefixe and not n.startswith(prefixe + ".")}
+            if projette:
+                # Une couche ne survit que NOMMÉE elle-même — demander `email` ne
+                # fait pas apparaître `email.origine` (même règle que l'ancien
+                # filtrage a posteriori, `_project_row`).
+                plat = {n: val for n, val in plat.items() if n in fields}
             out.update(plat)
         # oto#182 — toute colonne DÉCLARÉE est servie, à `null` quand aucune valeur n'est
         # en place : une clé absente se lisait « cette colonne n'existe pas » et l'agent
         # fabriquait la valeur. Rien n'est écrit ; une valeur présente (même `""`, `null`
         # ou une couche seule) n'est pas touchée ; une colonne masquée reste absente.
         for k in dsv2.cles_declarees(schema):
-            if k not in data and k not in out and k not in cachees and not k.startswith("_"):
+            if (k not in data and k not in out and k not in cachees
+                    and not k.startswith("_") and (not projette or k in fields)):
                 out[k] = None
         # ⚠️ Un bail EXPIRÉ n'est pas une réservation — mesuré le 01/09/2026 sur un
         # fichier de production : **495 lignes sur 8 910 portaient `_claimed_by`, et
@@ -425,19 +455,22 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
             # sur les lignes qu'il faut justement libérer. Le défaut vaut mieux SÛR :
             # un chemin de lecture neuf tait le bail mort sans avoir à y penser.
             if bail_echu == "servir" or actif:
-                out["_claimed_by"] = row["claimed_by"]
-                out["_claimed_until"] = row.get("claimed_until")
+                if not projette or "_claimed_by" in fields:
+                    out["_claimed_by"] = row["claimed_by"]
+                if not projette or "_claimed_until" in fields:
+                    out["_claimed_until"] = row.get("claimed_until")
                 # LE RUN qui tient ce bail — ce qui lie un travail à la LIGNE qu'il
                 # travaille. `null` = bail pris SANS run (une personne sur la file du
                 # dashboard) : un fait, pas un trou.
-                out["_claimed_run"] = row["claimed_run"]
+                if not projette or "_claimed_run" in fields:
+                    out["_claimed_run"] = row["claimed_run"]
         # Ce que la file sait de la ligne (#433). Rendus SEULEMENT s'ils portent
         # quelque chose : un `_claims: 0` sur chaque ligne de chaque tableau serait
         # du bruit dans toutes les lectures, pour une file que la plupart n'ouvrent
         # jamais. Voir « déjà tentée 2 fois » est ce qui change une décision.
-        if row.get("claims"):
+        if row.get("claims") and (not projette or "_claims" in fields):
             out["_claims"] = row["claims"]
-        if row.get("abandon_reason"):
+        if row.get("abandon_reason") and (not projette or "_abandon" in fields):
             out["_abandon"] = row["abandon_reason"]
         return out
 
