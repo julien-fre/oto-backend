@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from typing import Any, Iterator, Optional
 
@@ -136,8 +137,69 @@ def _get_pool() -> ConnectionPool:
     return _pool
 
 
+class _EmpruntParesseux:
+    """Emprunte au pool à la PREMIÈRE utilisation réelle, jamais avant — un bloc
+    `reuse_connection()` dont le chemin ne fait finalement aucune requête (chemin
+    entièrement mocké en test, ou tous les préchargements retombent en cache) ne
+    touche ni le pool ni `DATABASE_URL`."""
+
+    def __init__(self):
+        self._cm = None
+        self._conn: Optional[psycopg.Connection] = None
+
+    def obtenir(self) -> psycopg.Connection:
+        if self._conn is None:
+            pool = _get_pool()
+            self._cm = pool.connection()
+            self._conn = self._cm.__enter__()
+        return self._conn
+
+    def fermer(self) -> None:
+        if self._cm is not None:
+            self._cm.__exit__(None, None, None)
+
+
+# Emprunt partagé par `reuse_connection()` pour toute une portée — vide en temps
+# normal, chaque `_connect()` emprunte alors la sienne au pool comme avant.
+_emprunt_partage: ContextVar[Optional[_EmpruntParesseux]] = ContextVar(
+    "_emprunt_partage", default=None)
+
+
+@contextmanager
+def reuse_connection() -> Iterator[None]:
+    """Emprunte AU PLUS UNE connexion au pool pour toute la portée du bloc — à la
+    première requête réelle, pas à l'entrée du bloc (cf. `_EmpruntParesseux`) — et
+    les `_connect()` imbriqués dedans la RÉUTILISENT au lieu d'en emprunter une
+    chacun (oto-backend, lot `status_for` N+1, 17/09/2026 — 53 emprunts mesurés sur
+    un appel, chacun payant son `BEGIN`/`COMMIT` propre au pool : ~3 allers-retours
+    par emprunt plutôt qu'1).
+
+    ⚠️ **LECTURE SEULE.** La connexion n'est rendue (et donc commitée) qu'à la
+    sortie du bloc : une écriture posée dedans reste invisible aux AUTRES
+    connexions tant que le bloc n'est pas sorti — n'enveloppe jamais un chemin qui
+    écrit puis relit sa propre écriture par une voie externe. `status_for` est une
+    PROJECTION (aucune écriture sur son chemin) — c'est le seul appelant prévu.
+
+    Ré-entrant : un `reuse_connection()` imbriqué dans un autre ne fait rien (la
+    connexion déjà empruntée par le bloc englobant sert aux deux)."""
+    if _emprunt_partage.get() is not None:
+        yield
+        return
+    emprunt = _EmpruntParesseux()
+    jeton = _emprunt_partage.set(emprunt)
+    try:
+        yield
+    finally:
+        _emprunt_partage.reset(jeton)
+        emprunt.fermer()
+
+
 @contextmanager
 def _connect() -> Iterator[psycopg.Connection]:
+    emprunt = _emprunt_partage.get()
+    if emprunt is not None:
+        yield emprunt.obtenir()
+        return
     pool = _get_pool()
     with pool.connection() as conn:
         yield conn
