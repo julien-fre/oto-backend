@@ -48,22 +48,60 @@ def create_platform_worker(label: str) -> dict:
     return {**dict(row), "secret": secret}
 
 
+#: Granularité de la marque de présence d'un worker de PLATEFORME — bien en
+#: dessous d'`ARME_FENETRE_S` (15 min, `runner_arme`) : un lecteur de cette
+#: fenêtre ne voit jamais la différence entre « vu il y a 3 s » et « vu il y a
+#: 28 s ». Sœur exacte de la granularité posée côté `claim_next_job`
+#: (`runner_jobs.py::_PRESENCE_GRANULARITE_S`) — même seuil, deux points
+#: d'écriture distincts sur la même ligne.
+_PRESENCE_GRANULARITE_S = 30
+
+
+def _touch_worker_presence(worker_sub: str) -> None:
+    """Marque `last_seen_at`, borné : n'écrit — donc ne verrouille — que si la
+    dernière marque a plus de `_PRESENCE_GRANULARITE_S`. Sa propre connexion,
+    courte, jamais dans la transaction de l'appelant."""
+    with _connect() as conn:
+        conn.execute(
+            f"""
+            UPDATE runner_platform_workers
+               SET last_seen_at = NOW()
+             WHERE worker_sub = %s
+               AND last_seen_at < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
+            """,
+            (worker_sub,),
+        )
+
+
 def verify_worker_secret(secret: str) -> Optional[dict]:
     """Le secret → le worker, ou None. Un worker révoqué n'existe plus pour
-    l'authentification, quelle que soit la ligne qu'il garde en base."""
+    l'authentification, quelle que soit la ligne qu'il garde en base.
+
+    ⚠️ LECTURE PURE (oto-backend, lot perf 17/09/2026, mesuré par oto cd) :
+    authentifie CHAQUE appel d'un worker (`take`/`beat`/`complete`/le sondage
+    `claim`…), donc s'exécutait jusqu'ici comme un `UPDATE … RETURNING`
+    synchrone sur l'UNIQUE ligne que partagent toutes les unités d'une même
+    machine (12 `oto-runner@N` sur un seul secret) — 31 attentes de verrou
+    mesurées sur 150 instantanés de 30 s, indépendamment du lot déjà posé sur
+    `claim_next_job`. La décision d'authentifier ne dépend plus du nombre de
+    lignes écrites : un `SELECT`, puis une marque de présence BORNÉE et
+    séparée (`_touch_worker_presence`) qui n'écrit — donc ne verrouille — que
+    si la dernière marque date de plus de 30 s."""
     if not secret or not secret.startswith(WORKER_SECRET_PREFIX):
         return None
     with _connect() as conn:
         row = conn.execute(
             """
-            UPDATE runner_platform_workers
-               SET last_seen_at = NOW()
+            SELECT worker_sub, label
+              FROM runner_platform_workers
              WHERE secret_hash = %s AND revoked_at IS NULL
-         RETURNING worker_sub, label
             """,
             (_hash_token(secret),),
         ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    _touch_worker_presence(row["worker_sub"])
+    return dict(row)
 
 
 def list_platform_workers() -> list[dict]:

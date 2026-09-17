@@ -250,34 +250,24 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
 #: dessous d'`ARME_FENETRE_S` (15 min) : un lecteur de `runner_arme`/`families`
 #: (fenêtre de 15 min) ne voit jamais la différence entre « vu il y a 3 s » et
 #: « vu il y a 28 s ». Une écriture évitée sous ce seuil ne prend aucun verrou.
+#: Sœur exacte de `runner_workers._PRESENCE_GRANULARITE_S`.
 _PRESENCE_GRANULARITE_S = 30
 
 
 def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> None:
-    """Marque la présence d'un worker de PLATEFORME — SA PROPRE connexion,
-    courte, committée avant que `claim_next_job` n'ouvre sa transaction de
-    réservation. `runner_platform_workers` ne porte qu'UNE ligne par worker,
-    et plusieurs unités peuvent partager le même `worker_sub` (un secret de
-    machine commun) : poser cet upsert DANS la transaction de réservation
-    tiendrait le verrou de cette ligne pendant tout le `FOR UPDATE SKIP
-    LOCKED` qui suit, et sérialiserait les unités entre elles pour rien.
+    """Marque la présence PAR FAMILLE d'un worker de PLATEFORME — SA PROPRE
+    connexion, courte, committée avant que `claim_next_job` n'ouvre sa
+    transaction de réservation.
 
-    La clause `WHERE … < NOW() - interval` du `DO UPDATE` n'écrit que si la
-    dernière marque a plus de `_PRESENCE_GRANULARITE_S` — sans elle, chaque
-    sondage réécrirait la même ligne pour une fraîcheur que personne ne lit
-    à la seconde près."""
+    ⚠️ Ne touche PLUS `runner_platform_workers` (17/09/2026) : l'authentification
+    (`verify_worker_secret`, appelée avant que cette fonction ne le soit,
+    `api/base.py`) marque déjà cette ligne, bornée, dans sa propre connexion
+    (`runner_workers._touch_worker_presence`) — un deuxième upsert ici pour la
+    MÊME ligne serait un aller-retour de plus pour un no-op quasi systématique.
+    `runner_platform_depots`, elle, est keyée `(worker_sub, depot)` : c'est une
+    ligne PAR dépôt, jamais touchée par l'authentification, qui ne connaît pas
+    le dépôt demandé."""
     with _connect() as conn:
-        conn.execute(
-            f"""
-            INSERT INTO runner_platform_workers (worker_sub, last_seen_at)
-                 VALUES (%s, NOW())
-            ON CONFLICT (worker_sub) DO UPDATE
-               SET last_seen_at = NOW()
-             WHERE runner_platform_workers.last_seen_at
-                   < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
-            """,
-            (worker_sub,),
-        )
         # La présence PAR FAMILLE — ce que `runner_arme` rend en `families`.
         # Seules les familles du catalogue se notent : `provider` est une
         # chaîne libre, et un dépôt que rien ne route n'a rien à promettre.

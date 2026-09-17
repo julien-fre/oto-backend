@@ -96,15 +96,45 @@ def test_declare_mais_jamais_vu_ne_compte_PAS_comme_present(live):
 
 
 def test_la_presence_n_efface_pas_la_declaration(live):
-    """Le sondage écrit la présence par upsert sur la MÊME ligne : il ne doit
-    toucher que `last_seen_at`."""
+    """L'authentification (`verify_worker_secret`, 17/09/2026) écrit la
+    présence par un `UPDATE` borné sur la MÊME ligne que la déclaration :
+    elle ne doit toucher que `last_seen_at`."""
     from oto_mcp import db
     w = db.create_platform_worker("banc présence")
-    db.claim_next_job(None, w["worker_sub"], lease_seconds=60)   # file vide : n'écrit que la présence
-    assert db.verify_worker_secret(w["secret"]) is not None, "le secret a survécu à l'upsert"
+    assert db.verify_worker_secret(w["secret"]) is not None, "le secret a survécu à la marque"
     ligne = [x for x in db.list_platform_workers() if x["worker_sub"] == w["worker_sub"]][0]
     assert not str(ligne["last_seen_at"]).startswith("1970")
     assert ligne["label"] == "banc présence"
+
+
+def test_verify_worker_secret_authentifie_sans_reecrire_sous_30s(live):
+    """oto-backend, lot perf 17/09/2026 (mesuré par oto cd, suite du lot posé
+    sur `claim_next_job`) : `verify_worker_secret` authentifiait CHAQUE appel
+    d'un worker (`take`/`beat`/`complete`/le sondage…) par un `UPDATE …
+    RETURNING` synchrone sur l'UNIQUE ligne que partagent toutes les unités
+    d'une même machine (12 `oto-runner@N` sur un seul secret) — 31 attentes de
+    verrou mesurées sur 150 instantanés de 30s, hors du lot déjà posé sur la
+    réservation. C'est maintenant une lecture pure ; la marque de présence est
+    bornée et séparée (`_touch_worker_presence`).
+
+    Deux appels authentifiés à MOINS de 30s d'intervalle : aucune écriture
+    (valeur inchangée en base), et le worker reste authentifié pendant toute
+    cette fenêtre — l'authentification ne dépend plus du nombre de lignes
+    écrites. Comparaison de VALEUR, pas de durée."""
+    from oto_mcp import db
+
+    w = db.create_platform_worker("banc auth sans réécriture")
+    premier = db.verify_worker_secret(w["secret"])       # 1970 -> NOW() : écrit
+    assert premier == {"worker_sub": w["worker_sub"], "label": "banc auth sans réécriture"}
+    avant = [x for x in db.list_platform_workers()
+             if x["worker_sub"] == w["worker_sub"]][0]["last_seen_at"]
+
+    second = db.verify_worker_secret(w["secret"])        # < 30s après : ne doit rien écrire
+    apres = [x for x in db.list_platform_workers()
+             if x["worker_sub"] == w["worker_sub"]][0]["last_seen_at"]
+
+    assert second == premier, "le worker reste authentifié pendant la fenêtre de granularité"
+    assert avant == apres, "sous 30s, l'authentification ne doit pas réécrire last_seen_at"
 
 
 def test_la_presence_ne_partage_pas_la_transaction_de_reservation(live):
