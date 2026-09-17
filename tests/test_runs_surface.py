@@ -112,6 +112,8 @@ def test_lancer_ne_compte_rien_et_arme_avec_la_flotte_et_son_org_seules(monkeypa
     monkeypatch.setattr(RF.db, "armer", _armer)
     monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
+    monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
+        "armed": True, "workers": 1, "last_seen": None, "families": []})
 
     out = RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=7))
     assert recu["args"] == (7, 2)

@@ -8,9 +8,40 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .. import runner_models
+from .. import db, runner_models
 from . import _cle_exigee
 from ._types import AuthzDenied
+
+
+def exige_un_runner(org_id: int) -> dict:
+    """Refuse de PROMETTRE une exécution que personne n'assure — et rend l'état lu,
+    pour que la garde du modèle (`exige_servi`) juge sur la même lecture.
+
+    ⚠️ Partagée par `runner.triggers` (poser un déclencheur) et `runner.fleets`
+    (`launch`) — les deux gestes MENTENT de la même façon sans elle : ils
+    rendent une promesse (`next_due`, `armed`) qu'aucun worker ne tient, et
+    l'objet a l'air programmé sans jamais tourner. `runner_fleets#13` (oto-runner)
+    a mesuré la conséquence sur `launch` : 41 travaux restés en file 13 jours,
+    un armement qui a réussi et n'a jamais été repris.
+    """
+    etat = db.runner_arme(org_id)
+    if etat["armed"]:
+        return etat
+    if etat["last_seen"] is None:
+        detail = ("aucun worker n'a jamais sondé la file de cette org : rien "
+                  "n'exécuterait ce geste")
+    else:
+        detail = (f"le dernier worker de cette org s'est tu le "
+                  f"{etat['last_seen']} — au-delà de "
+                  f"{db.ARME_FENETRE_S // 60} minutes on ne le tient plus pour "
+                  f"présent")
+    raise AuthzDenied(
+        400, "no_runner_armed",
+        f"aucun runner armé pour cette org ({detail}). L'exécution appartient "
+        "au worker, et sans worker le geste réussirait pour rien, sans erreur "
+        "— l'objet aurait l'air de marcher. Arme un worker pour cette org "
+        "(`OTO_RUNNER_ARMED=1` + un jeton de l'org, cf. otomata-tech/oto-runner), "
+        "puis reprends ce geste.")
 
 
 def famille_declaree(model: Optional[str],

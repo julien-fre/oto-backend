@@ -416,14 +416,21 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # Seule la famille DE CE MODÈLE compte (14/09/2026) — un passage sans
         # modèle (ou d'un modèle hors catalogue) n'exige rien.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # ⚠️ Armer un passage qu'AUCUN worker vivant ne réclame le laisse `armed`
+        # pour toujours : personne ne fait jamais `prendre_flotte`, et le
+        # symptôme lu depuis le produit est « l'ordonnanceur est mort » — un
+        # diagnostic faux posé sur une cause invisible (oto-runner#13, 41
+        # travaux restés en file 13 jours). Lu même SANS modèle demandé : un
+        # agent sans modèle est servi par n'importe quel worker, encore faut-il
+        # qu'il y en ait un. L'état lu sert aussi à la garde de famille qui suit.
+        etat = _modele.exige_un_runner(ctx.org_id)
         # ⚠️ Armer un passage dont AUCUN worker vivant ne sert le modèle le laisse
         # `running` pour toujours : `campagne_a_servir` produit un travail, le
-        # claim le filtre, et plus rien n'est produit tant qu'il attend. Refusé
-        # AVANT la réparation de l'instruction — un refus n'écrit rien.
-        # Un passage sans modèle (ou d'un modèle hors catalogue) n'est pas jugé :
+        # claim le filtre, et plus rien n'est produit tant qu'il attend. Un
+        # passage sans modèle (ou d'un modèle hors catalogue) n'est pas jugé :
         # n'importe quel worker le sert.
         if famille:
-            _modele.exige_servi(db.runner_arme(ctx.org_id), famille)
+            _modele.exige_servi(etat, famille)
         if avant and avant.get("procedure") and not (avant.get("input") or "").strip():
             db.update_fleet(inp.fleet_id, ctx.org_id, {"input": _instruction.de_file(
                 avant["procedure"], avant.get("namespace"), avant.get("row_filter"))})
