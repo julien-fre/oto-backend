@@ -152,10 +152,6 @@ RETURN_APPS: dict[str, tuple[str, str]] = {
 # Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de
 # route callback faisait seul avant ce module.
 _DEFAULT_RETURN_BASE_ENV = "OTO_APP_URL"
-# Une redirection doit TOUJOURS aboutir : sans patron chez le tenant, on sert la
-# nôtre (cf. `links.redirect_for`). Voir notre marque une fois vaut mieux qu'une page
-# blanche au milieu d'une connexion.
-_DEFAULT_RETURN_BASE_FALLBACK = config.dashboard_url()
 _DEFAULT_RETURN_PATH = "/connectors"
 
 
@@ -176,7 +172,13 @@ def return_url(app: Optional[str], suffix: str, *, org: Optional[int] = None) ->
     if app in RETURN_APPS:
         base, path_tmpl = RETURN_APPS[app]
     else:
-        base = os.environ.get(_DEFAULT_RETURN_BASE_ENV, _DEFAULT_RETURN_BASE_FALLBACK).rstrip("/")
+        # Une redirection doit TOUJOURS aboutir : sans patron chez le tenant, on
+        # sert la nôtre (cf. `links.redirect_for`) — `dashboard_url()` porte déjà la
+        # cascade complète (dont `OTO_APP_URL`), résolue ICI (pas à l'import, #968 :
+        # sans elle NULLE PART déclarée, le premier retour de consentement lève
+        # nommé plutôt que de deviner).
+        base = os.environ.get(_DEFAULT_RETURN_BASE_ENV) or config.dashboard_url()
+        base = base.rstrip("/")
         path_tmpl = _DEFAULT_RETURN_PATH
     path = path_tmpl.format(org=org if org is not None else "")
     return f"{base}{path}{suffix}"

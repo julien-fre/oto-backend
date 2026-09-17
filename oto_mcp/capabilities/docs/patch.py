@@ -112,6 +112,8 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
                                                mode=mode)
         else:
             new_body = doc_patch.patch_preamble(corps, inp.body_md, mode=mode)
+        # Après le patch, qui a déjà refusé une cible absente ou ambiguë.
+        emporte = doc_patch.emprise(corps, inp.section if vise_section else None, mode)
     except doc_patch.SectionNotFound as e:
         # Le refus nomme les sections disponibles ET, si la page a un préambule,
         # la poignée qui l'atteint : c'est ici que `section="__preamble__"` se heurte
@@ -138,6 +140,19 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
                 "Cette page n'a aucun titre : « ce qui précède le premier titre » y "
                 "est la page ENTIÈRE, et la supprimer la viderait. Si c'est ce que "
                 "tu veux : op=update avec le nouveau corps, ou op=delete pour la page.")
+    cible = inp.section if vise_section else "(préambule)"
+    if inp.dry_run:
+        # oto#171 : sans simulation, le seul moyen de savoir ce qu'un `replace` emporte
+        # était de l'essayer sur une page jetable créée dans le projet du client.
+        # `rev` = la version sur laquelle ce relevé vaut : la repasser en `expected_rev`
+        # garantit que le vrai patch emporte exactement ce qui a été annoncé.
+        return {"ok": True, "id": inp.doc_id, "dry_run": True, "written": False,
+                "mode": mode, "target": cible, "removed": emporte,
+                "rev": db.doc_rev(row.get("title"), corps),
+                "hint": ("Rien n'a été écrit. `removed` = les lignes du corps ACTUEL que "
+                         "ce patch retirerait (null : ce mode ne retire rien). Repasse "
+                         "`rev` en `expected_rev` pour que le vrai patch porte sur cette "
+                         "même version.")}
     try:
         db.update_doc(int(inp.doc_id), body_md=new_body, edited_by=sub,
                       expected_rev=inp.expected_rev)
@@ -145,12 +160,13 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         require(False, "conflict",
                 f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                 f"Relis-le (op=get) et refais ton patch sur la version à jour.", 409)
-    cible = inp.section if vise_section else "(préambule)"
     db.log_project_activity(pid, sub, "doc.patch", f"{row.get('title')} § {cible}")
     # #530 : c'est le patch qui souffrait le plus — il existe précisément pour éditer
     # une page trop longue pour être lue entière, et il en rendait le corps complet.
     out = view.projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
                          brut_par_defaut=False, hint=view.HINT_ACCUSE)
+    if emporte is not None:
+        out["removed"] = emporte
     if removed:
         out["removed_subsections"] = removed
         verbe = ("retiré la section ENTIÈRE, titre compris" if mode == "delete"

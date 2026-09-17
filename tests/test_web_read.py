@@ -28,10 +28,17 @@ class _Reg:
         return deco
 
 
-def _web_read(monkeypatch, *, fetch=None, serper="absent", browserbase_page=None):
+def _web_read(monkeypatch, *, fetch=None, serper="absent", browserbase_page=None,
+              repli_www_reel=False):
     """Le tool monté avec les crans scriptés. `serper` : 'absent' (pas de clé),
-    dict (réponse), Exception (panne)."""
+    dict (réponse), Exception (panne).
+
+    Le repli `www.` (oto#262) résout le DNS avant le cran ① : neutralisé par défaut,
+    sinon chaque banc de ce fichier dépendrait du résolveur de la machine qui le
+    joue. Un banc qui l'exerce passe `repli_www_reel=True` et simule le DNS."""
     reg = _Reg()
+    if not repli_www_reel:
+        monkeypatch.setattr(W, "_cible_avec_repli_www", lambda url: (url, False))
     if fetch is not None:
         monkeypatch.setattr(W, "_fetch_http", lambda url: fetch)
     if serper == "absent":

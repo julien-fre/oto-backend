@@ -197,6 +197,38 @@ def subsections(body: str, heading: str) -> list[str]:
             for m in (_HEADING.match(ln) for ln in lines[i + 1:j]) if m]
 
 
+def emprise(body: str, heading: str | None, mode: str) -> dict | None:
+    """Ce qu'un patch EMPORTE du corps actuel, avant de l'écrire (oto#171).
+
+    `heading=None` vise le préambule. Rend `None` pour append/prepend, qui ne retirent
+    rien ; sinon `{from_line, to_line, line_count, subsections}`, lignes 1-based dans le
+    corps tel qu'il est lu (bornes `None` si la région est vide).
+
+    ⚠️ La portée surprend quand la section n'a PAS de sous-titre : des puces posées
+    après un `###` lui appartiennent jusqu'au prochain titre de niveau ≤, et un
+    `replace` les emporte. `subsections()` ne l'annonçait que s'il y avait des enfants ;
+    le compte de lignes le dit dans tous les cas. `replace` garde le titre (hors de
+    l'emprise), `delete` l'emporte. Lève les mêmes refus que `patch_section`."""
+    if mode not in MODES:
+        raise ValueError(f"mode invalide: {mode}")
+    if mode not in ("replace", "delete"):
+        return None
+    lines = (body or "").split("\n")
+    if heading is None:
+        debut, fin = 0, _first_heading_index(lines)
+        enfants: list[str] = []
+    else:
+        found = _locate(lines, _norm(heading), heading)
+        if found is None:
+            raise SectionNotFound(heading, headings(body))
+        i, _level, fin = found
+        debut = i if mode == "delete" else i + 1
+        enfants = [m.group(2).strip()
+                   for m in (_HEADING.match(ln) for ln in lines[i + 1:fin]) if m]
+    n = fin - debut
+    return {"from_line": debut + 1 if n else None, "to_line": fin if n else None,
+            "line_count": n, "subsections": enfants}
+
 def _check_mode(mode: str, new_body: str | None) -> None:
     """Un mode inconnu, ou un contenu passé à `delete`, s'arrête ICI.
 

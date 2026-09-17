@@ -47,8 +47,8 @@ def test_index_shows_connectors_with_tooltip_and_link(monkeypatch):
     assert "Connecteurs" in html
     # serper_search → connecteur `serper` ; fr_search → connecteur `sirene`.
     assert "connector=serper" in html
-    from oto_mcp import share_ui as _su
-    assert f"{_su._DASHBOARD}/connectors?tab=marketplace" in html
+    from oto_mcp import config
+    assert f"{config.dashboard_url()}/connectors?tab=marketplace" in html
     assert 'class=conn' in html and 'data-tip=' in html  # pastille + tooltip
 
 

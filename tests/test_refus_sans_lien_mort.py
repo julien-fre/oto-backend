@@ -31,8 +31,10 @@ SA_PAGE = "https://app.gamma.test/org/7/connectors"
 
 @pytest.fixture
 def registre(monkeypatch):
-    for var in ("OTO_APP_URL", "OTO_DASHBOARD_URL", "OTO_DASHBOARD_BASE_URL"):
-        monkeypatch.delenv(var, raising=False)
+    # `OTO_APP_URL` reste posé par le gréement global (`conftest.py`, #968) : ce
+    # fichier affirme sur NOTRE_PAGE = "https://manage.oto.cx/connectors", exactement
+    # cette valeur — pas le cas « rien de déclaré », couvert ailleurs
+    # (`test_dashboard_url_par_tenant.py`).
     avant = tenancy.current()
     tenancy.install(tenancy.IssuerRegistry(tenancy.build(
         "https://auth.oto.ninja/oidc",

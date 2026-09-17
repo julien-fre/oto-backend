@@ -774,3 +774,32 @@ dump ; qu'un blocage continu observé à plusieurs cycles de vérification ne pr
 qu'UN dump ; que deux blocages séparés par une vraie résorption en produisent bien
 DEUX (le réarmement) ; et qu'une salve au-delà du plafond par minute est refusée en
 le disant.
+
+## Le convoi du GIL — quand le travail est déjà bien threadpoolé (oto-backend#980, 16/09)
+
+Différent des cinq modes ci-dessus : ici le travail est déjà correctement sorti de la
+boucle (`run_in_threadpool`), et pourtant deux requêtes concurrentes sur le même
+tableau se dégradent bien au-delà du linéaire. Remonté par scout : une lecture
+paginée complète du datastore (8 910 lignes, ~90 colonnes) prend **2-3 s en solo**,
+mais **54 s** à deux requêtes concurrentes sur le même token — pas un simple partage
+de bande passante.
+
+Reproduit sur la box (script isolé, contre la vraie base) : la même lecture prend
+3,3 s seule, et **15 à 24 s** dès qu'UN SEUL thread de calcul tourne à côté, à
+l'intervalle de bascule par défaut de CPython (5 ms — `sys.getswitchinterval()`).
+C'est le **convoi du GIL** : à un intervalle de 5 ms, un thread qui vient de le
+céder attend en moyenne bien plus longtemps pour le reprendre que le travail réel
+ne le justifierait, sous contention. Resserré à **1 ms**
+(`sys.setswitchinterval(0.001)`, posé dans `server.main()`, au tout début du
+démarrage — jamais au niveau module), la même lecture retombe à **8,1-8,4 s**. En
+dessous de 1 ms (testé à 0,5 ms), plus aucun gain : le plancher ×2 est déjà atteint.
+
+Lot minimal (Alexis, 16/09) : ce seul réglage. Les pistes structurelles qui
+resteraient à instruire si la contention redevenait un problème au palier de charge
+suivant — lecture des grosses colonnes en `data::text` plutôt qu'en objets Python
+détaillés, ou un modèle multi-processus — restent sur `oto-backend#980`, pas
+attaquées ici. Preuve : `tests/test_switch_interval_980.py`, qui vérifie que `main()`
+pose la valeur avant tout autre sous-système (capturée à l'appel de
+`logging.basicConfig`, le tout premier après le réglage) — pas une mesure de perf
+rejouée à chaque run (coûteuse, contre une vraie base), juste le fait qui compte :
+la valeur est posée, et posée tôt.

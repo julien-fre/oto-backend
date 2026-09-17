@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import time
 
 from fastmcp import FastMCP
@@ -887,6 +888,20 @@ def build_root_app(app, anon_app):
 
 
 def main():
+    # Convoi du GIL (oto-backend#980, mesuré 16/09/2026) : une lecture paginée
+    # complète du datastore (8 910 lignes) prend 3,3 s seule, mais 15 à 24 s dès
+    # qu'un SEUL thread de calcul tourne à côté avec l'intervalle de bascule par
+    # défaut (5 ms) — deux threads Python se disputent le GIL bien plus que ne le
+    # justifierait le travail réel. Reproduit sur la box, contre la vraie base,
+    # hors du serveur, dans un script isolé. À 1 ms, la lecture retombe à 8,1-8,4 s ;
+    # à 0,5 ms, plus aucun gain (le plancher ×2 est déjà atteint). Posé ICI, au tout
+    # début du démarrage RÉEL — jamais au niveau module (`test_server_construction.py`
+    # interdit tout travail à l'import), et avant tout thread applicatif (threadpool
+    # DB, sondes de connecteur) pour qu'aucun ne parte avec l'intervalle par défaut.
+    # Lot minimal (Alexis, 16/09) : ce seul réglage ; les pistes structurelles
+    # (lecture en `data::text`, multi-processus) restent sur l'issue pour plus tard.
+    sys.setswitchinterval(0.001)
+
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

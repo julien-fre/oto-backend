@@ -43,10 +43,12 @@ def registre():
 
 # --- une seule source, et un défaut qui ne ment pas ----------------------------
 
-def test_le_defaut_vise_la_prod_jamais_la_preprod(env_propre):
-    """C'est le défaut qui a servi la preprod à un client : un environnement mal
-    configuré doit dégrader vers le vrai produit, pas vers un bac à sable."""
-    assert config.dashboard_url() == "https://manage.oto.cx"
+def test_rien_de_declare_refuse_plutot_que_de_deviner(env_propre):
+    """Jusqu'au 16/09/2026 (#968), rien de déclaré retombait en silence sur NOTRE
+    dashboard — c'est ce défaut-là qui avait servi la preprod à un client (13/08).
+    Désormais : aucune des trois posée ⟹ refus nommé, pas un produit deviné."""
+    with pytest.raises(RuntimeError, match="OTO_APP_URL"):
+        config.dashboard_url()
 
 
 @pytest.mark.parametrize("var", ["OTO_APP_URL", "OTO_DASHBOARD_URL",
@@ -70,22 +72,22 @@ def test_un_compte_de_tenant_recoit_ladresse_de_son_produit(registre, env_propre
     assert config.dashboard_url_for("acme:u-1") == "https://app.acme.test"
 
 
-def test_un_compte_de_la_plateforme_recoit_la_notre(registre, env_propre):
+def test_un_compte_de_la_plateforme_recoit_la_notre(registre):
     assert config.dashboard_url_for("bn01jfy76a5n") == config.dashboard_url()
 
 
-def test_un_tenant_SANS_adresse_retombe_sur_la_notre(registre, env_propre):
+def test_un_tenant_SANS_adresse_retombe_sur_la_notre(registre):
     """L'inertie : déclarer un tenant ne change aucun lien tant qu'on ne lui a pas
     donné d'adresse."""
     assert config.dashboard_url_for("beta:u-1") == config.dashboard_url()
 
 
-def test_sans_compte_on_sert_la_notre(registre, env_propre):
+def test_sans_compte_on_sert_la_notre(registre):
     assert config.dashboard_url_for(None) == config.dashboard_url()
     assert config.dashboard_url_for("") == config.dashboard_url()
 
 
-def test_un_registre_illisible_ne_casse_aucun_lien(env_propre, monkeypatch):
+def test_un_registre_illisible_ne_casse_aucun_lien(monkeypatch):
     """Ce chemin construit des liens DANS des réponses d'outils : il ne doit jamais
     lever, sous peine de transformer une question anodine en erreur."""
     def _boum():
@@ -97,7 +99,7 @@ def test_un_registre_illisible_ne_casse_aucun_lien(env_propre, monkeypatch):
 
 # --- les surfaces qui rendent ces liens ----------------------------------------
 
-def test_une_adresse_seule_ne_suffit_pas_a_faire_un_lien(registre, env_propre):
+def test_une_adresse_seule_ne_suffit_pas_a_faire_un_lien(registre):
     """⚠️ Ce test affirmait l'inverse jusqu'au 13/08 — il collait NOS chemins sous
     LEUR domaine. Le code du partenaire a montré que ça fabrique des liens morts :
     ses chemins ne ressemblent pas aux nôtres, et il n'a aucune vue tableau.

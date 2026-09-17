@@ -400,6 +400,88 @@ def test_les_livraisons_se_lisent_et_se_comptent(live):
     assert compte["derniere"] is not None
 
 
+def _job_de(trigger_id):
+    from oto_mcp import db
+    return db.livraisons(trigger_id, ORG)[0]["job_id"]
+
+
+def _poser_statut(job_id, statut):
+    from oto_mcp import db
+    with db._connect() as conn:
+        conn.execute("UPDATE runner_jobs SET status = %s WHERE id = %s",
+                     (statut, job_id))
+
+
+def test_la_livraison_reste_FIGEE_mais_l_etat_du_travail_SUIT(live):
+    """`outcome` dit ce qui est arrivé à la PORTE et ne bouge plus ; ce que le
+    travail est devenu se lit sur le travail, joint à chaque lecture. Sans ça,
+    une livraison dont le déroulé est fini depuis des heures reste « queued »
+    (16/09/2026)."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="journal-etat-du-travail")
+    _livrer(t, secret)
+    job = _job_de(t["id"])
+    lue = db.livraisons(t["id"], ORG)[0]
+    assert (lue["outcome"], lue["job_status"]) == (db.QUEUED, "pending")
+
+    _poser_statut(job, "done")
+    lue = db.livraisons(t["id"], ORG)[0]
+    assert lue["outcome"] == db.QUEUED, "la ligne de livraison n'est JAMAIS réécrite"
+    assert lue["job_status"] == "done", "l'état du travail est lu, pas recopié"
+
+
+def test_un_REFUS_n_a_aucun_travail_donc_aucun_etat(live):
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="journal-refus-sans-travail")
+    with db._connect() as conn:
+        db.enregistrer(conn, t["id"], ORG, db.REFUSE_PAUSED)
+    lue = db.livraisons(t["id"], ORG)[0]
+    assert (lue["job_id"], lue["job_status"]) == (None, None)
+    assert db.livraisons(t["id"], ORG, en_attente=True) == [], (
+        "un refus n'a pas de travail, donc n'est jamais dans la file")
+
+
+def test_en_attente_ne_rend_QUE_ce_qui_n_a_pas_tourne_du_plus_ancien(live):
+    """La file seule : `pending` et `held`, dans l'ordre où elles partiront.
+    Ce qui a tourné (terminé, échoué, en cours, périmé) se lit dans les déroulés."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="file-seulement-en-attente", max_per_hour=100)
+    _livrer(t, secret, 5)
+    ids = [l["job_id"] for l in db.livraisons(t["id"], ORG)][::-1]  # ordre d'arrivée
+    _poser_statut(ids[0], "done")
+    _poser_statut(ids[1], "claimed")
+    _poser_statut(ids[2], "held")
+    _poser_statut(ids[4], "expired")
+
+    file = db.livraisons(t["id"], ORG, en_attente=True)
+    assert [l["job_id"] for l in file] == [ids[2], ids[3]], "held + pending, plus ancien d'abord"
+    assert [l["job_status"] for l in file] == ["held", "pending"]
+    assert all(l["job_due_at"] for l in file), "l'échéance du travail est servie"
+    assert len(db.livraisons(t["id"], ORG)) == 5, "sans le filtre, le journal entier"
+
+
+def test_la_file_compte_ce_que_VIDER_viderait(live):
+    """Même prédicat que `perimer_travaux_du_declencheur` : le nombre affiché à
+    côté du bouton est exactement ce que le bouton périme."""
+    from oto_mcp import db
+    t, secret = _webhook(db, procedure="file-ce-qui-attend", max_per_hour=100)
+    autre, secret_autre = _webhook(db, procedure="file-autre-agent", max_per_hour=100)
+    _livrer(t, secret, 3)
+    _livrer(autre, secret_autre, 2)
+    jobs = [l["job_id"] for l in db.livraisons(t["id"], ORG)]
+    _poser_statut(jobs[0], "held")
+    _poser_statut(jobs[1], "done")
+
+    assert db.file_du_declencheur(t["id"], ORG) == {"pending": 1, "held": 1}
+    assert db.file_du_declencheur(autre["id"], ORG) == {"pending": 2, "held": 0}, (
+        "la file d'un autre agent ne se mélange pas")
+    assert db.file_du_declencheur(t["id"], ORG + 1) == {"pending": 0, "held": 0}, (
+        "org-scopé")
+
+    assert db.perimer_travaux_du_declencheur(t["id"], ORG) == 2
+    assert db.file_du_declencheur(t["id"], ORG) == {"pending": 0, "held": 0}
+
+
 def test_les_livraisons_d_une_AUTRE_org_sont_invisibles(live):
     from oto_mcp import db
     t, _ = _webhook(db, procedure="veille-autre-org")

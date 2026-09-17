@@ -13,10 +13,17 @@ import html as _html
 import logging
 import os
 
+from .config import require_env
+
 log = logging.getLogger("oto_mcp.email")
 
-_MAILER_URL = os.environ.get("OTO_MAILER_URL", "https://mailer.oto.zone/api/send")
-_MAIL_FROM = os.environ.get("OTO_MAIL_FROM", "Oto <oto@otomata.tech>")
+
+def _mailer_url() -> str:
+    return require_env("OTO_MAILER_URL")
+
+
+def _mail_from() -> str:
+    return require_env("OTO_MAIL_FROM")
 
 
 def _esc(s: str) -> str:
@@ -43,29 +50,36 @@ def _no_crlf(s: str | None) -> str | None:
 def _send(to: str, subject: str, html: str, reply_to: str | None = None,
           from_email: str | None = None) -> bool:
     """Envoi via mailer.oto.zone (Scaleway TEM). `from_email` = adresse expéditrice
-    (défaut marque `_MAIL_FROM`) — le service refuse (403) un domaine hors allowlist
-    `MAILER_FROM_DOMAINS`. Best-effort (False si pas de bearer ou échec)."""
+    (défaut marque `_mail_from()`) — le service refuse (403) un domaine hors allowlist
+    `MAILER_FROM_DOMAINS`. Best-effort (False si pas de bearer ou échec) — mais
+    `OTO_MAILER_URL`/`OTO_MAIL_FROM` sont REQUISES dès qu'un envoi est tenté (#968) :
+    sans elles, un envoi partirait en silence sous NOTRE relais et NOTRE adresse."""
     bearer = os.environ.get("OTO_MAILER_SEND_BEARER")
     if not bearer:
         return False
+    # Résolues AVANT le bloc best-effort : une variable manquante est une erreur de
+    # CONFIGURATION, pas un aléa réseau — elle ne doit pas se perdre dans le même
+    # `except` qu'un timeout httpx (#968).
+    url = _mailer_url()
+    depuis = from_email or _mail_from()
     try:
         import httpx
         # Anti-injection d'en-tête : neutralise CR/LF sur TOUS les champs d'en-tête
         # (choke-point unique → couvre tous les templates). Le corps `html` n'est pas
         # un en-tête (et déjà échappé par les templates via _esc).
-        payload = {"from": _no_crlf(from_email or _MAIL_FROM), "to": _no_crlf(to),
+        payload = {"from": _no_crlf(depuis), "to": _no_crlf(to),
                    "subject": _no_crlf(subject), "html": html}
         if reply_to:
             payload["reply_to"] = _no_crlf(reply_to)
         r = httpx.post(
-            _MAILER_URL,
+            url,
             headers={"Authorization": f"Bearer {bearer}"},
             json=payload,
             timeout=10.0,
         )
         if r.status_code == 200:
             return True
-        log.warning("mailer %s → %s %s", _MAILER_URL, r.status_code, r.text[:200])
+        log.warning("mailer %s → %s %s", url, r.status_code, r.text[:200])
         return False
     except Exception as e:  # réseau, import, etc. → best-effort
         log.warning("email to %s not sent (%s)", to, e)
@@ -346,5 +360,7 @@ def send_composed_email(
     html = render_composed_email(body, cta_text=cta_text, cta_url=cta_url, footer=footer,
                                  image_url=image_url, image_alt=image_alt, brand=brand,
                                  locale=locale, unsubscribe_url=unsubscribe_url)
-    rt = reply_to or os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
+    # `require_env` seulement si `reply_to` est absent (court-circuit `or`) — sans
+    # elle, le repli irait vers NOTRE boîte personnelle (#968).
+    rt = reply_to or require_env("OTO_CONTACT_TO")
     return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name))

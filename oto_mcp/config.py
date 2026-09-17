@@ -215,15 +215,22 @@ def dashboard_url() -> str:
     posait que la première :
     tout ce qui lisait la seconde retombait sur un défaut EN DUR pointant la
     **preprod**. Un client d'un partenaire s'est ainsi vu servir un lien vers un
-    environnement qui n'est pas le sien (13/08). Le défaut, lui, vise désormais la
-    PROD : un environnement mal configuré doit dégrader vers le vrai produit, jamais
-    vers un bac à sable.
+    environnement qui n'est pas le sien (13/08).
+
+    Décision du 16/09/2026 (#968) : plus de défaut muet vers NOTRE dashboard —
+    une instance qui n'a posé AUCUNE des trois refuse de démarrer les boucles qui en
+    dépendent, en le nommant, plutôt que d'offrir silencieusement notre produit à sa
+    place.
     """
     for var in ("OTO_APP_URL", "OTO_DASHBOARD_URL", "OTO_DASHBOARD_BASE_URL"):
         valeur = os.environ.get(var, "").strip().rstrip("/")
         if valeur:
             return valeur
-    return "https://manage.oto.cx"
+    raise RuntimeError(
+        "Aucune de OTO_APP_URL / OTO_DASHBOARD_URL / OTO_DASHBOARD_BASE_URL n'est "
+        "posée : l'adresse du tableau de bord doit être déclarée (une seule suffit), "
+        "ce process ne devine pas la nôtre à sa place."
+    )
 
 
 def dashboard_url_for(sub: Optional[str]) -> str:
