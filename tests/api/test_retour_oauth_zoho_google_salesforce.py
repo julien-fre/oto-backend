@@ -2,11 +2,10 @@
 (`?connector=<nom>&connect=connected|error|forbidden`, oto-backend#670) au
 niveau de la ROUTE (callback réel, pas la fabrique seule).
 
-- **zoho** et **google** (`api/datastore.py`) servent déjà un suffixe LU par le
-  dashboard (`?zoho=connected`, `?google=connected`) : la MÊME redirection doit
-  porter l'ANCIENNE forme ET la nouvelle — pas deux redirections, un seul jeu
-  d'URL avec les deux jeux de clés. google n'avait en revanche AUCUNE
-  redirection d'échec avant ce lot (JSON brut) : pur ajout, rien à doubler.
+- **zoho** et **google** (`api/datastore.py`) doublaient un temps l'ancienne
+  forme lue par le dashboard (`?zoho=connected`, `?google=connected`) — retirée
+  le 17/09/2026, sans préavis, faute de lecteur mesuré. Ces bancs vérifient
+  désormais son ABSENCE, et rougissent si quelqu'un la remet.
 - **salesforce** est déjà la forme cible : test de non-régression après le
   passage au fabricant partagé (`auth.flow.connector_return_url`).
 """
@@ -71,13 +70,13 @@ def test_zoho_state_illisible_double_zoho_error(monkeypatch):
     handler = _endpoint(zoho_routes, ZOHO_CALLBACK)
     resp = asyncio.run(handler(_get(ZOHO_CALLBACK, "state=bad")))
     q = _qs(_location(resp))
-    assert q["zoho"] == ["error"], "ancienne forme absente — le dashboard la lit encore"
+    assert q.get("zoho") is None, "ancienne forme réapparue — elle est retirée depuis le 17/09"
     assert q["connector"] == ["zoho"] and q["connect"] == ["error"]
 
 
-def test_zoho_succes_double_les_deux_formes_avec_le_connecteur_reel(monkeypatch):
-    """Succès sur `zohodesk` (pas `zoho`) : l'ancienne clé porte le connecteur RÉEL
-    — c'était déjà le cas avant ce lot — et la nouvelle aussi."""
+def test_zoho_succes_ne_sert_que_la_forme_neuve(monkeypatch):
+    """Succès sur `zohodesk` (pas `zoho`) : seule la forme neuve est servie,
+    portant le connecteur RÉEL."""
     parsed = {"sub": "u1", "org": 5, "connector": "zohodesk",
              "data_center": "eu", "return_app": ""}
     monkeypatch.setattr(zoho_routes.zoho_oauth, "verify_state", lambda s: parsed)
@@ -88,14 +87,13 @@ def test_zoho_succes_double_les_deux_formes_avec_le_connecteur_reel(monkeypatch)
     handler = _endpoint(zoho_routes, ZOHO_CALLBACK)
     resp = asyncio.run(handler(_get(ZOHO_CALLBACK, "code=c&state=s")))
     q = _qs(_location(resp))
-    assert q["zohodesk"] == ["connected"], "ancienne forme absente"
+    assert q.get("zohodesk") is None, "ancienne forme réapparue — elle est retirée depuis le 17/09"
     assert q["connector"] == ["zohodesk"] and q["connect"] == ["connected"]
 
 
-def test_zoho_echange_echoue_double_zoho_error_meme_pour_analytics(monkeypatch):
-    """L'échec a TOUJOURS porté `?zoho=error` (jamais le connecteur réel), y
-    compris pour zohodesk/zohoanalytics — un choix PRÉSERVÉ tel quel pour la forme
-    héritée ; la forme neuve, elle, porte le connecteur réellement visé."""
+def test_zoho_echange_echoue_ne_sert_que_la_forme_neuve(monkeypatch):
+    """La forme neuve porte le connecteur réellement visé, y compris pour
+    zohodesk/zohoanalytics ; plus aucune ancienne forme à côté."""
     parsed = {"sub": "u1", "org": 5, "connector": "zohoanalytics",
              "data_center": "eu", "return_app": ""}
     monkeypatch.setattr(zoho_routes.zoho_oauth, "verify_state", lambda s: parsed)
@@ -107,16 +105,16 @@ def test_zoho_echange_echoue_double_zoho_error_meme_pour_analytics(monkeypatch):
     handler = _endpoint(zoho_routes, ZOHO_CALLBACK)
     resp = asyncio.run(handler(_get(ZOHO_CALLBACK, "code=c&state=s")))
     q = _qs(_location(resp))
-    assert q["zoho"] == ["error"], "comportement hérité changé — c'était toujours zoho=error"
+    assert q.get("zoho") is None, "ancienne forme réapparue — elle est retirée depuis le 17/09"
     assert q["connector"] == ["zohoanalytics"] and q["connect"] == ["error"]
 
 
-# --- google (api/datastore.py) : succès doublé, échec enfin redirigé ----------
+# --- google (api/datastore.py) : forme neuve seule, échec enfin redirigé -----
 
 GOOGLE_CALLBACK = "/api/google/oauth/callback"
 
 
-def test_google_succes_double_google_connected(monkeypatch):
+def test_google_succes_ne_sert_que_la_forme_neuve(monkeypatch):
     monkeypatch.setattr(datastore_routes.google_oauth, "verify_state", lambda s: ("sub-1", 7, ""))
     monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code",
                         lambda code: {"access_token": "a", "refresh_token": "r"})
@@ -125,7 +123,7 @@ def test_google_succes_double_google_connected(monkeypatch):
     handler = _endpoint(datastore_routes, GOOGLE_CALLBACK, with_cors=True)
     resp = asyncio.run(handler(_get(GOOGLE_CALLBACK, "code=c&state=s")))
     q = _qs(_location(resp))
-    assert q["google"] == ["connected"], "ancienne forme absente — le dashboard la lit encore"
+    assert q.get("google") is None, "ancienne forme réapparue — elle est retirée depuis le 17/09"
     assert q["connector"] == ["google"] and q["connect"] == ["connected"]
 
 
