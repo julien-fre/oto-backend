@@ -68,19 +68,20 @@ def make_routes(
 
     # --- Google OAuth ----------------------------------------------------
 
-    def _retour(etat: str, *, legacy: bool = False, app: str = "",
+    def _retour(etat: str, *, app: str = "",
                 org: int | None = None) -> str:
         """Où renvoyer le navigateur après le consentement Google.
 
         Convention unique de retour OAuth (oto-backend#670) : le suffixe vient du
-        fabricant partagé `oauth_flow.connector_return_suffix`. `legacy=True`
-        double l'ancienne forme `?google=connected` — encore lue par le dashboard
-        aujourd'hui — le temps du préavis (`deprecations.dans_le_preavis_retour_oauth`).
+        fabricant partagé `oauth_flow.connector_return_suffix`. L'ancienne forme
+        `?google=connected`, doublée le temps d'un préavis, a été retirée le
+        17/09/2026 — plus aucun lecteur mesuré (le dashboard lit `connect=`
+        depuis le 04/09, et zéro connexion Google chez le seul partenaire
+        concerné, Tulina).
 
-        Les branches d'ÉCHEC (`legacy=False`, le défaut) ne redirigeaient PAS du
-        tout avant ce lot — un JSON brut 400/502/504 à la place. Rien à doubler :
-        un statut qui n'a jamais existé n'a pas de lecteur à préserver, donc PUR
-        AJOUT ici, aligné sur les quatre autres connecteurs."""
+        Les branches d'ÉCHEC ne redirigeaient PAS du tout avant ce lot — un JSON
+        brut 400/502/504 à la place. Rien n'a jamais été doublé pour elles : un
+        statut qui n'a jamais existé n'a pas de lecteur à préserver."""
         from ..auth import flow as oauth_flow
 
         # Le front qui a DEMANDÉ la connexion, porté par le state signé depuis
@@ -97,9 +98,7 @@ def make_routes(
         # sur un 404, panne silencieuse puisque l'autorisation, elle, avait bien eu
         # lieu — exactement le mode d'échec déjà vu sur le patron d'un front tiers
         # (cf. le commentaire de `RETURN_APPS`).
-        return oauth_flow.connector_return_url(
-            app, "google", etat, org=org,
-            legacy=("google", etat) if legacy else None)
+        return oauth_flow.connector_return_url(app, "google", etat, org=org)
 
     async def google_oauth_callback(request: Request) -> Response:
         # Pas d'auth Logto — Google redirige depuis le navigateur user.
@@ -135,7 +134,7 @@ def make_routes(
         # Retour vers la page connecteurs (où vit la config Google, ADR 0024 B2).
         # `datastore` n'est plus Google Sheets (ADR 0016, PG natif) → ex-signal
         # `?datastore=connected` retiré.
-        return RedirectResponse(url=_retour("connected", legacy=True, app=return_app, org=org_id), status_code=302)
+        return RedirectResponse(url=_retour("connected", app=return_app, org=org_id), status_code=302)
 
 
 

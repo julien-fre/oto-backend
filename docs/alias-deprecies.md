@@ -22,16 +22,19 @@ qui s'exécute. L'ancien mot servait pour deux choses à la fois, l'objet produi
 « principe maison » ; c'est cette double vie qui prête à confusion.
 
 ⚠️ **Cette page couvre CE renommage-là (#519) — pas tous les renommages datés.**
-`oto_mcp/deprecations.py` porte un second couple, INDÉPENDANT : la convention de
-retour OAuth unifiée (`?connector=<nom>&connect=connected|error|forbidden`,
-oto-backend#670) double deux suffixes hérités (`?zoho=connected`, `?google=
-connected`) le temps d'un préavis à SA propre date — `ANNONCE_RETOUR_OAUTH` /
-`RETRAIT_RETOUR_OAUTH`, même `PREAVIS_MOIS` (l'Art 8.2 ne distingue pas de quelle
-surface il s'agit) mais un point de départ différent, puisque ce lot n'a pas été
-tagué le même jour que celui-ci. Détail : `docs/rest-api.md` §OAuth per-user. La
-mécanique ci-dessous (tag pas merge, deux mois calendaires, doublage jamais posé
-globalement) s'y applique à l'identique ; seule la table plus bas est propre à
-doctrine→guide.
+
+**17/09/2026 — retrait SANS préavis, exception à la règle ci-dessous** : la
+convention de retour OAuth unifiée (`?connector=<nom>&connect=connected|error|
+forbidden`, oto-backend#670) doublait deux suffixes hérités (`?zoho=connected`,
+`?google=connected`) depuis le 04/09. Décision d'Alexis : retrait immédiat,
+sans les deux mois habituels, après mesure qu'AUCUN consommateur ne lisait
+encore l'ancienne forme — le dashboard lit `connect=` depuis le 04/09
+(v1.55.0), et le seul partenaire susceptible de dépendre de ces deux
+connecteurs (Tulina) n'a mesuré aucune connexion Zoho ni Google. Contrairement
+à doctrine→guide, ce n'était pas un renommage consommé par des tiers actifs :
+c'était un doublage de précaution devenu sans objet. `ANNONCE_RETOUR_OAUTH` /
+`RETRAIT_RETOUR_OAUTH` / `dans_le_preavis_retour_oauth()` sont retirés
+d'`oto_mcp/deprecations.py`.
 
 Le **lot A** (PR #525) l'a retiré de l'interne sans changer un octet servi. Le **lot
 B** renomme les SURFACES — et une surface ne se renomme pas, elle se **double**.
