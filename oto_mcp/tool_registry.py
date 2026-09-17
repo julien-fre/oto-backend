@@ -51,10 +51,16 @@ def ref_names(text: str) -> list[str]:
 
 
 def namespaces_in(text: str) -> set[str]:
-    """Namespaces (1er token avant `_`) des outils référencés `<tool:slug>` dans
-    `text`. Sert le compteur « référencé par N guides » (posture guide-only,
-    ADR 0024) — dérivation pure, sans toucher au registre live."""
-    return {n.split("_", 1)[0] for n in ref_names(text)}
+    """Namespaces des outils référencés `<tool:slug>` dans `text`. Sert le compteur
+    « référencé par N guides » (posture guide-only, ADR 0024) — dérivation pure,
+    sans toucher au registre live.
+
+    ⚠️ Résolu par `namespace_of`, pas par le premier token (oto#260) : deux
+    connecteurs distincts partagent le premier mot (`linkedin_unipile_*`,
+    `linkedin_aiark_*`), et découper au premier `_` les rangeait tous deux sous
+    `linkedin` — un connecteur qui n'existe pas. Le résolveur était déjà importé
+    ici ; il n'était simplement pas appelé."""
+    return {namespace_of(n) for n in ref_names(text)}
 
 
 # Une docstring d'outil est enveloppée à ~80 colonnes : sa 1ʳᵉ LIGNE coupe presque
