@@ -217,6 +217,11 @@ _DECLARATIONS: tuple[str, ...] = (
     # Côté administratif seulement (agenda, catalogue, devis, factures) : le
     # contenu médical n'est pas servi, cf. `tools/nextmotion.py`.
     "nextmotion",
+    # --- paie et RH, en lecture — câblé 2026-09-17 ----------------------------
+    # Voisin de `nextmotion` par la SITUATION : un logiciel qui porte des données
+    # personnelles lourdes (NIR, IBAN, motifs d'absence médicaux), servi par liste
+    # blanche, cf. `tools/payfit.py`.
+    "payfit",
     # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
     # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
     # servent aucun tool : le worker la consomme pour le compte de l'org.
