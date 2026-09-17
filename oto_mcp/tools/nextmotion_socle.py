@@ -5,6 +5,15 @@ qui décide ce qui SORT d'un rendez-vous, d'un devis ou d'une facture, donc la p
 relire quand l'API change. Le patient n'est servi que par son `id` ; un champ absent
 d'une liste ci-dessous ne passe pas, y compris un champ que l'API ajouterait demain.
 Le pourquoi (données de santé, textes libres) est dans la docstring de `nextmotion.py`.
+
+⚠️ Ce qui reste en texte : les libellés du CATALOGUE (`subject` d'un type ou
+sous-type de visite, `name` d'une ligne de devis ou de facture) et le nom affiché
+d'un praticien. Ils décrivent la prestation ou le soignant, pas le patient ; la spec
+ne dit pas si un libellé de ligne est éditable à la main, donc un nom saisi là par
+un praticien passerait — risque résiduel assumé, pas un oubli.
+
+Le stock produits (`_product`) passe aussi par une liste blanche — celle des champs de la
+spec — sans porter de patient : il ne reçoit donc pas la note `withheld`.
 """
 from __future__ import annotations
 
@@ -89,7 +98,21 @@ def _invoice(i: Any) -> Any:
                         "ref_quote_id"), "invoiced_treatments")
 
 
-def _page(env: Any, key: str, shape=None, fields: Optional[list] = None) -> dict:
+def _product(p: Any) -> Any:
+    """Un lot du stock : les champs de `OApiProduct`, et du produit catalogue
+    (`GlobalProduct`) ce qui le nomme."""
+    if not isinstance(p, dict):
+        return p
+    out = _pick(p, ("id", "created_time", "modified_time", "lot_number", "expiration_date",
+                    "stock_level", "warning_level", "physical_stock_level",
+                    "physical_stock_diff", "unit_price"))
+    _nested(out, p, "global_product", ("id", "created_time", "modified_time", "name",
+                                       "brand", "image"))
+    return out
+
+
+def _page(env: Any, key: str, shape=None, fields: Optional[list] = None,
+          withheld: Optional[str] = _WITHHELD) -> dict:
     """Une page de liste. `shape` = la liste blanche d'une ressource qui embarque un
     patient ; `fields` = les colonnes que l'appelant garde (l'`id` toujours).
 
@@ -103,13 +126,16 @@ def _page(env: Any, key: str, shape=None, fields: Optional[list] = None) -> dict
     out = {"count": env.get("count"), "has_more": env.get("next") is not None, key: rows}
     if fields is not None and output_projection.RAW not in fields:
         out = output_projection.project(out, items_path=key, fields=set(fields) | {"id"})
-    if shape is not None:
-        out["withheld"] = _WITHHELD
+    if shape is not None and withheld:
+        out["withheld"] = withheld
     return out
 
 
-def _one(env: Any, key: str, shape=None) -> dict:
+def _one(env: Any, key: str, shape=None, withheld: Optional[str] = _WITHHELD) -> dict:
     data = env.get("data") if isinstance(env, dict) else None
     if shape is None:
         return {key: data}
-    return {key: shape(data), "withheld": _WITHHELD}
+    out = {key: shape(data)}
+    if withheld:
+        out["withheld"] = withheld
+    return out
