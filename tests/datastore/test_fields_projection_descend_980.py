@@ -17,6 +17,7 @@ from unittest.mock import patch
 import pytest
 
 from oto_mcp.datastore import core as D
+from oto_mcp.datastore import layers as dsl
 from oto_mcp.datastore import schema as dsv2
 
 _SCHEMA = {"fields": [{"key": f"c{i}"} for i in range(20)]}
@@ -69,6 +70,46 @@ def test_une_couche_ne_survit_que_nommee_elle_meme():
     assert "c0.origine" not in out
     out2 = D.DatastorePg._row_to_dict(row, _SCHEMA, fields=frozenset({"c0", "c0.origine"}))
     assert out2.get("c0.origine") == "import"
+
+
+# ── trois cas posés par oto cd (17/09/2026) avant fusion de la PR #995 : la
+# projection en amont sait-elle encore lire le suffixe de couche ? ──
+
+_ROW_EMAIL = {"row_id": "r03", "created_at": "t", "updated_at": "t",
+              "data": {"email": {"valeur": "a@b.c", "origine": "import"}}}
+_SCHEMA_EMAIL = {"fields": [{"key": "email"}]}
+
+
+def test_fields_email_point_origine_en_mode_plat_rend_la_couche():
+    """`fields=["email.origine"]`, `layers="flat"` — la couche nommée survit à la
+    projection en amont (elle sait reconnaître `email.origine` comme une couche
+    de la colonne `email`, pas une colonne inconnue)."""
+    out = D.DatastorePg._row_to_dict(
+        _ROW_EMAIL, _SCHEMA_EMAIL, fields=frozenset({"email.origine"}))
+    assert out.get("email.origine") == "import"
+    # Le nom nu n'a pas été demandé : il ne doit pas apparaître.
+    assert "email" not in out
+
+
+def test_fields_email_seul_en_mode_plat_ne_ramene_pas_ses_couches():
+    """`fields=["email"]`, `layers="flat"` — la colonne rend sa valeur SANS ses
+    couches : demander `email` ne fait pas apparaître `email.origine` (même
+    règle que l'ancien filtrage a posteriori `_project_row`, INCHANGÉE par ce
+    lot — ce n'est pas une régression, c'est le contrat déjà servi)."""
+    out = D.DatastorePg._row_to_dict(
+        _ROW_EMAIL, _SCHEMA_EMAIL, fields=frozenset({"email"}))
+    assert out.get("email") == "a@b.c"
+    assert "email.origine" not in out
+
+
+def test_fields_email_en_mode_nested_garde_ses_couches():
+    """`fields=["email"]`, `layers="nested"` — en nested, `fields` nomme des
+    COLONNES (jamais de couches) ; la cellule projetée garde sa forme nested
+    complète (`valeur`/`origine`/…), rien n'est aplati à côté."""
+    out = D.DatastorePg._row_to_dict(
+        _ROW_EMAIL, _SCHEMA_EMAIL, fields=frozenset({"email"}), layers=dsl.NESTED)
+    assert out.get("email") == {"valeur": "a@b.c", "origine": "import"}
+    assert "email.origine" not in out
 
 
 # ── l'ordre, pas seulement le résultat : rougit si la projection repasse après ──
