@@ -19,7 +19,7 @@ from ...connectors import health as connector_health
 from ...connectors import verify as connector_verify
 from .._authz import ORG_ADMIN, ORG_MEMBER
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
-from .instances import _DOC_LEVEL
+from ._level_doc import DOC_LEVEL as _DOC_LEVEL
 
 
 class VerifyInput(BaseModel):

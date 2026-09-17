@@ -57,6 +57,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # list_org_secrets/list_group_secrets (elles écrasent account/meta/secret_kind).
 from ... import access, credentials_store, db, group_store, instance_refs, providers
 from . import instances_tenant
+from ._level_doc import DOC_LEVEL as _DOC_LEVEL
 from ...connectors import instance_visibility
 from .._authz import SUB_ONLY
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
@@ -66,24 +67,6 @@ logger = logging.getLogger(__name__)
 
 # Rang de proximité (§C) : la cascade relue comme niveaux, portée par le tri.
 _LEVEL_RANK = {"member": 0, "group": 1, "org": 2, "tenant": 3, "platform": 4}
-
-# Description partagée de l'échelle à cinq crans (oto-backend#775) : `tenant` est
-# le compte de plus haut niveau isolé CHEZ LE FOURNISSEUR — donc AU-DESSUS de
-# l'organisation qui lit, pas en dessous. Ne concerne que ceux qui accèdent à oto
-# via un partenaire qui le sert sous sa marque (« hébergeur » côté doc publique,
-# même notion) : ce partenaire peut poser des clés partagées pour toutes les
-# organisations qu'il héberge. Rien à renommer (cf. rectificatif du 06/09/2026 sur
-# l'issue) — seule la définition manquait.
-_DOC_LEVEL = (
-    "Rang de proximité dans la cascade de résolution : `member` (la clé de "
-    "l'appelant lui-même) < `group` (son équipe) < `org` (son organisation) < "
-    "`tenant` < `platform` (clé oto par défaut). `tenant` désigne le compte de "
-    "PLUS HAUT NIVEAU, isolé chez le fournisseur — au-dessus de l'organisation "
-    "qui lit, pas en dessous : ne concerne que les comptes qui accèdent à oto "
-    "via un partenaire qui le sert sous sa propre marque (appelé « hébergeur » "
-    "dans la doc publique, même notion), et qui peut poser des clés partagées "
-    "pour toutes les organisations qu'il héberge."
-)
 
 
 class ListInstancesInput(BaseModel):
