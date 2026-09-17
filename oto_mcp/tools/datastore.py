@@ -1383,9 +1383,12 @@ def register(mcp: FastMCP) -> None:
             page = store.cursor_rows(datastore, filter=filter, limit=limit,
                                      cursor=cursor, q=q, filters=filters,
                                      order_by=order_by, order_dir=order_dir,
-                                     layers=layers, versions=vers,
+                                     layers=layers, versions=vers, fields=fields,
                                      **dsl.relayer_empties(empties))
-            rows = [_project_row(r, fields) for r in page["rows"]] if fields else page["rows"]
+            # Projetée dès `cursor_rows` (oto-backend#980, lot 2) : `_row_to_dict` ne
+            # fabrique plus les couches des colonnes non demandées, plutôt que les
+            # fabriquer puis les jeter ici. `page["rows"]` sort déjà à la bonne forme.
+            rows = page["rows"]
             out = {"rows": rows, "count": len(rows),
                    "next_cursor": page["next_cursor"],
                    # La réponse DÉCLARE ce qu'elle sert : « pas demandée » et « absente
