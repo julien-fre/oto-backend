@@ -108,6 +108,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "silae",
     "forager",
     "lucca",
+    "inqom",
     # --- gocardless : keyed BYO self-serve -----------------------------------
     "gocardless",
     # `planity` reste ICI, à la place qu'il occupait quand il était fédéré : cet
