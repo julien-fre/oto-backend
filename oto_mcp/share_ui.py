@@ -48,7 +48,9 @@ _DATA_PAGE = 100
 
 # Adresse du dashboard, pour le lien de chaque connecteur vers sa fiche marketplace.
 # Env-driven (cutover ADR 0040 : prod dashboard ≠ preprod ; ne pas figer sur .oto.ninja).
-_DASHBOARD = config.dashboard_url()
+# Résolue À L'APPEL (pas à l'import, #968) : `dashboard_url()` lève si rien n'est
+# déclaré, et lever au premier `import oto_mcp.share_ui` casserait le serveur entier
+# pour une page annexe.
 
 # Favicon Otomata (mark canonique) — source unique dans `brand.py`.
 _FAVICON_LINK = brand.FAVICON_LINK
@@ -630,7 +632,7 @@ def _connectors_from_tools(tools: list[str]) -> tuple[list[dict], list[str]]:
             "logo": logo,
             "description": (getattr(con, "description", "") or "").strip(),
             "tool_count": len(groups[ns]),
-            "href": f"{_DASHBOARD}/connectors?tab=marketplace&connector={con.name}",
+            "href": f"{config.dashboard_url()}/connectors?tab=marketplace&connector={con.name}",
         })
     return connectors, loose
 

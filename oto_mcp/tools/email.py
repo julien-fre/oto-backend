@@ -225,7 +225,7 @@ def register(mcp: FastMCP) -> None:
                                             image_url=image_url, image_alt=image_alt,
                                             brand=marque_expediteur, org_footer=pied_org)
         org_id = route["org_id"]
-        from_hdr = mailer.format_from(route["from_email"], route["from_name"]) or mailer._MAIL_FROM
+        from_hdr = mailer.format_from(route["from_email"], route["from_name"]) or mailer._mail_from()
         transport = route["transport"]
         rt = reply_to or route["reply_to"]
 
