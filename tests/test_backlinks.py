@@ -197,6 +197,28 @@ def test_op_backlinks_filters_unreadable_projects(monkeypatch):
     assert out["count"] == 1 and out["backlinks"][0]["id"] == 10
 
 
+def test_op_backlinks_porte_kind_updated_at_et_url(monkeypatch):
+    """oto-backend#660 — partie additive : `kind`/`updated_at` (déjà portés par la
+    ligne `docs` jointe) et `url` (posée au call-site capacité, comme pour une page
+    lue seule). `nod_id` et le verbe de relation restent HORS scope (#651, décision
+    de modèle)."""
+    from oto_mcp.capabilities.docs import core as D
+    from oto_mcp.capabilities._types import ResolvedCtx
+    monkeypatch.setattr(db, "get_doc_by_id",
+                        lambda did: {"id": did, "project_id": 1, "title": "Cible"})
+    monkeypatch.setattr(db, "doc_backlinks", lambda did: [
+        {"id": 10, "project_id": 1, "title": "Page lisible", "kind": "note",
+         "updated_at": "2026-09-01T00:00:00Z"},
+    ])
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
+    b = out["backlinks"][0]
+    assert b["kind"] == "note"
+    assert b["updated_at"] == "2026-09-01T00:00:00Z"
+    assert "url" in b  # None ou une adresse — jamais absente (signal #599)
+    assert "nod_id" not in b
+
+
 def test_des_citations_MASQUEES_par_l_acces_sont_dites(monkeypatch):
     """oto#42, entrée 4. Le filtrage retirait des citations en silence, et quand il
     les retirait TOUTES, le hint affirmait « personne ne cite encore cette page ».
