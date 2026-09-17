@@ -3,8 +3,15 @@
 Avant ce lot, aucune surface servie ne disait DE QUEL tenant relève l'appelant —
 la forme de l'identifiant (`tenant:{slug}:…` sur une instance) était bien servie,
 mais pas l'appartenance elle-même. `rung_tenant` est la seule fonction qui sait
-répondre (registre en process, aucune lecture DB) : `oto_whoami` la rejoue,
-fail-open comme le reste de sa réponse.
+répondre (registre en process, aucune lecture DB) : `oto_whoami` la rejoue.
+
+⚠️ Et la rejoue SANS filet, contrairement aux blocs DB voisins. Le premier jet
+enveloppait l'appel d'un `try/except` qui rendait `tenant: None` sur échec — or la
+description servie donne `None` pour un FAIT (« compte oto ordinaire »). Le filet
+faisait donc AFFIRMER à `oto_whoami` quelque chose qu'il n'avait pas résolu, sans que
+l'appelant puisse distinguer les deux cas. Il n'amortissait rien au passage :
+`rung_tenant` ne fait aucune I/O (classification par préfixe dans le registre du
+process). Le banc du bas fige ce choix.
 """
 from __future__ import annotations
 
@@ -46,9 +53,13 @@ def test_un_compte_nu_ne_relevant_du_tenant_primaire_rend_none(monkeypatch):
     assert out["tenant"] is None
 
 
-def test_un_hoquet_de_resolution_ne_fait_pas_echouer_whoami(monkeypatch):
-    """Fail-open, même discipline que le reste de cette réponse (org/group/project) :
-    un tenant illisible ne doit jamais transformer `oto_whoami` en 500."""
+def test_une_resolution_qui_echoue_REMONTE_au_lieu_de_mentir(monkeypatch):
+    """`tenant: None` est servi comme un FAIT (« compte oto ordinaire ») : le rendre
+    sur une résolution ratée, c'est répondre « tu n'es hébergé par personne » à un
+    compte hébergé, sans que rien ne le signale. L'erreur remonte donc — et comme
+    `rung_tenant` ne touche ni la base ni le réseau, elle ne peut venir que d'un
+    registre cassé, qui doit se voir."""
+    import pytest
     from fastmcp import FastMCP
     from oto_mcp import tenant_vault
     from oto_mcp.tools import whoami as whoami_tool
@@ -60,5 +71,5 @@ def test_un_hoquet_de_resolution_ne_fait_pas_echouer_whoami(monkeypatch):
     m = FastMCP("t")
     whoami_tool.register(m)
     fn = asyncio.run(m.get_tool("oto_whoami")).fn
-    out = fn(ctx=None)
-    assert out["tenant"] is None
+    with pytest.raises(RuntimeError, match="registre indisponible"):
+        fn(ctx=None)

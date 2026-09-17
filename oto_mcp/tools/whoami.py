@@ -76,12 +76,16 @@ def register(mcp: FastMCP) -> None:
 
         # Slug du tenant (partenaire) dont dépend ce compte, `None` pour un compte
         # oto ordinaire — même résolution que la clé de coffre `tenant_key`
-        # (`instances_tenant.py`), fail-open comme le reste de cette réponse.
-        tenant = None
-        try:
-            tenant = tenant_vault.rung_tenant(sub)
-        except Exception as e:
-            logger.warning("whoami: tenant lookup failed: %s", e)
+        # (`instances_tenant.py`).
+        #
+        # ⚠️ PAS de fail-open ici, contrairement aux blocs DB qui suivent, et c'est la
+        # description servie qui l'impose : elle donne `None` pour un FAIT (« compte oto
+        # ordinaire »). Avaler l'échec rendrait ce fait-là sur une résolution qui n'a pas
+        # eu lieu — un compte hébergé se verrait répondre qu'il ne l'est pas, et l'agent
+        # n'aurait aucun moyen de faire la différence. `rung_tenant` ne fait d'ailleurs
+        # AUCUNE I/O (classification par préfixe dans le registre du process) : il n'y a
+        # pas de « hoquet » à amortir, seulement un registre cassé, qui doit se voir.
+        tenant = tenant_vault.rung_tenant(sub)
 
         user = {}
         try:
