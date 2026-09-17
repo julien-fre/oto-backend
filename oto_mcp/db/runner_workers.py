@@ -50,16 +50,28 @@ def create_platform_worker(label: str) -> dict:
 
 def verify_worker_secret(secret: str) -> Optional[dict]:
     """Le secret → le worker, ou None. Un worker révoqué n'existe plus pour
-    l'authentification, quelle que soit la ligne qu'il garde en base."""
+    l'authentification, quelle que soit la ligne qu'il garde en base.
+
+    ⚠️ LECTURE PURE (oto-backend, lot perf 17/09/2026, mesuré par oto cd) :
+    authentifie CHAQUE appel d'un worker (`take`/`beat`/`complete`/le sondage
+    `claim`…), donc s'exécutait jusqu'ici comme un `UPDATE … RETURNING`
+    synchrone sur l'UNIQUE ligne que partagent toutes les unités d'une même
+    machine (12 `oto-runner@N` sur un seul secret) — 31 attentes de verrou
+    mesurées sur 150 instantanés de 30 s, indépendamment du lot déjà posé sur
+    `claim_next_job`. La marque de présence n'est PLUS posée ici : un worker
+    de plateforme finit toujours par sonder `claim_next_job`
+    (`runner_jobs.py::_touch_platform_worker_presence`, seul point d'écriture
+    de `runner_platform_workers` depuis ce lot — c'est aussi le seul chemin
+    commun à un worker à jeton d'ORG, qui n'appelle jamais cette fonction-ci).
+    Poser un second point d'écriture ici referait doublon avec lui."""
     if not secret or not secret.startswith(WORKER_SECRET_PREFIX):
         return None
     with _connect() as conn:
         row = conn.execute(
             """
-            UPDATE runner_platform_workers
-               SET last_seen_at = NOW()
+            SELECT worker_sub, label
+              FROM runner_platform_workers
              WHERE secret_hash = %s AND revoked_at IS NULL
-         RETURNING worker_sub, label
             """,
             (_hash_token(secret),),
         ).fetchone()

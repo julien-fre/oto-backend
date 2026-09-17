@@ -246,6 +246,63 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
             "expired_last": d.get("expired_last")}
 
 
+#: Granularité de la marque de présence d'un worker de PLATEFORME — bien en
+#: dessous d'`ARME_FENETRE_S` (15 min) : un lecteur de `runner_arme`/`families`
+#: (fenêtre de 15 min) ne voit jamais la différence entre « vu il y a 3 s » et
+#: « vu il y a 28 s ». Une écriture évitée sous ce seuil ne prend aucun verrou.
+#: Seul point d'écriture de `runner_platform_workers.last_seen_at` (17/09/2026) —
+#: `verify_worker_secret` (`runner_workers.py`) est une lecture pure.
+_PRESENCE_GRANULARITE_S = 30
+
+
+def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> None:
+    """Marque la présence d'un worker de PLATEFORME — SA PROPRE connexion,
+    courte, committée avant que `claim_next_job` n'ouvre sa transaction de
+    réservation.
+
+    ⚠️ **C'est ICI, et seulement ici, que `runner_platform_workers` s'écrit**
+    (17/09/2026, revue oto cd) — PAS dans `verify_worker_secret` (lecture pure
+    depuis ce lot). Deux raisons de choisir ce point plutôt que l'authentification :
+    un worker à jeton d'ORG (`OTO_RUNNER_ARMED=1`, oto-runner) sonde `claim_next_job`
+    sans jamais passer par `verify_worker_secret`, réservé aux workers de
+    PLATEFORME (préfixe `otow_`) — une écriture posée côté auth resterait
+    invisible pour ces workers-là, et `runner_arme`/`no_runner_armed` les
+    verrait toujours absents. Et l'`INSERT … ON CONFLICT` ci-dessous CRÉE la
+    ligne si elle n'existe pas encore (`ON CONFLICT DO UPDATE`, avec la fenêtre
+    en `WHERE`), quand un `UPDATE` seul ne réagirait jamais à une ligne absente
+    — le cas exact d'un worker qui sonde avant d'avoir jamais été vu.
+    `runner_platform_depots`, elle, est keyée `(worker_sub, depot)` : c'est une
+    ligne PAR dépôt."""
+    with _connect() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO runner_platform_workers (worker_sub, last_seen_at)
+                 VALUES (%s, NOW())
+            ON CONFLICT (worker_sub) DO UPDATE
+               SET last_seen_at = NOW()
+             WHERE runner_platform_workers.last_seen_at
+                   < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
+            """,
+            (worker_sub,),
+        )
+        # La présence PAR FAMILLE — ce que `runner_arme` rend en `families`.
+        # Seules les familles du catalogue se notent : `provider` est une
+        # chaîne libre, et un dépôt que rien ne route n'a rien à promettre.
+        from ..runner_models import FAMILLES
+        if depot in FAMILLES:
+            conn.execute(
+                f"""
+                INSERT INTO runner_platform_depots (worker_sub, depot, last_seen_at)
+                     VALUES (%s, %s, NOW())
+                ON CONFLICT (worker_sub, depot) DO UPDATE
+                   SET last_seen_at = NOW()
+                 WHERE runner_platform_depots.last_seen_at
+                       < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
+                """,
+                (worker_sub, depot),
+            )
+
+
 def claim_next_job(org_id: Optional[int], worker_sub: str,
                    lease_seconds: int = _LEASE_DEFAULT_S,
                    depot: Optional[str] = None,
@@ -283,34 +340,18 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
     fait attendre toutes les autres — le partage est équitable dans le TEMPS,
     pas entre clients. Un tourniquet par organisation est le geste suivant ; il
     n'est pas fait."""
+    if org_id is None:
+        # Le SONDAGE vaut présence, HORS de la transaction de réservation
+        # ci-dessous (oto-backend, lot perf 17/09/2026, mesuré par oto cd :
+        # `runner_platform_workers` ne porte QU'UNE ligne — les 12 unités
+        # `oto-runner@N` partagent un seul secret — et un upsert de présence
+        # posé ICI, dans la même transaction que le `FOR UPDATE SKIP LOCKED`,
+        # tenait le verrou de cette ligne pendant TOUTE la réservation : les
+        # 12 workers passaient un par un. Sa propre connexion, courte,
+        # committée avant que la réservation ne commence.
+        _touch_platform_worker_presence(worker_sub, depot)
     with _connect() as conn:
-        # Le SONDAGE vaut présence — avant même de savoir s'il y a du travail. Un
-        # claim sur file vide n'écrit rien d'autre : sans cette ligne, une org
-        # servie par un worker bien vivant serait indistinguable d'une org sans
-        # runner, et `runner_arme` refuserait le premier déclencheur pour rien.
-        if org_id is None:
-            conn.execute(
-                """
-                INSERT INTO runner_platform_workers (worker_sub, last_seen_at)
-                     VALUES (%s, NOW())
-                ON CONFLICT (worker_sub) DO UPDATE SET last_seen_at = NOW()
-                """,
-                (worker_sub,),
-            )
-            # La présence PAR FAMILLE — ce que `runner_arme` rend en `families`.
-            # Seules les familles du catalogue se notent : `provider` est une
-            # chaîne libre, et un dépôt que rien ne route n'a rien à promettre.
-            from ..runner_models import FAMILLES
-            if depot in FAMILLES:
-                conn.execute(
-                    """
-                    INSERT INTO runner_platform_depots (worker_sub, depot, last_seen_at)
-                         VALUES (%s, %s, NOW())
-                    ON CONFLICT (worker_sub, depot) DO UPDATE SET last_seen_at = NOW()
-                    """,
-                    (worker_sub, depot),
-                )
-        else:
+        if org_id is not None:
             conn.execute(
                 """
                 INSERT INTO runner_workers (org_id, worker_sub, last_seen_at)
