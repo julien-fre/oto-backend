@@ -28,7 +28,7 @@ from __future__ import annotations
 from alembic import context
 from sqlalchemy import create_engine, text
 
-from ...config import require_env
+from oto_mcp.config import require_env
 
 # Clé du verrou consultatif. Arbitraire, mais FIGÉE : la changer ouvrirait une
 # seconde file qui ignorerait la première.

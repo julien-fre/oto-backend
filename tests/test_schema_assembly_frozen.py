@@ -417,8 +417,8 @@ from oto_mcp.db import _schema, schema
 # retiré du produit au profit du seul token long, `code`/son index sont désormais
 # documentés comme LEGACY plutôt que comme le mécanisme de partage courant.
 # 159 935 → 160 173 (+238).
-EMPREINTE = "ddf4542a10875172a7b921f4d77b598eae147528de9301c62d19311757e108a3"
-LONGUEUR = 160173
+EMPREINTE = "42364eca29b4edd995d138ea97f249de98ff1cfb0a00b973ebecf2ab3b32f27c"
+LONGUEUR = 161215
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
