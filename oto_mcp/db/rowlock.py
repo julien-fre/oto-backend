@@ -24,11 +24,18 @@ c'est le plafond de reprises (`rowabandon`, #433), armé aux deux réservations 
 """
 from __future__ import annotations
 
+import logging
+import os
+import time
 from typing import Optional
+
+import psycopg
 
 from ._conn import _connect
 from .query import _ds_filter_clauses
 from .rowabandon import abandonner_les_lignes_a_bout, plafond_de
+
+logger = logging.getLogger(__name__)
 
 # Les colonnes rendues avec une ligne réservée : son bail — À QUI, JUSQU'À QUAND et
 # POUR QUEL RUN —, et ce que la file sait d'elle : combien de fois elle a été prise
@@ -130,6 +137,19 @@ def datastore_compter_reservables(ns_id: int, perimetres: dict) -> dict:
     return {cle: int(row[f"n{i}"]) for i, cle in enumerate(cles)}
 
 
+# Nombre d'essais sur `DeadlockDetected` — même idiome que `init_db()`
+# (`_init.py::init_db`), symétrique côté trafic vivant plutôt que côté migration :
+# un `ALTER`/`ADD CONSTRAINT` de boot tient un `AccessExclusiveLock` sur des dizaines
+# de tables dans une seule transaction (commentaire d'`init_db`, incident Sentry du
+# 2026-07-30) ; si PG choisit pour VICTIME un `claim_next` en vol plutôt que la
+# migration, l'agent reçoit `deadlock detected` en pleine face pour une contention
+# purement liée au déploiement, pas à son propre travail. `init_db` rejoue déjà sa
+# propre transaction ; ceci fait le symétrique côté appelant, sur la SEULE ressource
+# perdue par un rejeu (le pick lui-même — jamais posé faute de gagner la course), pas
+# sur tout l'outil MCP.
+_CLAIM_DEADLOCK_ATTEMPTS = "OTO_MCP_CLAIM_DEADLOCK_ATTEMPTS"
+
+
 def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
                          filters: Optional[list] = None,
                          run_id: Optional[str] = None,
@@ -145,7 +165,31 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
 
     ⚠️ La passe d'abandon tourne AVANT le pick, hors de sa transaction : elle
     ramasse les lignes à bout que personne n'a relâchées (agent mort, bail
-    expiré) — le relâchement, lui, s'occupe du cas nominal."""
+    expiré) — le relâchement, lui, s'occupe du cas nominal.
+
+    Rejoue sur `DeadlockDetected` (oto-backend, Sentry PYTHON-STARLETTE-8Z) : la
+    victime d'un cycle contre une migration de boot n'a RIEN posé — un rejeu est
+    aussi sûr qu'un premier essai, jamais un double claim."""
+    attempts = max(1, int(os.environ.get(_CLAIM_DEADLOCK_ATTEMPTS, "3")))
+    for attempt in range(1, attempts + 1):
+        try:
+            return _datastore_claim_next_once(
+                ns_id, worker=worker, lease_seconds=lease_seconds,
+                filters=filters, run_id=run_id, max_claims=max_claims)
+        except psycopg.errors.DeadlockDetected:
+            if attempt == attempts:
+                raise
+            delay = 0.2 * attempt
+            logger.warning(
+                "datastore_claim_next(ns_id=%s): deadlock (tentative %d/%d) — "
+                "nouvel essai dans %.1fs", ns_id, attempt, attempts, delay)
+            time.sleep(delay)
+    return None  # pragma: no cover — inatteignable (la boucle raise ou return)
+
+
+def _datastore_claim_next_once(ns_id: int, *, worker: str, lease_seconds: int,
+                               filters: Optional[list], run_id: Optional[str],
+                               max_claims: Optional[int]) -> Optional[dict]:
     abandonner_les_lignes_a_bout(ns_id, max_claims=max_claims)
     where, params = _perimetre_reclamable(ns_id, filters)
     with _connect() as conn:

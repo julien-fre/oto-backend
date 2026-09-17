@@ -255,6 +255,12 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("LOG_LEVEL", Classe.REGLAGE, "INFO",
              "Niveau de log du process.",
              ("oto_mcp/server.py:887", "oto_mcp/cli.py:40")),
+    Variable("OTO_MCP_CLAIM_DEADLOCK_ATTEMPTS", Classe.REGLAGE, "3",
+             "Nombre d'essais de `datastore_claim_next` sur `DeadlockDetected` "
+             "(oto-backend#990, Sentry PYTHON-STARLETTE-8Z) — victime d'un cycle "
+             "contre une migration de boot, rien n'est jamais posé côté claim, "
+             "un rejeu est aussi sûr qu'un premier essai.",
+             ("oto_mcp/db/rowlock.py:173",)),
     Variable("OTO_MCP_UNIPILE_DEFAULT_LIMIT", Classe.REGLAGE, "5",
              "Taille de page par défaut des lectures Unipile.",
              ("oto_mcp/unipile_connect.py:49",)),
