@@ -123,6 +123,45 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
 > projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.
 
+## Partager UNE page sans son projet (kind `doc`, signal #1084)
+
+> **Le besoin.** Faire lire une page d'un projet à des personnes d'une autre org sans leur
+> ouvrir le projet (ses autres pages, internes comprises) ni rendre la page publique
+> (`oto_doc op=set_public`, lisible par quiconque a le lien).
+> **La surface** est celle des autres familles (ADR 0047/0048) : `oto_resource op=share
+> resource_type="doc" resource_id=<id de la page>` + `email`/`sub` · `org_id` ·
+> `group_id` ; `op=unshare` retire ; `op=get` rend la fiche et ses bénéficiaires ;
+> `op=list` rend les pages partagées une à une. Le destinataire lit par `oto_doc op=get`
+> et retrouve par `oto_doc op=shared_with_me` (toutes orgs confondues : vue « moi »).
+> **Aucun DDL** : `resource_grants.resource_type` est un TEXT libre ; la valeur persistée
+> est `doc` (`docs/common.DOC_RTYPE`).
+> **Le kind `doc`** (`capabilities/docs/common.py`) : une page n'a pas de propriétaire
+> propre — `owner_getter` rend celui de son PROJET, et `governed_by` fait gouverner la
+> page par son projet (`ownership.can_govern` ne lit que ce parent). Qui partage le projet
+> partage ses pages ; un lecteur de la page ou du projet, jamais. `reparent` refuse (une
+> page se déplace par `op=move`, elle ne se transfère pas).
+> **Ce que le partage ouvre : `op=get` sur CETTE page, et rien d'autre.** La seule porte
+> qui lit un partage de page est `common.acces_a_la_page`, appelée par `reads.get` seul ;
+> `list`, `search`, `revisions`, `backlinks` et toutes les écritures restent gardées par
+> le projet. D'où : ni pages sœurs, ni sous-pages (le grant est lu sur `(doc, id)` de la
+> ligne, jamais hérité), ni historique (une version antérieure peut porter ce que
+> l'auteur a retiré avant de partager), ni backlinks (ils nomment d'autres pages), ni
+> tableaux liés ou intégrés (leur droit est le leur). L'`url` servie vaut `None` pour
+> ce lecteur : elle ouvre la page dans son projet, qu'il ne lit pas.
+> **Rôle `viewer` seulement** (`doc_viewer_only` sinon) ; `public`/`secret` ne
+> s'appliquent pas à une page par ce chemin (`publication_unsupported`).
+> **Trace** : le partage passe par le même handler que les autres familles — e-mail au
+> destinataire personne (`_notify_grant`, libellé « page ») et ligne
+> `portee_elargissements` (ADR 0068 §4, muette) qui nomme l'AUTEUR de la page comme
+> propriétaire du contenu élargi.
+> ⚠️ **Ce qui n'est pas ouvert** : `oto_doc_app`, la fiche de nœud (`oto_node`, qui sert
+> le fil d'Ariane et la fratrie) et la recherche restent gardées par le projet — le
+> destinataire n'y voit rien, et la section « Partagé » du chrome compte ces partages
+> dans `grants_sans_noeud`. Un partage SUIT la page si elle change de projet
+> (`op=move to_project`) ; supprimer la page laisse une ligne de grant orpheline,
+> inerte (ids jamais recyclés, listes jointes sur `docs`).
+> Bancs : `tests/test_partage_une_page_1084.py` (base réelle, sentinelles).
+
 ## Privé par défaut, et l'observation qui l'accompagne (ADR 0068, 04/09/2026)
 
 > **La règle.** Aucune opération ne donne à ce qu'elle crée une portée plus large que

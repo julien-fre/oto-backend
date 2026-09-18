@@ -24,6 +24,7 @@ from .. import access, db, email, group_store, org_store, ownership, roles
 from . import _portee
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .docs import partage as page
 from .registry import CAPABILITIES
 from .resources_contract import REFUS, REFUS_TYPE_INCONNU, ResourceOut
 from .. import config
@@ -127,7 +128,7 @@ def _owner_label(owner_type: str, owner_id: str) -> Optional[str]:
 
 
 _TYPE_LABELS = {"project": "projet", "datastore_namespace": "datastore",
-                "doctrine": "doctrine"}
+                "doctrine": "doctrine", "doc": "page"}
 # Recouvrement EN (oto-backend#700) — seules les clés dont le mot CHANGE : les deux
 # autres s'écrivent à l'identique dans les deux langues, pas la peine de les répéter
 # ici (et `tests/test_vocabulaire_guide.py` compte chaque occurrence littérale du
@@ -149,6 +150,8 @@ def _resource_name(resource_type: str, rid: str) -> Optional[str]:
         if resource_type == "doctrine":
             r = org_store.get_instruction_by_id(int(rid))
             return (r.get("title") or r.get("slug")) if r else None
+        if resource_type == "doc":
+            return page.portee(rid).get("ressource_nom")
     except (TypeError, ValueError):
         return None
     return None
@@ -271,6 +274,8 @@ _OPS: dict[str, dict] = {
         "get_by_id": lambda i: org_store.get_instruction_by_id(i),
         "enrich": _enrich_guide,
     },
+    # UNE page sans son projet (#1084) — lecture seule, gouvernée par son projet.
+    "doc": {**page.OPS, "enrich": lambda row: page.enrich(row, _owner_label)},
 }
 
 
@@ -568,6 +573,8 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         # Rôle effectif : `role` prime ; à défaut rétro-compat depuis `permission`.
         role = inp.role or _ROLE_FROM_PERMISSION.get(inp.permission, "editor")
         perm = _PERMISSION_OF_ROLE.get(role, "write")
+        if inp.resource_type == "doc":
+            page.require_viewer(role)
         ptype, pid, plabel = _share_principal(ctx.sub, inp)
         ownership.grant(inp.resource_type, rid, ptype, pid, role=role, granted_by=ctx.sub)
         out = {"ok": True, "resource_id": rid, "shared_with": plabel,
@@ -576,7 +583,8 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         _portee.observer(ctx, ressource_type=inp.resource_type, ressource_id=rid,
                          vers={"org": "org", "group": "group"}.get(ptype, "person"),
                          geste=f"oto_resource op=share role={role}",
-                         cible=str(plabel))
+                         cible=str(plabel),
+                         **(page.portee(rid) if inp.resource_type == "doc" else {}))
         if inp.cascade and inp.resource_type == "project":
             out["cascade"] = _cascade_project(ctx.sub, int(rid), "share",
                                               principal=(ptype, pid), role=role)
@@ -643,8 +651,9 @@ CAPABILITIES += [
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). resource_type ∈ {datastore_namespace, "
-            "project, doctrine} — it is the discriminant, and it also decides which shape "
-            "comes back. ⚠️ KNOWN DEFECT, kept for backward compatibility: resource_type "
+            "project, doctrine, doc} — it is the discriminant, and it also decides which shape "
+            "comes back. " + page.DESCRIPTION
+            + " ⚠️ KNOWN DEFECT, kept for backward compatibility: resource_type "
             "DEFAULTS to `datastore_namespace`. Omitting it does NOT mean « any type » — the "
             "call silently targets a datastore namespace, so op=get/list answer about the "
             "wrong family, and op=transfer/share ACT ON A DIFFERENT RESOURCE than the one you "

@@ -40,11 +40,11 @@ from pydantic import BaseModel, Field, RootModel
 
 from ._types import DeclaredError
 
-# Les trois familles gouvernables. Source unique de l'énuméré publié ET du champ
+# Les quatre familles gouvernables. Source unique de l'énuméré publié ET du champ
 # `resource_type` de l'entrée : `tests/test_resources_output.py` la confronte aux
-# clés de `_OPS`, pour qu'un quatrième type ne puisse pas s'ajouter au dispatch
-# sans entrer dans le contrat.
-ResourceType = Literal["datastore_namespace", "project", "doctrine"]
+# clés de `_OPS`, pour qu'un type ne puisse pas s'ajouter au dispatch sans entrer
+# dans le contrat. `doc` = UNE page, partagée sans son projet (#1084).
+ResourceType = Literal["datastore_namespace", "project", "doctrine", "doc"]
 
 
 class ResourceGrant(BaseModel):
@@ -95,8 +95,17 @@ class GuideResource(_OwnedResource):
     updated_at: Optional[str] = None
 
 
+class DocResource(_OwnedResource):
+    """UNE page. Son propriétaire est celui de son PROJET (une page n'en a pas
+    d'autre) ; `title` la nomme, le corps n'est jamais servi ici."""
+    resource_type: Literal["doc"]
+    title: Optional[str] = None
+    project_id: Optional[int] = None
+    updated_at: Optional[str] = None
+
+
 GovernedResource = Annotated[
-    Union[DatastoreResource, ProjectResource, GuideResource],
+    Union[DatastoreResource, ProjectResource, GuideResource, DocResource],
     Field(discriminator="resource_type"),
 ]
 
@@ -124,8 +133,13 @@ class GuideResourceDetail(GuideResource):
     grants: list[ResourceGrant]
 
 
+class DocResourceDetail(DocResource):
+    grants: list[ResourceGrant]
+
+
 ResourceDetail = Annotated[
-    Union[DatastoreResourceDetail, ProjectResourceDetail, GuideResourceDetail],
+    Union[DatastoreResourceDetail, ProjectResourceDetail, GuideResourceDetail,
+          DocResourceDetail],
     Field(discriminator="resource_type"),
 ]
 
@@ -266,6 +280,10 @@ REFUS: tuple[DeclaredError, ...] = (
     DeclaredError(400, "email_required",
                   "share/unshare sans principal : ni `email`, ni `org_id`, "
                   "ni `group_id`"),
+    DeclaredError(400, "doc_viewer_only",
+                  "`share` of a page (`resource_type=\"doc\"`) with a role other than "
+                  "`viewer` — a page is shared read-only; share its project to let "
+                  "someone write"),
     DeclaredError(400, "publication_unsupported",
                   "audience `public`/`secret`/`private` sur autre chose qu'un "
                   "projet — seul un projet se publie"),

@@ -185,10 +185,10 @@ def owner_in_scope(sub: str, org_id: Optional[int],
 
 @dataclass(frozen=True)
 class ResourceKind:
-    # rid (str) -> (owner_type, owner_id) | None
-    owner_getter: Callable[[str], Optional[tuple[str, str]]]
-    # rid, new_owner_type, new_owner_id -> None (lève ValueError sur collision)
-    reparent: Callable[[str, str, str], None]
+    owner_getter: Callable[[str], Optional[tuple[str, str]]]  # rid -> (owner_type, owner_id) | None
+    reparent: Callable[[str, str, str], None]  # rid, new_type, new_id ; ValueError si refus
+    # rid -> (type, id) du parent qui la GOUVERNE seul (une page → son projet) : cf. `can_govern`.
+    governed_by: Optional[Callable[[str], Optional[tuple[str, str]]]] = None
 
 
 #: Le type de ressource d'un tableau du datastore, **tel qu'il est ÉCRIT EN BASE**
@@ -356,6 +356,8 @@ def can_govern(sub: str, resource_type: str, resource_id: str) -> bool:
     """Plan GOUVERNANCE (ADR 0048) : re-partager / révoquer / supprimer / publier, SANS
     lire le contenu. **Grantable** = owner ∪ **grant `gérant`** ∪ escalade `roles.py`. Le
     transfert de propriété, lui, exclut le gérant → `can_transfer`."""
+    if (k := RESOURCE_KINDS.get(resource_type)) and k.governed_by:  # une page → son projet
+        return (cible := k.governed_by(resource_id)) is not None and can_govern(sub, *cible)
     if owner_of(resource_type, resource_id) is None:
         return False
     return can_transfer(sub, resource_type, resource_id) \
@@ -375,9 +377,7 @@ def grant(
                       permission=permission, granted_by=granted_by, role=role)
 
 
-def revoke(
-    resource_type: str, resource_id: str, principal_type: str, principal_id: str,
-) -> bool:
+def revoke(resource_type: str, resource_id: str, principal_type: str, principal_id: str) -> bool:
     return db.revoke_resource_grant(resource_type, resource_id, principal_type, principal_id)
 
 

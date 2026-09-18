@@ -48,10 +48,17 @@ def search(ctx: ResolvedCtx, inp) -> dict:
 
 
 def get(sub: Optional[str], inp, row: dict, pid: int) -> dict:
-    require(common.can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
+    # La SEULE lecture qu'ouvre un partage de page (#1084) — cf. `common.acces_a_la_page`.
+    acces = common.acces_a_la_page(sub, row)
+    require(acces is not None, "forbidden", "Accès refusé.", 403)
     # Une lecture nue rend la page entière ; `fields` est HONORÉ quand il est là
     # (#461/#525 : lire le seul `rev` avant un patch ne doit plus coûter la page).
-    return view.projected(row, sub, inp.fields, brut_par_defaut=True)
+    out = view.projected(row, sub, inp.fields, brut_par_defaut=True)
+    if acces == common.PAR_LA_PAGE:
+        # L'adresse servie ouvre la page DANS son projet, que ce lecteur ne lit pas : un
+        # lien mort se subit, un `None` se dit (`view.doc_url`).
+        out["url"] = None
+    return out
 
 
 def backlinks(sub: Optional[str], inp, row: dict, pid: int) -> dict:

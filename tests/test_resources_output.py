@@ -40,6 +40,10 @@ _PROJ_ROW = {"id": 7, "name": "Proj", "owner_type": "user", "owner_id": "u1",
 _GUIDE_ROW = {"id": 11, "slug": "onboarding", "title": "Onboarding",
               "owner_type": "group", "owner_id": "4", "version": 2,
               "updated_at": "2026-08-31 18:00:00"}
+# Une page (#1084), telle que la rend la liste de gouvernance (`db.list_shared_docs`) :
+# le propriétaire est celui de son PROJET, joint par la requête.
+_DOC_ROW = {"id": 21, "project_id": 7, "title": "Récap", "owner_type": "user",
+            "owner_id": "u1", "updated_at": "2026-09-18 10:00:00"}
 
 
 @pytest.fixture
@@ -57,6 +61,7 @@ def enrichable(monkeypatch):
     (R._enrich_datastore, _NS_ROW, C.DatastoreResource),
     (R._enrich_project, _PROJ_ROW, C.ProjectResource),
     (R._enrich_guide, _GUIDE_ROW, C.GuideResource),
+    (R._OPS["doc"]["enrich"], _DOC_ROW, C.DocResource),
 ])
 def test_chaque_modele_decrit_exactement_ce_que_son_enrich_produit(
         enrich, row, modele, enrichable):
@@ -74,6 +79,7 @@ def test_chaque_modele_decrit_exactement_ce_que_son_enrich_produit(
     (C.DatastoreResourceDetail, C.DatastoreResource),
     (C.ProjectResourceDetail, C.ProjectResource),
     (C.GuideResourceDetail, C.GuideResource),
+    (C.DocResourceDetail, C.DocResource),
 ])
 def test_la_fiche_est_la_liste_plus_les_beneficiaires(detail, base):
     """`op=get` = `op=list` + `grants`. Rien d'autre ne s'ajoute au passage — c'est
@@ -242,6 +248,22 @@ def test_refus_email_required_quand_aucun_principal(monkeypatch):
     assert (e.value.status, e.value.code) == (400, "email_required")
 
 
+@pytest.mark.parametrize("args", [{"role": "editor"}, {"role": "manager"},
+                                  {"permission": "write"}])
+def test_refus_doc_viewer_only(monkeypatch, args):
+    """Une page se partage en LECTURE (#1084) — `editor`, `manager`, et le `write`
+    hérité qui s'y mappe. Refusé AVANT de résoudre le destinataire : aucun grant
+    n'est posé, pas même en lecture « à la place »."""
+    _wire(monkeypatch)
+    poses = []
+    monkeypatch.setattr(R.ownership, "grant", lambda *a, **k: poses.append(a))
+    with pytest.raises(AuthzDenied) as e:
+        R._resources(CTX, R.ResourceInput(op="share", resource_type="doc",
+                                          resource_id="21", email="u2@x.co", **args))
+    assert (e.value.status, e.value.code) == (400, "doc_viewer_only")
+    assert poses == []
+
+
 def test_refus_not_group_member(monkeypatch):
     """Transférer VERS une équipe exige d'en être : on n'envoie pas une ressource
     dans un scope où l'on n'est pas."""
@@ -267,7 +289,7 @@ def test_refus_transfer_failed(monkeypatch):
 
 
 _REJOUES = {
-    "email_required", "publication_unsupported", "forbidden", "group_not_visible",
+    "email_required", "doc_viewer_only", "publication_unsupported", "forbidden", "group_not_visible",
     "not_group_member", "not_org_member", "unknown_user", "unknown_org",
     "unknown_group", "confirm_loss_of_control", "transfer_failed",
 }

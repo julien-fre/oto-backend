@@ -35,6 +35,7 @@ from pydantic import Field
 
 from ._authz import RESOURCE_GOVERN
 from ._types import Capability, RestBinding
+from .docs import partage as page
 from .registry import CAPABILITIES
 from .resources import ResourceInput, _resources
 from .resources_contract import REFUS, ResourceOut, ResourceType
@@ -82,7 +83,8 @@ CAPABILITIES += [
         description=(
             "BETA. Same governance surface as oto_resource (ADR 0030), with a STRICT "
             "input contract: resource_type is REQUIRED (no default) ∈ {datastore_namespace, "
-            "project, doctrine}, and resource_id must be numeric. Prefer this tool over "
+            "project, doctrine, doc}, and resource_id must be numeric. " + page.DESCRIPTION
+            + " Prefer this tool over "
             "oto_resource: on the legacy one, omitting resource_type silently targets a "
             "datastore namespace, so op=transfer/share act on a DIFFERENT resource than the "
             "one you meant. Everything else is identical — op=list: resources you govern "

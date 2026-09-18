@@ -12,11 +12,12 @@ domaines qu'elle traverse, pas la surface qu'elle sert.
 
 | module | ce qu'il porte |
 |---|---|
-| `common` | le socle : droit d'accès à un projet, refus nommé, ops de lecture partagée |
+| `common` | le socle : droit d'accès à un projet, refus nommé, ops de lecture partagée ; la page partagée SEULE (`acces_a_la_page`) et le kind `doc` du seam `ownership` |
 | `view` | la FORME servie : adresses, `rev`, projection de sortie |
 | `reads` | ce qui LIT sans écrire : `list`, `search`, `get`, `backlinks` |
 | `writes` | ce qui écrit l'arbre : `create`, `bulk_create`, `update`, `move`, `delete`, `set_public` |
 | `patch` | l'édition d'UNE région (`patch`) et ses deux axes d'adressage |
 | `history` | les versions : `revisions`, `revert` |
+| `partage` | partager UNE page (#1084) : ce que `oto_resource` route pour `resource_type="doc"`, et `shared_with_me` |
 | `core` | `DocInput`, le dispatcher — dont l'ORDRE des branches est un contrat — et le descripteur |
 """

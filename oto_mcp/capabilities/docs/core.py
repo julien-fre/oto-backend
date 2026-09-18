@@ -5,8 +5,9 @@ projet — pas d'ownership propre). Le `brief_md` du projet reste la page d'entr
 Docs sont les pages, en arbre via `parent_id`. kind ∈ {doc (humain), note (agent),
 source (import)}. CRUD + move, co-déclaré MCP+REST.
 
-⚠️ **L'ORDRE des branches de `_doc` est un contrat, pas une mise en page.** Les créations
-et les deux lectures par projet (`list`, `search`) se résolvent AVANT le gate `doc_id`. Les
+⚠️ **L'ORDRE des branches de `_doc` est un contrat, pas une mise en page.** Les créations,
+les deux lectures par projet (`list`, `search`) et la liste des pages reçues
+(`shared_with_me`) se résolvent AVANT le gate `doc_id`. Les
 remonter ou les descendre change ce qui est atteignable ; c'est la raison pour laquelle le dispatcher reste ici, entier et
 lisible d'un coup, pendant que les corps vivent dans les modules du domaine.
 """
@@ -21,13 +22,14 @@ from .._authz import PROJECT_SHARED_READ
 from .. import _portee, _publication
 from .._types import Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
-from . import common, history, patch, reads, view, writes
+from . import common, history, partage, patch, reads, view, writes
 from .common import require
 
 
 class DocInput(BaseModel):
     op: Literal["create", "bulk_create", "list", "search", "get", "update", "patch",
-                "delete", "move", "revisions", "revert", "set_public", "backlinks"]
+                "delete", "move", "revisions", "revert", "set_public", "backlinks",
+                "shared_with_me"]
     project_id: Optional[int] = None   # create / list / search
     doc_id: Optional[int] = None       # get / update / delete / move
     query: Optional[str] = None        # search : termes recherchés dans titre + corps
@@ -106,6 +108,14 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     if inp.op == "search":
         return reads.search(ctx, inp)
 
+    if inp.op == "shared_with_me":
+        # Ce qu'on a REÇU, page par page (#1084) : le périmètre est l'appelant, jamais un
+        # argument — un `project_id`/`doc_id` passé ici serait avalé sans effet.
+        require(inp.project_id is None and inp.doc_id is None, "unsupported_scope",
+                "op=shared_with_me takes no project_id or doc_id: it lists the pages "
+                "shared with YOU, across projects. Read one with op=get doc_id.")
+        return partage.recus(sub)
+
     # ops par doc_id (résolvent le projet pour l'autz)
     require(inp.doc_id is not None, "missing_doc", "`doc_id` requis.")
     row = db.get_doc_by_id(int(inp.doc_id))
@@ -161,7 +171,8 @@ CAPABILITIES += [
     Capability(
         key="me.doc", handler=_doc, Input=DocInput, authz=PROJECT_SHARED_READ,
         description=(
-            "Docs (markdown pages tree inside a project; inherit the project's access). "
+            "Docs (markdown pages tree inside a project; inherit the project's access — "
+            "except ONE page shared on its own, see shared_with_me). "
             "A reference page is a DOC, in the PROJECT it belongs to (that project's "
             "« Documents » zone in the dashboard): CAPTURE the sourced facts of a piece of "
             "work there (kind=source/note) as you learn them, and search it before the "
@@ -252,6 +263,11 @@ CAPABILITIES += [
             "of hidden ones is deliberately not given: it would tell you how many "
             "pages exist in projects that are closed to you. Every write says which of its `[[…]]` "
             "found nothing, under `citations_sans_cible` "
+            "/ shared_with_me (no argument → the pages shared WITH YOU one by one — to you, "
+            "your org or your team, via oto_resource op=share resource_type=\"doc\": "
+            "{id, title, updated_at, role, via, shared_by, url}. Such a page is readable "
+            "with op=get ALONE: its project, sibling pages, sub-pages, revisions and "
+            "backlinks stay closed, and it is read-only) "
             "/ set_public (public: true → shareable public read-only link to THIS PAGE "
             "ALONE: the reader gets its title and body, and nothing else — not the "
             "project, not the sibling pages, not this page's own sub-pages, which each "
