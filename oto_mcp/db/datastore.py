@@ -84,6 +84,7 @@ from .query import (  # noqa: F401
     _DS_MAX_FILTERS,
     group_key,
     order_health_sql,
+    thin_read_cte_sql,
     typed_order_sql,
 )
 from .users import upsert_user
@@ -749,8 +750,64 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
     `order_type`/`order_options` (#336) : le TYPE DÉCLARÉ du champ trié
     (`number`/`enum`/`date`), résolu PAR LE STORE — cette couche ne connaît pas
     le schéma et ne doit pas le connaître, elle reçoit un type générique et
-    construit l'expression (cf. `typed_order_sql`). None = tri textuel historique."""
+    construit l'expression (cf. `typed_order_sql`). None = tri textuel historique.
+
+    ⚠️ Un tri TYPÉ sur une colonne SIMPLE (et/ou des `filters` sur des colonnes
+    SIMPLES) passe par `thin_read_cte_sql` (oto-backend#980) : `typed_order_sql`
+    relit `data` 56 fois par ligne et un filtre autant de fois qu'il est évalué,
+    et PostgreSQL le détoaste à chaque référence — mesuré à 924 000 blocs lus
+    pour une page de 50 lignes triées sur un vivier réel, et 237 000 pour une
+    page filtrée sans tri. La CTE mince ramène chacun à une lecture par ligne."""
     direction = "ASC" if str(order_dir).lower() == "asc" else "DESC"
+    order_simple = order_by not in (None, "", "_created_at", "_updated_at", "_id")
+    thin = thin_read_cte_sql(ns_id, q, filters,
+                             order_by if (order_type and order_simple) else None)
+    if thin is not None and (not order_simple or order_type):
+        cte_sql, cte_params, where_sql, where_params = thin
+        tail = ""
+        tail_params: list = []
+        if limit is not None:
+            tail = " LIMIT %s OFFSET %s"
+            tail_params = [limit, offset]
+        if order_type and order_simple:
+            _v, _vp = field_read_sql(order_by)
+            order_sql, _op = typed_order_sql(_v, _vp, order_type, order_options, direction)
+        else:
+            # Amincissement porté par les SEULS `filters` (`order_by` est une
+            # colonne MÉTA ici, jamais dans `data`, ou absent) : même ordre que
+            # le chemin historique. `created_at`/`updated_at` sont portées par
+            # `s` elle-même (cf. `thin_read_cte_sql`) — jamais `dr` à ce stade,
+            # sous peine d'un `data` ambigu (`s.data` mince vs `dr.data` entier
+            # dans la même portée).
+            if order_by == "_updated_at":
+                order_sql, _op = f"updated_at {direction}, row_id {direction}", []
+            elif order_by == "_id":
+                order_sql, _op = f"row_id {direction}", []
+            else:
+                order_sql, _op = f"created_at {direction}, row_id {direction}", []
+        p_params = list(_op) + list(where_params)
+        with _connect() as conn:
+            rows = conn.execute(
+                f"WITH {cte_sql}, "
+                f"p AS (SELECT row_id, row_number() OVER (ORDER BY {order_sql}) AS rn "
+                f"FROM s {where_sql} ORDER BY rn{tail}) "
+                "SELECT dr.row_id, dr.created_at, dr.updated_at, dr.data, dr.rev, "
+                "       dr.claimed_by, dr.claimed_until, dr.claimed_run, dr.claims, "
+                "       dr.abandon_reason, "
+                "       (dr.claimed_until IS NOT NULL AND dr.claimed_until > NOW())"
+                "           AS claim_active "
+                # ⚠️ `row_id` n'est PAS globalement unique (TEXT scopé par
+                # `ns_id`, jamais une clé primaire à lui seul) : un JOIN qui ne
+                # filtrerait QUE sur `row_id` fusionnerait des lignes HOMONYMES
+                # d'AUTRES tableaux (vu en test : `datastore_rows` porte le même
+                # `row_id` littéral dans N namespaces). `ns_id` DOIT faire partie
+                # de la condition de jointure, pas seulement de la CTE `s`.
+                "FROM p JOIN datastore_rows dr "
+                "  ON dr.row_id = p.row_id AND dr.ns_id = %s "
+                "ORDER BY p.rn",
+                tuple(cte_params + p_params + tail_params + [ns_id]),
+            ).fetchall()
+            return [dict(r) for r in rows]
     where, params = _ds_where(ns_id, q, filters)
     if order_by in (None, "", "_created_at"):
         order_sql = f"created_at {direction}, row_id {direction}"
@@ -822,7 +879,23 @@ def datastore_order_health(ns_id: int, *, order_by: str, order_type: str,
     """Les compteurs d'écart d'un tri typé (#336) : `{off_type, empty}` sur le
     même WHERE que la page — décision ① rendue à l'issue : les valeurs qu'on ne
     sait pas ranger vont en queue ET LA RÉPONSE LE DIT, au lieu d'enterrer
-    l'écart sous un tri qui a l'air délibéré."""
+    l'écart sous un tri qui a l'air délibéré.
+
+    ⚠️ Même détoastage répété que `datastore_list_rows` (oto-backend#980) :
+    `order_health_sql` relit `data` 35 fois par ligne (et chaque filtre, à
+    chaque référence). Passe par la même CTE mince quand `order_by`/`filters`
+    s'y prêtent (`thin_read_cte_sql`)."""
+    thin = thin_read_cte_sql(ns_id, q, filters, order_by)
+    if thin is not None:
+        cte_sql, cte_params, where_sql, where_params = thin
+        _v, _vp = field_read_sql(order_by)
+        proj, pparams = order_health_sql(_v, _vp, order_type, order_options)
+        with _connect() as conn:
+            row = conn.execute(
+                f"WITH {cte_sql} SELECT {proj} FROM s {where_sql}",
+                tuple(cte_params + pparams + where_params),
+            ).fetchone()
+        return {"off_type": int(row["off_type"] or 0), "empty": int(row["empty"] or 0)}
     where, params = _ds_where(ns_id, q, filters)
     _v, _vp = field_read_sql(order_by)
     proj, pparams = order_health_sql(_v, _vp, order_type, order_options)
@@ -838,7 +911,21 @@ def datastore_count_rows(ns_id: int, q: Optional[str] = None,
                          filters: Optional[list] = None) -> int:
     """Nombre total de rows d'un namespace (pour la pagination), filtré par `q` et
     les filtres par colonne — même clause que `datastore_list_rows` → total cohérent
-    avec la page affichée."""
+    avec la page affichée.
+
+    ⚠️ Même détoastage répété que `datastore_list_rows` (oto-backend#980) — un
+    `COUNT` scanne TOUTES les lignes filtrées, donc paie la relecture de `data`
+    par filtre sur le jeu ENTIER, jamais juste la page. CTE mince quand `filters`
+    s'y prête (`thin_read_cte_sql`)."""
+    thin = thin_read_cte_sql(ns_id, q, filters)
+    if thin is not None:
+        cte_sql, cte_params, where_sql, where_params = thin
+        with _connect() as conn:
+            row = conn.execute(
+                f"WITH {cte_sql} SELECT COUNT(*) AS n FROM s {where_sql}",
+                tuple(cte_params + where_params),
+            ).fetchone()
+            return int(row["n"]) if row else 0
     where, params = _ds_where(ns_id, q, filters)
     with _connect() as conn:
         row = conn.execute(
