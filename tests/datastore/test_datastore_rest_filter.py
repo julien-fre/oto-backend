@@ -113,6 +113,14 @@ def test_le_store_convertit_le_filtre_en_clauses():
 
     class _FakeDb:
         @staticmethod
+        def datastore_page_with_stats(ns_id, **kw):
+            # `None` = pas amincissable (oto-backend#980, suite) : `page_rows`
+            # retombe alors sur les deux appels séparés ci-dessous, exactement
+            # ce que ce banc exerce — la fusion elle-même est couverte par
+            # `tests/datastore/test_page_with_stats_980.py`, pas ici.
+            return None
+
+        @staticmethod
         def datastore_list_rows(ns_id, **kw):
             captured["list"] = kw
             return []

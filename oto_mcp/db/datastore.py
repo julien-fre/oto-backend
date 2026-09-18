@@ -934,6 +934,97 @@ def datastore_count_rows(ns_id: int, q: Optional[str] = None,
         return int(row["n"]) if row else 0
 
 
+def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[int] = None,
+                              order_by: Optional[str] = None, order_dir: str = "desc",
+                              q: Optional[str] = None, filters: Optional[list] = None,
+                              order_type: Optional[str] = None,
+                              order_options: Optional[list] = None
+                              ) -> Optional[tuple[list[dict], int, int, int]]:
+    """Page + total + compteurs d'écart de tri (`off_type`/`empty`), en UNE SEULE
+    requête — `None` quand la lecture n'est pas amincissable (`thin_read_cte_sql`),
+    l'appelant retombe alors sur `datastore_list_rows`/`datastore_count_rows`/
+    `datastore_order_health` séparés, inchangés (oto-backend#980, suite).
+
+    Avant ce lot : page, total et compteurs reconstruisaient chacun leur PROPRE
+    CTE mince et re-scannaient le jeu filtré entier — trois passages de
+    détoastage sur les mêmes lignes (mesuré en prod, ~400-500 ms chacun sur le
+    vivier réel). Une seule CTE `f` (le jeu mince ET filtré, calculé UNE fois)
+    porte les trois : `agg` (total + compteurs, un `COUNT(*) FILTER` par
+    compteur) et `p` (la page, `row_number()` + `LIMIT`/`OFFSET`) lisent TOUTES
+    LES DEUX `f`, jamais `s` ni `datastore_rows` directement.
+
+    ⚠️ **`offset` au-delà du total** : `p` rend alors ZÉRO ligne — un
+    `JOIN agg, p` perdrait le total avec elle. `agg` porte TOUJOURS exactement
+    UNE ligne (un `COUNT(*)` sans `GROUP BY` n'est jamais vide) : le combiné
+    part donc de `agg LEFT JOIN p ON TRUE`, jamais l'inverse — la ligne de
+    stats survit même quand la page est vide (`p.rn IS NULL` dans ce cas, geste
+    de lecture explicite ci-dessous plutôt que silencieux)."""
+    direction = "ASC" if str(order_dir).lower() == "asc" else "DESC"
+    order_simple = order_by not in (None, "", "_created_at", "_updated_at", "_id")
+    typed = bool(order_type and order_simple)
+    thin = thin_read_cte_sql(ns_id, q, filters, order_by if typed else None)
+    if thin is None:
+        return None
+    cte_sql, cte_params, where_sql, where_params = thin
+
+    if typed:
+        _v, _vp = field_read_sql(order_by)
+        order_sql, order_params = typed_order_sql(_v, _vp, order_type, order_options, direction)
+        health_proj, health_params = order_health_sql(_v, _vp, order_type, order_options)
+    else:
+        if order_by == "_updated_at":
+            order_sql, order_params = f"updated_at {direction}, row_id {direction}", []
+        elif order_by == "_id":
+            order_sql, order_params = f"row_id {direction}", []
+        else:
+            order_sql, order_params = f"created_at {direction}, row_id {direction}", []
+        # Pas de tri typé → pas de compteur d'écart à calculer (`_order_health`
+        # ne l'appelle pas non plus dans ce cas) : littéraux, aucun paramètre.
+        health_proj, health_params = "0 AS off_type, 0 AS empty", []
+
+    tail = ""
+    tail_params: list = []
+    if limit is not None:
+        tail = " LIMIT %s OFFSET %s"
+        tail_params = [limit, offset]
+
+    sql = (
+        f"WITH {cte_sql}, "
+        f"f AS (SELECT * FROM s {where_sql}), "
+        f"agg AS (SELECT COUNT(*) AS total, {health_proj} FROM f), "
+        f"p AS (SELECT row_id, row_number() OVER (ORDER BY {order_sql}) AS rn "
+        f"FROM f ORDER BY rn{tail}) "
+        "SELECT agg.total, agg.off_type, agg.empty, p.rn, "
+        "dr.row_id, dr.created_at, dr.updated_at, dr.data, dr.rev, "
+        "dr.claimed_by, dr.claimed_until, dr.claimed_run, dr.claims, dr.abandon_reason, "
+        "(dr.claimed_until IS NOT NULL AND dr.claimed_until > NOW()) AS claim_active "
+        "FROM agg LEFT JOIN p ON TRUE "
+        "LEFT JOIN datastore_rows dr ON dr.row_id = p.row_id AND dr.ns_id = %s "
+        "ORDER BY p.rn"
+    )
+    params = (cte_params + where_params + health_params
+              + order_params + tail_params + [ns_id])
+    with _connect() as conn:
+        result = conn.execute(sql, tuple(params)).fetchall()
+    if not result:
+        # `agg` porte toujours une ligne — un résultat vide signale un `ns_id`
+        # sans AUCUNE ligne (jeu filtré vide dès la base, jamais une page hors
+        # bornes d'un jeu non-vide, couvert par `p.rn IS NULL` ci-dessous).
+        return [], 0, 0, 0
+    total = int(result[0]["total"] or 0)
+    off_type = int(result[0]["off_type"] or 0)
+    empty = int(result[0]["empty"] or 0)
+    # `agg`/`p` (total, off_type, empty, rn) ne font pas partie de la FORME d'une
+    # ligne — seules les colonnes de `dr` la composent, même dict que rendrait
+    # `datastore_list_rows`.
+    rows = [{"row_id": r["row_id"], "created_at": r["created_at"],
+             "updated_at": r["updated_at"], "data": r["data"], "rev": r["rev"],
+             "claimed_by": r["claimed_by"], "claimed_until": r["claimed_until"],
+             "claimed_run": r["claimed_run"], "claims": r["claims"],
+             "abandon_reason": r["abandon_reason"], "claim_active": r["claim_active"]}
+            for r in result if r["rn"] is not None]
+    return rows, total, off_type, empty
+
 
 def datastore_aggregate(ns_id: int, *, group_by: Optional[str] = None,
                         metrics: Optional[list] = None, q: Optional[str] = None,

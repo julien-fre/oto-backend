@@ -232,16 +232,31 @@ class LectureMixin:
         # Le tri honore le TYPE déclaré (#336) — résolu ICI, où le schéma est connu :
         # la couche db reçoit un type générique, jamais le schéma.
         otype, oopts = dsv2.order_spec(sch, order_by)
-        rows = db.datastore_list_rows(
+        # Page + total + compteurs d'écart en UNE requête quand la lecture est
+        # amincissable (oto-backend#980, suite) — `None` = pas amincissable
+        # (ex. recherche plein texte `q`), on retombe alors sur les trois appels
+        # historiques, inchangés.
+        combined = db.datastore_page_with_stats(
             ns_id, offset=offset, limit=limit, order_by=order_by,
             order_dir=order_dir, q=q, filters=clauses,
             order_type=otype, order_options=oopts)
+        if combined is not None:
+            rows, total, off_type, empty = combined
+            health = ({"off_type": off_type, "empty": empty}
+                      if (off_type or empty) else None)
+        else:
+            rows = db.datastore_list_rows(
+                ns_id, offset=offset, limit=limit, order_by=order_by,
+                order_dir=order_dir, q=q, filters=clauses,
+                order_type=otype, order_options=oopts)
+            total = db.datastore_count_rows(ns_id, q=q, filters=clauses)
+            health = self._order_health(ns_id, order_by, otype, oopts, q, clauses)
         out = {
             "rows": [self._row_to_dict(r, sch, layers=layers, versions=versions,
                                        empties=empties, fields=proj) for r in rows],
             # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la
             # pagination du dashboard annonce des lignes qu'elle ne servira jamais.
-            "total": db.datastore_count_rows(ns_id, q=q, filters=clauses),
+            "total": total,
             "offset": offset, "limit": limit,
             # ⚠️ La réponse DÉCLARE ce qu'elle sert (oto#140). Sans elle, « je ne
             # l'ai pas demandée » et « elle n'existe pas sur cette case » se lisent
@@ -250,7 +265,6 @@ class LectureMixin:
             # coût nul par ligne, et l'enveloppe devient autoportante.
             "versions_servies": list(versions),
         }
-        health = self._order_health(ns_id, order_by, otype, oopts, q, clauses)
         if health:
             out["order_health"] = health
         return out
