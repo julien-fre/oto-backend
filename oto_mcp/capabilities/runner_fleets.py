@@ -416,14 +416,21 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # Seule la famille DE CE MODÈLE compte (14/09/2026) — un passage sans
         # modèle (ou d'un modèle hors catalogue) n'exige rien.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # ⚠️ Armer un passage qu'AUCUN worker vivant ne réclame le laisse `armed`
+        # pour toujours : personne ne fait jamais `prendre_flotte`, et le
+        # symptôme lu depuis le produit est « l'ordonnanceur est mort » — un
+        # diagnostic faux posé sur une cause invisible (oto-runner#13, 41
+        # travaux restés en file 13 jours). Lu même SANS modèle demandé : un
+        # agent sans modèle est servi par n'importe quel worker, encore faut-il
+        # qu'il y en ait un. L'état lu sert aussi à la garde de famille qui suit.
+        etat = _modele.exige_un_runner(ctx.org_id)
         # ⚠️ Armer un passage dont AUCUN worker vivant ne sert le modèle le laisse
         # `running` pour toujours : `campagne_a_servir` produit un travail, le
-        # claim le filtre, et plus rien n'est produit tant qu'il attend. Refusé
-        # AVANT la réparation de l'instruction — un refus n'écrit rien.
-        # Un passage sans modèle (ou d'un modèle hors catalogue) n'est pas jugé :
+        # claim le filtre, et plus rien n'est produit tant qu'il attend. Un
+        # passage sans modèle (ou d'un modèle hors catalogue) n'est pas jugé :
         # n'importe quel worker le sert.
         if famille:
-            _modele.exige_servi(db.runner_arme(ctx.org_id), famille)
+            _modele.exige_servi(etat, famille)
         if avant and avant.get("procedure") and not (avant.get("input") or "").strip():
             db.update_fleet(inp.fleet_id, ctx.org_id, {"input": _instruction.de_file(
                 avant["procedure"], avant.get("namespace"), avant.get("row_filter"))})
@@ -647,6 +654,9 @@ CAPABILITIES += [
             DeclaredError(400, "invalid_model",
                           "`create` avec un `model` hors catalogue, un `provider` "
                           "qui le contredit, ou un `provider` sans `model`"),
+            DeclaredError(400, "no_runner_armed",
+                          "`launch` dans une org qu'aucun worker vivant ne sonde : "
+                          "l'armement réussirait sans que rien ne s'exécute jamais"),
             DeclaredError(400, "model_not_served",
                           "`launch` d'un passage dont aucun worker vivant ne sert "
                           "la famille du modèle"),
@@ -689,8 +699,10 @@ CAPABILITIES += [
             "none of its jobs is left in flight, at which point Oto states the "
             "fact (`stopped`) at the next poll. "
             "Never report a launch on `armed`, nor a stop on `stopping` — the gap "
-            "between the two is also the diagnosis. op=launch is REFUSED "
-            "(`model_not_served`) when the fleet declares a model no live worker "
+            "between the two is also the diagnosis. op=launch is REFUSED with "
+            "`no_runner_armed` when no worker polls for this org at all (nothing "
+            "would ever execute it — reading, updating and op=stop stay open), and "
+            "with `model_not_served` when the fleet declares a model no live worker "
             "serves: its jobs would wait forever. "
             "op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "

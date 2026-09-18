@@ -468,6 +468,34 @@ def arret_demande(fleet_id: int, org_id: int) -> bool:
     return bool(row) and dict(row)["status"] in ("stopping", "stopped")
 
 
+# Les états où une campagne SERT des exécutions : armée (on a demandé qu'elle
+# tourne) ou en cours (elle tourne). Ce sont exactement ceux que `demander_arret`
+# sait arrêter — une exécution rattachée hors d'eux échapperait à `op=stop`.
+STATUTS_QUI_SERVENT = ("armed", "running")
+
+
+def verrouiller_la_flotte(conn, fleet_id: int, org_id: int) -> Optional[str]:
+    """L'état de la flotte de CETTE org, verrouillé en PARTAGE jusqu'à la fin de
+    la transaction de `conn` — ou None si elle n'existe pas ou n'est pas la sienne.
+
+    ⚠️ **Le verrou est ce qui rend la garde d'enfilement vraie sous concurrence.**
+    En READ COMMITTED, une lecture nue laisse un `stop` passer la flotte
+    `stopping` entre elle et l'INSERT du travail : le travail partirait sur une
+    campagne dont l'arrêt est déjà demandé. `FOR SHARE` entre en conflit avec
+    l'UPDATE des gestes d'état (`demander_arret`, `armer`, `accuser_arret`…) :
+    soit le geste attend que l'enfilement soit validé — le travail existe alors
+    AVANT l'ordre, et l'arrêt gracieux l'attend comme les autres —, soit
+    l'enfilement attend le geste et relit l'état qu'il a laissé. Jamais entre
+    les deux. Partagé, pas exclusif : deux enfilements sur la même flotte ne se
+    sérialisent pas l'un l'autre.
+    """
+    row = conn.execute(
+        "SELECT status FROM runner_fleets WHERE id = %s AND org_id = %s FOR SHARE",
+        (fleet_id, org_id),
+    ).fetchone()
+    return dict(row)["status"] if row else None
+
+
 def run_appartient_a_flotte(run_id: str, fleet_id: int) -> bool:
     """Ce déroulé tourne-t-il POUR cette flotte ?
 

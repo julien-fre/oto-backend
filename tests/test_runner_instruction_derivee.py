@@ -125,6 +125,8 @@ def _launch_avec(monkeypatch, flotte):
     monkeypatch.setattr(RF.db, "get_fleet", lambda fid, org: flotte)
     monkeypatch.setattr(RF.db, "update_fleet", _update)
     monkeypatch.setattr(RF.db, "armer", _armer)
+    monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
+        "armed": True, "workers": 1, "last_seen": None, "families": []})
     RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=flotte["id"]))
     return trace
 

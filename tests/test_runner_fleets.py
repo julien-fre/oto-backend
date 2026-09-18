@@ -42,6 +42,17 @@ def _compte_beta(monkeypatch):
     monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
 
 
+@pytest.fixture(autouse=True)
+def _un_worker_par_defaut(monkeypatch):
+    """`launch` refuse d'armer un passage sans worker vivant (oto-runner#13,
+    17/09/2026) — ce fichier ne parle pas de cette absence par défaut, elle a
+    son propre banc plus bas (`test_runner_fleets_sans_worker.py`). Sans cette
+    doublure, chaque `launch` irait chercher la vraie base."""
+    monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
+        "armed": True, "workers": 1, "last_seen": "2026-09-17 08:00:00",
+        "families": []})
+
+
 def _ctx(sub="alexis", org_id=2):
     return ResolvedCtx(sub=sub, org_id=org_id)
 

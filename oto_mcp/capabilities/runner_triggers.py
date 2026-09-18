@@ -278,41 +278,6 @@ def _avec_pertes(org_id: int, t: dict) -> dict:
     return {**t, **db.comptage_perime(org_id, t["id"])}
 
 
-def _exige_un_runner(org_id: int) -> dict:
-    """Refuse de PROMETTRE une exécution que personne n'assure — et rend l'état lu,
-    pour que la garde du modèle (`_modele.exige_servi`) juge sur la même lecture.
-
-    ⚠️ La garde suit le VERBE, pas l'objet — le motif que `runner_fleets` a
-    établi pour `launch`/`stop`. Poser un déclencheur (ou en rallumer un) est le
-    geste qui MENT : il rend un `next_due`, que l'agent rapporte comme une
-    promesse tenue. Lire, corriger et supprimer restent ouverts, précisément
-    parce que c'est ce dont a besoin quelqu'un qui découvre un déclencheur mort.
-
-    Fermer `create` derrière la présence d'un worker n'ôte donc rien à personne :
-    ce qui existe reste gérable, et ce qui n'aurait jamais tourné ne se crée
-    plus en silence."""
-    etat = db.runner_arme(org_id)
-    if etat["armed"]:
-        return etat
-    if etat["last_seen"] is None:
-        detail = ("aucun worker n'a jamais sondé la file de cette org : rien "
-                  "n'exécuterait ce déclencheur")
-    else:
-        detail = (f"le dernier worker de cette org s'est tu le "
-                  f"{etat['last_seen']} — au-delà de "
-                  f"{db.ARME_FENETRE_S // 60} minutes on ne le tient plus pour "
-                  f"présent")
-    raise AuthzDenied(
-        400, "no_runner_armed",
-        f"aucun runner armé pour cette org ({detail}). Le tick ENFILE un job à "
-        "chaque échéance ; l'exécution appartient au worker, et sans worker le "
-        "job resterait `pending` pour toujours, sans erreur — le déclencheur "
-        "aurait l'air de marcher. Arme un worker pour cette org "
-        "(`OTO_RUNNER_ARMED=1` + un jeton de l'org, cf. otomata-tech/oto-runner), "
-        "puis repose le déclencheur. Lecture, modification et suppression des "
-        "déclencheurs existants restent ouvertes.")
-
-
 def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
     """L'allowlist DÉDUITE de la procédure — les outils qu'elle cite.
 
@@ -554,7 +519,7 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # se corrige, une org sans runner appelle un autre geste — les deux
         # refus ne se remplacent pas, et celui qu'on lit d'abord est celui qu'on
         # peut réparer sans quitter l'appel.
-        etat = _exige_un_runner(ctx.org_id)
+        etat = _modele.exige_un_runner(ctx.org_id)
         # Un runner armé ne sert pas forcément CE modèle : son travail attendrait
         # un worker de la bonne famille, puis périmerait.
         _modele.exige_servi(etat, famille)
@@ -749,8 +714,8 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # renommer ou corriger un cron ne promet rien et passe toujours — sinon un
     # déclencheur mort deviendrait impossible à ranger.
     if champs.get("enabled") is True:
-        etat = _exige_un_runner(ctx.org_id)
-        # ⚠️ Lu APRÈS `_exige_un_runner`, jamais avant : l'ordre des refus est un
+        etat = _modele.exige_un_runner(ctx.org_id)
+        # ⚠️ Lu APRÈS `_modele.exige_un_runner`, jamais avant : l'ordre des refus est un
         # contrat. Lire le déclencheur d'abord ferait répondre « inconnu » (404)
         # là où le serveur répond aujourd'hui « aucun runner » — deux diagnostics
         # opposés pour la même org, et celui qu'on retirerait est le seul qui dit

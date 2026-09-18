@@ -467,11 +467,17 @@ def test_armer_un_passage_au_modele_servi_arme(monkeypatch, armement):
     assert armement["armee"]
 
 
-def test_armer_un_passage_SANS_modele_ne_lit_pas_les_familles(monkeypatch, armement):
-    """Les passages d'avant ce lot n'ont pas de modèle : aucune garde neuve ne doit
-    les toucher."""
+def test_armer_un_passage_SANS_modele_ignore_les_familles_mais_lit_la_presence(
+        monkeypatch, armement):
+    """Les passages d'avant ce lot n'ont pas de modèle : la garde de FAMILLE ne
+    doit pas les toucher (`exige_servi` ne regarde `families` que si un modèle
+    est demandé). Mais depuis oto-runner#13 (17/09/2026), la présence d'un
+    runner, elle, reste vérifiée — un agent sans modèle est servi par
+    N'IMPORTE QUEL worker, encore faut-il qu'il y en ait un."""
     armement["stockee"]["model"] = None
-    monkeypatch.setattr(RF.db, "runner_arme",
-                        lambda org: pytest.fail("un passage sans modèle ne lit rien"))
+    lu = {}
+    monkeypatch.setattr(RF.db, "runner_arme", lambda org: lu.setdefault(
+        "oui", {"armed": True, "workers": 1, "last_seen": None, "families": []}))
     RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=1))
     assert armement["armee"]
+    assert "oui" in lu, "la présence d'un runner doit être lue, même sans modèle"
