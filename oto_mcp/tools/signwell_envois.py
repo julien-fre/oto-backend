@@ -31,7 +31,7 @@ def _csv_b64(csv: Optional[str], csv_base64: Optional[str]) -> str:
     return csv_base64
 
 
-def _shape_documents_page(page: object, full: bool) -> object:
+def _shape_documents_page(page: object, full: Optional[bool]) -> object:
     """Page de documents d'un envoi groupé : chaque document en vue resserrée, les
     clés de pagination intactes. `full=True` rend la page telle que servie."""
     if full or not isinstance(page, dict):
@@ -64,7 +64,7 @@ def register(mcp: FastMCP) -> None:
         user_email: Optional[str] = None,
         page: Optional[int] = None,
         limit: Optional[int] = None,
-        full: bool = False,
+        full: Optional[bool] = None,
         dry_run: Optional[bool] = None,
     ) -> dict:
         """SignWell bulk sends — one document per CSV row, built from templates.
@@ -156,7 +156,7 @@ def register(mcp: FastMCP) -> None:
         webhook_id: Optional[str] = None,
         callback_url: Optional[str] = None,
         api_application_id: Optional[str] = None,
-        dry_run: bool = False,
+        dry_run: Optional[bool] = None,
     ) -> dict:
         """SignWell webhooks — a URL you control receives every event of the account.
 
@@ -204,7 +204,7 @@ def register(mcp: FastMCP) -> None:
     def signwell_account(
         op: Literal["me", "api_application", "delete_api_application"] = "me",
         application_id: Optional[str] = None,
-        dry_run: bool = False,
+        dry_run: Optional[bool] = None,
     ) -> dict:
         """SignWell account behind the key, and its API applications.
 

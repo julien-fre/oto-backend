@@ -102,8 +102,13 @@ def _run(fn: Callable[[], Any]) -> Any:
 def _hors_op(op: str, **donnes: Any) -> None:
     """Refuse un argument qui ne s'applique pas à l'`op` choisie, plutôt que de
     l'ignorer : `signwell_document(op="get", subject=…)` laisserait croire que le
-    sujet a été posé."""
-    en_trop = sorted(k for k, v in donnes.items() if v is not None and v is not False)
+    sujet a été posé.
+
+    `None` = non passé, et c'est le SEUL « absent » : un `False` explicite est un
+    argument donné, donc refusé comme les autres (`full=False` sur un `op` sans vue
+    resserrée n'est pas « rien »). D'où les booléens des tools en `Optional[bool] =
+    None` — un `bool = False` nu rendrait l'omission et le `False` indiscernables."""
+    en_trop = sorted(k for k, v in donnes.items() if v is not None)
     if en_trop:
         raise _bad(f"op='{op}' ne prend pas {en_trop}.")
 

@@ -411,3 +411,46 @@ def test_full_is_refused_where_it_changes_nothing(tool, kwargs):
     croire qu'il a rendu davantage."""
     with pytest.raises(McpError, match="full"):
         _call(tool, full=True, **kwargs)
+
+
+# --- corrections après fusion (oto-backend#984) ---------------------------------
+
+def test_verify_refuses_an_empty_key_before_building_the_client():
+    """Construit sur une clé vide, le client retombe sur le secret du SERVEUR
+    (`SIGNWELL_API_KEY`) : la sonde validerait la clé de quelqu'un d'autre et dirait
+    « connexion OK » à une carte vide."""
+    with patch("oto.tools.signwell.SignWellClient") as cls:
+        for vide in ({}, {"key": ""}, {"key": "   "}):
+            with pytest.raises(ValueError, match="vide"):
+                signwell._verify(vide)
+    cls.assert_not_called()
+
+
+@pytest.mark.parametrize("tool,kwargs", [
+    ("signwell_document", dict(op="completed_pdf", document_id="d", dry_run=False)),
+    ("signwell_document", dict(op="get", document_id="d", dry_run=False)),
+    ("signwell_template", dict(op="get", template_id="t", full=False)),
+    ("signwell_bulk_send", dict(op="list", full=False)),
+    ("signwell_webhook", dict(op="list", dry_run=False)),
+    ("signwell_account", dict(op="me", dry_run=False)),
+])
+def test_explicit_false_is_refused_where_the_op_ignores_it(tool, kwargs):
+    """Un `False` EXPLICITE est un argument donné : refusé là où l'`op` ne s'en sert
+    pas, comme n'importe quel autre — seule l'omission (`None`) vaut absence."""
+    with pytest.raises(McpError, match="ne prend pas"):
+        _call(tool, **kwargs)
+
+
+def test_completed_pdf_judges_the_upstream_status_not_the_text():
+    """Le cas « pas encore signé » se reconnaît au STATUT 404 amont. Un autre refus
+    dont le texte contient « (404) » reste ce qu'il est."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    def setup(i):
+        i.get_completed_pdf.side_effect = UpstreamHTTPError(
+            409, {"message": "Conflict", "meta": {"messages": ["audit page pending (404)"]}},
+            service="signwell")
+    with pytest.raises(McpError) as e:
+        _call("signwell_document", setup=setup, op="completed_pdf", document_id="doc-1")
+    assert "(409)" in str(e.value)
+    assert "pas encore signé" not in str(e.value)

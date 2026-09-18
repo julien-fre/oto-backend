@@ -34,10 +34,9 @@ from typing import Any, Dict, List, Literal, Optional
 from fastmcp import FastMCP
 
 from ..connectors import verify as connector_verify
-from ..mcp_errors import McpError
 from .signwell_socle import (
-    _bad, _client, _hors_op, _need, _run, destinataires_valides, fichiers_valides,
-    options_valides, refus, sans_base64, vue_document,
+    OU_CREER_LA_CLE, _bad, _client, _hors_op, _need, _run, destinataires_valides,
+    fichiers_valides, options_valides, refus, sans_base64, vue_document,
 )
 
 #: Réglages rares de `POST /documents`, passables par `options` (spec, 2026-09-16).
@@ -78,8 +77,14 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.signwell import SignWellClient
 
+    cle = (fields.get("key") or "").strip()
+    # Refusée AVANT le client : construit sur une clé vide, il retombe sur le secret
+    # `SIGNWELL_API_KEY` du SERVEUR — la sonde validerait alors la clé de quelqu'un
+    # d'autre et dirait « connexion OK » à une carte vide.
+    if not cle:
+        raise ValueError(f"Clé SignWell vide : crée-la sur {OU_CREER_LA_CLE}, puis colle-la.")
     try:
-        SignWellClient(api_key=(fields.get("key") or "").strip()).get_me()
+        SignWellClient(api_key=cle).get_me()
     except UpstreamHTTPError as e:
         raise ValueError(refus(e)) from None
 
@@ -100,7 +105,7 @@ def _qui_recoit(recipients: List[Dict[str, Any]], *, test_mode: bool,
     return out
 
 
-def _vue(payload: Any, full: bool) -> dict:
+def _vue(payload: Any, full: Optional[bool]) -> dict:
     if full:
         return {"document": payload}
     return vue_document(payload) if isinstance(payload, dict) else {"result": payload}
@@ -131,8 +136,8 @@ def register(mcp: FastMCP) -> None:
         options: Optional[dict] = None,
         audit_page: Optional[bool] = None,
         file_format: Optional[Literal["pdf", "zip"]] = None,
-        full: bool = False,
-        dry_run: bool = False,
+        full: Optional[bool] = None,
+        dry_run: Optional[bool] = None,
     ) -> dict:
         """SignWell documents sent for signature — create, send, follow, fetch the signed PDF.
 
@@ -286,19 +291,25 @@ def register(mcp: FastMCP) -> None:
             _hors_op(op, files=files, recipients=recipients, draft=draft, text_tags=text_tags,
                      fields=fields, options=options, dry_run=dry_run, full=full, **explicites)
             if op == "completed_pdf":
-                try:
-                    res = _run(lambda: _client().get_completed_pdf(
-                        document_id, url_only=True, audit_page=audit_page,
-                        file_format=file_format))
-                except McpError as e:
-                    # Relevé en live : un document qui EXISTE mais n'est pas encore
-                    # signé par tous rend 404 ici, pas un refus d'état.
-                    if "(404)" not in str(e):
-                        raise
-                    raise _bad("SignWell rend 404 pour ce PDF : soit le document n'est pas "
-                               "encore signé par tous (le PDF n'existe qu'une fois "
-                               "« Completed » — vérifie avec op=\"get\"), soit l'identifiant "
-                               "est inconnu.") from None
+                from oto.tools.common.errors import UpstreamHTTPError
+
+                def _pdf():
+                    try:
+                        return _client().get_completed_pdf(
+                            document_id, url_only=True, audit_page=audit_page,
+                            file_format=file_format)
+                    except UpstreamHTTPError as e:
+                        # Relevé en live : un document qui EXISTE mais n'est pas encore
+                        # signé par tous rend 404 ici, pas un refus d'état. Jugé sur le
+                        # STATUT amont, jamais sur le texte d'un message traduit.
+                        if e.status_code != 404:
+                            raise
+                        raise _bad("SignWell rend 404 pour ce PDF : soit le document n'est "
+                                   "pas encore signé par tous (le PDF n'existe qu'une fois "
+                                   "« Completed » — vérifie avec op=\"get\"), soit "
+                                   "l'identifiant est inconnu.") from None
+
+                res = _run(_pdf)
             else:
                 _hors_op(op, audit_page=audit_page, file_format=file_format)
                 res = _run(lambda: _client().get_nom151_certificate(document_id, url_only=True))
@@ -342,8 +353,8 @@ def register(mcp: FastMCP) -> None:
         expires_in: Optional[int] = None,
         reminders: Optional[bool] = None,
         options: Optional[dict] = None,
-        full: bool = False,
-        dry_run: bool = False,
+        full: Optional[bool] = None,
+        dry_run: Optional[bool] = None,
     ) -> dict:
         """SignWell templates — reusable documents with placeholder roles, and documents made from them.
 
