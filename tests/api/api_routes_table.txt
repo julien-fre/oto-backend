@@ -654,6 +654,8 @@ POST /api/me/runner/fleets -> _handler
 OPTIONS /api/me/runner/fleets -> options_handler
 POST /api/admin/runner/workers -> _handler
 OPTIONS /api/admin/runner/workers -> options_handler
+POST /api/me/functions -> _handler
+OPTIONS /api/me/functions -> options_handler
 POST /api/billing/webhook -> webhook
 OPTIONS /api/billing/webhook -> options_handler
 GET,HEAD /api/me/billing/invoices/{id}/pdf -> invoice_pdf

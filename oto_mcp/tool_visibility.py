@@ -121,6 +121,10 @@ BETA_TOOLS: frozenset[str] = frozenset({
     # règle ci-dessus : `oto_fleet` naît avec ce lot, il ne retire donc rien à
     # personne — cf. `oto_mcp/capabilities/runner_fleets.py`.
     "oto_fleet",
+    # La FONCTION (ADR 0073, 18/09/2026) : du code pur stocké et exécuté par Oto. Elle
+    # part de VIDE et son contrat est PROVISOIRE — ce premier lot stocke et versionne,
+    # il n'exécute pas encore. ⚠️ Nom NEUF : `oto_function` naît avec ce lot.
+    "oto_function",
 })
 
 # L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur
