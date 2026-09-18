@@ -54,8 +54,19 @@ def poser_revision_de_ligne(conn) -> bool:
     borné, advisory lock pris). Rend True si le déclencheur vient d'être créé."""
     # `DEFAULT` constant sur table existante : rangé au catalogue (PG >= 11), aucune
     # réécriture — et 0 est bien la révision d'une ligne jamais modifiée depuis.
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS "
-                 "rev BIGINT NOT NULL DEFAULT 0")
+    # ⚠️ `ADD COLUMN IF NOT EXISTS` prend son AccessExclusiveLock AVANT de constater
+    # qu'il n'a rien à faire (le `IF NOT EXISTS` évite l'ERREUR, pas le VERROU) — sur
+    # `datastore_rows`, la table la plus sollicitée, ce verrou pris pour rien à
+    # chaque boot a bloqué du trafic de production (oto-backend, mesuré 2026-09-18).
+    # Pas d'import de `_init._colonne_absente` ici : ce module est importé PAR
+    # `_init.py`, l'import inverse créerait un cycle — même requête, dupliquée.
+    deja = conn.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'datastore_rows' AND column_name = 'rev'"
+    ).fetchone()
+    if deja is None:
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS "
+                     "rev BIGINT NOT NULL DEFAULT 0")
     conn.execute(
         f"CREATE OR REPLACE FUNCTION {NOM_FONCTION}() RETURNS trigger "
         "LANGUAGE plpgsql AS $$ BEGIN NEW.rev := OLD.rev + 1; RETURN NEW; END $$")
