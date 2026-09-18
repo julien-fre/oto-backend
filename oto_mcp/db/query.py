@@ -556,11 +556,16 @@ def thin_read_cte_sql(ns_id: int, q: Optional[str], filters: Optional[list],
 
     N'extraire QUE les colonnes utiles, une fois, dans une CTE `MATERIALIZED`
     (sans ce mot-clé le planner DÉPLIE la sous-requête et le gain disparaît —
-    mesuré en production) fait tomber toutes ces relectures à UNE par ligne et par
-    colonne référencée. `CASE WHEN data ? %s` est nécessaire pour chaque clé :
-    sans lui, une clé ABSENTE devient un JSON `null` (`data->k` sur une clé
-    manquante rend `null`, pas d'absence) au lieu d'un NULL SQL, et les compteurs
-    `off_type`/`empty`/les filtres `empty` divergent de la vraie table.
+    mesuré en production) fait tomber toutes ces relectures à UNE SEULE lecture
+    de `data` PAR LIGNE, quel que soit le nombre de colonnes amincies —
+    `jsonb_each(data)` filtré par la liste des clés voulues (`ANY(%s)`), agrégé
+    par `jsonb_object_agg`. Une clé ABSENTE de `data` n'apparaît simplement pas
+    dans `jsonb_each`, donc pas dans l'agrégat : `s.data->k` rend un NULL SQL
+    naturellement (jamais un JSON `null`), sans `CASE WHEN data ? k` explicite —
+    la forme précédente (un `CASE WHEN … THEN jsonb_build_object(...)` PAR
+    colonne, combinés par `||`) relisait `data` DEUX fois par colonne, mesuré en
+    prod : `COUNT` filtré 670ms/238k blocs (sans amincissement) → 506ms/161k
+    (par-colonne) → 372ms/43k (lecture unique, cette forme).
 
     ⚠️ **`q` (recherche plein texte) a besoin de `data` ENTIER** — dès qu'il est
     posé, aucune CTE mince n'est construite (`None`), comportement inchangé : la
@@ -581,14 +586,19 @@ def thin_read_cte_sql(ns_id: int, q: Optional[str], filters: Optional[list],
     keys = thinnable_read_keys(order_by, filters) if not q else None
     if not keys:
         return None
-    parts: list[str] = []
-    params: list = []
-    for k in sorted(keys):
-        parts.append(
-            "CASE WHEN data ? %s::text THEN jsonb_build_object(%s::text, data->%s::text) "
-            "ELSE '{}'::jsonb END")
-        params += [k, k, k]
-    combine = " || ".join(parts) if len(parts) > 1 else parts[0]
+    # Lecture UNIQUE de `data`, quel que soit le nombre de colonnes amincies
+    # (oto-backend#980, suite mesurée en prod après #1009) : la forme précédente
+    # (un `CASE WHEN data ? k THEN jsonb_build_object(...)` PAR colonne, combinés
+    # par `||`) relit `data` DEUX fois par colonne référencée (`data ? k` puis
+    # `data->k`) — 4 détoastages/ligne pour 2 colonnes filtrées, contre 14 avant
+    # tout amincissement. `jsonb_each` ne détoaste QU'UNE FOIS par ligne, filtré
+    # ensuite en mémoire sur les clés voulues : mesuré en prod, COUNT filtré
+    # 670ms/238k blocs (avant tout correctif) → 506ms/161k (forme #1009) →
+    # 372ms/43k (cette forme). Le `CASE WHEN data ? k` n'est PLUS nécessaire ici :
+    # une clé absente de `data` n'apparaît simplement pas dans le résultat de
+    # `jsonb_each`, donc `jsonb_object_agg` ne la porte pas — `s.data->k` rend
+    # alors un NULL SQL naturellement, pas un JSON `null` (même garantie qu'avant,
+    # obtenue par construction plutôt que par un CASE explicite).
     cte = (
         "s AS MATERIALIZED ("
         # `created_at`/`updated_at` portés ici aussi (colonnes physiques, pas
@@ -596,10 +606,12 @@ def thin_read_cte_sql(ns_id: int, q: Optional[str], filters: Optional[list],
         # faire SANS rejoindre `datastore_rows` dans cette même portée — `dr.data`
         # (entier) et `s.data` (mince) rendraient `data` AMBIGU si les deux
         # étaient dans le même FROM.
-        f"SELECT row_id, created_at, updated_at, {combine} AS data "
+        "SELECT row_id, created_at, updated_at, "
+        "(SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb) "
+        " FROM jsonb_each(data) e WHERE e.key = ANY(%s)) AS data "
         "FROM datastore_rows WHERE ns_id = %s)"
     )
-    params.append(ns_id)
+    params: list = [sorted(keys), ns_id]
     where_clauses, where_params = _ds_filter_clauses(filters)
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     return cte, params, where_sql, where_params
