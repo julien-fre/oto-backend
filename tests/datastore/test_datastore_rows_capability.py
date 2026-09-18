@@ -107,7 +107,8 @@ def test_les_defauts_de_pagination_sont_ceux_davant(store):
 
 @pytest.mark.parametrize("query,attendu", [
     (b"limit=10&offset=20", (20, 10)),
-    (b"limit=9000", (0, 500)),        # borné à 500
+    (b"limit=9000", (0, 1000)),       # borné à 1000
+    (b"limit=1000", (0, 1000)),       # la borne elle-même reste acceptée
     (b"limit=0", (0, 1)),             # borné à 1
     (b"offset=-5", (0, 50)),          # jamais négatif
     (b"limit=beaucoup", (0, 50)),     # un entier illisible retombe sur le défaut…
