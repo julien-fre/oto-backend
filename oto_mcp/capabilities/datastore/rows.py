@@ -72,7 +72,7 @@ def _tolerant_int(v):
 
 class ListRowsInput(EntreeDatastore):
     datastore: Adresse
-    # `None` = le défaut du serveur (0 / 50) ; borné à [1, 500] pour `limit`.
+    # `None` = le défaut du serveur (0 / 50) ; borné à [1, 1000] pour `limit`.
     offset: Optional[int] = None
     limit: Optional[int] = None
     order_by: Optional[str] = None
@@ -452,7 +452,7 @@ def _json_param(raw: Optional[str], code: str, *, expect=None):
 def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
     ns, _ = _adresse(inp.datastore)
     offset = max(0, inp.offset if inp.offset is not None else 0)
-    limit = min(500, max(1, inp.limit if inp.limit is not None else 50))
+    limit = min(1000, max(1, inp.limit if inp.limit is not None else 50))
     filter_eq = _json_param(inp.filter, "invalid_filter", expect=dict)
     filters = _json_param(inp.filters, "invalid_filters", expect=list)
     layers = _layers(inp.layers)
