@@ -224,6 +224,12 @@ _REGLAGES: tuple[Variable, ...] = (
              "(poste de dev, tests) : rien n'engage un tiers. Une valeur hors des "
              "deux lève `EnvironnementAmbigu`.",
              ("oto_mcp/config.py:108",)),
+    Variable("OTO_FUNCTIONS_SANDBOX_DIR", Classe.REGLAGE, "",
+             "Répertoire du bac à sable des fonctions (ADR 0073), posé par "
+             "`scripts/installer_bac_a_sable.py`. Absente : l'instance n'exécute pas de "
+             "fonction — `oto_function` op=run/test/publish rend 503 "
+             "`sandbox_unavailable`, le reste répond.",
+             ("oto_mcp/functions/executor.py:60",)),
     Variable("OTO_EGRESS_ALLOW", Classe.REGLAGE, "",
              "Destinations internes autorisées en egress (`nom=adresse:port`, "
              "virgules). Absente = aucune exception : fail-closed, jamais un défaut "

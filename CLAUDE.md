@@ -195,6 +195,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `version-servie.md` — dater un changement : les 3 surfaces, les 3 coordonnées qui mentent
 - `noeuds.md` — le NOUVEL univers de contenu : page/tableau/ligne, `props` vs `data`, les deux
   univers côte à côte, l'arrêt de la recopie
+- `fonctions.md` — `oto_function` : code pur versionné, publié sous la garde de ses tests,
+  exécuté dans un bac à sable Pyodide/Deno sans réseau (ADR 0073)
 - `datastore.md` — spine PG `data_*`, OAuth Google
 - `datastore-colonne-tableau.md` — sa spec
 - `projects.md` — liens, partage, périmètre d'URL
