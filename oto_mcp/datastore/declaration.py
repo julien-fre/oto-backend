@@ -38,7 +38,7 @@ from .motifs import PATTERN_MAX_SUBJECT, pattern_refusal
 # validation reste volontairement permissive — le schéma guide le rendu, il ne
 # transforme pas le datastore en base contrainte.
 SCALAR_TYPES = ("text", "number", "date", "datetime", "bool", "json",
-                "url", "email", "enum")
+                "url", "email", "enum", "formula")
 COMPOSITE_TYPES = ("object", "list")
 
 
@@ -376,9 +376,13 @@ def readonly_fields(schema: Optional[dict]) -> set:
     """Les colonnes `readonly: true` (#606) : leur VALEUR ne change pas par une
     écriture. Leurs couches restent ouvertes — `comment` est la destination de ce
     que dit une autre source (« registre — 20 B AVENUE … »), attachée au champ,
-    comptable, livrable. `None` = absence (c'est ainsi qu'un patch lève le cran)."""
+    comptable, livrable. `None` = absence (c'est ainsi qu'un patch lève le cran).
+
+    Une colonne `type: "formula"` (oto-backend#1008) est READONLY IMPLICITE : sa
+    valeur est CALCULÉE, jamais posée par un geste — inutile (et trompeur) de
+    devoir écrire `readonly: true` en plus de `type: "formula"`."""
     return {f["key"] for f in _fields(schema)
-            if f.get("readonly") is True
+            if (f.get("readonly") is True or f.get("type") == "formula")
             and isinstance(f.get("key"), str) and f["key"]}
 
 

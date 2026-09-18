@@ -46,6 +46,7 @@ from .declaration import (
 )
 from .cycle_de_vie import lifecycle_of, terminal_states
 from .hors_schema import UNKNOWN_FIELDS_MODES
+from . import formule as _formule
 
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
 
@@ -58,6 +59,7 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
         return ["schema doit être un objet {fields:[...]} ou null"]
     errors: list[str] = []
     _validate_fields_def(_fields(schema), "fields", errors)
+    errors.extend(_validate_formulas_def(_fields(schema)))
     # Une colonne titre par tableau (#317) : deux candidats, et le nom d'une ligne
     # dépendrait de l'ordre de déclaration — une inférence silencieuse, exactement ce
     # que le retrait des rôles supprime. Zéro conflit en production au moment de la
@@ -450,3 +452,35 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
         # `_COLUMN_ONLY_KEYS` a déjà parlé.
         if not layer:
             _validate_reserved_def(f, fpath, errors, top=(path == "fields"))
+
+
+# ── colonnes calculées (oto-backend#1008) ───────────────────────────────────
+
+def _validate_formulas_def(fields: list) -> list[str]:
+    """Une colonne `type: "formula"` DOIT porter un texte `formula` qui PARSE
+    (fonction du sous-ensemble fermé, grammaire correcte), ne référence QUE des
+    colonnes déclarées au premier niveau, et ne chaîne PAS sur une autre colonne
+    formule (v1). Refusé À LA POSE, jamais stocké-invalide."""
+    errors: list[str] = []
+    top_level = [f for f in fields if isinstance(f, dict)]
+    colonnes = {f["key"] for f in top_level
+                if isinstance(f.get("key"), str) and f["key"]}
+    formules = {f["key"] for f in top_level
+                if f.get("type") == "formula" and isinstance(f.get("key"), str)
+                and f["key"]}
+    for f in top_level:
+        if f.get("type") != "formula":
+            continue
+        key = f.get("key")
+        fpath = f"fields.{key or '?'}"
+        texte = f.get("formula")
+        if not isinstance(texte, str) or not texte.strip():
+            errors.append(
+                f"{fpath}: type=\"formula\" exige `formula` (texte OpenFormula "
+                f"non vide)")
+            continue
+        try:
+            _formule.valider(texte, colonnes, formules - {key})
+        except _formule.FormulaError as e:
+            errors.append(f"{fpath}: formule refusée — {e}")
+    return errors
