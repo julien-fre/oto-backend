@@ -57,6 +57,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # list_org_secrets/list_group_secrets (elles écrasent account/meta/secret_kind).
 from ... import access, credentials_store, db, group_store, instance_refs, providers
 from . import instances_tenant
+from ._level_doc import DOC_LEVEL as _DOC_LEVEL, DOC_OWNER_TYPE as _DOC_OWNER_TYPE
 from ...connectors import instance_visibility
 from .._authz import SUB_ONLY
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
@@ -70,14 +71,16 @@ _LEVEL_RANK = {"member": 0, "group": 1, "org": 2, "tenant": 3, "platform": 4}
 
 class ListInstancesInput(BaseModel):
     connector: Optional[str] = None      # filtre par type de connecteur
-    level: Optional[Literal["member", "group", "org", "tenant", "platform"]] = None
+    level: Optional[Literal["member", "group", "org", "tenant", "platform"]] = (
+        Field(default=None, description=_DOC_LEVEL))
 
 
 class InstanceOwner(BaseModel):
     """Propriétaire d'une instance. `type='user'` porte un sub, `group`/`org` un
     entier, `platform` **aucun id** (une clé plateforme est identifiée par son
     label, ADR 0044 §F) — d'où trois champs optionnels plutôt qu'un couple figé."""
-    type: Literal["user", "group", "org", "tenant", "platform"]
+    type: Literal["user", "group", "org", "tenant", "platform"] = Field(
+        description=_DOC_OWNER_TYPE)
     # sub (user) ou id de groupe/org — ENTIER quand il vient du contexte, CHAÎNE
     # quand il est reconstruit depuis une ligne partagée (`entity_id`). Absent en
     # platform.
@@ -117,7 +120,8 @@ class ConnectorInstance(BaseModel):
     # Rang de PROXIMITÉ dans la cascade, qui porte le tri (membre < groupe < org <
     # plateforme). Ce n'est PAS le gagnant : la liste ne dit jamais qui résout —
     # une seule vérité pour ça, `status_for`.
-    level: Literal["member", "group", "org", "tenant", "platform"]
+    level: Literal["member", "group", "org", "tenant", "platform"] = Field(
+        description=_DOC_LEVEL)
     owner: InstanceOwner
     # DÉRIVÉ, jamais stocké : `meta.label` > « Connecteur · compte » > « Connecteur ·
     # label de clé » > label du connecteur. Deux instances peuvent donc porter le
