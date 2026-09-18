@@ -25,6 +25,11 @@ from ._level_doc import DOC_LEVEL as _DOC_LEVEL
 class VerifyInput(BaseModel):
     provider: str                              # path {provider}
     level: Literal["auto", "org"] = "auto"     # auto = credential effectif ; org = clé de l'org
+    # Discrimine plusieurs instances du même connecteur au même niveau (multi-compte,
+    # même vocabulaire que `ConnectorInstance.account` — `instances.py`) : `""` = la
+    # clé par défaut. Ne s'applique qu'à `level="org"` — `auto` teste le credential
+    # EFFECTIF de la cascade, pas une instance choisie à la main.
+    account: str = ""
 
 
 class VerifyResult(BaseModel):
@@ -173,15 +178,21 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
     - `org` (carte org) : la clé DE L'ORG active/consultée spécifiquement (une clé perso
       la masquerait dans la cascade). `ctx.org_id` est injecté par l'authz (IDOR-safe)."""
     if inp.level == "org":
-        row = credentials_store.get_credential_with_meta("org", str(ctx.org_id), inp.provider)
+        account = inp.account or ""
+        row = credentials_store.get_credential_with_meta(
+            "org", str(ctx.org_id), inp.provider, account)
         if not row:
+            if account:
+                raise AuthzDenied(400, "no_org_credential",
+                                  f"aucune clé d'org posée pour ce connecteur sous "
+                                  f"le compte « {account} ».")
             raise AuthzDenied(400, "no_org_credential",
                               "aucune clé d'org posée pour ce connecteur.")
         return (credentials_store.unpack_secret(inp.provider, row["secret"]),
                 credentials_store.public_meta(row.get("meta")),
-                ("org", str(ctx.org_id), ""),
+                ("org", str(ctx.org_id), account),
                 {"level": "org", "ref": _ref("org", str(ctx.org_id), inp.provider)},
-                ("org", str(ctx.org_id), ""))
+                ("org", str(ctx.org_id), account))
     rc = access.resolve_credential(
         inp.provider, want="auto", sub=ctx.sub, emit_on_failure=False,
     )
@@ -278,7 +289,9 @@ CAP_DOC = (
     "Test whether a connector's configured credential actually authenticates "
     "(side-effect-free probe), returning {ok, error}. Use it to diagnose a connector "
     "that is set but not working (wrong region, expired token…) before reporting a gap. "
-    "'auto' tests the credential that resolves for you; 'org' tests the org shared key. "
+    "'auto' tests the credential that resolves for you; 'org' tests the org shared key "
+    "— pass `account` to pick one of several org-level instances of the same connector "
+    "(e.g. several companies each with their own key), default `\"\"` for the default one. "
     "The reply names the instance actually probed (`level` + `ref`) — under 'auto' the "
     "cascade may have fallen through to a shared key, and `ok` alone would not say so. "
     "⚠️ READ `coverage` WITH `ok`: it says what the probe actually measured. "
