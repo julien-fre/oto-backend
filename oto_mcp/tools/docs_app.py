@@ -5,12 +5,20 @@ Même patron que `data_app` (SEP-1865, prefab_ui) : import optionnel gardé
 (extra `fastmcp[apps]` absent → le tool ne s'enregistre pas, `oto_doc` reste la
 voie par défaut/agent). Lecture SEULE — toute écriture passe par `oto_doc`.
 Spine (chargé explicitement par register_all, hors gate d'activation).
+
+**Deux canaux, deux lecteurs** (extension MCP Apps) : l'hôte peint la carte avec
+`structuredContent` et donne au MODÈLE le seul `content` texte. Rendre la carte nue
+laissait FastMCP poser au texte le marqueur « [Rendered Prefab UI] » : le modèle ne
+lisait rien de la page et improvisait (signal #1083, 18/09/2026). Chaque vue rend donc
+AUSSI son contenu en texte — la page entière, l'arbre, les extraits (`_rendu`).
 """
 from __future__ import annotations
 
 from typing import Optional
 
 from fastmcp import FastMCP
+from fastmcp.tools import ToolResult
+from mcp.types import TextContent
 
 from .. import access, db, org_store, ownership
 
@@ -26,12 +34,18 @@ def register(mcp: FastMCP) -> None:
     except Exception:  # pragma: no cover - extra `apps` absent
         return
 
-    def _message_card(title: str, message: str) -> "Card":
+    def _rendu(card, texte: str) -> ToolResult:
+        """La carte à l'hôte (`structuredContent`), le même contenu au modèle (texte).
+        Jamais l'un sans l'autre : cf. l'en-tête du module."""
+        return ToolResult(content=[TextContent(type="text", text=texte)],
+                          structured_content=card)
+
+    def _message_card(title: str, message: str) -> ToolResult:
         with Card() as card:
             with Column(gap=4):
                 Heading(title)
                 Text(message)
-        return card
+        return _rendu(card, f"{title} — {message}")
 
     def _can_read(sub: str, project_id: int) -> bool:
         return ownership.can_access(sub, PROJECT_RTYPE, str(project_id), "read")
@@ -101,8 +115,9 @@ def register(mcp: FastMCP) -> None:
         snippets, accent-insensitive.
 
         Use when the user wants to *see* a page or explore a project's docs
-        without leaving the chat. For raw JSON or ANY write (create/update/move/share),
-        use `oto_doc`.
+        without leaving the chat. The text result gives YOU the same content (the
+        whole page, the tree, the hits) — read it, never summarize from the card.
+        For raw JSON or ANY write (create/update/move/share), use `oto_doc`.
 
         Args:
             project_id: project whose pages to browse ; omit = the active org's
@@ -119,15 +134,21 @@ def register(mcp: FastMCP) -> None:
                                      f"Aucune page #{doc_id} accessible.")
             meta = f"{row.get('kind') or 'doc'} · maj {str(row.get('updated_at') or '')[:16]}"
             tok = row.get("public_token")
+            title = str(row.get("title") or f"#{doc_id}")
+            body = row.get("body_md") or "*(page vide)*"
+            lien = None
+            if tok:
+                from ..capabilities.docs.view import public_doc_url
+                lien = f"lien public : {public_doc_url(tok)}"
             with Card() as card:
                 with Column(gap=4):
-                    Heading(str(row.get("title") or f"#{doc_id}"))
+                    Heading(title)
                     Text(meta)
-                    Markdown(row.get("body_md") or "*(page vide)*")
-                    if tok:
-                        from ..capabilities.docs.view import public_doc_url
-                        Text(f"lien public : {public_doc_url(tok)}")
-            return card
+                    Markdown(body)
+                    if lien:
+                        Text(lien)
+            entete = [f"# {title}", f"page #{doc_id} · {meta}"] + ([lien] if lien else [])
+            return _rendu(card, "\n".join(entete) + "\n\n" + body)
 
         pid = int(project_id) if project_id is not None else _kb_project_id(sub)
         if pid is None:
@@ -147,10 +168,12 @@ def register(mcp: FastMCP) -> None:
             rows = [{"page": h.get("title"), "type": h.get("kind") or "doc",
                      "extrait": _strip_hl(h.get("snippet") or ""), "id": h["id"]}
                     for h in hits]
+            titre = f"« {query.strip()} » — {project.get('name')}"
+            compte = f"{len(rows)} page(s) trouvée(s) · lire : oto_doc_app doc_id=<id>"
             with Card() as card:
                 with Column(gap=4):
-                    Heading(f"« {query.strip()} » — {project.get('name')}")
-                    Text(f"{len(rows)} page(s) trouvée(s) · lire : oto_doc_app doc_id=<id>")
+                    Heading(titre)
+                    Text(compte)
                     if rows:
                         cols = [DataTableColumn(key="page", header="Page", sortable=True),
                                 DataTableColumn(key="type", header="Type", sortable=True),
@@ -160,14 +183,18 @@ def register(mcp: FastMCP) -> None:
                                   paginated=len(rows) > 20, pageSize=20)
                     else:
                         Text("Aucune page ne correspond.")
-            return card
+            lignes = [f"- {r['page']} · {r['type']} · #{r['id']} — {r['extrait']}"
+                      for r in rows] or ["Aucune page ne correspond."]
+            return _rendu(card, "\n".join([titre, compte, ""] + lignes))
 
         docs = db.list_docs_for_project(pid)
         rows = _tree_rows(docs)
+        titre = str(project.get("name") or f"Projet #{pid}")
+        compte = f"{len(rows)} page(s) · lire : oto_doc_app doc_id=<id>"
         with Card() as card:
             with Column(gap=4):
-                Heading(str(project.get("name") or f"Projet #{pid}"))
-                Text(f"{len(rows)} page(s) · lire : oto_doc_app doc_id=<id>")
+                Heading(titre)
+                Text(compte)
                 if rows:
                     cols = [DataTableColumn(key="page", header="Page"),
                             DataTableColumn(key="type", header="Type", sortable=True),
@@ -177,4 +204,6 @@ def register(mcp: FastMCP) -> None:
                               paginated=len(rows) > 20, pageSize=20)
                 else:
                     Text("Aucune page — crée-en avec oto_doc (op=create).")
-        return card
+        lignes = [f"{r['page']} · {r['type']} · maj {r['maj']} · #{r['id']}" for r in rows] \
+            or ["Aucune page — crée-en avec oto_doc (op=create)."]
+        return _rendu(card, "\n".join([f"{titre} (projet #{pid})", compte, ""] + lignes))

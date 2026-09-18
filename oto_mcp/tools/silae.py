@@ -29,7 +29,7 @@ part maintient la frontière lecture/écriture visible.
 masquage IBAN/BIC/RIB est disponible à la frontière des tools
 (`FieldRedactionMiddleware`, politique résolue par NAMESPACE `silae` — donc
 insensible au nom des tools : ce renommage ne la casse pas), mais
-`field_filter_defaults.SERVER_DEFAULTS` est **vide depuis le 2026-06-22** : rien
+`field_filter_defaults.SERVER_DEFAULTS` ne porte **rien pour `silae`** : rien
 n'est redacté tant que l'org n'a pas posé de politique (template `bank_details`,
 applicable en 1 clic ; `connector_field_schema` déclare le plancher PII silae —
 iban/bic/rib/salaire/numeroSecu/dateNaissance/nom/prenom). Les bulletins

@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
                group: "int | None | object" = scope._UNSET) -> dict:
+    """Snapshot pour `/api/me` — enveloppe fine : ouvre UNE connexion pour tout
+    l'appel (oto-backend, lot `status_for` N+1, 17/09/2026 — cf. `db.reuse_connection`)
+    et délègue à `_status_for_projection`, qui porte le VRAI docstring."""
+    with db.reuse_connection():
+        return _status_for_projection(sub, org=org, group=group)
+
+
+def _status_for_projection(sub: str, *, org: "int | None | object" = scope._UNSET,
+               group: "int | None | object" = scope._UNSET) -> dict:
     """Snapshot pour `/api/me` — rôle + statut par provider :
 
     - `mode` : `user` (clé perso) | `group` | `org` | `tenant` (clé partagée du

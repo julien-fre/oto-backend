@@ -1,13 +1,18 @@
 """Connecteur Nextmotion — dispatch `op=`, projection des données de santé, sonde.
 
 Ce que ce fichier verrouille :
-- la SURFACE (7 tools) et le routage de chaque op vers la bonne méthode du client ;
+- la SURFACE (15 tools, sur les cinq modules du connecteur) et le routage de chaque op
+  vers la bonne méthode du client — les ressources ajoutées le 2026-09-17 ont leur
+  propre fichier, `test_nextmotion_administratif.py` ;
 - un argument requis manquant nommé, un argument non pertinent REFUSÉ — « fourni » se
   lit `is not None`, donc `dry_run=False` et `offset=0` comptent ;
 - `dry_run` vaut True par défaut sur les deux écritures et n'atteint JAMAIS la méthode
   mutante ;
 - la projection en liste blanche : un rendez-vous, un devis, une facture ne rendent
   aucun champ de santé ni texte libre, même quand l'API les envoie ;
+- le filtre de période des factures : parcours de toutes les pages sans supposer un
+  ordre, plafond de pages, `complet` faux et `offset_suivant` quand le plafond coupe ;
+- le stock produits en liste blanche, sans rattachement aux factures ;
 - la sonde : une clé vide est refusée avant le client, un 401/403 se classe
   `NonAutorise` sur `status_code`.
 
@@ -38,11 +43,16 @@ def client(monkeypatch):
 
 
 def _mcp():
+    """Les outils de TOUS les modules que le registre monte pour ce connecteur : le
+    cliquet et la surface se jugent sur le montage réel, pas sur un module."""
+    import importlib
+
     from fastmcp import FastMCP
-    from oto_mcp.tools import nextmotion as N
+    from oto_mcp.providers.nextmotion import CONNECTOR
 
     m = FastMCP("t")
-    N.register(m)
+    for mod in CONNECTOR.modules:
+        importlib.import_module(f"oto_mcp.tools.{mod}").register(m)
     return m
 
 
@@ -50,11 +60,13 @@ def _tool(name: str):
     return asyncio.run(_mcp().get_tool(name)).fn
 
 
-def test_the_surface_is_exactly_seven_tools(client):
+def test_the_surface_is_exactly_fifteen_tools(client):
     assert sorted(t.name for t in asyncio.run(_mcp().list_tools())) == [
-        "nextmotion_appointment", "nextmotion_availability", "nextmotion_catalog",
-        "nextmotion_clinic", "nextmotion_invoice", "nextmotion_practitioner",
-        "nextmotion_quote",
+        "nextmotion_appointment", "nextmotion_availability", "nextmotion_calendar",
+        "nextmotion_catalog", "nextmotion_clinic", "nextmotion_invoice",
+        "nextmotion_journey", "nextmotion_lead", "nextmotion_patient_stats",
+        "nextmotion_payment", "nextmotion_practitioner", "nextmotion_product",
+        "nextmotion_quote", "nextmotion_setting", "nextmotion_statistics",
     ]
 
 
@@ -74,6 +86,8 @@ def test_the_surface_is_exactly_seven_tools(client):
     ("nextmotion_quote", {"op": "get", "quote_id": X}, "get_quote"),
     ("nextmotion_invoice", {"clinic_id": C}, "list_invoices"),
     ("nextmotion_invoice", {"op": "get", "invoice_id": X}, "get_invoice"),
+    ("nextmotion_product", {"clinic_id": C}, "list_products"),
+    ("nextmotion_product", {"op": "get", "product_id": X}, "get_product"),
 ])
 def test_ops_route_to_the_right_client_method(client, tool, kwargs, method):
     _tool(tool)(**kwargs)
@@ -123,6 +137,13 @@ def test_missing_required_argument_is_named(client, tool, kwargs, match):
      "`search`"),
     ("nextmotion_catalog", {"kind": "visit_type_category", "clinic_id": C,
                             "visit_type_id": X}, "`visit_type_id`"),
+    ("nextmotion_invoice", {"op": "get", "invoice_id": X, "invoiced_from": "2026-01-01"},
+     "`invoiced_from`"),
+    ("nextmotion_invoice", {"clinic_id": C, "max_pages": 1}, "`max_pages`"),
+    ("nextmotion_product", {"clinic_id": C, "product_id": X}, "`product_id`"),
+    ("nextmotion_product", {"op": "get", "product_id": X, "stock_state": "low"},
+     "`stock_state`"),
+    ("nextmotion_product", {"op": "get", "product_id": X, "offset": 0}, "`offset`"),
 ])
 def test_an_argument_the_op_does_not_use_is_refused(client, tool, kwargs, match):
     with pytest.raises(McpError, match=f"n'utilise pas {match}"):
@@ -363,3 +384,113 @@ def test_chaque_outil_de_liste_satisfait_le_cliquet_de_projection(client):
     from test_sorties_listes_projetees import _pagine, _projette
     outils = asyncio.run(_mcp().list_tools())
     assert [t.name for t in outils if _pagine(t) and not _projette(t)] == []
+
+
+# --- factures : filtre de période côté outil ----------------------------------------
+
+def _factures(*dates, suite=True):
+    """Une page amont : une facture par date (`None` = pas de `invoiced_time`)."""
+    rows = [{"id": f"00000000-0000-4000-8000-{i:012d}", "status": 3,
+             "patient": _patient(), **({"invoiced_time": d} if d else {})}
+            for i, d in enumerate(dates)]
+    return {"count": 9999, "next": "page-suivante" if suite else None, "data": rows}
+
+
+def test_periode_parcourt_toutes_les_pages_sans_supposer_un_ordre(client):
+    client.list_invoices.side_effect = [
+        # Une page ENTIÈRE avant la période : un parcours qui supposerait un tri
+        # décroissant s'arrêterait là et perdrait la page suivante.
+        _factures("2025-12-31T23:59:00+01:00", "2025-11-02T09:00:00+01:00"),
+        _factures("2026-01-01T00:00:00+01:00", "2026-01-31T23:30:00+01:00",
+                  "2026-02-01T00:00:00+01:00", suite=False),
+    ]
+    out = _tool("nextmotion_invoice")(clinic_id=C, invoiced_from="2026-01-01",
+                                      invoiced_to="2026-01-31")
+    assert [c.kwargs["offset"] for c in client.list_invoices.call_args_list] == [0, 2]
+    assert {c.kwargs["limit"] for c in client.list_invoices.call_args_list} == {100}
+    assert [f["invoiced_time"] for f in out["invoices"]] == [
+        "2026-01-01T00:00:00+01:00", "2026-01-31T23:30:00+01:00"]
+    assert out["pages_lues"] == 2 and out["factures_parcourues"] == 5
+    assert out["complet"] is True and out["offset_suivant"] is None
+    _assert_clean(out)
+
+
+def test_periode_coupee_par_le_plafond_le_dit_et_donne_la_reprise(client):
+    client.list_invoices.side_effect = [_factures("2026-01-05T10:00:00Z"),
+                                        _factures("2026-01-06T10:00:00Z")]
+    out = _tool("nextmotion_invoice")(clinic_id=C, invoiced_from="2026-01-01",
+                                      max_pages=2, offset=40)
+    assert [c.kwargs["offset"] for c in client.list_invoices.call_args_list] == [40, 41]
+    assert out["complet"] is False and out["offset_suivant"] == 42
+    assert out["pages_lues"] == 2 and out["factures_parcourues"] == 2
+    assert len(out["invoices"]) == 2
+
+
+def test_periode_applique_fields_et_la_liste_blanche(client):
+    client.list_invoices.return_value = _factures("2026-01-05T10:00:00Z", suite=False)
+    out = _tool("nextmotion_invoice")(clinic_id=C, invoiced_to="2026-01-05",
+                                      fields=["invoiced_time"])
+    assert set(out["invoices"][0]) == {"id", "invoiced_time"}
+    assert out["complet"] is True and "withheld" in out
+    _assert_clean(out)
+
+
+def test_periode_sans_invoiced_time_lisible_leve(client):
+    client.list_invoices.return_value = _factures(None, suite=False)
+    with pytest.raises(McpError, match="invoiced_time"):
+        _tool("nextmotion_invoice")(clinic_id=C, invoiced_from="2026-01-01")
+
+
+@pytest.mark.parametrize("kwargs,match", [
+    ({"invoiced_from": "2026-01-01", "limit": 10}, "`limit`"),
+    ({"invoiced_from": "01/01/2026"}, "YYYY-MM-DD"),
+    ({"invoiced_from": "2026-02-01", "invoiced_to": "2026-01-01"}, "postérieur"),
+    ({"invoiced_from": "2026-01-01", "max_pages": 0}, "max_pages"),
+    ({"invoiced_from": "2026-01-01", "max_pages": 101}, "max_pages"),
+])
+def test_periode_refuse_ce_qui_n_a_pas_de_sens(client, kwargs, match):
+    with pytest.raises(McpError, match=match):
+        _tool("nextmotion_invoice")(clinic_id=C, **kwargs)
+    assert not client.method_calls
+
+
+def test_sans_periode_la_liste_reste_une_page(client):
+    client.list_invoices.return_value = _factures("2026-01-05T10:00:00Z")
+    out = _tool("nextmotion_invoice")(clinic_id=C, limit=10)
+    client.list_invoices.assert_called_once_with(C, limit=10, offset=0)
+    assert "complet" not in out and out["has_more"] is True
+
+
+# --- stock produits -----------------------------------------------------------------
+
+def test_product_list_forwards_the_spec_filters(client):
+    _tool("nextmotion_product")(clinic_id=C, search="zzz", stock_state="out",
+                                expiring_within_days=30, order="-stock_level")
+    client.list_products.assert_called_once_with(
+        C, search="zzz", stock_state="out", expiring_within_days=30,
+        order="-stock_level", limit=50, offset=0)
+
+
+def test_product_is_a_whitelist_without_patient_note(client):
+    produit = {"id": X, "lot_number": "LOT-TEST", "expiration_date": "2030-01-01",
+               "stock_level": "1.00", "warning_level": 0, "physical_stock_level": "1.00",
+               "physical_stock_diff": "0", "unit_price": "0.00",
+               "created_time": "2026-01-01T00:00:00Z", "modified_time": "2026-01-01T00:00:00Z",
+               "global_product": {"id": C, "name": "Produit-Test", "brand": "Marque-Test",
+                                  "image": None, "champ_de_demain": SENTINEL},
+               "champ_de_demain": SENTINEL}
+    client.list_products.return_value = {"count": 1, "next": None, "data": [produit]}
+    client.get_product.return_value = {"data": produit}
+    page = _tool("nextmotion_product")(clinic_id=C)
+    one = _tool("nextmotion_product")(op="get", product_id=X)
+    for row in (page["products"][0], one["product"]):
+        assert SENTINEL not in json.dumps(row)
+        assert row["lot_number"] == "LOT-TEST"
+        assert row["global_product"] == {"id": C, "name": "Produit-Test",
+                                         "brand": "Marque-Test", "image": None}
+    assert "withheld" not in page and "withheld" not in one
+
+
+def test_product_description_says_stock_is_not_linked_to_invoices(client):
+    tool = asyncio.run(_mcp().get_tool("nextmotion_product"))
+    assert "not linked to invoices" in tool.description

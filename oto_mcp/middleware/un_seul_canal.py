@@ -47,6 +47,14 @@ plus EXTERNE que tout ce qui réémet le résultat sur les deux canaux — le re
 la rédaction, l'écho de compte. Plus interne, l'un d'eux rétablirait le canal qu'on
 vient de retirer.
 
+**Exception : une app** (outil qui déclare `_meta.ui.resourceUri`, extension MCP Apps).
+Là, `structuredContent` n'est pas la copie du texte : c'est l'UNIQUE entrée de la carte
+— l'hôte le pousse à la vue (`ui/notifications/tool-result`) et ne le donne pas au
+modèle. Le renderer Prefab ne peint rien sans lui et reste sur « Waiting for
+content… » (`prefab_ui/renderer/app.html` : `const p=f.structuredContent; if(!p)return`).
+Le retirer a éteint TOUTES les apps du 10/09 au 18/09/2026 (signal #1083,
+`oto_doc_app`). Une app garde donc son canal ; le texte, lui, est à sa charge.
+
 Ce qui rend ça durable : **le comportement du client cesse de compter.** Quand un seul
 canal porte la donnée, Claude Code, oto-runner et un client tiers lisent tous la même
 chose — celle que la chaîne a optimisée.
@@ -70,6 +78,13 @@ def schema_est_vide(schema) -> bool:
     change la forme entre les deux canaux, et c'est cette différence qu'un client
     pourrait avoir apprise."""
     return schema is None or schema == _OBJET_VIDE
+
+
+def est_une_app(outil) -> bool:
+    """Vrai pour un outil MCP App : il déclare la ressource d'UI qui le peint
+    (`_meta.ui.resourceUri`). Son canal structuré nourrit la carte — cf. le module."""
+    ui = (getattr(outil, "meta", None) or {}).get("ui")
+    return isinstance(ui, dict) and bool(ui.get("resourceUri"))
 
 
 def retirer_les_schemas_vides(instance) -> frozenset[str]:
@@ -121,6 +136,9 @@ class UnSeulCanalMiddleware(Middleware):
         # ABSENT, pas « vide » : un schéma encore déclaré, fût-il l'objet vide, exige
         # le canal aux yeux d'un client qui valide (cf. l'en-tête du module).
         if outil is None or getattr(outil, "output_schema", None) is not None:
+            return result
+        # Une app : le canal structuré EST la carte, pas une copie du texte.
+        if est_une_app(outil):
             return result
         return ToolResult(
             content=result.content,

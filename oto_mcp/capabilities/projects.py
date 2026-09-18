@@ -36,7 +36,18 @@ _LINK_TYPES = ("tableau", "procedure", "connecteur")
 class ProjectInput(BaseModel):
     op: Literal["create", "list", "list_templates", "get", "update", "archive",
                 "copy", "handoff", "link", "unlink", "activity", "runs", "inventory",
-                "lint", "publish_mcp", "unpublish_mcp"]
+                "lint", "publish_mcp", "unpublish_mcp"] = Field(description=(
+        "To CHANGE THE OWNER of an existing project (e.g. personal → org) WITHOUT "
+        "duplicating it or losing its history (docs, activity, runs stay on the SAME "
+        "project_id): no op here does that — `op=copy` DUPLICATES into a new project. "
+        "Use `oto_resource(op=\"transfer\", resource_type=\"project\", "
+        "resource_id=<id>, new_owner_org=<org_id>, cascade=true)` (ADR 0030): same id, "
+        "and a former personal owner keeps write access. `cascade` is NOT optional "
+        "detail — it defaults to false, and without it the project moves ALONE while "
+        "its linked entities stay behind, silently. With `cascade=true`: linked "
+        "tableaux you govern are transferred too, a linked procedure is COPIED to the "
+        "new owner org (the original stays with its owner) and connectors come back "
+        "`action_required` — the recipient plugs in their own credential."))
     project_id: Optional[int] = Field(default=None, description=(
         "OMIT it on op=runs and you get YOUR OWN still-open runs instead, across every "
         "org, each with its `run_id` — that is how you find a run whose id you lost."))

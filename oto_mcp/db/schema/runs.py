@@ -255,8 +255,21 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     -- de flotte (garde budget) sans parser la note libre d'un run.
     result JSONB
 );
-CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
-    ON runner_jobs(org_id, due_at) WHERE status = 'pending';
+-- Un travail est VIVANT tant qu'il reste `pending` ou `claimed` — c'est la
+-- fenêtre où `claim_next_job` le cherche (op-backend#deadlock, mesuré 17/09/2026) :
+-- un sondage jouait un `Seq Scan` complet, 72k lignes `done` écartées, 152 ms pour
+-- zéro résultat, parce que le partiel `WHERE status = 'pending'` d'origine ne
+-- couvrait pas `claimed` — la moitié de la condition de réservation
+-- (`status = 'pending' OR (status = 'claimed' AND lease_until < NOW())`) obligeait
+-- un parcours complet. L'index reste quasi vide en régime normal : peu de travaux
+-- vivants à un instant donné, contre un historique `done` qui ne cesse de grossir.
+-- ⚠️ **Remplace `idx_runner_jobs_claim`** (retiré ici, dans le MÊME lot que la
+-- migration Alembic qui le construit CONCURRENTLY et dépose l'ancien sur une base
+-- déjà peuplée — cf. `oto_mcp/db/migrations/versions/*_runner_jobs_index_vivant.py`
+-- et `docs/live-migrations.md`). Sûr sur une base neuve : table et index naissent
+-- ensemble, comme `idx_runner_jobs_claim` avant lui.
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_live
+    ON runner_jobs(org_id, due_at) WHERE status IN ('pending', 'claimed');
 -- Le comptage des occurrences PERDUES est lu à chaque `runner.triggers op=list`,
 -- donc à chaque ouverture de l'écran des automatisations. Sans cet index il
 -- balaye toute la file — une lecture d'affichage qui grossit avec l'historique

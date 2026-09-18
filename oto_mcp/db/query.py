@@ -498,6 +498,113 @@ def order_health_sql(value_sql: str, value_params: list, order_type: str,
     return sql, vide_p + conforme_p + vide_p
 
 
+def thinnable_order_key(order_by: str) -> Optional[str]:
+    """`order_by` désigne-t-il une colonne SIMPLE (ni couche — `champ.comment` —
+    ni chemin de liste — `contacts[0].email`) ? Rend la clé JSONB à isoler dans
+    la CTE mince du tri typé (`thin_read_cte_sql`), sinon `None` — pas
+    d'optimisation plutôt qu'une optimisation fausse sur une forme qu'elle ne
+    sait pas amincir à une seule clé."""
+    if split_list_path(order_by) is not None:
+        return None
+    base, layer = split_layer(order_by)
+    if layer is not None:
+        return None
+    return base
+
+
+def thinnable_read_keys(order_by: Optional[str],
+                        filters: Optional[list]) -> Optional[set]:
+    """Les clés JSONB de premier niveau à isoler pour lire `order_by` ET tous les
+    champs référencés par `filters` — `None` si l'un d'eux n'est pas amincissable
+    (couche, chemin de liste) ; une colonne MÉTA (`_id`, `_created_at`…) n'est pas
+    dans `data`, elle est ignorée plutôt que de faire échouer l'amincissement."""
+    keys: set = set()
+    if order_by:
+        k = thinnable_order_key(order_by)
+        if k is None:
+            return None
+        keys.add(k)
+    for f in (filters or []):
+        for field in _ds_filter_targets(f):
+            if field in _DS_META_TS_COLS or field in _DS_META_TEXT_COLS:
+                continue
+            if split_list_path(field) is not None:
+                return None
+            base, layer = split_layer(field)
+            if layer is not None:
+                return None
+            keys.add(base)
+    return keys or None
+
+
+def thin_read_cte_sql(ns_id: int, q: Optional[str], filters: Optional[list],
+                      order_by: Optional[str] = None
+                      ) -> Optional[tuple[str, list, str, list]]:
+    """La CTE MATÉRIALISÉE qui isole les colonnes lues par un tri typé ET/OU des
+    filtres, avant `typed_order_sql`/`order_health_sql`/`_ds_filter_clauses`
+    (oto-backend#980 — un mécanisme DISTINCT du convoi du GIL, mesuré deux fois :
+    dans l'ORDER BY d'abord, puis dans le WHERE des filtres, même cause).
+
+    `field_read_sql` lit `data` 7 fois par évaluation. `typed_order_sql` l'appelle
+    8 fois (56 références par ligne triée) et `order_health_sql` 5 fois (35) — sur
+    un vivier réel (8 910 lignes, `data` ~3,9 Ko compressés donc TOASTé), mesuré à
+    924 000 blocs lus pour une page de 50 lignes triées (3 861 sans tri), `LIMIT 1`
+    coûtant pareil que `LIMIT 50`. Un filtre par colonne relit `data` à chaque
+    référence de la même façon — mesuré séparément à 14 références sur un jeu de
+    filtres réel, DEUX fois par appel (page + COUNT). PostgreSQL DÉTOASTE `data` à
+    CHAQUE référence, sans jamais mettre en cache.
+
+    N'extraire QUE les colonnes utiles, une fois, dans une CTE `MATERIALIZED`
+    (sans ce mot-clé le planner DÉPLIE la sous-requête et le gain disparaît —
+    mesuré en production) fait tomber toutes ces relectures à UNE par ligne et par
+    colonne référencée. `CASE WHEN data ? %s` est nécessaire pour chaque clé :
+    sans lui, une clé ABSENTE devient un JSON `null` (`data->k` sur une clé
+    manquante rend `null`, pas d'absence) au lieu d'un NULL SQL, et les compteurs
+    `off_type`/`empty`/les filtres `empty` divergent de la vraie table.
+
+    ⚠️ **`q` (recherche plein texte) a besoin de `data` ENTIER** — dès qu'il est
+    posé, aucune CTE mince n'est construite (`None`), comportement inchangé : la
+    recherche substring sur tout le JSON ne se prête à aucun amincissement à
+    quelques clés.
+
+    Rend `None` quand rien n'est amincissable (`thinnable_read_keys`). Sinon
+    `(cte_sql, cte_params, where_sql, where_params)` :
+    - `cte_sql` se préfixe à une requête `WITH <cte_sql>, …` qui référence `s`
+      comme SEULE table de son FROM — `ns_id` y est déjà filtré, `data` y est
+      DÉJÀ amincie. `field_read_sql`/`typed_order_sql`/`order_health_sql` y
+      fonctionnent SANS AUCUN changement : leur `data->%s` littéral désigne
+      alors la colonne mince de `s`.
+    - `where_sql`/`where_params` portent les FILTRES (`filters`), à poser APRÈS
+      la CTE — `FROM s {where_sql}` — PAS dans la CTE elle-même : les évaluer
+      contre `s.data` (déjà mince) est précisément ce qui évite de relire `data`
+      une fois par filtre sur les 8 910 lignes AVANT toute réduction."""
+    keys = thinnable_read_keys(order_by, filters) if not q else None
+    if not keys:
+        return None
+    parts: list[str] = []
+    params: list = []
+    for k in sorted(keys):
+        parts.append(
+            "CASE WHEN data ? %s::text THEN jsonb_build_object(%s::text, data->%s::text) "
+            "ELSE '{}'::jsonb END")
+        params += [k, k, k]
+    combine = " || ".join(parts) if len(parts) > 1 else parts[0]
+    cte = (
+        "s AS MATERIALIZED ("
+        # `created_at`/`updated_at` portés ici aussi (colonnes physiques, pas
+        # JSONB, aucun détoastage) : un tri sur une colonne MÉTA doit pouvoir se
+        # faire SANS rejoindre `datastore_rows` dans cette même portée — `dr.data`
+        # (entier) et `s.data` (mince) rendraient `data` AMBIGU si les deux
+        # étaient dans le même FROM.
+        f"SELECT row_id, created_at, updated_at, {combine} AS data "
+        "FROM datastore_rows WHERE ns_id = %s)"
+    )
+    params.append(ns_id)
+    where_clauses, where_params = _ds_filter_clauses(filters)
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    return cte, params, where_sql, where_params
+
+
 def _metric_filter_sql(m: dict) -> tuple[str, list]:
     """Le `FILTER (WHERE …)` d'une métrique conditionnelle (oto#22 barreau 1).
 

@@ -18,7 +18,7 @@ from fastmcp import Context, FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, db, org_store, session_org
+from .. import access, db, org_store, session_org, tenant_vault
 from ..auth.hooks import current_user_sub_from_token
 from .. import config
 
@@ -54,7 +54,11 @@ def register(mcp: FastMCP) -> None:
         confirmer le contexte. C'est ce couple **compte × org active × groupe actif**
         qui détermine quelles clés API sont résolues et à quelles données tu accèdes.
 
-        Renvoie : `account` (sub, email, name, rôle plateforme), `org` (org active —
+        Renvoie : `account` (sub, email, name, rôle plateforme), `tenant` (le slug du
+        partenaire dont dépend ton compte, s'il en a un — `None` pour un compte oto
+        ordinaire ; le tenant est AU-DESSUS de ton org, pas en dessous : c'est le
+        compte de plus haut niveau chez le fournisseur, appelé « hébergeur » dans la
+        doc publique), `org` (org active —
         id, name, rôle ; tu es TOUJOURS dans une org), `group` (groupe actif éventuel),
         `connectors` (résumé des connecteurs
         configurés — dont `platform_quotas`, le quota du jour `{used, limit,
@@ -69,6 +73,19 @@ def register(mcp: FastMCP) -> None:
         l'agent ne mute jamais le défaut.
         """
         sub = _require_sub()
+
+        # Slug du tenant (partenaire) dont dépend ce compte, `None` pour un compte
+        # oto ordinaire — même résolution que la clé de coffre `tenant_key`
+        # (`instances_tenant.py`).
+        #
+        # ⚠️ PAS de fail-open ici, contrairement aux blocs DB qui suivent, et c'est la
+        # description servie qui l'impose : elle donne `None` pour un FAIT (« compte oto
+        # ordinaire »). Avaler l'échec rendrait ce fait-là sur une résolution qui n'a pas
+        # eu lieu — un compte hébergé se verrait répondre qu'il ne l'est pas, et l'agent
+        # n'aurait aucun moyen de faire la différence. `rung_tenant` ne fait d'ailleurs
+        # AUCUNE I/O (classification par préfixe dans le registre du process) : il n'y a
+        # pas de « hoquet » à amortir, seulement un registre cassé, qui doit se voir.
+        tenant = tenant_vault.rung_tenant(sub)
 
         user = {}
         try:
@@ -182,6 +199,7 @@ def register(mcp: FastMCP) -> None:
                 "name": user.get("name"),
                 "role": role,
             },
+            "tenant": tenant,
             "org": org_block,
             "group": group_block,
             "project": project_block,

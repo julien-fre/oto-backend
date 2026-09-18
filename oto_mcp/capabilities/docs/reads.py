@@ -67,6 +67,10 @@ def backlinks(sub: Optional[str], inp, row: dict, pid: int) -> dict:
 
     tous = db.doc_backlinks(int(inp.doc_id))
     cites = [b for b in tous if _readable(b["project_id"])]
+    # `url` (oto-backend#660) : dépend du tenant du lecteur, posée ici — comme
+    # `docs/view.py::doc_url` la pose pour une page lue seule — pas dans `db`.
+    for b in cites:
+        b["url"] = view.doc_url(sub, b)
     out = {"doc_id": inp.doc_id, "backlinks": cites, "count": len(cites)}
     # oto#42, entrée 4 : le filtrage d'accès retirait des citations en silence, et le
     # hint affirmait alors « personne ne cite encore cette page » — une phrase FAUSSE
