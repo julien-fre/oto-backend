@@ -5,7 +5,8 @@ description: >-
   Explique le mécanisme de rédaction/anonymisation des sorties de connecteurs dans
   oto-backend : middleware unique FieldRedactionMiddleware (enregistré en dernier,
   retouche le résultat final via access.resolve_field_filter), fail-closed si la
-  policy existe (sortie retenue, jamais le brut), rien par défaut avec templates
+  policy existe (sortie retenue, jamais le brut), rien par défaut — sauf le plancher
+  `payfit` (NIR, IBAN/BIC, motif d'absence, levable par l'org) — avec templates
   1-clic (candidate, bank_details). Détaille la capture passive du schéma observé
   via connector_schema_store (squelette clés+types, jamais de valeurs/PII, table
   connector_schemas, cap 1000 clés) car les API tierces (Unipile, Apollo…) ne
@@ -41,18 +42,36 @@ retiré).
 - **Fail-closed** : si une policy existe et que `apply` lève (ex. Faker absent) → on
   **retient** la sortie (`_withheld`), jamais le brut. `is_empty` (pas de policy) =
   passe-through. Échec de *résolution* (aléa DB) → passe-through, sauf service à défaut
-  serveur (aucun aujourd'hui).
+  serveur (`payfit` depuis le 2026-09-17) : lui RETIENT sa sortie.
 - `FieldFilter` matche par **nom de clé feuille, récursif** (à toute profondeur). ⚠️
   aveugle au contexte : une règle sur `name` touche aussi `skills[].name` — d'où
   l'importance du schéma observé + dry-run pour ne pas corrompre.
 
-## Rien par défaut + templates 1-clic
+## Rien par défaut (sauf un plancher) + templates 1-clic
 
 `field_filter_defaults.SERVER_DEFAULTS = {}` — **aucune** rédaction par défaut (la PII
 n'est pas toujours un risque : CRM/inbox/annuaire = c'est le but ; un défaut large
 casserait ces connecteurs). L'org **active explicitement** ce qu'elle veut.
 `TEMPLATES` (`candidate`, `bank_details`) = jeux de règles **applicables en 1 clic**
 depuis le dashboard (≠ défaut imposé).
+
+**Exception depuis le 2026-09-17 : le plancher `payfit`.** Le connecteur de paie retirait
+en dur NIR, IBAN et motifs d'absence, sans que l'entreprise propriétaire de ses données
+puisse les rouvrir. Il sert désormais tout ce que l'API expose, et ce qui protège est
+`SERVER_DEFAULTS["payfit"]` : NIR/NTT et BIC masqués, IBAN masqué en préservant sa forme,
+`absence_type` masqué. L'org_admin le **lève** en posant `rules: []` (politique d'org vide,
+autoritaire) — ⚠️ l'**effacer** (`rules: null`) fait l'inverse : ça remet le plancher.
+Conditions pour poser un tel défaut : donnée sensible par nature, servie par construction,
+et **nom de feuille sans homonyme** — le type d'absence est servi sous `absence_type`
+et non `type` précisément parce qu'une règle sur `type` abîmerait `emails[].type` & co.
+
+⚠️ **Un filtre ne voit pas l'intérieur d'un FICHIER.** Un connecteur qui sert à la fois
+des champs et des documents portant les mêmes données (PayFit : bulletin PDF → NIR,
+fichier de virement → IBAN, export comptable → noms et montants) doit VERROUILLER ses
+documents sur la politique : ils ne sortent que si la politique EFFECTIVE de l'appelant
+(`access.resolve_field_filter`, même cascade que la sortie) est vide — sinon refus nommé,
+et fail-closed si elle est illisible (`tools/payfit_garde.serve_document`, décision du
+2026-09-18). Masquer les champs et laisser passer le fichier serait une passoire.
 
 ## Schéma OBSERVÉ = source de vérité (pas déclaré)
 
@@ -331,7 +350,7 @@ dans ce lot (hors périmètre demandé) ; à nommer si un prochain audit y revie
   **rendu du vide**, l'allow-list REST `champs_autorises`),
   `middleware/field_redaction.py` + `middleware/empty_result.py`,
   `connectors/schema_store.py`,
-  `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connectors/field_schema.py`
+  `field_filter_defaults.py` (SERVER_DEFAULTS — plancher `payfit` seul — + TEMPLATES), `connectors/field_schema.py`
   (curé, libellés), `capabilities/orgs/field_filters.py` (get/set/preview), `db.py`
   (`connector_schemas`).
 - oto-core : `oto/tools/common/field_filter.py`.

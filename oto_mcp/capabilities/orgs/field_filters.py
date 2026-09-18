@@ -57,10 +57,14 @@ class FieldFiltersView(BaseModel):
     """Politique de redaction de l'org, par connecteur, + de quoi peindre le
     formulaire. Trois pièges de lecture :
 
-    ⚠️ **`filters: {}` veut dire « rien n'est masqué »**, pas « pas encore
-    configuré » : la redaction est OPT-IN et `defaults` (`SERVER_DEFAULTS`) est
-    **vide par décision** — aucun champ n'est redacté tant qu'une règle d'org ne le
-    demande. Ne jamais afficher un état vide comme « protégé par défaut ».
+    ⚠️ **`filters: {}` ne veut pas dire « rien n'est masqué »**, et ne veut pas dire
+    « pas encore configuré » : il dit que l'ORG n'a rien posé. Ce qui s'applique
+    alors est `defaults` (`SERVER_DEFAULTS`), qui n'est plus vide depuis le
+    2026-09-17 — `payfit` y porte un plancher (NIR, IBAN/BIC, motif d'absence). La
+    lecture juste est **`filters[svc]` s'il existe, sinon `defaults[svc]`, sinon
+    rien** : afficher « protégé par défaut » sur un service absent des deux serait
+    faux, afficher « rien n'est masqué » sur un service présent dans `defaults`
+    aussi.
 
     ⚠️ **`schema` (singulier) et `schemas` (pluriel) n'ont aucun rapport.** `schema`
     = la spec du FORMULAIRE (actions disponibles et leurs sous-options), toujours
@@ -97,7 +101,11 @@ class FieldFilterSet(BaseModel):
     `GET /field-filters` et comparer aux connecteurs réels reste à la charge du client.
 
     `cleared: true` = la politique de ce connecteur a été RETIRÉE ; le repli est le
-    défaut serveur, qui est vide ⟹ plus rien n'est masqué pour ce connecteur."""
+    défaut serveur — vide pour presque tous les connecteurs (⟹ plus rien n'est
+    masqué), mais **pas pour ceux qui ont un plancher** (`payfit`), où effacer la
+    politique d'org REMET le masquage du défaut au lieu de l'enlever. Pour lever un
+    plancher, on pose `rules: []` (une politique d'org vide, autoritaire), on
+    n'efface pas."""
     ok: bool
     org_id: int
     service: str
@@ -112,7 +120,7 @@ class FieldFilterPreview(BaseModel):
 
     ⚠️ Un `redacted` **identique à l'entrée** ne veut pas dire « rien de sensible » :
     c'est le cas normal quand aucune règle ne s'applique (aucune politique posée pour
-    ce service, et le défaut serveur est vide). Le dry-run ne détecte rien — il
+    ce service, et pas de défaut serveur pour lui). Le dry-run ne détecte rien — il
     APPLIQUE des règles."""
     org_id: int
     service: str
@@ -158,7 +166,8 @@ def _get_field_filters(ctx: ResolvedCtx, inp: GetFieldFiltersInput) -> dict:
     out = {
         "org_id": inp.org_id,
         "filters": filters,
-        "defaults": field_filter_defaults.SERVER_DEFAULTS,   # vide : rien par défaut
+        # Planchers serveur, par service — le repli quand l'org n'a rien posé.
+        "defaults": field_filter_defaults.SERVER_DEFAULTS,
         "templates": field_filter_defaults.TEMPLATES,         # jeux applicables en 1 clic
         "schema": _ACTION_SCHEMA,
     }

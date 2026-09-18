@@ -1,20 +1,22 @@
-"""Connecteur PayFit — dispatch `op=`, projection des données personnelles, sonde.
+"""Connecteur PayFit — dispatch `op=`, dry-run des écritures, forme des sorties, sonde.
 
 Ce que ce fichier verrouille :
-- la SURFACE (4 tools, lecture seule) et le routage de chaque op vers la bonne
+- la SURFACE (10 tools sur 3 modules) et le routage de chaque op vers la bonne
   méthode du client ;
 - un argument requis manquant nommé, un argument non pertinent REFUSÉ — « fourni » se
   lit `is not None`, donc `limit=0` et `include_in_progress=False` comptent ;
-- la projection en liste blanche : un collaborateur, un contrat, une absence ne rendent
-  ni NIR, ni IBAN, ni naissance, ni adresse, ni e-mail personnel, ni motif médical,
-  même quand l'API les envoie — et `fields=["*"]` n'y change rien ;
+- **aucune écriture ne part sans `dry_run=False`** : c'est l'invariant le plus cher du
+  connecteur, vérifié op par op sur la méthode du client RÉELLEMENT atteinte ;
+- la seule clé renommée (`absence_type` + `absence_category`), et le fait que tout le
+  reste sort tel que l'amont l'envoie — le connecteur ne retire plus rien en dur ;
+- les documents (PDF, export, virement) : leur VERROU est éprouvé à part, dans
+  `test_payfit_documents_verrou.py` ;
 - la sonde et la fabrique de client : une clé vide est refusée avant le client, un
   401/403 se classe `NonAutorise` sur `status_code`.
 
 Toutes les valeurs sont factices.
 """
 import asyncio
-import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,12 +24,13 @@ import pytest
 from oto_mcp.mcp_errors import McpError
 
 K = "000000000000000000000a0a"
-SENTINEL = "SENTINELLE-PAIE"
+K2 = "000000000000000000000b0b"
+MOIS = "202601"
 
 
 @pytest.fixture
 def client(monkeypatch):
-    """Faux `PayfitClient` + clé résolue. `register()` importe la classe À
+    """Faux `PayfitClient` + clé résolue. `payfit_garde._client()` importe la classe À
     L'INTÉRIEUR de la fonction : patcher l'attribut du package suffit."""
     inst = MagicMock()
     monkeypatch.setattr("oto.tools.payfit.PayfitClient", lambda **kw: inst)
@@ -38,10 +41,15 @@ def client(monkeypatch):
 
 def _mcp():
     from fastmcp import FastMCP
+
     from oto_mcp.tools import payfit as P
+    from oto_mcp.tools import payfit_paie as PP
+    from oto_mcp.tools import payfit_social as PS
 
     m = FastMCP("t")
     P.register(m)
+    PP.register(m)
+    PS.register(m)
     return m
 
 
@@ -49,13 +57,15 @@ def _tool(name: str):
     return asyncio.run(_mcp().get_tool(name)).fn
 
 
-def test_the_surface_is_exactly_four_read_tools(client):
+def test_the_surface_is_exactly_ten_tools(client):
     assert sorted(t.name for t in asyncio.run(_mcp().list_tools())) == [
         "payfit_absence", "payfit_collaborator", "payfit_company", "payfit_contract",
+        "payfit_document", "payfit_insurance", "payfit_meal_voucher", "payfit_payroll",
+        "payfit_payslip", "payfit_worked_time",
     ]
 
 
-# --- routage -----------------------------------------------------------------------
+# --- routage des LECTURES ----------------------------------------------------------
 
 @pytest.mark.parametrize("tool,kwargs,method", [
     ("payfit_company", {}, "get_company"),
@@ -64,10 +74,36 @@ def test_the_surface_is_exactly_four_read_tools(client):
     ("payfit_contract", {}, "list_contracts"),
     ("payfit_contract", {"op": "get", "contract_id": K}, "get_contract"),
     ("payfit_absence", {}, "list_absences"),
+    ("payfit_payslip", {"collaborator_id": K}, "list_payslips"),
+    ("payfit_payroll", {"date": MOIS}, "get_payroll_status"),
+    ("payfit_payroll", {"op": "accounting", "date": MOIS}, "list_accounting_entries"),
+    ("payfit_worked_time", {"date": MOIS}, "list_worked_time"),
+    ("payfit_meal_voucher", {"date": MOIS}, "list_meal_vouchers"),
+    ("payfit_insurance", {}, "list_health_insurance_contracts"),
+    ("payfit_insurance", {"kind": "provident"}, "list_provident_fund_contracts"),
+    ("payfit_document", {}, "list_income_tax_documents"),
+    ("payfit_document", {"op": "auto_enrolment"}, "list_auto_enrolment_documents"),
 ])
-def test_ops_route_to_the_right_client_method(client, tool, kwargs, method):
+def test_read_ops_route_to_the_right_client_method(client, tool, kwargs, method):
     _tool(tool)(**kwargs)
     getattr(client, method).assert_called_once()
+
+
+def test_every_default_op_is_a_read(client):
+    """ADR 0047 §Amendement, règle 2 : le chemin paresseux ne doit jamais écrire."""
+    ecritures = ("create_collaborator", "create_contract", "create_absence",
+                 "cancel_absence", "set_health_insurance", "set_provident_fund",
+                 "request_health_insurance_regularization")
+    for tool, kwargs in [("payfit_company", {}), ("payfit_collaborator", {}),
+                         ("payfit_contract", {}), ("payfit_absence", {}),
+                         ("payfit_payslip", {"collaborator_id": K}),
+                         ("payfit_payroll", {"date": MOIS}),
+                         ("payfit_worked_time", {"date": MOIS}),
+                         ("payfit_meal_voucher", {"date": MOIS}),
+                         ("payfit_insurance", {}), ("payfit_document", {})]:
+        _tool(tool)(**kwargs)
+    appelees = {c[0] for c in client.method_calls}
+    assert not appelees & set(ecritures), f"un défaut d'op écrit : {appelees}"
 
 
 def test_list_defaults_are_sent(client):
@@ -80,6 +116,8 @@ def test_list_defaults_are_sent(client):
     client.list_absences.assert_called_once_with(
         limit=50, cursor=None, contract_id=K, status=["all"],
         begin_date="2026-01-01", end_date=None)
+    _tool("payfit_worked_time")(date=MOIS, limit=10)
+    client.list_worked_time.assert_called_once_with(MOIS, limit=10, cursor=None)
 
 
 def test_get_contract_forwards_the_french_variant(client):
@@ -87,11 +125,89 @@ def test_get_contract_forwards_the_french_variant(client):
     client.get_contract.assert_called_once_with(K, fr=True)
 
 
+def test_the_french_company_is_asked_for_explicitly(client):
+    _tool("payfit_company")(fr=True)
+    client.get_company.assert_called_once_with(fr=True)
+
+
+# --- écritures : le dry-run est le DÉFAUT ------------------------------------------
+
+_ECRITURES = [
+    ("payfit_collaborator", {"op": "create", "first_name": "Ada", "last_name": "Test",
+                             "personal_email": "ada@exemple.test"},
+     "create_collaborator"),
+    ("payfit_contract", {"op": "create", "collaborator_id": K, "job_title": "Poste",
+                         "start_date": "2026-02-01"}, "create_contract"),
+    ("payfit_absence", {"op": "create", "contract_id": K,
+                        "absence_type": "fr_conges_payes",
+                        "begin_date": "2026-02-02", "end_date": "2026-02-06"},
+     "create_absence"),
+    ("payfit_absence", {"op": "cancel", "absence_id": K}, "cancel_absence"),
+    ("payfit_insurance", {"op": "affiliate", "contract_id": K,
+                          "insurance_contract_ids": [K2]}, "set_health_insurance"),
+    ("payfit_insurance", {"op": "affiliate", "kind": "provident", "contract_id": K,
+                          "insurance_contract_ids": [K2]}, "set_provident_fund"),
+    ("payfit_insurance", {"op": "regularize", "contract_id": K,
+                          "insurance_contract_ids": [K2],
+                          "effective_date": "2026-01-01"},
+     "request_health_insurance_regularization"),
+]
+
+
+@pytest.mark.parametrize("tool,kwargs,method", _ECRITURES)
+def test_a_write_writes_NOTHING_without_dry_run_false(client, tool, kwargs, method):
+    out = _tool(tool)(**kwargs)
+    assert out["dry_run"] is True and out["would"] == kwargs["op"]
+    assert "dry_run=False" in out["note"]
+    assert not client.method_calls, (
+        f"{tool}({kwargs['op']}) a touché le client sans qu'on le lui demande : "
+        f"{client.method_calls}")
+
+
+@pytest.mark.parametrize("tool,kwargs,method", _ECRITURES)
+def test_a_write_reaches_its_client_method_with_dry_run_false(client, tool, kwargs,
+                                                              method):
+    _tool(tool)(**dict(kwargs, dry_run=False))
+    getattr(client, method).assert_called_once()
+
+
+def test_the_absence_creation_forwards_its_moments(client):
+    _tool("payfit_absence")(op="create", contract_id=K, absence_type="fr_rtt",
+                            begin_date="2026-02-02", end_date="2026-02-02",
+                            start_moment="middle-of-day", dry_run=False)
+    client.create_absence.assert_called_once_with(
+        contract_id=K, absence_type="fr_rtt", start_date="2026-02-02",
+        end_date="2026-02-02", start_moment="middle-of-day")
+
+
+def test_the_affiliation_says_it_REPLACES(client):
+    out = _tool("payfit_insurance")(op="affiliate", contract_id=K,
+                                    insurance_contract_ids=[K2])
+    assert out["replaces_with"] == [K2]
+
+
+def test_a_regularization_does_not_exist_for_the_provident_fund(client):
+    with pytest.raises(McpError, match="mutuelle"):
+        _tool("payfit_insurance")(op="regularize", kind="provident", contract_id=K,
+                                  insurance_contract_ids=[K2],
+                                  effective_date="2026-01-01")
+    assert not client.method_calls
+
+
 # --- refus -------------------------------------------------------------------------
 
 @pytest.mark.parametrize("tool,kwargs,match", [
     ("payfit_collaborator", {"op": "get"}, "exige `collaborator_id`"),
+    ("payfit_collaborator", {"op": "create"}, "exige `first_name`"),
     ("payfit_contract", {"op": "get"}, "exige `contract_id`"),
+    ("payfit_contract", {"op": "create"}, "exige `collaborator_id`"),
+    ("payfit_absence", {"op": "create"}, "exige `contract_id`"),
+    ("payfit_absence", {"op": "cancel"}, "exige `absence_id`"),
+    ("payfit_payslip", {}, "exige `collaborator_id`"),
+    ("payfit_payslip", {"op": "download", "collaborator_id": K}, "exige `contract_id`"),
+    ("payfit_payroll", {}, "exige `date`"),
+    ("payfit_insurance", {"op": "affiliate"}, "exige `contract_id`"),
+    ("payfit_document", {"op": "download"}, "exige `document_id`"),
 ])
 def test_missing_required_argument_is_named(client, tool, kwargs, match):
     with pytest.raises(McpError, match=match):
@@ -104,11 +220,26 @@ def test_missing_required_argument_is_named(client, tool, kwargs, match):
     ("payfit_collaborator", {"op": "get", "collaborator_id": K, "limit": 0}, "`limit`"),
     ("payfit_contract", {"op": "get", "contract_id": K, "include_in_progress": False},
      "`include_in_progress`"),
-    ("payfit_collaborator", {"op": "get", "collaborator_id": K, "email": "a@exemple.test"},
-     "`email`"),
+    ("payfit_collaborator", {"op": "get", "collaborator_id": K,
+                             "email": "a@exemple.test"}, "`email`"),
     ("payfit_collaborator", {"collaborator_id": K}, "`collaborator_id`"),
+    ("payfit_collaborator", {"first_name": "Ada"}, "`first_name`"),
     ("payfit_contract", {"contract_id": K}, "`contract_id`"),
-    ("payfit_contract", {"op": "get", "contract_id": K, "fields": ["jobName"]}, "`fields`"),
+    ("payfit_contract", {"op": "get", "contract_id": K, "fields": ["jobName"]},
+     "`fields`"),
+    # Un dry_run sur une LECTURE n'a pas de sens : il serait retenu au silence.
+    ("payfit_contract", {"dry_run": False}, "`dry_run`"),
+    ("payfit_absence", {"dry_run": True}, "`dry_run`"),
+    # `fr` ne veut rien dire à la création (l'endpoint est déjà français).
+    ("payfit_contract", {"op": "create", "collaborator_id": K, "job_title": "P",
+                         "start_date": "2026-02-01", "fr": False}, "`fr`"),
+    # Une dispense de mutuelle n'existe pas côté prévoyance.
+    ("payfit_insurance", {"op": "affiliate", "kind": "provident", "contract_id": K,
+                          "insurance_contract_ids": [K2],
+                          "employee_is_exempted": False}, "`employee_is_exempted`"),
+    ("payfit_payroll", {"date": MOIS, "fields": ["status"]}, "`fields`"),
+    ("payfit_payslip", {"collaborator_id": K, "contract_id": K2}, "`contract_id`"),
+    ("payfit_document", {"document_id": K}, "`document_id`"),
 ])
 def test_an_argument_the_op_does_not_use_is_refused(client, tool, kwargs, match):
     with pytest.raises(McpError, match=f"n'utilise pas {match}"):
@@ -116,242 +247,137 @@ def test_an_argument_the_op_does_not_use_is_refused(client, tool, kwargs, match)
     assert not client.method_calls
 
 
-def test_unknown_op_is_refused(client):
-    with pytest.raises(McpError, match="op doit être"):
-        _tool("payfit_collaborator")(op="delete", collaborator_id=K)
-
-
-# --- projection des données personnelles -------------------------------------------
-
-_PERSONAL_KEYS = {"socialSecurityNumber", "temporaryTechnicalNumber", "iban", "bic",
-                  "birthDate", "birthName", "countryOfBirth", "nationality", "gender",
-                  "addresses", "phoneNumbers", "matricule", "numeroSecuriteSociale",
-                  "numeroTechniqueTemporaire", "motifRuptureDeContratDsn",
-                  "healthInsuranceContractIds", "providentFundContractIds",
-                  "standardWeeklyHours", "fullTimeEquivalent", "isFullTime",
-                  "workingTimeModality", "contactEmail", "postalCode", "city", "address",
-                  "probationEndDate", "firstName_deprecated"}
-
-
-def _keys(obj):
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            yield k
-            yield from _keys(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            yield from _keys(v)
-
-
-def _assert_clean(out, allowed=frozenset()):
-    assert SENTINEL not in json.dumps(out)
-    assert not (_PERSONAL_KEYS - allowed) & set(_keys(out))
-
-
-def _raw_collaborator():
-    return {
-        "id": K, "firstName": "Prénom-Test", "lastName": "Nom-Test",
-        "matricule": SENTINEL, "birthName": SENTINEL, "birthDate": "1900-01-01",
-        "gender": "other", "nationality": SENTINEL, "countryOfBirth": SENTINEL,
-        "socialSecurityNumber": SENTINEL, "temporaryTechnicalNumber": SENTINEL,
-        "iban": SENTINEL, "bic": SENTINEL,
-        "emails": [{"email": "pro@exemple.test", "type": "professional"},
-                   {"email": SENTINEL, "type": "personal"},
-                   {"email": SENTINEL, "type": "unknown"}],
-        "phoneNumbers": [{"phoneNumber": SENTINEL, "type": "personal"}],
-        "addresses": [{"address": SENTINEL, "postcode": SENTINEL, "city": SENTINEL,
-                       "country": SENTINEL, "type": "personal"}],
-        "managerId": K, "teamName": "Équipe-Test", "terminationDate": None,
-        "contracts": [{"id": K, "startDate": "2020-01-01", "endDate": None,
-                       "status": "ACTIVE", "salary": SENTINEL}],
-        "field_added_tomorrow": SENTINEL,
-    }
-
-
-def test_collaborator_list_withholds_personal_data(client):
-    client.list_collaborators.return_value = {
-        "collaborators": [_raw_collaborator()],
-        "meta": {"nextPageToken": "tok-2", "count": 1}}
-    out = _tool("payfit_collaborator")()
-    _assert_clean(out)
-    row = out["collaborators"][0]
-    assert row == {"id": K, "firstName": "Prénom-Test", "lastName": "Nom-Test",
-                   "managerId": K, "teamName": "Équipe-Test", "terminationDate": None,
-                   "emails": ["pro@exemple.test"],
-                   "contracts": [{"id": K, "startDate": "2020-01-01", "endDate": None,
-                                  "status": "ACTIVE"}]}
-    assert out["next_cursor"] == "tok-2" and out["count"] == 1 and "withheld" in out
-
-
-def test_collaborator_get_withholds_personal_data(client):
-    client.get_collaborator.return_value = _raw_collaborator()
-    out = _tool("payfit_collaborator")(op="get", collaborator_id=K)
-    _assert_clean(out)
-    assert out["collaborator"]["emails"] == ["pro@exemple.test"]
-
-
-def _raw_contract_fr():
-    return {
-        "contractId": K, "companyId": K, "collaboratorId": K, "jobName": "Poste-Test",
-        "status": "ACTIVE", "startDate": "2020-01-01", "endDate": None,
-        "probationEndDate": SENTINEL, "standardWeeklyHours": 35,
-        "fullTimeEquivalent": 1, "isFullTime": True, "workingTimeModality": "standard",
-        "firstName": SENTINEL, "lastName": SENTINEL, "birthName": SENTINEL,
-        "birthDate": "1900-01-01", "contactEmail": SENTINEL, "address": SENTINEL,
-        "city": SENTINEL, "postalCode": SENTINEL,
-        "natureContratDsn": "01", "statutConventionnelDsn": "04", "idcc": "0000",
-        "motifRuptureDeContratDsn": "014", "estCadreDirigeant": False,
-        "healthInsuranceContractIds": [SENTINEL], "providentFundContractIds": [SENTINEL],
-        "numeroSecuriteSociale": SENTINEL, "numeroTechniqueTemporaire": SENTINEL,
-    }
-
-
-@pytest.mark.parametrize("fr", [True, None])
-def test_contract_withholds_personal_data(client, fr):
-    client.get_contract.return_value = _raw_contract_fr()
-    out = _tool("payfit_contract")(op="get", contract_id=K, fr=fr)
-    _assert_clean(out)
-    base = {"contractId": K, "companyId": K, "collaboratorId": K, "jobName": "Poste-Test",
-            "status": "ACTIVE", "startDate": "2020-01-01", "endDate": None}
-    if fr:
-        base.update(natureContratDsn="01", statutConventionnelDsn="04", idcc="0000")
-    assert out["contract"] == base
-
-
-@pytest.mark.parametrize("raw,served", [
-    ("fr_conges_payes", "fr_conges_payes"),
-    ("fr_rtt", "fr_rtt"),
-    ("uk_annual_leave", "uk_annual_leave"),
-    ("fr_maladie_ordinaire", "absence"),
-    ("fr_accident_travail", "absence"),
-    ("fr_maladie_professionnelle", "absence"),
-    ("fr_temps_partiel_therapeutique", "absence"),
-    ("fr_maternite", "absence"),
-    ("fr_pathologique", "absence"),
-    ("fr_enfant_malade", "absence"),
-    ("fr_deces", "absence"),
-    ("uk_sick_leave", "absence"),
-    ("es_baja_medica", "absence"),
-    ("es_visita_medica", "absence"),
-    ("other", "absence"),
-    ("type_ajoute_demain", "absence"),
+@pytest.mark.parametrize("tool,kwargs", [
+    ("payfit_collaborator", {"op": "delete"}),
+    ("payfit_contract", {"op": "terminate"}),
+    ("payfit_absence", {"op": "approve"}),
+    ("payfit_payroll", {"op": "dsn", "date": MOIS}),
+    ("payfit_payslip", {"op": "lines", "collaborator_id": K}),
+    ("payfit_insurance", {"op": "unaffiliate", "contract_id": K,
+                          "insurance_contract_ids": [K2]}),
+    # ⚠️ L'op inconnue prime sur l'argument manquant : répondre « exige
+    # collaborator_id » à `op="lines"` enverrait chercher un argument pour une
+    # opération qui n'existe pas — l'agent fournirait l'argument et recommencerait.
+    ("payfit_payslip", {"op": "lines"}),
+    ("payfit_payroll", {"op": "dsn"}),
 ])
-def test_absence_type_is_served_only_for_ordinary_leave(client, raw, served):
-    client.list_absences.return_value = {"absences": [{
-        "id": K, "contractId": K, "type": raw, "status": "approved",
-        "startDate": {"date": "2026-01-05", "moment": "beginning-of-day", "x": SENTINEL},
-        "endDate": {"date": "2026-01-06", "moment": "end-of-day"},
-        "comment": SENTINEL, "reason": SENTINEL,
-    }], "meta": {"count": 1}}
-    for fields in (None, ["*"]):
-        out = _tool("payfit_absence")(fields=fields)
-        assert SENTINEL not in json.dumps(out)
-        assert out["absences"] == [{
-            "id": K, "contractId": K, "status": "approved", "type": served,
-            "startDate": {"date": "2026-01-05", "moment": "beginning-of-day"},
-            "endDate": {"date": "2026-01-06", "moment": "end-of-day"}}]
-        if served == "absence":
-            assert raw not in json.dumps(out)
+def test_an_op_the_api_does_not_have_is_refused(client, tool, kwargs):
+    with pytest.raises(McpError, match="inconnu"):
+        _tool(tool)(**kwargs)
+    assert not client.method_calls
 
 
-def test_company_is_whitelisted(client):
-    client.get_company.return_value = {"id": K, "name": "Entreprise-Test", "country": "FR",
-                                       "identificationNumber": "00000000000000",
-                                       "nbActiveContracts": 3, "owner_iban": SENTINEL}
-    out = _tool("payfit_company")()
-    assert SENTINEL not in json.dumps(out)
-    assert out["company"]["country"] == "FR"
+# --- forme des sorties -------------------------------------------------------------
+
+def test_an_absence_renames_its_type_and_says_its_category(client):
+    client.list_absences.return_value = {"meta": {"count": 2, "nextPageToken": "t2"},
+                                         "absences": [
+        {"id": "a1", "contractId": K, "type": "fr_conges_payes", "status": "approved"},
+        {"id": "a2", "contractId": K, "type": "fr_maladie_ordinaire",
+         "status": "approved"}]}
+    out = _tool("payfit_absence")()
+    assert out["count"] == 2 and out["next_cursor"] == "t2"
+    lignes = out["absences"]
+    # ⚠️ `type` ne doit exister NULLE PART : deux noms pour la même donnée, dont un
+    # seul est visé par le filtre de champs, serait une passoire.
+    assert all("type" not in ligne for ligne in lignes)
+    assert lignes[0]["absence_type"] == "fr_conges_payes"
+    assert lignes[0]["absence_category"] == "ordinary_leave"
+    assert lignes[1]["absence_type"] == "fr_maladie_ordinaire"
+    assert lignes[1]["absence_category"] == "restricted"
 
 
-# --- projection des listes (cliquet `test_sorties_listes_projetees`) ----------------
-
-def test_fields_ne_garde_que_les_colonnes_demandees_et_l_id(client):
-    client.list_contracts.return_value = {"contracts": [_raw_contract_fr()],
-                                          "meta": {"count": 1}}
-    out = _tool("payfit_contract")(fields=["jobName"])
-    assert out["contracts"] == [{"contractId": K, "jobName": "Poste-Test"}]
-    assert out["count"] == 1 and out["next_cursor"] is None
+def test_an_unknown_absence_type_is_never_called_ordinary(client):
+    """Un type ajouté demain chez PayFit ne doit pas devenir « congé ordinaire »
+    parce que personne n'a mis la liste à jour."""
+    client.list_absences.return_value = {"meta": {}, "absences": [
+        {"id": "a3", "type": "fr_type_invente_demain"}]}
+    assert _tool("payfit_absence")()["absences"][0]["absence_category"] == "restricted"
 
 
-def test_fields_etoile_ou_nom_sensible_ne_rend_jamais_le_brut(client):
-    client.list_collaborators.return_value = {"collaborators": [_raw_collaborator()],
-                                              "meta": {}}
-    for fields in (["*"], ["socialSecurityNumber", "iban", "birthDate", "addresses"]):
-        out = _tool("payfit_collaborator")(fields=fields)
-        _assert_clean(out)
+def test_nothing_is_withheld_from_a_collaborator_any_more(client):
+    """Le connecteur ne RETIRE plus : ce qui protège est le filtre de champs, posé
+    au-dessus (cf. `test_payfit_field_filter_defaults.py`)."""
+    brut = {"id": "c1", "firstName": "Ada", "socialSecurityNumber": "1NIRFACTICE",
+            "iban": "FR7630000000000000000000000", "bic": "FAKEFRPP",
+            "birthDate": "1990-01-01", "nationality": "FR", "gender": "FEMALE",
+            "addresses": [{"address": "1 rue Factice", "type": "main"}]}
+    client.get_collaborator.return_value = brut
+    out = _tool("payfit_collaborator")(op="get", collaborator_id=K)
+    assert out["collaborator"] == brut
+    assert "défaut serveur" in out["redaction"]
 
 
-def test_chaque_outil_de_liste_satisfait_le_cliquet_de_projection(client):
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_sorties_listes_projetees import _pagine, _projette
-    outils = asyncio.run(_mcp().list_tools())
-    assert [t.name for t in outils if _pagine(t)] != []
-    assert [t.name for t in outils if _pagine(t) and not _projette(t)] == []
+def test_fields_can_only_narrow_a_page(client):
+    client.list_collaborators.return_value = {"meta": {}, "collaborators": [
+        {"id": "c1", "firstName": "Ada", "teamName": "Bloc A"}]}
+    out = _tool("payfit_collaborator")(fields=["teamName"])
+    assert out["collaborators"] == [{"id": "c1", "teamName": "Bloc A"}]
 
 
-# --- erreurs amont & clé -----------------------------------------------------------
+def test_a_non_paginated_list_does_not_fake_a_cursor(client):
+    client.list_accounting_entries.return_value = [
+        {"accountId": "641000", "accountName": "Salaires", "debit": 1000, "credit": None}]
+    out = _tool("payfit_payroll")(op="accounting", date=MOIS)
+    assert out["count"] == 1 and "next_cursor" not in out
 
-def test_403_is_read_on_status_code_and_names_the_scopes(client):
+
+# --- erreurs amont, sonde, fabrique ------------------------------------------------
+
+def test_an_upstream_error_is_classified_on_its_status_code(client):
     from oto.tools.common.errors import UpstreamHTTPError
 
-    client.list_absences.side_effect = UpstreamHTTPError(403, {"error": "x"},
+    client.list_absences.side_effect = UpstreamHTTPError(403, {"error": "nope"},
                                                          service="payfit")
-    with pytest.raises(McpError, match="time:read"):
+    with pytest.raises(McpError, match="HTTP 403"):
         _tool("payfit_absence")()
 
 
-def test_client_value_error_becomes_invalid_params(client):
-    client.get_collaborator.side_effect = ValueError("collaborator_id invalide")
-    with pytest.raises(McpError, match="invalide"):
-        _tool("payfit_collaborator")(op="get", collaborator_id="../x")
-
-
-def test_an_empty_resolved_key_never_builds_a_client(monkeypatch):
-    built = []
-    monkeypatch.setattr("oto.tools.payfit.PayfitClient", lambda **kw: built.append(kw))
+def test_an_empty_credential_never_falls_back_to_a_server_secret(monkeypatch):
+    """Vide, `PayfitClient` résoudrait `PAYFIT_API_KEY` dans l'environnement du
+    SERVEUR et travaillerait sur une AUTRE entreprise."""
     monkeypatch.setattr("oto_mcp.access.resolve_api_key",
-                        lambda provider, account=None: ("  ", False))
-    with pytest.raises(McpError, match="aucune clé"):
-        _tool("payfit_company")()
-    assert not built
-
-
-@pytest.mark.parametrize("fields", [{}, {"key": ""}, {"key": "   "}, {"key": None}])
-def test_probe_refuses_an_empty_key_before_the_client(monkeypatch, fields):
-    from oto_mcp.connectors import verify as connector_verify
-    from oto_mcp.tools import payfit as P
-
-    built = []
-    monkeypatch.setattr("oto.tools.payfit.PayfitClient", lambda **kw: built.append(kw))
-    with pytest.raises(connector_verify.NonAutorise):
-        P._verify(fields)
-    assert not built
-
-
-@pytest.mark.parametrize("status,expected", [(401, "NonAutorise"), (403, "NonAutorise"),
-                                             (500, "UpstreamHTTPError")])
-def test_probe_classifies_on_status_code(monkeypatch, status, expected):
-    from oto.tools.common.errors import UpstreamHTTPError
-    from oto_mcp.tools import payfit as P
-
-    inst = MagicMock()
-    inst.get_company.side_effect = UpstreamHTTPError(status, {"error": "x"},
-                                                     service="payfit")
-    monkeypatch.setattr("oto.tools.payfit.PayfitClient", lambda **kw: inst)
-    with pytest.raises(Exception) as exc:
-        P._verify({"key": "pf-test"})
-    assert type(exc.value).__name__ == expected
-
-
-def test_probe_calls_get_company_with_the_posed_key(monkeypatch):
-    from oto_mcp.tools import payfit as P
-
-    seen = {}
-    inst = MagicMock()
+                        lambda provider, account=None: ("   ", False))
+    construit = []
     monkeypatch.setattr("oto.tools.payfit.PayfitClient",
-                        lambda **kw: seen.update(kw) or inst)
-    P._verify({"key": " pf-test "})
-    assert seen == {"api_key": "pf-test"}
-    inst.get_company.assert_called_once_with()
+                        lambda **kw: construit.append(kw))
+    with pytest.raises(McpError, match="aucune clé API posée"):
+        _tool("payfit_company")()
+    assert not construit
+
+
+def test_the_probe_refuses_an_empty_key():
+    from oto_mcp.connectors import verify as connector_verify
+    from oto_mcp.tools import payfit_garde
+
+    with pytest.raises(connector_verify.NonAutorise, match="vide"):
+        payfit_garde.verify({"key": "  "})
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_the_probe_classifies_a_refusal_on_the_status_code(monkeypatch, status):
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    from oto_mcp.connectors import verify as connector_verify
+    from oto_mcp.tools import payfit_garde
+
+    faux = MagicMock()
+    faux.get_company.side_effect = UpstreamHTTPError(status, {"error": "x"},
+                                                     service="payfit")
+    monkeypatch.setattr("oto.tools.payfit.PayfitClient", lambda **kw: faux)
+    with pytest.raises(connector_verify.NonAutorise):
+        payfit_garde.verify({"key": "pf-test"})
+
+
+def test_a_server_error_is_not_swallowed_by_the_probe(monkeypatch):
+    """Une panne amont n'est pas un refus d'autorisation : la classer `NonAutorise`
+    ferait croire à une clé invalide."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    from oto_mcp.tools import payfit_garde
+
+    faux = MagicMock()
+    faux.get_company.side_effect = UpstreamHTTPError(503, {}, service="payfit")
+    monkeypatch.setattr("oto.tools.payfit.PayfitClient", lambda **kw: faux)
+    with pytest.raises(UpstreamHTTPError):
+        payfit_garde.verify({"key": "pf-test"})

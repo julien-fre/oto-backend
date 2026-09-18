@@ -1,10 +1,41 @@
-"""PayFit — la projection en LISTE BLANCHE de tout ce qui sort du connecteur.
+"""PayFit — les ENVELOPPES de sortie et la seule clé que ce connecteur renomme.
 
-Séparée de `payfit.py` (outils) pour qu'une seule partie décide ce qui SORT d'une
-entreprise, d'un collaborateur, d'un contrat ou d'une absence : la partie à relire
-quand l'API change. Un champ absent d'une liste ci-dessous ne passe pas, y compris un
-champ que l'API ajouterait demain ou qu'une clé aux scopes larges ferait apparaître.
-Le pourquoi (données de paie, NIR, IBAN, santé) est dans la docstring de `payfit.py`.
+Séparé de `payfit.py` et de ses frères pour qu'une seule partie décide de la FORME
+de ce qui sort : la pagination, la projection `fields`, et le sort du type d'absence.
+
+## Ce qui a changé le 17/09/2026, et pourquoi
+
+Ce module portait une **liste blanche** : seuls quelques champs nommés sortaient de
+l'entreprise, du collaborateur, du contrat, de l'absence. Le retrait était EN DUR —
+personne ne pouvait l'ouvrir, pas même l'entreprise propriétaire de ses propres
+données de paie. Décision d'Alexis (signal d'usage #1063) : **on sert tout ce que
+l'API expose**, et la protection passe désormais par les **filtres de champs par
+org** (ADR 0009/0015), avec des **défauts serveur protecteurs** posés dans
+`field_filter_defaults.SERVER_DEFAULTS["payfit"]` — qu'un org_admin peut lever,
+connecteur par connecteur.
+
+Conséquence directe : il n'y a plus de `_pick`. Une réponse sort telle que l'API la
+livre, et ce qui la réduit est (1) le scope de la clé PayFit, (2) la politique de
+rédaction de l'org, (3) `fields` quand l'appelant veut moins de tokens.
+
+## La clé renommée, et pourquoi c'est nécessaire ici
+
+⚠️ **`FieldFilter` matche par NOM DE CLÉ FEUILLE, à toute profondeur.** Une règle
+sur `type` toucherait donc AUSSI `emails[].type`, `phoneNumbers[].type`,
+`addresses[].type`, `analyticCodes[].type` et `documents[].type` — cinq champs
+anodins corrompus pour en protéger un. Le mécanisme ne sait pas dire « `type`, mais
+seulement sous `absences` » : c'est sa limite, pas un oubli de configuration.
+
+Le type d'une absence est donc servi sous **`absence_type`**, un nom de feuille qui
+n'appartient qu'à lui — et c'est CE nom que le défaut serveur masque. La clé `type`
+de l'amont n'est pas servie : deux noms pour la même donnée, l'un filtré et l'autre
+non, serait une passoire.
+
+`absence_category` l'accompagne, calculé ici : `ordinary_leave` pour un congé
+ordinaire, `restricted` pour tout le reste. Il reste lisible quand `absence_type`
+est masqué — un pilotage de charge a besoin de savoir qu'une personne est absente et
+que ce n'est pas un congé payé, sans lire un motif médical. Il ne nomme JAMAIS la
+santé : `restricted` couvre aussi bien un arrêt maladie qu'un mariage.
 """
 from __future__ import annotations
 
@@ -12,98 +43,87 @@ from typing import Any, Callable, Optional
 
 from .. import output_projection
 
-_WITHHELD = ("données personnelles retirées : NIR, IBAN/BIC, date et lieu de naissance, "
-             "nationalité, sexe, adresses, téléphones et e-mails personnels, temps de "
-             "travail, mutuelle et prévoyance, motif de rupture, rémunération ; le motif "
-             "d'une absence n'est servi que s'il est un congé ordinaire (sinon `absence`).")
+# Ce que le DÉFAUT SERVEUR masque sur ce connecteur, dit à l'agent pour qu'il ne
+# prenne pas un `••••` pour une donnée absente — et dit à l'org comment le lever.
+REDACTION = (
+    "défaut serveur de rédaction : NIR (et NTT), IBAN/BIC et `absence_type` sont "
+    "masqués. Ce n'est pas une absence de donnée — un org_admin lève la règle pour "
+    "ce connecteur (dashboard, ou `oto_org_settings domain=field_filters "
+    "service=payfit`). `absence_category` reste lisible dans tous les cas.")
 
-_COMPANY = ("id", "name", "country", "identificationNumber", "address", "city",
-            "postalCode", "nbActiveContracts")
-_COLLABORATOR = ("id", "firstName", "lastName", "secondLastName", "managerId",
-                 "teamName", "terminationDate")
-_COLLABORATOR_CONTRACT = ("id", "startDate", "endDate", "status")
-_CONTRACT = ("contractId", "collaboratorId", "companyId", "jobName", "status",
-             "startDate", "endDate")
-# Variante FR : nature du contrat (CDI, CDD…), statut conventionnel, convention
-# collective. PAS le motif de rupture (codes d'inaptitude), ni NIR, ni mutuelle.
-_CONTRACT_FR = _CONTRACT + ("natureContratDsn", "statutConventionnelDsn", "idcc")
-_ABSENCE = ("id", "contractId", "status")
-_MOMENT = ("date", "moment")
-
-# Types d'absence servis tels quels : des congés ordinaires qui ne disent rien de la
-# santé ni de la vie familiale. Tout AUTRE type — maladie, accident du travail,
-# maternité, enfant malade, deuil, type ajouté demain — sort en `absence`.
+# Les congés ORDINAIRES : ceux qui ne disent rien de la santé ni de la vie familiale.
+# Tout AUTRE type — maladie, accident du travail, maternité, enfant malade, deuil,
+# mariage, ou un type ajouté demain — tombe en `restricted`. La liste est fermée
+# côté sûreté : un type inconnu n'est jamais « ordinaire ».
 ORDINARY_ABSENCE_TYPES = frozenset({
     "fr_conges_payes", "fr_rtt", "fr_repos", "fr_sans_solde", "fr_teletravail",
-    "fr_ecole", "uk_annual_leave", "uk_paid_leave", "uk_unpaid_leave", "uk_remote",
-    "es_vacaciones", "es_teletrabajo", "es_compensacion_dias_trabajados",
+    "fr_ecole", "fr_absence_remuneree", "uk_annual_leave", "uk_paid_leave",
+    "uk_unpaid_leave", "uk_remote", "es_vacaciones", "es_teletrabajo",
+    "es_compensacion_dias_trabajados",
 })
-GENERIC_ABSENCE = "absence"
-
-
-def _pick(obj: Any, keys: tuple) -> Any:
-    if not isinstance(obj, dict):
-        return None
-    return {k: obj[k] for k in keys if k in obj}
-
-
-def company(c: Any) -> Any:
-    return _pick(c, _COMPANY)
-
-
-def collaborator(c: Any) -> Any:
-    out = _pick(c, _COLLABORATOR)
-    if out is None:
-        return None
-    if "emails" in c:
-        # Seul l'e-mail déclaré professionnel : `personal` et `unknown` restent dehors.
-        out["emails"] = [e["email"] for e in c.get("emails") or []
-                         if isinstance(e, dict) and e.get("type") == "professional"
-                         and isinstance(e.get("email"), str)]
-    if "contracts" in c:
-        out["contracts"] = [_pick(k, _COLLABORATOR_CONTRACT)
-                            for k in c.get("contracts") or [] if isinstance(k, dict)]
-    return out
-
-
-def contract(c: Any) -> Any:
-    return _pick(c, _CONTRACT)
-
-
-def contract_fr(c: Any) -> Any:
-    return _pick(c, _CONTRACT_FR)
+ORDINARY = "ordinary_leave"
+RESTRICTED = "restricted"
 
 
 def absence(a: Any) -> Any:
-    out = _pick(a, _ABSENCE)
-    if out is None:
-        return None
-    for key in ("startDate", "endDate"):
-        if key in a:
-            out[key] = _pick(a[key], _MOMENT)
+    """Une absence, telle que l'API la livre, sauf `type` → `absence_type` +
+    `absence_category` (cf. docstring du module)."""
+    if not isinstance(a, dict):
+        return a
+    out = {k: v for k, v in a.items() if k != "type"}
     if "type" in a:
-        out["type"] = a["type"] if a["type"] in ORDINARY_ABSENCE_TYPES else GENERIC_ABSENCE
+        out["absence_type"] = a["type"]
+        out["absence_category"] = (
+            ORDINARY if a["type"] in ORDINARY_ABSENCE_TYPES else RESTRICTED)
     return out
 
 
-def page(env: Any, key: str, shape: Callable[[Any], Any], id_key: str,
-         fields: Optional[list] = None) -> dict:
-    """Une page de liste : `{count, next_cursor, <key>: [...], withheld}`.
+def page(env: Any, key: str, id_key: str, *, fields: Optional[list] = None,
+         shape: Optional[Callable[[Any], Any]] = None,
+         redaction: Optional[str] = None) -> dict:
+    """Une page de liste : `{count, next_cursor, <key>: [...]}`.
 
-    ⚠️ `fields` s'applique APRÈS la liste blanche et ne peut que retirer : `["*"]`
-    rend la vue par défaut, jamais le brut de l'amont (aucune échappatoire vers les
-    données personnelles). `id_key` est toujours gardé."""
+    `fields` ne peut que RETIRER, et `id_key` est toujours gardé : c'est une
+    économie de tokens, jamais un pouvoir de lecture — il n'y a plus rien à ouvrir
+    par ce chemin, tout est déjà servi. `["*"]` rend la vue complète.
+    """
     env = env if isinstance(env, dict) else {}
     meta = env.get("meta") if isinstance(env.get("meta"), dict) else {}
-    rows = [shape(r) for r in env.get(key) or [] if isinstance(r, dict)]
+    rows = env.get(key) or []
+    if shape is not None:
+        rows = [shape(r) for r in rows]
     out = {"count": meta.get("count"), "next_cursor": meta.get("nextPageToken") or None,
            key: rows}
     if fields is not None and output_projection.RAW not in fields:
         out = output_projection.project(out, items_path=key,
                                         fields=set(fields) | {id_key})
-    out["withheld"] = _WITHHELD
+    if redaction:
+        out["redaction"] = redaction
     return out
 
 
-def one(obj: Any, key: str, shape: Callable[[Any], Any]) -> dict:
-    return {key: shape(obj), "withheld": _WITHHELD}
+def rows(items: Any, key: str, id_key: str, *, fields: Optional[list] = None,
+         shape: Optional[Callable[[Any], Any]] = None,
+         redaction: Optional[str] = None) -> dict:
+    """Une liste NON paginée servie sous `key` — l'API en a plusieurs (écritures
+    comptables, contrats de mutuelle, documents). Même projection, pas de curseur :
+    inventer un `next_cursor: null` ferait croire à une pagination qui n'existe pas.
+    """
+    items = items if isinstance(items, list) else []
+    if shape is not None:
+        items = [shape(r) for r in items]
+    out = {"count": len(items), key: items}
+    if fields is not None and output_projection.RAW not in fields:
+        out = output_projection.project(out, items_path=key,
+                                        fields=set(fields) | {id_key})
+    if redaction:
+        out["redaction"] = redaction
+    return out
+
+
+def one(obj: Any, key: str, *, shape: Optional[Callable[[Any], Any]] = None,
+        redaction: Optional[str] = None) -> dict:
+    out = {key: shape(obj) if shape is not None else obj}
+    if redaction:
+        out["redaction"] = redaction
+    return out

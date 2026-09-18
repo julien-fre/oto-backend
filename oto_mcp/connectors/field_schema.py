@@ -35,7 +35,9 @@ _CANDIDATE_FIELDS: list[dict] = [
 ]
 
 CONNECTOR_FIELD_SCHEMA: dict[str, list[dict]] = {
-    # Silae (paie FR). Plancher PII = coordonnées bancaires (cf. field_filter_defaults).
+    # Silae (paie FR). ⚠️ Aucun plancher serveur : contrairement à `payfit`, rien
+    # n'est masqué ici tant que l'org ne pose pas sa politique (cf.
+    # `field_filter_defaults.SERVER_DEFAULTS`). Ces champs sont ce que l'UI PROPOSE.
     "silae": [
         {"name": "iban", "label": "IBAN", "type": "string", "sensitive": True},
         {"name": "bic", "label": "BIC", "type": "string", "sensitive": True},
@@ -84,6 +86,30 @@ CONNECTOR_FIELD_SCHEMA: dict[str, list[dict]] = {
     # gouvernait que `unipile_connect_start`, qui ne rend aucun profil : le
     # catalogue proposait à l'admin de masquer des champs sur des outils qui n'en
     # servent pas, et les profils LinkedIn sortaient en clair.
+    # PayFit (paie et RH). Le connecteur ne retire RIEN en dur : ces noms sont
+    # exactement ceux que le plancher serveur masque (`field_filter_defaults`), et
+    # c'est ici que l'org_admin les retrouve pour les lever ou en ajouter.
+    # ⚠️ `absence_type` n'est pas le nom de l'amont (qui dit `type`) : PayFit le sert
+    # sous ce nom-là justement pour qu'une règle puisse le viser sans toucher
+    # `emails[].type` & co — cf. `tools/payfit_socle.py`.
+    "payfit": [
+        {"name": "socialSecurityNumber", "label": "NIR", "type": "string", "sensitive": True},
+        {"name": "numeroSecuriteSociale", "label": "NIR (contrat FR)", "type": "string", "sensitive": True},
+        {"name": "temporaryTechnicalNumber", "label": "NTT", "type": "string", "sensitive": True},
+        {"name": "numeroTechniqueTemporaire", "label": "NTT (contrat FR)", "type": "string", "sensitive": True},
+        {"name": "iban", "label": "IBAN", "type": "string", "sensitive": True},
+        {"name": "bic", "label": "BIC", "type": "string", "sensitive": True},
+        {"name": "absence_type", "label": "motif d'absence", "type": "string", "sensitive": True},
+        {"name": "absence_category", "label": "catégorie d'absence", "type": "string", "sensitive": False},
+        {"name": "motifRuptureDeContratDsn", "label": "motif de rupture (DSN)", "type": "string", "sensitive": True},
+        {"name": "birthDate", "label": "date de naissance", "type": "date", "sensitive": True},
+        {"name": "nationality", "label": "nationalité", "type": "string", "sensitive": True},
+        {"name": "gender", "label": "sexe", "type": "string", "sensitive": True},
+        {"name": "addresses", "label": "adresses", "type": "list", "sensitive": True},
+        {"name": "phoneNumbers", "label": "téléphones", "type": "list", "sensitive": True},
+        {"name": "emails", "label": "emails", "type": "list", "sensitive": True},
+        {"name": "employeeFullName", "label": "salarié (écriture comptable)", "type": "string", "sensitive": True},
+    ],
     "linkedin_unipile": _CANDIDATE_FIELDS,
     "ashby": _CANDIDATE_FIELDS,
     "greenhouse": _CANDIDATE_FIELDS,

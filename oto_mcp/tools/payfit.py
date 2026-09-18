@@ -1,5 +1,5 @@
-"""PayFit — logiciel de paie et RH : l'entreprise, l'annuaire des collaborateurs,
-leurs contrats et leurs absences, en LECTURE seule.
+"""PayFit — logiciel de paie et RH. **Tout ce que l'API Partner documente**, en
+lecture et en écriture.
 
 Wrappe `oto.tools.payfit.PayfitClient` (Bearer, « Partner API » v1). keyed
 `api_key`, BYO (membre ou org) : une clé API PayFit est créée par un admin de
@@ -9,276 +9,370 @@ introspection de la clé. Hôtes fixes (`partner-api.payfit.com`,
 `oauth.payfit.com`) : aucun champ ne désigne une destination, donc pas de garde
 d'egress (`oto_mcp/egress.py`) à poser ici.
 
-## Données de paie : ce que ce connecteur ne sert PAS
+## Ce que ce connecteur sert, depuis le 17/09/2026
 
-Bulletins de paie, journal comptable, fichiers de virement, mutuelle et
-prévoyance, titres-restaurant, documents fiscaux : le client oto-core n'a aucune
-méthode vers ces endpoints, et ce module n'en ajoute pas. Aucune écriture
-(création de collaborateur, de contrat ou d'absence) n'est servie.
+Tout : l'entreprise, l'annuaire, les contrats (dont la variante FR : nature DSN,
+convention collective, forfait jours, motif de rupture, statut cadre dirigeant), les
+absences, les bulletins (métadonnées et PDF), les écritures comptables de paie et
+leur export, le fichier de virement, l'état du cycle de paie, le temps de travail
+réalisé, les titres-restaurant, la mutuelle et la prévoyance, les documents. Et
+l'écriture : créer un collaborateur, un contrat, une absence, l'annuler, affilier un
+contrat à une mutuelle ou une prévoyance, demander une régularisation.
 
-⚠️ **Les ressources du périmètre EMBARQUENT quand même des données personnelles
-lourdes**, selon les scopes que porte la clé : un collaborateur peut arriver avec
-son NIR, son IBAN/BIC, sa date et son pays de naissance, sa nationalité, son sexe,
-ses adresses, téléphones et e-mails personnels ; un contrat FR avec le NIR, le
-motif de rupture (dont les codes d'inaptitude), la mutuelle et la prévoyance ; une
-absence avec un type qui nomme un arrêt maladie, un accident du travail ou une
-maternité — donnée de santé (RGPD art. 9). Tout passe donc par une **projection en
-LISTE BLANCHE** (`payfit_socle`) : seuls les champs nommés sortent, un champ que
-l'API ajouterait demain reste dehors. Le type d'une absence n'est servi que s'il
-est un congé ordinaire (congés payés, RTT, repos, sans solde, télétravail, école) ;
-tout autre sort en `absence`. **Il n'existe aucune échappatoire vers le brut** :
-`fields=["*"]` rend la vue par défaut, jamais plus.
+Il n'y avait pas de choix à faire entre « servir la paie » et « protéger les
+personnes » : ce sont deux mécanismes différents.
 
-## Surface (ADR 0047), verbe en `op`, lecture seule
+⚠️ **La protection ne passe plus par un retrait en dur.** Elle passe par les
+**filtres de champs par org** (ADR 0009/0015) et un **défaut serveur protecteur**
+pour ce connecteur (`field_filter_defaults.SERVER_DEFAULTS["payfit"]`) : NIR (et
+NTT), IBAN/BIC et `absence_type` sont masqués tant qu'un org_admin ne lève pas la
+règle. Tout le reste sort : rémunérations portées par les écritures comptables,
+bulletins, coût employeur, contrats complets, temps de travail, mutuelle,
+titres-restaurant, coordonnées, naissance, nationalité, ancienneté, manager.
 
-- `payfit_company` — l'entreprise de la clé (seul, sans op).
-- `payfit_collaborator` — list | get.
-- `payfit_contract` — list | get ; `fr=True` → variante FR (nature du contrat,
-  statut conventionnel, IDCC).
-- `payfit_absence` — la liste des absences (l'API n'a pas de lecture unitaire).
+⚠️ **Les DOCUMENTS (bulletin PDF, export comptable, fichier de virement, document
+fiscal) sont verrouillés** : un filtre ne lit pas l'intérieur d'un fichier, donc ils
+ne sortent que si la politique effective de l'org pour `payfit` ne masque rien —
+sinon refus nommé, et fail-closed si elle est illisible (`payfit_garde.serve_document`).
 
-**Aucun argument n'est retenu au silence** : un argument qu'un `op` n'utilise pas
-est REFUSÉ, et « fourni » se lit `is not None` — un `fr=False` passé à un op qui
-l'ignore est refusé comme les autres.
+⚠️ **Une seule clé est renommée, et c'est mécanique** : le type d'une absence sort
+sous `absence_type`, parce que `FieldFilter` matche par nom de feuille et qu'une
+règle sur `type` toucherait aussi `emails[].type` et quatre autres champs anodins.
+`absence_category` (`ordinary_leave` | `restricted`) l'accompagne et reste lisible
+quand le type est masqué. Le pourquoi complet : `payfit_socle`.
+
+## Surface (ADR 0047), verbe en `op`, défaut toujours en lecture
+
+Ce module :
+- `payfit_company` — l'entreprise de la clé ; `fr=True` ajoute SIREN/SIRET.
+- `payfit_collaborator` — list | get | create.
+- `payfit_contract` — list | get | create ; `fr=True` → variante FR.
+- `payfit_absence` — list | create | cancel.
+
+Modules frères (même clé, même client, montés par `Connector.modules`) :
+`payfit_paie` (bulletins, comptabilité et virements, état du cycle, temps de
+travail, titres-restaurant), `payfit_social` (mutuelle, prévoyance, documents).
+
+**Aucun argument n'est retenu au silence** (`is not None`) → `payfit_garde`.
+**Toute écriture est en `dry_run=True` par défaut** : l'appel rend ce qu'il ferait
+et n'écrit rien tant que `dry_run=False` n'est pas passé délibérément.
 
 Dérivé de la documentation et de la spec OpenAPI publiques (lues le 2026-09-17).
-**Aucun appel réel** : pas de clé disponible — la forme exacte des réponses n'est
-pas vérifiée.
+**Aucun appel réel** : pas de clé disponible — ni la forme exacte des réponses, ni
+les effets de bord d'une écriture (PayFit notifie-t-il le salarié ? une absence
+créée est-elle immédiatement en paie ?) ne sont vérifiés.
 """
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
-from ..connectors import verify as connector_verify
-from ..mcp_errors import McpError
 from . import payfit_socle as S
-
-_NAME = "payfit"
-_DEFAULT_LIMIT = 50
-
-
-def _bad(msg: str) -> McpError:
-    return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
-
-
-def _need(op: str, **required: Any) -> None:
-    missing = [n for n, v in required.items() if v is None or v == ""]
-    if missing:
-        raise _bad(f"op={op!r} exige {', '.join('`' + m + '`' for m in missing)}.")
-
-
-def _refuse_ignored(op: str, **provided: Any) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention.
-    `is not None`, jamais la vérité : `False` et `0` sont des valeurs fournies."""
-    for name, value in provided.items():
-        if value is not None:
-            raise _bad(f"op={op!r} n'utilise pas `{name}`.")
-
-
-def _limit(limit: Optional[int]) -> int:
-    return _DEFAULT_LIMIT if limit is None else limit
-
-
-# ---------------------------------------------------------------------------
-# Erreurs amont & sonde
-# ---------------------------------------------------------------------------
-
-def _upstream_message(e: Any) -> str:
-    status = e.status_code
-    if status == 401:
-        return "PayFit : clé API refusée (HTTP 401) — invalide, révoquée ou inactive."
-    if status == 403:
-        return ("PayFit : accès refusé (HTTP 403) — la clé ne porte pas le scope requis "
-                "(collaborators:read, contracts:read ou time:read selon la ressource).")
-    if status == 404:
-        return "PayFit : ressource introuvable (HTTP 404)."
-    if status == 429:
-        return "PayFit : trop de requêtes (HTTP 429) — réessaie dans un instant."
-    if status >= 500:
-        return f"PayFit est momentanément indisponible (HTTP {status})."
-    return f"PayFit a refusé la requête (HTTP {status}) : {e.body}"
-
-
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : introspection de la clé puis
-    `GET /companies/{id}` (aucun scope requis), sans effet.
-
-    Une clé vide est refusée AVANT le client : passée vide, `PayfitClient`
-    résoudrait `PAYFIT_API_KEY` dans l'environnement du serveur et testerait une
-    autre clé que celle posée."""
-    from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.payfit import PayfitClient
-
-    key = (fields or {}).get("key")
-    if not isinstance(key, str) or not key.strip():
-        raise connector_verify.NonAutorise("PayFit : clé API vide.")
-    try:
-        PayfitClient(api_key=key.strip()).get_company()
-    except UpstreamHTTPError as e:
-        if e.status_code in (401, 403):
-            raise connector_verify.NonAutorise(_upstream_message(e)) from e
-        raise
+from .payfit_garde import (_client, is_dry, limit_or_default, need, preview,
+                           refuse_ignored, refuse_unknown_op, register_probe, run)
 
 
 def register(mcp: FastMCP) -> None:
-    from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.payfit import PayfitClient
-
-    connector_verify.register(_NAME, _verify)
-
-    def _client() -> PayfitClient:
-        key, _ = access.resolve_api_key(_NAME)
-        if not isinstance(key, str) or not key.strip():
-            # Vide, le client irait chercher une clé dans l'environnement du serveur.
-            raise _bad("PayFit : aucune clé API posée pour ce connecteur.")
-        return PayfitClient(api_key=key.strip())
-
-    def _run(fn):
-        try:
-            return fn()
-        except ValueError as e:
-            raise _bad(str(e))
-        except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e))
+    register_probe()
 
     @mcp.tool()
-    def payfit_company() -> dict:
+    def payfit_company(fr: Optional[bool] = None) -> dict:
         """The PayFit company the API key belongs to — name, country, registration
-        number (SIRET in France), address, number of active contracts. Its
-        `country` tells whether `payfit_contract(fr=True)` applies (FR only)."""
+        number, address, number of active contracts.
+
+        Its `country` tells whether the French variants apply: `payfit_contract(
+        fr=True)`, the meal vouchers, the worked time and the insurance tools are
+        French-only.
+
+        Args:
+            fr: French variant — adds `siren`, `siret`, the legal address and the
+                health-insurance proration method. France only.
+        """
         c = _client()
-        return S.one(_run(c.get_company), "company", S.company)
+        return S.one(run(lambda: c.get_company(fr=bool(fr))), "company")
 
     @mcp.tool()
     def payfit_collaborator(
-        op: Literal["list", "get"] = "list",
+        op: Literal["list", "get", "create"] = "list",
         collaborator_id: Optional[str] = None,
         email: Optional[str] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        personal_email: Optional[str] = None,
+        other_name: Optional[str] = None,
+        social_security_number: Optional[str] = None,
+        personal_address: Optional[dict] = None,
+        birth_information: Optional[dict] = None,
+        personal_phone_number: Optional[str] = None,
+        number_of_children: Optional[int] = None,
+        gender: Optional[str] = None,
+        invite_collaborator: Optional[bool] = None,
+        dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """The PayFit employee directory, reduced to what is professional: id, first
-        and last names, professional emails, manager id, team, termination date,
-        and each contract's id, dates and status. Job title and contract type are
-        on `payfit_contract`.
+        """The PayFit employee directory — read it, or hire into it.
 
-        Personal data is withheld and cannot be requested: social security number,
-        bank details, birth date and place, nationality, gender, personal
-        addresses, phones and emails.
+        A collaborator carries what the API key's scopes allow: names, matricule,
+        professional and personal emails, phones, addresses, manager, team,
+        contracts (id, dates, status), birth date and country, nationality, gender,
+        termination date, and — masked by the server default — the social security
+        number and the bank details.
 
         `op`:
         - **"list"** (default): the collaborators, optionally the one whose contract
           carries `email`. Paginated: pass back `next_cursor` as `cursor`.
         - **"get"**: one collaborator (`collaborator_id`).
+        - **"create"**: hires a person into PayFit. `first_name`, `last_name` and
+          `personal_email` are required. ⚠️ Creates a REAL person in a payroll
+          system, and `invite_collaborator=True` EMAILS them. A collaborator
+          created here has no contract yet — `payfit_contract(op="create")` is what
+          puts them on the payroll.
+
+        ⚠️ `dry_run` DEFAULTS TO TRUE on create: the call returns what it would
+        send and writes nothing. Pass `dry_run=False` deliberately to act.
 
         Args:
-            op: list (default) | get.
+            op: list (default) | get | create.
             collaborator_id: op="get".
             email: op="list" — exact contract email (not the login email).
+            first_name / last_name / personal_email: op="create", required.
+            other_name: op="create" — nom d'usage (FR), middle name (UK).
+            social_security_number: op="create" — length by country (FR 15, ES 14,
+                GB 12).
+            personal_address: op="create" — `{streetNumber, addressFirstLine,
+                addressSecondLine, city, state, postCode, country}` (country as a
+                2-letter ISO code).
+            birth_information: op="create" — `{birthDate, birthPlace,
+                birthCountry}`, birth date as YYYY-MM-DD in the past.
+            personal_phone_number: op="create".
+            number_of_children: op="create" — 0 to 20.
+            gender: op="create" — `MALE` or `FEMALE` (PayFit's closed set).
+            invite_collaborator: op="create" — sends the invitation email.
+            dry_run: op="create" — default True.
             limit: op="list" — 1..50 (default 50).
             cursor: op="list" — `next_cursor` of the previous page.
             fields: op="list" — keep only these keys per row (`id` always kept);
-                omitted or `["*"]` = the default view, never more.
+                omitted or `["*"]` = the full view.
         """
-        c = _client()
+        creation = dict(
+            first_name=first_name, last_name=last_name, personal_email=personal_email,
+            other_name=other_name, social_security_number=social_security_number,
+            personal_address=personal_address, birth_information=birth_information,
+            personal_phone_number=personal_phone_number,
+            number_of_children=number_of_children, gender=gender,
+            invite_collaborator=invite_collaborator)
         if op == "list":
-            _refuse_ignored(op, collaborator_id=collaborator_id)
-            return S.page(_run(lambda: c.list_collaborators(
-                limit=_limit(limit), cursor=cursor, email=email)),
-                "collaborators", S.collaborator, "id", fields=fields)
+            refuse_ignored(op, collaborator_id=collaborator_id, dry_run=dry_run,
+                           **creation)
+            c = _client()
+            return S.page(run(lambda: c.list_collaborators(
+                limit=limit_or_default(limit), cursor=cursor, email=email)),
+                "collaborators", "id", fields=fields, redaction=S.REDACTION)
         if op == "get":
-            _need(op, collaborator_id=collaborator_id)
-            _refuse_ignored(op, email=email, limit=limit, cursor=cursor, fields=fields)
-            return S.one(_run(lambda: c.get_collaborator(collaborator_id)),
-                         "collaborator", S.collaborator)
-        raise _bad("op doit être 'list' ou 'get'.")
+            need(op, collaborator_id=collaborator_id)
+            refuse_ignored(op, email=email, limit=limit, cursor=cursor, fields=fields,
+                           dry_run=dry_run, **creation)
+            c = _client()
+            return S.one(run(lambda: c.get_collaborator(collaborator_id)),
+                         "collaborator", redaction=S.REDACTION)
+        if op == "create":
+            need(op, first_name=first_name, last_name=last_name,
+                 personal_email=personal_email)
+            refuse_ignored(op, collaborator_id=collaborator_id, email=email,
+                           limit=limit, cursor=cursor, fields=fields)
+            if is_dry(dry_run):
+                return preview(op, collaborator={k: v for k, v in creation.items()
+                                                 if v is not None})
+            c = _client()
+            return S.one(run(lambda: c.create_collaborator(**creation)), "created")
+        raise refuse_unknown_op(op, "list", "get", "create")
 
     @mcp.tool()
     def payfit_contract(
-        op: Literal["list", "get"] = "list",
+        op: Literal["list", "get", "create"] = "list",
         contract_id: Optional[str] = None,
+        collaborator_id: Optional[str] = None,
+        job_title: Optional[str] = None,
+        start_date: Optional[str] = None,
         fr: Optional[bool] = None,
         include_in_progress: Optional[bool] = None,
+        dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """Employment contracts in PayFit (active, pending, and last year's
-        archived): job title, status, start and end dates, collaborator id.
+        """Employment contracts in PayFit: job title, status, start/end dates,
+        probation end date, weekly hours, full-time equivalent, collaborator id.
 
-        `fr=True` (French companies only) adds the contract nature
-        (`natureContratDsn`: 01 CDI, 02 CDD, …), the conventional status
-        (`statutConventionnelDsn`) and the collective agreement (`idcc`).
-        Withheld: social security number, working time, termination reason,
-        health insurance and provident fund, pay.
+        `fr=True` (French companies only) reads a DIFFERENT collection, and it is
+        the only one that carries the contract nature (`natureContratDsn`: 01 CDI,
+        02 CDD…), the conventional status, the collective agreement (`idcc`), the
+        termination reason (`motifRuptureDeContratDsn`), the working time modality
+        (`standard`, `forfait_heures`, `forfait_jours`…), the "cadre dirigeant"
+        flag, and the linked health-insurance and provident-fund contract ids.
+        For a French company, read `fr=True`.
+
+        ⚠️ `op="list"` returns active, pending and LAST YEAR's archived contracts —
+        not the company's full history. And there is no amendment history anywhere
+        in this API: a contract is served as it stands today.
 
         `op`:
         - **"list"** (default): paginated; pass back `next_cursor` as `cursor`.
         - **"get"**: one contract (`contract_id`).
+        - **"create"**: creates a contract for an EXISTING collaborator
+          (`collaborator_id`, `job_title`, `start_date`). ⚠️ This is what puts a
+          real person on the payroll. France only.
+
+        ⚠️ `dry_run` DEFAULTS TO TRUE on create.
 
         Args:
-            op: list (default) | get.
+            op: list (default) | get | create.
             contract_id: op="get".
-            fr: French variant (default False).
+            collaborator_id: op="create" — the person the contract belongs to.
+            job_title: op="create".
+            start_date: op="create" — YYYY-MM-DD.
+            fr: op="list"/"get" — French variant (default False).
             include_in_progress: op="list" — also contracts still being created.
+            dry_run: op="create" — default True.
             limit: op="list" — 1..50 (default 50).
             cursor: op="list" — `next_cursor` of the previous page.
             fields: op="list" — keep only these keys per row (`contractId` always
-                kept); omitted or `["*"]` = the default view, never more.
+                kept); omitted or `["*"]` = the full view.
         """
-        c = _client()
-        french = bool(fr)
-        shape = S.contract_fr if french else S.contract
         if op == "list":
-            _refuse_ignored(op, contract_id=contract_id)
-            return S.page(_run(lambda: c.list_contracts(
-                limit=_limit(limit), cursor=cursor,
-                include_in_progress=include_in_progress, fr=french)),
-                "contracts", shape, "contractId", fields=fields)
+            refuse_ignored(op, contract_id=contract_id, collaborator_id=collaborator_id,
+                           job_title=job_title, start_date=start_date, dry_run=dry_run)
+            c = _client()
+            return S.page(run(lambda: c.list_contracts(
+                limit=limit_or_default(limit), cursor=cursor,
+                include_in_progress=include_in_progress, fr=bool(fr))),
+                "contracts", "contractId", fields=fields, redaction=S.REDACTION)
         if op == "get":
-            _need(op, contract_id=contract_id)
-            _refuse_ignored(op, include_in_progress=include_in_progress, limit=limit,
-                            cursor=cursor, fields=fields)
-            return S.one(_run(lambda: c.get_contract(contract_id, fr=french)),
-                         "contract", shape)
-        raise _bad("op doit être 'list' ou 'get'.")
+            need(op, contract_id=contract_id)
+            refuse_ignored(op, collaborator_id=collaborator_id, job_title=job_title,
+                           start_date=start_date, include_in_progress=include_in_progress,
+                           limit=limit, cursor=cursor, fields=fields, dry_run=dry_run)
+            c = _client()
+            return S.one(run(lambda: c.get_contract(contract_id, fr=bool(fr))),
+                         "contract", redaction=S.REDACTION)
+        if op == "create":
+            need(op, collaborator_id=collaborator_id, job_title=job_title,
+                 start_date=start_date)
+            refuse_ignored(op, contract_id=contract_id, fr=fr,
+                           include_in_progress=include_in_progress, limit=limit,
+                           cursor=cursor, fields=fields)
+            if is_dry(dry_run):
+                return preview(op, contract={"collaborator_id": collaborator_id,
+                                             "job_title": job_title,
+                                             "start_date": start_date})
+            c = _client()
+            return S.one(run(lambda: c.create_contract(
+                collaborator_id, job_title=job_title, start_date=start_date)),
+                "created")
+        raise refuse_unknown_op(op, "list", "get", "create")
 
     @mcp.tool()
     def payfit_absence(
+        op: Literal["list", "create", "cancel"] = "list",
+        absence_id: Optional[str] = None,
+        contract_id: Optional[str] = None,
+        absence_type: Optional[str] = None,
         begin_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        contract_id: Optional[str] = None,
+        start_moment: Optional[str] = None,
+        end_moment: Optional[str] = None,
+        comment: Optional[str] = None,
         status: Optional[list] = None,
+        dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
         """Absences in PayFit: contract id, start and end (date + moment of day),
-        status, type. Paginated: pass back `next_cursor` as `cursor`.
+        status, and the type.
 
-        ⚠️ The type is served only for ordinary leave (paid leave, RTT, rest,
-        unpaid leave, remote work, school); every other type — sick leave, work
-        accident, maternity, sick child, bereavement… — is served as `absence`.
-        Do not try to infer the reason of an `absence`.
+        The type is served as **`absence_type`** (not `type`), alongside
+        **`absence_category`**: `ordinary_leave` for paid leave, RTT, rest, unpaid
+        leave, remote work or school; `restricted` for everything else — sick
+        leave, work accident, maternity, bereavement, marriage… The server default
+        MASKS `absence_type` (health data, GDPR art. 9) and leaves
+        `absence_category` readable, so absence planning works without reading a
+        medical reason. An org_admin can lift that mask for the whole connector.
+        A `••••` is a masked value, not a missing one — do not infer the reason.
+
+        ⚠️ This API has **no leave balance and no counter**: acquired or remaining
+        paid leave, RTT left, seniority-based days are nowhere in it. Do not
+        compute a balance from this list and present it as PayFit's — it is not.
+
+        `op`:
+        - **"list"** (default): paginated; pass back `next_cursor` as `cursor`.
+          There is no single-absence read upstream.
+        - **"create"**: records an absence that is **already approved** — there is
+          no approval workflow in this API, so this goes straight into payroll.
+        - **"cancel"**: cancels `absence_id`, optionally with a `comment`.
+
+        ⚠️ `dry_run` DEFAULTS TO TRUE on create and cancel.
 
         Args:
-            begin_date / end_date: YYYY-MM-DD — absences overlapping the window.
-            contract_id: only this contract's absences (ids from `payfit_contract`
-                or a collaborator's `contracts`).
-            status: approved (PayFit's default) | pending_approval | declined |
-                cancelled | pending_cancellation | all — one or several.
-            limit: 1..50 (default 50).
-            cursor: `next_cursor` of the previous page.
-            fields: keep only these keys per row (`id` always kept); omitted or
-                `["*"]` = the default view, never more.
+            op: list (default) | create | cancel.
+            absence_id: op="cancel".
+            contract_id: op="list" (filter) / op="create" (required).
+            absence_type: op="create" — PayFit's `CreateAbsenceType` value
+                (`fr_conges_payes`, `fr_rtt`, `fr_sans_solde`,
+                `fr_maladie_ordinaire`…). The creatable set is NOT the readable
+                set: maternity and work accidents cannot be created here.
+            begin_date / end_date: op="list" — YYYY-MM-DD, absences overlapping the
+                window; op="create" — the absence's own start and end.
+            start_moment / end_moment: op="create" — `beginning-of-day`,
+                `middle-of-day` or `end-of-day` (defaults cover full days).
+            comment: op="cancel" — recorded on the cancellation.
+            status: op="list" — approved (PayFit's default) | pending_approval |
+                declined | cancelled | pending_cancellation | all.
+            dry_run: op="create"/"cancel" — default True.
+            limit: op="list" — 1..50 (default 50).
+            cursor: op="list" — `next_cursor` of the previous page.
+            fields: op="list" — keep only these keys per row (`id` always kept);
+                omitted or `["*"]` = the full view.
         """
-        c = _client()
-        return S.page(_run(lambda: c.list_absences(
-            limit=_limit(limit), cursor=cursor, contract_id=contract_id, status=status,
-            begin_date=begin_date, end_date=end_date)),
-            "absences", S.absence, "id", fields=fields)
+        if op == "list":
+            refuse_ignored(op, absence_id=absence_id, absence_type=absence_type,
+                           start_moment=start_moment, end_moment=end_moment,
+                           comment=comment, dry_run=dry_run)
+            c = _client()
+            return S.page(run(lambda: c.list_absences(
+                limit=limit_or_default(limit), cursor=cursor, contract_id=contract_id,
+                status=status, begin_date=begin_date, end_date=end_date)),
+                "absences", "id", fields=fields, shape=S.absence,
+                redaction=S.REDACTION)
+        if op == "create":
+            need(op, contract_id=contract_id, absence_type=absence_type,
+                 begin_date=begin_date, end_date=end_date)
+            refuse_ignored(op, absence_id=absence_id, comment=comment, status=status,
+                           limit=limit, cursor=cursor, fields=fields)
+            moments = {k: v for k, v in
+                       (("start_moment", start_moment), ("end_moment", end_moment))
+                       if v is not None}
+            if is_dry(dry_run):
+                return preview(op, absence={"contract_id": contract_id,
+                                            "absence_type": absence_type,
+                                            "begin_date": begin_date,
+                                            "end_date": end_date, **moments})
+            c = _client()
+            return S.one(run(lambda: c.create_absence(
+                contract_id=contract_id, absence_type=absence_type,
+                start_date=begin_date, end_date=end_date, **moments)), "created")
+        if op == "cancel":
+            need(op, absence_id=absence_id)
+            refuse_ignored(op, contract_id=contract_id, absence_type=absence_type,
+                           begin_date=begin_date, end_date=end_date,
+                           start_moment=start_moment, end_moment=end_moment,
+                           status=status, limit=limit, cursor=cursor, fields=fields)
+            if is_dry(dry_run):
+                return preview(op, absence_id=absence_id, comment=comment)
+            c = _client()
+            run(lambda: c.cancel_absence(absence_id, comment=comment))
+            return {"cancelled": True, "absence_id": absence_id}
+        raise refuse_unknown_op(op, "list", "create", "cancel")
