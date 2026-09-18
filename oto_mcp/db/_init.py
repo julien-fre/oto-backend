@@ -130,6 +130,67 @@ def _poser_domaine(conn, table: str, nom: str, colonne: str,
     return True
 
 
+def _colonne_absente(conn: psycopg.Connection, table: str, colonne: str) -> bool:
+    """`True` si `colonne` n'existe pas encore sur `table` — lu via le catalogue,
+    sous un simple `AccessShareLock` (jamais `ACCESS EXCLUSIVE`).
+
+    ⚠️ `ALTER TABLE … ADD COLUMN IF NOT EXISTS` prend son `AccessExclusiveLock`
+    AVANT de constater qu'il n'a rien à faire — le `IF NOT EXISTS` évite l'ERREUR,
+    pas le VERROU. Sur une table déjà migrée (le cas de CHAQUE boot après le
+    premier), ce verrou est pris pour rien, et sa file d'attente bloque le trafic
+    applicatif qui lit la même table pendant que ce boot attend le verrou SUIVANT
+    de la même transaction (oto-backend, incident mesuré 2026-09-18 : jusqu'à
+    ~5 s de blocage sur `orgs` par tentative de déploiement, base partagée
+    préprod/prod). Appeler ce garde AVANT l'`ALTER` évite de demander le verrou
+    du tout quand il n'y a rien à poser — le reste de la transaction (les DDL
+    suivants) n'attend donc jamais derrière un verrou inutile."""
+    row = conn.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = %s AND column_name = %s",
+        (table, colonne),
+    ).fetchone()
+    return row is None
+
+
+def _index_absent(conn: psycopg.Connection, index: str) -> bool:
+    """Même garde que `_colonne_absente`, pour `CREATE INDEX` : un index déjà
+    posé n'a pas besoin d'un `AccessExclusiveLock` pour se constater exister."""
+    row = conn.execute(
+        "SELECT 1 FROM pg_indexes WHERE indexname = %s", (index,)
+    ).fetchone()
+    return row is None
+
+
+_RE_ADD_COLONNE = re.compile(
+    r"^\s*ALTER TABLE (\w+) ADD COLUMN IF NOT EXISTS (\w+)\b", re.IGNORECASE)
+_RE_CREATE_INDEX = re.compile(
+    r"^\s*CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)\b", re.IGNORECASE)
+
+
+def _executer_ddl_idempotent(conn: psycopg.Connection, sql: str, *params) -> None:
+    """Exécute `sql`, sauf si le catalogue dit qu'il n'a rien à faire.
+
+    Pour du DDL généré dynamiquement (`oto_mcp/db/search.py::rank_column_ddl`/
+    `index_ddl`, une boucle sur plusieurs tables) : la même faute que les `ALTER`
+    écrits à la main — `IF NOT EXISTS` évite l'ERREUR, pas le VERROU — mais ici la
+    table visée change à chaque itération, donc pas de nom de colonne/table à
+    coder en dur au point d'appel. Reconnaît les deux formes produites par ce
+    module (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`) et applique
+    le même garde catalogue. Un DDL d'une forme non reconnue est exécuté tel
+    quel — jamais sauté par défaut."""
+    m = _RE_ADD_COLONNE.match(sql)
+    if m:
+        if _colonne_absente(conn, m.group(1), m.group(2)):
+            conn.execute(sql, params or None)
+        return
+    m = _RE_CREATE_INDEX.match(sql)
+    if m:
+        if _index_absent(conn, m.group(1)):
+            conn.execute(sql, params or None)
+        return
+    conn.execute(sql, params or None)
+
+
 def apply_boot_schema(conn: psycopg.Connection) -> None:
     """Le DDL du boot, en UNE transaction, sur la connexion qu'on lui passe.
 
@@ -193,8 +254,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # MÊME séquence », docs/live-migrations.md).
     conn.execute("SELECT setval(pg_get_serial_sequence('tenants','id'), "
                  "GREATEST((SELECT MAX(id) FROM tenants), 1))")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS tenant_id BIGINT "
-                 "NOT NULL DEFAULT 1 REFERENCES tenants(id)")
+    if _colonne_absente(conn, "orgs", "tenant_id"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS tenant_id BIGINT "
+                     "NOT NULL DEFAULT 1 REFERENCES tenants(id)")
     # L7 (blueprint ADR 0053) — QUI a écrit cette observation. Prod et preprod
     # partagent la MÊME base : sans cette colonne, leurs compteurs se mélangent et
     # « une fenêtre en prod » n'est pas lisible. Dérivée de ce que le process sait de
@@ -492,9 +554,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # row n'est marquée qu'à l'écriture dans un namespace opt-in, ou au passage du flag
     # à ON qui re-dirty ses rows). Index partiel sur les seules rows dirty.
     conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS semantic_search BOOLEAN NOT NULL DEFAULT FALSE")
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS embed_dirty BOOLEAN NOT NULL DEFAULT FALSE")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_datastore_rows_embed_dirty "
-                 "ON datastore_rows(ns_id, row_id) WHERE embed_dirty")
+    if _colonne_absente(conn, "datastore_rows", "embed_dirty"):
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS embed_dirty BOOLEAN NOT NULL DEFAULT FALSE")
+    if _index_absent(conn, "idx_datastore_rows_embed_dirty"):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_datastore_rows_embed_dirty "
+                     "ON datastore_rows(ns_id, row_id) WHERE embed_dirty")
     # Lot 3 Ship 3 : propositions de CRÉATION (doc_id nullable + project_id +
     # emplacement proposé + CHECK). Le CHECK valide sur l'existant (toutes les
     # lignes ont doc_id). Idempotent.
@@ -513,13 +577,17 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # (ne touche que les NULL ; ensuite create_doc/move_doc posent toujours).
     conn.execute("ALTER TABLE docs ADD COLUMN IF NOT EXISTS description TEXT")
     conn.execute("ALTER TABLE docs ADD COLUMN IF NOT EXISTS position INTEGER")
-    conn.execute("""
-        UPDATE docs d SET position = s.rn * 16
-        FROM (SELECT id, ROW_NUMBER() OVER (
-                  PARTITION BY project_id, parent_id ORDER BY title, id) AS rn
-              FROM docs WHERE position IS NULL) s
-        WHERE d.id = s.id AND d.position IS NULL
-    """)
+    # Vérifié AVANT l'UPDATE : sur une base déjà backfillée (le cas de chaque boot
+    # après le premier), `position IS NULL` ne matche plus rien — sans ce garde,
+    # l'UPDATE relit `docs` en entier à CHAQUE démarrage pour ne rien faire.
+    if conn.execute("SELECT 1 FROM docs WHERE position IS NULL LIMIT 1").fetchone():
+        conn.execute("""
+            UPDATE docs d SET position = s.rn * 16
+            FROM (SELECT id, ROW_NUMBER() OVER (
+                      PARTITION BY project_id, parent_id ORDER BY title, id) AS rn
+                  FROM docs WHERE position IS NULL) s
+            WHERE d.id = s.id AND d.position IS NULL
+        """)
     # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas, avec son
     # backfill (ADR 0042, barreau 1). Les index de recherche construits juste
     # après portent `WHERE delivery = 'on-demand'` : sur une base qui existe
@@ -541,9 +609,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # remplissage au boot aurait rendu le démarrage tributaire du volume, sous le
     # healthcheck du deploy.
     for ddl in _search.rank_column_ddl():
-        conn.execute(ddl)
+        _executer_ddl_idempotent(conn, ddl)
     for ddl in _search.index_ddl():
-        conn.execute(ddl)
+        _executer_ddl_idempotent(conn, ddl)
     # Lot 3 chantier 0.4 : purge du type de lien `doc` (pointeur
     # manuel vers une page, subsumé par les backlinks [[…]] de Ship 4). 4 liens en
     # prod au comptage du 17/07. Idempotent (0 row ensuite).
@@ -551,22 +619,36 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Lot 3 chantier 0.3 : le projet KB est ancré PAR ID (fin de l'identification
     # par nom — renommable, transférable, 2 appels concurrents = 2 KB). ON DELETE
     # SET NULL : un hard-delete du projet vide l'ancre, kb.py recrée.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS kb_project_id BIGINT "
-                 "REFERENCES projects(id) ON DELETE SET NULL")
+    if _colonne_absente(conn, "orgs", "kb_project_id"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS kb_project_id BIGINT "
+                     "REFERENCES projects(id) ON DELETE SET NULL")
     # Backfill one-shot par nom (l'ancien marqueur) : pour chaque org sans ancre,
     # le PLUS ANCIEN projet org-owned vivant nommé « Base de connaissance ».
     # ⚠️ Ce littéral est de l'HISTOIRE, pas la constante `capabilities.kb.KB_NAME` —
     # qui vaut « Knowledge base » depuis le 2026-09-03 (#527). Le remplacer par la
     # constante ferait rater l'ancre de toutes les KB posées avant cette date, qui
     # sont précisément les seules que ce backfill vise.
-    conn.execute("""
-        UPDATE orgs o SET kb_project_id = p.id
-        FROM (SELECT DISTINCT ON (owner_id) owner_id, id FROM projects
-              WHERE owner_type = 'org' AND name = 'Base de connaissance'
-                AND archived_at IS NULL
-              ORDER BY owner_id, id) p
-        WHERE o.kb_project_id IS NULL AND p.owner_id = o.id::text
-    """)
+    # Vérifié AVANT l'UPDATE, avec la MÊME jointure (pas juste `kb_project_id IS
+    # NULL` seul : une org NOUVELLE sans ancre le vaut aussi pour toujours — ce
+    # backfill ne vise que le nom historique — un garde sur ce seul critère ne
+    # sauterait donc jamais rien sur une base vivante). Sur une base où plus
+    # AUCUNE org éligible n'attend son ancre, ce SELECT est une lecture pure
+    # (AccessShareLock), jamais le verrou de l'UPDATE qu'il évite de lancer pour
+    # rien.
+    if conn.execute("""
+        SELECT 1 FROM orgs o
+          JOIN projects p ON p.owner_id = o.id::text AND p.owner_type = 'org'
+           AND p.name = 'Base de connaissance' AND p.archived_at IS NULL
+         WHERE o.kb_project_id IS NULL LIMIT 1
+    """).fetchone():
+        conn.execute("""
+            UPDATE orgs o SET kb_project_id = p.id
+            FROM (SELECT DISTINCT ON (owner_id) owner_id, id FROM projects
+                  WHERE owner_type = 'org' AND name = 'Base de connaissance'
+                    AND archived_at IS NULL
+                  ORDER BY owner_id, id) p
+            WHERE o.kb_project_id IS NULL AND p.owner_id = o.id::text
+        """)
     # ADR 0032 §7 (B5a) : un projet peut être publié comme MODÈLE (template) copiable.
     conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_template BOOLEAN NOT NULL DEFAULT FALSE")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_template ON projects(is_template) WHERE is_template")
@@ -621,18 +703,23 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         "WHERE status NOT IN ('paid', 'failed', 'canceled', 'expired')")
     # ADR 0046 D (datastore v2) : bail de claim de la file de travail sur les rows
     # (data_claim_next / data_release ; NULL = libre, bail expiré = recyclable).
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_by TEXT")
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_until TIMESTAMPTZ")
+    if _colonne_absente(conn, "datastore_rows", "claimed_by"):
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_by TEXT")
+    if _colonne_absente(conn, "datastore_rows", "claimed_until"):
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_until TIMESTAMPTZ")
     # #317 : le run sous lequel la ligne est réservée. `ADD COLUMN` nullable sans
     # défaut = instantané (PG 11+), aucune réécriture, aucun verrou long — la
     # base est partagée avec la production.
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_run TEXT")
+    if _colonne_absente(conn, "datastore_rows", "claimed_run"):
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_run TEXT")
     # Plafond de reprises par ligne (#433) : compteur de réservations sans
     # écriture + motif d'abandon. `DEFAULT` sur table existante ne réécrit rien
     # (PG >= 11) — la fenêtre de healthcheck n'en voit pas la couleur, et aucun
     # backfill n'est requis (0 est bien l'état d'une ligne jamais réservée).
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
-    conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
+    if _colonne_absente(conn, "datastore_rows", "claims"):
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
+    if _colonne_absente(conn, "datastore_rows", "abandon_reason"):
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
     # La RÉVISION de ligne (12/09/2026) : colonne `rev` + le premier déclencheur du
     # dépôt, qui l'avance quelle que soit la version du code qui écrit (bleu/vert sur
     # base partagée). Posé seulement s'il manque — cf. `db/revision.py`. Appelé par le
@@ -1004,7 +1091,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org ON unipile_accounts(org_id)")
     conn.execute("ALTER TABLE unipile_pending ADD COLUMN IF NOT EXISTS org_id BIGINT")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS unipile_account_limit INTEGER")
+    if _colonne_absente(conn, "orgs", "unipile_account_limit"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS unipile_account_limit INTEGER")
     # Multi-canal Unipile : un account_id par (sub, provider). Migration de la
     # PK sub → (sub, provider) ; les lignes existantes prennent 'LINKEDIN' (DEFAULT).
     conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'LINKEDIN'")
@@ -1118,32 +1206,41 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ")
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_by TEXT")
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_reason TEXT")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logo_url TEXT")
+    if _colonne_absente(conn, "orgs", "logo_url"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logo_url TEXT")
     # Description libre de l'org (self-service org_admin) — prose, pas un secret.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''")
+    if _colonne_absente(conn, "orgs", "description"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''")
     # Profil d'org (2026-07-02) : donner du corps à l'entreprise. `domain` =
     # domaine de marque (acme.com, normalisé org_store._normalize_domain) —
     # sert AUSSI à dériver le logo via logo.dev quand aucun logo n'est uploadé
     # (org_store.effective_logo_url, même CDN que le catalogue connecteurs).
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS domain TEXT")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS industry TEXT NOT NULL DEFAULT ''")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT ''")
+    if _colonne_absente(conn, "orgs", "domain"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS domain TEXT")
+    if _colonne_absente(conn, "orgs", "industry"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS industry TEXT NOT NULL DEFAULT ''")
+    if _colonne_absente(conn, "orgs", "location"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT ''")
     # Baseline de toolset par org (ex-ADR 0015) RETIRÉE — les presets de tools
     # ont été supprimés : drop de la colonne si présente (idempotent).
-    conn.execute("ALTER TABLE orgs DROP COLUMN IF EXISTS default_tools")
+    if not _colonne_absente(conn, "orgs", "default_tools"):
+        conn.execute("ALTER TABLE orgs DROP COLUMN IF EXISTS default_tools")
     # Baseline de connecteurs proposés par l'org (ADR 0019, B2) : liste de
     # connecteurs recommandés (« org propose »). NULL = pas de baseline.
     # Inerte tant que la capacité B7 ne la lit pas.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS default_connectors TEXT[]")
+    if _colonne_absente(conn, "orgs", "default_connectors"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS default_connectors TEXT[]")
     # Redaction de champs par org (FieldFilter) : politique par connecteur,
     # gouvernée par l'org_admin. Forme JSONB :
     #   { "<service>": { "salt": str?, "rules": [ {fields, action, ...} ] } }
     # {} = aucune config → repli sur le défaut serveur (field_filter_defaults).
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS field_filters JSONB NOT NULL DEFAULT '{}'::jsonb")
+    if _colonne_absente(conn, "orgs", "field_filters"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS field_filters JSONB NOT NULL DEFAULT '{}'::jsonb")
     # Adresses expéditrices d'email de l'org, keyées PAR CONNECTEUR (scaleway/resend).
     #   { "<connector>": { "senders": [{email, name?, reply_to?}], "quiet_hours"?: {...} } }
     # {} = aucune adresse → email_send retombe sur la marque oto@otomata.tech (super_admin).
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS email_settings JSONB NOT NULL DEFAULT '{}'::jsonb")
+    if _colonne_absente(conn, "orgs", "email_settings"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS email_settings JSONB NOT NULL DEFAULT '{}'::jsonb")
     # Migration ONE-SHOT (idempotente, gardée sur le format PLAT = clé `senders` au
     # top-level) : {senders:[{...,transport}], quiet_hours} → keyé par connecteur.
     # transport 'resend'→'resend', sinon 'scaleway' ; transport retiré du sender ;
@@ -1165,12 +1262,15 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Archivage (soft-delete) d'une org : masquée de tous les listings, réversible
     # (NULL = active). Pas de hard-delete — les FK (membres, credentials, usage,
     # invitations, groupes) restent intactes pour audit/restauration.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
+    if _colonne_absente(conn, "orgs", "archived_at"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
     # Org PERSO (suppression du perso) : `personal_of` = sub dont c'est l'espace
     # privé mono-membre (NULL = org partagée). Unicité : 1 org perso par user.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS personal_of TEXT")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_personal_of "
-                 "ON orgs(personal_of) WHERE personal_of IS NOT NULL")
+    if _colonne_absente(conn, "orgs", "personal_of"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS personal_of TEXT")
+    if _index_absent(conn, "uq_orgs_personal_of"):
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_personal_of "
+                     "ON orgs(personal_of) WHERE personal_of IS NOT NULL")
     # MFA obligatoire par org (voie « org Logto miroir », ADR 0044/sécu-auth).
     #   require_mfa   = l'org impose le 2ᵉ facteur à ses membres (toggle org_admin).
     #   logto_org_id  = l'organization Logto MIROIR créée derrière l'org quand le
@@ -1178,8 +1278,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     #                   par sub) ; NULL tant que le MFA n'est pas activé.
     # Source de vérité (org, membres, droits) = CE PG ; l'org Logto n'est qu'un
     # miroir d'enforcement MFA au login (aucune autorité). Voir docs/auth-logto.md.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS require_mfa BOOLEAN NOT NULL DEFAULT FALSE")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logto_org_id TEXT")
+    if _colonne_absente(conn, "orgs", "require_mfa"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS require_mfa BOOLEAN NOT NULL DEFAULT FALSE")
+    if _colonne_absente(conn, "orgs", "logto_org_id"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logto_org_id TEXT")
     # Front qui héberge l'org — oto-backend sert PLUSIEURS produits depuis une
     # instance (oto, un tenant tiers). NULL = oto (le défaut, l'écrasante majorité) ; posé
     # = l'org vit sous un front tiers, dont les liens sortants et la marque des
@@ -1192,8 +1294,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # pas à chaque org. Tenable tant que les orgs sous front tiers se comptent sur
     # les doigts ; à la migration, ces deux colonnes remontent d'un cran et les
     # lignes se vident — le code qui les lit ne bouge pas.
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS front_base_url TEXT")
-    conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS front_brand TEXT")
+    if _colonne_absente(conn, "orgs", "front_base_url"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS front_base_url TEXT")
+    if _colonne_absente(conn, "orgs", "front_brand"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS front_brand TEXT")
     # Identité par org (ADR 0015) : visibilité scopée par (sub, org_id) ; org_id=0
     # = profil perso/global. Migration ONE-SHOT (gardée sur l'absence d'org_id) :
     # ajoute la colonne (existants → 0 = perso), re-keye les PK, puis BACKFILL =
