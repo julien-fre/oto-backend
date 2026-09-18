@@ -92,6 +92,28 @@ def _cause_required_when(rw: Any) -> str:
     return " (requis quand " + " et ".join(bouts) + ")"
 
 
+def _clause_un_seul_appel(rw: Any) -> str:
+    """oto-backend#649 : POUR REVENIR EN ARRIÈRE, il ne suffit pas de vider ce champ.
+
+    `required_when` se juge sur la ligne MERGÉE, aiguillage compris (#347) : vider
+    ce champ pendant que l'aiguillage porte encore la valeur qui l'exige refuse cet
+    appel-là, précisément parce que rien n'a changé côté aiguillage. Le geste qui
+    passe est un `data_write` UNIQUE portant les deux écritures — c'est tout ce que
+    la clause nomme.
+
+    ⚠️ Elle ne promet PAS l'indifférence à l'ordre, qui serait fausse : en DEUX
+    appels, changer l'aiguillage d'abord passe (la garde s'éteint sur la ligne
+    mergée), et le vidage qui suit passe aussi — rien ne refuse un champ gaté resté
+    rempli quand la garde tombe. La contrainte porte sur le VIDE tant que la garde
+    tient, jamais sur le PLEIN quand elle s'éteint."""
+    if not isinstance(rw, dict) or not rw:
+        return ""
+    noms = ", ".join(f"`{c}`" for c in rw)
+    return (f" ; pour revenir en arrière, vide ce champ ET change {noms} dans le "
+            f"MÊME appel — vider ce champ seul, pendant que la condition tient "
+            f"encore, reste refusé")
+
+
 def _clause_aiguillage(fields: list, rw: Any) -> str:
     """La PRÉVENTION du geste suivant : ne pas écrire le texte dans l'aiguillage.
 
