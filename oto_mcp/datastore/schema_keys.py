@@ -99,6 +99,11 @@ CLES: tuple[Cle, ...] = (
     Cle("options", ("validateur", "front"),
         "les valeurs permises d'une colonne `type: \"enum\"` — c'est ELLE qui contraint"),
     Cle("required", ("validateur", "front"), "la valeur ne peut pas être vide"),
+    # oto-backend#1008 : le texte OpenFormula d'une colonne `type: "formula"` —
+    # calculée par ligne, readonly implicite (cf. `readonly_fields`), recalculée à
+    # l'écriture d'une colonne dont elle dépend et au backfill quand elle est posée.
+    Cle("formula", ("validateur", "front"),
+        "le texte OpenFormula d'une colonne calculée (`type: \"formula\"`)", True),
     Cle("max_items", ("validateur", "front"), "nombre maximum d'éléments d'une liste"),
     # — présentation, lues par le FRONT SEUL : invisibles au validateur, et c'est
     #   exactement ce qui a fait échouer la première forme de ce lot —

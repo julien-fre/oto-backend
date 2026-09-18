@@ -19,6 +19,7 @@ from typing import Optional
 from .. import db, ownership, session_org
 from . import ecartes as dsec
 from . import schema as dsv2
+from . import formule as dsformule
 from .columns import effacements_report, ignores_report
 from .errors import RowValidationError
 from .forcage import Forcage
@@ -196,6 +197,23 @@ class ControlesMixin:
             dsec.retirer(merged, str(h.get("champ") or ""))
         return releve
 
+    def _appliquer_formules(self, schema: Optional[dict], merged: dict) -> None:
+        """Calcule les colonnes `type: "formula"` du schéma contre `merged` et les
+        écrit EN PLACE — `{"valeur": ..., "comment": ...}`, en préservant toute
+        AUTRE couche déjà posée sur la même clé (notamment `origine`, jamais
+        touchée par ce mécanisme). No-op si le schéma ne déclare aucune formule."""
+        if not any(isinstance(f, dict) and f.get("type") == "formula"
+                   for f in (schema or {}).get("fields") or []):
+            return
+        plate = {k: dsv2.unwrap(v) for k, v in merged.items()}
+        for cle, resultat in dsformule.compute_row_formulas(schema, plate).items():
+            existant = merged.get(cle)
+            couches = dict(existant) if isinstance(existant, dict) else {}
+            couches[dsv2.VALUE_LAYER] = resultat["valeur"]
+            if "comment" in resultat:
+                couches["comment"] = resultat["comment"]
+            merged[cle] = couches
+
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None,
                    lot: bool = False, creation: bool = False) -> None:
@@ -214,6 +232,16 @@ class ControlesMixin:
         # endroit qui voit à la fois la colonne fautive et la colonne attendue. Le
         # récupérer après coup imposerait de reparser le message, ce que la face REST
         # ne doit jamais avoir à faire.
+        # oto-backend#1008 : les colonnes `type: "formula"` se CALCULENT ici, sur le
+        # résultat MERGÉ (donc à chaque écriture qui change une colonne dont une
+        # formule dépend — pas besoin de comparer `written` aux références de la
+        # formule : recalculer une formule dont aucune entrée n'a bougé rend la
+        # même valeur, c'est idempotent et sans effet observable). AVANT la
+        # validation, pour que la valeur calculée participe à `required`/`type`/etc.
+        # comme n'importe quelle autre colonne. Mute `merged` EN PLACE, ne touche
+        # JAMAIS la couche `origine` d'un champ — seules `valeur` et `comment` sont
+        # écrites, et uniquement pour les clés que le schéma déclare `formula`.
+        self._appliquer_formules(schema, merged)
         details: dict = {}
         hors: list = []
         gelees: list = []
