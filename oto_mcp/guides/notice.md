@@ -13,9 +13,9 @@ ta note) : `oto_context` — et recharge-le après un changement d'org/équipe/p
 
 Avant une tâche substantielle, vérifie s'il existe une procédure pertinente (`oto_procedure op=list`), y compris hors du projet courant. Une procédure existante fait autorité sur ta propre méthode.
 
-## Écrire une procédure : le dessin du process
+## Écrire une procédure
 
-Une procédure s'écrit AVEC son schéma. Quand tu écris ou réécris une procédure (`oto_procedure op=set`), **le dessin du process** en est une section requise, pas une illustration : le front en fait la **vue par défaut** de la page de la procédure, donc une procédure sans dessin s'y affiche vide. Il se place juste après le tableau « At a glance » (ou après l'intro s'il n'y en a pas), avant le premier titre de phase — **UN seul** bloc fencé **non tagué** (``` sans langage), tracé en caractères semi-graphiques. Sa grammaire est un **contrat** et non un style : le dessin est reparsé en graphe, et tout ce qui en sort est refusé et retombe en caractères bruts. Lis le guide `procedure-flowchart` (`oto_guide op=read`) AVANT de dessiner — il porte la grammaire et un exemple qui rend. Le dessin se pose juste après le tableau « At a glance » (ou l'intro) — **rien entre les deux**, ce qui explique le dessin va dessous. La réponse de `op=set` porte `diagram_warning` quand le bloc manque.
+Une procédure se lit en prose : des étapes numérotées, que l'agent qui l'exécute suit dans l'ordre. Aucun dessin n'est requis. Si le corps que tu lis porte une ligne `<!-- flowchart: … -->`, c'est le dessin d'une version existante mis de côté : recopie-la telle quelle pour le conserver.
 
 ## Encadre et remonte
 

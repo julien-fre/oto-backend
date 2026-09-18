@@ -71,12 +71,15 @@ def test_un_corps_sans_dessin_est_servi_tel_quel():
 
 def test_sans_dessin_courant_le_marqueur_s_efface():
     """Création, ou procédure qui n'a jamais eu de dessin : le marqueur ne peut rien
-    rendre, il part — et le corps tombe sous `diagram_warning` comme avant."""
+    rendre, il part — et c'est cette PERTE qui est dite, pas l'absence de dessin."""
     servi = procedure_diagram.sans_le_dessin(_CORPS, 7)
+    assert procedure_diagram.marqueur_sans_dessin(servi, "")
     ecrit = procedure_diagram.avec_le_dessin(servi, "")
     assert not procedure_diagram.porte_le_marqueur(ecrit)
     assert not procedure_diagram.has_diagram(ecrit)
-    assert procedure_diagram.diagram_check(ecrit)["diagram_warning"]
+    assert procedure_diagram.diagram_check(ecrit)["diagram_warning"] is None
+    assert (procedure_diagram.diagram_check(ecrit, marqueur_perdu=True)["diagram_warning"]
+            == procedure_diagram.PERDU)
 
 
 def test_un_vrai_dessin_envoye_gagne_sur_le_courant():
@@ -197,7 +200,7 @@ def test_op_set_a_la_creation_efface_le_marqueur_et_avertit(monkeypatch):
                                 oi.ConsoleInstrCreateInput(slug="p", body_md=relu, scope="org"),
                                 must_create=True)[0]
     assert not procedure_diagram.porte_le_marqueur(ecrit["body_md"])
-    assert out["diagram_warning"] == procedure_diagram.WARNING
+    assert out["diagram_warning"] == procedure_diagram.PERDU
 
 
 def test_op_set_avec_un_vrai_dessin_l_ecrit_tel_quel(monkeypatch):
@@ -245,7 +248,7 @@ def test_un_scope_omis_ecrit_ailleurs_et_perd_le_dessin(monkeypatch):
                                 oi.ConsoleInstrSetInput(slug="p", body_md=relu,
                                                         scope="user"))[0]
     assert vus and vus[0] == "user", "l'écriture doit relire le palier qu'elle VISE"
-    assert out["diagram_warning"] == procedure_diagram.WARNING
+    assert out["diagram_warning"] == procedure_diagram.PERDU
 
 
 def test_marqueur_plus_vrai_dessin_annonce_les_deux_blocs(monkeypatch):
@@ -297,6 +300,4 @@ def test_l_essentiel_d_oto_procedure_survit_a_la_coupe_du_client():
     assert not dehors, (
         f"Hors des {_COUPE_CLIENT} premiers caractères servis (longueur totale "
         f"{len(d)}) : {dehors}. Claude Code ne lira pas ces phrases. N'allonge pas la "
-        "tête de la description : déplace vers la fin ce qui se rattrape autrement "
-        "(la grammaire du dessin est dans le guide `procedure-flowchart`, et "
-        "`diagram_warning` nomme ce guide quand il se déclenche).")
+        "tête de la description : déplace vers la fin ce qui se rattrape autrement.")

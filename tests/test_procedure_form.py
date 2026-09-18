@@ -1,10 +1,11 @@
-"""La FORME d'une procédure : son schéma, requis.
+"""La FORME d'une procédure : un dessin FACULTATIF (retiré des exigences le 18/09/2026).
 
 Couvre : le test de présence (mêmes seuils que le `isDrawing` du front), le fait que
 seuls les blocs NON TAGUÉS comptent (c'est le routeur du front qui en décide), le
-régime non bloquant du check, sa remontée dans les deux faces d'écriture (org + équipe),
-et les deux tripwires qui font que la CONSIGNE ne peut pas disparaître en silence :
-le guide qui porte la grammaire, et la mention dans le socle injecté à chaque session.
+SILENCE du check quand il n'y a pas de dessin, sa remontée dans les faces d'écriture
+(org, équipe, publication) quand il y en a deux, et le CLIQUET qui refuse le retour de
+l'obligation dans les textes servis : elle y avait été posée le 23/08/2026 pour un
+besoin d'affichage d'un front partenaire, et quatre tests en figeaient les renvois.
 
 ⚠️ Le DIGEST d'ouverture, longtemps l'autre moitié de cette « forme », a été retiré le
 10/09/2026 (oto#159) — son retrait est gardé par `test_digest_retire_159.py`.
@@ -16,10 +17,9 @@ from oto_mcp import guide_store, instructions, procedure_diagram as pd
 from oto_mcp.capabilities.groups import guide as gd
 from oto_mcp.capabilities.orgs import instructions as oi
 
-_GUIDE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp" / "guides" / "procedure-flowchart.md"
+_GUIDES = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp" / "guides"
 
-# Le dessin de référence — extrait du guide lui-même, pour qu'un test ne puisse pas
-# passer sur un dessin que la doc ne montre pas (et inversement).
+# Un dessin de référence, tel que les procédures qui en ont un le portent.
 _DRAWING = """\
               Natural language input in Claude
               "Wholesale distributors in the East Bay, 200 employees. Source 40 accounts."
@@ -47,15 +47,16 @@ def test_a_real_drawing_is_found():
     assert pd.diagram_check(_fenced(_DRAWING))["diagram_warning"] is None
 
 
-def test_no_fence_at_all_warns():
-    assert pd.diagram_check("Une procédure sans le moindre bloc.")["diagram_warning"] == pd.WARNING
+def test_no_drawing_is_silent():
+    """Le dessin est facultatif : son absence n'appelle aucun avertissement."""
+    assert pd.diagram_check("Une procédure sans le moindre bloc.")["diagram_warning"] is None
 
 
 def test_a_tagged_block_is_never_a_drawing():
     """Le routeur du front ne dessine QUE les blocs non tagués : compter un ```text
     plein de caractères de tracé serait un faux positif silencieux."""
     assert not pd.has_diagram(_fenced(_DRAWING, lang="text"))
-    assert pd.diagram_check(_fenced(_DRAWING, lang="text"))["diagram_warning"] == pd.WARNING
+    assert pd.diagram_check(_fenced(_DRAWING, lang="text"))["diagram_warning"] is None
 
 
 def test_thresholds_match_the_front():
@@ -126,10 +127,16 @@ def _set_org(monkeypatch, body):
     return asyncio.run(oi._set_instruction(_Ctx(), _Inp(body)))
 
 
-def test_org_set_surfaces_the_warning(monkeypatch):
+def test_org_set_without_drawing_is_silent(monkeypatch):
     out = _set_org(monkeypatch, "Une procédure sans dessin.")
-    assert out["diagram_warning"] == pd.WARNING
-    assert out["ok"] is True and out["version"] == 3   # non bloquant : l'écriture a eu lieu
+    assert out["diagram_warning"] is None
+    assert out["ok"] is True and out["version"] == 3
+
+
+def test_org_set_surfaces_two_drawings(monkeypatch):
+    out = _set_org(monkeypatch, _fenced(_DRAWING) + "\n" + _fenced(_DRAWING))
+    assert out["diagram_warning"] == pd.DOUBLE
+    assert out["ok"] is True   # non bloquant : l'écriture a eu lieu
 
 
 def test_org_set_is_silent_when_the_drawing_is_there(monkeypatch):
@@ -137,15 +144,15 @@ def test_org_set_is_silent_when_the_drawing_is_there(monkeypatch):
     assert out["diagram_warning"] is None
 
 
-def test_group_set_surfaces_the_warning(monkeypatch):
-    """Une procédure d'équipe est une procédure : même exigence, même régime."""
+def test_group_set_is_silent_without_drawing(monkeypatch):
+    """Une procédure d'équipe est une procédure : même régime."""
     monkeypatch.setattr(gd.org_store, "set_instruction", lambda *a, **k: 2)
 
     class _GInp(_Inp):
         group_id = 4
 
     out = gd._set(_Ctx(), _GInp("Une procédure d'équipe sans dessin."))
-    assert out["diagram_warning"] == pd.WARNING
+    assert out["diagram_warning"] is None
     assert gd._set(_Ctx(), _GInp(_fenced(_DRAWING)))["diagram_warning"] is None
 
 
@@ -154,49 +161,35 @@ def test_written_models_declare_the_field():
     assert "diagram_warning" in gd.GroupInstructionWritten.model_fields
 
 
-# ── Tripwires : la consigne ne peut pas disparaître en silence ──────────────
-def test_the_guide_ships_and_its_example_passes_our_own_gate():
-    """Le guide qui PORTE la grammaire doit lui-même montrer un dessin que la garde
-    accepte — sinon la doc prescrit ce que le serveur signale."""
-    assert _GUIDE.is_file()
-    seeds = {g["slug"]: g for g in guide_store.list_file_guides()}
-    assert "procedure-flowchart" in seeds
-    seed = seeds["procedure-flowchart"]
-    assert seed["title"] and seed["description"]
-    # Sur le corps PARSÉ (ce que l'agent recevra), pas sur le fichier brut.
-    assert pd.has_diagram(seed["body_md"])
+# ── Cliquet : l'obligation ne revient pas dans les textes servis ────────────
+_PRESCRIPTIONS = ("procedure-flowchart", "must carry a FLOWCHART", "section requise",
+                  "son dessin")
 
 
-def test_the_guide_states_the_density_limits():
-    """Les bornes de densité ne vivent QUE dans le guide : le check serveur ne les voit
-    pas (il faudrait le parseur du front pour savoir ce qu'est un « détail »). Si elles
-    tombent d'ici, plus rien ne les porte."""
-    body = _GUIDE.read_text(encoding="utf-8")
-    for token in ("~40", "~80", "~60", "~35", "~50", "note de marge"):
-        assert token in body, token
-
-
-def test_the_base_guide_still_asks_for_the_drawing():
-    """Le socle injecté à chaque session est le seul endroit où l'agent apprend que
-    le dessin est requis AVANT d'écrire. S'il tombe, plus personne ne dessine."""
-    socle = instructions._SECRET_SAUCE
-    assert "procedure-flowchart" in socle
-    assert "diagram_warning" in socle
-
-
-def test_the_set_tool_description_names_the_guide():
-    from oto_mcp.capabilities import procedure_console
+def test_aucun_texte_servi_ne_reclame_le_dessin():
+    """Socle de session, descriptions servies, guides semés : aucun ne réclame plus un
+    dessin. Le socle se vérifie sur la constante (sa surcharge éventuelle en base est
+    un geste d'exploitation, pas du code)."""
+    from oto_mcp.capabilities import procedure_console  # noqa: F401 — monte la console
     from oto_mcp.capabilities.registry import CAPABILITIES
 
-    caps = {c.key: c for c in CAPABILITIES}
-    assert "procedure-flowchart" in (caps["org.procedure.console"].description or "")
-    assert "procedure-flowchart" in (caps["org.instruction.set"].description or "")
-    assert procedure_console  # l'import monte la console
+    textes = {"socle": instructions._SECRET_SAUCE}
+    textes.update({c.key: c.description or "" for c in CAPABILITIES})
+    textes.update({f"guide {g['slug']}": g["body_md"]
+                   for g in guide_store.list_file_guides()})
+    fautifs = sorted(nom for nom, texte in textes.items()
+                     if any(p in texte for p in _PRESCRIPTIONS))
+    assert not fautifs, f"le dessin est de nouveau réclamé par : {fautifs}"
+    assert textes, "aucun texte relu — le cliquet ne garde plus rien"
 
 
-def test_publish_and_fork_carry_the_warning(monkeypatch):
-    """Publier ou forker, c'est faire circuler une procédure : le manque de schéma
-    part avec elle, donc le signal aussi."""
+def test_le_guide_du_dessin_n_est_plus_seme_par_la_plateforme():
+    assert not (_GUIDES / "procedure-flowchart.md").exists()
+    assert "procedure-flowchart" not in {g["slug"] for g in guide_store.list_file_guides()}
+
+
+def test_publish_and_fork_are_silent_without_drawing(monkeypatch):
+    """Publier ou forker une procédure sans dessin : rien à signaler."""
     from oto_mcp.capabilities import guide_library as dl
 
     # Seul un super_admin publie ; le rôle se pose à sa source, d'où dérivent les deux
@@ -214,7 +207,7 @@ def test_publish_and_fork_carry_the_warning(monkeypatch):
         slug = "s"; public_slug = None; title = None; description = None
         category = None; tags = None; visibility = "public"
 
-    assert dl._publish(_Ctx(), _P())["diagram_warning"] == pd.WARNING
+    assert dl._publish(_Ctx(), _P())["diagram_warning"] is None
 
     monkeypatch.setattr(dl.org_store, "get_library_entry",
                         lambda **k: {"id": 1, "body_md": _fenced(_DRAWING)})

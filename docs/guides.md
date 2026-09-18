@@ -128,57 +128,35 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   évolue avec le code du connecteur → sa place reste le repo (docstring, `_SERVER_INSTRUCTIONS`),
   versionné avec l'outil.
 
-## Le schéma est une section requise (front tiers, issue #108)
+## Le dessin n'est plus exigé (retiré le 18/09/2026)
 
-⚠️ **Le « Self-improvement digest » a été RETIRÉ le 10/09/2026 (oto#159).** La
-plateforme réclamait un bloc de citation en tête de chaque corps ; elle ne le réclame
-plus, et `procedure_digest` n'existe plus. Ce que ce bloc racontait, la plateforme le
-porte déjà : la version par le champ `version`, ce qui a changé par l'historique des
-versions (`with_history`, réversible par `from_version`), ce qu'un passage a appris par
-un document de projet. Le bloc était né d'une contrainte de RENDU (il fallait quelque
-chose en tête de la page d'un process) et 24 procédures sur 57 recevaient
-l'avertissement à chaque écriture depuis des mois sans que rien ne change. Les corps
-existants gardent leur bloc : c'est du texte ordinaire, retiré par son auteur quand il
-touche au texte, jamais par une migration.
+⚠️ **Une procédure n'a plus à porter de dessin.** Il avait été rendu obligatoire le
+23/08/2026 (b34af1cc) pour un besoin d'affichage d'un front partenaire, qui faisait du
+dessin la vue par défaut de sa page de procédure. Une règle de RENDU d'un seul
+consommateur était devenue une règle du cœur, servie à tous les agents de toutes les
+orgs : dans la description de `oto_procedure`, celle de l'écriture d'org, le socle de
+session, le guide `notice` et un guide plateforme dédié (`procedure-flowchart`) — et
+figée par des tests qui vérifiaient la présence de chaque renvoi. Décision d'Alexis :
+une procédure se lit en prose, en étapes numérotées ; c'est ce que l'agent qui
+l'exécute lit, et le dessin lui coûtait des jetons sans rien lui apprendre. Un front qui
+veut un dessin le demande au niveau de SON TENANT — et bientôt de sa propre instance
+(ADR 0070) —, jamais du cœur ni de chaque org.
 
-Une procédure embarque un **dessin** de son process, et ce n'est pas une illustration :
-le front en fait la **vue par défaut** de la page de la procédure — une procédure sans
-dessin s'y affiche en état vide. Emplacement fixe : juste après le tableau « At a
-glance » (ou après l'intro s'il n'y en a pas), **avant le premier titre de phase**.
+Ce qui part : l'avertissement « aucun dessin » (`diagram_check` rend `None` sans
+dessin), les quatre textes qui le réclamaient, le guide plateforme `procedure-flowchart`
+(fichier seed retiré ; ⚠️ le nœud déjà semé en base se retire à part, par
+`oto_guide op=delete scope=platform`), et les tests qui figeaient ces renvois — remplacés
+par un cliquet qui refuse leur retour.
 
-⚠️ **RIEN entre le tableau et le dessin**, et c'est encore le rendu qui commande : quand
-le corps dessine, la page retire le titre « At a glance » ET son tableau
-(`stripDiagramSummary` — les deux disent la même chose, le dessin le dit mieux ; le
-tableau reste dans le CORPS, que l'agent exécutant lit). Ce qui traînait entre les deux
-se retrouve donc orphelin juste au-dessus du dessin. Une note qui explique le TABLEAU
-passe au-dessus de lui ; ce qui explique le DESSIN va directement dessous.
+Ce qui reste, pour les procédures qui ont DÉJÀ un dessin : il s'affiche comme avant, il
+est servi à l'agent sous la forme d'un marqueur et remis à l'écriture (section
+suivante), et `diagram_warning` parle encore d'un dessin PRÉSENT — deux dessins dans un
+corps (la page n'en rend qu'un), ou un tracé que le parseur du front refusera (lint
+ligne à ligne, `procedure_diagram.lint_du_trace`).
 
-⚠️ **La grammaire du dessin est un CONTRAT, pas un style.** Le bloc n'est pas
-typographié tel quel : il est **reparsé en graphe** (`src/lib/ascii-diagram.ts` côté
-front) puis redessiné en cartes. Tout ce que la grammaire ne couvre pas est *refusé* —
-le parseur préfère refuser plutôt que dessiner faux — et retombe en caractères bruts.
-Le front ne regarde qu'**UN** bloc fencé **non tagué** : un dessin dans un ```text ne
-sera jamais rendu. Le guide porte aussi les bornes de **densité** (titre ~40 c.,
-détail UNE phrase de ~80 c. — ~60 c. pour deux étapes côte à côte, raison de sortie ~35 c.,
-note de sortie latérale ~50 c., noms d'outils en note de marge et jamais dans le détail) :
-le texte est REFLOWÉ à l'affichage, donc la largeur de la boîte n'est pas la borne — la
-carte rendue l'est. La grammaire complète + un exemple qui rend vivent dans le guide
-plateforme **`procedure-flowchart`** (`oto_mcp/guides/procedure-flowchart.md`), cité par
-le socle injecté à chaque session (`instructions._SECRET_SAUCE`) et par la description
-de `oto_procedure op=set`.
-
-Côté serveur, `procedure_diagram.diagram_check` ajoute un **`diagram_warning`** au
-retour d'écriture (org **et** équipe), dans le même régime non bloquant que
-`unresolved_tools` / `slot_warnings` (ADR 0014/0035) : la procédure est enregistrée, sa
-page se rendra vide. ⚠️ Le check est **volontairement grossier** — il porte les deux
-seuils du `isDrawing` du front (≥ 3 lignes portant un glyphe, ≥ 20 glyphes au total) et
-rien d'autre. Rejouer la grammaire ici fabriquerait **deux vérités** qui divergeraient au
-premier changement de rendu : ce module répond « l'auteur a-t-il dessiné ? », jamais « le
-dessin est-il valide ? ». Seul le rendu de la page tranche.
-
-⚠️ Un **refus** aurait cassé toute réécriture des ~14 procédures vivantes qui n'avaient
-pas de dessin — et le premier effet d'une garde bloquante aurait été qu'on cesse
-d'écrire des procédures.
+⚠️ Le « Self-improvement digest », imposé par le même commit, avait déjà été retiré le
+10/09/2026 (oto#159) pour la même raison : la plateforme portait déjà ce qu'il racontait
+(version, historique des versions, documents de projet).
 
 ## Ce que l'agent lit : la consigne, pas la vitrine
 
@@ -206,7 +184,7 @@ qu'il faut demander ne bénéficie à personne) :
 chaque édition d'agent viderait la page du process — et personne ne le verrait avant
 de l'ouvrir. À l'écriture, `procedure_diagram.avec_le_dessin` remplace le marqueur par
 le dessin de la **version courante** ; un corps qui arrive avec un vrai dessin le garde ;
-un corps sans marqueur ni dessin est ce qu'il a toujours été (`diagram_warning`). Les
+un corps sans marqueur ni dessin s'écrit tel quel, ce qui est permis. Les
 corps **stockés** ne portent jamais le marqueur — il ne vit qu'entre les deux appels.
 Banc : `tests/test_procedure_servie_lean.py`, dont l'aller-retour à l'identique.
 

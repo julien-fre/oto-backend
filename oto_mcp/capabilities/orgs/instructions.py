@@ -1113,6 +1113,7 @@ def _write_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> tupl
             # empêcher une écriture légitime ; journalisé pour qu'un silence durable se
             # voie.
             logger.warning("retrait: corps précédent illisible pour %s : %s", norm, e)
+    marqueur_perdu = procedure_diagram.marqueur_sans_dessin(body_md, ancien_md)
     body_md = procedure_diagram.avec_le_dessin(body_md, ancien_md)
     # Injecté dans le guide de base servi à chaque session → caper la taille.
     # ⚠️ La borne n'est PAS publiée dans le schéma servi de `InstrSetInput` /
@@ -1181,7 +1182,7 @@ def _write_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> tupl
             **_note_de_portee(owner), "version": version, "set": True,
             **({"reverted_from": from_version} if from_version is not None else {}),
             **slots_mod.slots_check(body_md, effective_slots),
-            **procedure_diagram.diagram_check(body_md),
+            **procedure_diagram.diagram_check(body_md, marqueur_perdu=marqueur_perdu),
             **procedure_retrait.retrait_check(ancien_md, body_md)}, body_md
 
 
@@ -1439,10 +1440,7 @@ CAPABILITIES += [
                      "`slots` = the procedure's REQUIRED ENTITIES [{name, type: tableau|"
                      "connecteur|base, description?, connector?}] — reference them BY NAME "
                      "in the prose as <slot:name> (never a hardcoded instance: the project "
-                     "binds name→instance). EVERY procedure must carry a FLOWCHART (one "
-                     "untagged fenced block drawn in box characters, right after the « At a "
-                     "glance » table and before the first phase heading) — it is the DEFAULT "
-                     "view of the process page; read the `procedure-flowchart` guide first. "
+                     "binds name→instance). "
                      "Response returns cross-check warnings "
                      "(unresolved/unreferenced slots, suggestions, `diagram_warning`). "
                      "`org` pins the write to "

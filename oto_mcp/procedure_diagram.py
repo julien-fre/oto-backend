@@ -1,12 +1,16 @@
-"""Le DESSIN d'une procédure — la garde d'écriture (pendant de `slots.slots_check`).
+"""Le DESSIN d'une procédure, quand elle en a un — FACULTATIF.
 
-Depuis l'issue #108 d'un front tiers, le schéma d'une procédure n'est plus une illustration :
-c'est la **vue par défaut** de la page du process. Le front cherche UN bloc de code
-non tagué (``` sans langage) tracé en caractères semi-graphiques, le reparse en graphe
-et le redessine en cartes. Une procédure sans dessin s'affiche donc en état vide —
-et un dessin hors grammaire est *refusé* par le parseur, qui retombe sur les caractères
-bruts (le parseur préfère refuser plutôt que dessiner faux). Le dessin est une SECTION
-REQUISE d'une procédure, pas une décoration.
+⚠️ **Le dessin n'est plus exigé** (Alexis, 18/09/2026). Il l'avait été le 23/08/2026
+(b34af1cc) pour un besoin d'affichage d'un front partenaire, où il était la vue par
+défaut de la page du process — une règle de rendu d'UN consommateur devenue règle du
+cœur, servie à tous les agents. Une procédure se lit désormais en prose ; une
+procédure sans dessin n'appelle plus aucun avertissement. Ce qui reste ici ne sert
+qu'aux procédures qui en ont UN : le servir sans le tracé (le marqueur), le remettre à
+l'écriture, et dire quand il ne se dessinera pas ou qu'il y en a deux.
+
+Côté front, un dessin est UN bloc de code non tagué (``` sans langage) tracé en
+caractères semi-graphiques, reparsé en graphe et redessiné en cartes ; un dessin hors
+grammaire est refusé par le parseur, qui retombe sur les caractères bruts.
 
 Ce module ne reparse rien : la grammaire complète vit dans `src/lib/ascii-diagram.ts`
 côté front, et la redoubler ici fabriquerait deux vérités qui divergeraient au premier
@@ -16,9 +20,7 @@ changement de rendu. On garde le seul test qui ne peut pas mentir dans les deux 
 pour qu'un échantillon shell avec une flèche égarée ne passe pas pour un dessin.
 
 ⚠️ **Warning, jamais un refus** : ADR 0014/0035 — les checks croisés d'une écriture de
-procédure signalent la dérive, ils ne la bloquent pas. ~14 procédures vivantes n'ont
-aucun dessin ; les refuser casserait toute réécriture d'une procédure existante, et le
-premier effet d'une garde bloquante serait qu'on cesse d'écrire des procédures.
+procédure signalent la dérive, ils ne la bloquent pas.
 
 ⚠️ **Seuls les blocs NON TAGUÉS comptent** : c'est le routeur du front qui en décide
 (`process-code-block.tsx`) — un ```text plein de caractères de tracé ne sera jamais
@@ -45,8 +47,13 @@ MIN_GLYPHS = 20
 # un bloc trop tôt. Même forme que `FENCE` dans `drawing.ts`.
 _FENCE = re.compile(r"^[ \t]*```[ \t]*([\w-]*)[^\n]*\n(.*?)^[ \t]*```[ \t]*$", re.M | re.S)
 
-WARNING = ("no flowchart found — add the drawing described in the procedure guide "
-           "(procedure-flowchart)")
+# Le marqueur est arrivé, mais il n'y avait pas de dessin à remettre à cet endroit : la
+# nouvelle version en est privée. Le dessin étant facultatif, l'absence seule ne dit
+# rien — c'est la PERTE qu'on signale, parce qu'elle n'est presque jamais voulue.
+PERDU = ("the `<!-- flowchart: … -->` line was dropped: there is no stored drawing at "
+         "this slug and scope to put back (op=create, a new slug, or an omitted scope = "
+         "user). The drawing still lives in the version you read — write there, or pass "
+         "the drawing itself")
 
 # Deux blocs qui dessinent : la page n'en rend qu'UN, le premier. Le cas se fabrique
 # quand un corps arrive avec le marqueur ET un vrai dessin — `avec_le_dessin` remet
@@ -104,7 +111,7 @@ def trouver_le_dessin(body_md: str) -> tuple[int, int] | None:
 # réécrit (`op=get` → `op=set`), et sans elle chaque édition d'agent ferait DISPARAÎTRE
 # le dessin — la page se rendrait vide. À l'écriture, `avec_le_dessin` remet à sa place
 # le tracé de la version courante. Un corps qui arrive avec un VRAI dessin le garde ;
-# un corps sans marqueur ni dessin est ce qu'il a toujours été : `diagram_warning`.
+# un corps sans marqueur ni dessin s'écrit tel quel — le dessin est facultatif.
 # Les corps STOCKÉS ne portent jamais le marqueur — il ne vit qu'entre les deux appels.
 #
 # ⚠️ Ce que le marqueur NE promet pas : `avec_le_dessin` relit le corps COURANT de la
@@ -126,7 +133,7 @@ def marqueur(version, lignes: int) -> str:
     qui ne visent pas la ligne d'où le marqueur vient : `op=create` (rien à relire),
     un slug neuf, un `scope` omis (le défaut d'écriture est `user` — on relit l'org et
     on écrit chez soi, ADR 0068), et le marqueur simplement non recopié. Le dessin est
-    alors perdu — pas en silence (`diagram_warning` le dit), mais après coup.
+    alors perdu : la nouvelle version n'en a plus, ce qui est permis mais pas voulu.
 
     Un texte servi est du code de prod : une promesse sans condition sera crue."""
     return (f"<!-- flowchart: v{version}, {lignes} lines, omitted here — keep this line "
@@ -149,10 +156,16 @@ def porte_le_marqueur(body_md: str) -> bool:
     return bool(_MARQUEUR.search(body_md or ""))
 
 
+def marqueur_sans_dessin(body_md: str, courant_md: str) -> bool:
+    """Le corps envoyé porte le marqueur, mais le corps courant n'a pas de dessin à
+    remettre : `avec_le_dessin` va effacer la ligne, et le dessin est perdu ici."""
+    return porte_le_marqueur(body_md) and trouver_le_dessin(courant_md) is None
+
+
 def avec_le_dessin(body_md: str, courant_md: str) -> str:
     """Le corps à ÉCRIRE : chaque marqueur remplacé par le dessin du corps courant.
     Sans dessin courant (création, ou une procédure qui n'en a jamais eu), le marqueur
-    s'efface — et le corps tombe sous `diagram_warning`, comme tout corps sans dessin."""
+    s'efface — et le corps s'écrit sans dessin, ce qui est permis."""
     if not porte_le_marqueur(body_md):
         return body_md
     etendue = trouver_le_dessin(courant_md)
@@ -163,8 +176,7 @@ def avec_le_dessin(body_md: str, courant_md: str) -> str:
 
 # ── Le dessin est là, mais il ne se dessinera pas ────────────────────────────
 #
-# `WARNING` couvre « rien de dessiné ». Il reste le cas qui coûte le plus cher :
-# l'auteur A dessiné, le bloc passe `is_drawing`, et le parseur du front le refuse
+# Le cas qui coûte le plus cher : l'auteur A dessiné, le bloc passe `is_drawing`, et le parseur du front le refuse
 # quand même — la page rend alors les caractères bruts, un pavé gris là où la
 # procédure devait montrer ses cartes. Le parseur compose pourtant une phrase
 # exacte sur ce qu'il n'a pas su lire, puis la jette. L'auteur (une IA, presque
@@ -261,18 +273,20 @@ def _phrase(fautes: list[dict]) -> str:
     et_le_reste = f" (+{reste} more)" if reste > 0 else ""
     return ("the drawing will NOT render as the flow figure, the page will show the "
             f"raw characters instead — {dites}{et_le_reste}. Line-level checks only: "
-            "a clean result is not a promise it renders, see the "
-            "`procedure-flowchart` guide for the shapes the grammar cannot say.")
+            "a clean result is not a promise it renders.")
 
 
-def diagram_check(body_md: str) -> dict:
+def diagram_check(body_md: str, *, marqueur_perdu: bool = False) -> dict:
     """Check croisé à l'écriture, dans la forme des autres (`slots_check`,
     `write_check`) : la clé est TOUJOURS présente, `None` = le check a tourné et
-    n'a rien trouvé à dire. Best-effort — un check ne casse jamais une écriture."""
+    n'a rien trouvé à dire. Best-effort — un check ne casse jamais une écriture.
+
+    Aucun dessin : rien à dire — le dessin est facultatif. Le check ne parle que d'un
+    dessin présent (deux dessins, ou un tracé qui ne se dessinera pas)."""
     try:
         combien = compter_les_dessins(body_md)
         if combien == 0:
-            return {"diagram_warning": WARNING}
+            return {"diagram_warning": PERDU if marqueur_perdu else None}
         if combien > 1:
             return {"diagram_warning": DOUBLE}
         # Un seul dessin : reste à dire s'il se dessinera.

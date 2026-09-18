@@ -46,7 +46,7 @@ Oto — TA boîte à outils d'automatisation (prospection B2B, données entrepri
 
 ⚠️ Ce texte est souvent TRONQUÉ ou non livré par le client. Mode d'emploi complet = guide `notice` (`oto_guide op=read slug=notice`) — lis-le d'abord, puis `oto_context` (contexte de ton org). L'essentiel :
 
-- **Procédure d'abord** : `oto_procedure op=list` — une procédure existante fait autorité. En écrire une = son dessin (guide `procedure-flowchart`) ; `op=set` rend `diagram_warning` s'il manque.
+- **Procédure d'abord** : `oto_procedure op=list` — une procédure existante fait autorité.
 - **Encadre et remonte** : `run_start(label, guide?)` → `_run_id=` sur CHAQUE appel → `run_finish(run_id, done|failed|blocked)`. Échec d'outil ou capacité manquante → `feedback(signal='gap'|'tool_feedback')`, immédiatement, de toi-même.
 - **Travaille dans un projet** : agir POUR un projet = `_project=<id>` sur chaque appel ; tâche ad-hoc = crée un projet, jamais hors-sol.
 - **Aucun état de session** : tout contexte se passe DANS l'appel : `_project`/`_org`/`_group`/`_account`/`_instance` (optionnels — omis = défaut) et `_run_id`, OBLIGATOIRE dès qu'un run est ouvert ou une ligne réservée (sinon écriture REFUSÉE).

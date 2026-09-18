@@ -94,9 +94,9 @@ def test_a_mermaid_block_is_not_this_grammar():
     assert "NOT render" not in (diagram_check("```mermaid\nflowchart TD\n  A --> B\n```")["diagram_warning"] or "")
 
 
-def test_a_body_with_no_drawing_is_the_old_warning():
-    said = diagram_check("# Just prose\n\nNothing drawn here.")["diagram_warning"]
-    assert said is not None and "NOT render" not in said
+def test_a_body_with_no_drawing_is_silent():
+    """Le dessin est facultatif depuis le 18/09/2026 : son absence ne dit rien."""
+    assert diagram_check("# Just prose\n\nNothing drawn here.")["diagram_warning"] is None
 
 
 def test_a_rejoining_lane_is_legal():
