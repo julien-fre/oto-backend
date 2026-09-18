@@ -474,3 +474,23 @@ def compute_row_formulas(schema: Optional[dict], row: dict) -> dict[str, dict]:
             entree["comment"] = provenance
         out[cle] = entree
     return out
+
+
+def _formulas_by_key(schema: Optional[dict]) -> dict[str, str]:
+    return {f["key"]: f["formula"] for f in (schema or {}).get("fields") or []
+            if isinstance(f, dict) and f.get("type") == "formula"
+            and isinstance(f.get("key"), str) and isinstance(f.get("formula"), str)}
+
+
+def formules_neuves_ou_modifiees(avant: Optional[dict], apres: Optional[dict]) -> bool:
+    """`True` si `apres` déclare au moins une colonne `type: "formula"` ABSENTE de
+    `avant`, ou dont le texte `formula` a changé — le déclencheur du backfill
+    (oto-backend#1008) : poser ou modifier une formule recalcule TOUTES les lignes
+    existantes, une seule fois, pour ce changement de schéma. Une formule retirée,
+    ou re-déclarée à l'identique, ne déclenche rien — `compute_row_formulas` calcule
+    de toute façon TOUTES les colonnes formule du schéma courant à chaque passage :
+    inutile de cibler la colonne précise, une seule détection suffit à armer le
+    recalcul de la ligne entière."""
+    anciennes = _formulas_by_key(avant)
+    nouvelles = _formulas_by_key(apres)
+    return any(nouvelles.get(k) != anciennes.get(k) for k in nouvelles)

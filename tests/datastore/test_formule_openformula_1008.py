@@ -241,3 +241,112 @@ def test_appliquer_formules_recalcule_quand_une_entree_change():
     merged["code"] = "AA002"
     store._appliquer_formules(_schema_zones(), merged)
     assert merged["zone"]["valeur"] == "Bob"
+
+
+# ── backfill à la pose/modification de la formule, sur vrai PostgreSQL ───────
+# Complète #1010 : poser ou modifier une formule doit recalculer TOUTES les
+# lignes existantes — pas seulement les écritures qui suivent. Vrai Postgres,
+# jamais un double : ce qu'on vérifie ici, c'est ce que le STORE persiste.
+
+import uuid
+
+
+def _store_1008():
+    from oto_mcp.datastore.core import make_store
+    return make_store("sub-test-1008")
+
+
+def _donnees_1008(ns_id: int, row_id: str) -> dict:
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        r = conn.execute(
+            "SELECT data FROM datastore_rows WHERE ns_id = %s AND row_id = %s",
+            (ns_id, row_id)).fetchone()
+    return dict((r or {}).get("data") or {})
+
+
+def _poser_origine_brute(ns_id: int, row_id: str, champ: str, valeur: str) -> None:
+    """Plante une couche `origine` directement en base, AVANT que la colonne ne
+    devienne une formule (une fois `type: formula`, la colonne est readonly —
+    on ne peut plus y écrire par le chemin normal).
+
+    ⚠️ `jsonb_set` ne crée QUE le dernier élément manquant d'un chemin, jamais
+    les intermédiaires (doc Postgres) : `jsonb_set(data, '{zone,origine}', …)`
+    est un NO-OP SILENCIEUX quand `zone` n'existe pas encore. On fusionne donc
+    au niveau du champ (`||`), en partant de son objet existant ou de `{}`."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE datastore_rows SET data = data || jsonb_build_object("
+            "  %s::text, COALESCE(data->%s::text, '{}'::jsonb) "
+            "    || jsonb_build_object('origine', %s::jsonb)"
+            ") WHERE ns_id = %s::bigint AND row_id = %s::text",
+            (champ, champ, f'{{"valeur": "{valeur}"}}', ns_id, row_id))
+
+
+def test_poser_une_formule_recalcule_les_lignes_existantes(live):
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    ns_id = db.create_datastore("user", "sub-test-1008", ns)
+    st = _store_1008()
+    st.set_schema(ns, {"fields": [{"key": "code", "type": "text"}]})
+    r1 = st.append_row(ns, {"code": "AA001"})
+    r2 = st.append_row(ns, {"code": "AA002"})
+
+    pose = st.set_schema(ns, _schema_zones())
+
+    assert pose.get("formules_recalculees") == 2
+    d1 = _donnees_1008(ns_id, r1["_id"])
+    d2 = _donnees_1008(ns_id, r2["_id"])
+    assert d1["zone"]["valeur"] == "Alice"
+    assert "comment" in d1["zone"]
+    assert d2["zone"]["valeur"] == "Bob"
+
+
+def test_backfill_ne_touche_jamais_la_couche_origine(live):
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    ns_id = db.create_datastore("user", "sub-test-1008", ns)
+    st = _store_1008()
+    st.set_schema(ns, {"fields": [
+        {"key": "code", "type": "text"}, {"key": "zone", "type": "text"}]})
+    row = st.append_row(ns, {"code": "AA001"})
+    _poser_origine_brute(ns_id, row["_id"], "zone", "VALEUR HISTORIQUE DE LA CLIENTE")
+
+    st.set_schema(ns, _schema_zones())
+
+    d = _donnees_1008(ns_id, row["_id"])
+    assert d["zone"]["origine"] == {"valeur": "VALEUR HISTORIQUE DE LA CLIENTE"}
+    assert d["zone"]["valeur"] == "Alice"
+
+
+def test_modifier_le_texte_de_la_formule_recalcule_a_nouveau(live):
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    ns_id = db.create_datastore("user", "sub-test-1008", ns)
+    st = _store_1008()
+    st.set_schema(ns, _schema_zones())
+    row = st.append_row(ns, {"code": "AA001"})
+    assert _donnees_1008(ns_id, row["_id"])["zone"]["valeur"] == "Alice"
+
+    autre = {"fields": [
+        {"key": "code", "type": "text"},
+        {"key": "zone", "type": "formula",
+         "formula": 'IFS(TRUE(); "toujours-pareil")'}]}
+    pose = st.set_schema(ns, autre)
+
+    assert pose.get("formules_recalculees") == 1
+    assert _donnees_1008(ns_id, row["_id"])["zone"]["valeur"] == "toujours-pareil"
+
+
+def test_reposer_la_meme_formule_ne_recalcule_rien(live):
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    db.create_datastore("user", "sub-test-1008", ns)
+    st = _store_1008()
+    st.set_schema(ns, _schema_zones())
+    st.append_row(ns, {"code": "AA001"})
+
+    pose = st.set_schema(ns, _schema_zones())
+
+    assert "formules_recalculees" not in pose
