@@ -417,13 +417,8 @@ from oto_mcp.db import _schema, schema
 # retiré du produit au profit du seul token long, `code`/son index sont désormais
 # documentés comme LEGACY plutôt que comme le mécanisme de partage courant.
 # 159 935 → 160 173 (+238).
-# 18/09/2026 (ADR 0073, la fonction) — fragment NEUF `schema/functions.py`, posé EN FIN
-# d'assemblage : deux tables neuves, `functions` (identité, version publiée) et
-# `function_versions` (chaque version, immuable, et son statut), sans FK vers une autre
-# table que la première. ADDITIF : la prod qui tourne l'ancien code ne les voit pas.
-# 161 215 → 163 324 (+2 109, commentaires du fragment compris).
-EMPREINTE = "2768c5b22ebf4d6aac3b2039d973ff246ebae421a10bada80426357b7c885ad3"
-LONGUEUR = 163324
+EMPREINTE = "42364eca29b4edd995d138ea97f249de98ff1cfb0a00b973ebecf2ab3b32f27c"
+LONGUEUR = 161215
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

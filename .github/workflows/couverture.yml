@@ -48,14 +48,6 @@ jobs:
         # `pytest-cov` n'est PAS dans les deps dev : il ne sert qu'ici, et l'ajouter à
         # `[dev]` le ferait installer à chaque run de CI sans que personne s'en serve.
         run: pip install -e ".[dev]" pytest-cov
-      - name: Bac à sable des fonctions (ADR 0073)
-        # Deno, Pyodide et les roues de la liste blanche, épinglés et vérifiés par
-        # empreinte. Sans lui, les bancs de l'exécuteur ÉCHOUENT en CI (ils ne se taisent
-        # que sur un poste qui n'en a pas posé) : un banc de sécurité muet en CI serait
-        # le pire des verts.
-        run: |
-          python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
-          echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
       - name: Mesure
         env:
           # Même raison que le job `test` : ce conteneur est isolé, la garde à 2 places

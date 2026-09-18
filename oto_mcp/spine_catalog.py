@@ -146,13 +146,6 @@ SPINE_FAMILIES: tuple[SpineFamily, ...] = (
         "déclencheurs programmés",
     ),
     SpineFamily(
-        "oto_function",
-        ("oto_function",),
-        "fonctions : du code pur stocké et exécuté par Oto pour un calcul exact "
-        "(entrée JSON → résultat, avertissements, fichiers), versionné, publié par la "
-        "plateforme après ses tests",
-    ),
-    SpineFamily(
         "oto_upload_url",
         ("oto_upload_url",),
         "pousser un contenu volumineux dans oto par URL signée à usage unique, au lieu "

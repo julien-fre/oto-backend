@@ -122,14 +122,6 @@ jobs:
           cache: pip
       - name: Install (deps + dev)
         run: pip install -e ".[dev]"
-      - name: Bac à sable des fonctions (ADR 0073)
-        # Deno, Pyodide et les roues de la liste blanche, épinglés et vérifiés par
-        # empreinte. Sans lui, les bancs de l'exécuteur ÉCHOUENT en CI (ils ne se taisent
-        # que sur un poste qui n'en a pas posé) : un banc de sécurité muet en CI serait
-        # le pire des verts.
-        run: |
-          python scripts/installer_bac_a_sable.py "$RUNNER_TEMP/bac-a-sable"
-          echo "OTO_FUNCTIONS_SANDBOX_DIR=$RUNNER_TEMP/bac-a-sable" >> "$GITHUB_ENV"
       - name: Tests
         # `--durations=25` n'ajoute qu'un tableau en fin de sortie : aucune sélection,
         # aucun comportement changé, aucune seconde de plus. Il est là parce que
