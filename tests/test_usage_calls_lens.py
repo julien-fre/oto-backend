@@ -24,20 +24,22 @@ import uuid
 import pytest
 
 from oto_mcp.capabilities import org_monitoring as om
-from oto_mcp.capabilities._types import ResolvedCtx
+from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 CTX = ResolvedCtx(sub="membre", org_id=7)
 
 
 # ── La forme servie (store simulé) ─────────────────────────────────────────────
 
-def _fake(monkeypatch, *, calls, total, suivant=None, until="2026-09-01T10:00:00.0Z"):
+def _fake(monkeypatch, *, calls, total, suivant=None, until="2026-09-01T10:00:00.0Z",
+          inconnus=()):
     vu: dict = {}
 
     def faux(org_id, tool, **kw):
         vu.update(org_id=org_id, tool=tool, **kw)
         return {"until_effectif": until, "total": total,
-                "calls": [dict(c) for c in calls], "next": suivant}
+                "calls": [dict(c) for c in calls], "next": suivant,
+                "unknown_run_ids": list(inconnus)}
 
     monkeypatch.setattr(om.db, "list_billable_calls_for_org", faux)
     return vu
@@ -112,10 +114,19 @@ def test_le_curseur_et_la_fenetre_sont_transmis_tels_quels(monkeypatch):
     assert vu["limit"] == 250
 
 
+def _refus(inp) -> AuthzDenied:
+    with pytest.raises(AuthzDenied) as e:
+        om._billable_calls(CTX, inp)
+    return e.value
+
+
 def test_l_outil_ou_le_run_est_obligatoire():
-    """Le relevé se lit par outil ou par run — c'est ce qui borne la fenêtre."""
-    with pytest.raises(Exception):
-        om.OrgBillableCallsInput(org_id=7)
+    """Le relevé se lit par outil ou par run — c'est ce qui borne la fenêtre. Le
+    refus est levé par le HANDLER et NOMMÉ : levé par la validation pydantic, il
+    sortait en `400 invalid_input` nu (cf. le banc REST plus bas)."""
+    d = _refus(om.OrgBillableCallsInput(org_id=7))
+    assert (d.status, d.code) == (400, "invalid_input")
+    assert "`tool` ou `run_id` est requis" in d.message
     om.OrgBillableCallsInput(org_id=7, tool="t")
     om.OrgBillableCallsInput(org_id=7, run_id="r-1")
 
@@ -123,13 +134,83 @@ def test_l_outil_ou_le_run_est_obligatoire():
 def test_plusieurs_runs_en_une_lecture_et_une_borne():
     """La forme répétée de la query string arrive en liste, la forme à virgule en
     chaîne : les deux donnent la même liste, dédoublonnée. Au-delà de la borne,
-    refus — jamais une troncature silencieuse."""
+    refus nommé — jamais une troncature silencieuse."""
     assert om.OrgBillableCallsInput(org_id=7, run_id=["a", "b", "a"]).run_id == ["a", "b"]
     assert om.OrgBillableCallsInput(org_id=7, run_id="a, b").run_id == ["a", "b"]
-    with pytest.raises(Exception):
-        om.OrgBillableCallsInput(org_id=7, run_id=[f"r{i}" for i in range(om.MAX_BILLABLE_RUNS + 1)])
-    with pytest.raises(Exception):
-        om.OrgBillableCallsInput(org_id=7, run_id=" , ")
+    trop = _refus(om.OrgBillableCallsInput(
+        org_id=7, run_id=[f"r{i}" for i in range(om.MAX_BILLABLE_RUNS + 1)]))
+    assert trop.status == 400 and f"au plus {om.MAX_BILLABLE_RUNS} runs" in trop.message
+    assert om.OrgBillableCallsInput(org_id=7, run_id=" , ").run_id is None
+    assert "`tool` ou `run_id`" in _refus(om.OrgBillableCallsInput(org_id=7, run_id=" , ")).message
+
+
+def test_les_deux_formes_se_melangent_dans_une_meme_url():
+    """`?run_id=a,b&run_id=c` arrive en `["a,b", "c"]` : chaque élément de la LISTE
+    se redécoupe lui aussi. Laissé entier, `"a,b"` ne désignait aucun run — `total: 0`
+    en silence sur un tuyau de facturation."""
+    assert om.OrgBillableCallsInput(org_id=7, run_id=["a,b", "c", " a"]).run_id == ["a", "b", "c"]
+    trop = [",".join(f"r{i}" for i in range(om.MAX_BILLABLE_RUNS)), "encore-un"]
+    assert "au plus" in _refus(om.OrgBillableCallsInput(org_id=7, run_id=trop)).message
+
+
+def test_les_runs_inconnus_de_l_org_sont_rendus(monkeypatch):
+    """Un run inconnu rend `total: 0` comme un run qui n'a rien consommé : la réponse
+    dit lesquels des runs demandés ne sont pas ceux de l'org."""
+    _fake(monkeypatch, total=0, calls=[], inconnus=["r-faute"])
+    out = om._billable_calls(CTX, om.OrgBillableCallsInput(org_id=7, run_id="r-1,r-faute"))
+    assert out["unknown_run_ids"] == ["r-faute"]
+    assert om.OrgBillableCalls(**out).unknown_run_ids == ["r-faute"]
+
+
+async def _par_rest(monkeypatch, query: str, *, store: bool = False):
+    """La route SERVIE `GET /api/orgs/{id}/usage/calls`, adaptateur REST compris —
+    c'est lui qui avalait le message du refus."""
+    import json
+
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+
+    from oto_mcp.capabilities import _authz, _rest_adapter
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
+    monkeypatch.setattr(_authz.roles, "is_org_member", lambda sub, org_id: True)
+    monkeypatch.setattr(_authz.access, "get_user_role", lambda sub: "member")
+    vu = _fake(monkeypatch, total=0, calls=[]) if store else None
+    cap = next(c for c in CAPABILITIES if c.key == "org.usage.calls")
+
+    def _json_error(_req, status, code, message=None, **_kw):
+        return JSONResponse({"error": code, "detail": message}, status_code=status)
+
+    def _json_response(_req, payload, status=200):
+        return JSONResponse(payload, status_code=status)
+
+    async def _auth(_req, _verifier, **_kw):
+        return "membre", None
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    handler = _rest_adapter._make_handler(cap, cap.rest, None, _auth,
+                                          _json_response, _json_error)
+    rep = await handler(Request({"type": "http", "method": "GET",
+                                 "path": "/api/orgs/7/usage/calls", "headers": [],
+                                 "query_string": query.encode(),
+                                 "path_params": {"id": "7"}}, _receive))
+    return rep.status_code, json.loads(bytes(rep.body)), vu
+
+
+@pytest.mark.asyncio
+async def test_le_refus_arrive_NOMME_par_la_route_servie(monkeypatch):
+    code, corps, _ = await _par_rest(monkeypatch, "")
+    assert code == 400 and corps["error"] == "invalid_input"
+    assert "`tool` ou `run_id` est requis" in (corps["detail"] or "")
+
+
+@pytest.mark.asyncio
+async def test_l_url_mixte_descend_au_store_decoupee(monkeypatch):
+    code, corps, vu = await _par_rest(monkeypatch, "run_id=a,b&run_id=c", store=True)
+    assert code == 200, corps
+    assert vu["run_ids"] == ["a", "b", "c"]
 
 
 def test_le_run_est_transmis_et_rendu_sur_chaque_appel(monkeypatch):
@@ -302,7 +383,30 @@ def test_le_store_rend_ce_qu_UN_run_a_consomme_tous_outils_confondus(live):
 
     hors = db.list_billable_calls_for_org(org, "linkedin_aiark_search", **fenetre)
     assert {c["run_id"] for c in hors["calls"]} == {run, voisin, None}
+    assert p["unknown_run_ids"] == deux["unknown_run_ids"] == hors["unknown_run_ids"] == []
 
     with pytest.raises(ValueError):
         db.list_billable_calls_for_org(org, **fenetre)
 
+
+def test_le_store_nomme_les_runs_qui_ne_sont_pas_ceux_de_l_org(live):
+    """Un run inconnu, et le run d'une AUTRE org, sortent dans `unknown_run_ids` — au
+    même titre, sans dire que le second existe ailleurs. Un run de l'org qui n'a rien
+    consommé (ligne `runs` seule) n'y est PAS : c'est tout l'écart avec `total: 0`."""
+    from oto_mcp import db, org_store
+
+    sub = "sub-runk-" + uuid.uuid4().hex[:6]
+    org = org_store.create_org("Runs connus", created_by=sub)
+    autre = org_store.create_org("Runs d'ailleurs", created_by=sub)
+    journalise, muet, ailleurs, faute = ("run-" + uuid.uuid4().hex[:8] for _ in range(4))
+    _poser(sub, org, quand="2026-08-20T10:00:00+00:00", quantity=5, key_mode="tenant",
+           run_id=journalise)                                   # connu par le journal seul
+    db.insert_run(muet, sub=sub, org_id=org, label="rien consommé")   # connu par `runs` seul
+    db.insert_run(ailleurs, sub=sub, org_id=autre, label="autre org")
+    _poser(sub, autre, quand="2026-08-20T10:01:00+00:00", run_id=ailleurs)
+
+    fenetre = {"since": "2026-08-10T00:00:00+00:00", "until": "2026-08-21T00:00:00+00:00"}
+    p = db.list_billable_calls_for_org(org, run_ids=[faute, journalise, ailleurs, muet],
+                                       **fenetre)
+    assert p["total"] == 1
+    assert p["unknown_run_ids"] == [faute, ailleurs]

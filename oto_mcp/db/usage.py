@@ -1112,7 +1112,7 @@ def list_billable_calls_for_org(
 ) -> dict:
     """Les appels FACTURABLES d'un outil et/ou d'un run sous une org — la lentille membre du
     relevé de consommation (`org.usage.calls`). Rend
-    `{until_effectif, total, calls, next}`, **même contrat que
+    `{until_effectif, total, calls, next, unknown_run_ids}`, **même contrat que
     `export_tool_calls_for_org`**, et pour les mêmes raisons :
 
     - une seule construction de clauses (`_audit_window_clauses` + l'outil),
@@ -1138,7 +1138,14 @@ def list_billable_calls_for_org(
     `run_ids` (et la colonne rendue `run_id`) : ce qu'un ou plusieurs runs ont
     consommé, tous outils confondus — `idx_tool_calls_run` sert le filtre. Il reste
     sous `org_id` : nommer le run d'une autre org ne rend rien. Au moins un de
-    `tool`/`run_ids`."""
+    `tool`/`run_ids`.
+
+    `unknown_run_ids` : ceux des `run_ids` qui ne désignent aucun run de CETTE org —
+    ni ligne `runs` à son `org_id`, ni appel journalisé sous elle (un run d'avant la
+    table `runs` n'a que le journal) —, dans l'ordre demandé. C'est ce qui distingue
+    un run inconnu d'un run qui n'a rien consommé, les deux rendant `total: 0`. Le run
+    d'une autre org y figure comme un id inexistant : aucun oracle. Même snapshot que
+    le reste."""
     if not tool and not run_ids:
         raise ValueError("list_billable_calls_for_org : `tool` ou `run_ids` requis")
     limit = max(1, min(int(limit), 5000))
@@ -1179,12 +1186,26 @@ def list_billable_calls_for_org(
             tuple(page_params + [limit + 1]),
         ).fetchall()
 
+        inconnus = [r["run_id"] for r in conn.execute(
+            """
+            SELECT d.run_id
+              FROM unnest(%s::text[]) WITH ORDINALITY AS d(run_id, rang)
+             WHERE NOT EXISTS (SELECT 1 FROM runs r
+                                WHERE r.run_id = d.run_id AND r.org_id = %s)
+               AND NOT EXISTS (SELECT 1 FROM tool_calls t
+                                WHERE t.run_id = d.run_id AND t.org_id = %s)
+             ORDER BY d.rang
+            """,
+            (list(run_ids), org_id, org_id),
+        ).fetchall()] if run_ids else []
+
     encore = len(rows) > limit
     rows = [dict(r) for r in rows[:limit]]
     for r in rows:
         r["found"] = _found_from_row(r)
     return {"until_effectif": until, "total": total, "calls": rows,
-            "next": (rows[-1]["created_at"], rows[-1]["id"]) if encore and rows else None}
+            "next": (rows[-1]["created_at"], rows[-1]["id"]) if encore and rows else None,
+            "unknown_run_ids": inconnus}
 
 
 def instruction_usage(

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .. import db, deprecations
 from . import audit_log, monitoring
@@ -668,6 +668,13 @@ class OrgBillableCalls(BaseModel):
     until_effectif: str
     next_at: Optional[str] = None
     next_id: Optional[int] = None
+    # Les `run_id` DEMANDÉS qui ne désignent aucun run de CETTE org — ni dans `runs`,
+    # ni dans son journal. Sans lui, un run inconnu (faute de frappe, id tronqué) rend
+    # `total: 0`, indiscernable d'un run réel qui n'a rien consommé : un relevé de
+    # facturation qui se trompe EN SILENCE. Le run d'une AUTRE org y figure aussi, au
+    # même titre qu'un id inexistant — la lentille ne dit pas qu'il existe ailleurs.
+    # `[]` sans filtre par run.
+    unknown_run_ids: list[str] = Field(default_factory=list)
 
 
 # Une page de runs côté app en montre 50 ; la borne laisse de la marge sans ouvrir
@@ -697,25 +704,34 @@ class OrgBillableCallsInput(BaseModel):
     @field_validator("run_id", mode="after")
     @classmethod
     def _runs_en_liste(cls, v):
+        # Chaque élément se redécoupe sur la virgule, liste comprise : les deux formes
+        # se MÉLANGENT dans une vraie URL (`?run_id=a,b&run_id=c`), et un élément `"a,b"`
+        # laissé entier ne désignerait aucun run — `total: 0` en silence.
+        # NORMALISE seulement : les refus (ni outil ni run, trop de runs) se lèvent dans
+        # le handler. Levés ici, ils deviendraient une `ValidationError`, que
+        # l'adaptateur REST rend en `400 invalid_input` NU — sans la phrase qui dit quoi
+        # corriger.
         if v is None:
             return None
-        brut = v if isinstance(v, list) else str(v).split(",")
-        runs = list(dict.fromkeys(m for m in (str(x).strip() for x in brut) if m))
-        if len(runs) > MAX_BILLABLE_RUNS:
-            raise ValueError(f"au plus {MAX_BILLABLE_RUNS} runs par lecture "
-                             f"({len(runs)} demandés)")
+        brut = v if isinstance(v, list) else [v]
+        runs = list(dict.fromkeys(
+            m for x in brut for m in (p.strip() for p in str(x).split(",")) if m))
         return runs or None
-
-    @model_validator(mode="after")
-    def _outil_ou_run(self):
-        # Ni l'un ni l'autre = tout le journal de l'org : ce que la lentille refuse.
-        if not self.tool and not self.run_id:
-            raise ValueError("`tool` ou `run_id` est requis : le relevé se lit par "
-                             "outil ou par run, jamais sur tout le journal")
-        return self
 
 
 def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
+    # Refus NOMMÉS (`AuthzDenied` : message rendu tel quel par les deux faces), même
+    # code que l'adaptateur pour une entrée invalide — le contrat ne change pas, le
+    # client apprend enfin pourquoi.
+    if not inp.tool and not inp.run_id:
+        # Ni l'un ni l'autre = tout le journal de l'org : ce que la lentille refuse.
+        raise AuthzDenied(400, "invalid_input",
+                          "`tool` ou `run_id` est requis : le relevé se lit par outil ou "
+                          "par run, jamais sur tout le journal.")
+    if inp.run_id and len(inp.run_id) > MAX_BILLABLE_RUNS:
+        raise AuthzDenied(400, "invalid_input",
+                          f"au plus {MAX_BILLABLE_RUNS} runs par lecture "
+                          f"({len(inp.run_id)} demandés).")
     before = ((inp.before_at, inp.before_id)
               if inp.before_at and inp.before_id is not None else None)
     page = db.list_billable_calls_for_org(
@@ -734,6 +750,7 @@ def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
         "until_effectif": page["until_effectif"],
         "next_at": nxt[0] if nxt else None,
         "next_id": nxt[1] if nxt else None,
+        "unknown_run_ids": page["unknown_run_ids"],
     }
 
 
