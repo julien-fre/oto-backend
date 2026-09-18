@@ -74,6 +74,7 @@ from .base import (  # noqa: F401 — ré-export de compatibilité
 # Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
 # de module, testables seules ; la table de routes ci-dessous reste ici.
 from . import alias_routes, public
+from . import datastore_export
 from . import media
 from . import projects
 from . import uploads
@@ -514,6 +515,15 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # monté par capability_routes plus bas.
         Route("/api/me/projects/{id}/export", bind(projects.me_project_export, verifier=verifier), methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),
+        # Export CSV d'un tableau entier — écrit à la main pour la même raison
+        # structurelle que l'export ZIP juste au-dessus : `text/csv`, pas du
+        # JSON (`api/datastore_export.py`). Le distingue : un CORPS STREAMÉ
+        # (`base._file_stream`), pas un blob déjà en mémoire — voir le docstring
+        # du module pour les trois contraintes mono-boucle qu'il tient.
+        Route("/api/datastores/{datastore}/rows/export.csv",
+              bind(datastore_export.export_csv, verifier=verifier), methods=["GET"]),
+        Route("/api/datastores/{datastore}/rows/export.csv", options_handler,
+              methods=["OPTIONS"]),
         *datastore_routes,
         *sirene_routes,
         *accords_routes,

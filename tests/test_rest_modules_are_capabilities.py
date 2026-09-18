@@ -217,6 +217,13 @@ _KNOWN: dict[str, str] = {
     # une route qui apparaît selon l'environnement ferait mentir ce cliquet sur une
     # machine et pas sur l'autre. Le dark launch vit dans le handler (404).
     "/api/me/billing/invoices/{id}/pdf": NATURE,         # réponse application/pdf
+    # L'export CSV d'un tableau entier (`api/datastore_export.py`) — même raison
+    # STRUCTURELLE que les deux au-dessus : `text/csv`, pas du JSON. STREAMÉ
+    # plutôt que matérialisé (un tableau peut porter des dizaines de milliers de
+    # lignes, à la différence d'une facture ou d'un export projet), via
+    # `base._file_stream` — même garde CORS que `_file`, cf.
+    # `tests/api/test_reponses_binaires_cors.py`.
+    "/api/datastores/{datastore}/rows/export.csv": NATURE,  # réponse text/csv, streamée
     "/api/orgs/{id}/logo": NATURE,                       # POST multipart
     # ⚠️ La TOOLBOX DU MEMBRE a quitté cette liste le 2026-08-27 : les six routes
     # `/api/me/tools*` sont des capacités (`capabilities/tools_me.py` —
