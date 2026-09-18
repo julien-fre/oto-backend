@@ -20,10 +20,18 @@ doit apparaître dans les ordres exécutés.
 from __future__ import annotations
 
 import re
+import sys
+from pathlib import Path
 
 import pytest
 
-from tests.test_boot_order_replay import _OrdresEnregistres, base_bootee  # noqa: F401
+# `tests/` n'est pas un package (pas de `__init__.py`) — un import `from tests.x
+# import y` marche en LOCAL (PYTHONPATH=. insère la racine du dépôt) mais PAS en
+# CI (pytest insère `tests/` lui-même dans `sys.path`, pas son parent). On importe
+# donc `test_boot_order_replay` comme module DE PREMIER NIVEAU, exactement comme
+# pytest le fait pour le charger lui-même.
+sys.path.insert(0, str(Path(__file__).parent))
+from test_boot_order_replay import _OrdresEnregistres, base_bootee  # noqa: E402,F401
 
 
 def _sql_rejoue(base_bootee) -> list[str]:
