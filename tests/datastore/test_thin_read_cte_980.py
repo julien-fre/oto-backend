@@ -275,3 +275,70 @@ def test_recherche_plein_texte_q_ne_passe_jamais_par_la_cte_mince(vivier):
     from oto_mcp.db.query import thin_read_cte_sql
     assert thin_read_cte_sql(vivier, "nord", None, "priorite") is None
 
+
+
+def _cte_par_colonne_1009(ns_id: int, keys: list[str]) -> tuple[str, list]:
+    """La forme de la CTE mince posée par #1009 : un `CASE WHEN data ? k THEN
+    jsonb_build_object(...)` PAR clé, combinés par `||` — DEUX références à
+    `data` par colonne référencée. Reconstruite ici tel quel (pas depuis le
+    dépôt, elle a été remplacée) pour comparer directement contre la forme à
+    lecture unique de ce lot, sur la MÊME base, sans le bruit du coût de
+    matérialisation qui domine la comparaison contre le tout premier patron
+    (sans aucun amincissement) à cette échelle synthétique."""
+    parts, params = [], []
+    for k in sorted(keys):
+        parts.append(
+            "CASE WHEN data ? %s::text THEN jsonb_build_object(%s::text, data->%s::text) "
+            "ELSE '{}'::jsonb END")
+        params += [k, k, k]
+    combine = " || ".join(parts) if len(parts) > 1 else parts[0]
+    cte = (
+        "s AS MATERIALIZED ("
+        f"SELECT row_id, created_at, updated_at, {combine} AS data "
+        "FROM datastore_rows WHERE ns_id = %s)"
+    )
+    params.append(ns_id)
+    return cte, params
+
+
+def test_lecture_unique_lit_moins_de_blocs_que_la_forme_par_colonne_de_1009(vivier):
+    """Le point précis mesuré par oto cd en prod après #1009 : la forme
+    `CASE WHEN data ? k THEN jsonb_build_object(...)` PAR colonne relit `data`
+    DEUX fois par colonne référencée (`data ? k` puis `data->k`) — pour 2
+    colonnes (le cas filtres réel), 4 détoastages/ligne au lieu de 2 avec
+    `jsonb_each` (UNE lecture de `data`, quel que soit le nombre de colonnes).
+    Comparé DIRECTEMENT contre #1009 (pas contre l'absence totale
+    d'amincissement) : ça isole le gain de cette forme précise du bruit de
+    matérialisation qui, à l'échelle synthétique de ce banc, masquait le gain
+    dans `test_deux_filtres_combines_comptent_juste_par_la_cte_mince`
+    ci-dessus."""
+    keys = ["categorie", "priorite"]
+
+    ancienne_cte, ancienne_params = _cte_par_colonne_1009(vivier, keys)
+    ancien_sql = f"WITH {ancienne_cte} SELECT count(*) AS n FROM s"
+    blocs_avant = _relations_buffers(ancien_sql, tuple(ancienne_params))
+
+    from oto_mcp.db.query import thin_read_cte_sql
+    thin = thin_read_cte_sql(
+        vivier, None,
+        [{"field": "categorie", "op": "in", "value": ["nord", "sud"]},
+         {"field": "priorite", "op": "in", "value": ["1", "2"]}])
+    assert thin is not None
+    cte_sql, cte_params, where_sql, where_params = thin
+    nouveau_sql = f"WITH {cte_sql} SELECT count(*) AS n FROM s {where_sql}"
+    blocs_apres = _relations_buffers(nouveau_sql, tuple(cte_params + where_params))
+
+    assert blocs_apres < blocs_avant, (
+        f"la lecture unique (jsonb_each) devait lire moins de blocs que la "
+        f"forme par-colonne de #1009 : avant={blocs_avant}, après={blocs_apres}")
+
+    # Mêmes VALEURS entre les deux CTE elles-mêmes (le comptage total de la
+    # CTE amincie, avant tout filtre applicatif, doit être identique — les
+    # deux formes projettent la MÊME table, juste avec un coût différent).
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        n_avant = conn.execute(ancien_sql, tuple(ancienne_params)).fetchone()["n"]
+        n_apres = conn.execute(
+            f"WITH {cte_sql} SELECT count(*) AS n FROM s",
+            tuple(cte_params)).fetchone()["n"]
+    assert n_avant == n_apres == 6000
