@@ -368,11 +368,22 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         #
         # Le pré-calcul ne coûte que là où le danger existe : deux tableaux du parc
         # portent des reliques, tous les autres sortent sur le test de présence.
+        #
+        # oto-backend#980 (suite, profil GIL de prod, 18/09/2026) : `any(f.startswith(k
+        # + ".") ...)` était réévalué pour CHAQUE clé de la ligne, en reparcourant
+        # `fields` à chaque fois — quadratique en (clés de la ligne × colonnes de
+        # `fields`). Avec `fields` à 144 colonnes, c'était la première feuille de code
+        # applicatif au profil GIL (~9%), devant `_row_to_dict` elle-même. Les BASES de
+        # `fields` (`"email.origine"` → base `"email"`) ne changent pas d'une clé à
+        # l'autre : les calculer UNE FOIS par ligne, puis tester l'appartenance à cet
+        # ensemble, passe de O(clés × champs) à O(clés + champs).
+        bases_demandees = (frozenset(f.split(".", 1)[0] for f in fields)
+                            if projette else frozenset())
+
         def _pertinente(k: str) -> bool:
             """`k` (ou une de ses couches, `k.origine`…) est demandée — seul cas où
             `flat_layers(k, …)` vaut la peine d'être calculée sous projection."""
-            return not projette or k in fields or any(
-                f.startswith(k + ".") for f in fields)
+            return not projette or k in bases_demandees
 
         couches_servies: set = set()
         if layers != dsl.NESTED and any(

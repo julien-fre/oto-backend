@@ -127,6 +127,59 @@ def test_ordre_la_projection_doit_operer_AVANT_l_aplatissement():
         "la projection est appliquée APRÈS l'aplatissement, pas avant")
 
 
+# ── quadratique en clés-de-ligne × colonnes-de-fields, corrigé le 18/09/2026 ──
+# (profil GIL de prod, oto cd : `_pertinente` reparcourait `fields` en entier
+# pour CHAQUE clé de la ligne, deux fois — couches puis valeurs.)
+
+class _FieldsCompteIterations(frozenset):
+    """Un `frozenset` qui compte combien de fois on l'ITÈRE (`for f in fields`),
+    par opposition au nombre de tests d'appartenance (`in`), qui restent O(1)
+    et ne trahiraient pas un retour au balayage linéaire par clé."""
+    iterations: list = None
+
+    def __new__(cls, *args, **kwargs):
+        obj = super().__new__(cls, *args, **kwargs)
+        obj.iterations = []
+        return obj
+
+    def __iter__(self):
+        self.iterations.append(1)
+        return super().__iter__()
+
+
+def test_le_balayage_de_fields_ne_depend_plus_du_nombre_de_cles_de_la_ligne():
+    """Avant ce lot, `_pertinente` reparcourait `fields` (`any(f.startswith(...)
+    for f in fields)`) pour CHAQUE clé de `data`, deux fois (couches puis
+    valeurs) — un nombre d'itérations de `fields` proportionnel au nombre de
+    clés de la ligne. Ce banc compare une ligne à 5 clés et une ligne à 200
+    clés, MÊME `fields` : le nombre d'itérations de `fields` doit être IDENTIQUE
+    dans les deux cas (le pré-calcul des bases n'itère `fields` qu'une fois, au
+    début de l'appel — jamais par clé)."""
+    schema_5 = {"fields": [{"key": f"c{i}"} for i in range(5)]}
+    schema_200 = {"fields": [{"key": f"c{i}"} for i in range(200)]}
+    row_5 = {"row_id": "r5", "created_at": "t", "updated_at": "t",
+             "data": {f"c{i}": f"v{i}" for i in range(5)}}
+    row_200 = {"row_id": "r200", "created_at": "t", "updated_at": "t",
+               "data": {f"c{i}": f"v{i}" for i in range(200)}}
+
+    fields_5 = _FieldsCompteIterations({"c0", "c1"})
+    D.DatastorePg._row_to_dict(row_5, schema_5, fields=fields_5)
+    iterations_5_cles = len(fields_5.iterations)
+
+    fields_200 = _FieldsCompteIterations({"c0", "c1"})
+    D.DatastorePg._row_to_dict(row_200, schema_200, fields=fields_200)
+    iterations_200_cles = len(fields_200.iterations)
+
+    assert iterations_5_cles == iterations_200_cles, (
+        f"le nombre d'itérations de `fields` dépend du nombre de clés de la "
+        f"ligne ({iterations_5_cles} pour 5 clés, {iterations_200_cles} pour "
+        "200 clés) — le balayage est redevenu O(clés × champs), pas O(clés + "
+        "champs)")
+    assert iterations_5_cles <= 1, (
+        "fields` est itéré plus d'une fois par appel à _row_to_dict — le "
+        f"pré-calcul des bases n'est plus unique ({iterations_5_cles} fois)")
+
+
 @pytest.fixture
 def store(monkeypatch):
     rows = [{"row_id": f"r{i:02d}", "created_at": "t", "updated_at": "t",
