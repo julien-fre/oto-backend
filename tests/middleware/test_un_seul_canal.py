@@ -22,6 +22,7 @@ import pathlib
 
 from _mcp_app import static_mcp as _test_mcp
 
+import pytest
 from fastmcp import Client, FastMCP
 from oto.tools.common import FieldFilter
 from pydantic import BaseModel
@@ -35,14 +36,14 @@ _DEBT_FILE = pathlib.Path(__file__).resolve().parent.parent / "structured_output
 _PLAFOND = 120
 
 
-def _banc(fn, *, nom: str = "recherche", montage: bool = True):
+def _banc(fn, *, nom: str = "recherche", montage: bool = True, app: bool = False):
     """Un serveur d'un seul outil, sous la chaîne de middlewares du VRAI serveur — et,
     comme `_build_mcp`, le schéma déduit retiré au montage (`montage=False` pour
     reproduire un serveur qui aurait le middleware SANS le geste de montage)."""
     m = FastMCP("banc")
     for mw in _test_mcp().middleware:
         m.add_middleware(mw)
-    m.tool(name=nom)(fn)
+    m.tool(name=nom, **({"app": True} if app else {}))(fn)
     if montage:
         un_seul_canal.retirer_les_schemas_vides(m)
     return m
@@ -174,6 +175,27 @@ def test_un_schema_encore_declare_garde_son_canal():
     texte, structure, err = _servir(_banc(recherche, montage=False))
     assert not err
     assert structure == charge
+
+
+def test_une_app_garde_son_canal_structure():
+    """Une MCP App (`_meta.ui.resourceUri`) n'a pas de schéma de sortie, et son canal
+    structuré n'est pas une copie du texte : c'est l'UNIQUE entrée de sa carte. Le
+    retirer laissait le renderer Prefab sur « Waiting for content… » — toutes les
+    apps, du 10/09 au 18/09/2026 (signal #1083, `oto_doc_app`)."""
+    pytest.importorskip("prefab_ui")
+    from prefab_ui.components import Card, Text
+
+    def recherche():
+        with Card() as carte:
+            Text("SENTINELLE-CARTE")
+        return carte
+
+    m = _banc(recherche, app=True)
+    assert un_seul_canal.est_une_app(asyncio.run(m.get_tool("recherche")))
+    _, structure, err = _servir(m)
+    assert not err
+    assert structure is not None and "$prefab" in structure
+    assert "SENTINELLE-CARTE" in json.dumps(structure)
 
 
 def test_une_erreur_n_est_pas_touchee():

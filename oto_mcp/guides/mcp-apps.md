@@ -8,8 +8,11 @@ description: quand appeler un outil `*_app` plutôt que son équivalent JSON, ce
 Certains outils oto ne renvoient pas du JSON mais une **carte interactive rendue
 dans le chat** (table triable/cherchable, fiche dépliée, page mise en forme) : ce
 sont les **MCP Apps** (extension standard SEP-1865). L'utilisateur voit une vraie
-interface sans quitter la conversation ; toi tu reçois quand même le contenu en
-données structurées, que tu peux lire normalement.
+interface sans quitter la conversation. Ce que TOI tu lis, c'est le texte du
+résultat — la carte, tu ne la vois pas. `oto_doc_app` y met le contenu entier (la page,
+l'arbre, les extraits) ; les autres apps n'y mettent qu'un marqueur
+`[Rendered Prefab UI]` : pour lire leurs données, appelle l'outil JSON équivalent.
+Ne décris jamais une carte dont tu n'as pas lu le contenu.
 
 ## Les apps disponibles
 

@@ -5,11 +5,22 @@ enregistreurs, db/ownership/access stubbés (pas de DB), et on exerce la vraie
 closure. On prouve : l'arbre indente les enfants sous leur parent (DFS), la vue
 page rend le markdown, le défaut sans args résout la KB de l'org active, et un
 projet non lisible rend une carte message (jamais une fuite).
+
+Et le canal TEXTE (signal #1083) : l'hôte donne au modèle le seul `content`, la carte
+va à la vue. Chaque vue doit donc porter son contenu en texte — prouvé ici sur le stub,
+puis BOUT EN BOUT sur le vrai prefab_ui à travers la chaîne de middlewares servie
+(`test_bout_en_bout_…`), qui retirait le canal structuré de la carte.
 """
+import asyncio
+import json
 import sys
 import types
 
 import pytest
+# Importé ICI, avant tout stub : FastMCP fige `_HAS_PREFAB` à son premier import. Chargé
+# pour la première fois sous le stub de la fixture, il croirait prefab_ui absent — les
+# apps perdraient leur ressource d'UI et le test bout en bout jugerait un autre serveur.
+from fastmcp import Client, FastMCP
 
 
 # ── stub prefab_ui.components : composants enregistreurs (pile de contexte) ─────
@@ -93,22 +104,21 @@ DOCS = [
 ]
 
 
-@pytest.fixture
-def doc_app(monkeypatch):
-    _install_prefab_stub(monkeypatch)
-    _STACK.clear()
-    monkeypatch.delitem(sys.modules, "oto_mcp.tools.docs_app", raising=False)
-    import oto_mcp.tools.docs_app as da
+SENTINELLE = "SENTINELLE-1083 : le modèle lit ce corps"
+DOCS[1]["body_md"] = f"corps **gras** — {SENTINELLE}"
 
-    captured = {}
 
-    class _FakeMcp:
-        def tool(self, *a, **k):
-            def deco(fn):
-                captured[fn.__name__] = fn
-                return fn
-            return deco
+class _Rendu:
+    """Ce que `_rendu` remet à FastMCP : le texte au modèle, la carte (stub) à l'hôte.
+    Le vrai `ToolResult` ne sait pas sérialiser un composant stub — le vrai chemin est
+    joué par le test bout en bout."""
 
+    def __init__(self, content, structured_content):
+        self.texte = "".join(b.text for b in content)
+        self.carte = structured_content
+
+
+def _stub_backend(monkeypatch, da):
     monkeypatch.setattr(da.access, "current_user_sub_or_raise", lambda: "sub1")
     monkeypatch.setattr(da.access, "current_org", lambda sub: 42)
     monkeypatch.setattr(da.ownership, "can_access",
@@ -129,13 +139,33 @@ def doc_app(monkeypatch):
     monkeypatch.setattr(da.db, "search_docs_in_project",
                         lambda pid, q, **k: [{"id": 2, "title": "Enfant", "kind": "note",
                                               "snippet": "corps <b>gras</b>"}])
+
+
+@pytest.fixture
+def doc_app(monkeypatch):
+    _install_prefab_stub(monkeypatch)
+    _STACK.clear()
+    monkeypatch.delitem(sys.modules, "oto_mcp.tools.docs_app", raising=False)
+    import oto_mcp.tools.docs_app as da
+
+    captured = {}
+
+    class _FakeMcp:
+        def tool(self, *a, **k):
+            def deco(fn):
+                captured[fn.__name__] = fn
+                return fn
+            return deco
+
+    _stub_backend(monkeypatch, da)
+    monkeypatch.setattr(da, "ToolResult", _Rendu)
     da.register(_FakeMcp())
     assert "oto_doc_app" in captured, "oto_doc_app doit s'enregistrer avec le stub prefab_ui"
     return captured["oto_doc_app"]
 
 
 def test_tree_indents_children_under_parent(doc_app):
-    card = doc_app(project_id=7)
+    card = doc_app(project_id=7).carte
     tables = card.tables()
     assert len(tables) == 1
     pages = [r["page"] for r in tables[0].attrs["rows"]]
@@ -146,11 +176,11 @@ def test_tree_indents_children_under_parent(doc_app):
 
 
 def test_page_view_renders_markdown(doc_app):
-    card = doc_app(doc_id=2)
+    card = doc_app(doc_id=2).carte
     kinds = [n.kind for n in card.walk()]
     assert "Markdown" in kinds
     md = next(n for n in card.walk() if n.kind == "Markdown")
-    assert md.text == "corps **gras**"
+    assert md.text == DOCS[1]["body_md"]
     assert "Enfant" in card.texts()[0]
 
 
@@ -163,18 +193,85 @@ def test_default_resolves_active_org_kb(doc_app):
     qui renomme sa base — ce que fait justement le client anglophone qui la
     rebaptise « Knowledge base » — perd `oto_doc_app` sans argument, qui répond
     « Aucun projet ciblé » alors que sa KB est là, ancrée, lisible."""
-    card = doc_app()
+    card = doc_app().carte
     assert card.texts()[0] == "KB test"      # la KB (projet 7) a été résolue
     assert len(card.tables()) == 1
 
 
 def test_unreadable_project_yields_message_card(doc_app):
-    card = doc_app(project_id=99)
+    card = doc_app(project_id=99).carte
     assert "Projet introuvable" in card.texts()
     assert card.tables() == []
 
 
 def test_search_strips_headline_markup(doc_app):
-    card = doc_app(project_id=7, query="gras")
+    card = doc_app(project_id=7, query="gras").carte
     rows = card.tables()[0].attrs["rows"]
     assert rows[0]["extrait"] == "corps gras"
+
+
+# ── Le canal TEXTE : ce que le modèle lit (signal #1083) ─────────────────────────
+
+def test_la_page_arrive_au_modele_en_texte(doc_app):
+    """Le cas du 18/09 : le modèle ne recevait que « [Rendered Prefab UI] » et a résumé
+    une page qu'il n'avait pas lue. Le texte porte le titre ET le corps entier."""
+    texte = doc_app(doc_id=2).texte
+    assert texte.startswith("# Enfant")
+    assert SENTINELLE in texte
+
+
+def test_l_arbre_et_les_extraits_arrivent_au_modele_en_texte(doc_app):
+    arbre = doc_app(project_id=7).texte
+    for titre in ("KB test", "Racine", "Enfant", "Autre racine", "#3"):
+        assert titre in arbre
+    extraits = doc_app(project_id=7, query="gras").texte
+    assert "Enfant" in extraits and "corps gras" in extraits
+
+
+def test_une_carte_message_dit_son_message_au_modele(doc_app):
+    """Un refus se dit aussi en texte : un modèle qui ne lit que le marqueur croirait
+    la page servie."""
+    assert doc_app(project_id=99).texte == "Projet introuvable — Aucun projet #99 accessible."
+    assert "Page introuvable" in doc_app(doc_id=404).texte
+
+
+# ── Bout en bout : vrai prefab_ui, vraie chaîne de middlewares servie ────────────
+
+def test_bout_en_bout_le_modele_lit_la_page_et_la_carte_a_son_contenu(monkeypatch):
+    """Les deux pannes du 18/09, à travers ce que sert le vrai serveur :
+
+    - le TEXTE (ce que l'hôte donne au modèle) porte la page, pas le marqueur ;
+    - `structuredContent` (l'unique entrée du renderer Prefab, qui reste sur « Waiting
+      for content… » sans lui) survit à la chaîne : `UnSeulCanal` le retirait, l'outil
+      n'ayant pas de schéma de sortie ;
+    - la ressource d'UI annoncée par l'outil se lit, au type MIME des MCP Apps."""
+    pytest.importorskip("prefab_ui")
+    from _mcp_app import static_mcp
+
+    from oto_mcp.middleware import un_seul_canal
+
+    monkeypatch.delitem(sys.modules, "oto_mcp.tools.docs_app", raising=False)
+    import oto_mcp.tools.docs_app as da
+
+    m = FastMCP("banc")
+    for mw in static_mcp().middleware:
+        m.add_middleware(mw)
+    da.register(m)
+    un_seul_canal.retirer_les_schemas_vides(m)
+    _stub_backend(monkeypatch, da)
+
+    async def appel():
+        async with Client(m) as c:
+            outil = next(t for t in await c.list_tools() if t.name == "oto_doc_app")
+            r = await c.call_tool("oto_doc_app", {"doc_id": 2}, raise_on_error=False)
+            ui = (await c.read_resource(outil.meta["ui"]["resourceUri"]))[0]
+            return r, ui
+
+    r, ui = asyncio.run(appel())
+    assert not r.is_error
+    texte = "".join(getattr(b, "text", "") for b in r.content)
+    assert SENTINELLE in texte and "[Rendered Prefab UI]" not in texte
+    assert r.structured_content is not None, "la carte n'a rien à peindre"
+    assert "$prefab" in r.structured_content
+    assert SENTINELLE in json.dumps(r.structured_content, ensure_ascii=False)
+    assert ui.mimeType == "text/html;profile=mcp-app" and ui.text

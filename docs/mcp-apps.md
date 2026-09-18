@@ -98,6 +98,21 @@ nom nu. Trois conséquences à connaître :
 `test_platform_tools_are_capabilities.py` compte désormais les `@app.ui()` comme des
 tools écrits à la main : un point d'entrée `FastMCPApp` y passait sans être vu.
 
+## Deux canaux, deux lecteurs — le modèle ne voit pas la carte
+
+L'hôte peint la carte avec `structuredContent` et donne au **modèle** le seul `content`
+texte. Un tool qui rend un composant nu laisse FastMCP poser au texte le marqueur
+`[Rendered Prefab UI]` (`fastmcp/tools/base.py`, `_PREFAB_TEXT_FALLBACK`) : le modèle ne
+lit rien et invente ce qu'il résume (signal #1083, 18/09/2026, `oto_doc_app`). Une app
+qui montre un contenu que le modèle doit connaître rend
+`ToolResult(content=[<texte>], structured_content=<carte>)` — patron `docs_app._rendu`.
+
+Et le canal structuré d'une app n'est **jamais** retiré : c'est l'unique entrée du
+renderer Prefab, qui reste sinon sur « Waiting for content… ». `UnSeulCanalMiddleware`
+l'a retiré à toutes les apps du 10/09 au 18/09/2026 ; il reconnaît désormais une app à
+son `_meta.ui.resourceUri` (`est_une_app`). Les deux sont prouvés bout en bout dans
+`tests/test_docs_app.py`, à travers la chaîne de middlewares servie.
+
 ## Construire une app qui agit — ce que la première a appris
 
 - **Le JSON servi ne prouve pas l'écran.** Les tests lisent `structuredContent` : ils

@@ -238,6 +238,12 @@ FastMCP refuse un résultat sans canal structuré dès qu'un schéma est encore 
 le geste de montage, casserait ces clients. Il ne juge donc que l'absence ; c'est le
 montage qui la crée.
 
+**Exception : les apps** (`_meta.ui.resourceUri`, extension MCP Apps). Leur
+`structuredContent` n'est pas une copie du texte : c'est l'UNIQUE entrée de la carte,
+que l'hôte pousse à la vue sans la donner au modèle. Le retirer figeait toutes les apps
+sur « Waiting for content… » (10/09 → 18/09/2026, signal #1083) ; `est_une_app` les
+exempte. Le texte d'une app reste à sa charge (`docs/mcp-apps.md`).
+
 Les 120 enveloppes `x-fastmcp-wrap-result` (une valeur annotée `-> list` ou `-> object`,
 emballée en `{"result": …}`) sont **gardées** et nommées dans
 `tests/structured_output_debt.txt`, liste qui ne peut que décroître : là, les deux canaux
