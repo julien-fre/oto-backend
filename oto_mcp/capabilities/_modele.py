@@ -41,7 +41,9 @@ def exige_un_runner(org_id: int) -> dict:
         "au worker, et sans worker le geste réussirait pour rien, sans erreur "
         "— l'objet aurait l'air de marcher. Arme un worker pour cette org "
         "(`OTO_RUNNER_ARMED=1` + un jeton de l'org, cf. otomata-tech/oto-runner), "
-        "puis reprends ce geste.")
+        "puis reprends ce geste. Ce qui existe reste gérable sans worker : un "
+        "déclencheur se lit, se modifie et se supprime ; une campagne se lit, se "
+        "modifie et s'arrête (`stop`).")
 
 
 def famille_declaree(model: Optional[str],

@@ -654,6 +654,9 @@ CAPABILITIES += [
             DeclaredError(400, "invalid_model",
                           "`create` avec un `model` hors catalogue, un `provider` "
                           "qui le contredit, ou un `provider` sans `model`"),
+            DeclaredError(400, "no_runner_armed",
+                          "`launch` dans une org qu'aucun worker vivant ne sonde : "
+                          "l'armement réussirait sans que rien ne s'exécute jamais"),
             DeclaredError(400, "model_not_served",
                           "`launch` d'un passage dont aucun worker vivant ne sert "
                           "la famille du modèle"),
@@ -696,8 +699,10 @@ CAPABILITIES += [
             "none of its jobs is left in flight, at which point Oto states the "
             "fact (`stopped`) at the next poll. "
             "Never report a launch on `armed`, nor a stop on `stopping` — the gap "
-            "between the two is also the diagnosis. op=launch is REFUSED "
-            "(`model_not_served`) when the fleet declares a model no live worker "
+            "between the two is also the diagnosis. op=launch is REFUSED with "
+            "`no_runner_armed` when no worker polls for this org at all (nothing "
+            "would ever execute it — reading, updating and op=stop stay open), and "
+            "with `model_not_served` when the fleet declares a model no live worker "
             "serves: its jobs would wait forever. "
             "op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "

@@ -59,8 +59,11 @@ def test_launch_est_refuse_quand_aucun_worker_nest_joignable(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         _appel(_ctx(), op="launch", fleet_id=1)
     assert (e.value.status, e.value.code) == (400, "no_runner_armed")
-    # Le message doit dire QUOI FAIRE, pas seulement que c'est refusé.
+    # Le message doit dire QUOI FAIRE, pas seulement que c'est refusé…
     assert "OTO_RUNNER_ARMED" in e.value.message
+    # …et ce qui RESTE ouvert, sur les deux surfaces qui partagent ce refus.
+    assert "se supprime" in e.value.message
+    assert "s'arrête (`stop`)" in e.value.message
 
 
 def test_le_refus_narme_rien(monkeypatch):
@@ -93,22 +96,31 @@ def test_launch_passe_quand_un_worker_est_joignable(monkeypatch):
     assert out["fleet"]["id"] == 1
 
 
-def test_stop_reste_ouvert_sans_worker():
+def test_stop_reste_ouvert_sans_worker(monkeypatch):
     """LA garantie du lot : un passage mort doit pouvoir être arrêté — le
     refuser enfermerait l'utilisateur avec un objet qui lui ment, sans même
-    lui laisser le geste qui range."""
-    # `_exige_un_runner` n'est appelée que par `launch` : `stop` ne la lit pas
-    # du tout, donc même sans doubler `db.runner_arme` ici, un `stop` ne doit
-    # jamais lever `no_runner_armed`. La preuve : ce banc ne mocke pas
-    # `runner_arme` et vérifie seulement le CODE de refus rendu.
-    from oto_mcp.capabilities import runner_fleets as RF2
-    import inspect
-    src = inspect.getsource(RF2)
-    idx_stop = src.index('if inp.op == "stop"')
-    idx_launch = src.index('if inp.op == "launch"')
-    bloc_stop = src[idx_stop:idx_stop + 800]
-    assert "exige_un_runner" not in bloc_stop
-    assert idx_launch < idx_stop
+    lui laisser le geste qui range.
+
+    Un VRAI appel `op=stop`, et `db.runner_arme` n'est PAS doublé : il reste
+    la fonction servie. Le magasin est rendu injoignable (ni pool ni
+    `DATABASE_URL`) — aucun worker ne peut y être lu, donc aucun n'est présent.
+    Si `stop` consultait la présence d'un runner, l'appel lèverait ici au lieu
+    d'arrêter."""
+    from oto_mcp.db import _conn
+    monkeypatch.setattr(_conn, "_pool", None)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(RF, "_run_courant", lambda: None)
+    demande = {}
+
+    def _demander_arret(fleet_id, org_id, raison):
+        demande.update(fleet_id=fleet_id, org_id=org_id, raison=raison)
+        return {"id": fleet_id, "status": "stopping", "stop_reason": raison}
+
+    monkeypatch.setattr(RF.db, "demander_arret", _demander_arret)
+
+    out = _appel(_ctx(), op="stop", fleet_id=1, reason="plus aucun runner")
+    assert out["fleet"]["status"] == "stopping"
+    assert demande == {"fleet_id": 1, "org_id": 2, "raison": "plus aucun runner"}
 
 
 def test_la_garde_partage_la_meme_fonction_que_les_declencheurs():

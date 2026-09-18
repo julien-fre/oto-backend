@@ -86,7 +86,9 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     ⚠️ **L'APPARTENANCE de la flotte se vérifie AVANT**, chez l'appelant : la FK
     garantit que la flotte EXISTE, pas qu'elle soit celle de cette org. Rattacher
     un travail à la flotte d'autrui ferait entrer son coût et son avancement dans
-    l'état d'un passage étranger.
+    l'état d'un passage étranger. Son ÉTAT aussi, dans la même transaction
+    (`conn`) : `runner.jobs op=enqueue` refuse une flotte hors
+    `STATUTS_QUI_SERVENT` sous `verrouiller_la_flotte` (oto-backend#996).
 
     ⚠️ `_plateforme` (`_CHAMP_PLATEFORME`) est RETIRÉ de la charge : le serveur seul
     l'écrit, à la réservation. Retiré plutôt que refusé, comme la capacité retire

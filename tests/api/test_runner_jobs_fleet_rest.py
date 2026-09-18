@@ -24,6 +24,11 @@ Et le maillon de sécurité qui va avec : **la clé étrangère garantit qu'une 
 EXISTE, pas qu'elle soit celle de cette org.** Sans garde, un travail se
 rattacherait à la flotte d'autrui et ferait entrer son coût dans l'état d'un
 passage étranger — état faux des deux côtés, et observabilité qui fuit.
+
+Et son ÉTAT (oto-backend#996, 18/09/2026) : un travail ne se rattache qu'à une
+flotte `armed`/`running` — les seuls états que `stop` sait arrêter. La flotte des
+bancs est donc ARMÉE par sa route, ce qui exige un worker joignable
+(`no_runner_armed`) : un worker de plateforme est posé pour le module, et retiré.
 """
 from __future__ import annotations
 
@@ -111,12 +116,39 @@ def voisin(live):
 
 
 @pytest.fixture(scope="module")
-def flotte(client, maison):
+def worker(live):
+    """Un worker de PLATEFORME vivant — `launch` refuse sans lui. Retiré à la
+    sortie : la base du module n'en garde aucune trace."""
+    from oto_mcp.db._conn import _connect
+    sub = "worker:banc-jobs-flotte-" + uuid.uuid4().hex[:8]
+    with _connect() as c:
+        c.execute("INSERT INTO runner_platform_workers (worker_sub) VALUES (%s)", (sub,))
+    try:
+        yield sub
+    finally:
+        with _connect() as c:
+            c.execute("DELETE FROM runner_platform_workers WHERE worker_sub = %s", (sub,))
+
+
+def _declarer(client, maison, label: str) -> dict:
     r = client.post(FLEETS, headers=_h(maison["sub"]), json={
-        "op": "create", "label": "passage", "procedure": "enrichissement",
+        "op": "create", "label": label, "procedure": "enrichissement",
         "tools": ["oto_kb"], "max_rows": 10})
     assert r.status_code == 200, r.text
     return r.json()["fleet"]
+
+
+def _armer(client, maison, fleet: dict) -> dict:
+    r = client.post(FLEETS, headers=_h(maison["sub"]),
+                    json={"op": "launch", "fleet_id": fleet["id"]})
+    assert r.status_code == 200, r.text
+    return r.json()["fleet"]
+
+
+@pytest.fixture(scope="module")
+def flotte(client, maison, worker):
+    """Déclarée PUIS armée par la route : on n'enfile que sur une flotte qui sert."""
+    return _armer(client, maison, _declarer(client, maison, "passage"))
 
 
 # ── le trajet complet, uniquement par les routes ─────────────────────────────
@@ -197,6 +229,60 @@ def test_on_ne_rattache_pas_un_travail_a_la_flotte_d_une_autre_org(
         "op": "enqueue", "kind": "start", "payload": {"procedure": "p"},
         "fleet_id": flotte["id"]})
     assert (r.status_code, r.json().get("error")) == (404, "fleet_not_found")
+
+
+def _enfiler(client, maison, fleet: dict):
+    return client.post(JOBS, headers=_h(maison["sub"]), json={
+        "op": "enqueue", "kind": "start", "payload": {"procedure": "p"},
+        "fleet_id": fleet["id"]})
+
+
+def test_on_n_enfile_pas_sur_une_flotte_qui_ne_sert_pas(client, maison, worker):
+    """⚠️ Le trou d'oto-backend#996 : un ordonnanceur dont l'armement a été refusé
+    enfilait quand même, sur une flotte restée `draft` — et `stop` refuse une
+    flotte `draft` (`not_stoppable`). Des exécutions qu'aucun geste n'arrête.
+
+    Rejoué à chaque bout du cycle : `draft` refusé, `armed` accepté, `stopping`
+    refusé — la garde suit exactement ce que `stop` sait arrêter."""
+    f = _declarer(client, maison, "jamais-armee")
+    r = _enfiler(client, maison, f)
+    assert (r.status_code, r.json().get("error")) == (409, "fleet_not_serving"), r.text
+    detail = r.json().get("detail", "")
+    assert "`draft`" in detail, "le refus dit l'état ACTUEL"
+    assert "op=launch" in detail and "op=take" in detail, "et le geste qui débloque"
+    assert _etat(client, maison, f)["no_jobs_attached"] is True, "un refus n'enfile rien"
+
+    _armer(client, maison, f)
+    assert _enfiler(client, maison, f).status_code == 200
+
+    arret = client.post(FLEETS, headers=_h(maison["sub"]),
+                        json={"op": "stop", "fleet_id": f["id"], "reason": "banc"})
+    assert arret.json()["fleet"]["status"] == "stopping", arret.text
+    r = _enfiler(client, maison, f)
+    assert (r.status_code, r.json().get("error")) == (409, "fleet_not_serving"), r.text
+    assert "`stopping`" in r.json().get("detail", "")
+
+
+def test_le_verrou_de_l_enfilement_fait_attendre_un_stop_concurrent(maison, flotte):
+    """La course : la flotte passe `stopping` PENDANT l'enfilement. La lecture de
+    l'état et l'INSERT tiennent dans une transaction, sous `FOR SHARE` : l'UPDATE
+    d'un geste d'état (celui de `demander_arret`) doit ATTENDRE — sinon il
+    passerait entre la lecture et l'INSERT, et le travail partirait sur une
+    flotte dont l'arrêt est déjà demandé."""
+    import psycopg
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    with _connect() as enfilement:
+        assert db.verrouiller_la_flotte(enfilement, flotte["id"], maison["id"]) in (
+            "armed", "running")
+        with _connect() as arret:
+            arret.execute("SET LOCAL lock_timeout = '300ms'")
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                arret.execute("UPDATE runner_fleets SET status = 'stopping' "
+                              "WHERE id = %s AND status IN ('armed', 'running')",
+                              (flotte["id"],))
+            arret.rollback()
+        enfilement.rollback()
 
 
 def test_une_flotte_inexistante_est_refusee_de_la_meme_facon(client, maison):

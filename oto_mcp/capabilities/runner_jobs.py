@@ -819,6 +819,38 @@ def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
 _VERBES_DU_WORKER = frozenset({"claim", "bind_run", "extend", "complete"})
 
 
+def _exige_flotte_servie(statut: Optional[str]) -> None:
+    """Refuse de rattacher un travail à une flotte qui ne le servira pas.
+
+    ⚠️ L'APPARTENANCE d'abord, pas seulement l'existence. La FK vers
+    `runner_fleets` garantit que la flotte existe — elle ne dit rien de QUI elle
+    est. Sans cette vérification, un travail se rattacherait à la flotte d'une
+    autre org et ferait entrer son coût et son avancement dans l'état d'un
+    passage étranger : une fuite d'observabilité, et un état faux des deux côtés.
+    Même 404 sans oracle que le gate propriétaire d'un run.
+
+    ⚠️ Puis l'ÉTAT (oto-backend#996, 18/09/2026). L'enfilement ne regardait que
+    l'appartenance : un ordonnanceur dont l'armement avait été refusé
+    (`no_runner_armed`, ou n'importe quel refus de `launch`) enfilait quand même
+    sur une flotte restée `draft`. Ces travaux tournaient, dépensaient — et
+    `op=stop` les refusait (`not_stoppable` : on n'arrête qu'une flotte
+    `armed`/`running`). Des exécutions qu'aucun geste ne peut plus arrêter : on
+    refuse donc de les créer, hors des états que `stop` sait arrêter.
+    """
+    if statut is None:
+        raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+    if statut not in db.STATUTS_QUI_SERVENT:
+        raise AuthzDenied(
+            409, "fleet_not_serving",
+            f"cette campagne est `{statut}` : elle n'accepte une exécution que "
+            "lorsqu'elle est armée (`armed`) ou en cours (`running`) — seuls états "
+            "que `stop` sait arrêter. Une exécution ajoutée maintenant tournerait "
+            "hors de portée de tout arrêt. Arme-la (`op=launch`, puis `op=take` si "
+            "c'est ton ordonnanceur qui la prend) et reprends l'enfilement — une "
+            "campagne `stopping` doit d'abord atteindre `stopped` —, ou déclare "
+            "une autre campagne.")
+
+
 def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
     # Deux principaux, deux files. Un MEMBRE agit sur la file de SON org, et
     # doit en avoir une. Un WORKER de plateforme n'en a aucune : il sonde, et
@@ -855,22 +887,29 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             head = db.get_run_head(inp.run_id)
             if not head or head.get("sub") != ctx.sub:
                 raise AuthzDenied(404, "run_not_found", "run inconnu")
-        # ⚠️ L'APPARTENANCE, pas seulement l'existence. La FK vers `runner_fleets`
-        # garantit que la flotte existe — elle ne dit rien de QUI elle est. Sans
-        # cette vérification, un travail se rattacherait à la flotte d'une autre
-        # org et ferait entrer son coût et son avancement dans l'état d'un passage
-        # étranger : une fuite d'observabilité, et un état faux des deux côtés.
-        # Même 404 sans oracle que le gate propriétaire d'un run juste au-dessus.
-        if inp.fleet_id is not None and not db.get_fleet(inp.fleet_id, ctx.org_id):
-            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
         # ⚠️ L'identité vient de l'ÉTAT SERVEUR (`ctx.sub`), jamais d'un champ
         # d'entrée : un travail dont l'appelant choisirait le porteur serait une
         # usurpation en une ligne de JSON. Le paramétrage vers un autre membre —
         # prévu par la direction du 02/09 — passera par une garde
         # d'appartenance, pas par la confiance faite au corps de la requête.
-        res = db.enqueue_job(ctx.org_id, inp.kind, payload=_charge_et_modele(ctx, inp),
-                             run_id=inp.run_id, max_attempts=inp.max_attempts,
-                             fleet_id=inp.fleet_id, sub=ctx.sub)
+        if inp.fleet_id is None:
+            res = db.enqueue_job(ctx.org_id, inp.kind,
+                                 payload=_charge_et_modele(ctx, inp),
+                                 run_id=inp.run_id, max_attempts=inp.max_attempts,
+                                 sub=ctx.sub)
+        else:
+            # La lecture de la flotte et l'INSERT partagent UNE transaction, sous
+            # verrou partagé (`verrouiller_la_flotte`) : un `stop` concurrent passe
+            # avant ou après l'enfilement, jamais entre les deux. La charge se
+            # compose APRÈS la garde, comme avant elle : l'ordre des refus
+            # (`fleet_not_found` avant `invalid_model`) ne bouge pas.
+            with db._connect() as conn:
+                _exige_flotte_servie(db.verrouiller_la_flotte(
+                    conn, inp.fleet_id, ctx.org_id))
+                res = db.enqueue_job(ctx.org_id, inp.kind,
+                                     payload=_charge_et_modele(ctx, inp),
+                                     run_id=inp.run_id, max_attempts=inp.max_attempts,
+                                     fleet_id=inp.fleet_id, sub=ctx.sub, conn=conn)
         return {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"]),
                 "fleet_id": res.get("fleet_id"), "sub": res.get("sub")}
 
@@ -997,6 +1036,10 @@ CAPABILITIES += [
             DeclaredError(404, "fleet_not_found",
                           "`enqueue fleet_id=` désignant une flotte qui n'est pas "
                           "celle de l'org du porteur"),
+            DeclaredError(409, "fleet_not_serving",
+                          "`enqueue fleet_id=` désignant une campagne ni armée ni en "
+                          "cours (`draft`, `stopping`, `stopped`…) : l'exécution "
+                          "échapperait à `stop`"),
         ),
         # Un WORKER de plateforme (secret de machine déclaré en base, aucun
         # compte, aucune org) ou un MEMBRE d'org. Le worker ne nomme rien et ne

@@ -108,7 +108,9 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   `op=state` capable d'agréger. ⚠️ **L'APPARTENANCE de la flotte se vérifie, pas
   seulement son existence** : la FK dit qu'une flotte existe, pas à QUI elle est
   — sans garde, le coût d'un travail entrerait dans l'état du passage d'une autre
-  org (`fleet_not_found`, même 404 sans oracle qu'un run étranger). ⚠️ Livré
+  org (`fleet_not_found`, même 404 sans oracle qu'un run étranger) — **et son
+  ÉTAT** : hors `armed`/`running`, `409 fleet_not_serving` (voir « `launch`
+  refuse sans runner joignable » plus bas). ⚠️ Livré
   d'abord SANS écrivain (R4) : la colonne, l'index, la FK et l'agrégat existaient
   pendant que `state` répondait « aucun travail » pour toute flotte — *un harnais
   qui prouve un chemin de lecture ne prouve pas qu'il existe un chemin d'écriture
@@ -169,18 +171,28 @@ jobs do not execute ». Quelqu'un a diagnostiqué la panne et n'a eu que le NOM 
 l'objet pour l'écrire : le produit ne disait rien, nulle part.
 
 **La garde suit le VERBE, pas l'objet** — le motif que `runner_fleets` a établi
-pour `launch`/`stop` :
+pour `launch`/`stop`, et que les deux surfaces partagent depuis le 17/09/2026
+(`_modele.exige_un_runner`, un seul texte de refus) :
 
 ```
-create              REFUSÉ sans runner armé   c'est le geste qui MENT
-update enabled=true REFUSÉ sans runner armé   rallumer, c'est promettre à nouveau
-list / get          ouverts, + `runner`       et c'est là qu'on cherche la réponse
-update (autre) /
-delete              TOUJOURS ouverts          ranger un déclencheur mort
+déclencheur (runner.triggers)
+  create               REFUSÉ sans runner armé    c'est le geste qui MENT
+  update enabled=true  REFUSÉ sans runner armé    rallumer, c'est promettre à nouveau
+  list / get           ouverts, + `runner`        et c'est là qu'on cherche la réponse
+  update (autre) /
+  delete               TOUJOURS ouverts           ranger un déclencheur mort
+campagne (runner.fleets)
+  launch               REFUSÉ sans runner armé    armer, c'est promettre (oto-runner#13)
+  list / get / state /
+  update / stop        TOUJOURS ouverts           arrêter une campagne morte
+exécution rattachée (runner.jobs op=enqueue fleet_id=)
+  enqueue              REFUSÉ hors armed/running  409 `fleet_not_serving` : sinon elle
+                                                  échappe à `stop` (voir plus bas)
 ```
 
 Fermer aussi la lecture ou la suppression enfermerait l'utilisateur avec l'objet
-qui lui ment — or c'est exactement la personne qui a besoin d'agir.
+qui lui ment — or c'est exactement la personne qui a besoin d'agir. Le refus
+`no_runner_armed` le DIT : il nomme ce qui reste ouvert, sur les deux surfaces.
 
 **Le signal, et pourquoi une table.** Un claim sur file VIDE n'écrit rien :
 `runner_jobs.claimed_by` ne distingue donc pas « aucun worker » de « un worker
@@ -280,6 +292,30 @@ quelle resterait `armed` sans avancer : le worker refuse de démarrer, et le
 symptôme lu depuis le produit serait « l'ordonnanceur est mort » — un diagnostic
 faux posé sur une cause invisible. Le refus du worker reste, en dernier ressort ;
 il n'est plus le seul filet.
+
+⚠️ **`launch` refuse sans runner joignable** (`400 no_runner_armed`, 17/09/2026,
+oto-runner#13). Armer une campagne qu'aucun worker vivant ne sonde la laissait
+`armed` pour toujours — 41 travaux restés en file 13 jours chez un partenaire, et
+le même faux diagnostic « l'ordonnanceur est mort ». La présence est lue même
+SANS modèle déclaré (un agent sans modèle est servi par n'importe quel worker,
+encore faut-il qu'il y en ait un), AVANT la garde de famille (`model_not_served`)
+qui juge sur la même lecture, et avant la réparation de l'instruction : un refus
+n'écrit rien. `stop`, la lecture et la retouche restent ouverts.
+
+⚠️ **Et l'enfilement refuse une campagne qui ne sert pas** (`409
+fleet_not_serving`, oto-backend#996, 18/09/2026). Le refus de `launch` avait un
+angle mort : le driver d'oto-runner (`fleet.py`) journalise l'échec d'`armer`
+puis de `prendre`, et ENFILE quand même avec `fleet_id`. `runner.jobs
+op=enqueue` ne vérifiait que l'appartenance ; les travaux partaient donc sur une
+campagne restée `draft` — et `stop` la refuse (`not_stoppable`, on n'arrête
+qu'`armed`/`running`). Des exécutions qui tournent et dépensent sans qu'aucun
+geste puisse les arrêter. L'enfilement exige donc `armed`/`running`
+(`db.STATUTS_QUI_SERVENT`, exactement ce que `demander_arret` sait arrêter), lu
+**sous verrou partagé dans la transaction même de l'INSERT**
+(`db.verrouiller_la_flotte`, `FOR SHARE`) : un `stop` concurrent passe avant ou
+après l'enfilement, jamais entre les deux. Le producteur de la plateforme
+(`_produire_pour_une_campagne`) n'est pas concerné : il ne sert que des campagnes
+`armed`/`running` (`campagne_a_servir`) et écrit par `db.enqueue_job` direct.
 
 ### La procédure se LIT par MCP, la plateforme n'en injecte aucune copie (13/09/2026)
 

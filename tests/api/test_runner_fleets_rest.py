@@ -109,13 +109,24 @@ def _un_worker_de_plateforme_sonde(live, org):
     module. Un worker de plateforme sert TOUTES les orgs (`db.runner_arme`), donc
     une seule ligne suffit ; aucune famille n'est déclarée ici — les bancs de ce
     fichier n'arment que des flottes sans `model`, sauf le dernier qui pose sa
-    propre présence Anthropic explicitement."""
+    propre présence Anthropic explicitement.
+
+    Retiré à la sortie, comme tout worker de banc (patron de
+    `test_modele_propose_accepte_rest.py`) : la table est globale, et une ligne
+    laissée à `NOW()` ferait lire « un runner est là » à qui suit."""
     from oto_mcp.db._conn import _connect
+    sub = "worker:banc-flottes-rest"
     with _connect() as c:
         c.execute("INSERT INTO runner_platform_workers (worker_sub) "
-                  "VALUES ('worker:banc-flottes-rest') ON CONFLICT (worker_sub) "
-                  "DO UPDATE SET last_seen_at = NOW()")
+                  "VALUES (%s) ON CONFLICT (worker_sub) "
+                  "DO UPDATE SET last_seen_at = NOW()", (sub,))
         c.commit()
+    try:
+        yield sub
+    finally:
+        with _connect() as c:
+            c.execute("DELETE FROM runner_platform_workers WHERE worker_sub = %s", (sub,))
+            c.commit()
 
 
 @pytest.fixture(scope="module")
@@ -513,6 +524,40 @@ def test_on_n_arme_pas_ce_qui_tourne_deja(client, org, flotte_a_piloter):
     statut, code = _refus(client, org, {"op": "launch",
                                         "fleet_id": flotte_a_piloter["id"]})
     assert (statut, code) == (409, "not_launchable")
+
+
+def test_sans_runner_joignable_launch_est_refuse_et_dit_ce_qui_reste(
+        client, org, _un_worker_de_plateforme_sonde):
+    """`no_runner_armed` est DÉCLARÉ sur `runner.fleets` : rejoué ici, sur la route.
+
+    Le worker du module est vieilli au-delà de la fenêtre de présence le temps du
+    banc — plus aucun runner joignable — puis rendu. Le refus doit dire QUOI
+    FAIRE et ce qui RESTE ouvert : sinon on cherche un contournement."""
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    fid = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "sans-runner", "procedure": "p",
+        "tools": ["oto_kb"]}).json()["fleet"]["id"]
+    with _connect() as c:
+        c.execute("UPDATE runner_platform_workers SET last_seen_at = NOW() - "
+                  "make_interval(secs => %s) WHERE worker_sub = %s",
+                  (db.ARME_FENETRE_S * 2, _un_worker_de_plateforme_sonde))
+        c.commit()
+    try:
+        r = client.post(ROUTE, headers=_h(org["membre"]),
+                        json={"op": "launch", "fleet_id": fid})
+        assert (r.status_code, r.json().get("error")) == (400, "no_runner_armed"), r.text
+        detail = r.json().get("detail", "")
+        assert "OTO_RUNNER_ARMED" in detail
+        assert "s'arrête (`stop`)" in detail, "le refus nomme ce qui reste ouvert"
+        f = client.post(ROUTE, headers=_h(org["membre"]),
+                        json={"op": "get", "fleet_id": fid}).json()["fleet"]
+        assert f["status"] == "draft", "un refus n'arme rien"
+    finally:
+        with _connect() as c:
+            c.execute("UPDATE runner_platform_workers SET last_seen_at = NOW() "
+                      "WHERE worker_sub = %s", (_un_worker_de_plateforme_sonde,))
+            c.commit()
 
 
 def test_on_n_arrete_pas_ce_qui_ne_tourne_pas(client, org):
