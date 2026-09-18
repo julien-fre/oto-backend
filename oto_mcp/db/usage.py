@@ -1105,11 +1105,12 @@ def _found_from_row(row: dict) -> Optional[dict]:
 
 
 def list_billable_calls_for_org(
-    org_id: int, tool: str, *, since: Optional[str] = None,
+    org_id: int, tool: Optional[str] = None, *, run_ids: Optional[list[str]] = None,
+    since: Optional[str] = None,
     until: Optional[str] = None, limit: int = 1000,
     before: Optional[tuple[str, int]] = None,
 ) -> dict:
-    """Les appels FACTURABLES d'un outil sous une org — la lentille membre du
+    """Les appels FACTURABLES d'un outil et/ou d'un run sous une org — la lentille membre du
     relevé de consommation (`org.usage.calls`). Rend
     `{until_effectif, total, calls, next}`, **même contrat que
     `export_tool_calls_for_org`**, et pour les mêmes raisons :
@@ -1132,7 +1133,14 @@ def list_billable_calls_for_org(
     rien n'a été tracé). Ni `sub`, ni `email`,
     ni `error`, ni aucun autre argument — la lentille est lisible par tout
     membre, et ce qu'il lit est ce que son org consomme, pas qui a fait quoi.
-    Seuls les appels `ok` : un échec n'a rien consommé chez le fournisseur."""
+    Seuls les appels `ok` : un échec n'a rien consommé chez le fournisseur.
+
+    `run_ids` (et la colonne rendue `run_id`) : ce qu'un ou plusieurs runs ont
+    consommé, tous outils confondus — `idx_tool_calls_run` sert le filtre. Il reste
+    sous `org_id` : nommer le run d'une autre org ne rend rien. Au moins un de
+    `tool`/`run_ids`."""
+    if not tool and not run_ids:
+        raise ValueError("list_billable_calls_for_org : `tool` ou `run_ids` requis")
     limit = max(1, min(int(limit), 5000))
     with _connect() as conn:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
@@ -1141,8 +1149,13 @@ def list_billable_calls_for_org(
                 f"SELECT to_char(now() AT TIME ZONE 'UTC', {_ISO_US}) AS t"
             ).fetchone()["t"]
         clauses, params = _audit_window_clauses(org_id, since, until)
-        clauses += ["l.tool = %s", "l.ok = TRUE"]
-        params += [tool]
+        clauses.append("l.ok = TRUE")
+        if tool:
+            clauses.append("l.tool = %s")
+            params.append(tool)
+        if run_ids:
+            clauses.append("l.run_id = ANY(%s)")
+            params.append(list(run_ids))
         total = int(conn.execute(
             f"SELECT count(*) AS n FROM tool_calls l WHERE {' AND '.join(clauses)}",
             tuple(params),
@@ -1154,7 +1167,7 @@ def list_billable_calls_for_org(
             page_params += [before[0], int(before[1])]
         rows = conn.execute(
             f"""
-            SELECT l.id, l.tool, l.quantity, l.key_mode,
+            SELECT l.id, l.tool, l.quantity, l.key_mode, l.run_id,
                    {_BILLABLE_JOB_ID_SQL} AS job_id,
                    {_BILLABLE_FOUND_SQL},
                    {_AUDIT_KEYSET_AT} AS created_at
