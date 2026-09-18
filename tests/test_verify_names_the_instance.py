@@ -73,10 +73,78 @@ def test_le_niveau_org_se_nomme_sans_passer_par_la_cascade(monkeypatch):
     monkeypatch.setattr(credentials_store, "public_meta", lambda m: {})
 
     class _InpOrg:
-        provider, level = "salesforce", "org"
+        provider, level, account = "salesforce", "org", ""
 
     _, _, _, instance, _ = cv._fields_config_scope(_Ctx(), _InpOrg())
     assert instance == {"level": "org", "ref": "org:2:salesforce"}
+
+
+# --- le compte, pour plusieurs instances d'org (oto-backend, sonde PayFit) -----
+
+def test_account_omis_teste_toujours_la_cle_par_defaut(monkeypatch):
+    """`account` absent doit se comporter EXACTEMENT comme avant son ajout — la
+    clé par défaut (`account=""`), jamais une autre instance choisie à sa place."""
+    from oto_mcp import credentials_store
+
+    vus = {}
+
+    def _get(entity_type, entity_id, connector, account=""):
+        vus["account"] = account
+        return {"secret": "s", "meta": {}}
+
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta", _get)
+    monkeypatch.setattr(credentials_store, "unpack_secret", lambda *a: {"client_id": "ci"})
+    monkeypatch.setattr(credentials_store, "public_meta", lambda m: {})
+
+    class _InpOrg:
+        provider, level, account = "payfit", "org", ""
+
+    cv._fields_config_scope(_Ctx(), _InpOrg())
+    assert vus["account"] == ""
+
+
+def test_account_fourni_cible_la_bonne_instance(monkeypatch):
+    """Plusieurs sociétés PayFit posées au niveau org : `account` doit atteindre la
+    ligne DE CE compte, pas la ligne anonyme (« principal »)."""
+    from oto_mcp import credentials_store
+
+    vus = {}
+
+    def _get(entity_type, entity_id, connector, account=""):
+        vus["account"] = account
+        return {"secret": "s", "meta": {}}
+
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta", _get)
+    monkeypatch.setattr(credentials_store, "unpack_secret", lambda *a: {"client_id": "ci"})
+    monkeypatch.setattr(credentials_store, "public_meta", lambda m: {})
+
+    class _InpOrg:
+        provider, level, account = "payfit", "org", "societe-b"
+
+    _, _, scope, instance, cible = cv._fields_config_scope(_Ctx(), _InpOrg())
+    assert vus["account"] == "societe-b"
+    assert scope == ("org", "2", "societe-b")
+    assert cible == ("org", "2", "societe-b")
+    # `ref`/`level` restent ceux de l'org — le compte discrimine LA LIGNE lue, pas
+    # l'identité de l'entité sondée.
+    assert instance == {"level": "org", "ref": "org:2:payfit"}
+
+
+def test_account_inconnu_est_un_refus_nomme(monkeypatch):
+    """Un compte demandé qui n'existe pas ne doit JAMAIS retomber en silence sur la
+    clé par défaut — refus nommé, citant le compte demandé."""
+    from oto_mcp import credentials_store
+    from oto_mcp.capabilities._types import AuthzDenied
+
+    monkeypatch.setattr(credentials_store, "get_credential_with_meta",
+                        lambda *a, **k: None)
+
+    class _InpOrg:
+        provider, level, account = "payfit", "org", "societe-inconnue"
+
+    with pytest.raises(AuthzDenied) as exc:
+        cv._fields_config_scope(_Ctx(), _InpOrg())
+    assert "societe-inconnue" in exc.value.message
 
 
 # --- la remontée jusqu'à la réponse --------------------------------------------
