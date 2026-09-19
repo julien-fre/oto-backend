@@ -49,6 +49,11 @@ class SessionStartInput(BaseModel):
     # `?url=` ouvre la Live View sur la page de connexion demandée. Absent (les
     # connecteurs à site unique) ⇒ la `login_url` enregistrée.
     url: Optional[str] = None
+    # Taille (px CSS) de l'iframe qui affichera la Live View : la session distante
+    # prend ce viewport, bornée, pour un rendu 1:1 au lieu d'un écran réduit.
+    # Absente ⇒ viewport par défaut (`browserbase.LIVE_VIEW_VIEWPORT`).
+    width: Optional[int] = None
+    height: Optional[int] = None
 
 
 class SessionFinalizeInput(BaseModel):
@@ -104,10 +109,13 @@ def _session_connector(name: str):
 
 async def _start(ctx: ResolvedCtx, inp: SessionStartInput) -> dict:
     browser_session = _session_connector(inp.name)
+    from .. import browserbase
     url = (inp.url or "").strip() or None
+    viewport = browserbase.clamp_viewport(inp.width, inp.height)
     try:
         return await asyncio.to_thread(
-            lambda: browser_session.start(ctx.sub, inp.name, login_url=url))
+            lambda: browser_session.start(ctx.sub, inp.name, login_url=url,
+                                          viewport=viewport))
     except browser_session.SessionError as e:
         raise AuthzDenied(503, "browserbase_unavailable", str(e))
 
@@ -152,7 +160,8 @@ _DOC_START = (
     "Ouvre une fenêtre de navigateur hébergée pour que JE me connecte à la main au site "
     "d'un connecteur à session (ADR 0026). Rend l'URL de la Live View à afficher, plus "
     "le couple `context_id`/`session_id` à rendre tel quel à `…/finalize`. `url` ne sert "
-    "qu'au connecteur générique, dont le site vient de l'appel. `404 "
+    "qu'au connecteur générique, dont le site vient de l'appel. `width`/`height` = "
+    "taille de l'iframe d'affichage, pour que la page distante s'y rende à l'échelle 1. `404 "
     "not_a_session_connector` si le connecteur ne se connecte pas ainsi ; `503 "
     "browserbase_unavailable` si le substrat navigateur ne répond pas."
 )

@@ -203,11 +203,12 @@ def is_session_connector(connector: str) -> bool:
 
 
 def start(sub: str, connector: str | None = None, *,
-          login_url: str | None = None) -> dict:
+          login_url: str | None = None, viewport: dict | None = None) -> dict:
     """Ouvre un Context + une session keep-alive pour `sub` et renvoie la Live View
     interactive. La session est amenée sur `login_url` si fourni (connecteur générique :
     le site vient de l'appel), sinon sur la `login_url` enregistrée du connecteur, sinon
-    `about:blank`. La session émise est LIÉE à `sub` (consommée par `finalize`). BLOQUANT
+    `about:blank`. `viewport` = taille de l'iframe qui affichera la Live View (rendu 1:1,
+cf. `browserbase.LIVE_VIEW_VIEWPORT`). La session émise est LIÉE à `sub` (consommée par `finalize`). BLOQUANT
     (HTTP Browserbase synchrone) → appeler via `asyncio.to_thread` depuis une route async.
     Lève `SessionError` si Browserbase n'est pas configuré côté plateforme."""
     if not browserbase.is_configured():
@@ -215,7 +216,8 @@ def start(sub: str, connector: str | None = None, *,
                            "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).")
     try:
         context_id = browserbase.create_context()
-        sess = browserbase.start_session(context_id, keep_alive=True, timeout=900)
+        sess = browserbase.start_session(context_id, keep_alive=True, timeout=900,
+                                         viewport=viewport)
         login_url = login_url or _LOGIN_URLS.get(connector or "")
         if login_url:
             # Best-effort : on amène la session sur la page de login. Un échec (nav lente,

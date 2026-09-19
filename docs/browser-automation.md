@@ -35,7 +35,12 @@ connecteur d'**API privée cookie-bound**. État réel (2026-06-24) :
   avec une `login_url`** (`browser_session.register(name, verify, login_url=…)`) : `start()`
   amène la session **sur cette page** avant d'afficher la Live View (best-effort). Sans elle,
   la Live View reste sur `about:blank` (l'user ne sait pas où se loguer — vécu pennylaneged
-  2026-07-01). **Sécu** : la session émise est liée au `sub`
+  2026-07-01). ⚠️ **La Live View RÉDUIT l'écran distant à la taille de son iframe** : le
+  front passe `?width=&height=` (taille de l'iframe, px CSS) à `…/session/start`, la
+  session prend ce viewport (borné 800×500–1920×1200) et la page s'affiche à l'échelle 1.
+  Sans ça, le défaut Browserbase (~1920×1080) dans une fenêtre de ~900 px rendait le
+  login à moitié taille, illisible ; appel sans taille ⇒ `LIVE_VIEW_VIEWPORT` (1280×800).
+  **Sécu** : la session émise est liée au `sub`
   (`_PENDING`, anti-IDOR — `finalize` refuse un Context tiers) et **aucune exception
   brute n'est renvoyée** (l'URL CDP porte `?apiKey=…` → loggué, message propre). L'état
   (`configured` + `session_set_at`) sort dans `me.providers[name]` via `status_for`
