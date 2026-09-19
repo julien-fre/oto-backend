@@ -114,6 +114,26 @@ class CallInput(BaseModel):
     call_id: int
 
 
+class RestCallRow(BaseModel):
+    id: int
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    route: str
+    called_at: datetime
+    duration_ms: Optional[int] = None
+    ok: bool
+    error: Optional[str] = None
+    org_id: Optional[int] = None
+    # La cible du « voir en tant que » (ADR 0023, `RestCallLogger`) — `None` quand
+    # l'appel n'en portait pas, jamais deviné. C'est le champ que cette lentille
+    # existe pour servir (oto-backend#962).
+    view_as_sub: Optional[str] = None
+
+
+class RestCallsOutput(BaseModel):
+    calls: list[RestCallRow]
+
+
 class RestCallsInput(BaseModel):
     limit: int = 200
     days: Optional[int] = None
@@ -364,7 +384,7 @@ CAPABILITIES += [
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/rest")),
     Capability(key="monitoring.rest_calls", handler=_rest_calls,
-               Input=RestCallsInput,
+               Input=RestCallsInput, Output=RestCallsOutput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/rest-calls")),
     Capability(key="monitoring.connectors", handler=_connector_stats,
