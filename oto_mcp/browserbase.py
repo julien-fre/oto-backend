@@ -70,12 +70,31 @@ def create_context() -> str:
 
 
 # --- sessions ---------------------------------------------------------------
+# Viewport des sessions sur Context. La Live View peint l'écran distant RÉDUIT à la
+# taille de son iframe : sans viewport explicite, le défaut Browserbase (~1920×1080)
+# tenait dans une fenêtre de ~900 px → page de login à moitié taille, illisible
+# (« beaucoup trop dézoomé », 2026-09-19). Le login passe donc la taille RÉELLE de
+# l'iframe (`start_session(viewport=…)`) pour un rendu 1:1 ; le reste prend le défaut.
+LIVE_VIEW_VIEWPORT = {"width": 1280, "height": 800}
+_VIEWPORT_MIN = (800, 500)      # en deçà, les sites passent en mise en page mobile
+_VIEWPORT_MAX = (1920, 1200)
+
+
+def clamp_viewport(width: Optional[int], height: Optional[int]) -> Optional[dict]:
+    """Taille demandée par l'appelant → viewport borné, ou None si absente."""
+    if not width or not height:
+        return None
+    return {"width": max(_VIEWPORT_MIN[0], min(_VIEWPORT_MAX[0], int(width))),
+            "height": max(_VIEWPORT_MIN[1], min(_VIEWPORT_MAX[1], int(height)))}
+
+
 def start_session(context_id: str, *, keep_alive: bool = False,
-                  timeout: int = 600) -> dict:
+                  timeout: int = 600, viewport: Optional[dict] = None) -> dict:
     """Ouvre une session sur un Context (persist=true). Renvoie le JSON
-    Browserbase ({id, connectUrl, ...})."""
+    Browserbase ({id, connectUrl, ...}). `viewport` : cf. `LIVE_VIEW_VIEWPORT`."""
     body = {"projectId": _project(),
-            "browserSettings": {"context": {"id": context_id, "persist": True}},
+            "browserSettings": {"context": {"id": context_id, "persist": True},
+                                "viewport": viewport or LIVE_VIEW_VIEWPORT},
             "timeout": timeout}
     if keep_alive:
         body["keepAlive"] = True

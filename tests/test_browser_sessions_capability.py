@@ -32,8 +32,8 @@ def socle(monkeypatch):
     vus: list = []
     monkeypatch.setattr(browser_session, "is_session_connector", lambda n: True)
 
-    def _start(sub, name, login_url=None):
-        vus.append(("start", sub, name, login_url))
+    def _start(sub, name, login_url=None, viewport=None):
+        vus.append(("start", sub, name, login_url, viewport))
         return {"live_view_url": "https://live/x", "context_id": "ctx-1",
                 "session_id": "ses-1"}
 
@@ -86,6 +86,20 @@ def test_le_site_vient_de_l_appel_pour_le_connecteur_generique(monkeypatch, socl
     assert socle[0][3] is None
 
 
+def test_la_live_view_prend_la_taille_de_son_iframe(monkeypatch, socle):
+    """`?width=&height=` = taille de l'iframe : la session distante s'y cale (bornée),
+    sinon la Live View RÉDUIT un écran plus large et la page devient illisible."""
+    stub_authz(monkeypatch)
+    _start(query=b"width=940&height=700")
+    assert socle[0][4] == {"width": 940, "height": 700}
+    socle.clear()
+    _start(query=b"width=300&height=5000")
+    assert socle[0][4] == {"width": 800, "height": 1200}
+    socle.clear()
+    _start()
+    assert socle[0][4] is None
+
+
 def test_un_connecteur_qui_ne_se_connecte_pas_ainsi_est_un_404(monkeypatch, socle):
     stub_authz(monkeypatch)
     monkeypatch.setattr(browser_session, "is_session_connector", lambda n: False)
@@ -98,7 +112,7 @@ def test_un_substrat_muet_est_un_503_qui_dit_quoi_faire(monkeypatch, socle):
     tout seul ne l'est pas."""
     stub_authz(monkeypatch)
 
-    def _boum(sub, name, login_url=None):
+    def _boum(sub, name, login_url=None, viewport=None):
         raise browser_session.SessionError("connexion au navigateur distant impossible.")
 
     monkeypatch.setattr(browser_session, "start", _boum)
