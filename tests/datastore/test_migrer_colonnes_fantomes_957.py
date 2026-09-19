@@ -7,11 +7,17 @@ d'une supposition Python."""
 from __future__ import annotations
 
 import json
+import pathlib
+import sys
 
 import psycopg
 import pytest
 
-from scripts.migrer_colonnes_fantomes import main as migrer
+# `tests/datastore/` n'a pas de `__init__.py` : pytest insère ce dossier dans
+# `sys.path`, pas la racine du dépôt — même patron que
+# `test_sentinelles_dans_les_listes.py::_descriptions_servies`.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+from scripts.migrer_colonnes_fantomes import main as migrer  # noqa: E402
 
 
 @pytest.fixture()
