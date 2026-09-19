@@ -36,6 +36,8 @@ POST /api/orgs/{id}/logo -> org_logo_save
 OPTIONS /api/orgs/{id}/logo -> options_handler
 GET,HEAD /api/me/projects/{id}/export -> me_project_export
 OPTIONS /api/me/projects/{id}/export -> options_handler
+GET,HEAD /api/datastores/{datastore}/rows/export.csv -> export_csv
+OPTIONS /api/datastores/{datastore}/rows/export.csv -> options_handler
 GET,HEAD /api/google/oauth/callback -> google_oauth_callback
 POST /api/sirene/headquarters -> headquarters
 OPTIONS /api/sirene/headquarters -> options_handler

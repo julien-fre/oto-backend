@@ -28,7 +28,7 @@ from typing import Awaitable, Callable
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .. import db
 from ..auth import platform_worker, token_scopes
@@ -369,6 +369,31 @@ def _file(request: Request, content, *, media_type: str,
         entetes["Content-Disposition"] = f'attachment; filename="{nom}"'
     return Response(content, media_type=media_type, status_code=status_code,
                     headers=entetes)
+
+
+def _file_stream(request: Request, content, *, media_type: str,
+                 filename: str | None = None,
+                 headers: dict[str, str] | None = None,
+                 status_code: int = 200) -> StreamingResponse:
+    """`_file`'s streaming twin — même CORS, même filtre de nom de fichier ; seule
+    différence : `content` est un itérable ASYNC de bytes plutôt qu'un corps déjà
+    en mémoire, pour une réponse trop grosse pour tenir d'un bloc (l'export CSV
+    d'un tableau).
+
+    Une fonction à part plutôt qu'un paramètre optionnel sur `_file` : les deux
+    prennent une forme de corps différente, et confondre les deux signatures à
+    l'appel (un générateur passé où `_file` attend des bytes, ou l'inverse)
+    échouerait tard et loin de sa cause. `test_aucune_reponse_fichier_ne_se_
+    construit_hors_de_base_file` (`tests/api/test_reponses_binaires_cors.py`)
+    exige que toute construction de réponse fichier passe par CE module — cette
+    fonction est ce que `datastore_export.py` appelle pour ne pas y échapper."""
+    entetes = dict(headers or {})
+    entetes.update(_cors_headers(request.headers.get("origin")))
+    if filename is not None:
+        nom = "".join(c for c in filename if c not in '"\r\n\x00') or "fichier"
+        entetes["Content-Disposition"] = f'attachment; filename="{nom}"'
+    return StreamingResponse(content, media_type=media_type, status_code=status_code,
+                             headers=entetes)
 
 
 async def options_handler(request: Request) -> Response:
