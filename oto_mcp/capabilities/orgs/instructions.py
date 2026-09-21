@@ -34,6 +34,7 @@ from starlette.concurrency import run_in_threadpool
 from ... import (access, db, deprecations, group_store, guide_store, org_store,
                 procedure_diagram, procedure_retrait, roles,
                 slots as slots_mod, tool_alias, tool_registry)
+from .._auteurs import nommer_l_auteur, nommer_les_auteurs
 from .._authz import (ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER,
                       ORG_MEMBER_OF, SUB_ONLY, capacite_autorise)
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -250,6 +251,10 @@ class InstructionView(BaseModel):
     body_md: str
     slots: list[slots_mod.SlotDecl]
     set_by: Optional[str] = None
+    set_by_name: Optional[str] = Field(default=None, description=(
+        "De quoi NOMMER l'auteur de la dernière écriture : son nom, à défaut son email, "
+        "à défaut son identifiant (`set_by`). null quand aucun auteur n'est connu — une "
+        "procédure ancienne, jamais un auteur déduit."))
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     archived_at: Optional[str] = Field(default=None, description=(
@@ -284,6 +289,7 @@ class InstructionVersion(BaseModel):
     version: int
     title: Optional[str] = None
     set_by: Optional[str] = None
+    set_by_name: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -862,11 +868,17 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
             if not versioned:
                 raise _inconnu(f"Guide #{guide_id} : pas de version {version}.")
             instr = {**versioned, "id": instr["id"]}
+        # L'auteur ne se nomme que dans SON périmètre : un guide partagé par une AUTRE
+        # org donne accès au texte, pas à l'identité de ses rédacteurs (#708).
+        auteur = (nommer_l_auteur(instr) if (
+            (parent_org is not None and parent_org == org_id)
+            or (owner_type == "user" and owner_id == str(ctx.sub))) else {})
         return deprecations.avec_les_deux_noms({
             "org_id": parent_org, "guide_id": int(guide_id),
             "scope": owner_type, "slug": instr["slug"], "title": instr["title"],
             "description": instr["description"], "version": instr["version"],
             "body_md": instr["body_md"], "slots": instr.get("slots") or [],
+            **{k: auteur[k] for k in ("set_by", "set_by_name") if k in auteur},
             "archived_at": str(archivee) if archivee is not None else None}), (instr["body_md"],)
 
     if slug is None:
@@ -950,9 +962,11 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
         raise _inconnu(f"Aucun guide `{org_store.normalize_slug(slug)}` (scope {scope})"
                        + (f" en version {version}" if version is not None else "")
                        + ". Vois `oto_procedure(op='list')`.")
+    auteur = nommer_l_auteur(instr)
     out = {**scope_ref, "scope": scope, "slug": instr["slug"], "title": instr["title"],
            "description": instr["description"], "version": instr["version"],
-           "body_md": instr["body_md"], "slots": instr.get("slots") or []}
+           "body_md": instr["body_md"], "slots": instr.get("slots") or [],
+           "set_by": auteur["set_by"], "set_by_name": auteur["set_by_name"]}
     # #857 — la ligne COURANTE porte l'état ; une version archivée lue par slug vient
     # de la table des révisions, qui ne le porte pas : clé absente plutôt que `null`,
     # qui se lirait « en service ».
@@ -966,7 +980,7 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
     # modèle versionné est le MÊME aux deux étages depuis la fusion des stores (#681) :
     # une procédure d'équipe avait des versions que cette réponse taisait.
     if inp.with_history:
-        out["versions"] = org_store.list_instruction_versions(*owner, slug)
+        out["versions"] = nommer_les_auteurs(org_store.list_instruction_versions(*owner, slug))
     return out, (instr["body_md"],)
 
 
@@ -1314,6 +1328,7 @@ def _instruction_get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
         "slug": instr["slug"], "title": instr["title"], "description": instr["description"],
         "version": instr["version"], "body_md": instr["body_md"],
         "slots": instr.get("slots") or [], "set_by": instr.get("set_by"),
+        "set_by_name": nommer_l_auteur(instr)["set_by_name"],
         "created_at": instr.get("created_at"), "updated_at": instr.get("updated_at"),
         # ⚠️ **L'état de retrait voyage jusqu'à l'appelant** (#857). Cette lecture
         # n'a AUCUN filtre sur l'archivage — elle sert une procédure retirée comme
@@ -1346,7 +1361,8 @@ def _unarchive_instruction(ctx: ResolvedCtx, inp) -> dict:
 def _instruction_versions(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     slug = org_store.normalize_slug(inp.slug)
     return {"slug": slug,
-            "versions": org_store.list_instruction_versions("org", ctx.org_id, slug)}
+            "versions": nommer_les_auteurs(
+                org_store.list_instruction_versions("org", ctx.org_id, slug))}
 
 
 def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:

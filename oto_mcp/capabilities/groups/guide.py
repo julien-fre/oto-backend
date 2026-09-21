@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from ... import (deprecations, guide_store, org_store, procedure_diagram, roles,
                  tool_alias)
+from .._auteurs import nommer_l_auteur, nommer_les_auteurs
 from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, capacite_autorise
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -191,6 +192,7 @@ class GroupInstructionView(BaseModel):
     # qui les tairait laisserait croire qu'elle n'en a pas.
     slots: list = []
     set_by: Optional[str] = None
+    set_by_name: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -243,6 +245,7 @@ class GroupInstructionVersion(BaseModel):
     version: int
     title: Optional[str] = None
     set_by: Optional[str] = None
+    set_by_name: Optional[str] = None
     created_at: Optional[str] = None
 
 
@@ -308,6 +311,7 @@ def _get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
             "title": instr.get("title"), "description": instr.get("description"),
             "version": instr["version"], "body_md": instr["body_md"],
             "slots": instr.get("slots") or [], "set_by": instr.get("set_by"),
+            "set_by_name": nommer_l_auteur(instr)["set_by_name"],
             "created_at": instr.get("created_at"), "updated_at": instr.get("updated_at")}
 
 
@@ -345,7 +349,8 @@ def _delete(ctx: ResolvedCtx, inp: InstrSlugInput) -> dict:
 
 def _versions(ctx: ResolvedCtx, inp: InstrSlugInput) -> dict:
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
-            "versions": org_store.list_instruction_versions("group", inp.group_id, inp.slug)}
+            "versions": nommer_les_auteurs(
+                org_store.list_instruction_versions("group", inp.group_id, inp.slug))}
 
 
 def _revert(ctx: ResolvedCtx, inp: InstrRevertInput) -> dict:
