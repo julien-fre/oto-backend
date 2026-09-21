@@ -277,11 +277,13 @@ changent pas.
 - **Aucune redirection ouverte** : la destination est résolue côté serveur ; la requête n'est
   recopiée qu'après le `?` ; un caractère de contrôle est refusé (400 `invalid_request`) ; la
   réponse n'est pas mise en cache.
-- **Hôtes d'un tenant : inchangés.** Leur métadonnée annonce toujours le point d'autorisation de
-  leur annuaire (sauf host DÉCLARÉ au relais, section suivante : `/oauth/relay/authorize`,
-  toujours sans `consent`), et cette route répond 404 sur leur hôte, déclaré ou non. Délivrer des jetons de rafraîchissement à
-  leurs utilisateurs est la décision du partenaire (même principe que le TTL du 10/09,
-  `/data/infra/docs/logto-oto-dedicated.md`).
+- **Hôtes d'un tenant : inchangés, sauf opt-in.** Leur métadonnée annonce toujours le point
+  d'autorisation de leur annuaire (sauf host DÉCLARÉ au relais, section suivante :
+  `/oauth/relay/authorize`, sans `consent` tant que le tenant n'a pas déclaré
+  `refresh_tokens`), et cette route répond 404 sur leur hôte, déclaré ou non. Délivrer des jetons
+  de rafraîchissement à leurs utilisateurs est la décision du partenaire (même principe que le
+  TTL du 10/09, `/data/infra/docs/logto-oto-dedicated.md`) : il la prend par l'opt-in de la
+  section « Jetons de rafraîchissement d'un tenant relayé » ci-dessous.
 - **Effet visible** (lu dans le code de Logto 1.38, non mesuré) : pour une application première
   partie comme `Claude (oto MCP)`, `prompt=consent` n'affiche **aucun écran** — `koaAutoConsent`
   accorde le consentement côté serveur. Avec une session Logto ouverte, l'autorisation enchaîne
@@ -297,6 +299,76 @@ changent pas.
   Deux renouvellements concurrents avec le même jeton déclenchent « refresh token already used » et
   la révocation de toute la délégation : à surveiller.
 - Banc : `tests/auth/test_authorize_consent.py`.
+
+### Jetons de rafraîchissement d'un tenant relayé : opt-in par tenant
+
+**Le défaut mesuré.** Sur un host de tenant relayé, Codex fait un OAuth complet puis, une heure
+plus tard (durée du jeton d'accès), un 401 → la découverte → et s'arrête : Logto ne lui a
+délivré aucun jeton de rafraîchissement, faute de `prompt=consent` (oto#202, ci-dessus), et le
+relais passait `consent` à NOTRE annuaire seulement. claude.ai envoie `prompt=login consent` et
+se rétablit seul ; un client qui n'envoie pas `prompt` ne le peut pas.
+
+**Le drapeau.** Le tenant le déclare dans `tenants.logto_mgmt`, la même colonne que ses accès
+d'annuaire et ses rappels exacts (elle n'a d'effet que si la façade administre son annuaire) :
+
+```json
+{"token_endpoint": "…", "api_endpoint": "…", "credential": "LOGTO_<TENANT>_MGMT",
+ "refresh_tokens": true}
+```
+
+- **Éteint par défaut** : absent, `null` ou `false`, l'autorisation relayée d'un tenant est celle
+  d'avant, à l'octet près. Seul le booléen JSON `true` allume ; `"true"`, `1`, une liste, une
+  chaîne vide sont écartés au chargement, en alertant (`tenancy._normalize_refresh_tokens`),
+  drapeau éteint — une faute de frappe ne délivre jamais de jetons de longue durée.
+- **Ce qu'il fait, et seulement cela** : sur les hosts de CE tenant, l'autorisation relayée passe
+  par `redirection(..., consentement=True)` (`relay.cible_pour_host`, `Cible.consentement`) :
+  `consent` s'ajoute à `prompt` quand `scope` demande `offline_access`. Aucun scope n'est ajouté,
+  `prompt=none` et un `consent` déjà présent restent tels quels, un client qui ne demande pas
+  `offline_access` suit le parcours d'avant. Un autre tenant et NOTRE annuaire sont inchangés.
+- **Il ne se lit que dans la déclaration** posée par l'administrateur de la plateforme : aucun
+  paramètre de requête, en-tête ou corps de DCR ne peut l'activer.
+- **Il ne vaut que sur un host RELAYÉ** (`OTO_MCP_OAUTH_RELAY_HOSTS`, annuaire administrable).
+  Sur un host non relayé le client s'autorise chez l'annuaire du tenant : la plateforme ne voit
+  pas la demande et ne peut rien y ajouter. `/oauth/authorize` reste un 404 sur un host de
+  tenant, drapeau ou pas.
+- **Poser** (geste d'exploitation ; le tenant doit déjà porter `logto_mgmt`), puis
+  `oto_admin_tenant op=reload` — le registre est lu au boot, et prod et preprod ne partagent que
+  la base :
+
+  ```sql
+  UPDATE tenants
+     SET logto_mgmt = jsonb_set(logto_mgmt, '{refresh_tokens}', 'true'::jsonb)
+   WHERE slug = %s AND logto_mgmt IS NOT NULL;
+  ```
+
+  Retirer : `'false'::jsonb`, ou supprimer la clé (`logto_mgmt - 'refresh_tokens'`).
+
+**Le risque accepté.** Des jetons de rafraîchissement de longue durée, délivrés à des clients
+PUBLICS (Codex, ChatGPT : ni secret, ni contrôle du poste). Un jeton volé se rejoue jusqu'à son
+expiration ou sa révocation. Deux garde-fous existent, tous deux dans l'annuaire du TENANT : ils
+ne se règlent pas dans notre code, qui ne peut pas les imposer.
+
+**Checklist d'activation, à vérifier chez le tenant AVANT de poser le drapeau :**
+
+1. **L'accord explicite du partenaire**, par écrit : c'est sa décision, pas la nôtre.
+2. **`refreshTokenTtlInDays`** sur l'application OAuth du tenant (celle de `oauth_client_id`),
+   dans SON Logto : le plafond qu'il accepte. **Sans réglage, c'est le défaut de Logto : 14
+   jours**, donc une reconnexion complète tous les 14 jours. Notre annuaire est à 90 jours (défaut
+   Logto 14, maximum 180, `/data/infra/docs/logto-oto-dedicated.md` § « Déconnexions tous les 14
+   jours ») ; la rotation ne prolonge rien : la fenêtre court depuis la première autorisation.
+3. **La rotation** : Logto fait tourner les jetons de rafraîchissement d'un client public. Deux
+   renouvellements concurrents avec le même jeton déclenchent « refresh token already used » et
+   la révocation de toute la délégation : un client qui rafraîchit en parallèle se déconnecte.
+4. **L'application est « première partie »** dans son Logto : pour une application tierce,
+   l'écran de consentement s'afficherait à chaque autorisation (`koaAutoConsent` accorde le
+   consentement côté serveur pour une première partie : lu dans le code de Logto 1.38, non
+   mesuré, cf. « Effet visible » ci-dessus).
+5. **Le host est relayé** et l'annuaire administrable (`OTO_MCP_OAUTH_RELAY_HOSTS`, `logto_mgmt` +
+   credential présent) : sans cela, le drapeau ne change rien.
+6. **Après activation** : les clients déjà connectés ont un jeton SANS rafraîchissement ; il leur
+   faut UNE nouvelle autorisation. Puis, sur ce host, `token grant=refresh_token … upstream=200`
+   dans le journal, environ une heure après la connexion, à la place de la boucle 401 →
+   découverte → arrêt.
 
 ## Le relais d'autorisation : `iss` = l'issuer annoncé (RFC 9207, `OTO_MCP_OAUTH_RELAY_HOSTS`, 13/09/2026)
 
@@ -322,7 +394,7 @@ métadonnée annonce `authorization_endpoint = <host>/oauth/relay/authorize` et
   `OTO_MCP_OAUTH_STATE_SECRET`, le rappel du client, son `state`, le host et l'heure — **10 min** :
   un sceau s'obtient sans connexion, il ne doit rester rejouable que le temps d'une connexion) ;
   PKCE et le reste arrivent chez Logto à l'octet près, `consent` ajouté pour NOTRE annuaire
-  seulement (oto#202) ;
+  (oto#202) et pour un tenant qui l'a DÉCLARÉ (`logto_mgmt.refresh_tokens`, opt-in, ci-dessus) ;
 - le retour vérifie le sceau et, quand il est présent, l'`iss` de Logto (un émetteur que cet
   annuaire ne signe pas ⟹ 400, sans redirection), puis renvoie le client sur son rappel —
   paramètres de réponse REMPLACÉS, le reste de sa requête à l'octet près — avec `iss` =

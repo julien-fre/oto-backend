@@ -85,7 +85,11 @@ class TenantRow(BaseModel):
                     "NOM du couple de variables d'environnement, jamais sa valeur). "
                     "`redirect_uris` (optionnel) : les URLs de rappel EXACTES d'un client "
                     "hébergé que la façade d'enregistrement accepte sur les hosts de ce "
-                    "tenant seulement — jamais un motif. "
+                    "tenant seulement — jamais un motif. `refresh_tokens` (optionnel, "
+                    "booléen `true` seul accepté, éteint par défaut) : le tenant choisit "
+                    "que l'autorisation RELAYÉE de ses hosts demande le consentement sans "
+                    "lequel ses clients (Codex…) ne reçoivent aucun jeton de "
+                    "rafraîchissement. "
                     "Vide = annuaire non administrable par la plateforme.")
 
     primary: bool = Field(description="Le tenant de la plateforme (`oto`), dont "
