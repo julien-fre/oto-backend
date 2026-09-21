@@ -35,8 +35,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from starlette.concurrency import run_in_threadpool
-
 from . import client_trace, config, project_exposure, session_org
 
 logger = logging.getLogger(__name__)
@@ -318,15 +316,6 @@ def resolve_project(host: str) -> Optional[dict]:
         return None
 
 
-async def resolve_project_async(host: str) -> Optional[dict]:
-    """`resolve_project` hors de la boucle — appelé sur CHAQUE requête HTTP (`HostDispatch`),
-    donc jamais un SQL synchrone dans la boucle. Un host sans slug (le canonique, le cas
-    le plus courant) ne lit rien : il ne paie pas le saut de thread."""
-    if _slug_from_host(host) is None:
-        return None
-    return await run_in_threadpool(resolve_project, host)
-
-
 def _root_to_mcp(scope: dict) -> dict:
     """Réécrit le chemin RACINE `/` (ou vide) vers `/mcp` — le MCP d'un sous-domaine
     dédié est servi à la racine. Copie le scope (jamais de mutation partagée). Les
@@ -376,7 +365,7 @@ class HostDispatch:
     async def _http(self, scope, receive, send):
         headers = dict(scope.get("headers") or [])
         host = headers.get(b"host", b"").decode("latin-1")
-        proj = await resolve_project_async(host)
+        proj = resolve_project(host)
         if proj is None:
             return await self.authed(scope, receive, send)
         sid = headers.get(b"mcp-session-id", b"").decode("latin-1") or None
@@ -459,7 +448,7 @@ def make_routes():
 
     async def _tls_check(request):
         domain = request.query_params.get("domain", "")
-        return (PlainTextResponse("ok") if await resolve_project_async(domain) is not None
+        return (PlainTextResponse("ok") if resolve_project(domain) is not None
                 else PlainTextResponse("not published", status_code=404))
 
     async def _public_mcp_projects(request):
@@ -468,7 +457,7 @@ def make_routes():
         from . import db
         out = []
         try:
-            for p in await run_in_threadpool(db.list_published_mcp_projects):
+            for p in db.list_published_mcp_projects():
                 slug = p.get("mcp_slug")
                 if not slug:
                     continue

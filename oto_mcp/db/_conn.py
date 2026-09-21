@@ -18,7 +18,6 @@ from psycopg_pool import ConnectionPool
 
 from .. import providers
 from ..config import require_env
-from . import _hors_boucle
 
 def _normalize_value(v: Any) -> Any:
     # Match the string shape SQLite returned ("YYYY-MM-DD HH:MM:SS") so downstream
@@ -222,9 +221,6 @@ def reuse_connection() -> Iterator[None]:
 
 @contextmanager
 def _connect() -> Iterator[psycopg.Connection]:
-    # Avant TOUT (y compris le prêt partagé de `reuse_connection`) : chaque requête
-    # s'exécute dans le thread appelant, c'est donc chaque `_connect()` qui peut geler.
-    _hors_boucle.verifier()
     emprunt = _emprunt_partage.get()
     if emprunt is not None:
         yield emprunt.obtenir()
@@ -262,7 +258,6 @@ def _connect_autocommit(*, bornee: bool = True) -> Iterator[psycopg.Connection]:
     pool, la transaction ouverte serait coupée par `idle_in_transaction_session_timeout`
     en plein appel, et un verrou de session oublié survivrait au retour de la connexion
     dans le pool ; ici, la fermeture de la connexion le rend."""
-    _hors_boucle.verifier()
     options = _ddl_options() if bornee else _connect_options()
     with psycopg.connect(_database_url(), options=options,
                          row_factory=_str_dict_row, autocommit=True) as conn:

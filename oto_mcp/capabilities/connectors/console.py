@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from pydantic import BaseModel
-from starlette.concurrency import run_in_threadpool
 
 from . import (account_grants as connectors_account_grants,
                acl as connectors_acl,
@@ -130,22 +129,17 @@ class ConnectorInput(BaseModel):
 
 
 async def _connector(ctx: ResolvedCtx, inp: ConnectorInput) -> dict:
-    # `async` pour `force` seulement : les autres gestes lisent/écrivent la base en
-    # synchrone (`_me`, `_select`…, `_recommend` → `connectors.kit.appliquer`), donc jamais
-    # dans la boucle. Trouvé par la garde d'exécution, pas par le balayage : l'alias local
-    # `sel = connectors_selection` cachait les appels.
     sel = connectors_selection
     if inp.op == "list":
         # `name` est honoré ICI aussi (feedback #326) : il était déclaré sur l'outil
         # mais seul select/pause/unselect/force le lisait → passé sur list il partait
         # à la poubelle en silence et l'agent recevait tout le catalogue.
-        return await run_in_threadpool(sel._me, ctx, sel.MyConnectorsInput(
+        return sel._me(ctx, sel.MyConnectorsInput(
             verbose=inp.verbose, state=inp.state, name=inp.name))
     if inp.op in ("select", "pause", "unselect"):
         action = sel.ConnectorActionInput(
             name=_need(inp.name, "missing_name", f"`name` (connecteur) requis pour {inp.op}."))
-        geste = {"select": sel._select, "pause": sel._pause, "unselect": sel._unselect}[inp.op]
-        return await run_in_threadpool(geste, ctx, action)
+        return {"select": sel._select, "pause": sel._pause, "unselect": sel._unselect}[inp.op](ctx, action)
     oid = _need(inp.org_id, "missing_org", f"`org_id` requis pour {inp.op}.")
     if inp.op == "force":
         return await connectors_force._force_connector(ctx, connectors_force.ForceConnectorInput(
@@ -155,8 +149,7 @@ async def _connector(ctx: ResolvedCtx, inp: ConnectorInput) -> dict:
     if inp.connectors is None:
         raise AuthzDenied(400, "missing_connectors",
                           "`connectors` (liste de noms, [] pour effacer) requis pour recommend.")
-    return await run_in_threadpool(
-        sel._recommend, ctx, sel.RecommendInput(org_id=oid, connectors=inp.connectors))
+    return sel._recommend(ctx, sel.RecommendInput(org_id=oid, connectors=inp.connectors))
 
 
 # ── oto_instance : list / lend / verify (ADR 0038 §B, 0044 share_side) ───────

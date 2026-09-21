@@ -27,10 +27,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from typing import NamedTuple, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
-from starlette.concurrency import run_in_threadpool
 
 from .. import access, providers, credentials_store, db, journal_secrets, roles
 from ._authz import SUB_ONLY
@@ -364,23 +363,10 @@ def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
     return out
 
 
-class _PoseCredentielle(NamedTuple):
-    """Ce que la phase de LECTURE d'une pose passe à la vérification puis à l'écriture."""
-    account: str
-    org_id: Optional[int]
-    eid: object
-    fields: dict
-    st: object
-    pending: bool
-
-
-def _set_preparer(ctx: ResolvedCtx, inp: CredentialSetInput) -> _PoseCredentielle:
-    """Tout ce qui LIT la base avant la vérification (rôles, coffre, garde de pose).
-
-    Synchrone : `_set` l'exécute dans le threadpool. La vérification, elle, parle à un
-    service tiers et s'attend dans la boucle (`connector_verify.run` est asynchrone)."""
+async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
     from ..mcp_errors import McpError
     from .. import status_hints
+    from ..connectors import verify as connector_verify
 
     c = _exiger_credentialable(inp.provider, pose=True)
     # RBAC connecteur (ADR 0025) : aligner la POSE sur l'USAGE — un membre non autorisé
@@ -445,18 +431,6 @@ def _set_preparer(ctx: ResolvedCtx, inp: CredentialSetInput) -> _PoseCredentiell
     # (vécu 28/07, six poses Zoho rejetées sans chemin de sortie).
     st = status_hints.credential_state(inp.provider, fields)
     pending = st is not None and not st.complete
-    return _PoseCredentielle(account=account, org_id=org_id, eid=eid, fields=fields,
-                             st=st, pending=pending)
-
-
-async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
-    from ..mcp_errors import McpError
-    from ..connectors import verify as connector_verify
-
-    # Le SQL avant et après la vérification part au threadpool (le serveur est mono-loop :
-    # `docs/event-loop-perf.md`) ; seule la sonde du connecteur, asynchrone, reste ici.
-    pose = await run_in_threadpool(_set_preparer, ctx, inp)
-    fields, pending = pose.fields, pose.pending
     verified = False
     if connector_verify.supports(inp.provider) and not pending:
         try:
@@ -467,14 +441,6 @@ async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
             raise AuthzDenied(400, "verify_failed", str(e))
         verified = True
 
-    return await run_in_threadpool(_set_ecrire, ctx, inp, pose, verified)
-
-
-def _set_ecrire(ctx: ResolvedCtx, inp: CredentialSetInput, pose: _PoseCredentielle,
-                verified: bool) -> dict:
-    """L'écriture du secret dans le coffre, après vérification. Synchrone (SQL)."""
-    fields, account, org_id, eid = pose.fields, pose.account, pose.org_id, pose.eid
-    st, pending = pose.st, pose.pending
     secret = credentials_store.pack_secret(inp.provider, fields)
     meta = None
     if verified:

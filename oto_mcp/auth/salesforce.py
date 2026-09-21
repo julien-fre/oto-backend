@@ -286,11 +286,9 @@ def exchange_code(code: str, client_id: str, client_secret: str, login_url: str,
         raise RuntimeError(_sf_error_hint(e)) from e
 
 
-def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
-                  group_id: Optional[int] = None) -> dict:
-    """Synchrone (DB) : l'appelant l'exécute par `run_in_threadpool`, jamais dans la boucle.
-
-    Read-merge-write: `secret_enc` is one encrypted blob per row (no
+async def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
+                        group_id: Optional[int] = None) -> dict:
+    """Read-merge-write: `secret_enc` is one encrypted blob per row (no
     column-level partial update for a multi-field secret exists in
     credentials_store) — so we read back the client_id/client_secret/login_url
     saved before `/start`, merge in the refresh_token this exchange just

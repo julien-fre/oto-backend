@@ -20,7 +20,6 @@ import types
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
 
 from . import _cle_exigee, _instruction, _modele
 from .. import (access, db, runner_hook, runner_models, runner_tick,
@@ -450,11 +449,7 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: TriggerInput) -> TriggerInput:
     return inp.model_copy(update=maj) if maj else inp
 
 
-def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
-    """TOUT le SQL de `runner.triggers`, en synchrone — `_triggers` l'exécute dans le
-    threadpool. Rend les déclencheurs SANS leurs avertissements d'outils : ceux-là
-    passent par `_avec_tool_warnings`, qui est asynchrone, et se posent ensuite
-    (`_ajouter_tool_warnings`)."""
+async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les déclencheurs sont org-scopés")
     inp = _noms_canoniques(ctx, inp)
@@ -578,9 +573,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             db.poser_secret_de_hook(t["id"], ctx.org_id, hache)
             # Le secret en CLAIR, une seule fois. Il n'est pas stocké — seul son
             # haché l'est — donc ni une relecture ni un incident ne le rendront.
-            return {"trigger": _avec_hook(ctx.org_id, t),
+            return {"trigger": await _avec_tool_warnings(ctx, _avec_hook(ctx.org_id, t)),
                    "hook_secret": secret}
-        return {"trigger": t}
+        return {"trigger": await _avec_tool_warnings(ctx, t)}
 
     if inp.op == "list":
         # ⚠️ Filtré par OBJET quand `procedure` est fourni : l'écran d'une
@@ -588,7 +583,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Filtrer côté client devient faux dès qu'il y a plus d'une page.
         lus = (db.triggers_for_procedure(ctx.org_id, inp.procedure) if inp.procedure
                else db.list_triggers(ctx.org_id))
-        return {"triggers": [_avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))
+        return {"triggers": [await _avec_tool_warnings(
+                                 ctx, _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)))
                              for t in lus],
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
@@ -599,7 +595,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-        return {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
+        return {"trigger": await _avec_tool_warnings(
+                            ctx, _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t))),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.op == "rotate_secret":
@@ -614,8 +611,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         logger.warning("secret de webhook RENOUVELÉ pour le déclencheur %s (org %s) "
                        "par %s — la source en place cessera d'être acceptée",
                        inp.trigger_id, ctx.org_id, ctx.sub)
-        return {"trigger": _avec_hook(ctx.org_id,
-                                      db.get_trigger(inp.trigger_id, ctx.org_id)),
+        return {"trigger": await _avec_tool_warnings(
+                            ctx, _avec_hook(ctx.org_id,
+                                           db.get_trigger(inp.trigger_id, ctx.org_id))),
                 "hook_secret": secret}
 
     if inp.op == "deliveries":
@@ -644,8 +642,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         logger.info("déclencheur %s (org %s) : file VIDÉE à la demande de %s — "
                     "%d travaux périmés", inp.trigger_id, ctx.org_id, ctx.sub, vides)
         return {"ok": True, "cleared": vides,
-                "trigger": _avec_hook(ctx.org_id,
-                                      db.get_trigger(inp.trigger_id, ctx.org_id))}
+                "trigger": await _avec_tool_warnings(
+                            ctx, _avec_hook(ctx.org_id,
+                                           db.get_trigger(inp.trigger_id, ctx.org_id)))}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):
@@ -766,28 +765,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-    return {"trigger": _avec_hook(ctx.org_id, t)}
-
-
-async def _ajouter_tool_warnings(ctx: ResolvedCtx, rep: dict) -> dict:
-    """Pose les avertissements d'outils sur le(s) déclencheur(s) de la réponse.
-
-    Séparé du SQL (`_triggers_sync`) parce que le calcul de visibilité est asynchrone : le
-    SQL part au threadpool en un bloc, les avertissements se calculent ensuite dans la
-    boucle — ils ne lisent pas la base directement."""
-    if "trigger" in rep:
-        rep["trigger"] = await _avec_tool_warnings(ctx, rep["trigger"])
-    if "triggers" in rep:
-        rep["triggers"] = [await _avec_tool_warnings(ctx, t) for t in rep["triggers"]]
-    return rep
-
-
-async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
-    # `async` seulement pour les avertissements d'outils ; le SQL — une dizaine de lectures et
-    # d'écritures, dont `access.has_option` et la résolution des noms — est ICI hors de la
-    # boucle (le serveur est mono-loop : `docs/event-loop-perf.md`).
-    rep = await run_in_threadpool(_triggers_sync, ctx, inp)
-    return await _ajouter_tool_warnings(ctx, rep)
+    return {"trigger": await _avec_tool_warnings(ctx, _avec_hook(ctx.org_id, t))}
 
 
 CAPABILITIES += [

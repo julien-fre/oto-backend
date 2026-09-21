@@ -306,7 +306,8 @@ class _FakeStore:
         return True
 
 
-def test_persist_token_merges_refresh_token_without_disturbing_other_fields(monkeypatch):
+@pytest.mark.asyncio
+async def test_persist_token_merges_refresh_token_without_disturbing_other_fields(monkeypatch):
     store = _FakeStore({
         "client_id": "cid", "client_secret": "csecret",
         "login_url": "https://acme.my.salesforce.com",
@@ -323,7 +324,7 @@ def test_persist_token_merges_refresh_token_without_disturbing_other_fields(monk
     async def _ok():
         return None
 
-    result = salesforce_oauth.persist_token(
+    result = await salesforce_oauth.persist_token(
         "sub-1", 1, "member",
         {"refresh_token": "rt-abc", "instance_url": "https://acme.my.salesforce.com",
          "id": "https://login.salesforce.com/id/00D.../005..."},
@@ -343,7 +344,8 @@ def test_persist_token_merges_refresh_token_without_disturbing_other_fields(monk
         "une sonde post-écriture est revenue : elle détruira le jeton sous rotation")
 
 
-def test_persist_token_writes_to_org_scope_when_scope_is_org(monkeypatch):
+@pytest.mark.asyncio
+async def test_persist_token_writes_to_org_scope_when_scope_is_org(monkeypatch):
     store = _FakeStore({
         "client_id": "cid", "client_secret": "csecret", "login_url": "https://acme.my.salesforce.com",
     })
@@ -363,14 +365,15 @@ def test_persist_token_writes_to_org_scope_when_scope_is_org(monkeypatch):
         return None
     monkeypatch.setattr(connector_verify, "run", lambda *a, **k: _ok())
 
-    salesforce_oauth.persist_token("sub-1", 42, "org", {"refresh_token": "rt-org"})
+    await salesforce_oauth.persist_token("sub-1", 42, "org", {"refresh_token": "rt-org"})
 
     assert len(org_secret_calls) == 1
     assert org_secret_calls[0][0] == 42
     assert org_secret_calls[0][1] == "salesforce"
 
 
-def test_persist_token_writes_to_group_scope_when_scope_is_group(monkeypatch):
+@pytest.mark.asyncio
+async def test_persist_token_writes_to_group_scope_when_scope_is_group(monkeypatch):
     store = _FakeStore({
         "client_id": "cid", "client_secret": "csecret", "login_url": "https://acme.my.salesforce.com",
     })
@@ -390,7 +393,7 @@ def test_persist_token_writes_to_group_scope_when_scope_is_group(monkeypatch):
         return None
     monkeypatch.setattr(connector_verify, "run", lambda *a, **k: _ok())
 
-    salesforce_oauth.persist_token("sub-1", 5, "group", {"refresh_token": "rt-team"},
+    await salesforce_oauth.persist_token("sub-1", 5, "group", {"refresh_token": "rt-team"},
                                          group_id=77)
 
     assert len(group_secret_calls) == 1
@@ -398,7 +401,8 @@ def test_persist_token_writes_to_group_scope_when_scope_is_group(monkeypatch):
     assert group_secret_calls[0][1] == "salesforce"
 
 
-def test_persist_token_requires_refresh_token():
+@pytest.mark.asyncio
+async def test_persist_token_requires_refresh_token():
     with pytest.raises(RuntimeError, match="refresh_token"):
-        salesforce_oauth.persist_token(
+        await salesforce_oauth.persist_token(
             "sub-1", 1, "member", {"access_token": "at-only"})

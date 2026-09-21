@@ -30,7 +30,6 @@ endroit. Ce module ne porte que les handlers.
 from __future__ import annotations
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
-from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
@@ -38,7 +37,7 @@ from .. import (access, deprecations, providers, db, guide_store, openapi,
                 org_store, version as oto_version)
 from ..connectors import activation as connector_activation
 from ..connectors import cardinality as connector_cardinality
-from .base import _authenticate, _file, _json, _json_error, en_thread
+from .base import _authenticate, _file, _json, _json_error
 
 
 async def favicon(request: Request) -> Response:
@@ -142,30 +141,18 @@ async def connectors_catalog(request: Request, *, verifier: JWTVerifier) -> JSON
     élargie par surcharge lisait « single » sur un connecteur dont le serveur
     accepte un second compte : un geste offert par la base et jamais par l'écran.
     """
+    cat = providers.public_catalog()
     if not request.headers.get("authorization"):
-        return await run_in_threadpool(_catalogue_public, request)
+        exposed = connector_activation.exposed_connectors(None)
+        cat = [c for c in cat if c["name"] in exposed]
+        cat = [c for c in cat if c["availability"] != "platform_granted"]
+        # Aucun requérant ⟹ aucune org de contexte : la cardinalité servie ne peut
+        # être que le défaut du code (surchargeable seulement au cran PLATEFORME,
+        # que l'overlay applique aussi avec `org=None`). C'est la vitrine.
+        return _json(request, {"connectors": connector_cardinality.overlay_for_org(cat, None)})
     sub, err = await _authenticate(request, verifier)
     if err:
         return err
-    return await run_in_threadpool(_catalogue_du_requerant, request, sub)
-
-
-def _catalogue_public(request: Request) -> JSONResponse:
-    """Le corps SYNCHRONE de `connectors_catalog` sans requérant : les lectures de
-    l'activation et de la cardinalité parlent à la base, donc jamais dans la boucle."""
-    cat = providers.public_catalog()
-    exposed = connector_activation.exposed_connectors(None)
-    cat = [c for c in cat if c["name"] in exposed]
-    cat = [c for c in cat if c["availability"] != "platform_granted"]
-    # Aucun requérant ⟹ aucune org de contexte : la cardinalité servie ne peut
-    # être que le défaut du code (surchargeable seulement au cran PLATEFORME,
-    # que l'overlay applique aussi avec `org=None`). C'est la vitrine.
-    return _json(request, {"connectors": connector_cardinality.overlay_for_org(cat, None)})
-
-
-def _catalogue_du_requerant(request: Request, sub: str) -> JSONResponse:
-    """Idem, pour un requérant authentifié (org de contexte, visibilité)."""
-    cat = providers.public_catalog()
     # Org de CONTEXTE (seam ADR 0023 : consultation X-Oto-Org > maison) — le
     # catalogue suit l'org consultée au dashboard, comme status_for. Lue une fois :
     # elle sert la visibilité ET la cardinalité, qui doivent parler de la même org.
@@ -213,8 +200,7 @@ def _vitrine(entree: dict, champs: tuple) -> dict:
     return {k: v for k, v in entree.items() if k in champs}
 
 
-@en_thread
-def guide_library_public(request: Request) -> JSONResponse:
+async def guide_library_public(request: Request) -> JSONResponse:
     """Catalogue PUBLIC des guides (bibliothèque/marketplace) — pas d'auth.
 
     Alimente le site vitrine oto.ninja. Deny-by-default sur DEUX axes : quelles
@@ -241,8 +227,7 @@ def guide_library_public(request: Request) -> JSONResponse:
     return _json(request, deprecations.avec_les_deux_noms({"guides": items}))
 
 
-@en_thread
-def guide_library_public_get(request: Request) -> JSONResponse:
+async def guide_library_public_get(request: Request) -> JSONResponse:
     """Un guide PUBLIC complet (markdown) par slug — vitrine, pas d'auth.
     Public-only : une entrée 'unlisted' n'est jamais servie ici, et seuls les
     champs de `_VITRINE_ENTREE` en sortent (les identifiants restent dedans)."""
@@ -253,8 +238,7 @@ def guide_library_public_get(request: Request) -> JSONResponse:
     return _json(request, _vitrine(entry, _VITRINE_ENTREE))
 
 
-@en_thread
-def guides_library_public(request: Request) -> JSONResponse:
+async def guides_library_public(request: Request) -> JSONResponse:
     """Catalogue PUBLIC des guides PLATEFORME — pas d'auth.
 
     Même rôle que `guide_library_public` : alimenter la vitrine (snapshot
@@ -266,8 +250,7 @@ def guides_library_public(request: Request) -> JSONResponse:
     return _json(request, {"guides": guide_store.list_guides_for()})
 
 
-@en_thread
-def guides_library_public_get(request: Request) -> JSONResponse:
+async def guides_library_public_get(request: Request) -> JSONResponse:
     """Un guide PLATEFORME complet (markdown) par slug — vitrine, pas d'auth.
     `scope='platform'` est EXPLICITE : sans lui, `read_guide_scoped` cherche
     aussi org puis user, ce qu'une route anonyme ne doit jamais faire."""
@@ -277,8 +260,7 @@ def guides_library_public_get(request: Request) -> JSONResponse:
     return _json(request, g)
 
 
-@en_thread
-def invite_preview(request: Request) -> JSONResponse:
+async def invite_preview(request: Request) -> JSONResponse:
     """Aperçu PUBLIC d'une invitation (pas d'auth — le token est le secret).
     Alimente la page d'accueil « vous êtes invité·e » avant la création de
     compte : email visé + inviteur, pour accompagner l'onboarding."""
@@ -288,8 +270,7 @@ def invite_preview(request: Request) -> JSONResponse:
     return _json(request, p)
 
 
-@en_thread
-def public_doc(request: Request) -> JSONResponse:
+async def public_doc(request: Request) -> JSONResponse:
     """Lecture publique d'un doc partagé par token (gap #4a) — PAS d'auth,
     lecture seule. Le dashboard rend le markdown sur sa route publique /p/d/<token>."""
     token = request.path_params.get("token", "")
@@ -300,8 +281,7 @@ def public_doc(request: Request) -> JSONResponse:
                            "updated_at": doc.get("updated_at")})
 
 
-@en_thread
-def public_doc_view(request: Request) -> Response:
+async def public_doc_view(request: Request) -> Response:
     """Page de partage PUBLIQUE d'un doc — route `/p/d/<token>`, **server-rendered**
     pour être lisible par un agent (WebFetch sans JS) autant que par un navigateur.
     Négocie sur `Accept` : `application/json` → JSON, `text/markdown` → markdown brut,
@@ -346,8 +326,7 @@ def public_doc_view(request: Request) -> Response:
     return HTMLResponse(html_page, headers=_entetes_page_a_jeton)
 
 
-@en_thread
-def outreach_unsubscribe(request: Request) -> Response:
+async def outreach_unsubscribe(request: Request) -> Response:
     """Désinscription des relances — route `/o/u/<token>`, **sans auth**.
 
     Le jeton signé EST l'autorisation : demander une session ici ferait dépendre un
@@ -377,8 +356,7 @@ def outreach_unsubscribe(request: Request) -> Response:
                         headers={"Cache-Control": "no-store"})
 
 
-@en_thread
-def digest_unsubscribe(request: Request) -> Response:
+async def digest_unsubscribe(request: Request) -> Response:
     """Désinscription du DIGEST de signaux (oto#150) — route `/o/d/<token>`,
     **sans auth**. Sœur d'`outreach_unsubscribe`, même régime (GET qui écrit,
     server-rendered, idempotent, strictement soustractif) — voir son docstring pour

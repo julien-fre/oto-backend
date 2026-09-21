@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 
 from . import config
@@ -63,18 +62,6 @@ def org_id_for_host(host: str) -> Optional[int]:
     return oid
 
 
-async def org_id_for_host_async(host: str) -> Optional[int]:
-    """`org_id_for_host` hors de la boucle : un slug pas encore en cache lit TOUTES les orgs
-    (`list_all_orgs`) — sur chaque requête d'un host dont le slug est inconnu. Le host sans
-    slug et le hit de cache, eux, ne paient pas le saut de thread."""
-    slug = _slug_from_host(host)
-    if slug is None:
-        return None
-    if slug in _CACHE:
-        return _CACHE[slug]
-    return await run_in_threadpool(org_id_for_host, host)
-
-
 class SubdomainOrgMiddleware:
     """ASGI brut : enregistre l'org du sous-domaine pour la requête courante."""
 
@@ -85,7 +72,7 @@ class SubdomainOrgMiddleware:
         if scope.get("type") != "http":
             return await self.app(scope, receive, send)
         request = Request(scope, receive)  # headers seulement → ne consomme pas le body
-        org_id = await org_id_for_host_async(request.headers.get("host", ""))
+        org_id = org_id_for_host(request.headers.get("host", ""))
         if org_id is None:
             return await self.app(scope, receive, send)
         from . import session_org
