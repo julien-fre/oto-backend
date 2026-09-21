@@ -53,7 +53,7 @@ class HorsBoucle(RuntimeError):
 _strict = False
 _tolere: frozenset[str] = frozenset()
 _deja_vus: set[str] = set()
-_defaut_signale = False
+_DEFAUT = "<défaut interne>"        # clé de `_deja_vus` : le défaut est journalisé une fois
 
 
 def _nom(cle: str) -> str:
@@ -65,20 +65,10 @@ def _nom(cle: str) -> str:
 
 def configurer(*, strict: bool, tolere=()) -> None:
     """Posé par `tests/conftest.py`. Sans appel : mode production (avertir, jamais lever)."""
-    global _strict, _tolere, _defaut_signale
+    global _strict, _tolere
     _strict = strict
     _tolere = frozenset(_nom(c) for c in tolere)
     _deja_vus.clear()
-    _defaut_signale = False
-
-
-def _defaut_interne() -> None:
-    """Un défaut de la garde elle-même : journalisé UNE fois par process, jamais levé."""
-    global _defaut_signale
-    if _defaut_signale:
-        return
-    _defaut_signale = True
-    logger.exception("db.hors_boucle.defaut — la garde a échoué, l'accès base se poursuit")
 
 
 def _site(frame) -> tuple[str, list[str]] | None:
@@ -130,7 +120,9 @@ def verifier() -> None:
                     "db.hors_boucle site=%s — accès base SYNCHRONE dans la boucle (le serveur "
                     "entier attend la requête) ; pile : %s", site, " <- ".join(pile))
     except Exception:  # noqa: BLE001 — un défaut de l'instrument ne casse jamais le chemin observé
-        _defaut_interne()
+        if _DEFAUT not in _deja_vus:       # UNE fois par process, avec sa pile : c'est ce qui le répare
+            _deja_vus.add(_DEFAUT)
+            logger.exception("db.hors_boucle.defaut — la garde a échoué, l'accès base se poursuit")
         return
     if violation is not None:
         raise violation
