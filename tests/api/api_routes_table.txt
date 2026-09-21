@@ -374,6 +374,10 @@ POST /api/settings/api-keys/{provider} -> _handler
 OPTIONS /api/settings/api-keys/{provider} -> options_handler
 DELETE /api/settings/api-keys/{provider} -> _handler
 OPTIONS /api/settings/api-keys/{provider} -> options_handler
+GET,HEAD /api/me/model-subscriptions -> _handler
+OPTIONS /api/me/model-subscriptions -> options_handler
+DELETE /api/me/model-subscriptions/{family} -> _handler
+OPTIONS /api/me/model-subscriptions/{family} -> options_handler
 POST /api/me/connectors/{name}/session/start -> _handler
 OPTIONS /api/me/connectors/{name}/session/start -> options_handler
 POST /api/me/connectors/{name}/session/finalize -> _handler

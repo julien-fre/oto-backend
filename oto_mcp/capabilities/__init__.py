@@ -62,6 +62,9 @@ import oto_mcp.capabilities.connectors.verify  # noqa: F401 — connectors.verif
 # Credential PERSONNEL (pose/état/retrait) — REST-only, un secret ne passe pas
 # en argument d'outil. Ex-routes écrites à la main d'`api/routes.py` (#121).
 from . import me_credentials  # noqa: F401 — me.credential.{get,set,clear}
+# Mes ABONNEMENTS de modèles (OTO-130) — REST-only. Aucun identifiant ne s'y
+# pose : la personne se connecte DANS son bac à sable, et la session n'en sort pas.
+from . import me_abonnements  # noqa: F401 — me.model_subscriptions.{list,remove}
 # Connexion par SESSION NAVIGATEUR (ADR 0026) — l'autre voie de pose d'un credential,
 # par un login humain dans un navigateur hébergé. Ex-routes écrites à la main (#121).
 from . import browser_sessions  # noqa: F401 — me.browser_session.{start,finalize}
