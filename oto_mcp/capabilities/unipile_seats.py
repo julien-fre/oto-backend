@@ -102,8 +102,7 @@ def _rows_for(account_id: str) -> list[dict]:
 
 
 async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
-    # `_platform_client` lit le coffre (SQL) : hors de la boucle, comme les deux lectures d'après.
-    client = await asyncio.to_thread(_platform_client)
+    client = _platform_client()
     if client is None:
         return {"configured": False, "instance_dsn": None, "seats": [],
                 "orphan_count": 0, "reclaimable_count": 0}
