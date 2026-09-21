@@ -193,3 +193,18 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   - ⚠️ Pas de vue TENANT : un revendeur consulte org par org. Elle se fera quand l'étage
     tenant (ADR 0052) portera le rattachement — la bâtir aujourd'hui sur `front_brand`
     reviendrait à s'appuyer sur une colonne qui doit remonter d'un cran.
+
+## Journal du handshake MCP : ce qui a été SERVI (`handshake_log`)
+
+Une ligne de log (`INFO`, logger `oto_mcp.handshake_log`) par `initialize` et par requête de
+liste (`tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`) :
+
+    mcp.handshake initialize client=<nom>/<version> protocol_requested=<v> protocol_negotiated=<v> host=<hôte>
+    mcp.handshake list method=<méthode> count=<n> client=<nom>/<version> host=<hôte>
+
+Pour savoir pourquoi un client ne reçoit « aucun outil » : `count=0` (ou un compte bas) est
+ce que le serveur a servi, pas ce que le client en a fait. Hébergé dans `ToolAliasMiddleware`,
+le plus externe de nos middlewares : son compte est **la liste finale** (visibilité de
+session, alias dépréciés et préfixe de tenant compris). Aucun contenu — ni nom d'outil, ni
+`sub`, ni e-mail, ni jeton — jamais que des `len()`. Pas de table, pas de variable d'env.
+Complète `kind='protocol'` (cadence de re-handshake), qui ne porte ni protocole négocié ni hôte.

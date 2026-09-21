@@ -7,13 +7,13 @@ from fastmcp.server.middleware import Middleware
 from ..mcp_errors import McpError
 from mcp.types import ErrorData
 
-from .. import deprecations, tool_alias
+from .. import deprecations, handshake_log, tool_alias
 from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
 
 
-class ToolAliasMiddleware(Middleware):
+class ToolAliasMiddleware(handshake_log.JournalListesMixin, Middleware):
     """Traduit les noms d'outils de la plateforme au nom du PRODUIT du tenant.
 
     OUTERMOST, et c'est tout l'intérêt : le nom canonique (`oto_doc`) est rétabli
@@ -85,7 +85,14 @@ class ToolAliasMiddleware(Middleware):
         return out
 
     async def on_list_tools(self, context, call_next):
-        tools = await call_next(context)
+        """La liste d'outils servie — et sa JOURNALISATION (`handshake_log`) : ce
+        middleware est le dernier à retoucher la liste (alias dépréciés ajoutés,
+        préfixe de tenant appliqué), donc son compte est celui que le client reçoit."""
+        tools = self._liste_servie(await call_next(context))
+        handshake_log.log_list("tools/list", context, tools)
+        return tools
+
+    def _liste_servie(self, tools):
         try:
             tools = self._avec_alias_deprecies(tools)
         except Exception:  # noqa: BLE001 — un avis de dépréciation ne casse pas une liste
@@ -125,6 +132,7 @@ class ToolAliasMiddleware(Middleware):
         cohérent avec les noms d'outils), `title` le nom du tenant (le libellé
         humain). Rien de déclaré ⟹ l'annonce d'avant, à l'octet près (fail-open)."""
         result = await call_next(context)
+        handshake_log.log_initialize(context, result)
         if result is None or getattr(result, "serverInfo", None) is None:
             return result
         try:
