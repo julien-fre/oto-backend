@@ -193,3 +193,16 @@ async def test_me_credential_set_ne_gele_pas_la_boucle(monkeypatch):
     # deux temps lents (la lecture, puis l'écriture) : ~1 s de SQL au total, donc ~100
     # battements boucle libre ; on en exige le double du seuil d'un seul temps
     assert ticks >= 2 * _BATTEMENTS_MIN, _verdict(ticks)
+
+
+@pytest.mark.asyncio
+async def test_oto_connector_ne_gele_pas_la_boucle(monkeypatch):
+    """Trouvé par la garde d'EXÉCUTION en CI (pas par le balayage : l'alias local
+    `sel = connectors_selection` cachait les appels) — `recommend` écrit le kit d'une org."""
+    from oto_mcp.capabilities._types import ResolvedCtx
+    from oto_mcp.capabilities.connectors import console, selection
+    monkeypatch.setattr(selection, "_me", _lente({"connectors": []}))
+    out, ticks = await _battements_pendant(
+        console._connector(ResolvedCtx(sub="u", org_id=7), console.ConnectorInput(op="list")))
+    assert out == {"connectors": []}, "la lecture n'a pas été jouée : la garde serait inerte"
+    assert ticks >= _BATTEMENTS_MIN, _verdict(ticks)

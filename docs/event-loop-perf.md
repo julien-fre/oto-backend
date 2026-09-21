@@ -909,6 +909,11 @@ que c'est ce qu'un tiers peut marteler. **82 → 62 sites** :
 - `unipile_seats._list_seats` : `_platform_client()` (lecture du coffre) — le reliquat du
   correctif du matin, que la garde a trouvé.
 
+- `oto_connector` (`connectors/console._connector`) : `list`/`select`/`pause`/`unselect`/
+  `recommend` au threadpool. **Trouvé par la garde d'exécution en CI, pas par le balayage** :
+  l'alias local `sel = connectors_selection` cachait les appels (le balayage suit désormais
+  ces alias) — c'est la preuve que les deux détecteurs se recouvrent sans se remplacer.
+
 Preuve : `tests/test_lot1_sql_hors_boucle.py` — compteur de boucle pendant une lecture de
 0,5 s, **0 battement avant, ≥ 20 après**, sur neuf cas. **Reste 62 sites** dans
 `tests/_stock_db_hors_boucle.py` (dont 25 `[dormant]`) ; les plus exposés qui restent :

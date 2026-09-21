@@ -165,6 +165,20 @@ class Balayage:
                 return (lie[1], nom)
         return None
 
+    def _alias_local(self, fn: _Fn, nom: str):
+        """`sel = connectors_selection` dans le corps : `sel` désigne alors ce module (la forme
+        a caché un `sel._recommend(...)` — donc SQL dans la boucle — au premier balayage)."""
+        scope = fn
+        while scope is not None:
+            for n in ast.walk(scope.node):
+                if (isinstance(n, ast.Assign) and isinstance(n.value, ast.Name)
+                        and any(isinstance(t, ast.Name) and t.id == nom for t in n.targets)):
+                    lie = self.imports.get(fn.module, {}).get(n.value.id)
+                    if lie and lie[0] == "mod":
+                        return lie
+            scope = scope.parent
+        return None
+
     def cibles(self, fn: _Fn, appel: ast.Call):
         f = appel.func
         mod = fn.module
@@ -200,6 +214,8 @@ class Balayage:
                 cand = self.fns.get((mod, f"{fn.classe}.{attr}"))
                 return [cand] if cand else []
             lie = self.imports.get(mod, {}).get(racine)
+            if lie is None:
+                lie = self._alias_local(fn, racine)
             if lie and lie[0] == "mod":
                 if lie[1] == "oto_mcp.db" and attr in PUITS:
                     return [("PUITS", attr)]
