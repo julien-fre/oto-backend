@@ -392,3 +392,33 @@ Un succès n'est pas un accusé de ce que tu crois avoir fait ; lis ce qui manqu
 - **Un agrégat sur un champ absent rend un groupe de clé `null`**, pas une erreur : un
   seul groupe contenant tout est le signe d'un nom de colonne faux, pas d'une donnée
   vide.
+
+## 9. Une colonne `type: "formula"` est calculée, jamais écrite
+
+Une formule OpenFormula posée au schéma (`formula: "IFS(…)"`) calcule la colonne à
+partir des autres colonnes **de la même ligne** — jamais une autre ligne, jamais une
+autre colonne calculée. Sous-ensemble fermé : `IFS`, `IF`, `SWITCH`, `AND`, `OR`, `NOT`,
+`LEFT`, `MID`, `LEN`, `COUNTA`, `TRUE`, `FALSE`, comparaisons ; le reste, une colonne
+inconnue ou un chaînage est refusé **à la pose**, en le nommant. Grammaire complète :
+docstring de `oto_mcp/datastore/formule.py`.
+
+- **Non écrivable.** Une écriture est refusée (« colonne CALCULÉE ») et `readonly_override`
+  n'y change rien : la valeur serait recalculée. Écris les colonnes d'**entrée**.
+  `champ.comment` porte la provenance (la branche `IFS` gagnante) ; `origine` n'est
+  jamais touchée.
+- **Une liste se lit en plage** : `contacts[].telephone` (avec `[]` — un point nu désigne
+  une couche) donne le sous-champ de chaque élément, et ne se consomme que dans
+  `COUNTA(…)`.
+- ⚠️ **`contacts<>""` n'est pas un test de liste vide.** Lue comme un scalaire, une
+  liste vaut son texte (`[]` → `"[]"`) : `contacts<>""` est vrai même pour `[]`. « Au
+  moins une valeur » s'écrit `COUNTA(contacts[].telephone)>0`.
+- **Le vide assumé `@empty` est un vide**, pour les comparaisons comme pour `COUNTA`.
+- **Recalcul** : à chaque écriture de la ligne ; en masse, en tâche de fond, quand la
+  formule est posée ou que son **texte** change (`data_set_schema`, `data_patch_schema`
+  rendent `formules_recalcul_en_cours: true` ; `get_schema` dit `formules_a_recalculer`
+  tant qu'il en reste). Re-poser le même texte ne recalcule rien ; le modifier, même d'un
+  espace, relance le recalcul de toutes les lignes.
+- **Tri, filtre, agrégation** lisent la valeur **stockée**, comme pour toute colonne. La
+  colonne n'a pas de type de résultat : le tri est **textuel** — juste pour un rang
+  « 1 »…« 5 » ou un nom, faux pour des nombres à plusieurs chiffres (`"10"` avant
+  `"9"`, oto-backend#1034).

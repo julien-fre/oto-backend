@@ -96,7 +96,8 @@ class Cible:
     oidc_public: str      # où le NAVIGATEUR se connecte
     oidc_jeton: str       # où part l'échange de jeton, de serveur à serveur
     emetteurs: frozenset  # les `iss` que cet annuaire peut estampiller
-    consentement: bool    # oto#202 : pour NOTRE annuaire seulement
+    consentement: bool    # oto#202 : NOTRE annuaire, ou un tenant qui a DÉCLARÉ
+    #                       `logto_mgmt.refresh_tokens` (opt-in, éteint par défaut)
     directory: object = None
     label: str = "?"
 
@@ -125,8 +126,11 @@ def cible_pour_host(host: str, public_url: str, claude_app_id: str) -> Cible:
                      d if facade._credential_present(d) else None, d.label)
     d = facade.directory_for_tenant(entry)
     oidc = entry.issuer.rstrip("/")
+    # `consent` (donc un jeton de rafraîchissement) : la décision du TENANT, déclarée par
+    # l'administrateur de la plateforme (`entry.refresh_tokens`, éteint par défaut) — jamais
+    # celle du client ni de la requête.
     return Cible(host, f"https://{host}", entry.oauth_client_id or "", oidc, oidc,
-                 frozenset({oidc}), False,
+                 frozenset({oidc}), entry.refresh_tokens,
                  d if d is not None and facade._credential_present(d) else None, entry.slug)
 
 
@@ -336,7 +340,10 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             return _refus("temporarily_unavailable", "le serveur d'autorisation de ce host "
                           "n'est pas administrable par la plateforme", 503)
         rappel = demande["redirect_uri"]
-        if not facade._redirect_ok(rappel):     # le rappel de la façade n'y passe jamais
+        # La MÊME garde que la DCR (`facade.redirect_autorise`), avec la liste du tenant de
+        # ce host : un rappel que la DCR a refusé ne s'autorise pas, un qu'elle a accepté ne
+        # se retrouve pas refusé ici. Le rappel de la façade n'y passe jamais.
+        if not facade.redirect_autorise(facade.tenant_for_host(c.host), rappel):
             return refus_autorisation(c, "redirect_not_allowed", "invalid_request",
                                       "redirect_uri non autorisé", client=demande["client_id"])
         try:
@@ -471,15 +478,28 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             _en_vol -= 1
         ms = int((time.monotonic() - debut) * 1000)
         json_amont = amont.headers.get("content-type", "").startswith("application/json")
-        erreur = ""
-        if json_amont and amont.status_code >= 400:
+        erreur, refresh, expire = "", "-", "-"
+        if json_amont:
             try:
-                erreur = str(amont.json().get("error", ""))[:40]
+                lu = amont.json()
+                if amont.status_code >= 400:
+                    erreur = str(lu.get("error", ""))[:40]
+                else:
+                    # Un booléen et un entier seulement : jamais la valeur d'un jeton
+                    # (oto-backend : savoir si un client OpenAI reçoit un refresh token).
+                    refresh = "oui" if lu.get("refresh_token") else "non"
+                    ttl = lu.get("expires_in")
+                    expire = ttl if type(ttl) is int else "-"
             # noqa: SILENT — la raison n'est qu'une étiquette de journal, le corps part tel quel
             except Exception:
-                erreur = "?"
-        _log.info("oauth.relay token grant=%s code=%s upstream=%d error=%r ms=%d host=%s",
-                  v["grant_type"], forme, amont.status_code, erreur or "-", ms, c.host)
+                if amont.status_code >= 400:
+                    erreur = "?"
+                else:
+                    refresh = "?"
+        _log.info("oauth.relay token grant=%s code=%s upstream=%d error=%r ms=%d host=%s "
+                  "refresh_token=%s expires_in=%s",
+                  v["grant_type"], forme, amont.status_code, erreur or "-", ms, c.host,
+                  refresh, expire)
         if amont.status_code >= 500 or not json_amont:
             return _refus("server_error", "réponse inattendue du serveur d'autorisation", 502,
                           cors=True)

@@ -119,8 +119,9 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   **Déclarer n'est pas restreindre — c'est donner un domicile aux gardes** : un
   lancement qui prend son tableau en argument n'a nulle part où accrocher une
   cible ni une borne. ⚠️ `heartbeat_at` distingue le VIVANT du RÉSIDU (une flotte
-  `running` qui ne bat plus n'est pas une concurrence à attendre), et la table est
-  créée AVANT `runner_jobs`, qui la référence.
+  `running` qui ne bat plus n'est pas une concurrence à attendre), `taken_by` dit
+  QUEL ordonnanceur la tient (voir « Qui tient une campagne » plus bas), et la
+  table est créée AVANT `runner_jobs`, qui la référence.
   ⚠️ **La cible n'est stockée que par son NOM, et un nom ne désigne rien de sûr**
   (11/09/2026, oto#160). À nom égal, `resolve_datastore_ns` préfère le tableau
   PERSONNEL du demandeur — et le demandeur est celui qui APPELLE. Un écran qui
@@ -156,6 +157,75 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   l'org** — voir ci-dessous.
 - **workers vus** `runner_workers` — la présence d'un runner pour une org,
   inscrite à CHAQUE sondage de la file (`op=claim`, y compris à vide).
+
+### Qui tient une campagne : le preneur (21/09/2026)
+
+**Le défaut.** `op=take` passait une campagne `armed` → `running` sans noter QUI la
+prenait : `heartbeat_at` datait un battement sans dire de qui, et `sub` est le
+DÉCLARANT, pas le preneur. Un ordonnanceur d'oto-runner qui redémarrait ne pouvait donc
+pas savoir s'il reprenait SA campagne ou s'il en voyait une qu'un autre tenait encore —
+et, faute de mieux, oto-runner tolérait le refus sur une campagne `running` en supposant
+une reprise (oto-runner#19). Deux ordonnanceurs pouvaient conduire la même campagne et
+doubler ses exécutions.
+
+**Le contrat.** `runner_fleets.taken_by` porte l'identifiant que l'ordonnanceur DÉCLARE ;
+chaque geste d'ordonnanceur le reçoit (`taken_by`, requis — `400 missing_fields` sinon)
+et le compare **dans le même ordre SQL que l'écriture** : lire « qui la tient ? » puis
+écrire laisserait deux ordonnanceurs lire « personne » au même instant.
+
+```
+op=take       armed                          → running, taken_by écrit, started_at posé
+              running tenue par CE preneur   → REPRISE : 200, idempotente, started_at inchangé
+              running tenue par personne     → prise (le sondage des workers l'avait
+                                               démarrée seul, `marquer_demarree`)
+              running tenue par un AUTRE     → 409 held_by_other — sans nommer le preneur
+              tout autre état                → 409 not_takeable
+op=beat       battement compté du seul preneur ; sinon 409 not_the_holder
+              (un battement d'autrui ferait passer pour vivant un preneur mort)
+op=ack_stop   accusé du seul preneur ; sinon 409 not_the_holder ; 409
+              nothing_to_acknowledge sans arrêt en cours
+op=get / list rendent taken_by (null = personne ne la tient) — ce qu'un ordonnanceur
+              qui redémarre lit pour décider
+op=launch     réarmer LIBÈRE la campagne (taken_by remis à null)
+```
+
+Code : `oto_mcp/capabilities/_ordonnanceur_de_campagne.py` (refus nommés) et
+`oto_mcp/db/runner_fleets_preneur.py` (les trois écritures conditionnelles). Bancs sur
+la route servie : `tests/api/test_runner_fleets_rest.py`, section « QUI TIENT une
+campagne ».
+
+**L'identifiant, et pourquoi celui-là.** Il doit être STABLE à travers le redémarrage
+d'un même ordonnanceur (sinon il ne reprend jamais sa campagne) et DISTINCT d'un
+ordonnanceur à l'autre (sinon deux la conduisent). Le backend le traite comme opaque
+(≤ 200 caractères) ; oto-runner le compose **`<machine>/<unité systemd>`** — par
+exemple `oto-platform/oto-fleet-vague3` —, posé par `scripts/flotte.sh` dans
+l'environnement de l'unité qu'il crée. Stable : l'unité relancée (par systemd ou par
+`flotte.sh lancer` sous le même nom) porte le même nom. Distinct : systemd refuse deux
+unités du même nom sur une machine, et la machine sépare les box. Écartés :
+
+- `sub` — l'ordonnanceur parle sous un jeton de COMPTE (`.env.fleet`), le même pour
+  tous ceux d'une machine : il ne les distingue pas ;
+- le secret de machine d'un worker (`worker_sub`, `runner_platform_workers`) —
+  l'ordonnanceur n'en porte pas, et il désignerait la machine, pas l'ordonnanceur ;
+- un PID, `INVOCATION_ID` ou un identifiant tiré au démarrage — ils changent au
+  redémarrage : plus aucune reprise possible ;
+- une identité utilisateur par ordonnanceur — un processus n'est pas un compte (règle
+  de la maison : un worker n'a qu'un secret de machine).
+
+**Quand le preneur est mort.** La campagne reste `running`, tenue, et tout autre
+ordonnanceur est refusé : c'est voulu, le refus ne sait pas distinguer un mort d'un
+lent. Le geste est explicite : l'arrêter (`op=stop`), laisser le sondage constater
+l'arrêt quand plus aucune exécution ne tourne (`stopping` → `stopped`), la réarmer
+(`op=launch`, qui la libère), puis la prendre. Si l'ancien preneur revit, son battement
+suivant répond `not_the_holder` : il apprend qu'il ne conduit plus rien.
+
+**La migration, hors du démarrage.** Une base neuve reçoit la colonne du `CREATE TABLE`
+(`db/schema/runs.py`) ; la base partagée préprod/prod la reçoit de la révision Alembic
+`0003_runner_fleets_preneur`, jouée **à la main, avant la fusion** (le code qui
+l'accompagne la lit sur chaque verbe de `runner.fleets`, et main = préprod) — pas du
+boot, où un `ALTER` redemanderait son verrou exclusif à chaque déploiement (ADR 0065,
+`docs/migrations-versionnees.md` §5.1). La colonne est additive : l'ancien code l'ignore,
+et un retour au tag précédent reste sûr.
 
 ### Ne pas promettre une exécution que personne n'assure (02/09/2026)
 

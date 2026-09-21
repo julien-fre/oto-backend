@@ -87,7 +87,9 @@ client_id ni intervention manuelle**, même quand le redirect varie par connecte
 QUE des hosts connus (claude.ai/.com, chatgpt.com préfixe `/connector/oauth/`,
 callback.mistral.ai, localhost) — pas un registrar ouvert. **Nouveau client qui
 échoue** : son redirect est loggé (`DCR refusé — redirect_uris=…` en journalctl) →
-ajouter son host à `_redirect_ok`. Fail-open : Management API en panne → `client_id`
+ajouter son host à `_redirect_ok` — sauf un client HÉBERGÉ qui pose un rappel par instance
+(sous-domaine en libre-service) : jamais un motif, voir §« Le rappel d'un client hébergé ».
+Fail-open : Management API en panne → `client_id`
 renvoyé quand même (Claude, redirect pré-enregistré, jamais cassé).
 
 ### Sur le host d'un TENANT : enregistrer chez lui, ou dire qu'on ne l'a pas fait
@@ -138,6 +140,59 @@ cette confrontation qui rattache un refus à sa cause.
 process AVANT que sa ligne ne porte `logto_mgmt`, sinon la façade refuse pendant la
 fenêtre. La colonne, elle, est posée par `init_db` au boot — et preprod et prod
 partagent la même base.
+
+#### Le rappel d'un client hébergé : l'URL EXACTE, déclarée par tenant, jamais un motif
+
+Un client hébergé dont le tableau de bord pose son PROPRE rappel, un par instance
+(Hermes Cloud : `https://<id>.agents.<domaine>/api/mcp/oauth/callback/<serveur>`), n'entre
+pas dans la liste globale de `_redirect_ok`. **Un joker n'y entre pas non plus, à aucun
+prix** : `POST /oauth/register` n'est pas authentifié et pose le rappel demandé dans
+l'application partagée. Avec un motif `*.agents.<domaine>`, n'importe quel client du produit
+hébergé (le sous-domaine est en libre-service) enregistrerait le sien, enverrait à un
+utilisateur un lien d'autorisation, et recevrait le code — le PKCE n'y change rien, c'est
+lui qui ouvre le flux. Les hôtes fixes de la liste (chatgpt.com, callback.mistral.ai) n'ont
+pas ce défaut : c'est le serveur du fournisseur qui reçoit le code. Et `_redirect_ok` vaut
+pour TOUS les hosts, `mcp.oto.cx` compris, pour le bénéfice d'un seul tenant.
+
+Un tenant DÉCLARE donc les URLs exactes qu'il accepte, dans `tenants.logto_mgmt` (la
+même colonne, la même déclaration que ses accès d'annuaire — elle n'a d'effet que si la façade
+sait poser le rappel chez lui) :
+
+```json
+{"token_endpoint": "…", "api_endpoint": "…", "credential": "LOGTO_<TENANT>_MGMT",
+ "redirect_uris": ["https://<id>.agents.<domaine>/api/mcp/oauth/callback/<serveur>"]}
+```
+
+- **Égalité de chaîne, rien d'autre** : ni préfixe, ni joker, ni suffixe de domaine, ni
+  variante de casse ou de port. Une instance de plus = une entrée de plus, choisie par
+  l'exploitant du tenant.
+- **Sur les hosts de CE tenant seulement** : la liste, l'application et l'annuaire viennent
+  de la MÊME entrée de registre, résolue une fois d'après le `Host` de la requête. Le `Host`
+  n'est pas authentifié à ce niveau, mais forger celui d'un tenant ne donne que
+  l'enregistrement, chez lui, d'un rappel qu'il a déjà déclaré — jamais un rappel au choix de
+  l'appelant, jamais chez nous. `_redirect_ok` (liste globale) reste inchangée, et
+  `auth/anon.py` n'appelle qu'elle.
+- **La DCR et l'autorisation relayée appliquent la MÊME garde**
+  (`facade.redirect_autorise`) : un rappel refusé à l'enregistrement ne s'autorise pas, même
+  posé dans l'application par un autre chemin.
+- **Validée au chargement, entrée par entrée** : une entrée qui n'est pas une URL https
+  complète (joker, requête, fragment, identité, chemin absent) est écartée et alertée
+  (`tenancy._rappel_declarable`) — une ligne écartée ne peut que RÉDUIRE ce qui est accepté.
+- **Refus nommé** sur le host d'un tenant : 400 `invalid_redirect_uri` qui dit QUEL rappel est
+  écarté et à qui le demander (l'exploitant du tenant), sans nommer nos colonnes.
+- **Poser une entrée** (geste d'exploitation, comme tout le reste de `tenants` ; le tenant
+  doit déjà porter `logto_mgmt`), puis `oto_admin_tenant op=reload` — le registre est lu au
+  boot, et prod et preprod ne partagent que la base :
+
+  ```sql
+  UPDATE tenants
+     SET logto_mgmt = jsonb_set(logto_mgmt, '{redirect_uris}',
+           COALESCE(logto_mgmt->'redirect_uris', '[]'::jsonb) || to_jsonb(%s::text))
+   WHERE slug = %s AND logto_mgmt IS NOT NULL;
+  ```
+
+  Retirer une entrée retire l'accès : rien d'autre à défaire côté façade (le rappel déjà
+  posé dans l'application du tenant, lui, se retire chez lui).
 
 **Onboarding actuel = self-serve ouvert.** Le tenant a sign-up activé par
 email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire,
@@ -222,11 +277,13 @@ changent pas.
 - **Aucune redirection ouverte** : la destination est résolue côté serveur ; la requête n'est
   recopiée qu'après le `?` ; un caractère de contrôle est refusé (400 `invalid_request`) ; la
   réponse n'est pas mise en cache.
-- **Hôtes d'un tenant : inchangés.** Leur métadonnée annonce toujours le point d'autorisation de
-  leur annuaire (sauf host DÉCLARÉ au relais, section suivante : `/oauth/relay/authorize`,
-  toujours sans `consent`), et cette route répond 404 sur leur hôte, déclaré ou non. Délivrer des jetons de rafraîchissement à
-  leurs utilisateurs est la décision du partenaire (même principe que le TTL du 10/09,
-  `/data/infra/docs/logto-oto-dedicated.md`).
+- **Hôtes d'un tenant : inchangés, sauf opt-in.** Leur métadonnée annonce toujours le point
+  d'autorisation de leur annuaire (sauf host DÉCLARÉ au relais, section suivante :
+  `/oauth/relay/authorize`, sans `consent` tant que le tenant n'a pas déclaré
+  `refresh_tokens`), et cette route répond 404 sur leur hôte, déclaré ou non. Délivrer des jetons
+  de rafraîchissement à leurs utilisateurs est la décision du partenaire (même principe que le
+  TTL du 10/09, `/data/infra/docs/logto-oto-dedicated.md`) : il la prend par l'opt-in de la
+  section « Jetons de rafraîchissement d'un tenant relayé » ci-dessous.
 - **Effet visible** (lu dans le code de Logto 1.38, non mesuré) : pour une application première
   partie comme `Claude (oto MCP)`, `prompt=consent` n'affiche **aucun écran** — `koaAutoConsent`
   accorde le consentement côté serveur. Avec une session Logto ouverte, l'autorisation enchaîne
@@ -242,6 +299,76 @@ changent pas.
   Deux renouvellements concurrents avec le même jeton déclenchent « refresh token already used » et
   la révocation de toute la délégation : à surveiller.
 - Banc : `tests/auth/test_authorize_consent.py`.
+
+### Jetons de rafraîchissement d'un tenant relayé : opt-in par tenant
+
+**Le défaut mesuré.** Sur un host de tenant relayé, Codex fait un OAuth complet puis, une heure
+plus tard (durée du jeton d'accès), un 401 → la découverte → et s'arrête : Logto ne lui a
+délivré aucun jeton de rafraîchissement, faute de `prompt=consent` (oto#202, ci-dessus), et le
+relais passait `consent` à NOTRE annuaire seulement. claude.ai envoie `prompt=login consent` et
+se rétablit seul ; un client qui n'envoie pas `prompt` ne le peut pas.
+
+**Le drapeau.** Le tenant le déclare dans `tenants.logto_mgmt`, la même colonne que ses accès
+d'annuaire et ses rappels exacts (elle n'a d'effet que si la façade administre son annuaire) :
+
+```json
+{"token_endpoint": "…", "api_endpoint": "…", "credential": "LOGTO_<TENANT>_MGMT",
+ "refresh_tokens": true}
+```
+
+- **Éteint par défaut** : absent, `null` ou `false`, l'autorisation relayée d'un tenant est celle
+  d'avant, à l'octet près. Seul le booléen JSON `true` allume ; `"true"`, `1`, une liste, une
+  chaîne vide sont écartés au chargement, en alertant (`tenancy._normalize_refresh_tokens`),
+  drapeau éteint — une faute de frappe ne délivre jamais de jetons de longue durée.
+- **Ce qu'il fait, et seulement cela** : sur les hosts de CE tenant, l'autorisation relayée passe
+  par `redirection(..., consentement=True)` (`relay.cible_pour_host`, `Cible.consentement`) :
+  `consent` s'ajoute à `prompt` quand `scope` demande `offline_access`. Aucun scope n'est ajouté,
+  `prompt=none` et un `consent` déjà présent restent tels quels, un client qui ne demande pas
+  `offline_access` suit le parcours d'avant. Un autre tenant et NOTRE annuaire sont inchangés.
+- **Il ne se lit que dans la déclaration** posée par l'administrateur de la plateforme : aucun
+  paramètre de requête, en-tête ou corps de DCR ne peut l'activer.
+- **Il ne vaut que sur un host RELAYÉ** (`OTO_MCP_OAUTH_RELAY_HOSTS`, annuaire administrable).
+  Sur un host non relayé le client s'autorise chez l'annuaire du tenant : la plateforme ne voit
+  pas la demande et ne peut rien y ajouter. `/oauth/authorize` reste un 404 sur un host de
+  tenant, drapeau ou pas.
+- **Poser** (geste d'exploitation ; le tenant doit déjà porter `logto_mgmt`), puis
+  `oto_admin_tenant op=reload` — le registre est lu au boot, et prod et preprod ne partagent que
+  la base :
+
+  ```sql
+  UPDATE tenants
+     SET logto_mgmt = jsonb_set(logto_mgmt, '{refresh_tokens}', 'true'::jsonb)
+   WHERE slug = %s AND logto_mgmt IS NOT NULL;
+  ```
+
+  Retirer : `'false'::jsonb`, ou supprimer la clé (`logto_mgmt - 'refresh_tokens'`).
+
+**Le risque accepté.** Des jetons de rafraîchissement de longue durée, délivrés à des clients
+PUBLICS (Codex, ChatGPT : ni secret, ni contrôle du poste). Un jeton volé se rejoue jusqu'à son
+expiration ou sa révocation. Deux garde-fous existent, tous deux dans l'annuaire du TENANT : ils
+ne se règlent pas dans notre code, qui ne peut pas les imposer.
+
+**Checklist d'activation, à vérifier chez le tenant AVANT de poser le drapeau :**
+
+1. **L'accord explicite du partenaire**, par écrit : c'est sa décision, pas la nôtre.
+2. **`refreshTokenTtlInDays`** sur l'application OAuth du tenant (celle de `oauth_client_id`),
+   dans SON Logto : le plafond qu'il accepte. **Sans réglage, c'est le défaut de Logto : 14
+   jours**, donc une reconnexion complète tous les 14 jours. Notre annuaire est à 90 jours (défaut
+   Logto 14, maximum 180, `/data/infra/docs/logto-oto-dedicated.md` § « Déconnexions tous les 14
+   jours ») ; la rotation ne prolonge rien : la fenêtre court depuis la première autorisation.
+3. **La rotation** : Logto fait tourner les jetons de rafraîchissement d'un client public. Deux
+   renouvellements concurrents avec le même jeton déclenchent « refresh token already used » et
+   la révocation de toute la délégation : un client qui rafraîchit en parallèle se déconnecte.
+4. **L'application est « première partie »** dans son Logto : pour une application tierce,
+   l'écran de consentement s'afficherait à chaque autorisation (`koaAutoConsent` accorde le
+   consentement côté serveur pour une première partie : lu dans le code de Logto 1.38, non
+   mesuré, cf. « Effet visible » ci-dessus).
+5. **Le host est relayé** et l'annuaire administrable (`OTO_MCP_OAUTH_RELAY_HOSTS`, `logto_mgmt` +
+   credential présent) : sans cela, le drapeau ne change rien.
+6. **Après activation** : les clients déjà connectés ont un jeton SANS rafraîchissement ; il leur
+   faut UNE nouvelle autorisation. Puis, sur ce host, `token grant=refresh_token … upstream=200`
+   dans le journal, environ une heure après la connexion, à la place de la boucle 401 →
+   découverte → arrêt.
 
 ## Le relais d'autorisation : `iss` = l'issuer annoncé (RFC 9207, `OTO_MCP_OAUTH_RELAY_HOSTS`, 13/09/2026)
 
@@ -267,7 +394,7 @@ métadonnée annonce `authorization_endpoint = <host>/oauth/relay/authorize` et
   `OTO_MCP_OAUTH_STATE_SECRET`, le rappel du client, son `state`, le host et l'heure — **10 min** :
   un sceau s'obtient sans connexion, il ne doit rester rejouable que le temps d'une connexion) ;
   PKCE et le reste arrivent chez Logto à l'octet près, `consent` ajouté pour NOTRE annuaire
-  seulement (oto#202) ;
+  (oto#202) et pour un tenant qui l'a DÉCLARÉ (`logto_mgmt.refresh_tokens`, opt-in, ci-dessus) ;
 - le retour vérifie le sceau et, quand il est présent, l'`iss` de Logto (un émetteur que cet
   annuaire ne signe pas ⟹ 400, sans redirection), puis renvoie le client sur son rappel —
   paramètres de réponse REMPLACÉS, le reste de sa requête à l'octet près — avec `iss` =
@@ -377,8 +504,13 @@ client sont entre guillemets, `%r` : un saut de ligne n'y forge pas de ligne) �
   `authorize refused reason=<not_declared|request_object|param_shape|response_mode|pkce|foreign_client|redirect_not_allowed|redirect_not_registered|directory_unreadable> client='…'` ;
 - `callback outcome='code'|'error:<e>' redirect_host='…' age_s=`, ou, refusé :
   `outcome=bad_state:<sig|ttl|host|format|no_secret>`, `outcome=iss_mismatch`, `outcome=empty` ;
-- `token grant=<authorization_code|refresh_token> code=<marked|unmarked|-> upstream=<statut> error='<champ>|-' ms=`,
-  ou, refusé ou en panne : `code=tag_mismatch`, `code=mark_stripped`,
+- `token grant=<authorization_code|refresh_token> code=<marked|unmarked|-> upstream=<statut> error='<champ>|-' ms=`
+  puis `refresh_token=<oui|non|?|->` et `expires_in=<secondes|->` — **le seul endroit où lire si un
+  client reçoit un refresh token** (Caddy ne voit pas les corps) : un booléen et un entier, jamais
+  la valeur d'un jeton ; `-` = réponse en erreur ou champ illisible, `?` = succès au JSON illisible
+  (`tests/auth/test_relais_journal_echange_jeton.py`). ⚠️ Ne couvre que les hosts DÉCLARÉS dans
+  `OTO_MCP_OAUTH_RELAY_HOSTS` : ailleurs le `token_endpoint` annoncé est celui de Logto et ce
+  backend ne voit pas l'échange ; ou, refusé ou en panne : `code=tag_mismatch`, `code=mark_stripped`,
   `upstream=<timeout|saturated|NomDeLException>`.
 
 - Bancs : `tests/auth/test_authorization_relay.py` (routes, sceaux, déclaration, refus nommés,

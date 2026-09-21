@@ -31,7 +31,10 @@ description: >-
 >   poser**, puis `oidc.invalid_redirect_uri` deux secondes plus tard à l'`/authorize` —
 >   un succès annoncé, un échec ailleurs, aucun indice. Un tenant dont NOUS hébergeons
 >   l'annuaire déclare donc ses accès dans **`tenants.logto_mgmt`** (JSONB) :
->   `{"token_endpoint", "api_endpoint", "credential"}`. ⚠️ **Aucun secret en base** —
+>   `{"token_endpoint", "api_endpoint", "credential"}` (+ `redirect_uris`, optionnel : les
+>   URLs de rappel EXACTES d'un client hébergé, valables sur les hosts de CE tenant seulement,
+>   jamais un motif — `docs/auth-logto.md` §« Le rappel d'un client hébergé »).
+>   ⚠️ **Aucun secret en base** —
 >   `credential` est le NOM d'un couple de variables d'environnement
 >   (`<credential>_ID`/`_SECRET`), même convention que le primaire. ⚠️ **Les deux
 >   endpoints sont un COUPLE** : chez Logto le jeton se prend sur l'endpoint
@@ -48,7 +51,7 @@ description: >-
 >   client RFC 9207 (SDK MCP Python 2.0) refuse le flux après la connexion. Un host déclaré
 >   dans `OTO_MCP_OAUTH_RELAY_HOSTS` fait passer autorisation, retour et jeton par le relais
 >   de la façade (`auth/relay.py`), qui rend `iss` = le host — sans `consent` ajouté pour un
->   tenant, et **seulement si nous administrons son annuaire** (`logto_mgmt`) : le relais compare
+>   tenant (sauf opt-in `logto_mgmt.refresh_tokens`, éteint par défaut, `docs/auth-logto.md`), et **seulement si nous administrons son annuaire** (`logto_mgmt`) : le relais compare
 >   le rappel du client aux rappels relus sur SON application, à l'octet près. Mise en service,
 >   refus nommés et limites : `docs/auth-logto.md` §relais.
 > - ⚠️ **Pas de patron, pas de lien** (`links.py`, `tenants.link_paths`). Les chemins d'un

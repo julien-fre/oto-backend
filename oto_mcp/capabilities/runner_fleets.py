@@ -49,6 +49,8 @@ Et les trois verbes de l'ORDONNANCEUR sont servis ici aussi (`take`, `beat`,
 base et le runner les portaient : `op=stop` écrivait alors un ordre que personne
 ne pouvait lire, et une campagne annoncée « en arrêt » continuait de dépenser.
 **Un ordre que personne ne peut lire est un ordre qui n'arrive jamais.**
+Depuis le 21/09/2026 ils nomment leur auteur (`taken_by`) et ne se font que par
+l'ordonnanceur qui TIENT la campagne — `_ordonnanceur_de_campagne.py`.
 """
 from __future__ import annotations
 
@@ -58,7 +60,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from . import _cle_exigee, _descriptions_outils, _instruction, _lignes_reservables, _modele
+from . import (_cle_exigee, _descriptions_outils, _instruction, _lignes_reservables,
+               _modele, _ordonnanceur_de_campagne)
 from .. import access, db, output_projection, runner_models, tool_alias
 from ..tool_visibility import BETA_OPTION
 
@@ -132,6 +135,10 @@ class FleetInput(BaseModel):
     # stop — la raison est ÉCRITE : « arrêtée » sans raison oblige à rouvrir les
     # journaux pour savoir si c'était un incident, un budget ou une décision.
     reason: Optional[str] = None
+    # take / beat / ack_stop — QUI tient la campagne (21/09/2026).
+    taken_by: Optional[str] = Field(None, max_length=200, description=(
+        "take/beat/ack_stop (required): the scheduler's own identifier — stable across "
+        "its restarts, distinct from any other scheduler."))
 
 
 class Fleet(BaseModel):
@@ -161,6 +168,9 @@ class Fleet(BaseModel):
     started_at: Optional[str] = None
     stopping_at: Optional[str] = None
     heartbeat_at: Optional[str] = None
+    # L'ordonnanceur qui TIENT la campagne, tel qu'il s'est déclaré à `op=take` ;
+    # `null` = personne ne la tient.
+    taken_by: Optional[str] = None
     stopped_at: Optional[str] = None
     created_at: Optional[str] = None
 
@@ -171,7 +181,9 @@ class FleetCard(BaseModel):
     outils, les bornes de dépense, le contexte d'exécution — se lit par `op=get`.
 
     `input_sha256` tient lieu d'instruction : deux passages à la même empreinte portent
-    le même texte. `null` = aucune instruction.
+    le même texte. `null` = aucune instruction. `taken_by` dit quel ordonnanceur tient
+    la campagne (`null` = aucun) — ce qu'un ordonnanceur qui redémarre lit pour savoir
+    si elle est la sienne.
 
     ⚠️ Ses champs SONT la projection : le handler garde exactement ceux-ci, et le schéma
     servi les annonce — les deux ne peuvent pas diverger."""
@@ -189,6 +201,7 @@ class FleetCard(BaseModel):
     stopping_at: Optional[str] = None
     stopped_at: Optional[str] = None
     created_at: Optional[str] = None
+    taken_by: Optional[str] = None
     input_sha256: Optional[str] = None
 
 
@@ -490,49 +503,10 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         return {"fleet": f}
 
     # ── Les gestes de l'ORDONNANCEUR — ceux qui transforment une intention en
-    # fait. Ils sont servis parce que sans eux `op=stop` reste une écriture que
-    # personne ne lit ; et ils POSENT les faits que les verbes d'opérateur
-    # n'ont pas le droit de poser.
-    if inp.op == "take":
-        f = db.prendre(inp.fleet_id, ctx.org_id)
-        if not f:
-            actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
-            if not actuelle:
-                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
-            # ⚠️ Refus et non 200 : deux ordonnanceurs qui prendraient la même
-            # flotte armée doubleraient le passage. Le premier gagne, le second
-            # l'apprend au lieu de partir en croyant l'avoir prise.
-            raise AuthzDenied(
-                409, "not_takeable",
-                f"ce passage est `{actuelle['status']}` — on ne prend qu'une "
-                "flotte `armed`. Un autre ordonnanceur l'a peut-être déjà prise.")
-        return {"fleet": f}
-
-    if inp.op == "beat":
-        # Le battement, ET la lecture de l'ordre dans le même appel : un
-        # ordonnanceur qui bat sans jamais demander « dois-je m'arrêter ? »
-        # laisserait `stopping` sans lecteur.
-        vivant = db.battre(inp.fleet_id, ctx.org_id)
-        f = db.get_fleet(inp.fleet_id, ctx.org_id)
-        if not f:
-            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
-        return {"fleet": f, "stop_requested": f["status"] in ("stopping", "stopped"),
-                "beat_taken": vivant}
-
-    if inp.op == "ack_stop":
-        # ⚠️ Le SEUL geste qui pose `stopped`, et c'est l'ordonnanceur qui le
-        # pose. Si un opérateur pouvait l'écrire, l'écart entre « demandé » et
-        # « effectif » disparaîtrait — et avec lui le seul diagnostic d'un
-        # ordonnanceur mort.
-        if not db.accuser_arret(inp.fleet_id, ctx.org_id, inp.reason):
-            actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
-            if not actuelle:
-                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
-            raise AuthzDenied(
-                409, "nothing_to_acknowledge",
-                f"ce passage est `{actuelle['status']}` — il n'y a pas d'arrêt en "
-                "cours à accuser.")
-        return {"fleet": db.get_fleet(inp.fleet_id, ctx.org_id)}
+    # fait, et que seul celui qui TIENT la campagne peut faire (21/09/2026).
+    if inp.op in _ordonnanceur_de_campagne.GESTES:
+        return _ordonnanceur_de_campagne.geste(ctx.org_id, inp.op, inp.fleet_id,
+                                               inp.taken_by, inp.reason)
 
     if inp.op == "state":
         etat = db.fleet_state(inp.fleet_id, ctx.org_id)
@@ -665,6 +639,20 @@ CAPABILITIES += [
                           "clé de modèle et ne l'a pas déposée"),
             DeclaredError(404, "fleet_not_found",
                           "flotte inconnue dans l'org du porteur"),
+            DeclaredError(409, "not_launchable",
+                          "`launch` d'une campagne déjà armée ou en cours"),
+            DeclaredError(409, "not_stoppable",
+                          "`stop` d'une campagne ni armée ni en cours"),
+            DeclaredError(409, "not_takeable",
+                          "`take` d'une campagne ni `armed` ni `running`"),
+            DeclaredError(409, "held_by_other",
+                          "`take` d'une campagne `running` qu'un AUTRE ordonnanceur "
+                          "tient : deux ordonnanceurs doubleraient ses exécutions"),
+            DeclaredError(409, "not_the_holder",
+                          "`beat`/`ack_stop` par un ordonnanceur qui ne tient pas "
+                          "(ou plus) la campagne"),
+            DeclaredError(409, "nothing_to_acknowledge",
+                          "`ack_stop` sans arrêt en cours"),
         ),
         rest=RestBinding(verb="POST", path="/api/me/runner/fleets"),
         description=(
@@ -715,9 +703,13 @@ CAPABILITIES += [
             "execution context (`provider`/`model`) is frozen too, since changing it "
             "mid-flight falsifies the attribution of rows already written — declare "
             "another fleet instead — duplicate, never switch. An EXTERNAL scheduler "
-            "is still served here — op=take (`armed`→`running`, refused if another "
-            "scheduler already took it), op=beat (heartbeat AND reads back "
-            "`stop_requested` in the same call), op=ack_stop (`stopping`→`stopped`). "
+            "is still served here, and each of its calls names it with `taken_by` "
+            "(its own id, stable across its restarts): op=take (`armed`→`running`, "
+            "records `taken_by` — returned by get and list; taking back a `running` "
+            "pass it already holds is a resume and succeeds, one held by ANOTHER "
+            "scheduler is refused `held_by_other`), op=beat (heartbeat AND reads back "
+            "`stop_requested` in the same call), op=ack_stop (`stopping`→`stopped`) "
+            "— both refused `not_the_holder` to anyone but the holder. "
             "⚠️ None of them is required any more, and you should not call them: "
             "polling alone moves a pass, and op=take would only claim one that was "
             "about to start on its own."

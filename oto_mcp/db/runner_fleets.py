@@ -37,7 +37,8 @@ _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps
          "namespace, row_filter, provider, model, temperature, descriptions_outils, "
          "workers, max_rows, "
          "max_tokens, max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
-         "armed_at, started_at, stopping_at, heartbeat_at, stopped_at, created_at")
+         "armed_at, started_at, stopping_at, heartbeat_at, taken_by, stopped_at, "
+         "created_at")
 
 # Ce qu'un passage a le droit de changer une fois déclaré. La CIBLE n'en est pas :
 # rediriger un passage en vol vers un autre tableau est exactement le geste que la
@@ -386,26 +387,19 @@ def armer(fleet_id: int, org_id: int) -> Optional[dict]:
     `row_filter` de la flotte — ni le périmètre déclaré du tableau, ni les baux — et
     annonçait du travail qu'aucune réservation ne servait. La colonne garde, sans
     lecteur, la valeur posée par un armement antérieur.
+
+    ⚠️ Armer LIBÈRE la campagne (`taken_by` remis à NULL, 21/09/2026) : un nouveau
+    passage n'appartient à aucun ordonnanceur tant qu'aucun ne l'a prise. C'est aussi
+    le seul chemin pour reprendre une campagne dont le preneur est mort — l'arrêter,
+    puis la réarmer — et l'ancien preneur, s'il revit, l'apprend à son battement
+    suivant (`not_the_holder`).
     """
     with _connect() as conn:
         row = conn.execute(
             f"UPDATE runner_fleets SET status = 'armed', armed_at = NOW(), "
-            f"    stop_reason = NULL, stopping_at = NULL "
+            f"    stop_reason = NULL, stopping_at = NULL, taken_by = NULL "
             f"WHERE id = %s AND org_id = %s "
             f"  AND status IN ('draft', 'stopped', 'done', 'failed') "
-            f"RETURNING {_COLS}",
-            (fleet_id, org_id),
-        ).fetchone()
-    return dict(row) if row else None
-
-
-def prendre(fleet_id: int, org_id: int) -> Optional[dict]:
-    """`armed` → `running` : un ordonnanceur l'a prise. C'est le FAIT."""
-    with _connect() as conn:
-        row = conn.execute(
-            f"UPDATE runner_fleets SET status = 'running', started_at = NOW(), "
-            f"    heartbeat_at = NOW() "
-            f"WHERE id = %s AND org_id = %s AND status = 'armed' "
             f"RETURNING {_COLS}",
             (fleet_id, org_id),
         ).fetchone()
@@ -430,30 +424,6 @@ def demander_arret(fleet_id: int, org_id: int, raison: str) -> Optional[dict]:
             (raison, fleet_id, org_id),
         ).fetchone()
     return dict(row) if row else None
-
-
-def accuser_arret(fleet_id: int, org_id: int, raison: Optional[str] = None) -> bool:
-    """`stopping`/`running` → `stopped` : l'ordonnanceur a accusé réception.
-
-    ⚠️ C'est LUI qui pose ce statut, jamais l'opérateur — sans quoi l'écart entre
-    « demandé » et « effectif » disparaîtrait, et avec lui le seul diagnostic d'un
-    ordonnanceur mort : *un arrêt demandé qui ne devient jamais un arrêt effectif*.
-
-    ⚠️ Ce raisonnement valait TANT QU'UN ORDONNANCEUR EXISTAIT. Depuis le
-    renversement, plus personne n'appelle ce verbe et l'écart ne diagnostique
-    plus rien : il ne se referme jamais. `accuser_arrets_effectifs` le referme
-    au sondage, sur un fait constaté — plus aucun travail en vol — et non sur
-    une intention. Ce verbe-ci reste servi pour un ordonnanceur externe.
-    """
-    with _connect() as conn:
-        row = conn.execute(
-            "UPDATE runner_fleets SET status = 'stopped', stopped_at = NOW(), "
-            "    stop_reason = COALESCE(%s, stop_reason) "
-            "WHERE id = %s AND org_id = %s AND status IN ('stopping', 'running') "
-            "RETURNING id",
-            (raison, fleet_id, org_id),
-        ).fetchone()
-    return row is not None
 
 
 def arret_demande(fleet_id: int, org_id: int) -> bool:
@@ -512,21 +482,8 @@ def run_appartient_a_flotte(run_id: str, fleet_id: int) -> bool:
     return row is not None
 
 
-def battre(fleet_id: int, org_id: int) -> bool:
-    """Le battement de l'ordonnanceur — ce qui distingue le VIVANT du RÉSIDU.
-
-    Une flotte `running` qui ne bat plus n'est pas une concurrence à attendre :
-    c'est un reste de passage mort. Sans cette distinction, un second passage se
-    heurte à un refus que rien ne justifie, quelqu'un désarme à la main — et
-    désarmer devient le geste normal.
-    """
-    with _connect() as conn:
-        row = conn.execute(
-            "UPDATE runner_fleets SET heartbeat_at = NOW() "
-            "WHERE id = %s AND org_id = %s AND status = 'running' RETURNING id",
-            (fleet_id, org_id),
-        ).fetchone()
-    return row is not None
+# `prendre`, `battre` et `accuser_arret` — les gestes de l'ordonnanceur, qui nomment
+# désormais leur auteur — vivent dans `runner_fleets_preneur.py` (21/09/2026).
 
 
 def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:

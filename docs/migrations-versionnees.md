@@ -482,6 +482,13 @@ peuplée, ancien index seul) :
 Aucune fenêtre où l'un des deux états casse l'autre — seulement une fenêtre plus lente
 tant que le geste manuel n'a pas été joué.
 
+⚠️ **Cette indifférence à l'ordre tient à 0002, pas au registre.** La révision
+`0003_runner_fleets_preneur` (21/09/2026) ajoute une colonne que le code du même lot
+LIT (`runner_fleets.taken_by`) : jouée après la fusion, la préproduction répondrait
+`UndefinedColumn` sur chaque verbe de `runner.fleets`. Elle se joue donc **avant la
+fusion** — l'ancien code ignore la colonne. Chaque révision dit son ordre dans son
+en-tête : le lire avant de promouvoir.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

@@ -194,7 +194,7 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
   deploy-preprod:
-    needs: [test, syntaxe-plancher, arbre-importable]
+    needs: [test, syntaxe-plancher, arbre-importable, contrat-front-code]
     # push main OU relance manuelle (workflow_dispatch depuis main) — un dispatch
     # qui ne faisait que les tests laissait croire à un déploiement (vécu 23/07 :
     # canari resté en arrière après un push failed, dispatch « success » sans effet).
@@ -301,7 +301,7 @@ jobs:
             exit 1
           fi
           if [ "$code" != "0" ]; then
-            echo "::error title=Le front consommateur va casser::Une opération qu'il épingle a disparu ou changé d'entrée. Garder la compatibilité, ou le prévenir AVANT la mise en production."
+            echo "::error title=Le front consommateur va casser::Une opération qu'il épingle a disparu, changé d'entrée, ou ne rend plus ce qu'il lit. Garder la compatibilité, ou le prévenir AVANT la mise en production."
             exit 1
           fi
 
@@ -310,14 +310,22 @@ jobs:
         run: rm -rf "${{ steps.contrat.outputs.travail }}"
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # LE MÊME CONTRÔLE, MAIS AVANT LA FUSION.
+  # LE MÊME CONTRÔLE, MAIS AVANT LE DÉPLOIEMENT — une GARDE, pas un constat.
   #
   # `contrat-front` (ci-dessus) juge ce qui est SERVI par la préproduction : il ne peut
-  # donc parler qu'APRÈS le déploiement, donc après la fusion. Un garde-fou qui refuse
-  # après coup laisse la rupture atteindre la préproduction — et l'état que le partenaire
-  # peut interroger — avant de le dire. Ce job-ci juge le contrat que le CODE DE LA PR
-  # produirait, sans rien déployer : `openapi.build()` dérive le document par simple
-  # import, sans serveur ni base (c'est déjà ce que fait tests/test_openapi.py).
+  # donc parler qu'APRÈS le déploiement. Un garde-fou qui refuse après coup laisse la
+  # rupture atteindre la préproduction — et l'état que le partenaire peut interroger —
+  # avant de le dire. Ce job-ci juge le contrat que CE CODE produirait, sans rien
+  # déployer : `openapi.build()` dérive le document par simple import, sans serveur ni
+  # base (c'est déjà ce que fait tests/test_openapi.py).
+  #
+  # 21/09/2026 — il ne tournait QUE sur les PR, or le tronc reçoit ses commits par
+  # poussée directe : il était `skipped` à chaque déploiement réel, et deux retraits de
+  # champs lus par le front (`code` des invitations, `args` des appels) sont partis en
+  # préproduction puis en production sans l'arrêter. Il tourne désormais aussi sur la
+  # poussée, et `deploy-preprod` l'attend ; la production, qui exige un run de
+  # préproduction vert sur son sha (`scripts/garde_preprod_verte.py`), est gardée par
+  # ricochet.
   #
   # Les deux se complètent et ne font pas doublon : celui-ci dit « ce que tu t'apprêtes à
   # fusionner casserait le partenaire », celui d'après dit « ce qui est réellement servi
@@ -327,9 +335,8 @@ jobs:
   # Mêmes règles de verdict, délibérément : seule une rupture d'appel bloque. Un ajout
   # compatible sort en avertissement et n'empêche PAS de fusionner — sinon on ne pourrait
   # plus livrer un champ de réponse supplémentaire.
-  contrat-front-pr:
-    name: Contrat du front consommateur (avant fusion)
-    if: github.event_name == 'pull_request'
+  contrat-front-code:
+    name: Contrat du front consommateur (avant déploiement)
     runs-on: ubuntu-latest
     timeout-minutes: 10  # max observé 54 s
     steps:
@@ -392,7 +399,7 @@ jobs:
             echo "::error title=Confrontation impossible::Document illisible — le contrat N'A PAS été jugé."; exit 1
           fi
           if [ "$code" != "0" ]; then
-            echo "::error title=Cette PR casserait le front consommateur::Une opération qu'il épingle disparaît ou change d'entrée. Garder la compatibilité, ou le prévenir AVANT de fusionner."; exit 1
+            echo "::error title=Ce code casserait le front consommateur::Une opération qu'il épingle disparaît, change d'entrée, ou ne rend plus ce qu'il lit. Garder la compatibilité, ou le prévenir AVANT de livrer."; exit 1
           fi
 
       - name: Effacer la clé de lecture

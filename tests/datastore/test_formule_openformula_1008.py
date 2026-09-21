@@ -51,10 +51,12 @@ def test_bareme_sentinelle_inconnu_nest_pas_effectif_connu():
 
 
 def test_bareme_defaut_true_rang_5():
+    """La branche par défaut d'un IFS (`TRUE()`) doit se lire, pas se recopier :
+    « TRUE() » n'est pas une provenance lisible pour qui relit une fiche."""
     v, p = F.evaluer_avec_provenance(
         F.parse(BAREME), {"code": "ZZZZ", "effectif": "", "rattache": "non"})
     assert v == "5"
-    assert p == "TRUE()"
+    assert p == "cas par défaut"
 
 
 # ── SWITCH, provenance, et le bug préfixe 2 vs 3 chiffres (celui d'Audiens) ──
@@ -127,6 +129,95 @@ def test_valider_chainage_refuse():
     with pytest.raises(F.FormulaError, match="chaînage"):
         F.valider('IFS(autre_calc="x";"1";TRUE();"2")',
                   {"autre_calc"}, {"autre_calc"})
+
+
+# ── plage sur colonne-liste : contacts[].telephone + COUNTA (oto-backend#1008 v2)
+
+CHAMPS_HAS_TEL = [
+    {"key": "entreprise_telephone", "type": "text"},
+    {"key": "contacts", "type": "list", "of": {"fields": [
+        {"key": "telephone", "type": "text"}, {"key": "nom", "type": "text"}]}},
+]
+
+# Encadrée par IFS (pas un simple OR) : c'est la forme réelle — c'est aussi elle
+# qui produit une provenance (`evaluer_avec_provenance` n'en dérive une que pour
+# un IFS de tête, cf. sa docstring).
+HAS_TEL = """IFS(
+  entreprise_telephone<>""; TRUE();
+  COUNTA(contacts[].telephone)>0; TRUE();
+  TRUE(); FALSE())"""
+
+
+def test_plage_parse_et_champs_references():
+    noeud = F.parse(HAS_TEL)
+    # `contacts` (la colonne-liste) est référencée comme une colonne normale —
+    # le sous-champ `telephone`, lui, n'est PAS un nom de colonne de la ligne.
+    assert F.champs_references(noeud) == {"entreprise_telephone", "contacts"}
+
+
+def test_counta_compte_les_telephones_non_vides_sur_plusieurs_contacts():
+    row = {"entreprise_telephone": "", "contacts": [
+        {"telephone": "0600000000", "nom": "A"},
+        {"telephone": "", "nom": "B"},
+        {"telephone": "0700000000", "nom": "C"},
+    ]}
+    v, p = F.evaluer_avec_provenance(F.parse(HAS_TEL), row)
+    assert v is True
+    assert "2 valeur(s) trouvée(s)" in p
+
+
+def test_counta_zero_sur_contacts_vide_ou_sans_telephone():
+    for contacts in ([], [{"nom": "A"}], [{"telephone": "", "nom": "A"}]):
+        row = {"entreprise_telephone": "", "contacts": contacts}
+        v, _ = F.evaluer_avec_provenance(F.parse(HAS_TEL), row)
+        assert v is False, contacts
+
+
+def test_colonne_plate_gagne_sans_regarder_les_contacts():
+    row = {"entreprise_telephone": "0600000000", "contacts": []}
+    v, p = F.evaluer_avec_provenance(F.parse(HAS_TEL), row)
+    assert v is True
+    assert "valeur(s) trouvée(s)" not in p  # la branche gagnante ne teste pas COUNTA
+
+
+def test_recalcul_declenche_par_une_ecriture_qui_ne_touche_que_contacts():
+    """`_appliquer_formules` recalcule TOUJOURS toutes les formules sur `merged`
+    (cf. `controles.py::_check_row`) — donc un geste qui n'écrit QUE `contacts`
+    recalcule déjà `has_telephone` correctement, sans câblage supplémentaire."""
+    schema = {"fields": CHAMPS_HAS_TEL + [
+        {"key": "has_telephone", "type": "formula", "formula": HAS_TEL}]}
+    merged = {"entreprise_telephone": "", "contacts": [{"telephone": "0600000000"}]}
+    mixin = ControlesMixin()
+    mixin._appliquer_formules(schema, merged)
+    assert merged["has_telephone"][dsv2.VALUE_LAYER] is True
+
+
+def test_valider_plage_ok_contre_le_schema():
+    F.valider(HAS_TEL, {"entreprise_telephone", "contacts"}, set(),
+              champs_def=CHAMPS_HAS_TEL)
+
+
+def test_valider_plage_colonne_pas_liste_refusee():
+    with pytest.raises(F.FormulaError, match="n'est pas de type `list`"):
+        F.valider('COUNTA(entreprise_telephone[].x)>0',
+                  {"entreprise_telephone"}, set(), champs_def=CHAMPS_HAS_TEL)
+
+
+def test_valider_plage_sous_champ_inconnu_refuse():
+    with pytest.raises(F.FormulaError, match="sous-champ déclaré"):
+        F.valider('COUNTA(contacts[].fax)>0', {"contacts"}, set(),
+                  champs_def=CHAMPS_HAS_TEL)
+
+
+def test_plage_hors_counta_refusee():
+    with pytest.raises(F.FormulaError, match="COUNTA"):
+        F.valider('contacts[].telephone<>""', {"contacts"}, set(),
+                  champs_def=CHAMPS_HAS_TEL)
+
+
+def test_counta_sur_autre_chose_qu_une_plage_refuse():
+    with pytest.raises(F.FormulaError, match="COUNTA"):
+        F.valider('COUNTA(entreprise_telephone)>0', {"entreprise_telephone"}, set())
 
 
 def test_valider_formule_saine_rend_last_node():
@@ -223,6 +314,24 @@ def test_appliquer_formules_ne_touche_jamais_la_couche_origine():
     assert merged["zone"]["valeur"] == "Alice"
 
 
+def test_ecrire_une_colonne_formule_nomme_le_calcul_pas_le_fichier_source():
+    """Bug remonté en test réel (audiens, 18/09) : le refus générique `readonly`
+    disait « colonne du fichier source » et proposait `readonly_override`, faux
+    sur les deux points pour une colonne CALCULÉE — un override n'a aucun sens
+    puisque la valeur serait recalculée au prochain passage."""
+    schema = _schema_zones()
+    avant = {"code": "AA001", "zone": {"valeur": "Alice"}}
+    msgs, details = dsv2.reserved_refusals(
+        schema, {"zone": "Bob"}, avant)
+    assert msgs
+    assert "CALCULÉE" in msgs[0] or "calculée" in msgs[0].lower()
+    assert "fichier source" not in msgs[0]
+    # Le message peut NOMMER `readonly_override` pour dire qu'il ne sert à
+    # rien ici — ce qu'il ne doit plus faire, c'est le PROPOSER comme solution.
+    assert "readonly_override=true" not in msgs[0]
+    assert details.get("expected_column") == "zone.comment"
+
+
 def test_appliquer_formules_noop_sans_colonne_formule():
     store = _Store()
     schema_sans_formule = {"fields": [{"key": "code", "type": "text"}]}
@@ -284,7 +393,17 @@ def _poser_origine_brute(ns_id: int, row_id: str, champ: str, valeur: str) -> No
             (champ, champ, f'{{"valeur": "{valeur}"}}', ns_id, row_id))
 
 
-def test_poser_une_formule_recalcule_les_lignes_existantes(live):
+def _drainer_backfill() -> dict:
+    """Un tour SYNC du worker de fond (`formula_backfill_worker._backfill_round`),
+    appelé directement — pas de boucle asyncio à faire tourner dans un test."""
+    from oto_mcp.formula_backfill_worker import _backfill_round
+    return _backfill_round()
+
+
+def test_poser_une_formule_marque_puis_le_backfill_recalcule(live):
+    """Depuis oto-backend#1008 v2 (backfill asynchrone, mesuré au-delà du délai
+    client MCP sur un tableau de 8910 lignes) : `set_schema` ne recalcule plus
+    SYNCHRONE — il marque `formula_dirty`, et rend. Le worker de fond draine."""
     ns = "t-" + uuid.uuid4().hex[:6]
     from oto_mcp import db
     ns_id = db.create_datastore("user", "sub-test-1008", ns)
@@ -295,7 +414,15 @@ def test_poser_une_formule_recalcule_les_lignes_existantes(live):
 
     pose = st.set_schema(ns, _schema_zones())
 
-    assert pose.get("formules_recalculees") == 2
+    assert pose.get("formules_marquees_pour_recalcul") == 2
+    assert pose.get("formules_recalcul_en_cours") is True
+    # Marqué, PAS encore recalculé — la propriété centrale de l'asynchrone.
+    assert db.datastore_formula_dirty_count(ns_id) == 2
+    assert "zone" not in _donnees_1008(ns_id, r1["_id"])
+
+    _drainer_backfill()
+
+    assert db.datastore_formula_dirty_count(ns_id) == 0
     d1 = _donnees_1008(ns_id, r1["_id"])
     d2 = _donnees_1008(ns_id, r2["_id"])
     assert d1["zone"]["valeur"] == "Alice"
@@ -314,6 +441,7 @@ def test_backfill_ne_touche_jamais_la_couche_origine(live):
     _poser_origine_brute(ns_id, row["_id"], "zone", "VALEUR HISTORIQUE DE LA CLIENTE")
 
     st.set_schema(ns, _schema_zones())
+    _drainer_backfill()
 
     d = _donnees_1008(ns_id, row["_id"])
     assert d["zone"]["origine"] == {"valeur": "VALEUR HISTORIQUE DE LA CLIENTE"}
@@ -327,6 +455,7 @@ def test_modifier_le_texte_de_la_formule_recalcule_a_nouveau(live):
     st = _store_1008()
     st.set_schema(ns, _schema_zones())
     row = st.append_row(ns, {"code": "AA001"})
+    _drainer_backfill()
     assert _donnees_1008(ns_id, row["_id"])["zone"]["valeur"] == "Alice"
 
     autre = {"fields": [
@@ -335,7 +464,8 @@ def test_modifier_le_texte_de_la_formule_recalcule_a_nouveau(live):
          "formula": 'IFS(TRUE(); "toujours-pareil")'}]}
     pose = st.set_schema(ns, autre)
 
-    assert pose.get("formules_recalculees") == 1
+    assert pose.get("formules_marquees_pour_recalcul") == 1
+    _drainer_backfill()
     assert _donnees_1008(ns_id, row["_id"])["zone"]["valeur"] == "toujours-pareil"
 
 
@@ -349,4 +479,169 @@ def test_reposer_la_meme_formule_ne_recalcule_rien(live):
 
     pose = st.set_schema(ns, _schema_zones())
 
-    assert "formules_recalculees" not in pose
+    assert "formules_marquees_pour_recalcul" not in pose
+
+
+def test_get_schema_dit_le_statut_du_backfill_en_cours(live):
+    """Le statut CONSULTABLE demandé par le client (18/09) : `get_schema` doit
+    dire combien de rows restent `formula_dirty`, à tout instant — pas seulement
+    dans la réponse immédiate de `set_schema`."""
+    from oto_mcp.capabilities.datastore import schema as CAP
+    from oto_mcp.capabilities._types import ResolvedCtx
+
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    db.create_datastore("user", "sub-test-1008", ns)
+    st = _store_1008()
+    st.set_schema(ns, {"fields": [{"key": "code", "type": "text"}]})
+    st.append_row(ns, {"code": "AA001"})
+    st.append_row(ns, {"code": "AA002"})
+    st.set_schema(ns, _schema_zones())
+
+    ctx = ResolvedCtx(sub="sub-test-1008")
+    out = CAP._get_schema(ctx, CAP.GetSchemaInput(datastore=ns))
+    assert out.get("formules_a_recalculer") == 2
+
+    _drainer_backfill()
+
+    out = CAP._get_schema(ctx, CAP.GetSchemaInput(datastore=ns))
+    # Rien à recalculer : la clé n'apparaît PAS (un `0` permanent serait aussi
+    # peu lu qu'un `warning` toujours présent — même choix que `warning`).
+    assert "formules_a_recalculer" not in out
+
+
+# ── COUNTA et le vide ASSUMÉ (`@empty`) — la même lecture que le scalaire ────
+# Défaut rapporté après #1018 : `COUNTA(contacts[].telephone)` comptait comme une
+# VALEUR un élément dont le téléphone était un vide assumé. Cause : dans une fiche
+# de liste, `@empty` est rangé sous forme d'ENVELOPPE
+# (`{"valeur": "", "oto.vide_assume": true}`), et la plage la lisait par `str(dict)`
+# — une chaîne non vide — au lieu de la déballer comme le fait le scalaire (l'appelant
+# passe `unwrap` sur chaque colonne de PREMIER niveau, pas sur les attributs des
+# fiches d'une liste). Ces bancs passent la forme STOCKÉE, celle que voit vraiment
+# `compute_row_formulas`, pas une forme rêvée.
+
+_VIDE_ASSUME = {"valeur": "", "oto.vide_assume": True}
+
+
+def _has_tel(contacts, entreprise=""):
+    return F.evaluer_avec_provenance(
+        F.parse(HAS_TEL), {"entreprise_telephone": entreprise, "contacts": contacts})
+
+
+def test_counta_ignore_le_vide_assume_d_un_element():
+    v, _ = _has_tel([{"telephone": dict(_VIDE_ASSUME), "nom": "A"}])
+    assert v is False
+
+
+def test_counta_ignore_le_vide_assume_en_cellule_a_couches():
+    """`{"valeur": "@empty", "comment": …}` s'écrit puis se range en enveloppe qui
+    GARDE son commentaire : la cellule est à couches ET vide assumée."""
+    v, _ = _has_tel([{"telephone": {"valeur": "", "comment": "rien trouvé",
+                                    "oto.vide_assume": True}}])
+    assert v is False
+
+
+def test_counta_ignore_une_cellule_a_couches_dont_la_valeur_est_vide():
+    """Même famille, découverte en cherchant : une cellule à couches SANS vide assumé
+    mais dont la valeur est vide (`{"valeur": "", "comment": "source"}`) n'est pas
+    non plus une valeur — `str(dict)` la comptait aussi."""
+    v, _ = _has_tel([{"telephone": {"valeur": "", "comment": "source"}}])
+    assert v is False
+
+
+def test_counta_ignore_une_cellule_qui_n_a_que_des_couches():
+    v, _ = _has_tel([{"telephone": {"comment": "à chercher"}}])
+    assert v is False
+
+
+def test_counta_compte_une_valeur_reelle_en_cellule_a_couches():
+    v, p = _has_tel([{"telephone": {"valeur": "0600000000", "comment": "source"}}])
+    assert v is True
+    assert "1 valeur(s) trouvée(s)" in p
+
+
+def test_counta_melange_vide_assume_et_valeur_reelle():
+    contacts = [{"telephone": dict(_VIDE_ASSUME)},
+                {"telephone": "0600000000"},
+                {"telephone": dict(_VIDE_ASSUME)}]
+    v, _ = _has_tel(contacts)
+    assert v is True
+
+
+def test_la_provenance_ne_compte_que_les_valeurs_reelles():
+    contacts = [{"telephone": dict(_VIDE_ASSUME)},
+                {"telephone": "0600000000"},
+                {"telephone": {"valeur": "", "comment": "source"}}]
+    _, p = _has_tel(contacts)
+    assert "1 valeur(s) trouvée(s)" in p, p
+
+
+def test_counta_zero_quand_toute_la_plage_est_en_vide_assume():
+    noeud = F.parse('IFS(COUNTA(contacts[].telephone)=0; "aucun"; TRUE(); "au moins un")')
+    contacts = [{"telephone": dict(_VIDE_ASSUME)}, {"telephone": dict(_VIDE_ASSUME)}]
+    v, _ = F.evaluer_avec_provenance(noeud, {"contacts": contacts})
+    assert v == "aucun"
+
+
+def test_counta_ignore_les_conteneurs_vides():
+    """`est_vide` (la définition centrale du vide) : `[]` et `{}` sont vides — la
+    plage n'a pas sa propre idée de ce qu'est un vide."""
+    v, _ = _has_tel([{"telephone": []}, {"telephone": {}}])
+    assert v is False
+
+
+def test_counta_les_cas_deja_corrects_le_restent():
+    for contacts in ([], [{"nom": "A"}], [{"telephone": ""}], [{"telephone": None}]):
+        assert _has_tel(contacts)[0] is False, contacts
+    assert _has_tel([{"telephone": "0600000000"}])[0] is True
+    assert _has_tel([{"telephone": ""}, {"telephone": "0700000000"}])[0] is True
+
+
+def test_le_scalaire_en_vide_assume_reste_vide():
+    """Le témoin : la colonne de premier niveau, déjà déballée par l'appelant."""
+    v, _ = _has_tel([], entreprise=dsv2.unwrap(dict(_VIDE_ASSUME)))
+    assert v is False
+
+
+# ── de bout en bout, sur vrai PostgreSQL : ce que le STORE range, la formule le lit
+
+def test_counta_de_bout_en_bout_sur_ce_que_le_store_range(live):
+    """Les deux cas rapportés (`@empty` nu, `@empty` en cellule à couches), écrits
+    par la voie normale : le store range l'enveloppe, puis la formule la lit."""
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    ns_id = db.create_datastore("user", "sub-test-1008-counta", ns)
+    st = __import__("oto_mcp.datastore.core", fromlist=["make_store"]).make_store(
+        "sub-test-1008-counta")
+    st.set_schema(ns, {"fields": CHAMPS_HAS_TEL + [
+        {"key": "has_telephone", "type": "formula", "formula": HAS_TEL}]})
+
+    cas = {
+        "nu": ({"telephone": "@empty"}, False),
+        "couches": ({"telephone": {"valeur": "@empty", "comment": "rien trouvé"}}, False),
+        "couches_vide": ({"telephone": {"valeur": "", "comment": "source"}}, False),
+        "reel": ({"telephone": {"valeur": "0600000000", "comment": "source"}}, True),
+    }
+    for nom, (element, attendu) in cas.items():
+        r = st.append_row(ns, {"entreprise_telephone": "", "contacts": [element]})
+        d = _donnees_1008(ns_id, r["_id"])
+        assert d["has_telephone"]["valeur"] is attendu, (nom, d["has_telephone"])
+
+
+# ── ce que le guide `datastore-semantics` (§ 9) affirme, tenu par un test ─────
+
+def test_une_liste_lue_comme_scalaire_n_est_pas_un_test_de_liste_vide():
+    """`contacts<>""` est ACCEPTÉ à la pose (une colonne-liste se référence comme
+    n'importe quelle colonne) et vaut VRAI pour `[]` : lue comme un scalaire, une liste
+    vaut sa représentation texte (`"[]"`), jamais `""`. Le test « au moins une valeur »
+    est `COUNTA(contacts[].telephone)>0`, faux sur la même ligne. Comportement DÉJÀ
+    servi, documenté tel quel plutôt que changé (décision d'Alexis, 21/09/2026)."""
+    scalaire = 'IFS(contacts<>""; TRUE(); TRUE(); FALSE())'
+    F.valider(scalaire, {"contacts"}, set(), CHAMPS_HAS_TEL)        # ne lève pas
+    vide = {"contacts": []}
+    v, _ = F.evaluer_avec_provenance(F.parse(scalaire), vide)
+    assert v is True
+    plage = 'IFS(COUNTA(contacts[].telephone)>0; TRUE(); TRUE(); FALSE())'
+    v, _ = F.evaluer_avec_provenance(F.parse(plage), vide)
+    assert v is False
+
