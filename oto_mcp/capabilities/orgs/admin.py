@@ -16,6 +16,7 @@ from ... import org_store
 from .._authz import SUPER_ADMIN
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .members import _resolve_target
+from .update import ERREURS_ARCHIVAGE, archive_org_ou_409
 from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -73,7 +74,7 @@ def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
 def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
-    archived = org_store.archive_org(inp.org_id)
+    archived = archive_org_ou_409(inp.org_id)
     return {"ok": True, "org_id": inp.org_id, "archived": archived}
 
 
@@ -89,9 +90,11 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.admin.archive", handler=_archive_org, Input=OrgIdInput,
-        authz=SUPER_ADMIN,
+        authz=SUPER_ADMIN, errors=ERREURS_ARCHIVAGE,
         description="[super admin] Archive (soft-delete) an org: hidden from all "
-                    "listings, reversible in DB. Members fall back to their other orgs.",
+                    "listings, reversible in DB. Members fall back to their other orgs. "
+                    "Refused (409 `org_has_active_subscription`) while the org has an "
+                    "active subscription: it must be canceled first.",
         # MCP fusionné dans oto_admin_org(op=archive). REST conservé (dashboard).
         rest=RestBinding("DELETE", "/api/admin/orgs/{id}", _ID),
     ),

@@ -26,6 +26,27 @@ TERMINAL_PAYMENT_STATUSES = frozenset(
 SUBSCRIPTION_STATUSES = ("incomplete", "active", "past_due", "canceled")
 
 
+# Un abonnement qui PRÉLÈVE (ou prélèvera) : c'est lui qui interdit d'archiver l'org
+# (#400, piste 1 — `org_store.archive_org`). `active`/`past_due`, mais ni résilié à fin de
+# période (`canceled_at` posé, `next_billing_at` coupé : le statut reste `active` jusqu'à
+# `current_period_end` pour l'entitlement, or plus rien ne sera tiré), ni offert (`comp` :
+# jamais tiré, aucun PSP derrière — l'utilisateur n'a rien à « résilier d'abord »). Préfixe
+# d'alias `s.` : posé dans un `FROM org_subscriptions s`.
+ABONNEMENT_QUI_PRELEVE = (
+    "s.status IN ('active', 'past_due') AND s.canceled_at IS NULL AND s.provider <> 'comp'"
+)
+
+
+def _verrou_org_partage(conn, org_id: int) -> None:
+    """Verrou PARTAGÉ sur la ligne `orgs`, à poser dans la transaction qui fait entrer un
+    abonnement dans l'état « prélève ». Il se sérialise avec `archive_org`, qui prend le
+    verrou exclusif avant de compter les abonnements : sans lui, l'archivage lirait « pas
+    d'abonnement » dans son instantané pendant qu'une souscription se valide, et les deux
+    passeraient — une org archivée portant un abonnement actif (#400). Une org inconnue
+    ne verrouille rien : la contrainte de clé étrangère parle alors d'elle-même."""
+    conn.execute("SELECT 1 FROM orgs WHERE id = %s FOR SHARE", (org_id,))
+
+
 # ── org_subscriptions ────────────────────────────────────────────────────────
 
 def get_org_subscription(org_id: int) -> Optional[dict]:
@@ -55,7 +76,8 @@ def upsert_org_subscription(
     Remplacement TOTAL assumé (re-souscrire après résiliation repart propre) —
     les mises à jour ciblées du cycle passent par les setters dédiés ci-dessous.
     """
-    with _connect() as conn:
+    with _connect() as conn, conn.transaction():
+        _verrou_org_partage(conn, org_id)
         conn.execute(
             """
             INSERT INTO org_subscriptions
@@ -95,7 +117,9 @@ def set_subscription_status(
     """Fait avancer la machine à états. `canceled=True` stampe `canceled_at`."""
     if status not in SUBSCRIPTION_STATUSES:
         raise ValueError(f"statut d'abonnement inconnu : {status!r}")
-    with _connect() as conn:
+    with _connect() as conn, conn.transaction():
+        if status in ("active", "past_due"):
+            _verrou_org_partage(conn, org_id)      # entrée dans « prélève » (#400)
         n = conn.execute(
             "UPDATE org_subscriptions SET status = %s, grace_until = %s, "
             "canceled_at = CASE WHEN %s THEN NOW() ELSE canceled_at END, "

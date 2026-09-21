@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from ... import org_store, session_org
 from ...db import users as db_users
 from .._authz import ORG_ADMIN_OF, ORG_ADMIN_OF_LIVE
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -59,7 +59,11 @@ class OrgArchived(BaseModel):
 
     L'org sort de tous les listings mais rien n'est détruit (réversible en DB, membres
     et credentials conservés). Les membres qui l'avaient pour maison basculent sur leur
-    plus ancienne org restante ; l'espace personnel est le repli."""
+    plus ancienne org restante ; l'espace personnel est le repli.
+
+    ⚠️ Une org qui porte un abonnement actif ne s'archive PAS : `409
+    org_has_active_subscription` — résilier d'abord (elle disparaîtrait des listings et
+    plus personne ne pourrait le résilier)."""
     ok: bool
     org_id: int
     archived: bool
@@ -96,6 +100,33 @@ def _update_org(ctx: ResolvedCtx, inp: UpdateOrgInput) -> dict:
             "logo_url": org_store.effective_logo_url(o)}
 
 
+def archive_org_ou_409(org_id: int) -> bool:
+    """`org_store.archive_org`, l'abonnement qui prélève traduit en `409` (#400).
+
+    Point d'entrée COMMUN de l'archivage self-service et de la console admin : le refus
+    n'a qu'un texte, qu'un code — `org_has_active_subscription` — et il dit quoi faire.
+    Le message ne nomme pas d'écran : la face MCP n'en a pas, la face REST est servie à
+    plusieurs fronts."""
+    try:
+        return org_store.archive_org(org_id)
+    except org_store.OrgAvecAbonnementActif:
+        # Code EN LITTÉRAL : `tests/_refus_atteignables.py` lit les `AuthzDenied(status,
+        # "code")` du graphe d'appel, pas les constantes — une constante rendrait la
+        # déclaration `errors=` ci-dessous « décorative » aux yeux du banc.
+        raise AuthzDenied(409, "org_has_active_subscription",
+                          "Cette org porte un abonnement actif : résilie d'abord son "
+                          "abonnement, puis archive-la. Archivée, elle disparaîtrait de "
+                          "tous les listings et plus personne ne pourrait le résilier — "
+                          "il continuerait d'être prélevé.")
+
+
+ERREURS_ARCHIVAGE = (
+    DeclaredError(409, "org_has_active_subscription",
+                  "l'org porte un abonnement qui prélève (`active`/`past_due`, ni résilié "
+                  "à fin de période ni offert) : à résilier d'abord"),
+)
+
+
 def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     """Self-service : un org_admin archive (soft-delete) SA propre org. Réutilise
     `org_store.archive_org` (masque partout, réversible en DB, rebascule les membres
@@ -128,7 +159,7 @@ def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
         raise AuthzDenied(400, "personal_org",
                           "L'espace personnel d'un autre utilisateur ne peut pas être "
                           "supprimé ici.")
-    archived = org_store.archive_org(inp.org_id)
+    archived = archive_org_ou_409(inp.org_id)
     if archived:
         sid = session_org.current_session_id()
         present, ov = session_org.get_override(sid)
@@ -175,9 +206,12 @@ CAPABILITIES += [
         # Refuser l'org archivée ici changerait cet idempotent documenté en 409 et
         # casserait tout client qui retente une suppression dont il a perdu la réponse.
         authz=ORG_ADMIN_OF("org_id"), Output=OrgArchived,
+        errors=ERREURS_ARCHIVAGE,
         description=("Archive (delete) an organization you administer: it disappears "
                      "from every listing and its members fall back to their other "
                      "orgs. Reversible in DB, data is kept. You must be org_admin. "
+                     "Refused (409 `org_has_active_subscription`) while the org has an "
+                     "active subscription: cancel it first, then archive. "
                      "You may archive YOUR OWN personal space — never someone else's. "
                      "Archiving your last remaining org immediately provisions a fresh, "
                      "empty personal space so you are never left without one."),

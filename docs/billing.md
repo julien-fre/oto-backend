@@ -766,6 +766,35 @@ du PSP, pas depuis l'ouverture du checkout) sépare les deux lectures :
 branches d'avancement sont toutes des 200 discriminées par `status` ; `confirm` ne
 refuse que lorsque l'APPEL est fautif (`unknown_payment`, `no_pending_subscription`).
 
+## Une org qui prélève ne s'archive pas (#400)
+
+`archive_org` est un soft-delete : l'org sort de tous les listings et plus personne ne peut
+en résilier l'abonnement, qui continuait d'être prélevé. Décision du 21/09/2026 (piste 1
+de l'issue) : **l'archivage est refusé** — `409 org_has_active_subscription`, sur les deux
+portes (`DELETE /api/orgs/{id}` / `oto_org op=archive` et la console admin
+`org.admin.archive`), avec un message qui dit de résilier d'abord. Le refus est déclaré
+(`Capability.errors`) donc publié dans `/openapi.json`.
+
+- **Ce qui « prélève »** (`db.billing.ABONNEMENT_QUI_PRELEVE`) : `active` ou `past_due`,
+  ET ni résilié à fin de période (`canceled_at` posé : le statut reste `active` jusqu'à
+  `current_period_end` mais `next_billing_at` est coupé), ET ni offert (`provider='comp'` :
+  jamais tiré, aucun PSP derrière — l'utilisateur n'a rien à « résilier d'abord »).
+- **Atomique.** `archive_org` prend `FOR NO KEY UPDATE` sur la ligne `orgs`, compte les
+  abonnements, puis pose `archived_at` — une transaction. Ce qui fait entrer un abonnement
+  dans « prélève » (`upsert_org_subscription`, `set_subscription_status` vers
+  `active`/`past_due`) prend `FOR SHARE` sur la même ligne : l'une attend l'autre. Ordre
+  perdant possible : l'archivage passe avant la souscription — l'org archivée porte alors
+  un abonnement, que le filtre ci-dessous ne tirera pas.
+- **Le filet, pour les orgs DÉJÀ archivées.** `due_subscriptions` et la relecture sous
+  verrou de `reserver_echeance` partagent `_ECHEANCE_DUE`, qui exclut toute org archivée :
+  aucun prélèvement, l'abonnement reste `active` chez nous comme chez Mollie, l'échéance
+  échue est prélevée à la désarchivation. Les orgs archivées AVANT ce refus qui portent
+  encore un abonnement qui prélève se dénombrent par
+  `SELECT count(*) FROM orgs o JOIN org_subscriptions s ON s.org_id = o.id WHERE
+  o.archived_at IS NOT NULL AND s.status IN ('active','past_due') AND s.canceled_at IS NULL
+  AND s.provider <> 'comp'` ; leur sort (résilier chez Mollie, ou désarchiver) reste à
+  arbitrer.
+
 ## Trois invariants que le code tient maintenant
 
 1. **L'encaissement se grave avant tout le reste.** `status='paid'` est écrit dès

@@ -56,9 +56,14 @@ def _org_echue(nom: str) -> int:
 
 
 def _archiver(org: int) -> None:
-    from oto_mcp import org_store
+    """Pose `archived_at` À LA MAIN : `archive_org` refuse désormais une org qui porte un
+    abonnement qui prélève (#400, piste 1 — `test_org_archivage_abonnement_400.py`). Ce
+    banc-ci garde le FILET, celui des orgs DÉJÀ archivées avant ce refus : leur abonnement
+    reste `active`, et le tick ne doit pas les tirer."""
+    from oto_mcp.db._conn import _connect
 
-    assert org_store.archive_org(org) is True
+    with _connect() as conn:
+        conn.execute("UPDATE orgs SET archived_at = now() WHERE id = %s", (org,))
 
 
 def _dues() -> set[int]:
