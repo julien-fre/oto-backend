@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ...connectors import flow as connector_flow
 from .._authz import ORG_MEMBER
@@ -69,7 +70,7 @@ async def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
     # — jusqu'ici les deux capacités de démarrage divergeaient là-dessus (salesforce
     # gardait, zoho non).
     try:
-        access.require_connector_access(inp.name, ctx.sub)
+        await run_in_threadpool(access.require_connector_access, inp.name, ctx.sub)
     except McpError as e:
         raise AuthzDenied(403, "connector_restricted", e.error.message)
     return (await connector_flow.start(inp.name, ctx, inp.params or {})).as_dict()
