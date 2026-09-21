@@ -26,16 +26,25 @@ from fastmcp.server.middleware import MiddlewareContext
 
 from _mcp_app import static_mcp as _test_mcp
 
-from oto_mcp import deprecations, handshake_log
+from oto_mcp import deprecations, handshake_log, tenancy
 from oto_mcp.middleware.alias import ToolAliasMiddleware
 
 LOGGER = "oto_mcp.handshake_log"
 HOTE = "mcp.example.test"
+DOMAINE = "example.test"
+HOTE_TENANT = "mcp.tenant-fictif.test"
+SLUG_SECRET = "s3cr3t-k9x2q7fictif"
 
 
 @pytest.fixture(autouse=True)
 def _en_tete_http(monkeypatch):
     """L'hôte est lu sur la requête HTTP courante : ici, une requête fictive."""
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", f"https://{HOTE}")
+    monkeypatch.setenv("OTO_PROJECT_DOMAIN", DOMAINE)
+    monkeypatch.setattr(tenancy, "_INSTALLED", tenancy.IssuerRegistry(tenancy.build(
+        "https://logto.example.test/oidc",
+        tenants=[{"slug": "fictif", "issuer": "https://auth.tenant-fictif.test/oidc",
+                  "hosts": [HOTE_TENANT]}])))
     monkeypatch.setattr(handshake_log, "get_http_headers",
                         lambda **_kw: {"host": HOTE})
     monkeypatch.setattr("oto_mcp.middleware.alias.current_user_sub_from_token",
@@ -202,6 +211,69 @@ async def test_une_valeur_hostile_ne_forge_pas_une_seconde_ligne(caplog):
     (ligne,) = _lignes(caplog)
     assert "\n" not in ligne and " count=999" not in ligne
     assert len(ligne) < 400
+
+
+# ── l'hôte : jamais une URL-capacité ─────────────────────────────────────────
+
+def _hote_journalise(monkeypatch, caplog, **en_tetes):
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(handshake_log, "get_http_headers", lambda **_kw: en_tetes)
+    return handshake_log._host(), "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_hote_canonique_et_hote_de_tenant_declare_restent_journalises(monkeypatch, caplog):
+    assert _hote_journalise(monkeypatch, caplog, host=HOTE)[0] == HOTE
+    assert _hote_journalise(monkeypatch, caplog, host=HOTE_TENANT.upper() + ":443")[0] == HOTE_TENANT
+    assert _hote_journalise(monkeypatch, caplog, host=f"mcp.{DOMAINE}")[0] == f"mcp.{DOMAINE}"
+
+
+@pytest.mark.parametrize("hote", [
+    f"{SLUG_SECRET}.mcp.{DOMAINE}", f"{SLUG_SECRET}.share.{DOMAINE}",
+    f"{SLUG_SECRET}.mcp.{DOMAINE}:8443", f"{SLUG_SECRET.upper()}.MCP.{DOMAINE}"])
+def test_sous_domaine_de_projet_est_masque_et_le_slug_ne_fuit_nulle_part(monkeypatch, caplog, hote):
+    valeur, journaux = _hote_journalise(monkeypatch, caplog, host=hote)
+    assert valeur == "projet"
+    assert SLUG_SECRET not in journaux.lower()
+
+
+def test_hote_inconnu_est_masque(monkeypatch, caplog):
+    valeur, journaux = _hote_journalise(monkeypatch, caplog, host=f"{SLUG_SECRET}.autre.test")
+    assert valeur == "inconnu" and SLUG_SECRET not in journaux
+
+
+@pytest.mark.parametrize("en_tetes", [
+    {"host": HOTE, "x-forwarded-host": f"{SLUG_SECRET}.mcp.{DOMAINE}"},      # xfh prime
+    {"x-forwarded-host": f"{SLUG_SECRET}.mcp.{DOMAINE}, {HOTE}"},            # liste : 1re valeur
+    {"host": f"{SLUG_SECRET}.mcp.{DOMAINE}"},
+])
+def test_x_forwarded_host_ne_contourne_pas_le_filtre(monkeypatch, caplog, en_tetes):
+    valeur, journaux = _hote_journalise(monkeypatch, caplog, **en_tetes)
+    assert valeur == "projet" and SLUG_SECRET not in journaux
+
+
+@pytest.mark.asyncio
+async def test_le_slug_secret_n_apparait_dans_aucune_ligne_du_journal(caplog, monkeypatch):
+    """De bout en bout : `initialize` ET listes, sur tous les loggers."""
+    caplog.set_level(logging.DEBUG)
+    monkeypatch.setattr(handshake_log, "get_http_headers", lambda **_kw: {
+        "host": f"{SLUG_SECRET}.mcp.{DOMAINE}"})
+
+    await ToolAliasMiddleware().on_initialize(
+        _ctx_init(), lambda _c: _renvoie(_resultat_init()))
+    await ToolAliasMiddleware().on_list_tools(_ctx_liste(), lambda _c: _renvoie([]))
+    await ToolAliasMiddleware().on_list_prompts(_ctx_liste("prompts/list"), lambda _c: _renvoie([]))
+
+    lignes = [r.getMessage() for r in caplog.records if r.name == LOGGER]
+    assert len(lignes) == 3 and all(l.endswith(" host=projet") for l in lignes)
+    assert SLUG_SECRET not in "\n".join(r.getMessage() for r in caplog.records).lower()
+
+
+def test_classement_en_panne_donne_l_etiquette_fixe_jamais_la_valeur(monkeypatch, caplog):
+    def panne():
+        raise RuntimeError("config absente")
+    monkeypatch.setattr(handshake_log.config, "public_host", panne)
+    valeur, journaux = _hote_journalise(monkeypatch, caplog, host=f"{SLUG_SECRET}.mcp.{DOMAINE}")
+    assert valeur == "inconnu" and SLUG_SECRET not in journaux.replace("config absente", "")
 
 
 # ── fail-open ────────────────────────────────────────────────────────────────

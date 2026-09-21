@@ -4,11 +4,11 @@ Pourquoi : un client (Codex, ChatGPT, celui d'un tenant) ne reçoit parfois aucu
 et rien ne dit, côté serveur, ce qui lui a été rendu. Le journal `tool_calls`
 (`calllog.ToolCallLogger`) trace les APPELS, pas les listes ; l'`initialize` y est déjà
 (`kind='protocol'`) mais sans le protocole négocié ni l'hôte. Ce module écrit UNE ligne
-de log par `initialize` et par requête de liste — le client, le protocole, l'hôte, et le
-NOMBRE d'éléments rendus. Observabilité pure : il ne lit rien qu'il ne rende tel quel.
+de log par `initialize` et par requête de liste — le client, le protocole, l'hôte
+(masqué s'il n'est pas connu, cf. `_etiquette_hote`), et le NOMBRE d'éléments rendus. Observabilité pure : il ne lit rien qu'il ne rende tel quel.
 
-    mcp.handshake initialize client=<nom>/<version> protocol_requested=<v> protocol_negotiated=<v> host=<hôte>
-    mcp.handshake list method=<tools/list|prompts/list|…> count=<n> client=<nom>/<version> host=<hôte>
+    mcp.handshake initialize client=<nom>/<version> protocol_requested=<v> protocol_negotiated=<v> host=<hôte|projet|inconnu>
+    mcp.handshake list method=<tools/list|prompts/list|…> count=<n> client=<nom>/<version> host=<hôte|projet|inconnu>
 
 **Jamais** de contenu : ni nom d'outil, ni schéma, ni description, ni `sub`, ni e-mail, ni
 jeton. Seuls comptent un `len()` et des attributs lus. Les valeurs venues du client (nom,
@@ -33,6 +33,8 @@ import re
 
 from fastmcp.server.dependencies import get_http_headers
 
+from . import config, tenancy
+
 logger = logging.getLogger(__name__)
 
 _SAFE = re.compile(r"[^A-Za-z0-9._:/+\-]")
@@ -47,11 +49,50 @@ def _clean(value) -> str:
     return _SAFE.sub("?", str(value))[:_MAX]
 
 
+def _hote_connu(hote: str) -> bool:
+    """`hote` est-il un hôte que la plateforme ANNONCE ELLE-MÊME (pas une URL-capacité) ?
+
+    Trois sources, toutes en mémoire : l'hôte public de l'instance, ses audiences alt
+    et `mcp.<domaine de projet>` (l'hôte canonique, préprod comme prod), et les hôtes
+    DÉCLARÉS d'un tenant (`tenancy.current().for_host`)."""
+    if hote in {config.public_host(), f"mcp.{config.project_domain()}",
+                *config.mcp_audience_alt_hosts()}:
+        return True
+    return tenancy.current().for_host(hote) is not None
+
+
+def _etiquette_hote(hote: str) -> str:
+    """La valeur JOURNALISÉE d'un hôte : lui-même s'il est connu, sinon une étiquette fixe.
+
+    ⚠️ Le sous-domaine d'un projet publié (`<slug>.mcp.<D>`, `<slug>.share.<D>`) est,
+    en mode `secret`, une URL-CAPACITÉ (ADR 0032) : le slug EST le secret, et les logs
+    applicatifs sont lisibles bien au-delà de ceux qui le connaissent. Liste blanche,
+    pas liste noire : tout hôte non reconnu est masqué, quel que soit son mode."""
+    if not hote:
+        return _ABSENT
+    if _hote_connu(hote):
+        return _clean(hote)
+    domaine = config.project_domain()
+    if hote.endswith((f".mcp.{domaine}", f".share.{domaine}")):
+        return "projet"
+    return "inconnu"
+
+
 def _host() -> str:
-    """Hôte demandé par le client. Derrière le proxy, `x-forwarded-host` prime."""
+    """Hôte demandé par le client, MASQUÉ s'il n'est pas connu (`_etiquette_hote`).
+
+    Derrière le proxy, `x-forwarded-host` prime : le filtre s'applique à la valeur
+    RETENUE (première valeur, port retiré) — il ne peut donc pas être contourné par
+    l'un ou l'autre en-tête."""
     headers = get_http_headers(include={"host", "x-forwarded-host"})
     brut = headers.get("x-forwarded-host") or headers.get("host") or ""
-    return _clean(brut.split(",")[0].strip().lower())
+    retenu = brut.split(",")[0].strip().lower().split(":")[0]
+    try:
+        return _etiquette_hote(retenu)
+    except Exception:  # noqa: BLE001 — jamais la valeur brute : à défaut, l'étiquette fixe
+        logger.warning("mcp.handshake hôte non classé (fail-closed, étiquette fixe)",
+                       exc_info=True)
+        return "inconnu"
 
 
 def _client(params) -> str:
