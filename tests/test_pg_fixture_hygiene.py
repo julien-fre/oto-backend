@@ -45,8 +45,9 @@ needs_docker = pytest.mark.skipif(not _DOCKER, reason="docker absent : rien à p
 # factice « vieux » puis exigent qu'il soit là (ou parti) : sur deux workers en même temps,
 # le balai de l'un retire le factice de l'autre (`CalledProcessError: docker inspect`,
 # « balayage : … retiré »). Ressource partagée = un seul worker pour tout le fichier (#963).
-# `--dist loadgroup` disperse les tests SANS fixture module un par un, alors que `load` en
-# gardait la plupart côte à côte : la course, latente, est devenue visible.
+# La course est ANTÉRIEURE à `loadgroup` : fichier lancé seul en `-n 4 --dist load`, elle
+# rougit 3 fois sur 4 ; sur la suite entière, le découpage en tronçons la masquait le plus
+# souvent (le job CI de #963 l'a fait apparaître).
 pytestmark = pytest.mark.xdist_group(name="balai-docker")
 
 
