@@ -188,6 +188,23 @@ def _garde_reseau_sortant(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 # --------------------------------------------------------------------------- #
+# Garde d'exécution « pas de SQL dans la boucle » (oto_mcp/db/_hors_boucle.py)
+# --------------------------------------------------------------------------- #
+#
+# En production la garde AVERTIT ; ici elle LÈVE pour tout site `async def` hors du stock
+# gelé. La suite n'a presque pas de base (les bancs doublent `db.*`) : c'est donc surtout
+# le balayage statique (`test_db_hors_boucle.py`) qui garde, et cette levée qui rattrape
+# ce qu'un banc à base RÉELLE ferait passer par un chemin indirect.
+@pytest.fixture(scope="session", autouse=True)
+def _garde_sql_hors_boucle() -> Iterator[None]:
+    from oto_mcp.db import _hors_boucle
+    from _stock_db_hors_boucle import STOCK
+    _hors_boucle.configurer(strict=True, tolere=STOCK)
+    yield
+    _hors_boucle.configurer(strict=False)
+
+
+# --------------------------------------------------------------------------- #
 # Pin oto-core : le venv exécute-t-il ce que le tronc épingle ?
 # --------------------------------------------------------------------------- #
 #
