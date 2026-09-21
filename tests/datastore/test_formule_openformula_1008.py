@@ -626,3 +626,22 @@ def test_counta_de_bout_en_bout_sur_ce_que_le_store_range(live):
         r = st.append_row(ns, {"entreprise_telephone": "", "contacts": [element]})
         d = _donnees_1008(ns_id, r["_id"])
         assert d["has_telephone"]["valeur"] is attendu, (nom, d["has_telephone"])
+
+
+# ── ce que le guide `datastore-semantics` (§ 9) affirme, tenu par un test ─────
+
+def test_une_liste_lue_comme_scalaire_n_est_pas_un_test_de_liste_vide():
+    """`contacts<>""` est ACCEPTÉ à la pose (une colonne-liste se référence comme
+    n'importe quelle colonne) et vaut VRAI pour `[]` : lue comme un scalaire, une liste
+    vaut sa représentation texte (`"[]"`), jamais `""`. Le test « au moins une valeur »
+    est `COUNTA(contacts[].telephone)>0`, faux sur la même ligne. Comportement DÉJÀ
+    servi, documenté tel quel plutôt que changé (décision d'Alexis, 21/09/2026)."""
+    scalaire = 'IFS(contacts<>""; TRUE(); TRUE(); FALSE())'
+    F.valider(scalaire, {"contacts"}, set(), CHAMPS_HAS_TEL)        # ne lève pas
+    vide = {"contacts": []}
+    v, _ = F.evaluer_avec_provenance(F.parse(scalaire), vide)
+    assert v is True
+    plage = 'IFS(COUNTA(contacts[].telephone)>0; TRUE(); TRUE(); FALSE())'
+    v, _ = F.evaluer_avec_provenance(F.parse(plage), vide)
+    assert v is False
+
