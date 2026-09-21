@@ -1027,6 +1027,15 @@ def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[in
     thin = thin_read_cte_sql(ns_id, q, filters, order_by if typed else None)
     if thin is None:
         return None
+    if order_simple and not typed:
+        # Tri d'une colonne UTILISATEUR sans type de tri résolu (texte, non déclarée,
+        # `type: "formula"`… — `order_spec` ne résout que number/enum/date) : il lit
+        # `data`, donc sa clé doit être dans la CTE mince, comme celle d'un tri typé.
+        # Pas amincissable (couche, chemin de liste) → `None` : l'appelant retombe sur
+        # `datastore_list_rows`, qui sait lire ces formes.
+        thin = thin_read_cte_sql(ns_id, q, filters, order_by)
+        if thin is None:
+            return None
     cte_sql, cte_params, where_sql, where_params = thin
 
     if typed:
@@ -1034,7 +1043,15 @@ def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[in
         order_sql, order_params = typed_order_sql(_v, _vp, order_type, order_options, direction)
         health_proj, health_params = order_health_sql(_v, _vp, order_type, order_options)
     else:
-        if order_by == "_updated_at":
+        if order_simple:
+            # ⚠️ Cette branche manquait : `order_by=<colonne sans type résolu>` retombait
+            # en SILENCE sur `created_at` ci-dessous — l'ordre de création, ni croissant
+            # ni décroissant sur la colonne demandée — dès que des filtres posaient la CTE
+            # mince (sans filtre, on ne passait pas par ici). Même tri textuel que
+            # `datastore_list_rows` (la face MCP), sur la MÊME lecture de valeur.
+            _v, _vp = field_read_sql(order_by)
+            order_sql, order_params = f"{_v} {direction}, row_id {direction}", list(_vp)
+        elif order_by == "_updated_at":
             order_sql, order_params = f"updated_at {direction}, row_id {direction}", []
         elif order_by == "_id":
             order_sql, order_params = f"row_id {direction}", []
