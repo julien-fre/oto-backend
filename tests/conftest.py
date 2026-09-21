@@ -37,6 +37,7 @@ import pytest
 
 from _oto_core_pin import (MARQUEUR, categorie_non_concluante, ecart,
                            lignes_de_banniere, skips_autorises)
+import _groupes_xdist
 import _jeton_de_suite as jeton
 from _pg_hygiene import Guard, docker_available, run_args, sweep_orphans
 
@@ -233,10 +234,17 @@ def pytest_configure(config: pytest.Config) -> None:
         "elle documente pourquoi un stub ne suffit pas ici.")
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config: pytest.Config, items) -> None:
     """Un rouge qui ne prouve rien vaut moins qu'un test explicitement non
     concluant — mais SEULEMENT en local : en CI la garde version-skew doit mordre,
-    c'est tout son objet (cf. `skips_autorises`)."""
+    c'est tout son objet (cf. `skips_autorises`).
+
+    Pose aussi, avant tout, le groupement xdist des modules à fixture module-scopée
+    (`_groupes_xdist`, #963). ⚠️ `tryfirst` n'est pas cosmétique : xdist lit les marqueurs
+    `xdist_group` dans SON `pytest_collection_modifyitems` (il en suffixe le nodeid) — un
+    marqueur posé après lui est ignoré, sans erreur, et le flake revient."""
+    _groupes_xdist.regrouper(items)
     config.stash_oto_core_skips = 0            # type: ignore[attr-defined]
     e = _ecart_de_session()
     if e is None or not skips_autorises():

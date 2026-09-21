@@ -97,6 +97,13 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 # du 07/09 (quatre workers calibrés sur un poste à 28 cœurs → OOM killer, tronc rouge 6 h)
 # appliquée : ne pas recopier un chiffre d'ailleurs, le lire sur CETTE machine.
 #
+# **`--dist loadgroup` est obligatoire avec `-n`** (#963) : un module à fixture module-scopée
+# (`pg_module_dsn`, `live`) reste sur UN worker (`tests/_groupes_xdist.py`, marqueur
+# `xdist_group` posé sur ~2 000 tests de ~230 fichiers, le plus gros groupe = 124 tests) ; les
+# autres restent répartis test par test. Avec `load` (le défaut), deux tests d'un module
+# atterrissaient sur deux workers, donc sur DEUX bases jetables : rouge intermittent sur un
+# test sans rapport avec le changement. Un run série n'est pas concerné.
+#
 # ⚠️ **`-n 4` nu casse la suite — vérifié, pas supposé.** `pg_box` (fixture `pg_dsn`,
 # session-scopée) passe par `_jeton_de_suite.py`, qui borne à `OTO_TEST_PG_PLACES=2`
 # places PG simultanées — pensé pour le POSTE PARTAGÉ (plusieurs sessions d'agents qui se

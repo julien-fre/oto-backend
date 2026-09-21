@@ -65,7 +65,7 @@ jobs:
         # lignes non couvertes : c'est exactement la question posée ici, et ça évite de
         # noyer la réponse sous 709 fichiers à 100 %.
         run: |
-          pytest -q -n 4 \
+          pytest -q -n 4 --dist loadgroup \
             --cov=${{ inputs.cible || 'oto_mcp' }} \
             --cov-report=term-missing:skip-covered \
             --cov-report=xml \
