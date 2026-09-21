@@ -21,8 +21,14 @@ n'a pas de boucle (`get_running_loop` lève), un `async def` en a une.
 
 Le SITE est la fonction `async def` de `oto_mcp` la plus interne dans la pile : c'est celle
 qu'il faut décharger (`await run_in_threadpool(...)`), quel que soit l'assistant synchrone
-qui touche la base. `module::qualname`, le même nom que rend le balayage statique
-(`tests/_appels_db_hors_boucle.py`).
+qui touche la base. Sa clé est `module::nom` (`co_name`) : `co_qualname` n'existe qu'en
+Python 3.11+ et la prod tourne en 3.10 (le 21/09/2026, v1.325.0 : `AttributeError` à chaque
+accès base depuis la boucle). Le balayage statique (`tests/_appels_db_hors_boucle.py`) nomme
+ses sites en `module::qualname` ; `configurer` ramène les clés du stock à cette forme.
+
+**La garde n'est qu'un instrument** : aucune exception ne sort d'elle en production, hors
+la violation elle-même en mode test. Un défaut de l'outil d'observation ne doit jamais casser
+le chemin observé — il est journalisé une fois, et l'accès base se poursuit.
 """
 from __future__ import annotations
 
@@ -47,14 +53,32 @@ class HorsBoucle(RuntimeError):
 _strict = False
 _tolere: frozenset[str] = frozenset()
 _deja_vus: set[str] = set()
+_defaut_signale = False
+
+
+def _nom(cle: str) -> str:
+    """`module::Classe.methode` ou `module::f.<locals>.g` -> `module::methode` / `module::g` :
+    la forme que la garde sait produire sous TOUTES les versions supportées de Python."""
+    module, _, qualifie = cle.partition("::")
+    return f"{module}::{qualifie.rsplit('.', 1)[-1]}"
 
 
 def configurer(*, strict: bool, tolere=()) -> None:
     """Posé par `tests/conftest.py`. Sans appel : mode production (avertir, jamais lever)."""
-    global _strict, _tolere
+    global _strict, _tolere, _defaut_signale
     _strict = strict
-    _tolere = frozenset(tolere)
+    _tolere = frozenset(_nom(c) for c in tolere)
     _deja_vus.clear()
+    _defaut_signale = False
+
+
+def _defaut_interne() -> None:
+    """Un défaut de la garde elle-même : journalisé UNE fois par process, jamais levé."""
+    global _defaut_signale
+    if _defaut_signale:
+        return
+    _defaut_signale = True
+    logger.exception("db.hors_boucle.defaut — la garde a échoué, l'accès base se poursuit")
 
 
 def _site(frame) -> tuple[str, list[str]] | None:
@@ -69,7 +93,7 @@ def _site(frame) -> tuple[str, list[str]] | None:
         code = f.f_code
         chemin = code.co_filename
         if chemin.startswith(_RACINE):
-            cle = f"{f.f_globals.get('__name__', '?')}::{code.co_qualname}"
+            cle = f"{f.f_globals.get('__name__', '?')}::{code.co_name}"
             if len(pile) < _PROFONDEUR_PILE:
                 pile.append(f"{cle}:{f.f_lineno}")
             if (code.co_flags & _CO_COROUTINE and coroutine is None
@@ -85,20 +109,28 @@ def verifier() -> None:
         asyncio.get_running_loop()
     except RuntimeError:
         return                         # thread sans boucle : threadpool, démarrage, timer
-    trouve = _site(sys._getframe(1))   # la pile ENTIÈRE est parcourue : le point de départ importe peu
-    if trouve is None:
+    try:
+        trouve = _site(sys._getframe(1))   # la pile ENTIÈRE est parcourue : le point de départ importe peu
+        if trouve is None:
+            return
+        site, pile = trouve
+        if site in _tolere:
+            return
+        if _strict:
+            violation = HorsBoucle(
+                f"accès base depuis la boucle d'événements, dans `{site}` — le serveur est "
+                "mono-loop : ce SQL synchrone gèle TOUT le monde le temps de la requête. "
+                "Décharge-le : `await run_in_threadpool(...)` (ou rends le handler `def` "
+                "synchrone). Cf. docs/event-loop-perf.md. Pile : " + " <- ".join(pile))
+        else:
+            violation = None
+            if site not in _deja_vus:
+                _deja_vus.add(site)
+                logger.warning(
+                    "db.hors_boucle site=%s — accès base SYNCHRONE dans la boucle (le serveur "
+                    "entier attend la requête) ; pile : %s", site, " <- ".join(pile))
+    except Exception:  # noqa: BLE001 — un défaut de l'instrument ne casse jamais le chemin observé
+        _defaut_interne()
         return
-    site, pile = trouve
-    if site in _tolere:
-        return
-    if _strict:
-        raise HorsBoucle(
-            f"accès base depuis la boucle d'événements, dans `{site}` — le serveur est "
-            "mono-loop : ce SQL synchrone gèle TOUT le monde le temps de la requête. "
-            "Décharge-le : `await run_in_threadpool(...)` (ou rends le handler `def` "
-            "synchrone). Cf. docs/event-loop-perf.md. Pile : " + " <- ".join(pile))
-    if site not in _deja_vus:
-        _deja_vus.add(site)
-        logger.warning(
-            "db.hors_boucle site=%s — accès base SYNCHRONE dans la boucle (le serveur "
-            "entier attend la requête) ; pile : %s", site, " <- ".join(pile))
+    if violation is not None:
+        raise violation

@@ -855,12 +855,14 @@ threadpool n'en a pas (`get_running_loop` lève), un `async def` en a une : le c
 indirect (assistant sync appelé par un handler async, comme `session_layers`) est attrapé
 sans rien savoir du code appelant. `_connect_autocommit` (DDL à chaud) est gardé pareil.
 
-- **Site** = la coroutine `oto_mcp` la plus interne de la pile (`module::qualname`) : c'est
+- **Site** = la coroutine `oto_mcp` la plus interne de la pile (`module::nom`, `co_name`) : c'est
   elle qu'il faut décharger, quel que soit l'assistant qui touche la base. Une coroutine de
   test n'est pas un site ; un thread sans boucle (démarrage, `init_db`, timers, scripts) non plus.
 - **Production** : un `logger.warning` par site et par process, `db.hors_boucle site=… ; pile :
   …`, jamais une exception (un site en défaut est une lenteur, la lever en ferait une panne).
-  Aucune variable d'environnement, aucun schéma.
+  Aucune variable d'environnement, aucun schéma. **Aucune exception ne sort de la garde** :
+  un défaut interne est journalisé une fois (`db.hors_boucle.defaut`, avec sa pile) et l'accès
+  base se poursuit — l'observateur ne casse jamais le chemin observé.
 - **Tests** : `HorsBoucle` est levée pour tout site hors du **stock gelé**
   (`tests/_stock_db_hors_boucle.py`, posé par `tests/conftest.py`). La suite a très peu de base
   réelle : la levée rattrape ce qu'un banc à PostgreSQL ferait passer par un chemin indirect.
@@ -919,3 +921,21 @@ Preuve : `tests/test_lot1_sql_hors_boucle.py` — compteur de boucle pendant une
 `tests/_stock_db_hors_boucle.py` (dont 25 `[dormant]`) ; les plus exposés qui restent :
 `_IatGatedVerifier.verify_token` (audience d'un endpoint de projet), les outils
 `tools/meta` (`oto_call`, `oto_list_my_tools`…), `api/media`, `api/projects`.
+
+### 22/09/2026 — la garde tue la prod en 3.10, la CI ne le voit pas (revert de #1039)
+
+La première version (#1039, v1.325.0) lisait `code.co_qualname` — **Python 3.11+** — alors que
+la prod tourne en **3.10** (`requires-python = ">=3.10"`). `AttributeError` à *chaque* accès base
+depuis la boucle : 186 en ~3 min, jusqu'au revert. Pire : `access.resolve_field_filter` passe par
+`_connect()`, et `redaction.redact_payload` retombait alors en passe-through pour tout service
+sans défaut serveur (aucune exposition constatée, mais un contournement de la rédaction ;
+sujet distinct, suivi à part). **La CI (3.12) n'avait rien vu** : `syntaxe-plancher` compile en
+3.10 mais n'*exécute* rien, et `co_qualname` est un accès d'attribut, pas de la syntaxe.
+
+Trois corrections : la clé de site est `module::co_name` (portable ; `configurer` ramène les
+clés du stock, écrites en `module::qualname` par le balayage, à cette forme) ; la garde
+enveloppe son propre code et ne lève plus que la violation, en mode test ; et un job CI
+**`La garde s'exécute sous le plancher Python`** (3.10) exécute l'import complet de l'arbre et
+les bancs de la garde. Un banc statique (`test_la_garde_n_emploie_aucune_api_posterieure_a_python_3_10`)
+nomme les API 3.11+ dans le module, et une trame factice sans `co_qualname` prouve que `_site`
+n'en demande pas.
