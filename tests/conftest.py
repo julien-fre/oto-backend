@@ -220,19 +220,6 @@ def _ecart_de_session():
     return ecart()
 
 
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line(
-        "markers",
-        f"{MARQUEUR}: ce test n'a de SENS que face à l'oto-core épinglé — il est "
-        "passé (non concluant) en local quand le venv est en retard sur le pin, "
-        "et reste mordant en CI.")
-    config.addinivalue_line(
-        "markers",
-        f"{_MARQUEUR_RESEAU}(raison): autorise CE test à ouvrir une connexion "
-        "réseau sortante réelle (non-loopback) — la raison est OBLIGATOIRE, "
-        "elle documente pourquoi un stub ne suffit pas ici.")
-
-
 class _ConftestSansTests(pytest.File):
     """Le nœud d'un `conftest.py` donné en argument : présent (pytest exige que tout
     argument désigne un nœud, sinon `ERROR: not found`), mais qui ne collecte RIEN et
@@ -263,6 +250,19 @@ def pytest_collect_file(file_path, parent):
     if file_path.name == "conftest.py":
         return [_ConftestSansTests.from_parent(parent, path=file_path)]
     return collectes
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        f"{MARQUEUR}: ce test n'a de SENS que face à l'oto-core épinglé — il est "
+        "passé (non concluant) en local quand le venv est en retard sur le pin, "
+        "et reste mordant en CI.")
+    config.addinivalue_line(
+        "markers",
+        f"{_MARQUEUR_RESEAU}(raison): autorise CE test à ouvrir une connexion "
+        "réseau sortante réelle (non-loopback) — la raison est OBLIGATOIRE, "
+        "elle documente pourquoi un stub ne suffit pas ici.")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items) -> None:
