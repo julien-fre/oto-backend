@@ -842,3 +842,43 @@ il faudrait un cliquet (liste de dettes qui ne peut que se réduire), pas un rou
 La transitivité (`session_layers` → `_resolve_context` → SQL, exactement notre cas) n'est
 pas décidable par nom sans graphe d'appels : un garde purement direct **n'aurait pas
 attrapé ce gel-ci**.
+
+## La garde d'exécution : `_connect()` sait s'il est appelé depuis la boucle (21/09)
+
+Le gel du 21/09 (`me.agent_context`) est passé sous quatre garde-fous parce qu'aucun ne
+regardait **où** s'exécute un accès base : l'AST « async sans await » ne voit pas un handler
+qui `await` ailleurs, le seam `execute()` ne juge que le handler, `loop_watch` nomme après
+coup. Le point de passage obligé de toute requête est `db._conn._connect()` (le pool n'est
+ouvert nulle part ailleurs) : `oto_mcp/db/_hors_boucle.py` y pose la seule question qui
+compte — **y a-t-il une boucle asyncio qui tourne dans CE thread ?** Un thread du
+threadpool n'en a pas (`get_running_loop` lève), un `async def` en a une : le chemin
+indirect (assistant sync appelé par un handler async, comme `session_layers`) est attrapé
+sans rien savoir du code appelant. `_connect_autocommit` (DDL à chaud) est gardé pareil.
+
+- **Site** = la coroutine `oto_mcp` la plus interne de la pile (`module::qualname`) : c'est
+  elle qu'il faut décharger, quel que soit l'assistant qui touche la base. Une coroutine de
+  test n'est pas un site ; un thread sans boucle (démarrage, `init_db`, timers, scripts) non plus.
+- **Production** : un `logger.warning` par site et par process, `db.hors_boucle site=… ; pile :
+  …`, jamais une exception (un site en défaut est une lenteur, la lever en ferait une panne).
+  Aucune variable d'environnement, aucun schéma.
+- **Tests** : `HorsBoucle` est levée pour tout site hors du **stock gelé**
+  (`tests/_stock_db_hors_boucle.py`, posé par `tests/conftest.py`). La suite a très peu de base
+  réelle : la levée rattrape ce qu'un banc à PostgreSQL ferait passer par un chemin indirect.
+
+**Le cliquet statique** (`tests/_appels_db_hors_boucle.py` + `test_db_hors_boucle.py`) est
+la moitié qui couvre la suite sans base : un graphe d'appels par nom / module importé /
+`self.` / fermeture locale (les façades à ré-export plat `db` et `org_store` comprises)
+liste tout `async def` qui atteint `_connect` par des appels **synchrones**. Il coupe aux
+`await`, à `run_in_threadpool(f, …)` / `to_thread(f, …)` (`f` est passée, pas appelée) et
+aux `lambda`. Le test échoue dans les DEUX sens : un site nouveau (il faut le décharger, pas
+l'ajouter au stock), et un site du stock qui n'est plus fautif (il faut retirer sa ligne, sinon
+le stock tolérerait sa régression). Ce qu'il ne voit pas — répartition dynamique, `getattr`,
+callbacks — est le travail de la garde d'exécution ; ni l'un ni l'autre ne suffit seul.
+
+**Ce que la mesure a trouvé de plus que les 71 appels directs du 21/09** : le balayage
+direct s'arrêtait aux modules nommés `db.*`. En suivant les assistants, il y a **82 sites**
+au moment de la pose — les façades `org_store` et `access` (`roles.*`, `current_org`,
+`current_group`, `resolve_credential`…) cachent la base derrière un nom neutre, et 25 sites
+(tous les middlewares MCP, les axes `_org`/`_project`, plusieurs outils) n'y arrivent que par
+`current_user_sub_from_token`, qui ne lit la base **que tant que le drain d'alias est armé**
+(`[dormant]` dans le stock : un interrupteur, pas un gel d'aujourd'hui).
