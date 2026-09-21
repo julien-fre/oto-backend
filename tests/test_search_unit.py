@@ -29,15 +29,14 @@ def _stub_empty(monkeypatch, **over):
             monkeypatch.setattr(S.db, n, lambda q, org, sub, limit, _r=rows: list(_r))
         else:
             monkeypatch.setattr(S.db, n, lambda q, pids, limit, _r=rows: list(_r))
-    monkeypatch.setattr(S.ownership, "accessible_project_ids_by_provenance",
-                        lambda *a, **k: over.get(
-                            "by_provenance", {"all": [1], "own": [1], "granted": []}))
+    monkeypatch.setattr(S.ownership, "accessible_project_ids", lambda *a, **k: [1])
     monkeypatch.setattr(S.ownership, "active_org_principals", lambda *a: [])
     monkeypatch.setattr(S.db, "list_datastores_for_owners",
                         lambda owners: over.get("tableaux", []))
     monkeypatch.setattr(S.db, "list_datastores_granted_to",
                         lambda *a: [])
-    monkeypatch.setattr(S.db, "project_names", lambda ids: {1: "Projet X"})
+    monkeypatch.setattr(S.db, "project_labels", lambda ids: {1: {
+        "name": "Projet X", "owner_type": "org", "owner_id": "7", "context_org_id": None}})
 
 
 def test_rrf_interleaves_sources(monkeypatch):
@@ -68,41 +67,30 @@ def test_headline_without_highlight_dropped(monkeypatch):
     assert out["hits"][0]["passage"] is None
 
 
-def test_hit_dun_projet_possede_nest_pas_marque_cross_org(monkeypatch):
-    """oto-backend, feedback #1005/#1006 : un résultat venant d'un projet POSSÉDÉ
-    par le contexte (org/pôles/perso de cette org) ne doit jamais porter
-    `cross_org_share=True`, même si ce même projet est PAR AILLEURS partagé —
-    la provenance dit d'où vient CE hit, pas tout ce qui est vrai du projet."""
-    _stub_empty(monkeypatch, search_docs_fts=[
-        {"id": 10, "project_id": 1, "title": "Page A", "headline": "<b>x</b>"}],
-        by_provenance={"all": [1], "own": [1], "granted": []})
-    out = S.search("u1", 7, "xx")
-    assert out["hits"][0]["cross_org_share"] is False
-
-
-def test_hit_dun_projet_partage_est_marque_cross_org(monkeypatch):
-    """Le même hit, mais quand le projet 1 n'est visible QUE via un grant
-    (`granted`) — un agent qui restitue ce résultat ne doit pas le présenter
-    comme appartenant à l'org auditée sans le dire."""
-    _stub_empty(monkeypatch, search_docs_fts=[
-        {"id": 10, "project_id": 1, "title": "Page A", "headline": "<b>x</b>"}],
-        by_provenance={"all": [1], "own": [], "granted": [1]})
-    out = S.search("u1", 7, "xx")
-    assert out["hits"][0]["cross_org_share"] is True
-
-
-def test_hit_tableau_partage_est_marque_cross_org(monkeypatch):
-    """Même distinction pour un `tableau` (scopé par NAMESPACE, pas par projet) :
-    un namespace visible UNIQUEMENT via un grant org/groupe est marqué, un
-    namespace possédé ne l'est jamais."""
-    monkeypatch.setattr(S, "_match_tableaux", lambda q, sub, org: [
-        {"kind": "tableau", "ref": 101, "title": "prospects", "matched_by": "lexical"},
-        {"kind": "tableau", "ref": 102, "title": "leads", "matched_by": "lexical"}])
-    _stub_empty(monkeypatch, tableaux=[])
-    monkeypatch.setattr(S, "_granted_namespace_ids", lambda sub, org: {102})
-    out = S.search("u1", 7, "xx", kinds=["tableau"])
-    par_ref = {h["ref"]: h["cross_org_share"] for h in out["hits"]}
-    assert par_ref == {101: False, 102: True}
+def test_chaque_grain_porte_son_org_dorigine(monkeypatch):
+    """ADR 0071 : TOUT hit dit où vit l'objet — y compris procédure, guide et
+    connecteur, que la première version de ce champ omettait. Les cas sur base réelle
+    (tableau personnel, projet d'une autre org, collègue, admin) vivent dans
+    `test_search_org_origine.py` ; ici, la forme sur chaque grain."""
+    _stub_empty(monkeypatch,
+                search_docs_fts=[{"id": 10, "project_id": 1, "title": "Page xx",
+                                  "headline": "<b>xx</b>"}],
+                search_procedures_fts=[{"slug": "p", "title": "Proc xx", "headline": None}],
+                search_guides_fts=[
+                    {"scope": "org", "slug": "g-org", "title": "xx org", "headline": None},
+                    {"scope": "platform", "slug": "g-pf", "title": "xx pf", "headline": None},
+                    {"scope": "user", "slug": "g-moi", "title": "xx moi", "headline": None}])
+    out = S.search("u1", 7, "xx", connectors_catalog=[{"name": "xx", "label": "XX"}])
+    par = {(h["kind"], str(h["ref"])): (h["origin_org_id"], h["other_org"])
+           for h in out["hits"]}
+    assert par == {
+        ("page", "10"): (7, False),
+        ("procedure", "p"): (7, False),
+        ("guide", str({"scope": "org", "slug": "g-org"})): (7, False),
+        ("guide", str({"scope": "platform", "slug": "g-pf"})): (None, False),
+        ("guide", str({"scope": "user", "slug": "g-moi"})): (None, None),
+        ("connecteur", "xx"): (None, False),
+    }
 
 
 def test_zero_hits_carries_hint(monkeypatch):
@@ -158,11 +146,7 @@ def test_match_tableaux_ranking():
         {"id": 3, "datastore": "clients", "schema": {"fields": [{"label": "Prospects chauds"}]}},
         {"id": 4, "datastore": "autre", "schema": {}},
     ]
-    import unittest.mock as m
-    with m.patch.object(S.ownership, "active_org_principals", return_value=[]), \
-         m.patch.object(S.db, "list_datastores_for_owners", return_value=rows), \
-         m.patch.object(S.db, "list_datastores_granted_to", return_value=[]):
-        out = S._match_tableaux("Prospects", "u1", 7)
+    out = S._match_tableaux("Prospects", rows)
     assert [h["ref"] for h in out] == [1, 2, 3]   # exact > partiel > label ; 4 exclu
 
 

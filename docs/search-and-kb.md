@@ -32,6 +32,30 @@ seul ne trouvera donc jamais une valeur DANS une ligne — c'est `ligne` qu'il f
 (pas d'inversion de couche). `oto_doc(op=search)` = rerouté, déprécié. Fichiers matchés sur
 `filename+title+description` (jamais `summary`, colonne morte).
 
+## L'org d'un résultat : où vit l'objet, pas par où on l'atteint (21/09/2026)
+
+Signal #1005 (et #1006, son doublon sur `data_list_datastores`) : un agent qui audite
+l'org A restituait des résultats d'autres orgs sans pouvoir les distinguer. Chaque hit
+porte désormais `origin_org_id` (l'org où vit l'objet) et `other_org` (`true` = une
+AUTRE org que l'org active ; `false` = l'org active, ou aucune org — guide plateforme,
+connecteur ; `null` = **inconnue**). Jamais omis, `null` compris.
+
+⚠️ **Le critère est l'org de l'objet (ADR 0071), jamais le chemin d'accès.** Une
+première version déduisait l'org de « possédé par le contexte » contre « reçu par un
+partage » : le tableau personnel du visiteur né dans une autre org passait pour « d'ici »,
+le projet d'un collègue de la même org partagé nommément pour « d'ailleurs », et la
+réponse changeait selon que l'acteur était admin d'org. Règle (`org_origin.org_of`) :
+`org` → elle ; `group` → l'org parente ; `user` → `projects.context_org_id`, sinon
+inconnue (tableaux et nœuds personnels ne portent pas encore leur org, ADR 0071 §3 —
+on le dit, on ne devine pas) ; `platform` → aucune. Page/brief/fichier → leur projet ;
+une page partagée seule (#1084) ne sort pas de la recherche, gardée par son projet.
+
+Coût : les namespaces du contexte sont lus UNE fois par recherche (ils l'étaient jusqu'à
+trois fois, une par source tableau/ligne/ligne sémantique) ; l'org des projets vient de
+la requête qui lisait déjà leurs noms (`db.project_labels`) ; une seule requête groupée
+de plus, et seulement si un propriétaire est une équipe. Bancs :
+`tests/test_search_org_origine.py` (base réelle).
+
 ## Sémantique + RRF (20/07)
 
 **Sémantique + RRF (20/07, LIVE preprod)** : fusion LEXICAL + SÉMANTIQUE des pages.

@@ -103,7 +103,7 @@ _SURFACE = """
     migrate_business_key_indexes migrate_sub move_doc move_doc_to_project
     open_billing_payments org_adoption org_restricted_connectors
     org_unipile_account_ids os paths platform_instructions
-    project_grant_counts project_names project_run_stats project_run_tools
+    project_grant_counts project_labels project_run_stats project_run_tools
     project_runs project_spine projects prune_tool_calls psycopg
     rank_backfill_sql rank_column_ddl rank_expr rank_pending_counts re
     recent_runs reconcile_tenant_migration record_legal_acceptances

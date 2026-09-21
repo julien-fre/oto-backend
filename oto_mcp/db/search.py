@@ -443,14 +443,17 @@ def search_docs_semantic(query_literal: str, project_ids: list[int], *,
         return [dict(r) for r in rows]
 
 
-def project_names(ids: list[int]) -> dict[int, str]:
-    """Noms d'un lot de projets (étiquette des hits) — une requête."""
+def project_labels(ids: list[int]) -> dict[int, dict]:
+    """Étiquette d'un lot de projets (hits de recherche) — une requête : le nom, et
+    ce qui dit l'org où vit le projet (`owner_type`, `owner_id`, `context_org_id`,
+    cf. `org_origin`)."""
     if not ids:
         return {}
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, name FROM projects WHERE id = ANY(%s)", (ids,)).fetchall()
-        return {int(r["id"]): r["name"] for r in rows}
+            "SELECT id, name, owner_type, owner_id, context_org_id "
+            "FROM projects WHERE id = ANY(%s)", (ids,)).fetchall()
+        return {int(r["id"]): dict(r) for r in rows}
 
 
 def search_files_meta(q: str, project_ids: list[int], *, limit: int = 20) -> list[dict]:

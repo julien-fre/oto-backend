@@ -21,7 +21,9 @@ datastore, avec fragment surligné) et **conteneurs** (tableau/fichier/connecteu
 nom+description, pas d'aperçu). La **ligne** (#67 V2.1) est hybride : un enregistrement
 de datastore (`ref={ns_id, row_id}`) matché sur son contenu, rendu avec un fragment
 comme la prose. Forme : `{kind, ref, title, description?, passage?, project_id?,
-project_name?, updated_at?, matched_by:'lexical'}`.
+project_name?, updated_at?, matched_by:'lexical', origin_org_id, other_org}` — les deux
+derniers sur TOUT hit : l'org où vit l'objet, et s'il vit dans une autre org que l'org
+active (`None` = inconnue), cf. `_stamp_origins` et ADR 0071.
 """
 from __future__ import annotations
 
@@ -29,7 +31,7 @@ import hashlib
 import logging
 from typing import Optional
 
-from . import db, ownership
+from . import db, org_origin, ownership
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +80,12 @@ def search(sub: str, org_id: int, q: str, *,
 
     if scope == "project" and project_id is not None:
         pids = [int(project_id)]
-        granted_pids: set[int] = set()
     else:
-        by_prov = ownership.accessible_project_ids_by_provenance(sub, org_id, want="read")
-        pids = by_prov["all"]
-        granted_pids = set(by_prov["granted"])
-    # Même provenance, pour les tableaux/lignes (scopés par NAMESPACE, pas par
-    # projet) — calculée UNE fois, réutilisée par `_match_tableaux`/`_match_rows`/
-    # `_match_rows_semantic` (qui appellent `_accessible_namespaces` elles-mêmes,
-    # cache non nécessaire ici, l'appel est déjà borné aux namespaces du contexte)
-    # et par le tour de tag des hits plus bas.
-    ns_ids_partages = _granted_namespace_ids(sub, org_id) if "tableau" in wanted or "ligne" in wanted else set()
+        pids = ownership.accessible_project_ids(sub, org_id, want="read")
+    # Namespaces du contexte, lus UNE fois par recherche : ils scopent `tableau` ET
+    # `ligne` (lexical et sémantique), et leurs propriétaires disent l'org de chaque hit.
+    namespaces = (_accessible_namespaces(sub, org_id)
+                  if wanted & {"tableau", "ligne"} else [])
 
     ranked: list[tuple[float, dict]] = []
 
@@ -156,14 +153,14 @@ def search(sub: str, org_id: int, q: str, *,
 
     # ── conteneurs ──────────────────────────────────────────────────────────
     if "tableau" in wanted:
-        _add(_match_tableaux(q, sub, org_id), lambda r: r)
+        _add(_match_tableaux(q, namespaces), lambda r: r)
     # ── lignes de datastore (#67 V2.1/V2.2) — le contenu DANS les tableaux ────
     if "ligne" in wanted:
-        _add(_match_rows(q, sub, org_id), lambda r: r)
+        _add(_match_rows(q, namespaces), lambda r: r)
         # Sémantique (V2.2) : lignes des namespaces OPT-IN proches du sens de la
         # requête, fusionnées au lexical par RRF (comme les pages).
         if query_embedding is not None:
-            _add(_match_rows_semantic(q, sub, org_id, query_embedding), lambda r: r)
+            _add(_match_rows_semantic(namespaces, query_embedding), lambda r: r)
     if "fichier" in wanted:
         _add(db.search_files_meta(q, pids, limit=per_source), lambda r: {
             "kind": "fichier", "ref": r["id"],
@@ -203,21 +200,11 @@ def search(sub: str, org_id: int, q: str, *,
             fused[key] = (score, hit)
     ordered = sorted(fused.values(), key=lambda t: t[0], reverse=True)
     hits = [h for _, h in ordered[:limit]]
-    names = db.project_names(sorted({h["project_id"] for h in hits if h.get("project_id")}))
+    projects = db.project_labels(sorted({h["project_id"] for h in hits if h.get("project_id")}))
     for h in hits:
-        if h.get("project_id") in names:
-            h["project_name"] = names[h["project_id"]]
-        # oto-backend, feedback #1005/#1006 : dit si CE hit vient d'un partage
-        # cross-org plutôt que d'une ressource propre du contexte — jamais deviné,
-        # jamais omis, pour qu'un agent ne restitue pas un résultat partagé comme
-        # s'il appartenait au client audité. `ns_ids_partages` (tableau/ligne) est
-        # peuplé plus bas, avant ce tour — voir `_accessible_namespaces`.
-        if h.get("project_id") is not None:
-            h["cross_org_share"] = h["project_id"] in granted_pids
-        elif h.get("kind") == "tableau":
-            h["cross_org_share"] = h["ref"] in ns_ids_partages
-        elif h.get("kind") == "ligne":
-            h["cross_org_share"] = h["ref"].get("ns_id") in ns_ids_partages
+        if h.get("project_id") in projects:
+            h["project_name"] = projects[h["project_id"]]["name"]
+    _stamp_origins(hits, sub, org_id, projects, namespaces)
 
     # Télémétrie (lot 3 Ship 1 §5) : le calllog ne trace que le MCP — log applicatif
     # anonymisé (hash de q, jamais la saisie) pour rendre les conditions V2 décidables.
@@ -272,22 +259,68 @@ def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
     return rows
 
 
-def _granted_namespace_ids(sub: str, org_id: int) -> set[int]:
-    """Ids de namespace visibles UNIQUEMENT via un partage cross-org (grant
-    org/groupe) — jamais un namespace possédé par le contexte, même s'il est
-    AUSSI partagé explicitement. Même distinction que
-    `ownership.accessible_project_ids_by_provenance`, pour les tableaux/lignes."""
-    principals = ownership.active_org_principals(sub, org_id)
-    gids = [int(p[1]) for p in principals if p[0] == "group"]
-    owned = {r["id"] for r in db.list_datastores_for_owners(principals)}
-    return {r["id"] for r in db.list_datastores_granted_to(sub, [org_id], gids)
-            if r["id"] not in owned}
+def _stamp_origins(hits: list[dict], sub: str, org_id: int,
+                   projects: dict[int, dict], namespaces: list[dict]) -> None:
+    """Pose sur CHAQUE hit l'org où vit l'objet (`origin_org_id`) et s'il vit dans une
+    AUTRE org que l'org active (`other_org`, `None` = on ne sait pas) — ADR 0071 : l'org
+    d'un objet, jamais le chemin par lequel on l'atteint (`org_origin`).
+
+    Le champ n'est jamais omis. Par grain :
+    - page / brief / fichier → le PROJET (une page partagée seule, #1084, vit dans
+      celui de son projet — la recherche ne la rend d'ailleurs pas, elle reste gardée
+      par le projet) ;
+    - tableau / ligne → le propriétaire du namespace ; personnel → inconnue (§3) ;
+    - procédure → l'org active (la source ne lit que les procédures qu'elle possède) ;
+    - guide → son palier : org active, plateforme (aucune org), note personnelle
+      (inconnue — un nœud personnel ne porte pas son org) ;
+    - connecteur → une entrée du catalogue, pas un contenu rangé dans une org.
+
+    Coût : aucune requête au-delà de `project_labels` (déjà lue pour les noms), sauf
+    UNE, groupée, si un propriétaire est une équipe."""
+    ns_by_id = {r["id"]: r for r in namespaces}
+    owners = ([(p["owner_type"], p["owner_id"]) for p in projects.values()]
+              + [(ns_by_id[i]["owner_type"], ns_by_id[i]["owner_id"])
+                 for i in {_ns_id(h) for h in hits} if i in ns_by_id])
+    groups = org_origin.group_orgs(owners)
+
+    def origine(h: dict) -> org_origin.Origine:
+        if h.get("project_id") is not None:
+            p = projects.get(h["project_id"])
+            if p is None:   # effacé entre la recherche et l'étiquette
+                return None, False
+            return org_origin.org_of(p["owner_type"], p["owner_id"],
+                                     context_org_id=p.get("context_org_id"), groups=groups)
+        if h["kind"] in ("tableau", "ligne"):
+            ns = ns_by_id[_ns_id(h)]
+            return org_origin.org_of(ns["owner_type"], ns["owner_id"], groups=groups)
+        if h["kind"] == "procedure":
+            return org_origin.org_of("org", str(org_id), groups=groups)
+        if h["kind"] == "guide":
+            scope = h["ref"]["scope"]
+            owner_id = {"org": str(org_id), "user": sub}.get(scope, "")
+            return org_origin.org_of(scope, owner_id, groups=groups)
+        if h["kind"] == "connecteur":
+            return None, True
+        raise ValueError(f"grain de recherche sans org d'origine : {h['kind']!r}")
+
+    for h in hits:
+        o = origine(h)
+        h["origin_org_id"] = o[0]
+        h["other_org"] = org_origin.other_org(o, org_id)
 
 
-def _match_tableaux(q: str, sub: str, org_id: int) -> list[dict]:
-    """Tableaux du CONTEXTE matchés en mémoire sur nom + labels de colonnes du schéma.
-    Rang : nom exact > nom partiel > label."""
-    rows = _accessible_namespaces(sub, org_id)
+def _ns_id(hit: dict) -> Optional[int]:
+    """Namespace d'un hit `tableau` (sa ref) ou `ligne` (`ref.ns_id`) ; None sinon."""
+    if hit["kind"] == "tableau":
+        return hit["ref"]
+    if hit["kind"] == "ligne":
+        return hit["ref"]["ns_id"]
+    return None
+
+
+def _match_tableaux(q: str, rows: list[dict]) -> list[dict]:
+    """Tableaux du CONTEXTE (`rows` = `_accessible_namespaces`) matchés en mémoire sur
+    nom + labels de colonnes du schéma. Rang : nom exact > nom partiel > label."""
     fq = fold(q)
     scored: list[tuple[int, dict]] = []
     for r in rows:
@@ -325,23 +358,21 @@ def _row_hits(rows: list[dict], names: dict[int, str], matched_by: str) -> list[
     return out
 
 
-def _match_rows(q: str, sub: str, org_id: int) -> list[dict]:
-    """Lignes de datastore des namespaces accessibles, en LEXICAL (kind=ligne, #67 V2.1) —
-    rend le CONTENU des tableaux trouvable (ex. « la ligne où figure Sylvie »), pas
-    seulement leur nom. Même FTS que la prose (index d'expression), déjà classé par le SQL."""
-    ns = _accessible_namespaces(sub, org_id)
+def _match_rows(q: str, ns: list[dict]) -> list[dict]:
+    """Lignes de datastore des namespaces accessibles (`ns` = `_accessible_namespaces`),
+    en LEXICAL (kind=ligne, #67 V2.1) — rend le CONTENU des tableaux trouvable (ex. « la
+    ligne où figure Sylvie »), pas seulement leur nom. Même FTS que la prose (index
+    d'expression), déjà classé par le SQL."""
     if not ns:
         return []
     names = {r["id"]: r["datastore"] for r in ns}
     return _row_hits(db.search_datastore_rows_fts(q, list(names.keys())), names, "lexical")
 
 
-def _match_rows_semantic(q: str, sub: str, org_id: int,
-                         query_embedding: list[float]) -> list[dict]:
+def _match_rows_semantic(ns: list[dict], query_embedding: list[float]) -> list[dict]:
     """Lignes SÉMANTIQUEMENT proches (#67 V2.2) — seuls les namespaces opt-in ont des
     embeddings (les autres sont naturellement absents). Scope IDENTIQUE au lexical
     (mêmes namespaces accessibles → invariant « cherchable ⇔ lisible »)."""
-    ns = _accessible_namespaces(sub, org_id)
     if not ns:
         return []
     names = {r["id"]: r["datastore"] for r in ns}

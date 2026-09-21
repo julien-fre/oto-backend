@@ -36,6 +36,17 @@ class SearchHit(BaseModel):
     matched_by: Optional[str] = None             # lexical | semantic
     project_id: Optional[int] = None
     project_name: Optional[str] = None
+    # L'ORG où vit l'objet (ADR 0071) — pas le chemin par lequel on l'atteint : un
+    # tableau personnel reste à son org de naissance, le projet d'un collègue partagé
+    # reste à l'org de ce collègue. Toujours présents (jamais omis), `null` compris :
+    # - `origin_org_id` : l'org, ou `null` (inconnue, ou aucune org : plateforme,
+    #   catalogue de connecteurs — `other_org` départage) ;
+    # - `other_org` : `true` = vit dans une AUTRE org que l'org active (un partage :
+    #   ne jamais le présenter comme appartenant à l'org active) ; `false` = vit dans
+    #   l'org active, ou dans aucune org ; `null` = on ne sait pas (tableau/ligne ou
+    #   note personnels : leur org de naissance n'est pas enregistrée).
+    origin_org_id: Optional[int] = None
+    other_org: Optional[bool] = None
 
 
 class SearchResults(BaseModel):
@@ -145,6 +156,12 @@ CAPABILITIES += [
             "many were FOUND and `truncated` is true — 20 hits out of 300 must not "
             "read as « that is all there is ». "
             "`kinds` filters (page|brief|procedure|guide|tableau|ligne|fichier|connecteur). "
+            "Every hit carries WHERE the object lives, not how you reach it: "
+            "`origin_org_id` (the org it lives in) and `other_org` — true = it lives in "
+            "ANOTHER org than the active one (a share: never present it as the active "
+            "org's own); false = it lives in the active org, or in no org (platform "
+            "guide, connector); null = UNKNOWN (a personal table/row or personal note "
+            "does not record its org yet) — say so, do not guess. "
             "SEARCH when you know what you're looking for; NAVIGATE (oto_project op=get "
             "include=['spine']) when the question is structural. Then open the hit: "
             "oto_doc op=get (page), data_rows (tableau/ligne), oto_procedure op=get."),
