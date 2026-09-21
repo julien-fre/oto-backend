@@ -77,9 +77,12 @@ def test_une_insertion_AVEC_la_cle_ne_dit_rien(store):
     assert "non_rapprochable" not in store.off_schema_report()
 
 
-def test_une_cle_VIDE_compte_comme_absente(store):
-    store.append_row("viviers", {"siren": "", "raison_sociale": "ACME"})
-    assert store.off_schema_report().get("non_rapprochable") == ["siren"]
+def test_une_cle_VIDE_est_refusee_et_non_plus_comptee_absente(store):
+    """Signal feedback 994 : `""` entre dans l'index d'unicité, deux lignes « à clé
+    vide » s'y confondraient. Refusée à l'entrée — bancs réels dans
+    `test_cle_metier_vide_signal_994.py`. Seule l'ABSENCE de clé reste permise."""
+    with pytest.raises(ValueError, match="clé métier vide ne désigne aucune entité"):
+        store.append_row("viviers", {"siren": "", "raison_sociale": "ACME"})
 
 
 def test_un_tableau_SANS_cle_declaree_ne_dit_rien(store, monkeypatch):

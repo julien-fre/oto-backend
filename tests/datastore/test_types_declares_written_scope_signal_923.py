@@ -1,4 +1,4 @@
-"""oto-backend#923 (signal feedback) — `types_trahis` jugeait TOUTE colonne DÉCLARÉE
+"""Signal feedback 923 — `types_trahis` jugeait TOUTE colonne DÉCLARÉE
 du row mergé, y compris celles que le geste n'écrit pas.
 
 Mesuré : une écriture PARTIELLE par `id` (`row={"priorite": 3}`) sur une ligne dont
@@ -25,7 +25,7 @@ def _schema(**extra):
 
 def test_une_colonne_heritee_invalide_ne_gele_pas_un_patch_sans_rapport():
     """`ca` est déjà invalide EN BASE (hérité), le geste n'écrit que `priorite` :
-    aucun refus — c'est le défaut mesuré par #923."""
+    aucun refus — c'est le défaut mesuré par le signal 923."""
     merged = {"priorite": 3, "ca": "5547719 (2024)"}
     gelees: list = []
     errors = V.validate_row(_schema(), merged, written={"priorite"}, gelees=gelees)
@@ -55,3 +55,19 @@ def test_insert_sans_written_juge_toujours_la_row_entiere():
     merged = {"priorite": 3, "ca": "5547719 (2024)"}
     errors = V.validate_row(_schema(), merged, written=None)
     assert any("`ca`" in e and "refusé" in e for e in errors), errors
+
+
+def test_sans_validation_active_la_colonne_heritee_est_gelee_par_types_trahis_seul():
+    """Le banc qui prouve la branche : un tableau SANS validation active (ni `strict`,
+    ni `required`, ni borne) — `_row_errors` ne tourne pas, seul `types_trahis` juge le
+    type. Sur le schéma `strict` des bancs ci-dessus, `_row_errors` rangeait déjà `ca`
+    en gelée : ils passaient sans la nouvelle branche. Celui-ci tombe sans elle."""
+    schema = {"fields": [{"key": "priorite", "type": "number"},
+                         {"key": "ca", "type": "number"}]}
+    assert not V.validation_active(schema)
+    merged = {"priorite": 3, "ca": "5547719 (2024)"}
+    gelees: list = []
+    errors = V.validate_row(schema, merged, written={"priorite"}, gelees=gelees)
+    assert errors == [], errors
+    assert [g["champ"] for g in gelees] == ["ca"], gelees
+    assert "`ca`" in gelees[0]["refus"] and "refusé" in gelees[0]["refus"], gelees

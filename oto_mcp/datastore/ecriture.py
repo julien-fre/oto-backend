@@ -33,6 +33,7 @@ from .columns import (
     sans_les_nulls_sans_effet,
     vides_assumes_perdus,
 )
+from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
 from .controles import _relever_origine_module
 from .errors import DatastoreNotFound, RowNotFound, RowValidationError
 from . import fin_du_null as fdn
@@ -119,6 +120,9 @@ class EcritureMixin:
         refuser_cles_internes(user_data)
         refuser_les_mots_mal_places(schema, user_data)
         _refuse_mixed_layers(schema, user_data)
+        # Signal feedback 994 : une clé métier vide entrerait dans l'index d'unicité
+        # comme `""` — refusée ici, avant toute recherche et tout insert.
+        refuser_cle_metier_vide(schema, user_data)
         # #586 : la couche d'origine d'un champ système ne s'écrit pas, création
         # comprise — jugée sur le payload seul (le readonly, lui, se juge contre la
         # ligne en place, donc dans la fusion). Refusé AVANT le lookup de clé.
@@ -136,7 +140,7 @@ class EcritureMixin:
         # ⚠️ DÉBALLÉ — une clé métier annotée est la MÊME identité qu'une clé nue
         # (cf. `lots.py`). Enrichir la provenance ne change pas ce qu'une donnée est.
         kv = dsv2.unwrap(user_data.get(key)) if key else None
-        if key and kv is not None and str(kv) != "":
+        if key and kv is not None:
             existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
             if existing_id is not None:
                 return self._row_to_dict(
@@ -161,7 +165,7 @@ class EcritureMixin:
         # à refuser — on NOMME, comme `hors_schema`. Mesuré avant de la poser :
         # 197 tableaux à clé déclarée, 50 024 lignes, 3 sans clé. Elle ne parlera
         # quasiment jamais, et c'est ce qui la rendra lisible.
-        if key and (kv is None or str(kv) == ""):
+        if key and kv is None:
             # ⚠️ **Remonté au premier niveau depuis le 09/09/2026**, et pas ajouté :
             # ce message existait, exact, dans `notices` — et il n'a rien empêché,
             # servi dix fois en une soirée. Ce n'est pas un relevé de routine, c'est
@@ -192,30 +196,11 @@ class EcritureMixin:
         self._check_row(schema, a_creer, creation=True)
         try:
             row = db.datastore_insert_row(ns_id, _new_id(), a_creer)
-        except UniqueViolation:
+        except UniqueViolation as e:
             # Course perdue sous l'index UNIQUE de clé métier (#109 ch.3) : un write
             # concurrent a inséré la même clé entre le lookup et l'insert — le doublon
             # que la contrainte empêche. On converge en merge (même chemin que le batch).
-            existing_id = (db.datastore_find_row_id_by_key(ns_id, key, kv)
-                           if key and kv is not None else None)
-            if existing_id is None:
-                if key and kv is not None:
-                    # oto-backend#994 : une clé DÉCLARÉE portait cette valeur (l'index
-                    # vient de le prouver) mais la recherche EXACTE ne la retrouve pas
-                    # — cas mesuré : une clé posée à `@empty`/`@clear` n'est pas
-                    # indexée comme la donnée réelle (la cellule stockée porte le
-                    # marqueur de vide assumé, pas le mot réservé littéral), donc deux
-                    # lignes vidées sur la même colonne se heurtent à la contrainte
-                    # SANS jamais se retrouver l'une l'autre. Refus NOMMÉ, jamais
-                    # l'exception driver brute (500 vécu, signal oto-backend#994).
-                    raise ValueError(
-                        f"écriture refusée par la contrainte de clé métier unique "
-                        f"({key}={kv!r}) — une autre ligne porte déjà cette valeur, "
-                        "mais la recherche exacte ne l'a pas retrouvée (cas connu : "
-                        "une clé posée à `@empty`/`@clear` n'est pas indexée comme "
-                        "la donnée réelle). Contournement : omets la colonne clé sur "
-                        "cette ligne, ou donne-lui une valeur distincte.") from None
-                raise  # violation inexpliquée, sans clé déclarée → erreur franche
+            existing_id = ligne_de_la_course_perdue(ns_id, key, kv, e)
             # `donnees_d_origine` voyage ici : le geste d'origine n'a pas été touché
             # ci-dessus, la fusion pose donc elle-même les deux versions (cf. `lots.py`).
             return self._row_to_dict(
@@ -362,6 +347,7 @@ class EcritureMixin:
         refuser_cles_internes(user_data)
         refuser_les_mots_mal_places(schema, user_data)
         _refuse_mixed_layers(schema, user_data)
+        refuser_cle_metier_vide(schema, user_data)
         valide = dsv2.validation_active(schema) or dsv2.lifecycle_of(schema)
         reserves = bool(dsv2.readonly_fields(schema)
                         or dsv2.system_origin_fields(schema))
