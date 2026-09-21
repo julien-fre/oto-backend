@@ -1481,6 +1481,57 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
     return out
 
 
+def list_rest_calls(
+    limit: int = 200,
+    days: Optional[int] = None,
+    sub: Optional[str] = None,
+    org_id: Optional[int] = None,
+    route: Optional[str] = None,
+) -> list[dict]:
+    """Lentille PLATEFORME du journal REST, LIGNE PAR LIGNE (kind='rest') — le pendant
+    de `list_tool_calls` (MCP) pour l'audit `/api/*` (oto-backend#962).
+
+    Sert `view_as_sub` : la cible du « voir en tant que » APPLIQUÉE par `ViewAsMiddleware`
+    (opérateur vérifié, cible existante ≠ soi ; ADR 0023) — `null` sinon, jamais l'en-tête
+    brut. ⚠️ Les lignes d'avant le 2026-09-21 portent l'en-tête REVENDIQUÉ, non attesté. C'est ce qui
+    répond « cet opérateur a consulté au nom de qui », absent de `rest_call_stats`
+    (agrégats seulement) et de `list_tool_calls` (MCP seulement, `view_as_sub` y serait
+    toujours NULL puisque le champ n'existe que côté REST).
+
+    Mêmes axes que `rest_call_stats` (`days`/`org_id`/`sub`/`route`, mêmes réserves :
+    `org_id` = org de consultation revendiquée en en-tête, best-effort ; `route` =
+    préfixe de `MÉTHODE /route`, ex. `GET /api/orgs`). `days` par défaut 7, plafonné à
+    365 comme `rest_call_stats` ; `limit` plafonné à 200, le plafond de la console."""
+    limit = max(1, min(int(limit), 200))
+    since_days = max(1, min(int(days or 7), 365))
+    clauses = [f"l.kind = 'rest' AND {_REST_ROUTE_SHAPE}",
+               "l.created_at >= NOW() - make_interval(days => %s)"]
+    params: list = [since_days]
+    if org_id is not None:
+        clauses.append("l.org_id = %s"); params.append(int(org_id))
+    if sub is not None:
+        clauses.append("l.sub = %s"); params.append(sub)
+    if route is not None:
+        clauses.append("l.tool LIKE %s"); params.append(f"{route}%")
+    where = " WHERE " + " AND ".join(clauses)
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT l.id, l.sub, COALESCE(u.email, l.email) AS email, l.tool AS route,
+                   l.created_at AS called_at, l.duration_ms, l.ok, l.error, l.org_id,
+                   l.view_as_sub
+            FROM tool_calls l
+            LEFT JOIN users u ON u.sub = l.sub
+            {where}
+            ORDER BY l.created_at DESC, l.id DESC
+            LIMIT %s
+            """,
+            tuple(params),
+        ).fetchall()
+        return list(rows)
+
+
 def connector_failure_stats(since_days: int = 7, *, org_id: Optional[int] = None) -> dict:
     """Lentille santé connecteurs (ADR 0017, kind='connector') : échecs de résolution
     de credential par provider — combien, combien d'users distincts touchés, dernier

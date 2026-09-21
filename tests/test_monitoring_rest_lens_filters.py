@@ -125,3 +125,80 @@ def test_le_scope_par_org_dit_ce_qu_il_laisse_dehors(monkeypatch):
 
     out, _ = _run(monkeypatch, since_days=7, sub="sub-jane")
     assert "org_id_caveat" not in out          # rien à nuancer sans scope d'org
+
+
+class _CurLigne:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _ConnLigne:
+    """Comme `_Conn`, mais pour `list_rest_calls` : une seule requête, ligne par
+    ligne — capture le SQL/params et rend des lignes fixtures."""
+
+    def __init__(self, sink, rows):
+        self.sink = sink
+        self.rows = rows
+
+    def execute(self, sql, params):
+        self.sink.append((sql, params))
+        return _CurLigne(self.rows)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_list_rest_calls_sert_view_as_sub_sans_le_deviner(monkeypatch):
+    """oto-backend#962 — le pendant `list_tool_calls` pour REST : sert `view_as_sub`
+    ligne par ligne, seule lentille qui le peut (`rest_call_stats` n'agrège que)."""
+    vues: list = []
+    rows = [{"id": 1, "sub": "op-sub", "email": "op@example.com",
+             "route": "GET /api/orgs/1", "called_at": "2026-09-18T10:00:00",
+             "duration_ms": 42, "ok": True, "error": None, "org_id": 1,
+             "view_as_sub": "sub-cible"},
+            {"id": 2, "sub": "op-sub", "email": "op@example.com",
+             "route": "GET /api/me", "called_at": "2026-09-18T09:00:00",
+             "duration_ms": 12, "ok": True, "error": None, "org_id": None,
+             "view_as_sub": None}]
+    monkeypatch.setattr(usage, "_connect", lambda: _ConnLigne(vues, rows))
+    out = usage.list_rest_calls(org_id=1, route="GET /api/orgs")
+    assert len(vues) == 1                      # une seule requête, pas deux
+    sql, params = vues[0]
+    assert "l.view_as_sub" in sql
+    assert "l.org_id = %s" in sql and "l.tool LIKE %s" in sql
+    assert 1 in params and "GET /api/orgs%" in params
+    assert out[0]["view_as_sub"] == "sub-cible"
+    assert out[1]["view_as_sub"] is None       # absent au journal = None, jamais deviné
+
+
+def test_list_rest_calls_plafonne_limit_et_days(monkeypatch):
+    vues: list = []
+    monkeypatch.setattr(usage, "_connect", lambda: _ConnLigne(vues, []))
+    usage.list_rest_calls(limit=99999, days=9999)
+    sql, params = vues[0]
+    assert params[-1] == 200                   # limit plafonné, même borne que la console
+    assert params[0] == 365                    # days plafonné, même borne que rest_call_stats
+
+
+def test_list_rest_calls_filtre_pour_de_vrai(live):
+    """Le filtre `route` contre le VRAI journal : `tool` vaut `MÉTHODE /route`, donc le
+    préfixe porte la méthode. Un stub qui capture le SQL ne prouve pas qu'une ligne
+    passe ou non — ici, une route voisine, une autre org et un geste sémantique
+    (`data_write`, même `kind`) doivent rester dehors."""
+    for tool, org in (("GET /api/orgs/:id", 1), ("GET /api/orgs/:id", 2),
+                      ("GET /api/me", 1), ("data_write", 1)):
+        usage.insert_tool_call({"kind": "rest", "tool": tool, "sub": "op-sub",
+                                "org_id": org, "ok": True})
+    lignes = usage.list_rest_calls(org_id=1, route="GET /api/orgs")
+    assert [(r["route"], r["org_id"]) for r in lignes] == [("GET /api/orgs/:id", 1)]
+    # Sans filtre : les deux routes de l'org, jamais le geste sémantique.
+    assert sorted(r["route"] for r in usage.list_rest_calls(org_id=1)) == [
+        "GET /api/me", "GET /api/orgs/:id"]
+    # La route SANS méthode n'est le préfixe de rien : zéro, pas « tout ».
+    assert usage.list_rest_calls(route="/api/orgs") == []

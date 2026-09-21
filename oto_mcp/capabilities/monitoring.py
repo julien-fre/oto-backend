@@ -114,6 +114,39 @@ class CallInput(BaseModel):
     call_id: int
 
 
+class RestCallRow(BaseModel):
+    id: int
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    route: str
+    called_at: datetime
+    duration_ms: Optional[int] = None
+    ok: bool
+    error: Optional[str] = None
+    org_id: Optional[int] = None
+    # La cible du « voir en tant que » APPLIQUÉE (ADR 0023, `ViewAsMiddleware` →
+    # `RestCallLogger`) — `None` quand aucune vue n'a été appliquée, jamais l'en-tête brut. C'est le champ que cette lentille
+    # existe pour servir (oto-backend#962).
+    view_as_sub: Optional[str] = None
+
+
+class RestCallsOutput(BaseModel):
+    calls: list[RestCallRow]
+
+
+class RestCallsInput(BaseModel):
+    limit: int = 200
+    days: Optional[int] = None
+    sub: Optional[str] = None
+    org_id: Optional[int] = None
+    route: Optional[str] = None
+
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 200)
+
+
 def _summary(ctx: ResolvedCtx, inp: SummaryInput) -> dict:
     return db.tool_call_stats(since_days=inp.days, org_id=inp.org_id,
                               sub=_resolve_sub(inp.sub))
@@ -210,6 +243,15 @@ def _calls(ctx: ResolvedCtx, inp: CallsInput) -> dict:
     return calls_with_scope(inp)
 
 
+def _rest_calls(ctx: ResolvedCtx, inp: RestCallsInput) -> dict:
+    """Lentille plateforme, ligne par ligne — cf. `db.list_rest_calls` (oto-backend#962)
+    pour ce que `view_as_sub` porte et pourquoi ni `op=calls` (MCP only) ni `op=rest`
+    (agrégats) ne peuvent le montrer."""
+    return {"calls": db.list_rest_calls(limit=inp.limit or 200, days=inp.days,
+                                        sub=_resolve_sub(inp.sub), org_id=inp.org_id,
+                                        route=inp.route)}
+
+
 def _call(ctx: ResolvedCtx, inp: CallInput) -> dict:
     row = db.get_tool_call(inp.call_id)
     if row is None:
@@ -220,15 +262,15 @@ def _call(ctx: ResolvedCtx, inp: CallInput) -> dict:
 # ── console MCP consolidée `oto_admin_monitoring(op=…)` (pattern ADR 0047) ───
 
 class MonitoringInput(BaseModel):
-    op: Literal["summary", "rest", "connectors", "transport", "funnel", "calls",
-                "call", "runs", "run", "gaps", "tool_quality"]
+    op: Literal["summary", "rest", "rest_calls", "connectors", "transport", "funnel",
+                "calls", "call", "runs", "run", "gaps", "tool_quality"]
     days: Optional[int] = None            # fenêtre (défaut : 7 ; funnel/gaps/tool_quality : 30)
-    limit: Optional[int] = None           # calls (défaut 200) / runs (défaut 100)
-    sub: Optional[str] = None             # summary/rest/calls : appelant (email ou sub)
+    limit: Optional[int] = None           # calls/rest_calls (défaut = plafond 200) / runs (défaut 100)
+    sub: Optional[str] = None             # summary/rest/rest_calls/calls : appelant (email ou sub)
     tool: Optional[str] = None            # calls : filtre outil exact
     errors: bool = False                  # calls : erreurs seulement
-    org_id: Optional[int] = None          # summary/rest/connectors/calls : un workspace
-    route: Optional[str] = None           # rest : une route (préfixe), compte exact
+    org_id: Optional[int] = None          # summary/rest/rest_calls/connectors/calls : un workspace
+    route: Optional[str] = None           # rest/rest_calls : préfixe de `MÉTHODE /route` (`GET /api/orgs`)
     run_id: Optional[str] = None          # run (requis) / calls (filtre)
     session_id: Optional[str] = None      # calls : tous les appels d'une conversation
     min_duration_ms: Optional[int] = None  # calls : appels lents
@@ -259,6 +301,7 @@ def _need(val, code: str, msg: str):
 _CHAMPS_LUS: dict[str, set[str]] = {
     "summary": {"days", "org_id", "sub"},
     "rest": {"days", "org_id", "sub", "route"},
+    "rest_calls": {"days", "limit", "org_id", "sub", "route"},
     "connectors": {"days", "org_id"},
     "transport": {"days"},
     "funnel": {"days"},
@@ -303,6 +346,10 @@ def _monitoring(ctx: ResolvedCtx, inp: MonitoringInput) -> dict:
     if inp.op == "rest":
         return _rest_stats(ctx, RestInput(days=inp.days or 7, org_id=inp.org_id,
                                           sub=inp.sub, route=inp.route))
+    if inp.op == "rest_calls":
+        return _rest_calls(ctx, RestCallsInput(limit=inp.limit or 200, days=inp.days,
+                                               sub=inp.sub, org_id=inp.org_id,
+                                               route=inp.route))
     if inp.op == "connectors":
         return _connector_stats(ctx, ConnectorsInput(days=inp.days or 7,
                                                      org_id=inp.org_id))
@@ -336,6 +383,10 @@ CAPABILITIES += [
     Capability(key="monitoring.rest", handler=_rest_stats, Input=RestInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/rest")),
+    Capability(key="monitoring.rest_calls", handler=_rest_calls,
+               Input=RestCallsInput, Output=RestCallsOutput,
+               authz=PLATFORM_ADMIN,
+               rest=RestBinding("GET", "/api/admin/monitoring/rest-calls")),
     Capability(key="monitoring.connectors", handler=_connector_stats,
                Input=ConnectorsInput,
                authz=PLATFORM_ADMIN,
@@ -374,7 +425,13 @@ CAPABILITIES += [
             "invisible there without saying so; ⚠️ `org_id` here is the consultation "
             "org claimed by a header (best-effort): a request without it carries none "
             "and drops out of the filter, so a 0 does not prove an idle org — "
-            "cross-check with `sub`) / "
+            "cross-check with `sub`) / rest_calls (raw REST call log, newest first, "
+            "same filters as `rest` — `route` is a prefix of `METHOD /route`, e.g. "
+            "`GET /api/orgs` — plus `limit` (max 200); the ONLY lens that serves "
+            "`view_as_sub`: the account a platform operator's view-as was actually "
+            "APPLIED to (operator verified, existing target other than themself), "
+            "null otherwise — a refused or no-op X-Oto-View-As header leaves it null. "
+            "Rows logged before 2026-09-21 carry the header as claimed, unverified) / "
             "connectors (credential resolution failures; optional `org_id`) / funnel "
             "(accounts vs real usage) / gaps · tool_quality (aggregated usage signals). "
             "For raw signals use oto_admin_signal."),
