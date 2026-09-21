@@ -803,3 +803,42 @@ pose la valeur avant tout autre sous-système (capturée à l'appel de
 `logging.basicConfig`, le tout premier après le réglage) — pas une mesure de perf
 rejouée à chaque run (coûteuse, contre une vraie base), juste le fait qui compte :
 la valeur est posée, et posée tôt.
+
+## Mode n°1, encore : le handler `async` qui lit la base « juste avant » (`me.agent_context`, 21/09)
+
+Coupure de prod d'environ **140 s** (relayée par oto cd). Cause trouvée dans
+`capabilities/agent_context.py` : `_agent_context` est un `async def` et appelait
+`_instructions.session_layers(...)` **nûment** — `_resolve_context` y fait du SQL
+psycopg synchrone. `_execution.execute` ne met en thread que le handler **sync** ; pour un
+`async def`, appeler le handler dans le thread ne fait que *construire la coroutine*, dont
+le corps tourne ensuite sur la boucle. Le SQL tenait donc tout le process, MCP et REST.
+
+**Correctif** : `await run_in_threadpool(_instructions.session_layers, sub, org_id)` — la
+même discipline que `compute_hidden_layers` et `_get_guide`, qu'`_agent_context` appelle
+juste à côté et qui, eux, étaient déjà protégés (d'où le trou : deux appels protégés
+et un troisième oublié dans la même fonction).
+
+**Preuve** : `tests/test_agent_context_hors_boucle.py` observe la boucle plutôt que le
+source — pendant une lecture qui dort 0,5 s, une tâche incrémente un compteur toutes les
+10 ms. Avant le correctif : **0 battement** ; après : ≥ 20. (Rejoué sur le clone avec
+`PYTHONPATH=<clone>` : sans lui, l'*editable install* sert l'arbre partagé et le test
+« passe » ou « échoue » sur le mauvais code — cf. `docs/commands.md`.)
+
+**Balayage** (script AST jetable, 21/09) : les `async def` de `capabilities/`, `api/`,
+`tools/` qui appellent, hors `run_in_threadpool`/`to_thread`, un module SQL (`db`,
+`credentials_store`, `org_store`, `group_store`, `access`…). **71 appels directs dans 30
+handlers.** Écartés à la main : 4 faux positifs (`access.current_user_sub_or_raise`, pure)
+et les appels `access.current_project` / `account_noun` (purs eux aussi) ; `access.current_org`
+et `current_group`, eux, descendent à la base (repli `get_active_org`, `is_member`). Corrigés
+ici (une instruction chacun, patron identique) : `tools_me` `_list`/`_detail`,
+`unipile_seats._list_seats`, `connectors/connect._connect`. Le reste est listé dans la PR
+et **reste ouvert** — c'est le trou que ce document annonçait pour le mode n°1.
+
+⚠️ **Ce que le balayage dit de la garde manquante** : un test qui rougit dès qu'un `async
+def` appelle `db.*`/`credentials_store.*`/`org_store.*`/`group_store.*` hors threadpool est
+faisable avec très peu de faux positifs **si `access.*` en est exclu** (mélange de pur et de
+SQL — c'est là que naissent les faux positifs). Mais le stock existant est de ~26 handlers :
+il faudrait un cliquet (liste de dettes qui ne peut que se réduire), pas un rouge sec.
+La transitivité (`session_layers` → `_resolve_context` → SQL, exactement notre cas) n'est
+pas décidable par nom sans graphe d'appels : un garde purement direct **n'aurait pas
+attrapé ce gel-ci**.

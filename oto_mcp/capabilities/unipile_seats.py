@@ -111,7 +111,7 @@ async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
     except Exception as e:  # noqa: BLE001 — panne amont, pas un refus d'autz
         raise AuthzDenied(502, "unipile_list_failed", str(e))
     owners: dict[str, list[dict]] = {}
-    for r in db.unipile_account_owners(include_disconnected=True):
+    for r in await asyncio.to_thread(db.unipile_account_owners, include_disconnected=True):
         owners.setdefault(r["account_id"], []).append(r)
     seats = []
     for a in instance:

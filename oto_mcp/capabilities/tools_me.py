@@ -169,6 +169,12 @@ class ToolCallResult(BaseModel):
 
 # --- Handlers ---------------------------------------------------------------
 
+def _disabled_tools(sub: str) -> list:
+    """Outils désactivés par `sub` dans son org active — SQL synchrone (`current_org` +
+    `list_user_disabled_tools`) : à appeler via `run_in_threadpool` depuis un handler async."""
+    return db.list_user_disabled_tools(sub, access.current_org(sub) or 0)
+
+
 async def _tool_by_name(name: str):
     """Objet Tool FastMCP par nom (ou None). `run_middleware=False` : hors session MCP
     (contexte REST) la chaîne de middleware n'a pas de Context et lèverait."""
@@ -191,7 +197,7 @@ async def _list(ctx: ResolvedCtx, inp: ToolsListInput) -> dict:
         # juste après via `disabled`.
         all_names = {t.name for t in await instance.list_tools(run_middleware=False)}
 
-    disabled = set(db.list_user_disabled_tools(ctx.sub, access.current_org(ctx.sub) or 0))
+    disabled = set(await run_in_threadpool(_disabled_tools, ctx.sub))
     # Le middleware retire déjà les disabled de `list_tools` selon le sub
     # courant (celui de la requête REST = même token). On ré-ajoute donc
     # les disabled pour avoir la vue complète.
@@ -246,7 +252,7 @@ async def _detail(ctx: ResolvedCtx, inp: ToolNameInput) -> dict:
         raise AuthzDenied(404, f"unknown_tool:{inp.name}")
     ns = namespace_of(inp.name)
     conn = providers.connector_for_namespace(ns)
-    disabled = set(db.list_user_disabled_tools(ctx.sub, access.current_org(ctx.sub) or 0))
+    disabled = set(await run_in_threadpool(_disabled_tools, ctx.sub))
     return {
         "name": inp.name,
         "description": (tool.description or "").strip(),
