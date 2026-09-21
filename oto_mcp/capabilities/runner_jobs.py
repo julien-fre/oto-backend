@@ -122,6 +122,17 @@ class JobResult(BaseModel):
     stopped: Optional[str] = None
     steps: Optional[int] = None
     tool_counts: Optional[dict[str, int]] = None
+    abonnement: Optional[dict[str, Any]] = Field(
+        None, description=(
+            "Subscription jobs only (`model_family` ending in `_subscription`): what "
+            "the worker SAW of the requester's plan while running. Shape: `{etat, "
+            "deconnecte?, fenetres: {<window>: {utilization, resetsAt}}}` — `etat` "
+            "and the windows are copied from the provider's `rate_limit_event` "
+            "(`rate_limit_info.status`, `unifiedWindows`), `resetsAt` in epoch "
+            "seconds. The backend pauses the requester's subscription jobs when a "
+            "window reaches its threshold, until that window resets. "
+            "`deconnecte: true` = the program found no valid session: the person "
+            "must reconnect. Never a credential, never the account's email."))
     valeurs_cliente_reparees: Optional[list[str]] = Field(
         None, description=(
             "Guard post: the client's own values the harness had to PUT BACK on the "
@@ -1044,6 +1055,13 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # Déjà re-claimé après bail mort, ou jamais à lui : on ne conclut pas
             # ce qui ne nous appartient plus.
             raise AuthzDenied(404, "job_not_found", "job inconnu")
+        # Ce que le worker a vu du FORFAIT (OTO-130) se porte sur la connexion du
+        # demandeur. ⚠️ Worker de plateforme SEULEMENT : la conclusion est ouverte
+        # à qui tient la prise, et un membre qui aurait réservé le travail d'un
+        # collègue pourrait sinon le mettre en attente d'un rapport inventé.
+        if ctx.platform_worker:
+            _abonnement.noter_rapport(db.porteur_et_famille(inp.job_id) or {},
+                                      inp.ok, inp.result)
         # Le run de l'appel d'abord (c'est celui que le worker vient d'exécuter),
         # sinon celui que le job connaît (`bind_run`, ou un `continue`).
         return {"ok": True, "status": res["status"],

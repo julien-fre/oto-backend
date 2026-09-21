@@ -143,3 +143,37 @@ def test_deux_workers_SIMULTANES_ne_prennent_pas_deux_travaux_d_une_personne(liv
     [f.start() for f in fils]
     [f.join() for f in fils]
     assert len(pris) == 1, f"{len(pris)} travaux de la même personne en vol : {pris}"
+
+
+def test_la_boucle_entiere_un_rapport_met_en_attente_et_la_file_SAUTE(live):
+    """Conclusion → rapport → statut → réservation : les quatre maillons, en base.
+    Chacun a son banc ; celui-ci tient qu'ils se PARLENT (mêmes noms de colonnes,
+    même fuseau, même famille)."""
+    from oto_mcp import db
+    from oto_mcp.capabilities import _abonnement
+    from oto_mcp.db import user_subscriptions as US
+    from oto_mcp.db._conn import _connect
+    f = _personne("abo-f")
+    US.upsert_sandbox(f, _FAMILLE, "bac-f")
+    US.marquer_statut(f, _FAMILLE, US.CONNECTE, ok=True)
+    premier, second = _travail(9405, f), _travail(9405, f)
+    assert _claim(9405)["id"] == premier
+
+    db.complete_job(premier, "w-abonnement", ok=True)
+    conclu = db.porteur_et_famille(premier)
+    assert conclu == {"sub": f, "model_family": _FAMILLE}, (
+        "de quoi adresser le rapport à la bonne personne")
+    with _connect() as conn:
+        dans_une_heure = conn.execute(
+            "SELECT EXTRACT(EPOCH FROM NOW() + interval '1 hour')::bigint AS t"
+        ).fetchone()["t"]
+    _abonnement.noter_rapport(conclu, True, {"abonnement": {
+        "etat": "allowed",
+        "fenetres": {"five_hour": {"utilization": 0.99, "resetsAt": dans_une_heure}}}})
+
+    assert US.get_subscription(f, _FAMILLE)["statut"] == US.PLAFOND
+    assert _claim(9405) is None, "le second travail attend l'échéance du forfait"
+    with _connect() as conn:
+        assert conn.execute("SELECT status FROM runner_jobs WHERE id = %s",
+                            (second,)).fetchone()["status"] == "pending", (
+            "en ATTENTE — ni échoué, ni tentative brûlée")

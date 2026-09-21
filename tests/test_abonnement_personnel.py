@@ -234,3 +234,64 @@ class TestCablage:
             asyncio.run(RT._triggers(self._ctx(sub="un-collegue"), RT.TriggerInput(
                 op="update", trigger_id=3, model="sub:sonnet")))
         assert e.value.code == "subscription_personal_only"
+
+
+class TestRapport:
+    """Ce que le worker a vu du forfait, porté sur la connexion du demandeur.
+    La forme du rapport est celle du `rate_limit_event` mesuré le 21/09/2026."""
+
+    @pytest.fixture
+    def _ecrits(self, monkeypatch):
+        ecrits: list[tuple] = []
+        monkeypatch.setattr(
+            US, "marquer_statut",
+            lambda sub, famille, statut, **k: ecrits.append((sub, statut, k)))
+        return ecrits
+
+    def _conclu(self, famille=_FAMILLE, sub=_PORTEUR):
+        return {"status": "done", "run_id": None, "sub": sub, "model_family": famille}
+
+    def _fenetres(self, cinq_h=0.07, sept_j=0.49):
+        return {"five_hour": {"utilization": cinq_h, "resetsAt": 1790029800},
+                "seven_day": {"utilization": sept_j, "resetsAt": 1790053200}}
+
+    def test_un_usage_sain_confirme_la_connexion(self, _ecrits):
+        _abonnement.noter_rapport(self._conclu(), True, {
+            "abonnement": {"etat": "allowed", "fenetres": self._fenetres()}})
+        assert [(s, st) for s, st, _ in _ecrits] == [(_PORTEUR, US.CONNECTE)]
+
+    def test_le_seuil_met_en_attente_AVANT_le_refus(self, _ecrits):
+        """`etat` dit encore `allowed` : c'est la jauge qui arrête, pas le refus."""
+        _abonnement.noter_rapport(self._conclu(), True, {
+            "abonnement": {"etat": "allowed",
+                           "fenetres": self._fenetres(cinq_h=0.97)}})
+        (_, statut, k), = _ecrits
+        assert statut == US.PLAFOND
+        assert int(k["limit_reset_at"].timestamp()) == 1790029800
+
+    def test_deux_fenetres_saturees_attendent_la_plus_LOINTAINE(self, _ecrits):
+        _abonnement.noter_rapport(self._conclu(), False, {
+            "abonnement": {"etat": "rejected",
+                           "fenetres": self._fenetres(cinq_h=1.0, sept_j=0.99)}})
+        (_, statut, k), = _ecrits
+        assert statut == US.PLAFOND
+        assert int(k["limit_reset_at"].timestamp()) == 1790053200, (
+            "repartir à l'échéance courte, c'est retomber sur la fenêtre longue")
+
+    def test_une_session_perdue_demande_une_reconnexion(self, _ecrits):
+        _abonnement.noter_rapport(self._conclu(), False,
+                                  {"abonnement": {"deconnecte": True}})
+        assert _ecrits[0][1] == US.A_RECONNECTER
+
+    def test_un_rapport_mal_forme_ne_fait_JAMAIS_echouer_la_conclusion(self, _ecrits):
+        """Un `complete` qui lèverait laisserait un travail TERMINÉ re-servi à
+        l'expiration de son bail."""
+        for tordu in ({"abonnement": {"fenetres": "pas un dict"}},
+                      {"abonnement": {"fenetres": {"five_hour": {"utilization": "x"}}}},
+                      {"abonnement": []}):
+            _abonnement.noter_rapport(self._conclu(), True, tordu)
+
+    def test_une_autre_famille_n_ecrit_rien(self, _ecrits):
+        _abonnement.noter_rapport(self._conclu(famille="anthropic"), True, {
+            "abonnement": {"deconnecte": True}})
+        assert _ecrits == []

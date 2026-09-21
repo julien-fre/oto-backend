@@ -528,6 +528,21 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
     return dict(row) if row else None
 
 
+def porteur_et_famille(job_id: int) -> Optional[dict]:
+    """`{sub, model_family}` d'un travail — de quoi adresser le rapport de forfait à
+    la conclusion (OTO-130).
+
+    Une lecture À PART, et non deux colonnes de plus au `RETURNING` de
+    `complete_job` : ce retour est un contrat (`{status, run_id}`) que six bancs
+    tiennent à l'octet, et l'élargir pour un à-côté ferait bouger tous ses
+    lecteurs pour une famille qui n'en concerne qu'un."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT sub, payload->>'model_family' AS model_family "
+            "FROM runner_jobs WHERE id = %s", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def _deja_en_vol(conn, pris: dict) -> bool:
     """Un AUTRE travail de la même personne, de la même famille, est-il en vol ?
 

@@ -21,11 +21,21 @@ ne traverse pas le backend — c'est la condition qui rend ce chemin licite.
 """
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from .. import runner_models
 from ..db import user_subscriptions
 from ._types import AuthzDenied
+
+logger = logging.getLogger(__name__)
+
+#: Au-delà de cette part d'une fenêtre du forfait, la personne est mise en attente
+#: AVANT qu'un travail ne soit refusé. Le fournisseur annonce l'usage à chaque
+#: exécution (`rate_limit_event`, mesuré le 21/09/2026) : attendre le refus, c'est
+#: brûler une tentative du travail pour apprendre ce qu'on savait déjà.
+SEUIL_D_ATTENTE = 0.95
 
 #: Les familles servies par un abonnement personnel. Dérivée du catalogue, jamais
 #: recopiée : le jour où Codex suit le même chemin, il suffit de l'y déclarer.
@@ -111,3 +121,65 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
             f"aucune connexion `{famille}` ouverte pour toi ({etat}). Ouvre-la dans "
             "Réglages › Fournisseurs de modèles, puis pose l'agent : un agent posé "
             "sans connexion resterait programmé sans jamais tourner.")
+
+
+def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
+    """Ce que le worker a VU du forfait en exécutant ce travail, porté sur la
+    connexion de son demandeur. Appelé à la conclusion, pour un worker de
+    plateforme seulement (l'appelant le garantit).
+
+    Le rapport voyage dans le résultat déclaré, clé `abonnement` :
+
+        {"etat": "allowed" | <autre>,            # `rate_limit_info.status`
+         "deconnecte": true,                     # le programme n'a plus de session
+         "fenetres": {"five_hour": {"utilization": 0.07, "resetsAt": 1790029800},
+                      "seven_day": {"utilization": 0.49, "resetsAt": 1790053200}}}
+
+    ⚠️ DEUX fenêtres, pas une : un forfait s'épuise sur cinq heures OU sur sept
+    jours, et l'échéance à attendre est celle de la fenêtre saturée — la plus
+    LOINTAINE s'il y en a deux, sinon la personne repartirait pour retomber.
+
+    ⚠️ Jamais une levée : ce rapport est un à-côté de la conclusion. Un rapport mal
+    formé se journalise et s'ignore — faire échouer `complete` pour lui laisserait
+    un travail TERMINÉ re-servi à l'expiration de son bail.
+    """
+    famille, porteur = conclu.get("model_family"), conclu.get("sub")
+    if not est_abonnement(famille) or not porteur:
+        return
+    try:
+        rapport = (resultat or {}).get("abonnement")
+        if not isinstance(rapport, dict):
+            # Aucun rapport : un succès prouve au moins que la session tient.
+            if ok:
+                user_subscriptions.marquer_statut(
+                    porteur, famille, user_subscriptions.CONNECTE, ok=True)
+            return
+        if rapport.get("deconnecte") is True:
+            user_subscriptions.marquer_statut(
+                porteur, famille, user_subscriptions.A_RECONNECTER)
+            return
+        echeances = [
+            f["resetsAt"] for f in (rapport.get("fenetres") or {}).values()
+            if isinstance(f, dict)
+            and isinstance(f.get("resetsAt"), (int, float))
+            and isinstance(f.get("utilization"), (int, float))
+            and f["utilization"] >= SEUIL_D_ATTENTE]
+        refuse = rapport.get("etat") not in (None, "allowed")
+        if refuse and not echeances:
+            # Refusé sans fenêtre saturée lisible : toutes les échéances connues
+            # comptent, faute de savoir laquelle a mordu.
+            echeances = [f["resetsAt"] for f in (rapport.get("fenetres") or {}).values()
+                         if isinstance(f, dict)
+                         and isinstance(f.get("resetsAt"), (int, float))]
+        if echeances or refuse:
+            quand = (datetime.fromtimestamp(max(echeances), tz=timezone.utc)
+                     if echeances else None)
+            user_subscriptions.marquer_statut(
+                porteur, famille, user_subscriptions.PLAFOND, limit_reset_at=quand)
+            return
+        user_subscriptions.marquer_statut(
+            porteur, famille, user_subscriptions.CONNECTE, ok=bool(ok))
+    except Exception:
+        logger.warning("rapport d'abonnement illisible pour le travail conclu "
+                       "(famille %s) — ignoré, la conclusion tient", famille,
+                       exc_info=True)
