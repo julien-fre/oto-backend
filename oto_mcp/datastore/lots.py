@@ -24,6 +24,7 @@ from .columns import (
     refuser_les_mots_mal_places,
     sans_les_nulls_sans_effet,
 )
+from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
 from .controles import _relever_origine_module
 from .errors import BusinessKeyRequired, RowLocked, RowValidationError
 from .outils import _new_id, _refus_de_creation
@@ -121,6 +122,9 @@ class LotsMixin:
                 _refuse_dotted_names(user_data)
                 refuser_cles_internes(user_data)
                 refuser_les_mots_mal_places(schema, user_data)
+                # Signal feedback 994 : la clé DÉCLARÉE (celle de l'index), pas le
+                # `key=` de l'appel — cf. `cle_metier`.
+                refuser_cle_metier_vide(schema, user_data)
                 # ⚠️ DÉBALLÉ : une clé métier ANNOTÉE désigne la même ligne qu'une clé nue.
                 # `{"code": {"valeur": "A", "comment": "fichier source"}}` et
                 # `{"code": "A"}` sont la MÊME identité — enrichir la provenance ne
@@ -173,7 +177,7 @@ class LotsMixin:
                 self._check_row(schema, a_creer, lot=True, creation=True)
                 try:
                     row = db.datastore_insert_row(ns_id, _new_id(), a_creer)
-                except UniqueViolation:
+                except UniqueViolation as e:
                     # Course perdue sous l'index UNIQUE de clé métier (#109 ch.3) : un
                     # write concurrent vient d'insérer la même clé entre le lookup et
                     # l'insert — c'est PRÉCISÉMENT le doublon que la contrainte empêche.
@@ -183,10 +187,7 @@ class LotsMixin:
                     dk = ((db.get_datastore_by_id(ns_id) or {}).get("schema")
                           or {}).get("key")
                     dkv = dsv2.unwrap(user_data.get(dk)) if dk else None
-                    existing_id = (db.datastore_find_row_id_by_key(ns_id, dk, dkv)
-                                   if dk and dkv is not None else None)
-                    if existing_id is None:
-                        raise  # violation inexpliquée → erreur franche, pas de repli muet
+                    existing_id = ligne_de_la_course_perdue(ns_id, dk, dkv, e)
                     # ⚠️ `donnees_d_origine` voyage ICI aussi (oto#72) : ce chemin est
                     # la COURSE PERDUE sous l'index de clé métier, qui converge en
                     # update — « même merge que le chemin nominal », disait le
