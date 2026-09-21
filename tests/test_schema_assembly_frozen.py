@@ -422,8 +422,13 @@ from oto_mcp.db import _schema, schema
 # `function_versions` (chaque version, immuable, et son statut), sans FK vers une autre
 # table que la première. ADDITIF : la prod qui tourne l'ancien code ne les voit pas.
 # 161 215 → 163 324 (+2 109, commentaires du fragment compris).
-EMPREINTE = "2768c5b22ebf4d6aac3b2039d973ff246ebae421a10bada80426357b7c885ad3"
-LONGUEUR = 163324
+# 21/09/2026 (qui tient une campagne) — colonne NULLABLE `runner_fleets.taken_by` dans le
+# fragment RUNS, pour une base NEUVE seulement : une base existante la reçoit de la
+# révision Alembic `0003_runner_fleets_preneur`, jouée à la main, jamais du boot (ADR
+# 0065). ADDITIVE : l'ancien code ne la lit ni ne l'écrit.
+# 163 324 → 163 978 (+654, commentaire compris).
+EMPREINTE = "4c8e30c3dbe2b3ab67ef7594514c54a387d72b086f55a5860b3b3175ed7bc42b"
+LONGUEUR = 163978
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
