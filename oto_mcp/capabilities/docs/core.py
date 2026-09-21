@@ -51,6 +51,13 @@ class DocInput(BaseModel):
     # PAS un numéro d'ordre : `doc_revisions` n'en porte aucun, et un rang calculé sur
     # une liste plafonnée (`limit`) désignerait une autre version au prochain appel.
     revision_id: Optional[int] = None
+    # shared_with_me : la PORTÉE des pages reçues. Omis = la vue historique (tout ce que
+    # l'appelant reçoit, toutes orgs confondues) — un contrat servi se double, il ne se
+    # durcit pas en place.
+    scope: Optional[Literal["me", "org"]] = Field(default=None, description=(
+        "shared_with_me only: `me` = pages shared with YOU as a person; `org` = pages "
+        "shared with the organization you are acting in (and your teams in it). "
+        "Omitted = both, across all your organizations."))
     # delete (#657) : True = ne supprime RIEN, rend seulement ce que la suppression
     # emporterait (de quoi annoncer « ceci supprimera N pages » avant de la faire).
     # patch (oto#171) : True = n'écrit rien, rend la région que le patch retirerait.
@@ -91,6 +98,10 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         require(inp.op == "revert", "unsupported_revision_id",
                 "`revision_id` ne s'applique qu'à op=revert (la version à restaurer). "
                 "Pour LIRE l'historique, c'est op=revisions, qui ne prend que `doc_id`.")
+    if inp.scope is not None:
+        require(inp.op == "shared_with_me", "unsupported_scope_arg",
+                "`scope` ne s'applique qu'à op=shared_with_me (la portée des pages "
+                "reçues). Retire-le.")
     if inp.dry_run is not None:
         require(inp.op in ("delete", "patch"), "unsupported_dry_run",
                 "`dry_run` ne s'applique qu'à op=delete et op=patch — les autres ops "
@@ -114,7 +125,11 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         require(inp.project_id is None and inp.doc_id is None, "unsupported_scope",
                 "op=shared_with_me takes no project_id or doc_id: it lists the pages "
                 "shared with YOU, across projects. Read one with op=get doc_id.")
-        return partage.recus(sub)
+        if inp.scope == "org":
+            require(ctx.org_id is not None, "no_active_org",
+                    "scope=\"org\" lists the pages shared with the organization you act "
+                    "in, and there is none: pass `org=<id>`.")
+        return partage.recus(sub, inp.scope, ctx.org_id)
 
     # ops par doc_id (résolvent le projet pour l'autz)
     require(inp.doc_id is not None, "missing_doc", "`doc_id` requis.")
@@ -263,9 +278,12 @@ CAPABILITIES += [
             "of hidden ones is deliberately not given: it would tell you how many "
             "pages exist in projects that are closed to you. Every write says which of its `[[…]]` "
             "found nothing, under `citations_sans_cible` "
-            "/ shared_with_me (no argument → the pages shared WITH YOU one by one — to you, "
+            "/ shared_with_me (→ the pages shared WITH YOU one by one — to you, "
             "your org or your team, via oto_resource op=share resource_type=\"doc\": "
-            "{id, title, updated_at, role, via, shared_by, url}. Such a page is readable "
+            "{id, title, updated_at, role, via, shared_by, url}; `scope` narrows it: "
+            "`me` = shared with you as a person, `org` = shared with the organization "
+            "you act in and your teams in it; omitted = all of it, across all your "
+            "organizations. Such a page is readable "
             "with op=get ALONE: its project, sibling pages, sub-pages, revisions and "
             "backlinks stay closed, and it is read-only) "
             "/ set_public (public: true → shareable public read-only link to THIS PAGE "

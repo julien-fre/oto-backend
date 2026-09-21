@@ -89,9 +89,9 @@ def seams(monkeypatch):
     rec["granted"] = []
     monkeypatch.setattr(P.db, "list_projects_granted_to",
                         lambda principals: rec["granted"].append(principals) or [])
-    # #5.1 : org maison = l'org active des tests (99) → le partage personnel s'affiche
-    # (comportement préservé) ; un test dédié utilise une AUTRE org pour vérifier le masquage.
-    monkeypatch.setattr(P.org_store, "get_active_org", lambda sub: 99)
+    # Le partage PERSONNEL ne s'affiche plus dans la liste d'aucune org, maison comprise
+    # (il vit sous `scope="me"`) : la fixture ne pose donc plus d'org maison — `op=list`
+    # ne la lit plus. Tests dédiés : `test_personal_share_listed_in_no_org` et suivants.
     # Pastilles d'état de l'index (refonte UX) : nb de grants batché + audit par projet.
     monkeypatch.setattr(P.db, "project_grant_counts", lambda ids: {})
     monkeypatch.setattr("oto_mcp.project_audit.audit_project",
@@ -257,20 +257,63 @@ def test_lint_reports_stale_empty_duplicates(seams, monkeypatch):
     assert len(out["duplicate_titles"]) == 1 and set(out["duplicate_titles"][0]["ids"]) == {1, 2}
 
 
-def test_personal_share_shown_only_in_home_org(seams, monkeypatch):
-    # #5.1 : un projet partagé PERSONNELLEMENT (principal ('user', sub)) n'apparaît que
-    # dans l'org de rattachement (maison=99), pas dupliqué dans les autres orgs.
+def test_personal_share_listed_in_no_org(seams, monkeypatch):
+    # Un projet partagé PERSONNELLEMENT (principal ('user', sub)) n'appartient à aucune
+    # org : il n'apparaît dans la liste d'AUCUNE org — ni l'org maison (où il passait,
+    # jusqu'ici, pour un projet de cette org : règle #5.1 retirée), ni une autre.
     perso_share = dict(ROW, id=67, name="Partagé perso", owner_type="org", owner_id="188",
                        permission="read")
     monkeypatch.setattr(P.db, "list_projects_granted_to",
-                        lambda principals: [perso_share] if ("user", "u1") in principals else [])
-    # Dans la MAISON (99) → visible.
-    out_home = P._project(ResolvedCtx(sub="u1", org_id=99), P.ProjectInput(op="list"))
-    assert 67 in [p["id"] for p in out_home["projects"]]
-    # Dans une AUTRE org (42) → le principal 'user' est retiré → invisible (plus de doublon).
-    monkeypatch.setattr(P.roles, "is_org_member", lambda sub, oid: True)
-    out_other = P._project(ResolvedCtx(sub="u1", org_id=42), P.ProjectInput(op="list"))
-    assert 67 not in [p["id"] for p in out_other["projects"]]
+                        lambda principals: seams["granted"].append(list(principals)) or (
+                            [perso_share] if ("user", "u1") in principals else []))
+    for org in (99, 42):
+        out = P._project(ResolvedCtx(sub="u1", org_id=org), P.ProjectInput(op="list"))
+        assert 67 not in [p["id"] for p in out["projects"]]
+    # Le principal personnel n'est même pas interrogé par la liste d'une org.
+    assert seams["granted"] == [[("org", "99")], [("org", "42")]]
+
+
+def test_list_scope_me_rend_les_partages_personnels(seams, monkeypatch):
+    # `scope="me"` : ce qui est partagé à la PERSONNE, quelle que soit l'org consultée —
+    # le seul endroit où un partage personnel se liste. Rien de l'org n'y entre.
+    perso_share = dict(ROW, id=67, name="Partagé perso", owner_type="org", owner_id="188",
+                       permission="write")
+    monkeypatch.setattr(P.db, "list_projects_granted_to",
+                        lambda principals: seams["granted"].append(list(principals)) or (
+                            [perso_share] if ("user", "u1") in principals else []))
+    out = P._project(ResolvedCtx(sub="u1", org_id=42), P.ProjectInput(op="list", scope="me"))
+    assert [p["id"] for p in out["projects"]] == [67]
+    assert out["projects"][0]["shared"] is True
+    assert out["projects"][0]["permission"] == "write"
+    assert seams["granted"] == [[("user", "u1")]]
+    assert seams["list_owners"] == []                       # la liste de l'org n'est pas lue
+
+
+def test_list_scope_org_est_le_defaut(seams):
+    explicite = P._project(CTX, P.ProjectInput(op="list", scope="org"))
+    assert explicite == P._project(CTX, P.ProjectInput(op="list"))
+
+
+def test_scope_hors_op_list_refuse(seams):
+    with pytest.raises(AuthzDenied) as e:
+        P._project(CTX, P.ProjectInput(op="list_templates", scope="me"))
+    assert e.value.code == "unsupported_scope"
+
+
+def test_list_templates_scoped_to_consulted_org(seams, monkeypatch):
+    # Les modèles se lisent DANS l'org consultée (org + ses pôles, mêmes owners
+    # qu'op=list) + la plateforme — plus l'union de toutes les orgs de l'acteur.
+    monkeypatch.setattr(P.ownership.group_store, "list_groups_for_user",
+                        lambda sub, org_id=None: [{"group_id": 5}])
+    mon_modele = dict(ROW, id=72, owner_type="user", owner_id="u1", is_template=True)
+    brouillon = dict(ROW, id=73, owner_type="user", owner_id="u1", is_template=False)
+    monkeypatch.setattr(P.db, "list_member_projects",
+                        lambda sub, org, **k: [mon_modele, brouillon]
+                        if (sub, org) == ("u1", 99) else [])
+    out = P._project(CTX, P.ProjectInput(op="list_templates"))
+    assert seams["list_owners"] == [[("org", "99"), ("group", "5"), ("platform", "platform")]]
+    # Mes modèles PERSO rangés dans cette org en font partie ; un perso non publié, non.
+    assert [p["id"] for p in out["projects"]] == [7, 72]
 
 
 def test_get_other_org_hidden_returns_404(seams, monkeypatch):

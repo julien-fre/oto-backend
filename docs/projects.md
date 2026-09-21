@@ -129,6 +129,19 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 `/projects` + page dédiée `/projects/:id` (`ProjectDetailView`, ADR 0030). Reliquats du modèle
 (MCP-App rendu, édition temps réel/lock, pré-set vendable=copie) **non faits**.
 
+> **Ce qu'une liste d'org montre des partages (21/09/2026).** `oto_project op=list` (portée
+> `org`, le défaut) rend les projets de l'org consultée, ceux de ses pôles, mes projets
+> perso qui y sont rangés (ADR 0030 amendé) et ce qui est partagé **à l'org ou à mes
+> équipes en elle** — jamais un partage fait **à moi** : il n'appartient à aucune org, et
+> l'afficher dans l'une le faisait lire comme un projet de celle-ci. La règle #5.1 le
+> montrait encore dans l'org « maison » ; elle est retirée. Ces projets se listent par
+> **`scope="me"`**, quelle que soit l'org consultée. Rien n'est devenu inaccessible : la
+> garde par-id (`visible_in_org`) et la recherche (`accessible_project_ids`) gardent le
+> principal personnel — lisible ⇒ cherchable tient, seule la liste d'org ne le nomme plus.
+> `op=list_templates` suit la même borne : les modèles de l'org consultée et de ses pôles,
+> mes modèles perso rangés dans cette org, et la bibliothèque plateforme — plus l'union de
+> toutes mes orgs.
+
 > **Partage NAVIGABLE d'un projet — `<slug>.share.oto.cx` (ADR 0032).** Un projet publié en
 > `secret` est servi sur son sous-domaine `<slug>.share.oto.cx` comme un petit site rendu
 > **server-side** (lisible humain ET agent WebFetch), en **lecture seule** : la racine = index

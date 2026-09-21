@@ -133,6 +133,13 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > `group_id` ; `op=unshare` retire ; `op=get` rend la fiche et ses bénéficiaires ;
 > `op=list` rend les pages partagées une à une. Le destinataire lit par `oto_doc op=get`
 > et retrouve par `oto_doc op=shared_with_me` (toutes orgs confondues : vue « moi »).
+> **Sa portée se choisit (21/09/2026)** : `scope="me"` = les pages partagées à la PERSONNE
+> seule, quelle que soit l'org ; `scope="org"` = celles partagées à l'org CONSULTÉE
+> (`X-Oto-Org` en REST, l'org de session en MCP) et aux équipes de l'appelant dans cette
+> org, jamais à lui (`ownership.active_org_principals` moins la personne) — c'est ce
+> qu'affiche l'écran des projets d'une org. Sans `scope`, l'union historique (lui, toutes
+> ses orgs, toutes ses équipes) reste servie : un contrat servi se double, il ne se durcit
+> pas en place. La réponse nomme la portée appliquée (`scope`, `null` = l'union).
 > **Aucun DDL** : `resource_grants.resource_type` est un TEXT libre ; la valeur persistée
 > est `doc` (`docs/common.DOC_RTYPE`).
 > **Le kind `doc`** (`capabilities/docs/common.py`) : une page n'a pas de propriétaire

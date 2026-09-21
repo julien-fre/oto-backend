@@ -91,6 +91,15 @@ class ProjectInput(BaseModel):
     config: Optional[dict] = None      # surcharge contextuelle PRÉFAITE du lien (ADR 0032 §4) — connecteur : {identity_id?, instructions_md?} (legacy : identité dans config ; multi-binding : voir identity_ref) ; tableau : {provision?: "shared"|"empty"|"seeded"} = comment la COPIE de projet traite ce tableau (ADR 0032 §6)
     identity_ref: Optional[str] = None  # connecteur : identité (compte) du BINDING — clé de multiplicité (#57) ; N liens par connecteur, une identité par binding. link sans identity_ref = binding par défaut ; unlink sans identity_ref = TOUS les bindings du connecteur
     instance_ref: Optional[str] = None  # connecteur : ref d'INSTANCE (ADR 0038 B5, grammaire B4 via oto_instance op=list) — le binding désigne exactement CE credential ; la résolution le sert en dur (re-gardé pour l'appelant). Exclusif d'identity_ref (le ref porte déjà le compte). Stocké config.instance_ref.
+    # list : la PORTÉE. Omis/`org` = l'org consultée (ses projets, mes projets perso qui y
+    # sont rangés, ce qui est partagé à elle ou à mes équipes en elle) ; `me` = ce qui est
+    # partagé à MOI en personne — un tel partage n'appartient à aucune org, il n'entre
+    # donc dans la liste d'aucune.
+    scope: Optional[Literal["org", "me"]] = Field(default=None, description=(
+        "list only: `org` (default) = the projects of the organization you act in, "
+        "your personal projects filed there, and those shared with it or with your "
+        "teams in it; `me` = the projects shared with YOU as a person, whatever their "
+        "organization — they are listed nowhere else."))
     # list / list_templates : projection — omis = vue de tri, ["*"] = la fiche entière
     fields: Optional[list[str]] = Field(default=None, description=(
         "list/list_templates: output projection. Omitted returns the INDEX (no "
@@ -543,6 +552,8 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
 
 def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
     sub = ctx.sub
+    _require(inp.scope is None or inp.op == "list", "unsupported_scope",
+             "`scope` ne s'applique qu'à op=list. Retire-le.")
 
     if inp.op == "create":
         _require(inp.name and inp.name.strip(), "missing_name", "`name` requis.")
@@ -593,38 +604,11 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         return _view(db.get_project_by_id(pid), sub)
 
     if inp.op == "list":
-        # Scopé à l'org active (seam `ownership.active_owner`) : charger une org ne
-        # montre QUE ses projets (l'org est le contexte, ADR 0023). Un projet d'une
-        # autre org ne fuite plus. S'y AJOUTENT les projets PARTAGÉS à cette org, à
-        # mes équipes DANS cette org, ou à moi (grant `resource_grants`, livraison
-        # #52 / partage d'équipe) — marqués `shared` (l'owner reste l'org émettrice ;
-        # ce n'est pas une fuite, c'est un don d'accès). Les groupes sont ceux de
-        # l'org active seulement : pas de fuite cross-org.
         from .. import project_audit
-        owner = ownership.active_owner(ctx.org_id)
-        _require(owner is not None, "no_active_org", "Aucune org active.", 400)
-        # ADR 0049 : les projets de PÔLE (group-owned) de l'org active s'ajoutent aux
-        # projets d'org — pour mes équipes (membre), ou TOUS les groupes de l'org si
-        # j'en suis admin (gouvernance inaliénable, même règle que `can_read_group`).
-        # Le scope reste borné à l'org active (pas d'`owner_pairs`, ADR 0023).
-        if roles.is_org_admin(sub, int(ctx.org_id)):
-            group_ids = [int(g["id"]) for g in group_store.list_groups(int(ctx.org_id))]
-        else:
-            group_ids = [int(g["group_id"])
-                         for g in group_store.list_groups_for_user(sub, ctx.org_id)]
-        owners = [owner] + [("group", str(g)) for g in group_ids]
-        own_rows = db.list_projects_for_owners(owners)
-        # Scope MEMBRE (ADR 0030 amendé) : mes projets PERSO de CETTE org (`context_org`),
-        # possédés par moi seul → owned (jamais `shared`). Parité stricte avec la recherche
-        # (`accessible_project_ids` appelle le même `db.list_member_projects`) : « cherchable
-        # ⇔ lisible » (tripwire `test_search_scope_tripwire`).
-        _seen_own = {r["id"] for r in own_rows}
-        own_rows += [r for r in db.list_member_projects(sub, int(ctx.org_id))
-                     if r["id"] not in _seen_own]
         # Pastilles d'ÉTAT de l'index (refonte UX, ADR 0032) : nb d'entités liées +
         # partagé + « à vérifier » (audit). Le nb de grants est batché (1 requête) ; les
         # liens/audit sont par projet (les listes d'org sont petites) et best-effort.
-        grant_counts = db.project_grant_counts([r["id"] for r in own_rows])
+        grant_counts: dict[int, int] = {}
 
         def _enrich(r: dict, shared: bool) -> dict:
             links = db.list_project_links(r["id"])
@@ -641,29 +625,73 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                     # un projet partagé en lecture seule remonte false. Own = accès effectif.
                     "can_write": ownership.can_access(sub, RTYPE, str(r["id"]), "write")}
 
+        def _received(principals: list[tuple[str, str]], seen: set) -> list[dict]:
+            return [{**_enrich(r, True), "permission": r.get("permission")}
+                    for r in db.list_projects_granted_to(principals)
+                    if r["id"] not in seen]
+
+        if inp.scope == "me":
+            # « Partagés avec moi » : le partage PERSONNEL (principal ('user', sub)) est
+            # org-agnostique — il ne s'affiche dans la liste d'aucune org (ci-dessous),
+            # c'est ici qu'on le retrouve, quelle que soit l'org consultée. L'ACCÈS n'a
+            # jamais dépendu de la liste : `visible_in_org` l'honore dans toute org.
+            return _projected(_received([("user", sub)], set()), inp.fields)
+
+        # Scopé à l'org active (seam `ownership.active_owner`) : charger une org ne
+        # montre QUE ses projets (l'org est le contexte, ADR 0023). Un projet d'une
+        # autre org ne fuite plus. S'y AJOUTENT les projets PARTAGÉS à cette org ou à
+        # mes équipes DANS cette org (grant `resource_grants`, livraison #52 / partage
+        # d'équipe) — marqués `shared` (l'owner reste l'org émettrice ; ce n'est pas une
+        # fuite, c'est un don d'accès). Les groupes sont ceux de l'org active seulement :
+        # pas de fuite cross-org.
+        owner = ownership.active_owner(ctx.org_id)
+        _require(owner is not None, "no_active_org", "Aucune org active.", 400)
+        # ADR 0049 : les projets de PÔLE (group-owned) de l'org active s'ajoutent aux
+        # projets d'org — pour mes équipes (membre), ou TOUS les groupes de l'org si
+        # j'en suis admin (gouvernance inaliénable, même règle que `can_read_group`).
+        # Le scope reste borné à l'org active (pas d'`owner_pairs`, ADR 0023).
+        if roles.is_org_admin(sub, int(ctx.org_id)):
+            group_ids = [int(g["id"]) for g in group_store.list_groups(int(ctx.org_id))]
+        else:
+            group_ids = [int(g["group_id"])
+                         for g in group_store.list_groups_for_user(sub, ctx.org_id)]
+        owners = [owner] + [("group", str(g)) for g in group_ids]
+        own_rows = db.list_projects_for_owners(owners)
+        # Scope MEMBRE (ADR 0030 amendé) : mes projets PERSO de CETTE org (`context_org`),
+        # possédés par moi seul → owned (jamais `shared`). Parité avec la recherche
+        # (`accessible_project_ids` appelle le même `db.list_member_projects`) : « cherchable
+        # ⇔ lisible » (tripwire `test_search_scope_tripwire`).
+        _seen_own = {r["id"] for r in own_rows}
+        own_rows += [r for r in db.list_member_projects(sub, int(ctx.org_id))
+                     if r["id"] not in _seen_own]
+        grant_counts.update(db.project_grant_counts([r["id"] for r in own_rows]))
+
         own = [_enrich(r, False) for r in own_rows]
-        seen = {p["id"] for p in own}
-        principals = ownership.active_org_principals(ctx.sub, ctx.org_id)
-        # #5.1 : un partage PERSONNEL (principal ('user', sub)) est org-agnostique → il
-        # remontait dans « Partagés » de CHAQUE org de l'utilisateur. On ne l'AFFICHE que
-        # dans l'org de RATTACHEMENT (la maison) → une seule fois, pas dupliqué partout.
-        # L'ACCÈS reste intact ailleurs (can_access/recherche : un partage personnel est
-        # cross-org par nature) — c'est le LISTING qui se dé-duplique.
-        from .. import org_store  # noqa: org_store est shadowé en local par d'autres branches de cette fonction
-        if ctx.org_id != org_store.get_active_org(ctx.sub):
-            principals = [p for p in principals if p[0] != "user"]
-        shared = [{**_enrich(r, True), "permission": r.get("permission")}
-                  for r in db.list_projects_granted_to(principals)
-                  if r["id"] not in seen]
+        # Partagés à l'ORG consultée et à mes équipes en elle — jamais à MOI : un partage
+        # personnel n'appartient à aucune org, et l'afficher dans une org le ferait lire
+        # comme un projet de cette org (il vit sous `scope="me"`). Avant, il n'était
+        # retiré que hors de l'org « maison » (#5.1), où il passait pour un projet d'elle.
+        # La RECHERCHE garde le principal personnel : un tel projet reste LISIBLE dans
+        # toute org (`visible_in_org`), donc « cherchable ⇒ lisible » tient toujours.
+        principals = [p for p in ownership.active_org_principals(ctx.sub, ctx.org_id)
+                      if p[0] != "user"]
+        shared = _received(principals, {p["id"] for p in own})
         return _projected(own + shared, inp.fields)
 
     if inp.op == "list_templates":
-        # Modèles (is_template) lisibles par l'acteur — la bibliothèque copiable (B5a).
-        # ADR 0049 : + les modèles PLATFORM-owned (bibliothèque plateforme), pour tous.
-        owners = ownership.accessor_scope(sub).owner_pairs() + [("platform", "platform")]
-        return _projected([_view(r, sub) for r in
-                           db.list_projects_for_owners(owners, templates_only=True)],
-                          inp.fields)
+        # Modèles (is_template) lisibles DANS l'org consultée — la bibliothèque copiable
+        # (B5a) : ceux de l'org et de ses pôles (mêmes owners qu'`op=list`), mes modèles
+        # perso rangés dans cette org, et (ADR 0049) les modèles PLATFORM-owned, pour
+        # tous. Jamais l'union de toutes mes orgs : un modèle d'une autre org se voit
+        # depuis cette org-là.
+        rows = db.list_projects_for_owners(
+            ownership.project_scope_owners(sub, ctx.org_id) + [("platform", "platform")],
+            templates_only=True)
+        if ctx.org_id is not None:
+            seen = {r["id"] for r in rows}
+            rows += [r for r in db.list_member_projects(sub, int(ctx.org_id))
+                     if r.get("is_template") and r["id"] not in seen]
+        return _projected([_view(r, sub) for r in rows], inp.fields)
 
     if inp.op == "runs" and inp.project_id is None:
         # « Fermer un déroulé dont on a perdu l'identifiant » (#473). `run_finish`
@@ -1381,11 +1409,14 @@ CAPABILITIES += [
             # tests/test_resume_nomme_ses_ops.py.
             "Projects (organization layer). op=create (name, "
             "optional brief_md; owner_type user|org + owner_id for a team project) / list "
-            "(ORG-SCOPED: the ACTIVE org's projects + projects shared with it or with you — "
-            "pass `org=<id>` to see another org's; every response echoes the "
+            "(ORG-SCOPED: the ACTIVE org's projects + projects shared with it or with your "
+            "teams in it — pass `org=<id>` to see another org's; `scope=\"me\"` lists "
+            "instead the projects shared with YOU as a person, which no org list shows; "
+            "every response echoes the "
             "effective org in `_org`. An INDEX: names and `brief_md_length`, NOT the briefs — "
             'read one with op=get, or pass `fields=["*"]` for whole records) / '
-            "list_templates (published MODEL projects you can copy) / "
+            "list_templates (published MODEL projects you can copy, from the ACTIVE org "
+            "and the platform library) / "
             "get (project + its links + an `audit` of those links: dead_links / unbound_slots / "
             "inert_procedures — a linked entity that no longer resolves surfaces HERE, act on it) / "
             "update (name, icon = an emoji shown in the lists and headers (\"\" clears it), brief_md, is_template = publish/unpublish "

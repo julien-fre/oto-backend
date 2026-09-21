@@ -206,6 +206,44 @@ def test_shared_with_me_rend_la_page_et_elle_seule(monde):
         _retire(monde, email=f"{DEST}@exemple.test")
 
 
+def test_shared_with_me_par_portee_la_personne_ou_l_org_consultee(monde):
+    """`scope` sépare ce que la PERSONNE reçoit (`me`, toutes orgs) de ce que reçoit
+    l'org CONSULTÉE et les équipes de l'appelant en elle (`org`). Sans `scope`, l'union
+    historique reste servie : le contrat se double, il ne se durcit pas."""
+    _partage(monde, email=f"{DEST}@exemple.test")
+    _partage(monde, org_id=monde["y"], audience="org")
+    _partage(monde, group_id=monde["equipe"], audience="team")
+    try:
+        def ids(sub, org, **a):
+            ok, out = _doc(sub, org, op="shared_with_me", **a)
+            assert ok == "ok"
+            return [(d["id"], d["via"]) for d in out["docs"]], out["scope"]
+
+        page = monde["recap"]
+        # La personne : son partage nominatif, quelle que soit l'org consultée.
+        assert ids(DEST, monde["y"], scope="me") == ([(page, "person")], "me")
+        assert ids(DEST, monde["z"], scope="me") == ([(page, "person")], "me")
+        # L'org consultée : le partage à l'org, jamais celui fait à la personne.
+        assert ids(COLLEGUE, monde["y"], scope="org") == ([(page, "org")], "org")
+        assert ids(COLLEGUE, monde["y"], scope="me") == ([], "me")
+        # L'équipe de l'appelant DANS l'org consultée compte pour l'org.
+        assert ids(EQUIPIER, monde["x"], scope="org") == ([(page, "team")], "org")
+        # Une autre org que celle qui a reçu : rien.
+        assert ids(TIERS, monde["z"], scope="org") == ([], "org")
+        # Défaut : l'union, inchangée.
+        assert ids(COLLEGUE, monde["y"])[0] == [(page, "org")]
+        assert ids(COLLEGUE, monde["y"])[1] is None
+    finally:
+        _retire(monde, email=f"{DEST}@exemple.test")
+        _retire(monde, org_id=monde["y"])
+        _retire(monde, group_id=monde["equipe"])
+
+
+def test_scope_ne_s_applique_qu_a_shared_with_me(monde):
+    assert _doc(DEST, monde["y"], op="get", doc_id=monde["recap"], scope="me")[:3] == \
+        ("refus", 400, "unsupported_scope_arg")
+
+
 # ── Les trois audiences ─────────────────────────────────────────────────────────
 
 def test_audience_org_une_org_cliente_lit_la_page(monde):

@@ -97,15 +97,38 @@ def portee(rid: str) -> dict:
     return {"ressource_nom": row.get("title"), "proprietaire_sub": row.get("created_by")}
 
 
-def recus(sub: str) -> dict:
-    """`oto_doc op=shared_with_me` : les pages partagées à l'appelant — à lui, à l'une de
-    ses orgs ou de ses équipes —, toutes orgs confondues (c'est la vue « moi » : un
-    partage reçu ne disparaît pas quand on change d'org active).
+# Les portées de `op=shared_with_me` (`scope`). Le défaut (None) est la vue historique
+# — l'union de tout ce que l'appelant reçoit, toutes orgs confondues — et le reste :
+# un contrat servi se DOUBLE, il ne se durcit pas en place.
+PORTEES = ("me", "org")
+
+
+def _principaux(sub: str, scope: Optional[str], org_id: Optional[int]) -> list[tuple[str, str]]:
+    """Les principals dont on lit les partages reçus, selon la portée.
+
+    - `None` : l'appelant, toutes ses orgs et toutes ses équipes (vue historique) ;
+    - `"me"` : l'appelant SEUL — un partage à une personne n'appartient à aucune org ;
+    - `"org"` : l'org CONSULTÉE et les équipes de l'appelant DANS cette org, jamais
+      l'appelant lui-même (même seam que les listes par contexte,
+      `ownership.active_org_principals`, dont on retire la personne)."""
+    if scope == "me":
+        return [("user", sub)]
+    if scope == "org":
+        return [p for p in ownership.active_org_principals(sub, org_id) if p[0] != "user"]
+    return ownership.accessor_scope(sub).principal_pairs()
+
+
+def recus(sub: str, scope: Optional[str] = None, org_id: Optional[int] = None) -> dict:
+    """`oto_doc op=shared_with_me` : les pages partagées à l'appelant. Sans `scope`, à
+    lui, à l'une de ses orgs ou de ses équipes — toutes orgs confondues (un partage reçu
+    ne disparaît pas quand on change d'org active) ; `scope="me"` à lui seul ;
+    `scope="org"` à l'org consultée (`org_id`) et à ses équipes dans cette org. La
+    réponse nomme la portée appliquée (`scope`, `null` = l'union historique).
 
     Une entrée NOMME la page, elle ne la livre pas : le corps se lit par `op=get`.
     `url` est None quand l'appelant n'a que la page — l'adresse servie ouvre la page
     dans son projet, qu'il ne lit pas (cf. `reads.get`)."""
-    rows = db.list_docs_granted_to(ownership.accessor_scope(sub).principal_pairs())
+    rows = db.list_docs_granted_to(_principaux(sub, scope, org_id))
     noms = db_shell.names_of(r.get("granted_by") for r in rows)
     docs = [{
         "id": r["id"],
@@ -117,4 +140,4 @@ def recus(sub: str) -> dict:
         "url": (view.doc_url(sub, r)
                 if common.acces_a_la_page(sub, r) == common.PAR_LE_PROJET else None),
     } for r in rows]
-    return {"docs": docs, "count": len(docs)}
+    return {"docs": docs, "count": len(docs), "scope": scope}
