@@ -124,7 +124,8 @@ description: >-
 >   REFUSÉ (l'alias éclipserait un vrai outil) ; rien n'est réparé au passage (`Acme` est
 >   refusé, pas abaissé — cf. le slug). Poser = `UPDATE tenants SET tool_prefix=…` **+
 >   restart** (le registre est bâti au boot) ; l'écran `/platform/tenants` nomme l'écart
->   `tool_prefix` (déclaré) vs `tool_prefix_effectif` (appliqué). ⚠️ **Pas de canari
+>   `tool_prefix` (déclaré) vs `tool_prefix_effectif` (appliqué) ; de même
+>   `logto_mgmt.refresh_tokens` (déclaré) vs `refresh_tokens_effectif` (appliqué). ⚠️ **Pas de canari
 >   possible** : prod et preprod partagent la base (§Infra), donc la colonne posée vaut
 >   pour les deux — la seule fenêtre de test est le décalage des redémarrages. La face
 >   REST reste en canonique : ses écritures sont keyées par nom, et le dashboard d'un

@@ -166,6 +166,14 @@ sait poser le rappel chez lui) :
 - **Égalité de chaîne, rien d'autre** : ni préfixe, ni joker, ni suffixe de domaine, ni
   variante de casse ou de port. Une instance de plus = une entrée de plus, choisie par
   l'exploitant du tenant.
+- ⚠️ **Déclarer l'instance d'un opérateur, c'est lui confier les codes d'autorisation de TOUS
+  les utilisateurs du tenant**, pas seulement de ses clients. L'application est première
+  partie : Logto accorde le consentement tout seul (`koaAutoConsent`, lu dans Logto 1.38), et
+  un utilisateur dont la session Logto est ouverte qui suit un lien d'autorisation vers ce
+  rappel voit son code partir SANS aucun écran — le lien, c'est l'opérateur de l'instance qui
+  le fabrique. **L'instance déclarée doit donc appartenir à l'exploitant du tenant**, jamais
+  à un client de son produit hébergé ; le déclarer pour un tiers, c'est l'accord écrit de
+  l'exploitant, en connaissance de cause.
 - **Sur les hosts de CE tenant seulement** : la liste, l'application et l'annuaire viennent
   de la MÊME entrée de registre, résolue une fois d'après le `Host` de la requête. Le `Host`
   n'est pas authentifié à ce niveau, mais forger celui d'un tenant ne donne que
@@ -191,8 +199,21 @@ sait poser le rappel chez lui) :
    WHERE slug = %s AND logto_mgmt IS NOT NULL;
   ```
 
-  Retirer une entrée retire l'accès : rien d'autre à défaire côté façade (le rappel déjà
-  posé dans l'application du tenant, lui, se retire chez lui).
+  **Retirer une entrée ferme le chemin de la FAÇADE, pas l'accès.** Elle n'est relue que par
+  la DCR et par l'autorisation relayée (`facade.redirect_autorise`) : sur un host RELAYÉ
+  (`OTO_MCP_OAUTH_RELAY_HOSTS`), le client qui suit la métadonnée est refusé. Sur un host NON
+  relayé, le client s'autorise directement chez l'annuaire du tenant, qui accepte TOUT rappel
+  posé sur son application — et il en va de même, sur tout host, pour un lien d'autorisation
+  construit directement vers cet annuaire. **Tant que l'URL reste dans l'application Logto,
+  l'instance reçoit encore des codes.** Le geste complet, dans cet ordre :
+  1. retirer l'entrée ici, puis `oto_admin_tenant op=reload` (la façade ne la reposera plus) ;
+  2. retirer l'URL de l'application Logto DU TENANT (celle de `oauth_client_id`) : sa console
+     → Applications → l'application → « Redirect URIs », ou la Management API
+     `PATCH /api/applications/<id>` avec `oidcClientMetadata` RELU en entier, `redirectUris`
+     moins l'entrée. ⚠️ Logto remplace la liste entière (cf. « Le rappel de la façade peut
+     disparaître » ci-dessous) : relire juste avant, garder `https://<host>/oauth/callback`,
+     relire après. L'origine ajoutée à `customClientMetadata.corsAllowedOrigins` par la DCR se
+     retire au même endroit.
 
 **Onboarding actuel = self-serve ouvert.** Le tenant a sign-up activé par
 email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire,
@@ -341,7 +362,22 @@ d'annuaire et ses rappels exacts (elle n'a d'effet que si la façade administre 
    WHERE slug = %s AND logto_mgmt IS NOT NULL;
   ```
 
-  Retirer : `'false'::jsonb`, ou supprimer la clé (`logto_mgmt - 'refresh_tokens'`).
+  Constater : `oto_admin_tenant op=get slug=<tenant>` → `refresh_tokens_effectif: true` sur
+  CHAQUE process (prod et preprod ont leur registre). `logto_mgmt.refresh_tokens` y montre le
+  DÉCLARÉ : un `"true"` en chaîne s'y lit, mais le drapeau est éteint.
+
+  **Retirer** : `'false'::jsonb`, ou supprimer la clé (`logto_mgmt - 'refresh_tokens'`), puis
+  `op=reload`. ⚠️ **Éteindre le drapeau ne révoque RIEN** : il cesse seulement de demander le
+  consentement aux PROCHAINES autorisations. Les jetons de rafraîchissement déjà délivrés
+  vivent dans le Logto du tenant et tournent jusqu'à leur TTL (`refreshTokenTtlInDays`, la
+  rotation ne les raccourcit pas) ; nous n'en détenons aucun, le relais ne fait que les
+  transmettre. Pour couper, révoquer chez le tenant, par sa Management API (Logto ≥ 1.38) :
+  pour chaque utilisateur, `GET /api/users/<userId>/grants?appType=firstParty`, puis
+  `DELETE /api/users/<userId>/grants/<grantId>` pour chaque autorisation de l'application
+  `oauth_client_id` — Logto invalide alors les jetons d'accès opaques et de rafraîchissement
+  de cette autorisation. ⚠️ L'autorisation est par (utilisateur, application), pas par
+  client : tous les clients de cet utilisateur sur l'application (claude.ai compris) doivent
+  se reconnecter. Réduire `refreshTokenTtlInDays` ne suffit pas à couper vite.
 
 **Le risque accepté.** Des jetons de rafraîchissement de longue durée, délivrés à des clients
 PUBLICS (Codex, ChatGPT : ni secret, ni contrôle du poste). Un jeton volé se rejoue jusqu'à son
