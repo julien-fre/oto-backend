@@ -76,10 +76,20 @@ def upsert_sandbox(sub: str, famille: str, sandbox_id: str) -> dict:
 def marquer_statut(sub: str, famille: str, statut: str, *,
                    plan: Optional[str] = None, method: Optional[str] = None,
                    limit_reset_at: Optional[Any] = None,
-                   ok: bool = False) -> Optional[dict]:
+                   ok: bool = False,
+                   observe: bool = False) -> Optional[dict]:
     """Écrit l'état observé. Ne crée RIEN : sans bac à sable, il n'y a rien à
     décrire, et une ligne née d'un rapport de worker serait une connexion qui
     n'a jamais eu lieu.
+
+    ⚠️ `observe=True` = cet état a été OBSERVÉ par un worker, pas VOULU par la
+    personne — et une observation ne défait JAMAIS une déconnexion (revue du
+    21/09/2026). Le cas est banal : elle se déconnecte pendant qu'un de ses
+    travaux tourne, et la conclusion de ce travail la remettait `connected` — ou
+    `paused_limit`, servable dès l'échéance passée. Son « non » était annulé par
+    un travail parti avant lui. La garde vit ICI, dans l'écriture, pour qu'aucun
+    appelant ne puisse l'oublier ; seuls les gestes de la personne (connexion,
+    déconnexion) écrivent sans elle. Rend `None` quand elle a mordu.
 
     `plan` / `method` : ce que la sonde a lu (`Max`, `claude.ai`). `None` laisse la
     valeur d'avant — un worker qui rapporte un plafond ne sait rien du palier.
@@ -99,8 +109,10 @@ def marquer_statut(sub: str, famille: str, statut: str, *,
                        last_ok_at = CASE WHEN %s THEN NOW() ELSE last_ok_at END,
                        updated_at = NOW()
                  WHERE sub = %s AND famille = %s
+                   AND (NOT %s::boolean OR statut <> '{DECONNECTE}')
              RETURNING {_CHAMPS}""",
-            (statut, plan, method, statut, limit_reset_at, bool(ok), sub, famille),
+            (statut, plan, method, statut, limit_reset_at, bool(ok), sub, famille,
+             bool(observe)),
         ).fetchone()
     return dict(row) if row else None
 

@@ -295,3 +295,32 @@ class TestRapport:
         _abonnement.noter_rapport(self._conclu(famille="anthropic"), True, {
             "abonnement": {"deconnecte": True}})
         assert _ecrits == []
+
+
+def test_un_worker_d_abonnement_ne_prend_QUE_sa_famille_meme_sans_le_demander(monkeypatch):
+    """Le drapeau `org_key_only` oublié sur l'unité systemd ne doit pas suffire à
+    lui faire voler — et casser — les agents historiques posés sans modèle."""
+    import asyncio
+
+    from oto_mcp.capabilities._types import ResolvedCtx
+    vus = []
+    monkeypatch.setattr(RJ.db, "claim_next_job",
+                        lambda *a, **k: vus.append(k) or None)
+    monkeypatch.setattr(RJ, "_produire_pour_une_campagne", lambda *a, **k: None)
+    # Un worker de PLATEFORME : pas d'org, et c'est un fait (`WORKER_OR_ORG_MEMBER`).
+    ctx = ResolvedCtx(sub="svc-worker", org_id=None, platform_worker=True)
+    RJ._jobs(ctx, RJ.JobsInput(op="claim", provider=_FAMILLE))
+    assert vus and all(k["famille_seule"] is True for k in vus)
+    # Et rien ne change pour les autres : le drapeau reste leur choix.
+    vus.clear()
+    RJ._jobs(ctx, RJ.JobsInput(op="claim", provider="mistral"))
+    assert vus and all(k["famille_seule"] is False for k in vus)
+
+
+def test_une_base_qui_hoquette_ne_casse_PAS_la_conclusion(monkeypatch):
+    """Le travail est déjà conclu quand le rapport se lit : une levée ici sortirait
+    en 500, et la libération des lignes du run ne s'exécuterait jamais."""
+    def _hoquet(job_id):
+        raise RuntimeError("connexion perdue")
+    monkeypatch.setattr(_abonnement.db_runner_jobs, "porteur_et_famille", _hoquet)
+    _abonnement.noter_rapport_du_travail(42, True, {"abonnement": {"etat": "allowed"}})

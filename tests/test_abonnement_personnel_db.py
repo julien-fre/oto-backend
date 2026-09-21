@@ -177,3 +177,26 @@ def test_la_boucle_entiere_un_rapport_met_en_attente_et_la_file_SAUTE(live):
         assert conn.execute("SELECT status FROM runner_jobs WHERE id = %s",
                             (second,)).fetchone()["status"] == "pending", (
             "en ATTENTE — ni échoué, ni tentative brûlée")
+
+
+def test_un_travail_EN_VOL_ne_reconnecte_PAS_qui_vient_de_se_deconnecter(live):
+    """La personne se déconnecte pendant qu'un de ses travaux tourne. La conclusion
+    de ce travail — succès, ou plafond rapporté — ne doit PAS la remettre en
+    service : `paused_limit` est servable une fois l'échéance passée, donc un
+    rapport tardif rouvrirait le forfait de quelqu'un qui a dit non."""
+    from oto_mcp.capabilities import _abonnement
+    from oto_mcp.db import user_subscriptions as US
+    g = _personne("abo-g")
+    US.upsert_sandbox(g, _FAMILLE, "bac-g")
+    US.marquer_statut(g, _FAMILLE, US.CONNECTE, ok=True)
+    conclu = {"sub": g, "model_family": _FAMILLE}
+
+    US.marquer_statut(g, _FAMILLE, US.DECONNECTE)      # elle se déconnecte…
+    _abonnement.noter_rapport(conclu, True, None)       # …le travail en vol réussit
+    assert US.get_subscription(g, _FAMILLE)["statut"] == US.DECONNECTE
+
+    _abonnement.noter_rapport(conclu, False, {"abonnement": {   # …ou rapporte un plafond
+        "etat": "rejected",
+        "fenetres": {"five_hour": {"utilization": 1.0, "resetsAt": 1}}}})
+    assert US.get_subscription(g, _FAMILLE)["statut"] == US.DECONNECTE
+    assert _abonnement.servable(g, _FAMILLE)[0] is False

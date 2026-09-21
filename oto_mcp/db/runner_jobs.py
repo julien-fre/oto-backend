@@ -31,8 +31,7 @@ _BACKOFF_S = 30
 #: Les familles servies par un ABONNEMENT personnel (OTO-130) — lues du catalogue,
 #: jamais recopiées. `runner_models` est PUR : la base peut le lire sans remonter
 #: d'une couche (c'est déjà ce que fait la capacité).
-_FAMILLES_ABONNEMENT = frozenset(m.family for m in runner_models.MODELES
-                                 if m.family.endswith("_subscription"))
+_FAMILLES_ABONNEMENT = runner_models.FAMILLES_PERSONNELLES
 
 
 def _abonnement_personnel(depot: Optional[str]) -> bool:

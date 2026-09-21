@@ -62,7 +62,7 @@ MODELES: tuple[Modele, ...] = (
     # ⚠️ L'ABONNEMENT de la personne (OTO-130), pas une clé : ces travaux tournent
     # dans SON bac à sable, sur le programme Claude Code officiel où elle s'est
     # connectée elle-même. La famille est donc un dépôt qu'AUCUNE org ne dépose et
-    # que la plateforme ne paie pas — `FAMILLES_SANS_DEPOT` ci-dessous dit à la
+    # que la plateforme ne paie pas — `FAMILLES_PERSONNELLES` ci-dessous dit à la
     # garde d'argent de ne pas aller chercher une clé qui n'existe pas.
     #
     # ⚠️ Des ids PRÉFIXÉS, et non les ids nus du catalogue Anthropic : la famille se
@@ -79,6 +79,12 @@ _PAR_ID = {m.id: m for m in MODELES}
 
 #: Les familles connues — c'est-à-dire les seuls dépôts dont la présence se note.
 FAMILLES = frozenset(m.family for m in MODELES)
+
+
+#: Les familles servies par l'abonnement PERSONNEL de quelqu'un. La convention de
+#: nom (`*_subscription`) est la seule source : la base (`db/runner_jobs`) et la garde
+#: (`capabilities/_abonnement`) la relisent d'ici, jamais d'une liste recopiée.
+FAMILLES_PERSONNELLES = frozenset(f for f in FAMILLES if f.endswith("_subscription"))
 
 
 def famille(model: Optional[str]) -> Optional[str]:
@@ -134,7 +140,14 @@ def catalogue(familles_servies, familles_sans_cle=()) -> list[dict]:
     qui le suivait se faisait refuser `model_key_required`. Si toutes les familles
     servies sont écartées, aucun défaut — jamais un repli sur un modèle refusé."""
     servies = set(familles_servies or ())
-    proposables = servies - set(familles_sans_cle or ())
+    # ⚠️ Un ABONNEMENT n'est JAMAIS le défaut (OTO-130, revue du 21/09/2026). Il ne
+    # sert que la personne qui s'y est connectée : proposé à toute une org, il
+    # ferait refuser `subscription_not_connected` à quiconque suit la proposition —
+    # la faute exacte du défaut en dur corrigée le 12/09, par une autre porte. Le
+    # cas n'a rien de théorique : il suffit que le pool d'abonnement soit le SEUL
+    # vivant (une preprod, un incident sur les autres pools). Il reste `served` :
+    # qui est connecté le choisit, personne ne se le voit proposer.
+    proposables = servies - set(familles_sans_cle or ()) - FAMILLES_PERSONNELLES
     defaut = next((m.id for m in MODELES if m.family in proposables), None)
     return [{"id": m.id, "label": m.label, "family": m.family,
              "default": m.id == defaut, "served": m.family in servies}

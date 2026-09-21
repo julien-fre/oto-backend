@@ -101,12 +101,16 @@ def _servi(ligne: dict) -> dict:
             "last_ok_at": _txt(ligne.get("last_ok_at"))}
 
 
-async def _liste(ctx: ResolvedCtx, inp: AbonnementsInput) -> dict:
+# ⚠️ `def`, pas `async def` (`docs/event-loop-perf.md`) : ces deux handlers ne font que
+# de l'I/O BLOQUANTE (psycopg). Un `async def` sans `await` s'exécute DANS la boucle
+# et gèle tout le serveur le temps de la requête ; un `def` part en threadpool.
+# Écrits `async` au premier jet — les bancs passaient, c'est la prod qui aurait gelé.
+def _liste(ctx: ResolvedCtx, inp: AbonnementsInput) -> dict:
     return {"subscriptions": [_servi(l)
                               for l in db.user_subscriptions.list_subscriptions(ctx.sub)]}
 
 
-async def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
+def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
     if not _abonnement.est_abonnement(inp.family):
         raise AuthzDenied(
             400, "unknown_family",

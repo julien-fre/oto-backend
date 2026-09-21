@@ -969,8 +969,16 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 "la clé de l'organisation doit nommer QUEL dépôt il consomme — "
                 "sans lui, il n'y a aucune clé à attendre et rien à servir.")
         bail = max(30, min(inp.lease_seconds, 3600))
+        # ⚠️ Un worker d'ABONNEMENT ne prend QUE sa famille, qu'il l'ait demandé ou
+        # non (revue du 21/09/2026). Il n'exécute rien lui-même : tout part dans le
+        # bac à sable du demandeur. Un travail SANS famille — l'agent historique
+        # posé sans modèle — n'a aucun bac à sable : servi à ce worker, il échoue à
+        # coup sûr, tentative après tentative. Le drapeau `org_key_only` le
+        # garantissait déjà… à condition que l'unité systemd le pose. Une garde qui
+        # dépend d'une variable d'environnement bien écrite n'en est pas une.
+        famille_seule = inp.org_key_only or _abonnement.est_abonnement(inp.provider)
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                depot=inp.provider, famille_seule=inp.org_key_only)
+                                depot=inp.provider, famille_seule=famille_seule)
         if job is None:
             # ⚠️ La file vide n'est pas la fin de l'histoire : une CAMPAGNE en
             # cours est une règle qui produit des travaux, et c'est ici qu'on
@@ -986,7 +994,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             panne = _produire_pour_une_campagne(ctx.org_id, bail)
             job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
                                     depot=inp.provider,
-                                    famille_seule=inp.org_key_only)
+                                    famille_seule=famille_seule)
             if job is None and panne:
                 # « Rien à faire » et « je n'ai pas pu regarder » ne se disent
                 # pas de la même façon. Les confondre a coûté des jours de
@@ -1060,8 +1068,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # à qui tient la prise, et un membre qui aurait réservé le travail d'un
         # collègue pourrait sinon le mettre en attente d'un rapport inventé.
         if ctx.platform_worker:
-            _abonnement.noter_rapport(db.porteur_et_famille(inp.job_id) or {},
-                                      inp.ok, inp.result)
+            _abonnement.noter_rapport_du_travail(inp.job_id, inp.ok, inp.result)
         # Le run de l'appel d'abord (c'est celui que le worker vient d'exécuter),
         # sinon celui que le job connaît (`bind_run`, ou un `continue`).
         return {"ok": True, "status": res["status"],

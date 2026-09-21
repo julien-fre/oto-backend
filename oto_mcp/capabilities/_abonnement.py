@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .. import runner_models
+from ..db import runner_jobs as db_runner_jobs
 from ..db import user_subscriptions
 from ._types import AuthzDenied
 
@@ -39,8 +40,7 @@ SEUIL_D_ATTENTE = 0.95
 
 #: Les familles servies par un abonnement personnel. Dérivée du catalogue, jamais
 #: recopiée : le jour où Codex suit le même chemin, il suffit de l'y déclarer.
-FAMILLES = frozenset(m.family for m in runner_models.MODELES
-                     if m.family.endswith("_subscription"))
+FAMILLES = runner_models.FAMILLES_PERSONNELLES
 
 
 def est_abonnement(famille: Optional[str]) -> bool:
@@ -152,11 +152,12 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
             # Aucun rapport : un succès prouve au moins que la session tient.
             if ok:
                 user_subscriptions.marquer_statut(
-                    porteur, famille, user_subscriptions.CONNECTE, ok=True)
+                    porteur, famille, user_subscriptions.CONNECTE, ok=True,
+                    observe=True)
             return
         if rapport.get("deconnecte") is True:
             user_subscriptions.marquer_statut(
-                porteur, famille, user_subscriptions.A_RECONNECTER)
+                porteur, famille, user_subscriptions.A_RECONNECTER, observe=True)
             return
         echeances = [
             f["resetsAt"] for f in (rapport.get("fenetres") or {}).values()
@@ -175,11 +176,30 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
             quand = (datetime.fromtimestamp(max(echeances), tz=timezone.utc)
                      if echeances else None)
             user_subscriptions.marquer_statut(
-                porteur, famille, user_subscriptions.PLAFOND, limit_reset_at=quand)
+                porteur, famille, user_subscriptions.PLAFOND, limit_reset_at=quand,
+                observe=True)
             return
         user_subscriptions.marquer_statut(
-            porteur, famille, user_subscriptions.CONNECTE, ok=bool(ok))
+            porteur, famille, user_subscriptions.CONNECTE, ok=bool(ok),
+            observe=True)
     except Exception:
         logger.warning("rapport d'abonnement illisible pour le travail conclu "
                        "(famille %s) — ignoré, la conclusion tient", famille,
                        exc_info=True)
+
+
+def noter_rapport_du_travail(job_id: int, ok: bool, resultat: Optional[dict]) -> None:
+    """`noter_rapport`, en lisant soi-même à qui le travail appartenait.
+
+    ⚠️ La LECTURE aussi est sous la garde (revue du 21/09/2026). Faite chez
+    l'appelant, un hoquet de base à cet instant sortait en 500 d'un `complete`
+    dont le travail était DÉJÀ conclu — et la libération des lignes du run, qui
+    suit, ne s'exécutait jamais. Un à-côté ne doit pas pouvoir casser le geste
+    qu'il accompagne, ni par son écriture, ni par sa lecture."""
+    try:
+        conclu = db_runner_jobs.porteur_et_famille(job_id) or {}
+    except Exception:
+        logger.warning("porteur du travail %s illisible — rapport d'abonnement "
+                       "ignoré, la conclusion tient", job_id, exc_info=True)
+        return
+    noter_rapport(conclu, ok, resultat)
