@@ -144,3 +144,64 @@ class TestPose:
         sort immédiatement."""
         _abonnement.exiger_a_la_pose(_PORTEUR, "quelqu-un-d-autre", "anthropic",
                                      flotte=True)
+
+
+class TestCablage:
+    """La garde est-elle POSÉE là où un agent se déclare ? Le banc de `TestPose`
+    juge la fonction ; celui-ci juge qu'elle est appelée — c'est l'oubli qui
+    coûterait cher, pas la logique."""
+
+    def _ctx(self, sub=_PORTEUR, org_id=2):
+        from oto_mcp.capabilities._types import ResolvedCtx
+        return ResolvedCtx(sub=sub, org_id=org_id)
+
+    @pytest.fixture(autouse=True)
+    def _plateforme(self, monkeypatch, _abonnements):
+        """Un runner armé qui sert la famille, et aucune clé exigée : le seul refus
+        qui reste possible est celui de l'abonnement."""
+        from oto_mcp.capabilities import runner_fleets as RF
+        from oto_mcp.capabilities import runner_triggers as RT
+        for module in (RT, RF):
+            monkeypatch.setattr(module.db, "runner_arme",
+                                lambda org: {"armed": True, "workers": 1,
+                                             "last_seen": "2026-09-19 07:00:00",
+                                             "families": [_FAMILLE]})
+        monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting",
+                            lambda *a, **k: None)
+        monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
+        # La population « bêta » et les outils de la procédure se lisent en base ;
+        # ces bancs ne parlent ni de l'une ni des autres.
+        # ⚠️ Par le NOM IMPORTÉ dans chaque module : `access` est une surface plate,
+        # et doubler `access.quotas.has_option` ne change pas le nom déjà lié ici.
+        monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
+        monkeypatch.setattr(RT.access, "has_option", lambda *a, **k: True)
+        monkeypatch.setattr(RT, "_outils_de_la_procedure", lambda ctx, p: ["oto_doc"])
+
+    def test_un_declencheur_sur_un_abonnement_non_connecte_est_refuse(self, monkeypatch):
+        import asyncio
+
+        from oto_mcp.capabilities import runner_triggers as RT
+        monkeypatch.setattr(RT.db, "create_trigger",
+                            lambda *a, **k: pytest.fail(
+                                "écrit malgré un abonnement non connecté"))
+        with pytest.raises(Exception) as e:
+            asyncio.run(RT._triggers(self._ctx(), RT.TriggerInput(
+                op="create", procedure="p", cron="0 8 * * *", tz="Europe/Paris",
+                model="sub:sonnet")))
+        assert e.value.code == "subscription_not_connected"
+
+    def test_une_flotte_ne_se_pose_JAMAIS_sur_un_abonnement(self, monkeypatch,
+                                                            _abonnements):
+        """Même connectée, une flotte est refusée : elle appartient à l'org."""
+        import asyncio
+
+        from oto_mcp.capabilities import runner_fleets as RF
+        _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE,
+                                              "sandbox_id": _BAC}
+        monkeypatch.setattr(RF.db, "create_fleet",
+                            lambda *a, **k: pytest.fail("flotte écrite sur un forfait"))
+        with pytest.raises(Exception) as e:
+            asyncio.run(RF._fleets(self._ctx(), RF.FleetInput(
+                op="create", label="passage", namespace="n", procedure="p",
+                tools=["oto_doc"], model="sub:sonnet")))
+        assert e.value.code == "subscription_personal_only"
