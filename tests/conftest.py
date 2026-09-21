@@ -233,6 +233,38 @@ def pytest_configure(config: pytest.Config) -> None:
         "elle documente pourquoi un stub ne suffit pas ici.")
 
 
+class _ConftestSansTests(pytest.File):
+    """Le nœud d'un `conftest.py` donné en argument : présent (pytest exige que tout
+    argument désigne un nœud, sinon `ERROR: not found`), mais qui ne collecte RIEN et
+    n'importe RIEN."""
+
+    def collect(self):
+        return []
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_collect_file(file_path, parent):
+    """Un `conftest.py` n'est jamais un module de test (#508).
+
+    `pytest tests/*.py tests/*/` glob AUSSI `tests/conftest.py` et le passe en argument
+    explicite : pytest l'importe alors une seconde fois comme MODULE de test. Or trois
+    `conftest.py` (racine, `datastore/`, `db/`) partagent le basename `conftest` — pas de
+    `__init__.py`, import `prepend` — donc dès que celui d'un sous-dossier est déjà chargé,
+    la collecte s'interrompt sur `import file mismatch` et TOUTE la suite tombe avec.
+    La CI lance `pytest` sans chemin et ne le voyait pas ; le rouge n'existait que pour
+    quelqu'un qui globbe.
+
+    ⚠️ `pytest_ignore_collect` ne peut PAS le faire : pytest ne le consulte pas pour un
+    fichier passé en argument (`isinitpath`). D'où ce wrapper sur `pytest_collect_file`,
+    qui remplace le module de test construit pour un `conftest.py` par un nœud vide — celui-ci reste chargé
+    comme plugin de dossier, ses fixtures et ses hooks s'appliquent comme avant.
+    """
+    collectes = yield
+    if file_path.name == "conftest.py":
+        return [_ConftestSansTests.from_parent(parent, path=file_path)]
+    return collectes
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items) -> None:
     """Un rouge qui ne prouve rien vaut moins qu'un test explicitement non
     concluant — mais SEULEMENT en local : en CI la garde version-skew doit mordre,
