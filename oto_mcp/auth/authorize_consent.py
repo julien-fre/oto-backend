@@ -28,7 +28,13 @@ rafraîchissement aux utilisateurs d'un partenaire est SA décision : sa métado
 d'annoncer son propre point d'autorisation, et la façade refuse cette route sur son hôte.
 Quand son host est RELAYÉ (`auth/relay.py`), son autorisation traverse la façade par un
 autre chemin, et arrive chez son annuaire SANS `consent` ajouté
-(`redirection(..., consentement=False)`).
+(`redirection(..., consentement=False)`) — sauf si le tenant l'a DÉCLARÉ : `logto_mgmt.
+refresh_tokens: true`, opt-in éteint par défaut, posé par l'administrateur de la plateforme
+et lu au chargement du registre (`tenancy._normalize_refresh_tokens`), jamais dans la
+requête (`relay.cible_pour_host`, `Cible.consentement`). Cette route-ci, elle, reste un 404
+sur son hôte, drapeau ou pas : l'opt-in passe par le relais, et ne vaut que sur un host
+relayé (sur un autre, le client s'autorise chez l'annuaire du tenant et la plateforme ne voit
+pas la demande). Checklist d'activation : `docs/auth-logto.md`.
 """
 from __future__ import annotations
 
@@ -83,8 +89,8 @@ def redirection(emetteur_oidc: str, requete: str, *, consentement: bool = True) 
     du client n'arriveraient plus intacts. Un caractère de contrôle n'a rien à faire dans
     une requête : il est refusé en le nommant, jamais recopié dans un en-tête.
 
-    `consentement=False` = l'annuaire d'un TENANT (cf. l'en-tête du module) : la requête
-    passe sans que `consent` y soit ajouté.
+    `consentement=False` = l'annuaire d'un TENANT qui n'a pas déclaré `refresh_tokens` (cf.
+    l'en-tête du module) : la requête passe sans que `consent` y soit ajouté.
     """
     if any(ord(c) < 0x21 or ord(c) == 0x7F for c in requete):
         return JSONResponse({"error": "invalid_request",

@@ -96,7 +96,8 @@ class Cible:
     oidc_public: str      # où le NAVIGATEUR se connecte
     oidc_jeton: str       # où part l'échange de jeton, de serveur à serveur
     emetteurs: frozenset  # les `iss` que cet annuaire peut estampiller
-    consentement: bool    # oto#202 : pour NOTRE annuaire seulement
+    consentement: bool    # oto#202 : NOTRE annuaire, ou un tenant qui a DÉCLARÉ
+    #                       `logto_mgmt.refresh_tokens` (opt-in, éteint par défaut)
     directory: object = None
     label: str = "?"
 
@@ -125,8 +126,11 @@ def cible_pour_host(host: str, public_url: str, claude_app_id: str) -> Cible:
                      d if facade._credential_present(d) else None, d.label)
     d = facade.directory_for_tenant(entry)
     oidc = entry.issuer.rstrip("/")
+    # `consent` (donc un jeton de rafraîchissement) : la décision du TENANT, déclarée par
+    # l'administrateur de la plateforme (`entry.refresh_tokens`, éteint par défaut) — jamais
+    # celle du client ni de la requête.
     return Cible(host, f"https://{host}", entry.oauth_client_id or "", oidc, oidc,
-                 frozenset({oidc}), False,
+                 frozenset({oidc}), entry.refresh_tokens,
                  d if d is not None and facade._credential_present(d) else None, entry.slug)
 
 

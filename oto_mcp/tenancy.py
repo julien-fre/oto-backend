@@ -138,6 +138,16 @@ class TenantIssuer:
     # les poser dans l'annuaire du tenant, donc avec ces accès. Vide = la liste globale
     # seule, l'état d'avant à l'octet près.
     dcr_redirects: tuple = ()
+    # OPT-IN de ce tenant aux jetons de rafraîchissement pour les clients qui passent par le
+    # RELAIS de la façade (`auth/relay.py`) : déclaré dans `logto_mgmt.refresh_tokens`, éteint
+    # par défaut. Allumé, l'autorisation relayée sur les hosts de CE tenant ajoute `consent` à
+    # `prompt` quand `offline_access` est demandé (`authorize_consent`, oto#202) — sans quoi
+    # Logto ne délivre aucun jeton de rafraîchissement et un client comme Codex, qui n'envoie
+    # pas `prompt`, perd sa connexion à chaque expiration du jeton d'accès. C'est SA décision,
+    # jamais la nôtre : durée et rotation se règlent dans SON annuaire. Ne vaut que sur un
+    # host relayé ; sur un autre, le client s'autorise chez l'annuaire du tenant et la
+    # plateforme ne voit pas la demande.
+    refresh_tokens: bool = False
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -219,7 +229,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                                     tool_prefix=str(tool_prefix or ""),
                                     brand=brand if isinstance(brand, dict) else None,
                                     logto_mgmt=_normalize_mgmt(logto_mgmt, slug),
-                                    dcr_redirects=_normalize_redirects(logto_mgmt, slug))
+                                    dcr_redirects=_normalize_redirects(logto_mgmt, slug),
+                                    refresh_tokens=_normalize_refresh_tokens(logto_mgmt, slug))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -356,6 +367,33 @@ def _normalize_redirects(valeur, slug: str = "") -> tuple:
         elif uri not in retenus:
             retenus.append(uri)
     return tuple(retenus)
+
+
+def _normalize_refresh_tokens(valeur, slug: str = "") -> bool:
+    """L'opt-in d'un tenant aux jetons de rafraîchissement (`logto_mgmt.refresh_tokens`).
+
+    ⚠️ **Fail-closed** : seul le booléen JSON `true` allume. `"true"`, `"yes"`, `1`, une
+    liste, un objet, une chaîne vide : écartés en alertant, drapeau ÉTEINT — une faute de
+    frappe ne doit jamais délivrer des jetons de longue durée à des clients publics. Absent,
+    `null` et `false` sont l'état d'avant, sans alerte. Le drapeau ne se lit qu'ici, dans la
+    déclaration posée par l'administrateur de la plateforme : aucune requête, aucun en-tête,
+    aucun corps de DCR n'y touche."""
+    if isinstance(valeur, str):
+        try:
+            valeur = json.loads(valeur)
+        except ValueError:
+            return False
+    if not isinstance(valeur, dict):
+        return False
+    brut = valeur.get("refresh_tokens")
+    if brut is None or brut is False:
+        return False
+    if brut is True:
+        return True
+    _refus("registre d'émetteurs : `logto_mgmt.refresh_tokens` du tenant %r vaut %r — le "
+           "booléen JSON `true` est seul accepté ; drapeau ÉTEINT (aucun jeton de "
+           "rafraîchissement délivré)", slug, brut)
+    return False
 
 
 def _normalize_paths(valeur) -> dict:

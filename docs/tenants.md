@@ -51,7 +51,7 @@ description: >-
 >   client RFC 9207 (SDK MCP Python 2.0) refuse le flux après la connexion. Un host déclaré
 >   dans `OTO_MCP_OAUTH_RELAY_HOSTS` fait passer autorisation, retour et jeton par le relais
 >   de la façade (`auth/relay.py`), qui rend `iss` = le host — sans `consent` ajouté pour un
->   tenant, et **seulement si nous administrons son annuaire** (`logto_mgmt`) : le relais compare
+>   tenant (sauf opt-in `logto_mgmt.refresh_tokens`, éteint par défaut, `docs/auth-logto.md`), et **seulement si nous administrons son annuaire** (`logto_mgmt`) : le relais compare
 >   le rappel du client aux rappels relus sur SON application, à l'octet près. Mise en service,
 >   refus nommés et limites : `docs/auth-logto.md` §relais.
 > - ⚠️ **Pas de patron, pas de lien** (`links.py`, `tenants.link_paths`). Les chemins d'un

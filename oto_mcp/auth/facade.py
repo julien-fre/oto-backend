@@ -76,7 +76,8 @@ def as_metadata(public_url: str, logto: str = "", *, relais: bool = False) -> di
     L'autorisation de NOTRE annuaire transite par la façade (oto#202) : elle y pose le
     consentement sans lequel Logto ne délivre aucun jeton de rafraîchissement. Celle
     d'un TENANT (`logto` fourni) reste chez lui : délivrer des jetons de
-    rafraîchissement à ses utilisateurs est sa décision, pas la nôtre.
+    rafraîchissement à ses utilisateurs est sa décision, pas la nôtre — il la prend en
+    déclarant `logto_mgmt.refresh_tokens` (relais seulement, cf. `authorize_consent`).
 
     ⚠️ RFC 8414 §3.3 : l'`issuer` retourné DOIT être IDENTIQUE à l'identifiant d'AS
     que le client a annoncé dans le PRM (`authorization_servers`) et dans lequel il
