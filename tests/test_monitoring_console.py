@@ -175,12 +175,20 @@ def test_rest_calls_sert_view_as_sub_quand_pose(monkeypatch):
                             {"id": 2, "route": "GET /api/me", "view_as_sub": None},
                         ])
     out = monitoring._monitoring(CTX, monitoring.MonitoringInput(
-        op="rest_calls", org_id=7, route="/api/orgs"))
+        op="rest_calls", org_id=7, route="GET /api/orgs"))
     assert seen["org_id"] == 7
-    assert seen["route"] == "/api/orgs"
+    assert seen["route"] == "GET /api/orgs"
     assert seen["limit"] == 200
     assert out["calls"][0]["view_as_sub"] == "sub-jane"
     assert out["calls"][1]["view_as_sub"] is None    # jamais devinée, jamais omise
+
+
+def test_rest_calls_ecrete_limit_au_plafond_de_la_console(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(monitoring.db, "list_rest_calls",
+                        lambda **kw: seen.update(kw) or [])
+    monitoring._monitoring(CTX, monitoring.MonitoringInput(op="rest_calls", limit=5000))
+    assert seen["limit"] == 200
 
 
 def test_rest_calls_refuse_les_champs_dune_autre_op():

@@ -123,17 +123,74 @@ def test_une_route_sans_jeton_n_ecrit_aucun_args(monkeypatch):
     assert row["args"] is None
 
 
-# ── La cible du « voir en tant que » (#572 point 4) ──────────────────────────
-# Le journal REST enregistre déjà l'org de consultation revendiquée (header,
-# best-effort — même statut que `sub`/`_claimed_sub`) mais pas la cible d'un
-# « voir en tant que ». On sait qu'un opérateur a consulté, pas au nom de qui.
+# ── La cible du « voir en tant que » (#572 point 4, oto-backend#962) ────────
+# Le journal enregistre la cible APPLIQUÉE par `ViewAsMiddleware`, jamais
+# l'en-tête `X-Oto-View-As` brut, que n'importe quel appelant peut poser. La
+# chaîne réelle (`RestCallLogger` enveloppe `ViewAsMiddleware`) est montée ici.
 
-def test_logs_view_as_target_header(monkeypatch):
-    row, _ = _run_mw(monkeypatch, path="/api/me",
-                      headers={"x-oto-view-as": "sub-cible-42"})
+def _run_chaine(monkeypatch, *, operateur, cible_existe=True, method="GET",
+                vue="sub-cible-42"):
+    from oto_mcp import access
+    from oto_mcp import db as oto_db
+
+    async def authentifie(request, verifier, **kw):
+        return "u-operateur", None
+    monkeypatch.setattr(ar, "_authenticate", authentifie)
+    monkeypatch.setattr(access, "is_platform_operator", lambda sub: operateur)
+    monkeypatch.setattr(oto_db, "get_user",
+                        lambda sub: {"sub": sub} if cible_existe else None)
+    captured = {}
+    monkeypatch.setattr(ar.db, "insert_tool_call", captured.update)
+
+    async def downstream(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    mw = ar.RestCallLogger(ar.ViewAsMiddleware(downstream, verifier=None))
+    scope = {"type": "http", "path": "/api/me", "method": method, "query_string": b"",
+             "headers": [(b"authorization", b"Bearer x"), (b"x-oto-view-as", vue.encode())]}
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def drive():
+        await mw(scope, receive, send)
+        await asyncio.sleep(0)
+        await asyncio.gather(*list(ar._REST_LOG_TASKS), return_exceptions=True)
+
+    asyncio.run(drive())
+    return captured, sent[0]["status"]
+
+
+def test_la_vue_appliquee_est_journalisee(monkeypatch):
+    row, status = _run_chaine(monkeypatch, operateur=True)
+    assert status == 200
     assert row["view_as_sub"] == "sub-cible-42"
+    assert row["sub"] is None or row["sub"] != "sub-cible-42"   # le porteur reste le sub
+
+
+@pytest.mark.parametrize("cas", [
+    dict(operateur=False),                          # non-opérateur : 403, rien d'appliqué
+    dict(operateur=True, vue="u-operateur"),        # cible = soi : no-op
+    dict(operateur=True, cible_existe=False),       # cible inconnue : no-op
+    dict(operateur=True, method="DELETE"),          # écriture en consultation : 403
+])
+def test_une_vue_refusee_ou_sans_effet_n_est_pas_journalisee(monkeypatch, cas):
+    row, _ = _run_chaine(monkeypatch, **cas)
+    assert row["kind"] == "rest"                    # la requête est bien journalisée…
+    assert row["view_as_sub"] is None               # …sans la cible revendiquée
 
 
 def test_view_as_target_absent_by_default(monkeypatch):
     row, _ = _run_mw(monkeypatch, path="/api/me")
+    assert row["view_as_sub"] is None
+
+
+def test_l_en_tete_seul_ne_fait_pas_une_vue(monkeypatch):
+    """Sans `ViewAsMiddleware` pour l'appliquer, l'en-tête n'est qu'une revendication."""
+    row, _ = _run_mw(monkeypatch, path="/api/me", headers={"x-oto-view-as": "sub-cible-42"})
     assert row["view_as_sub"] is None

@@ -167,6 +167,16 @@ async def _peek_op(receive):
     return op, replay
 
 
+# La cible du « voir en tant que » que `ViewAsMiddleware` a APPLIQUÉE à la requête,
+# déposée dans le `scope` ASGI — le MÊME dict que celui de `RestCallLogger`, qui
+# l'enveloppe et la relit dans son `finally` (même mécanique que `CLE_PRINCIPAL`).
+# ⚠️ Pourquoi pas l'en-tête : `X-Oto-View-As` se pose par n'importe quel appelant. Le
+# journal le recopiait tel quel — un non-opérateur refusé en 403 y figurait avec la
+# cible qu'il avait saisie, une cible = soi ou inconnue passait `ok` avec la colonne
+# remplie. Seul le middleware qui applique la vue sait ce qui a été appliqué.
+CLE_VIEW_AS_APPLIQUE = "oto_view_as_applique"
+
+
 class ViewAsMiddleware:
     """Middleware ASGI **brut** (pas BaseHTTPMiddleware, qui bufferiserait le
     streaming `/mcp`) : n'intervient QUE sur `/api/*` portant `X-Oto-Org`, sinon
@@ -236,6 +246,10 @@ class ViewAsMiddleware:
             op, receive = await _peek_op(receive)
             if op not in _READ_OPS:
                 return await _json_error(request, 403, "view_as_read_only")(scope, receive, send)
+        if view_user is not None:
+            # Publié pour le journal : APRÈS toutes les gardes (un 403 est sorti plus
+            # haut, une cible = soi ou inconnue a été remise à None).
+            scope[CLE_VIEW_AS_APPLIQUE] = view_user
         usr_token = session_org.set_view_user(view_user) if view_user is not None else None
         org_token = session_org.set_view_org(view_org) if view_org is not None else None
         grp_token = session_org.set_view_group(view_group) if view_group is not None else None
@@ -324,16 +338,6 @@ class RestCallLogger:
 
         request = Request(scope, receive)  # headers/query only → ne consomme pas le body
         org = _parse_view_org(request)  # org de consultation revendiquée (header), best-effort
-        # Cible du « voir en tant que » revendiquée (header `X-Oto-View-As`), même
-        # statut best-effort que `org` ci-dessus : `ViewAsMiddleware` a déjà validé
-        # (opérateur + cible existe) AVANT ce middleware dans la chaîne ASGI (il
-        # l'enveloppe), mais son contextvar est déjà remis à plat quand on arrive
-        # ICI — ce middleware est le PLUS externe, son `finally` tourne après que
-        # celui de `ViewAsMiddleware` a fait le sien. Re-parser le header est donc
-        # la seule façon de le voir depuis ce point, comme pour `org`. Le journal
-        # n'attestait que l'OPÉRATEUR réel (#572 point 4) : on sait qu'il a
-        # consulté, jamais au nom de qui — ce champ referme la moitié manquante.
-        view_as = _parse_view_user(request)
         started = time.monotonic()
         try:
             await self.app(scope, receive, _send)
@@ -367,9 +371,11 @@ class RestCallLogger:
                 "token_id": principal.get("token_id"),
                 "token_kind": principal.get("token_kind"),
                 "org_id": org,
-                # Jamais un remplacement de `sub` (l'opérateur réel reste le sub de
-                # la ligne, volontairement) : un champ EN PLUS, à côté.
-                "view_as_sub": view_as,
+                # La cible du « voir en tant que » APPLIQUÉE (#572 point 4) : publiée
+                # par `ViewAsMiddleware` dans ce scope, jamais l'en-tête brut — cf.
+                # `CLE_VIEW_AS_APPLIQUE`. Jamais un remplacement de `sub` (l'opérateur
+                # réel reste le sub de la ligne, volontairement) : un champ EN PLUS.
+                "view_as_sub": scope.get(CLE_VIEW_AS_APPLIQUE),
                 "ok": 200 <= code < 400,
                 "error": (f"HTTP {code}" if code >= 400 else None),
                 "duration_ms": int((time.monotonic() - started) * 1000),

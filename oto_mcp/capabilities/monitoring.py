@@ -124,8 +124,8 @@ class RestCallRow(BaseModel):
     ok: bool
     error: Optional[str] = None
     org_id: Optional[int] = None
-    # La cible du « voir en tant que » (ADR 0023, `RestCallLogger`) — `None` quand
-    # l'appel n'en portait pas, jamais deviné. C'est le champ que cette lentille
+    # La cible du « voir en tant que » APPLIQUÉE (ADR 0023, `ViewAsMiddleware` →
+    # `RestCallLogger`) — `None` quand aucune vue n'a été appliquée, jamais l'en-tête brut. C'est le champ que cette lentille
     # existe pour servir (oto-backend#962).
     view_as_sub: Optional[str] = None
 
@@ -265,12 +265,12 @@ class MonitoringInput(BaseModel):
     op: Literal["summary", "rest", "rest_calls", "connectors", "transport", "funnel",
                 "calls", "call", "runs", "run", "gaps", "tool_quality"]
     days: Optional[int] = None            # fenêtre (défaut : 7 ; funnel/gaps/tool_quality : 30)
-    limit: Optional[int] = None           # calls (défaut 200) / runs (défaut 100)
-    sub: Optional[str] = None             # summary/rest/calls : appelant (email ou sub)
+    limit: Optional[int] = None           # calls/rest_calls (défaut = plafond 200) / runs (défaut 100)
+    sub: Optional[str] = None             # summary/rest/rest_calls/calls : appelant (email ou sub)
     tool: Optional[str] = None            # calls : filtre outil exact
     errors: bool = False                  # calls : erreurs seulement
-    org_id: Optional[int] = None          # summary/rest/connectors/calls : un workspace
-    route: Optional[str] = None           # rest : une route (préfixe), compte exact
+    org_id: Optional[int] = None          # summary/rest/rest_calls/connectors/calls : un workspace
+    route: Optional[str] = None           # rest/rest_calls : préfixe de `MÉTHODE /route` (`GET /api/orgs`)
     run_id: Optional[str] = None          # run (requis) / calls (filtre)
     session_id: Optional[str] = None      # calls : tous les appels d'une conversation
     min_duration_ms: Optional[int] = None  # calls : appels lents
@@ -426,9 +426,12 @@ CAPABILITIES += [
             "org claimed by a header (best-effort): a request without it carries none "
             "and drops out of the filter, so a 0 does not prove an idle org — "
             "cross-check with `sub`) / rest_calls (raw REST call log, newest first, "
-            "same filters as `rest` plus `limit`; the ONLY lens that serves "
-            "`view_as_sub` — who an operator consulted on behalf of — null when the "
-            "call carried none, never guessed) / "
+            "same filters as `rest` — `route` is a prefix of `METHOD /route`, e.g. "
+            "`GET /api/orgs` — plus `limit` (max 200); the ONLY lens that serves "
+            "`view_as_sub`: the account a platform operator's view-as was actually "
+            "APPLIED to (operator verified, existing target other than themself), "
+            "null otherwise — a refused or no-op X-Oto-View-As header leaves it null. "
+            "Rows logged before 2026-09-21 carry the header as claimed, unverified) / "
             "connectors (credential resolution failures; optional `org_id`) / funnel "
             "(accounts vs real usage) / gaps · tool_quality (aggregated usage signals). "
             "For raw signals use oto_admin_signal."),

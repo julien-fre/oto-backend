@@ -1491,18 +1491,20 @@ def list_rest_calls(
     """Lentille PLATEFORME du journal REST, LIGNE PAR LIGNE (kind='rest') — le pendant
     de `list_tool_calls` (MCP) pour l'audit `/api/*` (oto-backend#962).
 
-    Sert `view_as_sub` : la cible du « voir en tant que » quand l'appel en portait un
-    (`RestCallLogger`, ADR 0023) — `null` sinon, jamais une valeur devinée. C'est ce qui
+    Sert `view_as_sub` : la cible du « voir en tant que » APPLIQUÉE par `ViewAsMiddleware`
+    (opérateur vérifié, cible existante ≠ soi ; ADR 0023) — `null` sinon, jamais l'en-tête
+    brut. ⚠️ Les lignes d'avant le 2026-09-21 portent l'en-tête REVENDIQUÉ, non attesté. C'est ce qui
     répond « cet opérateur a consulté au nom de qui », absent de `rest_call_stats`
     (agrégats seulement) et de `list_tool_calls` (MCP seulement, `view_as_sub` y serait
     toujours NULL puisque le champ n'existe que côté REST).
 
     Mêmes axes que `rest_call_stats` (`days`/`org_id`/`sub`/`route`, mêmes réserves :
     `org_id` = org de consultation revendiquée en en-tête, best-effort ; `route` =
-    préfixe). `days` par défaut 7, plafonné à 365 comme `rest_call_stats`."""
-    limit = max(1, min(int(limit), 1000))
+    préfixe de `MÉTHODE /route`, ex. `GET /api/orgs`). `days` par défaut 7, plafonné à
+    365 comme `rest_call_stats` ; `limit` plafonné à 200, le plafond de la console."""
+    limit = max(1, min(int(limit), 200))
     since_days = max(1, min(int(days or 7), 365))
-    clauses = ["l.kind = 'rest' AND position(' /' in l.tool) > 0",
+    clauses = [f"l.kind = 'rest' AND {_REST_ROUTE_SHAPE}",
                "l.created_at >= NOW() - make_interval(days => %s)"]
     params: list = [since_days]
     if org_id is not None:

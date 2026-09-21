@@ -167,12 +167,12 @@ def test_list_rest_calls_sert_view_as_sub_sans_le_deviner(monkeypatch):
              "duration_ms": 12, "ok": True, "error": None, "org_id": None,
              "view_as_sub": None}]
     monkeypatch.setattr(usage, "_connect", lambda: _ConnLigne(vues, rows))
-    out = usage.list_rest_calls(org_id=1, route="/api/orgs")
+    out = usage.list_rest_calls(org_id=1, route="GET /api/orgs")
     assert len(vues) == 1                      # une seule requête, pas deux
     sql, params = vues[0]
     assert "l.view_as_sub" in sql
     assert "l.org_id = %s" in sql and "l.tool LIKE %s" in sql
-    assert 1 in params and "/api/orgs%" in params
+    assert 1 in params and "GET /api/orgs%" in params
     assert out[0]["view_as_sub"] == "sub-cible"
     assert out[1]["view_as_sub"] is None       # absent au journal = None, jamais deviné
 
@@ -182,5 +182,23 @@ def test_list_rest_calls_plafonne_limit_et_days(monkeypatch):
     monkeypatch.setattr(usage, "_connect", lambda: _ConnLigne(vues, []))
     usage.list_rest_calls(limit=99999, days=9999)
     sql, params = vues[0]
-    assert params[-1] == 1000                  # limit plafonné, même borne que list_tool_calls
+    assert params[-1] == 200                   # limit plafonné, même borne que la console
     assert params[0] == 365                    # days plafonné, même borne que rest_call_stats
+
+
+def test_list_rest_calls_filtre_pour_de_vrai(live):
+    """Le filtre `route` contre le VRAI journal : `tool` vaut `MÉTHODE /route`, donc le
+    préfixe porte la méthode. Un stub qui capture le SQL ne prouve pas qu'une ligne
+    passe ou non — ici, une route voisine, une autre org et un geste sémantique
+    (`data_write`, même `kind`) doivent rester dehors."""
+    for tool, org in (("GET /api/orgs/:id", 1), ("GET /api/orgs/:id", 2),
+                      ("GET /api/me", 1), ("data_write", 1)):
+        usage.insert_tool_call({"kind": "rest", "tool": tool, "sub": "op-sub",
+                                "org_id": org, "ok": True})
+    lignes = usage.list_rest_calls(org_id=1, route="GET /api/orgs")
+    assert [(r["route"], r["org_id"]) for r in lignes] == [("GET /api/orgs/:id", 1)]
+    # Sans filtre : les deux routes de l'org, jamais le geste sémantique.
+    assert sorted(r["route"] for r in usage.list_rest_calls(org_id=1)) == [
+        "GET /api/me", "GET /api/orgs/:id"]
+    # La route SANS méthode n'est le préfixe de rien : zéro, pas « tout ».
+    assert usage.list_rest_calls(route="/api/orgs") == []
