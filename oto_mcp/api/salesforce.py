@@ -92,12 +92,16 @@ def make_routes(
         # a pu perdre son rôle. Parti pris maison (ADR 0038, ce qui a fermé #108) :
         # une autorisation se re-vérifie à la RÉSOLUTION, pas seulement à la pose.
         from .. import roles
-        allowed = True
-        if scope == "org":
-            allowed = roles.is_org_admin(sub, org_id)
-        elif scope == "group":
-            allowed = roles.can_admin_group(sub, group_id)
-        if not allowed:
+
+        def _droit_d_ecrire() -> bool:
+            if scope == "org":
+                return roles.is_org_admin(sub, org_id)
+            if scope == "group":
+                return roles.can_admin_group(sub, group_id)
+            return True
+
+        # Deux lectures de rôle en base : hors de la boucle (route publique, sans jeton).
+        if not await run_in_threadpool(_droit_d_ecrire):
             logger.warning("salesforce callback refusé : %s n'est plus admin du scope "
                            "%s (org=%s group=%s)", sub, scope, org_id, group_id)
             return RedirectResponse(_retour("forbidden", return_app, org_id), status_code=302)
@@ -122,7 +126,8 @@ def make_routes(
             # était déjà protégé — la discipline existait, elle n'avait
             # simplement pas été appliquée ici.
             tokens = await run_in_threadpool(_lire_et_echanger)
-            result = await salesforce_oauth.persist_token(sub, org_id, scope, tokens, group_id)
+            result = await run_in_threadpool(
+                salesforce_oauth.persist_token, sub, org_id, scope, tokens, group_id)
         except Exception:
             # Le client ne voit qu'un `?salesforce=error` : sans trace ici, un échec de
             # connexion est INDIAGNOSTICABLE (Sentry ne voit rien, l'exception est

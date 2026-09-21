@@ -22,6 +22,7 @@ ce qui est servi.
 """
 from __future__ import annotations
 
+import functools
 import os
 from typing import Awaitable, Callable
 
@@ -37,6 +38,25 @@ from .. import account_suspension
 
 # Signature de `_authenticate`, telle que la consomment les modules de routes.
 AuthFn = Callable[..., Awaitable["tuple[str | None, JSONResponse | None]"]]
+
+
+def en_thread(handler):
+    """Route dont le corps parle à la base : il tourne dans le threadpool, jamais sur la boucle.
+
+    Le serveur est mono-loop (`docs/event-loop-perf.md`) : un `async def` qui appelle du SQL
+    synchrone gèle TOUT le processus le temps de la requête — et une route publique, sans
+    jeton, est celle qu'un tiers peut marteler. On écrit donc le corps en `def` synchrone
+    (rien à awaiter dedans), et ce décorateur le sert comme une coroutine : l'objet reste
+    un `async def` pour Starlette, pour `route.endpoint is …` et pour qui l'attend
+    (`asyncio.run(route(req))`), et son nom, sa doc et sa signature sont conservés.
+
+    Une route qui doit AUSSI awaiter (authentification, flux) n'entre pas ici : elle
+    garde son `async def` et confie ses lectures à `run_in_threadpool` elle-même.
+    """
+    @functools.wraps(handler)
+    async def route(*args, **kwargs):
+        return await run_in_threadpool(handler, *args, **kwargs)
+    return route
 
 
 def _allowed_origins() -> list[str]:
