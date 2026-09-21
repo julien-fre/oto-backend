@@ -19,7 +19,7 @@ def _stub_sources(monkeypatch, *, lexical=(), semantic=()):
     monkeypatch.setattr(S.ownership, "active_org_principals", lambda *a: [])
     monkeypatch.setattr(S.db, "list_datastores_for_owners", lambda o: [])
     monkeypatch.setattr(S.db, "list_datastores_granted_to", lambda *a: [])
-    monkeypatch.setattr(S.db, "project_names", lambda ids: {})
+    monkeypatch.setattr(S.db, "project_labels", lambda ids: {})
 
 
 def _page(id, title, headline=None):

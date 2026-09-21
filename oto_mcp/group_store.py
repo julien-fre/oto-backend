@@ -54,6 +54,17 @@ def get_group(group_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def org_ids_of_groups(group_ids: list[int]) -> dict[int, int]:
+    """Org parente de chaque équipe d'un lot — une requête, pas une par équipe."""
+    if not group_ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, org_id FROM org_groups WHERE id = ANY(%s)", (list(group_ids),),
+        ).fetchall()
+        return {int(r["id"]): int(r["org_id"]) for r in rows}
+
+
 def list_groups(org_id: int) -> list[dict]:
     """Tous les groupes d'une org (métadonnées, sans les membres)."""
     with _connect() as conn:

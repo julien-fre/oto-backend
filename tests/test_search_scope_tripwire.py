@@ -117,7 +117,7 @@ def test_each_source_gets_its_predicate(monkeypatch):
                         _cap("ds_granted_a", [{"id": 102, "datastore": "leads"}]))
     monkeypatch.setattr(S.db, "search_datastore_rows_fts",
                         lambda q, ns_ids, limit=20: rec.setdefault("rows_ns", ns_ids) and [])
-    monkeypatch.setattr(S.db, "project_names", lambda ids: {})
+    monkeypatch.setattr(S.db, "project_labels", lambda ids: {})
 
     S.search("u1", 7, "prospection")
     assert rec["want"] == "read"
@@ -142,6 +142,6 @@ def test_project_scope_restricts_to_one_project(monkeypatch):
                         lambda *a, **k: pytest.fail("scope=project ne doit PAS élargir"))
     monkeypatch.setattr(S.db, "search_docs_fts",
                         lambda q, pids, limit: rec.setdefault("pids", pids) and [])
-    monkeypatch.setattr(S.db, "project_names", lambda ids: {})
+    monkeypatch.setattr(S.db, "project_labels", lambda ids: {})
     S.search("u1", 7, "x y", scope="project", project_id=42, kinds=["page"])
     assert rec["pids"] == [42]

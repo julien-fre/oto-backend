@@ -35,7 +35,8 @@ def _stub_empty(monkeypatch, **over):
                         lambda owners: over.get("tableaux", []))
     monkeypatch.setattr(S.db, "list_datastores_granted_to",
                         lambda *a: [])
-    monkeypatch.setattr(S.db, "project_names", lambda ids: {1: "Projet X"})
+    monkeypatch.setattr(S.db, "project_labels", lambda ids: {1: {
+        "name": "Projet X", "owner_type": "org", "owner_id": "7", "context_org_id": None}})
 
 
 def test_rrf_interleaves_sources(monkeypatch):
@@ -64,6 +65,32 @@ def test_headline_without_highlight_dropped(monkeypatch):
         {"id": 10, "project_id": 1, "title": "Décideur", "headline": "texte sans marque"}])
     out = S.search("u1", 7, "decideur")
     assert out["hits"][0]["passage"] is None
+
+
+def test_chaque_grain_porte_son_org_dorigine(monkeypatch):
+    """ADR 0071 : TOUT hit dit où vit l'objet — y compris procédure, guide et
+    connecteur, que la première version de ce champ omettait. Les cas sur base réelle
+    (tableau personnel, projet d'une autre org, collègue, admin) vivent dans
+    `test_search_org_origine.py` ; ici, la forme sur chaque grain."""
+    _stub_empty(monkeypatch,
+                search_docs_fts=[{"id": 10, "project_id": 1, "title": "Page xx",
+                                  "headline": "<b>xx</b>"}],
+                search_procedures_fts=[{"slug": "p", "title": "Proc xx", "headline": None}],
+                search_guides_fts=[
+                    {"scope": "org", "slug": "g-org", "title": "xx org", "headline": None},
+                    {"scope": "platform", "slug": "g-pf", "title": "xx pf", "headline": None},
+                    {"scope": "user", "slug": "g-moi", "title": "xx moi", "headline": None}])
+    out = S.search("u1", 7, "xx", connectors_catalog=[{"name": "xx", "label": "XX"}])
+    par = {(h["kind"], str(h["ref"])): (h["origin_org_id"], h["other_org"])
+           for h in out["hits"]}
+    assert par == {
+        ("page", "10"): (7, False),
+        ("procedure", "p"): (7, False),
+        ("guide", str({"scope": "org", "slug": "g-org"})): (7, False),
+        ("guide", str({"scope": "platform", "slug": "g-pf"})): (None, False),
+        ("guide", str({"scope": "user", "slug": "g-moi"})): (None, None),
+        ("connecteur", "xx"): (None, False),
+    }
 
 
 def test_zero_hits_carries_hint(monkeypatch):
@@ -119,11 +146,7 @@ def test_match_tableaux_ranking():
         {"id": 3, "datastore": "clients", "schema": {"fields": [{"label": "Prospects chauds"}]}},
         {"id": 4, "datastore": "autre", "schema": {}},
     ]
-    import unittest.mock as m
-    with m.patch.object(S.ownership, "active_org_principals", return_value=[]), \
-         m.patch.object(S.db, "list_datastores_for_owners", return_value=rows), \
-         m.patch.object(S.db, "list_datastores_granted_to", return_value=[]):
-        out = S._match_tableaux("Prospects", "u1", 7)
+    out = S._match_tableaux("Prospects", rows)
     assert [h["ref"] for h in out] == [1, 2, 3]   # exact > partiel > label ; 4 exclu
 
 
