@@ -254,7 +254,7 @@ def test_le_bail_se_pose_et_se_leve_pour_de_vrai(table):
     assert (encore["released"], encore["reason"]) == (False, "no_lease")
 
 
-def test_ecrire_sur_une_ligne_reservee_par_un_autre_refuse_en_nommant(table):
+def test_ecrire_sur_une_ligne_reservee_par_un_autre_refuse_en_disant_quoi_faire(table):
     """La protection du bail doit REFUSER, jamais avaler l'écriture : c'est le même
     principe, vu du côté du garde-fou."""
     from oto_mcp.datastore.core import RowLocked
@@ -264,5 +264,6 @@ def test_ecrire_sur_une_ligne_reservee_par_un_autre_refuse_en_nommant(table):
     with pytest.raises(RowLocked) as exc:
         st.update_row(ns, rid, {"contacts": CONTACTS})
 
-    assert "w-1" in str(exc.value), "le refus nomme qui tient la ligne"
+    assert "_run_id" in str(exc.value), "le refus mène par la faute la plus fréquente (#515)"
+    assert "w-1" not in str(exc.value), "et ne nomme pas le titulaire"
     assert "contacts" not in _donnees(ns_id, rid), "refusée ⟹ rien d'écrit"
