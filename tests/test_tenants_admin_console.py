@@ -224,6 +224,32 @@ def test_un_acces_dannuaire_complet_est_administrable(monkeypatch):
     assert ta.TenantRow(**t).directory_admin is True
 
 
+@pytest.mark.parametrize("declare, charge, allume", [
+    (True, True, True),
+    ("true", True, False),    # la chaîne s'affiche dans `logto_mgmt`… éteinte
+    (1, True, False),
+    (None, True, False),
+    (True, False, False),     # déclaré, pas encore rechargé : rien ne s'applique
+])
+def test_la_fiche_rend_l_opt_in_refresh_tokens_EFFECTIF(monkeypatch, declare, charge, allume):
+    """Relecture de #1030 : la fiche ne montrait que le déclaré — `"true"` en chaîne s'y
+    lisait « allumé » alors que seul le booléen `true` allume."""
+    mgmt = dict(_MGMT) if declare is None else dict(_MGMT, refresh_tokens=declare)
+    ligne = tenants_db._shape_tenant(dict(_TIERS, logto_mgmt=mgmt))
+    monkeypatch.setattr(ta.db, "get_tenant_overview", lambda slug, **kw: dict(ligne))
+    entree = {"slug": "acme", "issuer": "https://auth.acme.test/oidc",
+              "hosts": ["mcp.acme.test"]}
+    monkeypatch.setattr(tenancy, "_INSTALLED", _registry(
+        dict(entree, logto_mgmt=mgmt) if charge else entree), raising=False)
+
+    t = ta._tenant(CTX, ta.TenantInput(slug="acme"))["tenant"]
+
+    assert t["refresh_tokens_effectif"] is allume
+    assert ta.TenantSheet(**t).refresh_tokens_effectif is allume
+    if declare is not None:
+        assert t["logto_mgmt"]["refresh_tokens"] == declare   # le déclaré reste lisible
+
+
 def test_sans_declaration_lannuaire_nest_pas_administrable(monkeypatch):
     """Le défaut, et il le reste : authentifier les comptes d'un tenant ne donne aucun
     droit d'écrire dans son annuaire."""

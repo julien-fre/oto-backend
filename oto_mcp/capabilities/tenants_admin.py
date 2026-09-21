@@ -109,6 +109,13 @@ class TenantRow(BaseModel):
                     "DÉCLARÉ **et** credential présent dans son environnement. false "
                     "⟹ la façade d'enregistrement refuse les rappels de ses clients "
                     "au lieu de promettre une création qu'elle ne fait pas.")
+    refresh_tokens_effectif: bool = Field(
+        default=False,
+        description="Opt-in aux jetons de rafraîchissement tel que CE process "
+                    "l'APPLIQUE à l'autorisation relayée de ce tenant. "
+                    "`logto_mgmt.refresh_tokens` est le DÉCLARÉ : `\"true\"` en chaîne "
+                    "(ou `1`) s'y affiche mais reste ÉTEINT — seul le booléen JSON `true` "
+                    "allume, et seulement une fois chargé (`op=reload`, par process).")
     tool_prefix_effectif: Optional[str] = Field(
         default=None, description="Préfixe d'outils réellement APPLIQUÉ par ce process "
                                   "— null alors que `tool_prefix` est posé signifie "
@@ -209,6 +216,11 @@ def _decorate(row: dict, live: dict) -> dict:
     # lui, un refus d'enregistrement ne se rattache à rien de visible.
     directory = facade.directory_for_tenant((entry or {}).get("entry"))
     row["directory_admin"] = bool(directory and facade._credential_present(directory))
+    # L'opt-in aux jetons de rafraîchissement tel qu'il S'APPLIQUE (registre chargé,
+    # `tenancy._normalize_refresh_tokens`) : la déclaration brute ci-dessus peut montrer
+    # `"true"`, que le chargement écarte — l'opérateur lirait « allumé » un drapeau éteint.
+    row["refresh_tokens_effectif"] = bool(
+        getattr((entry or {}).get("entry"), "refresh_tokens", False))
     return row
 
 
@@ -374,7 +386,9 @@ CAPABILITIES += [
             "[platform admin] Tenant tracking (identity tier, ADR 0052). op=list → one "
             "row per declared tenant: issuer + jwks + hosts + oauth client + dashboard "
             "url, the tool-name prefix shown to its accounts (`tool_prefix` declared "
-            "vs `tool_prefix_effectif` actually applied), whether it is LOADED in this "
+            "vs `tool_prefix_effectif` actually applied), the refresh-token opt-in "
+            "(`logto_mgmt.refresh_tokens` declared vs `refresh_tokens_effectif` actually "
+            "applied — only the JSON boolean `true` turns it on), whether it is LOADED in this "
             "process's issuer registry (declared but not restarted ⇒ its tokens are "
             "still rejected), orgs (via orgs.tenant_id), "
             "accounts (via sub qualification), active accounts + MCP calls over `days` "
