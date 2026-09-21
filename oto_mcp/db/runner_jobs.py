@@ -21,12 +21,26 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from .. import runner_models
 from ._conn import _connect
 
 # Backoff linéaire simple : un échec renvoie le job dans la file à +30 s × tentatives.
 # Pas d'exponentiel en V1 — les échecs attendus (amont LLM en vrac) se lissent, et un
 # job vraiment cassé atteint son plafond en minutes, pas en heures.
 _BACKOFF_S = 30
+#: Les familles servies par un ABONNEMENT personnel (OTO-130) — lues du catalogue,
+#: jamais recopiées. `runner_models` est PUR : la base peut le lire sans remonter
+#: d'une couche (c'est déjà ce que fait la capacité).
+_FAMILLES_ABONNEMENT = frozenset(m.family for m in runner_models.MODELES
+                                 if m.family.endswith("_subscription"))
+
+
+def _abonnement_personnel(depot: Optional[str]) -> bool:
+    """Ce worker sert-il un abonnement personnel ? Les gardes de `claim_next_job`
+    qui n'ont de sens que pour un forfait ne s'allument que là."""
+    return bool(depot) and depot in _FAMILLES_ABONNEMENT
+
+
 _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le tour d'un run
 
 # Plafond d'une page de file. Il existait déjà — enfoui dans le LIMIT, appliqué sans
@@ -416,7 +430,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
         row = conn.execute(
             f"""
             WITH pris AS (
-                SELECT id, kind, run_id FROM runner_jobs
+                SELECT rj.id, rj.kind, rj.run_id FROM runner_jobs rj
                  WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
                    -- ⚠️ La forme `status IN (...) AND (status = 'pending' OR ...)`
                    -- n'est pas cosmétique : le `OR` nu d'avant (17/09/2026, cf.
@@ -439,6 +453,33 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                    -- aussi dans les commentaires SQL.)
                    AND (payload->>'model_family' = %s
                         OR (payload->>'model_family' IS NULL AND NOT %s))
+                   -- ⚠️ ABONNEMENT (OTO-130), et seulement lui : les deux clauses
+                   -- ci-dessous sont NEUTRES pour tout autre dépôt (le booléen les
+                   -- éteint), parce qu'elles décrivent ce qu'est un forfait
+                   -- personnel et non une file.
+                   --
+                   -- 1. UN travail à la fois par PERSONNE. Le bac à sable est le
+                   --    sien, et deux exécutions concurrentes y partagent une même
+                   --    session : le rafraîchissement du jeton se joue entre elles.
+                   --    Tant que ce n'est pas mesuré (question U4 du plan), la file
+                   --    sérialise — une attente est réparable, une session cassée
+                   --    déconnecte la personne.
+                   AND (NOT %s::boolean OR NOT EXISTS (
+                           SELECT 1 FROM runner_jobs vol
+                            WHERE vol.sub = rj.sub AND vol.status = 'claimed'
+                              AND vol.lease_until > NOW()
+                              AND vol.payload->>'model_family' = rj.payload->>'model_family'))
+                   -- 2. La personne dont le FORFAIT est épuisé attend son échéance.
+                   --    Servir ses travaux les ferait échouer un par un jusqu'à
+                   --    épuiser `max_attempts`, et l'agent finirait mort d'un
+                   --    plafond temporaire. Sans échéance connue, rien ne freine :
+                   --    on retente, et le fournisseur tranche.
+                   AND (NOT %s::boolean OR NOT EXISTS (
+                           SELECT 1 FROM user_model_subscriptions ab
+                            WHERE ab.sub = rj.sub
+                              AND ab.famille = rj.payload->>'model_family'
+                              AND ab.statut = 'paused_limit'
+                              AND ab.limit_reset_at > NOW()))
                  ORDER BY due_at
                    FOR UPDATE SKIP LOCKED
                  LIMIT 1
@@ -464,8 +505,10 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
                       j.lease_until, j.sub, j.org_id
             """,
-            (org_id, org_id, depot or "", bool(famille_seule), worker_sub,
-             int(lease_seconds)),
+            (org_id, org_id, depot or "", bool(famille_seule),
+             # Les deux gardes d'abonnement, éteintes pour tout autre dépôt.
+             _abonnement_personnel(depot), _abonnement_personnel(depot),
+             worker_sub, int(lease_seconds)),
         ).fetchone()
     return dict(row) if row else None
 

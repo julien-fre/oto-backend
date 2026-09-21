@@ -59,6 +59,20 @@ MODELES: tuple[Modele, ...] = (
     # par tour au plus. Même plafond que Medium : le raisonnement le partage avec la réponse.
     Modele("mistral-small-2603", "Mistral Small", "mistral", effort="high",
            max_output_tokens=16000),
+    # ⚠️ L'ABONNEMENT de la personne (OTO-130), pas une clé : ces travaux tournent
+    # dans SON bac à sable, sur le programme Claude Code officiel où elle s'est
+    # connectée elle-même. La famille est donc un dépôt qu'AUCUNE org ne dépose et
+    # que la plateforme ne paie pas — `FAMILLES_SANS_DEPOT` ci-dessous dit à la
+    # garde d'argent de ne pas aller chercher une clé qui n'existe pas.
+    #
+    # ⚠️ Des ids PRÉFIXÉS, et non les ids nus du catalogue Anthropic : la famille se
+    # DÉDUIT du modèle (`famille`), donc deux voies d'exécution ne peuvent pas
+    # partager un id. `claude-sonnet-5` reste la voie « clé de l'org » ;
+    # `sub:sonnet` est la voie « abonnement ». Le runner retire le préfixe et passe
+    # l'alias au programme, qui sert ce que le forfait de la personne autorise.
+    Modele("sub:sonnet", "Claude Sonnet (abonnement)", "claude_subscription"),
+    Modele("sub:opus", "Claude Opus (abonnement)", "claude_subscription"),
+    Modele("sub:haiku", "Claude Haiku (abonnement)", "claude_subscription"),
 )
 
 _PAR_ID = {m.id: m for m in MODELES}

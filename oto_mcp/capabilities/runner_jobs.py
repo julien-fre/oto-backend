@@ -25,7 +25,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import _cle_exigee, _lignes_reservables, _modele, _ordre_de_service
+from . import (_abonnement, _cle_exigee, _lignes_reservables, _modele,
+               _ordre_de_service)
 from .. import db, runner_consigne, runner_models, tool_alias
 from ._authz import WORKER_OR_ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -474,6 +475,15 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     """
     if not job.get("org_id") or job.get("delegation_refusee"):
         return job
+    famille = _abonnement.famille_du_travail(job)
+    if _abonnement.est_abonnement(famille):
+        # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
+        # ce travail tournera dans le bac à sable de SON DEMANDEUR, sur le programme
+        # officiel du fournisseur, avec la session qu'il y a ouverte lui-même. La
+        # plateforme ne paie rien, ne détient rien, ne relaie rien. Laisser la garde
+        # d'argent d'en dessous s'exécuter le ferait refuser `_SANS_CLE_DEPOSEE` —
+        # une clé que personne ne déposera jamais pour cette famille.
+        return _avec_abonnement(job, famille, appelant)
     if not worker:
         # Silencieux POUR L'APPELANT — il reçoit son travail, sans clé : un refus
         # explicite apprendrait qu'il y a une clé à obtenir.
@@ -529,6 +539,28 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     # Le workspace part À CÔTÉ de la clé, s'il est posé — et reste hors de la trace
     # ci-dessus comme elle.
     return {**job, "model_key": cle, **({"model_workspace": workspace} if workspace else {})}
+
+
+def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
+    """Le travail d'un abonnement, servi avec le BAC À SABLE de son porteur.
+
+    Ce que le worker reçoit en plus : `sandbox_id`. Jamais de clé, jamais de
+    session — il exécutera le programme officiel DANS ce bac à sable, qui lit la
+    sienne tout seul.
+
+    ⚠️ Un porteur sans connexion ARRÊTE le travail, raison écrite. Le remettre en
+    file le ferait reprendre par le worker suivant, indéfiniment, sans que
+    personne n'apprenne pourquoi — la leçon de `_refuser_sans_cle`.
+    """
+    servable, statut, bac = _abonnement.servable(job.get("sub"), famille)
+    if not servable:
+        return _refuser_sans_cle(job, appelant,
+                                 _abonnement.raison_du_refus(famille, statut))
+    # Trace de REMISE, comme pour une clé : qui, quelle org, quel bac à sable. Elle
+    # ne peut rien révéler d'un secret — il n'y en a pas dans ce chemin.
+    logger.info("abonnement `%s` servi à %s pour l'org %s (travail %s, bac %s)",
+                famille, appelant, job.get("org_id"), job.get("id"), bac)
+    return {**job, "sandbox_id": bac}
 
 
 _SANS_DEPOT = (
