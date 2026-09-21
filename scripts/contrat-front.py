@@ -13,7 +13,9 @@ Deux niveaux, délibérément distincts — un contrôle qui crie pour tout n'es
   ROUGE (sortie 1) — ses appels ne passeront plus, sans ambiguïté : opération disparue,
   identifiant d'opération changé, paramètre qu'il envoie disparu / devenu obligatoire /
   changé de type, paramètre obligatoire apparu, corps de requête disparu ou devenu
-  obligatoire. Cela demande une décision : garder la compatibilité, ou prévenir avant de
+  obligatoire ; ou ce qu'il LIT ne lui parviendra plus : réponse réussie disparue, champ
+  de réponse disparu, n'étant plus garanti, ou pouvant prendre un type qu'il n'attend pas
+  (nullable compris). Cela demande une décision : garder la compatibilité, ou prévenir avant de
   livrer.
 
   ⚠️ Ce qui est AJOUTÉ et facultatif n'est PAS une casse. Premier passage réel, le
@@ -22,8 +24,8 @@ Deux niveaux, délibérément distincts — un contrôle qui crie pour tout n'es
   qu'on cesse de lire. Comparer les signatures d'entrée en bloc était trop grossier ; la
   règle est désormais énumérée, et seul l'irréversible pour l'appelant est rouge.
 
-  AVERTISSEMENT (sortie 0) — le reste des écarts, typiquement une réponse enrichie ou une
-  description retouchée. Ses appels continuent de passer, mais SON contrôle à lui, qui est
+  AVERTISSEMENT (sortie 0) — le reste des écarts, typiquement une réponse ENRICHIE (champ
+  ajouté) ou une description retouchée. Ses appels continuent de passer, mais SON contrôle à lui, qui est
   exact, rougira à sa prochaine poussée : il devra ré-extraire. Ce n'est pas notre faute à
   réparer, c'est une information à lui transmettre.
 
@@ -143,6 +145,75 @@ def casse_les_appels(epingle: dict, servie: dict) -> list:
         nouveaux = set(apres.get("required") or []) - set(avant.get("required") or [])
         for champ in sorted(nouveaux):
             raisons.append(f"le champ « {champ} » du corps de requête devient obligatoire")
+    return raisons + casse_les_lectures(epingle, servie)
+
+
+def casse_les_lectures(epingle: dict, servie: dict) -> list:
+    """Ce que le front LIT et ne trouvera plus dans une réponse réussie. Rien d'autre.
+
+    Trou fermé le 21/09/2026 : jusque-là, seules les ENTRÉES étaient jugées. Un champ de
+    réponse retiré, renommé ou devenu nullable sortait en simple avertissement — or le
+    front le lit, et c'est à l'exécution, sur son écran, qu'il le découvre. La règle est
+    celle du lecteur, symétrique de celle de l'appelant : le serveur a le droit de rendre
+    PLUS (un champ ajouté, un type resserré), jamais MOINS ni AUTRE CHOSE.
+    """
+    raisons = []
+    rep_avant = epingle.get("responses") or {}
+    rep_apres = servie.get("responses") or {}
+    for code, avant in rep_avant.items():
+        if not str(code).startswith("2"):
+            continue
+        apres = rep_apres.get(code)
+        if apres is None:
+            raisons.append(f"la réponse {code} a disparu")
+            continue
+        for mime, sch in _schemas_de_corps(avant).items():
+            sch_apres = _schemas_de_corps(apres).get(mime)
+            if sch_apres is None:
+                raisons.append(f"la réponse {code} n'est plus servie en {mime}")
+                continue
+            raisons += _retrecit(sch, sch_apres, f"réponse {code}")
+    return raisons
+
+
+def _types(sch: dict) -> set:
+    if sch.get("type"):
+        t = sch["type"]
+        return set(t) if isinstance(t, list) else {t}
+    return {v.get("type") for v in (sch.get("anyOf") or sch.get("oneOf") or [])
+            if isinstance(v, dict) and v.get("type")}
+
+
+def _deballe(sch: dict) -> dict:
+    """`X | null` → X : la nullabilité est jugée par `_types`, la forme sur la branche."""
+    variantes = [v for v in (sch.get("anyOf") or sch.get("oneOf") or [])
+                 if isinstance(v, dict) and v.get("type") != "null"]
+    return variantes[0] if len(variantes) == 1 else sch
+
+
+def _retrecit(avant: dict, apres: dict, ou: str) -> list:
+    """Les champs qu'une lecture du schéma épinglé ne retrouvera plus dans le servi."""
+    raisons = []
+    ta, tb = _types(avant), _types(apres)
+    if ta and tb and not tb <= ta:
+        raisons.append(f"{ou} : peut maintenant valoir {sorted(tb - ta)} "
+                       f"(le front attend {sorted(ta)})")
+        return raisons
+    avant, apres = _deballe(avant), _deballe(apres)
+    props_a = avant.get("properties") or {}
+    props_b = apres.get("properties") or {}
+    garantis_b = set(apres.get("required") or [])
+    for champ in sorted(set(avant.get("required") or []) & set(props_a)):
+        if champ in props_b and champ not in garantis_b:
+            raisons.append(f"{ou} : le champ « {champ} » n'est plus garanti")
+    for champ, sch in props_a.items():
+        if champ not in props_b:
+            raisons.append(f"{ou} : le champ « {champ} » a disparu")
+        elif isinstance(sch, dict) and isinstance(props_b[champ], dict):
+            raisons += _retrecit(sch, props_b[champ], f"{ou}.{champ}")
+    items_a, items_b = avant.get("items"), apres.get("items")
+    if isinstance(items_a, dict) and isinstance(items_b, dict):
+        raisons += _retrecit(items_a, items_b, f"{ou}[]")
     return raisons
 
 
@@ -160,11 +231,6 @@ def _elargi_a_nullable(avant: dict, apres: dict) -> bool:
     (`scope` de `me.guide.get` : `"org"` → `None`, la lecture cascade désormais chez
     soi d'abord) — et il a rougi pour la mauvaise raison, en taisant la bonne. D'où
     l'avertissement que `_defaut_change` fait remonter à côté."""
-    def _types(sch: dict) -> set:
-        if sch.get("type"):
-            return {sch["type"]}
-        return {v.get("type") for v in (sch.get("anyOf") or sch.get("oneOf") or [])
-                if isinstance(v, dict) and v.get("type")}
     ta, tb = _types(avant), _types(apres)
     return bool(ta) and ta <= tb and (tb - ta) <= {"null"} and tb != ta
 
@@ -241,7 +307,7 @@ def main() -> int:
             for n in disparues:
                 print(f"  - {n}")
         if entree_changee:
-            print("\nAPPELS EXISTANTS CASSÉS :")
+            print("\nAPPELS OU LECTURES EXISTANTS CASSÉS :")
             for n, raisons in entree_changee:
                 print(f"  - {n}")
                 for r in raisons:
@@ -266,7 +332,7 @@ def main() -> int:
         print("  → prévenir le front : ses appels PASSENT toujours, leur réponse change.")
 
     if forme_changee:
-        print("\nÉcarts SANS effet sur ses appels (réponses ou descriptions retouchées) :")
+        print("\nÉcarts SANS effet sur ses appels (réponses enrichies ou descriptions retouchées) :")
         for n in forme_changee:
             print(f"  - {n}")
         print(
