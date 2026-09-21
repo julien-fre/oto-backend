@@ -60,12 +60,9 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
     Rend `(servable, statut, sandbox_id)`. Un porteur absent n'est jamais servable :
     sans personne, il n'y a pas d'abonnement à consommer.
 
-    ⚠️ `paused_limit` n'est PAS servable non plus, mais il ne devrait pas arriver
-    ici : la réservation saute déjà ces travaux tant que l'échéance est dans le
-    futur (`claim_next_job`). Ce qui arrive ici est un plafond dont l'échéance est
-    PASSÉE — la personne peut retravailler, mais rien n'a encore constaté que sa
-    session tient. On la sert : un travail qui échoue le dira, et le statut
-    suivra."""
+    ⚠️ `paused_limit` EST servable ici, et ce n'est pas une largesse : l'attente de
+    l'échéance vit dans la réservation (`claim_next_job`), pas dans cette garde.
+    Deux juges du même plafond finiraient par se contredire — voir plus bas."""
     if not sub:
         return False, None, None
     ligne = user_subscriptions.get_subscription(sub, famille) or {}
@@ -74,9 +71,14 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
         return False, statut, None
     if statut == user_subscriptions.CONNECTE:
         return True, statut, bac
-    if statut == user_subscriptions.PLAFOND and not ligne.get("limit_reset_at"):
-        # Plafond sans échéance connue : la réservation ne peut pas l'attendre, donc
-        # on tente. Le fournisseur tranchera, et le worker rapportera.
+    if statut == user_subscriptions.PLAFOND:
+        # ⚠️ Un plafond n'est JAMAIS un refus ici (corrigé le 21/09/2026). Tant que
+        # son échéance est future, la réservation saute la personne — ce travail
+        # n'arrive donc ici qu'une fois l'échéance PASSÉE, ou inconnue. Le refuser
+        # l'ARRÊTERAIT DÉFINITIVEMENT pour un plafond qui n'existe plus : la file
+        # rendait le travail et la garde le tuait (mesuré en base). On sert ; si
+        # le forfait est encore épuisé, le fournisseur le dira, et le worker
+        # rapportera une nouvelle échéance.
         return True, statut, bac
     return False, statut, bac
 

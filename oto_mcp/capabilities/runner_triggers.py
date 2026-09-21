@@ -771,6 +771,12 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
         if actuel["enabled"]:
             _modele.exige_servi(db.runner_arme(ctx.org_id), famille)
+            # ⚠️ Le TROISIÈME chemin de pose, oublié au premier jet (revue du
+            # 21/09/2026) : retoucher le modèle d'un agent ALLUMÉ ne passe ni par
+            # la création ni par le rallumage. Sans cette garde, un collègue
+            # pointait l'agent vivant de quelqu'un d'autre sur le forfait de
+            # celui-ci, dès l'occurrence suivante.
+            _abonnement.exiger_a_la_pose(ctx.sub, actuel.get("sub"), famille)
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")

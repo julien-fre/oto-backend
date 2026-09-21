@@ -427,6 +427,12 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
         # reprise d'un fil), jamais un bail repris sur un run ouvert. La trace
         # (`_CHAMP_PLATEFORME`) s'écrit dans la MÊME écriture que le détachement.
         from .usage import _run_closure
+        abonnement = _abonnement_personnel(depot)
+        if abonnement:
+            # Point de sauvegarde, et non un rollback : la connexion peut être
+            # PARTAGÉE avec un appelant (`_emprunt_partage`), dont une annulation
+            # entière déferait aussi les écritures. Seule la prise se défait.
+            conn.execute("SAVEPOINT prise_abonnement")
         row = conn.execute(
             f"""
             WITH pris AS (
@@ -510,7 +516,50 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
              _abonnement_personnel(depot), _abonnement_personnel(depot),
              worker_sub, int(lease_seconds)),
         ).fetchone()
+        if abonnement:
+            if row and _deja_en_vol(conn, dict(row)):
+                # Un autre worker a pris, AU MÊME INSTANT, un autre travail de la
+                # même personne. Cette prise-ci se défait : le travail retourne
+                # `pending`, sa tentative n'est pas comptée, et il repartira quand
+                # l'autre conclura.
+                conn.execute("ROLLBACK TO SAVEPOINT prise_abonnement")
+                row = None
+            conn.execute("RELEASE SAVEPOINT prise_abonnement")
     return dict(row) if row else None
+
+
+def _deja_en_vol(conn, pris: dict) -> bool:
+    """Un AUTRE travail de la même personne, de la même famille, est-il en vol ?
+
+    ⚠️ **Pourquoi la clause `NOT EXISTS` de la réservation ne suffit pas** (mesuré
+    le 21/09/2026, trois prises simultanées → deux travaux en vol) : elle lit un
+    INSTANTANÉ. Deux réservations parallèles prennent chacune un travail différent
+    de la même personne, et aucune ne voit la prise de l'autre — elle n'est pas
+    encore committée.
+
+    D'où le verrou consultatif, pris APRÈS la prise et BLOQUANT : les réservations
+    d'une même personne passent une à une. La première ne voit que la sienne et
+    garde ; la suivante attend le commit de la première, puis relit — en READ
+    COMMITTED, chaque ordre a son instantané, donc elle VOIT la prise committée —
+    et se défait. Le verrou tombe avec la transaction : aucun état à nettoyer.
+
+    Pas d'interblocage possible : la seconde tient sa ligne et attend le verrou ;
+    la première tient le verrou et n'a besoin d'aucune ligne de la seconde."""
+    porteur = pris.get("sub")
+    if not porteur:
+        return False
+    famille = (pris.get("payload") or {}).get("model_family")
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"abonnement:{famille}:{porteur}",))
+    return conn.execute(
+        """
+        SELECT 1 FROM runner_jobs
+         WHERE sub = %s AND id <> %s AND status = 'claimed'
+           AND lease_until > NOW() AND payload->>'model_family' = %s
+         LIMIT 1
+        """,
+        (porteur, pris["id"], famille),
+    ).fetchone() is not None
 
 
 def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:

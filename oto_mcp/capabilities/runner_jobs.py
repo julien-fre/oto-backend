@@ -475,15 +475,6 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     """
     if not job.get("org_id") or job.get("delegation_refusee"):
         return job
-    famille = _abonnement.famille_du_travail(job)
-    if _abonnement.est_abonnement(famille):
-        # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
-        # ce travail tournera dans le bac à sable de SON DEMANDEUR, sur le programme
-        # officiel du fournisseur, avec la session qu'il y a ouverte lui-même. La
-        # plateforme ne paie rien, ne détient rien, ne relaie rien. Laisser la garde
-        # d'argent d'en dessous s'exécuter le ferait refuser `_SANS_CLE_DEPOSEE` —
-        # une clé que personne ne déposera jamais pour cette famille.
-        return _avec_abonnement(job, famille, appelant)
     if not worker:
         # Silencieux POUR L'APPELANT — il reçoit son travail, sans clé : un refus
         # explicite apprendrait qu'il y a une clé à obtenir.
@@ -501,6 +492,20 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
                            "ce n'est pas un worker de plateforme",
                            depot, appelant, job["org_id"], job.get("id"))
         return job
+    famille = _abonnement.famille_du_travail(job)
+    if _abonnement.est_abonnement(famille):
+        # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
+        # ce travail tournera dans le bac à sable de SON DEMANDEUR, sur le programme
+        # officiel du fournisseur, avec la session qu'il y a ouverte lui-même. La
+        # plateforme ne paie rien, ne détient rien, ne relaie rien. Laisser la garde
+        # d'argent d'en dessous s'exécuter le ferait refuser `_SANS_CLE_DEPOSEE` —
+        # une clé que personne ne déposera jamais pour cette famille.
+        #
+        # ⚠️ APRÈS la garde `worker` ci-dessus, pas avant (revue du 21/09/2026) : la
+        # file n'est pas réservée aux workers. Placée plus haut, cette branche
+        # laissait un simple membre ARRÊTER DÉFINITIVEMENT le travail d'un collègue
+        # non connecté, et lui rendait le bac à sable d'un autre.
+        return _avec_abonnement(job, famille, appelant)
     # ⚠️ LA GARDE D'ARGENT (`_cle_exigee`), et seulement pour un WORKER : c'est lui
     # qui retombe sur la clé de SON environnement — la nôtre — quand le travail
     # n'en porte pas. Un membre qui réserve tourne sur ce qu'il a, pas sur nous.

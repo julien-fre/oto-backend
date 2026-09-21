@@ -1,0 +1,145 @@
+"""La file d'un ABONNEMENT personnel, EN BASE (OTO-130) — ce qu'une doublure ne prouve pas.
+
+Deux clauses vivent en SQL dans `claim_next_job` et ne se jugent que là : la
+sérialisation par PERSONNE, et l'attente de l'échéance d'un forfait épuisé. Le
+troisième banc tient la couture entre la base et la garde : un forfait dont
+l'échéance est PASSÉE redevient servable des deux côtés à la fois — sinon la file
+rend le travail et la garde le tue.
+
+Patron de base éphémère repris de `test_worker_cles_clients_db.py`. Tous les claims
+sont scopés à leur org : un claim de plateforme prendrait le travail des autres bancs.
+"""
+from __future__ import annotations
+
+import os
+import threading
+import uuid
+
+import pytest
+
+_FAMILLE = "claude_subscription"
+
+
+@pytest.fixture(scope="module")
+def live(pg_dsn):
+    psycopg = pytest.importorskip("psycopg")
+    from oto_mcp.db import _conn as dbconn
+
+    name = "oto_abonnement_" + uuid.uuid4().hex[:8]
+    root = psycopg.connect(pg_dsn, autocommit=True)
+    root.execute(f'CREATE DATABASE "{name}"')
+    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
+    avant_url, avant_pool = os.environ.get("DATABASE_URL"), dbconn._pool
+    avant_key = os.environ.get("OTO_MCP_MASTER_KEY")
+    os.environ["DATABASE_URL"] = dsn
+    os.environ["OTO_MCP_MASTER_KEY"] = "4" * 64
+    dbconn._pool = None
+    try:
+        from oto_mcp.db import init_db
+        init_db()
+        yield
+    finally:
+        if dbconn._pool is not None:
+            dbconn._pool.close()
+        dbconn._pool = avant_pool
+        for cle, valeur in (("DATABASE_URL", avant_url),
+                            ("OTO_MCP_MASTER_KEY", avant_key)):
+            if valeur is None:
+                os.environ.pop(cle, None)
+            else:
+                os.environ[cle] = valeur
+        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        root.close()
+
+
+def _personne(sub):
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("INSERT INTO users (sub) VALUES (%s) ON CONFLICT DO NOTHING", (sub,))
+    return sub
+
+
+def _travail(org, sub, famille=_FAMILLE):
+    from oto_mcp import db
+    return db.enqueue_job(org, "start", sub=sub,
+                          payload={"procedure": "p", "model": "sub:sonnet",
+                                   "model_family": famille})["id"]
+
+
+def _claim(org, worker="w-abonnement"):
+    from oto_mcp import db
+    return db.claim_next_job(org, worker, lease_seconds=60,
+                             depot=_FAMILLE, famille_seule=True)
+
+
+def test_un_seul_travail_a_la_fois_par_personne(live):
+    from oto_mcp import db
+    a, b = _personne("abo-a"), _personne("abo-b")
+    premier, second = _travail(9401, a), _travail(9401, a)
+    de_b = _travail(9401, b)
+
+    assert _claim(9401)["id"] == premier
+    # Le second travail de A ATTEND ; celui de B, plus récent, passe devant.
+    assert _claim(9401)["id"] == de_b
+    assert _claim(9401) is None, "le second travail de A attend la fin du premier"
+
+    db.complete_job(premier, "w-abonnement", ok=True)
+    assert _claim(9401)["id"] == second, "et il part dès que le premier conclut"
+
+
+def test_une_autre_famille_n_est_JAMAIS_serialisee(live):
+    """Les deux clauses sont éteintes hors abonnement : deux travaux `anthropic`
+    d'une même personne partent ensemble, comme avant ce lot."""
+    from oto_mcp import db
+    c = _personne("abo-c")
+    un, deux = _travail(9402, c, "anthropic"), _travail(9402, c, "anthropic")
+    pris = [db.claim_next_job(9402, "w", lease_seconds=60, depot="anthropic")["id"]
+            for _ in range(2)]
+    assert pris == [un, deux]
+
+
+def test_un_forfait_epuise_attend_son_echeance_puis_REPART(live):
+    """⚠️ La couture base ↔ garde. Tant que l'échéance est future, la file saute la
+    personne. Une fois PASSÉE, la file rend le travail — et la garde du claim doit le
+    servir aussi : si elle le refusait, le travail serait ARRÊTÉ DÉFINITIVEMENT par un
+    plafond qui n'existe plus."""
+    from oto_mcp import db
+    from oto_mcp.capabilities import _abonnement
+    from oto_mcp.db import user_subscriptions as US
+    from oto_mcp.db._conn import _connect
+    d = _personne("abo-d")
+    US.upsert_sandbox(d, _FAMILLE, "bac-d")
+    with _connect() as conn:
+        futur = conn.execute("SELECT NOW() + interval '1 hour' AS t").fetchone()["t"]
+        passe = conn.execute("SELECT NOW() - interval '1 minute' AS t").fetchone()["t"]
+    US.marquer_statut(d, _FAMILLE, US.PLAFOND, limit_reset_at=futur)
+    travail = _travail(9403, d)
+    assert _claim(9403) is None, "échéance future : la personne attend"
+
+    US.marquer_statut(d, _FAMILLE, US.PLAFOND, limit_reset_at=passe)
+    pris = _claim(9403)
+    assert pris and pris["id"] == travail, "échéance passée : la file le rend"
+    servable, _, bac = _abonnement.servable(d, _FAMILLE)
+    assert servable and bac == "bac-d", (
+        "la garde doit servir ce que la file vient de rendre — sinon le travail "
+        "est tué par un plafond expiré")
+
+
+def test_deux_workers_SIMULTANES_ne_prennent_pas_deux_travaux_d_une_personne(live):
+    """La sérialisation tient-elle sous concurrence réelle ? `NOT EXISTS` lit un
+    instantané : deux transactions parallèles ne voient pas la prise de l'autre."""
+    e = _personne("abo-e")
+    for _ in range(6):
+        _travail(9404, e)
+    pris, barriere = [], threading.Barrier(3)
+
+    def _un(i):
+        barriere.wait()
+        j = _claim(9404, worker=f"w-{i}")
+        if j:
+            pris.append(j["id"])
+
+    fils = [threading.Thread(target=_un, args=(i,)) for i in range(3)]
+    [f.start() for f in fils]
+    [f.join() for f in fils]
+    assert len(pris) == 1, f"{len(pris)} travaux de la même personne en vol : {pris}"

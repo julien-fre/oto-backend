@@ -96,12 +96,25 @@ def test_sans_porteur_rien_a_consommer(_abonnements):
     assert "delegation_refusee" in _servi(_travail(sub=None))
 
 
-def test_plafond_dont_l_echeance_est_passee_est_retente(_abonnements):
-    """La réservation saute déjà les plafonds à échéance FUTURE. Ce qui arrive ici
-    est un plafond sans échéance : on tente, le fournisseur tranchera."""
+def test_un_plafond_n_est_jamais_un_refus_a_la_garde(_abonnements):
+    """L'attente de l'échéance vit dans la RÉSERVATION, pas ici : ce qui arrive à
+    la garde a une échéance passée ou inconnue. Le refuser tuerait le travail pour
+    un plafond expiré (la couture est jugée en base, `_db`)."""
     _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.PLAFOND, "sandbox_id": _BAC,
                                           "limit_reset_at": None}
     assert _servi(_travail())["sandbox_id"] == _BAC
+
+
+def test_un_simple_membre_ne_recoit_ni_bac_a_sable_ni_pouvoir_d_arreter(
+        _abonnements, _refus_sans_base, monkeypatch):
+    """La file n'est pas réservée aux workers : un membre d'org peut réserver. Il ne
+    doit ni recevoir le bac à sable d'un collègue, ni — pire — pouvoir ARRÊTER
+    DÉFINITIVEMENT son travail parce que ce collègue n'est pas connecté."""
+    monkeypatch.setattr(RJ, "_depot_pose", lambda org, depot: False)
+    servi = RJ._avec_cle(_travail(), _FAMILLE, "un-membre-ordinaire",
+                         worker=False, org_key_only=True)
+    assert "sandbox_id" not in servi and "delegation_refusee" not in servi
+    assert _refus_sans_base == [], "un membre a fait arrêter le travail d'un autre"
 
 
 def test_une_autre_famille_garde_le_chemin_des_cles(monkeypatch):
@@ -204,4 +217,20 @@ class TestCablage:
             asyncio.run(RF._fleets(self._ctx(), RF.FleetInput(
                 op="create", label="passage", namespace="n", procedure="p",
                 tools=["oto_doc"], model="sub:sonnet")))
+        assert e.value.code == "subscription_personal_only"
+
+    def test_retoucher_le_modele_d_un_agent_ALLUME_passe_par_la_garde(self, monkeypatch):
+        """Le troisième chemin de pose : ni création, ni rallumage. Un collègue ne
+        pointe pas l'agent vivant d'un autre sur le forfait de celui-ci."""
+        import asyncio
+
+        from oto_mcp.capabilities import runner_triggers as RT
+        monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: {
+            "id": 3, "org_id": 2, "sub": "le-proprietaire", "enabled": True,
+            "kind": "schedule", "model": "claude-sonnet-5", "procedure": "p"})
+        monkeypatch.setattr(RT.db, "update_trigger",
+                            lambda *a, **k: pytest.fail("retouche écrite"))
+        with pytest.raises(Exception) as e:
+            asyncio.run(RT._triggers(self._ctx(sub="un-collegue"), RT.TriggerInput(
+                op="update", trigger_id=3, model="sub:sonnet")))
         assert e.value.code == "subscription_personal_only"
