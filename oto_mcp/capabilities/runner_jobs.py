@@ -569,6 +569,15 @@ def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
     personne n'apprenne pourquoi — la leçon de `_refuser_sans_cle`.
     """
     servable, statut, bac = _abonnement.servable(job.get("sub"), famille)
+    if not servable and _abonnement.reparable(statut, bac):
+        # ⚠️ RENDU à la file, pas arrêté (21/09/2026) : la personne doit se
+        # reconnecter, et ce n'est pas la faute du travail. La réservation saute
+        # déjà ces personnes — n'arrive ici que la course où l'état a changé entre
+        # la prise et cette garde. `delegation_refusee` reste le champ que le
+        # worker DÉPLOYÉ sait lire : il n'exécute pas et ne conclut pas.
+        raison = _abonnement.raison_de_l_attente(famille, statut)
+        db.rendre_a_la_file(job["id"], appelant, raison)
+        return {**job, "delegation_refusee": raison, "delegated_token": None}
     if not servable:
         return _refuser_sans_cle(job, appelant,
                                  _abonnement.raison_du_refus(famille, statut))

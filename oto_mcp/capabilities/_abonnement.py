@@ -64,6 +64,55 @@ def raison_du_refus(famille: str, statut: Optional[str]) -> str:
     return _PAS_CONNECTE.format(famille=famille, statut=statut or "jamais connectée")
 
 
+def reparable(statut: Optional[str], bac: Optional[str]) -> bool:
+    """Cet état se répare-t-il SANS toucher au travail ? Oui dès que la personne a
+    un bac à sable et n'a qu'à s'y reconnecter. Non quand il n'y a rien à attendre :
+    ni bac à sable, ni ligne — personne ne reviendra « reconnecter » ce qui n'a
+    jamais existé, et un travail en attente éternelle est un silence."""
+    return bool(bac) and statut in (user_subscriptions.A_RECONNECTER,
+                                    user_subscriptions.DECONNECTE)
+
+
+def raison_de_l_attente(famille: str, statut: Optional[str]) -> str:
+    return (f"en attente : ce travail tourne sur l'abonnement `{famille}` de son "
+            f"demandeur, qui doit s'y reconnecter ({statut}). Il repartira tout seul "
+            "à la reconnexion (Réglages › Fournisseurs de modèles).")
+
+
+def peut_agir_pour(sub: str, proprietaire: Optional[str], famille: str) -> bool:
+    """`sub` a-t-il le droit de faire tourner QUELQUE CHOSE sur l'abonnement de
+    `proprietaire` ? **LA couture du partage** (arbitré le 21/09/2026).
+
+    Aujourd'hui : le propriétaire seul. Demain, une connexion d'abonnement
+    s'administrera comme les autres connecteurs — partagée avec des personnes
+    nommées, qui pourront alors modifier ses agents. Ce jour-là, la règle change
+    ICI et nulle part ailleurs : les trois chemins de pose et la retouche d'un
+    agent relisent tous cette fonction."""
+    return not proprietaire or proprietaire == sub
+
+
+def exiger_le_droit_de_modifier(sub: str, agent: dict, famille: Optional[str],
+                                champs: dict) -> None:
+    """Retoucher l'agent d'un AUTRE posé sur un abonnement : refusé, sauf l'éteindre.
+
+    Changer sa procédure, sa consigne ou ses outils, c'est faire exécuter SES
+    instructions sur le forfait d'un autre — la même faute que changer son modèle,
+    par une autre porte. ÉTEINDRE reste ouvert à qui administre l'org : personne
+    ne doit avoir besoin du propriétaire pour arrêter un agent qui dérape (la
+    suppression, elle, ne passe pas par ici)."""
+    if not est_abonnement(famille):
+        return
+    if peut_agir_pour(sub, agent.get("sub"), famille):
+        return
+    if set(champs) <= {"enabled"} and champs.get("enabled") is False:
+        return
+    raise AuthzDenied(
+        400, "subscription_personal_only",
+        f"cet agent tourne sur l'abonnement `{famille}` de quelqu'un d'autre : ce que "
+        "tu y changerais s'exécuterait sur SON forfait. Tu peux l'éteindre ; pour le "
+        "modifier, il faut que sa connexion soit partagée avec toi.")
+
+
 def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Optional[str]]:
     """La connexion de `sub` peut-elle servir un travail `famille` ?
 
@@ -107,7 +156,7 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
             f"les modèles `{famille}` tournent sur l'abonnement d'UNE personne : une "
             "flotte appartient à l'organisation et ferait payer son forfait pour le "
             "travail de tous. Choisis un modèle servi par une clé d'organisation.")
-    if proprietaire and proprietaire != sub:
+    if not peut_agir_pour(sub, proprietaire, famille):
         raise AuthzDenied(
             400, "subscription_personal_only",
             f"cet agent appartient à quelqu'un d'autre, et les modèles `{famille}` "

@@ -1176,6 +1176,13 @@ ces identifiants. D'où trois conséquences lisibles dans le code :
 **Des ids PRÉFIXÉS.** La famille se DÉDUIT du modèle : `claude-sonnet-5` reste la voie
 « clé de l'org », `sub:sonnet` est la voie « abonnement ». Le worker retire le préfixe.
 
+**La couture du partage : `_abonnement.peut_agir_pour`.** Aujourd'hui le
+propriétaire seul. Une connexion d'abonnement s'administrera comme les autres
+connecteurs — partagée avec des personnes nommées, qui pourront alors modifier ses
+agents (arbitré le 21/09/2026). Ce jour-là, la règle change dans CETTE fonction et
+nulle part ailleurs. D'ici là, retoucher l'agent d'un autre est refusé, **sauf
+l'éteindre** : personne ne doit avoir besoin du propriétaire pour arrêter un agent.
+
 **Un forfait est PERSONNEL.** Trois refus, tous avant l'écriture :
 `subscription_not_connected` (poser sans connexion = un agent programmé qui ne tourne
 jamais), `subscription_personal_only` sur l'agent d'un collègue, et le même sur une
@@ -1189,8 +1196,14 @@ qu'on oublie).
    instantané, et trois prises simultanées donnaient deux travaux en vol (mesuré). Un
    verrou consultatif BLOQUANT est pris après la prise ; la prise en trop se défait par
    un **point de sauvegarde**, jamais un rollback (la connexion peut être partagée).
-2. *Un forfait épuisé attend son échéance.* La personne est SAUTÉE tant que
-   `limit_reset_at` est futur : ses travaux restent `pending`, aucune tentative brûlée.
+2. *Qui ne peut pas servir ATTEND, il n'échoue pas.* La personne est SAUTÉE tant
+   que son forfait est épuisé (`limit_reset_at` futur) **ou qu'elle doit se
+   reconnecter** (`needs_login`, `disconnected` — arbitré le 21/09/2026) : ses
+   travaux restent `pending`, aucune tentative brûlée, et ils repartent TOUT SEULS
+   à la reconnexion. Ce n'est pas un arriéré : le tick périme les occurrences
+   programmées restées en file, un webhook porte sa fraîcheur — seule la plus
+   récente attend vraiment. L'écran l'annonce (`waiting_jobs`). Ne s'ARRÊTE encore
+   que ce qui n'a rien à attendre : aucun bac à sable, aucun demandeur.
    ⚠️ L'attente vit ICI et nulle part ailleurs : la garde du claim sert un `paused_limit`
    sans discuter, sinon un plafond EXPIRÉ tuait le travail que la file venait de rendre.
 

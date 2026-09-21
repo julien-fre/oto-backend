@@ -200,3 +200,50 @@ def test_un_travail_EN_VOL_ne_reconnecte_PAS_qui_vient_de_se_deconnecter(live):
         "fenetres": {"five_hour": {"utilization": 1.0, "resetsAt": 1}}}})
     assert US.get_subscription(g, _FAMILLE)["statut"] == US.DECONNECTE
     assert _abonnement.servable(g, _FAMILLE)[0] is False
+
+
+@pytest.mark.parametrize("etat", ["needs_login", "disconnected"])
+def test_qui_doit_se_reconnecter_voit_ses_travaux_ATTENDRE_puis_REPARTIR(live, etat):
+    """Décidé le 21/09/2026 : une session perdue (ou une déconnexion voulue) ne tue
+    plus les travaux un par un. Ils attendent, et repartent TOUT SEULS à la
+    reconnexion — sans que personne ait à les relancer."""
+    from oto_mcp import db
+    from oto_mcp.db import user_subscriptions as US
+    from oto_mcp.db._conn import _connect
+    org = 9410 + ["needs_login", "disconnected"].index(etat)
+    h = _personne(f"abo-h-{etat}")
+    US.upsert_sandbox(h, _FAMILLE, "bac-h")
+    US.marquer_statut(h, _FAMILLE, etat)
+    travail = _travail(org, h)
+
+    assert _claim(org) is None, "personne ne le prend tant qu'elle n'est pas revenue"
+    with _connect() as conn:
+        ligne = conn.execute("SELECT status, attempts FROM runner_jobs WHERE id = %s",
+                             (travail,)).fetchone()
+    assert (ligne["status"], ligne["attempts"]) == ("pending", 0), (
+        "en ATTENTE : ni échoué, ni tentative brûlée")
+    assert db.travaux_en_attente_d_abonnement(h, _FAMILLE) == 1, "et l'écran le dit"
+
+    US.marquer_statut(h, _FAMILLE, US.CONNECTE, ok=True)      # elle se reconnecte
+    pris = _claim(org)
+    assert pris and pris["id"] == travail, "le travail repart tout seul"
+
+
+def test_une_prise_rendue_a_la_file_ne_coute_AUCUNE_tentative(live):
+    """La course : l'état change entre la prise et la garde. Le travail est rendu,
+    pas arrêté — et trois de ces courses ne doivent pas le tuer."""
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    i = _personne("abo-i")
+    travail = _travail(9412, i)
+    assert _claim(9412)["id"] == travail
+    assert db.rendre_a_la_file(travail, "w-abonnement", "en attente de reconnexion")
+    with _connect() as conn:
+        ligne = conn.execute(
+            "SELECT status, attempts, claimed_by, last_error, due_at > NOW() AS plus_tard "
+            "FROM runner_jobs WHERE id = %s", (travail,)).fetchone()
+    assert ligne["status"] == "pending" and ligne["attempts"] == 0
+    assert ligne["claimed_by"] is None and ligne["plus_tard"]
+    assert "reconnexion" in ligne["last_error"], "un travail qui attend dit pourquoi"
+    # Un autre worker ne peut pas rendre la prise de quelqu'un d'autre.
+    assert db.rendre_a_la_file(travail, "un-autre", "x") is False

@@ -777,6 +777,15 @@ async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # pointait l'agent vivant de quelqu'un d'autre sur le forfait de
             # celui-ci, dès l'occurrence suivante.
             _abonnement.exiger_a_la_pose(ctx.sub, actuel.get("sub"), famille)
+    # ⚠️ EN DERNIER, juste avant d'écrire : l'ordre des refus est un contrat, et
+    # cette garde ne doit en déplacer aucun. Elle juge la famille EFFECTIVE —
+    # celle qu'on pose, sinon celle qui est stockée.
+    actuel = _actuel()
+    if actuel:
+        _abonnement.exiger_le_droit_de_modifier(
+            ctx.sub, actuel,
+            famille if inp.model is not None
+            else runner_models.famille(actuel.get("model")), champs)
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")

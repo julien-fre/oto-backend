@@ -474,17 +474,23 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                             WHERE vol.sub = rj.sub AND vol.status = 'claimed'
                               AND vol.lease_until > NOW()
                               AND vol.payload->>'model_family' = rj.payload->>'model_family'))
-                   -- 2. La personne dont le FORFAIT est épuisé attend son échéance.
-                   --    Servir ses travaux les ferait échouer un par un jusqu'à
-                   --    épuiser `max_attempts`, et l'agent finirait mort d'un
-                   --    plafond temporaire. Sans échéance connue, rien ne freine :
-                   --    on retente, et le fournisseur tranche.
+                   -- 2. La personne qui ne peut pas servir ATTEND, elle n'échoue pas.
+                   --    Forfait épuisé : jusqu'à son échéance (sans échéance connue,
+                   --    rien ne freine — on retente, le fournisseur tranche).
+                   --    Session perdue ou déconnexion voulue : jusqu'à ce qu'elle se
+                   --    reconnecte (décidé le 21/09/2026). Arrêter ces travaux un
+                   --    par un tuait l'agent pour un état RÉPARABLE ; en attente,
+                   --    ils repartent tout seuls à la reconnexion. Ce n'est pas un
+                   --    arriéré qui s'accumule : le tick périme les occurrences
+                   --    programmées restées en file, et un webhook porte sa
+                   --    fraîcheur — seule la plus récente attend vraiment.
                    AND (NOT %s::boolean OR NOT EXISTS (
                            SELECT 1 FROM user_model_subscriptions ab
                             WHERE ab.sub = rj.sub
                               AND ab.famille = rj.payload->>'model_family'
-                              AND ab.statut = 'paused_limit'
-                              AND ab.limit_reset_at > NOW()))
+                              AND (ab.statut IN ('needs_login', 'disconnected')
+                                   OR (ab.statut = 'paused_limit'
+                                       AND ab.limit_reset_at > NOW()))))
                  ORDER BY due_at
                    FOR UPDATE SKIP LOCKED
                  LIMIT 1
@@ -594,6 +600,43 @@ def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:
     faux ici et enverrait chercher au mauvais endroit.
     """
     return arreter_definitivement(job_id, worker_sub, raison)
+
+
+def rendre_a_la_file(job_id: int, worker_sub: str, raison: str,
+                     delai_s: int = 60) -> bool:
+    """Défait une prise SANS la compter : le travail retourne `pending`.
+
+    L'inverse exact d'`arreter_definitivement`, pour un motif qui se RÉPARE sans
+    toucher au travail — son demandeur doit se reconnecter à son abonnement
+    (OTO-130). La réservation saute déjà ces personnes ; ceci ne sert qu'à la
+    course où l'état change entre la prise et la garde. La tentative est rendue
+    (`attempts - 1`) : le travail n'a rien tenté, et trois de ces courses ne
+    doivent pas le tuer. La raison s'écrit quand même — un travail qui attend dit
+    pourquoi."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'pending', claimed_by = NULL, lease_until = NULL,
+                   attempts = GREATEST(attempts - 1, 0),
+                   due_at = NOW() + make_interval(secs => %s), last_error = %s
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+            """,
+            (int(delai_s), raison, job_id, worker_sub),
+        )
+        return bool(cur.rowcount)
+
+
+def travaux_en_attente_d_abonnement(sub: str, famille: str) -> int:
+    """Combien de travaux de cette personne attendent SA reconnexion (ou la fin de
+    son plafond) — ce que l'écran annonce : « 3 travaux repartiront »."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM runner_jobs "
+            "WHERE sub = %s AND status = 'pending' "
+            "AND payload->>'model_family' = %s",
+            (sub, famille)).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def arreter_definitivement(job_id: int, worker_sub: str, raison: str) -> bool:

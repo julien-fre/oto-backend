@@ -84,10 +84,16 @@ def test_jamais_connecte_arrete_le_travail_en_le_disant(_abonnements, _refus_san
     assert [a[0] for a in _refus_sans_base] == [42]
 
 
-def test_deconnecte_arrete_le_travail(_abonnements):
+def test_sans_bac_a_sable_il_n_y_a_RIEN_a_attendre_le_travail_s_arrete(
+        _abonnements, _refus_sans_base):
+    """Depuis le 21/09/2026, qui doit se RECONNECTER voit ses travaux attendre (banc
+    plus bas). Ce qui s'arrête encore : l'état sans bac à sable — personne ne
+    reviendra « reconnecter » ce qui n'a jamais existé, et un travail en attente
+    éternelle est un silence."""
     _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.A_RECONNECTER,
-                                          "sandbox_id": _BAC}
+                                          "sandbox_id": None}
     assert "delegation_refusee" in _servi(_travail())
+    assert [a[0] for a in _refus_sans_base] == [42]
 
 
 def test_sans_porteur_rien_a_consommer(_abonnements):
@@ -324,3 +330,59 @@ def test_une_base_qui_hoquette_ne_casse_PAS_la_conclusion(monkeypatch):
         raise RuntimeError("connexion perdue")
     monkeypatch.setattr(_abonnement.db_runner_jobs, "porteur_et_famille", _hoquet)
     _abonnement.noter_rapport_du_travail(42, True, {"abonnement": {"etat": "allowed"}})
+
+
+class TestRetoucheParUnAutre:
+    """Arbitré le 21/09/2026 : modifier l'agent d'un autre posé sur un abonnement
+    n'est permis que si sa connexion est PARTAGÉE avec soi. Aucun partage n'existe
+    encore — donc le propriétaire seul, et la couture est `peut_agir_pour`."""
+
+    _AGENT = {"id": 3, "sub": "le-proprietaire", "model": "sub:sonnet"}
+
+    def test_changer_la_consigne_de_l_agent_d_un_autre_est_refuse(self):
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_le_droit_de_modifier(
+                "un-collegue", self._AGENT, _FAMILLE, {"input": "fais autre chose"})
+        assert e.value.code == "subscription_personal_only"
+
+    def test_l_ETEINDRE_reste_permis(self):
+        """Personne ne doit avoir besoin du propriétaire pour arrêter un agent."""
+        _abonnement.exiger_le_droit_de_modifier(
+            "un-collegue", self._AGENT, _FAMILLE, {"enabled": False})
+
+    def test_le_RALLUMER_ne_l_est_pas(self):
+        with pytest.raises(Exception):
+            _abonnement.exiger_le_droit_de_modifier(
+                "un-collegue", self._AGENT, _FAMILLE, {"enabled": True})
+
+    def test_le_proprietaire_modifie_librement(self):
+        _abonnement.exiger_le_droit_de_modifier(
+            "le-proprietaire", self._AGENT, _FAMILLE, {"input": "x", "tools": ["a"]})
+
+    def test_un_agent_ordinaire_n_est_pas_concerne(self):
+        _abonnement.exiger_le_droit_de_modifier(
+            "un-collegue", {"sub": "le-proprietaire", "model": "claude-sonnet-5"},
+            "anthropic", {"input": "x"})
+
+    def test_la_couture_du_partage_est_UNIQUE(self, monkeypatch):
+        """Le jour où une connexion se partage, UNE fonction change — et les trois
+        chemins de pose comme la retouche suivent. Ce banc tient qu'ils la lisent."""
+        monkeypatch.setattr(_abonnement, "peut_agir_pour", lambda *a: True)
+        monkeypatch.setattr(US, "get_subscription",
+                            lambda s, f: {"statut": US.CONNECTE, "sandbox_id": _BAC})
+        _abonnement.exiger_le_droit_de_modifier(
+            "un-collegue", self._AGENT, _FAMILLE, {"input": "x"})
+        _abonnement.exiger_a_la_pose("un-collegue", "le-proprietaire", _FAMILLE)
+
+
+def test_a_la_garde_un_etat_REPARABLE_rend_le_travail_au_lieu_de_l_arreter(
+        _abonnements, _refus_sans_base, monkeypatch):
+    rendus = []
+    monkeypatch.setattr(RJ.db, "rendre_a_la_file",
+                        lambda job_id, appelant, raison: rendus.append((job_id, raison)))
+    _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.A_RECONNECTER, "sandbox_id": _BAC}
+    servi = _servi(_travail())
+    assert [r[0] for r in rendus] == [42] and _refus_sans_base == [], (
+        "rendu à la file — pas arrêté")
+    assert "repartira" in servi["delegation_refusee"]
+    assert servi.get("delegated_token") is None and "sandbox_id" not in servi

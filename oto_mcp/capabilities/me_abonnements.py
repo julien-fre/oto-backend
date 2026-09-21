@@ -78,6 +78,11 @@ class Abonnement(BaseModel):
         None, description=("When the plan limit lifts, if the person is waiting on "
                            "one. Their jobs stay queued until then — none fail."))
     last_ok_at: Optional[str] = None
+    waiting_jobs: int = Field(
+        0, description=("How many of your jobs are queued on this subscription right "
+                        "now. While you are signed out, need to reconnect, or wait on "
+                        "a plan limit, they WAIT — none fail — and they resume on "
+                        "their own once you are back."))
 
 
 class AbonnementsListe(BaseModel):
@@ -106,8 +111,10 @@ def _servi(ligne: dict) -> dict:
 # et gèle tout le serveur le temps de la requête ; un `def` part en threadpool.
 # Écrits `async` au premier jet — les bancs passaient, c'est la prod qui aurait gelé.
 def _liste(ctx: ResolvedCtx, inp: AbonnementsInput) -> dict:
-    return {"subscriptions": [_servi(l)
-                              for l in db.user_subscriptions.list_subscriptions(ctx.sub)]}
+    return {"subscriptions": [
+        {**_servi(l),
+         "waiting_jobs": db.travaux_en_attente_d_abonnement(ctx.sub, l["famille"])}
+        for l in db.user_subscriptions.list_subscriptions(ctx.sub)]}
 
 
 def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
