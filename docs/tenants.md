@@ -31,7 +31,10 @@ description: >-
 >   poser**, puis `oidc.invalid_redirect_uri` deux secondes plus tard à l'`/authorize` —
 >   un succès annoncé, un échec ailleurs, aucun indice. Un tenant dont NOUS hébergeons
 >   l'annuaire déclare donc ses accès dans **`tenants.logto_mgmt`** (JSONB) :
->   `{"token_endpoint", "api_endpoint", "credential"}`. ⚠️ **Aucun secret en base** —
+>   `{"token_endpoint", "api_endpoint", "credential"}` (+ `redirect_uris`, optionnel : les
+>   URLs de rappel EXACTES d'un client hébergé, valables sur les hosts de CE tenant seulement,
+>   jamais un motif — `docs/auth-logto.md` §« Le rappel d'un client hébergé »).
+>   ⚠️ **Aucun secret en base** —
 >   `credential` est le NOM d'un couple de variables d'environnement
 >   (`<credential>_ID`/`_SECRET`), même convention que le primaire. ⚠️ **Les deux
 >   endpoints sont un COUPLE** : chez Logto le jeton se prend sur l'endpoint

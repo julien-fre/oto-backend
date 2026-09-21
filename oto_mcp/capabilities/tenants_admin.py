@@ -83,6 +83,9 @@ class TenantRow(BaseModel):
         description="Accès d'ADMINISTRATION de l'annuaire de ce tenant, tels que "
                     "DÉCLARÉS : `token_endpoint`, `api_endpoint`, et `credential` (le "
                     "NOM du couple de variables d'environnement, jamais sa valeur). "
+                    "`redirect_uris` (optionnel) : les URLs de rappel EXACTES d'un client "
+                    "hébergé que la façade d'enregistrement accepte sur les hosts de ce "
+                    "tenant seulement — jamais un motif. "
                     "Vide = annuaire non administrable par la plateforme.")
 
     primary: bool = Field(description="Le tenant de la plateforme (`oto`), dont "

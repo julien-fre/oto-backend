@@ -87,7 +87,9 @@ client_id ni intervention manuelle**, même quand le redirect varie par connecte
 QUE des hosts connus (claude.ai/.com, chatgpt.com préfixe `/connector/oauth/`,
 callback.mistral.ai, localhost) — pas un registrar ouvert. **Nouveau client qui
 échoue** : son redirect est loggé (`DCR refusé — redirect_uris=…` en journalctl) →
-ajouter son host à `_redirect_ok`. Fail-open : Management API en panne → `client_id`
+ajouter son host à `_redirect_ok` — sauf un client HÉBERGÉ qui pose un rappel par instance
+(sous-domaine en libre-service) : jamais un motif, voir §« Le rappel d'un client hébergé ».
+Fail-open : Management API en panne → `client_id`
 renvoyé quand même (Claude, redirect pré-enregistré, jamais cassé).
 
 ### Sur le host d'un TENANT : enregistrer chez lui, ou dire qu'on ne l'a pas fait
@@ -138,6 +140,59 @@ cette confrontation qui rattache un refus à sa cause.
 process AVANT que sa ligne ne porte `logto_mgmt`, sinon la façade refuse pendant la
 fenêtre. La colonne, elle, est posée par `init_db` au boot — et preprod et prod
 partagent la même base.
+
+#### Le rappel d'un client hébergé : l'URL EXACTE, déclarée par tenant, jamais un motif
+
+Un client hébergé dont le tableau de bord pose son PROPRE rappel, un par instance
+(Hermes Cloud : `https://<id>.agents.<domaine>/api/mcp/oauth/callback/<serveur>`), n'entre
+pas dans la liste globale de `_redirect_ok`. **Un joker n'y entre pas non plus, à aucun
+prix** : `POST /oauth/register` n'est pas authentifié et pose le rappel demandé dans
+l'application partagée. Avec un motif `*.agents.<domaine>`, n'importe quel client du produit
+hébergé (le sous-domaine est en libre-service) enregistrerait le sien, enverrait à un
+utilisateur un lien d'autorisation, et recevrait le code — le PKCE n'y change rien, c'est
+lui qui ouvre le flux. Les hôtes fixes de la liste (chatgpt.com, callback.mistral.ai) n'ont
+pas ce défaut : c'est le serveur du fournisseur qui reçoit le code. Et `_redirect_ok` vaut
+pour TOUS les hosts, `mcp.oto.cx` compris, pour le bénéfice d'un seul tenant.
+
+Un tenant DÉCLARE donc les URLs exactes qu'il accepte, dans `tenants.logto_mgmt` (la
+même colonne, la même déclaration que ses accès d'annuaire — elle n'a d'effet que si la façade
+sait poser le rappel chez lui) :
+
+```json
+{"token_endpoint": "…", "api_endpoint": "…", "credential": "LOGTO_<TENANT>_MGMT",
+ "redirect_uris": ["https://<id>.agents.<domaine>/api/mcp/oauth/callback/<serveur>"]}
+```
+
+- **Égalité de chaîne, rien d'autre** : ni préfixe, ni joker, ni suffixe de domaine, ni
+  variante de casse ou de port. Une instance de plus = une entrée de plus, choisie par
+  l'exploitant du tenant.
+- **Sur les hosts de CE tenant seulement** : la liste, l'application et l'annuaire viennent
+  de la MÊME entrée de registre, résolue une fois d'après le `Host` de la requête. Le `Host`
+  n'est pas authentifié à ce niveau, mais forger celui d'un tenant ne donne que
+  l'enregistrement, chez lui, d'un rappel qu'il a déjà déclaré — jamais un rappel au choix de
+  l'appelant, jamais chez nous. `_redirect_ok` (liste globale) reste inchangée, et
+  `auth/anon.py` n'appelle qu'elle.
+- **La DCR et l'autorisation relayée appliquent la MÊME garde**
+  (`facade.redirect_autorise`) : un rappel refusé à l'enregistrement ne s'autorise pas, même
+  posé dans l'application par un autre chemin.
+- **Validée au chargement, entrée par entrée** : une entrée qui n'est pas une URL https
+  complète (joker, requête, fragment, identité, chemin absent) est écartée et alertée
+  (`tenancy._rappel_declarable`) — une ligne écartée ne peut que RÉDUIRE ce qui est accepté.
+- **Refus nommé** sur le host d'un tenant : 400 `invalid_redirect_uri` qui dit QUEL rappel est
+  écarté et à qui le demander (l'exploitant du tenant), sans nommer nos colonnes.
+- **Poser une entrée** (geste d'exploitation, comme tout le reste de `tenants` ; le tenant
+  doit déjà porter `logto_mgmt`), puis `oto_admin_tenant op=reload` — le registre est lu au
+  boot, et prod et preprod ne partagent que la base :
+
+  ```sql
+  UPDATE tenants
+     SET logto_mgmt = jsonb_set(logto_mgmt, '{redirect_uris}',
+           COALESCE(logto_mgmt->'redirect_uris', '[]'::jsonb) || to_jsonb(%s::text))
+   WHERE slug = %s AND logto_mgmt IS NOT NULL;
+  ```
+
+  Retirer une entrée retire l'accès : rien d'autre à défaire côté façade (le rappel déjà
+  posé dans l'application du tenant, lui, se retire chez lui).
 
 **Onboarding actuel = self-serve ouvert.** Le tenant a sign-up activé par
 email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire,
