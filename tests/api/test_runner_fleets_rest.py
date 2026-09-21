@@ -506,9 +506,13 @@ def test_arreter_DEMANDE_et_ne_pretend_pas_que_c_est_fait(client, org, flotte_a_
 
 def test_l_ecart_entre_demande_et_effectif_est_le_diagnostic(client, org, flotte_a_piloter):
     """Un `stopping` qui ne devient jamais `stopped` désigne un ordonnanceur mort.
-    Fondu dans un seul état, ce cas ressemblerait à un arrêt réussi."""
+    Fondu dans un seul état, ce cas ressemblerait à un arrêt réussi.
+
+    Aucun ordonnanceur ne tient cette campagne : c'est le sondage qui CONSTATE
+    l'arrêt, quand plus aucune exécution ne tourne (21/09/2026 — l'accusé d'un
+    ordonnanceur n'est plus reçu que de celui qui la tient)."""
     from oto_mcp import db
-    assert db.accuser_arret(flotte_a_piloter["id"], org["id"], None) is True
+    assert flotte_a_piloter["id"] in db.accuser_arrets_effectifs(org["id"])
     f = client.post(ROUTE, headers=_h(org["membre"]),
                     json={"op": "get", "fleet_id": flotte_a_piloter["id"]}
                     ).json()["fleet"]
@@ -642,19 +646,24 @@ def test_le_cycle_armee_prise_arret_demande_arret_accuse(client, org, flotte_cyc
     armee = client.post(ROUTE, headers=h, json={"op": "launch", "fleet_id": fid}).json()["fleet"]
     assert armee["status"] == "armed" and not armee["started_at"]
 
-    prise = client.post(ROUTE, headers=h, json={"op": "take", "fleet_id": fid}).json()["fleet"]
+    moi = "box-a/oto-fleet-cycle"
+    prise = client.post(ROUTE, headers=h, json={"op": "take", "fleet_id": fid,
+                                                "taken_by": moi}).json()["fleet"]
     assert prise["status"] == "running" and prise["started_at"], (
         "c'est l'ordonnanceur qui pose le FAIT `running`, en prenant la flotte")
+    assert prise["taken_by"] == moi, "et il dit QUI la tient"
 
     demande = client.post(ROUTE, headers=h, json={
         "op": "stop", "fleet_id": fid, "reason": "budget"}).json()["fleet"]
     assert demande["status"] == "stopping", "l'ordre est posé, pas encore exécuté"
 
     # l'ordonnanceur LIT l'ordre en battant — c'est ce qui rend `stop` réel
-    beat = client.post(ROUTE, headers=h, json={"op": "beat", "fleet_id": fid}).json()
+    beat = client.post(ROUTE, headers=h, json={"op": "beat", "fleet_id": fid,
+                                               "taken_by": moi}).json()
     assert beat["stop_requested"] is True
 
-    acc = client.post(ROUTE, headers=h, json={"op": "ack_stop", "fleet_id": fid}).json()["fleet"]
+    acc = client.post(ROUTE, headers=h, json={"op": "ack_stop", "fleet_id": fid,
+                                              "taken_by": moi}).json()["fleet"]
     assert acc["status"] == "stopped" and acc["stopped_at"]
     assert acc["stop_reason"] == "budget", "la raison de la DEMANDE survit à l'accusé"
 
@@ -667,23 +676,38 @@ def test_un_battement_sans_ordre_ne_dit_pas_qu_il_faut_s_arreter(client, org):
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     client.post(ROUTE, headers=_h(org["membre"]), json={"op": "launch", "fleet_id": fid})
-    client.post(ROUTE, headers=_h(org["membre"]), json={"op": "take", "fleet_id": fid})
+    _prendre(client, org, fid, "box-a/oto-fleet-battement")
     beat = client.post(ROUTE, headers=_h(org["membre"]),
-                       json={"op": "beat", "fleet_id": fid}).json()
+                       json={"op": "beat", "fleet_id": fid,
+                             "taken_by": "box-a/oto-fleet-battement"}).json()
     assert beat["stop_requested"] is False and beat["beat_taken"] is True
 
 
 def test_deux_ordonnanceurs_ne_prennent_pas_la_meme_flotte(client, org):
     """⚠️ Le second doit l'APPRENDRE, pas partir en croyant l'avoir prise —
-    sinon le passage double et son état ne dit la vérité pour aucun des deux."""
+    sinon le passage double et son état ne dit la vérité pour aucun des deux.
+
+    Depuis le 21/09/2026 le refus dit POURQUOI — un autre la TIENT — sans dire qui :
+    `held_by_other` enseigne le geste (ne pas partir), la lecture dit le reste."""
+    fid = _campagne_armee(client, org, "concurrence")
+    assert _prendre(client, org, fid, "box-a/oto-fleet-a").status_code == 200
+    r = _prendre(client, org, fid, "box-b/oto-fleet-b")
+    assert (r.status_code, r.json().get("error")) == (409, "held_by_other"), r.text
+    assert "box-a" not in r.text, "le refus ne nomme pas le preneur en place"
+    f = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "fleet_id": fid}).json()["fleet"]
+    assert f["taken_by"] == "box-a/oto-fleet-a", "le refusé n'a rien écrit"
+
+
+def test_on_ne_prend_qu_une_campagne_armee_ou_en_cours(client, org):
+    """`not_takeable` rejoué : une campagne `draft` n'est demandée par personne."""
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "concurrence", "procedure": "p",
+        "op": "create", "label": "jamais-armee", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
-    client.post(ROUTE, headers=_h(org["membre"]), json={"op": "launch", "fleet_id": fid})
-    assert client.post(ROUTE, headers=_h(org["membre"]),
-                       json={"op": "take", "fleet_id": fid}).status_code == 200
-    assert _refus(client, org, {"op": "take", "fleet_id": fid}) == (409, "not_takeable")
+    assert _refus(client, org, {"op": "take", "fleet_id": fid,
+                                "taken_by": "box-a/oto-fleet-draft"}
+                  ) == (409, "not_takeable")
 
 
 def test_on_n_accuse_pas_un_arret_qui_n_a_pas_ete_demande(client, org):
@@ -693,8 +717,127 @@ def test_on_n_accuse_pas_un_arret_qui_n_a_pas_ete_demande(client, org):
         "op": "create", "label": "sans-demande", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
-    assert _refus(client, org, {"op": "ack_stop", "fleet_id": fid}
+    assert _refus(client, org, {"op": "ack_stop", "fleet_id": fid,
+                                "taken_by": "box-a/oto-fleet-x"}
                   ) == (409, "nothing_to_acknowledge")
+
+
+# ── QUI TIENT une campagne (21/09/2026) ──────────────────────────────────────
+#
+# `take` notait l'état sans noter l'auteur : un ordonnanceur qui redémarrait ne
+# savait pas s'il reprenait SA campagne ou s'il en voyait une qu'un autre tenait,
+# et oto-runner supposait une reprise — deux ordonnanceurs pouvaient conduire la
+# même campagne. Le preneur est désormais écrit, lu, et comparé à chaque geste.
+
+def _prendre(client, org, fid: int, preneur: str):
+    return client.post(ROUTE, headers=_h(org["membre"]),
+                       json={"op": "take", "fleet_id": fid, "taken_by": preneur})
+
+
+def _campagne_armee(client, org, label: str) -> int:
+    h = _h(org["membre"])
+    fid = client.post(ROUTE, headers=h, json={
+        "op": "create", "label": label, "procedure": "p", "tools": ["oto_kb"],
+        "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
+    assert client.post(ROUTE, headers=h,
+                       json={"op": "launch", "fleet_id": fid}).status_code == 200
+    return fid
+
+
+def test_take_pose_le_preneur_et_get_comme_list_le_rendent(client, org):
+    """Ce qu'un ordonnanceur qui redémarre LIT pour décider : sur la route, sérialisé."""
+    fid = _campagne_armee(client, org, "preneur-lu")
+    r = _prendre(client, org, fid, "box-a/oto-fleet-lu")
+    assert r.status_code == 200, r.text
+    assert r.json()["fleet"]["taken_by"] == "box-a/oto-fleet-lu"
+    h = _h(org["membre"])
+    get = client.post(ROUTE, headers=h, json={"op": "get", "fleet_id": fid}).json()["fleet"]
+    assert get["taken_by"] == "box-a/oto-fleet-lu"
+    carte = next(c for c in client.post(ROUTE, headers=h, json={"op": "list"}
+                                        ).json()["fleets"] if c["id"] == fid)
+    assert carte["taken_by"] == "box-a/oto-fleet-lu"
+
+
+def test_la_reprise_par_le_MEME_preneur_reussit_et_ne_redemarre_rien(client, org):
+    """L'ordonnanceur a redémarré : il reprend SA campagne, sans refus à contourner,
+    et le passage ne recommence pas pour autant."""
+    fid = _campagne_armee(client, org, "reprise")
+    premiere = _prendre(client, org, fid, "box-a/oto-fleet-reprise").json()["fleet"]
+    r = _prendre(client, org, fid, "box-a/oto-fleet-reprise")
+    assert r.status_code == 200, r.text
+    f = r.json()["fleet"]
+    assert f["status"] == "running" and f["taken_by"] == "box-a/oto-fleet-reprise"
+    assert f["started_at"] == premiere["started_at"], "une reprise ne redémarre pas"
+
+
+def test_un_geste_d_ordonnanceur_sans_preneur_est_refuse(client, org):
+    """Un geste sans auteur est ce que ce lot existe pour empêcher — et le refus
+    n'écrit rien."""
+    fid = _campagne_armee(client, org, "sans-preneur")
+    for op in ("take", "beat", "ack_stop"):
+        assert _refus(client, org, {"op": op, "fleet_id": fid}) == (400, "missing_fields"), op
+        assert _refus(client, org, {"op": op, "fleet_id": fid, "taken_by": "  "}
+                      ) == (400, "missing_fields"), op
+    f = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "fleet_id": fid}).json()["fleet"]
+    assert f["status"] == "armed" and f["taken_by"] is None
+
+
+def test_un_AUTRE_ne_bat_ni_n_accuse_a_la_place_du_preneur(client, org):
+    """Un battement d'autrui ferait passer pour vivant un preneur mort ; un accusé
+    d'autrui annoncerait un arrêt que le preneur n'a pas exécuté."""
+    h = _h(org["membre"])
+    fid = _campagne_armee(client, org, "battu-par-un-autre")
+    assert _prendre(client, org, fid, "box-a/oto-fleet-tenue").status_code == 200
+    assert _refus(client, org, {"op": "beat", "fleet_id": fid,
+                                "taken_by": "box-b/oto-fleet-intrus"}
+                  ) == (409, "not_the_holder")
+    beat = client.post(ROUTE, headers=h, json={
+        "op": "beat", "fleet_id": fid, "taken_by": "box-a/oto-fleet-tenue"}).json()
+    assert beat["beat_taken"] is True
+    assert client.post(ROUTE, headers=h, json={
+        "op": "stop", "fleet_id": fid, "reason": "fin"}).status_code == 200
+    assert _refus(client, org, {"op": "ack_stop", "fleet_id": fid,
+                                "taken_by": "box-b/oto-fleet-intrus"}
+                  ) == (409, "not_the_holder")
+    acc = client.post(ROUTE, headers=h, json={
+        "op": "ack_stop", "fleet_id": fid, "taken_by": "box-a/oto-fleet-tenue"})
+    assert acc.status_code == 200, acc.text
+    assert acc.json()["fleet"]["status"] == "stopped"
+
+
+def test_une_campagne_demarree_par_le_sondage_se_prend_une_seule_fois(client, org):
+    """Le sondage des workers démarre une campagne sans ordonnanceur (`taken_by`
+    NULL) : le premier qui la prend la tient, le suivant l'apprend."""
+    from oto_mcp import db
+    fid = _campagne_armee(client, org, "demarree-par-le-sondage")
+    db.marquer_demarree(fid)
+    f = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "fleet_id": fid}).json()["fleet"]
+    assert f["status"] == "running" and f["taken_by"] is None
+    assert _prendre(client, org, fid, "box-a/oto-fleet-sonde").status_code == 200
+    r = _prendre(client, org, fid, "box-b/oto-fleet-sonde")
+    assert (r.status_code, r.json().get("error")) == (409, "held_by_other"), r.text
+
+
+def test_rearmer_libere_la_campagne_et_l_ancien_preneur_l_apprend(client, org):
+    """Le chemin quand le preneur est mort : arrêter, laisser constater l'arrêt,
+    réarmer. Le réarmement libère ; l'ancien preneur, s'il revit, l'apprend à son
+    battement au lieu de conduire un passage qui n'est plus le sien."""
+    from oto_mcp import db
+    h = _h(org["membre"])
+    fid = _campagne_armee(client, org, "preneur-mort")
+    assert _prendre(client, org, fid, "box-a/oto-fleet-mort").status_code == 200
+    client.post(ROUTE, headers=h, json={"op": "stop", "fleet_id": fid,
+                                        "reason": "preneur mort"})
+    assert fid in db.accuser_arrets_effectifs(org["id"])
+    rearmee = client.post(ROUTE, headers=h, json={"op": "launch", "fleet_id": fid})
+    assert rearmee.status_code == 200, rearmee.text
+    assert rearmee.json()["fleet"]["taken_by"] is None
+    assert _prendre(client, org, fid, "box-b/oto-fleet-relais").status_code == 200
+    assert _refus(client, org, {"op": "beat", "fleet_id": fid,
+                                "taken_by": "box-a/oto-fleet-mort"}
+                  ) == (409, "not_the_holder")
 
 
 # ── bêta : la route REFUSE, elle ne se contente pas de cacher ──────────────────

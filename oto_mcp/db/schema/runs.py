@@ -188,6 +188,15 @@ CREATE TABLE IF NOT EXISTS runner_fleets (
     started_at TIMESTAMPTZ,
     stopping_at TIMESTAMPTZ,
     heartbeat_at TIMESTAMPTZ,
+    -- QUI tient la campagne (21/09/2026) : l'identifiant que l'ordonnanceur DÉCLARE
+    -- à `op=take`, stable à travers son redémarrage, distinct d'un ordonnanceur à
+    -- l'autre. `sub` est le DÉCLARANT et `heartbeat_at` date un battement sans dire
+    -- de qui : sans elle, un ordonnanceur qui redémarre ne sait pas s'il reprend SA
+    -- campagne ou s'il en voit une qu'un autre tient encore. NULL = personne ne la
+    -- tient (jamais prise, démarrée par le sondage, ou réarmée). ⚠️ Une base qui
+    -- existe déjà la reçoit de la révision Alembic `0003_runner_fleets_preneur`,
+    -- jouée à la main — pas du boot (ADR 0065).
+    taken_by TEXT,
     stopped_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

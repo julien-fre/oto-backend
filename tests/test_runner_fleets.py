@@ -504,7 +504,7 @@ def test_la_temperature_ne_se_change_PAS_en_vol():
 
 _CARTE = {"id", "label", "status", "procedure", "namespace", "row_filter", "max_rows",
           "model", "stop_reason", "armed_at", "started_at", "stopping_at", "stopped_at",
-          "created_at", "input_sha256"}
+          "created_at", "taken_by", "input_sha256"}
 
 
 def _ligne(**surcharges) -> dict:
@@ -522,7 +522,7 @@ def _ligne(**surcharges) -> dict:
         "max_tokens": 1_000_000, "max_consecutive_failures": 5,
         "max_tokens_per_row": 50_000, "status": "running", "stop_reason": None,
         "armed_at": "2026-09-13 08:00:00", "started_at": "2026-09-13 08:00:05",
-        "stopping_at": None, "heartbeat_at": None, "stopped_at": None,
+        "stopping_at": None, "heartbeat_at": None, "taken_by": None, "stopped_at": None,
         "created_at": "2026-09-12 17:00:00"}
     assert set(ligne) == {c.strip() for c in dbf._COLS.split(",")}, (
         "la doublure ne porte plus les colonnes du SELECT servi")
