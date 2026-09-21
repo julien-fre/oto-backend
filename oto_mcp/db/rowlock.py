@@ -399,12 +399,17 @@ def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str]) -> b
     """Libère le bail d'une row. `worker` non-None = gardé (on ne libère pas le
     claim d'un autre) ; None = libération inconditionnelle (chemin interne : entrée
     en état terminal). Renvoie False si rien n'a été libéré (pas de bail, ou bail
-    d'un autre worker)."""
+    d'un autre worker).
+
+    Efface aussi `claimed_run` (#664) : `datastore_release_by_run` compte TOUT ce qui
+    porte le run, donc une ligne rendue à la main mais restée marquée serait recomptée
+    par `run_finish` / `complete` dans `rows_released`."""
     guard = "" if worker is None else " AND claimed_by = %s"
     params: tuple = (ns_id, row_id) if worker is None else (ns_id, row_id, str(worker))
     with _connect() as conn:
         cur = conn.execute(
-            "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL "
+            "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
+            "claimed_run = NULL "
             f"WHERE ns_id = %s AND row_id = %s AND claimed_by IS NOT NULL{guard}",
             params,
         )
