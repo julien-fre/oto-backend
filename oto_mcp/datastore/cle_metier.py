@@ -48,6 +48,29 @@ def refuser_cle_metier_vide(schema: Optional[dict], user_data: dict) -> None:
         f"colonne (la ligne naît sans clé, non rapprochable).")
 
 
+def cle_reecrite(schema: Optional[dict], avant: dict, pose: dict) -> Optional[tuple[str, Any, Any]]:
+    """`(clé, ancienne, nouvelle)` si un patch par identifiant RÉÉCRIT la clé métier
+    déclarée d'une ligne qui en portait une, sinon None (#527).
+
+    Ce qu'une réécriture n'est PAS : poser la clé d'une ligne qui n'en avait pas (la
+    ligne « non rapprochable » qu'on répare), redire la même valeur, ou l'enrichir d'une
+    provenance — une clé annotée est la MÊME identité qu'une clé nue (cf. `lots.py`).
+    Comparé en texte : `551` et `"551"` désignent la même ligne pour l'index.
+
+    ⚠️ Le geste est légitime quand il corrige un SIREN mal saisi à l'import, et
+    silencieusement dévastateur quand il propage une faute de frappe : la ligne existe
+    toujours, le compte ne bouge pas, mais plus rien ne la rapproche du fichier client.
+    Celui qui décide (signaler ou refuser) est l'appelant, selon le cran du tableau."""
+    key = (schema or {}).get("key")
+    if not isinstance(key, str) or not key or key not in pose:
+        return None
+    ancienne = dsv2.unwrap(avant.get(key))
+    nouvelle = dsv2.unwrap(pose[key])
+    if ancienne in (None, "") or nouvelle is None or str(ancienne) == str(nouvelle):
+        return None
+    return key, ancienne, nouvelle
+
+
 def ligne_de_la_course_perdue(ns_id: int, key: Optional[str], kv: Any,
                               violation: Exception) -> str:
     """La ligne qui a gagné la course sous l'index de clé métier (#109 ch.3), vers

@@ -664,6 +664,21 @@ rendre un tableau inécrivable. Il est annoncé par `enforced` (#389) via une so
 interroge la fonction qui décide : il ne se prouve pas sur une ROW, puisqu'il se juge
 contre le CONTENU du tableau.
 
+**La clé métier RÉÉCRITE par un patch sur `id` (#527).** Le geste voisin de #516, un cran
+plus grave : là-bas on crée une ligne orpheline qu'on peut retrouver, ici on rend
+orpheline une ligne qu'on ne retrouvera plus. Mesuré le 28/08/2026 : `data_write(id=…)` avec
+un `siren` INEXISTANT (faute de frappe) dans le corps était accepté sans un mot — la ligne
+existe toujours, le compte ne bouge pas, mais elle porte un numéro qui n'existe pas et rien
+ne la rapproche plus du fichier client. Deux crans, comme #516 : un tableau **ouvert**
+laisse faire (corriger un SIREN mal saisi à l'import est légitime) mais le DIT — `notices`
+porte « clé métier `siren` modifiée sur la ligne « … » : ancienne → nouvelle » ; un tableau
+**fermé** (`key_required`) le **refuse**, en nommant l'ancienne et la nouvelle valeur, et la
+sortie passe par le schéma (`data_patch_schema(key_required=false)` le temps du geste),
+jamais par un paramètre « forcer » sur l'écriture. Ne sont PAS des réécritures : poser la
+clé d'une ligne qui n'en avait pas, redire la même valeur, ou l'enrichir d'une provenance.
+Garde : `cle_metier.cle_reecrite`, branchée dans `update_row` (donc aussi `append_row` avec
+`_id` et REST `PATCH …/rows/{id}`) ; le lot, qui vise par la clé, n'est pas concerné.
+
 **Le refus disait une sortie impraticable — corrigé le 02/09/2026 (#668).** Le cran
 faisait exactement ce que #516 a voulu ; ce qui manquait était le CHEMIN DE RETOUR. Le
 refus ne nommait qu'une sortie — « vise-la par son identifiant » — vraie, et sans objet
