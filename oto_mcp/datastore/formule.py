@@ -38,6 +38,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Optional, Union
 
+from .couches import est_vide, unwrap
+
 
 class FormulaError(ValueError):
     """Une formule invalide — texte actionnable, nommant le problème exact."""
@@ -443,17 +445,32 @@ def _valeurs_plage(noeud: "Plage", row: dict) -> list:
     colonne-liste `noeud.colonne` de `row` — une LISTE Python, jamais un scalaire.
     Défensif : une colonne absente/pas une liste rend une plage vide plutôt que de
     lever (la validation à la pose a déjà refusé ce cas ; ici on ne casse jamais
-    une écriture pour une formule posée avant un durcissement de la validation)."""
+    une écriture pour une formule posée avant un durcissement de la validation).
+
+    **Chaque attribut de fiche se lit COMME une colonne de premier niveau** : l'appelant
+    (`compute_row_formulas`) reçoit la ligne dont les colonnes sont déjà déballées
+    (`unwrap`), mais les attributs des fiches d'une liste, eux, sont rangés bruts — un
+    vide ASSUMÉ (`@empty`) y est l'enveloppe `{"valeur": "", "oto.vide_assume": true}`,
+    une cellule à couches `{"valeur": …, "comment": …}`. Les lire par `str(dict)` en
+    faisait une chaîne non vide, donc une valeur. On déballe ici avec la MÊME fonction
+    (`couches.unwrap`) et on juge le vide avec la MÊME définition (`couches.est_vide`)
+    que le reste du datastore : la plage n'a pas sa propre idée de ce qu'est un vide.
+    Un élément vide est rendu `""` — c'est ce que `COUNTA` et la provenance écartent."""
     valeur = row.get(noeud.colonne)
     if not isinstance(valeur, list):
         return []
     out = []
     for element in valeur:
-        if isinstance(element, dict):
-            out.append(_valeur_champ(element, noeud.sous_champ))
-        else:
-            out.append("")
+        brut = unwrap(element.get(noeud.sous_champ)) if isinstance(element, dict) else None
+        out.append("" if est_vide(brut) else _valeur_champ({noeud.sous_champ: brut},
+                                                         noeud.sous_champ))
     return out
+
+
+def _nb_valeurs(noeud: "Plage", row: dict) -> int:
+    """Combien de valeurs RÉELLES (non vides) porte la plage — l'unique définition,
+    lue par `COUNTA` et par la provenance, pour qu'elles ne divergent jamais."""
+    return sum(1 for v in _valeurs_plage(noeud, row) if v != "")
 
 
 def _evaluer(noeud: Noeud, row: dict) -> Any:
@@ -516,8 +533,7 @@ def _appeler(appel: Appel, row: dict) -> Any:
     if fn == "COUNTA":
         # `args[0]` est TOUJOURS une `Plage` ici — `valider()` refuse à la pose
         # tout autre argument (cf. `_verifier_usage_plages`).
-        valeurs = _valeurs_plage(args[0], row)
-        return sum(1 for v in valeurs if v != "")
+        return _nb_valeurs(args[0], row)
     if fn == "IF":
         cond, alors, sinon = args
         return _evaluer(alors, row) if bool(_evaluer(cond, row)) else _evaluer(sinon, row)
@@ -573,7 +589,7 @@ def _compte_counta(noeud: Noeud, row: dict) -> Optional[int]:
     gagnante qui teste une plage."""
     if isinstance(noeud, Appel):
         if noeud.fonction == "COUNTA":
-            return len([v for v in _valeurs_plage(noeud.args[0], row) if v != ""])
+            return _nb_valeurs(noeud.args[0], row)
         for a in noeud.args:
             trouve = _compte_counta(a, row)
             if trouve is not None:

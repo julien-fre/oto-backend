@@ -508,3 +508,121 @@ def test_get_schema_dit_le_statut_du_backfill_en_cours(live):
     # Rien à recalculer : la clé n'apparaît PAS (un `0` permanent serait aussi
     # peu lu qu'un `warning` toujours présent — même choix que `warning`).
     assert "formules_a_recalculer" not in out
+
+
+# ── COUNTA et le vide ASSUMÉ (`@empty`) — la même lecture que le scalaire ────
+# Défaut rapporté après #1018 : `COUNTA(contacts[].telephone)` comptait comme une
+# VALEUR un élément dont le téléphone était un vide assumé. Cause : dans une fiche
+# de liste, `@empty` est rangé sous forme d'ENVELOPPE
+# (`{"valeur": "", "oto.vide_assume": true}`), et la plage la lisait par `str(dict)`
+# — une chaîne non vide — au lieu de la déballer comme le fait le scalaire (l'appelant
+# passe `unwrap` sur chaque colonne de PREMIER niveau, pas sur les attributs des
+# fiches d'une liste). Ces bancs passent la forme STOCKÉE, celle que voit vraiment
+# `compute_row_formulas`, pas une forme rêvée.
+
+_VIDE_ASSUME = {"valeur": "", "oto.vide_assume": True}
+
+
+def _has_tel(contacts, entreprise=""):
+    return F.evaluer_avec_provenance(
+        F.parse(HAS_TEL), {"entreprise_telephone": entreprise, "contacts": contacts})
+
+
+def test_counta_ignore_le_vide_assume_d_un_element():
+    v, _ = _has_tel([{"telephone": dict(_VIDE_ASSUME), "nom": "A"}])
+    assert v is False
+
+
+def test_counta_ignore_le_vide_assume_en_cellule_a_couches():
+    """`{"valeur": "@empty", "comment": …}` s'écrit puis se range en enveloppe qui
+    GARDE son commentaire : la cellule est à couches ET vide assumée."""
+    v, _ = _has_tel([{"telephone": {"valeur": "", "comment": "rien trouvé",
+                                    "oto.vide_assume": True}}])
+    assert v is False
+
+
+def test_counta_ignore_une_cellule_a_couches_dont_la_valeur_est_vide():
+    """Même famille, découverte en cherchant : une cellule à couches SANS vide assumé
+    mais dont la valeur est vide (`{"valeur": "", "comment": "source"}`) n'est pas
+    non plus une valeur — `str(dict)` la comptait aussi."""
+    v, _ = _has_tel([{"telephone": {"valeur": "", "comment": "source"}}])
+    assert v is False
+
+
+def test_counta_ignore_une_cellule_qui_n_a_que_des_couches():
+    v, _ = _has_tel([{"telephone": {"comment": "à chercher"}}])
+    assert v is False
+
+
+def test_counta_compte_une_valeur_reelle_en_cellule_a_couches():
+    v, p = _has_tel([{"telephone": {"valeur": "0600000000", "comment": "source"}}])
+    assert v is True
+    assert "1 valeur(s) trouvée(s)" in p
+
+
+def test_counta_melange_vide_assume_et_valeur_reelle():
+    contacts = [{"telephone": dict(_VIDE_ASSUME)},
+                {"telephone": "0600000000"},
+                {"telephone": dict(_VIDE_ASSUME)}]
+    v, _ = _has_tel(contacts)
+    assert v is True
+
+
+def test_la_provenance_ne_compte_que_les_valeurs_reelles():
+    contacts = [{"telephone": dict(_VIDE_ASSUME)},
+                {"telephone": "0600000000"},
+                {"telephone": {"valeur": "", "comment": "source"}}]
+    _, p = _has_tel(contacts)
+    assert "1 valeur(s) trouvée(s)" in p, p
+
+
+def test_counta_zero_quand_toute_la_plage_est_en_vide_assume():
+    noeud = F.parse('IFS(COUNTA(contacts[].telephone)=0; "aucun"; TRUE(); "au moins un")')
+    contacts = [{"telephone": dict(_VIDE_ASSUME)}, {"telephone": dict(_VIDE_ASSUME)}]
+    v, _ = F.evaluer_avec_provenance(noeud, {"contacts": contacts})
+    assert v == "aucun"
+
+
+def test_counta_ignore_les_conteneurs_vides():
+    """`est_vide` (la définition centrale du vide) : `[]` et `{}` sont vides — la
+    plage n'a pas sa propre idée de ce qu'est un vide."""
+    v, _ = _has_tel([{"telephone": []}, {"telephone": {}}])
+    assert v is False
+
+
+def test_counta_les_cas_deja_corrects_le_restent():
+    for contacts in ([], [{"nom": "A"}], [{"telephone": ""}], [{"telephone": None}]):
+        assert _has_tel(contacts)[0] is False, contacts
+    assert _has_tel([{"telephone": "0600000000"}])[0] is True
+    assert _has_tel([{"telephone": ""}, {"telephone": "0700000000"}])[0] is True
+
+
+def test_le_scalaire_en_vide_assume_reste_vide():
+    """Le témoin : la colonne de premier niveau, déjà déballée par l'appelant."""
+    v, _ = _has_tel([], entreprise=dsv2.unwrap(dict(_VIDE_ASSUME)))
+    assert v is False
+
+
+# ── de bout en bout, sur vrai PostgreSQL : ce que le STORE range, la formule le lit
+
+def test_counta_de_bout_en_bout_sur_ce_que_le_store_range(live):
+    """Les deux cas rapportés (`@empty` nu, `@empty` en cellule à couches), écrits
+    par la voie normale : le store range l'enveloppe, puis la formule la lit."""
+    ns = "t-" + uuid.uuid4().hex[:6]
+    from oto_mcp import db
+    ns_id = db.create_datastore("user", "sub-test-1008-counta", ns)
+    st = __import__("oto_mcp.datastore.core", fromlist=["make_store"]).make_store(
+        "sub-test-1008-counta")
+    st.set_schema(ns, {"fields": CHAMPS_HAS_TEL + [
+        {"key": "has_telephone", "type": "formula", "formula": HAS_TEL}]})
+
+    cas = {
+        "nu": ({"telephone": "@empty"}, False),
+        "couches": ({"telephone": {"valeur": "@empty", "comment": "rien trouvé"}}, False),
+        "couches_vide": ({"telephone": {"valeur": "", "comment": "source"}}, False),
+        "reel": ({"telephone": {"valeur": "0600000000", "comment": "source"}}, True),
+    }
+    for nom, (element, attendu) in cas.items():
+        r = st.append_row(ns, {"entreprise_telephone": "", "contacts": [element]})
+        d = _donnees_1008(ns_id, r["_id"])
+        assert d["has_telephone"]["valeur"] is attendu, (nom, d["has_telephone"])
