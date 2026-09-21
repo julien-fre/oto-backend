@@ -339,13 +339,27 @@ def sweep_grace_expired() -> list[int]:
         )]
 
 
+# Le prédicat d'échéance, UNE fois : `due_subscriptions` (sélection du tick, sans verrou)
+# et `billing_reservation.reserver_echeance` (relecture sous verrou) DOIVENT rester
+# d'accord, sinon une org archivée entre les deux serait quand même tirée. Une org
+# archivée n'est plus prélevée (#400) : elle est invisible de tous les listings, personne
+# ne pourrait la résilier. L'abonnement n'est PAS touché — il reste `active` chez nous
+# comme chez le prestataire, et l'échéance revient si l'org est désarchivée.
+_ECHEANCE_DUE = (
+    "s.status IN ('active', 'past_due') AND s.next_billing_at <= NOW() "
+    "AND NOT EXISTS (SELECT 1 FROM orgs o "
+    "WHERE o.id = s.org_id AND o.archived_at IS NOT NULL)"
+)
+
+
 def due_subscriptions(limit: int = 50) -> list[dict]:
-    """Échéances à tirer par le billing_runner (actives ou en retard, dues)."""
+    """Échéances à tirer par le billing_runner (actives ou en retard, dues, org non
+    archivée)."""
     with _connect() as conn:
         return list(conn.execute(
-            "SELECT * FROM org_subscriptions "
-            "WHERE status IN ('active', 'past_due') AND next_billing_at <= NOW() "
-            "ORDER BY next_billing_at ASC LIMIT %s",
+            "SELECT s.* FROM org_subscriptions s "
+            f"WHERE {_ECHEANCE_DUE} "
+            "ORDER BY s.next_billing_at ASC LIMIT %s",
             (limit,),
         ))
 
