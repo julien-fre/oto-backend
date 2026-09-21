@@ -377,8 +377,13 @@ client sont entre guillemets, `%r` : un saut de ligne n'y forge pas de ligne) �
   `authorize refused reason=<not_declared|request_object|param_shape|response_mode|pkce|foreign_client|redirect_not_allowed|redirect_not_registered|directory_unreadable> client='…'` ;
 - `callback outcome='code'|'error:<e>' redirect_host='…' age_s=`, ou, refusé :
   `outcome=bad_state:<sig|ttl|host|format|no_secret>`, `outcome=iss_mismatch`, `outcome=empty` ;
-- `token grant=<authorization_code|refresh_token> code=<marked|unmarked|-> upstream=<statut> error='<champ>|-' ms=`,
-  ou, refusé ou en panne : `code=tag_mismatch`, `code=mark_stripped`,
+- `token grant=<authorization_code|refresh_token> code=<marked|unmarked|-> upstream=<statut> error='<champ>|-' ms=`
+  puis `refresh_token=<oui|non|?|->` et `expires_in=<secondes|->` — **le seul endroit où lire si un
+  client reçoit un refresh token** (Caddy ne voit pas les corps) : un booléen et un entier, jamais
+  la valeur d'un jeton ; `-` = réponse en erreur ou champ illisible, `?` = succès au JSON illisible
+  (`tests/auth/test_relais_journal_echange_jeton.py`). ⚠️ Ne couvre que les hosts DÉCLARÉS dans
+  `OTO_MCP_OAUTH_RELAY_HOSTS` : ailleurs le `token_endpoint` annoncé est celui de Logto et ce
+  backend ne voit pas l'échange ; ou, refusé ou en panne : `code=tag_mismatch`, `code=mark_stripped`,
   `upstream=<timeout|saturated|NomDeLException>`.
 
 - Bancs : `tests/auth/test_authorization_relay.py` (routes, sceaux, déclaration, refus nommés,

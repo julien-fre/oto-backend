@@ -471,15 +471,28 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             _en_vol -= 1
         ms = int((time.monotonic() - debut) * 1000)
         json_amont = amont.headers.get("content-type", "").startswith("application/json")
-        erreur = ""
-        if json_amont and amont.status_code >= 400:
+        erreur, refresh, expire = "", "-", "-"
+        if json_amont:
             try:
-                erreur = str(amont.json().get("error", ""))[:40]
+                lu = amont.json()
+                if amont.status_code >= 400:
+                    erreur = str(lu.get("error", ""))[:40]
+                else:
+                    # Un booléen et un entier seulement : jamais la valeur d'un jeton
+                    # (oto-backend : savoir si un client OpenAI reçoit un refresh token).
+                    refresh = "oui" if lu.get("refresh_token") else "non"
+                    ttl = lu.get("expires_in")
+                    expire = ttl if type(ttl) is int else "-"
             # noqa: SILENT — la raison n'est qu'une étiquette de journal, le corps part tel quel
             except Exception:
-                erreur = "?"
-        _log.info("oauth.relay token grant=%s code=%s upstream=%d error=%r ms=%d host=%s",
-                  v["grant_type"], forme, amont.status_code, erreur or "-", ms, c.host)
+                if amont.status_code >= 400:
+                    erreur = "?"
+                else:
+                    refresh = "?"
+        _log.info("oauth.relay token grant=%s code=%s upstream=%d error=%r ms=%d host=%s "
+                  "refresh_token=%s expires_in=%s",
+                  v["grant_type"], forme, amont.status_code, erreur or "-", ms, c.host,
+                  refresh, expire)
         if amont.status_code >= 500 or not json_amont:
             return _refus("server_error", "réponse inattendue du serveur d'autorisation", 502,
                           cors=True)
