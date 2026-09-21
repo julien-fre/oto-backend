@@ -777,10 +777,13 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # du drain + de l'audience alt) ferait retomber sa `resource` sur NOTRE domaine —
         # le client demanderait alors un jeton pour une audience qui n'est pas la sienne,
         # et l'échec se lirait comme un problème d'émetteur.
-        resource_url = candidate if (host in mcp_audience_alt_hosts()
-                                     or tenant is not None
-                                     or subdomain_project.valid_org_audience(candidate)) \
-            else f"{public_url}/mcp"
+        # `valid_org_audience` LIT LA BASE (le projet existe-t-il ?) : route publique sans
+        # jeton, donc jamais sur la boucle — et seulement quand les deux crans gratuits
+        # n'ont pas déjà tranché, comme le `or` d'origine.
+        connu = host in mcp_audience_alt_hosts() or tenant is not None
+        resource_url = candidate if (
+            connu or await run_in_threadpool(subdomain_project.valid_org_audience, candidate)
+        ) else f"{public_url}/mcp"
         return await _prm_handler(public_url, resource_url, as_url=as_url,
                                   resource_name=resource_name).handle(request)
 

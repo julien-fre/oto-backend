@@ -882,3 +882,35 @@ au moment de la pose — les façades `org_store` et `access` (`roles.*`, `curre
 (tous les middlewares MCP, les axes `_org`/`_project`, plusieurs outils) n'y arrivent que par
 `current_user_sub_from_token`, qui ne lit la base **que tant que le drain d'alias est armé**
 (`[dormant]` dans le stock : un interrupteur, pas un gel d'aujourd'hui).
+
+### Lot 1 de décharge (21/09) : les routes sans jeton d'abord, puis les deux handlers les plus lourds
+
+Demande d'oto cd : ce qui est atteignable **sans authentification** passe en premier, parce
+que c'est ce qu'un tiers peut marteler. **82 → 62 sites** :
+
+- `api/public.py` — toutes les routes publiques qui lisent la base (pages de partage
+  `public_doc`/`public_doc_view`, désinscriptions `outreach_unsubscribe`/`digest_unsubscribe`,
+  vitrines `guide(s)_library_public[_get]`, `invite_preview`, `connectors_catalog` — dont la
+  branche anonyme). Les corps redeviennent des `def` synchrones sous un décorateur
+  `api.base.en_thread` : l'objet reste un `async def` pour Starlette, pour `route.endpoint is …`
+  et pour les bancs qui font `asyncio.run(route(req))`.
+- le dispatch par Host, à CHAQUE requête : `subdomain_project.HostDispatch._http` et
+  `subdomain_org.SubdomainOrgMiddleware` passent par `resolve_project_async` /
+  `org_id_for_host_async`, qui ne paient le saut de thread que s'il y a de la base à lire (un
+  host canonique n'a pas de slug ; un slug d'org en cache est servi de la mémoire).
+- `_tls_check` (Caddy `ask`), l'annuaire public des projets MCP, la métadonnée de ressource
+  protégée (`prm`, `valid_org_audience` seulement quand les deux crans gratuits n'ont pas
+  tranché), le retour OAuth Salesforce (`callback` + `persist_token`, qui était un `async def`
+  sans `await`).
+- `runner.triggers` : le SQL de toutes les opérations (~40 appels) part au threadpool **en un
+  bloc** (`_triggers_sync`) ; seuls les avertissements d'outils, asynchrones, restent dans la boucle.
+- `me.credential.set` : lecture (`_set_preparer`) et écriture (`_set_ecrire`) au threadpool,
+  la sonde du connecteur, asynchrone, entre les deux.
+- `unipile_seats._list_seats` : `_platform_client()` (lecture du coffre) — le reliquat du
+  correctif du matin, que la garde a trouvé.
+
+Preuve : `tests/test_lot1_sql_hors_boucle.py` — compteur de boucle pendant une lecture de
+0,5 s, **0 battement avant, ≥ 20 après**, sur neuf cas. **Reste 62 sites** dans
+`tests/_stock_db_hors_boucle.py` (dont 25 `[dormant]`) ; les plus exposés qui restent :
+`_IatGatedVerifier.verify_token` (audience d'un endpoint de projet), les outils
+`tools/meta` (`oto_call`, `oto_list_my_tools`…), `api/media`, `api/projects`.

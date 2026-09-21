@@ -34,32 +34,6 @@ STOCK: dict[str, str] = {
         "_project_org_context_error, db.get_project_by_id, db.list_docs_for_project, ownership.can_access",
     "oto_mcp.api.projects::project_files_upload":
         "_project_org_context_error, db.add_project_file, db.get_project_by_id, db.log_project_activity, ownership.can_access",
-    "oto_mcp.api.public::connectors_catalog":
-        "access.current_org, access.is_platform_operator, connector_activation.exposed_connectors, connector_cardinality.overlay_for_org",
-    "oto_mcp.api.public::digest_unsubscribe":
-        "db.get_user, db_usage.opt_out_signal_digest",
-    "oto_mcp.api.public::guide_library_public":
-        "org_store.list_library",
-    "oto_mcp.api.public::guide_library_public_get":
-        "org_store.get_library_entry",
-    "oto_mcp.api.public::guides_library_public":
-        "guide_store.list_guides_for",
-    "oto_mcp.api.public::guides_library_public_get":
-        "guide_store.read_guide_scoped",
-    "oto_mcp.api.public::invite_preview":
-        "org_store.preview_invitation",
-    "oto_mcp.api.public::outreach_unsubscribe":
-        "db.get_user, db_outreach.desinscrire",
-    "oto_mcp.api.public::public_doc":
-        "db.get_doc_by_public_token",
-    "oto_mcp.api.public::public_doc_view":
-        "brand.marque_du_proprietaire, db.get_doc_by_public_token",
-    "oto_mcp.api.salesforce::make_routes.<locals>.callback":
-        "roles.can_admin_group, roles.is_org_admin",
-    "oto_mcp.auth.facade::make_routes.<locals>.prm":
-        "subdomain_project.valid_org_audience",
-    "oto_mcp.auth.salesforce::persist_token":
-        "_read_app, _read_fields, credentials_store.set_credential, group_store.set_group_secret, org_store.set_org_secret",
     "oto_mcp.call_axes::_pin_group":
         "[dormant] require_axis_sub",
     "oto_mcp.call_axes::_pin_instance":
@@ -84,16 +58,10 @@ STOCK: dict[str, str] = {
         "_fields_config_scope, connector_health.record_health",
     "oto_mcp.capabilities.instance_health::_instance_health":
         "credentials_store.get_credential",
-    "oto_mcp.capabilities.me_credentials::_set":
-        "_org_of, access.require_connector_access, credentials_store.get_credential_with_meta, credentials_store.guard_account_write, credentials_store.merge_with_existing, credentials_store.set_credential, db.upsert_user",
-    "oto_mcp.capabilities.runner_triggers::_triggers":
-        "_actuel, _avec_hook, _avec_pertes, _cle_exigee.exiger_a_la_pose, _est_webhook, _modele.etat_servi, _modele.exige_un_runner, _outils_de_la_procedure, access.has_option, db.create_trigger, db.delete_trigger, db.get_trigger, db.liberer_les_creneaux, db.list_triggers, db.livraisons, db.perimer_travaux_du_declencheur, db.poser_secret_de_hook, db.runner_arme, db.triggers_for_procedure, db.update_trigger",
     "oto_mcp.capabilities.search::_search":
         "connectors_selection._visible_catalog, ownership.visible_in_org, search_mod.search",
     "oto_mcp.capabilities.unipile_me::_status":
         "unipile.status_for",
-    "oto_mcp.capabilities.unipile_seats::_list_seats":
-        "_platform_client",
     "oto_mcp.capabilities.unipile_seats::_release_seat":
         "_platform_client, _rows_for",
     "oto_mcp.connectors.identities::_unipile_list":
@@ -130,14 +98,6 @@ STOCK: dict[str, str] = {
         "self._audience_ok",
     "oto_mcp.server::_build_mcp.<locals>._calllog_sink":
         "access.current_org, current_user_sub_from_token",
-    "oto_mcp.subdomain_org::SubdomainOrgMiddleware.__call__":
-        "org_id_for_host",
-    "oto_mcp.subdomain_project::HostDispatch._http":
-        "resolve_project",
-    "oto_mcp.subdomain_project::make_routes.<locals>._public_mcp_projects":
-        "db.list_published_mcp_projects",
-    "oto_mcp.subdomain_project::make_routes.<locals>._tls_check":
-        "resolve_project",
     "oto_mcp.tools.brevoauto::_api":
         "_context_id",
     "oto_mcp.tools.brevoauto::register.<locals>.brevoauto_connect_status":
