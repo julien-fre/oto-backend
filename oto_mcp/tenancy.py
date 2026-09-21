@@ -45,6 +45,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional, Any
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,13 @@ class TenantIssuer:
     # déploiement. Les teintes sont validées à la LECTURE, pas ici : le registre
     # transporte ce qui est déclaré, il ne juge pas des couleurs.
     brand: Any = None
+    # Rappels OAuth EXACTS que la façade d'enregistrement (`auth/facade.py`) accepte EN
+    # PLUS de sa liste globale, **sur les hosts de ce tenant et nulle part ailleurs** :
+    # l'URL complète d'un client hébergé que son exploitant a choisi, jamais un motif.
+    # Déclarés dans `logto_mgmt.redirect_uris` : ils n'ont d'effet que si la façade sait
+    # les poser dans l'annuaire du tenant, donc avec ces accès. Vide = la liste globale
+    # seule, l'état d'avant à l'octet près.
+    dcr_redirects: tuple = ()
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -210,7 +218,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                                     # `tool_alias.normalize_prefix` juge, il ne répare pas.
                                     tool_prefix=str(tool_prefix or ""),
                                     brand=brand if isinstance(brand, dict) else None,
-                                    logto_mgmt=_normalize_mgmt(logto_mgmt, slug))
+                                    logto_mgmt=_normalize_mgmt(logto_mgmt, slug),
+                                    dcr_redirects=_normalize_redirects(logto_mgmt, slug))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -292,6 +301,61 @@ def _normalize_mgmt(valeur, slug: str = "") -> Optional[dict]:
                slug, ", ".join(manque))
         return None
     return {"token_endpoint": tok, "api_endpoint": api, "credential": cred}
+
+
+_REDIRECT_MAX = 512
+
+
+def _rappel_declarable(uri) -> bool:
+    """Une URL de rappel qu'un tenant peut DÉCLARER : https, complète, et rien qui
+    ressemble à un motif. Ce n'est pas la garde d'acceptation (`facade`, qui exige en
+    plus l'ÉGALITÉ avec une déclaration et la lecture canonique de l'URL demandée) : ici on
+    refuse ce qu'aucune requête légitime n'écrirait, pour que la faute se voie au
+    chargement plutôt qu'à l'autorisation d'un client."""
+    if not isinstance(uri, str) or not (len(uri) <= _REDIRECT_MAX
+                                        and uri.startswith("https://")):
+        return False
+    if any(c <= " " or c > "~" or c in "\\*?#" for c in uri):
+        return False
+    try:
+        p = urlsplit(uri)
+        p.port  # un port hors bornes lève
+    # noqa: SILENT — fail-closed : une déclaration douteuse est refusée par l'appelant
+    except ValueError:
+        return False
+    return bool(p.hostname) and "@" not in p.netloc and p.path.startswith("/")
+
+
+def _normalize_redirects(valeur, slug: str = "") -> tuple:
+    """Les rappels EXACTS déclarés par un tenant (`logto_mgmt.redirect_uris`), en tuple.
+
+    ⚠️ **Fail-closed, entrée par entrée** : une entrée qui n'est pas une URL https
+    complète (joker, requête, identité, fragment…) est ÉCARTÉE et alertée, les autres
+    restent. Contrairement aux accès d'annuaire (`_normalize_mgmt`, tout ou rien), ici
+    une ligne écartée ne peut que RÉDUIRE ce qui est accepté — jamais l'élargir."""
+    if isinstance(valeur, str):
+        try:
+            valeur = json.loads(valeur)
+        except ValueError:
+            return ()
+    if not isinstance(valeur, dict):
+        return ()
+    brut = valeur.get("redirect_uris")
+    if brut in (None, [], ()):
+        return ()
+    if not isinstance(brut, (list, tuple)):
+        _refus("registre d'émetteurs : `logto_mgmt.redirect_uris` du tenant %r n'est pas "
+               "une liste — aucun rappel déclaré", slug)
+        return ()
+    retenus: list = []
+    for uri in brut:
+        if not _rappel_declarable(uri):
+            _refus("registre d'émetteurs : rappel %r du tenant %r refusé (une URL https "
+                   "EXACTE est attendue : ni joker, ni requête, ni fragment, ni identité) "
+                   "— écarté", uri, slug)
+        elif uri not in retenus:
+            retenus.append(uri)
+    return tuple(retenus)
 
 
 def _normalize_paths(valeur) -> dict:

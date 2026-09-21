@@ -336,7 +336,10 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
             return _refus("temporarily_unavailable", "le serveur d'autorisation de ce host "
                           "n'est pas administrable par la plateforme", 503)
         rappel = demande["redirect_uri"]
-        if not facade._redirect_ok(rappel):     # le rappel de la façade n'y passe jamais
+        # La MÊME garde que la DCR (`facade.redirect_autorise`), avec la liste du tenant de
+        # ce host : un rappel que la DCR a refusé ne s'autorise pas, un qu'elle a accepté ne
+        # se retrouve pas refusé ici. Le rappel de la façade n'y passe jamais.
+        if not facade.redirect_autorise(facade.tenant_for_host(c.host), rappel):
             return refus_autorisation(c, "redirect_not_allowed", "invalid_request",
                                       "redirect_uri non autorisé", client=demande["client_id"])
         try:

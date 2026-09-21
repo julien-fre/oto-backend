@@ -239,6 +239,39 @@ def _redirect_ok(uri: str) -> bool:
     return False
 
 
+def _redirect_declare(entry, uri: str) -> bool:
+    """`uri` est-elle l'un des rappels que CE tenant a DÉCLARÉS (`logto_mgmt.redirect_uris`) ?
+
+    ⚠️ **Égalité de chaîne, rien d'autre.** Ni préfixe, ni joker, ni suffixe de domaine :
+    un client hébergé qui distribue un sous-domaine par instance (Hermes Cloud) ne doit
+    JAMAIS ouvrir « tous ses sous-domaines » — n'importe lequel de ses clients recevrait
+    alors le code d'autorisation d'un utilisateur qu'il aurait attiré sur un lien
+    d'autorisation, le PKCE ne l'en empêchant pas puisque c'est lui qui ouvre le flux. La
+    déclaration nomme l'instance que l'exploitant du tenant a choisie, à l'URL près.
+
+    L'URL demandée passe d'abord par la lecture canonique (`_uri_canonique` : la même que
+    celle d'un navigateur), et doit être en https — la déclaration l'exige aussi
+    (`tenancy._rappel_declarable`), mais la garde ne s'en remet pas à elle. `entry` est
+    celle du HOST de la requête : elle décide ensemble de la liste, de l'application et de
+    l'annuaire où le rappel sera posé — une entrée qui se tromperait de host ne ferait
+    qu'inscrire, chez le tenant, un rappel que son exploitant a déjà déclaré."""
+    declares = getattr(entry, "dcr_redirects", ()) or ()
+    if not declares:
+        return False
+    p = _uri_canonique(uri)
+    return p is not None and p.scheme == "https" and uri in declares
+
+
+def redirect_autorise(entry, uri: str) -> bool:
+    """La garde d'un rappel sur le host servi par `entry` (`None` = un host qui n'est pas
+    celui d'un tenant) : la liste globale de `_redirect_ok`, PLUS les rappels que ce tenant a
+    déclarés. C'est la seule fonction que la DCR et l'autorisation relayée appellent — les
+    deux gardes du même rappel ne peuvent pas diverger. `_redirect_ok` reste GLOBALE et
+    inchangée : aucun rappel de tenant n'y entre, donc aucun n'est valable sur un autre host
+    (ni sur `auth/anon.py`, qui n'appelle que celle-là)."""
+    return _redirect_ok(uri) or _redirect_declare(entry, uri)
+
+
 # ── DCR réelle : enregistrement dynamique du redirect dans l'app Logto ────────
 # Le client_id reste celui de l'annuaire visé, mais on ÉTEND la liste de
 # redirectUris de son app à chaque DCR (le redirect de ChatGPT est propre à chaque
@@ -766,13 +799,33 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # partagé QUE pour des redirect_uris connus. L'enforcement réel reste
         # Logto au `/authorize` (cf. invariant ci-dessus), mais fail-fast ici
         # évite de tendre un client public à un redirect non prévu.
+        # Le host décide, une seule fois, de la garde (la liste du tenant), de l'application
+        # et de l'annuaire visés : trois lectures du même `entry`, jamais trois résolutions.
+        host = _host_of(request)
+        entry = tenant_for_host(host)
         requested = body.get("redirect_uris") or []
-        if not isinstance(requested, list) or any(not _redirect_ok(u) for u in requested):
-            _refus_dcr("DCR refusé — redirect_uris=%r client_name=%r grant_types=%r",
-                       requested, body.get("client_name"), body.get("grant_types"))
+        if not isinstance(requested, list) or any(
+                not redirect_autorise(entry, u) for u in requested):
+            detail = "redirect_uri non autorisé pour ce serveur"
+            if entry is None:
+                _refus_dcr("DCR refusé — redirect_uris=%r client_name=%r grant_types=%r",
+                           requested, body.get("client_name"), body.get("grant_types"))
+            else:
+                # Sur le host d'un tenant le refus NOMME le rappel écarté et à qui le
+                # demander : un client hébergé ne lit pas nos journaux, et « non autorisé »
+                # seul ne dit ni lequel ni comment le lever. Le JOURNAL, lui, porte le slug.
+                nom = getattr(entry, "name", "") or getattr(entry, "slug", "") or "ce domaine"
+                ecarte = next((u for u in requested if not redirect_autorise(entry, u)),
+                              None) if isinstance(requested, list) else None
+                _refus_dcr("DCR refusé sur le host du tenant %r — redirect_uris=%r "
+                           "client_name=%r grant_types=%r", getattr(entry, "slug", "?"),
+                           requested, body.get("client_name"), body.get("grant_types"))
+                if isinstance(ecarte, str):
+                    detail = (f"redirect_uri non autorisé pour {nom} : {ecarte}. Un rappel "
+                              f"hors de la liste connue doit être déclaré, à l'URL exacte, "
+                              f"par l'exploitant de {nom}.")
             return JSONResponse(
-                {"error": "invalid_redirect_uri",
-                 "error_description": "redirect_uri non autorisé pour ce serveur"},
+                {"error": "invalid_redirect_uri", "error_description": detail},
                 status_code=400,
                 headers=_cors(),
             )
@@ -790,8 +843,6 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # c'est là que l'utilisateur va s'authentifier. Rendre le nôtre enverrait le
         # client se présenter chez l'un avec l'identité de l'autre — refus au
         # `/authorize`, et un message qui n'accuse pas la bonne cause.
-        host = _host_of(request)
-        entry = tenant_for_host(host)
         if entry is None:
             app_id, directory = claude_app_id, _primary_directory()
         else:
