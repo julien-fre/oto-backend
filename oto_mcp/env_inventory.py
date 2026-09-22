@@ -370,6 +370,9 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_FORMULA_BACKFILL_ENABLED", Classe.REGLAGE, "1",
              "Boucle de fond : recalcul des colonnes formule (oto-backend#1008 v2).",
              ("oto_mcp/boucles_de_fond.py:146",)),
+    Variable("OTO_TRANSCRIPTION_WORKER_ENABLED", Classe.REGLAGE, "1",
+             "Boucle de fond : worker de transcription (ADR 0074, #674).",
+             ("oto_mcp/boucles_de_fond.py:160",)),
     Variable("OTO_BILLING_RUNNER_ENABLED", Classe.REGLAGE, "1",
              "Boucle de fond : runner de facturation — AGIT sur un tiers "
              "(prélèvement), donc lu aussi par `est_la_production()`.",

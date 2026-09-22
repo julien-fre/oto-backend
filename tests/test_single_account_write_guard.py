@@ -114,7 +114,7 @@ def test_la_cardinalite_declaree_prime_sur_la_derivation():
 def test_seuls_les_depots_de_cle_se_declarent_MONO_et_on_sait_pourquoi():
     """Le sens `mono` a eu ZÉRO porteur jusqu'au 04/09/2026, par tripwire : en
     ajouter un est une décision explicite, qui casse ce test et se motive en revue.
-    Voici le motif des deux premiers.
+    Voici le motif des trois premiers.
 
     `anthropic` et `mistral` sont des DÉPÔTS DE CLÉ (`kind="credential"`) : ils ne
     portent aucun outil, seulement la clé de modèle sur laquelle les agents
@@ -127,9 +127,18 @@ def test_seuls_les_depots_de_cle_se_declarent_MONO_et_on_sait_pourquoi():
 
     Et c'est bien une raison de FOURNISSEUR au sens de ce fichier : un passage
     tourne sur une clé, deux dépôts pour la même org seraient deux factures pour
-    un même travail, sans aucun critère pour trancher laquelle."""
+    un même travail, sans aucun critère pour trancher laquelle.
+
+    `transcription` (ADR 0074, #674) est mono pour une raison DIFFÉRENTE : ce n'est
+    pas un dépôt de clé (il porte deux outils), mais une instance y est « une clé ×
+    une langue × un vocabulaire », rattachée à un projet par SLOT (ADR 0035) — pas
+    par un compte nommé qu'on choisirait à l'appel. Deux instances sur la même org
+    n'auraient aucun critère pour se départager au moment de transcrire (contrairement
+    à Zoho ou Unipile, où l'agent NOMME le compte visé) ; la dérivation `fields` les
+    rendrait pourtant multi, ce qui proposerait un second dépôt sans jamais dire
+    lequel choisir."""
     assert sorted(c.name for c in providers._REGISTRY_LIST
-                  if c.cardinality == "mono") == ["anthropic", "mistral"]
+                  if c.cardinality == "mono") == ["anthropic", "mistral", "transcription"]
 
 
 def test_un_compte_nomme_sur_un_depot_de_cle_est_refuse(monkeypatch):

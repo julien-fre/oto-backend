@@ -389,6 +389,13 @@ _SUB_COLUMNS = [
     # l'identité n'est plus valide, alors qu'elle l'est, sous un autre nom.
     # Hors PK (`runner_jobs` a `id` pour clé) : UPDATE nu, pas de `_PK_SUB_TABLES`.
     ("runner_jobs", "sub"),
+    # Même raison que `runner_jobs.sub` juste au-dessus : l'identité au nom de
+    # laquelle le worker de transcription écrira la page (ADR 0074, #674). Hors PK
+    # (`transcription_jobs` a `id`), aucune FK vers `users` : sans repointage, le
+    # travail terminé écrirait sous un compte disparu — ou, en cours, échouerait au
+    # droit d'écriture pour un compte qui n'a jamais cessé d'exister, seulement
+    # changé de nom.
+    ("transcription_jobs", "sub"),
     # l'HISTORIQUE de la personne (dossier du 23/08 — ces lignes survivaient au merge
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :

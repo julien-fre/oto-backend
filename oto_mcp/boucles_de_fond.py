@@ -94,6 +94,11 @@ def _formule_backfill() -> Fonction:
     return formula_backfill_worker.run_formula_backfill_loop
 
 
+def _transcription() -> Fonction:
+    from . import transcription_worker
+    return transcription_worker.run_transcription_loop
+
+
 def _runner_tick_arme() -> bool:
     from . import runner_tick
     return runner_tick.enabled()
@@ -149,6 +154,10 @@ BOUCLES: tuple[Boucle, ...] = (
     Boucle(nom="formula_backfill", tiers=False,
            armee=_interrupteur("OTO_FORMULA_BACKFILL_ENABLED"),
            fonction=_formule_backfill),
+    # Transcription (ADR 0074, #674) : appelle Mistral, un FOURNISSEUR — aucun effet
+    # chez un client. En double, elle coûte des jetons, elle ne touche personne.
+    Boucle(nom="transcription_worker", tiers=False,
+           armee=_interrupteur("OTO_TRANSCRIPTION_WORKER_ENABLED"), fonction=_transcription),
     # Horloge des déclencheurs du runner (R3) : ENFILE un job, n'exécute rien, c'est
     # oto-runner qui agit. Deux ticks sur la même base, un seul gagne chaque échéance
     # (CAS sur `next_due`) : aucun doublon possible, d'où `tiers=False`.
