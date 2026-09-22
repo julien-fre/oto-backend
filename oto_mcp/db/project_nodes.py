@@ -87,8 +87,13 @@ def _ligne(famille: str, ident, parent: Optional[str], owner_type: str, owner_id
             "role": None, "legacy": famille, "legacy_id": str(ident), "slug": None}
 
 
-def lignes_pour_proprietaires(owners: Iterable[tuple[str, str]]) -> list[dict]:
+def lignes_pour_proprietaires(owners: Iterable[tuple[str, str]],
+                              org_id: Optional[int]) -> list[dict]:
     """Les projets non archivés de ces propriétaires, suivis de leurs pages.
+
+    Un projet PERSONNEL ne sort que dans son org de contexte (`context_org_id`, ADR 0030
+    amendé, la règle de `oto_project op=list`) ; sans org, ceux qui n'en ont pas. Sans ce
+    filtre, le rail d'une org cliente montrait les projets personnels créés ailleurs.
 
     Deux requêtes, jamais une par projet. L'ordre est celui des surfaces d'origine :
     projets par nom, pages par position puis titre.
@@ -100,8 +105,10 @@ def lignes_pour_proprietaires(owners: Iterable[tuple[str, str]]) -> list[dict]:
         projets = conn.execute(
             "SELECT p.id, p.owner_type, p.owner_id, p.name FROM projects p "
             "WHERE p.archived_at IS NULL AND (p.owner_type, p.owner_id) IN "
-            f"({','.join(['(%s, %s)'] * len(owners))}) ORDER BY p.name, p.id",
-            [v for pair in owners for v in pair]).fetchall()
+            f"({','.join(['(%s, %s)'] * len(owners))}) "
+            "AND (p.owner_type <> 'user' OR p.context_org_id IS NOT DISTINCT FROM %s) "
+            "ORDER BY p.name, p.id",
+            [v for pair in owners for v in pair] + [org_id]).fetchall()
         ids = [p["id"] for p in projets]
         pages = conn.execute(
             "SELECT d.id, d.project_id, d.parent_id, d.title, d.position FROM docs d "

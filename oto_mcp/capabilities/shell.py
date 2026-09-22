@@ -382,7 +382,7 @@ def _compose(ctx: ResolvedCtx) -> dict:
     # leurs anciennes copies : une copie restée en base porterait un contenu figé.
     lignes = [l for l in db_shell.nodes_for_owners(proprios)
               if not project_nodes.est_une_copie(l)]
-    lignes += project_nodes.lignes_pour_proprietaires(proprios)
+    lignes += project_nodes.lignes_pour_proprietaires(proprios, org_id)
 
     par_proprio: dict = {}
     for l in lignes:

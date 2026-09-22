@@ -18,6 +18,7 @@ from oto_mcp.db._conn import _connect
 MOI = "sub-proxy-moi"
 AUTRE = "sub-proxy-autre"
 CORPS = "# Titre\n\nUn paragraphe.\n\n- une\n- deux\n"
+ORG_CONTEXTE = 987650
 
 
 @pytest.fixture(scope="module")
@@ -43,6 +44,11 @@ def base(live):
         ids["archive"] = projet("Zeta archivé", archive=True)
         ids["page_archivee"] = page(ids["archive"], "Page d'un projet archivé")
         ids["autre"] = projet("Chez un autre", owner=AUTRE)
+        # Un projet PERSONNEL créé pendant qu'une org était active : il vit dans cette org.
+        ids["perso_ailleurs"] = conn.execute(
+            "INSERT INTO projects (owner_type, owner_id, name, brief_md, created_by, "
+            "context_org_id) VALUES ('user', %s, 'Perso créé dans une org', '', %s, %s) "
+            "RETURNING id", (MOI, MOI, ORG_CONTEXTE)).fetchone()["id"]
         # Une ANCIENNE COPIE du projet, telle que la recopie d'avant le 01/09 la déposait.
         ids["copie"] = conn.execute(
             "INSERT INTO nodes (public_id, kind, owner_type, owner_id, props) "
@@ -69,6 +75,7 @@ def test_le_rail_range_le_projet_et_ses_pages_sans_la_copie(base):
     assert "Alpha figé au 01/09" not in par_nom, "une ancienne copie est servie"
     assert "Zeta archivé" not in par_nom
     assert "Chez un autre" not in par_nom
+    assert "Perso créé dans une org" not in par_nom, "un perso d'une autre org est servi"
 
     alpha = par_nom["Alpha"]
     assert alpha["id"] == P.public_id("prj", base["prj"])
@@ -134,3 +141,13 @@ def test_un_identifiant_hors_forme_n_est_pas_une_cle(ident):
 def test_la_cle_se_relit_depuis_l_identifiant():
     assert P.cle_de(P.public_id("doc", 42)) == ("doc", 42)
     assert P.cle_de(P.public_id("prj", 7)) == ("prj", 7)
+
+
+def test_un_projet_perso_ne_sort_que_dans_son_org_de_contexte(base):
+    def noms(org_id):
+        return {l["title"] for l in P.lignes_pour_proprietaires([("user", MOI)], org_id)}
+
+    assert "Perso créé dans une org" in noms(ORG_CONTEXTE)
+    assert "Alpha" not in noms(ORG_CONTEXTE), "un perso sans org de contexte déborde"
+    assert "Perso créé dans une org" not in noms(ORG_CONTEXTE + 1)
+    assert "Alpha" in noms(None)
