@@ -245,3 +245,77 @@ def test_le_refus_est_une_ValueError():
     """La face MCP traduit `ValueError` en INVALID_PARAMS actionnable : en dériver
     est ce qui évite un « Erreur interne du serveur » sur une faute d'appel."""
     assert issubclass(BusinessKeyRequired, ValueError)
+
+
+# ── #527 : la clé métier RÉÉCRITE par un patch par identifiant ────────────────
+#
+# Mesuré le 28/08/2026 (table jetable, `key: siren`, index unique en place) : id juste +
+# siren INEXISTANT (faute de frappe) → accepté sans un mot. La ligne existe toujours, le
+# compte ne bouge pas, mais elle porte un numéro d'entreprise qui n'existe pas et plus
+# rien ne la rapproche du fichier client. Aucune garde de comptage ne le voit ; et,
+# contrairement à la création sans clé (`notices`), ce cas ne recevait RIEN. Une ligne
+# rendue orpheline qu'on ne retrouvera plus est plus grave qu'une orpheline créée.
+#
+# Deux crans, comme #516 : le tableau OUVERT le SIGNALE (corriger un SIREN mal saisi à
+# l'import est parfois légitime) ; le tableau FERMÉ (`key_required`) le REFUSE — et la
+# sortie passe par le SCHÉMA, jamais par un paramètre « forcer » sur l'écriture.
+
+def test_527_cas_1_id_juste_et_siren_juste_met_a_jour_sans_bruit(banc):
+    st, etat = banc
+    etat["schema"] = _FERME
+    st.update_row("viviers", "r-existante", {"siren": "552081317", "raison_sociale": "ACME SA"})
+    assert etat["lignes"]["r-existante"]["raison_sociale"] == "ACME SA"
+    assert not any("clé métier" in n for n in st.off_notices)
+
+
+def test_527_cas_2_id_faux_est_refuse_ligne_introuvable(banc):
+    st, etat = banc
+    with pytest.raises(dsm.RowNotFound):
+        st.update_row("viviers", "r-inexistante", {"siren": "552081317"})
+    assert etat["creees"] == []
+
+
+def test_527_cas_4_ferme_un_siren_inexistant_est_refuse_et_rien_n_est_ecrit(banc):
+    """Le cas silencieux du 28/08, sur un tableau qui a déclaré `key_required`."""
+    st, etat = banc
+    etat["schema"] = _FERME
+    with pytest.raises(ValueError) as exc:
+        st.update_row("viviers", "r-existante", {"siren": "349763571"})
+    msg = str(exc.value)
+    assert "552081317" in msg and "349763571" in msg, "l'ancienne ET la nouvelle valeur"
+    assert "siren" in msg
+    assert "key_required" in msg, "la sortie passe par le schéma, pas par un « forcer »"
+    assert etat["lignes"]["r-existante"]["siren"] == "552081317", "rien n'est écrit"
+
+
+def test_527_cas_4_ouvert_un_siren_inexistant_passe_mais_est_dit(banc):
+    """Le tableau ouvert reste ouvert : corriger une clé mal saisie est légitime. Mais
+    plus en silence — la réponse porte l'ancienne et la nouvelle valeur."""
+    st, etat = banc
+    etat["schema"] = _OUVERT
+    st.update_row("viviers", "r-existante", {"siren": "349763571"})
+    assert etat["lignes"]["r-existante"]["siren"] == "349763571"
+    dits = [n for n in st.off_notices if "clé métier" in n]
+    assert len(dits) == 1, st.off_notices
+    assert "552081317" in dits[0] and "349763571" in dits[0] and "r-existante" in dits[0]
+
+
+def test_527_une_cle_qui_n_etait_pas_posee_n_est_pas_une_reecriture(banc):
+    """Poser la clé d'une ligne qui n'en avait pas EST le geste légitime (la ligne
+    « non rapprochable » qu'on répare) — ni refus ni notice, même fermé."""
+    st, etat = banc
+    etat["schema"] = _FERME
+    etat["lignes"]["r-sans-cle"] = {"raison_sociale": "SANS CLE"}
+    st.update_row("viviers", "r-sans-cle", {"siren": "349763571"})
+    assert etat["lignes"]["r-sans-cle"]["siren"] == "349763571"
+    assert not any("clé métier" in n for n in st.off_notices)
+
+
+def test_527_la_cle_annotee_est_jugee_sur_sa_valeur(banc):
+    """Une clé métier annotée est la MÊME identité qu'une clé nue (cf. `lots.py`) :
+    enrichir sa provenance sans changer sa valeur n'est pas une réécriture."""
+    st, etat = banc
+    etat["schema"] = _FERME
+    st.update_row("viviers", "r-existante",
+                  {"siren": {"valeur": "552081317", "comment": "registre"}})
+    assert not any("clé métier" in n for n in st.off_notices)

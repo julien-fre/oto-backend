@@ -31,6 +31,7 @@ from . import acces_agent as aga
 from . import fin_du_null as fdn
 from . import reliques as rq
 from . import schema as dsv2
+from .cle_metier import cle_reecrite
 from .columns import (
     _META_COLS,
     _merge_column,
@@ -137,6 +138,29 @@ class EcritureParIdMixin:
             # #724 : un vide SEUL accepté sans effet, c'est le chemin des dix retraits
             # perdus du 01/09 — refusé avant tout relevé.
             refuser_geste_sans_effet(pose, ecartes)
+            # #527 : réécrire la clé métier d'une ligne qui en porte une, par un patch
+            # sur son `id`, la rend orpheline de son fichier d'origine si la valeur est
+            # une faute de frappe — et RIEN ne le disait. Tableau fermé : refusé, la
+            # sortie passe par le schéma (jamais un « forcer » sur l'écriture, #516).
+            # Tableau ouvert : permis (corriger une clé mal saisie est légitime) mais dit.
+            reecrite = cle_reecrite(schema, data, pose)
+            if reecrite:
+                cle, ancienne, nouvelle = reecrite
+                if dsv2.key_required_of(schema):
+                    raise ValueError(
+                        f"`{cle}` est la clé métier de ce tableau, et ce patch la "
+                        f"réécrit sur la ligne « {row_id} » ({ancienne!r} → "
+                        f"{nouvelle!r}) : refusé, la ligne ne serait plus rapprochée "
+                        f"de son fichier d'origine si {nouvelle!r} est une faute de "
+                        f"frappe. Rien n'est écrit. Si c'est bien la valeur voulue "
+                        f"(correction volontaire), lève le cran le temps du geste : "
+                        f"data_patch_schema(key_required=false), écris, puis "
+                        f"key_required=true ; sinon retire `{cle}` du patch.")
+                self.off_notices.add(
+                    f"clé métier `{cle}` modifiée sur la ligne « {row_id} » : "
+                    f"{ancienne!r} → {nouvelle!r}. Si c'est une faute de frappe, la "
+                    f"ligne n'est plus rapprochée de son fichier d'origine : réécris "
+                    f"la valeur d'avant.")
             avant = dict(data)
             written = set()
             for k, v in pose.items():
