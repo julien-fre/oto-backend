@@ -67,7 +67,6 @@ from . import (
     portee,
     alertes_credential,
     origine_ecritures,
-    transcription,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au
@@ -79,7 +78,7 @@ _MODULES = (
     platform_instructions, visibility, emails, google, datastore, projects, doc_grants,
     tokens, upload_tokens, billing, billing_invoices, guides, legal, search, aux_embed,
     datastore_embed, run_thread, runner_jobs, runner_triggers, runner_hooks,
-    runner_fleets, runner_fleets_preneur, runner_workers, journal_calls, transcription,
+    runner_fleets, runner_fleets_preneur, runner_workers, journal_calls,
 )
 _g = globals()
 for _mod in _MODULES:

@@ -58,7 +58,6 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.billing.IDENTITIES,       # identité de facturation par org (#486)
     schema.billing.INVOICES,         # factures et avoirs émis chez Pennylane (#488)
     schema.functions.FUNCTIONS,      # fonctions : code pur exécuté par Oto (ADR 0073)
-    schema.transcription.TRANSCRIPTION_JOBS,  # file des travaux de transcription (ADR 0074)
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

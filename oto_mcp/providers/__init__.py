@@ -224,8 +224,6 @@ _DECLARATIONS: tuple[str, ...] = (
     # personnelles lourdes (NIR, IBAN, motifs d'absence médicaux), servi par liste
     # blanche, cf. `tools/payfit.py`.
     "payfit",
-    # --- un audio du projet devient une page du projet — ADR 0074, #674 -----
-    "transcription",
     # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
     # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
     # servent aucun tool : le worker la consomme pour le compte de l'org.
