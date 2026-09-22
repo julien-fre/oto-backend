@@ -103,7 +103,7 @@ _ATTACHMENTS_TIMEOUT_S = 90
 def _resolve_attachments(attachments):
     """Résout des refs `file_source` en fichiers TEMPORAIRES (le GmailClient attend
     des CHEMINS locaux pour ses pièces jointes, or le serveur n'a pas le disque de
-    l'utilisateur). `attachments` = liste de `{"kind":"drive|gmail|url", …}` (cf.
+    l'utilisateur). `attachments` = liste de `{"kind":"drive|gmail|url|project_file", …}` (cf.
     file_source.resolve). Renvoie `(paths, cleanup)` — l'appelant DOIT appeler
     `cleanup()` en finally. Lève FileSourceError sur une ref illisible (nettoie
     d'abord le temp déjà écrit)."""
@@ -327,6 +327,8 @@ def register(mcp: FastMCP) -> None:
                 - Gmail: `{"kind":"gmail","message_id":"<id>","filename":"<name>"}`
                 - URL:   `{"kind":"url","url":"https://…"}` — e.g. a signed URL from
                   `oto_upload_url` (upload a local PDF first) or drive_download.
+                - Project file: `{"kind":"project_file","project_id":<id>,"file_id":<id>}`
+                  (ids from oto_project_files op=list)
         """
         if mode not in ("send", "draft"):
             raise _bad("mode doit être 'send' ou 'draft'.")

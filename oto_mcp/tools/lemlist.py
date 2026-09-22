@@ -144,8 +144,9 @@ def _fetch_audio(source) -> tuple[bytes, str]:
     agent aurait pu faire lire au serveur `localhost` ou l'IMDS cloud. Le seam
     (`file_source.resolve`, déjà utilisé par lighton et pennylane) porte cette
     garde, refuse les redirections, et accepte en prime `{"kind": "drive"}` et
-    `{"kind": "gmail"}` — l'audio peut donc venir d'un Drive ou d'une pièce
-    jointe, pas seulement d'une URL publique.
+    `{"kind": "gmail"}` et `{"kind": "project_file"}` — l'audio peut donc venir
+    d'un Drive, d'une pièce jointe ou d'un fichier du projet, pas seulement d'une
+    URL publique.
 
     Rend `(octets, nom de fichier)` : le nom vient de la SOURCE (pièce jointe,
     fichier Drive, dernier segment d'URL) et part en multipart. Le laisser
@@ -1259,8 +1260,9 @@ def register(mcp: FastMCP) -> None:
           `deduplicate`.
         - `upload_audio`: `lead_id` + `step_id` + `audio` — the audio of a
           `linkedinVoiceNote` step. `audio` is a source dict:
-          `{"kind": "url", "url": …}`, `{"kind": "drive", "file_id": …}` or
-          `{"kind": "gmail", "message_id": …, "filename": …}`. The server
+          `{"kind": "url", "url": …}`, `{"kind": "drive", "file_id": …}`,
+          `{"kind": "gmail", "message_id": …, "filename": …}` or
+          `{"kind": "project_file", "project_id": …, "file_id": …}`. The server
           fetches it (≤ 20 MB) and forwards the bytes.
         """
         client, is_platform = _client()
@@ -1338,7 +1340,7 @@ def register(mcp: FastMCP) -> None:
             if not (lead_id and step_id and audio):
                 raise _bad(
                     "`lead_id`, `step_id` ET `audio` requis — `audio` est une "
-                    'source : {"kind": "url"|"drive"|"gmail", …}')
+                    'source : {"kind": "url"|"drive"|"gmail"|"project_file", …}')
             data, filename = _fetch_audio(audio)
             result = client.upload_lead_audio(
                 lead_id, step_id, data, filename=filename)

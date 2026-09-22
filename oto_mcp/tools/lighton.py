@@ -190,6 +190,8 @@ def register(mcp: FastMCP) -> None:
         - Drive: `{"kind":"drive","file_id":"<id>"}`
         - Gmail attachment: `{"kind":"gmail","message_id":"<id>","filename":"<name>"}`
         - URL: `{"kind":"url","url":"https://…"}`
+        - Project file: `{"kind":"project_file","project_id":<id>,"file_id":<id>}`
+          (ids from oto_project_files op=list)
 
         Sync limits: ~20 MB / 15 pages. Returns `{status, result, usage}` —
         the Markdown is in `result`.
@@ -205,7 +207,7 @@ def register(mcp: FastMCP) -> None:
         Sync limits: ~20 MB / 15 pages. Returns `{status, result, usage}`.
 
         Args:
-            source: same shape as `lighton_parse` (drive/gmail/url).
+            source: same shape as `lighton_parse` (drive/gmail/url/project_file).
             schema: JSON Schema object describing the fields to extract,
                 e.g. `{"type":"object","properties":{"invoice_number":
                 {"type":"string"}}}`.
@@ -251,7 +253,7 @@ def register(mcp: FastMCP) -> None:
         Billed per ingested page.
 
         Args:
-            source: same shape as `lighton_parse` (drive/gmail/url).
+            source: same shape as `lighton_parse` (drive/gmail/url/project_file).
             workspace_id: destination workspace. REQUIRED unless the
                 connector instance has a configured default workspace.
                 List available ones with `lighton_workspaces`.

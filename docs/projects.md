@@ -117,6 +117,18 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > jusqu'au 21/09/2026, un fichier de plus de 2 Mo était refusé au dépôt du tableau de bord
 > et finissait `object_too_large` à l'extraction (ADR 0074, étape 0).
 
+> **Désigner un fichier du projet au lieu de le transporter (ADR 0074, étape 1).**
+> `file_source.resolve` (le résolveur « fichier côté oto » des outils qui prennent une
+> `source` : `lighton_*`, `pennylane_upload_file`, `gmail_compose` `attachments`,
+> `lemlist_lead op=upload_audio`) connaît le kind `{"kind":"project_file","project_id":…,
+> "file_id":…}` (ids rendus par `oto_project_files op=list`) : les octets sont lus côté
+> serveur dans le stockage objet (`media_store.fetch_object`), jamais par le contexte de
+> l'agent. Garde = celle d'une lecture par-id d'un projet — `ownership.visible_in_org`
+> (org active, ADR 0023) ET `can_access(read)` — et ⚠️ **un refus répond mot pour mot
+> comme un fichier inconnu** (ou rangé sur un autre projet) : distinguer les deux dirait
+> l'existence du fichier. Plafond = celui de `file_source` (`max_bytes`, 25 Mo par défaut),
+> vérifié AVANT de matérialiser (`head_object`).
+
 > **Livraison d'un projet COMPLET vers l'org d'un client (otomata-private#52).**
 > `oto_resource` : share/unshare acceptent un principal **org** (`org_id`, sans exigence
 > d'appartenance — on donne un accès) ; **`cascade=true`** sur share/transfer d'un projet

@@ -3,8 +3,8 @@ en récupérer les OCTETS côté serveur (oto-backend#60).
 
 Un agent MCP n'a pas de système de fichiers : il ne peut pas désigner un PDF par un
 chemin disque. Ce module résout une **référence typée** vers le contenu binaire d'un
-fichier qu'oto sait atteindre — pièce Gmail, fichier Drive, URL — pour qu'un tool
-(upload Pennylane, etc.) l'ingère sans passer par le disque.
+fichier qu'oto sait atteindre — pièce Gmail, fichier Drive, URL, fichier d'un projet —
+pour qu'un tool (upload Pennylane, etc.) l'ingère sans passer par le disque.
 
 Couche backend-core (ADR 0004) : imports lazy des clients connecteurs, résolution
 des credentials Google via `google_oauth`. Pas de fallback : une source illisible
@@ -121,28 +121,65 @@ def _from_url(src: dict, max_bytes: int) -> ResolvedFile:
     return ResolvedFile(data, name, mime)
 
 
+def _from_project_file(src: dict, max_bytes: int) -> ResolvedFile:
+    """Un fichier DÉPOSÉ sur un projet (« Autre document », `oto_project_files`), lu
+    dans le stockage objet — sans URL signée ni aller-retour HTTP (ADR 0074).
+
+    La garde est celle d'une lecture par-id d'un projet : visible dans l'org ACTIVE
+    (`ownership.visible_in_org`, ADR 0023) ET lisible (`can_access(read)`). Un refus
+    répond EXACTEMENT comme un fichier inconnu : distinguer les deux dirait à qui n'a
+    pas le droit que le fichier existe."""
+    try:
+        pid, fid = int(src.get("project_id")), int(src.get("file_id"))
+    except (TypeError, ValueError):
+        raise FileSourceError(
+            "source project_file : `project_id` et `file_id` entiers requis "
+            "(ids rendus par oto_project_files op=list).") from None
+    from . import db, media_store, ownership
+    introuvable = FileSourceError(
+        f"source project_file : fichier #{fid} introuvable sur le projet #{pid}.")
+    sub = access.current_user_sub_or_raise()
+    rid = str(pid)
+    if not (ownership.visible_in_org(sub, access.current_org(sub), "project", rid)
+            and ownership.can_access(sub, "project", rid, "read")):
+        raise introuvable
+    row = db.get_project_file(fid)
+    if not row or int(row["project_id"]) != pid:
+        raise introuvable
+    try:
+        data = media_store.fetch_object(row["s3_key"], max_bytes=max_bytes)
+    except media_store.MediaError as e:
+        raise FileSourceError(
+            f"source project_file : lecture impossible ({e.code} : {e}).") from None
+    return ResolvedFile(data, row.get("filename") or f"fichier-{fid}",
+                        row.get("mime") or "application/octet-stream")
+
+
 _RESOLVERS = {"drive": _from_drive, "gmail": _from_gmail}
+# Les résolveurs qui bornent la taille EUX-MÊMES, avant de matérialiser les octets.
+_RESOLVERS_BORNES = {"url": _from_url, "project_file": _from_project_file}
 
 
 def resolve(source: Any, *, max_bytes: int = DEFAULT_MAX_BYTES) -> ResolvedFile:
     """Résout une référence de fichier côté oto vers ses octets + métadonnées.
 
-    `source` = dict `{"kind": "drive"|"gmail"|"url", …}` :
-      - drive : `{file_id, account?}`
-      - gmail : `{message_id, filename, index?, account?}`
-      - url   : `{url}` (http/https, suit les redirections)
+    `source` = dict `{"kind": "drive"|"gmail"|"url"|"project_file", …}` :
+      - drive        : `{file_id, account?}`
+      - gmail        : `{message_id, filename, index?, account?}`
+      - url          : `{url}` (http/https, redirections refusées)
+      - project_file : `{project_id, file_id}` (ids d'`oto_project_files op=list`)
     Lève `FileSourceError` si `kind` manque/inconnu, source illisible, ou taille
     dépassée. Borne la taille à `max_bytes` (charge en RAM)."""
     if not isinstance(source, dict):
         raise FileSourceError("source : objet attendu `{kind, …}`.")
     kind = source.get("kind")
-    if kind == "url":
-        rf = _from_url(source, max_bytes)
+    if kind in _RESOLVERS_BORNES:
+        rf = _RESOLVERS_BORNES[kind](source, max_bytes)
     else:
         fn = _RESOLVERS.get(kind)
         if fn is None:
             raise FileSourceError(
-                f"source `kind`={kind!r} inconnu (attendu : drive, gmail, url).")
+                f"source `kind`={kind!r} inconnu (attendu : drive, gmail, url, project_file).")
         try:
             rf = fn(source)
         except FileSourceError:
