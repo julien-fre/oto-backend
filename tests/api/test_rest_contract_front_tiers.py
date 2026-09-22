@@ -528,6 +528,33 @@ def test_un_simple_membre_quitte_l_org(client, org):
     assert r.json() == {"ok": True, "org_id": oid, "left": True}
 
 
+# ── DELETE /api/orgs/{id} : 409 org_has_active_subscription (#400) ────────────
+
+def test_archiver_une_org_qui_porte_un_abonnement_rend_409_puis_passe_une_fois_resilie(client):
+    """Décision d'Alexis (#400, piste 1) : une org avec un abonnement qui prélève ne
+    s'archive pas — elle sortirait des listings et plus personne ne pourrait le résilier.
+    Rejoué sur la route SERVIE, avec le code que `Capability.errors` déclare."""
+    from oto_mcp import db, org_store
+    from oto_mcp.db import billing
+
+    admin = "usr_ft_archive_admin"
+    db.upsert_user(admin, email=f"{admin}@front-tiers.invalid", name=admin)
+    oid = org_store.create_org("Org à abonnement", created_by=admin)
+    org_store.add_org_member(oid, admin, "org_admin")
+    billing.upsert_org_subscription(oid, plan="standard", customer_id="cst_ft",
+                                    mandate_id="mdt_ft", status="active")
+
+    r = client.delete(f"/api/orgs/{oid}", headers=_h(admin))
+    assert (r.status_code, r.json()["error"]) == (409, "org_has_active_subscription"), r.text
+    assert "abonnement" in r.json()["detail"]
+    assert org_store.get_org(oid) is not None          # toujours servie : rien n'a été écrit
+
+    billing.mark_cancel_at_period_end(oid)              # « résilie d'abord »
+    r = client.delete(f"/api/orgs/{oid}", headers=_h(admin))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "org_id": oid, "archived": True}
+
+
 # ── GET /api/me/nodes/{id} : doc_id, project_id, ordered ──────────────────────
 
 @pytest.fixture(scope="module")

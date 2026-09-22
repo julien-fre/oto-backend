@@ -16,6 +16,7 @@ from typing import Optional
 from .. import config
 from .. import logodev
 from ..db import _connect
+from ..db.billing import ABONNEMENT_QUI_PRELEVE
 
 _log = logging.getLogger(__name__)
 
@@ -177,15 +178,51 @@ def list_all_orgs() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+class OrgAvecAbonnementActif(Exception):
+    """L'org porte un abonnement qui prélève : elle ne s'archive pas (#400).
+
+    Archiver est un soft-delete qui la rend invisible de tous les listings — plus
+    personne ne pourrait résilier son abonnement, qui continuerait d'être prélevé.
+    Les capacités d'archivage la traduisent en `409 org_has_active_subscription`."""
+
+    def __init__(self, org_id: int):
+        super().__init__(f"org #{org_id} : abonnement actif, à résilier avant archivage")
+        self.org_id = org_id
+
+
 def archive_org(org_id: int) -> bool:
     """Archive (soft-delete) une org : masquée de tous les listings, réversible
     (DB : `UPDATE orgs SET archived_at = NULL`). Aucune FK touchée (membres,
     credentials, usage restent). Les membres qui l'avaient pour org
     active basculent sur leur plus ancienne org NON archivée restante (miroir
     `remove_org_member`) ; sans org restante → plus d'org active (= perso).
-    False si l'org est inconnue ou déjà archivée."""
+    False si l'org est inconnue ou déjà archivée.
+
+    Lève `OrgAvecAbonnementActif` si l'org porte un abonnement qui prélève
+    (`db.billing.ABONNEMENT_QUI_PRELEVE`) : à résilier d'abord. Le contrôle et la pose
+    d'`archived_at` sont UNE transaction, sous le verrou de mise à jour de la ligne `orgs` ;
+    la souscription prend le verrou partagé de la même ligne (`billing.upsert_org_
+    subscription`) — l'une attend l'autre, aucune ne passe sur un instantané périmé."""
     with _connect() as conn:
         with conn.transaction():
+            # `archived_at IS NULL` dans le verrou : déjà archivée → False, idempotent,
+            # même si elle porte un abonnement (préexistant à ce refus). `NO KEY UPDATE`
+            # et non `UPDATE` : il suffit à exclure le verrou partagé de la souscription
+            # (`FOR SHARE`) — c'est ce que l'`UPDATE` d'en dessous prendrait de toute
+            # façon — sans bloquer, en plus, toute insertion qui référence l'org (un
+            # verrou `FOR UPDATE` interdit même la simple vérification de clé étrangère).
+            if conn.execute(
+                "SELECT 1 FROM orgs WHERE id = %s AND archived_at IS NULL "
+                "FOR NO KEY UPDATE",
+                (org_id,),
+            ).fetchone() is None:
+                return False
+            if conn.execute(
+                "SELECT 1 FROM org_subscriptions s "
+                f"WHERE s.org_id = %s AND {ABONNEMENT_QUI_PRELEVE}",
+                (org_id,),
+            ).fetchone() is not None:
+                raise OrgAvecAbonnementActif(org_id)
             cur = conn.execute(
                 "UPDATE orgs SET archived_at = now() WHERE id = %s AND archived_at IS NULL",
                 (org_id,),

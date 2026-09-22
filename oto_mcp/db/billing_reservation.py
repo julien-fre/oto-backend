@@ -35,6 +35,7 @@ from contextlib import contextmanager
 from typing import Iterator, Optional
 
 from ._conn import _connect_autocommit
+from .billing import _ECHEANCE_DUE
 
 # Famille de verrous propre aux échéances : le premier entier isole la famille (même
 # convention que `_VERROU_CAMPAGNE` dans runner_fleets), le second est l'org.
@@ -54,6 +55,5 @@ def reserver_echeance(sub_row: dict) -> Iterator[Optional[dict]]:
             yield None
             return
         yield conn.execute(
-            "SELECT * FROM org_subscriptions WHERE org_id = %s "
-            "AND status IN ('active', 'past_due') AND next_billing_at <= NOW()",
+            f"SELECT s.* FROM org_subscriptions s WHERE s.org_id = %s AND {_ECHEANCE_DUE}",
             (org_id,)).fetchone()
