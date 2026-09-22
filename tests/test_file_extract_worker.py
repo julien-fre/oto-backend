@@ -130,6 +130,36 @@ def test_one_exploding_file_does_not_stop_the_others(store, monkeypatch):
     assert {e["file_id"] for e in store.ecrits} == {2, 3}, "les autres ont été traités"
 
 
+def test_a_3_mb_file_is_read_under_the_project_file_cap(monkeypatch):
+    """La lecture passait `fetch_object` SANS `max_bytes` : elle retombait sur le
+    plafond d'une IMAGE (2 Mo), si bien que tout fichier de projet plus gros finissait
+    `failed / object_too_large` — alors que le dépôt en accepte 25. Le vrai
+    `fetch_object` est exercé ici, seul le client S3 est un faux."""
+    import io
+
+    from oto_mcp import media_store
+
+    texte = b"une ligne de texte lisible\n" * (3 * 1024 * 1024 // 27 + 1)
+    assert len(texte) > 3 * 1024 * 1024
+
+    class _S3:
+        def head_object(self, **kw):
+            return {"ContentLength": len(texte)}
+
+        def get_object(self, **kw):
+            return {"Body": io.BytesIO(texte)}
+
+    monkeypatch.setattr(media_store, "_get_client", lambda: _S3())
+    monkeypatch.setattr(media_store, "_bucket", lambda: "media-test")
+    monkeypatch.delenv("OTO_MCP_S3_MAX_IMAGE_BYTES", raising=False)
+    monkeypatch.delenv("OTO_MCP_UPLOAD_MAX_BYTES", raising=False)
+    faux = _FauxDb([_fichier(1)])
+    monkeypatch.setattr(w, "db", faux)
+
+    assert w._extract_one(_fichier(1)) == file_extract.OK, faux.ecrits
+    assert faux.ecrits[0]["detail"] != "object_too_large"
+
+
 def test_an_empty_queue_is_a_cheap_no_op(monkeypatch):
     monkeypatch.setattr(w, "db", _FauxDb([]))
     assert w._extract_batch() == (0, 0)

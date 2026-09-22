@@ -56,7 +56,7 @@ async def project_files_upload(request: Request, *, verifier: JWTVerifier) -> JS
     sub, err = await _authenticate(request, verifier)
     if err:
         return err
-    from .. import ownership, media_store
+    from .. import ownership, media_store, upload_tokens
     pid = int(request.path_params["project_id"])
     if not db.get_project_by_id(pid):
         return _json_error(request, 404, "unknown_project")
@@ -77,7 +77,10 @@ async def project_files_upload(request: Request, *, verifier: JWTVerifier) -> JS
     title = (str(form.get("title") or "")).strip() or None
     description = (str(form.get("description") or "")).strip() or None
     try:
-        key = media_store.upload_object("project-files", str(pid), data, content_type, filename)
+        # Le plafond d'un FICHIER DE PROJET, le même que le dépôt par lien signé : sans
+        # lui, `upload_object` retombe sur celui d'une image (2 Mo).
+        key = media_store.upload_object("project-files", str(pid), data, content_type,
+                                        filename, max_bytes=upload_tokens.max_bytes())
     except media_store.MediaError as e:
         return _json_error(request, e.status, e.code)
     row = db.add_project_file(pid, key, filename, mime=content_type,

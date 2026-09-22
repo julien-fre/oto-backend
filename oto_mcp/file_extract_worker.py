@@ -56,11 +56,13 @@ def _extract_one(f: dict) -> str:
     TÉLÉCHARGEMENT (stockage indisponible, clé absente) est un `failed` reprenable :
     contrairement à un format non supporté, elle peut disparaître d'elle-même.
     """
-    from . import media_store
+    from . import media_store, upload_tokens
 
     fid = int(f["id"])
     try:
-        data = media_store.fetch_object(f["s3_key"])
+        # Le plafond d'un FICHIER DE PROJET (celui du dépôt) : sans lui, la lecture
+        # retombe sur celui d'une image (2 Mo) et tout fichier plus gros échoue ici.
+        data = media_store.fetch_object(f["s3_key"], max_bytes=upload_tokens.max_bytes())
     # noqa: SILENT — l'échec est PERSISTÉ sur le fichier (status FAILED + detail)
     except Exception as e:  # noqa: BLE001 — stockage : reprenable, borné par `attempts`
         detail = getattr(e, "code", None) or type(e).__name__

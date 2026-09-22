@@ -110,6 +110,12 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > shell (claude.ai), il transmet l'URL à l'humain qui l'ouvre → **page d'upload HTML
 > autoportée** (`GET /api/upload/<token>`, POST multipart `file`, jeton consommé au POST pas
 > au GET). L'upload multipart humain dashboard (`POST /api/me/projects/{id}/files`) reste.
+> ⚠️ **Un seul plafond pour un fichier de projet** : `upload_tokens.max_bytes()`
+> (`OTO_MCP_UPLOAD_MAX_BYTES`) borne le dépôt par lien signé, le dépôt multipart du tableau
+> de bord ET la lecture du worker d'extraction (`file_extract_worker`). Sans `max_bytes`,
+> `media_store.upload_object`/`fetch_object` retombent sur le plafond d'une IMAGE (2 Mo) —
+> jusqu'au 21/09/2026, un fichier de plus de 2 Mo était refusé au dépôt du tableau de bord
+> et finissait `object_too_large` à l'extraction (ADR 0074, étape 0).
 
 > **Livraison d'un projet COMPLET vers l'org d'un client (otomata-private#52).**
 > `oto_resource` : share/unshare acceptent un principal **org** (`org_id`, sans exigence

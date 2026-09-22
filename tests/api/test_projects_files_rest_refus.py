@@ -39,6 +39,8 @@ from oto_mcp import access, db, doc_export, media_store, ownership
 from oto_mcp.api import base, projects
 
 PID = 42
+# Capturé à l'import, avant que la fixture `monde` ne le remplace par un faux.
+_VRAI_UPLOAD_OBJECT = media_store.upload_object
 LIGNE = {"id": 9, "project_id": PID, "filename": "rapport.pdf",
          "mime": "application/pdf", "size_bytes": 12, "title": None,
          "s3_key": "project-files/42/abcdef.pdf"}
@@ -83,7 +85,7 @@ def monde(monkeypatch, journal):
     monkeypatch.setattr(ownership, "visible_in_org", _visible)
     monkeypatch.setattr(ownership, "can_access", _acces)
 
-    def _upload_object(prefix, owner_id, data, content_type, filename):
+    def _upload_object(prefix, owner_id, data, content_type, filename, *, max_bytes=None):
         journal["objets"].append((prefix, owner_id, len(data), content_type, filename))
         return f"{prefix}/{owner_id}/abcdef.pdf"
 
@@ -248,6 +250,48 @@ def test_un_refus_du_stockage_ne_laisse_pas_de_ligne_orpheline(client, monkeypat
                     headers=_en_tant_que())
     assert r.status_code == 413 and r.json()["error"] == "file_too_large"
     assert journal["lignes"] == [] and journal["activite"] == []
+
+
+def test_un_fichier_de_3_mo_passe_le_plafond_d_un_fichier_de_projet(client, monkeypatch,
+                                                                   journal):
+    """Le dépôt passait `upload_object` SANS `max_bytes` : il retombait sur le plafond
+    d'une IMAGE (2 Mo), si bien qu'un fichier de projet déposé depuis le tableau de bord
+    était refusé au-delà, là où le même fichier passe par le lien signé (25 Mo). Le vrai
+    `upload_object` est exercé ici, seul le client S3 est un faux."""
+    class _S3:
+        def __init__(self):
+            self.puts = []
+
+        def put_object(self, **kw):
+            self.puts.append(kw)
+
+    s3 = _S3()
+    monkeypatch.setattr(media_store, "upload_object", _VRAI_UPLOAD_OBJECT)
+    monkeypatch.setattr(media_store, "_get_client", lambda: s3)
+    monkeypatch.setattr(media_store, "_bucket", lambda: "media-test")
+    monkeypatch.delenv("OTO_MCP_S3_MAX_IMAGE_BYTES", raising=False)
+    monkeypatch.delenv("OTO_MCP_UPLOAD_MAX_BYTES", raising=False)
+    trois_mo = b"%PDF" + b"x" * (3 * 1024 * 1024)
+
+    r = client.post(f"/api/me/projects/{PID}/files",
+                    files={"file": ("gros.pdf", trois_mo, "application/pdf")},
+                    headers=_en_tant_que())
+
+    assert r.status_code == 200, r.text
+    assert len(s3.puts) == 1 and len(s3.puts[0]["Body"]) == len(trois_mo)
+    assert journal["lignes"][0][3]["size_bytes"] == len(trois_mo)
+
+
+def test_le_plafond_du_depot_est_celui_du_lien_signe(client, monkeypatch, journal):
+    """Une seule source de vérité : `upload_tokens.max_bytes()` — abaissée par l'env,
+    elle borne aussi le dépôt du tableau de bord."""
+    monkeypatch.setattr(media_store, "upload_object", _VRAI_UPLOAD_OBJECT)
+    monkeypatch.setattr(media_store, "_get_client", lambda: None)
+    monkeypatch.setenv("OTO_MCP_UPLOAD_MAX_BYTES", "8")
+    r = client.post(f"/api/me/projects/{PID}/files", files=_fichier(),
+                    headers=_en_tant_que())
+    assert r.status_code == 413 and r.json()["error"] == "file_too_large"
+    assert journal["lignes"] == []
 
 
 # ── ce que la réponse a le droit de porter ───────────────────────────────────
