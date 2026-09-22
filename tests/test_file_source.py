@@ -102,9 +102,21 @@ def test_url_ssrf_blocked(host):
         fs.resolve({"kind": "url", "url": host})
 
 
-def test_assert_public_host_passes_for_global():
-    # Un host public ne lève pas (résolution réelle d'une IP globale).
+def test_assert_public_host_passes_for_global(monkeypatch):
+    # Un host public ne lève pas. Hermétique (#463) : la résolution est remplacée au seam
+    # de la garde d'egress (`egress.resolved_addresses`) — un test unitaire affirme le
+    # système, pas la connectivité du poste. Le test contraire (une adresse non publique
+    # est refusée) est `test_url_ssrf_blocked` juste au-dessus.
+    from oto_mcp import egress
+    appels = []
+
+    def _resolu(hote, port):
+        appels.append(hote)
+        return {"93.184.216.34"}  # adresse globale (plage documentaire d'example.com)
+
+    monkeypatch.setattr(egress, "resolved_addresses", _resolu)
     fs._assert_public_host("example.com")
+    assert appels == ["example.com"], "la garde doit résoudre l'hôte demandé, une fois"
 
 
 # ── kind="project_file" : un fichier déposé sur un projet (ADR 0074) ──────────
