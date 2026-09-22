@@ -427,8 +427,13 @@ from oto_mcp.db import _schema, schema
 # révision Alembic `0003_runner_fleets_preneur`, jouée à la main, jamais du boot (ADR
 # 0065). ADDITIVE : l'ancien code ne la lit ni ne l'écrit.
 # 163 324 → 163 978 (+654, commentaire compris).
-EMPREINTE = "4c8e30c3dbe2b3ab67ef7594514c54a387d72b086f55a5860b3b3175ed7bc42b"
-LONGUEUR = 163978
+# 22/09/2026 (ADR 0074, #674) — `transcription_create` devient ASYNCHRONE : table
+# NEUVE `transcription_jobs` (fragment `schema/transcription.py`, en QUEUE de
+# `ASSEMBLAGE`, après `functions` — après `projects` dont elle référence `projects(id)`).
+# Additive, aucun autre fragment touché.
+# 163 978 → 165 623 (+1 645, commentaire du fragment compris).
+EMPREINTE = "683ed246439019249c437f6bf547c72a18c6112745f733a1416acb8f61bdb77c"
+LONGUEUR = 165623
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
