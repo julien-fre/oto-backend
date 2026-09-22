@@ -869,6 +869,81 @@ def aggregate_tool_feedback(days: int = 30, *, org_id: Optional[int] = None) -> 
     return _signal_agg("tool_feedback", "s.target AS tool", "s.target", days, org_id)
 
 
+def agents_en_echec(days: int = 1, *, org_id: Optional[int] = None,
+                    seuil: int = 2) -> list[dict]:
+    """Les agents dont les travaux MEURENT, groupés par agent et par motif.
+
+    ⚠️ **La panne qu'on ne voit pas.** Un agent déclenché casse en silence : sa
+    file se vide (les travaux morts n'attendent plus), son écran le dit « actif »,
+    et son dernier déroulé peut très bien être vert. Trois travaux d'un même agent
+    de production sont morts sur quatre jours — neuf tentatives — et la panne
+    s'est découverte en regardant pour autre chose. Personne n'avait été prévenu,
+    parce que rien n'était chargé de prévenir.
+
+    Ce que cette lentille rend disponible : « quel agent a perdu au moins `seuil`
+    travaux dans la fenêtre, et pour quel motif ». C'est ce qu'un relevé nocturne
+    lit pour en faire UNE ligne.
+
+    ⚠️ **Groupé par MOTIF, pas seulement par agent.** « Trois fois la même panne »
+    est un défaut à réparer ; « trois pannes différentes » est un agent qu'on a
+    mal réglé, ou un amont instable. Les confondre sous un compte unique ferait
+    lire le second comme le premier.
+
+    ⚠️ **Le `motif` rendu est une CLÉ DE REGROUPEMENT, pas le message.** Deux
+    choses lui sont faites, et le message entier reste sur le travail :
+
+    - les suites de **4 chiffres ou plus** deviennent `N`. C'est ce qui fait que
+      « le travail 23324 est arrivé sans… » et « le travail 23325 est arrivé
+      sans… » sont UNE panne. Tronquer la tête ne suffisait pas : l'identifiant
+      qui varie est au douzième caractère, donc dans ce qu'on garde (banc ③).
+    - ⚠️ **Trois chiffres et moins sont laissés INTACTS**, délibérément : `429`
+      et `400` sont deux refus différents, et les fondre en « HTTP N » ferait
+      lire un throttle et un contrat cassé comme une seule panne. La frontière
+      est à quatre parce que les identifiants de cette base en portent cinq et
+      les codes HTTP trois — elle sépare ce que l'on veut séparer.
+    - puis on tronque à `_MOTIF_TETE`, pour qu'un message long ne se scinde pas
+      sur sa queue.
+
+    `org_id` scope à une org (lentille org_admin) ; sans lui, plateforme.
+    """
+    ou = "AND j.org_id = %s" if org_id is not None else ""
+    params: list = [days]
+    if org_id is not None:
+        params.append(org_id)
+    params.append(max(1, int(seuil)))
+    with _connect() as conn:
+        rows = conn.execute(
+            rf"""
+            SELECT j.org_id,
+                   (j.payload->>'trigger_id')::bigint    AS trigger_id,
+                   j.payload->>'label'                   AS label,
+                   LEFT(regexp_replace(j.last_error, '\d{{4,}}', 'N', 'g'),
+                        {_MOTIF_TETE})                    AS motif,
+                   COUNT(*)::int                         AS travaux,
+                   SUM(j.attempts)::int                  AS tentatives,
+                   MIN(j.finished_at)                    AS depuis,
+                   MAX(j.finished_at)                    AS dernier
+              FROM runner_jobs j
+             WHERE j.status = 'failed'
+               AND j.finished_at > NOW() - make_interval(days => %s)
+               {ou}
+             GROUP BY 1, 2, 3, 4
+            HAVING COUNT(*) >= %s
+             ORDER BY travaux DESC, dernier DESC
+             LIMIT 100
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+#: Ce qu'on garde du motif après normalisation — assez long pour qu'une cause
+#: reste lisible dans l'alerte, assez court pour qu'une queue variable ne scinde
+#: pas un groupe. La normalisation des identifiants, elle, se fait AVANT la
+#: troncature : cf. `agents_en_echec`, l'ordre importe.
+_MOTIF_TETE = 80
+
+
 def list_tool_calls(
     limit: int = 200,
     sub: Optional[str] = None,

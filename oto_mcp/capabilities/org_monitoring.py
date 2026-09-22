@@ -540,7 +540,8 @@ def _tool_quality(ctx: ResolvedCtx, inp: OrgDaysInput) -> dict:
 
 class OrgMonitoringInput(BaseModel):
     op: Literal["summary", "calls", "call", "connectors", "adoption",
-                "runs", "run", "gaps", "tool_quality", "signals", "export"]
+                "runs", "run", "gaps", "tool_quality", "signals", "export",
+                "agents_en_echec"]
     org_id: int
     days: Optional[int] = None            # fenêtre (défaut 7 ; adoption/gaps/tool_quality : 30)
     limit: Optional[int] = None           # calls (200) / runs (100) / export (1000)
@@ -593,6 +594,9 @@ def _console(ctx: ResolvedCtx, inp: OrgMonitoringInput) -> dict:
     if inp.op == "run":
         return _run(ctx, OrgRunInput(org_id=oid, run_id=_need(
             inp.run_id, "missing_run_id", "`run_id` requis pour run.")))
+    if inp.op == "agents_en_echec":
+        # 1 jour : une alerte, pas une histoire — cf. la lentille plateforme.
+        return {"agents": db.agents_en_echec(inp.days or 1, org_id=oid)}
     if inp.op == "gaps":
         return _gaps(ctx, OrgDaysInput(org_id=oid, days=inp.days or 30))
     if inp.op == "tool_quality":
@@ -880,7 +884,13 @@ CAPABILITIES += [
             "broken, AGGREGATED) / signals (the same reports RAW, with their body — the "
             "counts say how many, only the body says why; filters `signal` "
             "tool_feedback|gap, `tool`, `status`) / export (audit log, `since`/`until` "
-            "ISO — compliance evidence). "
+            "ISO — compliance evidence) / agents_en_echec (your hosted agents whose "
+            "JOBS are dying, grouped by agent AND by reason — `days`, default 1). "
+            "⚠️ A triggered agent breaks SILENTLY: its queue empties because dead jobs "
+            "stop waiting, the screen says `active`, and the last run can be green — "
+            "this is the lens that says otherwise. Grouped by reason because three "
+            "times the same fault is a bug, three different ones is a misconfigured "
+            "agent. "
             "Everything is scoped to calls EMITTED UNDER this org, never to membership. "
             "Platform-wide investigation is oto_admin_monitoring (platform admin)."),
         mcp="oto_org_monitoring",

@@ -747,7 +747,7 @@ def test_la_sortie_typee_GARDE_l_etat_du_travail_et_la_file():
 def test_les_livraisons_se_lisent_org_scopees(monkeypatch):
     vu = {}
     monkeypatch.setattr(RT.db, "livraisons",
-                        lambda t, o, limit=50, en_attente=False:
+                        lambda t, o, limit=50, en_attente=False, avec_corps=False:
                         vu.update(t=t, o=o, n=limit, attente=en_attente) or [])
     _appel(op="deliveries", trigger_id=5, limit=10)
     assert vu == {"t": 5, "o": ORG, "n": 10, "attente": False}, (
@@ -760,7 +760,7 @@ def test_waiting_only_ne_demande_QUE_la_file(monkeypatch):
     comme la file."""
     vu = {}
     monkeypatch.setattr(RT.db, "livraisons",
-                        lambda t, o, limit=50, en_attente=False:
+                        lambda t, o, limit=50, en_attente=False, avec_corps=False:
                         vu.update(attente=en_attente) or [])
     _appel(op="deliveries", trigger_id=5, waiting_only=True)
     assert vu == {"attente": True}

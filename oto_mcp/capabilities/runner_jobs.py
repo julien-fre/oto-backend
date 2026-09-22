@@ -210,6 +210,15 @@ class Job(BaseModel):
             "re-queued failure clears it), and null on a `pending` job that no one "
             "has taken."))
     last_error: Optional[str] = None
+    attempt_errors: Optional[list[dict]] = Field(
+        None, description=(
+            "The reason of EVERY attempt, oldest first: `[{attempt, at, error}]`. "
+            "⚠️ `last_error` is only the LAST one and overwrites the rest — three "
+            "attempts that fail differently are not three attempts that fail the "
+            "same way, and a job that SUCCEEDS on its third try kept no trace at "
+            "all of the two that didn't (the success clears `last_error`), which "
+            "is the quietest way an incident disappears. `[]` is a real empty "
+            "(nothing failed); null means the column was not read."))
     result: Optional[JobResult] = None
     due_at: Optional[str] = None
     created_at: Optional[str] = None

@@ -432,8 +432,15 @@ from oto_mcp.db import _schema, schema
 # `ASSEMBLAGE`, après `functions` — après `projects` dont elle référence `projects(id)`).
 # Additive, aucun autre fragment touché.
 # 163 978 → 165 623 (+1 645, commentaire du fragment compris).
-EMPREINTE = "683ed246439019249c437f6bf547c72a18c6112745f733a1416acb8f61bdb77c"
-LONGUEUR = 165623
+# 22/09/2026 (le motif de chaque tentative) — `ALTER TABLE runner_jobs ADD COLUMN IF
+# NOT EXISTS attempt_errors JSONB NOT NULL DEFAULT '[]'::jsonb` dans le fragment RUNS.
+# ADDITIVE et idempotente : l'ancien code ne la lit ni ne l'écrit, et un défaut non
+# volatile se pose en métadonnée (PG 11+) — pas de réécriture de table sur la base
+# PARTAGÉE. Elle existe parce que `last_error` n'en garde qu'UNE : un travail mort en
+# trois essais ne montrait qu'un tiers de son histoire.
+# 165 623 → 166 657 (+1 034, commentaire compris).
+EMPREINTE = "f5f2fa76d9e8178a0fa49a562d6d0096f179e3bdcec0549d86e8f0a990295dfd"
+LONGUEUR = 166657
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
