@@ -842,3 +842,100 @@ il faudrait un cliquet (liste de dettes qui ne peut que se réduire), pas un rou
 La transitivité (`session_layers` → `_resolve_context` → SQL, exactement notre cas) n'est
 pas décidable par nom sans graphe d'appels : un garde purement direct **n'aurait pas
 attrapé ce gel-ci**.
+
+## La garde d'exécution : `_connect()` sait s'il est appelé depuis la boucle (21/09)
+
+Le gel du 21/09 (`me.agent_context`) est passé sous quatre garde-fous parce qu'aucun ne
+regardait **où** s'exécute un accès base : l'AST « async sans await » ne voit pas un handler
+qui `await` ailleurs, le seam `execute()` ne juge que le handler, `loop_watch` nomme après
+coup. Le point de passage obligé de toute requête est `db._conn._connect()` (le pool n'est
+ouvert nulle part ailleurs) : `oto_mcp/db/_hors_boucle.py` y pose la seule question qui
+compte — **y a-t-il une boucle asyncio qui tourne dans CE thread ?** Un thread du
+threadpool n'en a pas (`get_running_loop` lève), un `async def` en a une : le chemin
+indirect (assistant sync appelé par un handler async, comme `session_layers`) est attrapé
+sans rien savoir du code appelant. `_connect_autocommit` (DDL à chaud) est gardé pareil.
+
+- **Site** = la coroutine `oto_mcp` la plus interne de la pile (`module::nom`, `co_name`) : c'est
+  elle qu'il faut décharger, quel que soit l'assistant qui touche la base. Une coroutine de
+  test n'est pas un site ; un thread sans boucle (démarrage, `init_db`, timers, scripts) non plus.
+- **Production** : un `logger.warning` par site et par process, `db.hors_boucle site=… ; pile :
+  …`, jamais une exception (un site en défaut est une lenteur, la lever en ferait une panne).
+  Aucune variable d'environnement, aucun schéma. **Aucune exception ne sort de la garde** :
+  un défaut interne est journalisé une fois (`db.hors_boucle.defaut`, avec sa pile) et l'accès
+  base se poursuit — l'observateur ne casse jamais le chemin observé.
+- **Tests** : `HorsBoucle` est levée pour tout site hors du **stock gelé**
+  (`tests/_stock_db_hors_boucle.py`, posé par `tests/conftest.py`). La suite a très peu de base
+  réelle : la levée rattrape ce qu'un banc à PostgreSQL ferait passer par un chemin indirect.
+
+**Le cliquet statique** (`tests/_appels_db_hors_boucle.py` + `test_db_hors_boucle.py`) est
+la moitié qui couvre la suite sans base : un graphe d'appels par nom / module importé /
+`self.` / fermeture locale (les façades à ré-export plat `db` et `org_store` comprises)
+liste tout `async def` qui atteint `_connect` par des appels **synchrones**. Il coupe aux
+`await`, à `run_in_threadpool(f, …)` / `to_thread(f, …)` (`f` est passée, pas appelée) et
+aux `lambda`. Le test échoue dans les DEUX sens : un site nouveau (il faut le décharger, pas
+l'ajouter au stock), et un site du stock qui n'est plus fautif (il faut retirer sa ligne, sinon
+le stock tolérerait sa régression). Ce qu'il ne voit pas — répartition dynamique, `getattr`,
+callbacks — est le travail de la garde d'exécution ; ni l'un ni l'autre ne suffit seul.
+
+**Ce que la mesure a trouvé de plus que les 71 appels directs du 21/09** : le balayage
+direct s'arrêtait aux modules nommés `db.*`. En suivant les assistants, il y a **82 sites**
+au moment de la pose — les façades `org_store` et `access` (`roles.*`, `current_org`,
+`current_group`, `resolve_credential`…) cachent la base derrière un nom neutre, et 25 sites
+(tous les middlewares MCP, les axes `_org`/`_project`, plusieurs outils) n'y arrivent que par
+`current_user_sub_from_token`, qui ne lit la base **que tant que le drain d'alias est armé**
+(`[dormant]` dans le stock : un interrupteur, pas un gel d'aujourd'hui).
+
+### Lot 1 de décharge (21/09) : les routes sans jeton d'abord, puis les deux handlers les plus lourds
+
+Demande d'oto cd : ce qui est atteignable **sans authentification** passe en premier, parce
+que c'est ce qu'un tiers peut marteler. **82 → 62 sites** :
+
+- `api/public.py` — toutes les routes publiques qui lisent la base (pages de partage
+  `public_doc`/`public_doc_view`, désinscriptions `outreach_unsubscribe`/`digest_unsubscribe`,
+  vitrines `guide(s)_library_public[_get]`, `invite_preview`, `connectors_catalog` — dont la
+  branche anonyme). Les corps redeviennent des `def` synchrones sous un décorateur
+  `api.base.en_thread` : l'objet reste un `async def` pour Starlette, pour `route.endpoint is …`
+  et pour les bancs qui font `asyncio.run(route(req))`.
+- le dispatch par Host, à CHAQUE requête : `subdomain_project.HostDispatch._http` et
+  `subdomain_org.SubdomainOrgMiddleware` passent par `resolve_project_async` /
+  `org_id_for_host_async`, qui ne paient le saut de thread que s'il y a de la base à lire (un
+  host canonique n'a pas de slug ; un slug d'org en cache est servi de la mémoire).
+- `_tls_check` (Caddy `ask`), l'annuaire public des projets MCP, la métadonnée de ressource
+  protégée (`prm`, `valid_org_audience` seulement quand les deux crans gratuits n'ont pas
+  tranché), le retour OAuth Salesforce (`callback` + `persist_token`, qui était un `async def`
+  sans `await`).
+- `runner.triggers` : le SQL de toutes les opérations (~40 appels) part au threadpool **en un
+  bloc** (`_triggers_sync`) ; seuls les avertissements d'outils, asynchrones, restent dans la boucle.
+- `me.credential.set` : lecture (`_set_preparer`) et écriture (`_set_ecrire`) au threadpool,
+  la sonde du connecteur, asynchrone, entre les deux.
+- `unipile_seats._list_seats` : `_platform_client()` (lecture du coffre) — le reliquat du
+  correctif du matin, que la garde a trouvé.
+
+- `oto_connector` (`connectors/console._connector`) : `list`/`select`/`pause`/`unselect`/
+  `recommend` au threadpool. **Trouvé par la garde d'exécution en CI, pas par le balayage** :
+  l'alias local `sel = connectors_selection` cachait les appels (le balayage suit désormais
+  ces alias) — c'est la preuve que les deux détecteurs se recouvrent sans se remplacer.
+
+Preuve : `tests/test_lot1_sql_hors_boucle.py` — compteur de boucle pendant une lecture de
+0,5 s, **0 battement avant, ≥ 20 après**, sur neuf cas. **Reste 62 sites** dans
+`tests/_stock_db_hors_boucle.py` (dont 25 `[dormant]`) ; les plus exposés qui restent :
+`_IatGatedVerifier.verify_token` (audience d'un endpoint de projet), les outils
+`tools/meta` (`oto_call`, `oto_list_my_tools`…), `api/media`, `api/projects`.
+
+### 22/09/2026 — la garde tue la prod en 3.10, la CI ne le voit pas (revert de #1039)
+
+La première version (#1039, v1.325.0) lisait `code.co_qualname` — **Python 3.11+** — alors que
+la prod tourne en **3.10** (`requires-python = ">=3.10"`). `AttributeError` à *chaque* accès base
+depuis la boucle : 186 en ~3 min, jusqu'au revert. Pire : `access.resolve_field_filter` passe par
+`_connect()`, et `redaction.redact_payload` retombait alors en passe-through pour tout service
+sans défaut serveur (aucune exposition constatée, mais un contournement de la rédaction ;
+sujet distinct, suivi à part). **La CI (3.12) n'avait rien vu** : `syntaxe-plancher` compile en
+3.10 mais n'*exécute* rien, et `co_qualname` est un accès d'attribut, pas de la syntaxe.
+
+Trois corrections : la clé de site est `module::co_name` (portable ; `configurer` ramène les
+clés du stock, écrites en `module::qualname` par le balayage, à cette forme) ; la garde
+enveloppe son propre code et ne lève plus que la violation, en mode test ; et un job CI
+**`La garde s'exécute sous le plancher Python`** (3.10) exécute l'import complet de l'arbre et
+les bancs de la garde. Un banc statique (`test_la_garde_n_emploie_aucune_api_posterieure_a_python_3_10`)
+nomme les API 3.11+ dans le module, et une trame factice sans `co_qualname` prouve que `_site`
+n'en demande pas.
