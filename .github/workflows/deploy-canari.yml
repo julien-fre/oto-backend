@@ -147,9 +147,14 @@ jobs:
         # concurrentes ; ce job tourne seul dans un conteneur CI isolé, où elle ne fait que
         # bloquer/chronométrer à vide 2 des 4 workers sur leur propre fixture — vérifié
         # localement (`-n 4` nu : 921 s et 414 erreurs en cascade, contre 668 s en série).
+        # `--dist loadgroup` (#963) : un module à fixture `scope="module"` (une base Postgres
+        # jetable) reste sur UN worker — `load` le scindait test par test et le second test ne
+        # voyait pas ce que le premier avait écrit (tronc rouge sur un test sans rapport, puis
+        # vert au run suivant). Le groupement est posé par `tests/_groupes_xdist.py` ; sans ce
+        # drapeau, il est inerte (`tests/test_groupes_xdist_963.py` refuse un `-n` sans lui).
         env:
           OTO_TEST_PG_PLACES: "4"
-        run: pytest -q -n 4 --durations=25
+        run: pytest -q -n 4 --dist loadgroup --durations=25
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CE QUE PÈSE UNE COLLECTE, SUR LA MACHINE QUI L'EXÉCUTE.

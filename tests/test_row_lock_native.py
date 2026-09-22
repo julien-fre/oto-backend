@@ -105,7 +105,10 @@ def test_a_run_only_frees_what_it_held(table):
     assert _bail(ns_id, b["_id"])["claimed_by"] == "w2", "l'autre run garde la sienne"
 
 
-def test_releasing_an_unknown_run_is_a_cheap_no_op():
+def test_releasing_an_unknown_run_is_a_cheap_no_op(live):
+    # `live` (#963) : ce test parle à la base mais ne demandait aucune fixture — il ne passait
+    # que s'il tombait sur un worker où un autre test du fichier avait déjà branché
+    # DATABASE_URL. Sous `--dist loadgroup` il est distribué seul : rouge (RuntimeError).
     from oto_mcp import db
     assert db.datastore_release_by_run("run-jamais-vu") == 0
     assert db.datastore_release_by_run("") == 0
