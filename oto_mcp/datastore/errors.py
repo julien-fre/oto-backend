@@ -199,10 +199,19 @@ class RowLocked(ValueError):
         # n'apprend rien à un tiers : « ce run est-il le tien ? » (cf.
         # `tools/datastore._omitted_run_hint`).
         self.claimed_run = claimed_run
+        # #515 — le refus MÈNE par la faute la plus fréquente (`_run_id` omis, 31 refus
+        # sur 100 mesurés) puis dit l'autre cas. Formulation retenue par Alexis le
+        # 29/08/2026, verrouillée par `test_refus_de_bail_mene_par_run_id_515`.
+        # ⚠️ L'ancien texte décrivait l'ÉTAT DU MONDE (« réservée par « X » jusqu'à… ») :
+        # deux sessions y ont lu la preuve d'un verrou non atomique, alors que les
+        # titulaires étaient strictement successifs. ⚠️ Jamais le run ni le libellé d'un
+        # tiers : l'échéance suffit (`_run_id` n'autorise rien, il NOMME).
         motif = (
-            f"ligne « {row_id} » réservée par « {claimed_by} » jusqu'à "
-            f"{claimed_until} — écriture refusée. Si le travail est terminé ou "
-            f"l'agent abandonné, libère la ligne (data_release), puis écris.")
+            f"ligne « {row_id} » : écriture refusée. Si cette ligne est la tienne, ton "
+            f"appel ne porte pas de `_run_id` : ajoute-le — obligatoire sur ce chemin, "
+            f"c'est lui qui prouve ta réservation. Sinon, la ligne est tenue par un "
+            f"autre travail jusqu'à {claimed_until} : attends, ou libère-la "
+            f"(data_release) si tu sais ce travail abandonné.")
         self.motif = motif
         super().__init__(f"{row} : {motif}" if row else motif)
 

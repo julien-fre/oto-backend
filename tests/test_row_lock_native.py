@@ -127,9 +127,11 @@ def test_writing_on_a_row_held_by_another_is_refused(table):
         _store().append_row(ns, {"_id": row["_id"], "societe": "Écrit par un autre"}) \
             if False else _store().upsert_row(ns, row["_id"], {"societe": "Par un autre"})
 
-    # L'erreur donne la SORTIE, pas seulement le constat.
+    # L'erreur donne la SORTIE, pas seulement le constat — et, depuis #515, ne nomme
+    # jamais le titulaire (l'échéance suffit) : elle mène par le `_run_id` manquant.
     msg = str(e.value)
-    assert "w1" in msg and "data_release" in msg
+    assert "_run_id" in msg and "data_release" in msg
+    assert "w1" not in msg
 
 
 def test_the_holder_writes_freely_through_its_run(table):

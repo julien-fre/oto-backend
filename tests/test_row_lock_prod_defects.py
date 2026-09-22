@@ -169,8 +169,9 @@ def test_closing_the_run_frees_the_campaign(table):
 # ── ② le refus est nommé, jamais un 500 ──────────────────────────────────────
 
 def test_the_refusal_carries_the_way_out(table):
-    """Un 500 ne dit rien. Le refus doit porter QUI tient, JUSQU'À QUAND et COMMENT
-    lever — c'est ce que l'agent bloqué n'avait pas."""
+    """Un 500 ne dit rien. Le refus doit porter la faute probable (`_run_id` omis, #515),
+    JUSQU'À QUAND et COMMENT lever — c'est ce que l'agent bloqué n'avait pas. Il ne
+    nomme pas le titulaire : l'échéance suffit."""
     from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
@@ -179,7 +180,9 @@ def test_the_refusal_carries_the_way_out(table):
         _store().upsert_row(ns, "r0", {"statut": "x"})
 
     msg = str(e.value)
-    assert "agent-1" in msg                    # qui tient
+    assert "_run_id" in msg                    # la faute la plus fréquente, d'abord
+    assert "agent-1" not in msg                # le titulaire d'un tiers n'est pas nommé
+    assert "jusqu'à" in msg                    # jusqu'à quand
     assert "data_release" in msg               # comment lever
 
 

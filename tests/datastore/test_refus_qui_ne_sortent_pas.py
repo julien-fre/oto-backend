@@ -47,7 +47,10 @@ def test_le_refus_de_bail_sort_en_409_et_dit_quoi_faire():
     refus = _write_refusal(ds_errors.RowLocked("r1", "worker-42", "2026-09-05T18:00Z"))
     assert refus.status == 409
     assert refus.code == "row_locked"
-    assert "worker-42" in refus.message, "qui tient la ligne"
+    # #515 : le refus mène par le `_run_id` manquant et ne nomme JAMAIS le titulaire
+    # (le libellé d'un tiers) — l'échéance dit jusqu'à quand attendre.
+    assert "_run_id" in refus.message, "la faute la plus fréquente, d'abord"
+    assert "worker-42" not in refus.message, "on ne nomme pas le titulaire"
     assert "2026-09-05T18:00Z" in refus.message, "jusqu'à quand"
     assert "libère" in refus.message, "le geste de sortie"
 
@@ -72,7 +75,7 @@ def test_dans_un_LOT_le_refus_de_bail_garde_sa_classe():
                             row="ligne 1/1 du lot (siren=55111000)")
     assert isinstance(e, ValueError)
     assert "ligne 1/1 du lot" in str(e), "la position dans le lot"
-    assert "agent-1" in str(e), "…et le bail, qui reste l'information utile"
+    assert "2026-09-05T18:00Z" in str(e), "…et l'échéance du bail, qui reste l'information utile"
     assert _write_refusal(e).status == 409
 
 
