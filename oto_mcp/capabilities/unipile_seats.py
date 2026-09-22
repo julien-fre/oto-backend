@@ -36,6 +36,10 @@ class SeatsListInput(BaseModel):
 
 class SeatReleaseInput(BaseModel):
     account_id: str
+    # Libérer un siège EN SERVICE. Par défaut non : couper la messagerie de quelqu'un
+    # qui s'en sert sans qu'il l'ait demandé doit être un geste EXPLICITE, jamais le
+    # comportement par défaut d'un appel mal formé.
+    force: bool = False
 
 
 class Seat(BaseModel):
@@ -70,6 +74,9 @@ class SeatReleased(BaseModel):
     ok: bool
     account_id: str
     was: str            # l'état qu'avait le siège au moment de le libérer
+    # Bindings VIVANTS déliés au passage — non nul seulement sur un `force`, et c'est
+    # le nombre de personnes dont la messagerie a été coupée.
+    unbound: int = 0
 
 
 def _platform_client():
@@ -149,23 +156,41 @@ async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
 
 
 async def _release_seat(ctx: ResolvedCtx, inp: SeatReleaseInput) -> dict:
-    state = _seat_state(_rows_for(inp.account_id))
-    if state == "bound":
+    rows = _rows_for(inp.account_id)
+    state = _seat_state(rows)
+    if state == "bound" and not inp.force:
         # Le libérer couperait la messagerie de quelqu'un qui s'en sert, sans qu'il
         # l'ait demandé. Ce geste-là appartient à son propriétaire (`DELETE
-        # /api/me/unipile`) ; l'admin ne fait que le ménage derrière.
+        # /api/me/unipile`) ; l'admin ne fait que le ménage derrière. `force=true`
+        # existe pour les cas où le propriétaire ne le fera PAS — décider QUAND un
+        # siège en service peut être repris appartient à l'appelant, pas à cette face.
         raise AuthzDenied(409, "seat_in_use",
-                          "Ce siège est en service — son propriétaire doit le déconnecter d'abord.")
+                          "Ce siège est en service — son propriétaire doit le déconnecter "
+                          "d'abord, ou passer force=true pour le reprendre quand même.")
     client = _platform_client()
     if client is None:
         raise AuthzDenied(400, "no_platform_key", "Aucune clé plateforme unipile.")
+    # Délier AVANT, reprendre APRÈS. Sans ça le compte disparaît chez unipile pendant
+    # qu'oto le croit encore lié : le plafond de sièges de l'org compte un siège qui
+    # n'existe plus, et toute vue qui lit les bindings (dont la lentille de
+    # facturation) annonce une connexion fantôme. Soft-déconnexion, pas suppression
+    # de ligne : elle survit comme preuve de propriété.
+    unbound = 0
+    for r in rows:
+        if r.get("disconnected_at") is None and r.get("org_id") is not None:
+            await asyncio.to_thread(db.clear_unipile_account, r["sub"], r["org_id"],
+                                    r.get("provider") or "LINKEDIN")
+            unbound += 1
     try:
         await asyncio.to_thread(client.delete_account, inp.account_id)
     except Exception as e:  # noqa: BLE001 — panne amont, pas un refus d'autz
+        # Les bindings sont déjà déliés : l'org ne sert plus ce compte, et un rappel
+        # reprendra le geste — le siège est alors `disconnected`, donc éligible sans
+        # `force`. On ne relie PAS : ce serait rendre un accès qu'on vient de retirer.
         raise AuthzDenied(502, "unipile_delete_failed", str(e))
-    logger.info("unipile seat libéré account_id=%s état=%s par=%s",
-                inp.account_id, state, ctx.sub)
-    return {"ok": True, "account_id": inp.account_id, "was": state}
+    logger.info("unipile seat repris account_id=%s état=%s force=%s déliés=%d par=%s",
+                inp.account_id, state, inp.force, unbound, ctx.sub)
+    return {"ok": True, "account_id": inp.account_id, "was": state, "unbound": unbound}
 
 
 CAPABILITIES += [
@@ -187,7 +212,11 @@ CAPABILITIES += [
             "[super admin] Frees a seat: deletes the account on unipile, so it stops "
             "billing. IRREVERSIBLE (the hosted session is destroyed; reconnecting yields "
             "a NEW account_id). Refuses a seat still in service (409 seat_in_use) — that "
-            "disconnection belongs to its owner."),
+            "disconnection belongs to its owner — UNLESS `force: true`, which first "
+            "soft-disconnects every LIVE binding (the ownership row survives, so a "
+            "reconnection still rebinds deterministically) and only then frees the seat. "
+            "`unbound` = how many people's messaging was cut. Deciding WHEN a seat in "
+            "service may be taken back belongs to the caller, never to this face."),
         mcp=None,  # face MCP = console op-aware `oto_admin_unipile_seat`
         rest=RestBinding("DELETE", "/api/admin/unipile/seats/{account_id}"),
     ),

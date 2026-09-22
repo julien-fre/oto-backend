@@ -147,3 +147,94 @@ def test_console_mcp_release_exige_un_compte(monkeypatch):
         asyncio.run(admin_console._unipile_seat(
             CTX, admin_console.UnipileSeatAdminInput(op="release")))
     assert e.value.code == "missing_account_id"
+
+
+# ── `force` : reprendre un siège EN SERVICE (22/09/2026) ─────────────────────
+#
+# Le refus par défaut reste la règle. `force` existe pour l'appelant qui a DÉJÀ
+# décidé — le service de facturation de Tulina coupe une org qui a épuisé son
+# enveloppe, et le propriétaire, lui, ne débranchera pas. Cette face n'a pas
+# d'avis sur le QUAND : elle exécute, et elle le journalise.
+
+def _unbind_spy(monkeypatch):
+    calls = []
+    monkeypatch.setattr(us.db, "clear_unipile_account",
+                        lambda sub, org_id, provider: calls.append((sub, org_id, provider)))
+    return calls
+
+
+def test_force_delie_les_bindings_vivants_AVANT_de_reprendre(monkeypatch):
+    """L'ordre est le point : supprimé chez unipile alors qu'oto le croit encore lié,
+    le siège compterait dans le plafond de l'org et la lentille de facturation
+    annoncerait une connexion fantôme."""
+    ordre = []
+    rows = [_row("acc_live", sub="u1", org_id=7)]
+    deleted, _ = _setup(monkeypatch, accounts=[{"id": "acc_live"}], rows=rows)
+    monkeypatch.setattr(us.db, "clear_unipile_account",
+                        lambda sub, org_id, provider: ordre.append("unbind"))
+    real_delete = us._platform_client().delete_account
+
+    class Tracing(FakeClient):
+        def delete_account(self, account_id):
+            ordre.append("delete")
+            return super().delete_account(account_id)
+
+    monkeypatch.setattr(us, "_platform_client", lambda: Tracing([{"id": "acc_live"}], deleted))
+    out = asyncio.run(us._release_seat(
+        CTX, us.SeatReleaseInput(account_id="acc_live", force=True)))
+    assert ordre == ["unbind", "delete"]
+    assert out["was"] == "bound" and out["unbound"] == 1
+    assert deleted == ["acc_live"]
+    assert real_delete is not None
+
+
+def test_force_delie_CHAQUE_org_qui_tenait_le_compte(monkeypatch):
+    """Un même compte peut être lié dans plusieurs orgs : en laisser une liée
+    rendrait le compte introuvable pour elle sans qu'elle l'ait demandé."""
+    rows = [_row("acc_live", sub="u1", org_id=7),
+            _row("acc_live", sub="u1", org_id=9),
+            _row("acc_live", sub="u2", org_id=9, disconnected_at="2026-08-01 09:00:00")]
+    deleted, _ = _setup(monkeypatch, accounts=[{"id": "acc_live"}], rows=rows)
+    calls = _unbind_spy(monkeypatch)
+    out = asyncio.run(us._release_seat(
+        CTX, us.SeatReleaseInput(account_id="acc_live", force=True)))
+    # la ligne DÉJÀ morte n'est pas rejouée
+    assert calls == [("u1", 7, "LINKEDIN"), ("u1", 9, "LINKEDIN")]
+    assert out["unbound"] == 2
+
+
+def test_sans_force_le_refus_ne_delie_RIEN(monkeypatch):
+    deleted, _ = _setup(monkeypatch, accounts=[{"id": "acc_live"}], rows=[_row("acc_live")])
+    calls = _unbind_spy(monkeypatch)
+    with pytest.raises(AuthzDenied) as e:
+        asyncio.run(us._release_seat(CTX, us.SeatReleaseInput(account_id="acc_live")))
+    assert (e.value.status, e.value.code) == (409, "seat_in_use")
+    assert calls == [] and deleted == []
+
+
+def test_force_sur_un_siege_deja_deconnecte_ne_delie_rien_de_plus(monkeypatch):
+    rows = [_row("acc_off", disconnected_at="2026-08-01 09:00:00")]
+    deleted, _ = _setup(monkeypatch, accounts=[{"id": "acc_off"}], rows=rows)
+    calls = _unbind_spy(monkeypatch)
+    out = asyncio.run(us._release_seat(
+        CTX, us.SeatReleaseInput(account_id="acc_off", force=True)))
+    assert calls == [] and out["unbound"] == 0 and deleted == ["acc_off"]
+
+
+def test_une_panne_amont_laisse_les_bindings_DELIES(monkeypatch):
+    """On ne relie pas : ce serait rendre un accès qu'on vient de retirer. Le siège
+    est alors `disconnected`, donc reprenable au rappel SANS `force`."""
+    rows = [_row("acc_live")]
+    deleted, _ = _setup(monkeypatch, accounts=[{"id": "acc_live"}], rows=rows)
+    calls = _unbind_spy(monkeypatch)
+
+    class Broken(FakeClient):
+        def delete_account(self, account_id):
+            raise RuntimeError("unipile down")
+
+    monkeypatch.setattr(us, "_platform_client", lambda: Broken([{"id": "acc_live"}], deleted))
+    with pytest.raises(AuthzDenied) as e:
+        asyncio.run(us._release_seat(
+            CTX, us.SeatReleaseInput(account_id="acc_live", force=True)))
+    assert e.value.code == "unipile_delete_failed"
+    assert len(calls) == 1
