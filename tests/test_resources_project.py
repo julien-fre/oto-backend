@@ -109,6 +109,58 @@ def test_transfer_to_org_requires_membership(monkeypatch):
     assert e.value.code == "not_org_member"
 
 
+# ── Transfert vers une ÉQUIPE : elle doit être de l'org du projet ─────────────
+# Le seam réel (`ownership.transfer`) tourne ; seuls le store et l'org des équipes
+# sont doublés. L'org du projet se lit sur son propriétaire (org_origin.org_of).
+
+_GROUP_ORG = {4: 35, 9: 77}   # équipe 4 ∈ org 35 ; équipe 9 ∈ org 77
+
+
+def _wire_group_transfer(monkeypatch, row):
+    _wire(monkeypatch)
+    monkeypatch.setattr(R.roles, "can_read_group", lambda sub, gid: True)
+    monkeypatch.setattr(R.roles, "can_admin_group", lambda sub, gid: True)  # garde le contrôle
+    monkeypatch.setattr(R.group_store, "get_group",
+                        lambda gid: {"id": gid, "name": f"g{gid}", "org_id": _GROUP_ORG[gid]})
+    monkeypatch.setattr(ownership.group_store, "org_ids_of_groups",
+                        lambda gids: {g: _GROUP_ORG[g] for g in gids if g in _GROUP_ORG})
+    monkeypatch.setattr(ownership.db, "get_project_by_id", lambda pid: row)
+    seen = []
+    monkeypatch.setattr(ownership.db, "reparent_project",
+                        lambda pid, nt, ni, context_org_id=None: seen.append((pid, nt, ni)))
+    monkeypatch.setattr(ownership.db, "revoke_resource_grant", lambda *a: False)
+    monkeypatch.setattr(ownership.db, "grant_resource", lambda *a, **k: None)
+    return seen
+
+
+@pytest.mark.parametrize("row", [
+    {"id": 7, "owner_type": "org", "owner_id": "35"},
+    {"id": 7, "owner_type": "group", "owner_id": "4"},
+    {"id": 7, "owner_type": "user", "owner_id": "u1", "context_org_id": 35},
+])
+def test_transfer_vers_une_equipe_de_la_meme_org(monkeypatch, row):
+    seen = _wire_group_transfer(monkeypatch, row)
+    out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
+                                            resource_id="7", new_owner_group=4))
+    assert out["ok"] and seen == [(7, "group", "4")]
+
+
+@pytest.mark.parametrize("row", [
+    {"id": 7, "owner_type": "org", "owner_id": "35"},
+    {"id": 7, "owner_type": "group", "owner_id": "4"},
+    {"id": 7, "owner_type": "user", "owner_id": "u1", "context_org_id": 35},
+])
+def test_transfer_vers_une_equipe_d_une_autre_org_refuse(monkeypatch, row):
+    """Un acteur membre des deux orgs rangeait un projet de l'org 35 dans une équipe
+    de l'org 77. Refus nommé, rien n'est re-parenté."""
+    seen = _wire_group_transfer(monkeypatch, row)
+    with pytest.raises(AuthzDenied) as e:
+        R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
+                                          resource_id="7", new_owner_group=9))
+    assert (e.value.status, e.value.code) == (403, "group_outside_resource_org")
+    assert seen == []
+
+
 def test_unknown_type():
     """Surface HÉRITÉE : le refus reste dans le handler, et garde son code nommé.
 

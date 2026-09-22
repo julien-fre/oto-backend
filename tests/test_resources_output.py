@@ -204,8 +204,8 @@ def test_la_surface_heritee_ne_publie_AUCUNE_de_ces_deux_contraintes():
 # `DeclaredError` DÉCRIT, il ne fait rien : une déclaration sans rejeu est
 # décorative, ce qui est pire qu'une absence (le document promet un refus que le
 # serveur ne rend pas). Les six autres refus déclarés sont déjà rejoués ailleurs —
-# `confirm_loss_of_control`, `not_org_member`, `publication_unsupported` dans
-# `test_resources_project.py`, `group_not_visible` et `unknown_group` dans
+# `confirm_loss_of_control`, `not_org_member`, `publication_unsupported`,
+# `group_outside_resource_org` dans `test_resources_project.py`, `group_not_visible` et `unknown_group` dans
 # `test_resources_group_share.py`, `unknown_org` dans `test_project_delivery.py`.
 
 def _wire(monkeypatch):
@@ -290,6 +290,7 @@ def test_refus_transfer_failed(monkeypatch):
 
 _REJOUES = {
     "email_required", "doc_viewer_only", "publication_unsupported", "forbidden", "group_not_visible",
+    "group_outside_resource_org",
     "not_group_member", "not_org_member", "unknown_user", "unknown_org",
     "unknown_group", "confirm_loss_of_control", "transfer_failed",
 }

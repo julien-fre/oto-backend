@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from . import db, group_store, org_store, roles
+from . import db, group_store, org_origin, org_store, roles
 
 
 # --- Scope de l'acteur (les principals sous lesquels il peut accéder) --------
@@ -189,6 +189,9 @@ class ResourceKind:
     reparent: Callable[[str, str, str], None]  # rid, new_type, new_id ; ValueError si refus
     # rid -> (type, id) du parent qui la GOUVERNE seul (une page → son projet) : cf. `can_govern`.
     governed_by: Optional[Callable[[str], Optional[tuple[str, str]]]] = None
+    # rid -> org de RANGEMENT d'une ressource perso (`projects.context_org_id`) ; None si
+    # le kind ne l'enregistre pas. Sert `resource_org` (org_origin, ADR 0071).
+    context_org: Optional[Callable[[str], Optional[int]]] = None
 
 
 #: Le type de ressource d'un tableau du datastore, **tel qu'il est ÉCRIT EN BASE**
@@ -385,12 +388,48 @@ def list_grants(resource_type: str, resource_id: str) -> list[dict]:
     return db.list_resource_grants(resource_type, resource_id)
 
 
+class GroupOutsideResourceOrg(ValueError):
+    """Transfert refusé : l'équipe cible vit dans une AUTRE org que la ressource
+    (servi en 403 `group_outside_resource_org` par `oto_resource`)."""
+
+
+def _require_group_in_resource_org(resource_type: str, resource_id: str,
+                                   group_id: str) -> None:
+    """Une équipe est un cloisonnement DANS une org (ADR 0049) : y ranger une ressource
+    ne la fait pas changer d'org. Un acteur membre de deux orgs pouvait ranger un projet
+    de l'org A dans une équipe de l'org B. L'org de la ressource se lit sur son
+    propriétaire (`org_origin.org_of`) ; inconnue (tableau perso, projet perso sans org
+    de rangement) ou nulle (plateforme) → rien à comparer. Changer d'org reste possible,
+    et explicite : un transfert vers l'org (`new_owner_org`)."""
+    owner = owner_of(resource_type, resource_id)
+    if owner is None:
+        raise ValueError(f"{resource_type} #{resource_id} introuvable")
+    k = _kind(resource_type)
+    groups = org_origin.group_orgs([owner, ("group", group_id)])
+    target_org = groups.get(int(group_id))
+    if target_org is None:
+        raise ValueError(f"équipe #{group_id} inconnue")
+    org, known = org_origin.org_of(
+        owner[0], owner[1], groups=groups,
+        context_org_id=k.context_org(resource_id) if k.context_org else None)
+    if known and org is not None and org != target_org:
+        raise GroupOutsideResourceOrg(
+            f"l'équipe #{group_id} appartient à l'org #{target_org}, la ressource vit "
+            f"dans l'org #{org} : une équipe ne fait pas changer d'org. Choisis une "
+            f"équipe de l'org #{org}, ou transfère d'abord vers l'org cible "
+            f"(`new_owner_org`).")
+
+
 def transfer(
     resource_type: str, resource_id: str, new_owner_type: str, new_owner_id: str,
 ) -> None:
     """Re-parente la ressource. Préserve l'UX non-destructive : l'ancien propriétaire
     **user** garde un accès `write` (passe en partagé) ; le nouveau propriétaire
-    perd son éventuel grant (il est désormais owner)."""
+    perd son éventuel grant (il est désormais owner). Vers une équipe : elle doit être
+    de l'org de la ressource (`GroupOutsideResourceOrg`) — gardé ICI, donc aussi pour
+    la cascade d'un projet livré."""
+    if new_owner_type == "group":
+        _require_group_in_resource_org(resource_type, resource_id, new_owner_id)
     prev = owner_of(resource_type, resource_id)
     _kind(resource_type).reparent(resource_id, new_owner_type, new_owner_id)
     # Le nouveau propriétaire ne reste pas bénéficiaire de sa propre ressource.
@@ -456,9 +495,15 @@ def _project_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> None:
     db.reparent_project(int(rid), new_owner_type, new_owner_id, context_org_id=ctx)
 
 
+def _project_context_org_id(rid: str) -> Optional[int]:
+    row = db.get_project_by_id(int(rid))
+    return int(row["context_org_id"]) if row and row.get("context_org_id") else None
+
+
 register_kind(
     "project",
-    ResourceKind(owner_getter=_project_owner, reparent=_project_reparent),
+    ResourceKind(owner_getter=_project_owner, reparent=_project_reparent,
+                 context_org=_project_context_org_id),
 )
 
 

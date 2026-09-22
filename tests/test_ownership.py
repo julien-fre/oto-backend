@@ -252,6 +252,56 @@ def test_project_transfer_vers_une_org_efface_le_contexte(monkeypatch):
     assert seen == {"pid": 167, "nt": "org", "ni": "35", "ctx": None}
 
 
+# --- Transfert vers une ÉQUIPE : même garde pour tous les kinds (seam unique) ----
+# Une équipe range DANS une org ; elle ne fait pas changer d'org. La garde vit dans
+# `ownership.transfer`, donc couvre aussi la cascade d'un projet livré.
+
+def _kind_stub(monkeypatch, owner, context_org=None):
+    calls = []
+    monkeypatch.setattr(ownership, "_kind", lambda rt: ownership.ResourceKind(
+        owner_getter=lambda rid: owner,
+        reparent=lambda rid, nt, ni: calls.append((rid, nt, ni)),
+        context_org=(lambda rid: context_org) if context_org else None))
+    monkeypatch.setattr(ownership.group_store, "org_ids_of_groups",
+                        lambda gids: {g: {4: 35, 9: 77}[g] for g in gids if g in (4, 9)})
+    monkeypatch.setattr(ownership.db, "revoke_resource_grant", lambda *a: False)
+    monkeypatch.setattr(ownership.db, "grant_resource", lambda *a, **k: None)
+    return calls
+
+
+@pytest.mark.parametrize("owner,ctx", [(("org", "35"), None), (("group", "4"), None),
+                                       (("user", "u1"), 35)])
+def test_transfer_group_autre_org_refuse(monkeypatch, owner, ctx):
+    calls = _kind_stub(monkeypatch, owner, ctx)
+    with pytest.raises(ownership.GroupOutsideResourceOrg):
+        ownership.transfer("project", "7", "group", "9")
+    assert calls == []
+
+
+@pytest.mark.parametrize("owner,ctx", [(("org", "35"), None), (("group", "4"), None),
+                                       (("user", "u1"), 35),
+                                       # org inconnue (tableau perso) ou nulle (plateforme) :
+                                       # rien à comparer, l'équipe de l'acteur fait foi.
+                                       (("user", "u1"), None), (("platform", "platform"), None)])
+def test_transfer_group_meme_org_ou_org_inconnue_passe(monkeypatch, owner, ctx):
+    calls = _kind_stub(monkeypatch, owner, ctx)
+    target = "9" if owner[0] in ("platform",) or (owner[0] == "user" and ctx is None) else "4"
+    ownership.transfer("datastore_namespace", "7", "group", target)
+    assert calls == [("7", "group", target)]
+
+
+def test_transfer_group_inconnu_leve(monkeypatch):
+    _kind_stub(monkeypatch, ("org", "35"))
+    with pytest.raises(ValueError, match="inconnue"):
+        ownership.transfer("doctrine", "7", "group", "404")
+
+
+def test_le_kind_project_lit_son_org_de_rangement(monkeypatch):
+    monkeypatch.setattr(ownership.db, "get_project_by_id",
+                        lambda pid: {"owner_type": "user", "owner_id": "u1", "context_org_id": 35})
+    assert ownership.RESOURCE_KINDS["project"].context_org("7") == 35
+
+
 # --- ADR 0049 : cran PLATFORM (bibliothèque) + visibilité contextuelle group ----
 
 def test_platform_owned_readable_by_all_but_not_writable(monkeypatch):

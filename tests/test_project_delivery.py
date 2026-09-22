@@ -18,6 +18,7 @@ from oto_mcp.capabilities import resources as R
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 CTX = ResolvedCtx(sub="oto", org_id=1)
+_REAL_TRANSFER = ownership.transfer
 
 LINKS = [
     {"target_type": "tableau", "target_ref": "11", "label": "leads"},
@@ -229,6 +230,35 @@ def test_transfer_cascade_vers_une_PERSONNE_copie_la_procedure(monkeypatch):
     assert calls["copies"] == [(77, "u2")], "la procédure est copiée chez la personne"
     by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}
     assert by_ref[("procedure", "77")]["status"] == "copied"
+
+
+def test_transfer_cascade_vers_une_equipe_garde_l_org_de_chaque_tableau(monkeypatch):
+    """La garde « une équipe ne fait pas changer d'org » vit dans `ownership.transfer` :
+    la cascade la traverse aussi. Projet de l'org 35 → équipe 4 (org 35) : il passe ;
+    le tableau lié, qui vit dans l'org 77, ne suit PAS et le rapport le dit."""
+    _wire(monkeypatch)
+    # le seam RÉEL de transfert, pas la doublure de `_wire` : c'est lui qui garde.
+    monkeypatch.setattr(R.ownership, "transfer", _REAL_TRANSFER)
+    real = ownership.RESOURCE_KINDS
+    moved = []
+    monkeypatch.setattr(R.roles, "can_read_group", lambda sub, gid: True)
+    monkeypatch.setattr(R.group_store, "get_group", lambda gid: {"id": gid, "name": "g"})
+    monkeypatch.setattr(ownership.group_store, "org_ids_of_groups",
+                        lambda gids: {g: 35 for g in gids})
+    monkeypatch.setitem(real, "project", ownership.ResourceKind(
+        owner_getter=lambda rid: ("org", "35"),
+        reparent=lambda rid, nt, ni: moved.append(("project", rid, nt, ni))))
+    monkeypatch.setitem(real, "datastore_namespace", ownership.ResourceKind(
+        owner_getter=lambda rid: ("org", "77"),
+        reparent=lambda rid, nt, ni: moved.append(("datastore_namespace", rid, nt, ni))))
+    monkeypatch.setattr(ownership.db, "revoke_resource_grant", lambda *a: False)
+    out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
+                                            resource_id="7", new_owner_group=4,
+                                            cascade=True))
+    assert moved == [("project", "7", "group", "4")]
+    by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}
+    assert by_ref[("tableau", "11")]["status"] == "failed"
+    assert "org #77" in by_ref[("tableau", "11")]["reason"]
 
 
 def test_cascade_entity_failure_does_not_break_delivery(monkeypatch):

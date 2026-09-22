@@ -294,6 +294,9 @@ REFUS: tuple[DeclaredError, ...] = (
                   "grant d'équipe visant un groupe d'une org dont tu n'es pas membre"),
     DeclaredError(403, "not_group_member",
                   "`transfer` vers une équipe dont tu n'es ni membre ni admin"),
+    DeclaredError(403, "group_outside_resource_org",
+                  "`transfer` vers une équipe d'une autre org que la ressource — "
+                  "une équipe ne fait pas changer d'org"),
     DeclaredError(403, "not_org_member",
                   "`transfer` vers une org dont tu n'es pas membre"),
     DeclaredError(404, "unknown_user", "aucun utilisateur oto avec cet email"),

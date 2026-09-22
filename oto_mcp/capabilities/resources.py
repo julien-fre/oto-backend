@@ -547,6 +547,8 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
                 f"pourra). Renvoie avec confirm_transfer=true pour confirmer.")
         try:
             ownership.transfer(inp.resource_type, rid, new_owner_type, new_owner_id)
+        except ownership.GroupOutsideResourceOrg as e:
+            raise AuthzDenied(403, "group_outside_resource_org", str(e))
         except ValueError as e:
             raise AuthzDenied(409, "transfer_failed", str(e))
         out = {"ok": True, "resource_id": rid, "new_owner": new_owner_label}
