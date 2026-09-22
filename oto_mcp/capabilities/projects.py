@@ -74,7 +74,13 @@ class ProjectInput(BaseModel):
     # 'user' (défaut) résout sur l'org ACTIVE ; 'org' = une org dont je suis membre ;
     # 'group' = un pôle/équipe (cloisonne le projet à ses membres + admins d'org) ;
     # 'platform' = projet bibliothèque (admin plateforme seulement).
-    owner_type: Literal["user", "org", "group", "platform"] = "user"
+    # Défaut None, et non 'user' : la PRÉSENCE du champ doit se lire, sinon op=update
+    # l'ignorait sans rien dire et l'agent croyait avoir déplacé le projet (#1007).
+    # Omis = 'user' pour create/copy (branche `else`).
+    owner_type: Optional[Literal["user", "org", "group", "platform"]] = Field(
+        default=None, description=(
+            "create/copy only (default `user`). op=update refuses it: move a project "
+            "with oto_resource op=transfer resource_type=project."))
     owner_id: Optional[str] = None   # org.id si owner_type='org' ; group.id si 'group' ; ignoré sinon
     # link / unlink : un pointeur typé vers une entité regroupée par le projet.
     target_type: Optional[Literal["tableau", "procedure", "connecteur"]] = None
@@ -867,6 +873,14 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                 "audit": project_audit.audit_project(int(inp.project_id), links)}
 
     if inp.op == "update":
+        # Changer de propriétaire n'est pas une mise à jour : c'est un TRANSFERT, avec
+        # ses gardes (cession, anti-lockout, org de l'équipe cible). L'ignorer en
+        # silence faisait croire à l'agent que le projet avait bougé (#1007).
+        _require(inp.owner_type is None and inp.owner_id is None, "owner_change_unsupported",
+                 "`op=update` ne change pas le propriétaire d'un projet, et rien n'a été "
+                 "modifié. Déplace-le avec `oto_resource op=transfer resource_type=project "
+                 "resource_id=<id>` (+ `new_owner_org`, `new_owner_group` ou "
+                 "`new_owner_email`), puis renvoie l'update sans `owner_type`/`owner_id`.")
         _require(ownership.can_access(sub, RTYPE, rid, "write"), "forbidden", "Écriture refusée.", 403)
         # Publier/retirer comme MODÈLE est un acte de gouvernance (visible aux autres
         # membres de l'org comme bibliothèque) → can_govern, pas un simple write.

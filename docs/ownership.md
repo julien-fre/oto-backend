@@ -82,7 +82,9 @@ sont des reliques nullable, **DROP différé** (Phase H) après cutover prod vé
 > **group-owned** : création `oto_project(op=create, owner_type='group')` (garde
 > `can_read_group`), listé dans l'org PARENTE (membres du pôle ; org_admin = tous les
 > pôles de son org), `visible_in_org` mappe le groupe sur son org ; transfert cible
-> `new_owner_group` (`oto_resource op=transfer`). **platform-owned** (`owner_id=
+> `new_owner_group` (`oto_resource op=transfer`). Le propriétaire ne se change QUE par
+> ce transfert : `oto_project op=update` refuse `owner_type`/`owner_id` (400
+> `owner_change_unsupported`). **platform-owned** (`owner_id=
 > 'platform'`, sentinelle comme les guides) : le cran BIBLIOTHÈQUE — `can_access`
 > read = tout utilisateur authentifié (un modèle est fait pour être copié), write/
 > govern/transfer = admin plateforme ; `op=list_templates` inclut toujours l'owner

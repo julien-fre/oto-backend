@@ -353,6 +353,25 @@ def test_update(seams):
     assert seams["update"] == [(7, "New", None, None)]
 
 
+@pytest.mark.parametrize("owner", [{"owner_type": "org", "owner_id": "5"},
+                                   {"owner_type": "user"}, {"owner_id": "5"},
+                                   {"owner_type": "group", "owner_id": "3"}])
+def test_update_refuse_un_changement_de_proprietaire(seams, owner):
+    """#1007 — `owner_type`/`owner_id` étaient IGNORÉS par op=update : l'agent croyait
+    avoir déplacé le projet. Refus nommé qui renvoie vers le transfert, et rien n'est
+    écrit (pas même le `name` passé avec)."""
+    with pytest.raises(AuthzDenied) as e:
+        P._project(CTX, P.ProjectInput(op="update", project_id=7, name="New", **owner))
+    assert (e.value.status, e.value.code) == (400, "owner_change_unsupported")
+    assert "oto_resource op=transfer resource_type=project" in str(e.value.message)
+    assert seams["update"] == []
+
+
+def test_owner_type_omis_se_lit_absent():
+    """La présence doit se lire : le défaut `user` ne s'applique qu'à create/copy."""
+    assert P.ProjectInput(op="update", project_id=7).owner_type is None
+
+
 def test_update_publish_template_needs_govern(seams, monkeypatch):
     # Publier comme modèle = gouvernance (can_govern), pas un simple write.
     monkeypatch.setattr(P.ownership, "can_govern", lambda sub, t, rid: False)
