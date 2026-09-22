@@ -21,6 +21,10 @@ description: >-
 # crée un env éphémère SANS les deps projet (piège, ModuleNotFoundError). Recette :
 uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 .venv/bin/python -m pytest -q
+# La CI lance la MÊME commande, sans chemin (`pytest -q -n 4`). Globber (`tests/*.py tests/*/`)
+# reste permis (#508) : `tests/conftest.py` passé en argument est remplacé par un nœud vide
+# (`pytest_collect_file`, tests/conftest.py) — sans lui, `import file mismatch` (trois
+# `conftest.py` partagent le basename) interrompait toute la collecte.
 # ⚠️ **`/data/oto/backend/.venv` est PARTAGÉ entre N sessions parallèles** — ce qu'on y
 # installe, on l'installe chez les voisines, au milieu de leurs runs. Poser pytest est le
 # SEUL geste tolérable : additif, et il ne touche pas oto-core.
