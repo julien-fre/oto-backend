@@ -118,41 +118,24 @@ def test_public_id_uniqueness_is_named():
     assert "CONSTRAINT nodes_public_id_key UNIQUE (public_id)" in _nodes_block()
 
 
-def test_conversion_follows_every_write_to_guides_of_the_same_boot():
-    """L'ordre est le seul risque du lot. Si la conversion précédait le backfill du
-    readme plateforme (`platform_instructions` → `guides`) qui vit juste au-dessus,
-    ce readme n'arriverait dans `nodes` qu'au boot SUIVANT — c'est-à-dire qu'un
-    redémarrage servirait une couche vide. Même famille de piège que le
-    seed-avant-colonne du lot L1 (tenants)."""
-    convert = _INIT_SRC.index("CONVERT_GUIDES_TO_NODES_SQL")
-    writes = [m.start() for m in re.finditer(
-        r"(INSERT INTO guides|UPDATE guides SET)", _INIT_SRC)]
-    assert writes, "plus aucune écriture de `guides` dans _init — test à réviser"
-    assert max(writes) < convert, (
-        "la conversion `guides` → `nodes` doit suivre TOUTE écriture de `guides` du "
-        "même boot, sinon ce que ce boot vient de semer n'est converti qu'au suivant.")
-
-
-def test_conversion_is_replayable():
-    """Trois propriétés, toutes déjà payées ailleurs (docs/live-migrations.md) :
-    gardée `to_regclass` (après le DROP de `guides`, un boot reste un no-op au lieu
-    de casser), arbitrée sur une contrainte nommée (rejouer ne duplique pas), et
-    **newer-wins** (une page éditée depuis la nouvelle surface n'est pas écrasée par
-    la copie ; une écriture de la prod pendant la fenêtre est rattrapée)."""
-    assert "to_regclass('guides')" in _INIT_SRC
-    sql = _GUIDES_SRC[_GUIDES_SRC.index("CONVERT_GUIDES_TO_NODES_SQL"):]
-    assert "ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE" in sql
-    assert "WHERE EXCLUDED.updated_at > nodes.updated_at" in sql
-
+# ⚠️ Deux tests ont disparu d'ici le 23/09/2026 avec ce qu'ils gardaient
+# (otomata-tech/oto#239) : `test_conversion_follows_every_write_to_guides_of_the_same_boot`
+# et `test_conversion_is_replayable`. La recopie `guides` → `nodes` ne se joue plus au
+# démarrage, et la table est sortie du code — il n'y a plus ni ordre d'écriture à tenir
+# ni rejeu à garantir. Les cliquets qui remplacent : `tests/test_search_reads_nodes.py` §4
+# (plus rien ne touche la table, et rien ne la recrée).
 
 def test_public_id_has_a_single_definition():
-    """L'identifiant public est DÉRIVÉ de la clé naturelle, et c'est ce qui rend la
-    conversion rejouable sans index de plus. Deux dérivations qui divergeraient d'un
-    caractère (la conversion d'un côté, la façade de l'autre) rempliraient la table
-    de doublons au boot suivant, en silence. Une seule fonction, deux appelants."""
-    assert _GUIDES_SRC.count("def _public_id_sql(") == 1
-    callers = re.findall(r"_public_id_sql\(", _GUIDES_SRC)
-    assert len(callers) == 3, callers      # la définition + la façade + la conversion
+    """L'identifiant public est DÉRIVÉ de la clé naturelle. Deux dérivations qui
+    divergeraient d'un caractère rempliraient la table de doublons, en silence.
+
+    Il n'y en avait qu'UNE pour deux appelants (la façade et la conversion) ; depuis
+    le retrait de la conversion (oto#239) il n'en reste qu'un, donc la dérivation est
+    une CONSTANTE — la fonction paramétrable n'avait plus d'objet. Ce qui se garde
+    reste le même : une seule écriture de la formule dans tout le module."""
+    formules = re.findall(r"'nod_' \|\| substr\(md5\('ctx:'", _GUIDES_SRC)
+    assert len(formules) == 1, formules
+    assert "def _public_id_sql(" not in _GUIDES_SRC
 
 
 def test_the_notion_of_guide_kind_does_not_exist():
@@ -161,7 +144,6 @@ def test_the_notion_of_guide_kind_does_not_exist():
     resterait une NATURE et le modèle unique serait un modèle à exceptions."""
     from oto_mcp.db import guides as G
     assert G._KIND == "page"
-    assert "'page', g.scope" in G.CONVERT_GUIDES_TO_NODES_SQL
     # Un seul genre nommé dans toute la façade, et il vient de la constante.
     assert set(re.findall(r"kind = '([^']+)'", _GUIDES_SRC)) == {"{_KIND}"}
     # La livraison, elle, est une clé de `props` — donc une propriété.
@@ -172,10 +154,8 @@ def test_the_facade_no_longer_reads_the_legacy_table():
     """La bascule de lecture (0063-D4) : la surface `oto_guide` / `/api/me/guides/*`
     est inchangée, mais elle lit `nodes`. Aucun SQL de la façade ne doit plus
     toucher `guides` — sinon on retombe dans la double lecture, donc dans les deux
-    vérités qui divergent."""
-    facade = _GUIDES_SRC[:_GUIDES_SRC.index("CONVERT_GUIDES_TO_NODES_SQL")] \
-        + _GUIDES_SRC[_GUIDES_SRC.index("# --- On-demand"):]
-    assert not re.search(r"(FROM|INTO|UPDATE|TABLE) guides", facade), facade
+    vérités qui divergent. Le module ENTIER, depuis le retrait de la conversion."""
+    assert not re.search(r"(FROM|INTO|UPDATE|TABLE) guides", _GUIDES_SRC), _GUIDES_SRC
 
 
 def test_user_owned_nodes_follow_a_tenant_switch():
@@ -185,9 +165,9 @@ def test_user_owned_nodes_follow_a_tenant_switch():
     sur les ressources possédées (Phase H B1)."""
     from oto_mcp.db.users import _SUB_COLUMNS
     assert ("nodes", "owner_id") in _SUB_COLUMNS
-    assert ("guides", "owner_id") in _SUB_COLUMNS, (
-        "`guides` reste écrite par la PROD pendant la fenêtre de promotion : les "
-        "deux tables se repointent tant que la legacy n'est pas droppée.")
+    assert ("guides", "owner_id") not in _SUB_COLUMNS, (
+        "La table `guides` est sortie du code (oto#239) : la repointer revient à "
+        "écrire dans une table morte, et le merge échouerait après son DROP.")
 
 
 def test_nothing_else_touches_nodes_yet():

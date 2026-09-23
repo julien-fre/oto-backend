@@ -39,7 +39,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.tokens.TOKENS,            # jetons d'API et d'upload
     schema.unipile.UNIPILE,          # comptes messagerie hébergés et leurs prêts
     schema.orgs.MEMBERSHIP,          # appartenance et invitations
-    schema.guides.GUIDES,            # instructions plateforme et guides (ADR 0042)
+    schema.guides.GUIDES,            # instructions plateforme (#50) — les guides sont des nœuds
     schema.nodes.NODES,              # nœuds de contenu et blocs
     schema.procedures.PROCEDURES,    # procédures d'org, révisions, bibliothèque
     schema.orgs.GROUPS,              # équipes et leurs membres

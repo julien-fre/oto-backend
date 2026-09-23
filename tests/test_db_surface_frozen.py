@@ -14,6 +14,11 @@ d'un chemin peu emprunté — pas au démarrage.
 
 Retirer volontairement un nom reste possible : on retire aussi sa ligne ici, et le
 diff dit alors ce qu'on a fait.
+
+Retraits faits à ce titre :
+- `CONVERT_GUIDES_TO_NODES_SQL` et `GUIDES_TEXT`, le 23/09/2026 (otomata-tech/oto#239),
+  avec la table `guides` : la recopie jouée à chaque démarrage et le texte indexé de
+  ses deux index de recherche. Leurs seuls appelants partaient dans le même commit.
 """
 from __future__ import annotations
 
@@ -23,9 +28,9 @@ from __future__ import annotations
 # l'état du monolithe, alors qu'il atteste de l'état d'une étape. Il vaut pour ce qu'il
 # est — un cliquet qui n'autorise plus de retrait à partir de ce point.
 _SURFACE = """
-    Any CONVERT_GUIDES_TO_NODES_SQL CREDENTIAL_PROVIDERS ConnectionPool
+    Any CREDENTIAL_PROVIDERS ConnectionPool
     DATASTORE_ROWS_TEXT DOCS_TEXT DocConflict FIELD_VALUE_PARAM_SQL FILE_TEXT
-    GOOGLE GUIDES_TEXT INSTR_TEXT Iterable Iterator KEY_PROVIDERS LAYER_KEYS
+    GOOGLE INSTR_TEXT Iterable Iterator KEY_PROVIDERS LAYER_KEYS
     LAYER_VALUE_PARAM_SQL MARK_NODES_TO_EMBED_SQL MAX_EXTRACT_ATTEMPTS
     NODES_TEXT NODE_DIRTY_SQL NODE_KIND Optional PROJECTS_TEXT RANKED_SOURCES
     RANK_VECTOR_COLUMN ROW_VALUES_TEXT_SQL SUBSCRIPTION_STATUSES Sequence

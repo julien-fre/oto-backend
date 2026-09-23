@@ -32,6 +32,22 @@ ailleurs que chez nous.
 4. **Promotion B**, puis **Lot C** (drops finaux), etc. Un lot = un boot canari vérifié
    (deploy vert + smoke + lecture d'une surface réelle) AVANT sa promotion.
 
+### En cours : la table `guides` (oto#239)
+
+- **Lot 1 — livré le 23/09/2026** : plus aucune ligne de code ne touche `guides`. Sont
+  partis dans le même commit son `CREATE TABLE IF NOT EXISTS` (`db/schema/guides.py`),
+  ses `ALTER`/`UPDATE`/`INSERT` de démarrage (`db/_init.py`, dont le backfill du readme
+  plateforme depuis `platform_instructions`), la recopie `guides` → `nodes`
+  (`CONVERT_GUIDES_TO_NODES_SQL`) jouée à chaque boot, ses deux index de recherche et
+  son entrée dans `RANKED_SOURCES` (`db/search.py`). Cliquets :
+  `tests/test_search_reads_nodes.py` §4.
+  ⚠️ **Le `CREATE TABLE IF NOT EXISTS` devait partir en premier** : tant qu'il restait,
+  un démarrage RECRÉAIT la table après son `DROP`, et le lot 2 n'aurait rien retiré.
+- **Lot 2 — à faire, pas ici** : `DROP TABLE guides` (et, à sa suite, les index
+  `idx_guides_*` et les lignes `aux_embeddings` de genre `guide`, keyées sur
+  `guides.id`). DDL non additive, jamais au démarrage : **décision d'Alexis**, exécutée
+  par l'opérationnel une fois le lot 1 en production.
+
 ## Les techniques (toutes vécues, toutes nécessaires)
 
 - **Copie legacy→cible à CHAQUE boot, gardée `to_regclass`** : tant que la table legacy

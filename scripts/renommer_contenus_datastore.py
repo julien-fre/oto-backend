@@ -90,7 +90,7 @@ GARDE_SENS_2: tuple[str, ...] = (
 
 
 CIBLES = [("org_instructions", "id", ("body_md", "description")),
-          ("docs", "id", ("body_md",)), ("guides", "id", ("body_md",)),
+          ("docs", "id", ("body_md",)),
           ("projects", "id", ("brief_md",)), ("blocks", "id", ("props",)),
           ("nodes", "id", ("props",)), ("runner_fleets", "id", ("input",)),
           ("doctrine_library", "id", ("body_md",)), ("guide_library", "id", ("body_md",)),

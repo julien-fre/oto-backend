@@ -168,23 +168,60 @@ def test_writing_a_guide_puts_it_back_in_the_outbox():
     assert "props->>'embed_dirty'" in A.NODE_DIRTY_SQL
 
 
-# ── 4. rien de `guides` n'est retiré tant que la prod tourne l'ancien code ────
+# ── 4. plus RIEN du code ne touche la table `guides` (oto#239, 23/09/2026) ───
+#
+# Le sens de cette section s'est INVERSÉ. Jusqu'au tag prod, il fallait prouver que
+# rien n'était retiré : la production tournait l'ancien code sur CETTE MÊME base et
+# lisait encore la table. Depuis, la table est morte — dernière écriture applicative
+# le 10/08 — et ce qui restait était pire qu'une archive : un `CREATE TABLE IF NOT
+# EXISTS` qui la faisait RENAÎTRE après un `DROP`, des `ALTER`/`UPDATE` de démarrage
+# qui écrivaient dans une table que plus rien ne lit pour servir, et une recopie
+# « la plus récente gagne » jouée à chaque boot, c'est-à-dire une synchronisation
+# permanente là où il fallait une fenêtre de promotion.
+#
+# ⚠️ Ce que ces tests ne gardent PAS, et c'est voulu : le `DROP TABLE guides`. DDL non
+# additive sur une base partagée prod/preprod, jamais au démarrage — décision
+# d'Alexis, exécutée par l'opérationnel une fois ce code livré
+# (docs/live-migrations.md). Le code qui ne la touche plus part d'abord.
 
-def test_nothing_of_the_legacy_table_is_dropped():
-    """La base est PARTAGÉE preprod/prod. Retirer maintenant la table, ses colonnes
-    ou ses index de recherche casserait la recherche EN PRODUCTION dans la seconde
-    (l'ancien code les lit encore). C'est le lot d'après, une fois le tag prod posé."""
+def test_no_code_path_touches_the_legacy_table():
+    """Plus une seule instruction SQL ne nomme `guides` dans la couche base."""
+    for path in (_DB / "_init.py", _DB / "search.py", _DB / "aux_embed.py",
+                 _DB / "guides.py", *sorted((_DB / "schema").glob("*.py"))):
+        src = path.read_text(encoding="utf-8")
+        fautifs = [l.strip() for l in src.splitlines()
+                   if re.search(r"\b(FROM|JOIN|INTO|ON|TABLE|UPDATE)\s+guides\b", l)
+                   and not l.strip().startswith(("#", "--", "*"))]
+        assert not fautifs, f"{path.name}: {fautifs}"
+
+
+def test_the_seeding_ddl_cannot_resurrect_the_table():
+    """Un `CREATE TABLE IF NOT EXISTS guides` laissé dans le schéma assemblé rendrait
+    le `DROP` d'exploitation sans effet : la table renaîtrait au démarrage suivant."""
+    from oto_mcp.db import _schema
+    assert "CREATE TABLE IF NOT EXISTS guides" not in _schema._SCHEMA
+
+
+def test_the_legacy_search_indexes_are_no_longer_posted():
+    """Les deux index `idx_guides_*` ne servaient plus aucune requête d'ici, et leur
+    DDL faisait du module de recherche un écrivain de la table morte."""
     ddl = "\n".join(S.index_ddl())
-    assert "idx_guides_fts ON guides" in ddl
-    assert "idx_guides_trgm ON guides" in ddl
-    # `db/schema/*` = le DDL, ex-corps de `_schema.py` : balayé au même titre.
-    for path in (_DB / "_init.py", _DB / "search.py",
-                 _DB / "aux_embed.py", _DB / "guides.py",
+    assert "ON guides" not in ddl
+    assert "guides" not in S.RANKED_SOURCES, (
+        "`guides` dans RANKED_SOURCES = un `ALTER TABLE guides ADD COLUMN search_vec` "
+        "au démarrage ET un `UPDATE guides SET search_vec` par la boucle de fond.")
+
+
+def test_no_drop_of_the_legacy_table_at_boot():
+    """Le retrait de la table est une DDL non additive : elle n'appartient pas au
+    démarrage, sur une base partagée prod/preprod."""
+    for path in (_DB / "_init.py", _DB / "search.py", _DB / "guides.py",
                  *sorted((_DB / "schema").glob("*.py"))):
         src = path.read_text(encoding="utf-8")
-        offenders = [l.strip() for l in src.splitlines()
-                     if re.search(r"DROP\s+(TABLE|INDEX|COLUMN).*guides", l, re.I)]
-        assert not offenders, f"{path.name}: {offenders}"
+        fautifs = [l.strip() for l in src.splitlines()
+                   if re.search(r"DROP\s+(TABLE|INDEX|COLUMN).*guides", l, re.I)
+                   and not l.strip().startswith(("#", "--"))]
+        assert not fautifs, f"{path.name}: {fautifs}"
 
 
 def test_embedding_keying_cannot_collide_with_production():
@@ -208,17 +245,10 @@ def test_backfill_is_idempotent_and_scoped_to_the_new_keying():
     assert "props->>'delivery' = 'on-demand'" in sql
 
 
-def test_init_runs_the_backfill_after_the_conversion():
-    """L'ordre compte : le backfill lit ce que la conversion vient d'écrire. Inversés,
-    un guide rattrapé de la prod n'entrerait dans l'outbox qu'au boot SUIVANT."""
-    src = (_DB / "_init.py").read_text(encoding="utf-8")
-    assert src.index("CONVERT_GUIDES_TO_NODES_SQL") < src.index("MARK_NODES_TO_EMBED_SQL")
-
-
-def test_the_legacy_table_survives_only_in_the_index_ddl():
-    """Garde de dérive : dans `db/search.py`, `guides` ne doit plus apparaître que
-    dans le DDL des deux index legacy (gardés pour la prod) — plus dans une requête."""
+def test_the_legacy_table_appears_nowhere_in_the_search_module():
+    """Garde de dérive : dans `db/search.py`, `guides` ne doit plus apparaître dans
+    aucune requête NI dans aucun DDL — la recherche lit `nodes` (#282)."""
     src = (_DB / "search.py").read_text(encoding="utf-8")
     lines = [l.strip() for l in src.splitlines()
              if re.search(r"\bON guides\b|\bFROM guides\b|\bJOIN guides\b", l)]
-    assert all("CREATE INDEX" in l for l in lines), lines
+    assert not lines, lines

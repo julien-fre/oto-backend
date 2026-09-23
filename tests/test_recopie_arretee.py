@@ -69,25 +69,29 @@ def test_le_boot_n_importe_plus_les_conversions():
     assert not (_CONVERSIONS & importes), sorted(_CONVERSIONS & importes)
 
 
-def test_les_couches_de_contexte_gardent_leur_projection():
-    """Le contre-test : ce qui reste DOIT rester.
+def test_la_derniere_recopie_est_arretee_elle_aussi():
+    """La sixième, celle des couches de contexte (`guides` → `nodes`), a survécu aux
+    cinq autres jusqu'au 23/09/2026 (otomata-tech/oto#239).
 
-    Sans lui, ce fichier serait satisfait par un `_init.py` qui aurait aussi coupé
-    le seul chemin du readme plateforme sur une base neuve — un arrêt qui emporte
-    plus que ce qu'on a décidé d'arrêter.
+    Elle était gardée pour une raison qui ne tenait plus : on la croyait « le seul
+    chemin par lequel le readme plateforme arrive sur une base NEUVE ». Vérifié : son
+    unique source était la table `platform_instructions`, que **plus personne
+    n'écrit** — `instructions.seed_platform_blocks` est un no-op depuis l'ADR 0042, et
+    la surface d'administration du bloc A lit et écrit `nodes` depuis le 28/07. Sur une
+    base neuve elle ne semait donc RIEN, et le bloc A retombe sur sa constante
+    (`instructions._platform_block`). Ce qu'elle faisait encore, en revanche : écrire à
+    chaque boot dans une table que plus rien ne lit pour servir, et arbitrer en
+    « la plus récente gagne » — une synchronisation permanente là où il fallait une
+    fenêtre de promotion.
     """
-    arbre = ast.parse(_INIT.read_text(encoding="utf-8"))
-    execute = [
-        n
-        for n in ast.walk(arbre)
-        if isinstance(n, ast.Call)
-        and any(
-            isinstance(a, ast.Name) and a.id == "CONVERT_GUIDES_TO_NODES_SQL"
-            for a in n.args
-        )
-    ]
-    assert execute, (
-        "Le boot ne joue plus CONVERT_GUIDES_TO_NODES_SQL : sur une base neuve, "
-        "le readme plateforme n'atteint plus `nodes`. Cette projection ne part "
-        "qu'avec un seed qui écrit nativement."
-    )
+    src = _INIT.read_text(encoding="utf-8")
+    assert "CONVERT_GUIDES_TO_NODES_SQL" not in src
+    assert "to_regclass('guides')" not in src
+
+
+def test_le_bloc_plateforme_garde_son_repli():
+    """Le contre-test : ce qui reste DOIT rester. Sans lui, l'arrêt ci-dessus serait
+    satisfait par un code qui aurait aussi coupé le défaut du bloc A — et une base
+    neuve servirait un socle de session VIDE à tous les comptes."""
+    from oto_mcp import instructions
+    assert instructions.default_block(instructions.KEY_SECRET_SAUCE).strip()

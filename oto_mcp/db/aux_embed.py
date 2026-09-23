@@ -6,8 +6,9 @@ Le worker `embed_worker` draine `list_dirty_aux` après les docs ; la recherche 
 Scope guides IDENTIQUE au lexical (`search_guides_fts`) : platform ∪ org active ∪ user.
 
 **Les guides sont des NŒUDS depuis le lot M1** (blueprint ADR 0054/0063) : cette
-outbox lit `nodes` depuis #282, plus la table `guides` gelée — sans quoi un guide
-écrit depuis M1 n'entrait dans aucun index et sortait de `oto_search` en silence.
+outbox lit `nodes` depuis #282, plus la table `guides` — sans quoi un guide écrit
+depuis M1 n'entrait dans aucun index et sortait de `oto_search` en silence. La table
+est sortie du code le 23/09/2026 (oto#239).
 
 ⚠️ **Le genre est `node`, pas `guide`, et ce n'est pas cosmétique** : `ref` est
 désormais un `nodes.id`, alors que les lignes `kind='guide'` déjà en base portent un
@@ -39,12 +40,12 @@ _NODE_TEXT = ("coalesce(props->>'title','') || E'\n' || coalesce(props->>'descri
 # dans les `jsonb_build_object` de la façade), lu et retiré ici.
 NODE_DIRTY_SQL = "(props->>'embed_dirty') = 'true'"
 
-# Backfill de l'outbox (#282), joué par `_init` APRÈS la conversion `guides`→`nodes` :
-# toute couche on-demand sans embedding SOUS LE NOUVEAU KEYING est remise à indexer.
-# Miroir du backfill que `guides` avait (`UPDATE guides SET embed_dirty = TRUE WHERE
-# … NOT IN (SELECT ref FROM aux_embeddings …)`) — sans lui, les lignes déjà converties
-# au lot M1 resteraient hors de la recherche sémantique, personne ne les rouvrant
-# jamais. Idempotent : une fois l'embedding posé, la ligne n'est plus re-marquée.
+# Backfill de l'outbox (#282), joué par `_init` : toute couche on-demand sans
+# embedding SOUS LE NOUVEAU KEYING est remise à indexer. Sans lui, les lignes
+# converties au lot M1 resteraient hors de la recherche sémantique, personne ne les
+# rouvrant jamais. Idempotent : une fois l'embedding posé, la ligne n'est plus
+# re-marquée. (Il suivait la recopie `guides`→`nodes`, retirée du démarrage le
+# 23/09/2026 avec la table elle-même — oto#239 ; il n'a plus d'ordre à respecter.)
 MARK_NODES_TO_EMBED_SQL = f"""
     UPDATE nodes SET props = props || '{{"embed_dirty": true}}'::jsonb
      WHERE props->>'delivery' = 'on-demand'

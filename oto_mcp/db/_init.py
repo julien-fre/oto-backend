@@ -538,16 +538,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_docs_embed_dirty ON docs(id) WHERE embed_dirty")
     conn.execute("UPDATE docs SET embed_dirty = TRUE "
                  "WHERE embed_dirty = FALSE AND id NOT IN (SELECT doc_id FROM doc_embeddings)")
-    # Sémantique AUSSI sur briefs (projects) + guides on-demand (#6 C) : même outbox.
-    # Additif (ADD COLUMN IF NOT EXISTS) → sûr sur la base partagée. Backfill dirty.
+    # Sémantique AUSSI sur les briefs de projet (#6 C) : même outbox. Additif
+    # (ADD COLUMN IF NOT EXISTS) → sûr sur la base partagée. Backfill dirty. (Les
+    # couches de contexte, elles, portent leur marqueur dans `props` — voir plus bas.)
     conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS embed_dirty BOOLEAN NOT NULL DEFAULT TRUE")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_embed_dirty ON projects(id) WHERE embed_dirty")
-    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS embed_dirty BOOLEAN NOT NULL DEFAULT TRUE")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_guides_embed_dirty ON guides(id) WHERE embed_dirty")
     conn.execute("UPDATE projects SET embed_dirty = TRUE "
                  "WHERE embed_dirty = FALSE AND id NOT IN (SELECT ref FROM aux_embeddings WHERE kind='brief')")
-    conn.execute("UPDATE guides SET embed_dirty = TRUE "
-                 "WHERE embed_dirty = FALSE AND id NOT IN (SELECT ref FROM aux_embeddings WHERE kind='guide')")
     # Sémantique OPT-IN des LIGNES de datastore (#67 V2.2) : flag par namespace
     # (`semantic_search`, défaut FALSE = jamais systématique — coût variable maîtrisé)
     # + outbox `embed_dirty` sur les rows (défaut FALSE, PAS de backfill massif : une
@@ -599,13 +596,6 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
                   FROM docs WHERE position IS NULL) s
             WHERE d.id = s.id AND d.position IS NULL
         """)
-    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas, avec son
-    # backfill (ADR 0042, barreau 1). Les index de recherche construits juste
-    # après portent `WHERE delivery = 'on-demand'` : sur une base qui existe
-    # déjà, la colonne n'arrive que par cet ALTER, donc l'ordre est une
-    # contrainte d'exécution, pas une mise en page. Le backfill des readmes
-    # `init`, lui, reste à sa place.
-    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
     # Lot 3 Ship 1 : index FTS de la recherche transverse (GIN d'expression —
     # PAS de colonne STORED, qui réécrirait la table sous ACCESS EXCLUSIVE).
     # Source unique des expressions : db/search.py (index ↔ requête identiques).
@@ -790,63 +780,31 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE user_account_profile DROP COLUMN IF EXISTS onboarded")
     conn.execute("ALTER TABLE user_account_profile DROP COLUMN IF EXISTS onboarded_at")
     conn.execute("DELETE FROM platform_instructions WHERE key = 'onboarding'")
-    # ADR 0042 (barreau 1) : `guides` unifie la PROSE d'instruction sur deux
-    # livraisons — 'on-demand' (how-to `oto_guide`) et 'init' (readme injecté au
-    # handshake). Colonne `delivery` (existants → 'on-demand' par DEFAULT = les
-    # guides B5 restent des how-to) + backfill des readmes init platform + user
-    # depuis les ex-tables (org/group suivent au barreau 2). ON CONFLICT DO NOTHING
-    # = idempotent, ne réécrit jamais une ligne guides déjà posée.
-    # (La colonne `delivery` elle-même est posée BEAUCOUP plus haut : les index
-    # de recherche la lisent dans leur prédicat — cf. le renvoi là-bas, #781.)
-    conn.execute(
-        "INSERT INTO guides (scope, owner_id, slug, delivery, body_md, created_at, updated_at) "
-        "SELECT 'platform', 'platform', key, 'init', body_md, "
-        "       COALESCE(updated_at, NOW()), COALESCE(updated_at, NOW()) "
-        "FROM platform_instructions WHERE key = 'secret_sauce' "
-        "ON CONFLICT (scope, owner_id, slug) DO NOTHING")
-    # (Le backfill jumeau `user_agent_readme` → guides est RETIRÉ avec la table
-    # elle-même — cf. le DROP plus bas. Il a tourné à chaque boot du 06/07 au 28/07 ;
-    # le laisser ferait échouer le premier boot post-drop, exactement le piège noté
-    # au barreau 2 ci-dessous.)
+    # === La table `guides` est RETIRÉE DU CODE (23/09/2026, otomata-tech/oto#239) ===
+    # Vivaient ici : la colonne `delivery`, l'outbox `embed_dirty` et son index, le
+    # backfill du readme plateforme depuis `platform_instructions`, et la recopie
+    # `guides` → `nodes` jouée à CHAQUE démarrage. Tout est parti ensemble, et dans
+    # cet ordre-là : un `CREATE TABLE IF NOT EXISTS` ou un `ALTER` laissé derrière
+    # aurait fait RENAÎTRE la table au démarrage suivant son `DROP`.
     #
-    # === Lot M1 (blueprint ADR 0054/0063) : les guides deviennent des NŒUDS ====
-    # L'ORDRE compte, et c'est le seul risque du lot : la conversion doit suivre
-    # TOUTE écriture de `guides` faite par ce boot — sinon le readme plateforme
-    # que la ligne juste au-dessus vient de semer n'arriverait dans `nodes` qu'au
-    # boot d'après (même famille de piège que le seed-avant-colonne de L1).
+    # Ce que le retrait de la recopie ne coûte pas : le seul écrivain applicatif
+    # restant de `guides` était le backfill du readme plateforme
+    # (`platform_instructions['secret_sauce']` → `guides`), et il ne semait RIEN sur
+    # une base neuve — plus personne n'écrit `platform_instructions`
+    # (`instructions.seed_platform_blocks` est un no-op depuis l'ADR 0042, la
+    # constante `_SECRET_SAUCE` est le défaut ET le repli), et la surface
+    # d'administration du bloc A lit et écrit `nodes` depuis le 28/07
+    # (`capabilities/platform_instructions.py` → `guide_store.{get,set}_init_guide`).
+    # Les 23 lignes mesurées en production le 2026-09-01 étaient déjà toutes dans
+    # `nodes`, aucune plus récente que son nœud.
     #
-    # Copie legacy→cible à CHAQUE boot, gardée `to_regclass`
-    # (docs/live-migrations.md) : tant que `guides` existe on recopie — la PROD
-    # tourne encore l'ancien code sur CETTE MÊME base et y écrit pendant la
-    # fenêtre de promotion ; après son DROP (lot suivant), la garde rend ceci
-    # no-op et aucun boot ne casse, quel que soit l'ordre des déploiements.
-    # Purement ADDITIF : rien n'est modifié ni supprimé dans `guides`, qui reste
-    # lisible telle quelle par la prod. Le lot se défait en repointant la façade.
-    #
-    # Ce que la conversion FAIT DISPARAÎTRE, au-delà du déménagement de lignes :
-    # le concept de guide. Une couche de contexte EST une page (0055-D4) → toutes
-    # ces lignes deviennent `kind='page'`, et `delivery` (injecté / à la demande)
-    # descend au rang de PROPRIÉTÉ. Détail et forme : `db/guides.py`, `_schema`.
-    #
-    # ⚠️ **La SEULE projection qui survit à l'arrêt de la recopie (2026-09-01).**
-    # Les cinq autres — projets, pages, procédures, tableaux, lignes — sont
-    # retirées plus bas ; celle-ci reste, et pour une raison qui n'est pas la
-    # symétrie : `db/guides.py` écrit ses cinq gestes DIRECTEMENT dans `nodes`,
-    # la table `guides` n'a donc plus d'écrivain applicatif — mais elle en garde
-    # UN, le seed `secret_sauce` semé quelques lignes plus haut, et ce seed est
-    # le seul chemin par lequel le readme plateforme arrive sur une base NEUVE.
-    # Mesuré en prod le 2026-09-01 : 23 lignes, toutes déjà dans `nodes`, aucune
-    # plus récente que son nœud — donc no-op stable sur la base vivante, et
-    # indispensable au premier boot d'une base vide.
-    # Elle s'en ira quand le seed sèmera nativement dans `nodes` ; la retirer
-    # avant, c'est retirer une chose sans lui donner de remplaçant.
-    if conn.execute("SELECT to_regclass('guides') AS t").fetchone()["t"]:
-        from .guides import CONVERT_GUIDES_TO_NODES_SQL
-        conn.execute(CONVERT_GUIDES_TO_NODES_SQL)
+    # Le `DROP TABLE guides` n'est PAS ici : DDL non additive sur une base partagée
+    # prod/preprod, jamais au démarrage — décision d'Alexis, exécutée par
+    # l'opérationnel une fois ce code livré (docs/live-migrations.md).
     # Outbox sémantique des couches de contexte (#282) : `nodes` ne porte pas de
     # colonne `embed_dirty` (la forme de la table est mesurée, 0063-D3 garde-fou 1)
     # → le marqueur est une clé de `props`, et son index est PARTIEL sur elle seule
-    # (l'équivalent d'`idx_guides_embed_dirty`, quelques lignes indexées).
+    # (quelques lignes indexées, comme l'outbox des briefs juste au-dessus).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_embed_dirty ON nodes(id) "
                  "WHERE (props->>'embed_dirty') = 'true'")
     # Backfill : ce qui a été converti au lot M1 n'a pas d'embedding sous le

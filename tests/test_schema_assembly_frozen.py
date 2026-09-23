@@ -439,8 +439,15 @@ from oto_mcp.db import _schema, schema
 # PARTAGÉE. Elle existe parce que `last_error` n'en garde qu'UNE : un travail mort en
 # trois essais ne montrait qu'un tiers de son histoire.
 # 165 623 → 166 657 (+1 034, commentaire compris).
-EMPREINTE = "f5f2fa76d9e8178a0fa49a562d6d0096f179e3bdcec0549d86e8f0a990295dfd"
-LONGUEUR = 166657
+# 23/09/2026 (otomata-tech/oto#239) — la table `guides` sort du DDL assemblé : son
+# `CREATE TABLE IF NOT EXISTS` est RETIRÉ du fragment `schema/guides.py`, qui ne porte
+# plus que `platform_instructions`. Ses lignes vivent dans `nodes` depuis le lot M1 et
+# plus aucun code ne la touche. ⚠️ Ce retrait NE DROPPE RIEN : un `CREATE TABLE IF NOT
+# EXISTS` laissé en place aurait fait RENAÎTRE la table au démarrage suivant le `DROP`
+# d'exploitation, qui reste une décision à part (docs/live-migrations.md).
+# 166 657 → 165 217 (−1 440, commentaire de remplacement compris).
+EMPREINTE = "9f9ec82ab3d5561a3d0ca1e27677ff623bb8cd49aa0b3de076119b53062721b9"
+LONGUEUR = 165217
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 DOCS_TEXT = "coalesce(title,'') || ' ' || coalesce(body_md,'')"
 PROJECTS_TEXT = "coalesce(name,'') || ' ' || coalesce(brief_md,'')"
 INSTR_TEXT = "coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || coalesce(body_md,'')"
-GUIDES_TEXT = "coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || coalesce(body_md,'')"
 # Couches de contexte (surface `oto_guide`) — des NŒUDS depuis le lot M1 (blueprint
 # ADR 0054/0063) : `nodes`, la prose dans `props`. MÊME texte indexé qu'au temps de
 # la table `guides` (titre + chapô + corps), à la lecture JSONB près — le
-# comportement de recherche est identique, seule la table lue change (#282).
+# comportement de recherche est identique, seule la table lue change (#282). La
+# table `guides` et ses deux index sont sortis du code le 23/09/2026 (oto#239).
 # `->>` sur jsonb (`jsonb_object_field_text`) est IMMUTABLE → indexable en
 # expression, comme `data::text` juste dessous.
 NODES_TEXT = ("coalesce(props->>'title','') || ' ' || coalesce(props->>'description','') "
@@ -82,7 +82,6 @@ RANKED_SOURCES = {
     "docs": DOCS_TEXT,
     "projects": PROJECTS_TEXT,
     "org_instructions": INSTR_TEXT,
-    "guides": GUIDES_TEXT,
     "nodes": NODES_TEXT,
     "datastore_rows": DATASTORE_ROWS_TEXT,
     "project_file_texts": FILE_TEXT,
@@ -238,14 +237,11 @@ def index_ddl() -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_docs_fts ON docs USING GIN ({_vec(DOCS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_projects_fts ON projects USING GIN ({_vec(PROJECTS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_org_instructions_fts ON org_instructions USING GIN ({_vec(INSTR_TEXT)})",
-        # ⚠️ Les deux index `idx_guides_*` ne servent plus AUCUNE requête d'ici (la
-        # recherche lit `nodes` depuis #282) — ils restent posés parce que la PROD
-        # tourne encore l'ancien code sur CETTE MÊME base et s'en sert. Leur DROP
-        # (et celui de la table) appartient au lot qui suivra le tag prod, pas ici :
-        # les retirer maintenant casserait la recherche de guides en production
-        # instantanément (docs/live-migrations.md, « la danse en N lots »).
-        f"CREATE INDEX IF NOT EXISTS idx_guides_fts ON guides USING GIN ({_vec(GUIDES_TEXT)}) "
-        "WHERE delivery = 'on-demand'",
+        # (Les deux index `idx_guides_*` ne sont plus POSÉS ici depuis le 23/09/2026,
+        # oto#239 : ils ne servaient plus aucune requête — la recherche lit `nodes`
+        # depuis #282 — et leur DDL faisait de ce fichier un écrivain de la table
+        # morte. Les index EXISTANTS en base ne sont pas droppés ici : DDL non
+        # additive, geste d'exploitation, docs/live-migrations.md.)
         # Couches de contexte converties en NŒUDS (#282). Index sur `nodes` ENTIÈRE,
         # sans prédicat partiel : la table porte des dizaines de lignes (seule la
         # façade des guides y écrit), et le prédicat se décidera quand les lignes de
@@ -259,9 +255,6 @@ def index_ddl() -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_docs_trgm ON docs USING GIN ({_trgm(DOCS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_projects_trgm ON projects USING GIN ({_trgm(PROJECTS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_org_instructions_trgm ON org_instructions USING GIN ({_trgm(INSTR_TEXT)})",
-        # Idem : gardé pour la PROD (cf. le commentaire du FTS ci-dessus), plus lu ici.
-        f"CREATE INDEX IF NOT EXISTS idx_guides_trgm ON guides USING GIN ({_trgm(GUIDES_TEXT)}) "
-        "WHERE delivery = 'on-demand'",
         f"CREATE INDEX IF NOT EXISTS idx_nodes_trgm ON nodes USING GIN ({_trgm(NODES_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_trgm ON datastore_rows USING GIN ({_trgm(DATASTORE_ROWS_TEXT)})",
         # Texte extrait des fichiers (#298). Les DEUX index, et c'est mesuré, pas
@@ -363,7 +356,7 @@ def search_procedures_fts(q: str, org_id: int, *, limit: int = 20) -> list[dict]
     """Procédures ORG-owned de l'org active — kind=procedure. Les procédures d'ÉQUIPE
     sont exclues V1 (écart nommé au plan : `can_read_group` par ligne, plus tard).
     `slug <> 'claude_md'` : reliques du readme pré-convergence 0042 (le readme vit
-    dans `guides` — 3 lignes mortes constatées en prod le 17/07, purge à part).
+    dans `nodes` — 3 lignes mortes constatées en prod le 17/07, purge à part).
 
     ⚠️ **Les ARCHIVÉES sont exclues** (#857, 10/09/2026). Elles ne l'étaient pas ici,
     alors que la voisine des projets porte la même clause quatre lignes plus haut et

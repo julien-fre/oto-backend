@@ -1,4 +1,7 @@
-"""DDL du domaine « guides » — fragment du schéma assemblé par `db/_schema.py`.
+"""DDL du domaine « prose de plateforme » — fragment assemblé par `db/_schema.py`.
+
+Il ne reste ici que `platform_instructions` (blocs A/B, #50) : la table `guides`
+a été retirée du code le 23/09/2026 (oto#239), ses lignes vivent dans `nodes`.
 
 Ce module ne porte QUE du DDL, en chaînes SQL, et n'est jamais exécuté seul :
 `_schema._SCHEMA` concatène tous les domaines dans un ordre FIGÉ (les FK en
@@ -11,7 +14,7 @@ particulier le piège du `CREATE INDEX` sur une colonne ajoutée par migration.
 """
 from __future__ import annotations
 
-# instructions plateforme et guides (ADR 0042)
+# instructions plateforme (#50). Les guides, eux, sont des nœuds (lot M1).
 GUIDES = """
 -- Instructions injectées AU NIVEAU PLATEFORME (#50, bloc A « secret sauce » +
 -- bloc B « onboarding »). Singleton par `key` ('secret_sauce' | 'onboarding').
@@ -26,37 +29,13 @@ CREATE TABLE IF NOT EXISTS platform_instructions (
     updated_by TEXT
 );
 
--- Guides (ADR 0042) — PROSE d'instruction, UNE table pour deux LIVRAISONS :
---   * delivery='on-demand' : how-to chargé à la demande via `oto_guide`
---     (scope org|user en DB ; platform on-demand = fichiers `guides/*.md`, PR) ;
---   * delivery='init' : readme injecté au handshake (bloc A/C) — le MÊME primitif,
---     migré des ex-tables (secret_sauce, *_instructions[claude_md], user_agent_readme).
--- Distincte des PROCÉDURES (`org_instructions`, slots/versioning). CLAIR (pas un credential).
---
--- ⚠️ TABLE EN LECTURE SEULE depuis le lot M1 (blueprint ADR 0063-D4) : ses lignes
--- vivent désormais dans `nodes` (voir juste dessous), plus rien ici ne s'écrit par
--- la façade `db/guides.py`. Elle reste en place — la PROD tourne encore l'ancien
--- code sur CETTE MÊME base, et la conversion la recopie à chaque boot pour
--- rattraper ce qu'elle y écrit. Les deux lecteurs qui vivaient hors façade — la
--- recherche (`db/search.py`) et l'outbox d'embeddings (`db/aux_embed.py`) — sont
--- passés sur `nodes` (#282) : un guide écrit depuis M1 était sorti de `oto_search`
--- sans que rien ne le dise.
--- ⚠️ **Rien ici ne se DROPPE tant que la prod n'a pas été taguée** : ni la table,
--- ni ses colonnes, ni ses index de recherche `idx_guides_fts`/`idx_guides_trgm`
--- (posés par `search.index_ddl`), ni les lignes `aux_embeddings(kind='guide')`.
--- L'ancien code s'en sert en production : les retirer aujourd'hui y casserait la
--- recherche instantanément. C'est le lot d'après (docs/live-migrations.md).
-CREATE TABLE IF NOT EXISTS guides (
-    id BIGSERIAL PRIMARY KEY,
-    scope TEXT NOT NULL,                         -- 'platform' | 'org' | 'group' | 'user'
-    owner_id TEXT NOT NULL,                      -- 'platform' | org.id::text | group.id::text | sub
-    slug TEXT NOT NULL,                          -- 'readme'/'secret_sauce' (init) | how-to slug
-    delivery TEXT NOT NULL DEFAULT 'on-demand',  -- 'init' | 'on-demand'
-    title TEXT NOT NULL DEFAULT '',
-    description TEXT NOT NULL DEFAULT '',
-    body_md TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (scope, owner_id, slug)
-);
+-- ⚠️ La table `guides` a été RETIRÉE DU CODE le 23/09/2026 (otomata-tech/oto#239).
+-- Ses lignes vivent dans `nodes` depuis le lot M1 (blueprint ADR 0054/0063) : une
+-- couche de contexte EST une page, `delivery` n'est qu'une propriété. Plus rien ici
+-- ne la crée, ne l'altère, ne l'indexe ni ne la recopie — un `CREATE TABLE IF NOT
+-- EXISTS` laissé en place la faisait RENAÎTRE au démarrage suivant un `DROP`, et le
+-- boot continuait d'écrire dans une table que plus rien ne lit pour servir.
+-- Le `DROP TABLE guides` lui-même n'est PAS ici : DDL non additive sur une base
+-- partagée, jamais au démarrage — décision d'Alexis, exécutée par l'opérationnel
+-- une fois ce code livré en production (docs/live-migrations.md, « la danse en N lots »).
 """

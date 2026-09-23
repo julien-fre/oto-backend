@@ -368,10 +368,12 @@ _SUB_COLUMNS = [
     # `col=old_sub` ne peut toucher que les lignes user.
     ("user_datastores", "owner_id"), ("projects", "owner_id"),
     ("resource_grants", "principal_id"), ("resource_grants", "granted_by"),
-    # `guides` est gelée depuis le lot M1 (ses lignes vivent dans `nodes`) mais elle
-    # existe encore et la prod y écrit pendant la fenêtre : les DEUX se repointent,
-    # sinon une bascule de tenant orphelinerait ce que la conversion recopiera après.
-    ("guides", "owner_id"), ("nodes", "owner_id"),
+    # Les couches de contexte d'une personne (sa note, ses guides perso) : des NŒUDS
+    # depuis le lot M1. (La table `guides` a quitté cet inventaire le 23/09/2026 avec
+    # le reste du code qui la touchait, oto#239 — la repointer revenait à écrire dans
+    # une table morte, et l'y laisser aurait fait échouer un merge de comptes après
+    # son DROP.)
+    ("nodes", "owner_id"),
     # Les fonctions personnelles (ADR 0073) suivent la personne, comme ses projets.
     # ⚠️ `functions` porte UNIQUE (owner_type, owner_id, slug) : si les deux comptes ont
     # chacun une fonction PERSONNELLE du même slug, l'UPDATE lève et le merge échoue EN
@@ -564,8 +566,9 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
         )
         # 2. user_account_profile (PK sub) : retirer le frais du new PUIS repointer
         #    l'ancien (garde l'historique). DELETE d'abord → pas de conflit PK.
-        #    (La NOTE de l'user suit désormais par `("guides", "owner_id")` dans
-        #    `_SUB_COLUMNS` — elle a quitté `user_agent_readme` avec l'ADR 0042.)
+        #    (La NOTE de l'user suit désormais par `("nodes", "owner_id")` dans
+        #    `_SUB_COLUMNS` — elle a quitté `user_agent_readme` avec l'ADR 0042, puis
+        #    la table `guides` avec le lot M1.)
         conn.execute("DELETE FROM user_account_profile WHERE sub=%s", (new_sub,))
         conn.execute("UPDATE user_account_profile SET sub=%s WHERE sub=%s", (new_sub, old_sub))
         # 2 bis. APPARTENANCES (org_members / org_group_members) : elles ne se repointent
