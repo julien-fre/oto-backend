@@ -79,7 +79,8 @@ def test_les_cles_de_api_me_sont_exactement_celles_servies(monkeypatch, socle):
     assert sorted(out) == sorted([
         "sub", "email", "name", "avatar_url", "locale", "role",
         "active_org", "active_org_name", "active_org_logo_url", "org_role",
-        "active_org_readonly", "active_org_is_personal", "active_org_require_mfa",
+        "active_org_readonly", "view_as_read_only",
+        "active_org_is_personal", "active_org_require_mfa",
         "home_org", "home_org_name",
         "active_group", "active_group_name", "group_role",
         "home_group", "home_group_name",
@@ -112,6 +113,49 @@ def test_un_membre_n_est_jamais_en_lecture_seule(monkeypatch, socle):
     monkeypatch.setattr(ma.access, "is_platform_operator", lambda sub: False)
     _, out = call("me.get")
     assert out["active_org_readonly"] is False
+
+
+# --- « Voir en tant que » : la lecture seule que la cible ne porte pas (oto#212) ---
+
+def _me_par_le_middleware(monkeypatch, entetes: dict) -> dict:
+    """`GET /api/me` à travers le VRAI `ViewAsMiddleware` : c'est lui qui applique la
+    vue (gardes comprises) ; le handler ne fait que la lire."""
+    from starlette.applications import Starlette
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+    from types import SimpleNamespace
+
+    from oto_mcp.api import routes as api_routes
+
+    async def authentifie(request, verifier, **kw):
+        return "u-operateur", None
+    monkeypatch.setattr(api_routes, "_authenticate", authentifie)
+
+    def me(request):  # synchrone → threadpool, comme les handlers de capacité
+        return JSONResponse(ma._me(SimpleNamespace(sub="u-cible"), ma.MeInput()))
+
+    app = Starlette(routes=[Route("/api/me", me)])
+    c = TestClient(api_routes.ViewAsMiddleware(app, verifier=None))
+    r = c.get("/api/me", headers={"Authorization": "Bearer x", **entetes})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_voir_en_tant_que_annonce_la_lecture_seule(monkeypatch, socle):
+    """La cible a un rôle réel : `active_org_readonly` est faux, et le serveur refuse
+    pourtant toute écriture. Sans ce champ, l'écran propose des gestes voués au 403."""
+    out = _me_par_le_middleware(monkeypatch, {"X-Oto-View-As": "u-cible"})
+    assert out["view_as_read_only"] is True
+    assert out["active_org_readonly"] is False
+
+
+@pytest.mark.parametrize("entetes", [{}, {"X-Oto-View-As": "u-operateur"}],
+                         ids=["sans-vue", "vue-sur-soi"])
+def test_sans_vue_appliquee_pas_de_lecture_seule(monkeypatch, socle, entetes):
+    """Une vue sur soi est un no-op du middleware : rien n'est refusé, rien ne
+    s'annonce."""
+    assert _me_par_le_middleware(monkeypatch, entetes)["view_as_read_only"] is False
 
 
 def test_hors_org_les_champs_d_org_sont_nuls_pas_absents(monkeypatch, socle):

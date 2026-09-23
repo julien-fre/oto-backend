@@ -35,7 +35,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, field_validator
 
-from .. import access, billing, db, group_store, org_store
+from .. import access, billing, db, group_store, org_store, session_org
 from ._authz import SUB_ONLY
 from ._types import Capability, ResolvedCtx, RestBinding
 from .connectors.provider_status import ProviderStatus
@@ -126,6 +126,12 @@ class MeView(BaseModel):
     # réel dedans. Le backend rejette déjà toute mutation (GET-only au middleware) —
     # ce flag sert au bandeau et au mode lecture du front. Un membre : toujours False.
     active_org_readonly: bool = False
+    # « Voir en tant que » (`X-Oto-View-As`) APPLIQUÉ par `ViewAsMiddleware` : la
+    # réponse est celle du compte CIBLE, dont `active_org_readonly` vaut faux (la cible
+    # a ses rôles), alors que le middleware refuse toute écriture (403
+    # `view_as_read_only`). Ce flag est donc le SEUL qui dise la lecture seule de ce
+    # mode ; un front calcule son droit d'écrire sur les deux. Hors vue : False.
+    view_as_read_only: bool = False
     # Espace privé mono-membre : le front adapte son vocabulaire (un « solo » ne lit
     # jamais « org » ni « équipe »).
     active_org_is_personal: bool = False
@@ -284,6 +290,9 @@ def _me(ctx: ResolvedCtx, inp: MeInput) -> dict:
         "active_org_logo_url": active_org_logo_url,
         "org_role": org_role,
         "active_org_readonly": active_org_readonly,
+        # Posé par `ViewAsMiddleware` APRÈS ses gardes (opérateur, cible existante
+        # ≠ soi) : une vue refusée ou sans effet le laisse à None → False.
+        "view_as_read_only": session_org.current_view_user() is not None,
         "active_org_is_personal": active_org_is_personal,
         "active_org_require_mfa": active_org_require_mfa,
         "home_org": home_org,

@@ -59,7 +59,10 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   ADR 0023 — la consultation `X-Oto-Org` l'emporte), `home_*` le défaut persistant. Un front
   qui scope ses vues sur `home_org` affiche les données d'une autre org que celle qu'il
   annonce. `active_org_readonly` = opérateur plateforme en consultation (bandeau + écran en
-  lecture). Les deux lentilles d'activité sont scopées **(sub, org active)** : jamais un
+  lecture) ; `view_as_read_only` = « voir en tant que » appliqué (`X-Oto-View-As`) : la
+  réponse est celle de la cible, dont `active_org_readonly` est faux, alors que toute
+  écriture est refusée (403 `view_as_read_only`). Un écran n'écrit que si les DEUX sont
+  faux (oto#212). Les deux lentilles d'activité sont scopées **(sub, org active)** : jamais un
   autre membre, jamais une autre org — filtres `?limit=` (défaut 200, plafond dur 1000),
   `?tool=` (nom EXACT), `?errors=1|true` (littéral : `?errors=yes` ne filtre pas), `?days=`.
   ⚠️ **Le repli de saisie est conservé** : `?days=abc` rend 200 avec la fenêtre par défaut,
