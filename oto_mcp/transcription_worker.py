@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 
 from starlette.concurrency import run_in_threadpool
 
-from . import db, media_store, transcript
+from . import db, media_store, transcript, upload_tokens
 from .crypto import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,14 @@ def _ecrire_page(sub: str, pid: int, titre: str, corps: str) -> dict:
         raise RuntimeError(f"écriture refusée sur le projet #{pid} ({e.code})") from None
 
 
+def _purger(audio_key: str, jid: int) -> None:
+    """L'objet audio temporaire ne survit à aucun tour, succès ou échec."""
+    try:
+        media_store.delete_by_key(audio_key)
+    except Exception:  # noqa: BLE001 — best-effort, ne masque jamais le résultat
+        logger.warning("transcription_worker: purge de l'audio #%s échouée.", jid)
+
+
 def _transcribe_one(job: dict) -> str:
     """Un travail : relire l'audio, appeler Mistral, écrire la page. Rend le
     statut obtenu (`done`/`failed`). Ne lève jamais — le résultat, succès comme
@@ -82,9 +90,14 @@ def _transcribe_one(job: dict) -> str:
     jamais qu'il est allé au bout)."""
     jid = int(job["id"])
     try:
-        data = media_store.fetch_object(job["audio_key"])
+        # Le plafond d'un FICHIER DE PROJET : sans lui la lecture retombe sur celui
+        # d'une image (2 Mo) et tout enregistrement plus gros échoue ici.
+        data = media_store.fetch_object(job["audio_key"],
+                                        max_bytes=upload_tokens.max_bytes())
     except Exception as e:  # noqa: SILENT — stockage : l'échec est PERSISTÉ sur le travail
-        db.mark_transcription_job_failed(jid, error=f"lecture de l'audio impossible ({type(e).__name__}).")
+        code = getattr(e, "code", None) or type(e).__name__
+        db.mark_transcription_job_failed(jid, error=f"lecture de l'audio impossible ({code}).")
+        _purger(job["audio_key"], jid)
         return "failed"
 
     import requests
@@ -108,10 +121,7 @@ def _transcribe_one(job: dict) -> str:
                            "Rien n'a été écrit.")
         return "failed"
     finally:
-        try:
-            media_store.delete_by_key(job["audio_key"])
-        except Exception:  # noqa: BLE001 — best-effort, ne masque jamais le résultat
-            logger.warning("transcription_worker: purge de l'audio #%s échouée.", jid)
+        _purger(job["audio_key"], jid)
 
     tours = transcript.process(brut["segments"])
     if not tours and brut["text"].strip():

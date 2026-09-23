@@ -439,3 +439,25 @@ def test_une_cle_plateforme_est_la_cle_nue_langue_par_defaut(all_tools, monde):
     assert envoi["headers"]["Authorization"] == "Bearer k-plateforme"
     champs = _champs(envoi)
     assert champs["language"] == ["fr"] and champs["context_bias"] == ["zinguerie"]
+
+
+def test_un_audio_plus_gros_qu_une_image_est_relu_et_un_echec_de_lecture_purge(
+        all_tools, monde, monkeypatch):
+    """Le worker relit sous le plafond des fichiers de projet, pas celui d'une image
+    (2 Mo) : un enregistrement de 10 Mo échouait à la lecture (première exécution réelle)."""
+    from oto_mcp import media_store
+    gros = b"ID3" + b"\x00" * (3 * 1024 * 1024)
+    monde["s3"].objets[FICHIER["s3_key"]] = gros
+    ref = _appeler(all_tools, source=_pf())
+    _tourner(monde)
+    assert _statut(all_tools, ref["job_id"])["status"] == "done"
+
+    def _boum(key, **kw):
+        raise media_store.MediaError(413, "file_too_large", "trop gros")
+
+    ref2 = _appeler(all_tools, source=_pf())
+    monkeypatch.setattr(media_store, "fetch_object", _boum)
+    _tourner(monde)
+    out = _statut(all_tools, ref2["job_id"])
+    assert out["status"] == "failed" and "file_too_large" in out["error"]
+    assert monde["jobs"][ref2["job_id"]]["audio_key"] in monde["s3"].supprimes
