@@ -88,6 +88,23 @@ se voit que si un admin a posé l'option `beta` sur l'UTILISATEUR ou sur son ORG
 (`oto_admin_set_option`, lue par le seam unique `access.has_option`) : l'utilisateur ne
 peut pas se l'accorder, et aucun override perso ne le lève.
 
+Depuis le 23/09/2026 l'option se pose aussi sur un **TENANT** (`entity_type='tenant'`,
+`entity_id=<slug>`) : elle vaut alors pour toutes les orgs qu'il héberge, lue en fin de
+cascade par `access.org_has_option` (après le comp d'org et le plan).
+
+**Deux populations, deux options.** `tool_visibility` disait : « le jour où deux
+populations bêta doivent différer, c'est ce jour-là qu'on scinde ». Ce jour est le
+23/09/2026 : un tenant partenaire ouvre les **agents hébergés** à toute sa population
+sans ouvrir le reste de la bêta. D'où `AGENTS_OPTION = "agents"` et
+`AGENTS_TOOLS = {"oto_fleet"}` : la flotte sort de `BETA_TOOLS` pour rejoindre ce lot,
+avec les mêmes règles (fail-closed, admin-only, aucun override perso). Les quatre portes
+des agents — la flotte (`beta_required`), le déclencheur webhook (`webhook_beta_only`),
+la visibilité MCP, le drapeau `agents` de `/api/me/orgs` — posent la question à UN
+endroit, `tool_visibility.hosted_agents_open(sub, org=…)` = `agents` OU `beta`. Un
+compte bêta reste un sur-ensemble ; l'inverse n'est pas vrai. Ouvrir les agents à un
+tenant entier : `oto_admin_set_option entity_type=tenant entity_id=<slug> option=agents
+on=true`.
+
 `BETA_TOOLS` (source unique, `tool_visibility.py`) porte **deux** familles, entrées pour
 des raisons différentes.
 

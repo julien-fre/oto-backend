@@ -174,6 +174,7 @@ def test_org_has_option_ne_lit_pas_le_comp_personnel_du_requerant(monkeypatch):
     monkeypatch.setattr(access.db, "has_option_comp",
                         lambda et, eid, opt: et == "user")
     monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: None)
+    monkeypatch.setattr(access.db, "org_tenant_slug", lambda oid: "oto")
     assert access.org_has_option(9, "unipile") is False
     monkeypatch.setattr(access, "current_org", lambda sub: 9)
     assert access.has_option("moi", "unipile") is True   # pour LUI, oui

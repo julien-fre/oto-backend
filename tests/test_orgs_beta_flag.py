@@ -34,7 +34,42 @@ def test_beta_est_calcule_par_org_avec_org_explicite(monkeypatch):
     out = R._list_my_orgs(ResolvedCtx(sub="membre", org_id=9196), R.NoInput())
     by_id = {o["id"]: o for o in out["orgs"]}
     assert by_id[9196]["beta"] is True and by_id[269]["beta"] is False
-    assert sorted(vus) == [("membre", "beta", 269), ("membre", "beta", 9196)]
+    # `beta` ne lit QUE `beta` ; `agents` lit `agents` puis `beta` (court-circuit
+    # sur le premier vrai) — toujours avec `org=` explicite.
+    assert sorted(set(vus)) == [("membre", "agents", 269), ("membre", "agents", 9196),
+                                ("membre", "beta", 269), ("membre", "beta", 9196)]
+    assert all(org in (269, 9196) for _, _, org in vus)
     # Le modèle déclaré (OpenAPI dérivé) porte le champ — un front typé le lit.
     assert R.MyOrgEntry(**by_id[9196]).beta is True
     assert R.MyOrgEntry.model_fields["beta"].default is False
+
+
+def test_agents_est_un_champ_a_part_ouvert_par_agents_OU_beta(monkeypatch):
+    """23/09/2026 : un tenant ouvre les agents hébergés à toute sa population sans
+    ouvrir le reste de la bêta. Le front lit `agents`, plus `beta`, pour la section
+    Agents ; `beta` ne bouge pas."""
+    rows = [
+        {"org_id": 1, "name": "Agents seulement", "org_role": "org_member", "is_active": True},
+        {"org_id": 2, "name": "Bêta", "org_role": "org_member", "is_active": False},
+        {"org_id": 3, "name": "Rien", "org_role": "org_member", "is_active": False},
+    ]
+    _stub_orgs(monkeypatch, rows)
+    ouvert = {(1, "agents"), (2, "beta")}
+    monkeypatch.setattr(R.access, "has_option",
+                        lambda sub, option, *, org=None: (org, option) in ouvert)
+    out = R._list_my_orgs(ResolvedCtx(sub="membre", org_id=1), R.NoInput())
+    by_id = {o["id"]: (o["agents"], o["beta"]) for o in out["orgs"]}
+    assert by_id == {1: (True, False), 2: (True, True), 3: (False, False)}
+    assert R.MyOrgEntry.model_fields["agents"].default is False
+
+
+def test_un_hoquet_ferme_agents_sans_ouvrir(monkeypatch):
+    _stub_orgs(monkeypatch, [{"org_id": 1, "name": "x", "org_role": "org_member",
+                              "is_active": True}])
+
+    def _boom(sub, option, *, org=None):
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(R.access, "has_option", _boom)
+    out = R._list_my_orgs(ResolvedCtx(sub="membre", org_id=1), R.NoInput())
+    assert (out["orgs"][0]["agents"], out["orgs"][0]["beta"]) == (False, False)

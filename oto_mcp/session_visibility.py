@@ -24,10 +24,12 @@ from .connectors import activation as connector_activation
 from .connectors import selection as connector_selection
 from .error_taxonomy import _is_client_disconnect
 from .tool_visibility import (
+    AGENTS_TOOLS,
     BETA_OPTION,
     BETA_TOOLS,
     DEFAULT_HIDDEN_TOOLS,
     effective_disabled,
+    hosted_agents_open,
     is_protected,
     namespace_of,
 )
@@ -259,12 +261,22 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
     # pire est l'inverse — une surface non finie qui réapparaît à tout le monde
     # sur un glitch, sans que personne ne le voie. On masque donc en cas de
     # doute : ne pas proposer une bêta n'a jamais bloqué personne.
+    #
+    # Deux populations depuis le 23/09/2026 : la bêta commune (`BETA_TOOLS`, option
+    # `beta`) et les AGENTS HÉBERGÉS (`AGENTS_TOOLS`, option `agents` OU `beta`,
+    # cf. `hosted_agents_open`) — un tenant peut ouvrir les seconds à tout le monde
+    # sans ouvrir la première. Même couche, même fail-closed.
+    caches_beta: set[str] = set()
     try:
         if not access.has_option(sub, BETA_OPTION, org=active_org):
-            couches[COUCHE_BETA] = all_names & BETA_TOOLS
+            caches_beta |= all_names & BETA_TOOLS
+        if not hosted_agents_open(sub, org=active_org):
+            caches_beta |= all_names & AGENTS_TOOLS
     except Exception as e:
         logger.warning("beta visibility fail-CLOSED for %s: %s", sub, e)
-        couches[COUCHE_BETA] = all_names & BETA_TOOLS
+        caches_beta = all_names & (BETA_TOOLS | AGENTS_TOOLS)
+    if caches_beta:
+        couches[COUCHE_BETA] = caches_beta
     # Outils hors de portée : masqués d'après l'AUTORISATION DÉCLARÉE, pas d'après
     # le nom. Visibilité seulement — l'autz reste appliquée à l'appel, ici comme avant.
     couches[COUCHE_HORS_DE_PORTEE] = _hors_de_portee_plateforme(all_names, role_plateforme)

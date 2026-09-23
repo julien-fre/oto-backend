@@ -90,7 +90,9 @@ conteneur de travail possédé · ⚠️ une liste de contenu scope sur `active_
 Denylist `(sub, org active)` dans `session_visibility.py`, appliquée au handshake ; régime **« non-sélectionné =
 masqué »** ; `PROTECTED_TOOLS` (`tool_visibility.py`) = jamais masquables ; stdio local = accès complet · gouvernance,
 **pas une barrière de sécurité** (ADR 0031) · ⚠️ `BETA_TOOLS` = population **choisie** (option `beta` posée par un
-admin), **fail-closed**, **noms neufs seulement** · ⚠️ **un contrat servi ne se durcit pas en place, il se double** :
+admin), **fail-closed**, **noms neufs seulement** · `AGENTS_TOOLS` (`oto_fleet`) = la population des **agents
+hébergés**, option `agents` OU `beta`, lue à UN endroit (`hosted_agents_open`) par ses quatre portes · une option
+se pose sur un compte, une org **ou un tenant** (fin de cascade) · ⚠️ **un contrat servi ne se durcit pas en place, il se double** :
 l'héritée garde son défaut écrit dans sa description, la stricte l'exige (ADR 0019/0050, `docs/tool-visibility.md`).
 **Agent readme** = prose injectée à chaque session, cumulée plateforme → org → équipe → user, éditée par la seule
 surface `me.guide{,s}` (ADR 0042) ; **procédure** = guide nommé chargé à la demande, qui embarque son schéma

@@ -485,7 +485,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
     if inp.op == "create":
         webhook = (inp.kind or "schedule") == "webhook"
-        if webhook and not access.has_option(ctx.sub, tool_visibility.BETA_OPTION):
+        if webhook and not tool_visibility.hosted_agents_open(ctx.sub, org=ctx.org_id):
             # ⚠️ **Le lot ATTERRIT FERMÉ** (13/09/2026), et c'est la condition de
             # son déploiement. `oto_trigger` est visible de tous (tranché le
             # 02/09) et la capacité est ouverte à tout membre d'org : sans cette
@@ -504,12 +504,17 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # ⚠️ Seule la CRÉATION est gardée. Retirer l'option ne doit pas casser
             # un agent qui tourne : le geste d'arrêt d'un agent emballé est sa
             # PAUSE, pas la fermeture de la population.
+            #
+            # 23/09/2026 : la porte lit `agents` OU `beta` (`hosted_agents_open`),
+            # contre l'org de l'APPEL (`org=ctx.org_id`, jamais current_org — la
+            # même règle que la flotte), pour qu'un tenant l'ouvre à toute sa
+            # population d'un don tenant. Le code d'erreur ne change pas.
             raise AuthzDenied(
                 403, "webhook_beta_only",
-                "les agents déclenchés par webhook sont en bêta fermée : cette "
-                "organisation n'y est pas encore. Un agent PROGRAMMÉ (`cron`) "
-                "reste disponible. Pour rejoindre la bêta, demande l'option "
-                "`beta` sur l'organisation.")
+                "les agents déclenchés par webhook ne sont pas ouverts à cette "
+                "organisation. Un agent PROGRAMMÉ (`cron`) reste disponible. Pour "
+                "les ouvrir, demande l'option `agents` (ou `beta`) sur "
+                "l'organisation ou sur le tenant.")
         # ⚠️ Ce qu'on exige dépend du COUP D'ENVOI. Un déclencheur programmé exige
         # son cadencement ; un webhook n'en a pas — exiger `cron` de lui, ou
         # l'accepter en l'ignorant, seraient deux façons de mentir sur ce qu'il est.

@@ -63,7 +63,7 @@ from pydantic import BaseModel, Field
 from . import (_cle_exigee, _descriptions_outils, _instruction, _lignes_reservables,
                _modele, _ordonnanceur_de_campagne, _outils_manquants)
 from .. import access, db, output_projection, runner_models, tool_alias
-from ..tool_visibility import BETA_OPTION
+from ..tool_visibility import hosted_agents_open
 
 logger = logging.getLogger(__name__)
 from ._authz import ORG_MEMBER
@@ -314,18 +314,25 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     # membre non bêta déclarait, lançait et arrêtait des passages depuis un front,
     # alors que son agent ne voyait même pas le nom. Fail-CLOSED, comme la
     # visibilité : une bêta qui s'ouvre sur un hoquet ne se voit pas.
+    #
+    # Depuis le 23/09/2026 la question est « les agents hébergés sont-ils ouverts »
+    # (`agents` OU `beta`, comp compte/org/tenant ou plan — `hosted_agents_open`),
+    # pour qu'un tenant les ouvre à toute sa population sans ouvrir le reste de la
+    # bêta. Le code d'erreur reste `beta_required` : un appelant qui le gère
+    # aujourd'hui n'a pas à réapprendre un nom.
     try:
-        beta = access.has_option(ctx.sub, BETA_OPTION, org=ctx.org_id)
+        ouvert = hosted_agents_open(ctx.sub, org=ctx.org_id)
     except Exception:
         # Fermer sans le dire serait un silence ; on ferme ET on le trace.
-        logger.warning("beta gate fail-CLOSED for %s in org %s",
+        logger.warning("agents gate fail-CLOSED for %s in org %s",
                        ctx.sub, ctx.org_id, exc_info=True)
-        beta = False
-    if not beta:
+        ouvert = False
+    if not ouvert:
         raise AuthzDenied(
             403, "beta_required",
-            "les passages d'agents sont en bêta : un admin pose l'option `beta` sur "
-            "ton compte ou ton org (`oto_admin_set_option`)")
+            "les passages d'agents ne sont pas ouverts à cette organisation : un "
+            "admin pose l'option `agents` (ou `beta`) sur ton compte, ton org ou "
+            "ton tenant (`oto_admin_set_option`)")
 
     if inp.op == "create":
         # ⚠️ Le seam vaut pour TOUTE opération, pas pour le seul verbe qu'on avait

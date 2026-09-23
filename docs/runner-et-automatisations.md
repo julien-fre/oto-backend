@@ -905,9 +905,13 @@ même procédure. Deux du même genre restent refusées, pour la raison d'origin
 
 #### Le lot atterrit FERMÉ (13/09/2026)
 
-**Créer** un agent déclenché exige l'option `beta` sur le compte ou sur l'org
-(`oto_admin_set_option`, lue par `access.has_option`). Sans elle : 403
-`webhook_beta_only`, et un agent programmé reste disponible.
+**Créer** un agent déclenché exige que les agents hébergés soient ouverts à
+l'appelant dans l'org de l'appel : option `agents` OU `beta`, sur le compte, l'org
+ou le **tenant** (`oto_admin_set_option`, lue par `tool_visibility.hosted_agents_open`
+→ `access.has_option`, avec `org=` explicite). Sans elle : 403 `webhook_beta_only`,
+et un agent programmé reste disponible. Depuis le 23/09/2026 `agents` est une option
+à part de `beta` (cf. `docs/tool-visibility.md`) : un tenant l'ouvre à toute sa
+population sans ouvrir le reste de la bêta.
 
 Pourquoi une porte, alors que `oto_trigger` est visible de tous (tranché le 02/09)
 et que la capacité est ouverte à tout membre d'org : sans elle, le jour du
@@ -923,7 +927,8 @@ tourne : le geste d'arrêt d'un agent emballé est sa PAUSE, pas la fermeture de
 population. Ouvrir la bêta à une org :
 
 ```
-oto_admin_set_option  option=beta  org_id=N
+oto_admin_set_option  entity_type=org     entity_id=N       option=agents  on=true
+oto_admin_set_option  entity_type=tenant  entity_id=<slug>  option=agents  on=true   # tout le tenant
 ```
 
 #### La porte : un secret par déclencheur, jamais relu

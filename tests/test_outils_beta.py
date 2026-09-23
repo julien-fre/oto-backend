@@ -25,7 +25,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import session_visibility as SV
-from oto_mcp.tool_visibility import BETA_OPTION, BETA_TOOLS
+from oto_mcp.tool_visibility import AGENTS_OPTION, AGENTS_TOOLS, BETA_OPTION, BETA_TOOLS
 
 
 class _Ctx:
@@ -42,7 +42,7 @@ class _Ctx:
         self.fastmcp = self._FastMCP(noms)
 
 
-_TOUS = set(BETA_TOOLS) | {"oto_whoami", "oto_doc"}
+_TOUS = set(BETA_TOOLS) | set(AGENTS_TOOLS) | {"oto_whoami", "oto_doc"}
 
 
 @pytest.fixture
@@ -77,23 +77,37 @@ async def _masques(ctx, monkeypatch, option):
 async def test_sans_l_option_les_verbes_sont_masques(socle, monkeypatch):
     caches = await _masques(socle, monkeypatch, lambda sub, opt, org=None: False)
     assert BETA_TOOLS <= caches, sorted(BETA_TOOLS - caches)
+    assert AGENTS_TOOLS <= caches, sorted(AGENTS_TOOLS - caches)
 
 
 @pytest.mark.asyncio
 async def test_avec_l_option_les_verbes_reviennent(socle, monkeypatch):
     """Sans ce test, un masquage DÉFINITIF satisferait le précédent."""
-    vu = {}
+    vus = []
 
     def option(sub, opt, org=None):
-        vu["option"], vu["org"] = opt, org
+        vus.append((opt, org))
         return True
 
     caches = await _masques(socle, monkeypatch, option)
     assert not (BETA_TOOLS & caches), sorted(BETA_TOOLS & caches)
-    assert vu["option"] == BETA_OPTION
+    assert not (AGENTS_TOOLS & caches), sorted(AGENTS_TOOLS & caches)
+    assert {opt for opt, _ in vus} == {BETA_OPTION, AGENTS_OPTION}
     # L'option se juge sur l'org ACTIVE de la session, pas sur une org devinée
     # ailleurs : c'est ce qui permet de l'ouvrir à une org entière.
-    assert vu["org"] == 1
+    assert all(org == 1 for _, org in vus)
+
+
+@pytest.mark.asyncio
+async def test_l_option_agents_SEULE_ouvre_la_flotte_et_rien_d_autre(socle, monkeypatch):
+    """23/09/2026 : deux populations. Un tenant qui ouvre les agents hébergés à
+    tout le monde n'ouvre pas `oto_node`, `oto_function`… — et réciproquement,
+    `beta` reste un sur-ensemble (le test précédent le prouve)."""
+    caches = await _masques(socle, monkeypatch,
+                            lambda sub, opt, org=None: opt == AGENTS_OPTION)
+    assert not (AGENTS_TOOLS & caches), sorted(AGENTS_TOOLS & caches)
+    assert BETA_TOOLS <= caches, sorted(BETA_TOOLS - caches)
+    assert "oto_fleet" in AGENTS_TOOLS and "oto_fleet" not in BETA_TOOLS
 
 
 @pytest.mark.asyncio
@@ -108,7 +122,7 @@ async def test_sur_une_ERREUR_ils_restent_masques(socle, monkeypatch):
         raise RuntimeError("base injoignable")
 
     caches = await _masques(socle, monkeypatch, casse)
-    assert BETA_TOOLS <= caches, (
+    assert (BETA_TOOLS | AGENTS_TOOLS) <= caches, (
         "un hoquet a rouvert la surface bêta à tout le monde")
 
 

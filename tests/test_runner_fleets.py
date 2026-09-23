@@ -370,7 +370,24 @@ def test_sans_option_beta_la_capacite_REFUSE_et_nomme_le_geste(monkeypatch):
         assert e.value.status == 403 and e.value.code == "beta_required", op
         assert "oto_admin_set_option" in e.value.message
     # `org=` EXPLICITE et égal à l'org de l'appel : jamais current_org (anti-fuite).
-    assert vus and all(v == ("alexis", "beta", 2) for v in vus)
+    # Deux options depuis le 23/09/2026 : `agents` (la population des agents
+    # hébergés) OU `beta` — les deux sont lues, toujours contre CETTE org.
+    assert vus and all(v[0] == "alexis" and v[2] == 2 for v in vus)
+    assert {v[1] for v in vus} == {"agents", "beta"}
+
+
+def test_l_option_agents_SEULE_ouvre_la_flotte(monkeypatch):
+    """Un tenant ouvre les agents hébergés à toute sa population sans ouvrir le
+    reste de la bêta : `agents` suffit, `beta` n'est pas exigée."""
+    monkeypatch.setattr(RF.access, "has_option",
+                        lambda sub, option, *, org=None: option == "agents")
+    monkeypatch.setattr(RF.db, "list_fleets", lambda org_id, status=None: [])
+    try:
+        out = _appel(_ctx(), op="list")
+    except AuthzDenied as e:
+        assert e.code != "beta_required", "l'option `agents` seule doit ouvrir"
+        raise
+    assert isinstance(out, dict)
 
 
 def test_un_hoquet_du_seam_ferme_la_beta_au_lieu_de_l_ouvrir(monkeypatch):

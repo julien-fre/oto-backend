@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 import logging
 
-from ... import access, billing, db, org_store
+from ... import access, billing, db, org_store, tool_visibility
 from ...tool_visibility import BETA_OPTION
 from .._authz import ORG_MEMBER_OF, PLATFORM_ADMIN, SUB_ONLY
 # Le quota de création vit avec la capacité qui REFUSE (`org.create`) : le lire ici
@@ -62,12 +62,18 @@ class MyOrgEntry(BaseModel):
     # session » — ADR 0038 a retiré tout état de session côté serveur.
     active: bool
     # Le compte est-il BÊTA dans cette org (option `beta`, seam `access.has_option` :
-    # comp user OU comp org OU plan) ? Par ORG et non sur /api/me : le front consulte
-    # l'org de l'URL, pas l'org maison. C'est ce qui décide si une surface bêta
-    # (Agents : `oto_fleet`, cf. `BETA_TOOLS`) se MONTRE — la visibilité MCP masque
-    # la liste d'outils, mais un front ne lit pas cette liste ; sans ce champ il ne
-    # peut que tout montrer ou rien.
+    # comp user OU comp org OU plan OU comp tenant) ? Par ORG et non sur /api/me : le
+    # front consulte l'org de l'URL, pas l'org maison. C'est ce qui décide si une
+    # surface bêta (cf. `BETA_TOOLS`) se MONTRE — la visibilité MCP masque la liste
+    # d'outils, mais un front ne lit pas cette liste ; sans ce champ il ne peut que
+    # tout montrer ou rien.
     beta: bool = False
+    # Les AGENTS HÉBERGÉS (section Agents du front : flottes, planifications,
+    # webhooks) sont-ils ouverts au compte dans cette org ? Option `agents` OU
+    # `beta` (`tool_visibility.hosted_agents_open`), même seam, même grain. Champ à
+    # PART de `beta` depuis le 23/09/2026 : un tenant ouvre les agents à toute sa
+    # population sans ouvrir le reste de la bêta. Absent ⟹ false (fail-closed).
+    agents: bool = False
 
 
 class OrgQuota(BaseModel):
@@ -216,6 +222,17 @@ def _beta_dans(sub: str, org_id: int) -> bool:
         return False
 
 
+def _agents_dans(sub: str, org_id: int) -> bool:
+    """`agents` par org — même contrat que `_beta_dans` (fail-CLOSED et TRACÉ), sur
+    la question des agents hébergés (`agents` OU `beta`, `hosted_agents_open`)."""
+    try:
+        return tool_visibility.hosted_agents_open(sub, org=org_id)
+    except Exception:
+        logger.warning("agents lookup fail-CLOSED for %s in org %s", sub, org_id,
+                       exc_info=True)
+        return False
+
+
 def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
     orgs, active = [], None
     for o in org_store.list_orgs_for_user(ctx.sub):
@@ -230,6 +247,7 @@ def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
             # `org=` EXPLICITE : calcul contre CETTE org, jamais contre current_org
             # (le seam le prévoit pour la fiche admin — même besoin ici).
             "beta": _beta_dans(ctx.sub, o["org_id"]),
+            "agents": _agents_dans(ctx.sub, o["org_id"]),
         })
     # Le quota voyage avec la liste : c'est l'outil par lequel un agent regarde ses
     # espaces, donc le seul endroit où il peut apprendre qu'il approche du mur sans

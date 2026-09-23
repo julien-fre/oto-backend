@@ -446,8 +446,14 @@ from oto_mcp.db import _schema, schema
 # EXISTS` laissé en place aurait fait RENAÎTRE la table au démarrage suivant le `DROP`
 # d'exploitation, qui reste une décision à part (docs/live-migrations.md).
 # 166 657 → 165 217 (−1 440, commentaire de remplacement compris).
-EMPREINTE = "9f9ec82ab3d5561a3d0ca1e27677ff623bb8cd49aa0b3de076119b53062721b9"
-LONGUEUR = 165217
+# 23/09/2026 (le don d'option sur un TENANT) — COMMENTAIRE SEUL dans le fragment
+# `schema/billing.py` : `option_comps.entity_type` documente sa troisième valeur
+# `'tenant'` (`entity_id` = slug), lue en fin de cascade par `access.org_has_option`.
+# Aucune colonne, aucune contrainte : `entity_type` est TEXT sans CHECK, la valeur
+# neuve s'écrit sans DDL. Le SQL exécuté est strictement le même.
+# 165 217 → 165 254 (+37, commentaire seul).
+EMPREINTE = "db1c86a076a699e80310294f67751f4b5e90c8de66eda51c2c402e59aac6f87f"
+LONGUEUR = 165254
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

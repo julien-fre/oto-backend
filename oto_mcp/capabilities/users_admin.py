@@ -18,7 +18,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, StrictInt
 
 from .. import (access, billing_grants, providers, credentials_store, db,
-                group_store, org_store)
+                group_store, org_store, tenancy)
 from . import _identite
 from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -120,7 +120,10 @@ class OrgUnipileLimitView(BaseModel):
 
 
 class OptionInput(BaseModel):
-    entity_type: Literal["user", "org"]
+    # `tenant` (23/09/2026) : le don vaut pour TOUTES les orgs hébergées par ce
+    # tenant (`entity_id` = son slug), lu en fin de cascade par
+    # `access.org_has_option` — après le comp d'org et le plan, jamais avant.
+    entity_type: Literal["user", "org", "tenant"]
     entity_id: str
     option: str
     on: bool
@@ -303,6 +306,14 @@ def _parse_expiry(inp: "OptionInput", eid: str) -> object:
             f"L'org #{eid} est hébergée par un tenant tiers : ses titulaires sont les "
             "clients de ce partenaire. Une échéance ne se pose pas sur eux depuis ici. "
             "Le don lui-même reste posable, sans terme.")
+    if inp.entity_type == "tenant" and eid != tenancy.PRIMARY_SLUG:
+        # Même règle, un cran plus haut : borner le don d'un tenant tiers, c'est
+        # borner d'un coup TOUS ses clients.
+        raise AuthzDenied(
+            409, "partner_org_out_of_scope",
+            f"Le tenant {eid!r} est un partenaire : ses orgs sont ses clientes. Une "
+            "échéance ne se pose pas sur elles depuis ici. Le don lui-même reste "
+            "posable, sans terme.")
     try:
         # `YYYY-MM-DD` seul = FIN de la journée : « offert jusqu'au 31 octobre » veut
         # dire que le 31 octobre est encore couvert. Minuit couperait un jour trop tôt.
@@ -326,6 +337,8 @@ def _set_option(ctx: ResolvedCtx, inp: OptionInput) -> dict:
                 raise AuthzDenied(404, "unknown_org", f"Org #{eid} inconnue.")
         except (ValueError, TypeError):
             raise AuthzDenied(400, "invalid_body", "entity_id d'org doit être un entier.")
+    if inp.entity_type == "tenant" and not db.tenant_exists(eid):
+        raise AuthzDenied(404, "unknown_tenant", f"Tenant {eid!r} inconnu.")
     if inp.on:
         db.set_option_comp(inp.entity_type, eid, inp.option, granted_by=ctx.sub,
                            expires_at=_parse_expiry(inp, eid))
@@ -360,7 +373,11 @@ def _visible_next_session(ctx: ResolvedCtx, inp: "OptionInput", eid: str) -> boo
     if inp.entity_type == "user":
         return eid != ctx.sub
     try:
-        return int(eid) != access.current_org(ctx.sub)
+        org = access.current_org(ctx.sub)
+        if inp.entity_type == "tenant":
+            # Un don TENANT touche l'appelant si son org effective y est hébergée.
+            return org is None or db.org_tenant_slug(int(org)) != eid
+        return int(eid) != org
     except (TypeError, ValueError):
         return True
 
@@ -379,6 +396,14 @@ def _compose_platform_grant(ctx: ResolvedCtx, inp: OptionInput, eid: str) -> Opt
     con = providers.connector_for_provider(inp.option)
     if not con or "platform" not in con.auth_modes:
         return None
+    if inp.entity_type == "tenant":
+        # Une clé plateforme se GRANTE par compte ou par org (ADR 0044 §F R4) : il
+        # n'y a pas de portée tenant dans le coffre. Le comp est posé, la clé non —
+        # on le DIT, plutôt que de laisser croire à un connecteur ouvert au tenant.
+        return {"granted": False, "reason": "tenant_scope_unsupported",
+                "hint": f"L'option {inp.option!r} est posée sur le tenant, mais une clé "
+                        "plateforme se grante par compte ou par org : pose-la sur "
+                        "chaque org concernée pour qu'elle soit utilisable."}
     if not credentials_store.list_platform_instances(inp.option):
         # Connecteur revente sans clé plateforme posée → la comp seule resterait un
         # état mort. On le signale au lieu de le masquer (cf. feedback governance UI).
@@ -409,6 +434,8 @@ def _compose_platform_revoke(inp: OptionInput, eid: str) -> Optional[dict]:
     con = providers.connector_for_provider(inp.option)
     if not con or "platform" not in con.auth_modes:
         return None
+    if inp.entity_type == "tenant":
+        return None  # rien n'a été granté au tenant (cf. `_compose_platform_grant`)
     scope = f"user:{eid}" if inp.entity_type == "user" else f"org:{eid}"
     credentials_store.platform_revoke(inp.option, scope)  # ADR 0044 §F R4
     return {"revoked": True}
@@ -504,7 +531,11 @@ CAPABILITIES += [
         authz=SUPER_ADMIN, refresh_visibility=True,
         description="[super admin] Grant (on=true) or remove (on=false) a connector option as a FREE "
                     "comp for a user or org (e.g. option='unipile'). Read by access.has_option "
-                    "(no billing — option governance is admin-only). entity_type='user'|'org', entity_id=sub|org_id. "
+                    "(no billing — option governance is admin-only). entity_type='user'|'org'|'tenant', "
+                    "entity_id=sub|org_id|tenant slug. A TENANT grant opens the option to EVERY org "
+                    "that tenant hosts (read last in the cascade, after the org comp and the plan) — "
+                    "e.g. option='agents' on a tenant releases hosted agents (fleets, webhook "
+                    "triggers, the Agents section) to all its users while 'beta' stays closed. "
                     "For a platform-mode connector this ALSO grants/revokes its platform key (so "
                     "the option is actually usable, not a dead has_option without a key); the "
                     "`platform_key` field reports what happened (granted / no_platform_key / "

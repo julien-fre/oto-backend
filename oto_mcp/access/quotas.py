@@ -5,8 +5,9 @@ Deux crans distincts, souvent confondus :
 - le **quota** journalier d'une clé PLATEFORME (`quota_for`, `_org_unmetered`,
   `record_platform_usage`) — un garde-fou d'essai, levé par un plan `unmetered` ;
 - l'**option payante** d'un connecteur (`paid_option_for`, `has_option`) — le
-  cran d'entitlement de l'abonnement d'org, seam unique à deux sources (comp
-  admin sur l'user ou l'org, OU plan de l'abonnement actif).
+  cran d'entitlement de l'abonnement d'org, seam unique à trois sources (comp
+  admin sur l'user ou l'org, OU plan de l'abonnement actif, OU comp admin sur le
+  tenant qui héberge l'org).
 
 Ne dépend que de `scope` (le contexte de l'acteur). Le verdict « l'option est-elle
 LEVÉE pour ce connecteur » (qui tient compte du BYO) vit dans `views.option_open`,
@@ -47,10 +48,11 @@ def paid_option_for(connector: str) -> Optional[str]:
 def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNSET) -> bool:
     """Couche 3 du modèle de connecteur (cf. docs/connector-model.md) : l'option de
     connecteur `option` (ex. `unipile`) est-elle débloquée pour `sub` ? **Seam unique** —
-    deux sources (ADR 0043) : un **comp admin** sur l'USER ou l'ORG active, OU
+    trois sources : un **comp admin** sur l'USER ou l'ORG active, OU
     l'**abonnement actif de l'org** dont le plan inclut l'option (mapping
     `billing.plan_options`, miroir `org_subscriptions` — `past_due` reste ouvert
-    tant que la grace court ; la fermeture est un acte du billing_runner).
+    tant que la grace court ; la fermeture est un acte du billing_runner), OU un
+    **comp admin sur le TENANT** qui héberge l'org (`tenant_has_option`, 23/09/2026).
     Ne JAMAIS lire les sources en direct ailleurs (un nouveau chemin passe par ici).
     `org` explicite (≠ _UNSET) = calcul pour un tiers contre une org donnée (fiche admin),
     sans current_org (anti-fuite de contexte)."""
@@ -105,8 +107,28 @@ def org_has_option(org: "int | None", option: str) -> bool:
     if plan is not None:
         from .. import billing  # import tardif (billing tire mollie/httpx)
 
-        return option in billing.plan_options(plan)
-    return False
+        if option in billing.plan_options(plan):
+            return True
+    return tenant_has_option(db.org_tenant_slug(int(org)), option)
+
+
+def tenant_has_option(tenant_slug: str, option: str) -> bool:
+    """La troisième source du seam (23/09/2026) : un don posé sur le TENANT qui
+    héberge l'org — `option_comps(entity_type='tenant', entity_id=<slug>)`.
+
+    Elle existe parce qu'un partenaire hébergé sort une surface de bêta
+    pour TOUTE sa population d'un geste, quand nous la gardons fermée chez nous. La
+    poser org par org, c'est un drapeau qu'on oublie sur la 61ᵉ org et sur chaque
+    org qui naît demain ; la coder dans le tenant, c'est un déploiement pour
+    changer une décision d'exploitation. Le tenant EFFECTIF vient de
+    `db.org_tenant_slug` (union des trois axes, jamais une colonne lue en direct),
+    et le tenant primaire (`oto`) est un tenant comme un autre : un don posé sur
+    lui ouvre nos propres orgs.
+
+    Fin de cascade, jamais court-circuit : un don d'org ou un plan répond avant.
+    Lecture SEULE ici — la pose reste dans `oto_admin_set_option` (super admin).
+    """
+    return db.has_option_comp("tenant", tenant_slug, option)
 
 
 def quota_for(provider: str) -> int:

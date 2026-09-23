@@ -282,14 +282,16 @@ async def test_sur_une_ERREUR_la_stricte_reste_masquee_sans_emporter_l_heritee(
 
 @pytest.mark.asyncio
 async def test_avec_l_option_la_stricte_revient(socle, monkeypatch):
-    vu = {}
+    vus = []
 
     def _oui(sub, opt, org=None):
-        vu.update(option=opt, org=org)
+        vus.append((opt, org))
         return True
 
     monkeypatch.setattr(SV.access, "has_option", _oui)
     caches = await SV.compute_hidden_tools(socle, "sub-1")
     assert "oto_resource_v2" not in caches
-    assert vu["option"] == BETA_OPTION, "l'option est celle des comptes bêta, pas une neuve"
-    assert vu["org"] == 1
+    # La stricte est sous l'option des comptes bêta, pas une neuve (l'option
+    # `agents`, lue par le même bloc, ne porte que la flotte).
+    assert BETA_OPTION in {opt for opt, _ in vus}, "l'option est celle des comptes bêta"
+    assert all(org == 1 for _, org in vus)

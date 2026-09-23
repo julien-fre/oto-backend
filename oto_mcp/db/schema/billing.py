@@ -19,8 +19,8 @@ OPTION_COMPS = """
 -- plan inclut l'option (ADR 0043, cf. org_subscriptions plus bas). Cf.
 -- docs/connector-model.md, couche 3. Entity-keyé (user|org).
 CREATE TABLE IF NOT EXISTS option_comps (
-    entity_type TEXT NOT NULL,        -- 'user' | 'org'
-    entity_id   TEXT NOT NULL,        -- sub (user) ou org_id en texte (org)
+    entity_type TEXT NOT NULL,        -- 'user' | 'org' | 'tenant' (23/09/2026)
+    entity_id   TEXT NOT NULL,        -- sub (user), org_id en texte (org), slug (tenant)
     option      TEXT NOT NULL,        -- 'unipile', …
     granted_by  TEXT,
     granted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),

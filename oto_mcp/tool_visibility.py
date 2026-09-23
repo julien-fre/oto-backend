@@ -114,26 +114,53 @@ BETA_TOOLS: frozenset[str] = frozenset({
     # donne une population choisie pendant que les appelants migrent, sans
     # date-couperet — cf. `oto_mcp/capabilities/resources_v2.py`.
     "oto_resource_v2",
-    # La FLOTTE (R4, 01/09/2026) : sa surface part de VIDE — aucune flotte n'est
-    # déclarée nulle part — et son contrat est PROVISOIRE : elle déclare et lit,
-    # elle ne sait ni lancer ni arrêter. La proposer à tous, ce serait offrir à
-    # chaque agent un verbe qui ne trouve rien. ⚠️ Nom NEUF, conformément à la
-    # règle ci-dessus : `oto_fleet` naît avec ce lot, il ne retire donc rien à
-    # personne — cf. `oto_mcp/capabilities/runner_fleets.py`.
-    "oto_fleet",
     # La FONCTION (ADR 0073, 18/09/2026) : du code pur stocké et exécuté par Oto. Elle
     # part de VIDE et son contrat est PROVISOIRE — ce premier lot stocke et versionne,
     # il n'exécute pas encore. ⚠️ Nom NEUF : `oto_function` naît avec ce lot.
     "oto_function",
 })
 
-# L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur
-# une ORG (`oto_admin_set_option`), lue par le seam unique `access.has_option`.
-# Le nom qualifie le COMPTE, pas la fonctionnalité : « ce compte est bêta ». Une
-# seconde surface bêta le rejoindra ici plutôt que d'inventer sa propre option —
-# et le jour où deux populations bêta doivent différer, c'est ce jour-là qu'on
-# scinde, avec le besoin sous les yeux.
+# L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR, sur une
+# ORG ou sur un TENANT (`oto_admin_set_option`), lue par le seam unique
+# `access.has_option`. Le nom qualifie le COMPTE, pas la fonctionnalité : « ce
+# compte est bêta ». Une seconde surface bêta le rejoint ici plutôt que d'inventer
+# sa propre option — et le jour où deux populations bêta doivent différer, c'est
+# ce jour-là qu'on scinde, avec le besoin sous les yeux.
 BETA_OPTION = "beta"
+
+# Ce jour est venu le 23/09/2026 : un tenant partenaire ouvre les AGENTS HÉBERGÉS à
+# toute sa population, sans ouvrir le reste de la bêta (`oto_node`, `oto_function`…
+# restent provisoires). Les deux populations diffèrent, donc deux options :
+# `agents` ne porte QUE la surface des agents hébergés — la flotte (`oto_fleet`,
+# `/api/me/runner/fleets`), le déclencheur webhook, et le drapeau `agents` que
+# `/api/me/orgs` sert au front. Elle se pose comme `beta` (compte, org, tenant) et
+# se lit par le même seam. `beta` continue d'ouvrir les agents : un compte bêta est
+# un sur-ensemble, pas une population à part — cf. `hosted_agents_open`.
+AGENTS_OPTION = "agents"
+
+# La FLOTTE (R4, 01/09/2026) : née dans `BETA_TOOLS` parce que sa surface partait de
+# VIDE et que son contrat était PROVISOIRE (elle déclarait et lisait, sans lancer ni
+# arrêter). Sortie de la bêta commune le 23/09/2026 pour rejoindre le lot des
+# agents hébergés : même règle de masquage (fail-closed, admin-only, aucun override
+# perso), autre population — cf. `oto_mcp/capabilities/runner_fleets.py`.
+AGENTS_TOOLS: frozenset[str] = frozenset({"oto_fleet"})
+
+
+def hosted_agents_open(sub: str, **scope) -> bool:
+    """Les agents hébergés sont-ils ouverts à `sub` ? — `agents` OU `beta`, par le
+    seam unique `access.has_option` (comp compte, comp org, PLAN, comp tenant).
+    `scope` = le `org=` explicite du seam, transmis tel quel : omis, le seam lit
+    l'org courante ; donné, il calcule contre CETTE org (anti-fuite de contexte).
+
+    Vit ici, à côté des deux noms qu'il compose, pour que les quatre portes des
+    agents (flotte, webhook, visibilité MCP, drapeau `/api/me/orgs`) posent la
+    question à UN endroit — sinon la quatrième oublie `beta`, ou la cinquième
+    oublie `agents`. Ne capture rien : les erreurs remontent, chaque porte décide
+    de son fail-closed (elles le font toutes)."""
+    from . import access  # tardif : `access` importe ce module
+
+    return any(access.has_option(sub, option, **scope)
+               for option in (AGENTS_OPTION, BETA_OPTION))
 
 # Méta-tools TOUJOURS visibles (anti-lockout) : sans eux l'utilisateur ne peut
 # plus se déverrouiller (lister/activer un tool) — plus l'identité `oto_whoami`

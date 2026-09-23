@@ -8,10 +8,13 @@ from __future__ import annotations
 from oto_mcp import access
 
 
-def _wire(monkeypatch, *, user_comp=False, org_comp=False, plan=None, org=7):
+def _wire(monkeypatch, *, user_comp=False, org_comp=False, tenant_comp=False,
+          plan=None, org=7, tenant="oto"):
+    comps = {"user": user_comp, "org": org_comp, "tenant": tenant_comp}
     monkeypatch.setattr(access.db, "has_option_comp",
-                        lambda et, eid, opt: user_comp if et == "user" else org_comp)
+                        lambda et, eid, opt: comps[et])
     monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: plan)
+    monkeypatch.setattr(access.db, "org_tenant_slug", lambda oid: tenant)
     monkeypatch.setattr(access, "current_org", lambda sub: org)
 
 
@@ -40,6 +43,37 @@ def test_no_org_short_circuits(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: None)
     assert access.has_option("u1", "unipile") is False
     assert called == {}                                     # jamais interrogé
+
+
+def test_tenant_comp_is_the_last_source(monkeypatch):
+    """Troisième source (23/09/2026) : le don posé sur le TENANT qui héberge l'org
+    ouvre l'option à toutes ses orgs — lu APRÈS le comp d'org et le plan."""
+    _wire(monkeypatch, tenant_comp=True, tenant="acme")
+    assert access.has_option("u1", "agents") is True
+    assert access.org_has_option(7, "agents") is True
+    assert access.tenant_has_option("acme", "agents") is True
+
+
+def test_tenant_is_resolved_by_the_three_axes_never_a_column(monkeypatch):
+    """Le tenant vient de `db.org_tenant_slug` (union des trois axes) et le don se
+    lit sur CE slug : un don sur un autre tenant n'ouvre rien."""
+    vus = []
+    _wire(monkeypatch, tenant="acme")
+    monkeypatch.setattr(access.db, "has_option_comp",
+                        lambda et, eid, opt: vus.append((et, eid)) or False)
+    assert access.has_option("u1", "agents") is False
+    assert ("tenant", "acme") in vus
+
+
+def test_no_org_never_reaches_the_tenant(monkeypatch):
+    called = {}
+    monkeypatch.setattr(access.db, "has_option_comp", lambda et, eid, opt: False)
+    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: None)
+    monkeypatch.setattr(access.db, "org_tenant_slug",
+                        lambda oid: called.update(oid=oid) or "oto")
+    monkeypatch.setattr(access, "current_org", lambda sub: None)
+    assert access.has_option("u1", "agents") is False
+    assert called == {}
 
 
 def test_explicit_org_kwarg_reaches_subscription(monkeypatch):

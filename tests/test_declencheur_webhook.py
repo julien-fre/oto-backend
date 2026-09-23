@@ -50,7 +50,7 @@ def _aucune_cle_exigee(monkeypatch):
 def _dans_la_beta(monkeypatch):
     """La population bêta, ouverte pour ces bancs : ils parlent du webhook, pas de
     la porte qui en règle le déploiement (tenue plus bas, à elle seule)."""
-    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: True)
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option, **kw: True)
 
 
 @pytest.fixture(autouse=True)
@@ -497,25 +497,39 @@ def test_creer_un_webhook_HORS_BETA_est_refuse(monkeypatch, pose):
     déploiement, n'importe quel client pourrait brancher une source bavarde sur
     un agent dont la file n'a pas de plafond — et, tant que la clé de l'org n'est
     pas exigée, sur NOTRE clé de modèle."""
-    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: False)
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option, **kw: False)
     with pytest.raises(AuthzDenied) as e:
         _appel(op="create", kind="webhook", procedure="veille", tools=["a"])
     assert (e.value.status, e.value.code) == (403, "webhook_beta_only")
     assert "hash_pose" not in pose and not pose, "rien n'est écrit"
 
 
-def test_la_porte_lit_l_option_BETA_sur_l_appelant(monkeypatch, pose):
-    vu = {}
+def test_la_porte_lit_agents_OU_beta_sur_l_appelant_contre_l_org_de_l_appel(monkeypatch, pose):
+    vus = []
     monkeypatch.setattr(RT.access, "has_option",
-                        lambda sub, option: vu.update(sub=sub, option=option) or True)
+                        lambda sub, option, **kw: vus.append((sub, option, kw)) or False)
+    with pytest.raises(AuthzDenied):
+        _appel(op="create", kind="webhook", procedure="veille", tools=["a"])
+    # Les deux options sont lues, contre l'org de l'APPEL (jamais current_org).
+    assert {(s, o) for s, o, _ in vus} == {
+        ("alexis", RT.tool_visibility.AGENTS_OPTION),
+        ("alexis", RT.tool_visibility.BETA_OPTION)}
+    assert all(kw == {"org": _ctx().org_id} for _, _, kw in vus)
+
+
+def test_l_option_agents_SEULE_ouvre_le_webhook(monkeypatch, pose):
+    """23/09/2026 : un tenant ouvre les agents hébergés à sa population sans
+    ouvrir le reste de la bêta — `agents` suffit."""
+    monkeypatch.setattr(RT.access, "has_option",
+                        lambda sub, option, **kw: option == RT.tool_visibility.AGENTS_OPTION)
     _appel(op="create", kind="webhook", procedure="veille", tools=["a"])
-    assert vu == {"sub": "alexis", "option": RT.tool_visibility.BETA_OPTION}
+    assert pose["kind"] == "webhook"
 
 
 def test_un_agent_PROGRAMME_reste_ouvert_a_tous(monkeypatch, pose):
     """La porte ne ferme QUE le genre neuf : rien de ce qui existe ne se
     restreint au passage."""
-    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: False)
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option, **kw: False)
     _appel(op="create", procedure="veille", cron="5 6 * * *", tools=["a"])
     assert pose["kind"] == "schedule"
 
@@ -524,7 +538,7 @@ def test_HORS_BETA_on_gere_encore_un_webhook_DEJA_POSE(monkeypatch, retouche):
     """⚠️ Seule la CRÉATION est gardée. Retirer l'option ne doit pas casser un
     agent qui tourne — le geste d'arrêt d'un agent emballé est sa PAUSE, pas la
     fermeture de la population."""
-    monkeypatch.setattr(RT.access, "has_option", lambda sub, option: False)
+    monkeypatch.setattr(RT.access, "has_option", lambda sub, option, **kw: False)
     _appel(op="update", trigger_id=5, enabled=False)
     assert retouche.get("enabled") is False
 
