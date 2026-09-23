@@ -6,7 +6,7 @@ description: >-
   onboarding, connecteurs), settings LinkedIn/API-keys/tools, guide org
   /api/me/instructions*, palier org (CRUD orgs, membres, secrets, invitations,
   entitlements datastore), admin users/grants/tokens/monitoring, billing Stripe,
-  bibliothèque publique de guides (`/api/guide-library`, visibilité public/unlisted).
+  bibliothèque de guides (`/api/me/guide-library`, visibilité public/unlisted).
   Détaille les règles CORS (oto.ninja, app.oto.ninja, dashboard.oto.ninja), l'autz
   (même JWTVerifier ES384 que /mcp, audience mcp.oto.ninja), et les gotchas secrets
   (jamais la clé en réponse, providers per-user refusés en org secrets). À charger
@@ -429,21 +429,16 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   renvoie au dashboard.
   **Auteur** = `otomata`. Une entrée signée par une `org` reste possédée par elle : la
   plateforme ne la reprend pas (409 `slug_taken`), son org_admin peut la dépublier.
-  **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. Surface
-  ANONYME pour la vitrine : routes écrites à la main `GET /api/guide-library[/{slug}]`
-  (deny-by-default `visibility='public'`, l'adaptateur capacité authentifie toujours).
-  ⚠️ **Deny-by-default aussi sur les CHAMPS** (`_VITRINE_META` / `_VITRINE_ENTREE` dans
-  `api/public.py`) : la vitrine sert le contenu du guide, jamais les identifiants qui le
-  rattachent à quelqu'un — `published_by` (identifiant d'utilisateur, forme
-  `<tenant>:<sub>`), `author_org_id`, `source_org_id`, `id`, `forked_from` restent
-  dedans. C'est une **allowlist** : une colonne ajoutée à `guide_library` ne sort pas
-  tant qu'on ne l'y a pas nommée. La face authentifiée `/api/me/guide-library`, elle,
+  **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. **Aucune surface
+  ANONYME** : les vitrines `GET /api/guide-library[/{slug}]` (marché) et
+  `GET /api/guides/library[/{slug}]` (guides plateforme), servies sans jeton au build de
+  oto.cx, sont retirées avec leurs alias `/api/doctrines/library[/{slug}]`
+  (otomata-tech/oto#84) — elles rendaient le corps complet à n'importe qui, et la version
+  servie survivait au nettoyage du dépôt. La face authentifiée `/api/me/guide-library`
   sert la ligne entière — `library.fork`/`library.unpublish` visent une entrée par `id`.
-  ⚠️ **`/api/guide-library` ≠ `/api/guides/library`** : le premier est le MARCHÉ des guides
-  publiés dans la bibliothèque (forkables), le second les guides PLATEFORME. Deux objets, deux
-  tables — la ressemblance des noms est ancienne, elle ne dit pas une parenté.
-  ⚠️ Ces chemins s'appelaient `/api/[me/]doctrines/…` jusqu'au 2026-08-28 (#519) ; les
-  anciens répondent **308** jusqu'au retrait — cf. `docs/alias-deprecies.md`.
+  ⚠️ Les chemins `/api/me/guide-library…` s'appelaient `/api/me/doctrines/…` jusqu'au
+  2026-08-28 (#519) ; les anciens répondent **308** jusqu'au retrait — cf.
+  `docs/alias-deprecies.md`.
   **`visibility`** : `public` (dans le catalogue) vs `unlisted` = **lien non listé** (style
   YouTube) — servie par `library.get` (slug exact, tout user authentifié) mais **jamais**
   listée (`list` force `include_unlisted=False`) ni servie en anonyme. Partage par lien, pas

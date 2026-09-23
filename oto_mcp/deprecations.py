@@ -263,10 +263,8 @@ def _alias_datastore() -> tuple:
 
 
 REST: tuple = (
-    # Bibliothèque publique de guides (marketplace) — servie sans auth, consommée
-    # par le build de la vitrine et par un `fetch` de navigateur.
-    AliasRest("GET", "/api/doctrines/library", "/api/guide-library"),
-    AliasRest("GET", "/api/doctrines/library/{slug}", "/api/guide-library/{slug}"),
+    # (`/api/doctrines/library[/{slug}]` → `/api/guide-library[/{slug}]` : partis
+    # avec leur cible, la vitrine anonyme des guides — otomata-tech/oto#84.)
     # ⚠️ ORDRE — `library` AVANT `{doctrine_id}` : le second capture un segment, et
     # servirait `library` comme un identifiant. C'est exactement ce que faisait la
     # table d'avant ce lot (le chemin `…/doctrines/library` y était inatteignable).
@@ -285,9 +283,9 @@ REST: tuple = (
 def cible(alias: AliasRest, path_params: dict, query: str = "") -> str:
     """Le chemin de destination d'un alias, params de chemin injectés.
 
-    La query string est REPORTÉE telle quelle : la vitrine appelle
-    `…/library?limit=200`, et un 308 qui la perdrait rendrait 100 entrées au lieu
-    de 200 — une régression qu'aucun code d'erreur ne signale.
+    La query string est REPORTÉE telle quelle : un client qui appelle
+    `…/library?limit=200` et suit un 308 qui la perdrait recevrait 100 entrées au
+    lieu de 200 — une régression qu'aucun code d'erreur ne signale.
     """
     chemin = alias.nouveau
     for nom, valeur in (path_params or {}).items():

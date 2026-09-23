@@ -129,21 +129,13 @@ _KNOWN: dict[str, str] = {
     #
     # --- NATURE — servies SANS AUTH, donc hors contrat capacité par CONSTRUCTION :
     # `_rest_adapter` authentifie TOUJOURS, un anonyme ne peut pas y passer.
-    # L'argument est déjà écrit dans le code (`guide_library_public` : « route
-    # écrite à la main car l'adaptateur REST des capacités authentifie toujours »).
-    # Quatre d'entre elles sont même consommées par un PROGRAMME, sans en-tête
+    # Trois d'entre elles sont même consommées par un PROGRAMME, sans en-tête
     # d'auth : le build du site vitrine (`oto-websites/web/scripts/refresh-catalog.mjs`
-    # → catalog/connectors/guides/guides) et celui de docs.oto.cx
-    # (`sites/docs.oto.cx/scripts/refresh-openapi.mjs` → openapi.json).
+    # → catalog/connectors) et celui de docs.oto.cx
+    # (`sites/docs.oto.cx/scripts/refresh-openapi.mjs` → openapi.json). Les vitrines
+    # anonymes des guides (`/api/guide-library`, `/api/guides/library`) sont
+    # retirées (otomata-tech/oto#84).
     "/api/mcp/catalog": NATURE,
-    # ⚠️ DEUX bibliothèques : `/api/guide-library` = le MARCHÉ des guides publiés par
-    # les orgs (forkables) ; `/api/guides/library` = les guides PLATEFORME. Le premier
-    # s'appelait `/api/doctrines/library` jusqu'au 2026-08-28 (#519) — son ancien
-    # chemin est plus bas, en alias.
-    "/api/guide-library": NATURE,
-    "/api/guide-library/{slug}": NATURE,
-    "/api/guides/library": NATURE,
-    "/api/guides/library/{slug}": NATURE,
     # Descriptif de la surface REST : décrit des FORMES, aucune valeur. Servi aux
     # deux chemins usuels parce qu'un intégrateur sonde l'un ou l'autre.
     "/openapi.json": NATURE,
@@ -250,8 +242,6 @@ _KNOWN: dict[str, str] = {
     # tenir. Ils quittent cette liste au lot D, avec le module qui les déclare.
     # Montés EN DERNIER dans `make_routes` : un alias ne capture que ce que rien
     # d'autre ne sert.
-    "/api/doctrines/library": NATURE,
-    "/api/doctrines/library/{slug}": NATURE,
     "/api/me/doctrines/library": NATURE,
     "/api/me/doctrines/library/{slug}": NATURE,
     "/api/me/doctrines/library/{id}": NATURE,

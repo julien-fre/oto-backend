@@ -10,14 +10,6 @@ GET,HEAD /api/openapi.json -> openapi_doc
 OPTIONS /api/openapi.json -> options_handler
 GET,HEAD /api/connectors -> connectors_catalog
 OPTIONS /api/connectors -> options_handler
-GET,HEAD /api/guide-library -> guide_library_public
-OPTIONS /api/guide-library -> options_handler
-GET,HEAD /api/guide-library/{slug} -> guide_library_public_get
-OPTIONS /api/guide-library/{slug} -> options_handler
-GET,HEAD /api/guides/library -> guides_library_public
-OPTIONS /api/guides/library -> options_handler
-GET,HEAD /api/guides/library/{slug} -> guides_library_public_get
-OPTIONS /api/guides/library/{slug} -> options_handler
 GET,HEAD /api/invitations/{token} -> invite_preview
 OPTIONS /api/invitations/{token} -> options_handler
 POST /api/me/avatar -> avatar_save
@@ -716,10 +708,6 @@ POST /api/datastore/namespaces/{namespace}/rows/{row_id}/release -> alias_deprec
 OPTIONS /api/datastore/namespaces/{namespace}/rows/{row_id}/release -> options_handler
 GET,HEAD /api/datastore/namespaces/{namespace}/rows/{row_id}/activity -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/rows/{row_id}/activity -> options_handler
-GET,HEAD /api/doctrines/library -> alias_deprecie
-OPTIONS /api/doctrines/library -> options_handler
-GET,HEAD /api/doctrines/library/{slug} -> alias_deprecie
-OPTIONS /api/doctrines/library/{slug} -> options_handler
 GET,HEAD /api/me/doctrines/library -> alias_deprecie
 OPTIONS /api/me/doctrines/library -> options_handler
 GET,HEAD /api/me/doctrines/library/{slug} -> alias_deprecie

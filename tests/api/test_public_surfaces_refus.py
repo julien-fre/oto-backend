@@ -2,25 +2,20 @@
 
 `oto_mcp/api/public.py` était à **49 %** le 15/09/2026. C'est le module dont le
 moindre trou est le plus cher : ses handlers répondent à **n'importe qui**, sans
-jeton, et deux d'entre eux sont lus par un PROGRAMME (le build de oto.cx, celui de
+jeton, et certains d'entre eux sont lus par un PROGRAMME (le build de oto.cx, celui de
 docs.oto.cx) qui republie ce qu'ils rendent sur le web ouvert. Un champ de trop ici
 n'est pas une fuite vers un utilisateur : c'est une publication.
 
-Trois régimes de deny-by-default y cohabitent, et ce banc tient les trois :
+Deux régimes de deny-by-default y cohabitent, et ce banc tient les deux :
 
-1. **Par ALLOWLIST de champs** — `_VITRINE_META` / `_VITRINE_ENTREE`. Le commentaire
-   du module dit pourquoi : une liste de champs à RETIRER ne protège que du passé,
-   elle est muette sur la colonne qui n'existe pas encore. On l'éprouve donc avec une
-   entrée qui porte une colonne inventée : si elle sort, l'allowlist a été retournée
-   en denylist par quelqu'un, et la prochaine colonne de `guide_library` fuitera.
-2. **Par CONSTRUCTION** — `guides_library_public` appelle `list_guides_for()` sans
-   `sub` ni `org_id`, et `guides_library_public_get` passe `scope="platform"`
-   EXPLICITEMENT. Sans ce mot, `read_guide_scoped` cherche aussi org puis user : une
-   route anonyme servirait le guide privé d'une org qui aurait choisi le même slug.
-3. **Par FILTRE** — `connectors_catalog`, la seule surface mixte. Anonyme : activation
+1. **Par FILTRE** — `connectors_catalog`, la seule surface mixte. Anonyme : activation
    plus exclusion des `platform_granted` (les bridges client-sensibles d'ADR 0003).
    Authentifié non-opérateur : activation de SON org. Opérateur : tout le registre,
    parce que sa vue sert justement à activer et désactiver.
+2. **Par JETON** — invitation et doc partagé : le jeton EST le secret.
+
+Les vitrines anonymes des guides (`/api/guide-library`, `/api/guides/library`) et
+leur allowlist de champs sont retirées (otomata-tech/oto#84) : plus rien à tenir.
 
 ⚠️ `outreach_unsubscribe` et `digest_unsubscribe` ne sont PAS ici : ils sont déjà
 tenus au niveau route par `tests/test_outreach_optout.py` (jeton trafiqué qui n'écrit
@@ -34,25 +29,10 @@ from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from oto_mcp import access, db, guide_store, org_store, providers
+from oto_mcp import access, db, org_store, providers
 from oto_mcp.api import base, public
 from oto_mcp.connectors import activation as connector_activation
 from oto_mcp.connectors import cardinality as connector_cardinality
-
-# Une entrée de bibliothèque telle que la ligne SQL la porte : le contenu publiable
-# ET les identifiants qui rattachent l'entrée à une org et à un compte.
-ENTREE = {
-    "id": 501, "slug": "prospection-b2b", "title": "Prospection B2B",
-    "description": "Un guide", "author_kind": "org", "author_display": "Une org",
-    "category": "vente", "tags": ["vente"], "visibility": "public", "version": 3,
-    "created_at": "2026-09-01T10:00:00Z", "updated_at": "2026-09-02T10:00:00Z",
-    "snippet": "…", "body_md": "# Titre\n\ncorps", "slots": {}, "source_slug": "src",
-    # Ce qui ne doit JAMAIS sortir sur la vitrine :
-    "published_by": "acme:u-42", "author_org_id": 168, "source_org_id": 12,
-    "forked_from": 490,
-    # La colonne de demain : personne ne la relira, l'allowlist doit la retenir seule.
-    "colonne_ajoutee_plus_tard": "valeur-interne",
-}
 
 
 class _Claims:
@@ -67,8 +47,7 @@ class _Verifier:
 
 @pytest.fixture
 def journal():
-    return {"list_library": [], "get_entry": [], "guides_for": [], "read_scoped": [],
-            "exposed": [], "overlay": []}
+    return {"exposed": [], "overlay": []}
 
 
 @pytest.fixture
@@ -76,27 +55,6 @@ def client(monkeypatch, journal):
     monkeypatch.setattr("oto_mcp.account_suspension.refus", lambda sub: None)
     monkeypatch.setattr(base, "alias_drain_armed", lambda: False)
     monkeypatch.setattr(db, "upsert_user", lambda *a, **k: None)
-
-    def _list_library(**kw):
-        journal["list_library"].append(kw)
-        return [dict(ENTREE)]
-
-    def _get_entry(**kw):
-        journal["get_entry"].append(kw)
-        return dict(ENTREE)
-
-    def _guides_for(sub=None, org_id=None):
-        journal["guides_for"].append((sub, org_id))
-        return [{"slug": "notice", "title": "Notice"}]
-
-    def _read_scoped(slug, **kw):
-        journal["read_scoped"].append((slug, kw))
-        return {"slug": slug, "body_md": "# guide plateforme"}
-
-    monkeypatch.setattr(org_store, "list_library", _list_library)
-    monkeypatch.setattr(org_store, "get_library_entry", _get_entry)
-    monkeypatch.setattr(guide_store, "list_guides_for", _guides_for)
-    monkeypatch.setattr(guide_store, "read_guide_scoped", _read_scoped)
     monkeypatch.setattr(org_store, "preview_invitation",
                         lambda tok: {"email": "invite@exemple.invalid"} if tok == "bon-jeton" else None)
     monkeypatch.setattr(db, "get_doc_by_public_token",
@@ -112,123 +70,13 @@ def client(monkeypatch, journal):
               methods=["GET"]),
         Route("/api/connectors",
               base.bind(public.connectors_catalog, verifier=verifier), methods=["GET"]),
-        Route("/api/guide-library", public.guide_library_public, methods=["GET"]),
-        Route("/api/guide-library/{slug}", public.guide_library_public_get,
-              methods=["GET"]),
-        Route("/api/guides/library", public.guides_library_public, methods=["GET"]),
-        Route("/api/guides/library/{slug}", public.guides_library_public_get,
-              methods=["GET"]),
         Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
         Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
     ]))
 
 
-# ── 1. l'allowlist de champs de la vitrine ───────────────────────────────────
-
-_INTERDITS = ("published_by", "author_org_id", "source_org_id", "id", "forked_from",
-              "colonne_ajoutee_plus_tard")
-
-
-def test_la_liste_publique_ne_sert_aucun_identifiant(client):
-    """Les identifiants faisaient de la vitrine un annuaire des orgs et des comptes
-    qui publient — servi sans jeton, donc indexable."""
-    entree = client.get("/api/guide-library").json()["guides"][0]
-    for champ in _INTERDITS:
-        assert champ not in entree, f"« {champ} » ne doit pas sortir sur la vitrine"
-
-
-def test_une_colonne_ajoutee_plus_tard_ne_fuit_pas(client):
-    """LE test de l'allowlist. Une denylist laisserait passer `colonne_ajoutee_plus_tard`
-    parce que personne n'aura pensé à l'y inscrire — c'est le seul cas qu'on ne relira
-    pas, et donc le seul contre lequel la forme de la garde doit protéger."""
-    entree = client.get("/api/guide-library").json()["guides"][0]
-    assert set(entree) <= set(public._VITRINE_META)
-    assert "colonne_ajoutee_plus_tard" not in entree
-
-
-def test_le_detail_publie_le_corps_mais_toujours_pas_les_identifiants(client):
-    """La fiche complète sert le markdown — c'est son objet — sans pour autant
-    élargir l'allowlist aux identifiants."""
-    fiche = client.get("/api/guide-library/prospection-b2b").json()
-    assert fiche["body_md"] == "# Titre\n\ncorps"
-    assert set(fiche) <= set(public._VITRINE_ENTREE)
-    for champ in _INTERDITS:
-        assert champ not in fiche
-
-
-def test_les_deux_noms_servis_portent_la_MEME_projection(client):
-    """Le préavis (#519) republie la liste sous l'ancien nom. Projeter APRÈS le
-    doublage servirait des entrées réduites sous un nom et complètes sous l'autre —
-    la fuite reviendrait par la porte de compatibilité."""
-    corps = client.get("/api/guide-library").json()
-    autres = [v for k, v in corps.items() if k != "guides" and isinstance(v, list)]
-    assert autres, "le doublage de nom a disparu : ce test doit être revu, pas supprimé"
-    for liste in autres:
-        assert liste == corps["guides"]
-
-
-def test_la_vitrine_ne_demande_JAMAIS_les_entrees_non_listees(client, journal):
-    """`unlisted` = partageable par lien, pas publiable. Le passer à True ici mettrait
-    dans le cliché du build des entrées que leur auteur a choisi de ne pas exposer."""
-    client.get("/api/guide-library")
-    client.get("/api/guide-library/prospection-b2b")
-    assert journal["list_library"][0]["include_unlisted"] is False
-    assert journal["get_entry"][0]["include_unlisted"] is False
-
-
-def test_un_slug_inconnu_rend_404_nomme(client, monkeypatch):
-    monkeypatch.setattr(org_store, "get_library_entry", lambda **kw: None)
-    r = client.get("/api/guide-library/inexistant")
-    assert r.status_code == 404 and r.json()["error"] == "unknown_entry"
-
-
-@pytest.mark.parametrize("brut, attendu", [
-    ("50", 50),
-    ("9999", 200),          # borné : une vitrine ne sert pas la table entière
-    ("abc", 100),           # illisible → défaut, pas 500
-    ("", 100),
-])
-def test_la_borne_de_liste_est_appliquee_sans_jamais_lever(client, journal, brut,
-                                                            attendu):
-    """La borne est la seule protection d'une route anonyme contre une lecture de
-    table complète — `?limit=` est choisi par l'appelant."""
-    client.get("/api/guide-library", params={"limit": brut})
-    assert journal["list_library"][0]["limit"] == attendu
-
-
-def test_les_filtres_de_la_vitrine_sont_transmis_tels_quels(client, journal):
-    client.get("/api/guide-library",
-               params={"q": "prospection", "category": "vente", "author": "org"})
-    passe = journal["list_library"][0]
-    assert (passe["query"], passe["category"], passe["author_kind"]) == (
-        "prospection", "vente", "org")
-
-
-# ── 2. les guides PLATEFORME : deny-by-default par construction ──────────────
-
-def test_la_bibliotheque_plateforme_n_interroge_ni_compte_ni_org(client, journal):
-    """`list_guides_for()` sans argument ne rend que le scope plateforme. Passer un
-    `sub` ou un `org_id` ici — même celui d'un requérant — servirait du contenu d'org
-    sur une route anonyme."""
-    assert client.get("/api/guides/library").status_code == 200
-    assert journal["guides_for"] == [(None, None)]
-
-
-def test_un_guide_est_lu_avec_un_scope_plateforme_EXPLICITE(client, journal):
-    """Sans `scope="platform"`, `read_guide_scoped` cherche aussi org puis user : une
-    org qui aurait choisi le même slug verrait son guide privé servi au public."""
-    client.get("/api/guides/library/notice")
-    assert journal["read_scoped"] == [("notice", {"scope": "platform"})]
-
-
-def test_un_guide_plateforme_inconnu_rend_404_nomme(client, monkeypatch):
-    monkeypatch.setattr(guide_store, "read_guide_scoped", lambda slug, **kw: None)
-    r = client.get("/api/guides/library/inexistant")
-    assert r.status_code == 404 and r.json()["error"] == "unknown_guide"
-
-
-# ── 3. le catalogue de connecteurs : la seule surface mixte ──────────────────
+# ── 1. le catalogue de connecteurs : la seule surface mixte ──────────────────
 
 @pytest.fixture
 def catalogue(monkeypatch, journal):
@@ -323,7 +171,7 @@ def test_l_activation_et_la_cardinalite_parlent_de_la_MEME_org(client, catalogue
     assert journal["exposed"] == [5] and journal["overlay"] == [5]
 
 
-# ── 4. les jetons qui SONT le secret : invitation, doc partagé ───────────────
+# ── 2. les jetons qui SONT le secret : invitation, doc partagé ───────────────
 
 def test_une_invitation_inconnue_rend_404_sans_dire_pourquoi(client):
     """Ni « jeton inconnu » ni « invitation expirée » : le même refus pour les deux,
@@ -409,7 +257,7 @@ def test_les_deux_faces_du_doc_servent_le_meme_contenu(client):
                                     "updated_at": "2026-09-01T10:00:00Z"}
 
 
-# ── 5. les descriptifs publics : aucune valeur, jamais de 500 ────────────────
+# ── 3. les descriptifs publics : aucune valeur, jamais de 500 ────────────────
 
 def test_le_catalogue_MCP_sans_instance_rend_une_liste_vide_pas_une_erreur(client):
     """La route est consommée par le build de l'autodoc : un 500 casserait la

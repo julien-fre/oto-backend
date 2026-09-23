@@ -91,9 +91,6 @@ MOT = re.compile("doctrine", re.I)
 # (Il y en avait trois : `seed_talent_doctrines.py` est parti le 23/09/2026 avec les
 # guides qu'il publiait — otomata-tech/oto#240.)
 PLAFONDS: dict[str, int] = {
-    # — Clé de réponse `doctrines`, servie à côté de `guides` (le build de la vitrine
-    #   lit encore l'ancienne, et il vit hors de ce dépôt).
-    "oto_mcp/api/public.py": 1,
     # — Clé de réponse `doctrine`, servie à côté de `guide`.
     "oto_mcp/capabilities/agent_context.py": 3,
     "oto_mcp/capabilities/org_monitoring.py": 2,
@@ -161,7 +158,7 @@ PLAFONDS: dict[str, int] = {
     # — LA table des noms SERVIS dépréciés (lot B, retrait daté au lot D #526).
     #   Le seul fichier où le mot est une DONNÉE et non un usage : il y entre au
     #   moment où une surface est renommée, et le fichier entier disparaît au retrait.
-    "oto_mcp/deprecations.py": 31,
+    "oto_mcp/deprecations.py": 30,
     # — Le paramètre `doctrine` de `run_start` (accepté à côté de `guide`), ses clés
     #   de réponse, et l'arg tracé `doctrine_version` (écrit dans `tool_calls.args`).
     "oto_mcp/guide_run.py": 1,

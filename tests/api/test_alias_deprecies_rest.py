@@ -10,7 +10,7 @@ Ce que ces tests gardent, dans l'ordre de ce qui coûterait le plus cher :
 1. **Un 308, pas un 301.** Un 301/302 autorise le client à retomber en GET : un
    `POST …/publish` deviendrait un GET sur la nouvelle route — 405, ou pire, un
    no-op silencieux. Le 308 conserve la méthode et le corps.
-2. **La query string survit.** La vitrine appelle `…/library?limit=200` ; un
+2. **La query string survit.** Un client appelle `…/library?limit=200` ; un
    `Location` qui la perdrait rendrait 100 entrées au lieu de 200, sans qu'aucun
    code d'erreur ne le dise. C'est le genre de régression qu'on découvre au trafic.
 3. **La cible EXISTE.** Un alias qui pointe un chemin mort est pire qu'un retrait
@@ -80,15 +80,15 @@ def test_lancien_chemin_redirige_en_308_vers_le_nouveau(client, alias):
 
 
 def test_la_query_string_est_reportee(client):
-    """Le build de la vitrine appelle `…/library?limit=200` : la perdre rendrait 100
+    """Un client qui appelle `…/library?limit=200` : la perdre rendrait 100
     entrées au lieu de 200, sans le moindre code d'erreur."""
-    r = client.get("/api/doctrines/library?limit=200&q=x", follow_redirects=False)
-    assert r.headers["location"] == "/api/guide-library?limit=200&q=x"
+    r = client.get("/api/me/doctrines/library?limit=200&q=x", follow_redirects=False)
+    assert r.headers["location"] == "/api/me/guide-library?limit=200&q=x"
 
 
 def test_lavis_de_retrait_est_dans_les_en_tetes(client):
     """Un intégrateur qui lit ses logs voit la date sans ouvrir la doc."""
-    r = client.get("/api/doctrines/library", follow_redirects=False)
+    r = client.get("/api/me/doctrines/library", follow_redirects=False)
     assert r.headers["deprecation"] == "true"
     assert r.headers["sunset"] == deprecations.date_de_retrait()
 
@@ -120,15 +120,15 @@ def test_le_preflight_nest_pas_redirige(alias):
 
 def test_la_redirection_porte_les_en_tetes_cors(client):
     """Le navigateur vérifie CORS sur CHAQUE réponse d'une chaîne de redirections."""
-    r = client.get("/api/doctrines/library", follow_redirects=False,
+    r = client.get("/api/me/doctrines/library", follow_redirects=False,
                    headers={"origin": _ORIGINE})
     assert r.headers.get("access-control-allow-origin") == _ORIGINE
 
 
 def test_sans_origine_pas_den_tete_cors(client):
-    """Inertie : un appel serveur-à-serveur (le build de la vitrine) reçoit
+    """Inertie : un appel serveur-à-serveur reçoit
     exactement ce qu'il recevait — pas d'en-tête inventé."""
-    r = client.get("/api/doctrines/library", follow_redirects=False)
+    r = client.get("/api/me/doctrines/library", follow_redirects=False)
     assert "access-control-allow-origin" not in r.headers
 
 

@@ -101,8 +101,6 @@ Une ligne par surface. « Forme » dit comment les deux noms coexistent.
 | Surface | Ancien nom (part le 29/10/2026) | Nouveau nom | Forme | Lot |
 | --- | --- | --- | --- | --- |
 | Outil MCP | `oto_admin_doctrine` | `oto_admin_guide` | les deux listés et appelables ; l'ancien porte l'avis en tête de sa description | B1 |
-| Chemin REST | `GET /api/doctrines/library` | `GET /api/guide-library` | 308 | B2 |
-| Chemin REST | `GET /api/doctrines/library/{slug}` | `GET /api/guide-library/{slug}` | 308 | B2 |
 | Chemin REST | `GET /api/me/doctrines/library` | `GET /api/me/guide-library` | 308 | B2 |
 | Chemin REST | `GET /api/me/doctrines/library/{slug}` | `GET /api/me/guide-library/{slug}` | 308 | B2 |
 | Chemin REST | `DELETE /api/me/doctrines/library/{id}` | `DELETE /api/me/guide-library/{id}` | 308 | B2 |
@@ -138,11 +136,10 @@ INLINE dans la réponse 200, et son nom n'y apparaît que comme `title` — ce
 qu'aucun `$ref` ne peut viser. Le renommer n'engage personne ; publier un alias
 pour lui inventerait un contrat qui n'a jamais existé.
 
-⚠️ **`/api/guide-library` n'est PAS `/api/guides/library`.** Le premier est le
-**marché** des guides publiés dans la bibliothèque (forkables, table `doctrine_library`) ; le
-second, les guides **plateforme**. Les deux existaient déjà côte à côte sous des noms
-qui se ressemblent ; c'est ce qui interdisait de renommer `/api/doctrines/library` en
-`/api/guides/library` — le nom était pris par un autre objet.
+Les vitrines anonymes `/api/guide-library[/{slug}]` (marché) et `/api/guides/library[/{slug}]`
+(guides plateforme) sont retirées, et avec elles les alias `/api/doctrines/library[/{slug}]`
+qui n'y menaient plus que vers un 404 (otomata-tech/oto#84). La face authentifiée
+`/api/me/guide-library` reste.
 
 ### Pourquoi les clés de capacité n'ont pas d'alias
 
@@ -261,8 +258,8 @@ répond **308** vers le nouveau. Quatre crans, chacun payé par un incident poss
 
 - **308, pas 301/302.** Les deux derniers autorisent le client à retomber en `GET` :
   un `POST …/publish` deviendrait un `GET` — 405, ou pire, un no-op silencieux.
-- **La query string est reportée.** Le build de la vitrine appelle
-  `…?limit=200` ; la perdre rendrait 100 entrées au lieu de 200, sans code d'erreur.
+- **La query string est reportée.** Un client qui appelle
+  `…?limit=200` : la perdre rendrait 100 entrées au lieu de 200, sans code d'erreur.
 - **Les en-têtes CORS sont sur la redirection elle-même**, et le préflight `OPTIONS`
   n'est jamais redirigé. Un navigateur vérifie CORS sur chaque réponse d'une chaîne ;
   et un `OPTIONS` redirigé le ferait abandonner avant d'essayer la vraie requête.
