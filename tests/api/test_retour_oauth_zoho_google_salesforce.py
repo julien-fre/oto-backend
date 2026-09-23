@@ -117,7 +117,7 @@ GOOGLE_CALLBACK = "/api/google/oauth/callback"
 def test_google_succes_ne_sert_que_la_forme_neuve(monkeypatch):
     monkeypatch.setattr(datastore_routes.google_oauth, "verify_state", lambda s: ("sub-1", 7, ""))
     monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code",
-                        lambda code: {"access_token": "a", "refresh_token": "r"})
+                        lambda code, sub: {"access_token": "a", "refresh_token": "r"})
     monkeypatch.setattr(datastore_routes.google_oauth, "persist_token",
                         lambda sub, org, tok: "e@x.io")
     handler = _endpoint(datastore_routes, GOOGLE_CALLBACK, with_cors=True)
@@ -140,7 +140,7 @@ def test_google_echec_redirige_desormais_au_lieu_dun_json_brut(monkeypatch, bris
     else:
         monkeypatch.setattr(datastore_routes.google_oauth, "verify_state", lambda s: ("sub-1", 7, ""))
 
-        def _boom(code):
+        def _boom(code, sub):
             raise RuntimeError("refus du fournisseur")
         monkeypatch.setattr(datastore_routes.google_oauth, "exchange_code", _boom)
         req = _get(GOOGLE_CALLBACK, "code=c&state=s")
