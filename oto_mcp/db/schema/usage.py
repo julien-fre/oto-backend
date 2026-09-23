@@ -210,3 +210,22 @@ CREATE INDEX IF NOT EXISTS idx_usage_signals_target ON usage_signals(signal, tar
 -- propre avertissement. La mention « table neuve → indexes inline sûrs » plus haut ne
 -- vaut QUE pour les colonnes nées avec la table.
 """
+
+# Registre des mois du journal archivés au froid (#665) — fragment séparé : la
+# révision Alembic `0005_journal_archives` l'exécute tel quel (une seule écriture du DDL).
+JOURNAL_ARCHIVES = """
+-- Registre des mois du journal ARCHIVÉS au froid (#665, arbitrage du 23/09/2026,
+-- option B). Écrit par `deploy/archive_tool_calls.py` APRÈS la relecture de l'archive
+-- et AVANT la suppression : une ligne ici dit que le corps de ce mois a quitté la
+-- base, où il se trouve, et depuis quand. Les faits de run (`run_start`/`run_finish`)
+-- restent, eux : un run archivé garde ses bornes, et sa page lit CE registre pour dire
+-- « contenu archivé le … » au lieu de servir une timeline réduite à deux lignes.
+-- Table neuve, née entière (aucune colonne posée par ALTER) ; fragment à part pour que
+-- la révision `0005_journal_archives` l'exécute tel quel.
+CREATE TABLE IF NOT EXISTS journal_archives (
+    mois TEXT PRIMARY KEY,                    -- 'YYYY-MM', mois calendaire de created_at
+    cle TEXT NOT NULL,                        -- objet S3 (privé) qui porte le mois
+    lignes BIGINT NOT NULL,                   -- enregistrements relus dans l'archive
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""

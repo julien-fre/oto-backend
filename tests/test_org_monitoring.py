@@ -102,7 +102,12 @@ def test_run_scopes_and_404s_when_empty(monkeypatch):
     assert seen["kw"] == {"org_id": 35}      # le filtre est bien descendu en SQL
 
     monkeypatch.setattr(om.db, "get_run", lambda rid, **kw: [{"tool": "run_start"}])
-    assert om._console(CTX, _inp(op="run", run_id="r1"))["run_id"] == "r1"
+    # #665 : le registre d'archive est lu sous le MÊME scope d'org que la timeline.
+    monkeypatch.setattr(om.db, "run_content_archived",
+                        lambda rid, **kw: seen.update(archive_kw=kw) and None)
+    out = om._console(CTX, _inp(op="run", run_id="r1"))
+    assert out["run_id"] == "r1" and out["content_archived"] is None
+    assert seen["archive_kw"] == {"org_id": 35}
 
 
 def test_call_et_run_ne_rendent_jamais_args(monkeypatch):
@@ -120,6 +125,7 @@ def test_call_et_run_ne_rendent_jamais_args(monkeypatch):
 
     monkeypatch.setattr(om.db, "get_run", lambda rid, **kw: [
         {"id": 1, "tool": "email_send", "args": {"to": "personne@exemple.test"}}])
+    monkeypatch.setattr(om.db, "run_content_archived", lambda rid, **kw: None)
     out = om._console(CTX, _inp(op="run", run_id="r1"))
     assert all("args" not in c for c in out["calls"]), out["calls"]
 

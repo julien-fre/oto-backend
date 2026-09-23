@@ -60,6 +60,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.functions.FUNCTIONS,      # fonctions : code pur exécuté par Oto (ADR 0073)
     schema.transcription.TRANSCRIPTION_JOBS,  # file des travaux de transcription (ADR 0074)
     schema.entitlements.ORG_ENTITLEMENTS,  # droits déclarés par org (ADR 0070 §7)
+    schema.usage.JOURNAL_ARCHIVES,   # mois du journal archivés au froid (#665)
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

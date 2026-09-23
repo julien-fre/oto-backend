@@ -832,6 +832,57 @@ def get_run(run_id: str, *, org_id: Optional[int] = None) -> list[dict]:
         ).fetchall()]
 
 
+def run_content_archived(run_id: str, *, org_id: Optional[int] = None) -> Optional[dict]:
+    """Ce que l'archive du journal a pris au corps de ce run, ou `None` (#665).
+
+    Arbitrage du 23/09/2026, option B : passé la rétention, un run garde ses bornes
+    (`run_start`/`run_finish` ne sont jamais archivés) et perd son corps, parti au
+    froid par mois calendaire entier. Sa page doit alors le DIRE — « contenu archivé
+    le … » — et non servir deux lignes de bornes sous une issue « done », qui est la
+    page vide de #289 revenue à une autre borne.
+
+    Lu dans le registre `journal_archives` (écrit par l'archive elle-même, avant de
+    supprimer), jamais déduit d'un corps absent : un run sans appel entre ses bornes
+    n'est pas un run archivé. Les mois consultés vont de l'ouverture du run à sa
+    clôture — à AUJOURD'HUI s'il est resté ouvert, puisque son corps a pu continuer
+    après la dernière ligne qui reste. Même scope d'org que `get_run`."""
+    clauses = ["run_id = %s"]
+    params: list[Any] = [run_id]
+    if org_id is not None:
+        clauses.append("org_id = %s")
+        params.append(int(org_id))
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            WITH b AS (
+                SELECT date_trunc('month', min(created_at)) AS lo,
+                       CASE WHEN bool_or(tool = 'run_finish')
+                            THEN date_trunc('month', max(created_at))
+                            ELSE date_trunc('month', NOW()) END AS hi
+                  FROM tool_calls WHERE {" AND ".join(clauses)}
+            )
+            SELECT a.mois, a.archived_at
+              FROM journal_archives a, b
+             WHERE a.mois BETWEEN to_char(b.lo, 'YYYY-MM') AND to_char(b.hi, 'YYYY-MM')
+             ORDER BY a.mois
+            """,
+            tuple(params),
+        ).fetchall()
+    if not rows:
+        return None
+    mois = [r["mois"] for r in rows]
+    archived_at = max(r["archived_at"] for r in rows)
+    return {
+        "archived_at": archived_at,
+        "months": mois,
+        "message": (
+            f"Contenu archivé le {archived_at:%d/%m/%Y} : les appels de ce déroulé "
+            f"({', '.join(mois)}) ont quitté la base pour l'archive froide, passé la "
+            "rétention du journal. Ses bornes — ouverture, clôture, issue — restent "
+            "ici ; le détail s'obtient auprès de l'exploitant de la plateforme."),
+    }
+
+
 def _signal_agg(signal: str, group_by: str, label: str, days: int,
                 org_id: Optional[int]) -> list[dict]:
     """Corps commun des deux agrégats de `usage_signals` (manques / qualité d'outil) :
@@ -1872,12 +1923,16 @@ def prune_tool_calls(keep_days: int = 30) -> int:
 def prune_orphan_runs(keep_days: int = 30) -> int:
     """Efface les ÉTIQUETTES de runs dont les faits ont disparu du journal (#289).
 
-    Un run EST ses faits ; sa ligne `runs` n'est qu'un index. Une fois le journal du
-    mois archivé au froid et supprimé, l'étiquette resterait à annoncer « prospection
-    Q3 → done » au-dessus d'une page vide. Même borne que le journal, donc, mais
-    exécutée APRÈS lui — d'où sa sortie de `prune_tool_calls` : les deux moitiés
-    n'ont plus le même exécutant (l'archive pour le journal, le timer de maintenance
-    pour les étiquettes)."""
+    Un run EST ses faits ; sa ligne `runs` n'est qu'un index. Une étiquette sans
+    aucun fait annoncerait « prospection Q3 → done » au-dessus d'une page vide. Même
+    borne que le journal, donc, mais exécutée APRÈS lui — d'où sa sortie de
+    `prune_tool_calls` : les deux moitiés n'ont plus le même exécutant.
+
+    ⚠️ L'archive du journal ne l'alimente PAS : elle exempte `run_start`/`run_finish`,
+    donc un run archivé garde ses faits et son étiquette (#665, option B du 23/09/2026)
+    — sa page dit « contenu archivé le … » (`run_content_archived`). Ce filet ne
+    joue que pour des faits effacés par un autre chemin (`prune_tool_calls`, appelée
+    à la main)."""
     with _connect() as conn:
         n = conn.execute(_PRUNE_ORPHAN_RUNS, (max(1, int(keep_days)),)).rowcount or 0
     if n:

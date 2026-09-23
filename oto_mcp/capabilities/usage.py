@@ -180,7 +180,9 @@ def _runs(ctx: ResolvedCtx, inp: RunsInput) -> dict:
 
 
 def _run(ctx: ResolvedCtx, inp: RunInput) -> dict:
-    return {"run_id": inp.run_id, "calls": db.get_run(inp.run_id)}
+    # `content_archived` (#665) : même forme que la vue d'org (`OrgRun`).
+    return {"run_id": inp.run_id, "calls": db.get_run(inp.run_id),
+            "content_archived": db.run_content_archived(inp.run_id)}
 
 
 def _gaps(ctx: ResolvedCtx, inp: DaysInput) -> dict:

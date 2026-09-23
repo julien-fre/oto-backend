@@ -19,6 +19,15 @@ ouverture, sa clôture et son issue, mais son « dernier signe de vie » retombe
 d'ouverture (`last_seen_at` se dérive du dernier appel rattaché). Sans effet sur un run
 clos ; un run resté ouvert et vieux de 90 jours est de toute façon lu comme silencieux.
 
+**Une page de run archivé le DIT** (#665, arbitrage du 23/09/2026, option B). Le run
+reste listé avec ses bornes ; son corps, lui, est parti. Pour que sa page ne retombe
+pas sur la page vide de #289, chaque mois archivé s'inscrit dans `journal_archives`
+(mois, objet S3, lignes relues, date) — APRÈS la relecture qui autorise la
+suppression, AVANT la suppression elle-même : la page qui lit ce registre dit alors
+« contenu archivé le … » à la place du contenu. ⚠️ Si l'inscription échoue (table
+absente : backend pas encore déployé), le script s'arrête AVANT de supprimer — un
+corps effacé sans registre, c'est exactement la page vide qu'on ferme.
+
 **Où il tourne, et pourquoi pas dans le backend.** Sur la box, en travail planifié — pas
 dans le processus MCP. Celui-ci est mono-boucle : y loger un export de plusieurs
 centaines de Mo et une suppression par lots reviendrait à réinstaller la panne que ce
@@ -187,6 +196,23 @@ def _verify_archive(s3, bucket: str, key: str, attendu: int) -> None:
              relus, len(entete))
 
 
+def _record_archive(conn: psycopg.Connection, mois: str, key: str, lignes: int) -> None:
+    """Inscrit le mois au registre des archives (#665) — la source de « contenu
+    archivé le … » sur la page d'un run.
+
+    Une reprise (mois déjà inscrit, suppression interrompue) garde la date de la
+    PREMIÈRE inscription : c'est ce jour-là que le corps a commencé à quitter la base.
+    Aucune exception n'est rattrapée : sans inscription, pas de suppression."""
+    conn.execute(
+        """
+        INSERT INTO journal_archives (mois, cle, lignes) VALUES (%(mois)s, %(cle)s, %(lignes)s)
+        ON CONFLICT (mois) DO UPDATE SET cle = EXCLUDED.cle, lignes = EXCLUDED.lignes
+        """,
+        {"mois": mois, "cle": key, "lignes": lignes},
+    )
+    log.info("registre : %s inscrit comme archivé (%s)", mois, key)
+
+
 def _delete_month(conn: psycopg.Connection, mois: str) -> int:
     """Supprime les lignes archivées, par lots bornés."""
     total = 0
@@ -250,6 +276,7 @@ def main() -> int:
                     log.info("%s : %s lignes archivées dans %s — suppression NON demandée",
                              mois, lignes, key)
                     continue
+                _record_archive(conn, mois, key, lignes)
                 supprimees = _delete_month(conn, mois)
                 log.info("%s : %s lignes archivées dans %s, %s supprimées de la base",
                          mois, lignes, key, supprimees)

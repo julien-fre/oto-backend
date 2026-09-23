@@ -313,12 +313,25 @@ class RunCall(BaseModel):
     duration_ms: Optional[int] = None
 
 
+class RunContentArchived(BaseModel):
+    """Le corps d'un run parti à l'archive froide (#665, option B du 23/09/2026).
+
+    Présent ⟹ la timeline ne porte plus que ce que l'archive a gardé en base (les
+    bornes `run_start`/`run_finish`, et les appels des mois non archivés) : la page
+    affiche `message` à la place du contenu, jamais une timeline réduite sans un mot."""
+    archived_at: str                 # date de l'archivage (la plus récente si plusieurs mois)
+    months: list[str]                # mois 'YYYY-MM' du run partis au froid
+    message: str                     # la phrase à afficher, telle quelle
+
+
 class OrgRun(BaseModel):
     """Timeline d'un déroulé, bornée aux appels émis SOUS cette org — un run à cheval
     sur deux orgs n'en montre donc que la tranche locale, sans le signaler. Un `run_id`
-    deviné depuis une autre org rend une timeline vide, traduite en 404."""
+    deviné depuis une autre org rend une timeline vide, traduite en 404.
+    `content_archived` : présent quand le corps du run est parti à l'archive (#665)."""
     run_id: str
     calls: list[RunCall]
+    content_archived: Optional[RunContentArchived] = None
 
 
 class GapRow(BaseModel):
@@ -471,7 +484,8 @@ def _run(ctx: ResolvedCtx, inp: OrgRunInput) -> dict:
         raise AuthzDenied(404, "unknown_run",
                           f"Aucun déroulé `{inp.run_id}` dans cette org.")
     calls = [{k: v for k, v in c.items() if k != "args"} for c in calls]
-    return {"run_id": inp.run_id, "calls": calls}
+    return {"run_id": inp.run_id, "calls": calls,
+            "content_archived": db.run_content_archived(inp.run_id, org_id=inp.org_id)}
 
 
 def _gaps(ctx: ResolvedCtx, inp: OrgDaysInput) -> dict:
@@ -879,7 +893,8 @@ CAPABILITIES += [
             "answer to 'is my team on board') / calls (call log of the org, newest first; "
             "filters `sub`, `tool`, `errors`, `days`, `run_id`, `session_id`, "
             "`min_duration_ms`, `error_contains`) / call (`call_id`) / runs · run "
-            "(`run_id` → timeline) / connectors (which connector fails to resolve for "
+            "(`run_id` → timeline; `content_archived` = its body went to cold archive, "
+            "only its bounds remain) / connectors (which connector fails to resolve for "
             "your members) / gaps · tool_quality (what YOUR members reported missing or "
             "broken, AGGREGATED) / signals (the same reports RAW, with their body — the "
             "counts say how many, only the body says why; filters `signal` "

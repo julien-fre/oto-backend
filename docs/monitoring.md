@@ -267,6 +267,24 @@ d'un run **encore vivant** (ouvert il y a 40 jours, appelé hier) n'est jamais t
 celle d'un run **récent** non plus, même si sa journalisation a échoué (best-effort).
 Conséquence sur les lectures dérivées de `runs` (`project_runs`, `project_run_stats`,
 pastille de procédure) : elles ne remontent pas au-delà de la fenêtre de rétention.
+⚠️ Ce filet ne joue PAS pour l'archive : elle exempte `run_start`/`run_finish`, donc un
+run archivé garde ses faits et son étiquette — c'est la section suivante.
+
+**Un run archivé garde ses bornes, et sa page le dit** (#665, arbitrage d'Alexis du
+23/09/2026, option B). Passé la rétention, le run reste listé avec ses dates et son
+issue ; son corps est au froid. Pour que sa page ne retombe pas sur la page vide de #289,
+l'archive inscrit chaque mois dans le registre `journal_archives` (révision
+`0005_journal_archives` ; mois, objet S3,
+lignes relues, date) **après** la relecture qui autorise la suppression et **avant** la
+suppression — si l'inscription échoue, rien n'est supprimé. La page d'un run
+(`GET /api/orgs/{id}/monitoring/runs/{run_id}`, `GET /api/admin/usage/runs/{run_id}`,
+`op=run` des deux consoles) porte alors `content_archived` — `archived_at`, `months`, et
+`message` (« Contenu archivé le … ») à afficher **à la place** du contenu. Le registre
+est lu, jamais déduit d'un corps absent : un run sans appel entre ses bornes n'est pas un
+run archivé. Rendu côté front : à faire dans `oto-frontend` (le champ est servi).
+⚠️ Le timer exécute une **copie installée** du script (`/usr/local/sbin/oto-journal-archive.py`,
+cf. l'unité) : elle doit être rafraîchie depuis `deploy/archive_tool_calls.py` avant le
+premier tir qui archive, sinon le mois part sans être inscrit.
 
 ## Les deux surfaces (mêmes capacités, ADR 0009/0042)
 
@@ -441,7 +459,8 @@ garder indéfiniment ne coûte rien. ⚠️ Conséquence assumée : un run dont 
 ordinaires ont été archivés garde son ouverture, sa clôture et son issue, mais son
 « dernier signe de vie » retombe sur sa date d'ouverture (`last_seen_at` se dérive du
 dernier appel rattaché) — sans effet sur un run clos, et un run resté ouvert depuis plus
-de 90 jours est de toute façon lu comme silencieux.
+de 90 jours est de toute façon lu comme silencieux. Sa page, elle, dit « contenu archivé
+le … » (registre `journal_archives`, #665 — cf. plus haut).
 
 **Trois précautions dans le script, chacune payée par une mesure du jour même :**
 - **La suppression n'est autorisée que par une RELECTURE de l'archive** (téléchargée,

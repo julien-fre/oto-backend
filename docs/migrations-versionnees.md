@@ -496,6 +496,12 @@ rien ne lit encore la table : l'ordre est indifférent. Seul coût : la clé ét
 vers `orgs` prend un verrou sur `orgs` à la création, borné par `lock_timeout` des deux
 côtés.
 
+`0005_journal_archives` (23/09/2026, #665) crée la table NEUVE `journal_archives`, que
+le démarrage crée aussi (fragment `db/schema/usage.py::JOURNAL_ARCHIVES`, exécuté tel
+quel par la révision). Aucune clé étrangère : aucun verrou hors de la table neuve.
+L'ordre avec le tag est indifférent ; elle doit seulement exister avant le premier tir
+de l'archive qui supprime un mois — sans elle, l'archive s'arrête avant de supprimer.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

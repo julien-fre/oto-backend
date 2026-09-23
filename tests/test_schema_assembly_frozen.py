@@ -452,8 +452,14 @@ from oto_mcp.db import _schema, schema
 # ADDITIVE : rien ne la lit encore, et l'ancien code l'ignore. La révision Alembic
 # `0004_org_entitlements` exécute le même fragment.
 # 165 217 → 165 940 (+723, commentaires du fragment compris).
-EMPREINTE = "f8ae6ba6ea3502b57af0add16a6ae83004912346ca951548fa430785fd05d7b8"
-LONGUEUR = 165940
+# 23/09/2026 (oto-backend#665, option B) — fragment NEUF `schema/usage.py::JOURNAL_ARCHIVES`,
+# en QUEUE de `ASSEMBLAGE` : la table `journal_archives`, registre des mois du journal
+# archivés au froid, écrit par `deploy/archive_tool_calls.py` avant de supprimer, lu par
+# la page d'un run pour dire « contenu archivé le … ». ADDITIVE, sans FK ; la révision
+# Alembic `0005_journal_archives` exécute le même fragment.
+# 165 940 → 166 957 (+1 017, commentaires du fragment compris).
+EMPREINTE = "a3566885b9f62b7be470dce1d2736ed37f08cfc35d1d70c89fa8a56e46293253"
+LONGUEUR = 166957
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
