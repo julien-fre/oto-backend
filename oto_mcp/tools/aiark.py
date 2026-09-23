@@ -86,10 +86,34 @@ _DEAD_FILTERS: dict[str, dict[str, str]] = {
 }
 
 
-def _reject_dead_filters(**blocks) -> None:
-    """Refuse un filtre qu'AI Ark accepterait sans l'appliquer (cf. `_DEAD_FILTERS`)."""
+# ── … et ceux qui ne sont morts QUE sur le point d'accès SOCIÉTÉS ────────────────
+# Mesuré le 23/09/2026 par différentiel `size=1` (op="companies", `location` France +
+# `employeeSize` 11-50), otomata-tech/oto#207 :
+#   témoin sans `keywords`                                   → 131 281
+#   + `keywords: ["packaging"]`                              → 131 281
+#   + `keywords: {"any": {"include": ["packaging"]}}`        → 131 281
+#   + `keywords: {"any": {"include": {"mode": "SMART", …}}}` → 131 281
+# Les QUATRE au même premier id. Aucune forme ne mord (même constat que le retour du
+# 12/09, 81 063 partout sur un autre pays). Refus limité à `op="companies"` : sur la
+# recherche de PERSONNES, `account.keywords` n'a pas été mesuré — le refuser là
+# serait affirmer ce qu'on ne sait pas.
+_DEAD_COMPANY_FILTERS: dict[str, dict[str, str]] = {
+    "account": {
+        "keywords": "`lookalike_domains` (jusqu'à 5 sociétés du secteur visé), ou "
+                    "un tri CÔTÉ CLIENT sur le champ `keywords` des enregistrements "
+                    "rendus avec `full=True` (la vue par défaut le retire) — en "
+                    "resserrant d'abord par `location` et `employeeSize`, qui, eux, "
+                    "mordent",
+    },
+}
+
+
+def _reject_dead_filters(table: dict[str, dict[str, str]] = _DEAD_FILTERS,
+                         **blocks) -> None:
+    """Refuse un filtre qu'AI Ark accepterait sans l'appliquer (cf. `_DEAD_FILTERS`,
+    et `_DEAD_COMPANY_FILTERS` pour le point d'accès sociétés)."""
     for block, value in blocks.items():
-        for field, remedy in _DEAD_FILTERS.get(block, {}).items():
+        for field, remedy in table.get(block, {}).items():
             if isinstance(value, dict) and field in value:
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
                     f"Filtre `{block}.{field}` : AI Ark l'accepte et ne l'applique "
@@ -335,11 +359,17 @@ def register(mcp: FastMCP) -> None:
                 - employee size: {"employeeSize": {"type": "RANGE", "range": [{"start": 1000, "end": 5000}]}}
                 - a company's site: {"domain": {"any": {"include": ["example.com"]}}}
                   — plain list, NOT the SMART wrapper (that one is for `name` only).
-                Combine keys in one object. Supports domain, industries, revenue,
-                foundedYear, technologies, keywords, funding, naics…
-                ⚠️ `website` is REFUSED here: AI Ark accepts it and silently ignores
-                it, returning the whole 72 M database as if it were your filtered
-                result. Filter on `domain` instead.
+                Combine keys in one object. Keys MEASURED to bite on
+                op="companies": `domain`, `employeeSize`, `location`.
+                `industries`, `technologies`, `naics` answered 400 under the forms
+                tried (a loud failure, but their expected shape is unknown).
+                ⚠️ REFUSED because AI Ark accepts them and silently ignores them,
+                returning the whole database as if it were your filtered result:
+                `website` and `linkedin_url` (filter on `domain` instead) and, on
+                op="companies", `keywords` — dead under every form tried (plain
+                list, `any.include`, SMART wrapper). To target a sector, use
+                `lookalike_domains`, or sort client-side on the records' `keywords`
+                (`full=True`).
             contact: op="people" — filters on the person, e.g.
                 {"seniority": {"any": {"include": ["founder"]}}}. Supports seniority
                 and location.
@@ -386,6 +416,7 @@ def register(mcp: FastMCP) -> None:
             result = _run(lambda c: c.search_people(
                 account=account, contact=contact, lists=lists, page=page, size=size))
         elif op == "companies":
+            _reject_dead_filters(_DEAD_COMPANY_FILTERS, account=account)
             result = _run(lambda c: c.search_companies(
                 account=account, lists=lists,
                 lookalike_domains=lookalike_domains, page=page, size=size))
