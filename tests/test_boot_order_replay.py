@@ -232,13 +232,25 @@ def colonnes_posees_par_alter(base_bootee) -> list[tuple[str, str]]:
     doctrine (`docs/live-migrations.md`), toute colonne ajoutée à une table existante
     passe par un `ALTER` d'`_init.py`. Donc « la base d'avant » = la base neuve moins
     l'une de ces colonnes."""
-    from oto_mcp.db._init import apply_boot_schema
+    from oto_mcp.db import _ddl_garde, _init
 
-    enregistreur = _OrdresEnregistres(base_bootee)
-    with base_bootee.transaction(force_rollback=True):
-        apply_boot_schema(enregistreur)
+    # ⚠️ On note les ordres DEMANDÉS au garde des DDL, pas ceux qu'il laisse partir.
+    # Sur cette base à jour, le garde (#1015 étendu, 23/09/2026) n'envoie plus aucun
+    # `ADD COLUMN` déjà posé : relevé sous lui, le cliquet ne verrait plus rien. Ce
+    # qu'il veut, c'est la liste des colonnes que le boot SAIT poser.
+    demandes: list[str] = []
+
+    class _GardeQuiNote(_ddl_garde.GardeDdl):
+        def _un(self, ordre, params, kw):
+            demandes.append(ordre if isinstance(ordre, str) else str(ordre))
+            return super()._un(ordre, params, kw)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_init, "GardeDdl", _GardeQuiNote)
+        with base_bootee.transaction(force_rollback=True):
+            _init.apply_boot_schema(base_bootee)
     colonnes: list[tuple[str, str]] = []
-    for sql in enregistreur.sql:
+    for sql in demandes:
         for table, colonne in _ADD_COLUMN.findall(sql):
             colonnes.append((table.lower(), colonne.lower()))
     colonnes = list(dict.fromkeys(colonnes))
@@ -248,7 +260,7 @@ def colonnes_posees_par_alter(base_bootee) -> list[tuple[str, str]]:
     # « on regarde encore quelque chose », pas « on regarde exactement ça ».
     assert len(colonnes) >= 100, (
         f"seulement {len(colonnes)} colonnes posées par ALTER ont été VUES dans les "
-        f"{len(enregistreur.sql)} ordres du boot — le relevé ne reconnaît plus la "
+        f"{len(demandes)} ordres du boot — le relevé ne reconnaît plus la "
         f"forme des ALTER, et tout ce fichier passerait à vide")
     return colonnes
 

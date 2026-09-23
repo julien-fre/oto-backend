@@ -15,6 +15,7 @@ import psycopg
 
 from . import connector_instances, revision
 from ._conn import _connect
+from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,46 @@ def _poser_domaine(conn, table: str, nom: str, colonne: str,
     return True
 
 
+def _reposer_index(conn, nom: str, creation: str) -> bool:
+    """Repose l'index `nom` par `creation` — **et seulement si sa forme a changé**.
+
+    Pour un index PARTIEL dont on fait évoluer le prédicat : `CREATE INDEX IF NOT
+    EXISTS` ne le mettrait jamais à jour, d'où un DROP/CREATE — qui, joué sans
+    condition, reconstruisait l'index à chaque démarrage. Même principe que
+    `_poser_domaine` : on compare ce qui compte (unicité, colonnes, valeurs du
+    prédicat et son sens), pas le texte, que `pg_get_indexdef` normalise.
+
+    ⚠️ Limite assumée : deux prédicats sans littéral qui ne diffèrent que par leur
+    forme (`IS NULL` ↔ `IS NOT NULL`) auraient la même empreinte. N'appeler cette
+    fonction que pour un prédicat à valeurs, comme celui de son seul appelant.
+
+    Rend True si l'index a été (re)posé."""
+    row = conn.execute("SELECT pg_get_indexdef(to_regclass(%s))", (nom,)).fetchone()
+    actuelle = (tuple(row.values()) if isinstance(row, dict) else tuple(row))[0] if row else None
+    if actuelle and _empreinte_index(actuelle) == _empreinte_index(creation):
+        return False
+    conn.execute(f"DROP INDEX IF EXISTS {nom}")
+    conn.execute(creation)
+    logger.info("index %s (re)posé", nom)
+    return True
+
+
+def _empreinte_index(definition: str) -> tuple:
+    """(unique, colonnes, valeurs du prédicat, prédicat négatif) d'une définition.
+
+    `status NOT IN ('a','b')` et sa forme normalisée `status <> ALL (ARRAY['a'::text,
+    'b'::text])` ont la même empreinte ; l'ajout ou le retrait d'une valeur la change."""
+    d = " ".join(definition.split())
+    colonnes = re.search(r"\bON\s+[\w.\"]+\s*(?:USING\s+\w+\s*)?\(([^)]*)\)", d, re.I)
+    predicat = re.search(r"\bWHERE\b(.*)$", d, re.I)
+    return (
+        bool(re.match(r"CREATE UNIQUE", d, re.I)),
+        " ".join(colonnes.group(1).replace('"', "").split()) if colonnes else None,
+        frozenset(re.findall(r"'([^']*)'", predicat.group(1))) if predicat else None,
+        bool(predicat and re.search(r"NOT IN|<> ALL", predicat.group(1), re.I)),
+    )
+
+
 def _colonne_absente(conn: psycopg.Connection, table: str, colonne: str) -> bool:
     """`True` si `colonne` n'existe pas encore sur `table` — lu via le catalogue,
     sous un simple `AccessShareLock` (jamais `ACCESS EXCLUSIVE`).
@@ -161,34 +202,16 @@ def _index_absent(conn: psycopg.Connection, index: str) -> bool:
     return row is None
 
 
-_RE_ADD_COLONNE = re.compile(
-    r"^\s*ALTER TABLE (\w+) ADD COLUMN IF NOT EXISTS (\w+)\b", re.IGNORECASE)
-_RE_CREATE_INDEX = re.compile(
-    r"^\s*CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+)\b", re.IGNORECASE)
-
-
 def _executer_ddl_idempotent(conn: psycopg.Connection, sql: str, *params) -> None:
     """Exécute `sql`, sauf si le catalogue dit qu'il n'a rien à faire.
 
     Pour du DDL généré dynamiquement (`oto_mcp/db/search.py::rank_column_ddl`/
-    `index_ddl`, une boucle sur plusieurs tables) : la même faute que les `ALTER`
-    écrits à la main — `IF NOT EXISTS` évite l'ERREUR, pas le VERROU — mais ici la
-    table visée change à chaque itération, donc pas de nom de colonne/table à
-    coder en dur au point d'appel. Reconnaît les deux formes produites par ce
-    module (`ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`) et applique
-    le même garde catalogue. Un DDL d'une forme non reconnue est exécuté tel
-    quel — jamais sauté par défaut."""
-    m = _RE_ADD_COLONNE.match(sql)
-    if m:
-        if _colonne_absente(conn, m.group(1), m.group(2)):
-            conn.execute(sql, params or None)
-        return
-    m = _RE_CREATE_INDEX.match(sql)
-    if m:
-        if _index_absent(conn, m.group(1)):
-            conn.execute(sql, params or None)
-        return
-    conn.execute(sql, params or None)
+    `index_ddl`, `db/revision.py`) : même verdict que tout ordre du boot
+    (`_ddl_garde.ddl_a_faire`), exposé ici parce que ces modules l'appellent
+    aussi hors d'`apply_boot_schema`. Une forme non reconnue part telle quelle —
+    jamais sautée par défaut."""
+    if ddl_a_faire(conn, sql):
+        conn.execute(sql, params or None)
 
 
 def apply_boot_schema(conn: psycopg.Connection) -> None:
@@ -212,6 +235,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # no-op) SEUL, sans entrelacement de locks. Doit précéder tout DDL (y compris
     # les _migrate_* ci-dessous). Le waiter est ACTIF (pas idle-in-tx) → non coupé
     # par idle_in_transaction_session_timeout ; il attend le commit du 1er.
+    # Tout ordre du boot passe par le garde des DDL (`_ddl_garde`, #1015 étendu à
+    # TOUT le démarrage le 23/09/2026) : sur une base à jour, un `ALTER`/`CREATE
+    # INDEX` qui n'a rien à faire n'est plus envoyé, donc ne demande plus son
+    # verrou. Les aides `_migrate_*` reçoivent cette même connexion enveloppée, et
+    # le `_SCHEMA` assemblé y est découpé ordre par ordre. Sur une base neuve ou en
+    # retard, chaque ordre part comme avant.
+    conn = GardeDdl(conn)
     conn.execute("SELECT pg_advisory_xact_lock(%s)", (_INIT_DB_LOCK_ID,))
     # APRÈS l'advisory lock (qui, lui, doit pouvoir attendre le migrateur d'en face
     # sans borne) : borne l'ATTENTE d'acquisition de chaque lock de table du DDL.
@@ -697,11 +727,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # de la file de réconciliation sur les statuts terminaux MOLLIE (le
     # prédicat doit matcher billing_payments.TERMINAL_PAYMENT_STATUSES pour
     # que l'index serve). Tables billing dormantes → drop/recreate sans coût.
-    conn.execute("DROP INDEX IF EXISTS idx_billing_payments_open")
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_billing_payments_open "
-        "ON billing_payments(created_at) "
-        "WHERE status NOT IN ('paid', 'failed', 'canceled', 'expired')")
+    # Reposé SEULEMENT si le prédicat a changé : le couple DROP/CREATE tournait à
+    # chaque boot, sous `AccessExclusiveLock` sur l'index et `ShareLock` sur la table.
+    _reposer_index(conn, "idx_billing_payments_open",
+                   "CREATE INDEX IF NOT EXISTS idx_billing_payments_open "
+                   "ON billing_payments(created_at) "
+                   "WHERE status NOT IN ('paid', 'failed', 'canceled', 'expired')")
     # ADR 0046 D (datastore v2) : bail de claim de la file de travail sur les rows
     # (data_claim_next / data_release ; NULL = libre, bail expiré = recyclable).
     if _colonne_absente(conn, "datastore_rows", "claimed_by"):
@@ -1305,8 +1336,15 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Coffre chiffré : colonnes courantes (idempotent pour les DB créées avant).
     conn.execute("ALTER TABLE connector_credentials ADD COLUMN IF NOT EXISTS secret_enc TEXT")
     conn.execute("ALTER TABLE connector_credentials ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT ''")
-    conn.execute("ALTER TABLE connector_credentials DROP CONSTRAINT IF EXISTS connector_credentials_pkey")
-    conn.execute("ALTER TABLE connector_credentials ADD PRIMARY KEY (entity_type, entity_id, connector, account)")
+    # La clé primaire n'est reposée QUE si elle n'a pas encore sa forme finale.
+    # ⚠️ Le couple DROP/ADD tournait à chaque boot : il reconstruisait l'index de la
+    # clé sous `AccessExclusiveLock`, sur une base déjà à jour depuis des mois. Le
+    # garde ordre par ordre ne peut pas juger le DROP seul (la contrainte existe
+    # toujours) : c'est la forme voulue qui décide des deux.
+    _pk = "ALTER TABLE connector_credentials ADD PRIMARY KEY (entity_type, entity_id, connector, account)"
+    if ddl_a_faire(conn, _pk):
+        conn.execute("ALTER TABLE connector_credentials DROP CONSTRAINT IF EXISTS connector_credentials_pkey")
+        conn.execute(_pk)
     # TTL opt-in des tokens API (audit 2026-06-13) : NULL = non-expirant.
     conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
     # Portée opt-in d'un jeton API (`token_scopes.py`) : NULL = jeton non porté

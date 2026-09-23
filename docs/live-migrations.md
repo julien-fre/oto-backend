@@ -171,6 +171,40 @@ recherche de `guides`, dont le prédicat lit `delivery` ; la conversion #317, qu
 son premier lecteur : dans `_init.py`, l'ordre des lignes est une contrainte d'exécution,
 pas une mise en page.
 
+## Un ordre qui n'a rien à faire ne part pas (#1015, étendu le 23/09/2026)
+
+`IF NOT EXISTS` évite l'**erreur**, pas le **verrou** : `ALTER TABLE … ADD COLUMN IF NOT
+EXISTS`, `CREATE INDEX IF NOT EXISTS`, `ALTER COLUMN … DROP NOT NULL` demandent leur
+verrou AVANT de constater qu'il n'y a rien à faire. Sur une base à jour — chaque boot
+après le premier —, un rejeu prenait un `AccessExclusiveLock` sur 40 tables et un
+`ShareLock` (qui bloque les écritures) sur 48 autres. Deux déploiements préprod en sont
+morts le 23/09 (`LockNotAvailable` sur `ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS
+request_id`, posée depuis des semaines) : une lecture longue sur `tool_calls` suffisait.
+
+**Mécanisme** : `apply_boot_schema` enveloppe sa connexion dans `db/_ddl_garde.GardeDdl`.
+Chaque ordre — écrit à la main, généré dans une boucle, émis par une aide `_migrate_*`, ou
+tiré du `_SCHEMA` assemblé (découpé ordre par ordre) — est confronté au catalogue (lecture
+pure, aucun verrou sur la table visée) et n'est envoyé que s'il a quelque chose à faire.
+Formes reconnues : `CREATE TABLE|INDEX|SEQUENCE IF NOT EXISTS`, `DROP TABLE|INDEX|VIEW|
+SEQUENCE|SCHEMA IF EXISTS`, `CREATE OR REPLACE VIEW v AS SELECT * FROM t` (rejouée si `t` a
+gagné une colonne), et les sous-commandes d'`ALTER TABLE` (`ADD COLUMN IF NOT EXISTS`,
+`DROP COLUMN|CONSTRAINT IF EXISTS`, `ADD PRIMARY KEY`, `ALTER COLUMN … DROP|SET NOT NULL`,
+`… DROP|SET DEFAULT`). **Le doute exécute** : forme inconnue ou comparaison incertaine ⟹
+l'ordre part, comme avant. Sur une base neuve ou en retard, rien ne change.
+
+Deux couples ne se jugent pas ordre par ordre, parce que leur `DROP` a toujours quelque
+chose à faire : la clé primaire de `connector_credentials` (reposée seulement si sa forme
+diffère) et l'index partiel `idx_billing_payments_open` (`_reposer_index`, qui compare les
+valeurs du prédicat comme `_poser_domaine` compare celles d'un `CHECK`). Tous deux
+reconstruisaient leur index à chaque démarrage.
+
+**Tenu mécaniquement** par `tests/test_boot_ddl_aucun_verrou_fort.py` : rejeu du boot sur
+une base à jour, relevé de `pg_locks` pour notre backend avant l'annulation — **zéro**
+verrou fort, sinon le rouge nomme l'ordre fautif ; et l'incident rejoué (une lecture tenue
+sur toutes les tables, `lock_timeout` de 300 ms : le boot doit passer). **Règle pour un
+nouvel ordre de boot** : s'il a une forme reconnue, rien à faire ; sinon, conditionnez-le
+sur le catalogue comme `_poser_domaine`/`_reposer_index`, ou étendez `_ddl_garde`.
+
 ## PROD et PREPROD partagent la MÊME base (constaté 07/08)
 
 > ⚠️ **PROD et PREPROD partagent la MÊME base** (constaté 07/08 : DSN **identiques** — même
