@@ -43,6 +43,35 @@ def _verify(fields: dict, config: dict | None = None) -> None:
             f"réponse inattendue : {str(infos)[:200]}")
 
 
+def _zero_warning(query: str, filter_type: Optional[str]) -> str:
+    """L'avertissement qu'un `notion_search` VIDE porte (otomata-tech/oto#184).
+
+    Un jeton valide auquel rien n'est partagé répond EXACTEMENT comme un espace qui
+    ne contient pas ce qu'on cherche (`results: []`), et la sonde `_verify` reste
+    verte (elle ne voit que l'authentification). Le savoir existait deux fois —
+    doc d'installation, commentaire de sonde — jamais là où l'agent lit : on le
+    porte donc dans la réponse, au moment du zéro.
+
+    ⚠️ Formulé comme une POSSIBILITÉ À VÉRIFIER, pas comme un diagnostic : la
+    lecture « requête vide + zéro objet ⟹ rien de partagé » n'a pas été éprouvée
+    contre l'API Notion, et un diagnostic faux enverrait réparer un partage sain."""
+    geste = ("partager la page ou la base voulue avec l'intégration, côté "
+             "workspace Notion (menu `...` → Connexions)")
+    if query or filter_type:
+        return (
+            "Zéro résultat. Sur Notion, un zéro ne distingue PAS « rien ne "
+            "correspond » de « rien n'est partagé avec l'intégration » (le jeton "
+            "s'authentifie dans les deux cas, la sonde reste verte). Pour trancher : "
+            "relance `notion_search` avec `query=\"\"` et sans `filter_type` — si "
+            f"elle rend aussi zéro, l'intégration ne voit vraisemblablement rien : "
+            f"{geste}.")
+    return (
+        "Zéro objet sur une recherche SANS filtre : l'intégration ne voit "
+        "vraisemblablement rien — aucune page ni base ne lui est partagée (le jeton "
+        "s'authentifie, la sonde reste verte, et Notion ne le dit pas). À vérifier "
+        f"avant d'agir, puis {geste}. Ce n'est PAS un credential à reposer.")
+
+
 def register(mcp: FastMCP) -> None:
     from oto.tools.notion.lib.notion_client import NotionClient
 
@@ -60,11 +89,19 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Search the workspace (pages + databases shared with the integration).
 
+        The integration sees ONLY what was shared with it in Notion: an empty
+        `results` may mean "nothing shared", not "nothing matches". An empty
+        answer carries a `warning` saying how to tell the two apart.
+
         Args:
+            query: text to match; "" lists everything the integration can see.
             filter_type: "page" or "database" to restrict object type.
             sort: "relevance" (default) or "last_edited_time".
         """
-        return _client().search(query, filter_type=filter_type, sort=sort)
+        result = _client().search(query, filter_type=filter_type, sort=sort)
+        if not result.get("results"):
+            result = {**result, "warning": _zero_warning(query, filter_type)}
+        return result
 
     @mcp.tool()
     def notion_get_page(page_id: str) -> dict:
