@@ -204,6 +204,83 @@ def test_le_corps_exactement_au_plafond_passe(client, journal, monkeypatch):
     assert r.status_code == 200 and journal["materialises"][0][2] == 64
 
 
+def _jouer_en_flux(methode: str, jeton: str, morceaux: int, taille: int,
+                   entetes: list | None = None) -> tuple[int, dict, int]:
+    """Joue la route en ASGI avec un corps de `morceaux` × `taille` octets, livré
+    morceau par morceau, et COMPTE ce que le handler a réellement tiré du flux.
+
+    `TestClient` rend le corps d'un coup : il ne dit pas si le handler a tout lu
+    avant de compter. Ici, le compteur le dit (#562)."""
+    import asyncio
+    tires = {"n": 0}
+
+    async def _receive():
+        tires["n"] += 1
+        return {"type": "http.request", "body": b"o" * taille,
+                "more_body": tires["n"] < morceaux}
+
+    envoye: dict = {}
+
+    async def _send(message):
+        if message["type"] == "http.response.start":
+            envoye["status"] = message["status"]
+        elif message["type"] == "http.response.body":
+            envoye["corps"] = envoye.get("corps", b"") + message.get("body", b"")
+
+    app = Starlette(routes=[Route("/api/upload/{token}", uploads.upload_receive,
+                                  methods=["PUT", "POST"])])
+    scope = {"type": "http", "method": methode, "path": f"/api/upload/{jeton}",
+             "raw_path": f"/api/upload/{jeton}".encode(), "query_string": b"",
+             "headers": entetes or [], "http_version": "1.1", "scheme": "http",
+             "server": ("t", 80), "client": ("c", 1), "root_path": ""}
+    asyncio.run(app(scope, _receive, _send))
+    return envoye["status"], json.loads(envoye["corps"]), tires["n"]
+
+
+@pytest.mark.parametrize("methode, entetes", [
+    ("PUT", []),
+    ("POST", [(b"content-type", b"multipart/form-data; boundary=frontiere")]),
+])
+def test_le_plafond_ARRETE_la_lecture_il_ne_la_juge_pas_apres(journal, client,
+                                                              monkeypatch, methode,
+                                                              entetes):
+    """⚠️ LE test de #562 : le plafond était comparé APRÈS `request.body()` /
+    `request.form()` — tout le corps passait en mémoire (ou sur disque) avant. Un lien
+    d'upload est fait pour être confié à un tiers : sa taille est une entrée non fiable."""
+    from oto_mcp.api import uploads as U
+    monkeypatch.setenv("OTO_MCP_UPLOAD_MAX_BYTES", "64")
+    monkeypatch.setattr(U, "_MARGE_MULTIPART", 64)
+    status, corps, tires = _jouer_en_flux(methode, _jeton(), morceaux=10_000, taille=32,
+                                          entetes=entetes)
+    assert (status, corps["error"]) == (413, "content_too_large")
+    assert tires <= 5, f"{tires} morceaux lus pour un plafond de 64 octets"
+    _rien_n_a_ete_ecrit(journal)
+
+
+def test_un_content_length_annonce_trop_gros_est_refuse_sans_rien_lire(journal, client,
+                                                                        monkeypatch):
+    monkeypatch.setenv("OTO_MCP_UPLOAD_MAX_BYTES", "64")
+    status, corps, tires = _jouer_en_flux(
+        "PUT", _jeton(), morceaux=1, taille=1,
+        entetes=[(b"content-length", str(10**9).encode())])
+    assert (status, corps["error"]) == (413, "content_too_large")
+    assert tires == 0
+    _rien_n_a_ete_ecrit(journal)
+
+
+def test_un_fichier_au_plafond_passe_aussi_par_le_formulaire(client, journal,
+                                                            monkeypatch):
+    """L'enveloppe multipart ne mange pas le plafond du FICHIER : un fichier de la
+    taille annoncée passe par le formulaire comme par le PUT."""
+    monkeypatch.setenv("OTO_MCP_UPLOAD_MAX_BYTES", "64")
+    r = client.post(f"/api/upload/{_jeton()}",
+                    files={"file": ("rapport.pdf", b"o" * 64, "application/pdf")})
+    assert r.status_code == 200 and journal["materialises"][0][2] == 64
+    r = client.post(f"/api/upload/{_jeton()}",
+                    files={"file": ("rapport.pdf", b"o" * 65, "application/pdf")})
+    assert r.status_code == 413 and r.json()["error"] == "content_too_large"
+
+
 # ── 4. l'usage unique, consommé AVANT la matérialisation ─────────────────────
 
 def test_le_meme_jeton_ne_sert_pas_deux_fois(client, journal):

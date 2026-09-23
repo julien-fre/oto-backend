@@ -13,6 +13,14 @@ La matérialisation RÉAPPLIQUE l'autz de la cible (`check_target_access`), born
 taille, puis consomme le jeton AVANT d'écrire — anti-rejeu et anti-double-écriture.
 L'accusé est léger : jamais le corps reçu.
 
+⚠️ **Le plafond de taille se tient PENDANT la lecture, pas après** (#562). Jusqu'au
+23/09/2026, le PUT faisait `await request.body()` et le POST `await request.form()`
+sans borne, puis comparait la longueur au plafond : un porteur du lien — un tiers, par
+construction — faisait tenir en mémoire (ou spooler sur disque) un corps de taille
+arbitraire, sur un serveur mono-boucle. Le corps se lit désormais en flux, et la
+lecture s'arrête au premier octet au-delà du plafond ; un `Content-Length` déclaré
+au-delà est refusé sans rien lire.
+
 La table de routes (chemins, méthodes, ORDRE) reste assemblée dans
 `api.routes.make_routes` ; ce module ne porte que les handlers.
 """
@@ -68,6 +76,42 @@ def _upload_page_html(label: str | None) -> str:
         '</style></head><body>' + body + '</body></html>')
 
 
+# Ce que l'enveloppe multipart ajoute autour du fichier (frontières, en-têtes de
+# partie, nom de fichier) : le formulaire humain n'envoie qu'une partie `file`. Le
+# plafond du FICHIER reste `max_bytes()`, revérifié sur la partie extraite.
+_MARGE_MULTIPART = 64 * 1024
+
+
+class _CorpsTropGros(Exception):
+    """Le corps dépasse le plafond : la lecture s'est arrêtée là."""
+
+
+def _annonce_trop_gros(request: Request, plafond: int) -> bool:
+    """Un `Content-Length` déclaré au-delà du plafond se refuse sans rien lire. Absent
+    (envoi `chunked`), c'est la lecture en flux qui tient la borne."""
+    annonce = request.headers.get("content-length", "")
+    return annonce.isdigit() and int(annonce) > plafond
+
+
+async def _lire_borne(request: Request, plafond: int) -> bytes:
+    """Lit le corps en flux et s'ARRÊTE dès que `plafond` est dépassé (#562) — jamais
+    un `request.body()` qui prendrait tout avant de compter."""
+    recu = bytearray()
+    async for morceau in request.stream():
+        recu += morceau
+        if len(recu) > plafond:
+            raise _CorpsTropGros
+    return bytes(recu)
+
+
+def _rejouer(corps: bytes):
+    """Un `receive` ASGI qui rend le corps déjà lu — pour confier au parseur multipart
+    un corps borné plutôt que le flux brut de la requête."""
+    async def _receive() -> dict:
+        return {"type": "http.request", "body": corps, "more_body": False}
+    return _receive
+
+
 async def _do_signed_upload(request: Request, payload: dict, data: bytes,
                             ct: str | None) -> JSONResponse:
     """Cœur commun des réceptions d'upload signé : autz réappliquée → borne de
@@ -102,9 +146,21 @@ async def upload_receive(request: Request) -> JSONResponse:
     payload = upload_tokens.verify(request.path_params.get("token", ""))
     if payload is None:
         return _json_error(request, 401, "invalid_or_expired_token")
+    plafond = upload_tokens.max_bytes()
     if request.method == "POST":
+        plafond += _MARGE_MULTIPART
+    if _annonce_trop_gros(request, plafond):
+        return _json_error(request, 413, "content_too_large")
+    try:
+        corps = await _lire_borne(request, plafond)
+    except _CorpsTropGros:
+        return _json_error(request, 413, "content_too_large")
+    if request.method == "POST":
+        # Le parseur lit le corps DÉJÀ BORNÉ, et n'accepte qu'une partie fichier :
+        # le formulaire n'envoie rien d'autre.
         try:
-            form = await request.form()
+            form = await Request(request.scope, _rejouer(corps)).form(
+                max_files=1, max_fields=0)
         except Exception:
             return _json_error(request, 400, "invalid_multipart")
         upload = form.get("file")
@@ -113,7 +169,7 @@ async def upload_receive(request: Request) -> JSONResponse:
         data = await upload.read()
         ct = getattr(upload, "content_type", None)
     else:  # PUT — corps brut
-        data = await request.body()
+        data = corps
         ct = request.headers.get("content-type")
     return await _do_signed_upload(request, payload, data, ct)
 
