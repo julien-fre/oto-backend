@@ -34,7 +34,8 @@ def test_self_serve_refuses_custom_plan(monkeypatch):
 
 
 def test_plan_carries_no_cap_and_unmetered():
-    # modèle simplifié : plus de plafond de comptes (None = illimité), tous unmetered.
+    # modèle simplifié : aucun palier ne porte de nombre de sièges (None = pas
+    # d'avis, surtout pas illimité — #805), tous unmetered.
     assert billing.plan_is_unmetered("business") is True
     assert billing.PLANS["premium"]["unipile_accounts"] is None
     assert billing.PLANS["enterprise"]["unipile_accounts"] is None
@@ -57,9 +58,9 @@ def test_admin_set_plan_forces_comp_and_configures_org(monkeypatch):
     state = _wire_admin(monkeypatch)
     billing.admin_set_plan(7, "business", granted_by="admin-sub")
     assert state["comp"] == (7, "business", "admin-sub")
-    # le plan CONFIGURE l'org : plafond messagerie posé d'un coup (None = illimité,
-    # modèle simplifié — plus de facturation au nombre de comptes)
-    assert state["limit"] == (7, None)
+    # un palier sans nombre de sièges n'a pas d'avis : le plafond de l'org n'est pas
+    # touché (#805, cf. test_billing_seat_cap.py)
+    assert "limit" not in state
 
 
 def test_admin_set_plan_rejects_unknown(monkeypatch):
@@ -85,7 +86,7 @@ def test_admin_clear_removes_comp(monkeypatch):
                         lambda org, lim: state.update(limit=(org, lim)))
     out = billing.admin_clear_plan(7)
     assert out["subscribed"] is False
-    assert state["deleted"] == 7 and state["limit"] == (7, None)
+    assert state["deleted"] == 7 and "limit" not in state   # plafond non touché (#805)
 
 
 def test_runner_never_charges_comp(monkeypatch):

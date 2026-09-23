@@ -84,7 +84,10 @@ def is_enabled() -> bool:
 # **Modèle simplifié (2026-08-03)** : gratuit = pas d'Unipile (option bloquée, sauf
 # `comp` admin = « offert ») ; payant = Unipile + clés plateforme SANS quota
 # (`unmetered`). On NE facture PLUS au nombre de comptes messagerie → tous les
-# paliers ont `unipile_accounts=None` (illimité). ⚠️ Les 4 paliers débloquent donc
+# paliers ont `unipile_accounts=None`, qui veut dire « le plan n'a PAS d'avis sur les
+# sièges » (arbitrage du 23/09, #805) — surtout pas « illimité » : le plafond en place
+# (posé à la main, ou le défaut plateforme de 5) reste ce qu'il est, voir
+# `apply_plan_entitlements`. ⚠️ Les 4 paliers débloquent donc
 # AUJOURD'HUI exactement la même chose et ne diffèrent QUE par le prix — la
 # différenciation (« payant = Unipile, mais pas que ») viendra plus tard (options
 # premium par palier). `unmetered=True` = fin des credits d'appel.
@@ -133,9 +136,8 @@ def _hosted_by_partner(org_id: int) -> bool:
 
     Son plafond de comptes de messagerie appartient alors à la facturation du
     partenaire, qui le pose lui-même (`platform.org.unipile_limit_set`) : un plan
-    d'oto — forcé par un admin, ou retiré — ne l'écrase pas. Sans ce garde, un
-    `oto_admin_set_plan` sur l'org d'un partenaire remettait son plafond au défaut de
-    la plateforme, dans le dos de la facturation qui l'avait posé.
+    d'oto qui porte un nombre de sièges ne l'écrase pas, dans le dos de la
+    facturation qui l'avait posé. (Un plan sans avis n'écrit de toute façon rien.)
 
     Une lecture de tenant qui échoue rend `False` : le plan écrit, comme avant. C'est
     le sens inverse de `billing_grants.org_is_ours` (fermé par défaut), et c'est
@@ -154,16 +156,26 @@ def _hosted_by_partner(org_id: int) -> bool:
 
 def apply_plan_entitlements(org_id: int, plan: str) -> None:
     """Configure l'org d'après son plan à l'ACTIVATION — le geste qui remplace
-    le micro-management admin (options + plafond messagerie posés d'un coup).
-    Idempotent. `unipile_accounts=None` (devis) = plafond levé."""
+    le micro-management admin. Idempotent. SEUL chemin par lequel un plan écrit le
+    plafond de comptes de messagerie (`orgs.unipile_account_limit`).
+
+    `unipile_accounts=None` = le plan n'a PAS d'avis sur les sièges : on n'écrit
+    RIEN (arbitrage du 23/09, #805). Écrire `NULL` n'aurait pas « levé » le plafond :
+    la lecture (`unipile_connect.hosted_auth_url`) rend `NULL` comme le défaut
+    plateforme (5) — un plafond posé à la main (20) retombait à 5 au moment où le
+    client payait. Le retrait d'un plan ne touche pas non plus au plafond
+    (`admin_clear_plan`)."""
     meta = PLANS.get(plan)
     if meta is None:
+        return
+    seats = meta.get("unipile_accounts")
+    if seats is None:
         return
     if _hosted_by_partner(org_id):
         logger.info("billing: org %s hébergée par un tenant tiers — son plafond de "
                     "messagerie reste celui que sa facturation a posé", org_id)
         return
-    db.set_org_unipile_limit(org_id, meta.get("unipile_accounts"))
+    db.set_org_unipile_limit(org_id, seats)
 
 
 def _add_period(dt: datetime, interval: str) -> datetime:
@@ -674,7 +686,8 @@ def resume(org_id: int) -> dict:
 
 def admin_set_plan(org_id: int, plan: str, *, granted_by: str) -> dict:
     """Force un plan sur une org SANS paiement (abonnement `comp`) — ADR 0043.
-    Ouvre l'entitlement immédiatement (options + plafond messagerie du plan),
+    Ouvre l'entitlement immédiatement (options du plan ; le plafond messagerie
+    seulement si le plan en porte un, cf. `apply_plan_entitlements`),
     jamais de PSP derrière, jamais d'échéance tirée. Sert les pilotes,
     partenaires et le palier « sur devis ». Écrase l'abonnement existant."""
     if plan not in PLANS:
@@ -696,8 +709,8 @@ def admin_clear_plan(org_id: int) -> dict:
         raise ValueError("paid_subscription: abonnement payant — résilier via "
                          "cancel, pas admin_clear_plan")
     db_billing.delete_subscription(org_id)
-    if not _hosted_by_partner(org_id):     # le plafond d'un partenaire est à lui
-        db.set_org_unipile_limit(org_id, None)   # retire le plafond posé par le plan
+    # Le plafond de sièges n'est PAS touché (#805) : il n'y a pas de « valeur d'avant »
+    # à restaurer, et écrire `NULL` le ramènerait au défaut plateforme.
     logger.info("billing: plan comp retiré de l'org %s", org_id)
     return {"subscribed": False, "org_id": org_id}
 

@@ -211,8 +211,11 @@ de paiement).
 > (admin plateforme, vue `{org_id, limit, default_limit, effective_limit, accounts}`) et
 > `PUT` même chemin, corps `{"limit": int | null}` (super admin ; `null` = retour au
 > défaut, négatif = `400 invalid_body`). ⚠️ Le plafond ne gouverne que les connexions
-> **neuves** — rien n'est déconnecté au-dessus — et la synchronisation d'un plan
-> (`billing.apply_plan_entitlements`, retrait d'un plan offert) **réécrit** la colonne.
+> **neuves** — rien n'est déconnecté au-dessus. Souscrire un plan, ou retirer un plan
+> offert, **ne touche pas** à la colonne (arbitrage du 23/09, oto-backend#805) : un plan
+> sans nombre de sièges (`unipile_accounts=None`, tous les paliers aujourd'hui) n'a pas
+> d'avis, ce n'est **pas** « illimité ». Jusque-là, la souscription écrivait `NULL`, relu
+> comme le défaut (5) : un plafond posé à la main retombait à 5 au paiement.
 
 > **Compte partagé autorisé (otomata-private#55).** Le **propriétaire** d'un compte
 > Unipile accorde à un **user nommé, cross-org** (⚠️ corrigé le 2026-09-02 : ce
@@ -524,4 +527,4 @@ comptabilité de miroir. Le défaut coupe donc le texte à **600 caractères** (
 
 ### Org hébergée par un tenant tiers
 
-Un plan d'oto — forcé (`oto_admin_set_plan`) ou retiré — **n'écrit pas** le plafond de comptes d'une org hébergée par un tenant tiers : ce plafond appartient à la facturation du partenaire, qui le pose via `PUT /api/admin/orgs/{id}/unipile-limit` (`billing._hosted_by_partner`). Une lecture de tenant qui échoue retombe sur le comportement d'avant : le plan écrit.
+Aucun plan d'oto ne porte aujourd'hui de nombre de sièges : ni la souscription ni le retrait n'écrivent le plafond (§ Plafond de sièges hébergés par org). Si un palier en portait un, il **n'écrirait pas** le plafond d'une org hébergée par un tenant tiers : ce plafond appartient à la facturation du partenaire, qui le pose via `PUT /api/admin/orgs/{id}/unipile-limit` (`billing._hosted_by_partner`). Une lecture de tenant qui échoue retombe sur le chemin des clientes directes : le plan écrit.

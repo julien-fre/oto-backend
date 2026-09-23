@@ -88,9 +88,11 @@ class Plan(BaseModel):
                                       "mois → 28/02), jamais +30 jours.")
     unipile_accounts: Optional[int] = Field(
         default=None,
-        description="Plafond de comptes de messagerie ouvert par le palier. "
-                    "`null` = ILLIMITÉ (surtout pas « zéro compte ») — aujourd'hui "
-                    "TOUS les paliers valent null : on ne facture plus au nombre de "
+        description="Plafond de comptes de messagerie posé par le palier. "
+                    "`null` = le palier n'a PAS d'avis : souscrire ne touche pas au "
+                    "plafond de l'org (celui réglé par un admin, sinon le défaut "
+                    "plateforme) — ni illimité, ni « zéro compte ». Aujourd'hui TOUS "
+                    "les paliers valent null : on ne facture plus au nombre de "
                     "comptes, les 4 paliers débloquent la même chose et ne diffèrent "
                     "que par le prix.")
     custom: bool = Field(description="Palier « sur devis ». billing.subscribe le REFUSE "
@@ -675,16 +677,19 @@ _BILLING_CAPS = [
         rest=RestBinding("GET", "/api/me/billing/payments"),
     ),
     # Admin : forcer un plan sur une org SANS paiement (abonnement comp) ou le
-    # retirer (plan=null). Ouvre l'entitlement (options + plafond messagerie du
-    # plan) immédiatement. Sert pilotes/partenaires + palier « sur devis ».
+    # retirer (plan=null). Ouvre l'entitlement (options du plan) immédiatement ; le
+    # plafond messagerie de l'org n'est pas touché tant que le plan n'en porte pas
+    # (#805). Sert pilotes/partenaires + palier « sur devis ».
     Capability(
         key="billing.admin_set_plan", handler=_admin_set_plan, Input=AdminPlanInput,
         authz=SUPER_ADMIN,
         description="[super admin] Force a plan on an org WITHOUT payment (comp "
-                    "subscription): unlocks the plan's options + messaging seat cap "
-                    "immediately, no PSP, never charged. Pass plan=null to remove a "
-                    "comp plan (refuses to touch a PAID subscription). For pilots, "
-                    "partners and the custom 'enterprise' tier.",
+                    "subscription): unlocks the plan's options immediately, no PSP, "
+                    "never charged. Does NOT change the org's messaging seat cap "
+                    "(no plan sets one today): a cap set by an admin stays, otherwise "
+                    "the platform default applies. Pass plan=null to remove a comp "
+                    "plan (refuses to touch a PAID subscription; the seat cap stays "
+                    "as is). For pilots, partners and the custom 'enterprise' tier.",
         mcp="oto_admin_set_plan",
         rest=RestBinding("POST", "/api/admin/orgs/{org_id}/plan", {"org_id": "org_id"}),
     ),

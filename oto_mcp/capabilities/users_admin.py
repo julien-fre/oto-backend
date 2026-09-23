@@ -264,11 +264,11 @@ def _set_unipile_limit(ctx: ResolvedCtx, inp: OrgUnipileLimitSetInput) -> dict:
     """Pose (ou efface, `limit=null`) le plafond propre de l'org.
 
     ⚠️ Ne gouverne que les connexions NEUVES : les comptes déjà connectés au-delà du
-    nouveau plafond restent en place, rien n'est déconnecté. ⚠️ Pour une cliente
-    DIRECTE sur un plan oto, la synchronisation du plan (`billing.apply_plan_entitlements`,
-    et le retrait d'un plan offert) RÉÉCRIT cette colonne. Pas pour une org hébergée
-    par un tenant tiers : son plafond appartient à la facturation du partenaire, qui le
-    pose ici, et le plan d'oto ne l'écrase pas (`billing._hosted_by_partner`)."""
+    nouveau plafond restent en place, rien n'est déconnecté. Une valeur posée ici
+    SURVIT à la souscription et au retrait d'un plan oto : un plan sans nombre de
+    sièges (tous aujourd'hui) n'écrit rien (`billing.apply_plan_entitlements`, #805),
+    et un plan qui en porterait un n'écraserait pas l'org d'un tenant tiers
+    (`billing._hosted_by_partner`)."""
     if inp.limit is not None and inp.limit < 0:
         raise AuthzDenied(400, "invalid_body",
                           f"limit doit être un entier ≥ 0 ou null (reçu {inp.limit}).")
@@ -492,10 +492,9 @@ CAPABILITIES += [
                     "`{\"limit\": int | null}` (required): an integer >= 0 (0 = no cap), or "
                     "null to drop the org's own cap and fall back to the platform default. "
                     "Returns the same view as the read. ⚠️ Only gates NEW connections: "
-                    "accounts already connected beyond the new cap stay connected. ⚠️ For a "
-                    "direct customer on an oto plan, the plan sync overwrites this value on "
-                    "the next plan activation; for an org hosted by a partner tenant it does "
-                    "not — that cap belongs to the partner's billing.",
+                    "accounts already connected beyond the new cap stay connected. The value "
+                    "survives subscribing to or removing an oto plan: no plan sets a seat "
+                    "count today, so the plan leaves this cap untouched.",
         mcp=None,
         rest=RestBinding("PUT", "/api/admin/orgs/{id}/unipile-limit", _ID),
     ),
