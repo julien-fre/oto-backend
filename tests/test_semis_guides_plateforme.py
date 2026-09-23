@@ -227,6 +227,25 @@ def test_live_une_ligne_sans_empreinte_n_est_pas_devinee(live):
     assert G.seed_platform_guides()["inchanges"] == [slug]
 
 
+def test_live_l_empreinte_posee_est_relue_par_list_et_get(live):
+    """`scripts/aligner_guides_plateforme.py` relit `db.list_guides_db(...)` juste
+    après un `--aligner` pour vérifier que l'estampillage a pris — s'il ne voit pas
+    l'empreinte qu'il vient de poser, il rapporte « empreinte ABSENTE » sur un guide
+    qu'il vient d'aligner, et un opérateur le rejoue sans fin (oto#236)."""
+    from oto_mcp import db
+    slug = "estampille-" + uuid.uuid4().hex[:6]
+    _ecrire(live, slug, "du dépôt")
+    G.seed_platform_guides()
+
+    empreinte = db.empreinte_de_couche("T", "D", "du dépôt")
+    assert db.aligner_guide_db("platform", G.PLATFORM_OWNER, slug, "du dépôt",
+                               "T", "D", seed_sha256=empreinte)
+
+    en_liste = {g["slug"]: g for g in db.list_guides_db("platform", G.PLATFORM_OWNER)}
+    assert en_liste[slug].get("seed_sha256") == empreinte
+    assert _servi(slug).get("seed_sha256") == empreinte
+
+
 def test_live_le_semis_tient_dans_la_fenetre_du_healthcheck(live):
     """120 s est la fenêtre du healthcheck : un semis qui la dépasse empêcherait
     toute bascule de version. On mesure une population comparable à la production."""

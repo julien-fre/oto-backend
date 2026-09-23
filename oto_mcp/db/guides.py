@@ -63,11 +63,20 @@ _PID = ("'nod_' || substr(md5('ctx:' || %s::text || ':' || %s::text "
 # Projection nœud → forme historique d'une ligne `guides`. `scope` EST l'owner_type
 # (même vocabulaire), les champs de prose vivent dans `props`. COALESCE parce que
 # `guides` les portait NOT NULL DEFAULT '' : une clé absente ne doit pas rendre None.
+#
+# `seed_sha256` est ici depuis le 23/09/2026 (oto#236) : tous les appelants
+# reprojettent déjà ce dict en clés explicites (`guide_store`, les routes REST,
+# `scripts/aligner_guides_plateforme.py`) — l'ajouter ne fuite nulle part, et son
+# absence faisait lire `None` au script de maintenance : chaque guide plateforme
+# réaligné se voyait donc rapporté « empreinte ABSENTE » à la relecture qui suit
+# `--aligner`, alors qu'elle vient d'être posée — un opérateur croit l'alignement
+# raté et le rejoue sans fin.
 _COLS = ("id, owner_type AS scope, owner_id, props->>'slug' AS slug, "
          "COALESCE(props->>'title', '') AS title, "
          "COALESCE(props->>'description', '') AS description, "
          "COALESCE(props->>'body_md', '') AS body_md, "
-         "props->>'delivery' AS delivery, created_at, updated_at")
+         "props->>'delivery' AS delivery, props->>'seed_sha256' AS seed_sha256, "
+         "created_at, updated_at")
 
 # --- On-demand (catalogue `oto_guide`) : delivery='on-demand' UNIQUEMENT ------
 
