@@ -155,6 +155,12 @@ PLANCHERS = {
     # servi : c'est un acte de plateforme, jamais délégable à un opérateur.
     "oto_admin_connector_setting": "super",
     "oto_admin_guide": None,            # ORG_MEMBER_OF / ORG_ADMIN_OF
+    # oto#236 — ce que le démarrage a fait des fichiers `oto_mcp/guides/*.md`.
+    # `operator` (PLATFORM_ADMIN) : c'est une santé d'INSTANCE, pas d'org — elle
+    # nomme les guides de la plateforme, servis à tout le monde, et la conduite
+    # qu'elle appelle (réconcilier, jouer le geste d'alignement) est celle de qui
+    # exploite le serveur.
+    "oto_admin_guides_semis": "operator",
     "oto_admin_invite": "operator",
     "oto_admin_key_grant": "operator",     # list PLATFORM, grant/revoke SUPER
     "oto_admin_monitoring": "operator",

@@ -146,7 +146,9 @@ def seed_platform_guides() -> dict:
             verdict = db.seed_guide_db("platform", PLATFORM_OWNER, g["slug"],
                                        g["body_md"], g["title"], g["description"],
                                        seed_sha256=g["seed_sha256"])
-        except Exception as e:  # noqa: BLE001 — le rapport EST le traitement
+        except Exception as e:  # noqa: BLE001 — un guide en échec n'emporte pas les autres
+            logger.warning("semis du guide plateforme `%s` en échec : %s",
+                           g["slug"], e, exc_info=True)
             rapport["echecs"][g["slug"]] = f"{type(e).__name__}: {e}"
             continue
         rapport[_CASE_DU_VERDICT[verdict]].append(g["slug"])
