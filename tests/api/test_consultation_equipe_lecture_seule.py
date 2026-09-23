@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from oto_mcp import group_store, org_store
+from oto_mcp import db, group_store, org_store
 from oto_mcp.access import scope as access_scope
 from oto_mcp.api import routes as api_routes
 
@@ -85,3 +85,26 @@ def test_la_lecture_seule_d_equipe_laisse_passer_les_lectures(client):
 ])
 def test_consulter_une_org_reste_inchange(client, plateforme, role_org, attendu):
     assert _efface_le_logo(client(plateforme, role_org, None), PAR_ORG) == attendu
+
+
+# ── `fleets op=state` est une lecture (oto#221) ──────────────────────────────
+# Les compteurs d'une campagne se lisent par `POST /api/me/runner/fleets {op:"state"}` :
+# refusés en consultation, l'écran d'une campagne était illisible pour l'opérateur.
+PAR_VUE_UTILISATEUR = {"X-Oto-View-As": "u-cible"}
+
+
+@pytest.mark.parametrize("entetes", [PAR_ORG, PAR_VUE_UTILISATEUR],
+                         ids=["consultation-org", "voir-en-tant-que"])
+@pytest.mark.parametrize("op, attendu", [
+    ("state", (200, None)),
+    ("get", (200, None)),
+    ("launch", (403, "view_as_read_only")),
+    ("update", (403, "view_as_read_only")),
+])
+def test_les_compteurs_d_une_campagne_se_lisent_en_consultation(
+        client, monkeypatch, entetes, op, attendu):
+    monkeypatch.setattr(db, "get_user", lambda sub: {"sub": sub})
+    c = client("super_admin", None, None)
+    r = c.request("POST", "/api/me/runner/fleets", json={"op": op, "fleet_id": 3},
+                  headers={"Authorization": "Bearer x", **entetes})
+    assert (r.status_code, r.json().get("error")) == attendu

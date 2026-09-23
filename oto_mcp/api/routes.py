@@ -127,11 +127,16 @@ def _parse_view_user(request: Request) -> str | None:
 # (`{op:'list'}`, `{op:'get'}`, …) — une garde par méthode HTTP bloquerait donc les
 # lectures. En consultation LECTURE SEULE (view-as user / inspection org opérateur),
 # seules ces ops passent sur une requête non-GET ; toute autre op — ou un POST/PUT/
-# DELETE sans op (= action/upload) — est une écriture, rejetée. Deny-by-default :
-# élargir cette liste si une vraie lecture op-aware manque.
+# DELETE sans op (= action/upload) — est une écriture, rejetée. Deny-by-default.
+# ⚠️ La liste est par NOM d'op, commune à toutes les routes : chaque op de chaque
+# capacité op-aware est classée lecture OU écriture dans
+# `tests/test_readonly_op_guard.py`, qui rougit sur une op neuve non classée, sur un
+# nom qui serait lecture ici et écriture là, et sur une entrée que plus rien ne sert
+# (oto#221 : `fleets op=state`, une lecture, était refusée en consultation).
 _READ_OPS = frozenset({
-    "list", "get", "search", "revisions", "inventory",
-    "list_templates", "preview", "describe", "status",
+    "list", "get", "search", "revisions", "inventory", "list_templates", "preview",
+    "state", "activity", "runs", "lint", "handoff", "backlinks", "shared_with_me",
+    "deliveries", "versions", "read", "audience", "journal", "optouts",
 })
 
 
