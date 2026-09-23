@@ -18,6 +18,9 @@ import pytest
 
 from oto.tools.slack.client import SlackError
 
+from oto_mcp import error_taxonomy
+from oto_mcp.mcp_errors import McpError
+
 from oto_mcp.tools import slack as slack_tools
 
 
@@ -36,7 +39,7 @@ def test_un_auteur_non_ambigu_est_servi(bot, user, author, attendu):
 
 
 def test_deux_identites_sans_auteur_est_un_refus_qui_dit_quoi_passer():
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(McpError) as e:
         slack_tools._auteur(True, True, None)
     assert 'author="me"' in str(e.value) and 'author="app"' in str(e.value)
 
@@ -48,9 +51,23 @@ def test_deux_identites_sans_auteur_est_un_refus_qui_dit_quoi_passer():
 def test_un_auteur_sans_son_jeton_est_refuse_jamais_remplace(bot, user, author, manque):
     """Le repli sur l'autre identité ferait parler quelqu'un d'autre que celui
     qu'on a nommé : c'est exactement ce que la décision interdit."""
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(McpError) as e:
         slack_tools._auteur(bot, user, author)
     assert manque in str(e.value)
+
+
+@pytest.mark.parametrize("bot,user,author", [
+    (True, True, None), (True, False, "me"), (False, True, "app")])
+def test_le_refus_ARRIVE_a_l_agent_tel_qu_ecrit(bot, user, author):
+    """Le contrat n'est pas « lever », c'est « que l'agent LISE le refus ». Le
+    premier envoi en prod rendait « Erreur interne du serveur » : une `ValueError`
+    nue passe par la taxonomie comme un bug, texte supprimé. On juge donc sur ce
+    que la taxonomie rend, pas sur l'exception."""
+    with pytest.raises(Exception) as e:
+        slack_tools._auteur(bot, user, author)
+    info = error_taxonomy.classify(e.value)
+    assert info.code == "invalid_input"
+    assert "author=" in info.message
 
 
 # --- sur l'outil monté --------------------------------------------------------

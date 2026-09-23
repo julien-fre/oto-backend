@@ -18,8 +18,10 @@ from contextlib import contextmanager
 from typing import Literal, Optional, Union
 
 from fastmcp import FastMCP
+from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, file_content
+from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
 
 
@@ -123,6 +125,15 @@ _GESTE_INVITATION = (
 Auteur = Literal["me", "app"]
 
 
+def _refus_auteur(message: str) -> McpError:
+    """Refus CURÉ : `McpError` INVALID_PARAMS, jamais une `ValueError` nue. La
+    taxonomie d'erreurs ne rend à l'agent le texte d'une exception que si elle est
+    curée ; une `ValueError` sans cause amont devient « Erreur interne du serveur »,
+    message perdu et compté comme un bug. Vécu au premier envoi en prod (v1.334.0) :
+    le refus était juste, l'agent n'en a lu que l'opacité."""
+    return McpError(ErrorData(code=INVALID_PARAMS, message=message))
+
+
 def _auteur(bot: bool, user: bool, author: Optional[str]) -> bool:
     """`as_user` à employer pour une écriture, ou un refus qui dit quoi passer.
 
@@ -131,19 +142,19 @@ def _auteur(bot: bool, user: bool, author: Optional[str]) -> bool:
     sur l'autre identité."""
     if author is None:
         if bot and user:
-            raise ValueError(
+            raise _refus_auteur(
                 "Ce workspace porte deux identités Slack : précise qui écrit — "
                 "`author=\"me\"` (en ton nom, jeton utilisateur) ou `author=\"app\"` "
                 "(sous le nom de l'app, jeton de bot). Aucun défaut n'est pris : un "
                 "message parti sous le mauvais nom ne se reprend pas.")
         return bool(user)
     if author == "me" and not user:
-        raise ValueError(
+        raise _refus_auteur(
             "`author=\"me\"` impossible : ce workspace n'a pas de jeton utilisateur "
             "(`xoxp-`). Seule l'app peut y écrire (`author=\"app\"`), ou pose un jeton "
             "utilisateur sur la fiche du connecteur.")
     if author == "app" and not bot:
-        raise ValueError(
+        raise _refus_auteur(
             "`author=\"app\"` impossible : ce workspace n'a pas de jeton de bot "
             "(`xoxb-`). Seule ta personne peut y écrire (`author=\"me\"`), ou pose le "
             "jeton de bot de l'app sur la fiche du connecteur.")
