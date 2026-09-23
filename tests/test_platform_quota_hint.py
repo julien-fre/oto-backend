@@ -113,3 +113,41 @@ def test_exceeded_message_keeps_the_pinned_contract_and_adds_what_was_missing(
     assert "0 restant" in msg
     assert "minuit" in msg
     assert "propre clé" in msg
+
+
+# ── Un lot est vérifié pour SA taille (oto#168) ──────────────────────────────
+
+def _resolve_with(monkeypatch, used, units=None):
+    monkeypatch.setattr(session_org, "current_call_instance", lambda: None)
+    monkeypatch.setattr(access.scope, "project_pinned_instance", lambda p, *a: None)
+    monkeypatch.setattr(db, "get_usage_today", lambda sub, p: used)
+    kw = {} if units is None else {"units": units}
+    return access.resolve.resolve_credential("apollo", "auto", "u", **kw)
+
+
+def test_a_lot_larger_than_what_remains_is_refused_before_the_call(
+        _platform_only, monkeypatch):
+    """1 unité restante (19/20) et un lot de 10 : avant, `used >= limit` laissait
+    passer puis le débit poussait la clé commune à 29/20."""
+    with pytest.raises(McpError) as e:
+        _resolve_with(monkeypatch, used=19, units=10)
+    msg = str(e.value)
+    assert "il reste 1 unité(s)" in msg
+    assert "ce lot en demande 10" in msg
+    assert "(19/20)" in msg
+    assert "réduis le lot" in msg
+    assert "propre clé" in msg
+
+
+def test_a_lot_that_exactly_fits_is_accepted(_platform_only, monkeypatch):
+    assert _resolve_with(monkeypatch, used=10, units=10).is_platform is True
+
+
+def test_a_single_call_is_unchanged_by_the_lot_check(_platform_only, monkeypatch):
+    """Défaut `units=1` : 19/20 passe encore, 20/20 est refusé par le message
+    historique (« dépassé », « 0 restant »), pas par celui du lot."""
+    assert _resolve_with(monkeypatch, used=19).is_platform is True
+    with pytest.raises(McpError) as e:
+        _resolve_with(monkeypatch, used=20)
+    assert "dépassé aujourd'hui (20/20)" in str(e.value)
+    assert "ce lot" not in str(e.value)

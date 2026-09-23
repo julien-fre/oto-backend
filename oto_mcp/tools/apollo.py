@@ -76,8 +76,10 @@ def _bad(msg: str) -> McpError:
 def register(mcp: FastMCP) -> None:
     from oto.tools.apollo.client import ApolloClient, ApolloError
 
-    def _client() -> tuple[ApolloClient, bool]:
-        key, is_platform = access.resolve_api_key("apollo")
+    def _client(units: int = 1) -> tuple[ApolloClient, bool]:
+        # `units` : taille du lot, pour que le quota de la clé commune soit vérifié
+        # pour tout le lot avant l'appel (oto#168).
+        key, is_platform = access.resolve_api_key("apollo", units=units)
         return ApolloClient(api_key=key), is_platform
 
     _BYO_ESPACE_PRIVE = (
@@ -742,7 +744,7 @@ def register(mcp: FastMCP) -> None:
             client = _client_byo(_BYO_REVEAL_LOT)
             is_platform = False
         else:
-            client, is_platform = _client()
+            client, is_platform = _client(units=len(people))
         destination = _webhook_destination(webhook_url) if webhook_url else None
         try:
             out = client.bulk_match_people(
@@ -753,12 +755,19 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
-        # Le crédit se paie à la PERSONNE : le compteur plateforme doit débiter
-        # autant d'unités qu'il y a d'entrées, jamais 1 pour l'appel — même règle
-        # que `fullenrich` et `lemlist_enrich_bulk`, et sans elle un lot de 10
-        # coûterait au pot commun le dixième de ce qu'il consomme vraiment.
+        # Le compteur plateforme débite ce qu'APOLLO a facturé : sa réponse porte
+        # `credits_consumed` (0 si rien de facturable n'a été trouvé, pas de crédit
+        # pour une personne sans correspondance). Jamais 1 pour l'appel, jamais
+        # `len(people)` quand l'amont dit son chiffre (oto#168). Repli sur
+        # `len(people)` seulement si la réponse ne le porte pas : l'amont est alors
+        # muet et le plus sûr est de compter ce qu'on a soumis. 0 ne débite rien
+        # (`record_platform_usage` plancherait à 1).
         if is_platform:
-            access.record_platform_usage("apollo", len(people))
+            credits = out.get("credits_consumed")
+            if not isinstance(credits, int) or isinstance(credits, bool):
+                credits = len(people)
+            if credits > 0:
+                access.record_platform_usage("apollo", credits)
             quota = access.platform_quota_hint("apollo")
             if quota is not None:
                 out = {**out, "platform_quota": quota}

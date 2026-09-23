@@ -247,8 +247,8 @@ def register(mcp: FastMCP) -> None:
 
     connector_verify.register("lemlist", _verify)
 
-    def _client() -> tuple[LemlistClient, bool]:
-        key, is_platform = access.resolve_api_key("lemlist")
+    def _client(units: int = 1) -> tuple[LemlistClient, bool]:
+        key, is_platform = access.resolve_api_key("lemlist", units=units)
         return LemlistClient(api_key=key), is_platform
 
     def _record_if_platform(is_platform: bool) -> None:
@@ -691,7 +691,7 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS, message="`people` is empty — nothing to enrich.",
             ))
-        client, is_platform = _client()
+        client, is_platform = _client(units=len(people))
 
         items = []
         for i, person in enumerate(people):
@@ -734,6 +734,9 @@ def register(mcp: FastMCP) -> None:
         if is_platform:
             # Un bulk est facturé À LA PERSONNE : la consommation est le nombre
             # d'entrées soumises, pas 1 pour l'appel (même règle que FullEnrich).
+            # `len(items)` et non un coût réel : la réponse de lemlist ne chiffre
+            # aucun coût par appel (seul `team/credits` donne un solde global), donc
+            # à ce moment-là l'amont ne dit rien — on ne devine pas.
             access.record_platform_usage("lemlist", len(items))
         submitted = []
         for i, entry in enumerate(raw if isinstance(raw, list) else []):

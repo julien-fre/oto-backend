@@ -52,11 +52,14 @@ def option_open(sub: str, connector: str, *, org: "int | None | object" = scope.
     return quotas.has_option(sub, opt, org=org)
 
 
-def resolve_api_key(provider: str, account: Optional[str] = None) -> tuple[str, bool]:
+def resolve_api_key(provider: str, account: Optional[str] = None,
+                    units: int = 1) -> tuple[str, bool]:
     """Renvoie `(api_key, is_platform)` ou lève McpError actionnable. Vue mince
     sur `resolve_credential` (contrat inchangé pour les ~15 tools keyed ; `account`
-    optionnel sélectionne le compte en multi-compte)."""
-    rc = resolve.resolve_credential(provider, want="auto", account=account)
+    optionnel sélectionne le compte en multi-compte). `units` : taille d'un lot que
+    l'appel va débiter, pour que le quota de la clé commune soit vérifié pour tout
+    le lot (défaut 1 = appel unitaire)."""
+    rc = resolve.resolve_credential(provider, want="auto", account=account, units=units)
     return rc.key, rc.is_platform
 
 

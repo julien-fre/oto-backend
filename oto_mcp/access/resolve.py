@@ -42,7 +42,8 @@ def resolve_credential(provider: str, want: str = "auto",
                        sub: Optional[str] = None, *,
                        account: Optional[str] = None,
                        emit_on_failure: bool = True,
-                       check_usage: bool = True) -> ResolvedCredential:
+                       check_usage: bool = True,
+                       units: int = 1) -> ResolvedCredential:
     """Vue publique de la résolution. Sur **échec** (McpError actionnable — credential
     absent / quota dépassé / accès RBAC refusé), émet un événement de monitoring
     `kind='connector'` dans le flux unifié (ADR 0017) AVANT de relever : c'est LE
@@ -51,7 +52,9 @@ def resolve_credential(provider: str, want: str = "auto",
     pour les **sondes** qui avalent la McpError, afin de ne pas fausser le signal.
     `check_usage=False` pour CONFIGURER une connexion : mêmes gardes d'accès et
     choix de compte, mais aucun quota d'usage ni débit tenant. Une exécution d'outil
-    garde toujours le défaut `True`. Cascade : voir `_resolve_credential_impl`."""
+    garde toujours le défaut `True`. `units` = consommation que l'appel va débiter
+    (taille d'un lot) : le quota de la clé commune est vérifié pour CE montant, pas
+    pour 1 (`used + units > limit` refuse). Cascade : voir `_resolve_credential_impl`."""
     if sub is None:
         # Endpoint MCP ANONYME (ADR 0032) : pas de sub → résolution contre l'org
         # propriétaire du projet (org secret > grant org > clé plateforme ouverte),
@@ -64,7 +67,7 @@ def resolve_credential(provider: str, want: str = "auto",
     sub = sub or scope.current_user_sub_or_raise()
     try:
         resolved = _resolve_credential_impl(provider, want, sub, account=account,
-                                            check_usage=check_usage)
+                                            check_usage=check_usage, units=units)
     except McpError:
         if emit_on_failure:
             _emit_connector_failure(provider, sub)
@@ -128,7 +131,8 @@ def _emit_connector_failure(provider: str, sub: str) -> None:
 
 def _resolve_credential_impl(provider: str, want: str, sub: str,
                              account: Optional[str] = None, *,
-                             check_usage: bool = True) -> ResolvedCredential:
+                             check_usage: bool = True,
+                             units: int = 1) -> ResolvedCredential:
     """Résolveur substrat unique (ADR 0024) : marche la cascade EXACTE
     user > groupe actif > org active > tenant [> grant plateforme] **une fois** et renvoie
     le credential gagnant (clé + origine + config). `want="byo"` court-circuite le
@@ -369,6 +373,21 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                 f"repart à minuit. Pose ta propre "
                 f"clé{links.ou_poser_la_cle(sub, org=active_org)} pour "
                 "lever la limite immédiatement."
+            ),
+        ))
+
+    if limit and used + units > limit:
+        # Un lot débite `units` d'un coup APRÈS l'appel : vérifié à `used >= limit`
+        # seul, il passerait avec une unité restante et dépasserait le quota de la
+        # clé commune de `units - 1` (oto#168).
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(
+                f"Quota plateforme {provider} : il reste {limit - used} unité(s) "
+                f"aujourd'hui ({used}/{limit}) sur la clé `{win.payload['label']}`, "
+                f"ce lot en demande {units} — réduis le lot, ou pose ta propre "
+                f"clé{links.ou_poser_la_cle(sub, org=active_org)} pour "
+                "lever la limite."
             ),
         ))
 

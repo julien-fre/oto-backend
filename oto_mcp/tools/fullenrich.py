@@ -71,8 +71,8 @@ def register(mcp: FastMCP) -> None:
 
     connector_verify.register("fullenrich", _verify, couvre=connector_verify.AUTH_QUOTA)
 
-    def _client() -> tuple[FullenrichClient, bool]:
-        key, is_platform = access.resolve_api_key("fullenrich")
+    def _client(units: int = 1) -> tuple[FullenrichClient, bool]:
+        key, is_platform = access.resolve_api_key("fullenrich", units=units)
         return FullenrichClient(api_key=key), is_platform
 
     @mcp.tool()
@@ -99,7 +99,7 @@ def register(mcp: FastMCP) -> None:
                 Only ask what you need — pricing is pay-per-result:
                 10 credits/phone, 1/work_email, 3/personal_email.
         """
-        client, is_platform = _client()
+        client, is_platform = _client(units=len(contacts))
         try:
             enrichment_id = client.submit(contacts, enrich_fields=enrich_fields)
         except ValueError as e:
@@ -108,6 +108,9 @@ def register(mcp: FastMCP) -> None:
             # Un job = un contact facturé par contact : la consommation est le
             # NOMBRE de contacts, comptée en un seul geste (l'ancienne boucle faisait
             # une requête par contact — jusqu'à 100 par job).
+            # `len(contacts)` et non le coût réel : FullEnrich facture à la donnée
+            # trouvée et ne dit rien à la soumission (le coût n'existe qu'au résultat
+            # du job, `fullenrich_result`, sur un autre appel) — on ne devine pas.
             access.record_platform_usage("fullenrich", len(contacts))
         # Métrage par unité (facturation du partenaire, 21/08) — INCONDITIONNEL (platform key
         # OU BYO), contrairement à `record_platform_usage` ci-dessus (qui ne compte

@@ -278,3 +278,33 @@ def test_a_lot_drops_the_two_heavy_blocks_on_EVERY_match_and_NAMES_them(monkeypa
     assert out["projection"]["how_to_get_everything"] == "full=True"
     brut = _tool(m, "apollo_bulk_match")(people=[{"id": "p0"}], full=True)
     assert "employment_history" in brut["matches"][0] and "account" in brut["matches"][0]
+
+
+# --------------------------------------------------------------------------- #
+# Quota : taille du lot déclarée à la résolution, débit = ce qu'Apollo facture (oto#168)
+# --------------------------------------------------------------------------- #
+
+def test_the_lot_size_is_declared_when_the_key_is_resolved(monkeypatch):
+    from oto_mcp import access
+
+    m, _, _ = _mount(monkeypatch, byo=False)
+    vus: list[dict] = []
+    monkeypatch.setattr(access, "resolve_api_key",
+                        lambda p, *a, **k: (vus.append(k), ("k", True))[1])
+    _tool(m, "apollo_bulk_match")(people=[{"id": f"p{i}"} for i in range(7)])
+    assert vus == [{"units": 7}]
+
+
+def test_the_debit_is_what_apollo_billed_not_what_was_submitted(monkeypatch):
+    """10 soumises, 3 facturées : les 7 sans correspondance ne coûtent rien à Apollo."""
+    m, _, usage = _mount(monkeypatch, byo=False, bulk_return={
+        "matches": [], "credits_consumed": 3})
+    _tool(m, "apollo_bulk_match")(people=[{"id": f"p{i}"} for i in range(10)])
+    assert usage == [("apollo", 3)]
+
+
+def test_a_lot_apollo_billed_nothing_for_debits_nothing(monkeypatch):
+    m, _, usage = _mount(monkeypatch, byo=False, bulk_return={
+        "matches": [], "credits_consumed": 0})
+    _tool(m, "apollo_bulk_match")(people=[{"id": "p1"}, {"id": "p2"}])
+    assert usage == []
