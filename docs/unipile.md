@@ -528,3 +528,37 @@ comptabilité de miroir. Le défaut coupe donc le texte à **600 caractères** (
 ### Org hébergée par un tenant tiers
 
 Aucun plan d'oto ne porte aujourd'hui de nombre de sièges : ni la souscription ni le retrait n'écrivent le plafond (§ Plafond de sièges hébergés par org). Si un palier en portait un, il **n'écrirait pas** le plafond d'une org hébergée par un tenant tiers : ce plafond appartient à la facturation du partenaire, qui le pose via `PUT /api/admin/orgs/{id}/unipile-limit` (`billing._hosted_by_partner`). Une lecture de tenant qui échoue retombe sur le chemin des clientes directes : le plan écrit.
+
+## Fin du droit `unipile` : cesser de payer les comptes (#806)
+
+Décision du 23/09/2026. Dès que l'org perd le droit `unipile` (fin d'essai, résiliation,
+don échu), ses canaux cessent de marcher (relecture du droit à l'usage). Le propriétaire de
+chaque compte est prévenu, et **sept jours plus tard** (réglable), si le droit n'est pas
+revenu, ses comptes branchés sur la **clé plateforme** sont supprimés chez unipile. Un
+compte sur la propre clé du client (`platform_seat = false`) n'est jamais regardé.
+
+- **Le travail** : `oto-mcp maintenance unipile-fin-de-droit` (`oto_mcp/unipile_fin_de_droit.py`),
+  dans le timer quotidien, prod seulement. Il relit l'état à chaque passage, sans
+  dépendre d'aucun événement. Il efface les marques des orgs qui ont le droit, marque
+  `unipile_accounts.entitlement_lost_at` au premier constat de la perte, envoie **un**
+  préavis par (propriétaire, org) et pose `entitlement_notice_at` après l'envoi. Puis il
+  supprime, par le geste de `release` (`capabilities/unipile_seats.liberer` : délier,
+  puis supprimer), les comptes que l'instance liste encore, dont aucune org qui les tient
+  en service n'a le droit, préavis fait et délai échu. Chaque suppression est
+  journalisée. Rejouer ne double ni un préavis ni une suppression.
+- **Le droit** est celui de `access.org_has(org, "unipile")`, donc `org_entitlements`.
+  Un compte adopté dans deux orgs reste dû tant qu'une des deux a le droit.
+- ⚠️ **Fermé par défaut** : sans `OTO_UNIPILE_FIN_DE_DROIT=1` dans le `.env` de prod, le
+  passage compte ce qu'il ferait et n'écrit rien. On ne l'ouvre qu'une fois la reprise des
+  abonnements faite dans `org_entitlements` : avant, `org_has` rend faux pour les abonnés.
+  Ouvert, il refuse encore de tourner si aucun droit `unipile` vivant n'existe alors que
+  des sièges sont en service.
+- ⚠️ **Préavis obligatoire** : un compte dont le propriétaire n'a pas d'adresse n'est pas
+  supprimé (`sans_adresse`). Les orgs d'un **tenant tiers** sont écartées et comptées
+  (`tenant_tiers_ecartes`).
+- **Délai** : `OTO_UNIPILE_FIN_DE_DROIT_DELAI_JOURS` (défaut 7, entier ≥ 1). Il part du
+  premier constat de la perte : rebrancher un compte ou retrouver le droit efface la marque.
+- **La console** `oto_admin_unipile_seat` : `list` sert, par siège, `entitled`,
+  `entitlement_lost_at` et `deletion_scheduled_at` ; `release` libère sans `force` un
+  siège en service dont aucune org n'a plus le droit, et refuse toujours (409
+  `seat_in_use`) celui dont l'org a le droit.

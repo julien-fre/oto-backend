@@ -48,6 +48,9 @@ def _setup(monkeypatch, *, accounts, rows, has_key=True):
                                                   if r["disconnected_at"] is None]
 
     monkeypatch.setattr(us.db, "unipile_account_owners", owners)
+    # Sans base : l'org a le droit `unipile` (#806). Le cas « droit perdu » se joue sur
+    # vraie base, dans `test_unipile_fin_de_droit.py`.
+    monkeypatch.setattr(us.access, "org_has", lambda org_id, key: True)
     deleted: list[str] = []
     monkeypatch.setattr(us, "_platform_client",
                         lambda: (FakeClient(accounts, deleted) if has_key else None))
@@ -86,7 +89,8 @@ def test_inventaire_classe_les_trois_etats(monkeypatch):
 
 
 def test_liberer_refuse_un_siege_en_service(monkeypatch):
-    """Le garde-fou MORD : un siège avec binding vivant n'est pas supprimé."""
+    """Le garde-fou MORD : un siège avec binding vivant, dont l'org a le droit, n'est
+    pas supprimé."""
     deleted, _ = _setup(monkeypatch, accounts=[{"id": "acc_live"}], rows=[_row("acc_live")])
     with pytest.raises(AuthzDenied) as e:
         asyncio.run(us._release_seat(CTX, us.SeatReleaseInput(account_id="acc_live")))

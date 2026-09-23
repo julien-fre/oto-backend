@@ -1104,6 +1104,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Horodatage du dernier sync du feed (miroir home, datastore linkedin-feed) :
     # gouverne la fraîcheur du cache (TTL) côté unipile_feed. NULL = jamais sync.
     conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS feed_synced_at TIMESTAMPTZ")
+    # Fin du droit `unipile` (#806, révision 0006) : le premier constat de la perte
+    # (point de départ du délai avant suppression chez unipile) et le préavis envoyé.
+    # Nullables sans défaut : catalogue seul. Écrites par `unipile_fin_de_droit.py`.
+    conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS entitlement_lost_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS entitlement_notice_at TIMESTAMPTZ")
     conn.execute("ALTER TABLE unipile_pending ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'LINKEDIN'")
     # ADR 0044 (B0) : l'entrée du coffre devient une INSTANCE de connecteur (config
     # possédée). Colonnes DORMANTES — non lues par la résolution avant B2/B3 (canari

@@ -38,7 +38,10 @@ def set_unipile_account(sub: str, account_id: str, account_name: Optional[str] =
             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (sub, org_id, provider) DO UPDATE SET "
             "account_id = EXCLUDED.account_id, account_name = EXCLUDED.account_name, "
             "platform_seat = EXCLUDED.platform_seat, connected_at = NOW(), "
-            "disconnected_at = NULL",  # re-binder = réactiver une ligne soft-déconnectée
+            "disconnected_at = NULL, "  # re-binder = réactiver une ligne soft-déconnectée
+            # …et effacer la fin de droit qu'elle portait (`db/unipile_fin_de_droit`) :
+            # un compte rebranché n'hérite ni du délai ni du préavis d'avant.
+            "entitlement_lost_at = NULL, entitlement_notice_at = NULL",
             (sub, provider, account_id, account_name, org_id, platform_seat),
         )
 
@@ -260,7 +263,7 @@ def unipile_account_owners(include_disconnected: bool = False) -> list[dict]:
         rows = conn.execute(
             "SELECT ua.account_id, ua.provider, ua.account_name, ua.sub, u.email, "
             "ua.org_id, o.name AS org_name, ua.connected_at, ua.disconnected_at, "
-            "ua.platform_seat "
+            "ua.platform_seat, ua.entitlement_lost_at "
             "FROM unipile_accounts ua "
             "LEFT JOIN users u ON u.sub = ua.sub "
             "LEFT JOIN orgs o ON o.id = ua.org_id" + where

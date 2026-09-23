@@ -385,9 +385,13 @@ CAPABILITIES += [
         description=("Seats on the shared unipile platform key — what the platform PAYS "
                      "for (super admin). op=list (each seat + `state`: bound in service | "
                      "disconnected, owner unhooked it on oto but it still bills | orphan, "
-                     "nobody claims it; `reclaimable_count` = what you can stop paying) / "
-                     "release (`account_id` — deletes it on unipile. IRREVERSIBLE; refuses "
-                     "a seat still in service, that disconnection belongs to its owner)."),
+                     "nobody claims it; `entitled` = its org still has the `unipile` "
+                     "right, else `entitlement_lost_at` and `deletion_scheduled_at` say "
+                     "when the account gets deleted on unipile; `reclaimable_count` = "
+                     "what you can stop paying) / release (`account_id` — deletes it on "
+                     "unipile. IRREVERSIBLE; refuses a seat in service whose org still "
+                     "has the right, that disconnection belongs to its owner; frees one "
+                     "whose org lost it)."),
         mcp="oto_admin_unipile_seat",
     ),
     Capability(

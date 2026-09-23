@@ -388,6 +388,16 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_ALERTE_CREDENTIAL", Classe.REGLAGE, "",
              "Cible d'alerte quand un credential attendu manque en maintenance.",
              ("oto_mcp/maintenance.py:337", "oto_mcp/maintenance.py:341")),
+    Variable("OTO_UNIPILE_FIN_DE_DROIT", Classe.REGLAGE, "",
+             "Ouvre le travail `unipile-fin-de-droit` (#806) : préavis puis suppression "
+             "chez unipile des comptes sur la clé plateforme d'une org sans droit "
+             "`unipile`. Absente : le travail compte ce qu'il ferait, n'écrit rien. "
+             "À poser seulement une fois `org_entitlements` rempli par la reprise des "
+             "abonnements.", ("oto_mcp/unipile_fin_de_droit.py:64",)),
+    Variable("OTO_UNIPILE_FIN_DE_DROIT_DELAI_JOURS", Classe.REGLAGE, "7",
+             "Jours entre le premier constat de la perte du droit `unipile` et la "
+             "suppression du compte chez unipile. Entier ≥ 1, sinon le travail lève.",
+             ("oto_mcp/unipile_fin_de_droit.py:70",)),
     # -- secrets / URLs optionnels (absence = dégradation propre) -------------
     Variable("LOGODEV_TOKEN", Classe.REGLAGE, None,
              "Jeton Logo.dev — absent, la résolution de logo dégrade sans lui.",

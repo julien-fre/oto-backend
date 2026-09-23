@@ -62,8 +62,6 @@ STOCK: dict[str, str] = {
         "connectors_selection._visible_catalog, ownership.visible_in_org, search_mod.search",
     "oto_mcp.capabilities.unipile_me::_status":
         "unipile.status_for",
-    "oto_mcp.capabilities.unipile_seats::_release_seat":
-        "_platform_client, _rows_for",
     "oto_mcp.connectors.identities::_unipile_list":
         "_unipile_chosen, _unipile_client, access.current_org, db.list_account_grants_to, db.list_unipile_accounts",
     "oto_mcp.connectors.identities::_unipile_live_status_map":

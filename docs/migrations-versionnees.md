@@ -502,6 +502,12 @@ quel par la révision). Aucune clé étrangère : aucun verrou hors de la table 
 L'ordre avec le tag est indifférent ; elle doit seulement exister avant le premier tir
 de l'archive qui supprime un mois — sans elle, l'archive s'arrête avant de supprimer.
 
+`0006_unipile_fin_de_droit` (23/09/2026, oto-backend#806) ajoute deux colonnes
+nullables à `unipile_accounts` (`entitlement_lost_at`, `entitlement_notice_at`), que le
+démarrage pose aussi (`ALTER … ADD COLUMN IF NOT EXISTS`, sauté par le garde des DDL
+une fois posées). Même régime que 0004 : idempotents l'un envers l'autre, ordre
+indifférent — le code qui les lit arrive avec le démarrage qui les pose.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

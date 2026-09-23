@@ -13,16 +13,25 @@ aucun user oto ».
 
 `SUPER_ADMIN` : l'inventaire révèle l'ownership cross-user, la libération est
 irréversible. Aucun secret ne sort (la clé sert à appeler unipile, jamais rendue).
+
+**Le droit `unipile` de l'org** (oto-backend#806) : l'inventaire dit, par siège, si une
+org qui le tient en service a encore le droit (`entitled`), depuis quand elle l'a perdu
+(`entitlement_lost_at`) et quand le compte sera supprimé (`deletion_scheduled_at`). La
+libération accepte un siège en service dont AUCUNE org n'a plus le droit : ce n'est plus
+couper la messagerie de quelqu'un qui y a droit, c'est avancer ce que le travail
+`unipile-fin-de-droit` fera de lui-même (`oto_mcp/unipile_fin_de_droit.py`). Les deux
+passent par le même geste, `liberer`.
 """
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta
 import logging
 from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import db
+from .. import access, db
 from ._authz import SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -58,6 +67,15 @@ class Seat(BaseModel):
     disconnected_at: Optional[str] = None
     state: str          # bound | disconnected | orphan
     orphan: bool        # = state == "orphan"
+    # Le droit `unipile` de l'org qui tient le siège (n'importe laquelle, s'il est en
+    # service dans plusieurs) — lu dans les droits déclarés (`access.org_has`).
+    entitled: bool = False
+    # Premier passage du travail de fin de droit qui l'a vue sans droit ; None tant
+    # qu'aucun passage ne l'a marquée (ou que le droit est revenu).
+    entitlement_lost_at: Optional[str] = None
+    # `entitlement_lost_at` + le délai (`OTO_UNIPILE_FIN_DE_DROIT_DELAI_JOURS`) ;
+    # None si l'org a le droit ou n'est pas marquée.
+    deletion_scheduled_at: Optional[str] = None
 
 
 class SeatsView(BaseModel):
@@ -108,6 +126,49 @@ def _rows_for(account_id: str) -> list[dict]:
             if r["account_id"] == account_id]
 
 
+def _droit_vivant(rows: list[dict], droits: Optional[dict] = None) -> bool:
+    """Une org qui tient ce siège EN SERVICE a-t-elle encore le droit `unipile` ?
+
+    Seuls les bindings vivants comptent : un compte adopté dans deux orgs reste dû
+    tant qu'une seule des deux a le droit. `droits` = cache `org_id → bool` d'un
+    inventaire, pour ne relire chaque org qu'une fois."""
+    droits = {} if droits is None else droits
+    for r in rows:
+        org = r.get("org_id")
+        if r.get("disconnected_at") is not None or org is None:
+            continue
+        if org not in droits:
+            droits[org] = access.org_has(int(org), "unipile")
+        if droits[org]:
+            return True
+    return False
+
+
+def liberer(client, account_id: str, rows: list[dict]) -> int:
+    """LE geste qui reprend un siège : délier ses bindings vivants, puis le supprimer
+    chez unipile. Rend le nombre de bindings déliés. Lève si unipile refuse.
+
+    Partagé par `release` et par le travail de fin de droit : deux chemins vers la
+    même suppression irréversible, un seul ordre.
+
+    Délier AVANT, reprendre APRÈS. Sans ça le compte disparaît chez unipile pendant
+    qu'oto le croit encore lié : le plafond de sièges de l'org compte un siège qui
+    n'existe plus, et toute vue qui lit les bindings (dont la lentille de
+    facturation) annonce une connexion fantôme. Soft-déconnexion, pas suppression
+    de ligne : elle survit comme preuve de propriété.
+
+    Si unipile échoue, les bindings RESTENT déliés : l'org ne sert plus ce compte, et
+    un rappel reprendra le geste — le siège est alors `disconnected`, donc éligible
+    sans `force`. On ne relie PAS : ce serait rendre un accès qu'on vient de retirer."""
+    unbound = 0
+    for r in rows:
+        if r.get("disconnected_at") is None and r.get("org_id") is not None:
+            db.clear_unipile_account(r["sub"], r["org_id"], r.get("provider") or "LINKEDIN")
+            unbound += 1
+    client.delete_account(account_id)
+    return unbound
+
+
 async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
     # `_platform_client` lit le coffre (SQL) : hors de la boucle, comme les deux lectures d'après.
     client = await asyncio.to_thread(_platform_client)
@@ -121,6 +182,9 @@ async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
     owners: dict[str, list[dict]] = {}
     for r in await asyncio.to_thread(db.unipile_account_owners, include_disconnected=True):
         owners.setdefault(r["account_id"], []).append(r)
+    from ..unipile_fin_de_droit import delai_jours
+    delai = timedelta(days=delai_jours())
+    droits: dict = {}
     seats = []
     for a in instance:
         rows = owners.get(a.get("id")) or []
@@ -129,6 +193,12 @@ async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
         # connu — une ligne morte NOMME encore la personne à qui écrire avant de libérer.
         best = next((r for r in rows if r["disconnected_at"] is None), None) or (
             sorted(rows, key=lambda r: str(r["connected_at"] or ""))[-1] if rows else None)
+        # Hors service, c'est l'org du dernier binding connu qui répond.
+        vus = rows if state == "bound" else ([{**best, "disconnected_at": None}]
+                                              if best else [])
+        entitled = await asyncio.to_thread(_droit_vivant, vus, droits)
+        pertes = [r["entitlement_lost_at"] for r in rows if r.get("entitlement_lost_at")]
+        perte = max(pertes) if pertes else None
         srcs = a.get("sources") or []
         provider = a.get("provider") or a.get("type")
         seats.append({
@@ -145,6 +215,12 @@ async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
             "disconnected_at": best["disconnected_at"] if best else None,
             "state": state,
             "orphan": state == "orphan",
+            "entitled": entitled,
+            # Même forme que les autres dates de la base (`db/_conn`, « AAAA-MM-JJ hh:mm:ss »).
+            "entitlement_lost_at": perte,
+            "deletion_scheduled_at": (
+                (datetime.fromisoformat(perte) + delai).isoformat(sep=" ")
+                if perte is not None and not entitled else None),
         })
     return {
         "configured": True,
@@ -156,37 +232,28 @@ async def _list_seats(ctx: ResolvedCtx, inp: SeatsListInput) -> dict:
 
 
 async def _release_seat(ctx: ResolvedCtx, inp: SeatReleaseInput) -> dict:
-    rows = _rows_for(inp.account_id)
+    rows = await asyncio.to_thread(_rows_for, inp.account_id)
     state = _seat_state(rows)
-    if state == "bound" and not inp.force:
-        # Le libérer couperait la messagerie de quelqu'un qui s'en sert, sans qu'il
-        # l'ait demandé. Ce geste-là appartient à son propriétaire (`DELETE
-        # /api/me/unipile`) ; l'admin ne fait que le ménage derrière. `force=true`
-        # existe pour les cas où le propriétaire ne le fera PAS — décider QUAND un
-        # siège en service peut être repris appartient à l'appelant, pas à cette face.
+    if (state == "bound" and not inp.force
+            and await asyncio.to_thread(_droit_vivant, rows)):
+        # Le libérer couperait la messagerie de quelqu'un qui s'en sert ET qui y a
+        # droit, sans qu'il l'ait demandé. Ce geste-là appartient à son propriétaire
+        # (`DELETE /api/me/unipile`) ; l'admin ne fait que le ménage derrière.
+        # `force=true` existe pour les cas où le propriétaire ne le fera PAS — décider
+        # QUAND un siège en service peut être repris appartient à l'appelant, pas à
+        # cette face. Sans droit, le siège ne sert plus (lot 3 de #806) : le reprendre
+        # n'est qu'avancer la suppression que le travail de fin de droit fera.
         raise AuthzDenied(409, "seat_in_use",
-                          "Ce siège est en service — son propriétaire doit le déconnecter "
+                          "Ce siège est en service et son organisation a le droit à la "
+                          "messagerie hébergée — son propriétaire doit le déconnecter "
                           "d'abord, ou passer force=true pour le reprendre quand même.")
-    client = _platform_client()
+    client = await asyncio.to_thread(_platform_client)
     if client is None:
         raise AuthzDenied(400, "no_platform_key", "Aucune clé plateforme unipile.")
-    # Délier AVANT, reprendre APRÈS. Sans ça le compte disparaît chez unipile pendant
-    # qu'oto le croit encore lié : le plafond de sièges de l'org compte un siège qui
-    # n'existe plus, et toute vue qui lit les bindings (dont la lentille de
-    # facturation) annonce une connexion fantôme. Soft-déconnexion, pas suppression
-    # de ligne : elle survit comme preuve de propriété.
-    unbound = 0
-    for r in rows:
-        if r.get("disconnected_at") is None and r.get("org_id") is not None:
-            await asyncio.to_thread(db.clear_unipile_account, r["sub"], r["org_id"],
-                                    r.get("provider") or "LINKEDIN")
-            unbound += 1
     try:
-        await asyncio.to_thread(client.delete_account, inp.account_id)
+        unbound = await asyncio.to_thread(liberer, client, inp.account_id, rows)
     except Exception as e:  # noqa: BLE001 — panne amont, pas un refus d'autz
-        # Les bindings sont déjà déliés : l'org ne sert plus ce compte, et un rappel
-        # reprendra le geste — le siège est alors `disconnected`, donc éligible sans
-        # `force`. On ne relie PAS : ce serait rendre un accès qu'on vient de retirer.
+        # Les bindings sont déjà déliés (cf. `liberer`) : on ne relie pas.
         raise AuthzDenied(502, "unipile_delete_failed", str(e))
     logger.info("unipile seat repris account_id=%s état=%s force=%s déliés=%d par=%s",
                 inp.account_id, state, inp.force, unbound, ctx.sub)
@@ -201,6 +268,9 @@ CAPABILITIES += [
             "[super admin] Seats living on the shared unipile platform key, reconciled "
             "with their oto bindings. `state`: bound (in service) | disconnected (owner "
             "unhooked it on oto, the seat still bills) | orphan (nobody claims it). "
+            "`entitled` = an org holding the seat still has the `unipile` right; "
+            "`entitlement_lost_at` / `deletion_scheduled_at` = when it lost it, and "
+            "when the account will be deleted on unipile if it does not come back. "
             "`reclaimable_count` = what you can stop paying for. No secret returned."),
         mcp=None,  # face MCP = console op-aware `oto_admin_unipile_seat`
         rest=RestBinding("GET", "/api/admin/unipile/seats"),
@@ -211,10 +281,12 @@ CAPABILITIES += [
         description=(
             "[super admin] Frees a seat: deletes the account on unipile, so it stops "
             "billing. IRREVERSIBLE (the hosted session is destroyed; reconnecting yields "
-            "a NEW account_id). Refuses a seat still in service (409 seat_in_use) — that "
-            "disconnection belongs to its owner — UNLESS `force: true`, which first "
-            "soft-disconnects every LIVE binding (the ownership row survives, so a "
-            "reconnection still rebinds deterministically) and only then frees the seat. "
+            "a NEW account_id). Refuses a seat in service whose org still has the "
+            "`unipile` right (409 seat_in_use) — that disconnection belongs to its owner "
+            "— UNLESS `force: true`. A seat in service whose org LOST the right is freed "
+            "without `force`. Either way every LIVE binding is soft-disconnected first "
+            "(the ownership row survives, so a reconnection still rebinds "
+            "deterministically), and only then is the seat freed. "
             "`unbound` = how many people's messaging was cut. Deciding WHEN a seat in "
             "service may be taken back belongs to the caller, never to this face."),
         mcp=None,  # face MCP = console op-aware `oto_admin_unipile_seat`

@@ -14,6 +14,11 @@ Ils sont ici, chacun nommé, chacun jouable seul :
     oto-mcp maintenance key-indexes   index d'unicité de clé métier par namespace
     oto-mcp maintenance instagram-tokens  renouvellement des autorisations
                                           Instagram avant leur terme
+    oto-mcp maintenance unipile-fin-de-droit  préavis puis suppression chez unipile
+                                          des comptes sur la clé plateforme d'une org
+                                          qui a perdu le droit `unipile` (#806) —
+                                          À BLANC tant que OTO_UNIPILE_FIN_DE_DROIT
+                                          n'est pas posé
     oto-mcp maintenance check-boot    rejoue l'ordre du boot en transaction ANNULÉE
     oto-mcp maintenance oauth-relay-callbacks  constate (À BLANC) ou pose (`--apply`) le
                                           rappel du relais d'autorisation sur les hosts
@@ -442,6 +447,17 @@ def instagram_tokens(*, dry_run: bool = False) -> dict:
     return ig.renouveler_les_jetons(dry_run=dry_run)
 
 
+def unipile_fin_de_droit(*, dry_run: bool = False) -> dict:
+    """Préavis puis suppression chez unipile des comptes d'une org sans droit `unipile`.
+
+    Dans `_ALL` ET fermé par `OTO_UNIPILE_FIN_DE_DROIT` : même dispositif que
+    `alertes-credential` — le passage quotidien dit ce qu'il ferait dès le tag, l'effet
+    attend une décision. Le détail, et pourquoi le drapeau plutôt qu'une garde sur la
+    table des droits, sont dans `unipile_fin_de_droit.py`."""
+    from . import unipile_fin_de_droit as fdd
+    return fdd.balayer(dry_run=dry_run)
+
+
 def oauth_relay_callbacks(*, dry_run: bool = False) -> dict:
     """Constate, ou pose avec `--apply`, le rappel du relais d'autorisation sur les hosts
     déjà inscrits dans `OTO_MCP_OAUTH_RELAY_HOSTS` — cf. `auth.relay_maintenance`.
@@ -462,6 +478,7 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "portee-observation": portee_observation,
     "alertes-credential": alertes_credential,
     "instagram-tokens": instagram_tokens,
+    "unipile-fin-de-droit": unipile_fin_de_droit,
     "oauth-relay-callbacks": oauth_relay_callbacks,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
@@ -474,8 +491,11 @@ _ACTES = ("journal-tokens", "residu-projete", "oauth-relay-callbacks")
 # ⚠️ `instagram-tokens` DOIT rester dans `_ALL` : c'est le seul déclencheur de
 # renouvellement qui ne dépende pas de l'usage, et un jeton Instagram non
 # renouvelé n'est pas dégradé — il est perdu (cf. le docstring du travail).
+# ⚠️ `unipile-fin-de-droit` aussi : tiré chaque jour, fermé par
+# `OTO_UNIPILE_FIN_DE_DROIT` — c'est ce tir quotidien qui compte le délai, pas un
+# événement de fin de droit.
 _ALL = ("retention", "blocks", "key-indexes", "alertes-credential",
-        "instagram-tokens")
+        "instagram-tokens", "unipile-fin-de-droit")
 
 
 def run(noms: list[str], *, dry_run: bool = False, strict: bool = False) -> int:

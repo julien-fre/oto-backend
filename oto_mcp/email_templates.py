@@ -1,6 +1,8 @@
-"""Les 4 gabarits transactionnels de `email.py` — extraits d'ici pour deux
+"""Les gabarits transactionnels de `email.py` — extraits d'ici pour deux
 raisons (oto-backend#700). Six à l'extraction ; les deux e-mails de proposition sont
-retirés depuis le 14/09/2026 (oto#191).
+retirés depuis le 14/09/2026 (oto#191). Le préavis de fin de droit `unipile`
+(oto-backend#806) s'y ajoute, sans réexport dans `email` : son seul appelant est
+`unipile_fin_de_droit.py`.
 
 **Place.** `email.py` frôlait déjà 500 lignes ; ajouter une deuxième langue par
 gabarit l'aurait fait déborder. Le TRANSPORT (`_send`, l'anti-injection d'en-tête,
@@ -299,3 +301,50 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
     return _email._send(to, subject, _charte.page(
         m, contenu, preheader=apercu, mention=pied, locale=locale,
         desinscription=desinscription))
+
+
+_MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+         "septembre", "octobre", "novembre", "décembre")
+
+
+def send_unipile_fin_de_droit_email(to: str, *, org_name: str | None, canaux: list,
+                                    supprime_le, app_url: str | None,
+                                    brand: str = "oto",
+                                    locale: str | None = None) -> bool:
+    """Préavis au propriétaire de comptes de messagerie hébergés sur la clé de la
+    plateforme, quand son org n'a plus le droit `unipile` (oto-backend#806).
+    Best-effort (False si non envoyé : l'appelant ne marque alors pas le préavis).
+
+    Trois choses, et rien d'autre : ce qui s'est arrêté, la date de suppression, et
+    les deux façons de la reporter. `canaux` = les noms de réseau (« LINKEDIN »…),
+    `supprime_le` = la date de suppression (datetime)."""
+    m = _charte.marque(brand)
+    reseaux = ", ".join(sorted({str(c).capitalize() for c in canaux if c})) or "—"
+    org = org_name or ("your organisation" if locale == "en" else "votre organisation")
+    if locale == "en":
+        quand = supprime_le.strftime("%B %d, %Y")
+        subject = f"your hosted messaging accounts will be deleted on {quand}"
+        apercu = f"hosted messaging is no longer active for {org}"
+        contenu = (
+            f'<p style="{_charte.PARA}">Hosted messaging is no longer active for '
+            f'<strong>{_email._esc(org)}</strong>. Your accounts connected through '
+            f'{_email._esc(m.nom)} ({_email._esc(reseaux)}) will be deleted on '
+            f'<strong>{_email._esc(quand)}</strong>.</p>'
+            f'<p style="{_charte.PARA}">To keep them, subscribe your organisation, or '
+            f'connect your own Unipile key.</p>'
+            + _email._bouton(app_url, f"open {m.nom}", brand))
+    else:
+        quand = f"{supprime_le.day} {_MOIS[supprime_le.month - 1]} {supprime_le.year}"
+        subject = f"vos comptes de messagerie hébergés seront supprimés le {quand}"
+        apercu = f"la messagerie hébergée n'est plus active pour {org}"
+        contenu = (
+            f'<p style="{_charte.PARA}">La messagerie hébergée n\'est plus active pour '
+            f'<strong>{_email._esc(org)}</strong>. Vos comptes connectés par '
+            f'{_email._esc(m.nom)} ({_email._esc(reseaux)}) seront supprimés le '
+            f'<strong>{_email._esc(quand)}</strong>.</p>'
+            f'<p style="{_charte.PARA}">Pour les garder, abonnez votre organisation, ou '
+            f'branchez votre propre clé Unipile.</p>'
+            + _email._bouton(app_url, f"ouvrir {m.nom}", brand))
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
