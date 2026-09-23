@@ -160,6 +160,29 @@ def test_network_relations_projection(client):
     assert out["items"] == [{"name": "X", "member_id": "1"}]
 
 
+def test_network_relations_projection_allege_vraiment_la_page(client):
+    """#91 (retour 731) : `_norm` rend la liste deux fois (`data` + `items`). Projeter
+    le seul `items` laissait `data` intact — rien n'était allégé. La page servie ne
+    porte plus qu'UNE liste et UN curseur, projetés ensemble ; `member_id` (la clé de
+    déduplication prescrite) est toujours gardé."""
+    lst = [{"name": "X", "member_id": "1", "headline": "H", "profile_picture_url": "…"}]
+    client.list_relations.return_value = {"data": lst, "items": lst,
+                                          "next_cursor": "C", "cursor": "C"}
+    out = _tool("linkedin_unipile_network")(op="relations", fields=["name"])
+    assert "data" not in out and "next_cursor" not in out
+    assert out["cursor"] == "C"
+    assert out["items"] == [{"name": "X", "member_id": "1"}]
+
+
+def test_network_relations_cle_inconnue_refusee_pas_ecartee(client):
+    """Une clé que la page ne porte pas rendait des objets VIDES, lus comme une perte
+    de données : elle est refusée, avec les clés présentes."""
+    client.list_relations.return_value = {
+        "items": [{"name": "X", "member_id": "1"}], "cursor": None}
+    with pytest.raises(McpError, match="full_name"):
+        _tool("linkedin_unipile_network")(op="relations", fields=["full_name"])
+
+
 def test_network_handle_requires_the_shared_secret(client):
     """`invitation_id` et `shared_secret` viennent du MÊME item : sans le second,
     l'appel amont échoue — autant le dire ici."""

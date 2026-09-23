@@ -193,6 +193,17 @@ def _alertes_recherche(items, total, cursor, facettes, page_suivante):
                 "rien sur les profils non vus ; resserre la recherche (facette plus "
                 "fine, découpage par localisation/intitulé, autre `api=`) pour faire "
                 "tenir la population sous le plafond.")
+    if total is None and items and not cursor:
+        # Le palier ordinaire (`classic`) ne porte AUCUN total (#91, retour 753) :
+        # l'aveu chiffré ci-dessus ne peut alors pas se déclencher, et c'est
+        # précisément le cas où la page peut être un plafond sans curseur. Se taire
+        # ici laissait lire une page unique comme une population balayée.
+        out.append(
+            f"{len(items)} résultat(s) et AUCUN total annoncé par l'amont (palier "
+            "sans compteur, typiquement api='classic') : l'absence de `cursor` ne "
+            "prouve PAS que la population est balayée — ce palier ne pagine pas. Ne "
+            "conclus rien sur les profils non vus ; resserre la recherche ou passe par "
+            "un produit premium (guide `linkedin-search`).")
     if facettes and not items:
         out.append(
             f"0 résultat AVEC facette(s) {', '.join(facettes)} : une facette peut ne PAS "
@@ -221,8 +232,10 @@ def _slim_search(res, *, facettes=(), page_suivante=False):
     ...et DIT ce que la page ampute (#536) : `returned`/`truncated` dès que
     `items < total_count`, plus des `warnings` en clair quand le résultat ne se
     lit pas au premier degré (plafond sans curseur, zéro sur facette, page
-    obtenue par curseur). L'enveloppe ne grossit QUE s'il y a quelque chose à
-    avouer — une recherche complète reste aussi légère qu'avant."""
+    obtenue par curseur, page sans total ni curseur). L'enveloppe ne grossit QUE
+    s'il y a quelque chose à avouer — une recherche complète reste aussi légère
+    qu'avant. ⚠️ `total_count` n'est que du PASSAGE : absent de l'amont (palier
+    ordinaire), il est absent ici, et `returned`/`truncated` avec lui (#91)."""
     if not isinstance(res, dict):
         return res
     items = res.get("items")
@@ -297,6 +310,43 @@ def _slim(payload, fields: Optional[list[str]] = None,
     if "data" in payload and isinstance(payload.get("data"), list):
         payload["data"] = payload["items"]   # `_norm` aliase les deux : garder cohérent
     return payload
+
+
+def _page_de_relations(page, fields: Optional[list] = None):
+    """Une page de relations N1, sans le doublon d'enveloppe, projetée si demandé.
+
+    oto-core `_norm` rend la liste DEUX fois (`data` et `items`, même contenu) et le
+    curseur deux fois (`next_cursor` et `cursor`). La projection ne touchait que
+    `items` : `data` repartait INTACT à côté d'un `items` projeté — rien n'était
+    allégé, et une clé mal nommée rendait un tableau d'objets vides qui se lisait
+    comme une perte de données (#91, retour 731). On sert donc UNE liste (`items`)
+    et UN curseur (`cursor`), projetés ensemble.
+
+    `member_id` est toujours gardé : c'est la clé de déduplication que la
+    description prescrit, projeter jusqu'à la perdre rendrait l'export inutilisable.
+    Un champ demandé qu'AUCUN item de la page ne porte est refusé en nommant les
+    clés présentes — jamais écarté en silence."""
+    if not isinstance(page, dict):
+        return page
+    out = {k: v for k, v in page.items() if k not in ("data", "next_cursor")}
+    items = page.get("items")
+    if not isinstance(items, list):
+        items = page.get("data") if isinstance(page.get("data"), list) else []
+    if "cursor" not in out and "next_cursor" in page:
+        out["cursor"] = page["next_cursor"]
+    if fields:
+        presentes = {k for it in items if isinstance(it, dict) for k in it}
+        inconnues = [f for f in fields if f not in presentes]
+        if items and inconnues:
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=(f"`fields` : clé(s) absente(s) de toutes les relations de la "
+                         f"page : {inconnues}. Clés présentes : {sorted(presentes)}.")))
+        garder = set(fields) | {"member_id"}
+        items = [{k: v for k, v in it.items() if k in garder}
+                 for it in items if isinstance(it, dict)]
+    out["items"] = items
+    return out
 
 
 def _shape_feed(payload: dict, fields: Optional[list[str]],
@@ -1030,7 +1080,9 @@ def register(mcp: FastMCP) -> None:
         `oto_guide(op=read, slug="linkedin-search")`. Quatre pièges qui FAUSSENT en
         silence : (1) une facette exige un **ID résolu** — passe le terme par
         `linkedin_unipile_facets` et donne l'`id` choisi ; un terme brut NE filtre PAS ;
-        (2) le mode `url=` est **plafonné à 25 sans pagination** — préfère le structuré ;
+        (2) le mode `url=` est **plafonné à 25 sans pagination** — préfère le structuré
+        pour maîtriser les filtres, pas pour le volume : c'est le PRODUIT (`api=`) qui
+        décide de la pagination (`classic` ne pagine pas, quel que soit le mode) ;
         (3) une facette peut n'être **PAS appliquée** par le produit choisi, sans erreur
         (mesuré : même employeur → 0 en `sales_navigator`, 10 en `classic`) — un **0 sur
         recherche à facettes ne prouve pas un vivier vide**, recoupe ;
@@ -1038,11 +1090,13 @@ def register(mcp: FastMCP) -> None:
         ne sont pas ré-appliqués, et la page 2 **perd parfois le filtre employeur** —
         contrôle l'employeur des items d'une page paginée.
 
-        **Le retour DIT ce qu'il ampute** (#536) : `total_count` (population annoncée)
-        vs `returned` + `truncated: true` dès que la page en rend moins, et des
-        `warnings` en clair quand le résultat ne se lit pas au premier degré. `truncated`
-        **sans** `cursor` = le reste est INATTEIGNABLE (plafond produit, ex. 25 sur 86) :
-        ne conclus rien sur les non-vus, resserre la recherche. Lis ces champs avant de
+        **Le retour** : toujours `items` + `cursor`. `total_count` **seulement quand
+        l'amont en annonce un** — le palier ordinaire (`api="classic"`) n'en porte
+        pas : pas de comptage de population par cette voie. Quand il est là,
+        `returned` + `truncated: true` disent que la page en rend moins ; `truncated`
+        **sans** `cursor` = le reste est INATTEIGNABLE (plafond produit, ex. 25 sur 86).
+        Sans total, ni `returned` ni `truncated` : l'absence de `cursor` ne prouve alors
+        PAS un balayage complet, et un `warnings` le dit. Lis `warnings` avant de
         rapporter « vivier vide » ou « population balayée ».
 
         ⚠️ **Cadence** : LinkedIn rate-limite par compte. Enchaîner des dizaines
@@ -1507,14 +1561,19 @@ def register(mcp: FastMCP) -> None:
 
         `op` :
         - **"relations"** (défaut) : tes relations N1 — pour cibler/exporter ton
-          réseau direct. Paginé (`cursor`). `fields` = PROJECTION : ne garde que ces
-          champs sur chaque item (ex. `["name","headline","public_identifier",
-          "member_id","created_at"]`) — réduit fortement le payload d'un export.
+          réseau direct. Paginé (`cursor`). Rend `{items, cursor, …}` — une seule
+          liste. `fields` = PROJECTION : ne garde que ces champs sur chaque item
+          (ex. `["name","headline","public_identifier","created_at"]`), plus
+          `member_id` toujours gardé — réduit le payload d'un export. Une clé
+          qu'aucune relation de la page ne porte est REFUSÉE, avec les clés
+          présentes.
           ⚠️ Pagination NON fiable pour un export EXHAUSTIF : le `cursor` encode un
           offset volatil (doublons dans l'espace d'offset, total surestimé) et une
           page `limit=100` rend 90-100 items, pas 100. Pour charger tout un réseau :
-          dédupliquer par `member_id` (JAMAIS l'offset), garder ≤8 pages en parallèle
-          (au-delà : 502 en cascade), prouver le tarissement par 2 passes décalées.
+          dédupliquer par `member_id` (JAMAIS l'offset), garder ≤6 pages en parallèle,
+          ~20 s entre deux salves (mesuré : 8 en parallèle → `429 "We only allow
+          10 requests"` sur 3 d'entre elles ; au-delà, 502 en cascade), prouver le
+          tarissement par 2 passes décalées.
           ⚠️ Ces six précautions sont TOUT ce qu'il y a à savoir : elles vivent ici,
           il n'existe pas de page à aller lire. Le guide `bulk-load` traite d'autre
           chose — déléguer un gros chargement à un sous-agent — et ne dit rien des
@@ -1551,17 +1610,14 @@ def register(mcp: FastMCP) -> None:
             cursor: pagination (relations, invitations) — toujours celui
                 rendu par l'appel précédent, jamais construit à la main.
             limit: taille de page.
-            fields: op="relations" — projection de champs.
+            fields: op="relations" — projection de champs (`member_id` toujours
+                gardé ; clé absente de toute la page = refus).
         """
         client = unipile_client()
 
         if op == "relations":
-            out = client.list_relations(cursor=cursor, limit=limit)
-            if fields and isinstance(out, dict) and isinstance(out.get("items"), list):
-                keep = set(fields)
-                out["items"] = [{k: v for k, v in it.items() if k in keep}
-                                for it in out["items"] if isinstance(it, dict)]
-            return out
+            return _page_de_relations(
+                client.list_relations(cursor=cursor, limit=limit), fields)
 
         if op == "invitations":
             return client.list_invitations(direction,

@@ -32,7 +32,7 @@ from ... import access
 from ...auth import token_scopes
 from ...datastore.identite import Adresse
 from ...datastore import journal as datastore_journal
-from ...datastore import identite, jetons
+from ...datastore import couches, identite, jetons
 from ...datastore import forcage as fcg
 from ...datastore import layers as dsl
 from ...datastore import schema as dsv2
@@ -792,7 +792,8 @@ CAPABILITIES += [
                      "`readonly_override=true` remplace les colonnes verrouillées "
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
-                     + " Couches, `readonly`, clé métier : guide "
+                     + " " + couches.DESCRIPTION_ECRITURE
+                     + " `readonly`, clé métier, ce qu'une écriture détruit : guide "
                      "`datastore-semantics`." + _ECRITURE_DETRUIT),
     ),
     Capability(
@@ -830,7 +831,7 @@ CAPABILITIES += [
                      "`readonly_override=true` remplace les colonnes verrouillées "
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
-                     + _ECRITURE_DETRUIT),
+                     + " " + couches.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
     ),
     Capability(
         key="me.datastore.delete_row",

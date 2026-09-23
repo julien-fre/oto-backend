@@ -20,7 +20,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
-from ..datastore import claimable, identite, jetons
+from ..datastore import claimable, couches, identite, jetons
 from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
 from ..datastore import versions as dsver
@@ -39,6 +39,21 @@ from ..datastore.core import (
     make_org_store,
     make_store,
 )
+
+
+_MARQUE_COUCHES = "<<couches>>"
+
+
+def _avec_la_phrase_des_couches(fn):
+    """Insère dans la description servie la phrase des couches, tenue par
+    `couches.DESCRIPTION_ECRITURE` — la même que sert la face REST (oto#91). Une
+    marque absente lève : une description qui aurait perdu sa phrase servirait
+    l'écriture sans son vocabulaire, et personne ne le verrait."""
+    if _MARQUE_COUCHES not in (fn.__doc__ or ""):
+        raise RuntimeError(f"{fn.__name__} : marque {_MARQUE_COUCHES} absente de la "
+                           "description")
+    fn.__doc__ = fn.__doc__.replace(_MARQUE_COUCHES, couches.DESCRIPTION_ECRITURE)
+    return fn
 
 
 def _store_for(sub: str):
@@ -758,6 +773,7 @@ def register(mcp: FastMCP) -> None:
     # capacité, ADR 0042 §Convergence des surfaces.
 
     @mcp.tool()
+    @_avec_la_phrase_des_couches
     def data_write(datastore: Adresse, row: dict | None = None, id: str | None = None,
                    rows: list | None = None, key: str | None = None,
                    readonly_override: bool = False,
@@ -774,11 +790,7 @@ def register(mcp: FastMCP) -> None:
         2026-10-01 on unless the call declares `origine_override=true` — which
         belongs to an import, not to a write of your own.
 
-        Layers: `valeur`/`comment`/`link` are yours to write, `origine` is read
-        only — write nested, `{"field": {"valeur": …, "comment": …, "link": …}}`,
-        never these as top-level keys of your own row. A misspelled layer name
-        next to a known layer (`{"valeur": …, "comnent": …}`) is REFUSED; alone
-        (`{"field": {"comnent": "x"}}`), it is no layer: that dict IS the value.
+        <<couches>>
         What a write destroys, what `readonly` and the business key protect,
         and where the REST face differs: guide `datastore-semantics`
         (`oto_guide op=read slug=datastore-semantics`).

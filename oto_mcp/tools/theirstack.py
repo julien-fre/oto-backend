@@ -186,6 +186,11 @@ def register(mcp: FastMCP) -> None:
         total_companies?}, data: [{company, job_title, date_posted, url, location}]}`
         (`full=True` → the raw records instead).
 
+        ⚠️ The company DOMAIN is NULLABLE (raw records, `full=True`): the same
+        company can come back without it, from one day to the next. An exclusion or
+        a dedup table keyed on the domain then lets that record through SILENTLY —
+        key on the company name too, never on the domain alone.
+
         Args:
             company_names: exact company names, CASE-SENSITIVE (`company_name_or`) —
                 pass the name as TheirStack spells it. For looser matching put

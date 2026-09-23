@@ -27,6 +27,25 @@ from __future__ import annotations
 
 from typing import Any
 
+# --- ce que les DEUX faces d'écriture disent des couches (oto#91) -------------
+#
+# Une seule phrase, servie par `data_write` (MCP) ET par `POST`/`PATCH …/rows`
+# (REST). La face REST n'en portait qu'un renvoi vers un guide : la même vérité en
+# deux textes, dont un sans le vocabulaire, est ce qui avait fait écrire à des agents
+# la provenance dans `origine`. Le texte vit ICI, chaque face l'insère — jamais
+# recopié.
+DESCRIPTION_ECRITURE = (
+    "Layers: `valeur`/`comment`/`link` are yours to write, `origine` is read "
+    "only — write nested, `{\"field\": {\"valeur\": …, \"comment\": …, "
+    "\"link\": …}}`, never these as top-level keys of your own row. Provenance "
+    "(WHAT you established, WHERE it came from) goes in `<field>.comment`, the "
+    "page in `<field>.link` — never in `origine`, the platform's layer. A "
+    "misspelled layer name next to a known layer (`{\"valeur\": …, \"comnent\": "
+    "…}`) is REFUSED; alone (`{\"field\": {\"comnent\": \"x\"}}`), it is no "
+    "layer: that dict IS the value."
+)
+
+
 # --- couches d'une colonne (#318) ---------------------------------------------
 # NATIF et universel : aucune déclaration ne dit qu'une colonne porte des couches.
 # Une colonne dont la valeur est un objet portant `valeur` EN a ; toute autre en est

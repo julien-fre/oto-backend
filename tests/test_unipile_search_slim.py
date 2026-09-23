@@ -88,6 +88,19 @@ def test_zero_sur_facette_ne_se_lit_pas_comme_un_vivier_vide():
     assert "warnings" not in U._slim_search({"items": [], "total_count": 0})
 
 
+def test_sans_total_ni_curseur_la_page_ne_se_dit_pas_complete():
+    """#91 (retour 753) : le palier ordinaire ne porte aucun `total_count`, donc ni
+    `returned` ni `truncated` — et l'aveu chiffré, gardé par le total, se taisait
+    exactement là où la page peut être un plafond sans curseur."""
+    out = U._slim_search({"items": [{"id": "1"}, {"id": "2"}], "cursor": None})
+    assert "total_count" not in out and "truncated" not in out
+    alerte = " ".join(out["warnings"])
+    assert "AUCUN total" in alerte and "balayée" in alerte
+
+    # Avec un curseur, la suite est atteignable : rien de plus à avouer.
+    assert "warnings" not in U._slim_search({"items": [{"id": "1"}], "cursor": "C"})
+
+
 def test_une_page_paginee_avertit_que_le_filtre_n_est_pas_re_applique():
     """Cas mesuré en `classic` : page 1 filtrée sur l'employeur, page 2 obtenue par
     curseur rendant des dirigeants d'entreprises étrangères au sujet. La pagination
