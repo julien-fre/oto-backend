@@ -105,7 +105,10 @@ def register(mcp: FastMCP) -> None:
         except file_source.FileSourceError as e:
             raise _refus(str(e)) from None
 
-        creds = access.resolve_credential("transcription", want="auto").fields
+        rc = access.resolve_credential("transcription", want="auto")
+        # Un secret plateforme est la clé SEULE (la langue et le vocabulaire sont ceux de
+        # l'appel) ; celui d'une instance d'org est le pack JSON des trois champs.
+        creds = {"api_key": rc.secret} if rc.is_platform else rc.fields
         langue = _langue(creds)
         api_key = creds.get("api_key")
         if not api_key:

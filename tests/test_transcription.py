@@ -157,13 +157,25 @@ def monde(monkeypatch):
     monkeypatch.setattr(file_source.access, "current_user_sub_or_raise", lambda: "u1")
     monkeypatch.setattr(file_source.access, "current_org", lambda sub: 3)
     class _Cred:
+        is_platform = False
+        secret = "unused"
+
         @property
         def fields(self):
             return dict(etat["creds"])
 
+    class _CredPlateforme:
+        """Le secret plateforme est la clé nue : `.fields` la relirait comme du JSON."""
+        is_platform = True
+        secret = "k-plateforme"
+
+        @property
+        def fields(self):
+            raise AssertionError("un secret plateforme ne se déballe pas en JSON")
+
     def _resolve(provider, want="auto", **kw):
         etat["want"] = want
-        return _Cred()
+        return _CredPlateforme() if etat.get("plateforme") else _Cred()
 
     monkeypatch.setattr(access, "resolve_credential", _resolve)
 
@@ -417,3 +429,13 @@ def test_le_vocabulaire_de_l_appel_peut_remplacer(all_tools, monde):
     _appeler(all_tools, source=_pf(), vocabulary="zinguerie", vocabulary_replace=True)
     _tourner(monde)
     assert _champs(monde["envois"][0])["context_bias"] == ["zinguerie"]
+
+
+def test_une_cle_plateforme_est_la_cle_nue_langue_par_defaut(all_tools, monde):
+    monde["plateforme"] = True
+    _appeler(all_tools, source=_pf(), vocabulary="zinguerie")
+    _tourner(monde)
+    (envoi,) = monde["envois"]
+    assert envoi["headers"]["Authorization"] == "Bearer k-plateforme"
+    champs = _champs(envoi)
+    assert champs["language"] == ["fr"] and champs["context_bias"] == ["zinguerie"]
