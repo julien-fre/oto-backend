@@ -45,7 +45,7 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field
 
-from .. import access, credentials_store, db
+from .. import access, credentials_store, db, providers
 from ..auth import token_scopes
 from ._authz import SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -335,11 +335,19 @@ def _keys_list(ctx: ResolvedCtx, inp: PlatformKeyListInput) -> dict:
     return {"platform_keys": credentials_store.list_platform_credentials()}
 
 
+def _porte_une_cle_plateforme(provider: str) -> bool:
+    """Un connecteur qui déclare le mode `platform` porte une clé plateforme même
+    s'il n'est pas `keyed` (ex. `transcription`, multi-champs dont seul le secret
+    est la clé) ; le coffre applique le même gate (`require_credential`)."""
+    c = providers.REGISTRY.get(provider)
+    return bool(c and c.credential_of is None and "platform" in c.auth_modes)
+
+
 def _keys_create(ctx: ResolvedCtx, inp: PlatformKeyCreateInput) -> dict:
     provider = (inp.provider or "").strip()
     label = (inp.label or "").strip()
     api_key = (inp.api_key or "").strip()
-    if provider not in db.KEY_PROVIDERS:
+    if provider not in db.KEY_PROVIDERS and not _porte_une_cle_plateforme(provider):
         raise AuthzDenied(400, "invalid_provider")
     if not label or not api_key:
         raise AuthzDenied(400, "missing_fields")

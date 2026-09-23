@@ -424,3 +424,14 @@ def test_les_DEUX_paliers_lisent_l_echeance_pareil(monkeypatch, socle, super_adm
     admin = call("platform.token.create", path_params={"sub": "u-9"},
                  body={"ttl_days": brut})[1]
     assert membre["ttl_days"] == admin["ttl_days"] == attendu
+
+
+def test_un_connecteur_non_keyed_en_mode_platform_accepte_une_cle_plateforme(
+        monkeypatch, socle, super_admin):
+    """`transcription` n'est pas `keyed` (multi-champs) mais déclare `platform` : la
+    route de pose ne le refuse plus `invalid_provider` (ADR 0074)."""
+    code, out = call("platform.key.create",
+                     body={"provider": "transcription", "label": "oto", "api_key": "K"})
+    assert code == 200 and out["provider"] == "transcription"
+    assert [v[:4] for v in socle if v[0] == "set"] == [
+        ("set", "platform", "oto", "transcription")]

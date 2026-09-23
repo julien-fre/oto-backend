@@ -1,5 +1,5 @@
 """Connecteur `transcription` (ADR 0074, #674) — verrouille : l'entrée registre
-(clé secrète + langue et vocabulaire NON secrets, `byo_org` seul, mono-compte), la
+(clé secrète + langue et vocabulaire NON secrets, `byo_org` + plateforme, mono-compte), la
 surface MCP (deux outils), la jointure outil↔client oto-core, et le geste de bout en
 bout avec un transport Mistral SIMULÉ : un fichier du projet lu côté serveur, envoyé
 avec la langue et le vocabulaire de l'instance, post-traité, rangé en page du projet
@@ -63,7 +63,7 @@ def all_tools():
 def test_entree_registre_cle_secrete_langue_et_vocabulaire_non_secrets():
     c = providers.REGISTRY["transcription"]
     assert c.kind == "tools" and c.secret_kind == "fields"
-    assert c.auth_modes == frozenset({"byo_org"})
+    assert c.auth_modes == frozenset({"byo_org", "platform"})
     assert c.default_active is False
     champs = {f.name: f for f in c.secret_fields}
     assert list(champs) == ["api_key", "language", "vocabulary"]
@@ -156,8 +156,16 @@ def monde(monkeypatch):
     monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: "u1")
     monkeypatch.setattr(file_source.access, "current_user_sub_or_raise", lambda: "u1")
     monkeypatch.setattr(file_source.access, "current_org", lambda sub: 3)
-    monkeypatch.setattr(access, "resolve_credential_fields",
-                        lambda provider, account=None: dict(etat["creds"]))
+    class _Cred:
+        @property
+        def fields(self):
+            return dict(etat["creds"])
+
+    def _resolve(provider, want="auto", **kw):
+        etat["want"] = want
+        return _Cred()
+
+    monkeypatch.setattr(access, "resolve_credential", _resolve)
 
     def _acces(sub, rtype, rid, want="read"):
         etat["droits"].append((rtype, rid, want))
@@ -389,3 +397,23 @@ def test_le_statut_dun_travail_dun_autre_projet_est_introuvable(all_tools, monde
 def test_statut_dun_travail_inconnu(all_tools, monde):
     with pytest.raises(McpError, match="introuvable"):
         _statut(all_tools, 999)
+
+
+# --- vocabulaire à l'appel, palier plateforme ------------------------------------------
+
+def test_le_credential_se_resout_en_cascade_plateforme_comprise(all_tools, monde):
+    _appeler(all_tools, source=_pf())
+    assert monde["want"] == "auto"
+
+
+def test_le_vocabulaire_de_l_appel_complete_celui_de_l_instance(all_tools, monde):
+    _appeler(all_tools, source=_pf(), vocabulary="zinguerie, chéneau")
+    _tourner(monde)
+    assert _champs(monde["envois"][0])["context_bias"] == [
+        "pompe,chaleur,Placo,BA13,zinguerie,chéneau"]
+
+
+def test_le_vocabulaire_de_l_appel_peut_remplacer(all_tools, monde):
+    _appeler(all_tools, source=_pf(), vocabulary="zinguerie", vocabulary_replace=True)
+    _tourner(monde)
+    assert _champs(monde["envois"][0])["context_bias"] == ["zinguerie"]

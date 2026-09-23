@@ -12,8 +12,11 @@ from ._model import CredentialField, _c
 # `mistral` existe déjà comme porteur de clé SANS outil (`kind="credential"`, agents
 # programmés), et un connecteur à outil ne s'y greffe pas.
 #
-# `byo_org` seul : la clé est celle de l'organisation (c'est elle qui paie la
-# minute d'audio), jamais une clé plateforme. MONO-compte, déclaré : un appel
+# `byo_org` + `platform` : la clé est celle de l'organisation (c'est elle qui paie la
+# minute d'audio) OU une instance plateforme accordée à une org (l'org qui n'a pas de
+# clé propre, ex. un pilote : la clé, la langue et le vocabulaire sont alors ceux de
+# l'instance plateforme). L'org qui a sa propre instance passe avant la plateforme
+# (cascade). MONO-compte, déclaré : un appel
 # transcrit avec UNE clé et UN vocabulaire, et deux instances posées sur la même org
 # n'auraient aucun critère pour se départager — le rattachement à un projet passe par
 # un slot (ADR 0035), comme toute instance.
@@ -26,7 +29,7 @@ from ._model import CredentialField, _c
 #   retours à la ligne — l'espace y est SIGNIFICATIF (« pompe à chaleur »), d'où
 #   `whitespace_significant` : le nettoyage par défaut retirerait tous les blancs.
 CONNECTOR = _c(
-    "transcription", ["transcription"], auth_modes={"byo_org"},
+    "transcription", ["transcription"], auth_modes={"byo_org", "platform"},
     secret_kind="fields", cardinality="mono",
     label="Transcription (Mistral)",
     help="transcrit un audio du projet en page du projet — locuteurs distingués, "

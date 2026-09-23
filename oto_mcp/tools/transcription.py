@@ -8,7 +8,7 @@ relit ce travail : en cours, terminé (avec la page), ou en échec (avec le refu
 
 **Ce qui se fait encore ICI, dans le contexte de l'appel** (avant de rendre) :
 lire l'audio par le seam d'accès (`file_source.resolve`, garde de visibilité du
-projet), résoudre le credential byo_org de l'instance (`access.resolve_credential_fields`)
+projet), résoudre le credential de l'instance (byo_org, ou plateforme accordée à l'org)
 et vérifier le droit d'ÉCRIRE dans le projet — dans cet ordre, le droit d'écrire
 AVANT l'appel payant reste vrai même déplacé : ici, c'est avant même de CRÉER le
 travail, pour ne jamais facturer un texte qui n'aura nulle part où se ranger.
@@ -22,7 +22,7 @@ worker (`oto_mcp/transcription_worker.py`, qui exécute hors de ce contexte).
 portés par le travail.
 
 Credential à 3 champs (ADR 0011), résolu par appel via
-`access.resolve_credential_fields("transcription")` : la clé (secret), la langue et le
+`access.resolve_credential("transcription", want="auto")` (cascade, palier plateforme compris) : la clé (secret), la langue et le
 vocabulaire (non secrets) — une instance = une clé × un vocabulaire, rattachable à un
 projet par slot. La clé est CHIFFRÉE (même enveloppe que le coffre, `oto_mcp/crypto.py`)
 avant d'être portée sur le travail — aucune colonne plaintext.
@@ -61,11 +61,20 @@ def _langue(creds: dict) -> str | None:
     return None if valeur.lower() == _AUTO else valeur
 
 
+def _vocabulaire(instance: str | None, appel: str | None, remplace: bool) -> str | None:
+    """Vocabulaire du travail : celui de l'instance complété par celui de l'appel
+    (l'instance d'abord : au-delà de 100 mots c'est l'appel qui est rogné), ou
+    l'appel seul s'il remplace."""
+    parts = [appel] if remplace else [instance, appel]
+    return "\n".join(p.strip() for p in parts if p and p.strip()) or None
+
+
 def register(mcp: FastMCP) -> None:
     connector_verify.register("transcription", _verify)
 
     @mcp.tool()
-    def transcription_create(source: dict) -> dict:
+    def transcription_create(source: dict, vocabulary: str | None = None,
+                             vocabulary_replace: bool = False) -> dict:
         """Start transcribing an audio recording (site visit, meeting, voice note)
         into a new page of the project — ASYNCHRONOUS, returns a job reference
         immediately (a ~30 min recording takes 20 s to 5 min to process). Needs
@@ -76,6 +85,11 @@ def register(mcp: FastMCP) -> None:
             source: the file, never its bytes. Project file:
                 `{"kind":"project_file","project_id":<id>,"file_id":<id>}` (ids from
                 oto_project_files op=list); also `drive`, `gmail`, `url`.
+            vocabulary: optional extra words to spell right for THIS recording
+                (names, materials), separated by commas or newlines. Added to the
+                connector's vocabulary; 100 words at most overall, the surplus is
+                reported by transcription_status (`vocabulary_dropped`).
+            vocabulary_replace: true = use only `vocabulary`, ignore the connector's.
         """
         pid = access.current_project()
         if pid is None:
@@ -91,7 +105,7 @@ def register(mcp: FastMCP) -> None:
         except file_source.FileSourceError as e:
             raise _refus(str(e)) from None
 
-        creds = access.resolve_credential_fields("transcription")
+        creds = access.resolve_credential("transcription", want="auto").fields
         langue = _langue(creds)
         api_key = creds.get("api_key")
         if not api_key:
@@ -106,7 +120,9 @@ def register(mcp: FastMCP) -> None:
         # l'id serial d'abord (même intention que le coffre, forme plus simple).
         job_id = db.create_transcription_job(
             project_id=pid, sub=sub, audio_key=audio_key, filename=fichier.filename,
-            mime=fichier.mime, language=langue, vocabulary=creds.get("vocabulary") or None,
+            mime=fichier.mime, language=langue,
+            vocabulary=_vocabulaire(creds.get("vocabulary"), vocabulary,
+                                    vocabulary_replace),
             api_key_enc=_encrypt(api_key, f"transcription_jobs:{audio_key}"))
 
         return {"job_id": job_id, "status": "pending",
