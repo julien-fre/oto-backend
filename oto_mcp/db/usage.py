@@ -1055,7 +1055,8 @@ def list_tool_calls(
 
 def get_tool_call(call_id: int) -> Optional[dict]:
     """Fiche d'UN appel (investigation plateforme) : la ligne complète, args inclus
-    (TRONQUÉS à l'écriture par `truncated_args` — jamais le payload intégral) +
+    (bornés à l'écriture par `truncated_args`, toute coupe déclarée dans
+    `args._truncated` — #413) +
     axes de corrélation (session_id, run_id, org_id + nom, client_id)."""
     with _connect() as conn:
         row = conn.execute(

@@ -386,7 +386,7 @@ def test_le_forcage_atteint_la_ligne_REST_en_VRAIE_liste(banc, monkeypatch):
     """Face REST : `datastore_journal.record` → `calllog.log_rest_call` → la table.
 
     ⚠️ La clé ne passe PAS par `args` : `truncated_args` y stringifie tout ce qui
-    n'est pas scalaire et coupe à 300 caractères — la liste reviendrait en `\"[{'row':
+    n'est pas scalaire et coupe au-delà de `MAX_ARG_CHARS` — la liste reviendrait en `\"[{'row':
     …\"`, illisible colonne par colonne. Elle rejoint la ligne comme `fields`, après
     la troncature. C'est cette propriété-là que le test fige."""
     # ⚠️ `calllog._insert_rest` importe `db` et `access` À L'APPEL : patcher

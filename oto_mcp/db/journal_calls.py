@@ -41,9 +41,14 @@ from ._conn import _connect
 # ensemble vide — ou `{}`) : c'est un FAIT sur l'appel, pas une vue qui manque. Le
 # `CASE` évite l'erreur de `jsonb_object_keys` sur autre chose qu'un objet ; la colonne
 # n'en porte jamais, mais une lecture ne doit pas dépendre de ce que l'écriture promet.
+#
+# La clé réservée qui DÉCLARE une coupe (#413, `calllog.truncated_args`) n'est pas un
+# argument : elle est exclue des clés rendues. La coupe se lit sur la fiche.
+ARGS_TRUNCATED_KEY = "_truncated"
 ARG_KEYS_SQL = (
     "COALESCE((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys("
-    "CASE WHEN jsonb_typeof(l.args) = 'object' THEN l.args ELSE '{}'::jsonb END) k), "
+    "CASE WHEN jsonb_typeof(l.args) = 'object' THEN l.args ELSE '{}'::jsonb END) k "
+    f"WHERE k <> '{ARGS_TRUNCATED_KEY}'), "
     "ARRAY[]::text[])"
 )
 

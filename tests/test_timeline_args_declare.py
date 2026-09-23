@@ -20,7 +20,7 @@ Deux choses tenues ici :
 
 1. `RunCall` et `CallDetail` ne portent PLUS de champ `args` du tout ;
 2. **aucune écriture d'arguments d'outil n'échappe à `truncated_args`.** C'est elle
-   qui tronque (300 caractères par valeur) et qui masque (un argument déclaré secret
+   qui tronque (`MAX_ARG_CHARS` par valeur) et qui masque (un argument déclaré secret
    part en empreinte). Une écriture directe ferait mentir cette promesse, sans
    qu'aucun test de masquage existant ne bouge : ils exercent la fonction, pas le
    fait qu'on l'appelle partout.

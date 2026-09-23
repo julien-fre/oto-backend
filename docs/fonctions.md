@@ -102,6 +102,6 @@ disant).
 
 ## Ce que le journal garde
 
-Chaque appel passe par `tool_calls` comme tout outil — arguments TRONQUÉS compris
-(`calllog.truncated_args`, 300 caractères) : l'entrée d'une fonction n'y échappe pas.
+Chaque appel passe par `tool_calls` comme tout outil — arguments compris
+(`calllog.truncated_args`, bornés à `MAX_ARG_CHARS` par valeur, la coupe déclarée) : l'entrée d'une fonction n'y échappe pas.
 Les fichiers produits vont dans `project_files` (qui, quand, quel projet).

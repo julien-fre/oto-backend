@@ -1,7 +1,7 @@
 """Journal des appels — middleware MCP inliné (ex-lib `otomata-calllog`) + gestes REST.
 
-Une ligne par `call_tool` reçu : qui (sub du JWT), quel tool, arguments tronqués,
-durée, succès/erreur. L'écriture part en tâche de fond : zéro latence ajoutée, un
+Une ligne par `call_tool` reçu : qui (sub du JWT), quel tool, arguments (bornés,
+masqués, la coupe déclarée), durée, succès/erreur, taille et forme du résultat. L'écriture part en tâche de fond : zéro latence ajoutée, un
 échec de journalisation n'échoue jamais le tool.
 
 Le journal a **un seul domicile** : la table `tool_calls` (`db.insert_tool_call`),
@@ -28,6 +28,7 @@ from fastmcp.server.middleware import Middleware
 
 from . import journal_secrets
 from .db._hors_boucle import HorsBoucle
+from .db.journal_calls import ARGS_TRUNCATED_KEY
 
 
 
@@ -64,8 +65,22 @@ def apply_call_trace(row: dict, trace: Optional[dict], traced_args: tuple) -> di
 
 logger = logging.getLogger("oto_mcp.calllog")
 
-MAX_ARG_CHARS = 300
+# Borne PAR VALEUR d'argument (oto-backend#413). Décision d'Alexis du 06/09/2026 : le
+# journal garde les arguments, et c'est l'ACCÈS qui se restreint (#563) — la coupe à
+# 300 caractères rendait un `data_write` refusé impossible à qualifier après coup.
+# Ce qui reste de borne est un arbitrage de COÛT DE STOCKAGE, pas de confidentialité :
+# `tool_calls` porte des millions de lignes. Mesure de 2026-09-01 sur la trace du
+# dispatch universel (non bornée alors) : 111 lignes sur 40 159 avaient une valeur
+# au-delà de 300, la plus longue à 4 383 — 4 000 couvre presque tout ce qui dépassait,
+# sans ouvrir la porte à un corps de plusieurs centaines de kilo-octets par ligne.
+# Toute coupe qui reste se DÉCLARE sur la ligne (`ARGS_TRUNCATED_KEY`).
+MAX_ARG_CHARS = 4000
 MAX_ERROR_CHARS = 500
+
+# `ARGS_TRUNCATED_KEY` (importée de `db.journal_calls`, qui l'exclut des `arg_keys`) :
+# la clé réservée d'`args` qui DÉCLARE une coupe — `{"at": <borne>, "sizes":
+# {<argument>: <taille réelle>}}`. Absente quand rien n'a été coupé. Elle ne porte que
+# des noms d'arguments et des tailles, jamais une valeur.
 
 # Profondeur de traversée du masquage. Deux niveaux suffisent aujourd'hui (le dispatch
 # universel en ajoute un, `smtp_imap` en ajoute un autre) ; la borne existe pour qu'une
@@ -105,7 +120,11 @@ def _masque_en_profondeur(valeur: Any, caches, profondeur: int) -> Any:
 def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS,
                    *, tool: str | None = None) -> dict | None:
     """Arguments journalisables : scalaires gardés tels quels, le reste
-    stringifié et coupé — le journal montre l'intention, pas le payload.
+    stringifié, et coupé au-delà de `max_chars` seulement (#413).
+
+    Une coupe n'est jamais silencieuse : la ligne porte alors
+    `args[ARGS_TRUNCATED_KEY] = {"at": max_chars, "sizes": {<argument>: <taille>}}`,
+    de quoi lire « tronqué à N, taille réelle M » sur la fiche d'appel.
 
     `tool` sert le MASQUAGE (#558) : un argument dont le nom est déclaré secret
     pour CET outil (`journal_secrets.secret_arg_names`) part en empreinte, jamais
@@ -124,6 +143,7 @@ def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS,
         # rouvrirait le canal qu'on vient de fermer.
         caches = caches | journal_secrets.secret_arg_names(arguments.get("name"))
     out: dict[str, Any] = {}
+    tailles: dict[str, int] = {}
     for k, v in arguments.items():
         if k in caches and v is not None:
             out[k] = journal_secrets.mask(v)
@@ -133,8 +153,11 @@ def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS,
         if not (v is None or isinstance(v, (int, float, bool))):
             v = str(v)
             if len(v) > max_chars:
+                tailles[k] = len(v)
                 v = v[:max_chars] + "…"
         out[k] = v
+    if tailles:
+        out[ARGS_TRUNCATED_KEY] = {"at": max_chars, "sizes": tailles}
     return out
 
 
@@ -162,16 +185,16 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
 
     Même table, même fonction d'insertion et même discipline que le middleware MCP :
     **best-effort** (l'écriture part en tâche de fond, un échec se log en warning et
-    n'échoue JAMAIS la requête métier) et arguments passés à `truncated_args` (le
-    journal montre l'intention, jamais le payload).
+    n'échoue JAMAIS la requête métier) et arguments passés à `truncated_args` (bornés
+    et masqués, la coupe déclarée).
 
     `tool` doit nommer le geste dans le vocabulaire de la surface MCP (`data_write`,
     `data_delete_row`, `data_release`) : les lectures du journal (parcours d'une
     ligne, activité d'un tableau) filtrent là-dessus, pas sur la route HTTP.
     `forced` (#658) = les colonnes verrouillées remplacées de force. Comme `fields`,
     il rejoint la ligne APRÈS `truncated_args` et reste un VRAI tableau JSON : passé
-    dans `args`, il repartirait stringifié et coupé à 300 caractères, donc illisible
-    colonne par colonne — exactement ce que `_fields_list` existe pour éviter. Absent
+    dans `args`, il repartirait stringifié (et coupé au-delà de `MAX_ARG_CHARS`), donc
+    illisible colonne par colonne — exactement ce que `_fields_list` existe pour éviter. Absent
     quand rien n'a été forcé : un forçage se cherche par la PRÉSENCE de la clé.
 
     ⚠️ Distinct de la ligne de route posée par `api.routes.RestCallLogger`

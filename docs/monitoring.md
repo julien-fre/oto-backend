@@ -189,9 +189,11 @@ cherche avec un défaut `{}` fabrique lui-même l'objet vide, et « je ne sais p
 s'est écrit « on ne peut pas savoir ». Depuis ce jour, le contrat le dit :
 
 - **la fiche** (`op=call` sur les deux consoles, `GET …/calls/{call_id}` aux deux étages) :
-  `call.args`, **tels que journalisés** — tronqués à l'écriture (300 caractères par
-  valeur, valeurs composées stringifiées), jetons masqués (#582), `null` quand l'appel
-  n'en portait aucun. Un seul chemin de lecture (`get_tool_call`) pour les trois faces ;
+  `call.args`, **tels que journalisés** — bornés à l'écriture (`calllog.MAX_ARG_CHARS`,
+  4 000 caractères par valeur depuis le 23/09/2026, 300 avant — #413 ; valeurs composées
+  stringifiées), toute coupe **déclarée** dans `call.args._truncated` = `{"at": <borne>,
+  "sizes": {<argument>: <taille réelle>}}` (absente quand rien n'a été coupé), jetons
+  masqués (#582), `null` quand l'appel n'en portait aucun. Un seul chemin de lecture (`get_tool_call`) pour les trois faces ;
   le schéma de la 200 (`CallDetail`) le déclare ;
 - **la liste** (`op=calls`, `GET …/calls`) ne porte pas le contenu — une page de 200
   lignes n'a pas à charrier 200 payloads — mais `arg_keys` : les **clés** des

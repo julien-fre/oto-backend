@@ -85,7 +85,7 @@ def journal(live):
 
     _ecrit("fr_directors", {"siren": SIREN})
     _ecrit("data_write", {"namespace": "fiches", "id": "row-1",
-                          "row": {"nom": "x" * 400}})          # `row` sera tronqué
+                          "row": {"nom": "x" * (calllog.MAX_ARG_CHARS + 100)}})  # `row` sera tronqué
     _ecrit("oto_org", {"op": "accept_invite", "token": TOKEN})  # `token` sera masqué
     _ecrit("slack_list_channels", {})                          # sans argument → NULL
 
@@ -124,6 +124,11 @@ def test_le_detail_plateforme_rend_args_tel_que_journalise_et_aucun_arguments(cl
     call = _detail_plateforme(client, journal, "data_write", monkeypatch)["call"]
     assert call["args"]["namespace"] == "fiches" and call["args"]["id"] == "row-1"
     assert isinstance(call["args"]["row"], str) and call["args"]["row"].endswith("…")
+    # …et la coupe se DÉCLARE sur la fiche (#413) : « tronqué à N, taille réelle M ».
+    from oto_mcp import calllog
+    coupe = call["args"][calllog.ARGS_TRUNCATED_KEY]
+    assert coupe["at"] == calllog.MAX_ARG_CHARS
+    assert coupe["sizes"]["row"] > calllog.MAX_ARG_CHARS
 
     # Un appel sans argument : `null`, la valeur journalisée — jamais un `{}` fabriqué.
     call = _detail_plateforme(client, journal, "slack_list_channels", monkeypatch)["call"]

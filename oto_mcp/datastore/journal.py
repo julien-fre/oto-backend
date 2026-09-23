@@ -123,7 +123,7 @@ def record(tool: str, *, sub: Optional[str], ctx: NsContext, row_id: Optional[st
               "from_status": from_status, "to_status": to_status},
         fields=fields,
         # ⚠️ PAS dans `args` : `truncated_args` y stringifierait la liste et la
-        # couperait à 300 caractères. Même raison que `fields`, même chemin.
+        # couperait au-delà de `calllog.MAX_ARG_CHARS`. Même raison que `fields`, même chemin.
         forced=forced,
     )
 

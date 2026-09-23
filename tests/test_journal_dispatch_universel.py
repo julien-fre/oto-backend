@@ -2,7 +2,7 @@
 règle annoncée.
 
 Le contrat servi promet, des deux côtés (`CallDetail.args`, `RunCall.args`), des
-arguments **tronqués à l'écriture** (300 caractères par valeur) et **masqués** (un
+arguments **tronqués à l'écriture** (`MAX_ARG_CHARS` par valeur) et **masqués** (un
 argument déclaré secret pour cet outil part en empreinte), « y compris à travers le
 dispatch universel ». Mesuré le 2026-09-01 : la promesse était fausse sur les deux
 lignes qu'un appel dispatché produit.
