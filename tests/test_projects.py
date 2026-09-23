@@ -44,6 +44,7 @@ def seams(monkeypatch):
                         rec["copy"].append((src, name, ot, oid, copied_by, context_org_id))
                         or (8, []))
     monkeypatch.setattr(P.db, "archive_project", lambda pid: rec["archive"].append(pid))
+    monkeypatch.setattr(P.db, "list_docs_for_project", lambda pid: [])
     rec["link"] = []
     rec["unlink"] = []
     def _add_link(pid, tt, tr, label=None, role=None, config=None, identity_ref=None,
@@ -475,8 +476,18 @@ def test_archive_needs_govern(seams, monkeypatch):
 
 
 def test_archive_ok(seams):
-    out = P._project(CTX, P.ProjectInput(op="archive", project_id=7))
-    assert out == {"ok": True, "id": 7, "archived": True} and seams["archive"] == [7]
+    # ROW porte un brief : l'archivage se CONFIRME et dit ce qu'il range (oto#38).
+    out = P._project(CTX, P.ProjectInput(op="archive", project_id=7, confirm=True))
+    assert out == {"ok": True, "id": 7, "archived": True,
+                   "unreachable": {"pages": 0, "procedures": 0, "links": 1,
+                                   "brief": True}} and seams["archive"] == [7]
+
+
+def test_archive_sans_confirm_refuse_un_projet_qui_porte_un_brief(seams):
+    with pytest.raises(P.AuthzDenied) as e:
+        P._project(CTX, P.ProjectInput(op="archive", project_id=7))
+    assert (e.value.status, e.value.code) == (409, "confirm_required")
+    assert seams["archive"] == []
 
 
 def test_get_includes_links(seams):

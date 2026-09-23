@@ -208,6 +208,24 @@ def archive_project(project_id: int) -> None:
                      "WHERE id = %s", (project_id,))
 
 
+def unarchive_project(project_id: int):
+    """Remet un projet EN SERVICE (issue `oto`#38). Rend la date d'archivage qu'il
+    portait, ou `None` s'il n'était pas archivé (ou n'existe pas).
+
+    Même forme que `org_store.unarchive_instruction` : la date d'AVANT, lue par une
+    CTE dans la même instruction (`RETURNING archived_at` rendrait la valeur neuve,
+    donc NULL), pour que le journal dise ce que le geste a annulé."""
+    with _connect() as conn:
+        row = conn.execute(
+            "WITH avant AS (SELECT id, archived_at FROM projects "
+            "               WHERE id = %s AND archived_at IS NOT NULL) "
+            "UPDATE projects p SET archived_at = NULL, updated_at = NOW() "
+            "FROM avant a WHERE p.id = a.id RETURNING a.archived_at AS avant",
+            (project_id,),
+        ).fetchone()
+        return None if row is None else row["avant"]
+
+
 def reparent_project(project_id: int, new_owner_type: str, new_owner_id: str,
                      context_org_id: Optional[int] = None) -> None:
     """Change le DÉTENTEUR d'un projet, et repose son « rangé chez » (`context_org_id`).

@@ -27,10 +27,9 @@ def archive_instruction(owner_type: str, owner_id: int | str, slug: str) -> bool
 
     Idempotent en pratique — ré-archiver rafraîchit l'horodatage plutôt que
     d'échouer, le résultat visé (« elle n'est plus en service ») étant déjà
-    atteint. Pas de désarchivage sur cette surface : même choix que
-    `db/projects.archive_project`, dont l'inverse n'existe pas non plus côté
-    app. Ce qu'archiver garantit ici, c'est que RIEN n'est détruit — contrairement
-    à `delete_instruction` juste en dessous, qui emporte l'historique."""
+    atteint. L'inverse est `unarchive_instruction`, juste en dessous. Ce qu'archiver
+    garantit ici, c'est que RIEN n'est détruit — contrairement à
+    `delete_instruction`, qui emporte l'historique."""
     otype, oid = instructions._owner(owner_type, owner_id)
     slug = instructions.normalize_slug(slug)
     with _connect() as conn:
@@ -47,10 +46,10 @@ def unarchive_instruction(owner_type: str, owner_id: int | str,
     ou `None` si elle n'était pas archivée (ou n'existe pas).
 
     ⚠️ **L'inverse de `archive_instruction` n'existait pas, et c'était un choix
-    ASSUMÉ** — parité avec les projets, dont l'archivage n'a pas d'inverse non plus.
-    La parité se rompt ici pour les PROCÉDURES SEULES, sur décision du 10/09/2026 et
-    en connaissance de cause ; les projets gardent le trou (oto-backend#929). Lire
-    cette fonction comme une incohérence serait ignorer qu'elle en est une, voulue.
+    ASSUMÉ** — parité avec les projets, dont l'archivage n'avait pas d'inverse non
+    plus. Rompu pour les procédures le 10/09/2026, puis pour les projets le 23/09
+    (`db/projects.unarchive_project`, oto#38 — clôt oto-backend#929) : les deux
+    archivages ont de nouveau la même forme, et leur inverse.
 
     ⚠️ **Rend la date d'AVANT, pas un booléen** : ressusciter une ligne que
     quelqu'un a retirée exprès doit laisser savoir QUAND elle l'avait été, sinon le

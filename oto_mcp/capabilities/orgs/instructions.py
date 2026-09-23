@@ -478,8 +478,8 @@ class InstructionArchived(BaseModel):
 
     ⚠️ **Le désarchivage existe depuis le 10/09/2026** (`…/unarchive`), sur CETTE
     face : celui qui retire depuis l'écran doit pouvoir remettre depuis l'écran.
-    C'est une rupture de parité avec les projets, dont l'archivage n'a toujours pas
-    d'inverse — assumée, et instruite à part (#929). Elle était nécessaire : refuser
+    Les projets ont reçu le même inverse le 23/09/2026 (`oto_project op=unarchive`,
+    oto#38 — clôt #929). Il était nécessaire : refuser
     d'écrire sur une procédure retirée sans offrir de la remettre en service
     laisserait la suppression pour seule sortie, donc la destruction de l'historique
     que l'archivage existe pour préserver.

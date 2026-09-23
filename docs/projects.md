@@ -19,6 +19,20 @@ docs/`, op create/list/get/update/patch/delete/move/revisions/revert…, `POST /
 un package depuis le 01/09, dispatcher et descripteur dans `docs/core.py`).
 Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dispatch `_OPS`).
 
+> **Archiver se défait, et dit ce qu'il range (23/09/2026, oto#38).** `op=archive` pose
+> `archived_at` : le projet sort de toutes les listes, rien n'est détruit. Jusque-là il
+> n'avait **aucun inverse** — un choix assumé (oto-backend#929), rompu sur décision
+> d'Alexis comme il l'avait été pour les procédures le 10/09 : le seul retour était un
+> UPDATE SQL par un admin, et un projet archivé par erreur portait dans son brief
+> les règles opérationnelles d'une mission. Désormais : `op=unarchive` (même garde,
+> `can_govern` ; journalisé `project.unarchive` ; `was_archived_at` = ce qui a été annulé,
+> `unarchived: false` n'est pas une erreur) ; `op=archive` rend `unreachable` (pages,
+> procédures liées, liens, brief) et **refuse** (409 `confirm_required`, même compte dans
+> `details.unreachable`) un projet qui porte un brief non vide ou une procédure liée, sauf
+> `confirm=true` ; `op=list archived=true` rend les projets archivés de l'org consultée
+> (mêmes propriétaires que la liste vivante, sans les partages reçus : qui reçoit ne
+> gouverne pas).
+
 > **Une liste rend son INDEX, jamais les corps (14/08).** ⚠️ **Ce doc a laissé croire le
 > contraire jusqu'au 14/08** : `op=list` a longtemps rendu la fiche entière de chaque
 > élément, et rien ici ne le signalait. Mesuré en prod : `oto_doc(op=list)` = **201 170

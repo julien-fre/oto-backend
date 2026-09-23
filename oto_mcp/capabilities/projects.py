@@ -22,7 +22,7 @@ from .. import (config, db, group_store, org_store, output_projection, ownership
                 roles, session_org, url_perimeter)
 from ._authz import SUB_ONLY
 from . import _portee, _publication
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 RTYPE = "project"
@@ -35,7 +35,7 @@ _LINK_TYPES = ("tableau", "procedure", "connecteur")
 
 class ProjectInput(BaseModel):
     op: Literal["create", "list", "list_templates", "get", "update", "archive",
-                "copy", "handoff", "link", "unlink", "activity", "runs", "inventory",
+                "unarchive", "copy", "handoff", "link", "unlink", "activity", "runs", "inventory",
                 "lint", "publish_mcp", "unpublish_mcp"] = Field(description=(
         "To CHANGE THE OWNER of an existing project (e.g. personal → org) WITHOUT "
         "duplicating it or losing its history (docs, activity, runs stay on the SAME "
@@ -106,6 +106,17 @@ class ProjectInput(BaseModel):
         "your personal projects filed there, and those shared with it or with your "
         "teams in it; `me` = the projects shared with YOU as a person, whatever their "
         "organization — they are listed nowhere else."))
+    # list : retrouver ce qu'on a RANGÉ (issue `oto`#38) — les projets archivés, et eux
+    # seuls. Un archivage sans moyen de relire la liste de ce qu'on a archivé ne se
+    # défait que si l'on se souvient de l'id.
+    archived: Optional[bool] = Field(default=None, description=(
+        "list only: `true` lists the ARCHIVED projects (yours and those of the orgs "
+        "and teams you see) instead of the live ones — to find one and unarchive it."))
+    # archive : le geste qui rend un brief ou une procédure inatteignable se CONFIRME.
+    confirm: Optional[bool] = Field(default=None, description=(
+        "archive only: required (`true`) when the project carries a non-empty brief or "
+        "a linked procedure — without it the archive is refused (409 "
+        "`confirm_required`) and the response says what would become unreachable."))
     # list / list_templates : projection — omis = vue de tri, ["*"] = la fiche entière
     fields: Optional[list[str]] = Field(default=None, description=(
         "list/list_templates: output projection. Omitted returns the INDEX (no "
@@ -560,6 +571,10 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
     sub = ctx.sub
     _require(inp.scope is None or inp.op == "list", "unsupported_scope",
              "`scope` ne s'applique qu'à op=list. Retire-le.")
+    _require(inp.archived is None or inp.op == "list", "unsupported_archived",
+             "`archived` ne s'applique qu'à op=list. Retire-le.")
+    _require(inp.confirm is None or inp.op == "archive", "unsupported_confirm",
+             "`confirm` ne s'applique qu'à op=archive. Retire-le.")
 
     if inp.op == "create":
         _require(inp.name and inp.name.strip(), "missing_name", "`name` requis.")
@@ -635,6 +650,12 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             return [{**_enrich(r, True), "permission": r.get("permission")}
                     for r in db.list_projects_granted_to(principals)
                     if r["id"] not in seen]
+
+        if inp.archived:
+            _require(inp.scope != "me", "unsupported_scope",
+                     "`archived=true` liste ce qui est rangé dans l'org consultée ; un "
+                     "partage personnel n'y appartient pas. Retire `scope`.")
+            return _projected(_archived_in_org(ctx), inp.fields)
 
         if inp.scope == "me":
             # « Partagés avec moi » : le partage PERSONNEL (principal ('user', sub)) est
@@ -1171,12 +1192,75 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             expose_docs=inp.mcp_expose_docs,
             instructions_md=inp.mcp_instructions_md)
 
+    if inp.op == "unarchive":
+        # L'inverse de l'archivage (issue `oto`#38), même garde. Il n'existait pas, et
+        # c'était un choix ASSUMÉ (oto-backend#929) : rompu sur décision d'Alexis du
+        # 23/09/2026, comme il l'avait été pour les procédures le 10/09. Le seul retour
+        # était un UPDATE SQL par un admin.
+        _require(ownership.can_govern(sub, RTYPE, rid), "forbidden",
+                 "Désarchivage réservé au propriétaire / admin.", 403)
+        avant = db.unarchive_project(int(inp.project_id))
+        if avant is not None:
+            db.log_project_activity(int(inp.project_id), sub, "project.unarchive",
+                                    row.get("name"))
+        # `unarchived: false` n'est pas une erreur : remettre en service ce qui l'est
+        # déjà est un non-geste. `was_archived_at` dit ce que le geste a ANNULÉ.
+        return {"ok": True, "id": inp.project_id, "unarchived": avant is not None,
+                "was_archived_at": str(avant) if avant is not None else None}
+
     # archive
     _require(ownership.can_govern(sub, RTYPE, rid), "forbidden",
              "Archivage réservé au propriétaire / admin.", 403)
+    perdu = _ce_que_l_archivage_range(row)
+    if (perdu["brief"] or perdu["procedures"]) and not inp.confirm:
+        # Le cas vécu (oto#38) : un projet pris pour un doublon, archivé, portait dans
+        # son brief les règles opérationnelles de la mission. Rien ne l'a dit.
+        raise AuthzDenied(
+            409, "confirm_required",
+            f"Archiver #{inp.project_id} le retire de toutes les listes, avec ce qu'il "
+            f"porte : {perdu['pages']} page(s), {perdu['procedures']} procédure(s) "
+            f"liée(s), {perdu['links']} lien(s)"
+            + (", et un brief non vide" if perdu["brief"] else "") + ". Rien n'est "
+            "détruit, et `op=unarchive` le remet en service. Repasse `confirm=true` "
+            "si c'est bien voulu.", {"unreachable": perdu})
     db.archive_project(int(inp.project_id))
     db.log_project_activity(int(inp.project_id), sub, "project.archive", row.get("name"))
-    return {"ok": True, "id": inp.project_id, "archived": True}
+    return {"ok": True, "id": inp.project_id, "archived": True, "unreachable": perdu}
+
+
+def _ce_que_l_archivage_range(row: dict) -> dict:
+    """Ce qu'un archivage retire de la vue (issue `oto`#38) : le compte des pages, des
+    procédures liées, des liens, et la présence d'un brief. Rien n'est détruit — les
+    procédures liées restent chez leur propriétaire — mais tout cela ne se retrouve
+    plus par la liste des projets."""
+    pid = int(row["id"])
+    links = db.list_project_links(pid)
+    return {"pages": len(db.list_docs_for_project(pid)),
+            "procedures": sum(1 for l in links if l["target_type"] == "procedure"),
+            "links": len(links),
+            "brief": bool((row.get("brief_md") or "").strip())}
+
+
+def _archived_in_org(ctx: ResolvedCtx) -> list[dict]:
+    """Les projets ARCHIVÉS de l'org consultée (`op=list archived=true`, oto#38) : ses
+    projets, ceux de ses équipes que je vois, et mes projets perso rangés là — le même
+    périmètre que la liste vivante, sans les partages reçus (celui qui reçoit ne
+    gouverne pas, il ne désarchiverait rien)."""
+    sub = ctx.sub
+    owner = ownership.active_owner(ctx.org_id)
+    _require(owner is not None, "no_active_org", "Aucune org active.", 400)
+    if roles.is_org_admin(sub, int(ctx.org_id)):
+        group_ids = [int(g["id"]) for g in group_store.list_groups(int(ctx.org_id))]
+    else:
+        group_ids = [int(g["group_id"])
+                     for g in group_store.list_groups_for_user(sub, ctx.org_id)]
+    rows = db.list_projects_for_owners([owner] + [("group", str(g)) for g in group_ids],
+                                       include_archived=True)
+    vus = {r["id"] for r in rows}
+    rows += [r for r in db.list_member_projects(sub, int(ctx.org_id),
+                                                include_archived=True)
+             if r["id"] not in vus]
+    return [_view(r, sub) for r in rows if r.get("archived_at") is not None]
 
 
 # ── Procédures liées, servies sur demande (#313) ─────────────────────────────
@@ -1445,7 +1529,12 @@ CAPABILITIES += [
             "ANOTHER org is re-provisioned EMPTY (never a pointer to the source's private data), "
             "and links whose namespace no longer resolves are skipped — both surfaced in the "
             "response `warnings`. Pass project_id = source + name = target) / handoff (a copy-paste « resume in Claude » blob "
-            "that pre-writes the per-call `_project=` token for this project) / archive / link & unlink "
+            "that pre-writes the per-call `_project=` token for this project) / archive (hides it "
+            "from every list, destroys nothing; the response says what became unreachable — "
+            "pages, linked procedures, links, brief — and a project with a non-empty brief or "
+            "a linked procedure needs `confirm=true`, else 409 `confirm_required`) / "
+            "unarchive (puts an archived project back; `was_archived_at` echoes what it "
+            "undid; find archived ones with op=list `archived=true`) / link & unlink "
             "(attach an entity: "
             "target_type tableau|procedure|connecteur + target_ref = its id/slug/name, "
             "optional label + optional "
@@ -1521,6 +1610,10 @@ CAPABILITIES += [
             "anonymous/org. unpublish_mcp removes it. get returns "
             "mcp_slug/mcp_access/mcp_tools/mcp_expose_datastore/mcp_url."
         ),
+        errors=(DeclaredError(409, "confirm_required",
+                              "op=archive sur un projet qui porte un brief ou une "
+                              "procédure liée, sans `confirm=true` — rien n'a été "
+                              "archivé ; `details.unreachable` dit ce qui l'aurait été"),),
         mcp="oto_project",
         rest=RestBinding("POST", "/api/me/projects"),
     ),
