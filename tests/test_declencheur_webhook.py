@@ -123,7 +123,8 @@ def test_un_secret_faux_et_un_id_inconnu_rendent_LE_MEME_refus(monkeypatch):
         with pytest.raises(runner_hook.HookRefus) as e:
             runner_hook.declencher(999, secret, None)
         refus.append((e.value.statut, e.value.code, e.value.message))
-    assert refus[0] == refus[1] == (404, "hook_not_found", "déclencheur inconnu")
+    # Le TEXTE peut changer ; ce qui est testé, c'est qu'il n'y en ait qu'UN.
+    assert refus[0] == refus[1] == (404, "hook_not_found", runner_hook.HOOK_INCONNU)
 
 
 def test_la_recherche_par_secret_exige_les_DEUX(monkeypatch):

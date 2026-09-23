@@ -73,7 +73,7 @@ async def fire(request: Request) -> JSONResponse:
     try:
         trigger_id = int(request.path_params["trigger_id"])
     except (KeyError, TypeError, ValueError):
-        return _refus(404, "hook_not_found", "déclencheur inconnu")
+        return _refus(404, "hook_not_found", runner_hook.HOOK_INCONNU)
     secret = runner_hook.secret_du_porteur(request.headers.get("authorization"))
 
     # ⚠️ La TAILLE avant le PARSE, et en FLUX : `request.body()` bufferise tout
@@ -88,9 +88,8 @@ async def fire(request: Request) -> JSONResponse:
         await run_in_threadpool(runner_hook.noter_corps_trop_gros, trigger_id,
                                 secret, (request.headers.get("user-agent") or "")[:200])
         return _refus(413, "payload_too_large",
-                      f"corps au-delà du plafond de {_CORPS_MAX} octets. Passe "
-                      "une RÉFÉRENCE (un identifiant que l'agent rechargera), pas "
-                      "l'enregistrement entier.")
+                      f"Body above the {_CORPS_MAX}-byte limit. Send a REFERENCE "
+                      "(an id the agent will load), not the whole record.")
 
     corps = None
     if brut.strip():
@@ -101,8 +100,8 @@ async def fire(request: Request) -> JSONResponse:
             # formulaire là où on attend du JSON verrait sinon ses agents tourner
             # sans jamais recevoir sa donnée, et rien ne le dirait.
             return _refus(400, "invalid_json",
-                          "le corps n'est pas du JSON. Envoie un objet JSON, ou "
-                          "rien du tout si l'agent n'en a pas besoin.")
+                          "The body is not JSON. Send a JSON object, or nothing "
+                          "at all if the agent does not need one.")
 
     try:
         rendu = await run_in_threadpool(
@@ -122,8 +121,8 @@ async def fire(request: Request) -> JSONResponse:
         # jamais avalé (`lint_silences`).
         logger.exception("webhook %s : déclenchement impossible", trigger_id)
         return _refus(500, "hook_failed",
-                      "le déclenchement a échoué de notre côté. Réessaie : "
-                      "aucun travail n'a été enfilé.")
+                      "The trigger failed on our side. Retry: no job was "
+                      "queued.")
 
     return JSONResponse(rendu, status_code=202)
 

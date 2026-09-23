@@ -47,6 +47,21 @@ logger = logging.getLogger(__name__)
 #: FAUX, donc aucun adaptateur qui teste `oto_` ne le confond avec un jeton.
 HOOK_SECRET_PREFIX = "otoh_"
 
+#: Le refus rendu quand l'appel ne se résout à AUCUN déclencheur — identifiant
+#: inconnu, secret faux, ou pas de secret du tout. **Un seul texte pour les trois,
+#: et c'est tout l'intérêt** : trois messages distincts feraient de cette route un
+#: oracle sur les déclencheurs qui existent. Il peut en revanche être aussi
+#: explicite qu'on veut, puisqu'il ne dépend d'aucun des trois cas. Il l'est
+#: devenu le 22/09/2026 : « déclencheur inconnu » envoyait chercher une URL
+#: fausse, alors que l'erreur vécue en production est le bearer d'un AUTRE agent,
+#: réutilisé parce que rien ne disait qu'un bearer ne vaut que pour un agent.
+HOOK_INCONNU = (
+    "Invalid id or secret. Every agent has its OWN bearer token, valid for that "
+    "agent alone: a token from another agent will always return this error. Copy "
+    "it from the agent's page, and check that the id in the URL is the one shown "
+    "there."
+)
+
 #: Le débit par défaut, par déclencheur et par heure. Ce n'est PAS un plafond de
 #: dépense (celui-là est un autre chantier) : c'est un lisseur. Il évite qu'un
 #: import de deux cents lignes lance deux cents agents dans la même seconde —
@@ -242,14 +257,14 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
     l'envoyeur a reçu un succès, il ne retentera pas.
     """
     if not secret:
-        raise HookRefus(404, "hook_not_found", "déclencheur inconnu")
+        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
     t = db.trigger_par_secret(trigger_id, hacher(secret))
     if not t:
         # ⚠️ MÊME refus qu'un id inconnu, et c'est délibéré : distinguer les deux
         # ferait de cette route un oracle sur les déclencheurs qui existent. Le
         # propriétaire, lui, voit `refused_secret` sur son écran — mais seulement
         # si l'id existe, donc on ne peut pas non plus journaliser ici.
-        raise HookRefus(404, "hook_not_found", "déclencheur inconnu")
+        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
 
     # ⚠️ UNE transaction, et le refus est levé APRÈS elle. Lever DANS le bloc
     # ferait rouler la transaction en arrière — la livraison refusée disparaîtrait
@@ -266,9 +281,9 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                            source=source)
             refus = HookRefus(
                 409, "trigger_paused",
-                "cet agent est en pause : il ne s'exécutera pas tant qu'il ne sera "
-                "pas rallumé. Rien n'a été perdu de ce côté — la livraison est "
-                "enregistrée et visible sur sa fiche.")
+                "This agent is paused: it will not run until it is switched back "
+                "on. Nothing was lost on our side — the delivery is recorded and "
+                "visible on its page.")
         else:
             # ⚠️ AVANT de compter. Une rafale est concurrente par définition : sans
             # ce verrou, toutes les livraisons lisent le même compte et partent
@@ -291,11 +306,11 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                                source=source)
                 refus = HookRefus(
                     429, "hook_rate_limited",
-                    f"ce déclencheur reçoit plus que son débit ({debit}/h) et la "
-                    f"file dépasse déjà sa fraîcheur ({fraicheur} s) : cette "
-                    "livraison ne serait plus pertinente au moment où elle "
-                    "partirait. Relève `max_per_hour` sur l'agent, ou espace la "
-                    "source.", issue="rate", retry_after=retard_s)
+                    f"This agent receives more than its rate ({debit}/h) and the "
+                    f"queue already exceeds its freshness window ({fraicheur}s): "
+                    "this delivery would no longer be relevant by the time it ran. "
+                    "Raise `max_per_hour` on the agent, or slow the sender down.",
+                    issue="rate", retry_after=retard_s)
             else:
                 charge = {
                     "procedure": t["procedure"],
