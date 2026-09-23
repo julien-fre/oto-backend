@@ -41,10 +41,11 @@ from .columns import (
     refuser_geste_sans_effet,
     refuser_les_mots_mal_places,
     sans_les_nulls_sans_effet,
+    sans_les_objets_vides,
     vides_assumes_perdus,
 )
 from .controles import _relever_origine_module
-from .donnees_d_origine import poser_les_deux_versions
+from . import donnees_d_origine as ddo
 from .errors import RowNotFound, RowValidationError
 from .outils import _now_iso
 from .points import _refuse_dotted_names, ranger_les_couches
@@ -94,6 +95,9 @@ class EcritureParIdMixin:
             # oto#182 : un `null` qui n'efface rien ne s'écrit pas — jugé ICI sous le
             # verrou, contre la ligne exacte, c'est la porte de la réémission.
             corps = sans_les_nulls_sans_effet(corps, lambda: data, schema)
+            # oto#165 : MÊME porte pour un `{}` sur une case vide — écarté, et dit.
+            corps, objets_vides = sans_les_objets_vides(corps, lambda: data)
+            self.off_rejected.extend(objets_vides)
             # oto#140 : `@keep` et `@clear` dépréciés, avertis (cf. `append_row`).
             deprecies = mdp.mots_nommes(corps)
             if deprecies:
@@ -109,8 +113,8 @@ class EcritureParIdMixin:
             vises = rq.effacements_sur_relique(corps, data)
             if vises:
                 raise RowValidationError([rq.refus(vises)])
-            if donnees_d_origine:
-                poser_les_deux_versions(corps, avant=data, schema=schema)
+            releve = (ddo.poser_les_deux_versions(corps, avant=data)
+                      if donnees_d_origine else None)
             # MÊME arbitrage que la fusion : le patch par `id` est le geste qui a vidé
             # `moteur` en production le 13/08 (#407/#408/#409). Les deux chemins
             # d'écriture ont déjà divergé une fois sur cette famille de règles (#322) :
@@ -161,14 +165,19 @@ class EcritureParIdMixin:
                                     forcage=forcage, agent=aga.appel_d_agent())
             # ⚠️ Ce chemin a déjà été oublié deux fois sur l'origine (sa survie, puis
             # son relevé) parce qu'il a son propre corps : les deux sont branchés ici.
-            _relever_origine_module(self, ns_id, pose, avant, schema=schema,
-                                    declare=origine_override)
+            # MÊME retrait que la fusion : l'origine posée par le paramètre est déclarée.
+            _relever_origine_module(
+                self, ns_id,
+                ddo.sans_les_origines_posees(pose, releve) if releve else pose,
+                avant, schema=schema, declare=origine_override)
             # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
             # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
             # Seule la borne de longueur se limite aux clés du patch (#383).
             self._check_row(schema, data, prev_status=prev_status, written=written)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
+            if releve is not None:
+                ddo.relever(self, releve)
             ecrit["data"] = data
             return data
 

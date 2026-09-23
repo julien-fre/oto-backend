@@ -23,6 +23,7 @@ from .columns import (
     refuser_cles_internes,
     refuser_les_mots_mal_places,
     sans_les_nulls_sans_effet,
+    sans_les_objets_vides,
 )
 from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
 from .controles import _relever_origine_module
@@ -30,7 +31,7 @@ from .errors import BusinessKeyRequired, RowLocked, RowValidationError
 from .outils import _new_id, _refus_de_creation
 from .points import _refuse_dotted_names, ranger_les_couches
 from . import mots_deprecies as mdp
-from .donnees_d_origine import poser_les_deux_versions
+from . import donnees_d_origine as ddo
 from .reserves import refuser_champs_reserves
 
 
@@ -112,6 +113,11 @@ class LotsMixin:
                 user_data = sans_les_nulls_sans_effet(
                     user_data, lambda: self._donnees_de_la_ligne_visee(
                         ns_id, schema, user_data, key), schema)
+                # oto#165 : un `{}` sur une case vide est écarté, et dit.
+                user_data, objets_vides = sans_les_objets_vides(
+                    user_data, lambda: self._donnees_de_la_ligne_visee(
+                        ns_id, schema, user_data, key))
+                self.off_rejected.extend(objets_vides)
                 # oto#140 : `@keep` et `@clear` dépréciés, sur le chemin des imports
                 # aussi — union sur le lot, donc une phrase et non cinq cents.
                 deprecies = mdp.mots_nommes(user_data)
@@ -167,8 +173,8 @@ class LotsMixin:
                 # réservés se résolvent ici, sur une copie (cf. `append_row`) : la course
                 # perdue ci-dessous fusionne le geste d'origine.
                 a_creer = mots_resolus_a_la_creation(schema, user_data)
-                if donnees_d_origine:
-                    poser_les_deux_versions(a_creer, schema=schema)
+                releve = (ddo.poser_les_deux_versions(a_creer)
+                          if donnees_d_origine else None)
                 # `lot=True` : le refus de l'`id` nu doit nommer un geste qui
                 # ABOUTIT en mode lot — cf. #72, 22 cas sur 29 suivaient le conseil
                 # du refus précédent, lequel échouait ici.
@@ -199,6 +205,9 @@ class LotsMixin:
                     updated += 1
                     ids.append(existing_id)
                     continue
+                # oto#164 : relevé APRÈS l'insert (cf. `append_row`).
+                if releve is not None:
+                    ddo.relever(self, releve)
             except RowLocked as e:
                 # ⚠️ MÊME parti que les deux clauses suivantes, et pour la même
                 # raison : le refus garde sa CLASSE, seule sa désignation change.

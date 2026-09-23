@@ -481,6 +481,60 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
     return out
 
 
+#: Le motif servi pour un `{}` écarté (oto#165), dans `valeurs_ecartees`.
+MOTIF_OBJET_VIDE = (
+    "objet vide `{}` : ce n'est pas une valeur, rien n'est écrit dans cette case. "
+    "Pour dire « cherché, rien », écris `@empty` ; sinon n'envoie pas le champ.")
+
+
+def _porte_un_objet_vide(neuf: Any) -> bool:
+    """L'écriture de CETTE colonne pose-t-elle `{}` comme valeur ? Un `{}` nu, ou une
+    `valeur` `{}` en couches."""
+    touche, posee = _valeur_posee(neuf)
+    return touche and isinstance(posee, dict) and not posee
+
+
+def sans_les_objets_vides(user_data: Optional[dict],
+                          en_place: Callable[[], Optional[dict]]) -> tuple:
+    """`(l'écriture sans les `{}` posés sur une case vide, le relevé des écartés)`.
+
+    **`{}` n'est jamais stocké comme valeur** (oto#165). Trois lecteurs en donnaient
+    trois verdicts : vide pour le validateur (`est_vide`, qui le laissait donc passer
+    tous les types — `number`, `enum`, `text`), valeur pour la fusion (qui le stockait
+    sur une case vide), rempli pour les filtres (`not_empty` le comptait). Un agent
+    qui « ne sait pas » et écrit `{}` produisait une case servie comme renseignée.
+
+    ÉCARTÉ en le disant, pas refusé : un refus romprait les appelants qui l'envoient
+    aujourd'hui sans dommage, et le relevé existe déjà (`valeurs_ecartees`, #667). Une
+    écriture en couches garde ce qui accompagne sa valeur (`{"valeur": {}, "comment":
+    …}` → `{"comment": …}`), comme pour un `null` sans effet.
+
+    ⚠️ **Sur une case VIDE seulement.** Sur une valeur en place, `{}` est déjà un vide
+    non-`null` que l'arbitrage écarte et relève (#608, `valeurs_ignorees`) — ou refuse
+    quand il est tout le geste (#724). Ce filtre ne change rien à ce chemin-là.
+
+    `en_place` rend les données de la ligne visée (`{}` pour une création), appelé
+    seulement si l'écriture porte un `{}` : le chemin nominal ne paie aucune lecture.
+    """
+    candidats = [cle for cle, neuf in (user_data or {}).items()
+                 if cle not in _META_COLS and _porte_un_objet_vide(neuf)]
+    if not candidats:
+        return user_data, []
+    donnees = en_place() or {}
+    out = dict(user_data)
+    ecartes: list[dict] = []
+    for cle in candidats:
+        if not dsv2._is_empty(dsv2.unwrap(donnees.get(cle))):
+            continue
+        reste = _sans_la_valeur(out[cle])
+        if reste is None:
+            del out[cle]
+        else:
+            out[cle] = reste
+        ecartes.append({"champ": cle, "motif": MOTIF_OBJET_VIDE, "valeur_rejetee": {}})
+    return out, ecartes
+
+
 # ── ce qu'une écriture de LISTE fait tomber d'un cran plus bas (oto#120) ────────
 #
 # La fusion se fait au grain de la COLONNE, jamais de l'élément : reposer une liste

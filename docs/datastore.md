@@ -1040,7 +1040,15 @@ de fin de passage détectait après coup.
   (pas de paramètre séparé : ce serait une deuxième façon d'écrire un commentaire).
   Trois règles : une origine posée n'est jamais réécrite (un ré-import est rejouable),
   une case vide ne reçoit rien (`0` et `false` sont des valeurs remises), et le défaut
-  ne bouge pas. Branché sur les QUATRE chemins d'écriture — ⚠️ j'en avais câblé trois,
+  ne bouge pas. ⚠️ **Une origine VIDE (`""`, `[]`, absente) n'est pas posée** (oto#164) :
+  le marqueur `""` de l'ancienne capture dit « rien n'avait été remis », et le compter
+  comme posé le gelait au moment où la cliente remettait enfin une valeur — un
+  ré-import la pose donc. La réponse le DIT, dans `notices`, cumulé sur le geste :
+  origines posées par colonne (nombre de lignes), et sautées par raison — `déjà
+  posée`, `valeur vide`, `écrite par l'appelant`. Les origines posées par le paramètre
+  n'entrent pas dans le relevé des origines écrites sans le dire (oto#70) : sur une
+  ligne existante, un ré-import aurait été averti, puis refusé à la date, pour avoir
+  fait ce qu'il déclarait. Branché sur les QUATRE chemins d'écriture — ⚠️ j'en avais câblé trois,
   et c'est le banc qui a trouvé le quatrième, celui qui ressemblait le plus aux autres.
   Déclaré au MINT sur l'upload signé, comme `origine_override` : le `PUT` ne porte
   aucun paramètre.
@@ -1482,7 +1490,9 @@ un champ requis — pendant que `_merge_column` les traitait en **valeur** et le
 ne peut s'écrire que là où il n'y a rien.** C'est ce que rend une source muette, pas une
 demande d'effacement ; `null`, lui, ne se fabrique pas tout seul dans un gabarit.
 La règle est volontairement étroite — là où la colonne était déjà vide, le geste passe
-tel quel, donc **créer** une ligne depuis un gabarit ne change pas de comportement — et
+tel quel, donc **créer** une ligne depuis un gabarit ne change pas de comportement (sauf
+`{}`, qui n'est jamais stocké comme valeur : sur une case vide il est ÉCARTÉ et dit dans
+`valeurs_ecartees`, oto#165 — `datastore_columns.sans_les_objets_vides`) — et
 elle se DIT : `valeurs_ignorees` + `valeurs_ignorees_hint`, clé distincte de
 `valeurs_effacees` parce que les valeurs qu'elle nomme sont **encore en base**. Un
 seul parcours (`datastore_columns.arbitrer_les_vides`) rend le payload corrigé et les

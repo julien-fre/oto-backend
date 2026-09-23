@@ -135,6 +135,11 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         # store est instancié par requête, donc ce set est celui d'un seul appel — et
         # un lot qui écrit vingt lignes n'avertit qu'une fois par colonne.
         self._origine_posee: set = set()
+        # oto#164 : ce qu'un geste `donnees_d_origine=true` a posé et sauté, cumulé
+        # sur le geste (`donnees_d_origine.relever`) — `{colonne: lignes}` pour les
+        # posées, `{raison: {colonne: lignes}}` pour les sautées, et les phrases
+        # servies dans `notices`, recalculées sur le cumul.
+        self.off_origines: dict = {"posees": {}, "sautees": {}, "servies": set()}
         # Scope dur (endpoint partagé) : None = pas de restriction ; set = ces ns_ids seuls.
         self.allowed_ns_ids: Optional[set] = (None if allowed_ns_ids is None
                                               else {int(x) for x in allowed_ns_ids})

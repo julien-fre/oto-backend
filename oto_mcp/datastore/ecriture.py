@@ -31,6 +31,7 @@ from .columns import (
     refuser_geste_sans_effet,
     refuser_les_mots_mal_places,
     sans_les_nulls_sans_effet,
+    sans_les_objets_vides,
     vides_assumes_perdus,
 )
 from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
@@ -42,7 +43,7 @@ from .forcage import Forcage
 from .outils import _new_id, _now_iso, _refus_de_creation
 from .points import _refuse_dotted_names, ranger_les_couches
 from .precondition import revision_attendue
-from .donnees_d_origine import poser_les_deux_versions
+from . import donnees_d_origine as ddo
 from .reserves import refuser_champs_reserves
 
 
@@ -105,6 +106,10 @@ class EcritureMixin:
         user_data = sans_les_nulls_sans_effet(
             user_data, lambda: self._donnees_de_la_ligne_visee(ns_id, schema, user_data),
             schema)
+        # oto#165 : un `{}` sur une case vide n'est pas une valeur — écarté, et dit.
+        user_data, objets_vides = sans_les_objets_vides(
+            user_data, lambda: self._donnees_de_la_ligne_visee(ns_id, schema, user_data))
+        self.off_rejected.extend(objets_vides)
         # oto#140 : `@keep` et `@clear` fonctionnent encore, mais leur refus est daté —
         # dit à l'instant où l'appelant les emploie, le seul moment actionnable.
         deprecies = mdp.mots_nommes(user_data)
@@ -182,8 +187,7 @@ class EcritureMixin:
         # ci-dessous, la fusion reçoit le geste d'origine et le résout elle-même — lui
         # passer un marqueur le ferait refuser comme clé interne.
         a_creer = mots_resolus_a_la_creation(schema, user_data)
-        if donnees_d_origine:
-            poser_les_deux_versions(a_creer, schema=schema)
+        releve = ddo.poser_les_deux_versions(a_creer) if donnees_d_origine else None
         # `creation=True` : c'est ici qu'une colonne parasite NAÎT (#117). Un patch par
         # `id` vise une ligne existante et peut légitimement ne toucher qu'une colonne
         # libre — la garde n'y a rien à faire.
@@ -203,6 +207,10 @@ class EcritureMixin:
                                      origine_override=origine_override,
                                      donnees_d_origine=donnees_d_origine),
                 schema)
+        # oto#164 : relevé APRÈS l'insert — une course perdue ne compte pas deux fois,
+        # la fusion ci-dessus relève elle-même ce qu'elle pose.
+        if releve is not None:
+            ddo.relever(self, releve)
         return self._row_to_dict(row, schema)
 
     def _merge_into_row(self, ns_id: int, row_id: str, user_data: dict,
@@ -265,8 +273,8 @@ class EcritureMixin:
             vises = rq.effacements_sur_relique(user_data, current)
             if vises:
                 raise RowValidationError([rq.refus(vises)])
-            if donnees_d_origine:
-                poser_les_deux_versions(user_data, avant=current, schema=schema)
+            releve = (ddo.poser_les_deux_versions(user_data, avant=current)
+                      if donnees_d_origine else None)
             pose, vidages, ecartes = arbitrer_les_vides(current, user_data, row_id)
             # #724 : préserver et le DIRE ne suffit pas quand l'écarté était TOUT ce
             # que l'écriture portait — l'appel n'a alors aucun effet et répond 200.
@@ -296,8 +304,12 @@ class EcritureMixin:
             # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.
             refuser_champs_reserves(schema, pose, avant=current or {},
                                     forcage=forcage, agent=aga.appel_d_agent())
-            _relever_origine_module(self, ns_id, pose, current or {}, schema=schema,
-                                    declare=origine_override)
+            # Les origines que `donnees_d_origine` vient de poser sont déclarées par
+            # le paramètre : elles ne sont pas « écrites sans le dire » (oto#70).
+            _relever_origine_module(
+                self, ns_id,
+                ddo.sans_les_origines_posees(pose, releve) if releve else pose,
+                current or {}, schema=schema, declare=origine_override)
             # ⚠️ `written` reste l'ensemble des clés que l'appelant a NOMMÉES, pas
             # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
             # se réarmer sur une colonne préservée, dont la valeur n'a pas bougé.
@@ -305,6 +317,8 @@ class EcritureMixin:
                             written=set(pose), lot=lot)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
+            if releve is not None:
+                ddo.relever(self, releve)
             return merged
 
         result = db.datastore_merge_row_locked(ns_id, row_id, _apply, _now_iso(),

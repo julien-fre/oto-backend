@@ -35,7 +35,8 @@ bougera au premier enrichissement, l'autre jamais.
 - **une origine DÉJÀ posée n'est jamais touchée.** Elle est figée par nature — c'est
   ce qui la rend fiable, et c'est pourquoi elle n'a pas besoin d'être déclarée
   `readonly`. Un ré-import ne l'écrase donc pas : une ligne retrouvée par sa clé
-  métier est une mise à jour, la version courante bouge, l'origine non ;
+  métier est une mise à jour, la version courante bouge, l'origine non. Une origine
+  VIDE (`""`, `[]`, absente) n'est pas posée : un ré-import la pose (oto#164) ;
 - **une colonne VIDE ne reçoit rien.** Demandé par la campagne, et juste sur le fond :
   poser une origine sur une case que la cliente n'a pas remplie affirmerait qu'elle a
   remis du vide. Elle n'a rien remis, ce qui n'est pas la même chose ;
@@ -76,37 +77,53 @@ def _vide(valeur: Any) -> bool:
     return valeur is None or (isinstance(valeur, str) and valeur.strip() == "")
 
 
-def poser_les_deux_versions(user_data: dict, avant: Optional[dict] = None,
-                            schema: Optional[dict] = None) -> list[str]:
+#: Pourquoi une colonne apportée n'a pas reçu d'origine (oto#164). Servi tel quel dans
+#: la réponse : c'est la raison qu'un appelant lit, pas un code à traduire.
+DEJA_POSEE = "déjà posée"
+VALEUR_VIDE = "valeur vide"
+ECRITE_PAR_L_APPELANT = "écrite par l'appelant"
+
+
+def origine_vide(origine: Any) -> bool:
+    """Cette origine en place est-elle ABSENTE ? — `None`, `""`, `[]`, `{}`, ou une
+    enveloppe sans valeur.
+
+    ⚠️ **Le marqueur `""` n'est pas une origine posée** (oto#164). Il dit « rien n'avait
+    été remis » — l'ancienne capture paresseuse le posait sur les cases vides. Le compter
+    comme posé gelait le marqueur au moment précis où la cliente remettait enfin
+    quelque chose : 1 case sur 104 432 d'un ré-import, sa valeur écrite sans origine, et
+    la règle de gel empêchant tout ré-import de la réparer. La notion de vide est celle
+    du datastore (`est_vide`), jugée sur la valeur déballée, comme partout."""
+    return dsv2.est_vide(dsv2.unwrap(origine))
+
+
+def poser_les_deux_versions(user_data: dict, avant: Optional[dict] = None) -> dict:
     """Fige la version d'origine de chaque colonne apportée. `user_data` est modifiée
-    en place ; rend les colonnes sur lesquelles une origine vient d'être posée.
+    en place ; rend le RELEVÉ `{"posees": [colonnes], "sautees": {colonne: raison}}`.
 
     `avant` = la ligne déjà en base pour une mise à jour (ré-import retrouvé par sa
     clé métier), `None` pour une création. Il sert à une seule chose : ne pas toucher
-    une origine déjà posée.
+    une origine déjà posée — une origine VIDE en place ne l'est pas (`origine_vide`).
 
-    ⚠️ **`schema` n'écarte plus rien — `origine: "system"` est SUPPRIMÉ (08/09/2026).**
-    Ce paramètre est conservé pour ne pas casser les appelants ; il n'a plus d'effet.
-
-    L'histoire vaut d'être gardée : quand ce geste a été livré, il entrait en collision
-    avec le cran, qui interdisait à quiconque d'écrire la couche d'origine. J'ai résolu
-    le conflit en écartant les colonnes à cran — donc en donnant la priorité à l'ancien
-    mécanisme sur le nouveau, et en l'écrivant « celui qui était là d'abord garde la
-    main ». C'était l'inverse de la décision produit, et je l'ai justifié proprement,
-    ce qui est le pire. **Un conflit entre l'ancien et le nouveau ne se résout pas en
-    pérennisant l'ancien.**
+    ⚠️ **Le relevé n'est pas un sous-produit, il est la moitié du geste** (oto#164). Il
+    était calculé puis jeté par les quatre appelants : une origine sautée ne se voyait
+    nulle part, et la réponse disait « ok » sur une écriture incomplète. Chaque
+    appelant le remet au store (`relever`), une fois l'écriture aboutie.
     """
     posees: list[str] = []
+    sautees: dict[str, str] = {}
     for cle, colonne in list(user_data.items()):
         couches = _couches_de(colonne)
         if _vide(couches.get(dsv2.VALUE_LAYER)):
+            sautees[cle] = VALEUR_VIDE
             continue
         if dsv2.ORIGIN_LAYER in couches:
             # L'appelant a écrit l'origine lui-même : c'est le chemin déclaré
             # (`origine_override`), avec ses propres gardes. On ne se superpose pas.
+            sautees[cle] = ECRITE_PAR_L_APPELANT
             continue
-        deja = dsv2.layer_value((avant or {}).get(cle), dsv2.ORIGIN_LAYER)
-        if deja is not None:
+        if not origine_vide(dsv2.layer_value((avant or {}).get(cle), dsv2.ORIGIN_LAYER)):
+            sautees[cle] = DEJA_POSEE
             continue
         # La version d'origine porte les MÊMES couches que ce qui est apporté —
         # sans `origine`, car il n'y a pas d'origine d'une origine.
@@ -114,7 +131,63 @@ def poser_les_deux_versions(user_data: dict, avant: Optional[dict] = None,
                                       if k != dsv2.ORIGIN_LAYER}
         user_data[cle] = couches
         posees.append(cle)
-    return posees
+    return {"posees": posees, "sautees": sautees}
+
+
+def sans_les_origines_posees(payload: dict, releve: dict) -> dict:
+    """Le payload tel que l'APPELANT l'a écrit, côté couche `origine`.
+
+    Les origines que ce geste vient de poser sont celles de la PLATEFORME, déclarées
+    par `donnees_d_origine=true` : elles n'ont rien à faire dans le relevé des
+    origines écrites sans le dire (oto#70), qui avertit aujourd'hui et refusera dès la
+    date. Sans ce retrait, un ré-import sur une ligne existante était averti — puis
+    serait refusé — pour avoir fait exactement ce qu'il déclarait."""
+    posees = set(releve["posees"])
+    return {k: v for k, v in payload.items() if k not in posees}
+
+
+def relever(store: Any, releve: dict) -> None:
+    """Remet au store le relevé d'UNE ligne écrite, cumulé sur le geste (un lot en
+    porte des milliers), et le rend lisible dans la réponse (`notices`).
+
+    Colonne par colonne, avec le nombre de lignes : posées d'un côté, sautées de
+    l'autre, rangées par raison. Les phrases servies sont RECALCULÉES à chaque ligne
+    sur le cumul — une phrase par raison, jamais une par ligne."""
+    cumul = store.off_origines
+    for cle in releve["posees"]:
+        cumul["posees"][cle] = cumul["posees"].get(cle, 0) + 1
+    for cle, raison in releve["sautees"].items():
+        par_raison = cumul["sautees"].setdefault(raison, {})
+        par_raison[cle] = par_raison.get(cle, 0) + 1
+    store.off_notices.difference_update(cumul["servies"])
+    cumul["servies"] = set(_phrases(cumul))
+    store.off_notices.update(cumul["servies"])
+
+
+_SUITE_DE_LA_RAISON = {
+    DEJA_POSEE: ("une origine posée ne se réécrit jamais : le ré-import a mis à jour "
+                 "la version courante et laissé l'origine. La corriger se déclare "
+                 "(`origine_override=true`, en écrivant `<champ>.origine`)."),
+    VALEUR_VIDE: ("rien n'a été remis dans ces cases : aucune origine n'y est posée, "
+                  "« rien remis » n'est pas « du vide remis »."),
+    ECRITE_PAR_L_APPELANT: ("l'appel écrit lui-même `<champ>.origine` : c'est elle "
+                            "qui est posée, pas une copie de la valeur."),
+}
+
+
+def _cite(par_colonne: dict) -> str:
+    return ", ".join(f"`{c}` ({n})" for c, n in sorted(par_colonne.items()))
+
+
+def _phrases(cumul: dict) -> list[str]:
+    out = []
+    if cumul["posees"]:
+        out.append(f"`{PARAMETRE}` : origine POSÉE sur {_cite(cumul['posees'])} — "
+                   f"nombre de lignes entre parenthèses.")
+    for raison, par_colonne in sorted(cumul["sautees"].items()):
+        out.append(f"`{PARAMETRE}` : origine NON posée, {raison}, sur "
+                   f"{_cite(par_colonne)} — {_SUITE_DE_LA_RAISON[raison]}")
+    return out
 
 
 def description_parametre(en: bool = False) -> str:
