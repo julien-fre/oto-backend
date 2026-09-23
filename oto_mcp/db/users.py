@@ -459,6 +459,8 @@ _SUB_COLUMNS = [
     # L'UPDATE nu ne touche que les lignes signées par l'ancien compte ; une étiquette
     # de producteur (qui n'est pas un sub) reste telle quelle.
     ("org_entitlements", "granted_by"),
+    # Qui a déclaré un abonnement réglé hors plateforme — colonne d'AUTEUR, sans FK.
+    ("billing_contracts", "granted_by"),
     # Qui a posé une surcharge de propriété de connecteur (L6 pièce 2 c2). Colonne
     # d'AUTEUR, pas d'identité : un UPDATE nu suffit, comme pour les voisines.
     ("connector_settings", "set_by"),

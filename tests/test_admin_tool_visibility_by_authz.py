@@ -178,6 +178,8 @@ PLANCHERS = {
     "oto_admin_platform_instructions": "operator",
     "oto_admin_set_option": "super",
     "oto_admin_set_plan": "super",
+    "oto_admin_set_contract": "super",
+    "oto_admin_cancel_contract": "super",
     # #863 — sonder la session d'un TIERS. `operator` (PLATFORM_ADMIN) et pas
     # `org_admin` : sonder l'accès de quelqu'un n'est pas un geste d'org, sinon un
     # admin d'org sonderait les instances de ses membres. Ce qui rend le régime

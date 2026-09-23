@@ -463,8 +463,13 @@ from oto_mcp.db import _schema, schema
 # sans index. Base existante : révision Alembic `0007_jetons_revocation_tracee`, pas le
 # démarrage. Le fragment `schema/tokens.TOKENS` passe de 2 216 à 2 604 caractères
 # (+388), et 166 957 + 388 = 167 345, la longueur mesurée sur le tronc b0d9ac3c.
-EMPREINTE = "bffb7c63698569b3f2be805078603f09992399e03b236d137a3582505ee955c2"
-LONGUEUR = 167345
+# 23/09/2026 (#806) — `schema.billing.CONTRACTS`, en QUEUE d'`ASSEMBLAGE` (après `orgs`,
+# qu'il référence) : la table NEUVE `billing_contracts`, les paramètres d'un abonnement
+# réglé hors plateforme. ADDITIVE : l'ancien code l'ignore. La révision Alembic
+# `0008_billing_contracts` exécute le même fragment.
+# 167 345 → 168 301 (+956, commentaires du fragment compris).
+EMPREINTE = "1e71a3125dfaeec3d283864f4fbdd264dcba9441d3d40d5266ac6ce50b55026d"
+LONGUEUR = 168301
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -33,7 +33,8 @@ SUBSCRIPTION_STATUSES = ("incomplete", "active", "past_due", "canceled")
 # jamais tiré, aucun PSP derrière — l'utilisateur n'a rien à « résilier d'abord »). Préfixe
 # d'alias `s.` : posé dans un `FROM org_subscriptions s`.
 ABONNEMENT_QUI_PRELEVE = (
-    "s.status IN ('active', 'past_due') AND s.canceled_at IS NULL AND s.provider <> 'comp'"
+    "s.status IN ('active', 'past_due') AND s.canceled_at IS NULL "
+    "AND s.provider NOT IN ('comp', 'contract')"
 )
 
 
@@ -148,6 +149,76 @@ def set_comp_subscription(org_id: int, plan: str, *,
             "  block_since=NULL, block_seen_at=NULL, updated_at=NOW()",
             (org_id, plan),
         )
+
+
+def set_contract_subscription(org_id: int, *, plan: str, seats: int,
+                              unit_amount: Optional[int], currency: str, interval: str,
+                              starts_at, ends_at, reference: Optional[str],
+                              granted_by: Optional[str]) -> None:
+    """Abonnement réglé HORS PLATEFORME, déclaré par un admin : ses paramètres dans
+    `billing_contracts`, et la ligne `org_subscriptions` `provider='contract'`, sans
+    échéance à tirer (`next_billing_at` NULL : le runner ne le voit jamais). Remplace
+    tout abonnement existant ; re-déclarer (nouvelle fin, nouvelles licences) remplace
+    les paramètres et lève une résiliation en cours."""
+    with _connect() as conn, conn.transaction():
+        conn.execute(
+            "INSERT INTO billing_contracts (org_id, seats, unit_amount, currency, "
+            "interval, starts_at, ends_at, reference, granted_by) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (org_id) DO UPDATE SET "
+            "seats = EXCLUDED.seats, unit_amount = EXCLUDED.unit_amount, "
+            "currency = EXCLUDED.currency, interval = EXCLUDED.interval, "
+            "starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, "
+            "reference = EXCLUDED.reference, granted_by = EXCLUDED.granted_by, "
+            "updated_at = NOW()",
+            (org_id, seats, unit_amount, currency, interval, starts_at, ends_at,
+             reference, granted_by),
+        )
+        conn.execute(
+            "INSERT INTO org_subscriptions "
+            "  (org_id, provider, method, plan, status, current_period_end, "
+            "   next_billing_at) "
+            "VALUES (%s, 'contract', 'contract', %s, 'active', %s, NULL) "
+            "ON CONFLICT (org_id) DO UPDATE SET "
+            "  provider='contract', method='contract', plan=EXCLUDED.plan, "
+            "  status='active', current_period_end=EXCLUDED.current_period_end, "
+            "  customer_id=NULL, card_id=NULL, sepa_id=NULL, mandate_id=NULL, "
+            "  mandate_rum=NULL, next_billing_at=NULL, grace_until=NULL, "
+            "  canceled_at=NULL, block_code=NULL, block_detail=NULL, "
+            "  block_since=NULL, block_seen_at=NULL, updated_at=NOW()",
+            (org_id, plan, ends_at),
+        )
+
+
+def get_contract(org_id: int) -> Optional[dict]:
+    """Les paramètres du contrat de l'org, ou `None`. `starts_epoch` pour les calculs
+    de période (le row factory rend des dates sans fuseau) ; `ended` dit, à l'horloge
+    de la base, si la date de fin est passée."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT org_id, seats, unit_amount, currency, interval, starts_at, "
+            "ends_at, reference, granted_by, "
+            "EXTRACT(EPOCH FROM starts_at) AS starts_epoch, "
+            "(ends_at IS NOT NULL AND ends_at <= NOW()) AS ended "
+            "FROM billing_contracts WHERE org_id = %s",
+            (org_id,),
+        ).fetchone()
+
+
+def end_contract(org_id: int, ends_at) -> bool:
+    """Résilie le contrat : pose sa date de fin, sur ses paramètres ET sur la ligne
+    d'abonnement (fin de période, `canceled_at`). Le runner le basculera `canceled` une
+    fois la date passée ; ses droits, eux, s'arrêtent à cette date d'eux-mêmes."""
+    with _connect() as conn, conn.transaction():
+        n = conn.execute(
+            "UPDATE org_subscriptions SET current_period_end = %s, canceled_at = NOW(), "
+            "next_billing_at = NULL, updated_at = NOW() "
+            "WHERE org_id = %s AND provider = 'contract' AND status <> 'canceled'",
+            (ends_at, org_id),
+        ).rowcount
+        if n:
+            conn.execute("UPDATE billing_contracts SET ends_at = %s, updated_at = NOW() "
+                         "WHERE org_id = %s", (ends_at, org_id))
+    return n > 0
 
 
 def is_comp_subscription(org_id: int) -> bool:
@@ -426,10 +497,14 @@ def subscription_rights_state(org_id: int) -> Optional[dict]:
     """L'abonnement de l'org tel que la réconciliation des droits le relit, ou `None`."""
     with _connect() as conn:
         return conn.execute(
-            "SELECT plan, provider, status, canceled_at IS NOT NULL AS canceled, "
-            "EXTRACT(EPOCH FROM current_period_end) AS period_end, "
-            "EXTRACT(EPOCH FROM grace_until) AS grace_until "
-            "FROM org_subscriptions WHERE org_id = %s",
+            "SELECT s.plan, s.provider, s.status, s.canceled_at IS NOT NULL AS canceled, "
+            "EXTRACT(EPOCH FROM s.current_period_end) AS period_end, "
+            "EXTRACT(EPOCH FROM s.grace_until) AS grace_until, "
+            "c.seats AS contract_seats, "
+            "EXTRACT(EPOCH FROM c.starts_at) AS contract_start "
+            "FROM org_subscriptions s "
+            "LEFT JOIN billing_contracts c ON c.org_id = s.org_id "
+            "WHERE s.org_id = %s",
             (org_id,),
         ).fetchone()
 

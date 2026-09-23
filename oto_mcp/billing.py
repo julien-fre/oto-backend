@@ -385,7 +385,11 @@ def subscribe(org_id: int, plan: str, return_url: str, *, sub: Optional[str],
     if method not in ("card", "sepa"):
         raise ValueError(f"unknown_method: {method!r} (card | sepa)")
     existing = db_billing.get_org_subscription(org_id)
-    if existing and existing["status"] == "active" and not existing.get("canceled_at"):
+    # Un contrat arrivé à sa date de fin ne tient plus la place : l'org peut souscrire.
+    contrat_fini = (existing and existing.get("provider") == "contract"
+                    and (db_billing.get_contract(org_id) or {}).get("ended"))
+    if (existing and existing["status"] == "active" and not existing.get("canceled_at")
+            and not contrat_fini):
         raise ValueError("already_subscribed: l'org a déjà un abonnement actif")
 
     now = datetime.now(timezone.utc)
@@ -613,8 +617,14 @@ def status(org_id: int) -> dict:
                 "granted": granted, "usage": usage}
     meta = PLANS.get(row["plan"], {})
     comp = row["provider"] == "comp"   # abonnement forcé par un admin (non payé)
+    # Abonnement réglé HORS PLATEFORME : payé ailleurs, rien n'est prélevé ici.
+    ligne = db_billing.get_contract(org_id) if row.get("provider") == "contract" else None
+    contrat = ({k: ligne.get(k) for k in ("seats", "unit_amount", "currency", "interval",
+                                          "starts_at", "ends_at", "reference")}
+               if ligne else None)
+    fini = bool(ligne and ligne["ended"])
     return {
-        "subscribed": row["status"] in ("active", "past_due"),
+        "subscribed": row["status"] in ("active", "past_due") and not fini,
         "plan": row["plan"], "label": meta.get("label"),
         "amount": meta.get("amount"), "currency": meta.get("currency"),
         "interval": meta.get("interval"),
@@ -628,10 +638,12 @@ def status(org_id: int) -> dict:
         # a pas de TTC à annoncer — et poser `vat_blocked` sur une org offerte sans
         # identité de facturation serait une FAUSSE alerte, sur un écran dont c'est
         # tout le rôle de signaler les échéances en danger.
-        **(billing_vat.BLANK_PREVIEW if comp else billing_vat.tax_preview(
+        **(billing_vat.BLANK_PREVIEW if comp or contrat else billing_vat.tax_preview(
             meta.get("amount"), db_billing.get_billing_identity(org_id))),
         "status": row["status"], "method": row["method"],
+        "provider": row.get("provider"),
         "comp": comp,
+        "contract": contrat,
         "current_period_end": row.get("current_period_end"),
         "next_billing_at": row.get("next_billing_at"),
         "grace_until": row.get("grace_until"),
@@ -659,6 +671,9 @@ def cancel(org_id: int) -> dict:
     row = db_billing.get_org_subscription(org_id)
     if not row or row["status"] == "canceled":
         raise ValueError("not_subscribed: aucun abonnement à résilier")
+    if row.get("provider") == "contract":
+        raise ValueError("contract_subscription: cet abonnement est réglé hors "
+                         "plateforme — sa résiliation passe par Otomata")
     db_billing.mark_cancel_at_period_end(org_id)
     # La résiliation BORNE les droits à la fin de la période payée.
     reconcilier_droits(org_id)
@@ -692,6 +707,9 @@ def resume(org_id: int) -> dict:
             "reprends-le par une nouvelle souscription, pas par une reprise")
     if not row.get("canceled_at"):
         raise ValueError("not_canceled: cet abonnement n'est pas résilié")
+    if row.get("provider") == "contract":
+        raise ValueError("contract_subscription: cet abonnement est réglé hors "
+                         "plateforme — le re-déclarer passe par Otomata")
     if not db_billing.resume_canceled(org_id):
         # Le `WHERE` n'a rien touché alors que la lecture disait le contraire : le
         # runner est passé entre les deux. On le DIT plutôt que de rendre un succès
@@ -721,12 +739,88 @@ def admin_set_plan(org_id: int, plan: str, *, granted_by: str) -> dict:
     return status(org_id)
 
 
+# ── admin : abonnement réglé HORS PLATEFORME (contrat, virement) ─────────────
+
+CONTRACT_INTERVALS = ("month", "year")
+
+
+def _contract_period_end(starts_at: datetime, interval: str, now: datetime) -> datetime:
+    """La fin de la période EN COURS d'un contrat reconduit tacitement : la première
+    échéance calendaire, comptée depuis son début, qui tombe après maintenant."""
+    fin = _add_period(starts_at, interval)
+    while fin <= now:
+        fin = _add_period(fin, interval)
+    return fin
+
+
+def admin_set_contract(org_id: int, plan: str, *, seats: int, granted_by: str,
+                       unit_amount: Optional[int] = None,
+                       starts_at: Optional[datetime] = None,
+                       ends_at: Optional[datetime] = None, interval: str = "month",
+                       reference: Optional[str] = None) -> dict:
+    """Déclare (ou re-déclare) un abonnement réglé HORS PLATEFORME — contrat, virement.
+
+    Ce n'est pas un don : c'est un abonnement payé ailleurs. Il ne prélève jamais (le
+    runner l'ignore), ouvre les droits de `plan` sous la source `contract`, et déclare
+    le droit `members_max` = `seats`. `ends_at` omis = reconduction tacite de période en
+    période (`interval`) jusqu'à la résiliation ; le renouveler, c'est le re-déclarer
+    avec une nouvelle date. Refuse de remplacer un abonnement PAYÉ ici et encore
+    actif : on le résilie d'abord, sinon un mandat continuerait de prélever."""
+    if plan not in PLANS:
+        raise ValueError(f"unknown_plan: {plan!r} (plans : {', '.join(PLANS)})")
+    if seats < 1:
+        raise ValueError("invalid_seats: un contrat porte au moins une licence")
+    if interval not in CONTRACT_INTERVALS:
+        raise ValueError(f"invalid_interval: {interval!r} (month | year)")
+    if unit_amount is not None and unit_amount < 0:
+        raise ValueError("invalid_amount: le prix unitaire est un montant positif")
+    debut = starts_at or datetime.now(timezone.utc)
+    if ends_at is not None and ends_at <= debut:
+        raise ValueError("invalid_period: la date de fin doit suivre la date de début")
+    row = db_billing.get_org_subscription(org_id)
+    if (row and row["provider"] not in ("comp", "contract")
+            and row["status"] in ("active", "past_due") and not row.get("canceled_at")):
+        raise ValueError("paid_subscription: l'org a un abonnement payé sur la "
+                         "plateforme — le résilier avant de déclarer un contrat")
+    db_billing.set_contract_subscription(
+        org_id, plan=plan, seats=seats, unit_amount=unit_amount,
+        currency=PLANS[plan]["currency"], interval=interval, starts_at=debut,
+        ends_at=ends_at, reference=reference, granted_by=granted_by)
+    reconcilier_droits(org_id)
+    logger.info("billing: contrat déclaré sur l'org %s (plan %s, %s licence(s), fin %s) "
+                "par %s", org_id, plan, seats, ends_at or "tacite", granted_by)
+    return status(org_id)
+
+
+def admin_cancel_contract(org_id: int, *, ends_at: Optional[datetime] = None) -> dict:
+    """Résilie un abonnement réglé hors plateforme : pose sa date de fin — celle donnée,
+    sinon la fin de la période en cours. Les droits s'arrêtent à cette date."""
+    contrat = db_billing.get_contract(org_id)
+    row = db_billing.get_org_subscription(org_id)
+    if not contrat or not row or row["provider"] != "contract":
+        raise ValueError("not_contract: aucun abonnement réglé hors plateforme sur "
+                         "cette org")
+    if row["status"] == "canceled":
+        raise ValueError("already_ended: ce contrat est déjà clos")
+    if ends_at is None:
+        debut = datetime.fromtimestamp(float(contrat["starts_epoch"]), timezone.utc)
+        ends_at = _contract_period_end(debut, contrat["interval"],
+                                       datetime.now(timezone.utc))
+    db_billing.end_contract(org_id, ends_at)
+    reconcilier_droits(org_id)
+    logger.info("billing: contrat de l'org %s résilié, fin %s", org_id, ends_at)
+    return status(org_id)
+
+
 def admin_clear_plan(org_id: int) -> dict:
     """Retire un abonnement `comp` (forcé). Refuse de toucher un abonnement PAYÉ
     (passer par la résiliation) — anti-bévue admin."""
     row = db_billing.get_org_subscription(org_id)
     if not row:
         raise ValueError("not_subscribed: aucun abonnement sur cette org")
+    if row["provider"] == "contract":
+        raise ValueError("contract_subscription: abonnement réglé hors plateforme — "
+                         "le résilier par oto_admin_cancel_contract")
     if row["provider"] != "comp":
         raise ValueError("paid_subscription: abonnement payant — résilier via "
                          "cancel, pas admin_clear_plan")

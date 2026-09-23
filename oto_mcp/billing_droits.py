@@ -25,6 +25,7 @@ Ce qu'elle dérive, et sous quelle source :
 | abonnement offert (`comp`) | `offered` | sa fin de période, ou aucune |
 | don d'option posé sur l'org | `offered` | l'échéance du don |
 | les deux derniers, org hébergée par un partenaire | `partner` | aucune |
+| abonnement réglé hors plateforme (`contract`) | `contract` | sa date de fin, ou aucune (reconduction tacite) ; + `members_max` = licences |
 
 Le grain PERSONNE (don d'option à un compte) n'écrit rien ici : seule l'org porte un
 droit payant.
@@ -44,14 +45,16 @@ logger = logging.getLogger(__name__)
 SOURCE_SUBSCRIPTION = "subscription"
 SOURCE_OFFERED = "offered"
 SOURCE_PARTNER = "partner"
+SOURCE_CONTRACT = "contract"
 # Les étiquettes que CE producteur pose, donc les seules qu'il retire.
-SOURCES = (SOURCE_SUBSCRIPTION, SOURCE_OFFERED, SOURCE_PARTNER)
+SOURCES = (SOURCE_SUBSCRIPTION, SOURCE_OFFERED, SOURCE_PARTNER, SOURCE_CONTRACT)
 # L'auteur d'une ligne que le commerce pose de lui-même (abonnement, plan offert) ; un
 # don garde l'auteur que l'admin y a inscrit.
 AUTEUR = "billing"
 
-# Une ligne voulue : (droit, source) → (échéance, auteur). Échéance `None` = sans échéance.
-_Voulus = dict[tuple[str, str], tuple[Optional[datetime], Optional[str]]]
+# Une ligne voulue : (droit, source) → (échéance, auteur, valeur, début). Échéance `None`
+# = sans échéance ; valeur `None` = pas d'avis ; début `None` = maintenant.
+_Voulus = dict[tuple[str, str], tuple]
 
 
 def delai_de_grace() -> timedelta:
@@ -75,12 +78,13 @@ def _plus_tardive(a: Optional[datetime], b: Optional[datetime]) -> Optional[date
 
 
 def _poser(voulus: _Voulus, droit: str, source: str, fin: Optional[datetime],
-           auteur: Optional[str] = AUTEUR) -> None:
+           auteur: Optional[str] = AUTEUR, *, valeur: Optional[int] = None,
+           debut: Optional[datetime] = None) -> None:
     cle = (droit, source)
     if cle in voulus:
-        voulus[cle] = (_plus_tardive(voulus[cle][0], fin), voulus[cle][1])
+        voulus[cle] = (_plus_tardive(voulus[cle][0], fin),) + voulus[cle][1:]
     else:
-        voulus[cle] = (fin, auteur)
+        voulus[cle] = (fin, auteur, valeur, debut)
 
 
 def _fin_de_l_abonnement_paye(etat: dict) -> Optional[datetime]:
@@ -101,7 +105,25 @@ def _fin_de_l_abonnement_paye(etat: dict) -> Optional[datetime]:
     return None
 
 
+def _droits_du_contrat(etat: dict, voulus: _Voulus) -> None:
+    """Un abonnement réglé hors plateforme : ce que son plan ouvre, plus le nombre de
+    licences, jusqu'à sa date de fin (aucune = reconduction tacite), à partir de sa
+    date de début. Traité comme un abonnement : payé, simplement pas ici."""
+    if etat["status"] != "active":
+        return
+    fin, debut = _instant(etat["period_end"]), _instant(etat["contract_start"])
+    from .access.entitlements import MEMBERS_MAX
+    for droit in billing.plan_rights(etat["plan"]):
+        _poser(voulus, droit, SOURCE_CONTRACT, fin, debut=debut)
+    if etat["contract_seats"] is not None:
+        _poser(voulus, MEMBERS_MAX, SOURCE_CONTRACT, fin,
+               valeur=int(etat["contract_seats"]), debut=debut)
+
+
 def _droits_de_l_abonnement(etat: dict, partenaire: bool, voulus: _Voulus) -> None:
+    if etat["provider"] == "contract":
+        _droits_du_contrat(etat, voulus)
+        return
     if etat["provider"] == "comp":
         if etat["status"] != "active":
             return
@@ -143,9 +165,9 @@ def reconcilier(org_id: int, *, dry_run: bool = False) -> dict:
                 for r in db_entitlements.list_for_org(org_id) if r["source"] in SOURCES}
     a_retirer = sorted(en_place - set(voulus))
     if not dry_run:
-        for (droit, source), (fin, auteur) in sorted(voulus.items()):
-            db_entitlements.grant(org_id, droit, source, expires_at=fin,
-                                  granted_by=auteur)
+        for (droit, source), (fin, auteur, valeur, debut) in sorted(voulus.items()):
+            db_entitlements.grant(org_id, droit, source, value=valeur, starts_at=debut,
+                                  expires_at=fin, granted_by=auteur)
         for droit, source in a_retirer:
             db_entitlements.revoke(org_id, droit, source)
     return {"poses": len(voulus), "retires": len(a_retirer)}

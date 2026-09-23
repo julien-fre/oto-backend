@@ -11,6 +11,9 @@ from ..db import entitlements as db_entitlements
 # Le droit qui lève le quota journalier des clés PLATEFORME pour toute l'org. Les
 # options payantes, elles, portent le nom de leur option (`unipile`).
 PLATFORM_UNMETERED = "platform_unmetered"
+# Le nombre maximal de membres de l'org (`value`). Une DÉCLARATION : rien ne le lit
+# encore ; `value` NULL = pas d'avis.
+MEMBERS_MAX = "members_max"
 
 
 def org_has(org_id: int, right_key: str) -> bool:

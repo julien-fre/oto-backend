@@ -301,6 +301,7 @@ après chaque geste qui change l'état de l'org.
 | abonnement offert (`comp`) | `offered` | sa fin de période, ou aucune |
 | don d'option posé sur l'ORG | `offered` | l'échéance du don |
 | les deux derniers, org hébergée par un partenaire | `partner` | aucune |
+| abonnement réglé hors plateforme (`contract`) | `contract` | sa date de fin, ou aucune ; + `members_max` = licences |
 
 Un plan pose ses `options` et, s'il est `unmetered`, `platform_unmetered`
 (`billing.plan_rights`). **Le don fait à une PERSONNE n'écrit rien** : seule l'org
@@ -323,6 +324,33 @@ porte un droit payant.
   démarrage (`reprise_droits` au journal, avec ses comptes) ou par la commande. Se
   vérifie par une lecture : `SELECT source, right_key, count(*) FROM
   org_entitlements GROUP BY 1, 2`.
+
+## L'abonnement réglé hors plateforme (`provider='contract'`)
+
+Un achat réglé AILLEURS (contrat, virement) se déclare par un admin plateforme :
+`oto_admin_set_contract` / `PUT /api/admin/orgs/{id}/contract`. **Ce n'est pas un
+don** : c'est un abonnement payé ailleurs, et la réconciliation le traite comme tel.
+
+- **Paramètres** : `plan` (ce qu'il ouvre), `seats` (licences), `unit_amount` (HT, en
+  centimes, pour mémoire), `starts_at`, `ends_at` **facultative**, `interval`
+  (`month` par défaut), `reference` libre. Ils vivent dans `billing_contracts` ; la
+  ligne `org_subscriptions` porte `provider='contract'`, `next_billing_at` NULL.
+- **Il ne prélève jamais** : le runner le saute (`_charge_one` → `skipped`), il n'est
+  jamais dû, et il n'empêche pas d'archiver l'org (`ABONNEMENT_QUI_PRELEVE`).
+- **Droits** : ceux du plan, source `contract`, de `starts_at` à `ends_at` ; et
+  `members_max` = licences (une déclaration, que rien ne lit encore).
+- **Sans date de fin** = reconduction tacite, droits sans échéance. **La résiliation**
+  (`oto_admin_cancel_contract` / `POST …/contract/cancel`) pose la fin : la date donnée,
+  sinon la fin de la période en cours, comptée depuis `starts_at`. **Renouveler** =
+  re-déclarer avec une nouvelle date.
+- Refus : remplacer un abonnement payé sur la plateforme et actif
+  (`paid_subscription`) ; l'org ne résilie pas elle-même un contrat
+  (`contract_subscription`, aussi pour `admin_clear_plan`). Un contrat échu ne bloque
+  pas une souscription.
+- `billing.status` et la fiche admin d'org l'affichent : `provider`, `contract`
+  (licences, prix, période, fin, référence), TVA `null` (rien n'est prélevé ici).
+- Table neuve : née au démarrage (`CREATE TABLE IF NOT EXISTS`) comme par la révision
+  `0008_billing_contracts`, dans n'importe quel ordre.
 
 ## Les paliers, et d'où ils viennent
 

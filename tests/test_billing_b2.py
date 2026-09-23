@@ -320,8 +320,11 @@ def test_capabilities_registered_rest_only():
     assert set(caps) == {"billing.plans", "billing.status", "billing.subscribe",
                          "billing.confirm", "billing.cancel", "billing.resume",
                          "billing.method_change", "billing.method_change_confirm",
-                         "billing.payments", "billing.admin_set_plan"}
-    # pas d'URL de paiement dans un contexte LLM : seule la capacité ADMIN
-    # (forcer un plan, pas de paiement) a une face MCP.
+                         "billing.payments", "billing.admin_set_plan",
+                         "billing.admin_set_contract", "billing.admin_cancel_contract"}
+    # pas d'URL de paiement dans un contexte LLM : seules les capacités ADMIN (forcer
+    # un plan, déclarer un contrat réglé hors plateforme — aucun paiement) ont une
+    # face MCP.
     mcp_caps = {k for k, c in caps.items() if c.mcp is not None}
-    assert mcp_caps == {"billing.admin_set_plan"}
+    assert mcp_caps == {"billing.admin_set_plan", "billing.admin_set_contract",
+                        "billing.admin_cancel_contract"}

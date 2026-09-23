@@ -187,9 +187,10 @@ def _charge_one(sub_row: dict, now: datetime) -> str:
     RELUE qui est tirée. `busy` = un autre processus la tient, ou elle n'est plus due une
     fois réservée.
     """
-    if sub_row.get("provider") == "comp":
-        # abonnement FORCÉ par un admin (non payé) — jamais de débit. Ceinture
-        # + bretelles : due_subscriptions l'exclut déjà (next_billing_at NULL).
+    if sub_row.get("provider") in ("comp", "contract"):
+        # abonnement FORCÉ par un admin (non payé), ou réglé HORS PLATEFORME (contrat)
+        # — jamais de débit ici. Ceinture + bretelles : due_subscriptions l'exclut déjà
+        # (next_billing_at NULL).
         return "skipped"
     with billing_reservation.reserver_echeance(sub_row) as relue:
         if relue is None:

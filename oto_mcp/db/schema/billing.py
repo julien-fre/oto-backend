@@ -36,6 +36,30 @@ CREATE TABLE IF NOT EXISTS option_comps (
 );
 """
 
+# Abonnement réglé HORS PLATEFORME (contrat, virement) : ses paramètres. La ligne
+# `org_subscriptions` de l'org porte `provider='contract'` ; le détail est ici, dans une
+# table NEUVE plutôt qu'en colonnes d'`org_subscriptions` — une table neuve naît au
+# démarrage comme par sa révision (`0008_billing_contracts`), dans n'importe quel ordre,
+# sans verrou exclusif sur une table que le runner lit.
+CONTRACTS = """
+-- Un abonnement payé AILLEURS, déclaré par un admin plateforme. Il ne prélève jamais.
+-- `ends_at` NULL = reconduit tacitement à chaque période (`interval`), jusqu'à la
+-- résiliation, qui pose la date. `unit_amount` est pour mémoire : rien ne le débite.
+CREATE TABLE IF NOT EXISTS billing_contracts (
+    org_id BIGINT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+    seats INTEGER NOT NULL,                 -- licences (membres)
+    unit_amount INTEGER,                    -- prix unitaire HT en centimes, pour mémoire
+    currency TEXT NOT NULL DEFAULT 'eur',
+    interval TEXT NOT NULL DEFAULT 'month', -- month | year
+    starts_at TIMESTAMPTZ NOT NULL,
+    ends_at TIMESTAMPTZ,                    -- NULL = reconduction tacite
+    reference TEXT,                         -- libre : numéro de contrat, bon de commande
+    granted_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
 # abonnements et paiements (ADR 0043)
 SUBSCRIPTIONS = """
 -- Abonnement payant PAR ORG (ADR 0043) — miroir ET machine à états : la

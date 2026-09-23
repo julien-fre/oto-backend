@@ -146,9 +146,15 @@ class OrgBilling(BaseModel):
     interval: Optional[str] = None
     status: Optional[str] = None        # active | past_due | canceled | …
     method: Optional[str] = None
+    # 'mollie' (payé sur la plateforme) | 'comp' (offert) | 'contract' (réglé hors
+    # plateforme : licences, fin et référence dans `contract`).
+    provider: Optional[str] = None
     # `true` = plan FORCÉ par un admin plateforme (offert), aucun paiement derrière
     # et aucune échéance tirée. Ne pas le présenter comme un abonnement payant.
     comp: Optional[bool] = None
+    # Abonnement réglé hors plateforme : `seats`, `unit_amount`, `interval`,
+    # `starts_at`, `ends_at` (null = reconduction tacite), `reference`.
+    contract: Optional[dict] = None
     current_period_end: Optional[str] = None
     next_billing_at: Optional[str] = None
     grace_until: Optional[str] = None

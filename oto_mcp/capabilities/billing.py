@@ -19,7 +19,8 @@ de les découvrir un par un.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -65,6 +66,51 @@ class PaymentsInput(BaseModel):
 class AdminPlanInput(BaseModel):
     org_id: int
     plan: str | None = None   # None / omis = retirer le plan comp forcé
+
+
+class AdminContractInput(BaseModel):
+    org_id: int
+    plan: str = Field(description="Palier dont le contrat ouvre les droits (clé de "
+                                  "catalogue, cf. billing.plans).")
+    seats: int = Field(description="Nombre de licences (membres) du contrat. Déclaré "
+                                   "comme droit `members_max` de l'org.")
+    unit_amount: Optional[int] = Field(
+        default=None, description="Prix unitaire HT par licence et par période, en "
+                                  "CENTIMES, pour mémoire : rien n'est prélevé.")
+    starts_at: Optional[str] = Field(
+        default=None, description="Début du contrat, 'YYYY-MM-DD' ou ISO 8601. Omis = "
+                                  "maintenant. Les droits ne s'ouvrent qu'à cette date.")
+    ends_at: Optional[str] = Field(
+        default=None,
+        description="Fin du contrat, 'YYYY-MM-DD' (fin de journée) ou ISO 8601. Omis = "
+                    "reconduction TACITE de période en période, jusqu'à la résiliation. "
+                    "Renouveler = re-déclarer avec la nouvelle date.")
+    interval: Literal["month", "year"] = Field(
+        default="month", description="Période du contrat : 'month' | 'year'.")
+    reference: Optional[str] = Field(
+        default=None, description="Référence libre : numéro de contrat, bon de commande.")
+
+
+class AdminContractCancelInput(BaseModel):
+    org_id: int
+    ends_at: Optional[str] = Field(
+        default=None,
+        description="Date de fin, 'YYYY-MM-DD' (fin de journée) ou ISO 8601. Omis = fin "
+                    "de la période en cours.")
+
+
+class ContractView(BaseModel):
+    """Un abonnement réglé HORS PLATEFORME (contrat, virement) : payé ailleurs, rien
+    n'est prélevé ici. Les dates sont au format 'YYYY-MM-DD HH:MM:SS' UTC."""
+    seats: int = Field(description="Licences (membres) du contrat.")
+    unit_amount: Optional[int] = Field(default=None, description="Prix unitaire HT en "
+                                                                 "centimes, pour mémoire.")
+    currency: str = "eur"
+    interval: str = Field(description="'month' | 'year'.")
+    starts_at: Optional[str] = None
+    ends_at: Optional[str] = Field(default=None, description="`null` = reconduction "
+                                                             "tacite, jusqu'à résiliation.")
+    reference: Optional[str] = None
 
 
 # ── formes de réponse (ADR 0009 : `Output` DÉCRIT la 200, ne la valide pas) ───
@@ -249,6 +295,16 @@ class BillingStatus(BaseModel):
         default=None,
         description="Moyen de paiement du mandat : 'card' | 'sepa' | 'comp' (aucun — "
                     "abonnement offert par un admin).")
+    provider: Optional[str] = Field(
+        default=None,
+        description="Qui porte l'abonnement : 'mollie' (payé sur la plateforme), 'comp' "
+                    "(offert par un admin), 'contract' (réglé hors plateforme, cf. "
+                    "`contract`).")
+    contract: Optional[ContractView] = Field(
+        default=None,
+        description="Présent seulement quand `provider='contract'` : licences, prix "
+                    "pour mémoire, période, fin, référence. Rien n'y est prélevé : les "
+                    "champs de TVA valent `null`.")
     comp: bool = Field(
         default=False,
         description="Abonnement OFFERT, forcé par un admin plateforme : accès ouvert, "
@@ -599,6 +655,38 @@ def _admin_set_plan(ctx: ResolvedCtx, inp: AdminPlanInput) -> dict:
     return _domain(lambda: billing.admin_clear_plan(inp.org_id))
 
 
+def _date(brut: Optional[str], champ: str, *, fin_de_journee: bool) -> Optional[datetime]:
+    """'YYYY-MM-DD' (début ou fin de journée, UTC) ou ISO 8601 → datetime ; `None`/vide
+    = non fourni."""
+    if brut is None or not brut.strip():
+        return None
+    brut = brut.strip()
+    try:
+        if len(brut) == 10:
+            jour = datetime.strptime(brut, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            return jour.replace(hour=23, minute=59, second=59) if fin_de_journee else jour
+        d = datetime.fromisoformat(brut.replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise AuthzDenied(400, "invalid_body",
+                          f"{champ} invalide : {brut!r}. Attendu 'YYYY-MM-DD' ou un "
+                          "horodatage ISO 8601.")
+
+
+def _admin_set_contract(ctx: ResolvedCtx, inp: AdminContractInput) -> dict:
+    debut = _date(inp.starts_at, "starts_at", fin_de_journee=False)
+    fin = _date(inp.ends_at, "ends_at", fin_de_journee=True)
+    return _domain(lambda: billing.admin_set_contract(
+        inp.org_id, inp.plan, seats=inp.seats, granted_by=ctx.sub,
+        unit_amount=inp.unit_amount, starts_at=debut, ends_at=fin,
+        interval=inp.interval, reference=inp.reference))
+
+
+def _admin_cancel_contract(ctx: ResolvedCtx, inp: AdminContractCancelInput) -> dict:
+    fin = _date(inp.ends_at, "ends_at", fin_de_journee=True)
+    return _domain(lambda: billing.admin_cancel_contract(inp.org_id, ends_at=fin))
+
+
 def _payments(ctx: ResolvedCtx, inp: PaymentsInput) -> dict:
     from ..db import billing as db_billing
 
@@ -690,6 +778,34 @@ _BILLING_CAPS = [
                     "as is). For pilots, partners and the custom 'enterprise' tier.",
         mcp="oto_admin_set_plan",
         rest=RestBinding("POST", "/api/admin/orgs/{org_id}/plan", {"org_id": "org_id"}),
+    ),
+    # Admin : un abonnement réglé HORS PLATEFORME (contrat, virement). Ce n'est pas un
+    # don : un abonnement payé ailleurs, qui ne prélève jamais. Déclarer et
+    # re-déclarer (renouveler, changer les licences) = PUT ; résilier = son acte à lui.
+    Capability(
+        key="billing.admin_set_contract", handler=_admin_set_contract,
+        Input=AdminContractInput, authz=SUPER_ADMIN, Output=BillingStatus,
+        description="[super admin] Declare (or re-declare) a subscription PAID OFF "
+                    "PLATFORM (contract, bank transfer) on an org: `plan`, `seats` "
+                    "(licences), `unit_amount` (HT cents, for the record), `starts_at`, "
+                    "optional `ends_at` (omitted = tacitly renewed each `interval` until "
+                    "cancelled), `reference`. Never charged. Opens the plan's rights until "
+                    "`ends_at`; renewing = declaring again with a new date. Refuses to "
+                    "replace an active subscription paid on the platform "
+                    "(`paid_subscription`).",
+        mcp="oto_admin_set_contract",
+        rest=RestBinding("PUT", "/api/admin/orgs/{org_id}/contract",
+                         {"org_id": "org_id"}),
+    ),
+    Capability(
+        key="billing.admin_cancel_contract", handler=_admin_cancel_contract,
+        Input=AdminContractCancelInput, authz=SUPER_ADMIN, Output=BillingStatus,
+        description="[super admin] Cancel a subscription paid off platform: sets its end "
+                    "date — `ends_at` if given, otherwise the end of the current period. "
+                    "Its rights stop at that date.",
+        mcp="oto_admin_cancel_contract",
+        rest=RestBinding("POST", "/api/admin/orgs/{org_id}/contract/cancel",
+                         {"org_id": "org_id"}),
     ),
 ]
 
