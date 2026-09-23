@@ -58,8 +58,8 @@ HOOK_SECRET_PREFIX = "otoh_"
 HOOK_INCONNU = (
     "Invalid id or secret. Every agent has its OWN bearer token, valid for that "
     "agent alone: a token from another agent will always return this error. Copy "
-    "it from the agent's page (Connect a sender › Regenerate), and check that "
-    "the id in the URL is the one shown there."
+    "it from the agent's page, and check that the id in the URL is the one shown "
+    "there."
 )
 
 #: Le débit par défaut, par déclencheur et par heure. Ce n'est PAS un plafond de

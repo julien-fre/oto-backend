@@ -211,7 +211,7 @@ def test_un_corps_TROP_GROS_est_refuse_avec_413(client, agent):
                     headers={"Authorization": f"Bearer {agent['secret']}"},
                     content=b'{"x":"' + b"a" * (runner_hook.CORPS_MAX + 100) + b'"}')
     assert (r.status_code, r.json()["error"]) == (413, "payload_too_large")
-    assert "RÉFÉRENCE" in r.json()["detail"]
+    assert "REFERENCE" in r.json()["detail"]
     # Le propriétaire VOIT la source trop bavarde : lui seul peut la réparer.
     assert db.livraisons(agent["id"], agent["org"])[0]["outcome"] == db.REFUSE_TOO_LARGE
 
