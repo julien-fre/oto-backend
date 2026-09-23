@@ -90,6 +90,10 @@ def test_le_schema_servi_de_la_surface_heritee_est_inchange():
     le diff montre LA valeur qui bouge et non une réindentation — un cliquet illisible
     ne se relit plus, et ne garde donc plus rien.
 
+    ⚠️ **Regravé le 2026-09-23, un champ OPTIONNEL ajouté : `credentials`** (#480,
+    arbitrage d'Alexis : le paramètre vit sur les deux contrats, v1 et v2). Défaut
+    `None` = inchangé : aucun appel existant ne change de sens ni ne passe à « refusé ».
+
     Ce fichier `.json` EST la déclaration : le régénérer est un geste qui se voit en
     revue et qui se nomme, exactement comme `tests/api/api_routes_table.txt`. Toute
     évolution du contrat d'entrée de la gouvernance passe par `oto_resource_v2`, dont

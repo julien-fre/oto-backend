@@ -21,6 +21,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
 from .. import access, db, deprecations, email, group_store, org_store, ownership, roles
+from ..access import heritage
 from . import _portee
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -94,6 +95,14 @@ class ResourceInput(BaseModel):
     mcp_slug: Optional[str] = None          # préfixe de sous-domaine (facultatif en secret)
     mcp_tools: Optional[list[str]] = None   # allowlist figée (vide = réutilise la liste publiée)
     cascade: bool = False                   # share/transfer d'un PROJET : embarquer ses entités liées (#52)
+    # #480 (arbitrage du 23/09) — avec QUELLES clés le bénéficiaire d'un projet y
+    # travaille. UN paramètre pour les trois audiences (personne, équipe, org), iso.
+    # Optionnel : omis = inchangé sur un partage existant, `own` sur un neuf — un
+    # re-partage qui ne dit rien (changer un rôle) ne retire pas un héritage en silence.
+    credentials: Optional[Literal["own", "inherit"]] = Field(default=None, description=(
+        "Project share only — which keys the recipient works with. `own` (default): "
+        "their own keys. `inherit`: also the project owner's org/team keys, bounded "
+        "by YOUR rights (you must be a member of the owner org). Omitted = unchanged."))
     confirm_transfer: bool = False          # transfer : lever la confirmation anti-lockout (perte de contrôle assumée)
 
     # L'avis de l'alias daté qui a servi l'appel (`deprecations.VALEURS`), ou None.
@@ -304,6 +313,9 @@ _OPS: dict[str, dict] = {
 
 
 def _grants_view(resource_type: str, resource_id: str) -> list[dict]:
+    heritages = (heritage.modes_du_projet(int(resource_id))
+                 if resource_type == "project" else None)
+
     def _label(g: dict) -> Optional[str]:
         # user → email (déjà joint) ; org/group → nom résolu (le front affiche `label`,
         # jamais un principal_id brut).
@@ -315,7 +327,11 @@ def _grants_view(resource_type: str, resource_id: str) -> list[dict]:
          # ADR 0048 : `role` (viewer/editor/manager) = surface produit ; `permission`
          # (read/write) conservé pour rétro-compat des consommateurs existants.
          "role": g.get("role"), "permission": g.get("permission"),
-         "granted_at": g.get("granted_at")}
+         "granted_at": g.get("granted_at"),
+         # #480 : avec quelles clés ce bénéficiaire travaille (projets seulement).
+         **({"credentials": heritages.get((g.get("principal_type"),
+                                           str(g.get("principal_id"))), heritage.OWN)}
+            if heritages is not None else {})}
         for g in ownership.list_grants(KIND_OF[resource_type], resource_id)
     ]
 
@@ -385,10 +401,29 @@ def _share_principal(sub: str, inp: ResourceInput, *, strict: bool = True) -> tu
     return "user", u["sub"], u.get("email")
 
 
+def _share_credentials(sub: str, inp: ResourceInput, rid: str) -> Optional[str]:
+    """Les clés que CE partage d'un projet déclare (#480) — None s'il n'en dit rien.
+
+    Omis : l'état existant est conservé tel quel, arête comprise — et avec elle le
+    partageur qui l'a posée et qui la borne. Un re-partage qui ne fait que changer un
+    rôle ne touche donc pas au prêt. `inherit` est borné aux droits de celui qui le
+    déclare : il ne prête que ce qu'il atteint — être membre de l'org dont le projet
+    résout les clés."""
+    if inp.credentials == heritage.INHERIT and not heritage.peut_accorder(sub, int(rid)):
+        raise AuthzDenied(
+            403, "inherit_beyond_sharer_rights",
+            "`credentials='inherit'` prêterait les clés de l'org propriétaire du projet, "
+            "dont tu n'es pas membre : on ne prête que ce qu'on atteint soi-même. "
+            "Partage avec `credentials='own'` (le bénéficiaire pose ses propres clés), "
+            "ou demande à un membre de cette org de faire le partage.")
+    return inp.credentials
+
+
 def _cascade_project(sub: str, project_id: int, op: str, *,
                      principal: Optional[tuple[str, str]] = None,
                      role: str = "viewer",
-                     new_owner: Optional[tuple[str, str]] = None) -> list[dict]:
+                     new_owner: Optional[tuple[str, str]] = None,
+                     credentials: str = heritage.OWN) -> list[dict]:
     """Livraison d'un projet COMPLET (#52) : répercute le geste (share/transfer) sur
     les entités liées (`project_links`). Par entité gouvernée par l'acteur :
     - `tableau`  → même geste (grant au même principal — user/org/groupe, `can_access`
@@ -398,7 +433,9 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
       + re-pointage du lien (l'originale reste chez la source — zéro casse des autres
       projets qui la référencent) ;
     - `connecteur` → rien à propager : le destinataire branche SON credential (la
-      surcharge préfaite du lien — identité/instructions — voyage avec le projet) ;
+      surcharge préfaite du lien — identité/instructions — voyage avec le projet),
+      sauf si le partage lui prête les clés du propriétaire (`credentials=inherit`,
+      #480) ;
     - `doc` → page Documents = contenu interne à SON projet propriétaire (partager CE
       projet la propage) ; hors périmètre du geste ici → `skipped`.
     Les docs/fichiers du projet suivent d'office (ils héritent de son accès).
@@ -445,6 +482,9 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
                     entry["status"] = "copied"
                     entry["new_ref"] = str(copy["id"])
                     entry["slug"] = copy["slug"]
+            elif t == "connecteur" and op == "share" and credentials == heritage.INHERIT:
+                entry["status"] = "shared"
+                entry["reason"] = "inherited_credential"   # les clés du propriétaire, prêtées (#480)
             elif t == "connecteur":
                 entry["status"] = "action_required"
                 entry["reason"] = "recipient_credential"   # le client branche SA clé (ADR 0022/0024)
@@ -604,6 +644,13 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         # ADR 0048 — « Partager » unifié : l'AUDIENCE route vers le bon mécanisme.
         #   public/secret → publication MCP (projets) ; private → dépublication ;
         #   person/team/org (ou legacy sans audience) → grant au principal, avec RÔLE.
+        if inp.credentials is not None and (inp.resource_type != "project"
+                                            or inp.audience in (*_PUBLICATION_AUDIENCE,
+                                                                "private")):
+            raise AuthzDenied(
+                400, "credentials_project_share_only",
+                "`credentials` ne se déclare que sur le partage d'un PROJET à une "
+                "personne, une équipe ou une org (audience person/team/org).")
         if inp.audience in _PUBLICATION_AUDIENCE:
             return _publish_audience(ctx, inp, rid, _PUBLICATION_AUDIENCE[inp.audience])
         if inp.audience == "private":
@@ -614,9 +661,13 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         if inp.resource_type == "doc":
             page.require_viewer(role)
         ptype, pid, plabel = _share_principal(ctx.sub, inp)
+        creds = _share_credentials(ctx.sub, inp, rid)
         ownership.grant(kind, rid, ptype, pid, role=role, granted_by=ctx.sub)
         out = {"ok": True, "resource_id": rid, "shared_with": plabel,
                "principal_type": ptype, "role": role, "permission": perm}
+        if creds is not None:
+            heritage.declarer(int(rid), ptype, pid, creds, ctx.sub)
+            out["credentials"] = creds
         # ADR 0068 §4 — observation : ce partage aurait prévenu quelqu'un.
         _portee.observer(ctx, ressource_type=inp.resource_type, ressource_id=rid,
                          vers={"org": "org", "group": "group"}.get(ptype, "person"),
@@ -624,8 +675,9 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
                          cible=str(plabel),
                          **(page.portee(rid) if inp.resource_type == "doc" else {}))
         if inp.cascade and inp.resource_type == "project":
-            out["cascade"] = _cascade_project(ctx.sub, int(rid), "share",
-                                              principal=(ptype, pid), role=role)
+            out["cascade"] = _cascade_project(
+                ctx.sub, int(rid), "share", principal=(ptype, pid), role=role,
+                credentials=creds or heritage.mode_de(int(rid), ptype, pid))
             db.log_project_activity(int(rid), ctx.sub, "project.deliver",
                                     f"share → {plabel}")
         # Notifier le bénéficiaire (best-effort). UNE fois, au niveau capability —
@@ -639,6 +691,10 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
     # unshare
     ptype, pid, plabel = _share_principal(ctx.sub, inp, strict=False)
     removed = ownership.revoke(kind, rid, ptype, pid)
+    if inp.resource_type == "project":
+        # Retirer l'accès retire le prêt des clés : une arête laissée vivante le
+        # rendrait au premier re-partage, sans que personne l'ait redemandé (#480).
+        heritage.declarer(int(rid), ptype, pid, heritage.OWN, ctx.sub)
     out = {"ok": True, "resource_id": rid, "unshared_with": plabel, "removed": removed}
     if inp.cascade and inp.resource_type == "project":
         revoked = []
@@ -663,6 +719,16 @@ TRANSFER_PROCEDURE = (
     "it (a slug already taken at the destination gets a suffix, nothing is overwritten). "
     "By contrast, transferring a PROJECT with cascade=true COPIES its linked procedures "
     "into the target (see DELIVER A FULL PROJECT below).")
+
+
+# #480 — le texte servi aux deux surfaces (héritée et stricte), écrit une fois.
+CREDENTIALS_DESCRIPTION = (
+    "KEYS (`credentials`, project share only, same for person/team/org): a recipient "
+    "works in the project with THEIR OWN keys (`own`, the default) — the owner org's "
+    "and team's keys are NOT lent. `credentials='inherit'` lends them, bounded by your "
+    "own rights (you must be a member of the owner org; refused with "
+    "`inherit_beyond_sharer_rights` otherwise); re-share with `credentials='own'` or "
+    "unshare to revoke. op=get shows each grant's `credentials`.")
 
 
 CAPABILITIES += [
@@ -701,7 +767,8 @@ CAPABILITIES += [
             "`private` → unpublish. ROLE (`role`) = what they can do: `viewer` (read), `editor` "
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
-            "still accepted (mapped to viewer/editor). resource_type ∈ {datastore_namespace, "
+            "still accepted (mapped to viewer/editor). " + CREDENTIALS_DESCRIPTION
+            + " resource_type ∈ {datastore_namespace, "
             "project, procedure, doc} — it is the discriminant, and it also decides which shape "
             "comes back. " + TRANSFER_PROCEDURE + " " + page.DESCRIPTION
             + " ⚠️ KNOWN DEFECT, kept for backward compatibility: resource_type "
@@ -717,7 +784,8 @@ CAPABILITIES += [
             "read (readable cross-org via oto_procedure op=get guide_id) or COPIED into "
             "the target org on transfer (link re-pointed, source untouched), connector "
             "links report `recipient_credential` (the recipient plugs their own key; the "
-            "project's pre-made identity/instructions overrides travel with it); docs & "
+            "project's pre-made identity/instructions overrides travel with it) or "
+            "`inherited_credential` under credentials=inherit; docs & "
             "files follow automatically. Returns a per-entity cascade report. "
             "Owner OR org/platform admin governing it; never exposes row content."
         ),

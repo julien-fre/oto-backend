@@ -144,6 +144,44 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > l'originale reste chez la source. Les deux sont écrits dans la description servie.
 > Banc : `tests/test_transfert_procedure_oto65.py` (org A → org B, contre un vrai PG).
 
+## Les clés d'un projet partagé (#480, arbitrage du 23/09/2026)
+
+> **La règle.** Qui reçoit un projet y travaille **avec ses propres clés**. Les clés du
+> propriétaire — clé d'org, clé de l'équipe propriétaire, accès plateforme accordés à son
+> org, plan de son org — ne lui sont prêtées que si le partageur le **déclare** au partage
+> (`oto_resource op=share … credentials="inherit"`), **borné à ses propres droits**, et
+> **révocable** (`credentials="own"`, ou `unshare`). **Iso** : le même paramètre et le
+> même comportement pour une personne, une équipe ou une org — la règle ne regarde que
+> l'appartenance de l'appelant à l'org du projet, jamais le type de grant par lequel il
+> est entré.
+
+> **Le trou fermé.** `_project=` co-pose l'org propriétaire comme contexte de l'appel
+> (`call_axes._pin_project`) ; le barreau ORG de la cascade n'était gardé par aucune
+> appartenance, et un bénéficiaire hors de l'org agissait sous ses clés d'org. Le barreau
+> équipe l'était déjà (`can_read_group` à la pose).
+
+> **Mécanique** (`access/heritage.py`). Le verdict `ClesDuProjet` se calcule UNE fois à
+> la pose de `_project=` (threadpool) et voyage dans un contextvar ; le walker
+> (`walk_cascade`), la traversée L7 (`chain_resolution`), la garde d'un binding de projet
+> et le plan de l'org (`_win_quota`) le lisent sans requête. Pour un **bénéficiaire hors
+> de l'org** : sa clé membre dans l'org du projet s'il l'y a posée, sinon **sa clé
+> personnelle posée ailleurs** (org perso d'abord, sinon la plus récente — l'instance
+> cross-org de #172, étendue à tout connecteur à clé personnelle, multi-compte compris),
+> son tenant, ses propres accès plateforme ; jamais le barreau org de l'org du projet ni
+> ses accès `org:<id>`. Le refus « aucune clé » lui dit alors les deux sorties (poser sa
+> clé, ou demander l'héritage).
+
+> **L'héritage est une arête de la chaîne de grants** (ADR 0053, point d'extension
+> `resource_kind`) : `grants.resource_kind='project_credentials'`, `resource_id=
+> 'project:<id>'`, émise par le partageur (`grantor = user:<sub>`), reçue par le principal
+> du partage. **Aucune colonne neuve** : révoquer = archiver l'arête (`revoked_at`). La
+> **borne se relit à chaque pose** — le prêt n'ouvre le barreau org que si le partageur
+> est ENCORE membre de l'org du projet (et le barreau d'équipe que s'il la lit) ; sorti de
+> l'org, son prêt s'éteint sans rien réécrire. À la déclaration, un partageur hors de l'org
+> propriétaire est refusé (`403 inherit_beyond_sharer_rights`). Omis, `credentials` laisse
+> l'état existant intact (un re-partage qui ne change qu'un rôle ne retire pas un prêt) ;
+> `op=get` rend le `credentials` de chaque grant d'un projet.
+
 ## Partager UNE page sans son projet (kind `doc`, signal #1084)
 
 > **Le besoin.** Faire lire une page d'un projet à des personnes d'une autre org sans leur

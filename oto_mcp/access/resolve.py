@@ -28,7 +28,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import links
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store,
                 session_org, tenant_vault)
-from . import cascade, chain_shadow, quotas, rbac, resolve_anon, scope, tenant_budget
+from . import (cascade, chain_shadow, heritage, quotas, rbac, resolve_anon, scope,
+               tenant_budget)
 from .resolved_credential import ResolvedCredential
 
 logger = logging.getLogger(__name__)
@@ -175,7 +176,8 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # le plus spécifique de l'appel.
     bound = scope.project_pinned_instance(porteur)
     if bound is not None:
-        rbac.guard_instance_access(sub, bound)
+        if not heritage.instance_heritee(sub, bound):   # prêtée par un partage (#480)
+            rbac.guard_instance_access(sub, bound)
         return _resolve_pinned_instance(porteur, sub, bound)
 
     # Scope MEMBRE (ADR 0033) : « ma clé » n'existe QUE dans l'org de contexte —
@@ -318,15 +320,17 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         raise _not_found(named_account, provider)
 
     if win is None:
+        lien_org = heritage.org_du_lien(sub, active_org)   # #480 : son compte, pas l'org
         # byo-only : pas de palier plateforme (mounts basic_auth, multi-secrets).
         if want == "byo":
             raise CredentialUnavailable(ErrorData(
                 code=INVALID_PARAMS,
                 message=(
                     f"Aucun credential `{provider}` configuré pour toi. Renseigne-le"
-                    f"{links.ou_poser_la_cle(sub, org=active_org, connecteur=provider)}."
+                    f"{links.ou_poser_la_cle(sub, org=lien_org, connecteur=provider)}."
                     + rbac._revoked_hint(sub, active_org, provider)
                     + rbac._reachable_hint(sub, active_org, provider)
+                    + heritage.indice_refus(sub, active_org, provider)
                 ),
             ))
         # Défense en profondeur : le palier plateforme n'existe que si le registre
@@ -340,10 +344,11 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             # sous le porteur — c'est là que les secrets partagés existent.
             message=(
                 f"Aucune clé `{porteur}` configurée pour toi. Soit pose ta propre "
-                f"clé{links.ou_poser_la_cle(sub, org=active_org, connecteur=porteur)}, "
+                f"clé{links.ou_poser_la_cle(sub, org=lien_org, connecteur=porteur)}, "
                 f"soit demande à un admin de te grant un accès à une clé plateforme."
                 + rbac._revoked_hint(sub, active_org, porteur)
                 + rbac._reachable_hint(sub, active_org, porteur)
+                + heritage.indice_refus(sub, active_org, porteur)
             ),
         ))
 
@@ -411,7 +416,9 @@ def _win_quota(win, sub: str, provider: str,
     # ADR 0043 : une org abonnée à un plan `unmetered` n'a PLUS de quota sur les
     # clés plateforme — fin du micro-management des « credits d'appel ». Le plan
     # est le seul cran ; hors abonnement, les quotas d'essai tiennent.
-    if limit and active_org is not None and quotas._org_unmetered(active_org):
+    # #480 : le plan d'une org ne couvre pas le bénéficiaire à qui rien n'est prêté.
+    plan_org = heritage.org_partagee(active_org, heritage.du_contexte(sub, active_org))
+    if limit and plan_org is not None and quotas._org_unmetered(plan_org):
         limit = 0
     return used, limit
 

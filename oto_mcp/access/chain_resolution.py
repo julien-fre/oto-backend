@@ -41,7 +41,7 @@ from typing import Optional
 from .. import (credentials_store, grants_chain, group_store, org_store, providers,
                 tenant_vault)
 from ..db import grants as db_grants
-from . import scope
+from . import heritage, scope
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,9 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
     La restriction `connector_acl`, elle, n'est PAS lue : c'est le fond du lot.
     """
     porteur = providers.credential_provider(provider)
+    # Projet PARTAGÉ (#480) : mêmes gardes que le walker, lues au même verdict.
+    cles = heritage.du_contexte(sub, org)
+    org_cles = heritage.org_partagee(org, cles)
     if org is not None and providers.is_byo_user(porteur):
         if (credentials_store.has_credential(
                 credentials_store.MEMBER, credentials_store.member_id(org, sub),
@@ -182,12 +185,15 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
         gids = _group_ids(sub, org)
         if active is not None and int(active) in gids:
             gids = [int(active)] + [g for g in gids if g != int(active)]
+        if cles is not None and cles.groupe_herite is not None \
+                and cles.groupe_herite not in gids:
+            gids.append(cles.groupe_herite)   # l'équipe propriétaire, prêtée (#480)
         for gid in gids:
             if group_store.has_group_secret(gid, porteur):
                 yield ChainPick("group", "group", str(gid), group_id=gid)
-        if org is not None:
-            if org_store.has_org_secret(org, porteur):
-                yield ChainPick("org", "org", str(org))
+        if org_cles is not None:
+            if org_store.has_org_secret(org_cles, porteur):
+                yield ChainPick("org", "org", str(org_cles))
         # Étage TENANT (L-clés PR 1) : le même que dans le walker, lu à la même source
         # (`rung_tenant` — le sub qualifié, jamais l'org). Sans lui, chaque clé tenant
         # servie compterait une divergence `inconnu` que ce lot aurait créée.
@@ -204,7 +210,7 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
     if want != "byo":
         con = providers.connector_for_provider(porteur)
         if con is not None and "platform" in con.auth_modes:
-            pick, hors_modele = _platform_pick(sub, porteur, org)
+            pick, hors_modele = _platform_pick(sub, porteur, org_cles)
             if pick is not None:
                 yield pick
             # La nuance ne se calcule QUE si la chaîne se tait — le `_platform_pick`

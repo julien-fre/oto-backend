@@ -22,7 +22,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import (providers, credentials_store, db, grants_chain, group_store, org_store,
                 tenant_vault)
 from ..connectors import cardinality
-from . import platform_grant, secret_repr
+from . import heritage, platform_grant, secret_repr
 
 # DÉRIVÉ du registre source unique (package `providers/`) : providers dont le
 # secret peut être POSSÉDÉ par une org et partagé (auth_mode byo_org) — exclut
@@ -140,7 +140,7 @@ class CascadeRung:
     entity_id: Optional[str]
     payload: object
     account: str = ""
-    via: str = "local"              # local | cross_org
+    via: str = "local"              # local | cross_org | grant | heritage
 
     def __repr__(self) -> str:
         """Expurgé SANS CONDITION (#564) : `payload` porte le secret déchiffré en
@@ -298,7 +298,10 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
     instances_par_provider = cs.list_all_platform_instances()
 
     return CascadeProbe(
-        member=lambda s, o, p: ((True, "") if p in membre and p not in suspendues
+        # L'inventaire ne porte que l'org de CONTEXTE : une autre org (la clé d'un
+        # bénéficiaire de projet partagé, posée chez lui — #480) relit à la source.
+        member=lambda s, o, p: (PRESENCE_PROBE.member(s, o, p) if o != org
+                                else (True, "") if p in membre and p not in suspendues
                                 else None),
         # Cross-org : l'inventaire ne porte QUE l'org active, donc on retombe sur la
         # lecture d'origine. C'est un appel, pas trente-trois : le walker n'y arrive
@@ -333,6 +336,14 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
     d'appeler : activation, ACL et sélection restent gatées sur le nom NU, chez
     l'appelant."""
     provider = providers.credential_provider(provider)
+    # Projet PARTAGÉ (#480) : le verdict posé par `_project=` quand l'appelant n'atteint
+    # pas de lui-même toutes les clés du propriétaire. None hors de ce cas — et alors
+    # rien ci-dessous ne change. Lu dans un contextvar : aucune requête ici.
+    cles = heritage.du_contexte(sub, org)
+    # L'org dont l'appelant consomme les droits PARTAGÉS (clé d'org, accès plateforme
+    # de l'org) : celle du contexte, sauf pour un bénéficiaire hors de l'org à qui
+    # rien n'a été prêté.
+    org_cles = heritage.org_partagee(org, cles)
     if sub is not None and org is not None and providers.is_byo_user(provider):
         hit = probe.member(sub, org, provider)
         if hit is not None:
@@ -342,15 +353,23 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
     # Instance personnelle cross-org (#172, amende ADR 0033) : connecteur par-personne
     # (unipile) → ma clé posée dans une AUTRE org me suit (même sub, zéro usurpation).
     # Mono-compte seulement. Prime sur les paliers partagés, comme la clé locale.
-    if (sub is not None and providers.is_personal_cross_org(provider)
-            and not _is_multi_account(provider, org)):
+    # Ouverte aussi au BÉNÉFICIAIRE d'un projet d'une org dont il n'est pas membre
+    # (#480) : il y travaille avec SES clés, et c'est ici qu'elles le suivent — y
+    # compris multi-compte, lues par la sonde MEMBRE (sélection de compte, suspension)
+    # sur l'org où il les a posées.
+    beneficiaire = heritage.hors_org(cles) and providers.is_byo_user(provider)
+    if sub is not None and (beneficiaire or (providers.is_personal_cross_org(provider)
+                                             and not _is_multi_account(provider, org))):
         pio = personal_instance_org(sub, provider, exclude_org=org)
         if pio is not None:
-            payload = probe.member_cross(sub, pio, provider)
+            if beneficiaire:
+                payload, account = probe.member(sub, pio, provider) or (None, "")
+            else:
+                payload, account = probe.member_cross(sub, pio, provider), ""
             if payload is not None:
                 yield CascadeRung("user", credentials_store.MEMBER,
                                   credentials_store.member_id(pio, sub), payload,
-                                  via="cross_org")
+                                  account, via="cross_org")
     # Scope LEGACY (#876) : LA ligne du sub DEMANDEUR seul, liste fermée.
     if sub is not None and provider in LEGACY_USER_SCOPE_PROVIDERS:
         payload = probe.legacy_user(sub, provider)
@@ -369,11 +388,22 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                 # présence répond un booléen, le barreau reste mono ('').
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
                 yield CascadeRung("group", "group", str(g), payload, account)
-        if org is not None:
-            hit = probe.org(org, provider)
+        # L'équipe PROPRIÉTAIRE d'un projet partagé, prêtée par héritage (#480).
+        herite = cles.groupe_herite if cles is not None else None
+        if herite is not None and herite != g:
+            hit = probe.group(herite, provider)
             if hit is not None:
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
-                yield CascadeRung("org", "org", str(org), payload, account)
+                yield CascadeRung("group", "group", str(herite), payload, account,
+                                  via="heritage")
+        # Le barreau ORG exige l'appartenance, ou l'héritage (#480) : jusque-là il
+        # n'était gardé par rien, et `_project=` y faisait entrer un non-membre.
+        if org_cles is not None:
+            hit = probe.org(org_cles, provider)
+            if hit is not None:
+                payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                yield CascadeRung("org", "org", str(org_cles), payload, account,
+                                  via="heritage" if heritage.hors_org(cles) else "local")
         # Étage TENANT (L-clés PR 1, ADR 0052) : la clé partagée du tenant de
         # l'APPELANT — lu sur son sub qualifié, jamais sur le rattachement de l'org
         # (lot L1). `rung_tenant` rend None pour un sub nu (tenant primaire : ses clés
@@ -402,7 +432,7 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
     if want != "byo":
         con = providers.connector_for_provider(provider)
         if con is not None and "platform" in con.auth_modes:
-            grant = probe.platform(sub, provider, org)
+            grant = probe.platform(sub, provider, org_cles)
             if grant:
                 yield CascadeRung("platform", credentials_store.PLATFORM,
                                   grant.get("label"), grant)

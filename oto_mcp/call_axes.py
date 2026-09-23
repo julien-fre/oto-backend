@@ -322,77 +322,66 @@ def _is_project_scopable_tool(name: str) -> bool:
 
 def _resolve_project_context_guarded(
     sub: str, pid: int, subdomain_org: Optional[int],
-) -> tuple[Optional[int], Optional[int]]:
+) -> tuple[Optional[int], Optional[int], object]:
     """Garde d'accès + dérivation du CONTEXTE (org, groupe) propriétaire du projet
     (chemin DB sync, appelé en threadpool). Lève une McpError actionnable si l'acteur
     n'a pas accès en lecture (privacy-by-default ADR 0030 — jamais is_org_member), si le
     projet n'existe pas, ou s'il échappe au lock de sous-domaine.
 
-    L'org dérivée est co-posée pour que credentials/redaction/datastore résolvent sous
-    l'org du projet. **Pour un projet d'ÉQUIPE (owner_type='group'), le groupe
-    propriétaire est co-posé** (2e valeur) : ouvrir le projet résout alors la cascade de
-    credentials de cette équipe (`group_secret`) de façon DÉTERMINISTE — indépendante du
-    groupe actif de l'utilisateur (c'est le fond de #218 : « projet et credentials au
-    même niveau »). Symétrique de l'org déjà co-posée, PAS l'inverse (jamais poser un
-    groupe sur un projet org-owned — restreindre/positionner = poser le projet au bon
-    scope, cf. transfert `oto_resource op=transfer new_owner_group`). Gardé
-    `can_read_group` : cohérent avec l'invariant que `current_group` suppose sur l'axe
-    d'appel (membre du groupe ou escalade org_admin) → un bénéficiaire d'un simple partage
-    de projet, hors de l'équipe, n'hérite pas de ses credentials."""
-    from . import db, group_store, org_store, ownership, roles
+    L'org dérivée (`heritage.contexte_du_projet`) est co-posée pour que
+    credentials/redaction/datastore résolvent sous l'org du projet. **Pour un projet
+    d'ÉQUIPE, le groupe propriétaire est co-posé** si l'appelant le lit
+    (`can_read_group`) : ouvrir le projet résout alors la cascade de cette équipe de
+    façon DÉTERMINISTE, indépendante du groupe actif (#218). Jamais l'inverse (poser
+    un groupe sur un projet org-owned).
+
+    3e valeur : le verdict des CLÉS du projet (`access.heritage`, #480) — posé quand
+    l'appelant n'atteint pas de lui-même toutes les clés du propriétaire (hors de son
+    org, ou hors de son équipe). Un bénéficiaire d'un simple partage travaille avec
+    SES clés ; celles du propriétaire ne lui sont prêtées que par héritage déclaré au
+    partage, borné aux droits du partageur. Même règle pour les trois types de
+    bénéficiaire (personne, équipe, org)."""
+    from . import ownership, roles
+    from .access import heritage
     if not ownership.can_access(sub, "project", str(pid), "read"):
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(f"Projet #{pid} inaccessible (tu n'y as pas accès en lecture, ou il "
                      "n'existe pas). Liste tes projets avec `oto_project op=list`.")))
-    owner = ownership.owner_of("project", str(pid))
-    if owner is None:
+    ctx = heritage.contexte_du_projet(pid)
+    if ctx is None:
         raise McpError(ErrorData(
             code=INVALID_PARAMS, message=f"Projet #{pid} introuvable."))
-    owner_type, owner_id = owner
-    group: Optional[int] = None
-    if owner_type == "org":
-        org = int(owner_id)
-    elif owner_type == "group":
-        gid = int(owner_id)
-        g = group_store.get_group(gid)
-        org = g.get("org_id") if g else None
-        if roles.can_read_group(sub, gid):
-            group = gid
-    elif owner_type == "user":
-        # Projet perso (ADR 0030 amendé) : l'org co-posée = son org de CONTEXTE
-        # (`context_org_id` — « moi, org » : un projet perso créé chez un client
-        # résout les credentials du client, pas l'org perso). Repli sur l'org PERSO
-        # du propriétaire pour les perso LEGACY sans contexte (jamais int(sub) — le sub
-        # n'est pas un id d'org).
-        prow = db.get_project_by_id(int(pid))
-        ctx_org = prow.get("context_org_id") if prow else None
-        org = int(ctx_org) if ctx_org is not None else org_store.get_personal_org(owner_id)
-    else:
-        org = None
+    org, owner_group = ctx
+    group = owner_group if (owner_group is not None
+                            and roles.can_read_group(sub, owner_group)) else None
     if subdomain_org is not None and org is not None and org != subdomain_org:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(f"Le projet #{pid} appartient à une autre org que celle de ce "
                      "endpoint (verrou de sous-domaine) — impossible de l'activer ici.")))
-    return org, group
+    return org, group, heritage.evaluer(sub, pid, org, owner_group, group)
 
 
 async def _pin_project(value: object) -> list[UndoEntry]:
     """Épingle le projet de l'appel + co-pose l'org dérivée (+ le groupe propriétaire
-    pour un projet d'équipe). Rejette l'anonyme AVANT toute pose. Garde `can_access` en
-    threadpool (DB sur le chemin inbound chaud)."""
+    pour un projet d'équipe, + le verdict des clés pour un bénéficiaire). Rejette
+    l'anonyme AVANT toute pose. Garde `can_access` en threadpool (DB sur le chemin
+    inbound chaud)."""
     if value is None:
         return []
     pid = require_axis_int(value, "_project")
     sub = require_axis_sub("_project")
     cand = session_org.current_subdomain_candidate()
-    org, group = await run_in_threadpool(_resolve_project_context_guarded, sub, pid, cand)
+    org, group, cles = await run_in_threadpool(_resolve_project_context_guarded, sub, pid,
+                                               cand)
     undo: list[UndoEntry] = []
     if org is not None:
         undo.append((session_org.reset_call_org, session_org.set_call_org(org)))
     if group is not None:
         undo.append((session_org.reset_call_group, session_org.set_call_group(group)))
+    if cles is not None:
+        undo.append((session_org.reset_call_cles, session_org.set_call_cles(cles)))
     undo.append((session_org.reset_call_project, session_org.set_call_project(pid)))
     return undo
 

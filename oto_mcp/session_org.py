@@ -113,6 +113,27 @@ def current_call_group() -> Optional[int]:
     return _CALL_GROUP.get()
 
 
+# Clés d'un projet PARTAGÉ (#480) : le verdict `access.heritage.ClesDuProjet` calculé à
+# la pose de `_project=` quand l'appelant n'atteint pas de lui-même toutes les clés du
+# propriétaire (hors de son org, ou hors de son équipe). Lu par le walker de cascade —
+# zéro requête sur le chemin chaud. None = rien à dire (hors projet, ou membre de tout).
+_CALL_CLES: contextvars.ContextVar[Optional[object]] = contextvars.ContextVar(
+    "oto_call_cles", default=None)
+
+
+def set_call_cles(verdict: object) -> contextvars.Token:
+    return _CALL_CLES.set(verdict)
+
+
+def reset_call_cles(token: contextvars.Token) -> None:
+    _CALL_CLES.reset(token)
+
+
+def current_call_cles() -> Optional[object]:
+    """Verdict des clés du projet de l'appel (`access.heritage`), ou None."""
+    return _CALL_CLES.get()
+
+
 def set_call_run(run_id: str) -> contextvars.Token:
     return _CALL_RUN.set(run_id)
 

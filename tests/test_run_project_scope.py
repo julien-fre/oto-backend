@@ -72,6 +72,9 @@ def _wire(monkeypatch, *, sub="u1", home_org=3, project_org=42, readable=True) -
     monkeypatch.setattr(org_store, "resolve_org_for_user", lambda s, o: int(o))
     monkeypatch.setattr(ownership, "can_access", lambda *a, **k: readable)
     monkeypatch.setattr(ownership, "owner_of", lambda rt, rid: ("org", str(project_org)))
+    # #480 : la pose de `_project=` lit l'appartenance (verdict des clés) — membre ici.
+    from oto_mcp import roles
+    monkeypatch.setattr(roles, "is_org_member", lambda s, o: True)
     rec: dict = {}
     monkeypatch.setattr(db, "insert_run", lambda run_id, **kw: rec.update(kw, run_id=run_id))
     return rec

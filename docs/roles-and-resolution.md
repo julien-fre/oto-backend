@@ -49,6 +49,12 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 5. Instance **plateforme** (grant/free-tier, ADR 0044 §F) avec quota.
 6. Rien → McpError actionnable + **instances à portée** (voir walker ci-dessous).
 
+⚠️ **Projet partagé à un non-membre** (#480, `access/heritage.py`) : sous `_project=` d'une
+org dont l'appelant n'est pas membre, les paliers **org** (3) et les accès plateforme
+`org:<id>` (5) de cette org sont **sautés**, et le palier 2 s'ouvre à tout connecteur à clé
+personnelle (sa clé posée dans une autre de ses orgs) — sauf héritage déclaré au partage
+(`credentials="inherit"`), borné aux droits du partageur. Détail : `docs/ownership.md`.
+
 > **Cet énoncé est le seul.** La source est le walker `access/cascade.py` ; la cascade
 > était recopiée dans trois autres documents, et **trois sur quatre ignoraient l'étage
 > tenant** cinq semaines après sa livraison — dont celui qui s'intitule « résolution ».

@@ -4,7 +4,7 @@ Security posture of **oto-backend** as deployed by Otomata, written to be read b
 
 Two rules govern what is written here. **Facts are derived from the code that is served and the infrastructure that runs it**, never from an intention — paths below are real paths in this repo. And **work in progress is marked as such**, dated, with a reference: a control that is designed but not yet active is in [Known limitations](#10-known-limitations), not in the section it will eventually belong to.
 
-Last reviewed: 2026-08-29.
+Last reviewed: 2026-09-23.
 
 ## 1. Scope
 
@@ -61,6 +61,8 @@ A **single trunk**, `main`, and no long-lived release branches.
 **Connector authorization.** Access is gated **at call time** inside credential resolution (`access.require_connector_access`), so a personal key does not bypass an organization's restriction. Absence of any access row means open to members; presence of one row makes it deny-by-default. Connector activation is likewise deny-by-default — `enabled: null` means off, not undetermined. Visibility masking above this gate **fails open by design** so a database blip cannot black out the surface; the call-time resolution behind it fails closed.
 
 **Credential cascade.** One walker (`oto_mcp/access/cascade.py`) resolves in order: member (scoped to the active organization) → personal cross-org instance → group → organization → platform key (metered, and only for providers declaring a platform auth mode). A named account found nowhere raises, never silently falls back to a platform key.
+
+**Shared projects do not lend the owner's keys** (since 2026-09-23, oto-backend#480). Opening a project makes its owning organization the call's context. Someone the project is shared with — a person, a team or a whole organization, the same rule for all three — who is **not a member** of that organization works with **their own keys**: the organization's shared keys, its platform allowances and its plan are not reachable (`oto_mcp/access/heritage.py`). The owner's keys are lent only if the sharer declares it on the share (`credentials="inherit"`), only if the sharer is a member of that organization, re-checked on every call, and revocable. Before this date the organization rung had no membership check, so a non-member recipient acting inside the project resolved the organization's keys.
 
 **Acting organization.** One seam, `access.current_org(sub)`, resolves session → consultation → home, and always returns the **requester's** context. The REST consultation header is applied by middleware only *after* membership validation (anti-IDOR). Content listings scope on the active organization, never on the union of the actor's organizations — a tripwire test exists because conflating the two caused a cross-organization visibility leak on 2026-06-30, since fixed.
 

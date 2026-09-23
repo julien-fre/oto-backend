@@ -82,6 +82,9 @@ class ResourceGrant(BaseModel):
     role: Optional[str] = None
     permission: Optional[str] = None
     granted_at: Optional[str] = None
+    # #480 — sur un PROJET seulement : avec quelles clés ce bénéficiaire y travaille
+    # (`own` = les siennes ; `inherit` = celles du propriétaire lui sont prêtées).
+    credentials: Optional[Literal["own", "inherit"]] = None
 
 
 class _OwnedResource(BaseModel):
@@ -215,6 +218,8 @@ class ResourceShared(_Avertissement):
     principal_type: str
     role: str
     permission: str
+    # #480 — rendu sur le partage d'un PROJET : les clés que ce partage déclare.
+    credentials: Optional[Literal["own", "inherit"]] = None
     cascade: Optional[list[CascadeEntry]] = None
     notified: Optional[bool] = None
 
@@ -314,12 +319,18 @@ REFUS: tuple[DeclaredError, ...] = (
                   "`share` of a page (`resource_type=\"doc\"`) with a role other than "
                   "`viewer` — a page is shared read-only; share its project to let "
                   "someone write"),
+    DeclaredError(400, "credentials_project_share_only",
+                  "`credentials` sur autre chose que le partage d'un projet à une "
+                  "personne, une équipe ou une org"),
     DeclaredError(400, "publication_unsupported",
                   "audience `public`/`secret`/`private` sur autre chose qu'un "
                   "projet — seul un projet se publie"),
     DeclaredError(403, "forbidden",
                   "`transfer` demandé par un gérant : la cession de propriété est "
                   "réservée au propriétaire / à un admin"),
+    DeclaredError(403, "inherit_beyond_sharer_rights",
+                  "`credentials='inherit'` demandé par qui n'est pas membre de l'org "
+                  "propriétaire du projet — on ne prête que les clés qu'on atteint"),
     DeclaredError(403, "group_not_visible",
                   "grant d'équipe visant un groupe d'une org dont tu n'es pas membre"),
     DeclaredError(403, "not_group_member",

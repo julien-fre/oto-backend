@@ -44,6 +44,10 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
 
 - `scope`   — qui agit : rôle plateforme, org/équipe/projet de l'appel, ce que le
               projet ÉPINGLE, `_UNSET`. Ne dépend de rien.
+- `heritage` — les clés d'un projet PARTAGÉ (#480) : ce que son bénéficiaire atteint
+              de celles du propriétaire (rien, sauf héritage déclaré au partage).
+              Verdict posé par `_project=`, lu par le walker ; ne dépend que de
+              `session_org` (et, paresseusement, de `roles`/`ownership`).
 - `quotas`  — ce qui est métré (quota jour, usage) et ce qui est payé (option
               payante, comp admin, abonnement).
 - `cascade` — le walker UNIQUE `perso > cross-org > équipe > org > plateforme`,
