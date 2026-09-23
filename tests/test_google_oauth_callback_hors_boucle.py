@@ -69,7 +69,7 @@ def wired(monkeypatch):
 def test_echange_tourne_hors_boucle(monkeypatch, wired):
     vu: dict = {}
 
-    def _exchange(code):
+    def _exchange(code, sub):
         vu["thread"] = threading.current_thread()
         return {"access_token": "a", "refresh_token": "r", "expires_in": 3600}
 
@@ -97,7 +97,7 @@ def test_echange_lent_redirige_avec_connect_error(monkeypatch, wired):
 
     monkeypatch.setattr(wired, "_OAUTH_EXCHANGE_TIMEOUT_S", 0.05)
 
-    def _lent(code):
+    def _lent(code, sub):
         import time
         time.sleep(1)
 

@@ -14,6 +14,11 @@ garantit cette séparation est documenté dans `credentials_store` §app d'édit
 **REST seulement, super admin** : la face MCP est délibérément absente — un secret brut
 en argument d'outil transiterait par le contexte du modèle (règle du repo, cf. la pose
 des secrets d'org).
+
+**La face du TENANT est ailleurs** (`tenant_apps`, 23/09/2026) : un admin de tenant pose
+SON app sous SON slug depuis `/api/admin/tenants/{slug}/apps/{connector}` — ici, la clé
+est libre (région zoho, `tenant:<slug>` pour l'app d'un tenant) et le geste reste celui
+de l'opérateur.
 """
 from __future__ import annotations
 
@@ -70,8 +75,21 @@ def _set(ctx: ResolvedCtx, inp: SetInput) -> dict:
             set_by=ctx.sub)
     except ValueError as e:
         raise AuthzDenied(400, "invalid_editor_app", str(e))
-    return {"connector": name, "data_center": inp.data_center.strip().lower(),
-            "callback_url": connector_flow.callback_url(name)}
+    key = inp.data_center.strip().lower()
+    return {"connector": name, "data_center": key,
+            "callback_url": connector_flow.callback_url(name, host=_tenant_host(key))}
+
+
+def _tenant_host(key: str) -> Optional[str]:
+    """Quand la clé de l'app désigne un TENANT (`tenant:<slug>`,
+    `credentials_store.tenant_app_key`), le rappel que l'admin doit enregistrer chez le
+    fournisseur est celui du tenant (cf. `google_oauth.app_for`) — lui rendre le nôtre,
+    c'est lui faire déclarer une URL que le flux n'enverra jamais. Une clé de RÉGION
+    rend `None` (le rappel de l'instance), même si un tenant porte le même nom : une
+    région n'est jamais lue comme un slug (revue de #1063)."""
+    from .. import tenancy
+    slug = credentials_store.tenant_of_app_key(key)
+    return tenancy.current().callback_host(slug) if slug else None
 
 
 def _delete(ctx: ResolvedCtx, inp: DeleteInput) -> dict:  # noqa: ARG001

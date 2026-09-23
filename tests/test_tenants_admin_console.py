@@ -78,6 +78,7 @@ def test_tenant_surfaces_read_platform_admin_reload_super_admin(monkeypatch):
     assert set(caps) == {"admin.tenants", "admin.tenant", "admin.tenant_console",
                          "admin.tenants_reload", "admin.tenant_keys",
                          "admin.tenant_key_set", "admin.tenant_key_clear",
+                         "admin.tenant_apps", "admin.tenant_app_set", "admin.tenant_app_clear",
                          "admin.tenant_admins", "admin.tenant_admin_add",
                          "admin.tenant_admin_remove", "admin.tenant_org_grants",
                          "admin.tenant_org_grant", "admin.tenant_org_revoke"}
@@ -121,6 +122,9 @@ def test_the_tracking_surface_cannot_write():
     from oto_mcp.capabilities import _authz
     ecritures_admises = {
         "admin.tenant_key_set": ("PUT", None), "admin.tenant_key_clear": ("DELETE", None),
+        # L'app OAuth du tenant (23/09/2026) : même règle que ses clés — l'admin du
+        # tenant OU le super admin, scopé au slug de la route.
+        "admin.tenant_app_set": ("PUT", None), "admin.tenant_app_clear": ("DELETE", None),
         "admin.tenant_admin_add": ("POST", "super"),
         "admin.tenant_admin_remove": ("DELETE", "super"),
         "admin.tenant_org_grant": ("PUT", None), "admin.tenant_org_revoke": ("DELETE", None),

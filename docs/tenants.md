@@ -290,6 +290,52 @@ tenant », l'arête tenant→org de 0053, l'étage tenant de l'endpoint anonyme,
 `tenant` dans `oto_instance op=list`. Reste côté dashboard : le mode `tenant` de `/api/me`
 (`keyStack.ts`, oto-front).
 
+## L'app Google du tenant — son écran de consentement (2026-09-23)
+
+Un tenant qui veut que ses utilisateurs consentent chez Google sous SA marque (son projet
+Google Cloud, ses scopes vérifiés sous son nom) pose son client OAuth comme **app
+d'éditeur** du connecteur `google`, keyée `tenant:<slug>` — un espace de noms à part,
+jamais confondable avec une région zoho — coffre chiffré (`docs/connector-vault.md`
+§app d'éditeur), aucune colonne, aucun env : le mécanisme existait, Google ne le lisait
+pas. Deux faces pour la poser, même ligne au coffre :
+
+- **la sienne**, depuis SON tableau de bord (`tenant_apps`) :
+  `PUT /api/admin/tenants/{slug}/apps/{connector} {"client_id", "client_secret"}` ;
+  `GET …/apps` (liste, jamais le secret, avec le rappel de chacune) ; `DELETE
+  …/apps/{connector}`. Plancher `TENANT_ADMIN_OF(slug)` comme ses clés : l'admin du
+  tenant (rôle lu sur le sub qualifié) OU le super admin. **Scopé au slug de la
+  route** : un admin de `pilote` ne voit ni ne pose rien sous `tulina`, et l'app d'un
+  tenant ne sert qu'aux comptes qualifiés sous son slug (`google_oauth.app_for`) —
+  jamais à un autre tenant, jamais à la plateforme. **Liste fermée** : `google` seul —
+  un connecteur n'y entre qu'avec un flux qui LIT l'app d'un tenant ; zoho lit une
+  région, et un autre connecteur est refusé en 400 `tenant_app_unsupported` ;
+- **celle de l'opérateur** (`platform.editor_app.set`, `POST /api/admin/editor-apps
+  {"connector": "google", "data_center": "tenant:<slug>", …}`, super admin).
+
+- **Le rappel est celui du tenant** : `https://<host>/api/google/oauth/callback`, sur le
+  premier host déclaré que le tenant TIENT (`tenancy.callback_host` — un host réclamé
+  mais tenu par un autre tenant est sauté ; rendu par la réponse de la pose). C'est
+  CETTE URL qu'il déclare dans son client Google — pas la nôtre, que son client
+  n'accepterait pas. ⚠️ **Ce host doit router vers ce backend** : le code
+  d'autorisation et le state signé y arrivent. Un host qui mène ailleurs (le site du
+  partenaire, par exemple) enverrait l'un et l'autre à un tiers — ce n'est pas vérifiable
+  d'ici, c'est une condition de la déclaration du host. Sans host tenu, le rappel reste le
+  nôtre.
+- **Sans app posée, rien ne change** : le tenant consent sous notre client (env) et notre
+  rappel. Poser l'app bascule TOUT compte du tenant d'un coup — consentement, échange,
+  refresh. **Un jeton ne se rafraîchit qu'avec le client qui l'a émis** (noté sur le
+  jeton) : un compte connecté avant la pose est refusé à son prochain appel, avant tout
+  réseau — « reconnecte ce compte », compte marqué, jamais purgé.
+- **Scopes** : sous le client du tenant, le consentement n'est pas incrémental
+  (`include_granted_scopes` n'est posé que sous le nôtre) — le jeton ne ramène pas les
+  scopes accordés aux autres produits du partenaire.
+- ⚠️ **Le host du tenant arrive sur UNE instance** (la prod) : un consentement démarré en
+  preprod avec l'app du tenant rappelle en prod, où le state est vérifié avec le secret de
+  la prod. L'app d'un tenant se teste là où son host arrive.
+- Retirer l'app (`DELETE /api/admin/tenants/<slug>/apps/google`, ou
+  `DELETE /api/admin/editor-apps/google/tenant:<slug>`) ramène le tenant sur la nôtre — et
+  rend ses comptes connectés sous la sienne à reconnecter (même refus nommé).
+
 ## Le rôle « admin de tenant » et l'arête tenant→org (L-clés PR 2 — 2026-08-29)
 
 **Le rôle.** La sortie nommée du régime transitoire (0052 §Amendement 27/08 : l'opérateur du

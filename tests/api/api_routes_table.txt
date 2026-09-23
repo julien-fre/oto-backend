@@ -188,6 +188,12 @@ GET,HEAD /api/admin/tenants/{slug} -> _handler
 OPTIONS /api/admin/tenants/{slug} -> options_handler
 POST /api/admin/tenants/reload -> _handler
 OPTIONS /api/admin/tenants/reload -> options_handler
+GET,HEAD /api/admin/tenants/{slug}/apps -> _handler
+OPTIONS /api/admin/tenants/{slug}/apps -> options_handler
+PUT /api/admin/tenants/{slug}/apps/{connector} -> _handler
+OPTIONS /api/admin/tenants/{slug}/apps/{connector} -> options_handler
+DELETE /api/admin/tenants/{slug}/apps/{connector} -> _handler
+OPTIONS /api/admin/tenants/{slug}/apps/{connector} -> options_handler
 GET,HEAD /api/admin/access-shadow -> _handler
 OPTIONS /api/admin/access-shadow -> options_handler
 GET,HEAD /api/admin/unipile/seats -> _handler

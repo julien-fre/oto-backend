@@ -137,7 +137,8 @@ def test_la_regle_n_a_pas_de_plancher_plateforme():
 def test_les_cles_et_la_fiche_du_tenant_acceptent_son_admin(registre, personne_plateforme,
                                                              admins):
     for key in ("admin.tenant", "admin.tenant_keys", "admin.tenant_key_set",
-                "admin.tenant_key_clear", "admin.tenant_org_grants",
+                "admin.tenant_key_clear", "admin.tenant_apps", "admin.tenant_app_set",
+                "admin.tenant_app_clear", "admin.tenant_org_grants",
                 "admin.tenant_org_grant", "admin.tenant_org_revoke", "admin.tenant_admins"):
         rule = _cap(key).authz
         assert rule(RawCtx(sub=ADMIN_T), SimpleNamespace(slug=PILOTE)).sub == ADMIN_T, key

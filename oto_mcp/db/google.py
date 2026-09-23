@@ -47,6 +47,9 @@ def _google_row(account: str, cur: dict) -> dict:
         "is_default": bool(m.get("is_default")),
         "granted_at": m.get("granted_at"),
         "updated_at": cur["set_at"],
+        # Le client OAuth qui a émis ce jeton (`None` : avant qu'on le note, donc le
+        # nôtre) — un jeton ne se rafraîchit qu'avec lui (`google_oauth.credentials_for`).
+        "client_id": m.get("client_id"),
     }
 
 
@@ -59,9 +62,11 @@ def set_google_oauth(
     access_token: Optional[str] = None,
     expires_at: Optional[str] = None,
     make_default: Optional[bool] = None,
+    client_id: Optional[str] = None,
 ) -> None:
     """Upsert un compte Google dans le COFFRE (connector='google', account=email ;
-    satellites — access_token/expires_at/scopes/is_default/granted_at — dans meta).
+    satellites — access_token/expires_at/scopes/is_default/granted_at/client_id — dans
+    meta). `client_id` = le client OAuth ÉMETTEUR du jeton (pas un secret).
 
     `make_default` None → défaut si 1er compte. is_default conservé si déjà défaut
     (existing OR new). Claime la ligne mono pré-migration (account='').
@@ -79,7 +84,7 @@ def set_google_oauth(
     granted_at = (prior["meta"].get("granted_at") if prior else None) \
         or datetime.now(timezone.utc).isoformat()
     meta = {"access_token": access_token, "expires_at": expires_at, "scopes": scopes,
-            "is_default": is_default, "granted_at": granted_at}
+            "is_default": is_default, "granted_at": granted_at, "client_id": client_id}
     with _connect() as conn:
         with conn.transaction():
             if account:   # claim l'éventuelle ligne mono pré-migration (account='')

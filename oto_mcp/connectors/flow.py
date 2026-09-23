@@ -171,8 +171,12 @@ async def start(connector: str, ctx, values: dict) -> FlowStart:
     return out
 
 
-def callback_url(connector: str) -> Optional[str]:
+def callback_url(connector: str, *, host: Optional[str] = None) -> Optional[str]:
     """URL de retour à enregistrer chez le fournisseur, DÉRIVÉE de l'environnement.
+
+    `host` : celle posée sur le host d'un TENANT (cf. `oauth_flow.redirect_uri`) —
+    ce qu'un admin doit déclarer chez Google quand l'app d'éditeur qu'il pose est celle
+    du tenant, pas la nôtre (`platform.editor_app.set`).
 
     Elle n'est PAS dans `describe()` : ce descripteur-là part dans `/api/connectors`,
     servie sans authentification. Celle-ci n'est ajoutée que sur la projection
@@ -187,7 +191,7 @@ def callback_url(connector: str) -> Optional[str]:
     if not f or not f.callback_path:
         return None
     from ..auth import flow as oauth_flow
-    return oauth_flow.redirect_uri(f.callback_path)
+    return oauth_flow.redirect_uri(f.callback_path, host=host)
 
 
 def app_ready(connector: str, sub: str) -> Optional[bool]:
