@@ -12,16 +12,17 @@ capacités : `connectors.activation.{org_list,set_org,clear_org}` et
 `{group_list,set_group,clear_group}`. Même métier, trois étages, une seule façon de
 le décrire désormais.
 
-⚠️ **Le gate d'activation est au CHARGEMENT** (`register_all`, au boot) : basculer le
-master GLOBAL ne prend effet qu'au prochain redémarrage du serveur — d'où
-`restart_required` dans la réponse. Un override d'ORG, lui, est lu à la résolution et
-prend effet tout de suite. Les deux passent par le même corps, la différence ne tient
-qu'à la présence d'`org_id` : c'est le genre de piège qu'un `Output` déclaré rend
-visible sans avoir à lire le code.
+**Master global comme override d'org prennent effet tout de suite**, sans redémarrage :
+`register_all` charge au boot les outils de TOUS les connecteurs du registre, et
+l'activation se lit en base à chaque requête (`connectors.activation.exposed_connectors`,
+par la visibilité de session et par les gardes d'appel — ADR 0011, 16/06/2026). La
+réponse portait jusqu'au 23/09/2026 un `restart_required: true` sur le master global :
+un reliquat d'avant l'ADR 0011, qui aurait fait redéployer la production pour un effet
+déjà obtenu (oto-backend#815, mesuré le 02/09 : catalogue public de 97 à 98 connecteurs
+sans redémarrage). Retiré, pas mis à `false` : un champ toujours faux ne dit rien.
 
-**Pas de face MCP** (`mcp=None`) : basculer le master global est un acte de
-DÉPLOIEMENT (il demande un redémarrage), et ouvrir l'accès plateforme est un acte
-commercial. Un agent n'a rien à en faire, et les paliers qu'un utilisateur peut
+**Pas de face MCP** (`mcp=None`) : basculer le master global engage toute la
+plateforme, et ouvrir l'accès plateforme est un acte commercial. Un agent n'a rien à en faire, et les paliers qu'un utilisateur peut
 réellement piloter — org et équipe — sont déjà servis par `oto_connector_activation`.
 
 `/api/admin/*` est retiré du descriptif OpenAPI public : une console de plateforme n'a
@@ -111,14 +112,12 @@ class ActivationListView(BaseModel):
 
 
 class ActivationSetView(BaseModel):
-    """⚠️ `restart_required: true` (master global) veut dire que la bascule est ÉCRITE
-    mais pas encore SERVIE : le chargement des tools est résolu au boot. Un override
-    d'org, lui, prend effet immédiatement."""
+    """La bascule posée, servie dès la requête suivante (master global comme override
+    d'org : l'activation se lit en base à chaque requête)."""
     ok: bool
     connector: str
     enabled: bool
     org_id: Optional[int] = None
-    restart_required: bool
 
 
 class ActivationClearView(BaseModel):
@@ -218,14 +217,11 @@ def _set_activation(ctx: ResolvedCtx, inp: ActivationSetInput) -> dict:
         raise AuthzDenied(400, "enabled_must_be_bool")
     connector_activation.set_activation(inp.connector, inp.enabled, org_id=inp.org_id,
                                         set_by=ctx.sub)
-    # Le chargement des tools est résolu au boot → un changement de master
-    # global ne prend effet qu'au prochain redémarrage.
     return {
         "ok": True,
         "connector": inp.connector,
         "enabled": inp.enabled,
         "org_id": inp.org_id,
-        "restart_required": inp.org_id is None,
     }
 
 
@@ -348,9 +344,8 @@ _DOC_LIST = (
 )
 _DOC_SET = (
     "Pose l'activation d'un connecteur : master GLOBAL si `org_id` est absent, override "
-    "de CETTE org sinon. ⚠️ Le master global ne prend effet qu'au prochain redémarrage "
-    "(le chargement des tools est résolu au boot) — `restart_required` le dit. Un "
-    "override d'org prend effet tout de suite."
+    "de CETTE org sinon. L'un comme l'autre prend effet dès la requête suivante, sans "
+    "redémarrage : l'activation se lit en base à chaque requête."
 )
 _DOC_CLEAR = (
     "Retire un override d'org : le connecteur retombe sur le master global. Les deux "

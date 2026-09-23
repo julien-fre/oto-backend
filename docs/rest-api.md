@@ -337,9 +337,10 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   capacités (`connectors.activation.{set_org,set_group}`).
   **Activation** (ADR 0010 B4) : le code DÉCLARE les connecteurs, la DB décide lesquels
   sont EXPOSÉS. ⚠️ `enabled: null` = **OFF** (jamais posé, deny-by-default), pas
-  « indéterminé ». ⚠️ **Le master GLOBAL ne prend effet qu'au prochain redémarrage** (le
-  chargement des tools est résolu au boot) — `restart_required` le dit ; un **override
-  d'org** prend effet tout de suite. Refus : `400 unknown_connector`,
+  « indéterminé ». Master **global** comme **override d'org** prennent effet dès la requête
+  suivante, **sans redémarrage** : l'activation se lit en base à chaque requête (ADR 0011).
+  La réponse du `POST` ne porte plus `restart_required` (retiré le 2026-09-23, #815 : il
+  annonçait à tort un redémarrage pour le master global). Refus : `400 unknown_connector`,
   `400 enabled_must_be_bool`, et sur le `DELETE` (query `?connector=&org_id=`)
   `400 connector_and_org_id_required` / `400 org_id_must_be_int`.
   **Accès plateforme** (ADR 0044 §H) : vue connecteur-centrique unique qui remplace les

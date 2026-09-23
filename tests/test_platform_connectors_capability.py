@@ -13,8 +13,8 @@ Ce que ce fichier garde :
   `unknown_user`, `no_platform_access` : huit jetons machine servis à la console admin.
   Pydantic les remplacerait tous par un `invalid_input` générique — d'où des champs
   déclarés facultatifs et une validation au handler (cf. le module).
-- **`restart_required`**, qui ne vaut que pour le master GLOBAL : le chargement des
-  tools est résolu au boot. Un override d'org, lui, prend effet tout de suite.
+- **Aucun `restart_required`** : master global comme override d'org se lisent en base à
+  chaque requête (#815) — le champ annonçait à tort un redémarrage pour le global.
 - **`enabled: null` = OFF**, pas « indéterminé » (deny-by-default).
 """
 from __future__ import annotations
@@ -109,16 +109,44 @@ def test_enabled_null_veut_dire_off_pas_indetermine(socle, admin):
     assert par_nom["serper"]["overrides"] == [{"org_id": 35, "enabled": False}]
 
 
-def test_le_master_global_demande_un_redemarrage_pas_l_override(socle, admin):
-    """⚠️ La distinction porte tout le sens de cette console : le chargement des tools
-    est résolu au boot, donc basculer le master GLOBAL est écrit mais pas encore servi.
-    Un override d'ORG est lu à la résolution et prend effet tout de suite."""
+def test_aucune_bascule_n_annonce_de_redemarrage(socle, admin):
+    """#815 : le master GLOBAL se lit en base à chaque requête, comme l'override d'ORG
+    (ADR 0011). La réponse annonçait `restart_required: true` pour le global — faux,
+    et assez crédible pour faire redéployer la production pour rien."""
     code, out = call("platform.connector.activation_set",
                      body={"connector": "serper", "enabled": True})
-    assert (code, out["restart_required"], out["org_id"]) == (200, True, None)
+    assert (code, out["org_id"]) == (200, None) and "restart_required" not in out
     code, out = call("platform.connector.activation_set",
                      body={"connector": "serper", "enabled": False, "org_id": 35})
-    assert (code, out["restart_required"], out["org_id"]) == (200, False, 35)
+    assert (code, out["org_id"]) == (200, 35) and "restart_required" not in out
+    assert "restart_required" not in pc.ActivationSetView.model_fields
+
+
+def test_le_master_global_est_lu_a_chaque_requete(monkeypatch):
+    """Le fait sur lequel repose l'absence de redémarrage : `exposed_connectors` relit
+    la table à chaque appel, sans cache — une bascule posée entre deux lectures se voit
+    à la seconde."""
+    from oto_mcp.connectors import activation as act
+
+    lignes = [{"scope_type": "platform", "connector": "serper", "enabled": False}]
+
+    class _Cx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *a, **k):
+            return self
+
+        def fetchall(self):
+            return [dict(r) for r in lignes]
+
+    monkeypatch.setattr("oto_mcp.db._connect", lambda: _Cx())
+    assert "serper" not in act.exposed_connectors(None)
+    lignes[0]["enabled"] = True
+    assert "serper" in act.exposed_connectors(None)
 
 
 @pytest.mark.parametrize("corps,attendu", [
