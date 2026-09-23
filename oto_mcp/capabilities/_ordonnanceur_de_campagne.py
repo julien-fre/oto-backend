@@ -21,12 +21,24 @@ lecture.
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from .. import db
+from . import _outils_manquants
 from ._types import AuthzDenied
 
+logger = logging.getLogger(__name__)
+
 GESTES = ("take", "beat", "ack_stop")
+
+# ⚠️ Dédup en mémoire du journal « outils manquants » de `beat`, par
+# process — pas une source de vérité, juste un frein au spam d'un
+# battement répété toutes les quelques secondes pendant qu'une campagne
+# tourne. Une même (flotte, manque) ne se journalise qu'une fois par
+# process ; un redémarrage ou un autre worker la rejournalise, ce qui est
+# le bon défaut (mieux vaut un doublon qu'un silence).
+_deja_journalise: set[tuple[int, tuple[str, ...]]] = set()
 
 
 def _preneur(taken_by: Optional[str], op: str) -> str:
@@ -79,6 +91,27 @@ def geste(org_id: int, op: str, fleet_id: int, taken_by: Optional[str],
         # laisserait `stopping` sans lecteur.
         vivant = db.battre(fleet_id, org_id, preneur)
         f = _flotte(fleet_id, org_id)
+        # ⚠️ Journal NOMMÉ, pas un arrêt : une flotte déjà EN VOL qui perd un
+        # outil (connecteur désinstallé/coupé pendant qu'elle tourne) continue
+        # — `beat` n'a pas de moyen sûr de savoir si l'agent en cours a besoin
+        # de CET outil précis à CE pas précis, et l'arrêter à l'aveugle
+        # couperait des passes qui n'en avaient pas besoin. Mais l'incident du
+        # 22/09 ne doit plus se découvrir qu'aux notes de sortie : `beat` est
+        # le point de contrôle déjà existant, appelé pendant toute
+        # l'exécution — on y accroche la même garde que `launch`.
+        try:
+            manquants = _outils_manquants.manquants(
+                org_id, f.get("sub"), f.get("tools"))
+        except Exception:
+            logger.exception("beat #%s: contrôle des outils manqué", fleet_id)
+            manquants = []
+        if manquants:
+            cle = (fleet_id, tuple(sorted(manquants)))
+            if cle not in _deja_journalise:
+                _deja_journalise.add(cle)
+                logger.warning(
+                    "flotte #%s (org %s) en vol : outils déclarés absents de la "
+                    "boîte — %s", fleet_id, org_id, ", ".join(sorted(manquants)))
         if not vivant and f.get("taken_by") != preneur:
             # Il ne la tient pas — ou plus : réarmée depuis, elle est libre. Dans les
             # deux cas il doit l'APPRENDRE, pas continuer en croyant la conduire.

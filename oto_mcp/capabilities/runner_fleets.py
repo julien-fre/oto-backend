@@ -61,7 +61,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from . import (_cle_exigee, _descriptions_outils, _instruction, _lignes_reservables,
-               _modele, _ordonnanceur_de_campagne)
+               _modele, _ordonnanceur_de_campagne, _outils_manquants)
 from .. import access, db, output_projection, runner_models, tool_alias
 from ..tool_visibility import BETA_OPTION
 
@@ -422,6 +422,21 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # depuis le produit est « l'ordonnanceur est mort » — un diagnostic faux
         # posé sur une cause invisible. On répare AVANT d'armer, jamais après.
         avant = db.get_fleet(inp.fleet_id, ctx.org_id)
+        # ⚠️ Un refus qui NOMME, avant d'armer (incident du 22/09) : la boîte
+        # d'un worker dépend de connecteurs exposés + sélectionnés dans l'org
+        # visée (ADR 0011/0019), pas seulement de la liste déclarée. Un manque
+        # ici n'écrivait rien au moment où ça comptait — l'agent ne le disait
+        # que dans ses notes de sortie, après coup.
+        if avant:
+            manquants = _outils_manquants.manquants(
+                ctx.org_id, avant.get("sub"), avant.get("tools"))
+            if manquants:
+                raise AuthzDenied(
+                    409, "tools_not_mounted",
+                    "ce passage déclare des outils absents de la boîte de l'org "
+                    f"visée : {', '.join(sorted(manquants))} — installe-les "
+                    "(`oto_connector op=select`) ou retire-les de `tools` "
+                    "(`op=update`) avant de lancer.")
         famille = runner_models.famille((avant or {}).get("model"))
         # ⚠️ Avant d'armer, et avant la réparation de l'instruction : un refus
         # n'écrit rien. Armé sans la clé exigée, le passage passerait `running` au
