@@ -973,18 +973,17 @@ de fin de passage détectait après coup.
   valeur courante la présenterait comme celle de la cliente — ce que la définition
   interdit. Le marqueur rend l'ignorance explicite plutôt que muette : sans lui, « pas
   d'origine » se confondrait avec « origine vide ».
-  ⚠️ **Fin de `null` (oto#140), en PRÉAVIS jusqu'au 1er décembre 2026.** `null`
-  efface dans le datastore alors qu'il veut dire « pas de valeur » partout ailleurs :
-  un jeton, deux sens opposés. Remplacé par `@empty` (vide délibéré) et l'omission
-  (= `@keep`). ⚠️ **Préavis et non retrait, parce que c'est mesuré** : 1 862
-  `"valeur": null` dans les journaux du plus gros écrivain, et le sens que ses agents
-  lui donnent est « cherché, rien trouvé » — l'exact opposé d'« efface ». Le texte servi
-  nomme donc l'OMISSION comme geste juste pour ce cas, sans quoi une traduction
-  mécanique vers `@empty` détruirait en masse. À la date, `null` est REFUSÉ en nommant
-  `@empty`, **jamais interprété en silence** : traduire « pour rendre service »
-  commettrait le dégât que le lot existe pour empêcher. Le refus PARTAGE son corps avec
-  l'avertissement — celui qui s'est préparé pendant le préavis ne doit pas découvrir
-  qu'on lui demandait autre chose.
+  ⚠️ **`null` efface, et le reste (oto#140, décidé le 23/09/2026).** La « fin de `null` »
+  (préavis puis refus au 1er décembre 2026) est ANNULÉE : `null` efface une case quel que
+  soit son type, et `@empty` (sa raison dans `comment`) dit « cherché, rien » — les deux
+  seuls gestes. `@keep` et `@clear`, qui doublaient l'omission et `null`, sont DÉPRÉCIÉS
+  (jalon J0) : une écriture qui les porte réussit, et la réponse porte dans `notices` un
+  avertissement daté — refus au 8 octobre 2026, `@clear` → `null`, `@keep` → omettre le
+  sous-champ (ou renvoyer sa valeur quand elle doit survivre à une valeur qui change).
+  Une seule date, `mots_deprecies.MOTS_DEPRECIES_REFUSES_LE`, dont l'avertissement et la
+  description de `data_write` sont dérivés ; posé sur les trois chemins d'écriture
+  (création, patch par `id`, lot). Suivront `""`/`[]` qui remplacent la valeur en place
+  (J2) et le retrait des deux mots (J3).
   ⚠️ **`force: [chemins]` (oto#140)** remplace la portée « tout l'appel » du booléen :
   `force=["raison_sociale.origine"]` ne force que ce qui est nommé, colonne ou couche.
   Le nommer vaut demande — pas besoin de `readonly_override` en plus. ⚠️ **Ça change la
@@ -2446,7 +2445,8 @@ Pour réécrire un vide assumé dans une liste sans clé, le geste est `@empty` 
 relit sous cette forme (`empties=sentinel`, section suivante).
 
 ⚠️ Un `null` écrit sur une cellule marquée ne l'efface pas : sa valeur est vide, et un `null` sans
-valeur en place n'est pas écrit (oto#182). Le geste qui démarque est `@clear` (étape 2).
+valeur en place n'est pas écrit (oto#182). Le geste qui démarque est `@clear` (étape 2) —
+⚠️ déprécié depuis le 23/09/2026 : avant son refus, `null` doit démarquer une cellule marquée.
 
 Bancs : `tests/datastore/test_vide_assume_lecture_204.py` et `…_204_live.py`.
 
@@ -2467,9 +2467,9 @@ préprod et prod partageant la base.
 
 | mot | sur la VALEUR d'une case | sur une COUCHE (`comment`, `link`) |
 |---|---|---|
-| `@keep` | tient ce qui est en place ; sur une case neuve, rien | tient la couche |
+| `@keep` *(déprécié, refusé au 08/10/2026)* | tient ce qui est en place ; sur une case neuve, rien | tient la couche |
 | `@empty` | vide ASSUMÉ : valeur `""`, marqueur posé — satisfait `required` | vide la couche seule |
-| `@clear` | efface SANS assumer : valeur `""`, marqueur retiré — refusé sur un requis | vide la couche seule |
+| `@clear` *(déprécié, refusé au 08/10/2026)* | efface SANS assumer : valeur `""`, marqueur retiré — refusé sur un requis | vide la couche seule |
 
 `""` garde son comportement : le `""` servi, renvoyé sur une case marquée, ne change rien ; sur
 une valeur en place il est écarté (#608). Formes acceptées : `"champ": "@clear"` et

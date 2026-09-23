@@ -28,7 +28,7 @@ from psycopg.errors import UniqueViolation
 
 from .. import db
 from . import acces_agent as aga
-from . import fin_du_null as fdn
+from . import mots_deprecies as mdp
 from . import reliques as rq
 from . import schema as dsv2
 from .cle_metier import cle_reecrite
@@ -94,13 +94,10 @@ class EcritureParIdMixin:
             # oto#182 : un `null` qui n'efface rien ne s'écrit pas — jugé ICI sous le
             # verrou, contre la ligne exacte, c'est la porte de la réémission.
             corps = sans_les_nulls_sans_effet(corps, lambda: data, schema)
-            # oto#140 : `null` efface ENCORE, mais il est en préavis. Refusé à la date,
-            # JAMAIS interprété en silence (cf. `append_row`).
-            vises = fdn.nulls_nommes(corps)
-            if vises:
-                if fdn.refus_arme():
-                    raise ValueError(fdn.refus(vises))
-                self.off_notices.add(fdn.avertissement(vises))
+            # oto#140 : `@keep` et `@clear` dépréciés, avertis (cf. `append_row`).
+            deprecies = mdp.mots_nommes(corps)
+            if deprecies:
+                self.off_notices.add(mdp.avertissement(deprecies))
             _refuse_dotted_names(corps)
             refuser_cles_internes(corps)
             refuser_les_mots_mal_places(schema, corps)

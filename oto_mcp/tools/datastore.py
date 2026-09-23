@@ -20,7 +20,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
-from ..datastore import claimable, couches, identite, jetons
+from ..datastore import claimable, couches, identite, jetons, mots_deprecies
 from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
 from ..datastore import versions as dsver
@@ -42,17 +42,22 @@ from ..datastore.core import (
 
 
 _MARQUE_COUCHES = "<<couches>>"
+_MARQUE_MOTS_DEPRECIES = "<<mots_deprecies>>"
 
 
 def _avec_la_phrase_des_couches(fn):
     """Insère dans la description servie la phrase des couches, tenue par
-    `couches.DESCRIPTION_ECRITURE` — la même que sert la face REST (oto#91). Une
+    `couches.DESCRIPTION_ECRITURE` — la même que sert la face REST (oto#91) —, et
+    l'annonce datée des mots dépréciés, DÉRIVÉE de la date qui les refusera. Une
     marque absente lève : une description qui aurait perdu sa phrase servirait
     l'écriture sans son vocabulaire, et personne ne le verrait."""
-    if _MARQUE_COUCHES not in (fn.__doc__ or ""):
-        raise RuntimeError(f"{fn.__name__} : marque {_MARQUE_COUCHES} absente de la "
-                           "description")
-    fn.__doc__ = fn.__doc__.replace(_MARQUE_COUCHES, couches.DESCRIPTION_ECRITURE)
+    phrases = {_MARQUE_COUCHES: couches.DESCRIPTION_ECRITURE,
+               _MARQUE_MOTS_DEPRECIES: mots_deprecies.DESCRIPTION_ECRITURE}
+    for marque, phrase in phrases.items():
+        if marque not in (fn.__doc__ or ""):
+            raise RuntimeError(f"{fn.__name__} : marque {marque} absente de la "
+                               "description")
+        fn.__doc__ = fn.__doc__.replace(marque, phrase)
     return fn
 
 
@@ -796,34 +801,30 @@ def register(mcp: FastMCP) -> None:
         (`oto_guide op=read slug=datastore-semantics`).
 
         ⚠️ **Writing a value DROPS the `comment` and `link` that came with it** —
-        they described the OLD value. Reserved words let you say otherwise, without
-        having to read the cell back first:
+        they described the OLD value. To keep one while the value changes, send it
+        back as it is.
 
-            "raison_sociale": {"valeur": "ACME SAS", "comment": "@keep"}
-
-        `"@keep"` = leave that sub-field exactly as it is.
-        `"@empty"` = the ONE form of an assumed empty, its reason in `comment`:
-        `{"valeur": "@empty", "comment": "registry and imprint: none"}` — for
-        "searched, nothing found" as for a value you discard. It satisfies `required`
-        (a plain `""` does not) and reads back `""` — or `"@empty"` with
-        `empties="sentinel"`.
-        `"@clear"` = empty it WITHOUT assuming anything: the value goes, and an
-        assumed empty goes with it. On a `required` field it is refused.
-        On a layer (`comment`, `link`), `@empty` and `@clear` only empty that layer:
-        the value and an assumed empty stay.
-
-        ⚠️ **These words must be the ENTIRE sub-field, alone.** Mixed into a sentence
-        they are just text and get stored as such — `"@keep ; found on the imprint"`
-        lands in the cell verbatim, and a client reads it in their deliverable. To
-        keep what is there AND add something, you cannot do both in one write: keep
-        it (`"@keep"`) or replace it, but do not write the word next to your prose.
+        Two gestures on a cell, and only two:
+        `null` = ERASE the cell: `{"field": null}`. The erased value is kept
+        nowhere: the response hands it back once, in `valeurs_effacees`.
+        `"@empty"` = "searched, nothing found", its reason in `comment`:
+        `{"valeur": "@empty", "comment": "registry and imprint: none"}`. It
+        satisfies `required` (a plain `""` does not) and reads back `""` — or
+        `"@empty"` with `empties="sentinel"`. On a layer (`comment`, `link`), it
+        only empties that layer.
 
         ⚠️ **On a cell that holds a value: keep it and write the layers alone
-        (`{"field": {"comment": "…"}}`), or discard it with `@empty` and the reason in
-        `comment`.** A discarded value is kept nowhere: the response hands it back
-        once, in `valeurs_effacees`. A field you leave out is "not mine" — its value
-        stays. A `comment` alone is a note beside the value, never "searched, nothing
-        found".
+        (`{"field": {"comment": "…"}}`), erase it with `null`, or discard it with
+        `@empty` and the reason in `comment`.** A field you leave out is "not mine" —
+        its value stays. A `comment` alone is a note beside the value, never
+        "searched, nothing found".
+
+        <<mots_deprecies>>
+
+        ⚠️ **`@empty` must be the ENTIRE sub-field, alone.** Mixed into a sentence it
+        is just text and gets stored as such — `"@empty ; nothing on the imprint"`
+        lands in the cell verbatim, and a client reads it in their deliverable. The
+        reason goes in `comment`.
 
         In a list, the word goes on the element's field:
         `{"contacts": [{"nom": "Alice", "fonction": "@empty"}]}`. A list whose schema
@@ -831,11 +832,6 @@ def register(mcp: FastMCP) -> None:
         `empties="sentinel"` and send each element back as it came, so an assumed
         empty stays `"@empty"`. Refused on an element's identity (`of.key`), in a list
         of plain values, and inside an object or a `json` column.
-
-        **Use `@keep` whenever you fix a value without re-establishing where it came
-        from** — a typo, a formatting change, a case correction. Retyping the
-        provenance instead is how it drifts: you would not copy it, you would
-        rephrase it, and a little of the source is lost every time.
 
         ⚠️ **A write DESTROYS what is in the column.** On an open column there is no
         undo and no history: the previous value is gone the moment yours lands. If

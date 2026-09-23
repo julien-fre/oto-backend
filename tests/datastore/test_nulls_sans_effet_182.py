@@ -2,12 +2,11 @@
 
 **Pourquoi ce filtre existe.** La lecture sert à `null` toute colonne déclarée sans
 valeur en place. Un agent qui relit une ligne puis la réémet renvoie ces `null` : écrits,
-ils ajoutaient une clé, faisaient tourner la révision et déclenchaient le préavis de
-`null` — le refus à partir du 01/12 — sur un geste qui ne change rien. La suite complète
+ils ajoutaient une clé et faisaient tourner la révision sur un geste qui ne change rien. La suite complète
 l'a montré sur cinq bancs d'aller-retour.
 
 **Ce qu'il ne doit PAS toucher.** Un `null` sur une valeur EN PLACE reste l'effacement
-nommé, avec son préavis. Ce banc tient les deux moitiés : la règle pure, sans base, et ses
+nommé. Ce banc tient les deux moitiés : la règle pure, sans base, et ses
 effets sur les trois chemins d'écriture, sur PostgreSQL jetable.
 """
 from __future__ import annotations
@@ -100,10 +99,11 @@ def test_reemettre_une_ligne_lue_ne_change_rien_et_ne_previent_pas(live):
 
     assert _stockee(ns_id, rid)["data"] == avant["data"], "un `null` a été écrit"
     assert _stockee(ns_id, rid)["rev"] == avant["rev"], "la révision a tourné"
-    assert not st.off_notices, "le préavis `null` est parti sur une réémission"
+    assert not st.off_notices, "une notice est partie sur une réémission"
 
 
-def test_effacer_une_valeur_en_place_efface_et_previent(live):
+def test_effacer_une_valeur_en_place_efface_sans_preavis(live):
+    """oto#140 (23/09/2026) : `null` efface, définitivement — plus de préavis servi."""
     st, ns, ns_id = _table()
     rid = st.append_row(ns, {"siren": "2", "raison": "BETA", "site_web": "beta.fr"})["_id"]
     st.off_notices.clear()
@@ -111,7 +111,7 @@ def test_effacer_une_valeur_en_place_efface_et_previent(live):
     st.update_row(ns, rid, {"site_web": None})
 
     assert st.get_row(ns, rid)["site_web"] is None
-    assert any("`site_web`" in n for n in st.off_notices), "le préavis a disparu"
+    assert not any("`site_web`" in n for n in st.off_notices), st.off_notices
 
 
 def test_creation_et_lot_ne_stockent_pas_un_null_sans_effet(live):

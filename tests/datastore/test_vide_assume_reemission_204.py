@@ -365,7 +365,10 @@ def test_le_releve_dit_la_relecture_et_ne_fuit_pas():
                                   "contacts", "r1")
     rep = effacements_report(perdus + [{"ligne": "r1", "champ": "contacts", "valeur": AVANT}])
     assert "empties=sentinel" in rep["couches_effacees_hint"]
-    assert "@clear" in rep["valeurs_effacees_hint"]
+    # oto#140 (23/09/2026) : `@clear` est déprécié — le relevé nomme `null` et `@empty`.
+    assert "`null`" in rep["valeurs_effacees_hint"]
+    assert "`@empty`" in rep["valeurs_effacees_hint"]
+    assert "@clear" not in rep["valeurs_effacees_hint"]
     _aucune_fuite(rep)
 
 

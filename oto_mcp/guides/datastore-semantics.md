@@ -232,47 +232,39 @@ Une colonne verrouillée absente de ta liste est refusée normalement, **et le r
 dit que c'est ta liste qui ne la nomme pas** — pas que tu manques d'un droit. La
 distinction compte : sans elle, tu partirais chercher une permission que tu as déjà.
 
-## 4 quinquies. ⚠️ `null` va cesser d'effacer — au 1er décembre 2026
-
-Aujourd'hui `{"champ": null}` EFFACE la valeur. Partout ailleurs — un schéma, une
-réponse, ton propre JSON — `null` veut dire « pas de valeur ». Le même jeton dit donc
-une chose et son contraire selon l'endroit, et c'est ce qu'on retire.
+## 4 quinquies. Deux gestes sur une case : `null` efface, `@empty` dit « cherché, rien »
 
 | ce que tu veux | ce que tu écris |
 |---|---|
-| effacer, sans rien affirmer | `{"champ": "@clear"}` — refusé sur un champ requis |
-| dire que le vide est ASSUMÉ (aucune source ne donne la valeur) | `{"champ": "@empty"}` — il satisfait un champ requis |
-| ne pas y toucher | **omets le champ** (ou `@keep`) |
+| effacer la case | `{"champ": null}` — la valeur perdue revient une fois dans `valeurs_effacees` |
+| dire « cherché, rien » | `{"champ": {"valeur": "@empty", "comment": "registre et mentions légales : rien"}}` — il satisfait un champ requis |
+| ne pas y toucher | **omets le champ** |
 
-Les deux mots valent aussi en couches (`{"champ": {"valeur": "@empty", "comment": …}}`) et
-sur le champ d'un élément de liste (`{"contacts": [{"nom": …, "fonction": "@empty"}]}`).
-Posés sur une couche (`comment`, `link`), ils ne vident que cette couche. Un vide assumé
-se relit `""` par défaut, et `"@empty"` avec `empties=sentinel` : c'est la lecture à
-faire avant de renvoyer une liste sans `of.key`, qui se remplace entière. Ils sont
-refusés sur l'identité d'un élément (`of.key`), dans une liste de valeurs et dans un objet.
+`@empty` vaut aussi sur le champ d'un élément de liste (`{"contacts": [{"nom": …,
+"fonction": "@empty"}]}`). Posé sur une couche (`comment`, `link`), il ne vide que cette
+couche. Un vide assumé se relit `""` par défaut, et `"@empty"` avec `empties=sentinel` :
+c'est la lecture à faire avant de renvoyer une liste sans `of.key`, qui se remplace
+entière. Il est refusé sur l'identité d'un élément (`of.key`), dans une liste de valeurs
+et dans un objet.
 
-⚠️ **`@keep`, `@empty` et `@clear` doivent être la valeur ENTIÈRE du sous-champ, seuls.** Mélangés
-à une phrase, ce ne sont plus que du texte, stocké tel quel — `"@keep ; trouvé sur les
-mentions légales"` atterrit dans la case, et une cliente le lit dans son livrable. Pour
-garder ce qui est là ET ajouter quelque chose, il faut choisir : garder, ou remplacer.
-Les deux ne s'écrivent pas dans la même chaîne.
+⚠️ **`@empty` doit être la valeur ENTIÈRE du sous-champ, seul.** Mélangé à une phrase, ce
+n'est plus que du texte, stocké tel quel — `"@empty ; rien sur les mentions légales"`
+atterrit dans la case, et une cliente le lit dans son livrable. La raison va dans
+`comment`. Le mot ne mord qu'au mot entier, et c'est délibéré : une sentinelle reconnue
+au milieu d'un texte viderait une valeur sur la foi d'une sous-chaîne.
 
-⚠️ **Le mot ne mord qu'au mot entier, et c'est délibéré** : une sentinelle qui
-reconnaîtrait `@keep` au milieu d'un texte effacerait ou figerait une valeur sur la foi
-d'une sous-chaîne — `contact@keepcool.fr` en ferait les frais. Mieux vaut servir une
-chaîne visible qu'exécuter une intention devinée.
+⚠️ **Sur une valeur en place, `null` comme `@empty` la retirent**, et elle n'est gardée
+nulle part (la réponse la rend une fois, dans `valeurs_effacees`) ; seule la version
+remise par la cliente, si elle a été posée à l'import, reste lisible dans
+`champ.origine` (`versions`, 4 ter). **Omettre le champ veut dire « pas à moi »** (la
+valeur est gardée), et une couche `comment` seule ne dit pas « cherché, rien ».
 
-⚠️ **`@empty` est la forme unique du vide assumé** : « cherché, rien trouvé » comme vider
-une valeur en place que tu ne reprends pas, la raison dans `comment`. Sur une valeur en
-place, `@empty` **retire la valeur courante**, qui n'est gardée nulle part (la réponse la
-rend une fois, dans `valeurs_effacees`) ; seule la version remise par la cliente, si elle
-a été posée à l'import, reste lisible dans `champ.origine` (`versions`, 4 ter).
-L'intention se relit avec `empties=sentinel`. **Omettre le champ veut dire « pas à moi »**
-(la valeur est gardée), et une couche `comment` seule ne dit pas « cherché, rien trouvé ».
-
-Jusqu'à la date, `null` efface encore et la réponse porte un avertissement. Après, il
-est **refusé** — jamais interprété en silence, parce qu'un `null` traduit « pour rendre
-service » ferait exactement le dégât qu'on cherche à empêcher.
+⚠️ **`@keep` et `@clear` sont dépréciés, REFUSÉS à partir du 8 octobre 2026.** D'ici là,
+une écriture qui les porte réussit et la réponse porte un avertissement daté dans
+`notices`. À la place de `@clear`, écris `null`. À la place de `@keep`, omets le
+sous-champ — ou, pour un `comment` ou un `link` qui doit survivre à une valeur qui
+change, renvoie-le tel quel : écrire une valeur fait tomber le `comment` et le `link`
+qui l'accompagnaient.
 
 ## 4 sexies. Le `lifecycle` DÉSIGNE la colonne d'état
 

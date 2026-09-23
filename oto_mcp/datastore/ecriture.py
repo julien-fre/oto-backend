@@ -36,7 +36,7 @@ from .columns import (
 from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
 from .controles import _relever_origine_module
 from .errors import DatastoreNotFound, RowNotFound, RowValidationError
-from . import fin_du_null as fdn
+from . import mots_deprecies as mdp
 from . import reliques as rq
 from .forcage import Forcage
 from .outils import _new_id, _now_iso, _refus_de_creation
@@ -101,22 +101,15 @@ class EcritureMixin:
             schema, user_data,
             colonnes_en_place=lambda: self._colonnes_de_la_ligne_visee(
                 ns_id, schema, user_data))
-        # oto#182 : un `null` qui n'efface rien (l'écho d'une ligne lue) ne s'écrit pas,
-        # et ne compte donc pas pour le préavis ci-dessous.
+        # oto#182 : un `null` qui n'efface rien (l'écho d'une ligne lue) ne s'écrit pas.
         user_data = sans_les_nulls_sans_effet(
             user_data, lambda: self._donnees_de_la_ligne_visee(ns_id, schema, user_data),
             schema)
-        # oto#140 : `null` efface ENCORE, mais il est en préavis. Dit à l'instant où
-        # l'ancien comportement joue — le seul moment actionnable, et le lecteur est
-        # celui qui peut agir. ⚠️ Refusé à la date, JAMAIS interprété en silence : un
-        # `null` traduit en `@empty` « pour rendre service » effacerait la valeur d'un
-        # agent qui voulait dire « cherché, rien trouvé » — le dégât même que ce lot
-        # existe pour empêcher, commis par la correction.
-        vises = fdn.nulls_nommes(user_data)
-        if vises:
-            if fdn.refus_arme():
-                raise ValueError(fdn.refus(vises))
-            self.off_notices.add(fdn.avertissement(vises))
+        # oto#140 : `@keep` et `@clear` fonctionnent encore, mais leur refus est daté —
+        # dit à l'instant où l'appelant les emploie, le seul moment actionnable.
+        deprecies = mdp.mots_nommes(user_data)
+        if deprecies:
+            self.off_notices.add(mdp.avertissement(deprecies))
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
         refuser_les_mots_mal_places(schema, user_data)

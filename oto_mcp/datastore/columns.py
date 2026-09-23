@@ -167,8 +167,8 @@ def refuser_cles_internes(user_data: Optional[dict]) -> None:
                 if cle in dsl.CLES_INTERNES:
                     errors.append(
                         f"`{chemin}` porte `{cle}` : c'est une clé interne, posée par la "
-                        f"plateforme, jamais écrite. Pour un vide délibéré, écris "
-                        f"`{dsl.VIDE_DELIBERE}`.")
+                        f"plateforme, jamais écrite. Pour dire « cherché, rien », écris "
+                        f"`{dsl.VIDE_DELIBERE}` ; pour effacer, `null`.")
                 else:
                     _scan(sous, f"{chemin}.{cle}")
         elif isinstance(val, list):
@@ -432,8 +432,8 @@ def _sans_la_valeur(neuf: Any) -> Any:
 
 
 def _porte_un_null(neuf: Any) -> bool:
-    """L'écriture de CETTE colonne pose-t-elle `null` ? Même lecture que
-    `fin_du_null.nulls_nommes` : un scalaire `null`, ou une `valeur` nulle en couches."""
+    """L'écriture de CETTE colonne pose-t-elle `null` ? Un scalaire `null`, ou une
+    `valeur` nulle en couches."""
     return neuf is None or (isinstance(neuf, dict) and dsv2.VALUE_LAYER in neuf
                             and neuf[dsv2.VALUE_LAYER] is None)
 
@@ -445,13 +445,11 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
 
     La lecture sert à `null` toute colonne déclarée sans valeur en place. Un agent qui
     relit une ligne puis la réémet renvoie donc ces `null` : écrits, ils ajoutaient une
-    clé, faisaient tourner la révision et déclenchaient le préavis de `null` (le refus à
-    partir du 01/12) — sur un geste qui ne change rien. Mesuré par la suite complète :
+    clé et faisaient tourner la révision — sur un geste qui ne change rien. Mesuré par la suite complète :
     cinq bancs d'aller-retour rougissaient.
 
     Un `null` sur une colonne SANS valeur en place (absente, ou déjà vide) n'est donc pas
-    écrit. Sur une valeur EN PLACE, il reste l'effacement nommé — préavis, puis refus —,
-    inchangé : ce filtre ne décide rien de ce qu'efface un `null`, il retire seulement
+    écrit. Sur une valeur EN PLACE, il reste l'effacement nommé, inchangé : ce filtre ne décide rien de ce qu'efface un `null`, il retire seulement
     ceux qui n'ont rien à effacer.
 
     ⚠️ **Colonnes DÉCLARÉES seulement.** La lecture ne sert à `null` que le déclaré : un
@@ -646,8 +644,9 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
         "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
         "succès. Un vide non-`null` ne déplace jamais une valeur : c'est ce que rend "
         "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
-        f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour laisser la "
-        "valeur intacte, retire ce champ de ton corps.")
+        f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour dire « cherché, "
+        f"rien », écris `{dsl.VIDE_DELIBERE}`, la raison dans `comment`. Pour laisser "
+        "la valeur intacte, retire ce champ de ton corps.")
 
 
 def _valeur_rendue(valeur: Any) -> Any:
@@ -687,8 +686,8 @@ def effacements_report(records: list) -> dict:
     valeurs = [r for r in records or [] if "couche" not in r]
     if valeurs:
         nommes, reste = _nommes(valeurs)
-        hint = ("un `null` NOMMÉ dans le payload — comme `@clear` et `@empty` — EFFACE la "
-                "valeur en place — ce n'est "
+        hint = ("un `null` NOMMÉ dans le payload EFFACE la valeur en place (`@empty` "
+                "aussi, en disant « cherché, rien ») — ce n'est "
                 "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
                 "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
                 "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base.")
@@ -934,8 +933,8 @@ def _merge_items(avant: Any, nouveaux: list, cle: str,
             [f"`{dsl.GARDE}` ne peut rien tenir dans un élément NOUVEAU de `{nom}` : "
              f"{', '.join('`' + r + '`' for r in refus)} — aucun élément en place ne porte "
              f"cette valeur de `{cle}`, il n'y a rien à garder. Rien n'a été écrit. Écris "
-             f"le contenu, ou `{dsl.VIDE_DELIBERE}` (vide assumé) / `{dsl.EFFACEMENT}` "
-             "(vide sans rien affirmer)."])
+             f"le contenu, `{dsl.VIDE_DELIBERE}` pour « cherché, rien », ou omets le "
+             f"sous-champ. `{dsl.GARDE}` est déprécié : il sera refusé partout."])
     return out
 
 
@@ -1019,8 +1018,8 @@ def _sentinelles_dans_les_items(nouveaux: Any, chemin: str) -> Any:
              f"celui-ci. Deux issues : déclarer `of.key` au schéma de `{chemin}` (le "
              "nom d'un CRÉNEAU stable — `contact_rh`, jamais un nom de personne), et "
              f"la fusion se fera élément par élément ; ou renvoyer le contenu au lieu "
-             f"de `{dsl.GARDE}`. `{dsl.VIDE_DELIBERE}` et `{dsl.EFFACEMENT}`, eux, "
-             "fonctionnent ici — ils ne demandent aucun passé."])
+             f"de `{dsl.GARDE}`, qui est déprécié. `{dsl.VIDE_DELIBERE}` (« cherché, "
+             "rien ») fonctionne ici — il ne demande aucun passé."])
     return out
 
 

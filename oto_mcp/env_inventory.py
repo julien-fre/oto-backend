@@ -241,10 +241,6 @@ _REGLAGES: tuple[Variable, ...] = (
              "déclarer est refusé. Une valeur illisible LÈVE plutôt que de retomber "
              "sur le défaut.",
              ("oto_mcp/datastore/champs_reserves.py:96",)),
-    Variable("OTO_NULL_REFUSE_LE", Classe.REGLAGE, None,
-             "Sœur exacte d'`OTO_ORIGINE_REFUS_LE`, même mécanique, pour le refus "
-             "d'écrire `null` sans le déclarer.",
-             ("oto_mcp/datastore/fin_du_null.py:66",)),
     # -- timeouts / cadences / tailles / rétention -----------------------------
     Variable("OTO_SLOW_CALLBACK_WARN", Classe.REGLAGE, "1.0",
              "Seuil (s) d'avertissement d'un callback lent (event loop).",

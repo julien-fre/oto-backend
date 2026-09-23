@@ -29,7 +29,7 @@ from .controles import _relever_origine_module
 from .errors import BusinessKeyRequired, RowLocked, RowValidationError
 from .outils import _new_id, _refus_de_creation
 from .points import _refuse_dotted_names, ranger_les_couches
-from . import fin_du_null as fdn
+from . import mots_deprecies as mdp
 from .donnees_d_origine import poser_les_deux_versions
 from .reserves import refuser_champs_reserves
 
@@ -112,13 +112,11 @@ class LotsMixin:
                 user_data = sans_les_nulls_sans_effet(
                     user_data, lambda: self._donnees_de_la_ligne_visee(
                         ns_id, schema, user_data, key), schema)
-                # oto#140 : préavis de `null`, sur le chemin des imports aussi —
-                # union sur le lot, donc une phrase et non cinq cents.
-                vises = fdn.nulls_nommes(user_data)
-                if vises:
-                    if fdn.refus_arme():
-                        raise ValueError(fdn.refus(vises))
-                    self.off_notices.add(fdn.avertissement(vises))
+                # oto#140 : `@keep` et `@clear` dépréciés, sur le chemin des imports
+                # aussi — union sur le lot, donc une phrase et non cinq cents.
+                deprecies = mdp.mots_nommes(user_data)
+                if deprecies:
+                    self.off_notices.add(mdp.avertissement(deprecies))
                 _refuse_dotted_names(user_data)
                 refuser_cles_internes(user_data)
                 refuser_les_mots_mal_places(schema, user_data)

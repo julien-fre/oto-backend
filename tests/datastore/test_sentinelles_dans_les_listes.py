@@ -150,7 +150,7 @@ def test_le_texte_servi_dit_que_le_mot_doit_etre_SEUL():
 
     src = inspect.getsource(face_mcp)
     assert "must be the ENTIRE sub-field, alone" in src
-    assert "just text and get stored as such" in src
+    assert "is just text and gets stored as such" in src
 
 
 def _servies(*noms: str) -> dict[str, str]:
