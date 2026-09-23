@@ -22,8 +22,9 @@ toute la plateforme. Ce module rend les dons LISIBLES là où on les cherche.
 
 ## Ce qu'il ne tient pas
 
-L'entitlement. « L'option est-elle ouverte » reste `access.has_option` (le seam), et
-l'échéance mord une fois pour toutes dans `db.has_option_comp`. Ce module ne décide
+L'entitlement. « L'option est-elle ouverte » reste `access.has_option` (le seam, qui
+lit les droits déclarés de l'org, où le don d'org est recopié avec son échéance). Ce
+module ne décide
 d'aucun droit : il DÉCRIT un don pour l'afficher. Un module qui déciderait aussi
 serait la quatrième règle d'une question qui en a déjà trois de trop.
 """
@@ -142,15 +143,12 @@ def _shape(row: dict, scope: str, meta: dict, now: datetime) -> dict:
     }
 
 
-def granted_benefits(org_id: Optional[int], *, sub: Optional[str] = None) -> list[dict]:
-    """Les avantages payants OFFERTS dont bénéficie cette org (et, si `sub` est
-    donné, ce compte-là), prêts à afficher.
+def granted_benefits(org_id: Optional[int]) -> list[dict]:
+    """Les avantages payants OFFERTS à cette org, prêts à afficher.
 
-    `sub` est le grain de l'appelant : `/api/me/billing` le passe (l'écran est le
-    sien, et 12 des 32 dons sont posés sur un COMPTE, pas sur un espace) ; la fiche
-    d'org servie à un admin plateforme ne le passe pas — sinon un admin porteur d'un
-    don personnel verrait toutes les orgs de la plateforme comme gratifiées. C'est le
-    même anti-fuite de contexte que le `org=` explicite d'`access.has_option`.
+    **L'org seulement.** Un don fait à une PERSONNE n'ouvre plus d'option payante
+    (ADR 0070 §7 : seule l'org porte un droit payant) ; l'annoncer comme un avantage
+    serait promettre ce que le seam refuse.
 
     Rend `[]` — jamais un refus, jamais une exception — dès que l'org sort du
     périmètre : un écran qui s'affiche à moitié vaut mieux qu'un écran qui parle à la
@@ -161,33 +159,12 @@ def granted_benefits(org_id: Optional[int], *, sub: Optional[str] = None) -> lis
     cat = _catalogue()
     now = datetime.now(timezone.utc)
     out: list[dict] = []
-    for scope, eid in (("org", str(org_id)), ("user", sub)):
-        if not eid:
+    for row in db.list_option_comp_rows("org", str(org_id)):
+        meta = cat.get(row["option"])
+        if meta is None:          # option sans prix (drapeau) : pas un cadeau
             continue
-        for row in db.list_option_comp_rows(scope, eid):
-            meta = cat.get(row["option"])
-            if meta is None:          # option sans prix (drapeau) : pas un cadeau
-                continue
-            out.append(_shape(row, scope, meta, now))
-    # Un même avantage peut être offert deux fois (au compte ET à l'espace) : on ne
-    # l'annonce qu'une fois, en gardant l'échéance la plus LOINTAINE — c'est celle
-    # qui décrit jusqu'à quand le bénéficiaire l'a réellement, l'autre étant
-    # recouverte. `None` (perpétuel) l'emporte sur toute date.
-    best: dict[str, dict] = {}
-    for b in out:
-        cur = best.get(b["option"])
-        if cur is None or _later(b["expires_at"], cur["expires_at"]):
-            best[b["option"]] = b
-    return [best[k] for k in sorted(best)]
-
-
-def _later(a: Optional[str], b: Optional[str]) -> bool:
-    """`a` couvre-t-il plus loin que `b` ? `None` = perpétuel, donc le plus loin."""
-    if a is None:
-        return True
-    if b is None:
-        return False
-    return a > b
+        out.append(_shape(row, "org", meta, now))
+    return sorted(out, key=lambda b: b["option"])
 
 
 # ── L'usage inclus : dire qu'oto n'est pas sans fin ──────────────────────────

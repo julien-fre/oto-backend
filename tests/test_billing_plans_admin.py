@@ -111,10 +111,9 @@ def test_runner_never_charges_comp(monkeypatch):
 # ── levée de quota (fin des credits d'appel) ─────────────────────────────────
 
 def test_unmetered_org_bypasses_quota(monkeypatch):
-    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: "premium")
-    assert access._org_unmetered(5) is True
+    # Le plan pose le droit `platform_unmetered` ; le cœur ne lit que ce droit.
+    assert access.PLATFORM_UNMETERED in billing.plan_rights("premium")
 
 
 def test_no_plan_org_keeps_quota(monkeypatch):
-    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: None)
-    assert access._org_unmetered(5) is False
+    assert billing.plan_rights("inconnu") == ()

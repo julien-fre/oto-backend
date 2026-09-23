@@ -90,7 +90,8 @@ def test_hint_is_none_when_org_is_unmetered(_platform_only, monkeypatch):
     # (walk_cascade) — sondes DB à blanc, pour ne pas taper une base absente ici.
     monkeypatch.setattr(db, "has_member_api_key", lambda s, o, p: False)
     monkeypatch.setattr(org_store, "has_org_secret", lambda o, p: False)
-    monkeypatch.setattr(access.quotas, "_org_unmetered", lambda org: True)
+    monkeypatch.setattr(access, "org_has",
+                        lambda org, droit: droit == access.PLATFORM_UNMETERED)
     monkeypatch.setattr(db, "get_usage_today", lambda sub, p: 4)
     assert access.platform_quota_hint("apollo", sub="u") is None
 

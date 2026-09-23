@@ -593,19 +593,17 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
 
 # ── état & résiliation ───────────────────────────────────────────────────────
 
-def status(org_id: int, *, sub: Optional[str] = None) -> dict:
+def status(org_id: int) -> dict:
     """État d'abonnement de l'org — **et ce qui lui est offert sans abonnement**.
 
     `granted` porte les avantages payants OFFERTS (dons d'option, cf.
     `billing_grants`). Il est joint dans les DEUX branches, et c'est le point : la
     branche « aucun abonnement » est justement celle où un bénéficiaire se voyait
     vendre ce qu'il possédait déjà. Le catalogue `plans` y reste servi — un don n'est
-    pas un abonnement, et la voie pour en prendre un ne doit pas se refermer.
-
-    `sub` = l'appelant, pour ses dons PERSONNELS. Omis sur les faces qui décrivent
-    une org à un tiers (fiche admin) : voir `billing_grants.granted_benefits`.
+    pas un abonnement, et la voie pour en prendre un ne doit pas se refermer. Les
+    dons faits à une PERSONNE n'y figurent pas : ils n'ouvrent plus d'option payante.
     """
-    granted = billing_grants.granted_benefits(org_id, sub=sub)
+    granted = billing_grants.granted_benefits(org_id)
     # L'usage est servi à TOUT LE MONDE, gratifié ou non, abonné ou non : c'est le
     # seul élément de cet écran qui vaut pour tous les comptes.
     usage = billing_grants.monthly_usage(org_id)

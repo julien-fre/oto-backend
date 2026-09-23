@@ -109,9 +109,10 @@ est additive au sens du droit, elle ne retire rien. Une date se pose **ligne par
 ligne**, par un acte admin explicite (`oto_admin_set_option expires_at=…`), et
 s'efface en repassant une chaîne vide.
 
-- **Elle mord dans le seam** : `db.has_option_comp` ignore une ligne échue, donc les
-  surfaces d'entitlement tombent d'accord sans qu'aucune connaisse la règle. Une
-  échéance qu'aucun chemin n'applique serait pire que pas d'échéance.
+- **Elle mord dans le seam** : le don d'org est recopié en droit déclaré (`offered`)
+  avec son échéance, et `access.org_has` ignore une ligne échue — les surfaces
+  d'entitlement tombent d'accord sans qu'aucune connaisse la règle. Une échéance
+  qu'aucun chemin n'applique serait pire que pas d'échéance.
 - **`list_option_comps` ne filtre PAS** : une console admin doit voir le don échu,
   sinon il devient invisible donc irrécupérable.
 - **Omettre `expires_at` ne l'efface pas** (sentinelle `db.KEEP_EXPIRY`) : deux
@@ -163,11 +164,12 @@ droit de manquer. Un dépassement s'affiche, il ne coupe pas, et il ne facture p
 
 Trois fonctions y répondaient avec trois règles. Conséquence mesurée : **une org qui
 PAYAIT s'affichait « non souscrite »** dans son cockpit d'activation, dont la lecture
-ne regardait que le don admin et jamais le plan. La moitié org du seam est désormais
-nommée — `access.org_has_option` — et `capabilities/connectors/activation` l'appelle.
-`access.has_option` reste le seam complet (comp user > comp org > plan) ;
-`access.views.option_open` reste au-dessus (il croise avec le BYO). Un nouveau chemin
-passe par l'un des trois, **jamais par les sources**.
+ne regardait que le don admin et jamais le plan. **Il n'y a plus qu'une règle** (lot 2
+de #806) : pour une option payante, `access.has_option` = `access.org_has(org courante)`,
+le droit déclaré de l'org (« Les droits déclarés », plus bas), et le cockpit lit `access.org_has`.
+`access.views.option_open` reste au-dessus (il croise avec le BYO). Le cœur n'importe
+plus `billing` (cliquet `tests/test_access_sans_billing.py`). ⚠️ **Le don fait à une
+personne n'ouvre plus d'option payante**, et `status.granted[]` ne l'annonce plus.
 
 ### Ce qui ne demande PAS de consentement
 

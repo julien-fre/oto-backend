@@ -73,7 +73,7 @@ def _connect_env(monkeypatch, *, seat_elsewhere=SEAT, byo_rows=None, alive=True,
     monkeypatch.setattr(access, "resolve_credential", lambda *a, **k: SimpleNamespace(
         key="K", mode="platform", config={}))
     monkeypatch.setattr(access, "current_org", lambda s: 168)
-    monkeypatch.setattr(access, "has_option", lambda s, o, **k: True)
+    monkeypatch.setattr(access, "org_has", lambda org_id, droit: True)
     monkeypatch.setattr(db, "get_unipile_account", lambda s, o, p: None)
     monkeypatch.setattr(db, "get_org_unipile_limit", lambda o: None)
     monkeypatch.setattr(db, "count_unipile_accounts_for_org", lambda o: 0)

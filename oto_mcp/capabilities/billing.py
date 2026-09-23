@@ -296,8 +296,9 @@ class BillingStatus(BaseModel):
                     "c'est la date du PREMIER constat, pas du dernier.")
     granted: list["GrantedBenefit"] = Field(
         default_factory=list,
-        description="Avantages payants OFFERTS à l'org (et, sur /api/me/billing, au "
-                    "compte appelant) — servis dans les DEUX branches, y compris "
+        description="Avantages payants OFFERTS à l'org (jamais à une personne : un "
+                    "don personnel n'ouvre plus d'option payante) — servis dans les "
+                    "DEUX branches, y compris "
                     "`subscribed:false`. Liste vide = rien d'offert **ou** org hors "
                     "du périmètre du dispositif (une org hébergée par un tenant "
                     "tiers n'en reçoit jamais : ses clients ne sont pas les nôtres). "
@@ -527,12 +528,9 @@ def _plans(ctx: ResolvedCtx, inp: NoInput) -> dict:
 
 
 def _status(ctx: ResolvedCtx, inp: NoInput) -> dict:
-    # `sub` passé ICI et nulle part ailleurs : /api/me/billing est l'écran de
-    # l'appelant, et un don sur douze est posé sur un COMPTE — sans ce grain, son
-    # porteur voit un catalogue qui lui vend ce qu'il a déjà. La fiche d'org servie à
-    # un admin plateforme (`orgs.reads._org_detail`) ne le passe pas : elle décrit
-    # l'org, pas son lecteur.
-    return _domain(lambda: billing.status(ctx.org_id, sub=ctx.sub))
+    # L'org seulement : un don fait à une personne n'ouvre plus d'option payante
+    # (ADR 0070 §7), l'écran ne l'annonce donc plus.
+    return _domain(lambda: billing.status(ctx.org_id))
 
 
 def _subscribe(ctx: ResolvedCtx, inp: SubscribeInput) -> dict:

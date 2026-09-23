@@ -1,16 +1,18 @@
-"""Ce qui est MÉTRÉ et ce qui est PAYÉ (ADR 0043).
+"""Ce qui est MÉTRÉ et ce qui est PAYÉ (ADR 0043, ADR 0070 §7).
 
 Deux crans distincts, souvent confondus :
 
-- le **quota** journalier d'une clé PLATEFORME (`quota_for`, `_org_unmetered`,
-  `record_platform_usage`) — un garde-fou d'essai, levé par un plan `unmetered` ;
-- l'**option payante** d'un connecteur (`paid_option_for`, `has_option`) — le
-  cran d'entitlement de l'abonnement d'org, seam unique à deux sources (comp
-  admin sur l'user ou l'org, OU plan de l'abonnement actif).
+- le **quota** journalier d'une clé PLATEFORME (`quota_for`, `usage_today`,
+  `record_platform_usage`) — un garde-fou d'essai, levé pour toute l'org par le droit
+  déclaré `platform_unmetered` (lu par `resolve._win_quota`) ;
+- l'**option payante** d'un connecteur (`paid_option_for`, `has_option`) — un droit
+  déclaré de l'ORG (`entitlements.org_has`), une seule règle. Le don fait à une
+  personne n'ouvre plus d'option payante.
 
-Ne dépend que de `scope` (le contexte de l'acteur). Le verdict « l'option est-elle
-LEVÉE pour ce connecteur » (qui tient compte du BYO) vit dans `views.option_open`,
-au-dessus de la cascade.
+Ne dépend que de `scope` (le contexte de l'acteur) et d'`entitlements` (les droits
+déclarés) — jamais de `billing` : le commerce écrit les droits, le cœur les relit.
+Le verdict « l'option est-elle LEVÉE pour ce connecteur » (qui tient compte du BYO)
+vit dans `views.option_open`, au-dessus de la cascade.
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ from typing import Optional
 
 from .. import providers, db, grants_chain
 from ..auth.hooks import current_user_sub_from_token
-from . import scope
+from . import entitlements, scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : quota daily par
 # provider (fallback si pas d'env ni de grant).
@@ -29,6 +31,11 @@ _QUOTA_DEFAULTS = providers.QUOTA_DEFAULTS
 # Add-on payant requis par un connecteur (couche 3, ADR 0043). None = aucun. HOME
 # canonique de ce mapping (les surfaces org ET user en dérivent — derive don't duplicate).
 _PAID_OPTION_BY_CONNECTOR = {"unipile": "unipile"}
+
+
+# Les options PAYANTES : un droit déclaré de l'org, jamais d'une personne. Dérivé du
+# mapping ci-dessus.
+_PAID_OPTIONS = frozenset(_PAID_OPTION_BY_CONNECTOR.values())
 
 
 def paid_option_for(connector: str) -> Optional[str]:
@@ -46,28 +53,36 @@ def paid_option_for(connector: str) -> Optional[str]:
 
 def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNSET) -> bool:
     """Couche 3 du modèle de connecteur (cf. docs/connector-model.md) : l'option de
-    connecteur `option` (ex. `unipile`) est-elle débloquée pour `sub` ? **Seam unique** —
-    deux sources (ADR 0043) : un **comp admin** sur l'USER ou l'ORG active, OU
-    l'**abonnement actif de l'org** dont le plan inclut l'option (mapping
-    `billing.plan_options`, miroir `org_subscriptions` — `past_due` reste ouvert
-    tant que la grace court ; la fermeture est un acte du billing_runner).
+    connecteur `option` est-elle débloquée pour `sub` dans son org ? **Seam unique.**
+
+    - Option PAYANTE (`unipile`) : un droit déclaré VIVANT de l'org
+      (`entitlements.org_has`), quelle que soit sa source — abonnement, don d'org,
+      partenaire, essai. **Le don fait à une personne n'ouvre plus d'option payante**
+      (ADR 0070 §7) : seule l'org porte un droit payant.
+    - Option non payante (`beta`, un drapeau de population) : la marque du compte
+      (`user_has_option`) ou celle de l'org.
+
     Ne JAMAIS lire les sources en direct ailleurs (un nouveau chemin passe par ici).
     `org` explicite (≠ _UNSET) = calcul pour un tiers contre une org donnée (fiche admin),
     sans current_org (anti-fuite de contexte)."""
-    if db.has_option_comp("user", sub, option):
+    if option in _PAID_OPTIONS:
+        org = scope.current_org(sub) if org is scope._UNSET else org
+        return org is not None and entitlements.org_has(int(org), option)
+    if user_has_option(sub, option):
         return True
     org = scope.current_org(sub) if org is scope._UNSET else org
-    return org_has_option(org, option)
+    return org is not None and db.has_option_comp("org", str(org), option)
 
 
 def user_has_option(sub: str, option: str) -> bool:
     """La moitié COMPTE du seam — « CET ACTEUR porte-t-il la marque », sans espace.
 
-    Miroir exact d'`org_has_option`, et pour la raison symétrique : certaines
+    Pour les options NON payantes seulement : une option payante est un droit de
+    l'org (`entitlements.org_has`), et une marque de compte ne l'ouvre pas. Certaines
     questions portent sur l'identité de l'appelant et sur elle seule. `has_option`
-    ne convient pas — il répond vrai dès que l'ORG ACTIVE porte le don ou que son
-    plan inclut l'option, donc il transforme une marque de compte en propriété
-    d'espace, partagée par tous les membres.
+    ne convient pas — il répond vrai dès que l'ORG ACTIVE porte la marque, donc il
+    transforme une marque de compte en propriété d'espace, partagée par tous les
+    membres.
 
     ⚠️ L'exemple qui l'a fait naître — la marque `runner_worker` sur un compte —
     n'existe plus (09/09/2026) : un worker n'est plus un compte marqué, c'est un
@@ -79,34 +94,6 @@ def user_has_option(sub: str, option: str) -> bool:
     L'échéance mord dans `has_option_comp`, comme pour toutes les autres surfaces.
     """
     return db.has_option_comp("user", sub, option)
-
-
-def org_has_option(org: "int | None", option: str) -> bool:
-    """La moitié ORG du seam — « cet ESPACE a-t-il l'option », sans acteur.
-
-    Extrait de `has_option` (dont elle est la fin), pas recopié : les deux sources
-    d'org (comp admin, plan de l'abonnement actif) restent écrites UNE fois. Elle
-    existe parce que certaines surfaces posent la question sur une org **sans que
-    l'appelant soit concerné** — un cockpit de gouvernance décrit l'espace, pas son
-    lecteur. Y appeler `has_option` ferait fuiter le comp PERSONNEL du requérant dans
-    l'état affiché de l'org (un admin gratifié verrait toutes les orgs souscrites).
-
-    ⚠️ Le motif de son existence : jusqu'au 2026-09-02, le cockpit d'activation d'org
-    lisait `db.has_option_comp('org', …)` **en direct** — donc une org qui PAYAIT s'y
-    affichait « non souscrite », son plan n'étant regardé par personne. Troisième
-    règle pour une même question, troisième réponse. Un nouveau chemin passe par ici
-    ou par `has_option`, jamais par les sources.
-    """
-    if org is None:
-        return False
-    if db.has_option_comp("org", str(org), option):
-        return True
-    plan = db.subscription_plan_for_org(int(org))
-    if plan is not None:
-        from .. import billing  # import tardif (billing tire mollie/httpx)
-
-        return option in billing.plan_options(plan)
-    return False
 
 
 def quota_for(provider: str) -> int:
@@ -132,16 +119,6 @@ def usage_today(sub: str, provider: str) -> int:
     un canal lirait 0 face au plafond d'une clé déjà épuisée (« quota intact » chez
     quelqu'un qui n'a plus rien). Tout lecteur de quota passe par ici."""
     return db.get_usage_today(sub, providers.credential_provider(provider))
-
-
-def _org_unmetered(org: int) -> bool:
-    """L'org a-t-elle un plan actif qui lève les quotas plateforme ? (ADR 0043)"""
-    plan = db.subscription_plan_for_org(int(org))
-    if plan is None:
-        return False
-    from .. import billing  # import tardif (billing tire mollie/httpx)
-
-    return billing.plan_is_unmetered(plan)
 
 
 def record_platform_usage(provider: str, calls: int = 1) -> None:

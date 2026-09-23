@@ -181,11 +181,12 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
     # de reconnecter ; `force=True` pour un compte RÉELLEMENT distinct. (Reconnexion
     # dans la MÊME org = remplacement, non concernée : filtrée par `org_id`.)
     platform_seat = not byo
-    # Gate OPTION (couche 3) : hébergé sans option accordée = refus.
-    if not byo and not access.has_option(sub, "unipile"):
+    # Gate OPTION (couche 3), au grain ORG : hébergé sans le droit déclaré de l'org
+    # = refus. Le don fait à une personne ne l'ouvre plus (ADR 0070 §7).
+    if not byo and not access.org_has(org_id, "unipile"):
         raise ConnectRefused(402, "unipile_option_required",
-                             "La messagerie hébergée n'est pas activée pour ton org "
-                             "(option à accorder par un admin).")
+                             "La messagerie hébergée n'est pas active pour cette org : "
+                             "essai terminé ou abonnement requis.")
     # Plafond de sièges hébergés (reconnexion d'un compte existant = remplacement, OK ;
     # une ADOPTION ci-dessous crée un binding dans cette org → soumise au même plafond).
     if platform_seat and db.get_unipile_account(sub, org_id, provider) is None:

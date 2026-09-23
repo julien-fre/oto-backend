@@ -56,24 +56,11 @@ def test_un_don_dorg_est_rendu_avec_son_nom_et_sa_valeur(monkeypatch):
     assert b["value_amount"] == 1900 and b["currency"] == "eur"
 
 
-def test_un_don_de_compte_suit_son_porteur(monkeypatch):
-    # 12 des 32 dons sont posés sur un COMPTE, pas sur un espace.
-    _wire(monkeypatch, user_rows=[_don()])
-    (b,) = billing_grants.granted_benefits(7, sub="u1")
-    assert b["scope"] == "user"
-
-
-def test_sans_sub_le_don_personnel_du_lecteur_ne_fuit_pas(monkeypatch):
-    # Fiche d'org servie à un admin plateforme : elle décrit l'ORG, pas son lecteur.
+def test_un_don_fait_a_une_personne_n_est_pas_annonce(monkeypatch):
+    # Il n'ouvre plus d'option payante (ADR 0070 §7) : l'annoncer comme un avantage
+    # promettrait ce que le seam refuse.
     _wire(monkeypatch, user_rows=[_don()])
     assert billing_grants.granted_benefits(7) == []
-
-
-def test_offert_deux_fois_ne_sannonce_quune_fois_au_terme_le_plus_lointain(monkeypatch):
-    _wire(monkeypatch, org_rows=[_don(expires_at=LOIN)], user_rows=[_don()])
-    (b,) = billing_grants.granted_benefits(7, sub="u1")
-    # `None` = perpétuel = le plus loin : c'est jusque-là que le porteur l'a vraiment.
-    assert b["expires_at"] is None and b["scope"] == "user"
 
 
 def test_un_drapeau_de_population_nest_pas_un_cadeau(monkeypatch):
@@ -100,7 +87,7 @@ def test_status_sans_abonnement_porte_le_don_ET_garde_le_catalogue(monkeypatch):
 
 def test_une_org_de_tenant_tiers_ne_recoit_aucun_dispositif(monkeypatch):
     _wire(monkeypatch, tenant="acme", org_rows=[_don(expires_at=LOIN)])
-    assert billing_grants.granted_benefits(7, sub="u1") == []
+    assert billing_grants.granted_benefits(7) == []
     assert billing_grants.org_is_ours(7) is False
 
 
@@ -113,14 +100,14 @@ def test_le_dispositif_se_referme_si_le_tenant_est_illisible(monkeypatch):
 
     monkeypatch.setattr(billing_grants.db, "org_tenant_slug", _boom)
     assert billing_grants.org_is_ours(7) is False
-    assert billing_grants.granted_benefits(7, sub="u1") == []
+    assert billing_grants.granted_benefits(7) == []
 
 
 def test_status_dune_org_de_tenant_tiers_ne_porte_aucun_don(monkeypatch):
     # La garde tient sur la surface SERVIE, pas seulement sur la fonction interne.
     _wire(monkeypatch, tenant="acme", org_rows=[_don(expires_at=LOIN)])
     monkeypatch.setattr(billing.db_billing, "get_org_subscription", lambda oid: None)
-    assert billing.status(7, sub="u1")["granted"] == []
+    assert billing.status(7)["granted"] == []
 
 
 def test_org_absente_hors_dispositif(monkeypatch):
@@ -152,31 +139,26 @@ def test_sans_echeance_le_don_est_perpetuel(monkeypatch):
 
 # ── 4. Le seam : une seule règle pour « cette org a-t-elle l'option » ────────
 
-def test_org_has_option_voit_le_plan_paye_pas_seulement_le_don(monkeypatch):
-    # LE défaut du 2026-09-02 : le cockpit d'activation lisait le don en direct, donc
-    # une org qui PAYAIT s'y affichait « non souscrite ».
-    monkeypatch.setattr(access.db, "has_option_comp", lambda et, eid, opt: False)
-    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: "premium")
-    assert access.org_has_option(9, "unipile") is True
-
-
 def test_le_cockpit_dorg_sert_le_meme_verdict_que_le_seam(monkeypatch):
+    # LE défaut du 2026-09-02 : le cockpit d'activation lisait le don en direct, donc
+    # une org qui PAYAIT s'y affichait « non souscrite ». Il lit le droit déclaré.
     from oto_mcp.capabilities.connectors import activation as cap
 
-    monkeypatch.setattr(access.db, "has_option_comp", lambda et, eid, opt: False)
-    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: "standard")
+    monkeypatch.setattr(access.db_entitlements, "has",
+                        lambda oid, droit: (oid, droit) == (9, "unipile"))
     assert cap._org_subscribed(9, "unipile") is True
+    monkeypatch.setattr(access, "current_org", lambda sub: 9)
+    assert access.has_option("moi", "unipile") is True
 
 
-def test_org_has_option_ne_lit_pas_le_comp_personnel_du_requerant(monkeypatch):
-    # Anti-fuite de contexte : un admin gratifié ne doit pas voir toutes les orgs
-    # de la plateforme comme souscrites.
+def test_le_don_personnel_du_requerant_n_ouvre_rien(monkeypatch):
+    # Ni pour l'org, ni pour lui : seule l'org porte un droit payant.
     monkeypatch.setattr(access.db, "has_option_comp",
                         lambda et, eid, opt: et == "user")
-    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: None)
-    assert access.org_has_option(9, "unipile") is False
+    monkeypatch.setattr(access.db_entitlements, "has", lambda oid, droit: False)
     monkeypatch.setattr(access, "current_org", lambda sub: 9)
-    assert access.has_option("moi", "unipile") is True   # pour LUI, oui
+    assert access.org_has(9, "unipile") is False
+    assert access.has_option("moi", "unipile") is False
 
 
 # ── 5. Poser l'échéance : l'ÉCRITURE aussi refuse hors périmètre ────────────
@@ -264,7 +246,7 @@ def test_un_depassement_saffiche_et_ne_refuse_rien(monkeypatch):
 
     from oto_mcp.access import quotas
 
-    for fn in (quotas.has_option, quotas.org_has_option):
+    for fn in (quotas.has_option, quotas.user_has_option):
         assert "monthly_usage" not in inspect.getsource(fn)
         assert "INCLUDED_CALLS" not in inspect.getsource(fn)
 

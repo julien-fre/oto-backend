@@ -26,7 +26,7 @@ def _wire(monkeypatch, *, byo=False, option=True, org=39, existing=None, count=0
     monkeypatch.setattr(access, "resolve_credential", lambda *a, **k: SimpleNamespace(
         key="KEY", mode="org" if byo else "platform", config={}))
     monkeypatch.setattr(access, "current_org", lambda sub: org)
-    monkeypatch.setattr(access, "has_option", lambda sub, opt: option)
+    monkeypatch.setattr(access, "org_has", lambda org_id, droit: option)
     # Garde-fou anti-doublon cross-org (#172) : comptes déjà connectés du sub, tous
     # canaux/orgs confondus. [] par défaut ⇒ garde-fou inerte (chemins existants).
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts", lambda sub: connected or [])

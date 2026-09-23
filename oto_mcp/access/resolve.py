@@ -28,8 +28,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import links
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store,
                 session_org, tenant_vault)
-from . import (cascade, chain_shadow, heritage, quotas, rbac, resolve_anon, scope,
-               tenant_budget)
+from . import (cascade, chain_shadow, entitlements, heritage, quotas, rbac, resolve_anon,
+               scope, tenant_budget)
 from .resolved_credential import ResolvedCredential
 
 logger = logging.getLogger(__name__)
@@ -413,12 +413,10 @@ def _win_quota(win, sub: str, provider: str,
     recopiée 3×), la même discipline s'applique ici."""
     used = quotas.usage_today(sub, provider)
     limit = win.payload.get("daily_quota") or quotas.quota_for(provider)
-    # ADR 0043 : une org abonnée à un plan `unmetered` n'a PLUS de quota sur les
-    # clés plateforme — fin du micro-management des « credits d'appel ». Le plan
-    # est le seul cran ; hors abonnement, les quotas d'essai tiennent.
-    # #480 : le plan d'une org ne couvre pas le bénéficiaire à qui rien n'est prêté.
+    # 0070 §7 : le droit `platform_unmetered` lève le quota ; #480 : pas sans prêt.
     plan_org = heritage.org_partagee(active_org, heritage.du_contexte(sub, active_org))
-    if limit and plan_org is not None and quotas._org_unmetered(plan_org):
+    if limit and plan_org is not None and entitlements.org_has(
+            plan_org, entitlements.PLATFORM_UNMETERED):
         limit = 0
     return used, limit
 

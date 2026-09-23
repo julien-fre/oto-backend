@@ -49,7 +49,7 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
               Verdict posé par `_project=`, lu par le walker ; ne dépend que de
               `session_org` (et, paresseusement, de `roles`/`ownership`).
 - `quotas`  — ce qui est métré (quota jour, usage) et ce qui est payé (option
-              payante, comp admin, abonnement).
+              payante = droit déclaré de l'org, via `entitlements`).
 - `cascade` — le walker UNIQUE `perso > cross-org > équipe > org > plateforme`,
               ses trois sondes, le palier plateforme.
 - `rbac`    — qui a le droit : RBAC connecteur org/équipe, tools masqués, garde
@@ -71,7 +71,7 @@ Le graphe est un DAG strict — aucun cycle, chaque flèche va vers le bas :
 ```
                     scope                    (ne dépend de rien)
                    ↗  ↑  ↖
-            quotas   cascade                 (cascade → scope)
+            quotas   cascade                 (quotas → entitlements ; cascade → scope)
                 ↑     ↑  ↖
                 |    rbac                    (rbac → scope, cascade)
                 |   ↗   ↑

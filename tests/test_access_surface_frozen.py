@@ -39,7 +39,7 @@ _SURFACE = """
     PRESENCE_PROBE ROLES ResolvedCredential SLOT_PREFIX SUPER_ADMIN
     _PAID_OPTION_BY_CONNECTOR _QUOTA_DEFAULTS _UNSET
     _emit_connector_failure _instance_side_shares_safe _is_multi_account
-    _legacy_platform_grant_meta _note_resolved_instance _org_unmetered
+    _legacy_platform_grant_meta _note_resolved_instance
     _platform_grant_meta _platform_grantee_scope _platform_instance_usable
     _platform_quota _reachable_hint _resolve_credential_anon
     _resolve_credential_impl _resolve_pinned_instance _resolve_platform_grant
@@ -90,11 +90,14 @@ def test_l_inventaire_n_est_pas_vide():
     retiré — l'adresse EN DUR des refus de credential envoyait un compte de
     tenant sur notre tableau de bord ; ils passent par `links.ou_poser_la_cle`
     (oto-backend#935), et le nom n'avait aucun lecteur hors d'`access/resolve.py`.
+    89 → 88 le 23/09/2026 : `_org_unmetered` retiré — il demandait son forfait au
+    commerce ; la levée du quota est désormais le droit déclaré `platform_unmetered`
+    (`access.org_has`, ADR 0070 §7, oto-backend#806).
     Ce compte n'est pas décoratif — c'est lui
     qui oblige à écrire POURQUOI la surface bouge. Une baisse qu'on ne peut pas
     justifier nom par nom est un rabotage, pas un nettoyage.
     """
-    assert len(_SURFACE) == 89
+    assert len(_SURFACE) == 88
 
 
 def test_une_ecriture_sur_la_facade_traverse_les_sous_modules(monkeypatch):

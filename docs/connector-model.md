@@ -6,8 +6,8 @@ description: >-
   connecteur oto (unipile, google, pennylane, sirene…) : disponibilité (connector_activation
   master ± override org + availability self_serve/platform_granted), authentification
   (cascade resolve_api_key BYO-user > groupe > org > tenant > clé plateforme), et option de
-  connecteur (has_option = comp admin via option_comps OU abonnement d'org, ADR 0043 ;
-  option_open = has_option ∪ BYO). Explique aussi le RBAC interne org-connector-access
+  connecteur (has_option d'une option payante = droit déclaré de l'org, org_entitlements,
+  ADR 0070 §7 ; option_open = has_option ∪ BYO). Explique aussi le RBAC interne org-connector-access
   (ADR 0025). À lire AVANT de toucher activation, clés ou options ; les autres docs
   (connector-vault, roles-and-resolution) sont le détail de chaque couche.
 adr:
@@ -29,7 +29,7 @@ Pour qu'un connecteur **marche** pour un utilisateur, les **trois** doivent êtr
 |---|--------|----------|----------|
 | 1 | **Disponibilité** | le connecteur est-il exposé ? | `connector_activation` (master ± override org) + `availability` |
 | 2 | **Authentification** | avec quelle clé appelle-t-il l'API ? | cascade `resolve_api_key` — ordre complet dans [`roles-and-resolution.md`](roles-and-resolution.md) |
-| 3 | **Option** *(options gatées only)* | l'option est-elle débloquée ? | `option_open(sub, connector)` = **BYO** ∪ `has_option` (comp admin user\|org **OU abonnement d'org**) |
+| 3 | **Option** *(options gatées only)* | l'option est-elle débloquée ? | `option_open(sub, connector)` = **BYO** ∪ `has_option` (droit déclaré de l'**org** : `org_entitlements`) |
 
 La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à option gatée**
 (le compte unipile et ses six canaux) ont la couche **3**.
@@ -166,15 +166,14 @@ d'admin**.
 
 **Deux seams, deux questions distinctes — ne pas les confondre :**
 
-**`access.has_option(sub, option)`** — « l'option est-elle ACCORDÉE ? ». Vraie si **l'une**
-des trois :
-
-1. **Comp admin sur l'user** — `option_comps (entity_type='user', entity_id=sub)`.
-2. **Comp admin sur l'org active** — `option_comps (entity_type='org', entity_id=org)`.
-3. **Abonnement actif de l'org** dont le plan inclut l'option (**ADR 0043**) — mapping
-   `billing.plan_options`, miroir `org_subscriptions`. `past_due` reste **ouvert** tant que
-   la grâce court ; la fermeture est un acte du `billing_runner`, jamais un effet de bord de
-   lecture.
+**`access.has_option(sub, option)`** — « l'option est-elle ACCORDÉE ? ». Pour une option
+**payante** (`unipile`), une seule règle (**ADR 0070 §7**) : un droit déclaré **vivant** de
+l'org active, `access.org_has(org, option)`, lu dans `org_entitlements` — quelle que soit sa
+source (abonnement, don d'org, partenaire, essai). Le cœur ne sait pas qui paie : c'est le
+commerce qui écrit ces lignes, avec leur échéance (`billing_droits`, cf. `billing.md`).
+⚠️ **Le don fait à une PERSONNE n'ouvre plus d'option payante** (depuis le lot 2 de #806) :
+seule l'org porte un droit payant. `user_has_option` ne sert plus qu'aux options non
+payantes (`beta`, un drapeau de population), que `has_option` lit sur le compte ou l'org.
 
 **`access.option_open(sub, connector)`** — « l'option est-elle LEVÉE pour cet appel ? », donc
 `has_option` **∪ BYO** (clé propre user/groupe/org). C'est le seam que lisent le statut de la
@@ -193,9 +192,10 @@ incohérente (corrigé 2026-07-07). **Un nouveau chemin appelle `option_open`**,
 > disait encore qu'il n'en existait qu'une. Un lecteur qui s'y fiait concluait qu'un client
 > abonné devait quand même recevoir un comp.
 
-Surfaces : bouton **« accorder l'option »** (super_admin) sur la fiche **user** (`option_comps`
-user) ET la fiche **org** (`option_comps` org) ; l'abonnement, lui, pose les options à
-l'activation du plan (`billing.apply_plan_entitlements`).
+Surfaces : bouton **« accorder l'option »** (super_admin) sur la fiche **org** (`option_comps`
+org, recopié en droit `offered` avec son échéance) ; l'abonnement pose les droits de son plan
+(source `subscription`). Le don sur la fiche **user** est encore posable, mais n'ouvre plus
+l'option payante.
 
 ---
 

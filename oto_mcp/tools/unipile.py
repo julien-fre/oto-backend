@@ -710,9 +710,12 @@ def admin_status_by_org(sub: str, orgs: list) -> list:
             "subscribed": access.option_open(sub, "unipile", org=oid),  # source unique
             "mode": mode, "byo": byo,
             "channels": _channels_from(by),
+            # Par le seam, jamais par les sources. `org_comp` = le droit déclaré de
+            # l'org (toute source) : c'est lui, seul, qui ouvre l'option. `user_comp`
+            # = le don fait à la personne, affiché pour mémoire — il n'ouvre plus rien.
             "option_source": {
-                "user_comp": db.has_option_comp("user", sub, "unipile"),
-                "org_comp": db.has_option_comp("org", str(oid), "unipile"),
+                "user_comp": access.user_has_option(sub, "unipile"),
+                "org_comp": access.org_has(oid, "unipile"),
             },
         })
     member = {o["org_id"] for o in orgs}
