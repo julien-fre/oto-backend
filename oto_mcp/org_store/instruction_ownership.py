@@ -19,6 +19,13 @@ ne peut plus commenter est un module qu'on ne peut plus corriger. La couture ét
 **Déplacement pur** : aucun corps de fonction n'a changé, la surface `org_store.<fn>`
 est identique, aucun appelant n'a bougé.
 
+Le RENOMMAGE vit ici aussi (issue `oto`#261) : changer le slug sans toucher à l'`id`
+est un geste d'identité, frère du déplacement. Il réécrit en SQL direct ce qui, dans le
+runner, désigne une procédure par son slug (`runner_triggers`, `runner_fleets`, et la
+charge des travaux en attente `runner_jobs.payload`) pour le faire SUIVRE
+le nouveau nom dans la même transaction : un agent planifié ne cherche jamais un nom
+disparu.
+
 Étage 1 du DAG du package, comme `library` : dépend d'`instructions`, et de lui seul.
 Les références croisées passent par `instructions.<nom>` et jamais par un import à plat —
 c'est ce qui fait qu'un `monkeypatch.setattr(org_store, …)` les atteint (cf. `_Facade`).
@@ -133,6 +140,128 @@ def move_instruction(instruction_id: int, new_owner_type: str,
             if (cur.rowcount or 0) != 1:
                 raise ValueError(f"procédure #{instruction_id} introuvable")
     return dest_slug
+
+
+def rename_instruction(owner_type: str, owner_id: int | str, slug: str,
+                       new_slug: str) -> Optional[dict]:
+    """RENOMME une procédure sans toucher à son identité (issue `oto`#261).
+
+    L'`id` surrogate ne bouge pas — c'est lui que `project_links.target_ref`,
+    `resource_grants.resource_id` et le nœud dérivé (`db/nodes`, lot ⑧) désignent —,
+    la version non plus : changer le nom n'est pas écrire le contenu. Les RÉVISIONS
+    suivent dans la MÊME transaction, comme au déplacement (`move_instruction`) : une
+    procédure et son historique ne se séparent pas. L'entrée de bibliothèque publiée
+    depuis elle garde sa trace (`guide_library.source_slug`), et le RUNNER suit le
+    nouveau nom dans la même transaction (`_repointer_le_runner`) : ses déclencheurs,
+    campagnes et travaux en attente la désignent par SLUG, pas par id.
+
+    Pas d'alias : l'ancien slug ne résout plus, et redevient libre. Rend
+    `{id, slug, previous_slug, runner}`, ou `None` si la procédure n'existe pas.
+    Lève `instructions.InstructionExists` sur un slug pris (rien n'est écrasé),
+    `ValueError` sur un slug vide, identique ou réservé. Une procédure ARCHIVÉE se renomme aussi : c'est un geste
+    de gouvernance, pas une écriture sur une consigne retirée."""
+    otype, oid = instructions._owner(owner_type, owner_id)
+    old, new = instructions.normalize_slug(slug), instructions.normalize_slug(new_slug)
+    if not old or not new:
+        raise ValueError("slug et nouveau slug requis")
+    if old == new:
+        raise ValueError(f"`{new}` est déjà le slug de cette procédure")
+    if instructions.BASE_SLUG in (old, new):
+        raise ValueError(f"`{instructions.BASE_SLUG}` est le readme, pas une procédure")
+    with _connect() as conn:
+        with conn.transaction():
+            # Les DEUX clés sous verrou, dans un ordre fixe : l'ancienne contre une
+            # écriture concurrente, la nouvelle contre une création concurrente.
+            for s in sorted((old, new)):
+                conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                             (f"oi:{otype}:{oid}:{s}",))
+            cur = conn.execute(
+                "SELECT id, org_id FROM org_instructions "
+                f"WHERE {instructions._OWNER_WHERE} AND slug = %s", (otype, oid, old),
+            ).fetchone()
+            if cur is None:
+                return None
+            pris = conn.execute(
+                "SELECT version, archived_at FROM org_instructions "
+                f"WHERE {instructions._OWNER_WHERE} AND slug = %s", (otype, oid, new),
+            ).fetchone()
+            if pris is not None:
+                raise instructions.InstructionExists(new, pris["version"],
+                                                     pris["archived_at"] is not None)
+            runner = _repointer_le_runner(conn, otype, oid, cur["org_id"], old, new)
+            conn.execute(
+                "UPDATE org_instruction_revisions SET slug = %s "
+                f"WHERE {instructions._OWNER_WHERE} AND slug = %s", (new, otype, oid, old))
+            conn.execute(
+                "UPDATE org_instructions SET slug = %s, updated_at = NOW() WHERE id = %s",
+                (new, cur["id"]))
+            if otype == "org":
+                conn.execute(
+                    "UPDATE guide_library SET source_slug = %s "
+                    "WHERE source_org_id = %s AND source_slug = %s", (new, int(oid), old))
+    return {"id": cur["id"], "slug": new, "previous_slug": old, "runner": runner}
+
+
+def _portee_runner(otype: str, oid: str, org_id: Optional[int],
+                   slug: str) -> tuple[str, tuple]:
+    """Les lignes du runner (alias `r` : `org_id`, `sub`) pour lesquelles `slug`
+    RÉSOUT vers cette procédure-ci — la cascade de lecture de l'agent qu'elles
+    lancent : sa procédure personnelle d'abord, celle de l'org ensuite, l'équipe en
+    dernier. Une ligne dont le slug résout vers une AUTRE procédure ne suit pas."""
+    perso = ("NOT EXISTS (SELECT 1 FROM org_instructions p WHERE p.owner_type = 'user' "
+             "AND p.owner_id = r.sub AND p.slug = %s)")
+    if otype == "user":
+        return "r.sub = %s", (oid,)
+    if otype == "org":
+        return f"r.org_id = %s AND {perso}", (int(oid), slug)
+    return (f"r.org_id = %s AND {perso} AND NOT EXISTS (SELECT 1 FROM org_instructions "
+            "p WHERE p.owner_type = 'org' AND p.owner_id = %s AND p.slug = %s)",
+            (org_id, slug, str(org_id), slug))
+
+
+def _repointer_le_runner(conn, otype: str, oid: str, org_id: Optional[int],
+                         old: str, new: str) -> dict:
+    """Le runner SUIT le renommage, dans la transaction de l'appelant (#261).
+
+    Trois porteurs désignent une procédure par son slug : `runner_triggers.procedure`,
+    `runner_fleets.procedure` et la charge des travaux (`runner_jobs.payload`). Leur
+    instruction de départ (`input`) le cite aussi — dérivée par `_instruction`, sous
+    la forme `` `slug` ``, que l'on réécrit. Un travail DÉJÀ PRIS (`claimed`) tourne
+    avec ce qu'il a lu : on ne le touche pas, on le NOMME (`in_flight_jobs`). Une
+    instruction qui cite encore l'ancien slug hors de cette forme est nommée aussi
+    (`inputs_to_review`) plutôt que devinée.
+
+    La procédure d'une campagne est figée à sa déclaration (`CHAMPS_MODIFIABLES`), pour
+    que l'attribution des lignes écrites reste vraie : ce gel porte sur l'OBJET, que
+    le renommage ne change pas — même id, même contenu, même version."""
+    portee, args = _portee_runner(otype, oid, org_id, old)
+    motif = f"(^|[^a-z0-9_-]){old}([^a-z0-9_-]|$)"
+    ancien, neuf = f"`{old}`", f"`{new}`"
+    out: dict = {"inputs_to_review": []}
+    for table, cle in (("runner_triggers", "triggers"), ("runner_fleets", "fleets")):
+        rows = conn.execute(
+            f"UPDATE {table} r SET procedure = %s, input = replace(r.input, %s, %s) "
+            f"WHERE r.procedure = %s AND {portee} "
+            "RETURNING r.id, COALESCE(r.input ~ %s, FALSE) AS a_reprendre",
+            (new, ancien, neuf, old, *args, motif)).fetchall()
+        out[cle] = sorted(r["id"] for r in rows)
+        out["inputs_to_review"] += [f"{cle}:{r['id']}" for r in rows if r["a_reprendre"]]
+    rows = conn.execute(
+        "UPDATE runner_jobs r SET payload = jsonb_set(r.payload, '{procedure}', "
+        "to_jsonb(%s::text)) || CASE WHEN jsonb_typeof(r.payload->'input') = 'string' "
+        "THEN jsonb_build_object('input', replace(r.payload->>'input', %s, %s)) "
+        "ELSE '{}'::jsonb END "
+        f"WHERE r.status IN ('pending', 'held') AND r.payload->>'procedure' = %s "
+        f"AND {portee} "
+        "RETURNING r.id, COALESCE((r.payload->>'input') ~ %s, FALSE) AS a_reprendre",
+        (new, ancien, neuf, old, *args, motif)).fetchall()
+    out["jobs"] = sorted(r["id"] for r in rows)
+    out["inputs_to_review"] += [f"jobs:{r['id']}" for r in rows if r["a_reprendre"]]
+    out["in_flight_jobs"] = [r["id"] for r in conn.execute(
+        "SELECT r.id FROM runner_jobs r WHERE r.status = 'claimed' "
+        f"AND r.payload->>'procedure' = %s AND {portee} ORDER BY r.id",
+        (old, *args)).fetchall()]
+    return out
 
 
 def list_instructions_for_owners(owners: list[tuple[str, str]]) -> list[dict]:

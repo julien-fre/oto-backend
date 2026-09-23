@@ -104,6 +104,27 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
 - **Versioning** : chaque écriture incrémente `version` (sur le courant) et archive un snapshot
   append-only. Revert = re-poser le corps d'une version → nouvelle version (jamais d'effacement
   d'historique sauf `delete`).
+- **Renommer** (issue `oto`#261) : `oto_procedure(op='rename', slug, new_slug[, scope, org,
+  group])` + `POST /api/me/instructions/{slug}/rename` (palier org). Le slug change, l'IDENTITÉ
+  reste : l'`id` stable (`guide_id`, que les liens de projet, les partages et le nœud dérivé
+  désignent), la version (renommer n'est pas écrire le contenu) et l'historique entier, qui
+  suit sous le nouveau nom dans la même transaction (`org_store.rename_instruction`). Même
+  garde que `set` — un membre renomme la procédure de son équipe : rien n'est détruit, et le
+  geste se défait en renommant de nouveau. **Pas d'alias** : l'ancien slug ne résout plus et
+  redevient libre ; une prose qui le cite (autre procédure, readme) est à reprendre à la main,
+  la réponse le rappelle. Refus, rien de changé : `new_slug` pris (409 `slug_taken`).
+  **Le runner suit**, dans la même transaction : `runner_triggers.procedure`,
+  `runner_fleets.procedure` et la charge des travaux en attente (`runner_jobs.payload`,
+  `pending`/`held`) portent le SLUG, pas l'id — ils sont repointés, et leur instruction de
+  départ réécrite là où elle cite `` `ancien` `` (la forme que `_instruction` dérive). Seules
+  suivent les lignes pour lesquelles l'ancien slug résolvait vers CETTE procédure (cascade
+  de lecture de l'agent : sa procédure personnelle d'abord, l'org, puis l'équipe). Un
+  travail déjà pris (`claimed`) tourne avec ce qu'il a lu : nommé (`in_flight_jobs`),
+  jamais réécrit ; une instruction libre qui cite encore l'ancien nom est nommée
+  (`inputs_to_review`). ⚠️ La procédure d'une campagne est figée à sa déclaration pour
+  que l'attribution des lignes reste vraie : le gel porte sur l'OBJET, que le renommage
+  ne change pas (même id, même contenu, même version). La lecture par slug rend désormais `guide_id` : sans
+  lui, l'identité qu'on préserve était illisible.
 - **Store** : `org_instructions(owner_type, owner_id, slug, org_id, title, description,
   body_md, slots, version, set_by, archived_at, created_at, updated_at)` +
   `org_instruction_revisions(owner_type, owner_id, slug, version PK, …)` (`db/schema/procedures.py`).

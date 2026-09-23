@@ -432,6 +432,42 @@ class InstructionDeleted(BaseModel):
     deleted: bool
 
 
+class RunnerRepointed(BaseModel):
+    """Ce que le RUNNER a suivi au renommage (#261) : ids des déclencheurs, campagnes
+    et travaux en attente repointés sur le nouveau slug (instruction de départ
+    comprise). `in_flight_jobs` : travaux déjà PRIS, qui tournent avec l'ancien nom et
+    que rien ne rattrape. `inputs_to_review` : `<porteur>:<id>` dont l'instruction
+    cite encore l'ancien slug hors de la forme `` `slug` `` — à relire."""
+    triggers: list[int]
+    fleets: list[int]
+    jobs: list[int]
+    in_flight_jobs: list[int]
+    inputs_to_review: list[str]
+
+
+class InstructionRenamed(BaseModel):
+    """Renommage d'une procédure (issue `oto`#261) : le slug change, l'IDENTITÉ reste.
+
+    `guide_id` est l'identifiant stable, INCHANGÉ — celui que les liens de projet,
+    les partages et la lecture par id désignent (même nom qu'à la lecture). La version ne monte pas : renommer n'est pas
+    écrire le contenu, et l'historique entier suit sous le nouveau nom.
+    `previous_slug` ne résout plus (pas d'alias) : une prose qui le cite est à
+    reprendre à la main, `note` le rappelle.
+
+    ⚠️ Comme à l'écriture, la clé de scope change de nom : `org_id`, `group_id` ou
+    `user_id` selon le palier (#681, ADR 0068)."""
+    ok: bool
+    org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    user_id: Optional[str] = None
+    scope: Optional[str] = None
+    guide_id: int
+    slug: str
+    previous_slug: str
+    runner: RunnerRepointed
+    note: str
+
+
 class InstructionArchived(BaseModel):
     """Archivage d'une procédure — l'alternative NON destructive à la suppression.
     La ligne et TOUT son historique de révisions restent en base ; ce qui change,
@@ -617,6 +653,17 @@ class GuideDeleteInput(BaseModel):
     org: Optional[int] = None
 
 
+class InstrRenameInput(BaseModel):
+    """RENOMMER une procédure : `slug` (l'actuel) → `new_slug` (issue `oto`#261).
+
+    `new_slug` est optionnel au MODÈLE pour que son absence se refuse par un code
+    nommé (`missing_new_slug`) plutôt que par une erreur de validation générique."""
+    slug: str
+    new_slug: Optional[str] = None
+    # #69 : idem set — org explicite optionnelle (None = org active).
+    org: Optional[int] = None
+
+
 # … et les porter sur les entrées de la CONSOLE seule (#681). Les faces REST
 # `/api/me/instructions/*` gardent leur palier org : le palier équipe y a déjà ses
 # propres routes (`/api/groups/{id}/instructions/*`, `groups/guide.py`). Publier
@@ -652,6 +699,16 @@ class ConsoleInstrDescribeInput(InstrDescribeInput):
     raison qu'il corrige le corps (celui qui déroule la procédure est celui qui
     l'améliore) et avec la même réversibilité (la version monte, `from_version`
     défait)."""
+    scope: Optional[str] = None
+    group: Optional[int] = None
+
+
+class ConsoleInstrRenameInput(InstrRenameInput):
+    """`InstrRenameInput` + le même axe de palier que `ConsoleInstrSetInput`.
+
+    Même garde que `set` (`_ECRIRE` côté console) : renommer ne détruit rien et se
+    défait en renommant de nouveau — rien n'y justifie le palier du chef d'équipe,
+    réservé à la suppression qui, elle, emporte l'historique."""
     scope: Optional[str] = None
     group: Optional[int] = None
 
@@ -963,7 +1020,14 @@ def _read_guide(ctx: ResolvedCtx, inp) -> tuple[dict, tuple[str, ...] | None]:
                        + (f" en version {version}" if version is not None else "")
                        + ". Vois `oto_procedure(op='list')`.")
     auteur = nommer_l_auteur(instr)
-    out = {**scope_ref, "scope": scope, "slug": instr["slug"], "title": instr["title"],
+    # L'id STABLE, rendu aussi à la lecture par slug (issue `oto`#261) : c'est lui que
+    # les liens de projet et les partages désignent, et lui qui survit à un renommage.
+    # Une version passée vient des révisions, qui ne le portent pas : on le lit sur la
+    # ligne courante.
+    stable = instr.get("id") if version is None else (
+        org_store.get_instruction(*owner, slug) or {}).get("id")
+    out = {**scope_ref, "scope": scope, "guide_id": stable,
+           "slug": instr["slug"], "title": instr["title"],
            "description": instr["description"], "version": instr["version"],
            "body_md": instr["body_md"], "slots": instr.get("slots") or [],
            "set_by": auteur["set_by"], "set_by_name": auteur["set_by_name"]}
@@ -1283,6 +1347,47 @@ def _archive_instruction(ctx: ResolvedCtx, inp) -> dict:
     return {"ok": True, **_scope_ref(owner), "slug": norm, "archived": True}
 
 
+def _rename_instruction(ctx: ResolvedCtx, inp) -> dict:
+    """RENOMME une procédure en gardant son identité (issue `oto`#261).
+
+    Le chemin détourné — créer sous le nouveau nom, supprimer l'ancien — frappait
+    deux invariants à la fois : l'`id` stable dont dépendent les liens de projet et
+    les partages, et l'historique, que la suppression emporte. Le store déplace le
+    slug de la ligne ET de ses révisions dans une transaction, sous verrou."""
+    owner = _owner_of(ctx, inp)
+    norm = org_store.normalize_slug(inp.slug)
+    if not norm:
+        raise AuthzDenied(400, "invalid_slug", "slug requis.")
+    if not (inp.new_slug or "").strip():
+        raise AuthzDenied(400, "missing_new_slug", "`new_slug` requis pour renommer.")
+    neuf = org_store.normalize_slug(inp.new_slug)
+    if not neuf:
+        raise AuthzDenied(400, "invalid_slug", "`new_slug` invalide (attendu [a-z0-9_-]).")
+    if neuf == norm:
+        raise AuthzDenied(400, "same_slug",
+                          f"`{neuf}` est déjà le slug de cette procédure (après "
+                          "normalisation en [a-z0-9_-]) — rien à renommer.")
+    if _BASE in (norm, neuf):
+        raise AuthzDenied(400, "reserved_slug",
+                          f"`{_BASE}` est le readme (prose injectée), pas une procédure.")
+    try:
+        out = org_store.rename_instruction(*owner, norm, neuf)
+    except org_store.InstructionExists as e:
+        raise AuthzDenied(
+            409, "slug_taken",
+            f"`{neuf}` porte déjà une procédure (v{e.version}"
+            + (", archivée" if e.archived else "") + ") dans ce scope — rien n'a été "
+            "renommé ni écrasé. Choisis un autre nom.",
+            {"slug": neuf, "version": e.version, "archived": e.archived})
+    if out is None:
+        raise AuthzDenied(404, "not_found", f"Instruction `{norm}` absente.")
+    return {"ok": True, **_scope_ref(owner), "guide_id": out["id"], "slug": out["slug"],
+            "previous_slug": out["previous_slug"], "runner": out["runner"],
+            "note": (f"`{norm}` ne résout plus. L'id, les liens de projet, les partages "
+                     "et l'historique sont conservés ; une prose qui cite l'ancien "
+                     "slug (autre procédure, readme) est à reprendre.")}
+
+
 # ── Handlers REST-only (org active) ─────────────────────────────────────────
 def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
     """Guide de base (meta) + index des instructions nommées de l'org active.
@@ -1553,6 +1658,28 @@ CAPABILITIES += [
                      "explicit org id (default = active org; must be org_admin of "
                      "it)."),
         rest=RestBinding("POST", "/api/me/instructions/{slug}/unarchive"),
+    ),
+    # Le RENOMMAGE (issue `oto`#261) : l'identité reste, seul le slug change.
+    Capability(
+        key="org.instruction.rename", handler=_rename_instruction,
+        Input=InstrRenameInput, authz=ORG_ADMIN_OPT("org"),
+        Output=InstructionRenamed,
+        description=("RENAME a procedure (org_admin): `slug` → `new_slug`, keeping its "
+                     "identity — the stable `guide_id` (project links, shares, reads "
+                     "by id), its version and its whole history, now read under the "
+                     "new name. The runner FOLLOWS in the same transaction: triggers, "
+                     "campaigns and pending jobs naming the old slug are repointed "
+                     "(`runner` lists them; jobs already running are only named). The "
+                     "old slug stops resolving (no alias): other prose that cites it "
+                     "must be updated by hand. Refused, nothing changed: a `new_slug` "
+                     "already taken (409 `slug_taken`). `org` pins to an explicit org id (default = "
+                     "active org; must be org_admin of it)."),
+        errors=(DeclaredError(400, "missing_new_slug", "`new_slug` absent — rien n'a été "
+                              "renommé"),
+                DeclaredError(400, "same_slug", "`new_slug` normalisé = slug actuel"),
+                DeclaredError(409, "slug_taken", "`new_slug` porte déjà une procédure "
+                              "dans ce scope (y compris archivée) — rien n'a été écrasé")),
+        rest=RestBinding("POST", "/api/me/instructions/{slug}/rename"),
     ),
     Capability(
         key="org.instruction.revert", handler=_instruction_revert, Input=RevertInput,

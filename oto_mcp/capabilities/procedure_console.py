@@ -106,7 +106,7 @@ def _need(val, code: str, msg: str):
 
 
 class ProcedureInput(BaseModel):
-    op: Literal["get", "list", "create", "set", "describe", "delete",
+    op: Literal["get", "list", "create", "set", "describe", "rename", "delete",
                 "library_list", "library_get", "publish", "fork", "unpublish"]
     slug: Optional[str] = None
     guide_id: Optional[int] = None         # get : lecture par ID STABLE (ADR 0032)
@@ -131,7 +131,7 @@ class ProcedureInput(BaseModel):
     category: Optional[str] = None         # publish / library_list
     tags: Optional[list] = None            # publish
     visibility: Optional[str] = None       # publish : public | unlisted
-    new_slug: Optional[str] = None         # fork
+    new_slug: Optional[str] = None         # fork / rename
     id: Optional[int] = None               # unpublish : id d'entrée bibliothèque
     author_kind: Optional[str] = None      # library_list : otomata | org
     limit: int = 100                       # library_list
@@ -177,6 +177,11 @@ def _dispatch_procedure(ctx: ResolvedCtx, inp: ProcedureInput):
             title=inp.title, description=inp.description,
             expected_version=inp.expected_version,
             org=inp.org, scope=_ECRIT_SCOPE(inp), group=inp.group))
+    if inp.op == "rename":
+        return oi._rename_instruction(ctx, oi.ConsoleInstrRenameInput(
+            slug=_need(inp.slug, "missing_slug", "`slug` requis pour rename."),
+            new_slug=inp.new_slug, org=inp.org, scope=_ECRIT_SCOPE(inp),
+            group=inp.group))
     if inp.op == "delete":
         return oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour delete."),
@@ -231,7 +236,9 @@ CAPABILITIES += [
             # `describe` partage la garde de `set` : corriger la vitrine est une
             # écriture, réversible de la même façon (la version monte, `from_version`
             # défait). Rien n'y justifierait un palier de droits différent.
-            "create": _ECRIRE, "set": _ECRIRE, "describe": _ECRIRE,
+            # `rename` aussi : il ne détruit rien (id et historique restent) et se
+            # défait en renommant de nouveau (issue `oto`#261).
+            "create": _ECRIRE, "set": _ECRIRE, "describe": _ECRIRE, "rename": _ECRIRE,
             "delete": _SUPPRIMER,
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
             # `publish` porte la règle de `library.publish` (super_admin plateforme) :
@@ -284,6 +291,11 @@ CAPABILITIES += [
             "whole body through `set`, which risks degrading prose you did not mean to "
             "edit. Same `scope`/`group`/`org` axes and same permission as `set`; still "
             "versioned, so `from_version` undoes it) "
+            "/ rename (`slug` → `new_slug`, same axes and permission as `set`: the stable "
+            "`guide_id`, project links, shares and the whole history are KEPT, the version does "
+            "not move; runner triggers, campaigns and pending jobs naming the old slug "
+            "follow in the same transaction (`runner`); the old slug stops resolving, no "
+            "alias. A taken `new_slug` is refused, nothing changed) "
             "/ delete (exact `slug`; same `scope`/`group`/`org` "
             "axes as set, but DESTRUCTIVE — it takes the whole version history, so "
             "`scope='group'` needs the team LEAD) — and the PUBLIC library: "

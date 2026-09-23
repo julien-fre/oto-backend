@@ -395,6 +395,13 @@ distribue le travail entre plusieurs agents. L'écrire ici évite qu'un client
 recopie à la main, dans chaque campagne, un protocole que la plateforme est seule
 à savoir juste. Sans cible déclarée, **aucune file n'est inventée**.
 
+⚠️ **Le runner désigne une procédure par son SLUG, pas par son id** (déclencheur,
+campagne, charge des travaux). Renommer une procédure (`oto_procedure op=rename`,
+oto#261) les fait donc SUIVRE dans sa transaction — `procedure` repointé, instruction
+de départ réécrite là où elle cite `` `slug` `` —, un travail déjà pris étant nommé et
+non réécrit (`docs/guides.md` § Renommer). La forme `` `slug` `` des deux textes
+ci-dessus est ce qui rend la réécriture sûre : la changer, c'est changer ce repérage.
+
 ⚠️ **Les deux surfaces qui déclarent un agent en dépendent** (déclencheur,
 flotte). Le déclencheur y a perdu la copie locale posée par #866 : si chacune
 rédige sa variante, la même règle vit à plusieurs endroits et l'une d'elles finit
