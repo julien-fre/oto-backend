@@ -185,3 +185,46 @@ def test_les_refus_de_l_en_tete_sont_FUSIONNES_jamais_substitues():
     ouvrir = doc["paths"]["/api/me/runs"]["post"]
     assert ouvrir["responses"]["403"]["content"]["application/json"]["schema"] == \
         {"$ref": "#/components/schemas/Erreur"}
+
+
+class _VerifieurInerte:
+    """`make_routes` n'a besoin que d'un objet à passer : rien n'est vérifié ici."""
+
+    def verify_token(self, token):  # pragma: no cover — jamais appelé
+        return None
+
+
+def test_chaque_operationId_est_unique_dans_le_document_servi():
+    """#436 : l'OpenAPI exige l'unicité des `operationId`. Un doublon ne se voit pas
+    dans le document : il se voit chez le client GÉNÉRÉ, indexé sur l'id, qui ne
+    compile pas ou garde un chemin et perd les autres en silence. Jugé sur le
+    document que le serveur SERT — capacités, routes écrites à la main et alias
+    dépréciés, bâtis depuis la table de routes vivante."""
+    from collections import Counter
+
+    from oto_mcp.api import routes as api_routes
+
+    routes = api_routes.make_routes(_VerifieurInerte(), mcp_instance=None)
+    doc = openapi.build(routes)
+    ids = Counter(op["operationId"] for item in doc["paths"].values()
+                  for op in item.values())
+    doublons = {i: [f"{v.upper()} {p}" for p, item in doc["paths"].items()
+                    for v, op in item.items() if op["operationId"] == i]
+                for i, n in ids.items() if n > 1}
+    assert not doublons, f"operationId portés par plusieurs opérations : {doublons}"
+
+
+def test_une_capacite_a_plusieurs_chemins_garde_son_id_sur_le_premier():
+    """Le PREMIER binding déclaré garde l'id de la capacité — celui qu'un client déjà
+    généré appelle : le correctif ne renomme aucune méthode existante. Les suivants
+    reçoivent l'id dérivé de leur chemin, la recette des routes écrites à la main."""
+    doc = openapi.build()
+    for chemin, attendu in (
+            ("/api/me/guides/{scope}/{slug}", ("me_guides_get_get", "me_guides_set_put")),
+            ("/api/orgs/{id}/guides/{scope}/{slug}",
+             ("get_api_orgs_id_guides_scope_slug", "put_api_orgs_id_guides_scope_slug")),
+            ("/api/groups/{id}/guides/{scope}/{slug}",
+             ("get_api_groups_id_guides_scope_slug",
+              "put_api_groups_id_guides_scope_slug"))):
+        item = doc["paths"][chemin]
+        assert (item["get"]["operationId"], item["put"]["operationId"]) == attendu, chemin

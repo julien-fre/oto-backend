@@ -199,8 +199,10 @@ def _section(key: str) -> str:
     return parts[1] if len(parts) >= 3 else parts[0]
 
 
-def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
-    """Opération OpenAPI d'un binding + les définitions `$defs` à hisser."""
+def _operation(cap: Capability, binding: RestBinding,
+               operation_id: str) -> tuple[dict, dict]:
+    """Opération OpenAPI d'un binding + les définitions `$defs` à hisser.
+    `operation_id` est attribué par `build`, qui seul voit les autres bindings."""
     try:
         schema = cap.Input.model_json_schema(ref_template="#/components/schemas/{model}")
     # noqa: SILENT — schéma d'entrée illisible ⇒ document amputé, jamais absent
@@ -238,7 +240,7 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
                   "content": {"application/json": {"schema": out}}}
 
     op: dict = {
-        "operationId": f"{cap.key}.{binding.verb.lower()}".replace(".", "_"),
+        "operationId": operation_id,
         "summary": (cap.description or cap.key).strip().split(". ")[0][:180],
         "description": cap.description or "",
         "tags": [_section(cap.key)],
@@ -282,9 +284,10 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
 
 
 def _handwritten_operation_id(verb: str, path: str) -> str:
-    """L'`operationId` d'un chemin qui n'est dérivé d'aucune capacité — donc dérivé
-    de son CHEMIN. Un seul endroit : les routes écrites à la main et les alias
-    dépréciés se ressemblent trop pour que deux recettes divergent."""
+    """L'`operationId` d'un chemin qui ne peut pas porter celui d'une capacité — donc
+    dérivé de son CHEMIN. Un seul endroit : routes écrites à la main, alias dépréciés
+    et bindings secondaires d'une capacité (`_capability_operation_ids`) se
+    ressemblent trop pour que deux recettes divergent."""
     corps = path.strip("/").replace("/", "_").replace("{", "").replace("}", "")
     return f"{verb.lower()}_{corps}"
 
@@ -378,6 +381,27 @@ def _alias_deprecies() -> dict:
     return out
 
 
+def _capability_operation_ids(cap: Capability, bindings: list) -> list[str]:
+    """Un `operationId` par binding publié, UNIQUE (#436).
+
+    L'id suit la CAPACITÉ (`{clé}_{verbe}`, cf. `docs/alias-deprecies.md`) — mais une
+    capacité à plusieurs bindings du même verbe (`me.guides.get` sur `/api/me/…`,
+    `/api/orgs/{id}/…`, `/api/groups/{id}/…`) le donnait à ses trois chemins, et un
+    client généré, indexé sur l'id, en perdait deux en silence. Le PREMIER binding
+    déclaré du verbe garde l'id de la capacité — celui que les clients déjà générés
+    appellent — et les suivants reçoivent un id dérivé de leur chemin."""
+    ids: list[str] = []
+    verbes_pris: set[str] = set()
+    for binding in bindings:
+        verbe = binding.verb.lower()
+        if verbe in verbes_pris:
+            ids.append(_handwritten_operation_id(verbe, binding.path))
+        else:
+            verbes_pris.add(verbe)
+            ids.append(f"{cap.key}.{verbe}".replace(".", "_"))
+    return ids
+
+
 def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None) -> dict:
     """Document OpenAPI 3.1 complet. `routes` = table de routes vivante (facultative :
     sans elle, seules les capacités sont décrites)."""
@@ -388,10 +412,9 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
     for cap in registry.CAPABILITIES:
         if not cap.is_exposed():
             continue
-        for binding in cap.rest_bindings():
-            if binding.path.startswith(_ADMIN_PREFIX):
-                continue
-            op, defs = _operation(cap, binding)
+        publies = [b for b in cap.rest_bindings() if not b.path.startswith(_ADMIN_PREFIX)]
+        for binding, operation_id in zip(publies, _capability_operation_ids(cap, publies)):
+            op, defs = _operation(cap, binding, operation_id)
             # L'en-tête de run : LA passe qui le référence, sur les capacités et elles seules.
             op["parameters"] = [*op.get("parameters", []), _PARAM_RUN_REF]
             schemas.update(defs)

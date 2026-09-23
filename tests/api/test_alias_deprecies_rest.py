@@ -188,10 +188,8 @@ def test_un_alias_ne_vole_pas_loperationid_dune_autre_entree():
     """Un `operationId` est unique dans un document OpenAPI : deux entrées qui le
     partagent font disparaître une méthode d'un client généré, en silence.
 
-    ⚠️ Portée VOLONTAIREMENT réduite aux alias. Le document porte des doublons
-    ANTÉRIEURS à ce lot (une capacité à plusieurs bindings donne le même id à ses
-    trois chemins) : les corriger renommerait des méthodes chez des clients déjà
-    générés, ce qui est une décision, pas un nettoyage."""
+    L'unicité sur TOUT le document est gardée par `tests/test_openapi.py` (#436) ;
+    celle-ci nomme la règle propre aux alias quand elle est enfreinte."""
     doc = openapi.build()
     anciens = {a.ancien for a in deprecations.REST}
     ids_alias = {op["operationId"] for p, item in doc["paths"].items() if p in anciens

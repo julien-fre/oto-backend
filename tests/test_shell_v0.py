@@ -295,5 +295,5 @@ def test_la_surface_est_DECLAREE_provisoire():
     cap = next(c for c in registry.CAPABILITIES if c.key == "me.shell")
     binding = cap.rest_bindings()[0]
     assert binding.provisoire is True
-    op, _ = openapi._operation(cap, binding)
+    op, _ = openapi._operation(cap, binding, "me_shell")
     assert op["x-oto-provisoire"] is True

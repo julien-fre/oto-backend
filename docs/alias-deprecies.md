@@ -158,6 +158,14 @@ renomme aucune méthode, seule l'URL bouge. L'entrée dépréciée reçoit alors
 dérivé de son chemin — deux entrées ne peuvent pas partager un `operationId` sans
 faire disparaître une méthode d'un client généré, en silence.
 
+La même règle vaut pour une capacité à **plusieurs bindings du même verbe**
+(`me.guides.get` / `me.guides.set` sur `/api/me/…`, `/api/orgs/{id}/…`,
+`/api/groups/{id}/…`) : le PREMIER binding déclaré garde l'id de la capacité, les
+suivants reçoivent l'id dérivé de leur chemin (`openapi._capability_operation_ids`,
+#436). L'ordre des bindings d'une capacité fait donc partie du contrat : en ajouter
+un se fait en queue. Unicité gardée sur tout le document servi
+(`tests/test_openapi.py`).
+
 ### Pourquoi une clé de réponse se double, et ne se renomme jamais
 
 C'est la panne la plus chère de tout ce chantier, et la plus **silencieuse** : un
