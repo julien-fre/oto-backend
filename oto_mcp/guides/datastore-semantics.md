@@ -91,7 +91,7 @@ historique ni annulation : la valeur précédente disparaît quand la tienne arr
 | `{"champ": Y}` ou `{"champ": {"valeur": Y}}` | valeur remplacée ; `origine` intacte ; `comment` et `link` **tombent** (ils décrivaient l'ancienne valeur) |
 | `{"champ": Y}` avec Y identique à la valeur en place | **no-op** : toutes les couches restent |
 | `{"champ": null}` | valeur effacée ; une `origine` pleine survit ; l'effacement revient dans `valeurs_effacees` (champ, ligne, valeur perdue) |
-| `{"champ": ""}` (ou `[]`, `{}`) sur une valeur en place | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null` |
+| `{"champ": ""}` (ou `[]`, `{}`) sur une valeur en place | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null`. ⚠️ `""` et `[]` la **remplaceront** à partir du 6 octobre 2026 (ci-dessous) |
 | `{"champ": {"comment": C}}` | comment posé ; valeur et autres couches intactes |
 | `{"champ": {"valeur": Y_identique, "comment": C}}` | comment posé, rien ne tombe |
 | `{"champ": {"origine": null}}` | origine effacée ; la colonne redevient plate |
@@ -265,6 +265,15 @@ une écriture qui les porte réussit et la réponse porte un avertissement daté
 sous-champ — ou, pour un `comment` ou un `link` qui doit survivre à une valeur qui
 change, renvoie-le tel quel : écrire une valeur fait tomber le `comment` et le `link`
 qui l'accompagnaient.
+
+⚠️ **`""` et `[]` sont des valeurs : ils REMPLACERONT la valeur en place à partir du
+6 octobre 2026.** Jusque-là, un `""` ou un `[]` sur une case qui porte une valeur est
+ignoré (et refusé comme écriture sans effet quand il est tout le geste), et la réponse
+porte un avertissement daté dans `notices`. Pour garder une valeur, omets la colonne ;
+pour l'effacer, écris `null`. `{}` n'est pas une valeur et ne sera jamais stocké.
+
+`null` efface aussi une case au vide assumé (`@empty`), marqueur compris : c'est le
+geste qui remplace `@clear` pour la démarquer.
 
 ## 4 sexies. Le `lifecycle` DÉSIGNE la colonne d'état
 

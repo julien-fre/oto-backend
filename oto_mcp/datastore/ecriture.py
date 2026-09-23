@@ -38,6 +38,7 @@ from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
 from .controles import _relever_origine_module
 from .errors import DatastoreNotFound, RowNotFound, RowValidationError
 from . import mots_deprecies as mdp
+from . import vide_remplace as vr
 from . import reliques as rq
 from .forcage import Forcage
 from .outils import _new_id, _now_iso, _refus_de_creation
@@ -283,7 +284,10 @@ class EcritureMixin:
             # qui garantit qu'un LOT ne casse jamais dessus. Il y est quand même :
             # les deux chemins d'écriture ont déjà divergé une fois sur cette famille
             # de règles (#322), ils partagent la fonction, pas seulement l'intention.
-            refuser_geste_sans_effet(pose, ecartes)
+            # oto#140 J2 : ce vide écarté REMPLACERA la valeur à une date annoncée — dit
+            # dans la réponse comme dans le refus.
+            annonce = vr.annonce(user_data, ecartes)
+            refuser_geste_sans_effet(pose, ecartes, annonce)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
@@ -317,6 +321,8 @@ class EcritureMixin:
                             written=set(pose), lot=lot)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
+            if annonce:
+                self.off_notices.add(annonce)
             if releve is not None:
                 ddo.relever(self, releve)
             return merged

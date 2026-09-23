@@ -31,6 +31,7 @@ from . import acces_agent as aga
 from . import mots_deprecies as mdp
 from . import reliques as rq
 from . import schema as dsv2
+from . import vide_remplace as vr
 from .cle_metier import cle_reecrite
 from .columns import (
     _META_COLS,
@@ -122,7 +123,9 @@ class EcritureParIdMixin:
             pose, vidages, ecartes = arbitrer_les_vides(data, corps, row_id)
             # #724 : un vide SEUL accepté sans effet, c'est le chemin des dix retraits
             # perdus du 01/09 — refusé avant tout relevé.
-            refuser_geste_sans_effet(pose, ecartes)
+            # oto#140 J2 : le préavis daté de la bascule, au refus comme à la réponse.
+            annonce = vr.annonce(corps, ecartes)
+            refuser_geste_sans_effet(pose, ecartes, annonce)
             # #527 : réécrire la clé métier d'une ligne qui en porte une, par un patch
             # sur son `id`, la rend orpheline de son fichier d'origine si la valeur est
             # une faute de frappe — et RIEN ne le disait. Tableau fermé : refusé, la
@@ -176,6 +179,8 @@ class EcritureParIdMixin:
             self._check_row(schema, data, prev_status=prev_status, written=written)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
+            if annonce:
+                self.off_notices.add(annonce)
             if releve is not None:
                 ddo.relever(self, releve)
             ecrit["data"] = data

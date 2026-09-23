@@ -20,7 +20,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
-from ..datastore import claimable, couches, identite, jetons, mots_deprecies
+from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
 from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
 from ..datastore import versions as dsver
@@ -43,16 +43,19 @@ from ..datastore.core import (
 
 _MARQUE_COUCHES = "<<couches>>"
 _MARQUE_MOTS_DEPRECIES = "<<mots_deprecies>>"
+_MARQUE_VIDE_REMPLACE = "<<vide_remplace>>"
 
 
 def _avec_la_phrase_des_couches(fn):
     """Insère dans la description servie la phrase des couches, tenue par
-    `couches.DESCRIPTION_ECRITURE` — la même que sert la face REST (oto#91) —, et
-    l'annonce datée des mots dépréciés, DÉRIVÉE de la date qui les refusera. Une
+    `couches.DESCRIPTION_ECRITURE` — la même que sert la face REST (oto#91) —,
+    l'annonce datée des mots dépréciés, DÉRIVÉE de la date qui les refusera, et celle
+    de `""`/`[]` qui remplaceront la valeur en place (oto#140 J2). Une
     marque absente lève : une description qui aurait perdu sa phrase servirait
     l'écriture sans son vocabulaire, et personne ne le verrait."""
     phrases = {_MARQUE_COUCHES: couches.DESCRIPTION_ECRITURE,
-               _MARQUE_MOTS_DEPRECIES: mots_deprecies.DESCRIPTION_ECRITURE}
+               _MARQUE_MOTS_DEPRECIES: mots_deprecies.DESCRIPTION_ECRITURE,
+               _MARQUE_VIDE_REMPLACE: vide_remplace.DESCRIPTION_ECRITURE}
     for marque, phrase in phrases.items():
         if marque not in (fn.__doc__ or ""):
             raise RuntimeError(f"{fn.__name__} : marque {marque} absente de la "
@@ -820,6 +823,8 @@ def register(mcp: FastMCP) -> None:
         "searched, nothing found".
 
         <<mots_deprecies>>
+
+        <<vide_remplace>>
 
         ⚠️ **`@empty` must be the ENTIRE sub-field, alone.** Mixed into a sentence it
         is just text and gets stored as such — `"@empty ; nothing on the imprint"`

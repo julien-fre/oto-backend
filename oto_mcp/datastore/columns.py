@@ -458,6 +458,11 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
     sinon une faute de frappe écrite à `null` disparaîtrait sans refus ni relevé
     (`test_hors_schema_tous_chemins.py`, rouge sur la première version de ce filtre).
 
+    ⚠️ **Un vide ASSUMÉ (`@empty`) est une valeur en place** (oto#140, J2) : sa valeur
+    est `""`, mais son marqueur dit « cherché, rien ». Un `null` dessus l'efface, marqueur
+    compris, comme sur toute autre case — c'est le geste qui remplace `@clear`, déprécié.
+    Écarté, il laissait `@clear` seul à pouvoir démarquer une case.
+
     `en_place` rend les données de la ligne visée (`{}` pour une création) et n'est
     appelé QUE si l'écriture porte un `null` : le chemin nominal ne paie aucune lecture.
     Une écriture en couches garde ce qui accompagne sa valeur nulle
@@ -471,7 +476,8 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
     donnees = en_place() or {}
     out = dict(user_data)
     for cle in candidats:
-        if not dsv2._is_empty(dsv2.unwrap(donnees.get(cle))):
+        cellule = donnees.get(cle)
+        if dsl.vide_assume(cellule) or not dsv2._is_empty(dsv2.unwrap(cellule)):
             continue
         reste = _sans_la_valeur(out[cle])
         if reste is None:
@@ -658,7 +664,8 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     return pose, effaces, ignores
 
 
-def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
+def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list,
+                             annonce: Optional[str] = None) -> None:
     """REFUSE une écriture qui, après arbitrage, ne pose plus RIEN (#724).
 
     #608 préserve une valeur en place contre un vide non-`null` et le DIT
@@ -684,6 +691,10 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
     inchangée. Conséquence structurelle : une row de LOT porte toujours sa clé métier,
     donc elle pose — un import de 500 lignes ne peut pas casser ici. Chiffres, fenêtre
     et réserves : `docs/datastore.md`.
+
+    `annonce` : le préavis daté de la bascule (`vide_remplace.annonce`, oto#140 J2) — à
+    partir de sa date, ce même geste REMPLACERA la valeur. Le refus le porte, comme la
+    réponse d'une écriture qui passe.
     """
     if not ecartes:
         return                       # rien n'a été écarté : rien à refuser
@@ -696,11 +707,12 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
         f"écriture sans effet : {cite} porte une valeur VIDE non-`null` (liste vide, "
         "chaîne vide, objet vide) sur une valeur déjà en place, et ton écriture ne "
         "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
-        "succès. Un vide non-`null` ne déplace jamais une valeur : c'est ce que rend "
+        "succès. Un vide non-`null` ne déplace pas une valeur : c'est ce que rend "
         "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
         f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour dire « cherché, "
         f"rien », écris `{dsl.VIDE_DELIBERE}`, la raison dans `comment`. Pour laisser "
-        "la valeur intacte, retire ce champ de ton corps.")
+        "la valeur intacte, retire ce champ de ton corps."
+        + (f" {annonce}" if annonce else ""))
 
 
 def _valeur_rendue(valeur: Any) -> Any:

@@ -984,6 +984,15 @@ de fin de passage détectait après coup.
   description de `data_write` sont dérivés ; posé sur les trois chemins d'écriture
   (création, patch par `id`, lot). Suivront `""`/`[]` qui remplacent la valeur en place
   (J2) et le retrait des deux mots (J3).
+  ⚠️ **J2, le préavis (23/09/2026) : `""` et `[]` REMPLACERONT la valeur en place au
+  6 octobre 2026** (`vide_remplace.VIDE_REMPLACE_LE`, une seule date dont le texte est
+  dérivé). D'ici là rien ne change à l'écriture — l'écart (#608) et le refus « écriture
+  sans effet » (#724) tiennent —, mais la réponse porte dans `notices` l'avertissement
+  daté qui nomme les colonnes et dit comment garder la valeur (omettre la colonne) ; le
+  refus porte la même annonce, et la description de `data_write` comme le guide
+  `datastore-semantics` l'affichent. `{}` n'est pas concerné (jamais une valeur, oto#165).
+  Posé sur les deux arbitrages (`ecriture`, qui porte aussi les lots, et `ecriture_par_id`).
+  Au même jalon, `null` efface une case au vide ASSUMÉ, marqueur compris (section oto#204).
   ⚠️ **`force: [chemins]` (oto#140)** remplace la portée « tout l'appel » du booléen :
   `force=["raison_sociale.origine"]` ne force que ce qui est nommé, colonne ou couche.
   Le nommer vaut demande — pas besoin de `readonly_override` en plus. ⚠️ **Ça change la
@@ -2404,7 +2413,7 @@ de `null` (le refus à partir du 01/12/2026) ; cinq bancs d'aller-retour rougiss
 les trois chemins d'écriture (création et fusion, mise à jour par id, lots) :
 
 - un `null` sur une colonne DÉCLARÉE SANS valeur en place (absente, `null` stocké, `""`, couche
-  seule) n'est pas écrit et ne compte pas pour le préavis ; une colonne HORS schéma écrite à `null`
+  seule — mais pas un vide ASSUMÉ, qu'il efface depuis le J2 d'oto#140) n'est pas écrit et ne compte pas pour le préavis ; une colonne HORS schéma écrite à `null`
   garde son comportement (elle naît, le relevé la nomme, ou le tableau la refuse) — un écho ne peut
   viser que le déclaré, et filtrer l'inconnu ferait taire une faute de frappe ; en couches, ce qui l'accompagne reste
   (`{"valeur": null, "comment": …}` → `{"comment": …}`) ;
@@ -2454,9 +2463,11 @@ manquant »), sans perte. Sur une liste à clé, la fusion élément par éléme
 Pour réécrire un vide assumé dans une liste sans clé, le geste est `@empty` — et l'étape 2 le
 relit sous cette forme (`empties=sentinel`, section suivante).
 
-⚠️ Un `null` écrit sur une cellule marquée ne l'efface pas : sa valeur est vide, et un `null` sans
-valeur en place n'est pas écrit (oto#182). Le geste qui démarque est `@clear` (étape 2) —
-⚠️ déprécié depuis le 23/09/2026 : avant son refus, `null` doit démarquer une cellule marquée.
+Un `null` écrit sur une cellule marquée l'EFFACE, marqueur compris, comme sur toute autre case
+(oto#140, J2) : le vide assumé est une valeur en place, et `columns.sans_les_nulls_sans_effet`
+ne l'écarte plus comme un `null` sans effet. C'est le geste qui remplace `@clear` (étape 2),
+déprécié et refusé au 08/10/2026. Jusqu'au J2, ce `null` était écarté (oto#182) et `@clear`
+seul démarquait. Bancs : `tests/datastore/test_vide_est_une_valeur_j2.py`.
 
 Bancs : `tests/datastore/test_vide_assume_lecture_204.py` et `…_204_live.py`.
 
