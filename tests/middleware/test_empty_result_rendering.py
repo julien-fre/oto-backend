@@ -74,9 +74,13 @@ def test_le_dict_vide_capture_ne_part_jamais_en_structure():
 def test_la_liste_vide_ne_part_jamais_en_structure(monkeypatch):
     """La liste vide n'atteint le canal texte qu'en repassant par `rebuild_result`
     (rédaction, écho de compte) — sans quoi fastmcp ne sérialise rien. On l'y met
-    donc : une policy de rédaction active, et le texte servi valait `[]`."""
+    donc : une policy de rédaction active, et le texte servi valait `[]`.
+
+    (Jusqu'à #1045, la policy était construite dans une forme invalide — un dict au lieu
+    d'une liste de règles : sa construction levait DANS la résolution, que la rédaction
+    avalait en passe-through. Ce banc passait donc sans jamais atteindre `rebuild_result`.)"""
     monkeypatch.setattr(redaction, "_resolve_field_filter",
-                        lambda _s: FieldFilter(rules={"secret": "drop"}))
+                        lambda _s: FieldFilter(rules=[{"fields": ["secret"], "action": "drop"}]))
 
     def recherche() -> list:
         return []

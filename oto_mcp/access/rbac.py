@@ -465,8 +465,8 @@ def resolve_field_filter(service: str):
          PII explicite, ex. IBAN Silae) ;
       3. sinon → filtre vide (no-op, aucune redaction).
 
-    Best-effort : sans org active ou sur erreur DB, on retombe sur le défaut
-    serveur (jamais moins protecteur que l'état pré-UI)."""
+    Sans org active, on retombe sur le défaut serveur. Une erreur DB, elle, LÈVE :
+    l'appelant (`redaction.redact_payload`) retient alors la sortie (#1045)."""
     from oto.tools.common import FieldFilter
 
     from .. import field_filter_defaults

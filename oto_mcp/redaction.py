@@ -8,9 +8,11 @@ ré-appliquer la rédaction lui-même — sinon un connecteur à PII
 
 Politique (ADR 0009/0015) : la policy de l'org active gouverne l'exposition.
 **Fail-closed** : une policy qui EXISTE mais échoue RETIENT la sortie (lève
-`RedactionWithheld`) plutôt que de laisser fuiter le brut. Absence de policy
-(`is_empty`), échec de résolution sur un service sans défaut serveur, ou payload
-non-structuré = passe-through (sentinelle `PASSTHROUGH`).
+`RedactionWithheld`) plutôt que de laisser fuiter le brut — et une policy qu'on
+n'a PAS PU LIRE aussi, quel que soit le service (#1045) : ne pas savoir si l'org
+filtre ce service n'autorise pas à conclure qu'elle ne filtre rien. Seules
+l'absence AVÉRÉE de policy (`is_empty`) et un payload non-structuré donnent le
+passe-through (sentinelle `PASSTHROUGH`).
 
 Ce module porte aussi le **rendu du VIDE** (`is_empty_payload`/`render_empty`) :
 un résultat sans aucun résultat se sert au modèle **en phrase**, jamais en
@@ -62,11 +64,6 @@ def _resolve_field_filter(service: str):
     return access.resolve_field_filter(service)
 
 
-def _service_has_server_default(service: str) -> bool:
-    from . import field_filter_defaults
-    return service in field_filter_defaults.SERVER_DEFAULTS
-
-
 def extract_payload(result) -> dict | list | None:
     """Forme brute renvoyée par un tool à partir de son `ToolResult` :
     `structured_content` si dict, sinon le JSON du 1er bloc `content`. None si
@@ -90,19 +87,19 @@ def extract_payload(result) -> dict | list | None:
 def redact_payload(service: str, payload):
     """Applique la policy de rédaction de l'org active pour `service` (namespace)
     au `payload` brut (dict | list). Retourne le payload rédacté, ou `PASSTHROUGH`
-    si rien ne s'applique. Lève `RedactionWithheld` si une policy existe mais lève."""
+    si rien ne s'applique. Lève `RedactionWithheld` si la policy n'a pas pu être
+    résolue, ou si elle existe et que son application lève."""
     if not isinstance(payload, (dict, list)):
         return PASSTHROUGH
     try:
         ff = _resolve_field_filter(service)
     except Exception:
-        # Résolution de policy en échec (ex. DB) : policy inconnue. Service à PII
-        # connu (défaut serveur déclaré) → fail-closed ; sinon passe-through pour
-        # ne pas casser tous les tools sur un aléa DB.
-        logger.exception("resolve_field_filter a échoué pour %s", service)
-        if _service_has_server_default(service):
-            raise RedactionWithheld(service)
-        return PASSTHROUGH
+        # Policy INCONNUE → fail-closed, pour TOUS les services (#1045). Le 21/09, une
+        # exception sans rapport dans `get_org_field_filters` a fait passer en clair,
+        # ~3 min, tout service sans défaut serveur : l'org qui aurait filtré l'un d'eux
+        # aurait vu sa politique contournée par un défaut étranger à la rédaction.
+        logger.exception("resolve_field_filter a échoué pour %s — sortie retenue", service)
+        raise RedactionWithheld(service)
     if ff.is_empty:
         return PASSTHROUGH
     # Une policy EXISTE pour ce service → fail-closed à partir d'ici.

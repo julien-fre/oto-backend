@@ -929,7 +929,7 @@ la prod tourne en **3.10** (`requires-python = ">=3.10"`). `AttributeError` à *
 depuis la boucle : 186 en ~3 min, jusqu'au revert. Pire : `access.resolve_field_filter` passe par
 `_connect()`, et `redaction.redact_payload` retombait alors en passe-through pour tout service
 sans défaut serveur (aucune exposition constatée, mais un contournement de la rédaction ;
-sujet distinct, suivi à part). **La CI (3.12) n'avait rien vu** : `syntaxe-plancher` compile en
+corrigé à part, #1045 : la résolution en échec retient désormais la sortie). **La CI (3.12) n'avait rien vu** : `syntaxe-plancher` compile en
 3.10 mais n'*exécute* rien, et `co_qualname` est un accès d'attribut, pas de la syntaxe.
 
 Trois corrections : la clé de site est `module::co_name` (portable ; `configurer` ramène les

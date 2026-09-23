@@ -126,11 +126,42 @@ def test_fail_closed_when_apply_raises():
     assert "Doe" not in out.content[0].text  # aucun brut ne fuit
 
 
-def test_resolve_failure_passthrough():
-    # Rien par défaut (SERVER_DEFAULTS vide) → aucun service n'est « sensible connu » :
-    # sur un échec de résolution (aléa DB) on passe le résultat tel quel plutôt que de
-    # casser le tool. (Le fail-closed reste sur l'échec d'APPLICATION, cf. test ci-dessus.)
-    res = _result({"q": "x"})
-    assert _run("fr_search", res, raises=True) is res
-    res2 = _result(dict(_PROFILE))
-    assert _run("unipile_profile", res2, raises=True) is res2
+def test_resolve_failure_withholds_every_service():
+    """#1045 : une policy qu'on n'a pas pu LIRE n'est pas une policy absente. Sur un
+    échec de résolution, la sortie est retenue pour TOUT service — pas seulement ceux
+    qui portent un défaut serveur — et rien du brut ne sort."""
+    for name in ("fr_search", "unipile_profile", "data_rows"):
+        out = _run(name, _result(dict(_PROFILE)), raises=True)
+        assert out.is_error
+        assert "Doe" not in out.content[0].text
+        assert out.structured_content is None
+
+
+def test_org_filter_unreadable_serves_nothing_of_the_filtered_data(monkeypatch):
+    """#1045, par le chemin RÉEL de résolution (`access.resolve_field_filter`) : une org
+    filtre `unipile` (service SANS défaut serveur) ; `get_org_field_filters` lève pour
+    une raison étrangère à la rédaction (incident du 21/09). Rien du brut ne sort."""
+    sentinelle = "SENTINELLE-NOM-1045"
+    politique = {"unipile": {"rules": [{"fields": ["last_name"], "action": "drop"}]}}
+    monkeypatch.setattr("oto_mcp.access.rbac.current_user_sub_from_token", lambda: "sub-test")
+    monkeypatch.setattr("oto_mcp.access.rbac.scope.current_org", lambda sub: 1)
+    monkeypatch.setattr("oto_mcp.access.rbac.org_store.get_org_field_filters",
+                        lambda org_id: politique)
+    monkeypatch.setattr(field_redaction, "_observe_schema", lambda *_a: None)
+    payload = dict(_PROFILE, last_name=sentinelle)
+    # Témoin : la politique lue masque bien la sentinelle — l'org FILTRE ce service.
+    assert sentinelle not in json.dumps(redaction.redact_payload("unipile", dict(payload)))
+
+    def _boom(org_id):
+        raise AttributeError("'code' object has no attribute 'co_qualname'")
+
+    monkeypatch.setattr("oto_mcp.access.rbac.org_store.get_org_field_filters", _boom)
+    with pytest.raises(redaction.RedactionWithheld):
+        redaction.redact_payload("unipile", dict(payload))
+    out = asyncio.run(field_redaction.FieldRedactionMiddleware().on_call_tool(
+        _Ctx("unipile_profile"), lambda _c: _async(_result(dict(payload)))))
+    assert out.is_error and sentinelle not in out.content[0].text
+
+
+async def _async(value):
+    return value

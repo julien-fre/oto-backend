@@ -41,8 +41,10 @@ retiré).
   retiré, plus haut dans la chaîne, des outils sans schéma de sortie (§ « Un seul canal »).
 - **Fail-closed** : si une policy existe et que `apply` lève (ex. Faker absent) → on
   **retient** la sortie (`_withheld`), jamais le brut. `is_empty` (pas de policy) =
-  passe-through. Échec de *résolution* (aléa DB) → passe-through, sauf service à défaut
-  serveur (`payfit` depuis le 2026-09-17) : lui RETIENT sa sortie.
+  passe-through. Échec de *résolution* (aléa DB, défaut étranger à la rédaction) →
+  sortie **retenue** aussi, pour tout service (#1045) : une policy qu'on n'a pas pu lire
+  n'est pas une policy absente. Avant, seul un service à défaut serveur (`payfit`)
+  retenait ; les autres passaient en clair — ~3 min le 21/09 (revert de #1039).
 - `FieldFilter` matche par **nom de clé feuille, récursif** (à toute profondeur). ⚠️
   aveugle au contexte : une règle sur `name` touche aussi `skills[].name` — d'où
   l'importance du schéma observé + dry-run pour ne pas corrompre.
