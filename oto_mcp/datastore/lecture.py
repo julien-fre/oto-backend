@@ -58,19 +58,23 @@ class LectureMixin:
         limit: int = 100,
         versions: tuple = dsver.DEFAUT,
     ) -> list[dict]:
-        """Filtre exact k:v en Python (chemin MCP `data_rows`). Ordre stable plus
-        ancien d'abord (compat historique)."""
+        """Les `limit` premières lignes, plus ancienne d'abord (surfaces d'affichage :
+        `data_app`, app de revue ; sync du feed). `filter` = la MÊME grammaire que
+        `cursor_rows`/`count_rows` (`{col: val}` ou `{col: {op: val}}`), poussée en SQL
+        par le même moteur.
+
+        ⚠️ oto#74 : ce chemin filtrait en Python par égalité de chaînes — un opérateur
+        (`{"in": [...]}`, `{"gt": 5}`) y était comparé au texte d'un dict, et rendait
+        zéro ligne sans erreur, pendant que `count_rows` rendait le vrai compte sur le
+        même filtre. Un seul moteur : un opérateur inconnu lève (`ValueError`)."""
         ns_id = self._resolve(datastore)
+        rows = db.datastore_list_rows(
+            ns_id, limit=limit, order_by="_created_at", order_dir="asc",
+            filters=_filter_clauses(filter, None))
+        if not rows:
+            return []
         sch = self._schema_of(ns_id)
-        out: list[dict] = []
-        for row in db.datastore_list_rows(ns_id, order_by="_created_at", order_dir="asc"):
-            record = self._row_to_dict(row, sch, versions=versions)
-            if filter and not all(str(record.get(k)) == str(v) for k, v in filter.items()):
-                continue
-            out.append(record)
-            if len(out) >= limit:
-                break
-        return out
+        return [self._row_to_dict(r, sch, versions=versions) for r in rows]
 
     def cursor_rows(
         self,

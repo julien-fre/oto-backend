@@ -1898,7 +1898,7 @@ def register(mcp: FastMCP) -> None:
         Visual variant of `data_url` that renders the data INLINE instead of just
         returning a dashboard link. WITHOUT `datastore` = a table of your
         datastores. WITH `datastore` = a sortable/searchable table of its rows,
-        with an optional exact-match `filter` (same shape as `data_rows`).
+        with an optional `filter` (same grammar as `data_rows`).
 
         Schema-aware (datastore v2, ADR 0046): a typed datastore renders its
         columns in the declared field order, and a SINGLE fiche is shown in a
@@ -1914,8 +1914,11 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: target datastore ; omit = list all your datastores.
-            filter: dict `{column: value}` exact match to pre-filter rows,
-                e.g. `{"priorite": "P1"}`.
+            filter: pre-filter rows, same grammar as `data_rows` — `{column: value}`
+                exact match (e.g. `{"priorite": "P1"}`) or `{column: {op: value}}`
+                with `op` in `eq`/`ne`/`contains`/`in`/`gt`/`gte`/`lt`/`lte`/
+                `empty`/`not_empty` (e.g. `{"statut": {"in": ["actif", "clos"]}}`).
+                An unknown operator is refused, never read as "no rows".
             row: open ONE fiche in detail view — matched against `_id`, the
                 declared business key (`schema.key`), or the title field value.
             limit: max rows rendered (default 100).
@@ -1957,6 +1960,10 @@ def register(mcp: FastMCP) -> None:
                 "Datastore introuvable",
                 f"Aucun datastore « {datastore} » sur ton compte.",
             )
+        except ValueError as e:
+            # Filtre mal formé (opérateur inconnu…) : refusé nommément — un tableau
+            # vide ici se lirait « la donnée n'existe pas » (oto#74).
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
         # Vue DÉTAIL d'une fiche : `row` explicite, ou `filter` qui isole 1 ligne.
         fiche = None

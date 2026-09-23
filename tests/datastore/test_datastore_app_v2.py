@@ -198,3 +198,17 @@ def test_list_view_columns_follow_schema_order(data_app):
 def test_unknown_row_returns_message(data_app):
     card = data_app(datastore="leads", row="does-not-exist")
     assert any("introuvable" in t.lower() for t in card.texts())
+
+
+def test_filtre_refuse_par_le_store_remonte_en_refus(data_app, monkeypatch):
+    """Un filtre que le moteur refuse (opérateur inconnu) sort en INVALID_PARAMS,
+    jamais en « Aucune ligne pour ce filtre » — ce zéro-là se lirait « la donnée
+    n'existe pas » (oto#74)."""
+    from oto_mcp.mcp_errors import McpError
+
+    def _refuse(self, datastore, filter=None, limit=100, **_):
+        raise ValueError("filtre `statut` : opérateur `pareil_que` inconnu")
+
+    monkeypatch.setattr(_FakeStore, "list_rows", _refuse)
+    with pytest.raises(McpError, match="pareil_que"):
+        data_app(datastore="leads", filter={"statut": {"pareil_que": "x"}})
