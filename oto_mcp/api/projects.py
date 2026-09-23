@@ -73,7 +73,9 @@ async def project_files_upload(request: Request, *, verifier: JWTVerifier) -> JS
         return _json_error(request, 400, "missing_file")
     data = await upload.read()
     filename = getattr(upload, "filename", None) or "file"
-    content_type = getattr(upload, "content_type", None) or "application/octet-stream"
+    # Le type SERVI, décidé sur le contenu : le déclaré du navigateur ne fait que
+    # départager (#562).
+    content_type = media_store.type_servi(data, getattr(upload, "content_type", None)).content_type
     title = (str(form.get("title") or "")).strip() or None
     description = (str(form.get("description") or "")).strip() or None
     try:

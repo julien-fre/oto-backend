@@ -199,16 +199,19 @@ def _ranger_les_fichiers(ctx: ResolvedCtx, fichiers: list[dict], projet: Optiona
     ranges = []
     for f in fichiers:
         contenu = base64.b64decode(f["base64"])
+        # Le type qu'une fonction DÉCLARE ne fait que départager : le fichier est
+        # enregistré et servi sous le type décidé sur son contenu (#562).
+        mime = media_store.type_servi(contenu, f["mime"]).content_type
         try:
-            cle = media_store.upload_object("project-files", str(projet), contenu, f["mime"],
+            cle = media_store.upload_object("project-files", str(projet), contenu, mime,
                                             f["name"], max_bytes=_MAX_FICHIER)
         except media_store.MediaError as e:
             raise AuthzDenied(502, "file_storage_failed", str(e)) from None
-        ligne = db.add_project_file(projet, cle, f["name"], mime=f["mime"],
+        ligne = db.add_project_file(projet, cle, f["name"], mime=mime,
                                     size_bytes=len(contenu), title=f["name"],
                                     description=f"Produit par la fonction `{slug}`.",
                                     created_by=ctx.sub)
-        ranges.append({"file_id": ligne["id"], "name": f["name"], "mime": f["mime"],
+        ranges.append({"file_id": ligne["id"], "name": f["name"], "mime": mime,
                        "size_bytes": len(contenu),
                        "download_url": media_store.presign_get(cle)})
     return ranges

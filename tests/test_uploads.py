@@ -160,10 +160,11 @@ def test_materialize_project_file_ignores_curl_default_ct(monkeypatch):
     monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
     target = {"kind": "project_file", "project_id": 5, "filename": "r.pdf",
               "title": None, "description": None, "content_type": None}
-    # curl --data-binary pose application/x-www-form-urlencoded → ne doit PAS coller au PDF
+    # curl --data-binary pose application/x-www-form-urlencoded → ne doit PAS coller au PDF.
+    # Depuis #562 le type se décide sur le contenu : la signature `%PDF-` le nomme.
     body = b"%PDF-1.7 ..."
     res = ut.materialize("u1", target, body, "application/x-www-form-urlencoded")
-    assert seen["ctype"] == "application/octet-stream"
+    assert seen["ctype"] == "application/pdf"
     # oto#86 : allow-list, pas retrait — l'accusé anonyme ne porte QUE ce qui suit,
     # jamais la clé S3, jamais l'id de ligne, jamais `created_by`.
     assert res == {"ok": True, "kind": "project_file", "filename": "r.pdf", "bytes": len(body)}

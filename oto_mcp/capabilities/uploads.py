@@ -172,7 +172,12 @@ CAPABILITIES += [
             "`origine` version as it lands) ; target='image' publishes ONE "
             "image (png/jpeg/gif/webp by magic bytes, 2 MB max) at a PUBLIC, permanent, "
             "content-addressed URL — the receipt carries `url`; upload once, reuse it in "
-            "every `email_send(image_url=…)`. Requires write access to the target."
+            "every `email_send(image_url=…)`. Requires write access to the target. "
+            "For 'project_file', `content_type` is only a hint: the file is served under "
+            "the type its bytes prove, and active or unrecognized content (HTML, SVG, "
+            "script…) is stored as a download, never refused. The URL is readable by "
+            "whoever holds it (signed, NOT encrypted: your account id, the org, the "
+            "target) — don't put a confidential title or filename in it."
         ),
         mcp="oto_upload_url",
     ),

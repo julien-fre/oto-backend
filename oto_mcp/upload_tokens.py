@@ -14,6 +14,11 @@ Jeton = `<b64url(payload)>.<b64url(sig)>` (même famille que les states OAuth). 
 unique** (`db.consume_upload_token`, table `upload_tokens_used`). Le champ `typ` évite
 qu'un state OAuth soit rejoué comme jeton d'upload.
 
+⚠️ **Le payload est SIGNÉ, pas chiffré — et c'est accepté** (#562, décision du 23/09) :
+qui détient le lien lit `sub`, `org` et la cible. Rien n'y est un secret (la signature
+seule ouvre, la cible est réautorisée à la réception), le jeton vit `_TTL` et sert une
+fois. Ne pas y sceller un titre ou un nom de fichier confidentiel.
+
 Deux consommateurs pour la MÊME URL signée : un **agent avec shell** (curl PUT du corps
 brut) OU, à défaut (claude.ai sans shell), un **humain** à qui l'agent transmet le lien —
 l'endpoint sert alors une page d'upload (GET) qui POST le fichier en multipart.
@@ -271,7 +276,9 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
     if kind == "project_file":
         pid = int(target["project_id"])
         filename = target.get("filename") or "file"
-        ctype = _resolve_content_type(target, request_ct)
+        # Le type DÉCLARÉ ne fait que départager ; ce qui est écrit et enregistré est
+        # le type SERVI, décidé sur le contenu (#562).
+        ctype = media_store.type_servi(data, _resolve_content_type(target, request_ct)).content_type
         try:
             key = media_store.upload_object("project-files", str(pid), data, ctype,
                                             filename, max_bytes=max_bytes())

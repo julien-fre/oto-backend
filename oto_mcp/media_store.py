@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import dataclass
 from urllib.parse import quote, urlsplit
 
 # Type sniffé → extension stockée. On ne fait JAMAIS confiance au Content-Type
@@ -81,6 +82,122 @@ def _sniff_content_type(data: bytes) -> str | None:
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return None
+
+
+# --- Le type SERVI d'un blob durable (oto-backend#562) -------------------------
+# Un fichier de projet arrive avec un type DÉCLARÉ (par le client, le jeton d'upload
+# ou une fonction) : rien ne l'obligeait à dire vrai, et il repartait tel quel dans
+# le `ContentType` de l'objet — donc dans ce que sert son URL présignée, puis son URL
+# publique une fois le fichier partagé. Un HTML déclaré `text/plain` ou `image/png`,
+# ou un `text/html` avoué, devenait une page active servie depuis notre stockage.
+#
+# Le type servi se décide sur le CONTENU, jamais sur la déclaration seule, et rien
+# n'est refusé : ce qu'on ne reconnaît pas, ou ce qui est actif, est écrit en
+# `application/octet-stream` avec `Content-Disposition: attachment` — le navigateur
+# le télécharge, il ne l'interprète jamais.
+
+_NEUTRE = "application/octet-stream"
+
+# Conteneurs dont la signature ne dit pas le format précis : le type déclaré est
+# retenu s'il appartient à la famille reconnue, sinon le type générique du conteneur.
+_FAMILLE_ZIP = frozenset({
+    "application/zip",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.oasis.opendocument.text",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "application/vnd.oasis.opendocument.presentation",
+    "application/epub+zip",
+})
+_FAMILLE_OLE = frozenset({"application/msword", "application/vnd.ms-excel",
+                          "application/vnd.ms-powerpoint", "application/vnd.ms-outlook"})
+_FAMILLE_ISO = frozenset({"audio/mp4", "audio/x-m4a", "audio/m4a", "video/mp4",
+                          "video/quicktime", "image/heic", "image/avif"})
+
+# Texte PASSIF : un navigateur l'affiche, il ne l'exécute pas. Retenu seulement si le
+# contenu est bien du texte UTF-8 et ne ressemble pas à du balisage actif.
+_TEXTE_PASSIF = frozenset({"text/plain", "text/csv", "text/markdown", "text/x-markdown",
+                           "text/tab-separated-values", "application/json",
+                           "application/x-ndjson"})
+
+# Débuts de balisage qu'un navigateur interprète (HTML, SVG, XML/XSLT) : un texte qui
+# en porte dans son premier kilo-octet est servi comme actif, quel que soit son type
+# déclaré.
+_BALISES_ACTIVES = (b"<html", b"<!doctype", b"<script", b"<svg", b"<?xml", b"<iframe",
+                    b"<body", b"<head", b"<object", b"<embed", b"<xsl")
+
+
+@dataclass(frozen=True)
+class TypeServi:
+    """Ce que le stockage SERVIRA pour un blob : `content_type`, et `attachment` =
+    télécharger plutôt qu'afficher (vrai exactement quand le type est neutralisé)."""
+    content_type: str
+    attachment: bool
+
+
+def _signature(data: bytes, declare: str) -> str | None:
+    """Le type que les OCTETS attestent (signatures de format). None sinon."""
+    image = _sniff_content_type(data)
+    if image:
+        return image
+    if data[:5] == b"%PDF-":
+        return "application/pdf"
+    if data[:4] == b"PK\x03\x04":
+        return declare if declare in _FAMILLE_ZIP else "application/zip"
+    if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return declare if declare in _FAMILLE_OLE else None
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return declare if declare in _FAMILLE_ISO else "video/mp4"
+    if data[:4] == b"\x1a\x45\xdf\xa3":
+        return "audio/webm" if declare == "audio/webm" else "video/webm"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return "audio/wav"
+    if data[:3] == b"ID3" or (len(data) >= 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0):
+        return "audio/mpeg"
+    if data[:4] == b"OggS":
+        return "audio/ogg"
+    if data[:4] == b"fLaC":
+        return "audio/flac"
+    if data[:2] == b"\x1f\x8b":
+        return "application/gzip"
+    return None
+
+
+def _balisage_actif(data: bytes) -> bool:
+    tete = data[:1024].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    return any(b in tete for b in _BALISES_ACTIVES)
+
+
+def _texte_utf8(data: bytes) -> bool:
+    if b"\x00" in data:
+        return False
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def type_servi(data: bytes, declare: str | None) -> TypeServi:
+    """Le type sous lequel un blob durable sera servi, décidé sur son CONTENU (#562).
+
+    1. une signature de format reconnue fait foi (le déclaré ne départage qu'une
+       famille de conteneurs : docx/xlsx dans un zip, m4a/mp4 dans un `ftyp`…) ;
+    2. sinon, un texte UTF-8 déclaré dans un type PASSIF garde ce type, s'il ne porte
+       pas de balisage actif ;
+    3. tout le reste — non reconnu, ou actif (HTML, SVG, XML, JavaScript, quel que
+       soit le type déclaré) — est servi NEUTRE et en téléchargement.
+
+    Rien n'est refusé : un fichier légitime qu'on ne sait pas nommer reste déposé,
+    il est seulement téléchargé au lieu d'être affiché."""
+    base = (declare or "").split(";")[0].strip().lower()
+    signe = _signature(data, base)
+    if signe:
+        return TypeServi(signe, attachment=False)
+    if base in _TEXTE_PASSIF and _texte_utf8(data) and not _balisage_actif(data):
+        return TypeServi(base, attachment=False)
+    return TypeServi(_NEUTRE, attachment=True)
 
 
 def public_url(key: str) -> str:
@@ -210,7 +327,11 @@ def upload_object(prefix: str, owner_id: str, data: bytes, content_type: str,
     S3 (à persister). L'URL d'accès se génère à la lecture via `presign_get`. Clé
     par hash de contenu → ré-upload identique idempotent. `max_bytes` (optionnel)
     surcharge le plafond image par défaut (2 Mo) — un document brut peut être plus
-    gros (upload out-of-bande d'un agent, issue #105)."""
+    gros (upload out-of-bande d'un agent, issue #105).
+
+    ⚠️ `content_type` est un type DÉCLARÉ : l'objet est écrit sous `type_servi`
+    (#562), décidé sur le contenu — neutre et en téléchargement s'il est actif ou
+    non reconnu. C'est ce que serviront son URL présignée et son URL publique."""
     if not data:
         raise MediaError(400, "missing_file", "Contenu vide.")
     limit = max_bytes if max_bytes is not None else max_image_bytes()
@@ -219,11 +340,12 @@ def upload_object(prefix: str, owner_id: str, data: bytes, content_type: str,
     digest = hashlib.sha256(data).hexdigest()[:32]
     name = quote(filename or "file", safe="")
     key = f"{prefix}/{quote(owner_id, safe='')}/{digest}/{name}"
+    servi = type_servi(data, content_type)
+    entetes = {"ContentType": servi.content_type}
+    if servi.attachment:
+        entetes["ContentDisposition"] = f"attachment; filename*=UTF-8''{name}"
     try:
-        _get_client().put_object(
-            Bucket=_bucket(), Key=key, Body=data,
-            ContentType=content_type or "application/octet-stream",
-        )
+        _get_client().put_object(Bucket=_bucket(), Key=key, Body=data, **entetes)
         return key
     except MediaError:
         raise
