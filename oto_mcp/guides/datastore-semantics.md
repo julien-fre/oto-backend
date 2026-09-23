@@ -361,10 +361,15 @@ l'autre, à l'identique.
 **Diverge** :
 
 - **Lot.** `POST …/rows` écrit **une** ligne : le corps **est** la ligne. Un corps à
-  clé unique dont la valeur est une liste d'objets (`{"rows": [...]}`, `{"data":
-  [...]}`) est refusé `400 batch_body`, rien n'est écrit — sauf si une colonne de ce
-  nom est déclarée au schéma. Un corps qui est une liste JSON est refusé `400
-  invalid_body`. Le lot passe par `data_write(rows=[…])` ou `oto_upload_url`.
+  clé unique dont la valeur est une liste d'objets (`{"data": [...]}`), ou dont la
+  clé `rows` en porte une quelles que soient les autres (`{"rows": [...], "key":
+  "siren"}`), est refusé `400 batch_body`, rien n'est écrit — sauf si une colonne de
+  ce nom est déclarée au schéma. Un corps qui est une liste JSON est refusé `400
+  invalid_body`. Le lot REST est `POST …/rows/batch`, corps `{"rows": [...], "key":
+  "siren", "donnees_d_origine": true}` (`key` et `donnees_d_origine` facultatifs) :
+  le même geste que `data_write(rows=[…])` — même moteur, mêmes refus nommant la
+  ligne, mêmes notices, même réponse (`inserted`, `updated`, `count`, `ids`). Pour
+  un volume, `oto_upload_url`.
 - **Projection.** `fields` n'existe que sur `data_rows` ; REST rend la ligne entière.
 - **Paramètres inconnus.** REST refuse tout paramètre de query ou de chemin qu'il ne
   connaît pas — 400 `unknown_fields`, qui nomme le champ et les attendus. Le corps de

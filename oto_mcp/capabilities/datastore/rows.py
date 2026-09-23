@@ -245,6 +245,37 @@ class AppendRowInput(EntreeDatastore):
 
 
 
+class WriteRowsInput(EntreeDatastore):
+    """Le LOT sur la face REST (oto#151) : le même geste que `data_write(rows=…)`.
+
+    Le corps n'est PAS libre ici, à la différence de l'ajout d'une ligne : il porte
+    `rows` et les paramètres du geste, que la garde de champ inconnu couvre donc aussi.
+    Les paramètres voyagent dans le corps ou en query, au choix de l'appelant."""
+    datastore: Adresse
+    # `list` sans type d'élément : une ligne qui n'est pas un objet est refusée par le
+    # moteur, qui NOMME son rang dans le lot — pydantic rendrait un `invalid_input` nu.
+    rows: list = Field(description=(
+        "The rows, one object per row, one key per column — the same objects "
+        "`POST …/rows` takes one at a time."))
+    key: Optional[str] = Field(default=None, description=(
+        "Business-key column used to dedup: a row whose key value already exists "
+        "is MERGED into that row, otherwise it is created. Defaults to the table's "
+        "declared key (`schema.key`)."))
+    readonly_override: bool = _FORCAGE
+    force: Optional[list[str] | str] = _FORCE
+    origine_override: bool = _ORIGINE
+    donnees_d_origine: bool = _DONNEES_D_ORIGINE
+
+    @field_validator("force", mode="after")
+    @classmethod
+    def _force_en_liste(cls, v):
+        """Même patron que l'ajout d'une ligne : `?force=a,b` arrive en chaîne."""
+        if v is None:
+            return None
+        brut = v if isinstance(v, list) else str(v).split(",")
+        return [m for m in (str(x).strip() for x in brut) if m]
+
+
 class UpdateRowInput(EntreeDatastore):
     datastore: Adresse
     row_id: str
@@ -375,6 +406,29 @@ class WrittenRow(Row):
     # migration dont tout l'objet est d'être LU doit exister au contrat publié : une
     # intégration qui lit l'OpenAPI ne saurait pas qu'il peut arriver. Absent quand
     # il n'y a rien à dire — le cas normal.
+    notices: Optional[list[str]] = None
+
+
+class WrittenBatch(BaseModel):
+    """Le récapitulatif d'un lot — la MÊME enveloppe que `data_write(rows=…)`.
+
+    Pas de ligne rendue : un lot en porte des milliers. Les relevés du geste
+    (`notices`, `hors_schema`, `valeurs_ecartees`…) sont cumulés sur le lot, une
+    phrase par fait et non une par ligne ; les plus lus sont déclarés, les autres
+    passent (`extra="allow"`), comme sur l'écriture d'une ligne."""
+    model_config = ConfigDict(extra="allow")
+
+    datastore: Optional[str] = None
+    ns_id: Optional[int] = Field(default=None, description=identite.DESCRIPTION)
+    inserted: int
+    updated: int
+    count: int
+    key: Optional[str] = None
+    ids: list[str]
+    hors_schema: Optional[list[str]] = None
+    hors_schema_hint: Optional[str] = None
+    valeurs_ecartees: Optional[list[dict]] = None
+    valeurs_ecartees_hint: Optional[str] = None
     notices: Optional[list[str]] = None
 
 
@@ -639,6 +693,42 @@ def _append_row(ctx: ResolvedCtx, inp: AppendRowInput) -> dict:
             **identite.numero(store.dernier_tableau)}
 
 
+def _write_rows(ctx: ResolvedCtx, inp: WriteRowsInput) -> dict:
+    """Le lot REST (oto#151) : `write_rows`, le moteur de `data_write(rows=…)`.
+
+    Un client REST pur n'avait AUCUN chemin de lot : 8 907 `PATCH` ligne à ligne,
+    douze minutes sur la production. Le moteur, lui, est indifférent à la face qui
+    l'appelle — ce n'était qu'un trou de surface. Mêmes refus nommant la ligne
+    fautive, mêmes notices, mêmes bascules datées (`@keep`/`@clear` jugés sur le lot
+    ENTIER avant la première ligne)."""
+    ns, _ = _adresse(inp.datastore)
+    _verifier_contenu(inp.rows)
+    store = make_store(ctx.sub)
+    try:
+        recap = store.write_rows(ns, inp.rows, key=inp.key,
+                                 readonly_override=inp.readonly_override,
+                                 origine_override=inp.origine_override,
+                                 donnees_d_origine=inp.donnees_d_origine,
+                                 force=fcg.chemins_forces(inp.force))
+    except DatastoreNotFound:
+        raise ns_not_found(ctx.sub, ns)
+    except DatastoreReadOnly:
+        raise AuthzDenied(403, "datastore_read_only")
+    except ValueError as e:
+        raise _write_refusal(e)
+    tableau = store.dernier_tableau or {}
+    # UNE ligne de journal pour le geste, comme la face MCP verse UN relevé d'appel :
+    # les colonnes écrites, en union sur le lot.
+    datastore_journal.record(
+        datastore_journal.TOOL_WRITE, sub=ctx.sub,
+        ctx=datastore_journal.NsContext(ns_id=tableau.get("ns_id"),
+                                        name=tableau.get("datastore") or str(ns)),
+        fields=sorted({k for r in inp.rows if isinstance(r, dict) for k in r}),
+        forced=store.off_forced)
+    return {**identite.de_releve(tableau, ns), **recap, **store.off_schema_report(),
+            **identite.numero(tableau)}
+
+
 def _update_row(ctx: ResolvedCtx, inp: UpdateRowInput) -> dict:
     # L'état AVANT vient du RELEVÉ de la mutation (`trace`) : c'est celui sur lequel la
     # transition a été validée. Le relire ici courrait avec un write concurrent → le
@@ -785,16 +875,52 @@ CAPABILITIES += [
         rest=RestBinding(verb="POST", path=_NS + "/rows", status=201, body_field="row"),
         description=("Ajoute UNE ligne à un tableau — le corps EST la ligne : un objet, "
                      "une clé par colonne. Pas de lot ici : un corps dont l'unique clé "
-                     "porte une liste d'objets est refusé (`400 batch_body`) ; le lot "
-                     "passe par `data_write(rows=[…])` côté agent, ou par un upload "
-                     "signé NDJSON/CSV (`oto_upload_url` → `PUT /api/upload/{token}`) "
-                     "pour les volumes. "
+                     "— ou la clé `rows`, quelles que soient les autres — porte une "
+                     "liste d'objets est refusé (`400 batch_body`) ; le lot passe par "
+                     "`POST …/rows/batch` (ou `data_write(rows=[…])` côté agent), ou "
+                     "par un upload signé NDJSON/CSV (`oto_upload_url` → "
+                     "`PUT /api/upload/{token}`) pour les volumes. "
                      "`readonly_override=true` remplace les colonnes verrouillées "
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
                      + " " + couches.DESCRIPTION_ECRITURE
                      + " `readonly`, clé métier, ce qu'une écriture détruit : guide "
                      "`datastore-semantics`." + _ECRITURE_DETRUIT),
+    ),
+    Capability(
+        key="me.datastore.write_rows",
+        handler=_write_rows,
+        Input=WriteRowsInput,
+        Output=WrittenBatch,
+        authz=SUB_ONLY,
+        mcp=None,  # `data_write(rows=…)` tient déjà la face agent
+        rest=RestBinding(verb="POST", path=_NS + "/rows/batch"),
+        errors=_REFUS_D_ADRESSE + _REFUS_D_ECRITURE + (
+            _JETON_MAL_PLACE,
+            DeclaredError(400, "row_invalid",
+                          "une ligne du lot est refusée par le schéma ou le cycle de "
+                          "vie : le message nomme son rang (et sa clé) et dit combien "
+                          "de lignes étaient déjà écrites avant l'arrêt"),
+            DeclaredError(400, "business_key_required",
+                          "le tableau exige sa clé métier à la création et une ligne "
+                          "du lot ne la porte pas, ou ne désigne aucune ligne "
+                          "existante : le message nomme la ligne"),
+        ),
+        description=("Écrit un LOT de lignes en un appel — le même geste que "
+                     "`data_write(rows=[…])` côté agent : même moteur, mêmes refus, "
+                     "mêmes notices. Corps `{\"rows\": [{…}, …], \"key\": "
+                     "\"<colonne>\"}` ; `key` facultatif, défaut = la clé métier "
+                     "déclarée. Une ligne dont la clé existe déjà est FUSIONNÉE dans "
+                     "celle-ci, sinon elle est créée. Réponse : `inserted`, "
+                     "`updated`, `count`, `ids`, et les relevés du geste cumulés sur "
+                     "le lot. Une écriture qui porte un mot refusé (`@keep`, "
+                     "`@clear`, après leur date) est refusée ENTIÈRE, rien n'est "
+                     "écrit. ⚠️ Sinon le lot n'est PAS atomique : une ligne refusée "
+                     "arrête le lot, les lignes d'avant restent écrites, et le refus "
+                     "dit à quelle ligne reprendre. Pour un volume au-delà de "
+                     "quelques milliers de lignes, l'upload signé NDJSON/CSV. "
+                     + dsv2.description_donnees_d_origine()
+                     + " " + couches.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
     ),
     Capability(
         key="me.datastore.get_row",

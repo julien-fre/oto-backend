@@ -626,6 +626,8 @@ GET,HEAD /api/datastores/{datastore}/rows -> _handler
 OPTIONS /api/datastores/{datastore}/rows -> options_handler
 POST /api/datastores/{datastore}/rows -> _handler
 OPTIONS /api/datastores/{datastore}/rows -> options_handler
+POST /api/datastores/{datastore}/rows/batch -> _handler
+OPTIONS /api/datastores/{datastore}/rows/batch -> options_handler
 GET,HEAD /api/datastores/{datastore}/rows/{row_id} -> _handler
 OPTIONS /api/datastores/{datastore}/rows/{row_id} -> options_handler
 PATCH /api/datastores/{datastore}/rows/{row_id} -> _handler
@@ -700,6 +702,8 @@ GET,HEAD /api/datastore/namespaces/{namespace}/aggregate -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/aggregate -> options_handler
 POST /api/datastore/namespaces/{namespace}/claim_next -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/claim_next -> options_handler
+POST /api/datastore/namespaces/{namespace}/rows/batch -> alias_deprecie
+OPTIONS /api/datastore/namespaces/{namespace}/rows/batch -> options_handler
 POST /api/datastore/namespaces/{namespace}/drop_column -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/drop_column -> options_handler
 GET,HEAD /api/datastore/namespaces/{namespace}/rows/{row_id} -> alias_deprecie

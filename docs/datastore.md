@@ -78,8 +78,11 @@ Surfaces :
   et un **champ inconnu est refusé** (400 `unknown_fields`) au lieu d'être ignoré —
   sauf le corps d'un ajout/patch de ligne, qui EST la donnée (`body_field`) — **UNE**
   ligne par `POST …/rows`, jamais un lot : un corps à clé unique portant une liste
-  d'objets est refusé `400 batch_body` (oto#48) ; le lot = `data_write(rows=…)` ou
-  l'upload signé NDJSON/CSV.
+  d'objets, ou dont la clé `rows` en porte une quelles que soient les autres, est
+  refusé `400 batch_body` (oto#48, oto#151) ; le lot = `POST …/rows/batch` (corps
+  `{"rows": […], "key"?, "donnees_d_origine"?}`, capacité `me.datastore.write_rows`,
+  le moteur `write_rows` de `data_write(rows=…)`), `data_write(rows=…)` ou l'upload
+  signé NDJSON/CSV.
   ⚠️ Éditer un de ces chemins = éditer sa capacité ; en rajouter un à la main casse
   le garde-fou `tests/test_rest_modules_are_capabilities.py`.
 - **Guide servi aux agents** `datastore-semantics` (seed `oto_mcp/guides/

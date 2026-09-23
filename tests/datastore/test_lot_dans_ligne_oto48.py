@@ -38,6 +38,9 @@ from oto_mcp.capabilities.datastore.lot import forme_de_lot
     ({"tags": ["x", "y"]}, None),              # liste de scalaires : une colonne
     ({"rows": []}, None),                      # liste vide : rien à prendre pour un lot
     ({"siren": "1", "contacts": [{"n": 1}]}, None),   # deux clés : une ligne
+    # oto#151 : `rows` est le nom du lot, quel que soit le nombre de clés.
+    ({"rows": [{"a": 1}], "key": "siren"}, ("rows", 1)),
+    ({"rows": [], "key": "siren"}, None),
     ({"rows": [{"a": 1}, "b"]}, None),         # mélange : pas un lot
     ({}, None),
     ([{"a": 1}], None),                        # la liste à la racine est jugée AVANT
@@ -97,7 +100,31 @@ def test_un_lot_enveloppe_est_refuse_nomme_et_rien_n_est_ecrit(live, cle):
     # Le message dit la forme attendue ET où va le lot — il sera cité tel quel.
     assert "UNE ligne" in rep["detail"]
     assert "data_write" in rep["detail"] and "oto_upload_url" in rep["detail"]
+    # oto#151 : la route de lot REST existe, le refus y renvoie.
+    assert "/rows/batch" in rep["detail"]
     assert _base(ns_id) == []
+
+
+def test_un_lot_a_cote_d_une_cle_metier_est_refuse_et_renvoie_a_la_route_de_lot(live):
+    """oto#151 : `{"rows": […], "key": …}` passait pour UNE ligne à deux colonnes, et le
+    refus servi réclamait une clé métier que le corps portait."""
+    ns, ns_id = _table()
+    status, rep = _post(ns, {"rows": LOT, "key": "siren"})
+    assert (status, rep["error"]) == (400, "batch_body")
+    assert rep["details"] == {"key": "rows", "count": 2}
+    assert "/rows/batch" in rep["detail"]
+    assert _base(ns_id) == []
+
+
+def test_une_colonne_declaree_rows_reste_ecrivable_a_cote_d_autres(live):
+    ns, ns_id = _table({"fields": [
+        {"key": "siren", "type": "text"},
+        {"key": "rows", "type": "list",
+         "of": {"type": "object", "fields": [{"key": "nom", "type": "text"}]}}]})
+    corps = {"siren": "5", "rows": [{"nom": "A"}]}
+    status, rep = _post(ns, corps)
+    assert status == 201, rep
+    assert _base(ns_id) == [corps]
 
 
 def test_la_liste_a_la_racine_reste_refusee(live):

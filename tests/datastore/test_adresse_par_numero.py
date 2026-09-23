@@ -116,5 +116,7 @@ def test_les_ENTREES_REST_acceptent_le_numero_aussi():
         kw = {"datastore": 609}
         for cle, champ in M.model_fields.items():
             if cle != "datastore" and champ.is_required():
-                kw[cle] = {} if "dict" in str(champ.annotation) else "x"
+                annotation = str(champ.annotation)
+                kw[cle] = ({} if "dict" in annotation
+                           else [] if "list" in annotation else "x")
         assert M(**kw).datastore == "609", f"{M.__name__} refuse le numéro"

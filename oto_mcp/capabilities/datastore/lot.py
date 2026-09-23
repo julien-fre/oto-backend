@@ -15,6 +15,14 @@ scalaires (`tags: ["a", "b"]`) n'est pas un lot ; un objet à deux clés non plu
 ce nom l'emporte : un sous-tableau (`contacts`, type `list`) est une ligne légitime,
 la déclaration dit l'intention mieux que la forme ne la devine.
 
+**Le nom littéral `rows` est un lot quel que soit le nombre de clés (oto#151).** Un
+client REST a posté `{"rows": [...], "key": "<clé métier>"}` — le corps que
+l'écriture agent lui suggérait. Deux clés : la garde ne le voyait pas, `rows` et `key`
+partaient en colonnes, et le refus servi (`business_key_required`) l'envoyait chercher
+une clé métier qu'il venait d'envoyer. `rows` est le nom du lot sur les deux faces
+(`data_write(rows=…)`, `POST …/rows/batch`) : à côté d'autres clés, il ne désigne pas
+une colonne. Le refus renvoie vers la route de lot, qui existe désormais.
+
 ⚠️ Sur la route unitaire seule, pas sur le PATCH : réécrire la sous-table d'une ligne
 est un geste courant, et l'URL d'un patch nomme déjà la ligne visée — un lot égaré là
 est improbable, un refus y casserait un usage juste.
@@ -28,15 +36,28 @@ from .._types import AuthzDenied
 
 CODE = "batch_body"
 
+#: Le nom du lot sur les deux faces — `data_write(rows=…)` et `POST …/rows/batch`.
+NOM_DU_LOT = "rows"
+
+
+def _liste_d_objets(valeur) -> bool:
+    return (isinstance(valeur, list) and bool(valeur)
+            and all(isinstance(v, dict) for v in valeur))
+
 
 def forme_de_lot(row) -> Optional[tuple[str, int]]:
-    """`(clé, nombre d'objets)` si `row` a la forme d'un lot enveloppé, sinon None."""
-    if not isinstance(row, dict) or len(row) != 1:
+    """`(clé, nombre d'objets)` si `row` a la forme d'un lot enveloppé, sinon None.
+
+    Deux formes : un objet à clé unique portant une liste d'objets, ou un objet —
+    à une clé ou plus — dont la clé `rows` porte une liste d'objets (oto#151)."""
+    if not isinstance(row, dict):
+        return None
+    if _liste_d_objets(row.get(NOM_DU_LOT)):
+        return NOM_DU_LOT, len(row[NOM_DU_LOT])
+    if len(row) != 1:
         return None
     (cle, valeur), = row.items()
-    if not isinstance(valeur, list) or not valeur:
-        return None
-    if not all(isinstance(v, dict) for v in valeur):
+    if not _liste_d_objets(valeur):
         return None
     return str(cle), len(valeur)
 
@@ -54,10 +75,12 @@ def refuser_un_lot(store, datastore: str, row) -> None:
         return
     raise AuthzDenied(400, CODE, (
         f"`POST …/rows` écrit UNE ligne : le corps est un objet, une clé par colonne. "
-        f"Reçu un objet dont l'unique clé `{cle}` porte une liste de {n} objets — la "
+        f"Reçu un objet dont la clé `{cle}` porte une liste de {n} objets — la "
         f"forme d'un LOT, qui aurait été écrit tel quel comme une seule ligne à colonne "
-        f"`{cle}`. Rien n'a été écrit. Un lot passe par `data_write(datastore=…, "
-        f"rows=[…])` côté agent ; pour un volume, `oto_upload_url` (NDJSON/CSV) puis "
+        f"`{cle}`. Rien n'a été écrit. Un lot passe par `POST /api/datastores/"
+        f"{{datastore}}/rows/batch`, corps `{{\"rows\": […], \"key\": \"<clé "
+        f"métier>\"}}` (`key` facultatif), ou par `data_write(datastore=…, rows=[…])` "
+        f"côté agent ; pour un volume, `oto_upload_url` (NDJSON/CSV) puis "
         f"`PUT /api/upload/{{token}}`. Si c'est bien UNE ligne dont la colonne `{cle}` "
         f"porte ces objets, déclare-la dans le schéma (`data_patch_schema`, type "
         f"`list`) : une colonne déclarée n'est jamais prise pour un lot."),
