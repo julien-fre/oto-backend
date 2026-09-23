@@ -22,6 +22,7 @@ from . import account_suspension  # noqa: F401 — admin.account (pause d'un com
 from . import outreach  # noqa: F401 — admin.outreach (relance des comptes jamais actifs)
 from . import instance_health  # noqa: F401 — admin.instance_health (session d'un tiers vivante ?, #863)
 from . import vault_health  # noqa: F401 — admin.vault_health (scan credentials indéchiffrables, #72)
+from . import guides_semis  # noqa: F401 — admin.guides_semis (le dépôt est-il servi ?, oto#236)
 from . import tenants_admin  # noqa: F401 — admin.tenant{s,_console} (suivi de l'étage tenant, ADR 0052)
 from . import tenant_keys  # noqa: F401 — admin.tenant_key{s,_set,_clear} (la clé de connecteur d'un tenant, L-clés PR 1)
 from . import tenant_admins  # noqa: F401 — admin.tenant_admin{s,_add,_remove} (le rôle « admin de tenant », L-clés PR 2)

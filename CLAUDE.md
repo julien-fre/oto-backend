@@ -96,7 +96,9 @@ l'héritée garde son défaut écrit dans sa description, la stricte l'exige (AD
 surface `me.guide{,s}` (ADR 0042) ; **procédure** = guide nommé chargé à la demande, qui embarque son schéma
 (le « digest d'ouverture » a été retiré le 10/09/2026, oto#159) · ⚠️ l'injection au handshake **n'est pas garantie** : le bloc A est un socle ≤ 2 000 c. (budget CI
 `tests/test_instructions_budget.py`) qui pointe le guide `notice` et `oto_context` · ⚠️ guides = **tout-DB**,
-`oto_mcp/guides/*.md` sont des seeds (`docs/guides.md`, `docs/alias-deprecies.md`).
+`oto_mcp/guides/*.md` sont les **seeds** : le semis de démarrage empreinte ce qu'il pose, met à jour un guide dont la
+base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis par `oto_admin_guides_semis`, geste unique
+`scripts/aligner_guides_plateforme.py` (oto#236, `docs/guides.md`, `docs/alias-deprecies.md`).
 `ToolCallLogger` journalise chaque appel dans `tool_calls` (identité = `sub`), lu par trois lentilles (membre / org /
 plateforme) ; exceptions vers **Sentry** · ⚠️ ne trace ni la connexion d'un connecteur ni `tools/list` → **compte actif
 ≠ usage** · jamais un jeton en clair ; la table est la **source de vérité des exécutions** (ADR 0017, `docs/monitoring.md`).

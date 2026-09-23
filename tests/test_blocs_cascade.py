@@ -180,7 +180,9 @@ def test_supprimer_une_couche_de_contexte_emporte_son_corps(base):
     from oto_mcp.db import blocks as db_blocks
     from oto_mcp.db import guides as db_guides
 
-    db_guides.seed_guide_db("user", "u-fuite", "une-couche", "# Titre\n\nDu corps.\n")
+    db_guides.seed_guide_db("user", "u-fuite", "une-couche", "# Titre\n\nDu corps.\n",
+                            seed_sha256=db_guides.empreinte_de_couche(
+                                "", "", "# Titre\n\nDu corps.\n"))
     noeud = _sql("SELECT id FROM nodes WHERE props->>'slug' = 'une-couche'")[0]["id"]
     db_blocks.backfill_node_blocks()
     assert _blocs_de(noeud) > 0, "le point de départ est faux : aucun bloc à emporter"

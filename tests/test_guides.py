@@ -30,18 +30,25 @@ def test_file_seeds_include_shipped_guides():
     assert not g["body_md"].startswith("---")         # front-matter retiré
 
 
-def test_seed_platform_guides_never_overwrites(monkeypatch):
-    seeded = []
+def test_le_semis_passe_chaque_fichier_avec_son_empreinte(monkeypatch):
+    """Tous les fichiers de la racine partent au semis, scope/owner plateforme, et
+    chacun porte l'empreinte de CE qu'il pose — sans elle, le démarrage suivant ne
+    saurait pas distinguer une base intacte d'une base éditée (oto#236)."""
+    vus = {}
 
-    def fake_seed(scope, owner, slug, body_md, title="", description=""):
-        seeded.append((scope, owner, slug))
+    def faux_semis(scope, owner, slug, body_md, title="", description="", *,
+                   seed_sha256):
+        vus[(scope, owner, slug)] = seed_sha256
+        return "seme"
 
     import oto_mcp.db as db
-    monkeypatch.setattr(db, "seed_guide_db", fake_seed)
-    G.seed_platform_guides()
-    # tous les fichiers passent par le seed DO-NOTHING, scope/owner plateforme
-    assert ("platform", G.PLATFORM_OWNER, "bulk-load") in seeded
-    assert ("platform", G.PLATFORM_OWNER, "mcp-apps") in seeded
+    monkeypatch.setattr(db, "seed_guide_db", faux_semis)
+    rapport = G.seed_platform_guides()
+    assert ("platform", G.PLATFORM_OWNER, "bulk-load") in vus
+    assert ("platform", G.PLATFORM_OWNER, "mcp-apps") in vus
+    fichiers = {g["slug"]: g for g in G.list_file_guides()}
+    assert vus[("platform", G.PLATFORM_OWNER, "bulk-load")] == fichiers["bulk-load"]["seed_sha256"]
+    assert "bulk-load" in rapport["semes"] and not rapport["echecs"]
 
 
 def test_index_lists_guides(monkeypatch):

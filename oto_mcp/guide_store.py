@@ -1,12 +1,27 @@
 """Guides d'usage d'oto — how-to chargés à la demande (oto-backend#111, ADR 0042).
 
-**Source de vérité = la table `guides` (DB), pour TOUS les scopes** — platform, org,
-user (bascule 2026-07-16 : le scope platform était fichiers-PR, il est désormais
-éditable en ligne comme les autres, gaté platform_admin). Les fichiers
-`oto_mcp/guides/<slug>.md` (front-matter `title`/`description` + corps) ne sont plus
-que des **seeds** : semés au boot s'ils n'existent pas en DB (`seed_platform_guides`,
-idempotent, n'écrase JAMAIS une ligne éditée), pour provisionner un environnement
-neuf. Droits : lecture = tout authentifié (platform) / org active / self ; écriture =
+**Source ÉDITABLE = la base, pour TOUS les scopes** — platform, org, user (bascule
+2026-07-16 : le scope platform était fichiers-PR, il est désormais éditable en ligne
+comme les autres, gaté platform_admin). Les fichiers `oto_mcp/guides/<slug>.md`
+(front-matter `title`/`description` + corps) sont la source du **SEMIS**.
+
+⚠️ Le semis n'a longtemps fait qu'INSÉRER : une mise à jour d'un guide dans le dépôt
+n'atteignait donc jamais un environnement déjà démarré, et le guide servi en
+production a dérivé de plusieurs livraisons (otomata-tech/oto#236). Depuis le
+2026-09-23, le semis pose l'**empreinte** du fichier qu'il a écrit
+(`props->>'seed_sha256'`) et s'en sert au démarrage suivant :
+
+- fichier changé **et** base encore au dernier semis → le guide est **mis à jour** ;
+- base éditée depuis le dernier semis → le guide est **conservé**, la divergence est
+  **signalée** (santé d'instance + Sentry) ;
+- même empreinte → aucune écriture.
+
+Rien ne refuse le démarrage (DDL additif, échec ouvert, fenêtre de healthcheck finie) :
+un semis en échec ou un guide divergent est un DÉFAUT DE SANTÉ d'instance, servi par
+`oto_admin_guides_semis`. Une ligne posée avant l'empreinte n'est pas devinée au boot —
+elle est alignée par un geste unique, `scripts/aligner_guides_plateforme.py`.
+
+Droits : lecture = tout authentifié (platform) / org active / self ; écriture =
 platform_admin / org_admin / self.
 
 Distinct des **guides nommés** (procédures d'ORG, per-org DB, `oto_procedure`,
@@ -20,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -59,6 +75,7 @@ def list_file_guides() -> list[dict]:
     qu'après un boot réussi."""
     if not _GUIDES_DIR.is_dir():
         return []
+    from . import db
     out = []
     for p in sorted(_GUIDES_DIR.glob("*.md")):
         try:
@@ -66,21 +83,128 @@ def list_file_guides() -> list[dict]:
         except Exception:  # noqa: BLE001
             logger.warning("guide illisible: %s", p.name, exc_info=True)
             continue
+        titre = meta.get("title") or p.stem
+        description = meta.get("description") or ""
         out.append({"slug": p.stem,
-                    "title": meta.get("title") or p.stem,
-                    "description": meta.get("description") or "",
-                    "body_md": body})
+                    "title": titre,
+                    "description": description,
+                    "body_md": body,
+                    # L'empreinte de ce que le semis POSERAIT — la même fonction des
+                    # deux côtés, sinon un fichier inchangé paraîtrait avoir bougé.
+                    "seed_sha256": db.empreinte_de_couche(titre, description, body)})
     return out
 
 
-def seed_platform_guides() -> None:
-    """Sème les guides plateforme depuis les fichiers `guides/*.md` (boot, idempotent) :
-    un slug déjà en DB n'est JAMAIS réécrit — la DB est la source de vérité éditable,
-    le fichier n'est que le contenu initial d'un environnement neuf."""
+# Où ranger chaque verdict rendu par `db.seed_guide_db`. Le dict est la table de
+# correspondance UNIQUE : un verdict neuf côté base sans case ici lève un KeyError
+# au boot du banc, il ne se range pas en silence dans « inchangé ».
+_CASE_DU_VERDICT = {"seme": "semes", "mis_a_jour": "mis_a_jour",
+                    "inchange": "inchanges", "diverge": "divergents",
+                    "sans_empreinte": "sans_empreinte"}
+
+#: Le rapport du DERNIER semis de ce process, lu par la santé d'instance
+#: (`capabilities/guides_semis.py`). Un semis par démarrage, un démarrage par
+#: process : la mémoire suffit, et une table de plus ne dirait rien de plus qu'un
+#: redémarrage n'efface déjà.
+_DERNIER_SEMIS: dict = {"fait": False}
+
+
+def _alerte(message: str, *args) -> None:
+    """Un défaut du semis : au journal **et** au suivi d'erreurs (Sentry).
+
+    Le journal seul n'a pas de destinataire — c'est précisément comme ça que le guide
+    `datastore-semantics` est resté périmé en production pendant plusieurs livraisons
+    sans que personne ne l'apprenne. Même canal et même forme que `tenancy._refus`.
+    Fail-open : un démarrage ne casse pas parce que le suivi d'erreurs est indisponible.
+    """
+    logger.warning(message, *args)
+    try:
+        import sentry_sdk
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("oto.semis_guides", "defaut")
+            sentry_sdk.capture_message(message % args if args else message,
+                                       level="error")
+    # noqa: SILENT — le suivi d'erreurs n'empêche jamais un démarrage
+    except Exception:
+        pass
+
+
+def seed_platform_guides() -> dict:
+    """Sème les guides plateforme depuis les fichiers `guides/*.md` (au démarrage).
+
+    Rend le rapport du semis — c'est lui que sert la santé d'instance. Ne LÈVE pas
+    sur un guide : un slug en échec est rangé dans le rapport et signalé, les autres
+    sont semés. Refuser le démarrage n'est pas une option (fenêtre de healthcheck
+    finie, ADR : DDL additif et échec ouvert étape par étape) ; le témoin est le
+    défaut de santé, pas le refus.
+    """
     from . import db
+    rapport: dict = {"semes": [], "mis_a_jour": [], "inchanges": [], "divergents": [],
+                     "sans_empreinte": [], "echecs": {}}
     for g in list_file_guides():
-        db.seed_guide_db("platform", PLATFORM_OWNER, g["slug"],
-                         g["body_md"], g["title"], g["description"])
+        try:
+            verdict = db.seed_guide_db("platform", PLATFORM_OWNER, g["slug"],
+                                       g["body_md"], g["title"], g["description"],
+                                       seed_sha256=g["seed_sha256"])
+        except Exception as e:  # noqa: BLE001 — le rapport EST le traitement
+            rapport["echecs"][g["slug"]] = f"{type(e).__name__}: {e}"
+            continue
+        rapport[_CASE_DU_VERDICT[verdict]].append(g["slug"])
+
+    _DERNIER_SEMIS.clear()
+    _DERNIER_SEMIS.update({"fait": True,
+                           "at": datetime.now(timezone.utc).isoformat(), **rapport})
+
+    # Groupé : une base injoignable fait échouer les vingt guides, et vingt alertes
+    # identiques ne disent rien de plus qu'une seule qui les nomme.
+    if rapport["echecs"]:
+        _alerte("guides non semés : %s",
+                ", ".join(f"{slug} ({err})" for slug, err in sorted(rapport["echecs"].items())))
+    # Un par guide, en revanche : chaque divergence est un texte servi à réconcilier,
+    # et les agréger en ferait une seule issue qu'on ferme en en traitant une seule.
+    for slug in rapport["divergents"]:
+        _alerte("guide divergent : `%s` a été édité en base depuis son dernier semis — "
+                "le fichier du dépôt n'est PAS servi (ADR 0042 : la base fait foi ; "
+                "réconcilier ou aligner avec scripts/aligner_guides_plateforme.py)", slug)
+    # Sans empreinte : état connu et daté (toute la population d'avant #236). Au
+    # journal, pas au suivi d'erreurs — le geste de maintenance est le traitement,
+    # et une alerte par guide à chaque démarrage jusqu'à ce qu'il tourne serait du bruit.
+    if rapport["sans_empreinte"]:
+        logger.warning("guides sans empreinte de semis (%d) : %s — geste de "
+                       "maintenance `scripts/aligner_guides_plateforme.py` pas encore joué",
+                       len(rapport["sans_empreinte"]), ", ".join(rapport["sans_empreinte"]))
+    return rapport
+
+
+def sante_du_semis() -> dict:
+    """L'état du semis de CE process, en défauts nommés — la santé d'instance des
+    guides plateforme. `fait: false` = le démarrage n'a pas (encore) semé, ce qui est
+    en soi un défaut : personne ne peut affirmer que les fichiers sont servis."""
+    etat = dict(_DERNIER_SEMIS)
+    defauts = []
+    if not etat.get("fait"):
+        defauts.append({"code": "semis_absent", "slugs": [],
+                        "detail": ("Aucun semis de guides plateforme dans ce process — "
+                                   "le démarrage ne l'a pas joué, ou pas encore.")})
+    for slug, err in sorted((etat.get("echecs") or {}).items()):
+        defauts.append({"code": "guides_non_semes", "slugs": [slug], "detail": err})
+    for slug in etat.get("divergents") or []:
+        defauts.append({"code": "guide_divergent", "slugs": [slug],
+                        "detail": ("Édité en base depuis le dernier semis : le fichier "
+                                   "du dépôt n'est pas servi.")})
+    if etat.get("sans_empreinte"):
+        defauts.append({"code": "guides_sans_empreinte",
+                        "slugs": list(etat["sans_empreinte"]),
+                        "detail": ("Posés avant que le semis n'empreinte : le démarrage "
+                                   "ne devine pas lequel du fichier ou de la base fait "
+                                   "foi. Geste unique : "
+                                   "`python -m scripts.aligner_guides_plateforme`.")})
+    return {"fait": bool(etat.get("fait")), "at": etat.get("at"),
+            "semes": etat.get("semes") or [], "mis_a_jour": etat.get("mis_a_jour") or [],
+            "inchanges": etat.get("inchanges") or [],
+            "divergents": etat.get("divergents") or [],
+            "sans_empreinte": etat.get("sans_empreinte") or [],
+            "echecs": etat.get("echecs") or {}, "defauts": defauts}
 
 
 # Prose INIT dans `guides` (delivery='init'). Slugs canoniques par scope :

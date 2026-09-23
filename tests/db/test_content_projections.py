@@ -56,14 +56,31 @@ async def test_native_page_and_guide_share_content_but_metadata_does_not_rewrite
 
 
 @pytest.mark.asyncio
-async def test_seed_only_projects_inserted_nodes_and_never_overwrites_existing(base_fraiche):
-    guides.seed_guide_db("user", "projection-owner", "seed", "Corps seed")
+async def test_seed_only_projects_inserted_nodes_and_never_overwrites_an_edited_row(base_fraiche):
+    """Le semis ne projette que ce qu'il INSÈRE — et ne réécrit pas une ligne éditée.
+
+    ⚠️ Depuis oto#236 il n'est plus en insertion seule : un semis dont l'empreinte est
+    encore celle de la base MET À JOUR (sinon une mise à jour du dépôt n'atteignait
+    jamais un environnement existant). Ce qu'il ne touche pas, c'est une ligne éditée
+    DEPUIS son dernier semis — ici, celle dont le corps ne correspond plus à
+    l'empreinte posée."""
+    empreinte = guides.empreinte_de_couche("", "", "Corps seed")
+    guides.seed_guide_db("user", "projection-owner", "seed", "Corps seed",
+                         seed_sha256=empreinte)
     row = guides.get_guide_db("user", "projection-owner", "seed")
     public_id = _public_id(base_fraiche, row["id"])
     assert "".join(b.get("md", "") for b in (await _read_page(public_id))["body"]) == "Corps seed"
     before = (await _read_page(public_id))["body"]
-    guides.seed_guide_db("user", "projection-owner", "seed", "Un autre défaut")
+    # Même empreinte que ce qui est en base : rien à écrire, rien à reprojeter.
+    guides.seed_guide_db("user", "projection-owner", "seed", "Corps seed",
+                         seed_sha256=empreinte)
     assert (await _read_page(public_id))["body"] == before
+    # Ligne éditée depuis le semis → le semis la CONSERVE, quoi que dise le fichier.
+    guides.set_guide_db("user", "projection-owner", "seed", "Écrit à la main")
+    assert guides.seed_guide_db("user", "projection-owner", "seed", "Un autre défaut",
+                                seed_sha256=guides.empreinte_de_couche(
+                                    "", "", "Un autre défaut")) == "diverge"
+    assert guides.get_guide_db("user", "projection-owner", "seed")["body_md"] == "Écrit à la main"
 
 
 def test_brief_procedure_and_native_page_update_their_existing_nonnull_rank(base_fraiche):

@@ -237,6 +237,60 @@ avant que quoi que ce soit d'autre ne le lise. Les refs `<tool:slug>` restent do
 canonique, continuent de résoudre, et **il n'y a rien à migrer**. Les deux formes sont d'ailleurs
 acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.
 
+## Le semis des guides plateforme : le dépôt atteint la base
+
+Un guide plateforme (`oto_mcp/guides/<slug>.md`) est un **texte servi à l'agent**.
+Servi périmé, il lui fait appliquer des gestes retirés et ignorer ceux qui existent.
+Mesuré le 13/09/2026 : le guide `datastore-semantics` servi en production avait
+**environ 250 lignes de retard** sur le fichier du dépôt, depuis plusieurs livraisons —
+il ne connaissait ni `@clear` ni le paramètre de lecture `empties`, et présentait
+encore comme active une forme retirée. Cause : le semis de démarrage n'**insérait**
+que les slugs absents (`INSERT … ON CONFLICT DO NOTHING`), donc **une mise à jour d'un
+guide dans le dépôt n'atteignait jamais un environnement existant**.
+
+**Contrat (validé le 13/09/2026, livré le 23/09/2026 — otomata-tech/oto#236), sans
+écart à l'ADR 0042 :**
+
+1. **Qui fait foi.** La base reste la source **éditable** d'un guide plateforme
+   (`oto_admin_guide` / `oto_guide` n'y perdent aucun droit) ; le fichier du dépôt est
+   la source du **semis**.
+2. **Le semis empreinte ce qu'il pose.** `props->>'seed_sha256'` = l'empreinte des
+   trois champs écrits (titre, description, corps — `db.empreinte_de_couche`). Au
+   démarrage (`guide_store.seed_platform_guides`), pour chaque fichier :
+   - fichier changé **et** base encore au dernier semis → le guide est **mis à jour** ;
+   - base éditée depuis le dernier semis → le guide est **conservé**, la divergence est
+     **signalée** ;
+   - même empreinte → **aucune écriture**.
+
+   Décision et écriture dans la même transaction, ligne verrouillée (`FOR UPDATE`) :
+   une édition admin concurrente ne se glisse pas entre le constat et l'écrasement.
+3. **Aucun refus au démarrage.** Le boot reste en DDL additif et échec ouvert, et la
+   fenêtre du healthcheck est finie : un refus empêcherait toute bascule de version.
+   Un semis en échec ou un guide divergent est un **défaut de santé d'instance**,
+   servi par `oto_admin_guides_semis` (`capabilities/guides_semis.py`, PLATFORM_ADMIN,
+   lecture seule) — codes `guides_non_semes`, `guide_divergent`,
+   `guides_sans_empreinte`, `semis_absent` — **plus une remontée Sentry** (tag
+   `oto.semis_guides`, même canal que `tenancy._refus`). Le témoin est le défaut, pas
+   le refus. ⚠️ Le rapport est celui **du process** qui a semé : `fait: false` ne dit
+   pas « tout va bien », il dit « ce serveur n'a rien semé ».
+4. **Les lignes d'avant l'empreinte** (toute la population de production au 23/09) ne
+   sont **jamais devinées au démarrage** : le semis ne saurait pas distinguer « jamais
+   touché » de « réécrit par un admin ». Elles sont alignées par un **geste unique**,
+   `scripts/aligner_guides_plateforme.py` : il énumère la population (fichiers ∪ base),
+   **montre chaque écart**, puis écrit — et seulement avec `--aligner`.
+5. **Un guide plateforme servi sans fichier dans le dépôt** (cas mesuré :
+   `procedure-en-routine`) est **exporté en fichier** par ce même geste, et ce fichier
+   devient sa source de semis. Aucun guide plateforme ne reste servi sans source
+   versionnée : sans fichier, il n'est relu par personne et le prochain environnement
+   ne l'a pas. ⚠️ Le fichier exporté est à **committer**.
+6. **Les sous-dossiers de `oto_mcp/guides/` ne sont pas semés** et le semis n'y descend
+   pas (`glob("*.md")`, NON récursif) : la frontière est tenue comme une propriété par
+   `tests/test_guides_seeds_foyer.py`. Un fichier posé à la racine par habitude, ou un
+   `rglob` « de propreté », sèmerait en production des guides que personne n'a décidés.
+7. **Bancs** : `tests/test_semis_guides_plateforme.py` — le rapport et ses défauts sans
+   base, puis sur base jetable base neuve, fichier modifié, base éditée, idempotence,
+   rejeu du démarrage, et la durée mesurée dans la fenêtre du healthcheck (120 s).
+
 ## Détail accumulé (migré de la carte)
 
 **Livraison au LLM = injection, plus un appel d'outil (otomata-private#49 puis #50, amende ADR 0014).**
@@ -253,8 +307,11 @@ bloc C) restent composées, mais seuls les clients qui ne tronquent pas les reç
 — un **artefact composé de 2 blocs** (`instructions.py`, #50 ; l'ex-bloc B onboarding a été
 retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
 - **bloc A « secret sauce »** (posture + boucle d'usage + **catalogue de namespaces** dérivé) —
-  prose en DB `platform_instructions['secret_sauce']`, éditable admin plateforme, **inviolable par
-  l'org**, toujours injecté (seedé depuis la constante = fallback) ; le catalogue est appendé à la composition ;
+  prose en DB — une couche de contexte `init` de slug `secret_sauce` dans `nodes` (⚠️ plus
+  la table `platform_instructions`, dont le backfill de boot est parti avec la table `guides`
+  le 23/09/2026, oto#239 ; la surface d'administration lit et écrit `nodes` depuis le 28/07) —,
+  éditable admin plateforme, **inviolable par l'org**, toujours injecté (la constante
+  `_SECRET_SAUCE` reste le défaut ET le repli) ; le catalogue est appendé à la composition ;
 - **bloc C « contexte dynamique »** par-(sub, org) — section de contexte résolu (org / équipe /
   connecteurs actifs / N derniers projets / derniers déroulés via `db.recent_runs` / fiche profil
   « situation avec oto » de l'user) + **agent readme cumulés** org → équipe active → user
@@ -308,7 +365,8 @@ Restent B4 (inventaire dérivé) + B5 (vérifications) — épic otomata-private
 
 Vocabulaire produit (unbundle 2026-07) : **agent readme** = prose libre **injectée à
 chaque session**, cumulée du général au spécifique — **plateforme** (bloc A) → **org** →
-**équipe active** → **user**. Les 4 étages vivent dans `guides` delivery='init' (0042) ET
+**équipe active** → **user**. Les 4 étages vivent dans `nodes`, `delivery='init'` (0042 ;
+la table `guides` est sortie du code le 23/09/2026, oto#239) ET
 **s'éditent par UNE surface** depuis le 28/07 (§Convergence des surfaces) : la capacité
 `me.guide{,s}` — `oto_guide(op=…, scope=…, delivery='init')` en MCP, `/api/me/guides/{scope}/readme`
 (+ variantes `/api/{orgs,groups}/{id}/…` pour viser une cible explicite) en REST. ⚠️ Le
@@ -316,7 +374,7 @@ routage `claude_md`→`guides` qui vivait DANS `org_store`/`group_store` est RET
 de procédures ne sert plus le readme (`get_instruction` → None, `set_instruction` → ValueError),
 les appelants qui le veulent lisent `guide_store.init_guide_body(scope, id)`. `me.agent_readme` +
 `/api/me/agent-readme` + `db.{get,set}_user_readme` supprimés (table `user_agent_readme` laissée
-en place — elle sert encore de source au backfill de boot ; son DROP est une migration à part). Chaque niveau passe par `_apply_vars`
+en place — plus aucun backfill ne la lit ; son DROP est une migration à part). Chaque niveau passe par `_apply_vars`
 ({{org}}/{{user}}/{{équipe}}/{{connecteurs_actifs}}). **Procédure** = guide nommé
 (skill), chargé à la demande. Prose opératoire versionnée par org — le reste de ce
 document en détaille le mécanisme.
