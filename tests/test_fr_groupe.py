@@ -141,6 +141,19 @@ _REPERTOIRE = {
     "333333333": {"siren": "333333333", "nom_complet": "EDITEUR ADHERENT",
                   "nature_juridique": "5710",
                   "dirigeants": [_pm("GIE PROLIVRE", "788242501", "Membre")]},
+    # Filiale d'un groupe étranger : son président est une société HORS RNE, que la
+    # source rend sans SIREN (ni pays, ni forme juridique : `denomination` et `qualite`
+    # seulement). Cas mesuré par oto#209 : 449 `indeterminee` sur 500 sociétés criblées.
+    "666666666": {"siren": "666666666", "nom_complet": "FILIALE FRANCE",
+                  "nature_juridique": "5710",
+                  "dirigeants": [_pp("MARTIN", "Directeur général"),
+                                 _pm("ACME HOLDING GMBH", None, "Président de SAS"),
+                                 _KPMG]},
+    # Une société qui se désigne elle-même comme gérante (erreur de saisie au
+    # registre) : le lien est rendu, il ne mène nulle part.
+    "777777777": {"siren": "777777777", "nom_complet": "AUTO GEREE",
+                  "nature_juridique": "5499",
+                  "dirigeants": [_pm("AUTO GEREE", "777777777", "Gérant")]},
     # Le répertoire connaît le SIREN mais n'en dit RIEN (unité non diffusible, ou
     # SIREN de test) : nom_complet à None. Relevé sur 999999999.
     "999999999": {"siren": "999999999", "nom_complet": None, "dirigeants": []},
@@ -296,6 +309,44 @@ def test_un_parcours_TRONQUE_n_est_pas_INDETERMINE(fr_groupe):
     assert out["tetes"] == []
     assert out["tronque"] is True
     assert out["confiance"] == "moyenne"
+
+
+# --- Indétermination : dire POURQUOI (oto#209) ---------------------------------
+
+def test_un_mandataire_sans_SIREN_est_RENDU_pas_reduit_a_un_compteur(fr_groupe):
+    """Un président personne morale sans SIREN — une société étrangère, hors RNE — ne
+    peut pas être suivi, mais c'est souvent le seul indice d'un groupe étranger. Réduit
+    à `sans_siren: 1`, il faisait lire « aucun groupe » ; la source donne pourtant sa
+    dénomination et sa qualité, rendues telles quelles, sans rien en déduire."""
+    out = fr_groupe(siren="666666666", op="ascendant")
+    assert out["exclus"]["sans_siren"] == [
+        {"de": "666666666", "denomination": "ACME HOLDING GMBH",
+         "qualite": "Président de SAS"}]
+    assert out["confiance"] == "indeterminee"
+    assert "sans_siren" in out["motifs_indetermination"]
+    assert "aucun_mandataire_personne_morale" not in out["motifs_indetermination"]
+
+
+@pytest.mark.parametrize("siren,motifs", [
+    ("378332258", ["aucun_mandataire_personne_morale"]),   # S.P.I.L : gérant personne physique
+    ("315785188", ["controle_des_comptes"]),               # Payot : un CAC, rien d'autre
+    ("333333333", ["liens_non_traverses"]),                # membre d'un GIE
+    ("666666666", ["controle_des_comptes", "sans_siren"]),
+    ("777777777", ["lien_vers_elle_meme"]),
+])
+def test_l_indetermination_se_distingue_MECANIQUEMENT(fr_groupe, siren, motifs):
+    """`indeterminee` recouvrait cinq situations ; « aucun mandataire personne
+    morale » n'est pas « des mandataires personnes morales sans SIREN »."""
+    out = fr_groupe(siren=siren, op="ascendant")
+    assert out["confiance"] == "indeterminee"
+    assert out["motifs_indetermination"] == motifs
+
+
+def test_un_parent_atteint_ne_porte_pas_de_motif_d_indetermination(fr_groupe):
+    out = fr_groupe(siren="572195550", op="ascendant")
+    assert out["confiance"] != "indeterminee"
+    assert "motifs_indetermination" not in out
+    assert out["exclus"]["sans_siren"] == []
 
 
 # --- Confiance ----------------------------------------------------------------

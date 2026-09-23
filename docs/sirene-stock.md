@@ -43,7 +43,11 @@ sépare les deux : il remonte/descend la chaîne par les **mandataires personnes
 RNE**, commissaires aux comptes exclus, chaque lien qualifié (`forte` = détention impliquée /
 `moyenne` = mandat social / `faible` = ni l'un ni l'autre). ⚠️ **Le RBE est fermé au public
 depuis le 31/07/2024** : une SAS sans mandataire personne morale sort `indeterminee`, ce qui
-ne veut PAS dire « indépendante » — et le descendant s'appuie sur l'index plein texte amont
+ne veut PAS dire « indépendante ». `motifs_indetermination` dit mécaniquement pourquoi
+(`aucun_mandataire_personne_morale`, `controle_des_comptes`, `sans_siren`,
+`liens_non_traverses`, `lien_vers_elle_meme`) : un mandataire personne morale **sans SIREN**
+(souvent étranger, hors RNE) est rendu dans `exclus.sans_siren` avec sa dénomination et sa
+qualité brutes, sans qu'on en déduise un pays (oto#209) — et le descendant s'appuie sur l'index plein texte amont
 (qui indexe les dirigeants), donc il rend un ÉCHANTILLON dès `candidats_tronques=true`. Le
 contrat amont vérifié (ce que `q` sait faire, les bornes 25/page et 10 000) vit dans la
 docstring du module.

@@ -124,9 +124,17 @@ def confiance_du_lien(qualite: Optional[str]) -> str:
     return "inconnue"
 
 
-def _mandataires(fiche: dict) -> tuple[list[dict], int, int]:
-    """(mandataires exploitables, contrôleurs des comptes écartés, sans SIREN écartés)."""
-    gardes, cac, sans_siren = [], 0, 0
+def _mandataires(fiche: dict) -> tuple[list[dict], int, list[dict]]:
+    """(mandataires exploitables, contrôleurs des comptes écartés, sans SIREN écartés).
+
+    Un mandataire personne morale SANS SIREN — typiquement une société étrangère, hors
+    RNE — ne peut pas être suivi, mais il n'est pas rien : la source en donne la
+    dénomination et la qualité, et c'est souvent le seul indice d'un groupe étranger.
+    Le réduire à un compteur faisait lire « aucun groupe » (oto#209). Il est donc rendu
+    tel que la source le porte, sans rien en déduire : ni pays, ni forme juridique (la
+    source n'en a pas), et pas d'« étranger » lu dans un nom — l'agent en juge.
+    """
+    gardes, cac, sans_siren = [], 0, []
     for d in fiche.get("dirigeants") or []:
         if d.get("type_dirigeant") != "personne morale":
             continue
@@ -135,10 +143,35 @@ def _mandataires(fiche: dict) -> tuple[list[dict], int, int]:
             cac += 1
             continue
         if not d.get("siren"):
-            sans_siren += 1
+            sans_siren.append({"denomination": d.get("denomination"),
+                               "qualite": d.get("qualite")})
             continue
         gardes.append(d)
     return gardes, cac, sans_siren
+
+
+def _motifs_indetermination(racine: str, fiche: dict, liens: list[dict]) -> list[str]:
+    """Pourquoi aucun parent n'a été atteint, lu mécaniquement sur la racine.
+
+    `indeterminee` recouvre des situations que l'agent doit pouvoir séparer sans
+    relire le registre : « aucun mandataire personne morale » n'est pas « des
+    mandataires personnes morales existent mais sans SIREN » (oto#209). Plusieurs
+    motifs peuvent coexister ; `aucun_mandataire_personne_morale` est seul par
+    construction.
+    """
+    pms, cac, sans_siren = _mandataires(fiche)
+    motifs = []
+    if cac:
+        motifs.append("controle_des_comptes")
+    if sans_siren:
+        motifs.append("sans_siren")
+    if any(l["de"] == racine and not l["traverse"] for l in liens):
+        motifs.append("liens_non_traverses")
+    if any(l["de"] == racine and l["traverse"] and l["vers"] == racine for l in liens):
+        motifs.append("lien_vers_elle_meme")
+    if not pms and not cac and not sans_siren:
+        motifs.append("aucun_mandataire_personne_morale")
+    return motifs
 
 
 def register(mcp: FastMCP) -> None:
@@ -182,7 +215,8 @@ def register(mcp: FastMCP) -> None:
         parent: dict[str, tuple[str, str]] = {}
         non_resolus: list[str] = []
         non_classees: set[str] = set()
-        cac = sans_siren = 0
+        cac = 0
+        sans_siren: list[dict] = []
         cycle = tronque = False
         frontiere = [racine]
         profondeur = 0
@@ -191,9 +225,9 @@ def register(mcp: FastMCP) -> None:
             profondeur += 1
             suivants: list[str] = []
             for src in frontiere:
-                pms, n_cac, n_sans = _mandataires(fiches[src])
+                pms, n_cac, sans = _mandataires(fiches[src])
                 cac += n_cac
-                sans_siren += n_sans
+                sans_siren.extend({"de": src, **d} for d in sans)
                 traversables = 0
                 for d in pms:
                     conf = confiance_du_lien(d.get("qualite"))
@@ -273,6 +307,8 @@ def register(mcp: FastMCP) -> None:
             "appels_amont": len(fiches) + len(non_resolus),
             "methode": _METHODE, "caveat": _CAVEAT,
         }
+        if globale == "indeterminee":
+            out["motifs_indetermination"] = _motifs_indetermination(racine, fiche, liens)
         if non_resolus:
             out["parents_hors_repertoire"] = non_resolus
         if non_classees:
@@ -339,10 +375,11 @@ def register(mcp: FastMCP) -> None:
         """Chaîne capitalistique d'une entreprise française — qualifier son
         INDÉPENDANCE, ou inventorier un groupe.
 
-        ⚠️ `confiance="indeterminee"` (aucun mandataire personne morale) ne veut PAS
-        dire « indépendante » : le registre des bénéficiaires effectifs est fermé au
-        public depuis le 31/07/2024, donc l'actionnaire d'une SAS n'est pas publié.
-        Aucune filiale / aucun parent est une RÉPONSE, pas une erreur.
+        ⚠️ `confiance="indeterminee"` (aucun parent atteint) ne veut PAS dire
+        « indépendante » : le registre des bénéficiaires effectifs est fermé au public
+        depuis le 31/07/2024. `motifs_indetermination` dit pourquoi — dont
+        `sans_siren` : mandataire personne morale sans SIREN (souvent étranger), rendu
+        dans `exclus.sans_siren` (dénomination, qualité). Aucun parent est une RÉPONSE.
         ⚠️ En descendant, l'amont plafonne à 25 résultats/page et 10 000 au total :
         `candidats_tronques=true` signale un échantillon, pas un inventaire.
 
@@ -354,14 +391,13 @@ def register(mcp: FastMCP) -> None:
 
         Pourquoi : `categorie_entreprise` (PME/ETI/GE) est calculée par l'INSEE sur le
         périmètre GROUPE, jamais sur l'entité — une filiale minuscule sort en "GE".
-        Ce tool sépare les deux.
 
         `confiance` par lien : **forte** = la qualité implique la détention (associé
         commandité / indéfiniment responsable) · **moyenne** = mandat social (président,
         administrateur, gérant) : gouvernance prouvée, contrôle suggéré · **faible** =
         ni l'un ni l'autre (membre de GIE, liquidateur) · **inconnue** = qualité non
         répertoriée. Seuls forte et moyenne sont traversés. Le contrôle légal des
-        comptes est exclu (commissaire OU contrôleur, comptés dans `exclus`).
+        comptes est exclu (commissaire OU contrôleur, compté dans `exclus`).
 
         Args:
             siren: SIREN de l'entreprise (9 chiffres).
