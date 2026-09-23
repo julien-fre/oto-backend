@@ -563,6 +563,16 @@ def _prepare_database() -> None:
             db.backfill_unipile_member_scope()
     except Exception as e:
         logger.warning("backfill_unipile_member_scope at boot failed: %s", e)
+    # ADR 0070 §7 : les droits déclarés des orgs (`org_entitlements`) réalignés sur
+    # l'état du commerce — abonnements, plans offerts, dons d'org. La REPRISE initiale
+    # et le rattrapage de tout geste manqué : idempotente, une poignée d'orgs. Même
+    # travail que `oto-mcp maintenance droits`.
+    try:
+        from . import billing_droits
+        with _timed("reprise_droits"):
+            logger.info("boot: droits déclarés %s", billing_droits.reconcilier_tout())
+    except Exception as e:
+        logger.warning("reprise_droits at boot failed: %s", e)
     # Seed des blocs plateforme A/B (#50) s'ils n'existent pas (idempotent).
     try:
         instructions.seed_platform_blocks()

@@ -24,6 +24,8 @@ Ils sont ici, chacun nommé, chacun jouable seul :
                                           rappel du relais d'autorisation sur les hosts
                                           DÉJÀ inscrits dans OTO_MCP_OAUTH_RELAY_HOSTS,
                                           avant de redémarrer le service
+    oto-mcp maintenance droits        réaligne les droits déclarés des orgs sur
+                                          l'état du commerce (ADR 0070 §7)
     oto-mcp maintenance all           ceux du timer quotidien, dans l'ordre
 
     oto-mcp maintenance key-index-rebuild   (#421 — voir plus bas, PAS dans `all`)
@@ -467,6 +469,18 @@ def oauth_relay_callbacks(*, dry_run: bool = False) -> dict:
     return relay_maintenance.poser_les_rappels(dry_run=dry_run)
 
 
+def droits(*, dry_run: bool = False) -> dict:
+    """Réaligne `org_entitlements` sur l'état du commerce, org par org (ADR 0070 §7).
+
+    La même reprise que le démarrage, jouable seule : abonnements, plans offerts et dons
+    d'org deviennent des droits déclarés, et ce que ces sources avaient posé sans raison
+    d'être est retiré — rien d'autre (cf. `billing_droits`). Dans le timer quotidien :
+    c'est le filet d'un geste dont la réconciliation aurait échoué. À blanc, elle compte
+    ce qu'elle poserait et retirerait."""
+    from . import billing_droits
+    return billing_droits.reconcilier_tout(dry_run=dry_run)
+
+
 _TRAVAUX: dict[str, Callable[..., dict]] = {
     "retention": retention,
     "blocks": blocks,
@@ -480,6 +494,7 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "instagram-tokens": instagram_tokens,
     "unipile-fin-de-droit": unipile_fin_de_droit,
     "oauth-relay-callbacks": oauth_relay_callbacks,
+    "droits": droits,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
 # c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.
@@ -494,8 +509,10 @@ _ACTES = ("journal-tokens", "residu-projete", "oauth-relay-callbacks")
 # ⚠️ `unipile-fin-de-droit` aussi : tiré chaque jour, fermé par
 # `OTO_UNIPILE_FIN_DE_DROIT` — c'est ce tir quotidien qui compte le délai, pas un
 # événement de fin de droit.
+# ⚠️ `droits` AVANT `unipile-fin-de-droit` : la fin de droit lit `org_entitlements`, que
+# `droits` vient de réaligner sur l'état du commerce.
 _ALL = ("retention", "blocks", "key-indexes", "alertes-credential",
-        "instagram-tokens", "unipile-fin-de-droit")
+        "instagram-tokens", "droits", "unipile-fin-de-droit")
 
 
 def run(noms: list[str], *, dry_run: bool = False, strict: bool = False) -> int:

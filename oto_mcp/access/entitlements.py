@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from ..db import entitlements as db_entitlements
 
+# Le droit qui lève le quota journalier des clés PLATEFORME pour toute l'org. Les
+# options payantes, elles, portent le nom de leur option (`unipile`).
+PLATFORM_UNMETERED = "platform_unmetered"
+
 
 def org_has(org_id: int, right_key: str) -> bool:
     """Vrai si une ligne VIVANTE, de n'importe quelle source, accorde ce droit."""

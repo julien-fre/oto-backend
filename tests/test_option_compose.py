@@ -23,7 +23,10 @@ def calls(monkeypatch):
     """Capture les écritures ; defaults inertes. ADR 0044 §F : le grant plateforme passe
     par credentials_store.platform_grant/revoke (scope `user:<sub>`|`org:<id>`), plus les
     db.*_platform_key legacy."""
-    rec = {"comp": [], "clear": [], "grant": [], "revoke": [], "instances": []}
+    rec = {"comp": [], "clear": [], "grant": [], "revoke": [], "instances": [],
+           "droits": []}
+    monkeypatch.setattr(ua.billing, "reconcilier_droits",
+                        lambda org_id: rec["droits"].append(org_id))
     monkeypatch.setattr(ua.db, "get_user", lambda eid: {"sub": eid})
     monkeypatch.setattr(ua.org_store, "get_org", lambda oid: {"id": oid})
     monkeypatch.setattr(ua.db, "set_option_comp",
@@ -106,3 +109,18 @@ def test_org_scope_grants_org_key(calls, monkeypatch):
                                              option="unipile", on=True))
     assert calls["grant"] == [("unipile", "org:5")]
     assert out["platform_key"]["granted"] is True
+    assert calls["droits"] == [5], "le don d'org devient un droit déclaré de l'org"
+
+
+def test_retirer_le_don_d_org_realigne_ses_droits(calls, monkeypatch):
+    monkeypatch.setattr(ua.providers, "connector_for_provider", lambda p: None)
+    ua._set_option(CTX, ua.OptionInput(entity_type="org", entity_id="5",
+                                       option="unipile", on=False))
+    assert calls["droits"] == [5]
+
+
+def test_le_don_a_une_personne_n_ecrit_aucun_droit_d_org(calls, monkeypatch):
+    monkeypatch.setattr(ua.providers, "connector_for_provider", lambda p: None)
+    ua._set_option(CTX, ua.OptionInput(entity_type="user", entity_id="u1",
+                                       option="unipile", on=True))
+    assert calls["droits"] == []

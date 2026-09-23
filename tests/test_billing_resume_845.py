@@ -15,6 +15,14 @@ import pytest
 from oto_mcp import billing
 
 
+@pytest.fixture(autouse=True)
+def _droits_declares_hors_banc(monkeypatch):
+    """La réconciliation des droits déclarés lit la base : son banc est
+    `test_billing_droits_live`. Ici, elle est neutralisée."""
+    from oto_mcp import billing as _billing
+    monkeypatch.setattr(_billing, "reconcilier_droits", lambda org_id: None)
+
+
 @pytest.fixture()
 def sub(monkeypatch):
     """Un abonnement résilié à fin de période : `active`, `canceled_at` posé."""

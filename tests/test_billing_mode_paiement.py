@@ -19,6 +19,15 @@ from oto_mcp.capabilities import billing as cap_billing
 from oto_mcp.capabilities._types import AuthzDenied
 from oto_mcp.db import billing as db_billing
 
+
+@pytest.fixture(autouse=True)
+def _droits_declares_hors_banc(monkeypatch):
+    """La réconciliation des droits déclarés lit la base : son banc est
+    `test_billing_droits_live`. Ici, elle est neutralisée."""
+    from oto_mcp import billing as _billing
+    monkeypatch.setattr(_billing, "reconcilier_droits", lambda org_id: None)
+
+
 # Les déclarations relevées sur les processus servis le 10/09/2026 — chaque
 # environnement se nommait alors par son URL publique ; c'est `OTO_ENV` qui le porte
 # depuis le 15/09, et Sentry reste le second témoin qu'on recoupe.

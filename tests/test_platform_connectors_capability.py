@@ -26,6 +26,14 @@ from _datastore_rest import call, stub_authz
 from oto_mcp.capabilities import platform_connectors as pc
 
 
+@pytest.fixture(autouse=True)
+def _droits_declares_hors_banc(monkeypatch):
+    """La réconciliation des droits déclarés lit la base : son banc est
+    `test_billing_droits_live`. Ici, elle est neutralisée."""
+    from oto_mcp import billing as _billing
+    monkeypatch.setattr(_billing, "reconcilier_droits", lambda org_id: None)
+
+
 class _Conn:
     def __init__(self, label, help_, ns):
         self.label, self.help, self.namespaces = label, help_, ns
@@ -247,6 +255,17 @@ def test_ouvrir_l_acces_pose_les_DEUX_leviers_ensemble(socle, admin):
                      body={"scope": "org", "id": 35, "on": True})
     assert code == 200 and out["ok"] is True
     assert socle == [("comp+", "org", "35", "messagerie"), ("grant", "unipile", "org:35")]
+
+
+def test_le_geste_sur_une_org_realigne_ses_droits_declares(socle, admin, monkeypatch):
+    """Le don d'org devient un droit déclaré de l'org ; celui d'une personne, aucun."""
+    vus: list = []
+    monkeypatch.setattr(pc.billing, "reconcilier_droits", vus.append)
+    call("platform.connector.access_set", path_params={"provider": "unipile"},
+         body={"scope": "org", "id": 35, "on": True})
+    call("platform.connector.access_set", path_params={"provider": "unipile"},
+         body={"scope": "user", "id": "u-9", "on": True})
+    assert vus == [35]
 
 
 def test_fermer_retire_les_deux(socle, admin):

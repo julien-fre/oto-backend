@@ -17,7 +17,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, StrictInt
 
-from .. import (access, billing_grants, providers, credentials_store, db,
+from .. import (access, billing, billing_grants, providers, credentials_store, db,
                 group_store, org_store)
 from . import _identite
 from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
@@ -333,6 +333,10 @@ def _set_option(ctx: ResolvedCtx, inp: OptionInput) -> dict:
     else:
         db.clear_option_comp(inp.entity_type, eid, inp.option)
         key = _compose_platform_revoke(inp, eid)
+    if inp.entity_type == "org":
+        # Le don d'ORG devient un droit déclaré de l'org (source `offered`, même
+        # échéance). Le grain personne n'en écrit aucun : seule l'org porte un droit payant.
+        billing.reconcilier_droits(int(eid))
     return {"ok": True, "entity_type": inp.entity_type, "entity_id": eid,
             "option": inp.option, "on": inp.on, "platform_key": key,
             "visible_next_session": _visible_next_session(ctx, inp, eid)}

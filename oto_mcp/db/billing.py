@@ -416,6 +416,52 @@ def subscription_plan_for_org(org_id: int) -> Optional[str]:
     return row["plan"] if row else None
 
 
+# ── ce que la réconciliation des droits relit (ADR 0070 §7) ──────────────────
+#
+# Les bornes sortent en SECONDES EPOCH, pas en date : le row factory rend une date sans
+# fuseau (`_normalize_value`), et une échéance de droit relue sous un fuseau supposé se
+# décalerait d'autant. `billing_droits` les reconvertit en UTC.
+
+def subscription_rights_state(org_id: int) -> Optional[dict]:
+    """L'abonnement de l'org tel que la réconciliation des droits le relit, ou `None`."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT plan, provider, status, canceled_at IS NOT NULL AS canceled, "
+            "EXTRACT(EPOCH FROM current_period_end) AS period_end, "
+            "EXTRACT(EPOCH FROM grace_until) AS grace_until "
+            "FROM org_subscriptions WHERE org_id = %s",
+            (org_id,),
+        ).fetchone()
+
+
+def org_option_comp_bounds(org_id: int) -> list[dict]:
+    """Les dons d'option posés sur l'ORG (grain org seulement), échus compris."""
+    with _connect() as conn:
+        return list(conn.execute(
+            "SELECT option, granted_by, EXTRACT(EPOCH FROM expires_at) AS expires_at "
+            "FROM option_comps WHERE entity_type = 'org' AND entity_id = %s "
+            "ORDER BY option",
+            (str(org_id),),
+        ))
+
+
+def orgs_with_commercial_rights(sources: tuple[str, ...]) -> list[int]:
+    """Les orgs qu'une réconciliation complète doit relire : un abonnement, un don
+    d'org, ou une ligne de droit posée sous l'une de `sources`. Jointe à `orgs` : un
+    don resté sur une org supprimée n'a pas de droit à porter."""
+    with _connect() as conn:
+        return [r["id"] for r in conn.execute(
+            "SELECT o.id FROM orgs o WHERE "
+            "EXISTS (SELECT 1 FROM org_subscriptions s WHERE s.org_id = o.id) "
+            "OR EXISTS (SELECT 1 FROM option_comps c WHERE c.entity_type = 'org' "
+            "           AND c.entity_id = o.id::text) "
+            "OR EXISTS (SELECT 1 FROM org_entitlements e WHERE e.org_id = o.id "
+            "           AND e.source = ANY(%s)) "
+            "ORDER BY o.id",
+            (list(sources),),
+        )]
+
+
 # ── billing_payments (journal) ───────────────────────────────────────────────
 
 def insert_billing_payment(

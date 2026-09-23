@@ -131,6 +131,14 @@ def plan_is_unmetered(plan: str) -> bool:
     return bool(meta and meta.get("unmetered"))
 
 
+def plan_rights(plan: str) -> tuple[str, ...]:
+    """Les droits déclarés (`org_entitlements.right_key`) qu'un plan fait poser : ses
+    options, plus la levée du quota plateforme s'il est `unmetered`. Plan inconnu = rien."""
+    from .access.entitlements import PLATFORM_UNMETERED
+    droits = tuple(sorted(plan_options(plan)))
+    return droits + ((PLATFORM_UNMETERED,) if plan_is_unmetered(plan) else ())
+
+
 def _hosted_by_partner(org_id: int) -> bool:
     """L'org est-elle hébergée par un tenant TIERS, sur réponse franche ?
 
@@ -176,6 +184,14 @@ def apply_plan_entitlements(org_id: int, plan: str) -> None:
                     "messagerie reste celui que sa facturation a posé", org_id)
         return
     db.set_org_unipile_limit(org_id, seats)
+
+
+def reconcilier_droits(org_id: int) -> None:
+    """Réaligne les droits déclarés de l'org (`org_entitlements`) sur son état de
+    commerce — à appeler APRÈS chaque geste qui change cet état. Rejouable : le détail
+    est dans `billing_droits`. Import tardif, `billing_droits` importe ce module."""
+    from . import billing_droits
+    billing_droits.reconcilier(org_id)
 
 
 def _add_period(dt: datetime, interval: str) -> datetime:
@@ -450,6 +466,9 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
     # période à chaque appel. Un abonnement résilié (canceled_at) n'est pas concerné :
     # il peut légitimement re-souscrire, exactement comme dans `subscribe`.
     if sub_row and sub_row["status"] == "active" and not sub_row.get("canceled_at"):
+        # Les droits se reposent aussi ici : si la pose a échoué au passage qui a ouvert
+        # l'abonnement, le rejeu du webhook ou la re-sonde du navigateur la rattrapent.
+        reconcilier_droits(org_id)
         return {"status": "active", "plan": sub_row["plan"]}
 
     # Candidats = les premiers paiements qui n'ont pas DÉFINITIVEMENT échoué. `paid`
@@ -559,6 +578,7 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
         mandate_rum=mandate.get("mandateReference"),
         status="active", current_period_end=period_end, next_billing_at=period_end)
     apply_plan_entitlements(org_id, plan)
+    reconcilier_droits(org_id)
     logger.info("billing: org %s abonnée (plan %s, méthode %s, échéance %s)",
                 org_id, plan, method, period_end.date())
     return {"status": "active", "plan": plan, "method": method, **billing_vat.tax_view(row),
@@ -642,6 +662,8 @@ def cancel(org_id: int) -> dict:
     if not row or row["status"] == "canceled":
         raise ValueError("not_subscribed: aucun abonnement à résilier")
     db_billing.mark_cancel_at_period_end(org_id)
+    # La résiliation BORNE les droits à la fin de la période payée.
+    reconcilier_droits(org_id)
     return status(org_id)
 
 
@@ -679,6 +701,7 @@ def resume(org_id: int) -> dict:
         raise ValueError(
             "already_ended: la résiliation s'est consommée pendant la reprise — "
             "relis l'état avant de rejouer")
+    reconcilier_droits(org_id)
     return status(org_id)
 
 
@@ -694,6 +717,7 @@ def admin_set_plan(org_id: int, plan: str, *, granted_by: str) -> dict:
         raise ValueError(f"unknown_plan: {plan!r} (plans : {', '.join(PLANS)})")
     db_billing.set_comp_subscription(org_id, plan, granted_by=granted_by)
     apply_plan_entitlements(org_id, plan)
+    reconcilier_droits(org_id)
     logger.info("billing: plan %s FORCÉ (comp) sur l'org %s par %s",
                 plan, org_id, granted_by)
     return status(org_id)
@@ -709,6 +733,7 @@ def admin_clear_plan(org_id: int) -> dict:
         raise ValueError("paid_subscription: abonnement payant — résilier via "
                          "cancel, pas admin_clear_plan")
     db_billing.delete_subscription(org_id)
+    reconcilier_droits(org_id)
     # Le plafond de sièges n'est PAS touché (#805) : il n'y a pas de « valeur d'avant »
     # à restaurer, et écrire `NULL` le ramènerait au défaut plateforme.
     logger.info("billing: plan comp retiré de l'org %s", org_id)

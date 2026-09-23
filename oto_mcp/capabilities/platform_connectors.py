@@ -34,7 +34,7 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, StrictBool, StrictInt
 
-from .. import access, db, org_store, providers
+from .. import access, billing, db, org_store, providers
 from ..connectors import activation as connector_activation
 from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -332,6 +332,9 @@ def _set_platform_access(ctx: ResolvedCtx, inp: PlatformAccessSetInput) -> dict:
             db.clear_option_comp(inp.scope, sid, option)
         if has_key:
             credentials_store.platform_revoke(inp.provider, gscope)
+    if option and inp.scope == "org":
+        # Le don d'org devient un droit déclaré de l'org (source `offered`).
+        billing.reconcilier_droits(int(sid))
     return {
         "ok": True, "connector": inp.provider, "scope": inp.scope, "id": sid, "on": on,
         "paid_option": option, "platform_key": has_key,

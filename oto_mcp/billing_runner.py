@@ -334,6 +334,18 @@ def _catch_up(org_id: int, payment_ref: str) -> None:
                   org_id, payment_ref, e, exc_info=True)
 
 
+def _reposer_droits(org_id: int) -> None:
+    """Réaligne les droits déclarés de l'org après que ce tick a changé son état
+    (échéance encaissée, impayé, fermeture). Un échec est une ERREUR journalisée, pas un
+    arrêt du cycle de paiement : la réconciliation est rejouable, et la maintenance
+    quotidienne (`oto-mcp maintenance droits`) la repasse sur toutes les orgs."""
+    try:
+        billing.reconcilier_droits(org_id)
+    except Exception:  # noqa: BLE001 — journalisé ; les droits se rattrapent au passage suivant
+        log.error("billing_runner: droits de l'org %s non réalignés — l'échéance de "
+                  "ses droits déclarés reste celle d'avant ce tick", org_id, exc_info=True)
+
+
 def tick() -> dict:
     """Un passage complet (sync, appelé en thread). Retourne les compteurs."""
     if not mollie_client.is_configured():
@@ -344,13 +356,17 @@ def tick() -> dict:
     for org_id in db_billing.sweep_period_end_cancellations():
         log.info("billing_runner: org %s résiliée (période échue)", org_id)
         counts["closed"] = counts.get("closed", 0) + 1
+        _reposer_droits(org_id)
     for org_id in db_billing.sweep_grace_expired():
         log.warning("billing_runner: org %s fermée (grace consommée)", org_id)
         counts["closed"] = counts.get("closed", 0) + 1
+        _reposer_droits(org_id)
 
     for sub_row in db_billing.due_subscriptions():
         outcome = _charge_one(sub_row, now)
         counts[outcome] = counts.get(outcome, 0) + 1
+        if outcome in ("renewed", "past_due"):
+            _reposer_droits(sub_row["org_id"])
 
     for row in db_billing.open_billing_payments():
         try:

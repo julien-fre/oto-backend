@@ -8,6 +8,14 @@ from oto_mcp import access, billing, billing_runner
 from oto_mcp.db import billing as db_billing
 
 
+@pytest.fixture(autouse=True)
+def _droits_declares_hors_banc(monkeypatch):
+    """La réconciliation des droits déclarés lit la base : son banc est
+    `test_billing_droits_live`. Ici, elle est neutralisée."""
+    from oto_mcp import billing as _billing
+    monkeypatch.setattr(_billing, "reconcilier_droits", lambda org_id: None)
+
+
 # ── catalogue des 4 plans ────────────────────────────────────────────────────
 
 def test_four_plans_with_prices():

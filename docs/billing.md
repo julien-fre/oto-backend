@@ -285,6 +285,40 @@ Les lignes recopiées de la projection ont leurs quatre satellites à `NULL` :
 « access ». Leur inventer un contexte ferait mentir la trace là où elle sert de
 preuve.
 
+## Les droits déclarés : le commerce les écrit, le cœur les relit (ADR 0070 §7)
+
+Le cœur relit `org_entitlements` (`access.org_has`) et ne sait pas qui paie. Le
+commerce y **écrit** ses droits : c'est `billing_droits.reconcilier(org)`, rejouée
+après chaque geste qui change l'état de l'org.
+
+| état du commerce | source | échéance (`expires_at`) |
+| --- | --- | --- |
+| abonnement payé `active` | `subscription` | fin de période + 21 j (relances J+3, J+6, puis 15 j de grâce) |
+| abonnement payé résilié | `subscription` | fin de période |
+| abonnement payé `past_due` | `subscription` | `grace_until` |
+| abonnement offert (`comp`) | `offered` | sa fin de période, ou aucune |
+| don d'option posé sur l'ORG | `offered` | l'échéance du don |
+| les deux derniers, org hébergée par un partenaire | `partner` | aucune |
+
+Un plan pose ses `options` et, s'il est `unmetered`, `platform_unmetered`
+(`billing.plan_rights`). **Le don fait à une PERSONNE n'écrit rien** : seule l'org
+porte un droit payant.
+
+- **Rejouable, pas événementielle.** Qui l'appelle : `confirm` (les deux branches,
+  pour que le rejeu du webhook rattrape une pose ratée), `cancel`, `resume`,
+  `admin_set_plan`, `admin_clear_plan`, le runner après une échéance encaissée, un
+  impayé ou une fermeture, et le don d'org (`admin.option.set`,
+  `platform.connector.access_set`). Un appel manqué se rattrape au boot, par
+  `oto-mcp maintenance droits` (timer quotidien) ou au geste suivant.
+- **Elle ne retire que ce que ses sources ont posé** (`subscription`, `offered`,
+  `partner`). Une autre étiquette ne lui appartient pas.
+- **La date ferme le droit toute seule** : aucune boucle n'a besoin de passer le jour
+  venu. `has` filtre en SQL sur `NOW()`.
+- **La reprise** est la même fonction sur toutes les orgs (`reconcilier_tout`) : au
+  démarrage (`reprise_droits` au journal, avec ses comptes) ou par la commande. Se
+  vérifie par une lecture : `SELECT source, right_key, count(*) FROM
+  org_entitlements GROUP BY 1, 2`.
+
 ## Les paliers, et d'où ils viennent
 
 **La grille vit dans `billing.PLANS`, et nulle part ailleurs.** Le dashboard peint
