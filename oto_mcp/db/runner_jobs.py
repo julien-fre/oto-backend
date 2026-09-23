@@ -643,6 +643,13 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
             # Échec : au plafond → failed VISIBLE ; sinon retour en file, backoff
             # linéaire, la trace d'erreur conservée pour l'audit. `result` s'écrit
             # comme au succès — la conclusion suivante l'écrase, rien ne s'additionne.
+            #
+            # ⚠️ `attempt_errors` s'AJOUTE (`||`), là où `last_error` écrase : les
+            # tentatives d'un même travail échouent parfois pour des raisons
+            # différentes, et seule la dernière survivait. Le numéro vient de
+            # `attempts`, qui est déjà à jour quand on arrive ici (posé à la
+            # réservation) — donc il nomme bien la tentative qu'on conclut.
+            motif = (error or 'échec non détaillé')[:500]
             row = conn.execute(
                 """
                 UPDATE runner_jobs
@@ -653,11 +660,17 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                        due_at   = NOW() + make_interval(secs => %s * attempts),
                        lease_until = NULL, claimed_by = NULL,
                        last_error = %s,
+                       attempt_errors = COALESCE(attempt_errors, '[]'::jsonb)
+                                        || jsonb_build_array(jsonb_build_object(
+                                               'attempt', attempts,
+                                               'at', to_char(NOW() AT TIME ZONE 'UTC',
+                                                             'YYYY-MM-DD"T"HH24:MI:SSZ'),
+                                               'error', %s::text)),
                        result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
                 RETURNING status, run_id
                 """,
-                (_BACKOFF_S, (error or 'échec non détaillé')[:500],
+                (_BACKOFF_S, motif, motif,
                  json.dumps(result) if result is not None else None,
                  job_id, worker_sub),
             ).fetchone()
@@ -744,8 +757,8 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     seul SQL est exactement ce que #469 reprochait."""
     ou, params = _filtre_de_file(org_id, status, source, fleet_id, trigger_id)
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
-         "       claimed_by, lease_until, last_error, result, due_at, created_at, "
-         "       finished_at, fleet_id, sub "
+         "       claimed_by, lease_until, last_error, attempt_errors, result, "
+         "       due_at, created_at, finished_at, fleet_id, sub "
          "FROM runner_jobs") + ou
     if before_id is not None:
         q += " AND id < %s"
@@ -787,7 +800,7 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             "SELECT id, kind, run_id, payload, status, attempts, max_attempts, result, "
-            "       claimed_by, lease_until, last_error, due_at, created_at, "
+            "       claimed_by, lease_until, last_error, attempt_errors, due_at, created_at, "
             "       finished_at, fleet_id, sub "
             "FROM runner_jobs WHERE id = %s AND org_id = %s",
             (job_id, org_id),

@@ -263,7 +263,7 @@ def _call(ctx: ResolvedCtx, inp: CallInput) -> dict:
 
 class MonitoringInput(BaseModel):
     op: Literal["summary", "rest", "rest_calls", "connectors", "transport", "funnel",
-                "calls", "call", "runs", "run", "gaps", "tool_quality"]
+                "calls", "call", "runs", "run", "gaps", "tool_quality", "agents_en_echec"]
     days: Optional[int] = None            # fenêtre (défaut : 7 ; funnel/gaps/tool_quality : 30)
     limit: Optional[int] = None           # calls/rest_calls (défaut = plafond 200) / runs (défaut 100)
     sub: Optional[str] = None             # summary/rest/rest_calls/calls : appelant (email ou sub)
@@ -312,6 +312,7 @@ _CHAMPS_LUS: dict[str, set[str]] = {
     "run": {"run_id"},
     "gaps": {"days"},
     "tool_quality": {"days"},
+    "agents_en_echec": {"days", "org_id"},
 }
 
 
@@ -371,6 +372,10 @@ def _monitoring(ctx: ResolvedCtx, inp: MonitoringInput) -> dict:
     if inp.op == "run":
         return usage._run(ctx, usage.RunInput(run_id=_need(
             inp.run_id, "missing_run_id", "`run_id` requis pour run.")))
+    if inp.op == "agents_en_echec":
+        # 1 jour par défaut : c'est une alerte, pas une histoire. Une fenêtre
+        # large mélangerait une panne réparée hier avec celle de ce matin.
+        return {"agents": db.agents_en_echec(inp.days or 1, org_id=inp.org_id)}
     if inp.op == "gaps":
         return usage._gaps(ctx, usage.DaysInput(days=inp.days or 30))
     return usage._tool_quality(ctx, usage.DaysInput(days=inp.days or 30))  # tool_quality
@@ -433,7 +438,16 @@ CAPABILITIES += [
             "null otherwise — a refused or no-op X-Oto-View-As header leaves it null. "
             "Rows logged before 2026-09-21 carry the header as claimed, unverified) / "
             "connectors (credential resolution failures; optional `org_id`) / funnel "
-            "(accounts vs real usage) / gaps · tool_quality (aggregated usage signals). "
+            "(accounts vs real usage) / gaps · tool_quality (aggregated usage signals) / "
+            "agents_en_echec (hosted agents whose JOBS are dying, grouped by agent AND "
+            "by reason — `days` (default 1), optional `org_id`; each row carries "
+            "`travaux`, `tentatives`, `depuis`, `dernier`). ⚠️ This is the one nobody "
+            "asks for: a triggered agent breaks SILENTLY — its queue empties because "
+            "dead jobs stop waiting, its screen says `active`, and its last run can be "
+            "green. Grouped by reason because three times the same fault is a bug to "
+            "fix, while three different ones is a misconfigured agent — one count would "
+            "read them alike. This is the lens a nightly report reads to say it in one "
+            "line. "
             "For raw signals use oto_admin_signal."),
         mcp="oto_admin_monitoring",
     ),

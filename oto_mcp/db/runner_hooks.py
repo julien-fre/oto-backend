@@ -41,6 +41,14 @@ QUEUED, DELAYED = "queued", "delayed"
 REFUSE_PAUSED, REFUSE_TOO_LARGE, REFUSE_RATE = (
     "refused_paused", "refused_too_large", "refused_rate")
 
+#: Ce qu'on rend du corps reçu quand on RELIT une livraison — borné parce qu'une
+#: page de livraisons en sert jusqu'à 200, et qu'un corps entier × 200 n'est plus
+#: un écran mais un transfert. Le corps complet reste sur le travail
+#: (`runner_jobs.payload`), qui est son domicile ; ceci en est la VUE.
+#: ⚠️ Le corps ne se recopie toujours pas sur la livraison — cf. l'en-tête. On le
+#: LIT en joignant le travail, ce qui garde un seul exemplaire et une seule vérité.
+_CORPS_MAX = 4000
+
 
 def verrouiller_le_declencheur(conn, trigger_id: int) -> None:
     """Prend le verrou de CE déclencheur pour le reste de la transaction.
@@ -256,7 +264,7 @@ def enregistrer(conn, trigger_id: int, org_id: int, outcome: str,
 
 
 def livraisons(trigger_id: int, org_id: int, limit: int = 50,
-               en_attente: bool = False) -> list[dict]:
+               en_attente: bool = False, avec_corps: bool = False) -> list[dict]:
     """Ce que ce déclencheur a reçu — ou, `en_attente`, ce qui ATTEND de tourner.
 
     Org-scopé : un déclencheur d'une autre org rend une liste vide, jamais les
@@ -278,14 +286,38 @@ def livraisons(trigger_id: int, org_id: int, limit: int = 50,
     dans les déroulés, pas ici : un journal qui répète la liste des runs sous un
     bouton « vider la file » se lit comme la file (vécu le 16/09/2026 — deux
     livraisons aux déroulés terminés depuis des heures, affichées « queued »).
+
+    ⚠️ **`job_input` est le CORPS REÇU tel que l'agent l'a lu** — l'instruction
+    augmentée que porte le travail (`runner_jobs.payload->>'input'`), bornée ici,
+    et servie SUR DEMANDE (`avec_corps`) : sans elle la clé est absente, pas nulle.
+    Une page fait jusqu'à 200 lignes ; 200 corps de 4 Ko servis à un agent qui
+    demande « a-t-il tourné » sont des dizaines de milliers de jetons pour une
+    question oui/non — le coût d'un relevé ne doit jamais dépasser ce qu'il relève.
+    Le corps n'est pas stocké sur la livraison (cf. le schéma : il voyage dans la
+    charge du travail, et le garder deux fois doublerait volume et surface de
+    fuite) : il se LIT en joignant, jamais en recopiant. Sans lui, rejouer une
+    livraison morte demandait de deviner ce qu'elle portait — et une livraison
+    qu'on ne peut pas rejouer à l'identique ne se diagnostique pas (trois
+    livraisons perdues sur un même agent événementiel, 18-22/09/2026). `NULL` pour
+    un refus (aucun travail)
+    ou un travail disparu.
+
+    ⚠️ **`job_attempt_errors` porte les motifs de TOUTES les tentatives**, pas
+    seulement la dernière : trois essais qui échouent différemment racontent autre
+    chose que trois essais identiques, et `last_error` ne gardait que le troisième.
+    `[]` = aucune tentative échouée, un vrai vide ; `NULL` = pas de travail.
     """
     filtre = "AND j.status IN ('pending', 'held')" if en_attente else ""
     ordre = "ASC" if en_attente else "DESC"
+    corps = (f"LEFT(j.payload->>'input', {_CORPS_MAX}) AS job_input," if avec_corps
+             else "")
     with _connect() as conn:
         rows = conn.execute(
             f"""
             SELECT d.id, d.trigger_id, d.received_at, d.outcome, d.job_id, d.source,
-                   j.status AS job_status, j.due_at AS job_due_at
+                   j.status AS job_status, j.due_at AS job_due_at,
+                   {corps}
+                   j.attempt_errors AS job_attempt_errors
               FROM runner_hook_deliveries d
               LEFT JOIN runner_jobs j ON j.id = d.job_id AND j.org_id = d.org_id
              WHERE d.trigger_id = %s AND d.org_id = %s {filtre}

@@ -386,6 +386,23 @@ ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS secret_hash TEXT UN
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 ALTER TABLE runner_platform_workers ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
+-- CHAQUE tentative garde son motif (22/09/2026). `last_error` porte la DERNIÈRE
+-- et écrase les précédentes : un travail mort au bout de trois essais ne montrait
+-- donc qu'un tiers de son histoire, et rien ne disait si les trois avaient échoué
+-- pour la même raison. Mesuré sur un agent événementiel de production : trois
+-- travaux, neuf tentatives, trois lignes lisibles.
+--
+-- ⚠️ Un JOURNAL, pas un état : on APPEND, on ne réécrit jamais. Une tentative
+-- inscrite reste inscrite même si la suivante réussit — c'est précisément le cas
+-- où l'écrasement faisait disparaître l'incident (un travail `done` au troisième
+-- essai ne garde aujourd'hui aucune trace des deux premiers).
+--
+-- ⚠️ Même matière que `last_error` — un motif BORNÉ, jamais du contenu de fil,
+-- jamais un secret. `last_error` reste : il est lu partout, et le remplacer par
+-- une dérivation de ce tableau ferait d'une lecture chaude un parcours JSON.
+ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS attempt_errors JSONB
+    NOT NULL DEFAULT '[]'::jsonb;
+
 -- Ce qu'un DÉCLENCHEUR WEBHOOK a reçu (12/09/2026) — une ligne par livraison,
 -- acceptée ou non. Trois lecteurs, un seul écrivain (la route `/api/hooks`) :
 --
