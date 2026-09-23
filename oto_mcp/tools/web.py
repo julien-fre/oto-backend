@@ -275,21 +275,21 @@ def register(mcp: FastMCP) -> None:
 
     def _serper_scrape(url: str) -> Optional[dict]:
         """Cran ② — None si la clé serper n'est pas résolvable (cran sauté)."""
-        from oto.tools.serper import SerperClient
+        from .serper import client_for, credits_consumed
 
         try:
             key, is_platform = access.resolve_api_key("serper")
         # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de clé serper » (#424, verdict C)
         except Exception:  # noqa: BLE001 — pas de clé = cran indisponible, pas une panne
             return None
-        res = SerperClient(api_key=key).scrape_page(url, include_markdown=True)
+        # Le client PARTAGÉ avec les outils `serper_*` : un seul limiteur par clé (oto#115).
+        res = client_for(key).scrape_page(url, include_markdown=True)
         if is_platform:
             # `web_read` est la SECONDE bouche serper du backend, et elle débitait 1 là
             # où un scrape en coûte 2 (la description ci-dessous l'annonce depuis
             # toujours) : le quota interne sous-comptait donc de moitié tout ce qui
             # passait par le cran ②. Même règle que les tools `serper_*`, importée et
             # non recopiée — une règle de coût dupliquée est une règle qui diverge.
-            from .serper import credits_consumed
             access.record_platform_usage("serper", credits_consumed("scrape_page", res))
         return res
 
@@ -410,7 +410,8 @@ def register(mcp: FastMCP) -> None:
 
         # ── ② le scraper hébergé ─────────────────────────────────────────────
         # Même raison qu'au cran ① : `SerperClient` est synchrone (et s'auto-
-        # limite par un `time.sleep`), il n'a rien à faire dans la boucle.
+        # limite par un `time.sleep`, par clé : instance partagée, oto#115), il n'a
+        # rien à faire dans la boucle.
         scrape = await asyncio.to_thread(_serper_scrape, url)
         if scrape is None:
             tentatives.append({"cran": "serper",

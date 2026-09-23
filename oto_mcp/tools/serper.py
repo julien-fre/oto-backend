@@ -8,6 +8,7 @@ Guests doivent obligatoirement poser leur propre clé.
 from __future__ import annotations
 
 import re
+import threading
 from typing import Literal, Optional
 
 import requests
@@ -78,6 +79,32 @@ def credits_consumed(method: str, result) -> int:
         return _as_count(raw, default=1)
     return _as_count(result.get("credits"), default=1)
 
+# UNE instance du client par clé, pour tout le processus (oto#115). Le client d'oto-core
+# porte son limiteur de débit (un intervalle minimal entre deux requêtes) dans l'INSTANCE :
+# reconstruit à chaque appel d'outil, son compteur repartait de zéro et la limite déclarée
+# n'avait jamais d'effet — le refus venait du fournisseur, au milieu d'un traitement.
+# Clé de cache = (fabrique, clé d'API) : la limite est celle d'une clé, que la servent un
+# outil `serper_*` ou le cran ② de `web_read` ; la fabrique en fait partie pour qu'une
+# classe remplacée (banc, rechargement) ne serve jamais une instance de l'ancienne.
+# Le nombre d'entrées est borné par celui des clés serper distinctes (plateforme + clés
+# posées par les comptes) : pas d'éviction.
+_CLIENTS: dict[tuple, object] = {}
+_CLIENTS_VERROU = threading.Lock()
+
+
+def client_for(key: str):
+    """Le client Serper de cette clé, le MÊME d'un appel à l'autre. PUBLIQUE parce que
+    `web_read` est la seconde bouche serper du backend et doit partager le limiteur :
+    deux instances pour une clé, ce sont deux compteurs qui s'ignorent."""
+    from oto.tools.serper import SerperClient
+    cle = (SerperClient, key)
+    with _CLIENTS_VERROU:
+        client = _CLIENTS.get(cle)
+        if client is None:
+            client = _CLIENTS[cle] = SerperClient(api_key=key)
+        return client
+
+
 # Serper renvoie `Serper <method> <status>: <msg>` (RuntimeError nu). Deux classes
 # d'échec sont des ENTRÉES invalides, pas des bugs backend — on les convertit en
 # McpError GÉRÉE (message actionnable pour l'agent + non reporté à Sentry, la
@@ -106,6 +133,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     d'une org, trois jours durant, sans préflight possible).
     """
     from oto.tools.serper import SerperClient
+    # Hors du cache `client_for` exprès : la clé sondée n'est qu'une CANDIDATE.
     SerperClient(api_key=fields["key"]).search("oto", num=1)
 
 
@@ -117,7 +145,7 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> tuple[SerperClient, bool]:
         key, is_platform = access.resolve_api_key("serper")
-        return SerperClient(api_key=key), is_platform
+        return client_for(key), is_platform
 
     def _refus_local(url: str) -> "str | None":
         """La raison pour laquelle ce domaine n'est JAMAIS scrapable, ou `None`.

@@ -257,7 +257,10 @@ def test_le_cap_arrete_la_lecture_en_cours(monkeypatch):
 #      utilisateurs à contaminer l'un par l'autre ;
 #   2. aucun état n'est partagé entre deux appels : `requests.get` ouvre sa
 #      propre connexion, `SerperClient` est instancié à chaque appel, une
-#      session Browserbase est ouverte puis relâchée par appel ;
+#      session Browserbase est ouverte puis relâchée par appel ; ⚠️ vrai au
+#      28/08 — depuis oto#115, le client Serper est UNE instance par clé
+#      (`serper.client_for`), pour que son limiteur de débit compte : elle ne
+#      porte que ce limiteur et la session HTTP, aucune donnée de réponse ;
 #   3. le cas cité (`www.calitex.fr` → `boutique.nydel-france.fr`) est une
 #      **redirection 301 légitime**, revérifiée en direct le 28/08 — elle n'est
 #      d'ailleurs visible qu'avec notre User-Agent, curl nu reçoit un 403 ;
