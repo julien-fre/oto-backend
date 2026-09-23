@@ -203,6 +203,14 @@ class ResourceKind:
 #: prochain renommage la trouve au lieu de la traverser.
 TYPE_RESSOURCE_DATASTORE = "datastore_namespace"
 
+#: Le type de ressource d'une PROCÉDURE, tel qu'il est ÉCRIT EN BASE — même régime que
+#: celui du tableau ci-dessus : une valeur de ligne de `resource_grants`, pas un nom
+#: servi. Le produit, lui, dit `procedure` (otomata-tech/oto#65, arbitrage du
+#: 23/09/2026) : la traduction se fait à la frontière de `oto_resource`
+#: (`resources_contract.KIND_OF`), et nulle part ailleurs. La valeur stockée garde le
+#: mot d'avant #519 jusqu'à sa migration nommée (lot D, #526).
+TYPE_RESSOURCE_PROCEDURE = "doctrine"
+
 RESOURCE_KINDS: dict[str, ResourceKind] = {}
 
 
@@ -540,6 +548,6 @@ def _guide_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> None:
 
 
 register_kind(
-    "doctrine",
+    TYPE_RESSOURCE_PROCEDURE,
     ResourceKind(owner_getter=_guide_owner, reparent=_guide_reparent),
 )

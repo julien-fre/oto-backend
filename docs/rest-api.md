@@ -623,7 +623,7 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   même invitation est **idempotent** (200, même réponse).
 - **`POST /api/resources` déclare sa 200 en UNION DISCRIMINÉE** (#659, 2026-09-01), plus
   onze refus. La forme dépend de `resource_type` — `row_count` pour un tableau,
-  `archived_at` pour un projet, `version` pour un guide — donc le document rend un
+  `archived_at` pour un projet, `version` pour une procédure (`resource_type="procedure"`, oto#65) — donc le document rend un
   `oneOf` + `discriminator: resource_type` pour `op=get`, à l'intérieur d'un `anyOf` qui
   couvre les cinq verbes (six branches : `op=share` en a deux, grant vs publication).
   Modèles dans `capabilities/resources_contract.py`. ⚠️ **Une union PLATE aurait déclaré

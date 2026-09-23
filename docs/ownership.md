@@ -127,6 +127,23 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
 > projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.
 
+## Une procédure se gouverne sous son nom : `procedure` (oto#65)
+
+> **Le nom servi.** `oto_resource` / `POST /api/resources[/v2]` publient la famille
+> `resource_type="procedure"`. La valeur ÉCRITE en base (`resource_grants.resource_type`,
+> kind d'`ownership`) garde son nom d'avant #519 jusqu'au lot D (#526) : elle est nommée
+> une seule fois (`ownership.TYPE_RESSOURCE_PROCEDURE`) et traduite à la frontière par
+> `resources_contract.KIND_OF`, que lisent la règle `RESOURCE_GOVERN` ET le handler.
+> Aucun des deux n'adresse `ownership` sous le nom public. L'ancien nom reste ACCEPTÉ en
+> entrée jusqu'à sa date, avec un `deprecation_warning` (`docs/alias-deprecies.md`).
+> **Transférer une procédure la DÉPLACE** (`op=transfer`, vers une personne, une équipe
+> ou une autre org dont on est membre) : l'`id` ne change pas, et ses révisions, ses liens
+> de projet et ses partages la suivent (`org_store.move_instruction`, une transaction ;
+> slug suffixé s'il est pris chez la cible, jamais d'écrasement). **La cascade d'un
+> projet, elle, COPIE** ses procédures chez la cible et re-pointe le lien (#52) :
+> l'originale reste chez la source. Les deux sont écrits dans la description servie.
+> Banc : `tests/test_transfert_procedure_oto65.py` (org A → org B, contre un vrai PG).
+
 ## Partager UNE page sans son projet (kind `doc`, signal #1084)
 
 > **Le besoin.** Faire lire une page d'un projet à des personnes d'une autre org sans leur

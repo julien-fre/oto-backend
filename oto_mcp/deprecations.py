@@ -294,6 +294,50 @@ def cible(alias: AliasRest, path_params: dict, query: str = "") -> str:
     return f"{chemin}?{query}" if query else chemin
 
 
+# ── Valeurs d'entrée renommées (otomata-tech/oto#65, 23/09/2026) ───────────
+#
+# Une VALEUR qu'un appelant passe dans un champ, renommée — pas une clé ni un chemin.
+# Premier cas : la famille « procédure » de `oto_resource` (`resource_type`), que la
+# surface servait sous le mot d'avant #519. Arbitrage d'Alexis du 23/09/2026 : ce
+# mot-là ne doit plus apparaître.
+#
+# ⚠️ **Pourquoi un alias et pas un retrait sec** : un appelant vivant l'envoie —
+# l'écran de partage d'une procédure du dashboard (`DoctrineView` →
+# `SharePrincipalDialog`, `resource-type=` codé en dur), mesuré le 23/09/2026. Le
+# nouveau front ne l'emploie pas, ni le plugin, ni oto-core, ni la CLI.
+#
+# **Forme de la coexistence** : l'entrée est RÉÉCRITE vers le nom d'aujourd'hui avant
+# toute autre lecture (autz comprise), et la réponse porte `deprecation_warning`, qui
+# nomme le nom d'aujourd'hui et la date. Rien en aval n'apprend que l'alias existe ;
+# la réponse, elle, ne sert que le nom d'aujourd'hui (`resource_type: "procedure"`).
+#
+# Sa propre date — même raison que `RETRAIT_DATASTORE` : une seule date pour deux
+# renommages est une copie qui ne peut que devenir fausse.
+ANNONCE_PROCEDURE = datetime.date(2026, 9, 23)
+RETRAIT_PROCEDURE = _plus_de_mois(ANNONCE_PROCEDURE, PREAVIS_MOIS)
+
+#: champ → ({valeur d'hier → valeur d'aujourd'hui}, date de retrait).
+VALEURS: dict = {
+    "resource_type": ({"doctrine": "procedure"}, RETRAIT_PROCEDURE),
+}
+
+
+def valeur_canonique(champ: str, valeur: Any) -> tuple:
+    """`(valeur d'aujourd'hui, avis)` — l'avis vaut `None` si la valeur n'est pas dépréciée.
+
+    L'avis est le texte SERVI dans `deprecation_warning` : il nomme ce qu'on a reçu,
+    ce qu'il faut envoyer, et la date — les trois choses qui permettent à l'appelant
+    de se corriger sans lire cette page."""
+    renommees, retrait = VALEURS.get(champ, ({}, None))
+    nouvelle = renommees.get(valeur) if isinstance(valeur, str) else None
+    if nouvelle is None:
+        return valeur, None
+    return nouvelle, (
+        f"Déprécié : `{champ}={valeur}` s'écrit `{champ}={nouvelle}` "
+        f"(retrait le {retrait.strftime('%d/%m/%Y')}). L'appel a été servi "
+        f"comme `{nouvelle}` ; envoie désormais `{nouvelle}`.")
+
+
 # ── Clés de capacité (lot B2) ───────────────────────────────────────────────
 # ancienne clé → clé d'aujourd'hui. ⚠️ **Renommées SANS alias**, et c'est un choix :
 # une clé de capacité ne sort du serveur qu'à deux endroits — `/api/admin/capabilities`

@@ -131,7 +131,7 @@ def test_la_stricte_exige_le_discriminant():
         V2.ResourceInputV2(op="list")
 
 
-@pytest.mark.parametrize("famille", ["datastore", "project", "doctrine"])
+@pytest.mark.parametrize("famille", ["datastore", "project", "procedure"])
 @pytest.mark.parametrize("valeur", ["abc", "", "7a", "1 OR 1", "../7"])
 def test_la_stricte_refuse_un_identifiant_non_numerique(famille, valeur):
     with pytest.raises(ValidationError):

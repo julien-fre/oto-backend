@@ -40,14 +40,15 @@ from oto_mcp import access, ownership, roles
 from oto_mcp.capabilities import _authz
 from oto_mcp.capabilities import resources as R
 from oto_mcp.capabilities._types import AuthzDenied, RawCtx
+from oto_mcp.capabilities.resources_contract import KIND_OF
 
 RAW = RawCtx(sub="u1")
 REGLE = _authz.RESOURCE_GOVERN()
 
-# Les deux mots du produit d'aujourd'hui pour une procédure, plus le mot français du
-# tableau : aucun n'est une famille de gouvernance, tous les trois sont ce qu'un
-# agent écrit spontanément.
-INCONNUES = ["procedure", "guide", "tableau", "banana"]
+# Ce qu'un agent écrit spontanément et qui n'est PAS une famille de gouvernance.
+# `procedure` en a été retiré le 23/09/2026 : c'est désormais le nom de la famille
+# (otomata-tech/oto#65) — le refus mesuré en #809 est devenu la réponse attendue.
+INCONNUES = ["guide", "tableau", "banana"]
 OPS_AVEC_ID = ["get", "transfer", "share", "unshare"]
 
 
@@ -72,8 +73,10 @@ def test_famille_inconnue_refusee_en_400_nomme(op, famille):
     assert err.code == "unsupported_resource_type"
     # Le refus doit ÉNUMÉRER ce qui est accepté : c'est la seule chose qui répare
     # l'appelant, et c'est ce qui manquait au signal #809.
-    for connue in ("datastore_namespace", "project", "doctrine"):
+    for connue in ("datastore_namespace", "project", "procedure", "doc"):
         assert connue in err.message, f"le refus ne nomme pas `{connue}`"
+    # Et il n'enseigne jamais la valeur STOCKÉE d'une procédure (oto#65).
+    assert KIND_OF["procedure"] not in err.message
 
 
 def test_une_famille_vide_reste_un_refus_de_saisie():
@@ -85,7 +88,7 @@ def test_une_famille_vide_reste_un_refus_de_saisie():
     assert ei.value.status == 400 and ei.value.code == "missing_resource"
 
 
-@pytest.mark.parametrize("famille", ["datastore_namespace", "project", "doctrine"])
+@pytest.mark.parametrize("famille", ["datastore_namespace", "project", "procedure"])
 def test_une_famille_connue_atteint_toujours_la_gouvernance(famille, monkeypatch):
     """Le garde-fou ne s'interpose que sur l'inconnu : sur une famille réelle, c'est
     toujours `can_govern` qui tranche, et son 403 est inchangé."""
@@ -99,7 +102,9 @@ def test_une_famille_connue_atteint_toujours_la_gouvernance(famille, monkeypatch
     ctx = REGLE(RAW, R.ResourceInput(op="transfer", resource_type=famille,
                                      resource_id="1246"))
     assert ctx.sub == "u1"
-    assert vus == [("u1", famille, "1246")]
+    # `ownership` reçoit le kind STOCKÉ de la famille publique — pour la procédure,
+    # ce n'est pas le nom que l'appelant a écrit.
+    assert vus == [("u1", KIND_OF[famille], "1246")]
 
 
 def test_op_list_ne_passe_toujours_pas_par_la_gouvernance():
@@ -107,8 +112,8 @@ def test_op_list_ne_passe_toujours_pas_par_la_gouvernance():
     qui refuse la famille (`_check_type`). Ce chemin-là servait déjà son 400 nommé —
     il ne change pas, sinon on transformerait un 400 du handler en 400 de la règle
     pour rien."""
-    ctx = REGLE(RAW, R.ResourceInput(op="list", resource_type="procedure"))
+    ctx = REGLE(RAW, R.ResourceInput(op="list", resource_type="guide"))
     assert ctx.sub == "u1"
     with pytest.raises(AuthzDenied) as ei:
-        R._check_type("procedure")
+        R._check_type("guide")
     assert ei.value.status == 400 and ei.value.code == "unsupported_resource_type"

@@ -4,7 +4,7 @@
 versionne et archive à la clé `(owner_type, owner_id, slug)`. Ici c'est la procédure
 comme **ressource possédée** — désignée par son `id` surrogate (ADR 0032 « stop using
 slug »), qui CHANGE de propriétaire, et qui s'ÉNUMÈRE pour être gouvernée. Ces fonctions
-alimentent le kind `doctrine` d'`ownership.py`, la cascade de livraison d'un projet
+alimentent le kind procédure d'`ownership.py` (`TYPE_RESSOURCE_PROCEDURE`), la cascade de livraison d'un projet
 (`oto_resource`) et la vue opérateur plateforme.
 
 Les deux plans ne se confondent pas, et c'est tout l'intérêt de la séparation : lire le
@@ -138,7 +138,7 @@ def move_instruction(instruction_id: int, new_owner_type: str,
 def list_instructions_for_owners(owners: list[tuple[str, str]]) -> list[dict]:
     """Procédures (hors base) des propriétaires donnés — plan GOUVERNANCE
     (métadonnées + propriétaire, sans body). Alimente
-    `oto_resource(op=list, resource_type='doctrine')`."""
+    `oto_resource(op=list, resource_type='procedure')`."""
     if not owners:
         return []
     clause = " OR ".join([f"({instructions._OWNER_WHERE})"] * len(owners))

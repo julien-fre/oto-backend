@@ -369,7 +369,7 @@ CAPABILITIES += [
     Capability(
         key="group.instruction.list", handler=_list, Input=GroupIdInput,
         authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionsBundle,
-        description=("Group base doctrine + skills index, plus the caller's rights: "
+        description=("Group base guide (readme) + procedures index, plus the caller's rights: "
                      "can_write_instructions (any member) and "
                      "can_delete_instructions (team lead) — can_edit is the "
                      "right to ADMINISTER the team, not to edit a procedure."),
@@ -378,7 +378,7 @@ CAPABILITIES += [
     Capability(
         key="group.instruction.get", handler=_get, Input=InstrGetInput,
         authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionView,
-        description="Full markdown of one group instruction (slug `claude_md` = base doctrine).",
+        description="Full markdown of one group instruction (slug `claude_md` = base guide, the readme).",
         rest=RestBinding("GET", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     # ⚠️ Écrire et supprimer ne partagent PAS une garde (#681) : voir l'en-tête du
@@ -391,7 +391,7 @@ CAPABILITIES += [
         description=("Create/update a group instruction (any team MEMBER — whoever runs "
                      "a procedure may improve it; a bad edit is undone by restoring a "
                      "past version). slug `claude_md` "
-                     "= the group base doctrine; any other slug = a named skill."),
+                     "= the group base guide (readme); any other slug = a named procedure."),
         rest=RestBinding("PUT", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(

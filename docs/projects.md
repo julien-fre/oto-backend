@@ -137,10 +137,11 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > licence : oto garde le master) / **copie chez la cible + re-pointage du lien** au
 > transfert (`org_store.copy_instruction_to_org`, l'originale intacte), **connecteur** =
 > `recipient_credential` (le client branche SA clé ; la surcharge identité/instructions du
-> lien voyage avec le projet) ; docs/fichiers suivent d'office (héritage d'accès). Kind
-> **`doctrine`** enregistré sur la primitive ownership (owner **dérivé** d'`org_instructions.
-> org_id`, resource_id = id surrogate) → lecture cross-org **par id** `oto_procedure(op='get', 
-> doctrine_id=…)` / `GET /api/me/doctrines/{doctrine_id}`, gatée `ownership.can_access`. Un projet
+> lien voyage avec le projet) ; docs/fichiers suivent d'office (héritage d'accès). Famille
+> **`procedure`** de la primitive ownership (owner lu sur `org_instructions.owner_type/owner_id`,
+> resource_id = id surrogate ; valeur stockée : `ownership.TYPE_RESSOURCE_PROCEDURE`, cf.
+> `docs/ownership.md`) → lecture cross-org **par id** `oto_procedure(op='get', guide_id=…)` /
+> `GET /api/me/guides/{guide_id}`, gatée `ownership.can_access`. Un projet
 > livré remonte chez le client dans `oto_project(op=list)` (flag `shared`+`permission`) ET
 > dans le bloc C du handshake (#50) — ouvrable en un message. Reste à cadrer : push des màj
 > post-livraison (re-share = re-grant idempotent, mais pas de notification). UI : `oto-dashboard`

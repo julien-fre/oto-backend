@@ -38,13 +38,37 @@ from typing import Annotated, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, RootModel
 
+from .. import ownership
 from ._types import DeclaredError
 
 # Les quatre familles gouvernables. Source unique de l'énuméré publié ET du champ
 # `resource_type` de l'entrée : `tests/test_resources_output.py` la confronte aux
 # clés de `_OPS`, pour qu'un type ne puisse pas s'ajouter au dispatch sans entrer
 # dans le contrat. `doc` = UNE page, partagée sans son projet (#1084).
-ResourceType = Literal["datastore_namespace", "project", "doctrine", "doc"]
+#
+# `procedure` s'est servie sous le mot d'avant #519 jusqu'au 23/09/2026
+# (otomata-tech/oto#65) ; l'ancien nom est encore ACCEPTÉ en entrée, jusqu'à sa date
+# (`deprecations.VALEURS`), et n'est plus jamais servi.
+ResourceType = Literal["datastore_namespace", "project", "procedure", "doc"]
+
+# Famille PUBLIQUE → kind d'`ownership`, c.-à-d. la valeur ÉCRITE en base
+# (`resource_grants.resource_type`). Elles coïncident partout sauf pour la procédure,
+# dont la valeur stockée garde son nom d'avant #519 jusqu'à sa migration (lot D,
+# #526). C'est la SEULE traduction entre les deux : la règle d'autz et le handler la
+# lisent ici, donc aucun des deux ne peut adresser `ownership` sous le nom public.
+KIND_OF: dict[str, str] = {
+    "datastore_namespace": ownership.TYPE_RESSOURCE_DATASTORE,
+    "project": "project",
+    "procedure": ownership.TYPE_RESSOURCE_PROCEDURE,
+    "doc": "doc",
+}
+
+
+class _Avertissement(BaseModel):
+    """Ce que TOUTE réponse d'un appel servi par un alias daté porte en plus : l'avis,
+    qui nomme la valeur d'aujourd'hui et la date de retrait (`deprecations.VALEURS`).
+    Absent quand l'appel emploie déjà les noms d'aujourd'hui."""
+    deprecation_warning: Optional[str] = None
 
 
 class ResourceGrant(BaseModel):
@@ -88,7 +112,9 @@ class ProjectResource(_OwnedResource):
 
 
 class GuideResource(_OwnedResource):
-    resource_type: Literal["doctrine"]
+    """Une PROCÉDURE. `op=transfer` la DÉPLACE : même `resource_id`, toutes ses
+    révisions, ses liens de projet et ses partages la suivent."""
+    resource_type: Literal["procedure"]
     slug: str
     title: Optional[str] = None
     version: Optional[int] = None
@@ -110,7 +136,7 @@ GovernedResource = Annotated[
 ]
 
 
-class ResourceList(BaseModel):
+class ResourceList(_Avertissement):
     """`op=list` — ce que l'acteur gouverne dans UNE famille (un admin plateforme
     voit tout). Le `resource_type` de tête reprend celui demandé : la liste ne
     mélange jamais deux familles."""
@@ -121,19 +147,19 @@ class ResourceList(BaseModel):
 # `op=get` = la fiche de la famille + ses bénéficiaires. L'héritage garde les trois
 # formes et leur discriminant : dupliquer les champs ici les ferait diverger au
 # premier ajout dans un `_enrich_*`.
-class DatastoreResourceDetail(DatastoreResource):
+class DatastoreResourceDetail(DatastoreResource, _Avertissement):
     grants: list[ResourceGrant]
 
 
-class ProjectResourceDetail(ProjectResource):
+class ProjectResourceDetail(ProjectResource, _Avertissement):
     grants: list[ResourceGrant]
 
 
-class GuideResourceDetail(GuideResource):
+class GuideResourceDetail(GuideResource, _Avertissement):
     grants: list[ResourceGrant]
 
 
-class DocResourceDetail(DocResource):
+class DocResourceDetail(DocResource, _Avertissement):
     grants: list[ResourceGrant]
 
 
@@ -164,10 +190,14 @@ class CascadeEntry(BaseModel):
     slug: Optional[str] = None
 
 
-class ResourceTransferred(BaseModel):
+class ResourceTransferred(_Avertissement):
     """`op=transfer`. `notified` n'est là que si le nouveau propriétaire est un
     user joignable par email — la notification est best-effort et ne casse jamais
-    le transfert, donc son absence ne dit rien de l'échec du geste."""
+    le transfert, donc son absence ne dit rien de l'échec du geste.
+
+    Transférer une PROCÉDURE la DÉPLACE : `resource_id` inchangé, et ses révisions,
+    ses liens de projet et ses partages la suivent. La cascade d'un PROJET, elle,
+    COPIE ses procédures chez la cible (`cascade[].status == "copied"`, #52)."""
     ok: Literal[True]
     resource_id: str
     new_owner: Optional[str] = None
@@ -175,7 +205,7 @@ class ResourceTransferred(BaseModel):
     notified: Optional[bool] = None
 
 
-class ResourceShared(BaseModel):
+class ResourceShared(_Avertissement):
     """`op=share` en audience `person`/`team`/`org` (ou sans audience — grant
     legacy). L'audience `public`/`secret`/`private` ne passe PAS par ici : elle
     publie le projet et rend `PublishedProject`."""
@@ -189,7 +219,7 @@ class ResourceShared(BaseModel):
     notified: Optional[bool] = None
 
 
-class ResourceUnshared(BaseModel):
+class ResourceUnshared(_Avertissement):
     """`op=unshare`. `removed=False` = il n'y avait rien à révoquer (geste
     idempotent, pas un refus)."""
     ok: Literal[True]

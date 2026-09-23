@@ -323,15 +323,20 @@ def RESOURCE_GOVERN(*, type_field: str = "resource_type", id_field: str = "resou
         # levait un `ValueError` nu, que l'adaptateur REST sert en 500 : mesuré le
         # 2026-09-08 en production sur `resource_type="procedure"` (retour d'outil
         # #809). Le refus ÉNUMÈRE les familles acceptées — c'est la seule chose qui
-        # répare l'appelant, puisque le nom de stockage d'une procédure n'est pas
-        # celui que le produit lui apprend (#519). Le message est le MÊME que celui
+        # répare l'appelant (à l'époque, la procédure ne se gouvernait que sous son
+        # nom d'avant #519 ; elle s'appelle `procedure` depuis oto#65). Le message est le MÊME que celui
         # du handler (`resources._check_type`) : une même saisie fautive ne peut pas
         # se lire de deux façons selon l'op.
-        if rtype not in ownership.RESOURCE_KINDS:
+        #
+        # Les familles sont celles que la surface PUBLIE (`resources_contract.KIND_OF`),
+        # traduites ici en kind d'`ownership` : la procédure s'appelle `procedure` pour
+        # l'appelant et garde sa valeur stockée d'avant #519 (otomata-tech/oto#65).
+        from .resources_contract import KIND_OF
+        if rtype not in KIND_OF:
             raise AuthzDenied(
                 400, "unsupported_resource_type",
-                f"type `{rtype}` non supporté ({list(ownership.RESOURCE_KINDS)}).")
-        if not ownership.can_govern(sub, rtype, str(rid)):
+                f"type `{rtype}` non supporté ({list(KIND_OF)}).")
+        if not ownership.can_govern(sub, KIND_OF[rtype], str(rid)):
             raise AuthzDenied(403, "forbidden",
                               "Gouvernance de cette ressource refusée.")
         return ResolvedCtx(sub=sub, org_id=access.current_org(sub),

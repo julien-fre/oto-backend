@@ -123,9 +123,38 @@ Une ligne par surface. « Forme » dit comment les deux noms coexistent.
 | Schéma OpenAPI | `DoctrineMeta` | `GuideMeta` | `$ref` déprécié vers le neuf | B3 |
 | Relation en base | table `doctrine_library` | vue `guide_library` | la vue sert, la table reste ; le renommage physique est au lot D | B4 |
 
+### Une valeur d'entrée renommée : la famille « procédure » d'`oto_resource` (oto#65)
+
+**Sa propre date : retrait au premier tag posé à partir du 23/11/2026**
+(`deprecations.ANNONCE_PROCEDURE` = 23/09/2026 + `PREAVIS_MOIS`). Ce n'est pas la date du
+lot #519 : ce renommage-là a été oublié par le lot B, et son préavis court à partir du
+moment où il est posé.
+
+Arbitrage d'Alexis du 23/09/2026 : « doctrine est l'ancien terme, ne doit plus
+apparaître ». `oto_resource` / `oto_resource_v2` (et `POST /api/resources[/v2]`) ne
+publient plus que `resource_type ∈ {datastore_namespace, project, procedure, doc}` —
+énuméré, discriminant de la réponse, descriptions, refus.
+
+| Surface | Ancien nom (part le 23/11/2026) | Nouveau nom | Forme |
+| --- | --- | --- | --- |
+| Valeur d'entrée `resource_type` | `doctrine` | `procedure` | l'ancienne est ACCEPTÉE sur les deux surfaces, réécrite avant l'autz, et la réponse porte `deprecation_warning` (nom d'aujourd'hui + date) ; la réponse ne sert QUE `procedure` |
+| Motif de cascade `reason` | `doctrine_needs_org_owner` | — | **retiré sec** : inatteignable depuis l'ADR 0068 (les trois paliers d'un nouveau propriétaire sont ceux d'une procédure) ; un palier inconnu ressort `status: "failed"` avec la raison du store |
+
+**Pourquoi un alias** : un appelant vivant l'envoie — l'écran de partage d'une procédure
+du dashboard (`DoctrineView` → `SharePrincipalDialog`, valeur codée en dur, op
+`get`/`share`/`unshare`), mesuré le 23/09/2026. Ni le nouveau front, ni le plugin, ni
+oto-core, ni la CLI ne l'emploient. **Le porteur du pont** est donc le dashboard : sa
+valeur passe à `procedure`, puis l'alias part à sa date.
+
+**Ce qui ne change pas** : la valeur ÉCRITE en base (`resource_grants.resource_type`)
+garde le mot d'avant #519 — nommée une seule fois, `ownership.TYPE_RESSOURCE_PROCEDURE`,
+et traduite à la frontière de la surface par `resources_contract.KIND_OF`. Sa migration
+reste au lot D (ci-dessous).
+
 Ce qui reste EN BASE et **n'a pas de doublure** — colonne `runs.doctrine`, valeur
 d'énumération `missing_doctrine` (contrainte `CHECK`), kind d'ownership `doctrine`
-(`resource_grants.resource_type`, une VALEUR de ligne), clé `doctrine_version` écrite
+(`resource_grants.resource_type`, une VALEUR de ligne — plus jamais servie depuis
+oto#65, voir ci-dessus), clé `doctrine_version` écrite
 dans les `props` d'un nœud : ce sont des **données déjà écrites**, pas des noms.
 Aucune vue ne les renomme ; il faut les migrer, et une migration de données est un
 acte nommé et daté (ADR 0065 étage 2), pas une ligne de boot. **Lot D, #526.**
@@ -224,8 +253,7 @@ est ce qu'un agent lit en début de session, sans passer par `tools/list`. C'est
 seule partie du chantier qu'un client ne peut pas ignorer.
 
 Ce qui RESTE dans la prose servie après B5 n'est plus de la prose : ce sont des
-**valeurs** qu'un agent passe ou lit — `resource_type ∈ {…, doctrine}`,
-`kind=missing_doctrine`, le paramètre `doctrine` de `run_start`, `doctrine_id`. Elles
+**valeurs** qu'un agent passe ou lit — `kind=missing_doctrine`, le paramètre `doctrine` de `run_start`, `doctrine_id`. Elles
 vivent en base ou sont des alias datés ; elles partent au lot D.
 
 ## Ce qu'un consommateur doit faire

@@ -215,7 +215,7 @@ def test_transfer_cascade_to_org(monkeypatch):
 def test_transfer_cascade_vers_une_PERSONNE_copie_la_procedure(monkeypatch):
     """⚠️ Ce banc s'appelait `…_skips_guide` et vérifiait que la cascade SAUTAIT la
     procédure quand le destinataire est une personne — parce que le palier personnel
-    n'existait pas (`doctrine_needs_org_owner`). L'ADR 0068 l'a ouvert : la procédure
+    n'existait pas (motif retiré le 23/09/2026, oto#65). L'ADR 0068 l'a ouvert : la procédure
     suit désormais le projet chez son nouveau propriétaire, comme elle le fait déjà
     vers une org ou une équipe.
 
@@ -324,7 +324,7 @@ def test_guide_reparent_refuse_un_palier_INCONNU():
 
 
 def test_guide_listed_in_resource_ops():
-    assert "doctrine" in R._OPS
+    assert "procedure" in R._OPS
 
 
 # ── oto_get_doctrine(doctrine_id) : lecture par id + grants ──────────────────

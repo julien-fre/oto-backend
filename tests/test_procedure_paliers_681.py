@@ -552,7 +552,7 @@ def test_la_sonde_regarde_aussi_lhistorique(monde):
 # ── 4. Ce que la gouvernance voit ──────────────────────────────────────────
 
 def test_une_procedure_dequipe_est_visible_dans_oto_resource(monde):
-    """`_OPS['doctrine']` filtrait les paires d'owner sur `t == "org"` et
+    """`_OPS` (famille procédure) filtrait les paires d'owner sur `t == "org"` et
     `_enrich_guide` écrivait `owner_type: "org"` en dur : une procédure d'équipe était
     absente du listing de gouvernance, et celles qui s'y trouvaient annonçaient comme
     propriétaire leur org PARENTE — la mauvaise cible dans l'écran de partage."""
@@ -560,14 +560,14 @@ def test_une_procedure_dequipe_est_visible_dans_oto_resource(monde):
     from oto_mcp.capabilities import resources as R
     org_store.set_instruction("group", monde["equipe"], "gouvernee", _CORPS,
                               title="Gouvernée", set_by="u-chef")
-    rows = R._OPS["doctrine"]["list_for_owners"]([("group", str(monde["equipe"]))])
+    rows = R._OPS["procedure"]["list_for_owners"]([("group", str(monde["equipe"]))])
     assert "gouvernee" in {r["slug"] for r in rows}
-    enrichie = R._OPS["doctrine"]["enrich"](
+    enrichie = R._OPS["procedure"]["enrich"](
         next(r for r in rows if r["slug"] == "gouvernee"))
     assert enrichie["owner_type"] == "group"
     assert enrichie["owner_id"] == str(monde["equipe"])
     # La vue opérateur ne filtre plus par palier non plus.
-    assert "gouvernee" in {r["slug"] for r in R._OPS["doctrine"]["list_all"]()}
+    assert "gouvernee" in {r["slug"] for r in R._OPS["procedure"]["list_all"]()}
 
 
 # ── ADR 0068 : le palier PERSONNEL, par le chemin servi ───────────────────────

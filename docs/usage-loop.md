@@ -28,9 +28,9 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   rattrapé : l'index sur `run_id` va dans le bloc **ALTER** d'`init_db` (après l'ADD COLUMN),
   **jamais** dans `_SCHEMA` (no-op sur table existante → `UndefinedColumn` au boot).
 - **Runs / déroulés** : tools spine `run_start`/`run_finish` (`tools/guide_run.py`) ;
-  `run_start(label, doctrine?)` ouvre un guide nommé (`doctrine`=slug — nom de
-  paramètre SERVI) **ou** un run
-  one-shot (sans `doctrine`), même trace. Le `run_id` vit dans une **pile en état de
+  `run_start(label, guide?)` ouvre un guide nommé (`guide`=slug ; l'ancien nom du
+  paramètre reste accepté jusqu'à sa date, `docs/alias-deprecies.md`) **ou** un run
+  one-shot (sans `guide`), même trace. Le `run_id` vit dans une **pile en état de
   session FastMCP** (`guide_run.py`, runs imbriqués OK), stampé sur chaque appel côté
   serveur — l'agent ne thread rien.
   - **Retrouver un `run_id` perdu** (#473, 28/08) : `oto_project op=runs` **sans**

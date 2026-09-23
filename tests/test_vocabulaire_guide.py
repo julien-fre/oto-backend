@@ -60,7 +60,7 @@ MOT = re.compile("doctrine", re.I)
 # raison servie n'a rien à faire ici : elle se renomme.
 #
 # Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3) → 217 (B4) → 162 (B5)
-# → 164 (#659, 2026-09-01).
+# → 164 (#659, 2026-09-01) → 145 (otomata-tech/oto#65, 2026-09-23).
 # Le compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
 #
 # ⚠️ **La seule remontée, et pourquoi elle n'est pas une dérive** : #659 a DÉCLARÉ le
@@ -102,7 +102,9 @@ PLAFONDS: dict[str, int] = {
     #   quelle pour ne pas mêler une correction de contrat à un lot de vocabulaire.
     "oto_mcp/capabilities/datastore/activity.py": 3,
     # — Clés de réponse `doctrine`/`doctrine_version`, servies à côté des `guide*`.
-    "oto_mcp/capabilities/groups/guide.py": 8,
+    #   (Les trois descriptions servies qui disaient « base doctrine » sont passées à
+    #   « base guide (readme) » le 23/09/2026, oto#65.)
+    "oto_mcp/capabilities/groups/guide.py": 5,
     # — Clé de réponse `doctrines`, servie à côté de `guides`.
     "oto_mcp/capabilities/guide_library.py": 2,
     # — Clés de réponse `doctrine`/`doctrines`/`doctrine_id`/`group_doctrine` servies
@@ -110,20 +112,12 @@ PLAFONDS: dict[str, int] = {
     #   d'hier ; kind d'ownership `doctrine` (VALEUR en base, lot D).
     "oto_mcp/capabilities/orgs/instructions.py": 11,
     "oto_mcp/capabilities/procedure_console.py": 3,
-    # — Kind de ressource `doctrine` (valeur en base, `resource_grants`), le motif
-    #   `doctrine_needs_org_owner`, et l'énuméré `resource_type` servi qui les nomme.
-    "oto_mcp/capabilities/resources.py": 10,
-    #   Le MÊME énuméré, une fois déclaré (#659, 2026-09-01) : `ResourceType` et le
-    #   `Literal["doctrine"]` qui discrimine la forme de réponse d'un guide. Aucun
-    #   usage neuf du mot — c'est la valeur servie par `resources.py`, désormais
-    #   écrite aussi dans le contrat. Elle sort avec elle au lot D (#526).
-    "oto_mcp/capabilities/resources_contract.py": 2,
-    #   Le MÊME énuméré une troisième fois, sur la surface STRICTE qui double
-    #   `oto_resource` (2026-09-01) : le mot n'apparaît que dans la description servie,
-    #   qui recopie l'énuméré `resource_type` pour que l'appelant le lise avant
-    #   d'appeler. Toujours zéro usage neuf — c'est la même valeur, et elle sort avec
-    #   les deux autres au lot D (#526).
-    "oto_mcp/capabilities/resources_v2.py": 1,
+    # (`capabilities/resources*.py` sont sortis le 23/09/2026 — otomata-tech/oto#65,
+    #  arbitrage d'Alexis : « doctrine est l'ancien terme, ne doit plus apparaître ».
+    #  La famille publique s'appelle `procedure` ; sa valeur STOCKÉE est nommée une
+    #  seule fois, `ownership.TYPE_RESSOURCE_PROCEDURE`, et traduite à la frontière
+    #  par `resources_contract.KIND_OF`. `org_store/instruction_ownership.py` est
+    #  tombé à 0 du même geste.)
     # — Valeur d'énumération servie `missing_doctrine` (contrainte CHECK en base).
     "oto_mcp/capabilities/usage.py": 2,
     # — DDL et migration de colonne : le SEUL endroit qui nomme encore la table. La
@@ -142,10 +136,6 @@ PLAFONDS: dict[str, int] = {
     #   des DONNÉES écrites, pas des noms.
     "oto_mcp/db/nodes.py": 2,
     "oto_mcp/db/shell.py": 2,
-    # Les 2 occurrences ont SUIVI leur code : `org_store/instructions.py` est passé à
-    # 0 le 01/09/2026 quand le plan GOUVERNANCE en est sorti (issue `oto`#27). Total
-    # inchangé — un déplacement, pas un ajout ni un remboursement.
-    "oto_mcp/org_store/instruction_ownership.py": 2,
     "oto_mcp/ownership.py": 1,
     # — Colonne `runs.doctrine`, clé `doctrine_version` des args journalisés, alias
     #   SQL `AS doctrine`/`AS doctrines` (donc clés de réponse).
@@ -158,7 +148,11 @@ PLAFONDS: dict[str, int] = {
     # — LA table des noms SERVIS dépréciés (lot B, retrait daté au lot D #526).
     #   Le seul fichier où le mot est une DONNÉE et non un usage : il y entre au
     #   moment où une surface est renommée, et le fichier entier disparaît au retrait.
-    "oto_mcp/deprecations.py": 30,
+    #   ⚠️ **Remonté de 30 à 32 le 23/09/2026, et c'est l'inverse d'une dérive** : la
+    #   valeur `resource_type` d'hier (oto#65) entre dans la table des VALEURS
+    #   renommées (+1) avec le nom de l'écran qui l'envoie encore (+1). Ailleurs, le
+    #   même lot retire 18 occurrences ; le total baisse de 161 à 145.
+    "oto_mcp/deprecations.py": 32,
     # — Le paramètre `doctrine` de `run_start` (accepté à côté de `guide`), ses clés
     #   de réponse, et l'arg tracé `doctrine_version` (écrit dans `tool_calls.args`).
     "oto_mcp/guide_run.py": 1,

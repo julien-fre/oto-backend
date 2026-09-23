@@ -18,15 +18,15 @@ import logging
 import os
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
-from .. import access, db, email, group_store, org_store, ownership, roles
+from .. import access, db, deprecations, email, group_store, org_store, ownership, roles
 from . import _portee
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .docs import partage as page
 from .registry import CAPABILITIES
-from .resources_contract import REFUS, REFUS_TYPE_INCONNU, ResourceOut
+from .resources_contract import KIND_OF, REFUS, REFUS_TYPE_INCONNU, ResourceOut
 from .. import config
 
 log = logging.getLogger(__name__)
@@ -96,6 +96,31 @@ class ResourceInput(BaseModel):
     cascade: bool = False                   # share/transfer d'un PROJET : embarquer ses entités liées (#52)
     confirm_transfer: bool = False          # transfer : lever la confirmation anti-lockout (perte de contrôle assumée)
 
+    # L'avis de l'alias daté qui a servi l'appel (`deprecations.VALEURS`), ou None.
+    # PRIVÉ : il ne figure dans aucun schéma servi, et le cliquet de l'héritée
+    # (`resources_input_legacy.json`) ne bouge pas.
+    _avertissement: Optional[str] = PrivateAttr(default=None)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _valeur_d_hier(cls, data, handler):
+        """Réécrit une valeur dépréciée de `resource_type` AVANT toute autre lecture.
+
+        Avant la validation du champ — donc la surface stricte, dont le `Literal` ne
+        publie que les noms d'aujourd'hui, l'accepte aussi jusqu'à la date — et avant
+        la règle d'autz, qui ne voit ainsi qu'un seul nom par famille. L'avis est
+        gardé pour être SERVI dans la réponse (otomata-tech/oto#65)."""
+        avis = None
+        if isinstance(data, dict) and "resource_type" in data:
+            canonique, avis = deprecations.valeur_canonique(
+                "resource_type", data["resource_type"])
+            if avis:
+                data = {**data, "resource_type": canonique}
+        inst = handler(data)
+        if avis:
+            inst._avertissement = avis
+        return inst
+
 
 def _check_type(resource_type: str) -> None:
     """Refus de famille inconnue, dans le handler — le champ hérité est un `str` libre,
@@ -103,7 +128,7 @@ def _check_type(resource_type: str) -> None:
     refuse à la validation : les deux ne déclarent donc PAS les mêmes refus."""
     if resource_type not in _OPS:
         raise AuthzDenied(400, "unsupported_resource_type",
-                          f"type `{resource_type}` non supporté ({list(_OPS)}).")
+                          f"type `{resource_type}` non supporté ({list(KIND_OF)}).")
 
 
 def _owner_label(owner_type: str, owner_id: str) -> Optional[str]:
@@ -128,14 +153,13 @@ def _owner_label(owner_type: str, owner_id: str) -> Optional[str]:
 
 
 _TYPE_LABELS = {"project": "projet", "datastore_namespace": "datastore",
-                "doctrine": "doctrine", "doc": "page"}
+                "procedure": "procédure", "doc": "page"}
 # Recouvrement EN (oto-backend#700) — seules les clés dont le mot CHANGE : les deux
 # autres s'écrivent à l'identique dans les deux langues, pas la peine de les répéter
-# ici (et `tests/test_vocabulaire_guide.py` compte chaque occurrence littérale du
-# mot ci-dessus, cliquet #519 — ne pas la réécrire). Le gabarit d'email ne traduit
+# ici. Le gabarit d'email ne traduit
 # pas un mot qu'on lui donne (`email_templates.send_resource_*`), donc c'est ICI, à
 # la source du texte, que la langue du DESTINATAIRE choisit le label.
-_TYPE_LABELS_EN_OVERRIDES = {"project": "project"}
+_TYPE_LABELS_EN_OVERRIDES = {"project": "project", "procedure": "procedure"}
 
 
 def _resource_name(resource_type: str, rid: str) -> Optional[str]:
@@ -147,7 +171,7 @@ def _resource_name(resource_type: str, rid: str) -> Optional[str]:
         if resource_type == "datastore_namespace":
             r = db.get_datastore_by_id(int(rid))
             return r.get("datastore") if r else None
-        if resource_type == "doctrine":
+        if resource_type == "procedure":
             r = org_store.get_instruction_by_id(int(rid))
             return (r.get("title") or r.get("slug")) if r else None
         if resource_type == "doc":
@@ -234,7 +258,7 @@ def _enrich_guide(row: dict) -> dict:
     # désignait la mauvaise cible dans l'écran de partage.
     otype, oid = str(row["owner_type"]), str(row["owner_id"])
     return {
-        "resource_type": "doctrine",
+        "resource_type": "procedure",
         "resource_id": str(row["id"]),
         "slug": row["slug"],
         "title": row.get("title"),
@@ -267,7 +291,7 @@ _OPS: dict[str, dict] = {
     # passent. Le filtre `t == "org"` d'avant retirait de la liste toute procédure
     # d'équipe que l'acteur gouverne pourtant : invisible au partage, invisible au
     # transfert, sans un mot.
-    "doctrine": {
+    "procedure": {
         "list_all": lambda: org_store.list_all_instructions(),
         "list_for_owners": lambda owners: org_store.list_instructions_for_owners(
             [(t, i) for (t, i) in owners if t in org_store.OWNER_TYPES]),
@@ -292,7 +316,7 @@ def _grants_view(resource_type: str, resource_id: str) -> list[dict]:
          # (read/write) conservé pour rétro-compat des consommateurs existants.
          "role": g.get("role"), "permission": g.get("permission"),
          "granted_at": g.get("granted_at")}
-        for g in ownership.list_grants(resource_type, resource_id)
+        for g in ownership.list_grants(KIND_OF[resource_type], resource_id)
     ]
 
 
@@ -398,30 +422,29 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
                     ownership.transfer("datastore_namespace", ref, new_owner[0], new_owner[1])
                     entry["status"] = "transferred"
             elif t == "procedure" and ref.isdigit():
-                if not ownership.can_govern(sub, "doctrine", ref):
+                if not ownership.can_govern(sub, KIND_OF["procedure"], ref):
                     entry["status"] = "skipped"
                     entry["reason"] = "not_governed"
                 elif op == "share":
                     # LECTEUR toujours : le partagé consomme la procédure, il n'édite pas
                     # le master (modèle licence — oto garde la main et pousse les màj).
-                    ownership.grant("doctrine", ref, principal[0], principal[1],
+                    ownership.grant(KIND_OF["procedure"], ref, principal[0], principal[1],
                                     role="viewer", granted_by=sub)
                     entry["status"] = "shared"
                     entry["role"] = "viewer"
                     entry["permission"] = "read"
-                elif new_owner[0] in org_store.OWNER_TYPES:
+                else:
+                    # Les trois paliers d'un nouveau propriétaire (org, équipe, personne)
+                    # sont ceux d'une procédure depuis l'ADR 0068 : la copie vaut pour
+                    # tous. Un palier inconnu fait lever le store, et l'entrée ressort
+                    # `failed` avec sa raison (le saut qui existait ici, nommé du mot
+                    # retiré, était devenu inatteignable — retiré le 23/09/2026, oto#65).
                     copy = org_store.copy_instruction_to_owner(
                         int(ref), new_owner[0], new_owner[1], set_by=sub)
                     db.update_project_link_ref(project_id, "procedure", ref, str(copy["id"]))
                     entry["status"] = "copied"
                     entry["new_ref"] = str(copy["id"])
                     entry["slug"] = copy["slug"]
-                else:
-                    # Reste le destinataire PERSONNEL : une procédure n'a pas encore de
-                    # palier `user` (phase 2 de #681). Le code servi ne change pas — c'est
-                    # le même cas qu'avant, moins les équipes qui y tombaient à tort.
-                    entry["status"] = "skipped"
-                    entry["reason"] = "doctrine_needs_org_owner"
             elif t == "connecteur":
                 entry["status"] = "action_required"
                 entry["reason"] = "recipient_credential"   # le client branche SA clé (ADR 0022/0024)
@@ -465,13 +488,26 @@ def _unpublish_audience(ctx: ResolvedCtx, inp: ResourceInput, rid: str) -> dict:
 
 
 def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
-    # Handler PARTAGÉ par les deux surfaces (héritée et stricte). Le contrôle vaut
-    # donc pour les deux : par `resources_v2`, `resource_type` est déjà un `Literal`
-    # et ce refus est inatteignable ; par la surface héritée, c'est lui qui refuse.
-    # `tests/test_resources_output.py` épingle `_OPS` == l'énuméré publié — ajouter
-    # une famille au dispatch sans l'ajouter au contrat fait rougir.
+    """Handler PARTAGÉ par les deux surfaces. Une réponse servie par un alias daté
+    porte l'avis (`deprecation_warning`) — seul endroit où il est ajouté, pour que
+    les cinq verbes le portent sans qu'aucun ne l'oublie."""
+    out = _gouverner(ctx, inp)
+    if inp._avertissement:
+        out = {**out, "deprecation_warning": inp._avertissement}
+    return out
+
+
+def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
+    # Le contrôle vaut pour les deux surfaces : par `resources_v2`, `resource_type`
+    # est déjà un `Literal` et ce refus est inatteignable ; par la surface héritée,
+    # c'est lui qui refuse. `tests/test_resources_output.py` épingle `_OPS` ==
+    # l'énuméré publié — ajouter une famille au dispatch sans l'ajouter au contrat
+    # fait rougir.
     _check_type(inp.resource_type)
     ops = _OPS[inp.resource_type]
+    # Le kind d'`ownership` (valeur en base) de la famille publique demandée. Tout
+    # appel à `ownership` passe par lui, jamais par `inp.resource_type`.
+    kind = KIND_OF[inp.resource_type]
 
     if inp.op == "list":
         # PLATEFORME → tout ; sinon → ce que l'acteur gouverne (perso + orgs/groupes
@@ -508,7 +544,7 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         # Le TRANSFERT de propriété exclut le simple gérant (ADR 0048 §3) : owner ∪
         # escalade `roles.py` seulement. Le gate capacité (`RESOURCE_GOVERN`) laisse
         # passer un gérant (il gouverne) → on re-garde ici la structure.
-        if not ownership.can_transfer(ctx.sub, inp.resource_type, rid):
+        if not ownership.can_transfer(ctx.sub, kind, rid):
             raise AuthzDenied(403, "forbidden",
                               "Le transfert de propriété est réservé au propriétaire / admin.")
         # Cible : une de SES orgs (owner_type='org'), un de SES groupes (owner_type=
@@ -546,7 +582,7 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
                 f"pourras plus récupérer cette ressource toi-même (seul un admin Otomata le "
                 f"pourra). Renvoie avec confirm_transfer=true pour confirmer.")
         try:
-            ownership.transfer(inp.resource_type, rid, new_owner_type, new_owner_id)
+            ownership.transfer(kind, rid, new_owner_type, new_owner_id)
         except ownership.GroupOutsideResourceOrg as e:
             raise AuthzDenied(403, "group_outside_resource_org", str(e))
         except ValueError as e:
@@ -578,7 +614,7 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         if inp.resource_type == "doc":
             page.require_viewer(role)
         ptype, pid, plabel = _share_principal(ctx.sub, inp)
-        ownership.grant(inp.resource_type, rid, ptype, pid, role=role, granted_by=ctx.sub)
+        ownership.grant(kind, rid, ptype, pid, role=role, granted_by=ctx.sub)
         out = {"ok": True, "resource_id": rid, "shared_with": plabel,
                "principal_type": ptype, "role": role, "permission": perm}
         # ADR 0068 §4 — observation : ce partage aurait prévenu quelqu'un.
@@ -602,18 +638,31 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
 
     # unshare
     ptype, pid, plabel = _share_principal(ctx.sub, inp, strict=False)
-    removed = ownership.revoke(inp.resource_type, rid, ptype, pid)
+    removed = ownership.revoke(kind, rid, ptype, pid)
     out = {"ok": True, "resource_id": rid, "unshared_with": plabel, "removed": removed}
     if inp.cascade and inp.resource_type == "project":
         revoked = []
         for link in db.list_project_links(int(rid)):
             t, ref = link.get("target_type"), str(link.get("target_ref") or "")
-            rt = {"tableau": "datastore_namespace", "procedure": "doctrine"}.get(t)
+            rt = {"tableau": KIND_OF["datastore_namespace"],
+                  "procedure": KIND_OF["procedure"]}.get(t)
             if rt and ref.isdigit() and ownership.can_govern(ctx.sub, rt, ref):
                 if ownership.revoke(rt, ref, ptype, pid):
                     revoked.append({"target_type": t, "target_ref": ref})
         out["cascade"] = revoked
     return out
+
+
+# Ce qu'un transfert fait à une procédure, SERVI dans la description des deux surfaces
+# (otomata-tech/oto#65) : un agent qui déplace une procédure doit savoir qu'il emporte
+# son historique, et qu'une cascade de projet, elle, copie. Une seule chaîne pour les
+# deux surfaces — deux copies divergeraient au premier lot.
+TRANSFER_PROCEDURE = (
+    "PROCEDURES (resource_type=procedure): op=transfer MOVES the procedure with its "
+    "history — same resource_id, every revision, its project links and its shares follow "
+    "it (a slug already taken at the destination gets a suffix, nothing is overwritten). "
+    "By contrast, transferring a PROJECT with cascade=true COPIES its linked procedures "
+    "into the target (see DELIVER A FULL PROJECT below).")
 
 
 CAPABILITIES += [
@@ -653,8 +702,8 @@ CAPABILITIES += [
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). resource_type ∈ {datastore_namespace, "
-            "project, doctrine, doc} — it is the discriminant, and it also decides which shape "
-            "comes back. " + page.DESCRIPTION
+            "project, procedure, doc} — it is the discriminant, and it also decides which shape "
+            "comes back. " + TRANSFER_PROCEDURE + " " + page.DESCRIPTION
             + " ⚠️ KNOWN DEFECT, kept for backward compatibility: resource_type "
             "DEFAULTS to `datastore_namespace`. Omitting it does NOT mean « any type » — the "
             "call silently targets a datastore namespace, so op=get/list answer about the "
