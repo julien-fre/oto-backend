@@ -63,8 +63,11 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 > Sélection = param `account` / axe d'appel `_account=` / épinglage projet > compte
 > unique auto > défaut `is_default` (`oto_identity op='set'`, scopes member/org/group).
 > L'axe `_account=` est **accepté à l'appel partout** (`axes_for_call`, `oto_call`
-> compris) et **annoncé** dans le schéma seulement où l'appelant détient ≥ 2 clés
-> (`axes_for_listing`). Invariant : un compte NOMMÉ introuvable à un palier **passe
+> compris) et **annoncé** dans le schéma seulement où l'appelant atteint ≥ 2 comptes,
+> **tous paliers confondus** (`axes_for_listing`). Un compte se **renomme**
+> (`oto_identity op='rename'`, `PATCH /api/connectors/{c}/identities/{id}`) — le nom est
+> l'identifiant de `_account`, donc c'est la ligne du coffre qui change
+> (`rename_account`), et un nom déjà pris est refusé (l'upsert écraserait l'autre clé). Invariant : un compte NOMMÉ introuvable à un palier **passe
 > la main** au suivant ; s'il n'existe à aucun palier à clé, la résolution **lève
 > « introuvable »** après la marche — jamais un repli plateforme silencieux. La
 > résolution **anonyme** (`<slug>.mcp.oto.cx`) sélectionne le compte d'org comme le
@@ -126,8 +129,12 @@ Deux règles internes, et elles ne sont pas cosmétiques :
 > **Ce que l'AGENT voit du choix de compte (27/08).** Le multi-compte n'existe pour lui
 > que par quatre surfaces, et chacune avait un trou :
 > - **le schéma** — l'axe `_account=` apparaît sur les outils du connecteur dès qu'il
->   détient ≥ 2 clés (`account_axis_advertised_for`), pas avant : recopier l'axe partout
->   doublerait le handshake. Il reste ACCEPTÉ partout (`accepts_account_axis`).
+>   atteint ≥ 2 comptes (`account_axis_advertised_for`), pas avant : recopier l'axe partout
+>   doublerait le handshake. Il reste ACCEPTÉ partout (`accepts_account_axis`). ⚠️ Le
+>   relevé ne comptait que le palier MEMBRE : des clés posées par l'org (une par société
+>   d'un groupe) n'annonçaient jamais l'axe, et l'agent ne le découvrait qu'en échouant.
+>   Il compte désormais membre + équipe active + org, et la description de l'axe NOMME
+>   les comptes atteints (palier, défaut) — elle n'est dynamique que là.
 > - **l'aide d'`oto_identity`** — elle disait de passer `account=<id>`, le nom NU, alors
 >   que les jetons ont été préfixés justement parce qu'il entrait en collision avec les
 >   arguments métier (28/07). Un agent qui la suivait échouait. Elle nomme `_account`,
@@ -137,6 +144,12 @@ Deux règles internes, et elles ne sont pas cosmétiques :
 >   au lieu de « plusieurs comptes » : le mot vient du registre (`access.account_noun`,
 >   dérivé de `Connector.account_noun`), et le message porte le geste qui débloque.
 >   Même chose pour « Workspace `X` introuvable ». `oto_identity op=list` rend `noun`.
+>   Le refus **nomme les comptes** en présence et s'écrit sans accord (« sans défaut
+>   unique ») : le mot du registre peut être féminin (« société »).
+> - **la fiche** — chaque connecteur multi-compte porte une section « plusieurs <mot>s »
+>   GÉNÉRÉE (`docs_reader.multi_account_section`, jointe par `Connector.doc_sections`) :
+>   la mécanique est celle de la plateforme, une fiche n'écrit que ce qui lui est propre
+>   (pourquoi il faut une clé par société, par installation…).
 > - **l'écho** — la réponse d'un appel servi par un compte NOMMÉ porte `_account`
 >   (`middleware.call_context._echo_account`, posé par `CallContextMiddleware` au retour). Sans lui,
 >   l'agent postait sur l'un de ses deux workspaces sans jamais savoir lequel : l'identité

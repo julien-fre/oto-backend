@@ -360,6 +360,8 @@ GET,HEAD /api/connectors/{connector}/identities -> _handler
 OPTIONS /api/connectors/{connector}/identities -> options_handler
 PUT /api/connectors/{connector}/identities/default -> _handler
 OPTIONS /api/connectors/{connector}/identities/default -> options_handler
+PATCH /api/connectors/{connector}/identities/{identity_id} -> _handler
+OPTIONS /api/connectors/{connector}/identities/{identity_id} -> options_handler
 POST /api/me/connectors/{name}/connect -> _handler
 OPTIONS /api/me/connectors/{name}/connect -> options_handler
 GET,HEAD /api/me/connectors/zohoanalytics/orgs -> _handler

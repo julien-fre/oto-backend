@@ -280,8 +280,11 @@ class Connector:
         restait 153 lignes de prose curée à ventiler dans `providers/<nom>.py` —
         le déplacement était fait depuis trois semaines. Une carte périmée coûte
         plus qu'une carte absente : elle est lue avec confiance."""
-        from ..connectors.docs_reader import DOC_SECTIONS
-        return DOC_SECTIONS.get(self.name, ())
+        from ..connectors.docs_reader import DOC_SECTIONS, multi_account_section
+        sections = tuple(DOC_SECTIONS.get(self.name, ()))
+        if self.auth_multi_account:
+            sections += (multi_account_section(self.name, self.account_noun or "compte"),)
+        return sections
 
     @property
     def description(self) -> str:

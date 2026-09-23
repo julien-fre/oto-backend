@@ -55,6 +55,7 @@ l'écho `_org` dans les payloads) : `_org` entre, `_org` sort.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
@@ -194,39 +195,64 @@ def accepts_account_axis(name: str) -> bool:
     return cardinality.accepted_anywhere(con.name)
 
 
-def account_axis_advertised_for(sub: Optional[str]) -> set[str]:
-    """Connecteurs (noms) pour lesquels l'APPELANT détient ≥ 2 comptes au palier membre
-    de son org de contexte — là, et là seulement, `_account=` vaut d'être annoncé dans
-    le schéma (un compte unique se résout tout seul, cf. access/resolve.py `_member_fetch`).
-    UNE requête par tools/list ; jamais d'exception (une liste d'outils ne tombe pas
-    pour un coffre injoignable → axe non annoncé, encore accepté à l'appel)."""
+def _palier_entities(sub: str) -> list[tuple[str, str, str]]:
+    """Les paliers du coffre où l'appelant peut avoir des comptes nommés, avec leur
+    étiquette : les siens, ceux de son équipe active, ceux de son org de contexte.
+    Mêmes paliers que `connectors.identities.keyed_entity` (member/group/org)."""
+    from . import access, credentials_store
+    org = access.current_org(sub)
+    if org is None:
+        return []
+    out = [(credentials_store.MEMBER, credentials_store.member_id(org, sub), "")]
+    gid = access.current_group(sub)
+    if gid is not None:
+        out.append(("group", str(gid), "équipe"))
+    out.append(("org", str(org), "org"))
+    return out
+
+
+def account_axis_advertised_for(sub: Optional[str]) -> dict[str, str]:
+    """Connecteurs pour lesquels l'APPELANT atteint ≥ 2 comptes, tous paliers
+    confondus (les siens, son équipe, son org) → description de l'axe `_account`
+    qui NOMME ces comptes. Là, et là seulement, l'axe vaut d'être annoncé : un compte
+    unique se résout tout seul. Un compte nommé se vise à n'importe quel palier
+    (access/resolve.py), donc la liste est l'union. Une requête par palier et par
+    tools/list ; jamais d'exception (une liste d'outils ne tombe pas pour un coffre
+    injoignable → axe non annoncé, encore accepté à l'appel)."""
     if not sub:
-        return set()
+        return {}
     try:
         from . import access, credentials_store
-        org = access.current_org(sub)
-        if org is None:
-            return set()
-        counts: dict[str, int] = {}
-        for row in credentials_store.list_credentials(
-                credentials_store.MEMBER, credentials_store.member_id(org, sub)):
-            counts[row["connector"]] = counts.get(row["connector"], 0) + 1
         by_name = {c.name: c for c in providers._REGISTRY_LIST}
-        return {name for name, n in counts.items()
-                if n >= 2 and name in by_name and by_name[name].auth_multi_account}
+        found: dict[str, list[str]] = {}
+        for etype, eid, palier in _palier_entities(sub):
+            for row in credentials_store.list_credentials(etype, eid):
+                con = by_name.get(row["connector"])
+                if con is None or not con.auth_multi_account:
+                    continue
+                marks = [m for m in (palier, "défaut" if (row.get("meta") or {}).get(
+                    "is_default") else "") if m]
+                nom = f"`{row['account']}`" if row["account"] else "(sans nom)"
+                found.setdefault(con.name, []).append(
+                    f"{nom} ({', '.join(marks)})" if marks else nom)
+        return {name: (f"{access.account_noun(name).capitalize()} à OPÉRER parmi : "
+                       f"{', '.join(comptes)}. `oto_identity(op='list')`.")
+                for name, comptes in found.items() if len(comptes) >= 2}
     except Exception:
         logger.exception("account_axis_advertised_for: relevé des comptes impossible")
-        return set()
+        return {}
 
 
-def axes_for_listing(name: str, advertised_accounts: set[str]) -> list["CallAxis"]:
+def axes_for_listing(name: str, advertised_accounts: dict[str, str]) -> list["CallAxis"]:
     """Axes à ANNONCER dans le schéma de ce tool : les statiques (`axes_for`) + l'axe
-    compte quand l'appelant détient plusieurs comptes de ce connecteur."""
+    compte quand l'appelant atteint plusieurs comptes de ce connecteur — sa
+    description nomme alors ces comptes (`account_axis_advertised_for`)."""
     axes = axes_for(name)
     if advertised_accounts and not any(a.param == ACCOUNT.param for a in axes):
         con = providers.connector_for_namespace(namespace_of(name))
         if con is not None and con.name in advertised_accounts:
-            axes = [*axes, ACCOUNT]
+            axes = [*axes, dataclasses.replace(ACCOUNT, schema={
+                **ACCOUNT.schema, "description": advertised_accounts[con.name]})]
     return axes
 
 

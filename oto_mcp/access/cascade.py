@@ -81,13 +81,15 @@ def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
         return defaults[0]["account"]
     sc = f", scope='{scope}'" if scope else ""
     noun = account_noun(provider)
+    # Tournure sans accord : le nom du compte vient du registre et peut être féminin
+    # (« société », « organisation ») — « configurés… marqué » faisait une faute sur deux.
+    noms = ", ".join(f"`{a['account']}`" for a in accts)
     raise McpError(ErrorData(
         code=INVALID_PARAMS,
         message=(
-            f"Plusieurs {noun}s `{provider}` configurés {where}, aucun (ou "
-            f"plusieurs) marqué par défaut — précise lequel avec `_account=\"<nom>\"` "
-            f"sur cet appel (oto_identity(op='list'{sc}) pour les lister, "
-            f"oto_identity(op='set'{sc}) pour en fixer un par défaut)."
+            f"Plusieurs {noun}s `{provider}` {where} ({noms}), sans défaut unique — "
+            f"passe `_account=\"<nom>\"` sur cet appel, ou fixe un défaut avec "
+            f"oto_identity(op='set'{sc}, connector='{provider}', identity_id='<nom>')."
         )))
 
 

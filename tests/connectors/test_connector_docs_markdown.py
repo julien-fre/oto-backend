@@ -51,9 +51,20 @@ def test_chaque_section_servie_vient_de_son_seul_markdown():
     `Connector.doc_sections` est la propriété que consomment le catalogue public et les
     fiches ; ce test la tient à sa source unique. Un jour où l'on y ajouterait un repli
     (« si pas de markdown, prendre la constante du module de déclaration »), la doc
-    aurait deux domiciles et plus personne ne saurait lequel est servi."""
+    aurait deux domiciles et plus personne ne saurait lequel est servi.
+
+    Seule exception, et elle a elle-même UN domicile : la section « plusieurs <mot>s »
+    d'un connecteur multi-compte, DÉRIVÉE du registre par
+    `docs_reader.multi_account_section` (la mécanique est celle de la plateforme, pas
+    une prose curée). Elle est retirée ici après avoir vérifié qu'elle est exactement
+    celle-là, en dernière position."""
     for nom, c in providers.REGISTRY.items():
         servies = c.doc_sections
+        if c.auth_multi_account:
+            assert servies and servies[-1] == connector_docs.multi_account_section(
+                nom, c.account_noun or "compte"), (
+                f"{nom} : multi-compte sans sa section générée en dernière position")
+            servies = servies[:-1]
         if not servies:
             continue
         fichier = _DIR / f"{nom}.md"

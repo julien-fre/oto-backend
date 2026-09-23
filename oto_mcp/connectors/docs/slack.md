@@ -58,13 +58,9 @@ settings:
 
 référence Slack : [créer une app depuis un manifeste](https://api.slack.com/reference/manifests) · [installer avec oauth v2](https://api.slack.com/authentication/oauth-v2)
 
-## setup — plusieurs workspaces, un compte par workspace
+## setup — un second workspace, une seconde installation
 
-un token Slack est émis **par installation** : deux workspaces = deux jeux de tokens indépendants. Refais l'installation dans le second workspace (le même manifeste), puis pose ses tokens comme un **second compte nommé** du connecteur (un nom par workspace, ex. `otomata`, `client-x`).
-- le premier compte n'a pas besoin de nom ; à partir du deuxième, chacun porte le sien
-- viser l'un d'eux à l'appel : `_account="<nom>"` sur l'outil (`oto_identity(op='list')` pour les lister)
-- en fixer un par défaut : `oto_identity(op='set', connector='slack', identity_id='<nom>')`
-- avec un seul compte posé, rien à préciser — il est servi automatiquement
+un token Slack est émis **par installation** : deux workspaces = deux jeux de tokens indépendants. Refais l'installation dans le second workspace (le même manifeste), puis pose ses tokens comme un second workspace du connecteur (section « plusieurs workspaces »).
 
 ## usage — ce que tu peux faire
 

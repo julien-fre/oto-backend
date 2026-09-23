@@ -191,9 +191,10 @@ async def _instance(ctx: ResolvedCtx, inp: InstanceInput) -> dict:
 
 # ── oto_identity : list / set (sélecteur d'identité, ADR 0024) ───────────────
 class IdentityInput(BaseModel):
-    op: Literal["list", "set"]
+    op: Literal["list", "set", "rename"]
     connector: str
-    identity_id: Optional[str] = None          # set
+    identity_id: Optional[str] = None          # set, rename (le nom actuel)
+    new_name: Optional[str] = None             # rename
     # Palier visé : les MIENS (défaut), ceux de mon équipe active, ceux de mon org.
     # La face REST le portait déjà ; la face agent ne pouvait voir que les siens —
     # donc un membre servi par la clé de son org ne pouvait pas savoir sous quels
@@ -206,6 +207,12 @@ async def _identity(ctx: ResolvedCtx, inp: IdentityInput) -> dict:
     if inp.op == "list":
         return await ids._list(ctx, ids.IdentitiesInput(
             connector=inp.connector, scope=inp.scope))
+    if inp.op == "rename":
+        return await ids._rename(ctx, ids.RenameIdentityInput(
+            connector=inp.connector, scope=inp.scope,
+            identity_id=_need(inp.identity_id, "missing_identity",
+                              "`identity_id` (le nom actuel) requis pour rename."),
+            name=_need(inp.new_name, "missing_new_name", "`new_name` requis pour rename.")))
     return await ids._set_default(ctx, ids.SetIdentityInput(
         connector=inp.connector, scope=inp.scope,
         identity_id=_need(inp.identity_id, "missing_identity", "`identity_id` requis pour set.")))
@@ -321,7 +328,10 @@ CAPABILITIES += [
             "sets your PERSISTENT default identity instead (rejects an id your credential "
             "can't reach). With a single account posted, nothing to do — it resolves alone; "
             "with several and no default, a call without `_account` is REFUSED rather than "
-            "sent under the wrong identity."),
+            "sent under the wrong identity. op=rename (`identity_id` + `new_name`) renames a "
+            "named account; `_account` then takes the new name. `scope=org` / `scope=group` "
+            "reads or acts on the accounts shared by your org / active team (e.g. one key "
+            "per company of a group) — set and rename there need that level's admin."),
         mcp="oto_identity",
     ),
     Capability(

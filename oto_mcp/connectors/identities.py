@@ -505,6 +505,36 @@ def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "memb
     return {"id": identity_id, "label": identity_id, "is_default": True, "channel": None}
 
 
+def rename_identity(sub: str, connector: str, identity_id: str, new_name: str,
+                    scope: str = "member") -> dict:
+    """Renomme un compte nommé du backend keyed générique — le nom EST l'identifiant
+    que l'agent passe en `_account=`, donc c'est la ligne du coffre qui change
+    (`credentials_store.rename_account` : rechiffrement, l'instance suit). Lève
+    `ValueError` (connecteur sans comptes du coffre, compte inconnu, nom vide ou déjà
+    pris) ; le contrôle d'accès du palier vit dans la capacité."""
+    from .. import credentials_store
+    if connector not in _KEYED:
+        raise ValueError(f"Le connecteur `{connector}` n'a pas de comptes renommables.")
+    new_name = (new_name or "").strip()
+    if not new_name:
+        raise ValueError("Le nouveau nom est vide.")
+    ent = keyed_entity(sub, scope)
+    if ent is None:
+        raise ValueError("Aucune org/équipe de contexte — impossible de renommer un compte.")
+    rows = {r["account"]: r for r in credentials_store.list_accounts(ent[0], ent[1], connector)}
+    if identity_id not in rows:
+        raise ValueError(f"Compte `{identity_id}` inconnu pour {connector}.")
+    if new_name == identity_id:
+        return {"id": identity_id, "is_default": bool((rows[identity_id].get("meta") or {})
+                                                        .get("is_default"))}
+    if new_name in rows:
+        # `rename_account` écraserait la ligne d'arrivée (upsert) : une clé perdue.
+        raise ValueError(f"Un compte `{new_name}` existe déjà pour {connector}.")
+    credentials_store.rename_account(ent[0], ent[1], connector, identity_id, new_name)
+    return {"id": new_name, "is_default": bool((rows[identity_id].get("meta") or {})
+                                                .get("is_default"))}
+
+
 _LISTERS = {"google": _google_list, "unipile": _unipile_list}
 _SELECTORS = {"google": _google_select, "unipile": _unipile_select}
 # Connecteurs servis par le backend keyed GÉNÉRIQUE (seul à connaître les paliers

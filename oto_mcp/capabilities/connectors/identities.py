@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
+from starlette.concurrency import run_in_threadpool
 
 from ...connectors import identities as connector_identities
 from .._authz import SUB_ONLY
@@ -28,6 +29,20 @@ class SetIdentityInput(BaseModel):
     connector: str                       # path {connector}
     identity_id: str                     # body — id renvoyé par connectors.identities
     scope: str = "member"                # `org`/`group` : admin du palier requis
+
+
+class RenameIdentityInput(BaseModel):
+    connector: str                       # path {connector}
+    identity_id: str                     # path {identity_id} — le nom actuel
+    name: str                            # body — le nouveau nom (= la valeur de `_account=`)
+    scope: str = "member"                # `org`/`group` : admin du palier requis
+
+
+class RenamedIdentity(BaseModel):
+    connector: str
+    id: str                              # le nouveau nom
+    previous_id: str
+    is_default: bool
 
 
 class IdentityOwner(BaseModel):
@@ -283,6 +298,22 @@ async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
     return {"connector": inp.connector, **res}
 
 
+def _rename_sync(ctx: ResolvedCtx, inp: RenameIdentityInput) -> dict:
+    _require_known_connector(inp.connector)
+    _require_scope(ctx, inp.scope, write=True)
+    try:
+        res = connector_identities.rename_identity(
+            ctx.sub, inp.connector, inp.identity_id, inp.name, inp.scope)
+    except ValueError as e:
+        raise AuthzDenied(400, "rename_refused", str(e))
+    return {"connector": inp.connector, "previous_id": inp.identity_id, **res}
+
+
+async def _rename(ctx: ResolvedCtx, inp: RenameIdentityInput) -> dict:
+    # Rôles + coffre = du SQL : hors de la boucle (mono-loop, `docs/event-loop-perf.md`).
+    return await run_in_threadpool(_rename_sync, ctx, inp)
+
+
 CAPABILITIES_DOC_LIST = (
     "List the connected identities/accounts your credential can act as for a connector "
     "(e.g. the LinkedIn accounts under your Unipile key, or your Google accounts), with "
@@ -298,6 +329,11 @@ CAPABILITIES_DOC_SET = (
     "connectors.identities). Unipile → picks the LinkedIn (or other channel) account; "
     "Google → sets the default account. Rejects an id not reachable by your credential."
 )
+CAPABILITIES_DOC_RENAME = (
+    "Rename a named account of a multi-account connector (one key per company, "
+    "workspace…). The name is what `_account=` targets, so callers must use the new one. "
+    "Refuses an unknown account or a name already taken at that level."
+)
 
 from ..registry import CAPABILITIES  # noqa: E402
 
@@ -312,5 +348,10 @@ CAPABILITIES += [
         key="connectors.set_default_identity", handler=_set_default, Input=SetIdentityInput,
         authz=SUB_ONLY, Output=SelectedIdentity, description=CAPABILITIES_DOC_SET,
         rest=RestBinding("PUT", "/api/connectors/{connector}/identities/default"),
+    ),
+    Capability(
+        key="connectors.rename_identity", handler=_rename, Input=RenameIdentityInput,
+        authz=SUB_ONLY, Output=RenamedIdentity, description=CAPABILITIES_DOC_RENAME,
+        rest=RestBinding("PATCH", "/api/connectors/{connector}/identities/{identity_id}"),
     ),
 ]

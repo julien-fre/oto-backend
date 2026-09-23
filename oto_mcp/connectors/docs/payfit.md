@@ -10,12 +10,8 @@ connecte-toi à PayFit **en admin de l'entreprise**, puis **Intégrations → AP
 
 ## setup — un groupe de sociétés, une clé par société
 
-une clé PayFit n'ouvre **qu'une entreprise**, et l'API n'a aucune vue de groupe : deux sociétés = deux clés indépendantes. crée une clé dans chaque entreprise PayFit, puis pose-les comme autant de **comptes nommés** du connecteur `payfit` (un nom par société).
-- le premier compte n'a pas besoin de nom ; à partir du deuxième, chacun porte le sien
-- viser une société à l'appel : `_account="<nom>"` sur l'outil (`oto_identity(op='list')` pour les lister)
-- en fixer une par défaut : `oto_identity(op='set', connector='payfit', identity_id='<nom>')`
-- avec une seule clé posée, rien à préciser — elle est servie automatiquement
-- ⚠️ **la consolidation se fait chez toi, pas chez PayFit** : pour un chiffre de groupe, appelle société par société et additionne. aucun outil ne parcourt les sociétés tout seul — un total rendu sans avoir bouclé sur chaque `_account` serait le chiffre d'une seule société présenté comme celui du groupe
+une clé PayFit n'ouvre **qu'une entreprise**, et l'API n'a aucune vue de groupe : deux sociétés = deux clés indépendantes. crée une clé dans chaque entreprise PayFit, puis pose chacune comme une société du connecteur (section « plusieurs sociétés »).
+- ⚠️ **la consolidation se fait chez toi, pas chez PayFit** : un total rendu sans avoir bouclé sur chaque `_account` serait le chiffre d'une seule société présenté comme celui du groupe
 
 ## usage — de l'annuaire au pilotage financier
 

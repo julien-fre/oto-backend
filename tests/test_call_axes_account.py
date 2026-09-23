@@ -47,24 +47,66 @@ def test_account_axis_accepted_on_every_keyed_tool():
 
 
 def test_account_axis_advertised_where_the_caller_holds_several_keys():
-    # Dynamique : annoncé sur serper quand l'appelant a ≥ 2 clés serper, pas sinon.
-    assert "_account" in {a.param for a in call_axes.axes_for_listing("serper_search", {"serper"})}
-    assert "_account" not in {a.param for a in call_axes.axes_for_listing("serper_search", set())}
-    assert "_account" not in {a.param for a in call_axes.axes_for_listing("oto_whoami", {"serper"})}
+    # Dynamique : annoncé sur serper quand l'appelant a ≥ 2 clés serper, pas sinon —
+    # et la description annoncée est celle qui nomme SES comptes.
+    adv = {"serper": "Compte à OPÉRER parmi : `a`, `b`."}
+    axes = {a.param: a for a in call_axes.axes_for_listing("serper_search", adv)}
+    assert axes["_account"].schema["description"] == adv["serper"]
+    assert axes["_account"].schema["type"] == "string"
+    assert "_account" not in {a.param for a in call_axes.axes_for_listing("serper_search", {})}
+    assert "_account" not in {a.param for a in call_axes.axes_for_listing("oto_whoami", adv)}
+    # L'axe statique partagé n'est pas muté par l'annonce dynamique.
+    assert "parmi" not in call_axes.ACCOUNT.schema["description"]
+
+
+def _paliers(monkeypatch, rows_by_entity, group=None):
+    from oto_mcp import access, credentials_store
+    monkeypatch.setattr(access, "current_org", lambda sub: 7)
+    monkeypatch.setattr(access, "current_group", lambda sub: group)
+    monkeypatch.setattr(credentials_store, "member_id", lambda org, sub: f"{org}:{sub}")
+    monkeypatch.setattr(credentials_store, "list_credentials",
+                        lambda et, eid: rows_by_entity.get((et, eid), []))
 
 
 def test_account_axis_advertised_for_counts_member_rows(monkeypatch):
-    from oto_mcp import access, credentials_store
-    monkeypatch.setattr(access, "current_org", lambda sub: 7)
-    monkeypatch.setattr(credentials_store, "member_id", lambda org, sub: f"{org}:{sub}")
     rows = [{"connector": "serper", "account": ""}, {"connector": "serper", "account": "eu"},
             {"connector": "hunter", "account": ""}, {"connector": "unipile", "account": "a"},
             {"connector": "unipile", "account": "b"}]
-    monkeypatch.setattr(credentials_store, "list_credentials", lambda et, eid: rows)
+    _paliers(monkeypatch, {(credentials_store.MEMBER, "7:u"): rows})
     # serper : 2 clés d'API → annoncé ; hunter : 1 → non ; unipile : hosted, pas
     # multi-credential → non (il porte déjà l'axe statiquement, autre famille).
-    assert call_axes.account_axis_advertised_for("u") == {"serper"}
-    assert call_axes.account_axis_advertised_for(None) == set()
+    adv = call_axes.account_axis_advertised_for("u")
+    assert set(adv) == {"serper"}
+    assert "`eu`" in adv["serper"]
+    assert call_axes.account_axis_advertised_for(None) == {}
+
+
+def test_account_axis_advertised_for_org_accounts(monkeypatch):
+    # Des clés posées au palier ORG (une par société d'un groupe) doivent annoncer
+    # l'axe à tous les membres — sinon l'agent ne découvre `_account` qu'en échouant.
+    rows = [{"connector": "serper", "account": "alpha", "meta": {"is_default": True}},
+            {"connector": "serper", "account": "beta", "meta": {}}]
+    _paliers(monkeypatch, {("org", "7"): rows})
+    adv = call_axes.account_axis_advertised_for("u")
+    assert set(adv) == {"serper"}
+    assert "`alpha` (org, défaut)" in adv["serper"]
+    assert "`beta` (org)" in adv["serper"]
+
+
+def test_account_axis_advertised_for_union_of_paliers(monkeypatch):
+    # Un compte à soi + un compte d'équipe = 2 comptes visables → annoncé.
+    _paliers(monkeypatch, {
+        (credentials_store.MEMBER, "7:u"): [{"connector": "serper", "account": "perso"}],
+        ("group", "3"): [{"connector": "serper", "account": "equipe"}],
+    }, group=3)
+    adv = call_axes.account_axis_advertised_for("u")
+    assert "`perso`" in adv["serper"] and "`equipe` (équipe)" in adv["serper"]
+
+
+def test_account_axis_advertised_for_never_raises(monkeypatch):
+    from oto_mcp import access
+    monkeypatch.setattr(access, "current_org", lambda sub: (_ for _ in ()).throw(RuntimeError()))
+    assert call_axes.account_axis_advertised_for("u") == {}
 
 
 def test_account_axis_applies_to_folk():
@@ -135,7 +177,8 @@ async def test_on_list_tools_advertises_account_where_the_caller_has_several_key
         return tools
 
     monkeypatch.setattr(mwmod, "current_user_sub_from_token", lambda: "u")
-    monkeypatch.setattr(call_axes, "account_axis_advertised_for", lambda sub: {"serper"})
+    monkeypatch.setattr(call_axes, "account_axis_advertised_for",
+                        lambda sub: {"serper": "Compte à OPÉRER parmi : `a`, `b`."})
     out = await mw.on_list_tools(_Ctx(_Msg("tools/list", {})), _next)
     by = {t.name: t for t in out}
     assert "_account" in by["serper_search"].parameters["properties"]

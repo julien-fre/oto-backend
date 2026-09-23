@@ -56,8 +56,10 @@ def test_two_workspaces_without_a_name_is_an_actionable_error(monkeypatch):
     # VOCABULAIRE de Slack — « plusieurs comptes » obligerait l'agent à traduire.
     msg = str(e.value)
     assert "Plusieurs workspaces `slack`" in msg
-    # Le refus doit porter le geste qui débloque, avec le nom EXACT du jeton.
-    assert '_account=' in msg and "oto_identity(op='list')" in msg
+    # Le refus doit porter le geste qui débloque, avec le nom EXACT du jeton — et
+    # nommer les workspaces en présence, pour qu'aucun appel de liste ne soit requis.
+    assert '_account=' in msg and "oto_identity(op='set'" in msg
+    assert "`otomata`" in msg and "`client`" in msg
 
 
 def test_single_workspace_resolves_without_a_name(monkeypatch):
