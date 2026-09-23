@@ -10,6 +10,9 @@ Il imite les trois formes réelles du dépôt :
 - un refus **littéral** sur le chemin du handler ;
 - un refus **relayé** — le code voyage dans une exception métier, ressort par un
   `AuthzDenied(400, e.code)` ;
+- un refus **fabriqué** : une fonction le CONSTRUIT, l'appelant écrit `raise
+  fabrique(…)` — l'idiome de `ns_not_found` et de `_write_refusal`, que le parcours ne
+  savait pas voir (oto#217) ;
 - un refus **voisin**, levé par une fonction que le handler n'appelle pas : c'est le
   cas qui restait vert quand la question était « existe-t-il dans ce module ? ».
 """
@@ -35,6 +38,11 @@ def coffre():
     raise RefusDeSaisie("valeur_refusee", "hors du jeu attendu")
 
 
+def fabrique(quoi: str) -> AuthzDenied:
+    """REND le refus au lieu de le lever — l'appelant écrit `raise fabrique(…)`."""
+    return AuthzDenied(409, "fabrique_puis_levee", quoi)
+
+
 def voisine():
     """Jamais appelée par `handler` — c'est tout l'objet du banc."""
     raise AuthzDenied(403, "jamais_par_ce_chemin", "une AUTRE capacité")
@@ -46,3 +54,6 @@ def handler():
         coffre()
     except RefusDeSaisie as e:
         raise AuthzDenied(400, getattr(e, "code", str(e)), "relayé tel quel")
+    except ValueError as e:
+        # L'idiome du dépôt : la fonction CONSTRUIT le refus, le `raise` reste ici.
+        raise fabrique(str(e))

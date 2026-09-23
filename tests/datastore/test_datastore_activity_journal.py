@@ -114,7 +114,7 @@ class _FakeStore:
         self._fill(trace)
         return {"_id": "row-2", **data}
 
-    def delete_row(self, datastore, row_id, *, trace=None):
+    def delete_row(self, datastore, row_id, *, trace=None, expected_revision=None):
         self._fill(trace, prev_status=self.row.get("statut"))
         return None
 

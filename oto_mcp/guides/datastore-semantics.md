@@ -110,6 +110,14 @@ rien n'est écrit et l'appel est refusé avec `revision_conflict` et la révisio
 (REST : `409`, `details.current_revision`) : relis, recalcule, réécris. Sinon, ne la
 passe pas.
 
+**Supprimer et libérer prennent la même précondition** — `data_delete_row(id=…,
+expected_revision=…)`, `DELETE …/rows/{row_id}?expected_revision=…`, et
+`POST …/rows/{row_id}/release` — quand c'est une ligne LUE qui t'a fait décider. Une
+suppression sur un état périmé emporte la modification qu'un autre venait d'y poser ; une
+libération sur un état périmé retire le bail que quelqu'un d'autre a repris depuis. Même
+refus, même conduite : relis, décide de nouveau, rejoue. Supprimer une ligne réservée par
+un autre travail est refusé (`row_locked`), comme l'écrire.
+
 ## 4. ⚠️ `origine: "system"` est SUPPRIMÉ
 
 Ce cran armait une capture automatique : à la première écriture qui changeait une

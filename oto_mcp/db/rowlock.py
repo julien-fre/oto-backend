@@ -395,25 +395,44 @@ def datastore_active_leases_of(*, run_id: Optional[str] = None,
         return [dict(r) for r in rows]
 
 
-def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str]) -> bool:
+def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str], *,
+                            expected_revision: Optional[int] = None) -> bool:
     """Libère le bail d'une row. `worker` non-None = gardé (on ne libère pas le
     claim d'un autre) ; None = libération inconditionnelle (chemin interne : entrée
-    en état terminal). Renvoie False si rien n'a été libéré (pas de bail, ou bail
-    d'un autre worker).
+    en état terminal, supervision humaine). Renvoie False si rien n'a été libéré (pas
+    de bail, ou bail d'un autre worker).
 
     Efface aussi `claimed_run` (#664) : `datastore_release_by_run` compte TOUT ce qui
     porte le run, donc une ligne rendue à la main mais restée marquée serait recomptée
-    par `run_finish` / `complete` dans `rows_released`."""
+    par `run_finish` / `complete` dans `rows_released`.
+
+    `expected_revision` (oto#217) = la révision de la ligne telle que l'appelant l'a
+    lue — la précondition des DEUX régimes, faute de quoi elle serait inerte sur celui
+    qui en a le plus besoin : la libération forcée, qui n'a aucune garde. Jugée sous le
+    verrou de la ligne, avant l'UPDATE : `RowNotFound` si la ligne n'existe plus,
+    `RevisionConflict` si elle a changé depuis la lecture (une réservation reprise par
+    un autre worker EN EST une), et zéro ligne touchée dans les deux cas."""
     guard = "" if worker is None else " AND claimed_by = %s"
     params: tuple = (ns_id, row_id) if worker is None else (ns_id, row_id, str(worker))
     with _connect() as conn:
-        cur = conn.execute(
-            "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
-            "claimed_run = NULL "
-            f"WHERE ns_id = %s AND row_id = %s AND claimed_by IS NOT NULL{guard}",
-            params,
-        )
-        libere = (cur.rowcount or 0) > 0
+        with conn.transaction():
+            if expected_revision is not None:
+                from ..datastore.errors import RevisionConflict, RowNotFound
+                locked = conn.execute(
+                    "SELECT rev FROM datastore_rows "
+                    "WHERE ns_id = %s AND row_id = %s FOR UPDATE",
+                    (ns_id, row_id)).fetchone()
+                if locked is None:
+                    raise RowNotFound(row_id)
+                if int(locked["rev"]) != int(expected_revision):
+                    raise RevisionConflict(row_id, expected_revision, locked["rev"])
+            cur = conn.execute(
+                "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
+                "claimed_run = NULL "
+                f"WHERE ns_id = %s AND row_id = %s AND claimed_by IS NOT NULL{guard}",
+                params,
+            )
+            libere = (cur.rowcount or 0) > 0
     if libere:
         # Rendre la ligne sans l'avoir écrite est le cas NOMINAL du faux départ :
         # c'est ici, à la ligne qu'on vient de relâcher, que le plafond se juge.

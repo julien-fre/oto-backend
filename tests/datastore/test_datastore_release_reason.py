@@ -38,7 +38,7 @@ def _store(monkeypatch, *, libere: bool, bail=None):
     monkeypatch.setattr(s, "_ns_of",
                         lambda ns_id: {"datastore": "vivier", "schema": None})
     monkeypatch.setattr(D.db, "datastore_release_claim",
-                        lambda ns_id, row_id, worker: libere)
+                        lambda ns_id, row_id, worker, **k: libere)
     monkeypatch.setattr(D.db, "datastore_active_lease",
                         lambda ns_id, row_id: bail)
     return s

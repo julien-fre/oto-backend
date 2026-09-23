@@ -2296,7 +2296,61 @@ sélectionne `rev` »).
 
 **Hors lot** : l'identité du titulaire d'un bail sur REST. La face REST ne pose aucun run,
 le titulaire ne s'y reconnaît donc pas (`POST …/claim` puis `PATCH` par le même compte =
-`409 row_locked`) ; `claimed_by` n'est pas une identité (cf. `_lease_guard`).
+`409 row_locked`) ; `claimed_by` n'est pas une identité (cf. `_lease_guard`). *(Fermé
+depuis par l'en-tête `X-Oto-Run`, oto#227 — cf. `docs/rest-api.md`.)*
+
+### La même précondition sur la suppression et la libération (23/09/2026, oto#217)
+
+Le patch avait sa précondition ; **la suppression et la libération n'en avaient aucune**,
+ni côté serveur ni côté contrat. Rejoué sur base jetable : une ligne modifiée entre la
+lecture et le clic disparaissait AVEC la modification, et une libération forcée décidée
+sur un écran d'il y a dix minutes retirait le bail qu'un SECOND worker venait de prendre
+— la ligne repartait alors à deux travaux à la fois. Aucune perte n'a été constatée en
+production ; c'est le mécanisme qui est fermé, pas un incident qui est réparé.
+
+**Une seule révision, opaque, bail compris.** Une réservation ou une libération survenue
+depuis la lecture EST un changement concurrent : le `409` qu'elle produit n'est pas un
+défaut à contourner. Pas de révision « métier » séparée, aucun nouveau compteur.
+
+- **Suppression** : `expected_revision` optionnelle, REST en query (`DELETE
+  …/rows/{row_id}?expected_revision=`), MCP `data_delete_row(expected_revision=…)`. Elle
+  passe désormais par une suppression VERROUILLÉE, jumelle de l'écriture par `id` et dans
+  le même ordre — verrou, **bail**, **révision**, puis `DELETE`. Deux conséquences : la
+  garde de bail ne repose plus sur une lecture séparée (la fenêtre où une réservation
+  s'intercalait est fermée), et `409 row_locked` est désormais TRADUITE côté REST — elle
+  traversait l'adaptateur, donc la suppression d'une ligne réservée sortait en **500
+  muet**. Refus : `409 revision_conflict` (+ `details.current_revision`), `409
+  row_locked`, `404 row_not_found`. Droits inchangés.
+- **Libération** : `expected_revision` optionnelle sur la libération REST, appliquée aux
+  DEUX régimes (avec et sans `worker`) — la cantonner au régime gardé l'aurait rendue
+  inerte là où elle protège le plus. Zéro ligne touchée : relecture sous verrou, puis
+  `404 row_not_found`, `409 revision_conflict`, ou le verdict d'avant. La politique de
+  force ne change pas (toujours refusée à un jeton porté), et « rien à rendre » reste le
+  succès bénin `released: false` / `reason: no_lease` (#517).
+- **Les refus sont DÉCLARÉS** (`Capability.errors`) sur l'écriture par id, la suppression,
+  la libération et les deux réservations : `row_locked`, `row_invalid`,
+  `invalid_row_input`, `row_not_found`, `datastore_not_found`, `datastore_read_only`,
+  `row_claimed`, `row_outside_claimable`, `worker_required`, `invalid_claim`,
+  `jeton_mal_place`. Ils étaient émis depuis toujours et publiés nulle part — un client
+  généré les traitait en panne. Leur vocabulaire vit dans
+  `capabilities/datastore/_refus.py`, tiers neutre importé par `rows.py` et `claim.py`
+  (importer l'un depuis l'autre changerait l'ordre de la table de routes, qui est figée).
+- **Ce qui ne bouge pas** : un appelant qui ne passe pas la précondition garde exactement
+  le geste d'avant. `_assert_writable` (garde de bail sur lecture séparée) ne sert plus
+  qu'au REMPLACEMENT, seul chemin de ligne qui n'ouvre pas de verrou.
+
+**Ce que la révision ne voit toujours pas** : `claims` et `abandon_reason` ne la font pas
+avancer, alors que toute écriture les remet à zéro — une transition portant une révision
+VALIDE peut donc remettre en file une ligne abandonnée. Et ni le lot, ni la fusion par
+clé, ni l'upsert ne portent de précondition : un appelant qui tient la révision y écrit
+quand même à l'aveugle. Les deux sont connus, aucun n'est fermé ici.
+
+**Banc** : `tests/datastore/test_preconditions_de_revision_217.py` — les scénarios de
+l'énoncé rejoués sur base jetable (transition aveugle qui écrase, la même refusée sous
+précondition, réservation/libération intercalées, suppression après modification
+concurrente, suppression sous bail, libération forcée après reprise par un second worker,
+ligne abandonnée, zéro écriture partielle et aucune entrée de journal sur un refus), plus
+le rejeu de chaque refus déclaré sur la route servie.
 
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 
@@ -2477,10 +2531,14 @@ n'est inventée.
   `sentinel`. Le chemin est celui de la liste ÉCRITE.
 
 OpenAPI : `invalid_layers` et `invalid_empties` déclarés sur les quatre lectures.
-⚠️ `row_invalid` et `row_locked`, bien rendus par `POST …/rows` et `PATCH …/rows/{id}`, ne sont
-PAS déclarés : `_write_refusal` les RETOURNE (`raise _write_refusal(e)`), le cliquet
-d'atteignabilité (`tests/_refus_atteignables.py`) ne voit que les `raise AuthzDenied(…)`, et
-cinq bancs figent ce retour.
+`row_invalid` et `row_locked` le sont depuis oto#217 sur `PATCH …/rows/{id}` (et `row_locked`
+sur `DELETE`) : le cliquet d'atteignabilité ne voyait que les `raise AuthzDenied(…)`, quand
+`_write_refusal` et `ns_not_found` RETOURNENT le refus que l'appelant lève
+(`raise _write_refusal(e)`) — c'est l'idiome du dépôt, et il rendait ces refus indéclarables.
+`tests/_refus_atteignables.py` relève désormais aussi le refus FABRIQUÉ, avec son cas au banc
+factice ; les cinq bancs qui figent ce retour restent vrais, la fonction rend toujours.
+⚠️ **`POST …/rows` (ajout) ne les déclare toujours pas** : le lot #217 s'est tenu à l'écriture
+par id, la suppression, la libération et les deux réservations — l'ajout attend son rejeu.
 
 Bancs : `tests/datastore/test_vide_assume_reemission_204.py` et `…_204_live.py`.
 

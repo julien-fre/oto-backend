@@ -131,6 +131,20 @@ def test_le_parcours_refuse_un_refus_qui_vit_a_COTE_du_chemin():
         "un code levé par une fonction que le handler n'appelle PAS doit être refusé")
 
 
+def test_le_parcours_accepte_un_refus_FABRIQUE_par_le_chemin():
+    """La troisième forme du dépôt (oto#217) : une fonction CONSTRUIT le refus et
+    l'appelant écrit `raise fabrique(…)`. Ne relever que les `raise` rendait
+    indéclarables `datastore_not_found`, `row_locked`, `row_invalid` et
+    `invalid_row_input` — tous servis depuis toujours, tous fabriqués ainsi."""
+    import _faux_refus
+
+    vu = atteignables(_faux_refus.handler)
+    assert vu.accepte(409, "fabrique_puis_levee"), (
+        "un refus construit par une fonction du chemin, puis levé, doit être déclarable")
+    assert not vu.accepte(403, "jamais_par_ce_chemin"), (
+        "…et la fabrique n'ouvre pas le chemin d'à côté")
+
+
 def test_le_parcours_accepte_un_refus_RELAYE_depuis_ailleurs():
     """L'autre sens : le code voyage dans une exception métier et ressort par un
     relais. Le refuser rendait indéclarable un refus réellement servi."""

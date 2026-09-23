@@ -72,7 +72,7 @@ class _Store:
         self._out("update_row", ns, row_id, patch)
         return {"_id": row_id, "_updated_at": "2026-08-12 09:00:00", **patch}
 
-    def delete_row(self, ns, row_id, *, trace=None):
+    def delete_row(self, ns, row_id, *, trace=None, expected_revision=None):
         return self._out("delete_row", ns, row_id)
 
     # #658 : la surface REST relit ce relevé pour sa ligne de journal.

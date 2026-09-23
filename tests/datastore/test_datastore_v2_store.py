@@ -49,7 +49,7 @@ def store(monkeypatch):
 
     monkeypatch.setattr(dsm.db, "datastore_merge_row_locked", fusion)
     monkeypatch.setattr(dsm.db, "datastore_release_claim",
-                        lambda ns_id, rid, worker: (
+                        lambda ns_id, rid, worker, **k: (
                             calls["release"].append((rid, worker)) or True))
     # #317 : la protection en écriture lit le bail ACTIF avant les gestes qui
     # n'ouvrent pas de verrou de ligne. Ces tests portent sur la validation de
@@ -182,7 +182,7 @@ def test_release_guarded_by_worker(store, monkeypatch):
     st, _ = store
     seen = {}
     monkeypatch.setattr(dsm.db, "datastore_release_claim",
-                        lambda ns_id, rid, worker: (
+                        lambda ns_id, rid, worker, **k: (
                             seen.update(rid=rid, worker=worker) or False))
     monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
     issue = st.release_claim("leads", "r1", worker="w-13")

@@ -14,7 +14,7 @@ il est listé dans `vocabulaire._read_keys`.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from psycopg.errors import UniqueViolation
 
@@ -41,6 +41,7 @@ from . import reliques as rq
 from .forcage import Forcage
 from .outils import _new_id, _now_iso, _refus_de_creation
 from .points import _refuse_dotted_names, ranger_les_couches
+from .precondition import revision_attendue
 from .donnees_d_origine import poser_les_deux_versions
 from .reserves import refuser_champs_reserves
 
@@ -404,16 +405,26 @@ class EcritureMixin:
                                       force=force)
 
     def delete_row(self, datastore: str, row_id: str, *,
-                   trace: Optional[dict] = None) -> None:
+                   trace: Optional[dict] = None,
+                   expected_revision: Any = None) -> None:
+        """Supprime une row, sous le VERROU de la ligne — bail, révision, suppression.
+
+        `expected_revision` (oto#217) = la `_revision` de la ligne telle que l'appelant
+        l'a lue, quand c'est sur cette lecture qu'il a décidé de supprimer. Différente
+        de la révision en place ⇒ `RevisionConflict`, rien n'est supprimé.
+
+        ⚠️ Le relevé de l'état d'avant (`trace`) vient de la ligne VERROUILLÉE, plus
+        d'un `get_row` séparé : celui-ci courait avec une écriture concurrente, et la
+        garde de bail, posée sur une lecture à part, laissait passer une réservation
+        qui s'intercalait entre le contrôle et le delete."""
+        attendue = revision_attendue(expected_revision)
         ns_id = self._resolve(datastore, write=True)
-        if trace is not None:
-            # Relevé demandé : on lit l'état de la row DANS le chemin de suppression
-            # (au plus près du delete), jamais par un `get_row` séparé côté route —
-            # qui re-résoudrait le datastore et courrait avec un write concurrent.
-            ns = self._ns_of(ns_id)
-            sk = (dsv2.status_field(ns.get("schema")) or {}).get("key")
-            prev = ((db.datastore_get_row(ns_id, row_id) or {}).get("data") or {}) if sk else {}
-            self._trace(trace, ns_id, ns, prev_status=prev.get(sk) if sk else None)
-        self._assert_writable(ns_id, row_id)
-        if not db.datastore_delete_row(ns_id, row_id):
+        supprimee = db.datastore_delete_row(ns_id, row_id,
+                                            lease_guard=self._lease_guard(row_id),
+                                            expected_revision=attendue)
+        if supprimee is None:
             raise RowNotFound(row_id)
+        if trace is not None:
+            ns = self._ns_of(ns_id)                  # lu seulement si on relève
+            sk = (dsv2.status_field(ns.get("schema")) or {}).get("key")
+            self._trace(trace, ns_id, ns, prev_status=supprimee.get(sk) if sk else None)

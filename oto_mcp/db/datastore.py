@@ -1214,13 +1214,50 @@ def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: st
             return dict(row), merged
 
 
-def datastore_delete_row(ns_id: int, row_id: str) -> bool:
+def datastore_delete_row(ns_id: int, row_id: str, *, lease_guard=None,
+                         expected_revision: Optional[int] = None) -> Optional[dict]:
+    """SUPPRIME une row par son `row_id`, sous verrou de ligne — la JUMELLE de
+    `datastore_merge_row_locked`, et dans le MÊME ordre : le bail, puis la révision,
+    puis le geste (oto#217).
+
+    Elle était une `DELETE` nue. Deux conséquences, mesurées à la lecture puis rejouées
+    sur base jetable : la garde de bail reposait sur une lecture SÉPARÉE, donc une
+    réservation qui s'intercalait entre le contrôle et la suppression passait ; et rien
+    ne permettait de dire « supprime seulement si la ligne est encore celle que j'ai
+    lue » — la ligne partait avec la modification qu'un autre venait d'y poser.
+
+    `lease_guard` = le contrôle du BAIL, appelé sous le verrou avec la ligne verrouillée,
+    exactement comme à l'écriture : il lève pour refuser, la transaction rollback.
+    `expected_revision` = la précondition de qui a décidé d'après une lecture. Différente
+    de `rev` ⇒ `RevisionConflict` AVANT la suppression : rien n'est supprimé.
+
+    Rend la DONNÉE de la ligne supprimée (relevé du journal : l'état d'avant, lu sous le
+    verrou, donc vrai), ou `None` si la ligne n'existait pas. ⚠️ `{}` est une ligne vide
+    bel et bien supprimée : les appelants testent `is None`, jamais la vérité du dict.
+    """
     with _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM datastore_rows WHERE ns_id = %s AND row_id = %s",
-            (ns_id, row_id),
-        )
-        return (cur.rowcount or 0) > 0
+        with conn.transaction():
+            locked = conn.execute(
+                "SELECT data, rev, claimed_by, claimed_until, claimed_run "
+                "FROM datastore_rows WHERE ns_id = %s AND row_id = %s FOR UPDATE",
+                (ns_id, row_id),
+            ).fetchone()
+            if locked is None:
+                return None
+            if lease_guard is not None:
+                lease_guard(locked)
+            if expected_revision is not None \
+                    and int(locked["rev"]) != int(expected_revision):
+                from ..datastore.errors import RevisionConflict
+                raise RevisionConflict(row_id, expected_revision, locked["rev"])
+            conn.execute(
+                "DELETE FROM datastore_rows WHERE ns_id = %s AND row_id = %s",
+                (ns_id, row_id),
+            )
+            data = locked["data"]
+            if not isinstance(data, dict):
+                data = json.loads(data) if data else {}
+            return data
 
 
 # ── File de travail (ADR 0046 D) ─────────────────────────────────────────────

@@ -40,8 +40,8 @@ def test_force_release_requires_write_and_skips_worker_guard(monkeypatch):
         seen["write"] = write
         return 7
 
-    def _release(ns_id, row_id, worker):
-        seen.update(ns_id=ns_id, row_id=row_id, worker=worker)
+    def _release(ns_id, row_id, worker, **k):
+        seen.update(ns_id=ns_id, row_id=row_id, worker=worker, **k)
         return True
 
     monkeypatch.setattr(D.db, "datastore_release_claim", _release)

@@ -10,7 +10,7 @@ avec le bail qu'elles font respecter : `_lease_guard` sous le verrou de ligne,
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from .. import db
 from . import claimable
@@ -19,6 +19,7 @@ from . import schema as dsv2
 from .claimable import RowOutsideClaimable
 from .errors import RowClaimed, RowLocked, RowNotFound
 from .outils import _backquote, _current_run, _filter_clauses
+from .precondition import revision_attendue
 
 
 def perimetre_de_reservation(schema: Optional[dict], ns_id: int,
@@ -252,7 +253,8 @@ class FileDeTravailMixin:
         self._trace(trace, ns_id, ns)
 
     def release_claim(self, datastore: str, row_id: str, *, worker: str,
-                      trace: Optional[dict] = None) -> dict:
+                      trace: Optional[dict] = None,
+                      expected_revision: Any = None) -> dict:
         """Libère le bail (abandon sans verdict), et NOMME ce qu'elle a constaté.
 
         Gardé par `worker` — on ne libère pas le claim d'un autre.
@@ -274,10 +276,12 @@ class FileDeTravailMixin:
         *Le serveur sait lequel des deux c'est : c'est dans la ligne qu'il vient de ne
         pas modifier. Un succès partiel qu'on ne peut pas distinguer d'un échec est
         pire qu'un refus — un refus, au moins, s'instruit.*"""
+        attendue = revision_attendue(expected_revision)
         ns_id = self._resolve(datastore, write=True)
         if trace is not None:
             self._trace(trace, ns_id, self._ns_of(ns_id))
-        if db.datastore_release_claim(ns_id, row_id, str(worker)):
+        if db.datastore_release_claim(ns_id, row_id, str(worker),
+                                      expected_revision=attendue):
             return {"released": True, "reason": None, "lease": None}
         # Relu APRÈS coup : l'ordre est celui du geste, pas d'un diagnostic préalable.
         # Une course changerait le motif rendu, jamais le fait — la ligne n'a pas été
@@ -349,11 +353,21 @@ class FileDeTravailMixin:
                 for r in db.datastore_claimed_rows(ns_id)]
 
     def force_release(self, datastore: str, row_id: str, *,
-                      trace: Optional[dict] = None) -> bool:
+                      trace: Optional[dict] = None,
+                      expected_revision: Any = None) -> bool:
         """Libère le bail SANS garde de worker — supervision humaine (dashboard),
         ≠ `release_claim` (agent, gardé). Exige le droit d'écriture. False = pas
-        de bail à libérer."""
+        de bail à libérer.
+
+        `expected_revision` (oto#217) = la révision de la ligne telle qu'elle a été
+        PRÉSENTÉE à qui décide de forcer. C'est ici qu'elle protège le plus : sans
+        garde de worker, une libération décidée sur un écran d'il y a dix minutes
+        retirait le bail que le titulaire avait rendu et qu'un SECOND worker avait
+        repris — la ligne partait alors à deux travaux à la fois. On ne libère jamais
+        un bail différent de celui vu au moment de la décision."""
+        attendue = revision_attendue(expected_revision)
         ns_id = self._resolve(datastore, write=True)
         if trace is not None:
             self._trace(trace, ns_id, self._ns_of(ns_id))
-        return db.datastore_release_claim(ns_id, row_id, None)
+        return db.datastore_release_claim(ns_id, row_id, None,
+                                          expected_revision=attendue)

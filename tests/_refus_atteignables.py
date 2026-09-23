@@ -125,23 +125,52 @@ def _fonctions_appelees(noeud: ast.AST, module: types.ModuleType,
 
 
 def _releve(noeud: ast.AST, acc: Atteignables) -> None:
-    """Les refus levés DIRECTEMENT dans ce corps."""
+    """Les refus levés — ou FABRIQUÉS — dans ce corps.
+
+    ⚠️ **Un refus `return`é compte autant qu'un refus `raise`d** (oto#217). Le dépôt a
+    un idiome, et il est délibéré : une fonction *construit* le refus, l'appelant écrit
+    `raise ns_not_found(…)` — « ce qui garde le `raise` visible sur la ligne du chemin
+    d'erreur », dit sa propre docstring. Ne relever que les `raise` rendait ces refus
+    INDÉCLARABLES : `datastore_not_found` (par `ns_not_found`), `row_locked`,
+    `row_invalid`, `invalid_row_input` (par `_write_refusal`) sont tous servis depuis
+    toujours et tous fabriqués ainsi. C'est la MÊME face manquée que le relais du #792 —
+    un refus réellement rendu que le parcours ne savait pas voir — et la règle reste
+    bornée au chemin : la fonction qui fabrique n'est parcourue que si le handler
+    l'appelle.
+
+    On ne retient qu'un `AuthzDenied` : une fonction qui rend autre chose n'est pas un
+    refus, et le premier argument d'un objet quelconque ne doit pas devenir un code.
+    """
     for n in ast.walk(noeud):
+        if isinstance(n, ast.Return) and isinstance(n.value, ast.Call) \
+                and (getattr(n.value.func, "id", None)
+                     or getattr(n.value.func, "attr", None)) == REFUS:
+            _code_du_refus(n.value.args, acc)
+            continue
         if not isinstance(n, ast.Raise) or not isinstance(n.exc, ast.Call):
             continue
         nom = getattr(n.exc.func, "id", None) or getattr(n.exc.func, "attr", None)
         args = n.exc.args
-        if nom == REFUS and len(args) >= 2 and isinstance(args[0], ast.Constant):
-            statut = args[0].value
-            if isinstance(args[1], ast.Constant) and isinstance(args[1].value, str):
-                acc.codes.add((statut, args[1].value))
-            else:
-                acc.statuts_relayes.add(statut)
+        if nom == REFUS:
+            _code_du_refus(args, acc)
         elif nom and nom != REFUS and args and isinstance(args[0], ast.Constant):
             # Une exception métier dont le premier argument est un code : c'est la
             # matière qu'un relais transporte jusqu'au refus servi.
             if isinstance(args[0].value, str) and _FORME_DE_CODE.match(args[0].value):
                 acc.codes_exceptions.add(args[0].value)
+
+
+def _code_du_refus(args: list, acc: Atteignables) -> None:
+    """`AuthzDenied(<statut>, <code>)` → ce que ce refus apporte au relevé."""
+    if len(args) < 2 or not isinstance(args[0], ast.Constant):
+        return
+    statut = args[0].value
+    if isinstance(args[1], ast.Constant) and isinstance(args[1].value, str):
+        acc.codes.add((statut, args[1].value))
+    else:
+        # Code CALCULÉ : on ne sait pas lequel sort, seulement le statut sous lequel
+        # un code inconnu peut sortir.
+        acc.statuts_relayes.add(statut)
 
 
 def atteignables(handler) -> Atteignables:

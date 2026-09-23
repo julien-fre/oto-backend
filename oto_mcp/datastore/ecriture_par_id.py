@@ -48,24 +48,8 @@ from .donnees_d_origine import poser_les_deux_versions
 from .errors import RowNotFound, RowValidationError
 from .outils import _now_iso
 from .points import _refuse_dotted_names, ranger_les_couches
+from .precondition import revision_attendue
 from .reserves import refuser_champs_reserves
-
-
-def revision_attendue(valeur: Any) -> Optional[int]:
-    """`expected_revision` tel que reçu → l'entier comparé à `rev`, None s'il est omis.
-
-    La révision est SERVIE en chaîne (`_revision`), c'est la forme attendue ; un entier
-    désigne la même révision et passe aussi. Tout le reste est REFUSÉ en nommant la
-    forme : une précondition illisible ne s'ignore pas, sinon l'écriture partirait sans
-    la protection que l'appelant a demandée."""
-    if valeur is None:
-        return None
-    texte = str(valeur).strip()
-    if isinstance(valeur, bool) or not (texte.isascii() and texte.isdigit()):
-        raise ValueError(
-            f"`expected_revision` = la `_revision` servie avec la ligne que tu as lue "
-            f"(une chaîne de chiffres, ex. \"3\") — reçu {valeur!r}. Rien n'est écrit.")
-    return int(texte)
 
 
 class EcritureParIdMixin:

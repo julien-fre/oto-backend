@@ -1562,14 +1562,20 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
 
     @mcp.tool()
-    def data_delete_row(datastore: Adresse, id: str) -> dict:
-        """Delete a row by `_id`. `datastore` accepts `slot:<name>` (active
-        project)."""
+    def data_delete_row(datastore: Adresse, id: str,
+                        expected_revision: Optional[str] = None) -> dict:
+        """Delete a row by `_id`. `datastore` accepts `slot:<name>` (active project).
+
+        `expected_revision` = the `_revision` of the row as you read it, when it is
+        that read that made you decide to delete. If the row changed since (any
+        column, or its reservation), nothing is deleted and the call is refused.
+        Omit it when you delete a row you did not have to read first.
+        """
         sub = access.current_user_sub_or_raise()
         store = _store_for(sub)
         datastore, id = _adresse(datastore, id)
         try:
-            store.delete_row(datastore, id)
+            store.delete_row(datastore, id, expected_revision=expected_revision)
         except DatastoreNotFound as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(datastore, e)))
         except DatastoreReadOnly:
@@ -1583,6 +1589,11 @@ def register(mcp: FastMCP) -> None:
             # Le message de l'exception porte déjà les trois ; `_row_locked_message` y
             # ajoute la CAUSE quand elle est prouvée (`_run_id` omis, #547).
             raise McpError(ErrorData(code=INVALID_PARAMS, message=_row_locked_message(e)))
+        except ValueError as e:
+            # `RevisionConflict` (oto#217) et la précondition illisible : leur message
+            # dit ce qui a changé et quoi faire. Sans cette branche elles sortiraient en
+            # « Erreur interne du serveur » — le défaut déjà payé sur `RowLocked`.
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         return {"ok": True, "id": id}
 
     @mcp.tool()

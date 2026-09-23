@@ -53,6 +53,8 @@ from .lot import refuser_un_lot
 from ..registry import CAPABILITIES
 from ._forme import (_EMPTIES, _LAYERS, _REFUS_DE_FORME, _VERSIONS, _layers,
                      _relais_empties, _versions)
+from ._refus import (_JETON_MAL_PLACE, _LIGNE_ABSENTE, _PRECONDITION_REFUSEE,
+                     _REFUS_D_ADRESSE, _REFUS_D_ECRITURE, _WORKER_REQUIS)
 
 
 def _tolerant_int(v):
@@ -68,6 +70,23 @@ def _tolerant_int(v):
         return int(v)
     except (TypeError, ValueError):
         return None
+
+
+def _precondition(refus: str):
+    """`?expected_revision=` — le MÊME champ sur les trois gestes qui décident d'après
+    une lecture : écrire, supprimer, libérer (oto#217).
+
+    En QUERY, jamais dans le corps là où le corps EST la donnée (une clé de plus y
+    serait écrite comme une colonne). Un serveur qui ne le connaît pas rend
+    `400 unknown_fields` — l'échec est fermé, rien ne part sans la protection demandée.
+    Un seul texte : trois copies auraient divergé, et le client aurait lu la plus
+    ancienne."""
+    return Field(
+        default=None,
+        description=("The `_revision` of the row as you read it, when what you do was "
+                     "decided from that read. If the row changed since (any column, or "
+                     f"its reservation), {refus}: `409 revision_conflict`, "
+                     "`details.current_revision`. Omit it otherwise."))
 
 
 class ListRowsInput(EntreeDatastore):
@@ -143,6 +162,12 @@ class DatastoreRefInput(EntreeDatastore):
 class RowRefInput(EntreeDatastore):
     datastore: Adresse
     row_id: str
+
+
+class DeleteRowInput(RowRefInput):
+    """La suppression porte la précondition ; la lecture par id n'en a que faire —
+    d'où deux entrées là où `RowRefInput` servait les deux (oto#217)."""
+    expected_revision: Optional[str] = _precondition("nothing is deleted")
 
 
 class GetRowInput(RowRefInput):
@@ -229,15 +254,7 @@ class UpdateRowInput(EntreeDatastore):
     force: Optional[list[str] | str] = _FORCE
     origine_override: bool = _ORIGINE
     donnees_d_origine: bool = _DONNEES_D_ORIGINE
-    # En QUERY (`?expected_revision=3`), jamais dans le corps : le corps EST le patch, une
-    # clé de plus y serait écrite comme une colonne. Un serveur qui ne la connaît pas
-    # rend `400 unknown_fields` — l'échec est fermé, rien n'est écrit sans la protection.
-    expected_revision: Optional[str] = Field(
-        default=None,
-        description=("The `_revision` of the row as you read it, when what you write was "
-                     "computed from that read. If the row changed since (any column, or "
-                     "its reservation), nothing is written: `409 revision_conflict`, "
-                     "`details.current_revision`. Omit it otherwise."))
+    expected_revision: Optional[str] = _precondition("nothing is written")
 
     @field_validator("force", mode="after")
     @classmethod
@@ -262,6 +279,10 @@ class ReleaseInput(EntreeDatastore):
     row_id: str
     # Vide = libération FORCÉE (supervision humaine) ; renseigné = libération GARDÉE.
     worker: str = ""
+    # oto#217 : la précondition vaut pour les DEUX régimes. La cantonner au régime
+    # gardé l'aurait rendue inerte là où elle protège le plus — le forcé, qui n'a
+    # aucune garde et peut retirer un bail repris entre-temps par un autre worker.
+    expected_revision: Optional[str] = _precondition("nothing is released")
 
 
 class Row(BaseModel):
@@ -563,6 +584,15 @@ def _write_refusal(e: Exception) -> AuthzDenied:
     return AuthzDenied(400, "invalid_row_input", str(e))
 
 
+def _conflit_de_revision(e: RevisionConflict) -> AuthzDenied:
+    """409 comme `row_locked`, et AVANT le refus générique : `RevisionConflict` dérive
+    de `ValueError`, en 400 elle enverrait corriger une requête juste. La révision en
+    place part en `details` : le client relit sans reparser la phrase. Écrite une fois
+    pour les trois gestes qui portent la précondition (oto#217)."""
+    return AuthzDenied(409, "revision_conflict", str(e),
+                       {"current_revision": e.current_revision})
+
+
 _ECRITURE_DETRUIT = (
     " ⚠️ Une écriture DÉTRUIT ce qui est dans la colonne : sur une colonne "
     "ouverte il n'y a ni annulation ni historique, la valeur précédente "
@@ -631,11 +661,7 @@ def _update_row(ctx: ResolvedCtx, inp: UpdateRowInput) -> dict:
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
     except RevisionConflict as e:
-        # 409 comme `row_locked`, et AVANT le refus générique : `RevisionConflict` dérive
-        # de `ValueError`, en 400 elle enverrait corriger une requête juste. La révision
-        # en place part en `details` : le client relit sans reparser la phrase.
-        raise AuthzDenied(409, "revision_conflict", str(e),
-                          {"current_revision": e.current_revision})
+        raise _conflit_de_revision(e)
     except ValueError as e:
         raise _write_refusal(e)
     nsctx = datastore_journal.from_trace(trace, ns)
@@ -648,17 +674,26 @@ def _update_row(ctx: ResolvedCtx, inp: UpdateRowInput) -> dict:
             **identite.numero(store.dernier_tableau)}
 
 
-def _delete_row(ctx: ResolvedCtx, inp: RowRefInput) -> dict:
+def _delete_row(ctx: ResolvedCtx, inp: DeleteRowInput) -> dict:
     ns, rid = _adresse(inp.datastore, inp.row_id)
     trace: dict = {}
     try:
-        make_store(ctx.sub).delete_row(ns, rid, trace=trace)
+        make_store(ctx.sub).delete_row(ns, rid, trace=trace,
+                                       expected_revision=inp.expected_revision)
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
     except DatastoreReadOnly:
         raise AuthzDenied(403, "datastore_read_only")
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
+    except RevisionConflict as e:
+        raise _conflit_de_revision(e)
+    except ValueError as e:
+        # Supprimer EST une écriture : même table de traduction que le patch. Elle
+        # porte le refus de BAIL (`409 row_locked`) — il n'était attrapé nulle part
+        # ici, donc la suppression d'une ligne réservée traversait l'adaptateur et
+        # sortait en 500 muet, sans dire qui tenait la ligne ni jusqu'à quand.
+        raise _write_refusal(e)
     nsctx = datastore_journal.from_trace(trace, ns)
     datastore_journal.record(datastore_journal.TOOL_DELETE, sub=ctx.sub, ctx=nsctx,
                              row_id=rid, from_status=trace.get("prev_status"))
@@ -685,17 +720,30 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
                           "à la supervision, session interactive)")
     trace: dict = {}
     store = make_store(ctx.sub)
+    attendue = inp.expected_revision
     try:
         # La libération FORCÉE reste un booléen : la supervision humaine agit sans
-        # garde, il n'y a pas de « bail d'un autre » qui la concerne.
-        issue = (store.release_claim(ns, rid, worker=worker, trace=trace) if worker
-                 else {"released": store.force_release(ns, rid, trace=trace),
+        # garde, il n'y a pas de « bail d'un autre » qui la concerne. La PRÉCONDITION,
+        # elle, vaut pour les deux régimes (oto#217).
+        issue = (store.release_claim(ns, rid, worker=worker, trace=trace,
+                                     expected_revision=attendue) if worker
+                 else {"released": store.force_release(ns, rid, trace=trace,
+                                                       expected_revision=attendue),
                        "reason": None, "lease": None})
         released = issue["released"]
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
     except DatastoreReadOnly:
         raise AuthzDenied(403, "datastore_read_only")
+    except RowNotFound:
+        # Seulement sous précondition : sans elle, une ligne absente n'a pas de bail et
+        # reste le `no_lease` bénin que la flotte lit (#517). Avec elle, l'appelant a
+        # demandé un verdict sur la ligne qu'il a lue — elle n'existe plus, on le dit.
+        raise AuthzDenied(404, "row_not_found")
+    except RevisionConflict as e:
+        raise _conflit_de_revision(e)
+    except ValueError as e:
+        raise _write_refusal(e)
     if released:  # rien libéré = rien changé, donc rien à journaliser
         datastore_journal.record(
             datastore_journal.TOOL_RELEASE, sub=ctx.sub,
@@ -766,11 +814,13 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,
         rest=RestBinding(verb="PATCH", path=_NS + "/rows/{row_id}", body_field="patch"),
-        errors=(
-            DeclaredError(409, "revision_conflict",
-                          "`?expected_revision=` ne vaut plus la révision en place : rien "
-                          "n'est écrit, `details.current_revision` porte la révision "
-                          "actuelle — relire, recalculer, réécrire"),
+        errors=_REFUS_D_ADRESSE + _REFUS_D_ECRITURE + (
+            _JETON_MAL_PLACE, _PRECONDITION_REFUSEE, _LIGNE_ABSENTE,
+            DeclaredError(400, "row_invalid",
+                          "la ligne fusionnée est refusée par le schéma strict ou par "
+                          "le cycle de vie (transition non déclarée) : le message nomme "
+                          "les champs fautifs, `details.expected_column` la colonne "
+                          "quand il y en a une"),
         ),
         description=("Modifie une ligne (patch partiel ; le corps EST le patch). "
                      "`?expected_revision=` (query, jamais le corps) = la `_revision` "
@@ -785,12 +835,19 @@ CAPABILITIES += [
     Capability(
         key="me.datastore.delete_row",
         handler=_delete_row,
-        Input=RowRefInput,
+        Input=DeleteRowInput,
         Output=DeletedRow,
         authz=SUB_ONLY,
         mcp=None,
         rest=RestBinding(verb="DELETE", path=_NS + "/rows/{row_id}"),
-        description="Supprime une ligne.",
+        errors=_REFUS_D_ADRESSE + _REFUS_D_ECRITURE + (
+            _JETON_MAL_PLACE, _PRECONDITION_REFUSEE, _LIGNE_ABSENTE),
+        description=("Supprime une ligne — définitivement, la ligne est retirée de la "
+                     "table. `?expected_revision=` (query) = la `_revision` lue, quand "
+                     "c'est sur cette lecture qu'on a décidé de supprimer : si la ligne "
+                     "a changé depuis, rien n'est supprimé (`409 revision_conflict`). "
+                     "Jugée sous le verrou de la ligne, après le bail — une ligne "
+                     "réservée par un autre travail ne se supprime pas."),
     ),
     Capability(
         key="me.datastore.release_claim",
@@ -800,7 +857,18 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,
         rest=RestBinding(verb="POST", path=_NS + "/rows/{row_id}/release"),
-        description="Libère le bail d'une ligne (gardée avec `worker`, forcée sans).",
+        errors=_REFUS_D_ADRESSE + (
+            _JETON_MAL_PLACE, _PRECONDITION_REFUSEE, _LIGNE_ABSENTE, _WORKER_REQUIS,
+            DeclaredError(400, "invalid_row_input",
+                          "`expected_revision` est illisible (la `_revision` est une "
+                          "chaîne de chiffres) : rien n'est libéré"),
+        ),
+        description=("Libère le bail d'une ligne (gardée avec `worker`, forcée sans). "
+                     "`expected_revision` = la `_revision` de la ligne telle qu'elle "
+                     "vous a été présentée : une réservation reprise depuis par un "
+                     "autre travail rend `409 revision_conflict` plutôt que de lui "
+                     "retirer sa ligne. « Rien à rendre » reste un succès "
+                     "(`released: false`, `reason: no_lease`)."),
     ),
     Capability(
         key="me.datastore.queue",

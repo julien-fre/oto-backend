@@ -47,6 +47,8 @@ from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .common import EntreeDatastore
 from ..registry import CAPABILITIES
 from ._forme import _EMPTIES, _LAYERS, _REFUS_DE_FORME, _layers, _relais_empties
+from ._refus import (_CLAIM_INVALIDE, _LIGNE_ABSENTE, _LIGNE_NON_RESERVABLE,
+                     _REFUS_D_ADRESSE, _WORKER_REQUIS)
 
 
 class ClaimNextInput(EntreeDatastore):
@@ -201,7 +203,11 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,  # `data_claim_next` tient déjà la face agent
         rest=RestBinding(verb="POST", path="/api/datastores/{datastore}/claim_next"),
-        errors=_REFUS_DE_FORME,
+        # `claim_next` PIOCHE : il n'y a pas de ligne nommée, donc ni `row_not_found`
+        # ni les deux refus qui jugent une ligne choisie — file vide n'est pas un refus
+        # (`row: null` + `hint`).
+        errors=_REFUS_DE_FORME + _REFUS_D_ADRESSE + (
+            _WORKER_REQUIS, _CLAIM_INVALIDE),
         description=("Réserve atomiquement la prochaine ligne libre d'un tableau (file de travail). "
                      "Toute colonne déclarée est servie, `null` sans valeur."),
     ),
@@ -214,7 +220,8 @@ CAPABILITIES += [
         mcp=None,  # geste d'un humain qui choisit sa ligne ; l'agent draine
         rest=RestBinding(verb="POST",
                          path="/api/datastores/{datastore}/rows/{row_id}/claim"),
-        errors=_REFUS_DE_FORME,
+        errors=_REFUS_DE_FORME + _REFUS_D_ADRESSE + _LIGNE_NON_RESERVABLE + (
+            _WORKER_REQUIS, _CLAIM_INVALIDE, _LIGNE_ABSENTE),
         description="Réserve une ligne nommée d'un tableau (409 si déjà sous bail d'un autre).",
     ),
 ]
