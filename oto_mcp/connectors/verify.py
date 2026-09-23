@@ -2,7 +2,7 @@
 
 Un credential keyé/multi-champs (Zoho, Silae…) peut être POSÉ mais ne pas authentifier
 (mauvais data center, refresh token périmé…). `credentials_store.credential_status` ne
-dit que « posée / pas posée » (`secret_enc IS NOT NULL`), jamais « ça authentifie ».
+dit que « posée / pas posée » (la ligne du coffre existe), jamais « ça authentifie ».
 Chaque connecteur peut enregistrer une **sonde** : un appel SANS effet de bord qui, à
 partir des champs déchiffrés, vérifie que le credential authentifie réellement et LÈVE
 sur échec (le message d'exception = le retour d'erreur remonté à l'UI).

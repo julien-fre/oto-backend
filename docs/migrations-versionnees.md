@@ -514,6 +514,16 @@ LIT à chaque authentification par jeton (`verify_api_token`) : comme 0003, elle
 **avant la fusion**, sinon chaque requête par jeton répondrait `UndefinedColumn`. Pas
 au démarrage : cette table a déjà connu le deadlock `ALTER` de boot contre requête.
 
+`0009_coffre_secret_obligatoire` (23/09/2026, #521, après `0008_billing_contracts` de #806) pose `NOT NULL` sur
+`connector_credentials.secret_enc` — la première contrainte reposée sur la base servie.
+Le code du même lot ne filtre plus `secret_enc IS NOT NULL` (« détenir une clé » = la
+ligne existe) : elle se joue **avant la fusion**. Elle **échoue d'elle-même** si une
+ligne nulle existe (rien n'est écrit) ; la requête de vérification est dans son en-tête.
+Le démarrage ne pose plus la colonne (`ADD COLUMN IF NOT EXISTS secret_enc TEXT` retiré
+d'`_init.py`, inerte sur toute base servie) : un `ALTER` qui rendait la colonne sans
+son `NOT NULL` aurait ouvert une neuvième divergence au cliquet de
+`tests/test_boot_order_replay.py`.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

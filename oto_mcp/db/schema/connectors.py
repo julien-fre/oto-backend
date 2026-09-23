@@ -46,15 +46,17 @@ CREDENTIALS = """
 -- entity_id = sub (user) | orgs.id::text (org) | org_groups.id::text (group) |
 -- tenants.slug (tenant) ;
 -- toujours requêter (entity_type, entity_id) ENSEMBLE. Secret chiffré par
--- enveloppe AES-256-GCM dans `secret_enc` (obligatoire — pas de colonne
--- plaintext) ; déchiffrement JIT dans resolve_api_key. meta JSONB pour les
+-- enveloppe AES-256-GCM dans `secret_enc`, NOT NULL : une ligne du coffre
+-- DÉTIENT un secret, « détenir une clé » = la ligne existe (oto-backend#521 ;
+-- base existante : révision `0009_coffre_secret_obligatoire`). Pas de colonne
+-- plaintext ; déchiffrement JIT dans resolve_api_key. meta JSONB pour les
 -- satellites (user_agent, scopes…).
 CREATE TABLE IF NOT EXISTS connector_credentials (
     entity_type TEXT NOT NULL,            -- 'member' | 'user' | 'org' | 'group' | 'tenant' (L-clés) | 'platform' (ADR 0044 §F)
     entity_id   TEXT NOT NULL,            -- member:'org:sub' | user:sub | org/group:id::text | tenant:slug | platform:label
     connector   TEXT NOT NULL,            -- nom de connecteur (registre)
     account     TEXT NOT NULL DEFAULT '', -- discriminant multi-compte ('' = mono ; ex. email Google)
-    secret_enc  TEXT,                     -- enveloppe AES-256-GCM (obligatoire)
+    secret_enc  TEXT NOT NULL,            -- enveloppe AES-256-GCM (#521)
     secret_kind TEXT NOT NULL DEFAULT 'api_key',
     meta        JSONB NOT NULL DEFAULT '{}',
     set_by      TEXT,

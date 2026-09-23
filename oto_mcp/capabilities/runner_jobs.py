@@ -402,7 +402,7 @@ def _depot_pose(org_id: int, depot: str) -> bool:
     """Cette org a-t-elle DÉPOSÉ cette clé — présence seule, sans déchiffrer.
 
     Sert à décider s'il y a quelque chose à refuser, donc quelque chose à dire.
-    `has_credential` lit la présence du chiffré (`secret_enc IS NOT NULL`) : le
+    `has_credential` lit la présence de la ligne du coffre, sans la déchiffrer : le
     secret n'est jamais touché pour écrire une ligne de journal.
 
     `account=""` — le mono-compte, exactement ce que la remise lit : signaler un

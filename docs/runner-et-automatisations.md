@@ -715,7 +715,7 @@ workers nomment leur dépôt à CHAQUE réservation — trois workers, toutes le
 15 secondes : sans ce filtre, la garde écrivait ~17 000 lignes par jour tant que
 la marque n'était pas posée, c'est-à-dire un journal que plus personne ne lit et
 une sonde qui fabrique son propre signal. La présence du dépôt se lit sans
-déchiffrer (`has_credential`, `secret_enc IS NOT NULL`) : le secret n'est jamais
+déchiffrer (`has_credential`, la ligne du coffre existe) : le secret n'est jamais
 touché pour décider d'écrire une ligne.
 
 ⚠️ **La marque se lit par `access.user_has_option`, jamais `has_option`.** Ce

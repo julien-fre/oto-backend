@@ -468,8 +468,13 @@ from oto_mcp.db import _schema, schema
 # réglé hors plateforme. ADDITIVE : l'ancien code l'ignore. La révision Alembic
 # `0008_billing_contracts` exécute le même fragment.
 # 167 345 → 168 301 (+956, commentaires du fragment compris).
-EMPREINTE = "1e71a3125dfaeec3d283864f4fbdd264dcba9441d3d40d5266ac6ce50b55026d"
-LONGUEUR = 168301
+# 24/09/2026 (#521) — `connector_credentials.secret_enc` passe NOT NULL dans le fragment
+# `schema/connectors.CREDENTIALS`, commentaire du coffre réécrit. Base existante :
+# révision Alembic `0009_coffre_secret_obligatoire`, pas le démarrage. Empreinte
+# recalculée sur le tronc qui porte #806 (qui rendait bien 168 301 / 1e71a312… sans ce
+# lot) : 168 301 → 168 453 (+152).
+EMPREINTE = "c7727baf89e06bbedf754e4590e9a10e072bee144ced0609088aef67b9c860b8"
+LONGUEUR = 168453
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

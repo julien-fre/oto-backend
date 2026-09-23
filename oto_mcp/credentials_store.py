@@ -684,9 +684,8 @@ def _reveal(row, entity_type: str, entity_id: str, connector: str, account: str)
     """Secret en clair depuis une ligne : déchiffre `secret_enc`. Le chiffrement
     est obligatoire (pas de chemin plaintext) → un échec de déchiffrement LÈVE,
     jamais de fallback silencieux. Primitive partagée par get_credential /
-    get_credential_with_meta."""
-    if not row["secret_enc"]:
-        return None
+    get_credential_with_meta. `secret_enc` est NOT NULL (#521) : une ligne lue porte
+    toujours son chiffré."""
     return crypto.decrypt(row["secret_enc"], _aad(entity_type, entity_id, connector, account))
 
 
@@ -823,12 +822,11 @@ def credential_status(entity_type: str, entity_id: str, connector: str,
     credential."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT meta, set_at, (secret_enc IS NOT NULL) AS configured "
-            "FROM connector_credentials "
+            "SELECT meta, set_at FROM connector_credentials "
             "WHERE entity_type = %s AND entity_id = %s AND connector = %s AND account = %s",
             (entity_type, entity_id, connector, account),
         ).fetchone()
-    if not row or not row["configured"]:
+    if not row:
         return None
     return {"set_at": row["set_at"], "meta": _public_meta(row["meta"])}
 
@@ -838,9 +836,14 @@ def has_credential(entity_type: str, entity_id: str, connector: str, account: Op
     réduite : /api/me n'a besoin que du booléen, jamais de la valeur).
 
     `account` None = n'importe quel compte (présence du connecteur, multi-compte
-    inclus) ; '' = strictement le mono-compte ; une valeur = ce compte précis."""
+    inclus) ; '' = strictement le mono-compte ; une valeur = ce compte précis.
+
+    « Détenir » = la ligne existe, la MÊME définition que `list_credentials` : la base
+    interdit une ligne sans chiffré (`secret_enc NOT NULL`, #521). Jusqu'au 23/09/2026
+    cette lecture filtrait `secret_enc IS NOT NULL` et `list_credentials` non, sur une
+    colonne que le schéma laissait nullable — deux définitions qui pouvaient diverger."""
     sql = ("SELECT 1 FROM connector_credentials WHERE entity_type = %s AND entity_id = %s "
-           "AND connector = %s AND secret_enc IS NOT NULL")
+           "AND connector = %s")
     params: tuple = (entity_type, entity_id, connector)
     if account is not None:
         sql += " AND account = %s"
@@ -1150,7 +1153,7 @@ def scan_vault_health() -> dict:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT entity_type, entity_id, connector, account, secret_enc, set_at "
-            "FROM connector_credentials WHERE secret_enc IS NOT NULL "
+            "FROM connector_credentials "
             "ORDER BY entity_type, connector, entity_id"
         ).fetchall()
     return classify_vault_rows(rows)

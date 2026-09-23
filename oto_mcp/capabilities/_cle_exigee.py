@@ -67,7 +67,7 @@ def cle_exigee(org_id: int, fournisseur: str) -> bool:
 
 
 def cle_deposee(org_id: int, fournisseur: str) -> bool:
-    """Présence du dépôt — sans déchiffrer (`secret_enc IS NOT NULL`), sur le
+    """Présence du dépôt — sans déchiffrer (la ligne du coffre existe), sur le
     mono-compte, exactement ce que la remise au worker lit. Une lecture qui LÈVE
     se lit « non déposée » et le dit : pour une garde d'argent, le doute arrête le
     travail plutôt que de le faire payer par nous."""

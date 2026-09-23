@@ -1339,7 +1339,9 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Baseline de toolset d'équipe (ex-ADR 0012) RETIRÉE avec les presets : drop.
     conn.execute("ALTER TABLE org_groups DROP COLUMN IF EXISTS default_tools")
     # Coffre chiffré : colonnes courantes (idempotent pour les DB créées avant).
-    conn.execute("ALTER TABLE connector_credentials ADD COLUMN IF NOT EXISTS secret_enc TEXT")
+    # (`secret_enc` n'est plus posée ici : toute base servie l'a depuis le chiffrement
+    # du coffre, et son NOT NULL — que cet ALTER ne savait pas poser — vient de la
+    # révision `0009_coffre_secret_obligatoire`, oto-backend#521.)
     conn.execute("ALTER TABLE connector_credentials ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT ''")
     # La clé primaire n'est reposée QUE si elle n'a pas encore sa forme finale.
     # ⚠️ Le couple DROP/ADD tournait à chaque boot : il reconstruisait l'index de la

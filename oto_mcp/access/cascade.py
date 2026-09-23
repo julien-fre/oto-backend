@@ -223,8 +223,8 @@ def group_secret_map(groups: Optional[list] = None) -> dict:
     contre les soixante-sept que ce lot retire. Le partage coûterait plus qu'il ne rend.
 
     ⚠️ Même définition de « détient » que la sonde préchargée, à dessein : la présence
-    d'une ligne dans `list_credentials`. `has_credential` y ajoute `secret_enc IS NOT
-    NULL` (la colonne est nullable en schéma, quoi qu'en dise son commentaire). Sur ce
+    d'une ligne dans `list_credentials` — celle de `has_credential` aussi depuis que la
+    base interdit une ligne sans chiffré (`secret_enc NOT NULL`, #521). Sur ce
     point la carte n'invente rien — elle ALIGNE le hint sur le verdict que la cascade
     rend déjà, au lieu de le laisser répondre par un chemin qui pourrait diverger.
     """

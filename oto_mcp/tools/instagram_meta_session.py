@@ -217,7 +217,7 @@ def renouveler_les_jetons(*, dry_run: bool = False) -> dict:
     with db_conn._connect() as conn:
         lignes = conn.execute(
             "SELECT entity_type, entity_id, account FROM connector_credentials "
-            "WHERE connector = %s AND secret_enc IS NOT NULL",
+            "WHERE connector = %s",
             (CONNECTOR,)).fetchall()
     for ligne in lignes:
         sortie["examines"] += 1
