@@ -131,6 +131,8 @@ def store(monkeypatch):
     from oto_mcp.tools import datastore as D
     monkeypatch.setattr(D, "_acting_store", lambda: s)
     monkeypatch.setattr(D, "_project_hint", lambda ns: None)
+    # Un claim d'agent se fait dans un run (#727) — ce banc n'est pas sur ce point.
+    monkeypatch.setattr(D, "_current_run", lambda: "run-numero")
     monkeypatch.setattr(CAP_CLAIM, "make_store", lambda sub: s)
     monkeypatch.setattr(CAP_ROWS, "make_store", lambda sub: s)
     monkeypatch.setattr(CAP_SCHEMA, "make_store", lambda sub: s)

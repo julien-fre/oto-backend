@@ -221,8 +221,7 @@ def _table(n: int = 1):
 
 def _claim(ns: str, run: str | None) -> dict:
     """La réservation comme elle arrive en production : `_run_id=` lu des arguments
-    BRUTS par le middleware, posé, retiré, puis l'outil dispatché. `run=None` = la
-    file pilotée à la main, sans jeton de run."""
+    BRUTS par le middleware, posé, retiré, puis l'outil dispatché."""
     from oto_mcp.middleware.call_context import CallContextMiddleware
 
     outil = _outil("data_claim_next")
@@ -288,9 +287,12 @@ def test_tous_les_chemins_servis_disent_le_run(surface):
 def test_un_bail_sans_run_vaut_null_et_pas_une_absence(surface):
     """Réserver sans jeton de run est un cas NORMAL (la file pilotée par une
     personne). La réponse doit le dire : la clé est là, sa valeur est `null` — « ce
-    bail n'appartient à aucun run », pas « je ne sais pas »."""
+    bail n'appartient à aucun run », pas « je ne sais pas ».
+
+    Par le STORE, comme la face REST de la file : le tool d'agent, lui, refuse hors
+    run (#727, `test_claim_sans_run_refuse_727.py`)."""
     ns, _ = _table(1)
-    pris = _claim(ns, None)["row"]
+    pris = _store().claim_next(ns, worker="poste-1", lease_s=600)
     assert pris["_claimed_by"] == "poste-1", "le bail est bien posé"
     assert "_claimed_run" in pris, "la clé manquante se lirait « pas de bail »"
     assert pris["_claimed_run"] is None

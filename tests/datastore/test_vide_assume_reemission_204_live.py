@@ -72,7 +72,10 @@ def outils(base):
 @pytest.fixture
 def acteur(monkeypatch):
     from oto_mcp import access
+    from oto_mcp.tools import datastore as tools_ds
     monkeypatch.setattr(access, "current_user_sub_from_token", lambda: SUB)
+    # Un claim d'agent se fait dans un run (#727) — ce banc porte sur la forme servie.
+    monkeypatch.setattr(tools_ds, "_current_run", lambda: "run-204")
 
 
 def _poser_a_la_main(ns_id: int, row_id: str, data: dict) -> None:

@@ -25,7 +25,7 @@ from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
 from ..datastore import versions as dsver
 from ..datastore.identite import AdresseJson as Adresse
-from ..datastore.outils import adresse_servie
+from ..datastore.outils import _current_run, adresse_servie
 from ..datastore import schema as dsv2
 from ..datastore.core import (
     indice_de_liberation,
@@ -333,6 +333,19 @@ _HINT_RIEN_TENU = (" — tu ne tiens AUCUNE ligne : n'écris rien, n'invente auc
                    "identifiant, termine ton travail (`run_finish`)")
 _HINT_FILE_VIDE = ("plus rien à claim (file vide pour ce filtre, ou tout est sous bail "
                    "actif)" + _HINT_RIEN_TENU)
+
+
+# #727 : sans run, le claim rendait une vraie ligne ET posait un bail — mais un bail se
+# tient par son RUN (`_lease_guard`), donc l'écriture était refusée APRÈS l'enquête, et le
+# claim suivant, sous run, rendait une autre ligne. Le refus nomme le geste manquant et ne
+# pose rien. Jamais de run implicite : ouvrir un déroulé à la place de l'appelant lui
+# attribuerait un fait qu'il n'a pas posé.
+_REFUS_SANS_RUN = (
+    "`data_claim_next` refusé : aucun run actif sur cet appel — RIEN n'a été réservé, la "
+    "ligne reste à l'agent suivant. Une réservation se tient par son run : hors run, tu "
+    "enquêterais sur une ligne que tu ne pourrais pas écrire. Ouvre ton travail avec "
+    "`run_start`, puis passe son `run_id` en `_run_id=` sur CET appel et sur chaque "
+    "écriture qui suit.")
 
 
 def _hint_file_vide(perimetre: dict, filter: Optional[dict]) -> str:
@@ -1094,6 +1107,11 @@ def register(mcp: FastMCP) -> None:
         — that is the signature. Stop and re-read your filter;
         claiming again will not help.
 
+        ⚠️ **A claim lives in a run.** Call `run_start` first and pass its
+        `run_id` as `_run_id=` on this call: without an active run the claim is
+        REFUSED and nothing is reserved — a row held outside a run could not be
+        written, so you would research it for nothing.
+
         Write your result and release it by the `_id` of the returned row.
 
         ⚠️ **Address the table by its NUMBER, not its name**: the reply carries
@@ -1177,6 +1195,8 @@ def register(mcp: FastMCP) -> None:
                 (default): `""`, like any empty cell. `sentinel`: `"@empty"`, the
                 word that writes it. Any other value is refused.
         """
+        if not _current_run():
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_REFUS_SANS_RUN))
         store = _acting_store()
         datastore = _ns(datastore)
         warnings: list = []

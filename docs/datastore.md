@@ -301,6 +301,17 @@ tient un run actif. C'est ce qui rend le jeton obligatoire dans les faits, et ce
 description de l'axe dit désormais (`call_axes.RUN`). Mesuré, non corrigé ici : le
 correctif de la lecture est un lot à part, avec sa propre mesure.
 
+**Un agent ne réserve que dans un run (23/09/2026, #727).** Sans run, `data_claim_next`
+rendait une vraie ligne ET posait un bail ; mais le bail se tient par son RUN
+(`_lease_guard`), donc l'écriture était refusée APRÈS l'enquête, et le claim suivant,
+sous run, rendait une autre ligne (2 occurrences sur 2). La ligne était retirée à tout le
+monde pendant le bail et refusée à qui l'avait demandée. Le tool REFUSE désormais hors run,
+**avant tout bail**, en nommant `run_start` et `_run_id` (`tools/datastore.py`,
+`_REFUS_SANS_RUN`). Jamais de run implicite : ouvrir un déroulé à la place de l'appelant
+lui attribuerait un fait qu'il n'a pas posé. La face REST (`me.datastore.claim_next`) n'est
+pas concernée : une personne sur la file du dashboard réserve sans run. Banc :
+`tests/datastore/test_claim_sans_run_refuse_727.py`.
+
 ⚠️ **Écrire un état terminal ne libère plus la ligne** — le store émet une notice à la
 place. Un tableau dont le statut n'a aucun état terminal est une file qui ne libère
 rien : `set_schema` le signale à la pose.
@@ -320,7 +331,7 @@ les deux curseurs, `queue`, et le claim lui-même). **Trois états, pas deux :**
 | forme | sens |
 |---|---|
 | `_claimed_run: "<run>"` | ce run tient la ligne — l'adresse du travail en cours |
-| `_claimed_run: null` | le bail a été pris **sans run** (une personne sur la file du dashboard, un agent qui n'a pas passé `_run_id`) — un fait, pas un trou |
+| `_claimed_run: null` | le bail a été pris **sans run** (une personne sur la file du dashboard, par la face REST ; un bail antérieur au 23/09 — un agent ne réserve plus hors run, cf. ci-dessous) — un fait, pas un trou |
 | clé **absente** (comme `_claimed_by`) | pas de bail du tout ; sur des millions de lignes jamais réservées, trois `null` par ligne seraient du bruit dans toutes les lectures |
 
 ⚠️ **Ce que `_claimed_run` ne dit PAS.** Il répond « sur quelle ligne ce run est-il
