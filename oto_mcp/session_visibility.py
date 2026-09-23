@@ -335,14 +335,20 @@ def _log_visibility_failure(quoi: str, sub: str, e: BaseException) -> None:
         logger.warning("Failed to %s tool visibility for %s: %s", quoi, sub, e)
 
 
-async def apply_session_visibility(ctx, sub: str, *, reset: bool = False) -> None:
+async def apply_session_visibility(ctx, sub: str, *, reset: bool = False, org=_DERIVE_ORG) -> None:
     """Calcule la denylist de `(sub, org active)` et la pose sur la session `ctx`.
 
     `reset=False` (handshake) : pose seulement la denylist (comportement
     historique). `reset=True` (bascule à chaud) : remet d'abord tout visible
     (`reset_visibility`) pour effacer la denylist de l'ANCIENNE org, puis re-pose
-    celle de la nouvelle — fastmcp émet `tools/list_changed` à la session."""
-    to_hide = await compute_hidden_tools(ctx, sub)
+    celle de la nouvelle — fastmcp émet `tools/list_changed` à la session.
+
+    `org` : org de scope EXPLICITE (défaut = dérive de `current_org(sub)`, la
+    maison). À passer pour une session de FLOTTE (#1058) : sa boîte doit suivre
+    l'org de la MISSION (posée par le runner, `X-Oto-Org` à l'`initialize`), pas
+    la maison mutable du compte porteur — une bascule de préférence dashboard ne
+    doit jamais changer, en cours de route, la boîte d'une flotte en vol."""
+    to_hide = await compute_hidden_tools(ctx, sub, org=org)
     if reset:
         try:
             await reset_visibility(ctx)
