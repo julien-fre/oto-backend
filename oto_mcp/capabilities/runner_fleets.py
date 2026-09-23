@@ -127,7 +127,10 @@ class FleetInput(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     temperature: Optional[float] = None
-    workers: Optional[int] = None
+    workers: Optional[int] = Field(None, description=(
+        "Cap on this campaign's jobs in flight (pending + claimed), default 1. A "
+        "ceiling, not a head count: the runners polling the queue decide how many "
+        "actually run (see `runner.workers` on triggers)."))
     max_rows: Optional[int] = None
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
@@ -160,7 +163,11 @@ class Fleet(BaseModel):
     row_filter: Optional[dict] = None
     provider: Optional[str] = None
     model: Optional[str] = None
-    workers: Optional[int] = None
+    #: DÉCLARÉ : le plafond de travaux en cours de la campagne (#907, oto#245) —
+    #: jamais le nombre d'exécutants, que sert `RunnerArme.workers` (constaté).
+    workers: Optional[int] = Field(None, description=(
+        "Declared cap on jobs in flight for this campaign — not the number of "
+        "running agents (that measured count is `runner.workers` on triggers)."))
     max_rows: Optional[int] = None
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None

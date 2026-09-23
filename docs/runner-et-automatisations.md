@@ -158,6 +158,24 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
 - **workers vus** `runner_workers` — la présence d'un runner pour une org,
   inscrite à CHAQUE sondage de la file (`op=claim`, y compris à vide).
 
+### Deux `workers` homonymes : un plafond déclaré, un compte constaté (23/09/2026)
+
+| champ | ce qu'il vaut |
+|---|---|
+| `fleet.workers` (déclaration d'une campagne) | **plafond** de travaux EN COURS (`pending` + `claimed`) de cette campagne, défaut 1 |
+| `runner.workers` (`RunnerArme`, servi avec les déclencheurs) | **compte constaté** des workers vivants de l'org |
+
+Jusqu'au 23/09/2026 le premier était accepté, stocké, rendu — et n'agissait sur
+rien (#907, oto#245) : huit unités qui sondaient une campagne `workers: 3` la
+tenaient à huit en vol, et un opérateur qui croyait ménager un fournisseur soumis à
+quotas ne bornait rien. Il borne désormais : `campagne_a_servir` n'élit pas une
+campagne qui a déjà `workers` travaux en cours, et l'enfilage
+(`enqueue_job(..., seulement_si_servable=True)`) **revérifie** sous le verrou de
+campagne, dans la transaction de l'INSERT — deux sondages concurrents ne dépassent
+pas le plafond. Le nombre d'agents qui travaillent réellement reste celui des
+unités qui sondent : `workers: 10` sur trois unités donne trois en cours. Un écran
+qui veut dire « N agents » lit `runner.workers`, jamais `fleet.workers`.
+
 ### Qui tient une campagne : le preneur (21/09/2026)
 
 **Le défaut.** `op=take` passait une campagne `armed` → `running` sans noter QUI la

@@ -68,7 +68,8 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 sub: Optional[str] = None,
                 delai_s: Optional[int] = None,
                 perime_apres_s: Optional[int] = None,
-                conn=None) -> dict:
+                conn=None,
+                seulement_si_servable: bool = False) -> Optional[dict]:
     """Enfile un travail, éventuellement rattaché à une FLOTTE.
 
     ⚠️ `sub` = **l'identité que l'agent portera en exécutant ce travail**, pas
@@ -120,6 +121,16 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     `conn` : la connexion de l'appelant, pour que l'enfilage partage SA
     transaction. La route des webhooks écrit la livraison et le travail ensemble
     ou pas du tout.
+
+    `seulement_si_servable` (#907, oto#245) : n'enfiler que si la campagne
+    `fleet_id` est ENCORE servable (`runner_fleets._ELIGIBLE` : armée, sans travail
+    en attente, sous `max_rows`, moins de `workers` travaux en cours) — et rendre
+    `None` sinon. La revérification et l'INSERT partagent la transaction et le
+    verrou de campagne : c'est ce qui fait de `workers` une borne TENUE et non lue.
+    ⚠️ Le verrou se prend dans une instruction À PART, avant l'INSERT : en
+    READ COMMITTED l'instantané d'une instruction date de son DÉBUT, donc un verrou
+    pris dans le `WHERE` de l'INSERT arriverait après l'instantané et ne verrait
+    pas le travail qu'un sondage concurrent vient de valider.
     """
     if payload is not None:
         payload = {k: v for k, v in payload.items()
@@ -144,10 +155,43 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
              max(0, int(delai_s or 0))),
         ).fetchone()
 
+    def _poser_si_servable(c):
+        from .runner_fleets import _ELIGIBLE, _VERROU_CAMPAGNE
+        c.execute("SET LOCAL lock_timeout = '200ms'")
+        # Non bloquant, comme `campagne_a_servir` : un sondage qui arrive pendant
+        # qu'un autre produit repart les mains vides et re-sondera.
+        verrou = c.execute("SELECT pg_try_advisory_xact_lock(%s, %s::int) AS tenu",
+                           (_VERROU_CAMPAGNE, fleet_id)).fetchone()
+        if not verrou["tenu"]:
+            return None
+        return c.execute(
+            f"""
+            INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts,
+                                     fleet_id, sub, due_at)
+            SELECT %s, %s, %s::jsonb, %s, %s, f.id, %s,
+                   NOW() + make_interval(secs => %s)
+              FROM runner_fleets f
+             WHERE f.id = %s AND {_ELIGIBLE}
+            RETURNING id, status, due_at, fleet_id, sub
+            """,
+            (org_id, kind,
+             json.dumps(charge, ensure_ascii=False) if charge is not None else None,
+             run_id, max(1, int(max_attempts)), sub,
+             max(0, int(delai_s or 0)), fleet_id),
+        ).fetchone()
+
+    if seulement_si_servable:
+        if fleet_id is None:
+            raise ValueError("seulement_si_servable exige fleet_id")
+        poser = _poser_si_servable
+    else:
+        poser = _poser
     if conn is not None:
-        return dict(_poser(conn))
-    with _connect() as c:
-        return dict(_poser(c))
+        row = poser(conn)
+    else:
+        with _connect() as c:
+            row = poser(c)
+    return dict(row) if row is not None else None
 
 
 _RAISON_CYCLE = ("occurrence non prise dans son cycle : le déclencheur a enfilé "

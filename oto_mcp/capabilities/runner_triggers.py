@@ -214,7 +214,11 @@ class RunnerArme(BaseModel):
     qu'un déclencheur ne s'exécute pas a été, le 26/08, une phrase tapée dans
     son propre LIBELLÉ."""
     armed: bool
-    workers: int
+    #: CONSTATÉ : les workers vivants vus dans la fenêtre d'armement — jamais le
+    #: plafond déclaré d'une campagne (`Fleet.workers`), son homonyme (#907).
+    workers: int = Field(description=(
+        "Measured: runner workers seen alive for this org. Not a fleet's declared "
+        "`workers` (its cap on jobs in flight)."))
     #: `None` = aucun worker n'est JAMAIS venu ; une date = il s'est tu depuis.
     #: Les deux n'appellent pas le même geste, et un seul booléen les confondrait.
     last_seen: Optional[str] = None

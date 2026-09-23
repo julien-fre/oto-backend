@@ -116,7 +116,12 @@ _ELIGIBLE = ("f.status IN ('armed', 'running') "
             "                 WHERE j.fleet_id = f.id AND j.status = 'pending') "
             "AND (f.max_rows IS NULL "
             "     OR (SELECT COUNT(*) FROM runner_jobs j2 "
-            "          WHERE j2.fleet_id = f.id) < f.max_rows)")
+            "          WHERE j2.fleet_id = f.id) < f.max_rows) "
+            # `workers` = le plafond de travaux EN COURS de la campagne (#907,
+            # oto#245) : en attente ou réservés, jamais plus que déclaré.
+            "AND (SELECT COUNT(*) FROM runner_jobs j3 "
+            "      WHERE j3.fleet_id = f.id "
+            "        AND j3.status IN ('pending', 'claimed')) < f.workers")
 
 
 def campagne_a_servir(org_id: Optional[int],
@@ -142,6 +147,18 @@ def campagne_a_servir(org_id: Optional[int],
     - la borne de lignes (`max_rows`), comptée sur les travaux DÉJÀ produits
       pour ce passage. Appliquée ici, elle ne se contourne pas : il n'existe
       plus d'autre chemin pour enfiler.
+    - **moins de `workers` travaux en cours** (`pending` + `claimed`) — #907,
+      oto#245, arbitrage du 23/09/2026. Jusque-là le champ était accepté, stocké,
+      rendu, et ne bornait rien : huit unités qui sondaient une campagne déclarée
+      `workers: 3` la tenaient à huit en vol. ⚠️ Ce n'est PAS le nombre d'exécutants
+      (les unités qui sondent, lu par `runner.workers` des déclencheurs) : c'est
+      un plafond, que le parc réel peut ne jamais atteindre.
+
+    ⚠️ Cette sélection ne produit rien : le travail s'enfile ensuite par
+    `enqueue_job(..., seulement_si_servable=True)`, qui REVÉRIFIE la même
+    éligibilité sous le même verrou et dans la même transaction que l'INSERT.
+    Sans cela, deux sondages se suivant entre cette lecture et l'enfilage
+    produisaient chacun un travail : la borne serait lue, pas tenue.
 
     ⚠️ **La FILE se juge ailleurs : `ordonner` rend les candidates à tenter, dans
     l'ordre** (couche capacités, `capabilities/_ordre_de_service.py` — ce module

@@ -622,7 +622,12 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
     Un seul, et sans le réserver : l'appelant re-sonde juste après et le prendra
     comme n'importe quel autre. Deux workers qui produisent en même temps ne se
     gênent pas — chacun fabrique le sien, et c'est exactement le parallélisme
-    voulu ; ce qui les borne est leur nombre, pas un réglage.
+    voulu — **jusqu'au plafond `workers` de la campagne** (#907, oto#245) : jamais
+    plus de `workers` travaux en cours. Jusqu'au 23/09/2026 ce texte disait « ce
+    qui les borne est leur nombre, pas un réglage », et c'était vrai : le champ
+    était ignoré. L'enfilage revérifie la borne sous verrou
+    (`enqueue_job(..., seulement_si_servable=True)`) ; `None` = un sondage
+    concurrent a pris la dernière place, rien n'est produit.
 
     ⚠️ L'identité du travail est celle de QUI A DÉCLARÉ la campagne
     (`fleet["sub"]`), jamais celle du worker qui sonde. C'est ce que `_delegue`
@@ -691,7 +696,7 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
         if not f or not f.get("sub"):
             return None
         message = runner_consigne.composer(f)
-        db.enqueue_job(
+        travail = db.enqueue_job(
             # L'org de la CAMPAGNE, jamais celle de l'appelant : un worker de
             # plateforme n'en a pas, et un travail sans org serait orphelin.
             f["org_id"], "start",
@@ -720,7 +725,9 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
                      **runner_models.charge(f.get("model")),
                      "input": message,
                      "label": f"flotte {f.get('namespace')} — {f['procedure']}"},
-            fleet_id=f["id"], sub=f["sub"])
+            fleet_id=f["id"], sub=f["sub"], seulement_si_servable=True)
+        if travail is None:
+            return None
         db.marquer_demarree(f["id"])
         return None
     except Exception as e:
