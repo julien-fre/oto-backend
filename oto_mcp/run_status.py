@@ -78,8 +78,36 @@ STALE_AFTER = timedelta(hours=24)
 # Un run peut échouer sans être bloqué, et l'absence de ce cas dans l'histoire dit
 # surtout que la plateforme est jeune.
 #
+# `partial` est AJOUTÉ (23/09/2026, arbitrage d'Alexis, oto#91) : une procédure d'org
+# cliente le prescrivait pendant que le schéma le refusait — un run fini à moitié
+# n'avait aucun mot juste et se déclarait `done` (faux) ou `blocked` (rien ne
+# l'arrêtait). Les quatre issues, et ce qui les sépare :
+#   - `done`    : tout ce qui était demandé est fait ;
+#   - `partial` : le run s'est terminé PROPREMENT mais n'a fait qu'une partie — la
+#                 `note` dit ce qui est fait et ce qui reste (exigée, cf. ci-dessous) ;
+#   - `blocked` : arrêté par un obstacle qu'il ne lève pas seul (accès, donnée
+#                 manquante, plafond, décision humaine) ;
+#   - `failed`  : une erreur a cassé le run.
+# En aval, AUCUNE surface ne branche sur la valeur : toute clôture rend les lignes
+# réservées à la file (#317) — ce qui reste d'un `partial` y est donc repris par le
+# prochain run —, et la relance d'un travail hébergé se joue sur son `complete`, pas
+# sur l'issue du run.
+#
 # `stale` n'est PAS ici : il ne se déclare pas, il se dérive (cf. `is_stale`).
-OUTCOMES = ("done", "failed", "blocked")
+OUTCOMES = ("done", "failed", "blocked", "partial")
+
+
+def refus_de_cloture(outcome: Any, note: Any) -> Optional[tuple[str, str]]:
+    """La règle de clôture, UNE fois pour le MCP (`run_finish`) et la REST
+    (`PATCH /api/me/runs/{id}`) : `(code, message)` si la clôture est refusée, sinon
+    None. Un `partial` sans note ne dit pas ce qui reste — c'est tout ce qui le
+    distingue d'un `done` : il est refusé, pas accepté muet."""
+    if outcome not in OUTCOMES:
+        return ("invalid_outcome", f"`outcome` must be one of {' | '.join(OUTCOMES)}")
+    if outcome == "partial" and not (isinstance(note, str) and note.strip()):
+        return ("note_required",
+                "`outcome=partial` requires a `note` saying what is done and what remains")
+    return None
 
 
 def _as_aware(value: Any) -> Optional[datetime]:

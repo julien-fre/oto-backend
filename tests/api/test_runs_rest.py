@@ -245,6 +245,32 @@ def test_clore_rend_les_lignes_ferme_le_run_et_le_fait_voir(client, monde):
     assert (apres.status_code, apres.json()["error"]) == (409, "run_closed")
 
 
+def test_un_run_fini_A_MOITIE_se_clot_partial(client, monde):
+    """oto#91 : `partial` est une issue acceptée par la face REST comme par le MCP, et
+    elle se relit telle quelle dans le suivi."""
+    from oto_mcp.db import usage
+    run = _ouvrir(client)
+    r = client.patch(f"/api/me/runs/{run}", headers=_h(ALICE),
+                     json={"outcome": "partial", "note": "40 fiches faites, 12 restent"})
+    assert r.status_code == 200, r.text
+    assert r.json()["outcome"] == "partial"
+    vu = {x["run_id"]: x for x in usage.my_runs(ALICE, limit=50)}
+    assert vu[run]["outcome"] == "partial"
+
+
+def test_un_partial_SANS_note_est_refuse(client, monde):
+    run = _ouvrir(client)
+    r = client.patch(f"/api/me/runs/{run}", headers=_h(ALICE), json={"outcome": "partial"})
+    assert (r.status_code, r.json()["error"]) == (400, "note_required")
+
+
+def test_une_issue_inconnue_est_refusee_en_listant_les_valides(client, monde):
+    run = _ouvrir(client)
+    r = client.patch(f"/api/me/runs/{run}", headers=_h(ALICE), json={"outcome": "abandoned"})
+    assert (r.status_code, r.json()["error"]) == (400, "invalid_outcome")
+    assert "partial" in r.text
+
+
 def test_seul_le_proprietaire_clot_son_run(client, monde):
     run = _ouvrir(client)
     r = client.patch(f"/api/me/runs/{run}", headers=_h(BOB), json={"outcome": "done"})

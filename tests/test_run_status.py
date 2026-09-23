@@ -111,7 +111,9 @@ def test_un_run_sans_dernier_signe_reste_en_cours():
 
 def test_le_vocabulaire_est_celui_de_ladr():
     """ADR 0058-D5 porte `done` · `failed` · `blocked` (plus `running`/`waiting_human`,
-    qui sont des ÉTATS, pas des issues déclarables).
+    qui sont des ÉTATS, pas des issues déclarables). `partial` s'y ajoute sur arbitrage
+    d'Alexis du 23/09/2026 (oto#91) : une procédure d'org cliente le prescrit, le schéma
+    le refusait — un run fini à moitié n'avait aucun mot juste pour se clore.
 
     ⚠️ `failed` reste bien qu'il n'ait JAMAIS servi (#309) : la mesure dit qu'un retrait
     serait indolore, pas qu'il serait juste. On ne retire pas un mot du vocabulaire
@@ -119,7 +121,7 @@ def test_le_vocabulaire_est_celui_de_ladr():
     échouer sans être bloqué, et l'absence du cas dans l'histoire dit surtout que la
     plateforme est jeune. `abandoned`, lui, ne figure PAS dans D5 : c'est ce qui a
     permis de le retirer, pas son absence d'usage."""
-    assert run_status.OUTCOMES == ("done", "failed", "blocked")
+    assert run_status.OUTCOMES == ("done", "failed", "blocked", "partial")
     assert "abandoned" not in run_status.OUTCOMES
     assert "stale" not in run_status.OUTCOMES, (
         "`stale` se DÉRIVE, il ne se déclare pas — l'exposer comme issue rouvrirait "
@@ -166,3 +168,54 @@ def test_le_tool_reellement_monte_refuse_une_issue_inconnue():
     for valide in run_status.OUTCOMES:
         assert valide in message, (
             "le refus doit LISTER les valeurs valides — sinon l'agent retente au hasard")
+
+
+def test_chaque_texte_servi_de_cloture_nomme_tout_le_vocabulaire():
+    """oto#91 : une procédure d'org prescrivait `partial` pendant que le schéma le
+    refusait. Chaque texte qui prescrit le geste de clôture — la description du tool
+    MCP réellement monté, celle de la face REST, le guide `notice` — nomme TOUTES les
+    issues acceptées, et dit ce que `partial` exige du résumé : ce qui est fait, ce qui
+    reste."""
+    import asyncio
+    from pathlib import Path
+
+    from fastmcp import FastMCP
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    from oto_mcp.tools import register_all
+    mcp = FastMCP("run-status-probe")
+    register_all(mcp)
+    outil = asyncio.run(mcp.get_tool("run_finish"))
+    rest = next(c for c in CAPABILITIES if c.key == "runs.close")
+    notice = (Path(__file__).resolve().parents[1] / "oto_mcp" / "guides" /
+              "notice.md").read_text(encoding="utf-8")
+    for nom, texte in (("run_finish", outil.description or ""),
+                       ("runs.close", rest.description), ("notice", notice)):
+        for mot in run_status.OUTCOMES:
+            assert mot in texte, f"« {mot} » absent du texte servi {nom}"
+    for nom, texte in (("run_finish", outil.description or ""),
+                       ("runs.close", rest.description)):
+        assert "remains" in texte, f"{nom} doit dire que `partial` nomme ce qui reste"
+
+
+@pytest.mark.parametrize("note", [None, "", "   "])
+def test_un_partial_sans_note_est_refuse(note):
+    """`partial` ne se distingue de `done` que par ce qui reste : sans note qui le dise,
+    la clôture est refusée — sur le tool RÉELLEMENT monté, avant tout usage du `ctx`."""
+    import asyncio
+
+    from fastmcp import FastMCP
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import register_all
+    mcp = FastMCP("run-status-probe")
+    register_all(mcp)
+    outil = asyncio.run(mcp.get_tool("run_finish"))
+    with pytest.raises(McpError) as err:
+        asyncio.run(outil.fn(ctx=None, run_id="r-1", outcome="partial", note=note))
+    assert "note" in str(err.value) and "remains" in str(err.value)
+
+
+def test_la_regle_de_cloture_est_partagee():
+    assert run_status.refus_de_cloture("partial", "30 faites, 12 restent") is None
+    assert run_status.refus_de_cloture("done", None) is None
+    assert run_status.refus_de_cloture("partial", None)[0] == "note_required"
+    assert run_status.refus_de_cloture("abandoned", "x")[0] == "invalid_outcome"

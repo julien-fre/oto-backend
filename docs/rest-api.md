@@ -772,6 +772,10 @@ PATCH /api/me/runs/{run_id} {outcome, note?}       → {outcome, rows_released}
   `run_finish` au journal, comme le MCP — un run se reconstruit du journal, jamais de
   `runs`. Clore rend les lignes que le run tenait encore (`rows_released`, `0` écrit), et
   seul le propriétaire clôt.
+- **L'issue** vaut `done` · `partial` · `failed` · `blocked` (`run_status.OUTCOMES`, même
+  règle que `run_finish` : `run_status.refus_de_cloture`). `partial` = terminé proprement
+  mais pas tout fait : la `note` est alors exigée et dit ce qui est fait et ce qui reste
+  (`400 note_required`) ; une issue inconnue `400 invalid_outcome`.
 - **Jeton porté** : ouvrir et clore relèvent de la famille des tableaux — il faut écrire au
   moins un tableau (`403 token_scope_forbidden` sinon). Aucune famille ni identité nouvelle.
 - ⚠️ **Un run n'est ni une identité ni un droit.** Deux sessions d'un même jeton ont le

@@ -229,9 +229,9 @@ def _clore(ctx: ResolvedCtx, inp: RunClotureInput) -> dict:
     head = db.get_run_head(inp.run_id)
     if not head or head.get("sub") != ctx.sub:
         raise AuthzDenied(404, "run_not_found", "run inconnu")
-    if inp.outcome not in run_status.OUTCOMES:
-        raise AuthzDenied(400, "invalid_outcome",
-                          f"`outcome` vaut {' | '.join(run_status.OUTCOMES)}")
+    refus = run_status.refus_de_cloture(inp.outcome, inp.note)
+    if refus:
+        raise AuthzDenied(400, *refus)
     _fait(ctx.sub, "run_finish", inp.run_id, head.get("org_id"),
           {"run_id": inp.run_id, "outcome": inp.outcome, "note": inp.note})
     db.finish_run(inp.run_id, inp.outcome, inp.note, sub=ctx.sub)
@@ -285,9 +285,11 @@ CAPABILITIES += [
         mcp=None,   # le MCP a `run_finish`
         rest=RestBinding(verb="PATCH", path="/api/me/runs/{run_id}"),
         description=(
-            "Close YOUR run: `outcome` done | failed | blocked, optional `note`. The rows "
-            "it still held go back to the queue (`rows_released`, 0 written). A closed "
-            "run is refused as `X-Oto-Run` (409 run_closed)."
+            "Close YOUR run: `outcome` done | partial | failed | blocked, and a `note`. "
+            "`partial` = the run ended cleanly but did only part of the work: `note` is "
+            "then required and says what is done and what remains (400 note_required). "
+            "The rows it still held go back to the queue (`rows_released`, 0 written). "
+            "A closed run is refused as `X-Oto-Run` (409 run_closed)."
         ),
     ),
 ]

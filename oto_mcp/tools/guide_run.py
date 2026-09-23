@@ -166,18 +166,26 @@ def register(mcp: FastMCP) -> None:
     async def run_finish(
         ctx: Context, run_id: str, outcome: str, note: str | None = None,
     ) -> dict:
-        """Close a run opened with `run_start`.
+        """Close a run opened with `run_start`, with one `outcome`:
+
+        - `done` — everything asked is done.
+        - `partial` — the run ended cleanly but did only part of the work: `note` is
+          REQUIRED and says what is done and what remains.
+        - `blocked` — stopped by an obstacle it cannot lift alone (access, missing
+          data, a cap, a human decision).
+        - `failed` — an error broke the run.
+
+        Whatever the outcome, the rows the run still held go back to the queue
+        (`rows_released`).
 
         Args:
             run_id: the id returned by run_start.
-            outcome: one of done | failed | blocked.
-            note: optional — what worked, where it broke, what was missing.
+            outcome: one of done | partial | failed | blocked.
+            note: what worked, where it broke, what was missing — required for partial.
         """
-        if outcome not in _OUTCOMES:
-            raise McpError(ErrorData(
-                code=INVALID_PARAMS,
-                message=f"outcome must be one of {', '.join(_OUTCOMES)}",
-            ))
+        refus = run_status.refus_de_cloture(outcome, note)
+        if refus:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=refus[1]))
         # La clôture appartient au déroulé qu'elle clôt : sans ce stamp, `tool_calls.
         # run_id` reste NULL sur cette ligne (l'axe `_run_id=` n'est pas advertisé sur
         # les verbes de run) et la timeline d'un run — `get_run`, qui filtre sur la

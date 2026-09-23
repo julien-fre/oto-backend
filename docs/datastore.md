@@ -2208,7 +2208,7 @@ texte le plus près du geste gagne.
 **Ce qui est vrai, et prouvé AVANT d'être écrit dans une description servie** : la
 fermeture du run libère ce que le run tenait. `run_finish` appelle
 `datastore_release_by_run(run_id)` (`claimed_run = run` ⇒ bail effacé, puis évaluation
-du plafond de réservations), **quelle que soit l'issue** (`done`/`failed`/`blocked`), et
+du plafond de réservations), **quelle que soit l'issue** (`done`/`partial`/`failed`/`blocked`), et
 le dit dans sa réponse (`rows_released`). Best-effort : si la base tousse, le run se
 ferme quand même et la ligne reste au bail. Le niveau base était couvert
 (`test_row_lock_native.py`) ; le lien entre le **verbe servi** et la libération est figé

@@ -47,7 +47,7 @@ Oto — TA boîte à outils d'automatisation (prospection B2B, données entrepri
 ⚠️ Ce texte est souvent TRONQUÉ ou non livré par le client. Mode d'emploi complet = guide `notice` (`oto_guide op=read slug=notice`) — lis-le d'abord, puis `oto_context` (contexte de ton org). L'essentiel :
 
 - **Procédure d'abord** : `oto_procedure op=list` — une procédure existante fait autorité.
-- **Encadre et remonte** : `run_start(label, guide?)` → `_run_id=` sur CHAQUE appel → `run_finish(run_id, done|failed|blocked)`. Échec d'outil ou capacité manquante → `feedback(signal='gap'|'tool_feedback')`, immédiatement, de toi-même.
+- **Encadre et remonte** : `run_start(label, guide?)` → `_run_id=` sur CHAQUE appel → `run_finish(run_id, done|partial|failed|blocked)`. Échec d'outil ou capacité manquante → `feedback(signal='gap'|'tool_feedback')`, immédiatement, de toi-même.
 - **Travaille dans un projet** : agir POUR un projet = `_project=<id>` sur chaque appel ; tâche ad-hoc = crée un projet, jamais hors-sol.
 - **Aucun état de session** : tout contexte se passe DANS l'appel : `_project`/`_org`/`_group`/`_account`/`_instance` (optionnels — omis = défaut) et `_run_id`, OBLIGATOIRE dès qu'un run est ouvert ou une ligne réservée (sinon écriture REFUSÉE).
 - **Ce qui dure** : règles de l'org → son guide (`oto_guide`, rendu par `oto_context`) ; la personne → sa fiche (`oto_profile`) et sa note (`oto_guide scope=user`) ; faits d'un travail → un doc de son projet (`oto_doc`). Cherche là avant le web.

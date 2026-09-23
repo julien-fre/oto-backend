@@ -108,7 +108,9 @@ class _SessionCtx:
 
 def _finish(run: str, outcome: str) -> dict:
     fn = _outil("run_finish").fn
-    return asyncio.run(fn(_SessionCtx(), run_id=run, outcome=outcome))
+    # `partial` exige sa note (ce qui est fait, ce qui reste) — oto#91.
+    note = "une ligne faite, le reste à reprendre" if outcome == "partial" else None
+    return asyncio.run(fn(_SessionCtx(), run_id=run, outcome=outcome, note=note))
 
 
 def _bail(ns_id, row_id) -> dict:
@@ -121,7 +123,7 @@ def _bail(ns_id, row_id) -> dict:
 
 # ── ① la preuve : fermer le run rend la ligne, quelle que soit l'issue ──────────
 
-@pytest.mark.parametrize("outcome", ["done", "failed", "blocked"])
+@pytest.mark.parametrize("outcome", ["done", "failed", "blocked", "partial"])
 def test_fermer_le_run_libere_la_ligne_qu_il_tenait(surface, outcome):
     """Claim sous `_run_id=R` par le chemin réel, puis `run_finish(R)` : la ligne
     revient libre, la réponse le dit, et un AUTRE run peut la reprendre."""
