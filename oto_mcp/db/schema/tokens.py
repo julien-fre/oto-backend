@@ -39,7 +39,14 @@ CREATE TABLE IF NOT EXISTS user_api_tokens (
     -- ⚠️ Une COLONNE, pas un filtre sur le libellé : `label` est du texte libre —
     -- un utilisateur peut nommer son jeton « runner job 42 ». Filtrer sur du
     -- texte libre n'est pas une garantie, c'est une convention qu'on espère.
-    kind TEXT NOT NULL DEFAULT 'user'
+    kind TEXT NOT NULL DEFAULT 'user',
+    -- Révocation (#523) : la ligne RESTE, `verify_api_token` refuse le jeton.
+    -- Qui (`revoked_by`, le sub qui a coupé — pas de FK : la trace survit au
+    -- compte), quand, et pourquoi (texte libre, facultatif). Base existante :
+    -- révision Alembic `0007_jetons_revocation_tracee`, jamais le démarrage.
+    revoked_at TIMESTAMPTZ,
+    revoked_by TEXT,
+    revoked_reason TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_user_api_tokens_sub ON user_api_tokens(sub);
 

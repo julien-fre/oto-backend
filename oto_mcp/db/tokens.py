@@ -58,7 +58,7 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
     par `verify_api_token`. None = non-expirant (défaut — token CLI long-lived
-    stocké en SOPS). La révocation explicite reste `delete_api_token`.
+    stocké en SOPS). La révocation explicite est `revoke_api_token`.
 
     `scopes` (cf. `token_scopes.py`) : None = jeton NON PORTÉ, il est le sub.
     Non None = deny-by-default, seul ce que la portée nomme passe — la forme d'un
@@ -93,7 +93,8 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
 
 def verify_api_token(token: str) -> Optional[dict]:
     """Renvoie `{sub, scopes}` du token, et met à jour last_used_at — `scopes` None
-    pour un jeton non porté. None (tout court) si inconnu ou expiré.
+    pour un jeton non porté. None (tout court) si inconnu, expiré ou révoqué (#523 :
+    un jeton révoqué garde sa ligne, c'est ce filtre qui le coupe).
 
     UN SEUL statement (`UPDATE … RETURNING`), et pas un SELECT puis un UPDATE dans la
     même transaction : la forme en deux temps prenait AccessShareLock (SELECT) puis
@@ -111,7 +112,8 @@ def verify_api_token(token: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             "UPDATE user_api_tokens SET last_used_at = NOW() "
-            "WHERE token_hash = %s AND (expires_at IS NULL OR expires_at > NOW()) "
+            "WHERE token_hash = %s AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > NOW()) "
             "RETURNING id, sub, scopes, kind",
             (h,),
         ).fetchone()
@@ -142,7 +144,11 @@ def _as_scopes(raw: object) -> Optional[dict]:
     return {}
 
 
-def list_api_tokens(sub: str) -> list[dict]:
+def list_api_tokens(sub: str, include_revoked: bool = False) -> list[dict]:
+    """Les jetons de l'utilisateur. Les RÉVOQUÉS n'y sont que sur demande
+    (`include_revoked`) : la liste sert d'abord à décider quoi couper, et un jeton
+    déjà coupé n'y a rien à faire ; il reste lisible pour l'enquête (#523)."""
+    revoques = "" if include_revoked else "AND revoked_at IS NULL "
     with _connect() as conn:
         rows = conn.execute(
             # ⚠️ `kind = 'user'` : cet écran annonce des jetons de CLI et
@@ -150,18 +156,31 @@ def list_api_tokens(sub: str) -> list[dict]:
             # émis automatiquement, un par travail — n'y ont pas leur place :
             # ils feraient mentir l'écran, et son bouton « révoquer » porterait
             # sur un accès en cours d'usage.
-            "SELECT id, label, created_at, last_used_at, expires_at, scopes "
-            "FROM user_api_tokens WHERE sub = %s AND kind = 'user' "
+            "SELECT id, label, created_at, last_used_at, expires_at, scopes, "
+            "revoked_at, revoked_by, revoked_reason "
+            f"FROM user_api_tokens WHERE sub = %s AND kind = 'user' {revoques}"
             "ORDER BY created_at DESC",
             (sub,),
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def delete_api_token(sub: str, token_id: int) -> bool:
+def revoke_api_token(sub: str, token_id: int, revoked_by: str,
+                     reason: Optional[str]) -> bool:
+    """Révoque un jeton : il cesse de fonctionner, sa ligne RESTE (#523).
+
+    ⚠️ Jusqu'au 23/09/2026, révoquer était un `DELETE` : après coup, on ne savait
+    plus qui détenait le jeton, ni quand ni pourquoi il avait été coupé — précisément
+    le cas où la trace compte (un jeton trop large stocké chez un tiers). Les partages
+    et les instances de connecteur gardaient déjà leur date de révocation.
+
+    False si le jeton n'existe pas pour ce sub OU s'il est déjà révoqué : une seconde
+    révocation n'écrase pas la trace de la première."""
     with _connect() as conn:
         cur = conn.execute(
-            "DELETE FROM user_api_tokens WHERE sub = %s AND id = %s",
-            (sub, token_id),
+            "UPDATE user_api_tokens SET revoked_at = NOW(), revoked_by = %s, "
+            "revoked_reason = %s "
+            "WHERE sub = %s AND id = %s AND revoked_at IS NULL",
+            (revoked_by, reason, sub, token_id),
         )
         return cur.rowcount > 0

@@ -508,6 +508,12 @@ démarrage pose aussi (`ALTER … ADD COLUMN IF NOT EXISTS`, sauté par le garde
 une fois posées). Même régime que 0004 : idempotents l'un envers l'autre, ordre
 indifférent — le code qui les lit arrive avec le démarrage qui les pose.
 
+`0007_jetons_revocation_tracee` (23/09/2026, #523) ajoute trois colonnes nullables à
+`user_api_tokens` (`revoked_at`, `revoked_by`, `revoked_reason`) que le code du même lot
+LIT à chaque authentification par jeton (`verify_api_token`) : comme 0003, elle se joue
+**avant la fusion**, sinon chaque requête par jeton répondrait `UndefinedColumn`. Pas
+au démarrage : cette table a déjà connu le deadlock `ALTER` de boot contre requête.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

@@ -63,7 +63,7 @@ _SURFACE = """
     datastore_release_by_run datastore_release_claim datastore_row_activity
     datastore_row_keys datastore_rows_by_ids
     datastore_upsert_row date datetime dead_unipile_account_ids_for
-    delete_api_token delete_datastore_by_id delete_doc
+    delete_datastore_by_id delete_doc
     delete_google_oauth delete_guide_db delete_project_file
     delete_subscription derive_description dict_row doc_backlinks doc_rev
     due_subscriptions duplicate_project edge_exists edges_for emails
@@ -118,7 +118,8 @@ _SURFACE = """
     reparent_project replace_doc_chunk_embeddings resolve_datastore_ns
     resolve_sub resolve_unipile_pending
     resource_ids_with_edges rest_call_stats
-    retry_billing_at revoke_edges revoke_resource_grant save_extracted_text
+    retry_billing_at revoke_api_token revoke_edges revoke_resource_grant
+    save_extracted_text
     schedule_next_billing search search_briefs_semantic
     search_datastore_rows_fts search_datastore_rows_semantic search_docs_fts
     search_docs_in_project search_docs_semantic search_file_contents
@@ -147,6 +148,9 @@ _SURFACE = """
 # n'y figure pas : sans cette table, son retrait ne laisserait aucune trace ici, et le
 # diff ne dirait pas ce qu'on a fait.
 _RETIRES = {
+    "delete_api_token": (
+        "23/09/2026 (#523) — révoquer ne supprime plus la ligne : `revoke_api_token` "
+        "garde qui, quand et pourquoi"),
     "datastore_count_claimable": (
         "13/09/2026 — le comptage « ce que la file servirait » n'avait aucun appelant ; "
         "la plateforme ne compte pas à la place de l'agent"),

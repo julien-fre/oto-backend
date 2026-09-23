@@ -379,6 +379,13 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   (`400 unknown_datastore` — sinon le jeton serait muet et on le croirait branché), et
   seul le palier ADMIN accepte un `ttl_days` (qui n'est retenu que s'il est fait de
   chiffres : `-1` ou un texte donnent « pas d'expiration »).
+  **Révoquer ne supprime plus la ligne** (#523, 23/09/2026) : le `DELETE …/{token_id}`
+  pose `revoked_at`/`revoked_by` (l'APPELANT)/`revoked_reason` (corps facultatif
+  `{"reason": "…"}`, 500 caractères au plus, `400 reason_too_long` au-delà — jamais
+  raboté) ; le jeton ne s'authentifie plus. Les deux `GET` ne rendent les révoqués
+  qu'avec `?include_revoked=true`. Un jeton déjà révoqué rend `404 unknown_token` : une
+  seconde révocation n'écrase pas la trace de la première. Avant, c'était un `DELETE`
+  SQL : on ne savait plus qui détenait le jeton, ni quand ni pourquoi il avait été coupé.
   Les **clés plateforme** (ADR 0044 §F) ne rendent jamais leur secret — provider, libellé,
   date de pose. Refus : `400 invalid_provider`, `400 missing_fields`,
   `400 invalid_platform_provider`, `404 unknown_key`. ⚠️ Un corps JSON **illisible** rend

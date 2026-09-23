@@ -61,6 +61,9 @@ from .registry import CAPABILITIES
 # de jetons qu'on ne sait plus distinguer. Un refus, lui, se signale — si la borne est
 # mal calibrée, on l'apprendra maintenant.
 _LABEL_MAX = 32
+# Le motif d'une révocation (#523) : du texte libre, même régime que le libellé —
+# une borne PUBLIÉE et un dépassement REFUSÉ, jamais raboté.
+_REASON_MAX = 500
 
 _ME = "/api/me/tokens"
 _ADMIN = "/api/admin/users/{sub}/tokens"
@@ -70,8 +73,18 @@ _CIBLE = {"sub": "target_sub"}          # {sub} = le sub VISÉ, pas l'appelant
 
 # --- Entrées ----------------------------------------------------------------
 
+_INCLURE_REVOQUES = Field(
+    False, description=("Rendre aussi les jetons RÉVOQUÉS (qui, quand, pourquoi). "
+                        "Absent : seuls les jetons encore actifs."))
+_MOTIF = Field(
+    None, json_schema_extra={"maxLength": _REASON_MAX},
+    description=("Pourquoi ce jeton est coupé — gardé avec la trace de la révocation "
+                 "(qui, quand). Au plus 500 caractères, au-delà : 400 "
+                 "`reason_too_long`, jamais une coupe."))
+
+
 class TokenListInput(BaseModel):
-    """Aucun paramètre."""
+    include_revoked: bool = _INCLURE_REVOQUES
 
 
 class TokenCreateInput(BaseModel):
@@ -101,10 +114,12 @@ class TokenDeleteInput(BaseModel):
     # Texte, pas entier : la route rend `400 invalid_id`, pas le `invalid_input` de
     # pydantic. On convertit dans le handler pour garder le code servi.
     token_id: str = ""
+    reason: Optional[str] = _MOTIF
 
 
 class AdminTokenListInput(BaseModel):
     target_sub: str
+    include_revoked: bool = _INCLURE_REVOQUES
 
 
 class AdminTokenCreateInput(BaseModel):
@@ -123,6 +138,7 @@ class AdminTokenCreateInput(BaseModel):
 class AdminTokenDeleteInput(BaseModel):
     target_sub: str
     token_id: str = ""
+    reason: Optional[str] = _MOTIF
 
 
 class PlatformKeyListInput(BaseModel):
@@ -147,13 +163,17 @@ class PlatformKeyDeleteInput(BaseModel):
 class ApiToken(BaseModel):
     """Un jeton, SANS son secret : celui-ci n'est rendu qu'UNE FOIS, à la création.
     `scopes: null` = jeton non porté (pleins pouvoirs du sub). `expires_at: null` =
-    jeton sans expiration."""
+    jeton sans expiration. `revoked_at` non null = jeton RÉVOQUÉ (liste avec
+    `include_revoked`) : `revoked_by` dit qui l'a coupé, `revoked_reason` pourquoi."""
     id: int
     label: Optional[str] = None
     created_at: Optional[Any] = None
     last_used_at: Optional[Any] = None
     expires_at: Optional[Any] = None
     scopes: Optional[dict] = None
+    revoked_at: Optional[Any] = None
+    revoked_by: Optional[str] = None
+    revoked_reason: Optional[str] = None
 
 
 class ApiTokenList(BaseModel):
@@ -268,10 +288,21 @@ def _libelle(brut: Optional[str]) -> str:
     return net
 
 
+def _motif(brut: Optional[str]) -> Optional[str]:
+    """Le motif tel qu'il sera ÉCRIT : blanc ⇒ absent, trop long ⇒ refusé."""
+    net = (brut or "").strip() or None
+    if net is not None and len(net) > _REASON_MAX:
+        raise AuthzDenied(
+            400, "reason_too_long",
+            f"`reason` fait {len(net)} caractères pour {_REASON_MAX} au plus. Il est "
+            "refusé entier plutôt que raboté : c'est la trace de la révocation.")
+    return net
+
+
 # --- Handlers : MES jetons --------------------------------------------------
 
 def _my_list(ctx: ResolvedCtx, inp: TokenListInput) -> dict:
-    return {"tokens": db.list_api_tokens(ctx.sub)}
+    return {"tokens": db.list_api_tokens(ctx.sub, include_revoked=inp.include_revoked)}
 
 
 def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
@@ -298,7 +329,8 @@ def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
 
 
 def _my_delete(ctx: ResolvedCtx, inp: TokenDeleteInput) -> dict:
-    if not db.delete_api_token(ctx.sub, _entier(inp.token_id)):
+    if not db.revoke_api_token(ctx.sub, _entier(inp.token_id), revoked_by=ctx.sub,
+                               reason=_motif(inp.reason)):
         raise AuthzDenied(404, "unknown_token")
     return {"ok": True}
 
@@ -306,7 +338,8 @@ def _my_delete(ctx: ResolvedCtx, inp: TokenDeleteInput) -> dict:
 # --- Handlers : jetons émis POUR UN TIERS -----------------------------------
 
 def _admin_list(ctx: ResolvedCtx, inp: AdminTokenListInput) -> dict:
-    return {"tokens": db.list_api_tokens(_cible_connue(inp.target_sub))}
+    return {"tokens": db.list_api_tokens(_cible_connue(inp.target_sub),
+                                         include_revoked=inp.include_revoked)}
 
 
 def _admin_create(ctx: ResolvedCtx, inp: AdminTokenCreateInput) -> dict:
@@ -322,7 +355,8 @@ def _admin_create(ctx: ResolvedCtx, inp: AdminTokenCreateInput) -> dict:
 def _admin_delete(ctx: ResolvedCtx, inp: AdminTokenDeleteInput) -> dict:
     cible = inp.target_sub
     token_id = _entier(inp.token_id)
-    if not db.delete_api_token(cible, token_id):
+    if not db.revoke_api_token(cible, token_id, revoked_by=ctx.sub,
+                               reason=_motif(inp.reason)):
         raise AuthzDenied(404, "unknown_token")
     return {"ok": True, "id": token_id}
 
@@ -371,21 +405,26 @@ def _keys_delete(ctx: ResolvedCtx, inp: PlatformKeyDeleteInput) -> dict:
 
 _D_LIST = ("Mes jetons API, sans leur secret — il n'est rendu qu'à la création et n'est "
            "stocké que haché. `scopes: null` = jeton non porté (pleins pouvoirs de mon "
-           "compte). Réservé à une session interactive : un jeton ne peut pas lister les "
-           "jetons.")
+           "compte). Les jetons révoqués n'y sont qu'avec `include_revoked`. Réservé à "
+           "une session interactive : un jeton ne peut pas lister les jetons.")
 _D_CREATE = ("Émet un jeton API. ⚠️ Le secret n'est rendu QU'UNE FOIS. `scopes` le BORNE "
              "à des tableaux ou projets nommés — la forme à confier à une intégration "
              "tierce ; absent, le jeton a tous mes droits. Un tableau que je ne vois pas "
              "est refusé (`unknown_namespace`) : sinon le jeton serait muet et on le "
              "croirait branché. Réservé à une session interactive.")
-_D_DELETE = ("Révoque un de mes jetons. Réservé à une session interactive — un jeton ne "
-             "peut pas en révoquer, sinon un attaquant couperait les jetons légitimes.")
-_D_A_LIST = "Les jetons émis pour un compte TIERS. Réservé à une session interactive."
+_D_DELETE = ("Révoque un de mes jetons : il cesse de fonctionner, et la révocation est "
+             "GARDÉE (qui, quand, `reason` facultatif) — la liste la montre avec "
+             "`include_revoked`. Un jeton déjà révoqué rend 404 `unknown_token`. Réservé "
+             "à une session interactive — un jeton ne peut pas en révoquer, sinon un "
+             "attaquant couperait les jetons légitimes.")
+_D_A_LIST = ("Les jetons émis pour un compte TIERS ; les révoqués avec "
+             "`include_revoked`. Réservé à une session interactive.")
 _D_A_CREATE = ("Émet un jeton POUR UN COMPTE TIERS. ⚠️ Le secret n'est rendu qu'une "
                "fois. `ttl_days` borne sa durée de vie (absent = pas d'expiration). Pas "
                "de contrôle de visibilité des tableaux ici : le catalogue visé n'est pas "
                "celui de l'émetteur. Réservé à une session interactive.")
-_D_A_DELETE = "Révoque un jeton d'un compte tiers. Réservé à une session interactive."
+_D_A_DELETE = ("Révoque un jeton d'un compte tiers, en gardant la trace (qui, quand, "
+               "`reason` facultatif). Réservé à une session interactive.")
 _D_K_LIST = ("Les clés PLATEFORME posées, sans leur secret : provider, libellé, date de "
              "pose. Le secret n'est ni déchiffré ni rendu par cette surface.")
 _D_K_CREATE = ("Pose une clé plateforme. Elle est chiffrée au coffre et ne ressort "
@@ -409,7 +448,9 @@ CAPABILITIES += [
     Capability(
         key="me.token.delete", handler=_my_delete, Input=TokenDeleteInput,
         authz=SUB_ONLY, Output=TokenDeleted, description=_D_DELETE, mcp=None,
-        rest=RestBinding("DELETE", _ME + "/{token_id}", allow_api_token=False),
+        # `reads_body` : le motif (`{reason}`) voyage dans le corps du DELETE.
+        rest=RestBinding("DELETE", _ME + "/{token_id}", allow_api_token=False,
+                         reads_body=True),
     ),
     Capability(
         key="platform.token.list", handler=_admin_list, Input=AdminTokenListInput,
@@ -427,7 +468,7 @@ CAPABILITIES += [
         Input=AdminTokenDeleteInput, authz=SUPER_ADMIN, Output=AdminTokenDeleted,
         description=_D_A_DELETE, mcp=None,
         rest=RestBinding("DELETE", _ADMIN + "/{token_id}", path_map=_CIBLE,
-                         allow_api_token=False),
+                         allow_api_token=False, reads_body=True),
     ),
     Capability(
         key="platform.key.list", handler=_keys_list, Input=PlatformKeyListInput,

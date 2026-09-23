@@ -162,8 +162,9 @@ class RestBinding:
     # ses propres données. Déclaré par binding (donc greppable), jamais deviné.
     body_field: Optional[str] = None
     # Lire le corps JSON même sur un verbe qui n'en porte pas d'ordinaire (DELETE).
-    # Un seul cas, historique : `DELETE …/namespaces/{ns}/share {"email": …}`, dont
-    # le client vit hors de ce dépôt (`oto-core`). Opt-in explicite : le défaut reste
+    # Cas historique : `DELETE …/namespaces/{ns}/share {"email": …}`, dont le client
+    # vit hors de ce dépôt (`oto-core`) ; et depuis #523 la révocation d'un jeton
+    # (`DELETE …/tokens/{id} {"reason": …}`). Opt-in explicite : le défaut reste
     # « pas de corps sur un DELETE », sinon migrer une route pourrait faire apparaître
     # un 400 `unknown_fields` sur un corps jusque-là ignoré.
     reads_body: bool = False

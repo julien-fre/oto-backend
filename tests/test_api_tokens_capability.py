@@ -31,7 +31,8 @@ from oto_mcp.datastore import core as datastore
 from oto_mcp.capabilities import _rest_adapter, api_tokens as at
 
 _JETONS = [{"id": 7, "label": "cli", "created_at": "2026-08-01", "last_used_at": None,
-            "expires_at": None, "scopes": None}]
+            "expires_at": None, "scopes": None, "revoked_at": None,
+            "revoked_by": None, "revoked_reason": None}]
 _PORTEE = {"namespaces": {"clients": "read"}}
 
 
@@ -92,12 +93,15 @@ def _jouer_et_capturer_auth(cle: str) -> dict:
 def socle(monkeypatch):
     vus: list = []
     monkeypatch.setattr(at.db, "get_user", lambda sub: {"sub": sub})
-    monkeypatch.setattr(at.db, "list_api_tokens", lambda sub: list(_JETONS))
+    monkeypatch.setattr(at.db, "list_api_tokens",
+                        lambda sub, include_revoked=False:
+                        vus.append(("list", sub, include_revoked)) or list(_JETONS))
     monkeypatch.setattr(at.db, "create_api_token",
                         lambda sub, label=None, ttl_days=None, scopes=None:
                         vus.append(("create", sub, label, ttl_days, scopes)) or "oto_SECRET")
-    monkeypatch.setattr(at.db, "delete_api_token",
-                        lambda sub, tid: vus.append(("delete", sub, tid)) or True)
+    monkeypatch.setattr(at.db, "revoke_api_token",
+                        lambda sub, tid, revoked_by, reason:
+                        vus.append(("revoke", sub, tid, revoked_by, reason)) or True)
     monkeypatch.setattr(at.db, "KEY_PROVIDERS", {"serper", "apollo"})
     monkeypatch.setattr(credentials_store, "list_platform_credentials",
                         lambda provider=None: [{"provider": "serper", "label": "prod",
@@ -257,7 +261,7 @@ def test_un_id_illisible_rend_invalid_id_pas_invalid_input(monkeypatch, socle,
 
 def test_un_jeton_inconnu_est_un_404(monkeypatch, socle):
     stub_authz(monkeypatch)
-    monkeypatch.setattr(at.db, "delete_api_token", lambda sub, tid: False)
+    monkeypatch.setattr(at.db, "revoke_api_token", lambda sub, tid, **kw: False)
     code, out = call("me.token.delete", path_params={"token_id": "7"})
     assert code == 404 and out["error"] == "unknown_token"
 
@@ -435,3 +439,36 @@ def test_un_connecteur_non_keyed_en_mode_platform_accepte_une_cle_plateforme(
     assert code == 200 and out["provider"] == "transcription"
     assert [v[:4] for v in socle if v[0] == "set"] == [
         ("set", "platform", "oto", "transcription")]
+
+
+# --- #523 : la révocation laisse une trace -----------------------------------
+
+def test_revoquer_trace_QUI_et_POURQUOI(monkeypatch, socle, super_admin):
+    """Révoquer était un `DELETE` sans trace. L'auteur est l'APPELANT (pas le
+    titulaire du jeton), le motif est celui du corps du DELETE."""
+    code, _ = call("me.token.delete", path_params={"token_id": "7"},
+                   body={"reason": "  fuite  "}, sub="u-1")
+    assert code == 200
+    code, _ = call("platform.token.delete",
+                   path_params={"sub": "u-cible", "token_id": "8"}, sub="u-admin")
+    assert code == 200
+    revocations = [v for v in socle if v[0] == "revoke"]
+    assert revocations == [("revoke", "u-1", 7, "u-1", "fuite"),
+                           ("revoke", "u-cible", 8, "u-admin", None)]
+
+
+def test_un_motif_trop_long_est_refuse_jamais_rabote(monkeypatch, socle):
+    stub_authz(monkeypatch)
+    code, out = call("me.token.delete", path_params={"token_id": "7"},
+                     body={"reason": "x" * (at._REASON_MAX + 1)})
+    assert (code, out.get("error")) == (400, "reason_too_long")
+    assert not [v for v in socle if v[0] == "revoke"]
+
+
+@pytest.mark.parametrize("cle,pp", [("me.token.list", {}),
+                                    ("platform.token.list", {"sub": "u-cible"})])
+def test_les_revoques_ne_sont_listes_que_sur_demande(monkeypatch, socle, super_admin,
+                                                      cle, pp):
+    call(cle, path_params=pp)
+    call(cle, path_params=pp, query=b"include_revoked=true")
+    assert [v[2] for v in socle if v[0] == "list"] == [False, True]

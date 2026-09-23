@@ -458,8 +458,13 @@ from oto_mcp.db import _schema, schema
 # la page d'un run pour dire « contenu archivé le … ». ADDITIVE, sans FK ; la révision
 # Alembic `0005_journal_archives` exécute le même fragment.
 # 165 940 → 166 957 (+1 017, commentaires du fragment compris).
-EMPREINTE = "a3566885b9f62b7be470dce1d2736ed37f08cfc35d1d70c89fa8a56e46293253"
-LONGUEUR = 166957
+# 23/09/2026 (#523) — `user_api_tokens.revoked_at/revoked_by/revoked_reason` : révoquer
+# un jeton ne supprime plus sa ligne, la trace (qui, quand, pourquoi) reste. NULLABLES,
+# sans index. Base existante : révision Alembic `0007_jetons_revocation_tracee`, pas le
+# démarrage. Le fragment `schema/tokens.TOKENS` passe de 2 216 à 2 604 caractères
+# (+388), et 166 957 + 388 = 167 345, la longueur mesurée sur le tronc b0d9ac3c.
+EMPREINTE = "bffb7c63698569b3f2be805078603f09992399e03b236d137a3582505ee955c2"
+LONGUEUR = 167345
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

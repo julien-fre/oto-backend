@@ -358,6 +358,8 @@ _SUB_COLUMNS = [
     ("user_disabled_tools", "sub"), ("user_enabled_tools", "sub"),
     ("org_members", "sub"), ("org_group_members", "sub"),
     ("user_api_tokens", "sub"), ("unipile_accounts", "sub"), ("unipile_pending", "sub"),
+    # Qui a RÉVOQUÉ un jeton (#523) : la trace suit le compte qui a coupé.
+    ("user_api_tokens", "revoked_by"),
     # Le PROPRIÉTAIRE d'un canal opéré : hors PK `(sub, provider)`, donc UPDATE nu
     # (le TITULAIRE, lui, est en PK → `_PK_SUB_TABLES`).
     ("unipile_operated_accounts", "owner_sub"),
