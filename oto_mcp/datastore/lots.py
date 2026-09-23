@@ -79,6 +79,10 @@ class LotsMixin:
         # `force` implique la demande : nommer une cible EST le geste.
         forcage = self._forcage_readonly(
             ns_id, schema, readonly_override or bool(force), force)
+        # oto#140 : `@keep` et `@clear` sur le chemin des imports aussi — jugés sur le
+        # lot ENTIER avant la première ligne : l'avertissement en une phrase et non
+        # cinq cents, et le refus daté (J3) sans moitié de lot déjà écrite.
+        mdp.controler(self.off_notices, *(r for r in rows if isinstance(r, dict)))
         inserted, updated, ids = 0, 0, []
         total = len(rows)
         for rang, data in enumerate(rows, 1):
@@ -118,11 +122,6 @@ class LotsMixin:
                     user_data, lambda: self._donnees_de_la_ligne_visee(
                         ns_id, schema, user_data, key))
                 self.off_rejected.extend(objets_vides)
-                # oto#140 : `@keep` et `@clear` dépréciés, sur le chemin des imports
-                # aussi — union sur le lot, donc une phrase et non cinq cents.
-                deprecies = mdp.mots_nommes(user_data)
-                if deprecies:
-                    self.off_notices.add(mdp.avertissement(deprecies))
                 _refuse_dotted_names(user_data)
                 refuser_cles_internes(user_data)
                 refuser_les_mots_mal_places(schema, user_data)

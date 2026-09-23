@@ -111,11 +111,10 @@ class EcritureMixin:
         user_data, objets_vides = sans_les_objets_vides(
             user_data, lambda: self._donnees_de_la_ligne_visee(ns_id, schema, user_data))
         self.off_rejected.extend(objets_vides)
-        # oto#140 : `@keep` et `@clear` fonctionnent encore, mais leur refus est daté —
-        # dit à l'instant où l'appelant les emploie, le seul moment actionnable.
-        deprecies = mdp.mots_nommes(user_data)
-        if deprecies:
-            self.off_notices.add(mdp.avertissement(deprecies))
+        # oto#140 : `@keep` et `@clear` — avertis jusqu'à leur date, REFUSÉS à partir
+        # d'elle (J3), dit à l'instant où l'appelant les emploie, le seul moment
+        # actionnable.
+        mdp.controler(self.off_notices, user_data)
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
         refuser_les_mots_mal_places(schema, user_data)
@@ -357,6 +356,8 @@ class EcritureMixin:
         # ligne. Ranger une annotation sur une colonne qui n'est que dans l'ancienne
         # ligne poserait une couche sur une valeur qui tombe dans le même geste.
         user_data = ranger_les_couches(schema, user_data)
+        # oto#140 : le remplacement aussi — avertis, puis REFUSÉS à leur date (J3).
+        mdp.controler(self.off_notices, user_data)
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
         refuser_les_mots_mal_places(schema, user_data)

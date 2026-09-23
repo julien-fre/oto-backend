@@ -99,10 +99,9 @@ class EcritureParIdMixin:
             # oto#165 : MÊME porte pour un `{}` sur une case vide — écarté, et dit.
             corps, objets_vides = sans_les_objets_vides(corps, lambda: data)
             self.off_rejected.extend(objets_vides)
-            # oto#140 : `@keep` et `@clear` dépréciés, avertis (cf. `append_row`).
-            deprecies = mdp.mots_nommes(corps)
-            if deprecies:
-                self.off_notices.add(mdp.avertissement(deprecies))
+            # oto#140 : `@keep` et `@clear` avertis, puis REFUSÉS à leur date (cf.
+            # `append_row`).
+            mdp.controler(self.off_notices, corps)
             _refuse_dotted_names(corps)
             refuser_cles_internes(corps)
             refuser_les_mots_mal_places(schema, corps)

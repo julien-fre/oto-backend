@@ -91,7 +91,8 @@ historique ni annulation : la valeur précédente disparaît quand la tienne arr
 | `{"champ": Y}` ou `{"champ": {"valeur": Y}}` | valeur remplacée ; `origine` intacte ; `comment` et `link` **tombent** (ils décrivaient l'ancienne valeur) |
 | `{"champ": Y}` avec Y identique à la valeur en place | **no-op** : toutes les couches restent |
 | `{"champ": null}` | valeur effacée ; une `origine` pleine survit ; l'effacement revient dans `valeurs_effacees` (champ, ligne, valeur perdue) |
-| `{"champ": ""}` (ou `[]`, `{}`) sur une valeur en place | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null`. ⚠️ `""` et `[]` la **remplaceront** à partir du 6 octobre 2026 (ci-dessous) |
+| `{"champ": ""}` ou `{"champ": []}` sur une valeur en place | **à partir du 6 octobre 2026** : valeur **remplacée**, comme par n'importe quelle valeur ; la valeur remplacée revient dans `valeurs_effacees`. Avant cette date : ignoré (ci-dessous) |
+| `{"champ": {}}` sur une valeur en place (et, avant le 6 octobre 2026, `""` ou `[]`) | **ignoré** : la valeur reste, le relevé `valeurs_ignorees` le dit ; si c'était tout ce que l'écriture posait, l'appel est **refusé** en nommant `null` |
 | `{"champ": {"comment": C}}` | comment posé ; valeur et autres couches intactes |
 | `{"champ": {"valeur": Y_identique, "comment": C}}` | comment posé, rien ne tombe |
 | `{"champ": {"origine": null}}` | origine effacée ; la colonne redevient plate |
@@ -259,17 +260,21 @@ remise par la cliente, si elle a été posée à l'import, reste lisible dans
 `champ.origine` (`versions`, 4 ter). **Omettre le champ veut dire « pas à moi »** (la
 valeur est gardée), et une couche `comment` seule ne dit pas « cherché, rien ».
 
-⚠️ **`@keep` et `@clear` sont dépréciés, REFUSÉS à partir du 8 octobre 2026.** D'ici là,
-une écriture qui les porte réussit et la réponse porte un avertissement daté dans
+⚠️ **`@keep` et `@clear` sont dépréciés, REFUSÉS à partir du 8 octobre 2026** : une
+écriture qui les porte, où que ce soit (valeur, couche, élément de liste, ligne d'un
+lot), est alors refusée ENTIÈRE, et le refus nomme les colonnes et le geste à faire.
+Avant cette date, elle réussit et la réponse porte un avertissement daté dans
 `notices`. À la place de `@clear`, écris `null`. À la place de `@keep`, omets le
 sous-champ — ou, pour un `comment` ou un `link` qui doit survivre à une valeur qui
 change, renvoie-le tel quel : écrire une valeur fait tomber le `comment` et le `link`
 qui l'accompagnaient.
 
-⚠️ **`""` et `[]` sont des valeurs : ils REMPLACERONT la valeur en place à partir du
-6 octobre 2026.** Jusque-là, un `""` ou un `[]` sur une case qui porte une valeur est
-ignoré (et refusé comme écriture sans effet quand il est tout le geste), et la réponse
-porte un avertissement daté dans `notices`. Pour garder une valeur, omets la colonne ;
+⚠️ **`""` et `[]` sont des valeurs : ils REMPLACENT la valeur en place à partir du
+6 octobre 2026**, et la valeur remplacée revient dans `valeurs_effacees`. Avant cette
+date, un `""` ou un `[]` sur une case qui porte une valeur est ignoré (et refusé comme
+écriture sans effet quand il est tout le geste), et la réponse porte un avertissement
+daté dans `notices`. Un `""` posé ne satisfait pas `required` et compte comme vide :
+pour dire « cherché, rien », c'est `@empty`. Pour garder une valeur, omets la colonne ;
 pour l'effacer, écris `null`. `{}` n'est pas une valeur et ne sera jamais stocké.
 
 `null` efface aussi une case au vide assumé (`@empty`), marqueur compris : c'est le

@@ -55,7 +55,7 @@ def test_le_refus_sans_effet_porte_l_annonce():
 def test_la_description_de_data_write_et_le_guide_annoncent_la_date():
     from oto_mcp.tools import datastore as tools_ds
 
-    assert vr.VIDE_REMPLACE_LE.isoformat() in vr.DESCRIPTION_ECRITURE
+    assert vr.VIDE_REMPLACE_LE.isoformat() in vr.description_ecriture()
     assert "<<vide_remplace>>" in inspect.getsource(tools_ds), "la date est recopiée"
     guide = pathlib.Path(__file__).parents[2] / "oto_mcp/guides/datastore-semantics.md"
     assert f"à partir du {QUAND}" in guide.read_text()

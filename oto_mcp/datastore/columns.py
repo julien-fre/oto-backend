@@ -22,6 +22,7 @@ from typing import Any, Callable, Optional
 
 from . import couches as dsl
 from . import schema as dsv2
+from . import vide_remplace as vr
 from .errors import RowValidationError
 
 # Les colonnes de la PLATEFORME : elles vivent dans la ligne sans être des
@@ -397,6 +398,14 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
 # imparfait coûte plus cher que la valeur qu'on préserve, et le tableau qui écrit
 # `""` depuis des mois n'a rien demandé (8 897 cellules vides mesurées en production
 # le 28/08, sur 59 tableaux — les refuser rétroactivement casserait 59 clients).
+#
+# ══ oto#140 J2 (arbitré le 23/09/2026) : `""` ET `[]` REDEVIENNENT DES VALEURS ═══
+#
+# Le contrat à deux gestes (`null` efface, `@empty` dit « cherché, rien ») retire cette
+# garde pour `""` et `[]`, risque des gabarits à demi remplis accepté : à partir de
+# `vide_remplace.date_de_bascule()`, ils remplacent la valeur en place et la valeur
+# remplacée revient dans `valeurs_effacees`. La bascule est jugée à l'écriture, pas au
+# déploiement. `{}` reste écarté : ce n'est pas une valeur (oto#165).
 
 # Deux bornes, pour qu'un relevé reste lisible par un agent : le nombre
 # d'effacements nommés, et la taille d'une valeur rendue. Au-delà, on dit la TAILLE
@@ -626,10 +635,15 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     fait pour les rétablir n'est pas le même geste.
 
     ⚠️ Ce parcours ne décide QUE de la valeur : le sort du GESTE — quand il n'a plus
-    rien à poser — se juge après, sur ses trois sorties (`refuser_geste_sans_effet`)."""
+    rien à poser — se juge après, sur ses trois sorties (`refuser_geste_sans_effet`).
+
+    ⚠️ **Bascule datée (oto#140 J2)** : à partir de `vide_remplace.date_de_bascule()`,
+    `""` et `[]` sur une valeur en place la REMPLACENT (relevés comme effacement) ; seul
+    `{}` est encore écarté."""
     pose: dict = {}
     effaces: list[dict] = []
     ignores: list[dict] = []
+    bascule: Optional[bool] = None       # oto#140 J2, jugée au premier vide seulement
     for cle, neuf in (user_data or {}).items():
         touche, posee = _valeur_posee(neuf)
         if cle in _META_COLS or not touche:
@@ -656,7 +670,16 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
             effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
             pose[cle] = neuf
             continue
-        # Vide non-`null` sur une valeur en place : la valeur survit (#608).
+        if bascule is None:
+            bascule = vr.bascule_faite()
+        if bascule and vr.vide_valeur(posee):
+            # oto#140 J2 : `""` et `[]` sont des valeurs — ils remplacent, et la valeur
+            # remplacée se dit comme sous un `null`.
+            effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
+            pose[cle] = neuf
+            continue
+        # Vide non-`null` sur une valeur en place : la valeur survit (#608) — depuis
+        # la bascule J2, seul `{}` arrive encore ici.
         ignores.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
         reste = _sans_la_valeur(neuf)
         if reste is not None:
@@ -704,10 +727,10 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list,
     cite = ", ".join(f"`{c}`" for c in champs)
     porte = ", ".join(f'"{c}": null' for c in champs)
     raise ValueError(
-        f"écriture sans effet : {cite} porte une valeur VIDE non-`null` (liste vide, "
-        "chaîne vide, objet vide) sur une valeur déjà en place, et ton écriture ne "
+        f"écriture sans effet : {cite} porte une valeur VIDE non-`null` "
+        f"({vr.vides_ecartables()}) sur une valeur déjà en place, et ton écriture ne "
         "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
-        "succès. Un vide non-`null` ne déplace pas une valeur : c'est ce que rend "
+        "succès. Un tel vide ne déplace pas une valeur : c'est ce que rend "
         "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
         f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour dire « cherché, "
         f"rien », écris `{dsl.VIDE_DELIBERE}`, la raison dans `comment`. Pour laisser "
@@ -745,9 +768,10 @@ def effacements_report(records: list) -> dict:
     Les confondre ferait prescrire l'un pour l'autre — un aller-retour dépensé pour
     rien, exactement ce que la famille de relevés existe pour éviter.
 
-    ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici : la phrase ne cite donc
-    pas les autres vides parmi les valeurs qui effacent, sous peine de prescrire un
-    geste qui, lui, est REFUSÉ quand il est seul et ignoré quand il accompagne (#724)."""
+    ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici — jusqu'à la bascule
+    oto#140 J2, à partir de laquelle `""` et `[]` remplacent aussi : la phrase ne les
+    cite qu'une fois la date passée, sous peine de prescrire avant elle un geste qui
+    est REFUSÉ quand il est seul et ignoré quand il accompagne (#724)."""
     out: dict = {}
     valeurs = [r for r in records or [] if "couche" not in r]
     if valeurs:
@@ -757,6 +781,9 @@ def effacements_report(records: list) -> dict:
                 "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
                 "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
                 "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base.")
+        if vr.bascule_faite():
+            hint += (" `\"\"` et `[]` sont des valeurs : eux aussi REMPLACENT la valeur "
+                     "en place, qui figure alors ci-dessus.")
         if reste:
             hint += f" {len(valeurs)} effacements au total, {len(nommes)} nommés ici."
         out["valeurs_effacees"] = nommes
@@ -868,7 +895,7 @@ def ignores_report(records: list) -> dict:
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = ("une valeur VIDE non-`null` (chaîne vide, liste vide, objet vide) ne "
+    hint = (f"une valeur VIDE non-`null` ({vr.vides_ecartables()}) ne "
             "remplace pas une valeur déjà en place : c'est ce que rend une source "
             "muette ou un gabarit à demi peuplé, pas une demande d'effacement. Les "
             "valeurs ci-dessus sont INTACTES en base — il n'y a rien à rétablir. "

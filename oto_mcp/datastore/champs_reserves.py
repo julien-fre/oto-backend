@@ -90,21 +90,42 @@ _MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
             "août", "septembre", "octobre", "novembre", "décembre")
 
 
-def date_refus() -> "_date":
-    """La date en vigueur : le réglage s'il est posé, le défaut du code sinon."""
-    import os
+def date_reglee(reglage: str, brut: Optional[str], defaut: "_date") -> "_date":
+    """La date d'une BASCULE en vigueur : `brut` (la valeur du réglage `reglage`) s'il
+    est posé, le défaut du code sinon. Partagée par toutes les bascules datées du
+    datastore (l'origine ici, `vide_remplace` et `mots_deprecies` pour oto#140) : une
+    seule façon de lire, une seule façon de lever. Chaque appelant lit LUI-MÊME son
+    réglage (`os.environ.get(ENV_…)`), pour que l'inventaire des variables le voie.
 
-    brut = (os.environ.get(ENV_ORIGINE_REFUS_LE) or "").strip()
+    ⚠️ Une valeur illisible LÈVE : le réglage décide à la fois de ce qui est ANNONCÉ
+    et de ce qui est APPLIQUÉ, et le lire de travers ferait promettre une échéance
+    que rien n'applique."""
+    brut = (brut or "").strip()
     if not brut:
-        return ORIGINE_REFUS_LE
+        return defaut
     try:
         return _date.fromisoformat(brut)
     except ValueError:
         raise ValueError(
-            f"{ENV_ORIGINE_REFUS_LE}={brut!r} n'est pas une date `YYYY-MM-DD`. "
+            f"{reglage}={brut!r} n'est pas une date `YYYY-MM-DD`. "
             "Ce réglage décide à la fois de ce qui est ANNONCÉ et de ce qui est "
-            "REFUSÉ : le lire de travers ferait promettre une échéance que rien "
+            "APPLIQUÉ : le lire de travers ferait promettre une échéance que rien "
             "n'applique.") from None
+
+
+def jour_utc() -> "_date":
+    """Le jour qui juge une bascule — en UTC, pas au fuseau du process : la bascule
+    doit tomber au même instant sur toutes les box, et le fuseau d'une machine n'est
+    pas un fait de produit."""
+    return _datetime.now(_timezone.utc).date()
+
+
+def date_refus() -> "_date":
+    """La date en vigueur : le réglage s'il est posé, le défaut du code sinon."""
+    import os
+
+    return date_reglee(ENV_ORIGINE_REFUS_LE, os.environ.get(ENV_ORIGINE_REFUS_LE),
+                       ORIGINE_REFUS_LE)
 
 
 def date_refus_fr() -> str:
@@ -189,8 +210,7 @@ def refus_arme(aujourdhui: Optional["_date"] = None) -> bool:
     """Le refus est-il tombé ? — `aujourdhui` en UTC, pas au fuseau du process : la
     bascule doit tomber au même instant sur toutes les box, et le fuseau d'une machine
     n'est pas un fait de produit."""
-    jour = aujourdhui or _datetime.now(_timezone.utc).date()
-    return jour >= date_refus()
+    return (aujourdhui or jour_utc()) >= date_refus()
 
 
 def _les_deux_gestes(colonnes: list, maintenant: bool = False) -> str:

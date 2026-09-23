@@ -136,6 +136,26 @@ def _adresse_du_tableau_de_bord(monkeypatch: pytest.MonkeyPatch) -> None:
 # aucun banc n'affirme sur leur valeur littérale (les envois réels sont mockés/
 # court-circuités par l'absence d'`OTO_MAILER_SEND_BEARER` en test) : les anciens
 # défauts servent de valeur gréée, sans risque de masquer une régression.
+# ── Les bascules DATÉES du contrat d'écriture d'une case (oto#140 J2 et J3) ─────────
+#
+# Elles tombent à leur date, dans le code, sans déploiement : sans ce gréement, la suite
+# changerait de verdict le 6 puis le 8 octobre 2026, sans qu'une ligne ait bougé. Le jour
+# qui les juge est fixé à la VEILLE de leur date par défaut — le comportement d'avant,
+# que la plupart des bancs décrivent. Un banc qui veut l'APRÈS déplace la date par son
+# réglage (`OTO_VIDE_REMPLACE_LE`, `OTO_MOTS_DEPRECIES_REFUSES_LE`), jamais l'horloge.
+@pytest.fixture(autouse=True)
+def _bascules_datees_a_la_veille(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from oto_mcp.datastore import mots_deprecies as mdp
+    from oto_mcp.datastore import vide_remplace as vr
+
+    veille = timedelta(days=1)
+    monkeypatch.setattr(vr, "_aujourdhui", lambda: vr.VIDE_REMPLACE_LE - veille)
+    monkeypatch.setattr(mdp, "_aujourdhui",
+                        lambda: mdp.MOTS_DEPRECIES_REFUSES_LE - veille)
+
+
 @pytest.fixture(autouse=True)
 def _email_transactionnel(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTO_MAILER_URL", "https://mailer.oto.zone/api/send")

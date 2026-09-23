@@ -54,7 +54,7 @@ def test_l_avertissement_dit_la_date_et_le_remplacement_de_chaque_mot():
 def test_la_description_de_data_write_derive_de_la_meme_date():
     from oto_mcp.tools import datastore as tools_ds  # noqa: F401 — pose la description
 
-    assert mdp.MOTS_DEPRECIES_REFUSES_LE.isoformat() in mdp.DESCRIPTION_ECRITURE
+    assert mdp.MOTS_DEPRECIES_REFUSES_LE.isoformat() in mdp.description_ecriture()
     src = inspect.getsource(tools_ds)
     assert "<<mots_deprecies>>" in src, "la description porte la marque, pas une date recopiée"
 
@@ -73,11 +73,13 @@ def test_le_texte_servi_ne_prescrit_plus_les_mots_deprecies_dans_les_refus():
     assert "(vide sans rien affirmer)" not in src
 
 
-def test_l_avertissement_est_pose_sur_les_trois_chemins_d_ecriture():
+def test_l_avertissement_est_pose_sur_les_quatre_chemins_d_ecriture():
     from oto_mcp.datastore import ecriture, ecriture_par_id, lots
 
-    for mod in (ecriture, ecriture_par_id, lots):
-        assert "mdp.mots_nommes(" in inspect.getsource(mod), mod.__name__
+    for mod in (ecriture_par_id, lots):
+        assert "mdp.controler(" in inspect.getsource(mod), mod.__name__
+    for fn in (ecriture.EcritureMixin.append_row, ecriture.EcritureMixin.upsert_row):
+        assert "mdp.controler(" in inspect.getsource(fn), fn.__name__
 
 
 # ── sur une base réelle : l'écriture a lieu ET l'avertissement est servi ────
