@@ -156,11 +156,13 @@ async def upload_receive(request: Request) -> JSONResponse:
     except _CorpsTropGros:
         return _json_error(request, 413, "content_too_large")
     if request.method == "POST":
-        # Le parseur lit le corps DÉJÀ BORNÉ, et n'accepte qu'une partie fichier :
-        # le formulaire n'envoie rien d'autre.
+        # Le parseur lit le corps DÉJÀ BORNÉ et n'accepte qu'une partie fichier.
+        # Quelques champs texte restent tolérés (`max_fields`) : un formulaire sans
+        # fichier, ou un `file` envoyé en texte, doit rendre `missing_file`, pas
+        # `invalid_multipart` — le corps borné rend leur coût négligeable.
         try:
             form = await Request(request.scope, _rejouer(corps)).form(
-                max_files=1, max_fields=0)
+                max_files=1, max_fields=16)
         except Exception:
             return _json_error(request, 400, "invalid_multipart")
         upload = form.get("file")
