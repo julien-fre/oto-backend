@@ -14,6 +14,8 @@ est leur seule raison d'être, aucun outil derrière — sont servis.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from oto_mcp import providers
@@ -172,6 +174,18 @@ def test_la_cle_ne_sort_que_de_la_reservation_jamais_d_une_lecture():
 MOTS_DE_RESULTAT = ("result", "response", "output", "reponse", "resultat")
 TYPES_QUI_NE_PORTENT_PAS_DE_TEXTE = ("integer", "bigint", "smallint", "numeric",
                                      "boolean", "double precision", "real")
+# Un TEXT dont la BASE ferme le vocabulaire (#644, `result_shape`) ne porte pas de texte
+# libre non plus : une contrainte `CHECK (<col> ~ '^…$')` ancrée, sans joker ni
+# répétition ouverte, refuse toute valeur hors de la liste — clé de modèle et extrait
+# de réponse compris. La propriété est lue dans le DDL, pas accordée à un nom.
+_CHECK_ANCRE = re.compile(r"check \((\w+) ~ '\^([^']*)\$'\)$")
+_JOKERS = (".", "*", "+", "?", "\\", "[^", ",}")
+
+
+def _vocabulaire_ferme(colonne: str, type_: str) -> bool:
+    m = _CHECK_ANCRE.search(type_)
+    return (type_.startswith("text") and m is not None and m.group(1) == colonne
+            and not any(j in m.group(2) for j in _JOKERS))
 
 
 def _colonnes_de_resultat_non_numeriques(insert: str, ddl: str) -> list[str]:
@@ -192,7 +206,8 @@ def _colonnes_de_resultat_non_numeriques(insert: str, ddl: str) -> list[str]:
                  if any(m in c.lower() for m in MOTS_DE_RESULTAT)]
     return [c for c in suspectes
             if not any(types.get(c, "?").startswith(t)
-                       for t in TYPES_QUI_NE_PORTENT_PAS_DE_TEXTE)]
+                       for t in TYPES_QUI_NE_PORTENT_PAS_DE_TEXTE)
+            and not _vocabulaire_ferme(c, types.get(c, "?"))]
 
 
 def test_le_journal_des_appels_ne_garde_aucune_reponse():
@@ -233,6 +248,25 @@ def test_la_garde_tombe_bien_sur_une_colonne_qui_STOCKERAIT():
            "    result_size INTEGER,\n"
            "    result_text TEXT\n);")
     assert _colonnes_de_resultat_non_numeriques(insert, ddl) == ["result_text"]
+
+
+def test_un_vocabulaire_FERME_par_la_base_passe_un_vocabulaire_ouvert_tombe():
+    """#644 : `result_shape` est un TEXT, mais la base n'y accepte que `empty`,
+    `non_empty` ou `refused(<identifiant>)`. Une contrainte qui laisserait passer un
+    texte libre — joker, répétition ouverte, classe niée, ou posée sur une AUTRE
+    colonne — ne ferme rien, et la garde tombe comme avant."""
+    insert = ("INSERT INTO tool_calls (tool, result_a, result_b, result_c, result_d, "
+              "result_e)\nVALUES (%s, %s, %s, %s, %s, %s)")
+    ddl = ("CREATE TABLE IF NOT EXISTS tool_calls (\n"
+           "    tool TEXT NOT NULL,\n"
+           "    result_a TEXT CONSTRAINT k CHECK (result_a ~ "
+           "'^(empty|refused[(][a-z][a-z_]{0,39}[)])$'),\n"
+           "    result_b TEXT CHECK (result_b ~ '^.*$'),\n"
+           "    result_c TEXT CHECK (result_c ~ '^[a-z]+$'),\n"
+           "    result_d TEXT CHECK (tool ~ '^(a|b)$'),\n"
+           "    result_e TEXT CHECK (result_e ~ '^[^x]{0,9}$')\n);")
+    assert _colonnes_de_resultat_non_numeriques(insert, ddl) == [
+        "result_b", "result_c", "result_d", "result_e"]
 
 
 def test_la_remise_ne_modifie_pas_le_travail_d_origine(_coffre):

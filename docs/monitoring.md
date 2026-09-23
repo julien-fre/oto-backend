@@ -204,8 +204,32 @@ s'est écrit « on ne peut pas savoir ». Depuis ce jour, le contrat le dit :
   (la vue ne le porte pas), la fiche rend `null` (l'appel n'en avait pas) — les deux se
   lisent différemment, et c'est le but.
 
-Ce que la fiche ne porte toujours pas : la **forme de la réponse** (vide / non vide /
-refusée) — lot à part, même issue.
+### La forme de la réponse : `result_shape` sur la fiche ET la liste (#644, 2026-09-23)
+
+`result_size` (#340) dit **combien** l'outil a servi, jamais **quoi** : un 0 ne sépare pas
+une liste vide d'un refus rendu poliment, un non-zéro ne sépare pas un résultat d'un
+`{"error": …}` rendu sous `ok=true`. La colonne `tool_calls.result_shape`, écrite au même
+point que la taille (`calllog.forme_servie`, middleware MCP), porte un vocabulaire
+**fermé**, jamais le contenu :
+
+- `empty` — `null`, `[]`, `{}`, `""` (une sortie non-objet que fastmcp range sous
+  `{"result": …}` est déballée) ; sans donnée structurée, aucun bloc ou des textes vides ;
+- `non_empty` — tout le reste ;
+- `refused(<code>)` — un objet qui porte `ok: false` ou une clé `error` non vide à la
+  racine. Le code est pris de `code`, `error_code` ou `error` (ou `error.code`) s'il a la
+  forme d'un identifiant (minuscules et `_`, 40 au plus) ; sinon `refused(unnamed)` — un
+  message libre ou une valeur à chiffres ne sort jamais dans le journal.
+
+Le vocabulaire est fermé **par la base** : la contrainte `tool_calls_result_shape_ferme`
+refuse toute autre valeur (un TEXT libre sous un nom de résultat pourrait garder une
+réponse — garde `tests/test_runner_cle_de_modele.py`).
+
+`NULL` = non mesurée : appel en échec (`ok=false` par exception), geste REST, forme
+illisible, lignes antérieures au 23/09/2026. Un refus rendu en **texte seul** (sans
+donnée structurée) n'est pas reconnu : ce serait parser le texte à chaque appel. Rendue
+par la fiche (`call.result_shape`) et par chaque ligne de la liste, à côté d'`arg_keys`.
+Colonne posée sur la base existante par la révision `0010_tool_calls_result_shape`, jouée
+**avant la fusion** (`docs/migrations-versionnees.md` §5.1).
 
 ## Ce qui n'est PAS tracé
 
@@ -302,7 +326,7 @@ un outil, verbe en `op` :
 | op | pour | paramètres utiles |
 |---|---|---|
 | `summary` | agrégats (totaux, par outil avec avg+p95, par user, par jour) | `days`, `org_id`, `sub` |
-| `calls` | le journal brut filtré — chaque ligne porte `arg_keys`, jamais `args` | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
+| `calls` | le journal brut filtré — chaque ligne porte `arg_keys` et `result_shape`, jamais `args` | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
 | `call` | la fiche d'UN appel (`call.args` tels que journalisés + corrélation) | `call_id` |
 | `run` / `runs` | timeline d'un déroulé / déroulés récents | `run_id`, `limit` |
 | `rest` | lentille REST par route (`/api/*`) — **les gestes du tableau de bord sont ICI, pas dans `calls`**. `by_status` ventile les erreurs par code HTTP (oto#179) : un 4xx attendu ne se lit plus comme une panne ; `status: null` = aucune réponse journalisée, c'est-à-dire une exception non rattrapée (500 servi plus haut) ou un client parti | `days`, `org_id`, `sub`, `route` |

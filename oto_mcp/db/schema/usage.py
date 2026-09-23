@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     -- NULL = non mesurée (appel en échec, ou forme de résultat non lisible) —
     -- distinct de 0, qui est une réponse réellement vide.
     result_size INTEGER,
+    -- FORME du résultat servi (oto-backend#644), vocabulaire FERMÉ, jamais le contenu :
+    -- `empty` | `non_empty` | `refused(<code>)` (le refus applicatif rendu sous un
+    -- `ok` vrai — `{"error": "not_found"}`). Sépare ce que `result_size` laisse
+    -- ambigu. Écrite au même point que la taille (`calllog.forme_servie`) ; NULL =
+    -- non mesurée (appel en échec, geste REST, forme illisible, historique).
+    -- ⚠️ La BASE ferme le vocabulaire : un TEXT libre sous un nom de résultat serait
+    -- de quoi garder une réponse (garde `test_runner_cle_de_modele`), la contrainte
+    -- refuse toute autre valeur — même motif que `calllog._CODE_DE_REFUS`.
+    -- Posée sur une base existante par la révision `0010_tool_calls_result_shape`,
+    -- jamais au démarrage (table de plusieurs millions de lignes). PAS d'index.
+    result_shape TEXT CONSTRAINT tool_calls_result_shape_ferme CHECK (result_shape ~ '^(empty|non_empty|refused[(][a-z][a-z_]{0,39}[)])$'),
     -- Corrélation (ADR 0017, extension OTO-LOCALE — PAS dans le contrat canonique
     -- calllog/otomata-mcp) : session_id = session mcp transport (grossier) ; run_id =
     -- déroulé/run (fin, posé par run_start, stampé ici). NULL hors run.

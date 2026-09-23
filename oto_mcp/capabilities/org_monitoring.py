@@ -128,6 +128,10 @@ class CallRow(BaseModel):
     # vers le traceback. None sur un appel réussi (et sur une erreur gérée).
     sentry_event_id: Optional[str] = None
     arg_keys: list[str] = []
+    # FORME du résultat servi (#644) : `empty` | `non_empty` | `refused(<code>)` —
+    # jamais le contenu. `None` = non mesurée (échec, historique, forme illisible).
+    # Sépare « l'outil a rendu une liste vide » de « il a rendu un refus sous ok=true ».
+    result_shape: Optional[str] = None
     # Nombre d'items TRAITÉS par cet appel (facturation du partenaire, 21/08) — `None` = non
     # tracé pour ce tool (l'écrasante majorité), à traiter comme 1 par un
     # consommateur, JAMAIS comme 0. Posé aujourd'hui par `linkedin_aiark_search`
@@ -185,6 +189,8 @@ class CallDetail(BaseModel):
     org_name: Optional[str] = None
     client_id: Optional[str] = None
     sentry_event_id: Optional[str] = None
+    # FORME du résultat servi (#644) — même vocabulaire que `CallRow.result_shape`.
+    result_shape: Optional[str] = None
 
 
 class OrgCall(BaseModel):

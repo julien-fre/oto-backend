@@ -63,9 +63,10 @@ def insert_tool_call(row: dict) -> None:
                 (server, kind, sub, email, tool, args, ok, error, duration_ms, session_id,
                  run_id, org_id, client_id, sentry_event_id,
                  request_id, call_uid, effective_sub, error_kind,
-                 token_id, token_kind, result_size, quantity, key_mode, view_as_sub)
+                 token_id, token_kind, result_size, result_shape, quantity, key_mode,
+                 view_as_sub)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 row.get("server") or "oto", row.get("kind") or "mcp",
@@ -85,6 +86,9 @@ def insert_tool_call(row: dict) -> None:
                 # pas été mesurée : les échecs (le middleware ne la calcule que sur le
                 # chemin heureux) et les gestes REST, qui ne passent pas par lui.
                 row.get("result_size"),
+                # oto-backend#644 — forme du résultat servi, même point d'écriture et
+                # même règle de NULL que la taille.
+                row.get("result_shape"),
                 # Métrage par unité (facturation du partenaire) — NULL = non tracé pour ce
                 # tool, un consommateur doit le traiter comme 1, pas 0.
                 row.get("quantity"),
@@ -1020,7 +1024,8 @@ def list_tool_calls(
     La ligne ne porte PAS `args` (le contenu est la fiche, `get_tool_call`) mais
     `arg_keys` : les clés des arguments journalisés, triées, `[]` sans argument
     (`journal_calls.ARG_KEYS_SQL`, #634) — de quoi savoir QUELS arguments un appel
-    portait sans ouvrir sa fiche, et sans jamais rendre une valeur."""
+    portait sans ouvrir sa fiche, et sans jamais rendre une valeur — et, à côté,
+    `result_shape` (#644) : la FORME de ce que l'outil a rendu, jamais son contenu."""
     limit = max(1, min(int(limit), 1000))
     # Les filtres de la PAGE et ceux de son plancher (#630) sortent de la même
     # construction — c'est ce qui rend les deux comptes comparables.
@@ -1041,7 +1046,7 @@ def list_tool_calls(
             SELECT l.id, l.sub, u.email, u.name, l.tool AS tool_name, l.created_at AS called_at,
                    l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id,
                    l.sentry_event_id, {journal_calls.ARG_KEYS_SQL} AS arg_keys,
-                   l.quantity, l.key_mode
+                   l.result_shape, l.quantity, l.key_mode
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             {where}
@@ -1056,7 +1061,7 @@ def list_tool_calls(
 def get_tool_call(call_id: int) -> Optional[dict]:
     """Fiche d'UN appel (investigation plateforme) : la ligne complète, args inclus
     (bornés à l'écriture par `truncated_args`, toute coupe déclarée dans
-    `args._truncated` — #413) +
+    `args._truncated` — #413) + forme du résultat (`result_shape`, #644) +
     axes de corrélation (session_id, run_id, org_id + nom, client_id)."""
     with _connect() as conn:
         row = conn.execute(
@@ -1065,7 +1070,7 @@ def get_tool_call(call_id: int) -> Optional[dict]:
                    u.name, l.tool, l.args, l.ok, l.error, l.error_kind, l.duration_ms,
                    l.created_at,
                    l.session_id, l.run_id, l.org_id, o.name AS org_name, l.client_id,
-                   l.sentry_event_id, l.quantity, l.key_mode
+                   l.sentry_event_id, l.result_shape, l.quantity, l.key_mode
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             LEFT JOIN orgs o ON o.id = l.org_id

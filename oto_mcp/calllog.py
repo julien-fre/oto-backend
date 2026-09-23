@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from typing import Any, Awaitable, Callable, Optional
@@ -314,6 +315,67 @@ def taille_servie(result) -> Optional[int]:
         return None
 
 
+# La FORME de ce qui a été servi (oto-backend#644) : un vocabulaire FERMÉ, jamais le
+# contenu. Elle sépare ce que `result_size` laisse ambigu — un 0 ne dit pas « liste
+# vide » plutôt que « refus rendu poliment », un non-zéro ne dit pas « résultat »
+# plutôt que « `{"error": …}` rendu sous `ok=true` ».
+RESULT_SHAPE_EMPTY = "empty"
+RESULT_SHAPE_NON_EMPTY = "non_empty"
+# `refused(<code>)` : le code est un identifiant (`not_found`, `identity_unavailable`),
+# jamais un message. Lettres minuscules et `_` seulement, 40 au plus : un texte libre
+# (« TypeError: … », « domaine invalide ») ou une valeur à chiffres — un identifiant
+# technique, une empreinte — ne passe pas, et le refus s'écrit `refused(unnamed)`.
+_CODE_DE_REFUS = re.compile(r"[a-z][a-z_]{0,39}")
+_REFUS_SANS_CODE = "unnamed"
+_TEXTES_VIDES = frozenset({"", "[]", "{}", "null"})
+
+
+def _code_de_refus(sc: dict) -> str:
+    erreur = sc.get("error")
+    for candidat in (sc.get("code"), sc.get("error_code"),
+                     erreur.get("code") if isinstance(erreur, dict) else erreur):
+        if isinstance(candidat, str) and _CODE_DE_REFUS.fullmatch(candidat):
+            return candidat
+    return _REFUS_SANS_CODE
+
+
+def forme_servie(result) -> Optional[str]:
+    """`empty` | `non_empty` | `refused(<code>)` — la forme du résultat servi (#644).
+
+    Lue sur `structured_content` quand il existe (la donnée de l'outil ; fastmcp range
+    une sortie non-objet sous `{"result": …}`, qu'on déballe) :
+    - `empty` : `None`, `[]`, `{}`, `""` ;
+    - `refused(<code>)` : un objet qui porte `ok: false` ou une clé `error` non vide
+      à la racine — le refus applicatif rendu sous un appel réussi ;
+    - `non_empty` : tout le reste.
+    Sans `structured_content`, sur les blocs de `content` : aucun bloc, ou des textes
+    tous vides (`""`, `[]`, `{}`, `null`) → `empty` ; sinon `non_empty` (un refus rendu
+    en texte seul n'est pas reconnu : ce serait parser le texte sur chaque appel).
+
+    Même contrat que `taille_servie` : `None` — non mesurée — dès que la forme est
+    illisible, et jamais bloquante. Un test de clés, pas une sérialisation : le coût
+    est constant, quelle que soit la taille du résultat."""
+    try:
+        sc = getattr(result, "structured_content", None)
+        if sc is None:
+            blocs = getattr(result, "content", None)
+            if blocs is None:
+                return None
+            textes = [getattr(b, "text", None) for b in blocs]
+            if all(isinstance(t, str) and t.strip() in _TEXTES_VIDES for t in textes):
+                return RESULT_SHAPE_EMPTY
+            return RESULT_SHAPE_NON_EMPTY
+        if isinstance(sc, dict) and sc.keys() == {"result"}:
+            sc = sc["result"]
+        if sc is None or (isinstance(sc, (dict, list, str)) and not sc):
+            return RESULT_SHAPE_EMPTY
+        if isinstance(sc, dict) and (sc.get("ok") is False or sc.get("error")):
+            return f"refused({_code_de_refus(sc)})"
+        return RESULT_SHAPE_NON_EMPTY
+    except Exception:  # noqa: SILENT — une mesure ne casse jamais l'appel qu'elle observe ; forme illisible = `None`, lu « non mesurée »
+        return None
+
+
 def _oto_call_outcome(result) -> tuple[bool, Optional[str]]:
     """`(ok, error)` de la cible RELAYÉE par `oto_call` (oto-backend#784) — lu dans
     `structured_content`, la forme `{"tool": ..., "ok": bool, "error": str}` que
@@ -445,7 +507,8 @@ class ToolCallLogger(Middleware):
             # la lecture qu'un lecteur du journal suppose.
             ok, error = _oto_call_outcome(result)
         self._record({**row, "ok": ok, "error": error,
-                      "result_size": taille_servie(result)}, t0)
+                      "result_size": taille_servie(result),
+                      "result_shape": forme_servie(result)}, t0)
         return result
 
     def _record(self, row: dict, t0: float) -> None:

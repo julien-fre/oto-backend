@@ -524,6 +524,14 @@ d'`_init.py`, inerte sur toute base servie) : un `ALTER` qui rendait la colonne 
 son `NOT NULL` aurait ouvert une neuvième divergence au cliquet de
 `tests/test_boot_order_replay.py`.
 
+`0010_tool_calls_result_shape` (24/09/2026, oto-backend#644, après `0009_coffre_secret_obligatoire`) ajoute une colonne nullable
+à `tool_calls` (`result_shape`), que le code du même lot ÉCRIT à chaque appel et LIT dans
+la liste et la fiche du journal : comme 0003, 0007 et 0009, elle se joue **avant la fusion** —
+sans elle, chaque insertion de journal échouerait en `UndefinedColumn`, avalée en warning
+(le journal se viderait sans bruit). Pas au démarrage : table de plusieurs millions de
+lignes, où chaque appel écrit. Sa contrainte de vocabulaire fermé est posée `NOT VALID` :
+aucun parcours des lignes existantes sous le verrou exclusif.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

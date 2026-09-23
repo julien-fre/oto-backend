@@ -473,8 +473,14 @@ from oto_mcp.db import _schema, schema
 # révision Alembic `0009_coffre_secret_obligatoire`, pas le démarrage. Empreinte
 # recalculée sur le tronc qui porte #806 (qui rendait bien 168 301 / 1e71a312… sans ce
 # lot) : 168 301 → 168 453 (+152).
-EMPREINTE = "c7727baf89e06bbedf754e4590e9a10e072bee144ced0609088aef67b9c860b8"
-LONGUEUR = 168453
+# 24/09/2026 (oto-backend#644) — `tool_calls.result_shape` : la FORME du résultat servi
+# (`empty` | `non_empty` | `refused(<code>)`), jamais le contenu — vocabulaire fermé PAR
+# LA BASE (contrainte `tool_calls_result_shape_ferme`). NULLABLE, sans index. Base
+# existante : révision Alembic `0010_tool_calls_result_shape`, pas le démarrage (table
+# de plusieurs millions de lignes). Recalculée sur le tronc qui porte #806 et #521 :
+# 168 453 → 169 421 (+968, commentaire compris).
+EMPREINTE = "54cb852176175f7fa525fb185e52891e3f8e52f830510588f6f9fd6aa89d0e6f"
+LONGUEUR = 169421
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
