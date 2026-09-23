@@ -393,6 +393,27 @@ def register(mcp: FastMCP) -> None:
         out["projection"] = bloc
         return out
 
+    # ⚠️ Le SONDAGE rend les mêmes fiches que le reveal, mais PAS sous la même forme :
+    # l'enveloppe du webhook, avec un tableau `webhook_result.people[]`, et non un
+    # `person` au premier niveau. Réappliquer `_light_reveal` tel quel ne mordrait
+    # sur rien (il lit `payload["person"]`) et passerait pour un correctif — la
+    # réponse resterait entière, ~15 000 c. par personne, et un lot de 50 ne tenait
+    # dans aucun contexte (otomata-tech/oto#186). On projette donc CHAQUE élément de
+    # `people[]` avec la coupe du lot, et on le DIT, sur le chemin réel.
+    def _light_reveal_result(result: dict) -> tuple[dict, Optional[dict]]:
+        """`(enveloppe, bloc de projection | None)` — `None` : rien n'a été retiré."""
+        wr = result.get("webhook_result")
+        people = wr.get("people") if isinstance(wr, dict) else None
+        if not isinstance(people, list):
+            return result, None
+        allegees = [_light_match(p) for p in people]
+        if not any(a for _, a in allegees):
+            return result, None
+        out = {**result, "webhook_result": {**wr, "people": [p for p, _ in allegees]}}
+        bloc = _projection_bloc(lot=True)
+        bloc["dropped"] = [f"result.webhook_result.people[].{d}" for d in bloc["dropped"]]
+        return out, bloc
+
     def _stringify_request_id(payload: dict) -> dict:
         """`request_id` en CHAÎNE — Apollo en rend un à CHAQUE match, reveal ou pas.
 
@@ -647,7 +668,7 @@ def register(mcp: FastMCP) -> None:
         return result if full else _light_reveal(result)
 
     @mcp.tool()
-    def apollo_reveal_phone_result(request_id: str) -> dict:
+    def apollo_reveal_phone_result(request_id: str, full: bool = False) -> dict:
         """Collect the numbers ordered with apollo_reveal_phone. 0 Apollo credits.
 
         `done: false` carries `retry_after_seconds` — wait that long, call again.
@@ -661,6 +682,11 @@ def register(mcp: FastMCP) -> None:
         Args:
             request_id: the id from apollo_reveal_phone, AS A STRING — a signed
                 64-bit integer, too large for a JSON number to carry exactly.
+            full: keep, on each `people[]` record, the employer's tech stack, the
+                employment history and the Apollo CRM account record. Off by
+                default (same cut as apollo_reveal_phone): ~15 000 characters per
+                person otherwise, and a batch of 50 fits in no context. Numbers
+                and person identity are kept either way. Still 0 credits.
         """
         client = _client_byo(_BYO_REVEAL_TELEPHONE)
         try:
@@ -685,7 +711,12 @@ def register(mcp: FastMCP) -> None:
         # dans une ligne de tableau) range un identifiant qui ne sonde rien.
         # Troisième fois que le même piège se présente à un niveau différent : il
         # se ferme là où la valeur SORT, pas là où on l'a vue la dernière fois.
-        return {"done": True, "result": _stringify_request_id(out.get("result") or {})}
+        result = _stringify_request_id(out.get("result") or {})
+        if full:
+            return {"done": True, "result": result}
+        result, bloc = _light_reveal_result(result)
+        return ({"done": True, "result": result, "projection": bloc} if bloc
+                else {"done": True, "result": result})
 
     _BYO_REVEAL_LOT = (
         "un lot qui RÉVÈLE (emails personnels ou téléphones) ne passe jamais par "

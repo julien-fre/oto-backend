@@ -61,7 +61,9 @@ minutes plus tard. la réponse immédiate ne porte qu'un `request_id`.
   receveur de webhook**, et ne voit pas ce qui y atterrit.
 - `apollo_reveal_phone_result(request_id)` — relit le MÊME contenu, **sans webhook, 0
   crédit, pendant 30 jours**. c'est par là que le numéro revient à l'agent : tu n'as pas
-  à lire toi-même ce qu'apollo a posté.
+  à lire toi-même ce qu'apollo a posté. chaque fiche de `people[]` sort allégée comme le
+  reveal (pile technique de l'employeur, historique d'emploi, fiche société du CRM
+  apollo retirés — les numéros restent) ; `full=True` rend l'enveloppe entière.
 - ⚠️ **le sondage demande la permission `webhook_result` sur ta clé** (ou une clé
   « Master »), d'après la doc apollo — même famille de prérequis que les outils de
   contact. à vérifier sur une vraie clé : si elle ne l'a pas, le reveal part quand même
