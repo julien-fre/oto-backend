@@ -59,8 +59,10 @@ def _serveur(rows):
     async def sink(row):
         rows.append(row)
 
-    mcp.add_middleware(calllog.ToolCallLogger(sink, server="oto",
-                                              identity=lambda: {"sub": "u1"}))
+    async def identite():
+        return {"sub": "u1"}
+
+    mcp.add_middleware(calllog.ToolCallLogger(sink, server="oto", identity=identite))
     return mcp
 
 

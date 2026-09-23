@@ -45,9 +45,10 @@ def _logger(rows):
     async def sink(row):
         rows.append(row)
 
-    return calllog.ToolCallLogger(
-        sink, server="oto", identity=lambda: {"sub": "user-42", "email": "a@b.c"}
-    )
+    async def identite():
+        return {"sub": "user-42", "email": "a@b.c"}
+
+    return calllog.ToolCallLogger(sink, server="oto", identity=identite)
 
 
 @pytest.mark.asyncio

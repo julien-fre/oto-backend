@@ -187,7 +187,10 @@ async def test_le_journal_stampe_l_org_du_run(surface):
         rows.append(row)
 
     mcp.add_middleware(CallContextMiddleware(frozenset()))
-    mcp.add_middleware(ToolCallLogger(sink, server="t", identity=lambda: {"sub": SUB}))
+    async def identite():
+        return {"sub": SUB}
+
+    mcp.add_middleware(ToolCallLogger(sink, server="t", identity=identite))
 
     async with Client(mcp) as c:
         await c.call_tool("data_sonde", {"_run_id": run})

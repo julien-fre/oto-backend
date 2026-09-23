@@ -592,6 +592,16 @@ def _prepare_database() -> None:
                 (time.monotonic() - debut) * 1000)
 
 
+async def _calllog_identity() -> dict:
+    """L'identité d'une ligne du journal d'appels (`ToolCallLogger`), résolue HORS de la
+    boucle : sous drain d'alias, `current_user_sub_from_token` lit la base (`resolve_sub` +
+    `upsert_user`) dès que la portée d'identité du message est vide — pré-résolution en
+    échec, refus non mémorisé (`CompteEnPause`…). Même geste que le lot 1 de décharge
+    (`docs/event-loop-perf.md`). La portée voyage avec le contexte copié dans le thread."""
+    from .auth import hooks
+    return {"sub": await run_in_threadpool(hooks.current_user_sub_from_token)}
+
+
 def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     """Construit le catalogue. Ne prépare PAS la base.
 
@@ -822,9 +832,6 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         # to_thread : l'INSERT PG (pool psycopg sync) ne doit pas bloquer
         # l'event loop sur le chemin chaud de chaque tool call.
         await asyncio.to_thread(db.insert_tool_call, row)
-
-    def _calllog_identity() -> dict:
-        return {"sub": current_user_sub_from_token()}
 
     instance.add_middleware(
         ToolCallLogger(_calllog_sink, server="oto", identity=_calllog_identity)

@@ -18,6 +18,11 @@ n'a pas de boucle (`get_running_loop` lève), un `async def` en a une.
 - **Tests** : `HorsBoucle` est LEVÉE pour tout site absent du stock gelé
   (`tests/_stock_db_hors_boucle.py`, posé par `configurer`). Le stock ne fait que rétrécir :
   `tests/test_db_hors_boucle.py` échoue aussi quand un site listé n'est plus fautif.
+  La levée seule ne suffit pas : un `except Exception` fail-soft sur le chemin l'avale
+  (`subdomain_org._resolve_slug` rendait `None`, le journal d'appels passait, et le banc
+  restait vert). Chaque violation est donc aussi NOTÉE, et `exiger_aucune_violation()` —
+  appelée par `tests/conftest.py` en fin de session — fait échouer la suite en nommant les
+  sites, quoi qu'en ait fait l'appelant.
 
 Le SITE est la fonction `async def` de `oto_mcp` la plus interne dans la pile : c'est celle
 qu'il faut décharger (`await run_in_threadpool(...)`), quel que soit l'assistant synchrone
@@ -54,6 +59,9 @@ _strict = False
 _tolere: frozenset[str] = frozenset()
 _deja_vus: set[str] = set()
 _DEFAUT = "<défaut interne>"        # clé de `_deja_vus` : le défaut est journalisé une fois
+# Violations levées en mode strict — `(site, pile)` —, qu'un appelant les ait laissées
+# remonter ou les ait avalées. Vidée par `exiger_aucune_violation`, jamais par `configurer`.
+_violations: list[tuple[str, str]] = []
 
 
 def _nom(cle: str) -> str:
@@ -107,6 +115,7 @@ def verifier() -> None:
         if site in _tolere:
             return
         if _strict:
+            _violations.append((site, " <- ".join(pile)))
             violation = HorsBoucle(
                 f"accès base depuis la boucle d'événements, dans `{site}` — le serveur est "
                 "mono-loop : ce SQL synchrone gèle TOUT le monde le temps de la requête. "
@@ -126,3 +135,21 @@ def verifier() -> None:
         return
     if violation is not None:
         raise violation
+
+
+def exiger_aucune_violation() -> None:
+    """Lève `HorsBoucle` si une violation a été notée depuis le dernier relevé — y compris
+    celles qu'un `except Exception` a avalées —, en nommant chaque site (et sa première
+    pile). Vide le relevé : un second appel ne rejuge pas les mêmes."""
+    if not _violations:
+        return
+    par_site: dict[str, tuple[int, str]] = {}
+    for site, pile in _violations:
+        n, premiere = par_site.get(site, (0, pile))
+        par_site[site] = (n + 1, premiere)
+    _violations.clear()
+    raise HorsBoucle(
+        f"{len(par_site)} site(s) ont accédé à la base depuis la boucle d'événements "
+        "(levée peut-être avalée par un `except` en chemin) :\n" + "\n".join(
+            f"- `{site}` ({n}×) ; pile : {pile}"
+            for site, (n, pile) in sorted(par_site.items())))

@@ -27,6 +27,7 @@ from typing import Any, Awaitable, Callable, Optional
 from fastmcp.server.middleware import Middleware
 
 from . import journal_secrets
+from .db._hors_boucle import HorsBoucle
 
 
 
@@ -309,6 +310,10 @@ def _oto_call_outcome(result) -> tuple[bool, Optional[str]]:
         return True, None
 
 
+async def _sans_identite() -> dict:
+    return {}
+
+
 class ToolCallLogger(Middleware):
     """Middleware FastMCP : journalise chaque on_call_tool via le sink fourni.
 
@@ -317,14 +322,31 @@ class ToolCallLogger(Middleware):
     pas — fastmcp ≥3 appelle le middleware comme un callable et lèverait
     « 'ToolCallLogger' object is not callable », cassant le handshake MCP.
 
-    `identity` = callable → {"sub": …, "email": …} (auth Logto custom d'oto :
-    le `get_access_token` fastmcp par défaut ne la voit pas).
+    `identity` = coroutine → {"sub": …, "email": …} (auth Logto custom d'oto :
+    le `get_access_token` fastmcp par défaut ne la voit pas). ASYNCHRONE par contrat :
+    résoudre l'identité peut lire la base (drain d'alias), et ce middleware tourne SUR la
+    boucle — c'est à la coroutine fournie de faire son SQL hors d'elle
+    (`server._calllog_identity`, `docs/event-loop-perf.md`).
     """
 
-    def __init__(self, sink: Sink, server: str, identity: Callable[[], dict] | None = None):
+    def __init__(self, sink: Sink, server: str,
+                 identity: Callable[[], Awaitable[dict]] | None = None):
         self.sink = sink
         self.server = server
-        self.identity = identity or (lambda: {})
+        self.identity = identity or _sans_identite
+
+    async def _poser_identite(self, row: dict) -> None:
+        """Verse `sub`/`email` dans la ligne. Le journal ne casse pas le service : un échec
+        d'identité laisse la ligne anonyme — sauf une violation de la garde d'exécution
+        (tests), qui n'est pas un échec du journal mais un gel de la boucle à signaler."""
+        try:
+            row.update({k: v for k, v in (await self.identity()).items()
+                        if k in ("sub", "email")})
+        except HorsBoucle:
+            raise
+        # noqa: SILENT — dette déclarée : le journal ne casse pas le service, mais l'échec devrait se voir (#424)
+        except Exception:
+            pass
 
     async def on_initialize(self, context, call_next):
         """Journalise le HANDSHAKE lui-même (`kind='protocol'`, ADR 0017 « un seul flux »).
@@ -357,11 +379,7 @@ class ToolCallLogger(Middleware):
                 "protocol_version": getattr(params, "protocolVersion", None),
             },
         }
-        try:
-            row.update({k: v for k, v in self.identity().items() if k in ("sub", "email")})
-        # noqa: SILENT — dette déclarée : le journal ne casse pas le service, mais l'échec devrait se voir (#424)
-        except Exception:
-            pass
+        await self._poser_identite(row)
         t0 = time.monotonic()
         try:
             result = await call_next(context)
@@ -386,11 +404,7 @@ class ToolCallLogger(Middleware):
             # de CETTE requête, sans dépendre d'un identifiant fourni par le client.
             "call_uid": uuid.uuid4().hex,
         }
-        try:
-            row.update({k: v for k, v in self.identity().items() if k in ("sub", "email")})
-        # noqa: SILENT — dette déclarée : le journal ne casse pas le service, mais l'échec devrait se voir (#424)
-        except Exception:
-            pass
+        await self._poser_identite(row)
         t0 = time.monotonic()
         try:
             result = await call_next(context)

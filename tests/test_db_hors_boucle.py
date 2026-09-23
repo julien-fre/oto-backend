@@ -79,7 +79,22 @@ async def decharge():
 async def ddl():
     with _conn._connect_autocommit() as c:
         return c
+
+async def avale():
+    # La forme fail-soft courante (`subdomain_org._resolve_slug`, le journal d'appels) :
+    # la levée n'en sort pas.
+    try:
+        return assistant_sync()
+    except Exception:
+        return None
 '''
+
+
+@pytest.fixture(autouse=True)
+def _releve_isole(monkeypatch):
+    """Les bancs de ce module PROVOQUENT des violations exprès : elles vont dans un relevé
+    propre au banc, jamais dans celui que `conftest.py` juge en fin de session."""
+    monkeypatch.setattr(_hors_boucle, "_violations", [])
 
 
 @pytest.fixture
@@ -281,3 +296,39 @@ def test_le_stock_se_ramene_a_la_cle_portable():
     assert _hors_boucle._nom("oto_mcp.tools.meta::register.<locals>.oto_call") \
         == "oto_mcp.tools.meta::oto_call"
     assert _hors_boucle._nom("oto_mcp.call_axes::_pin_group") == "oto_mcp.call_axes::_pin_group"
+
+
+@pytest.mark.asyncio
+async def test_une_violation_avalee_par_un_except_est_notee(faux_site, base_factice, garde_stricte):
+    """La levée seule ne suffit pas : un `except Exception` en chemin la transforme en
+    `None` et le banc passe. Le relevé, lui, la garde — et fait échouer la session."""
+    assert await faux_site["avale"]() is None                  # la levée a bien été avalée
+    with pytest.raises(_hors_boucle.HorsBoucle) as e:
+        _hors_boucle.exiger_aucune_violation()
+    assert SITE + "avale" in str(e.value)
+    assert "assistant_sync" in str(e.value), "le relevé doit porter la pile"
+
+
+@pytest.mark.asyncio
+async def test_le_releve_nomme_chaque_site_une_fois_puis_se_vide(faux_site, base_factice, garde_stricte):
+    for _ in range(3):
+        await faux_site["avale"]()
+    with pytest.raises(_hors_boucle.HorsBoucle):
+        await faux_site["direct"]()
+    with pytest.raises(_hors_boucle.HorsBoucle) as e:
+        _hors_boucle.exiger_aucune_violation()
+    assert "2 site(s)" in str(e.value)
+    assert f"`{SITE}avale` (3×)" in str(e.value)
+    _hors_boucle.exiger_aucune_violation()                     # relevé vidé : plus rien à juger
+
+
+@pytest.mark.asyncio
+async def test_un_site_tolere_ou_hors_mode_strict_n_est_pas_note(faux_site, base_factice):
+    try:
+        _hors_boucle.configurer(strict=True, tolere={SITE + "avale"})
+        await faux_site["avale"]()
+        _hors_boucle.configurer(strict=False)
+        await faux_site["direct"]()
+        _hors_boucle.exiger_aucune_violation()
+    finally:
+        _hors_boucle.configurer(strict=True, tolere=STOCK)

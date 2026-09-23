@@ -939,3 +939,24 @@ enveloppe son propre code et ne lève plus que la violation, en mode test ; et u
 les bancs de la garde. Un banc statique (`test_la_garde_n_emploie_aucune_api_posterieure_a_python_3_10`)
 nomme les API 3.11+ dans le module, et une trame factice sans `co_qualname` prouve que `_site`
 n'en demande pas.
+
+### 23/09/2026 — une violation avalée n'échappe plus à la suite ; le journal d'appels sort de la boucle
+
+La levée de `HorsBoucle` ne suffisait pas : un `except Exception` fail-soft sur le chemin
+l'avalait (`subdomain_org._resolve_slug` rend `None`, le journal d'appels laisse la ligne
+anonyme) et le banc restait vert. Chaque violation est désormais aussi **notée** par la garde,
+et `tests/conftest.py` appelle `_hors_boucle.exiger_aucune_violation()` en fin de session : une
+violation notée fait échouer la suite en nommant ses sites, quoi qu'en ait fait l'appelant.
+Sous xdist, chaque worker juge les siennes. Les bancs de la garde, qui provoquent des
+violations exprès, travaillent sur un relevé isolé.
+
+Premier fruit : `ToolCallLogger.on_call_tool` et `on_initialize` résolvaient l'identité de la
+ligne (`server._calllog_identity` → `current_user_sub_from_token`) en synchrone, donc dans la
+boucle — sous drain d'alias, deux requêtes PG dès que la portée d'identité du message est vide
+(pré-résolution en échec, refus non mémorisé). Le banc qui l'exerce,
+`test_la_meme_chaine_privee_de_sa_portee_repaie_les_dix`, arme le drain par `monkeypatch` et
+retire la portée exprès : ce n'est pas une fuite d'état, et la violation sortait sur le seul
+worker xdist qui le jouait. Le contrat d'`identity` est maintenant **asynchrone**, et
+`_calllog_identity` passe par `run_in_threadpool` (la portée voyage avec le contexte copié). Le
+journal ne casse toujours pas le service sur un échec d'identité, mais re-lève `HorsBoucle`.
+Preuve : `tests/test_calllog_identite_hors_boucle.py`, `test_db_hors_boucle.py` (relevé).

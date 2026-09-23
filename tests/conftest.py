@@ -203,6 +203,9 @@ def _garde_sql_hors_boucle() -> Iterator[None]:
     _hors_boucle.configurer(strict=True, tolere=STOCK)
     yield
     _hors_boucle.configurer(strict=False)
+    # La levée a pu être avalée par un `except Exception` fail-soft : le relevé, lui, ne
+    # l'est pas. Une violation notée fait échouer la session, sites nommés.
+    _hors_boucle.exiger_aucune_violation()
 
 
 # --------------------------------------------------------------------------- #
