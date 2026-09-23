@@ -79,7 +79,11 @@ def _run_courant() -> Optional[str]:
 
     ⚠️ `ResolvedCtx` ne porte PAS le run : le lire depuis `ctx` rendrait toujours
     `None` et les gardes anti-agent seraient DÉCORATIVES — vertes, et inertes.
-    Il vit dans le contexte d'appel, posé par l'axe `_run_id`.
+    Il vit dans le contexte d'appel, posé par l'axe `_run_id` — et SEULEMENT par
+    lui : le repli du middleware sur la pile de session est mort (#830). L'axe
+    n'atteint `oto_fleet` que parce qu'il figure dans `call_axes._RUN_SPINE_TOOLS` ;
+    l'en retirer rendrait ces gardes inertes sans qu'aucun banc à doublure ne
+    rougisse (`test_garde_anti_boucle_flotte_830.py` passe par le vrai middleware).
     """
     from .. import session_org
     return session_org.current_call_run()

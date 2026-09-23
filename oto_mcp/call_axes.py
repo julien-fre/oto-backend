@@ -428,7 +428,12 @@ def _is_work_tool(name: str) -> bool:
 # le prescrivent les instructions run_start/finish ne doit pas se faire rejeter
 # (« Unexpected keyword argument », feedback #168). SEULEMENT l'axe run_id : org=
 # leur est déjà injecté par `_mcp_adapter` (capacités), pas de double-traitement.
-_RUN_SPINE_TOOLS = frozenset({"oto_project", "oto_project_files", "oto_doc", "oto_resource"})
+# `oto_fleet` (#830) : pas pour corréler un travail, mais parce que ses deux gardes
+# anti-agent (`not_from_a_run`, `not_your_own_fleet`) se décident sur le run de
+# l'appel — et que le runner hébergé ne pose `_run_id` QUE sur un outil qui le
+# déclare. Hors de cette liste, les gardes étaient vertes et inertes.
+_RUN_SPINE_TOOLS = frozenset({"oto_project", "oto_project_files", "oto_doc", "oto_resource",
+                              "oto_fleet"})
 
 
 def _is_run_correlatable_tool(name: str) -> bool:
