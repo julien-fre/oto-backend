@@ -84,11 +84,12 @@ MOT = re.compile("doctrine", re.I)
 #      renommage, c'est un lot.
 #   3. **La table des alias elle-même** (`deprecations.py`), qui disparaît en entier.
 #
-# ⚠️ Le compte ne regarde QUE `oto_mcp/`. Trois scripts d'exploitation portent encore
+# ⚠️ Le compte ne regarde QUE `oto_mcp/`. Deux scripts d'exploitation portent encore
 # le mot dans leur NOM de fichier (`scripts/seed_doctrine_library.py`,
-# `seed_talent_doctrines.py`, `smoke_capability_doctrine_library.py`) : hors du radar,
-# et volontairement pas renommés ici — un opérateur a ces commandes dans ses runbooks.
-# Suivi dans #526.
+# `smoke_capability_doctrine_library.py`) : hors du radar, et volontairement pas
+# renommés ici — un opérateur a ces commandes dans ses runbooks. Suivi dans #526.
+# (Il y en avait trois : `seed_talent_doctrines.py` est parti le 23/09/2026 avec les
+# guides qu'il publiait — otomata-tech/oto#240.)
 PLAFONDS: dict[str, int] = {
     # — Clé de réponse `doctrines`, servie à côté de `guides` (le build de la vitrine
     #   lit encore l'ancienne, et il vit hors de ce dépôt).
@@ -167,8 +168,6 @@ PLAFONDS: dict[str, int] = {
     "oto_mcp/tools/guide_run.py": 6,
     "oto_mcp/instructions.py": 4,
     "oto_mcp/server.py": 3,
-    # — Nom du SCRIPT de semis, inchangé (un opérateur l'a dans ses runbooks).
-    "oto_mcp/guides/talent-sourcing/README.md": 2,
 }
 
 
