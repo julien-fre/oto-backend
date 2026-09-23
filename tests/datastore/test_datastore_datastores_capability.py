@@ -267,8 +267,11 @@ def test_le_renommage_rend_le_nouveau_nom(store, monkeypatch):
     monkeypatch.setattr("oto_mcp.capabilities.datastore.common.ownership.can_govern",
                         lambda *a: True)
     monkeypatch.setattr(dsn.db, "rename_datastore_by_id", lambda i, n: None)
+    # ⚠️ Le NUMÉRO part avec (oto#176) : c'est la remise après laquelle l'adresse par
+    # nom que l'appelant détenait est périmée, et le numéro, lui, n'a pas bougé.
     assert _call("me.datastore.rename_datastore", path_params={"datastore": "v"},
-                 body={"name": "neuf"}) == (200, {"ok": True, "datastore": "neuf"})
+                 body={"name": "neuf"}) == (200, {"ok": True, "datastore": "neuf",
+                                                  "ns_id": 42})
 
 
 def test_une_collision_de_nom_rend_409_avec_le_message_du_store(store, monkeypatch):

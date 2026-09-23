@@ -166,6 +166,23 @@ au même endroit :
   qui adressait par numéro (ou par `slot:`) et relisait cette clé pour se vérifier reçoit
   désormais le nom du tableau. C'est ce que la clé prétendait dire.
 
+⚠️ **Le CATALOGUE avait été oublié, et il est rattrapé le 23/09/2026 (oto#176).** Le
+palier ci-dessus avait laissé les trois remises du registre — `data_list_datastores` /
+`GET /api/datastores`, la création, le renommage — rendre le numéro sous `id` seul,
+pendant que la description de `data_rows` prescrivait `ns_id` comme « la forme à
+employer ». L'agent cherchait donc la clé prescrite dans la seule remise qui ne l'avait
+pas : **deux confusions d'identifiant en deux jours**, dont une demande de SUPPRESSION
+visant un tableau étranger à la mission, rattrapée par un humain et non par une garde.
+Le contrat REST, lui, PROMETTAIT `ns_id` sur `DatastoreEntry` depuis le 07/09 — un
+`Output` décrit, il ne sérialise pas : la clé était publiée à l'`openapi.json` et absente
+du fil. Correctif : `registre.py` pose les deux noms par `identite.identite` (un seul
+nombre, donc ils ne peuvent pas diverger), `CreatedDatastore`/`RenamedDatastore` les
+déclarent, et le renommage REST rend `ns_id` — c'est la remise après laquelle l'adresse
+par nom que l'appelant détenait est périmée. **`id` RESTE** : le tableau de bord bâtit
+`/data/<id>` dessus (`DataView.vue`, `DatastoreTable.vue`), et on ne casse pas un
+consommateur vivant pour réparer un vocabulaire. Retirer `id` demanderait un préavis
+daté, qui n'est pas pris.
+
 Le couple vient de `DatastorePg.dernier_tableau` — un relevé posé par `_resolve` dans la
 ligne `user_datastores` qu'il vient de lire, donc **sans une requête de plus** — et se met
 en forme par `datastore/identite.py` (source unique des deux clés, des deux faces). Sans

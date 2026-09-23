@@ -20,7 +20,9 @@ Les deux résolvent, partout, avec le même contrôle de visibilité — `datast
 rien n'est cassé, mais il n'est unique que par propriétaire, il change au renommage, et
 c'est le numéro que la plateforme enregistre.
 
-Où le trouver : `data_list_datastores` le donne (`id`), et surtout **les réponses le
+Où le trouver : `data_list_datastores` le donne sous **les deux noms** (`ns_id`, et `id`
+— le même nombre, gardé pour les liens du tableau de bord), la création et le renommage
+aussi, et surtout **les réponses le
 rendent** — `ns_id` dans la réservation (`data_claim_next`), l'écriture (`data_write`),
 la libération (`data_release`), la lecture d'une page (`data_rows`) et la lecture du
 schéma (`data_get_schema`). Réserve, note le `ns_id`, adresse par lui ensuite.

@@ -462,9 +462,18 @@ def _destinataire(email: str, recipient_sub: str) -> dict:
 
 def register(mcp: FastMCP) -> None:
 
+    # ⚠️ Le docstring nomme `ns_id` DÉLIBÉRÉMENT (oto#176). Ce catalogue ne rendait
+    # le numéro que sous `id` pendant que `data_rows` prescrivait `ns_id` comme « la
+    # forme à employer » : l'agent cherchait la clé prescrite dans la seule remise
+    # qui ne l'avait pas. Le registre sert désormais les deux — le texte le dit, sans
+    # quoi la clé existe pour qui la connaît déjà, c'est-à-dire pour personne.
     @mcp.tool()
     def data_list_datastores() -> dict:
-        """List the user's datastores (owned + shared)."""
+        """List the user's datastores (owned + shared).
+
+        Each entry carries the table's NUMBER under BOTH names — `ns_id` (the form
+        to pass as `datastore` from here on, and the one every other reply uses)
+        and `id` (the same number, kept for the dashboard's deep links)."""
         store = _acting_store()
         return {"datastores": store.list_datastores()}
 

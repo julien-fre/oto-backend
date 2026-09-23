@@ -14,6 +14,7 @@ from typing import Optional
 
 from .. import db, ownership
 from . import acces_agent as aga
+from . import identite
 from .errors import DatastoreExists, DatastoreForbidden
 from .outils import _ns_url
 
@@ -90,7 +91,18 @@ class RegistreMixin:
                       else ownership.can_govern(self.sub, ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id)))
         return {
             "id": ns_id,
-            "datastore": n["datastore"],
+            # ⚠️ **Le numéro sort sous les DEUX noms, et `identite` est la source du
+            # second** (oto#176). Le catalogue rendait `id` pendant que `data_rows` et
+            # `data_get_schema` rendaient le même nombre sous `ns_id` — et la
+            # description de `data_rows` est DIRECTIVE (« le NUMÉRO du tableau
+            # (`ns_id`) — la forme à employer »). Qui la suit cherchait `ns_id` dans la
+            # seule remise qui ne l'avait pas : deux confusions d'identifiant en deux
+            # jours, dont une demande de suppression visant le mauvais tableau.
+            # `id` RESTE : le dashboard bâtit ses liens dessus (`/data/<id>`), et on ne
+            # casse pas un consommateur vivant pour réparer un vocabulaire. Un seul
+            # nombre, deux noms — `identite.identite` les pose ensemble, donc ils ne
+            # peuvent pas diverger, et elle rend aussi le nom CANONIQUE du tableau.
+            **identite.identite(ns_id, n["datastore"]),
             "created_at": n.get("created_at"),
             "url": _ns_url(ns_id, self.sub, org=self._org_des_liens()),
             "shared": shared,
@@ -198,7 +210,11 @@ class RegistreMixin:
             ns_id = db.create_datastore(owner_type, oid, datastore)
         except ValueError as e:
             raise DatastoreExists(str(e))
-        out = {"datastore": datastore, "id": ns_id, "url": _ns_url(ns_id, self.sub, org=self._org_des_liens()),
+        # `id` ET `ns_id` : le même nombre sous les deux noms (oto#176) — la
+        # création est la remise où l'agent LIT le numéro pour la première fois,
+        # c'est donc la dernière qui puisse ne le servir que sous un seul nom.
+        out = {"id": ns_id, **identite.identite(ns_id, datastore),
+               "url": _ns_url(ns_id, self.sub, org=self._org_des_liens()),
                "owner_type": owner_type, "owner_id": oid,
                "is_personal": owner_type == "user"}
         avertissement = _avertissement_de_portee(ns_id, owner_type,
@@ -227,7 +243,10 @@ class RegistreMixin:
             db.rename_datastore_by_id(ns_id, new_name)
         except ValueError as e:
             raise DatastoreExists(str(e))
-        return {"id": ns_id, "datastore": new_name, "url": _ns_url(ns_id, self.sub, org=self._org_des_liens())}
+        # Le numéro sous les deux noms (oto#176) : il ne bouge pas, et c'est
+        # justement ce que cette remise doit dire à qui vient de perdre le nom.
+        return {"id": ns_id, **identite.identite(ns_id, new_name),
+                "url": _ns_url(ns_id, self.sub, org=self._org_des_liens())}
 
     def resolve_ns_id(self, datastore: str) -> int:
         """ns_id d'un datastore visible par l'acteur (lève `DatastoreNotFound`).

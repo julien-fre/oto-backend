@@ -27,8 +27,9 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
+from ...datastore import identite
 from ...datastore.identite import Adresse
 from ...datastore.outils import adresse_servie
 
@@ -99,9 +100,15 @@ class DatastoreEntry(BaseModel):
     # liens dessus (`/data/<id>`) ; le renommer casserait un consommateur vivant pour
     # réparer un vocabulaire. Deux clés portant le même nombre est le prix de la
     # compatibilité — et c'est le sens de la lecture qui compte, pas l'économie d'octets.
-    # DÉRIVÉ de `id` juste en dessous, jamais fourni par l'appelant : deux clés
-    # stockées côte à côte finissent par diverger, une clé calculée ne le peut pas.
-    ns_id: int = 0
+    #
+    # ⚠️ **Jusqu'à oto#176, ce contrat le PROMETTAIT sans que rien ne le serve.** Un
+    # `Output` DÉCRIT, il ne sérialise pas (`capabilities/_types.py`) : la clé était
+    # publiée à l'OpenAPI, recopiée dans le client généré du dashboard, et absente de
+    # la réponse réelle — le registre ne la posait pas. Un `model_validator` qui la
+    # recopiait ici entretenait l'illusion sans jamais toucher le fil. C'est le
+    # REGISTRE qui la pose maintenant (`datastore/registre.py`, `identite.identite`),
+    # pour les deux faces à la fois ; ici elle n'est plus que DÉCLARÉE.
+    ns_id: int
     datastore: Adresse
     created_at: Optional[str] = Field(default=None, description=HORODATAGE)
     # Deep-link dashboard du tableau (`/data/<id>`) — dérivé de l'id, jamais stocké.
@@ -128,17 +135,6 @@ class DatastoreEntry(BaseModel):
     declared_schema: Optional[dict] = Field(default=None, alias="schema",
                                             serialization_alias="schema")
 
-    @model_validator(mode="after")
-    def _le_numero_sous_les_deux_noms(self):
-        """`ns_id` recopie `id` — toujours, sans que la source ait à le savoir.
-
-        Ni un défaut ni un doublon paresseux : c'est ce qui rend l'égalité VRAIE au
-        lieu de la promettre. Un producteur qui poserait les deux pourrait en oublier
-        un le jour où il change ; ici il n'y a qu'un nombre, servi sous deux noms."""
-        if self.ns_id != self.id:
-            object.__setattr__(self, "ns_id", self.id)
-        return self
-
 
 class DatastoreList(BaseModel):
     datastores: list[DatastoreEntry]
@@ -147,6 +143,13 @@ class DatastoreList(BaseModel):
 class CreatedDatastore(BaseModel):
     datastore: Adresse
     id: int
+    # Le même nombre que `id`, sous le nom que le reste du datastore emploie (oto#176).
+    # La création est la première remise où l'agent lit le numéro d'un tableau neuf :
+    # s'il n'y est que sous `id`, l'agent qui suit la description de `data_rows`
+    # (« le NUMÉRO du tableau (`ns_id`) ») ne le trouve pas là où on le lui promet.
+    # REQUIS, comme sur `DatastoreEntry` : un défaut le publierait « optionnel » à
+    # l'`openapi.json`, et un client généré le lirait comme une clé qui peut manquer.
+    ns_id: int
     url: Optional[str] = Field(default=None, description=URL_TABLEAU)
     # QUI possède le tableau — donc qui le verra. La création rendait moins que la
     # liste sur la seule information qui décide de ça (otomata-tech/oto#45) : le
@@ -173,6 +176,11 @@ class RenamedDatastore(BaseModel):
     # Le NOUVEAU nom (l'id, l'URL et les partages, eux, ne bougent pas — ils sont
     # keyés par id).
     datastore: Adresse
+    # ⚠️ Le numéro, que cette remise ne rendait pas du tout (oto#176) — alors que
+    # c'est LA remise après laquelle l'adresse par nom que l'appelant détenait est
+    # périmée. Le numéro, lui, n'a pas bougé : le servir ici est la seule chose qui
+    # permette de continuer sans relister. REQUIS, comme les deux autres remises.
+    ns_id: int
 
 
 class DatastoreUrl(BaseModel):
@@ -255,7 +263,10 @@ def _rename_datastore(ctx: ResolvedCtx, inp: RenameDatastoreInput) -> dict:
         # côté db) : forme héritée de la route, conservée telle quelle — la changer
         # ferait mentir un front qui l'affiche.
         raise AuthzDenied(409, str(e))
-    return {"ok": True, "datastore": new}
+    # Le numéro survit au renommage ; le rendre ici évite un `list` de plus à qui
+    # vient de rendre son adresse par nom périmée (oto#176). Face MCP : le store
+    # (`rename_datastore`) rend la même chose.
+    return {"ok": True, "datastore": new, identite.CLE: ns_id}
 
 
 def _datastore_url(ctx: ResolvedCtx, inp: DatastoreRefInput) -> dict:

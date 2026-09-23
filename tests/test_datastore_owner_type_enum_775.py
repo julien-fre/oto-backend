@@ -26,9 +26,9 @@ def test_owner_type_decrit_sur_created_datastore():
 
 def test_une_valeur_hors_enum_est_refusee_sur_created_datastore():
     with pytest.raises(ValidationError):
-        CreatedDatastore(datastore="x", id=1, owner_type="platform")
+        CreatedDatastore(datastore="x", id=1, ns_id=1, owner_type="platform")
 
 
 def test_les_trois_valeurs_reelles_restent_acceptees():
     for v in ("user", "org", "group"):
-        CreatedDatastore(datastore="x", id=1, owner_type=v)
+        CreatedDatastore(datastore="x", id=1, ns_id=1, owner_type=v)

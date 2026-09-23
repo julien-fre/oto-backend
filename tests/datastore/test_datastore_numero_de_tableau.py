@@ -18,6 +18,14 @@ Ces bancs éprouvent les DEUX faces d'un même geste (MCP et REST), parce que c'
 que le datastore a déjà divergé en silence, et ils éprouvent la remise telle qu'un
 agent la reçoit — pas la fonction qui la met en forme.
 
+**Le CATALOGUE rendait le nombre sous un AUTRE nom** (oto#176). `data_list_datastores`,
+la création et le renommage rendaient `id` là où toutes les autres remises rendent
+`ns_id` — et la description de `data_rows` prescrit `ns_id` comme « la forme à
+employer ». L'agent cherchait donc la clé prescrite dans la seule remise qui ne
+l'avait pas : deux confusions d'identifiant en deux jours, dont une demande de
+SUPPRESSION visant un tableau étranger à la mission. `id` reste (le dashboard bâtit
+`/data/<id>` dessus) ; `ns_id` s'y ajoute — le prix d'un nombre, contre une rupture.
+
 ⚠️ Ce qui n'est PAS ici, et qui est voulu : `data_rows(id=…)` ne porte pas `ns_id`.
 Son corps EST la ligne, et c'est l'objet même que la plateforme invite à relire puis à
 republier tel quel (promotion de `_id`, #354/#390) : une clé de réponse posée dedans
@@ -273,3 +281,97 @@ def test_la_ligne_seule_ne_gagne_aucune_cle(store):
     libre, ligne entière perdue sur un tableau qui refuse l'inconnu."""
     out = _tool("data_rows").fn(datastore=NOM, id="r1")
     assert out == ROW, f"la ligne nue a gagné une clé de réponse : {out}"
+
+
+# ── ④ Le CATALOGUE rend le nombre sous les deux noms (oto#176) ───────────────
+#
+# On éprouve le REGISTRE lui-même, pas un faux : c'est lui qui met la remise en
+# forme, et le défaut d'oto#176 était précisément qu'une couche au-dessus (le
+# modèle `DatastoreEntry`) PROMETTAIT la clé que le registre ne posait pas.
+
+CATALOGUE_NS = 174
+
+
+@pytest.fixture()
+def registre(monkeypatch):
+    """Un store réel dont seuls les seams de base sont simulés."""
+    from oto_mcp import access, group_store, links, ownership, roles
+    from oto_mcp.datastore import core as D
+
+    ligne = {"id": CATALOGUE_NS, "datastore": NOM, "owner_type": "user",
+             "owner_id": "u-1", "created_at": "2026-09-01", "schema": None}
+    monkeypatch.setattr(access, "current_org", lambda sub: 99)
+    monkeypatch.setattr(links, "patron_reclame", lambda *a, **k: False)
+    monkeypatch.setattr(roles, "is_org_admin", lambda sub, oid: False)
+    monkeypatch.setattr(group_store, "list_groups_for_user",
+                        lambda sub, org_id=None: [])
+    monkeypatch.setattr(D.db, "list_datastores_for_owners", lambda owners: [ligne])
+    monkeypatch.setattr(D.db, "list_datastores_granted_to",
+                        lambda sub, orgs, groups: [])
+    monkeypatch.setattr(D.ownership, "can_govern", lambda sub, t, rid: True)
+    monkeypatch.setattr(ownership, "can_govern", lambda sub, t, rid: True)
+    monkeypatch.setattr(D.db, "create_datastore",
+                        lambda ot, oid, nom: CATALOGUE_NS)
+    monkeypatch.setattr(D.db, "rename_datastore_by_id", lambda ns, nom: None)
+    monkeypatch.setattr(D.db, "resolve_datastore_ns",
+                        lambda *a, **k: {"id": CATALOGUE_NS, "datastore": NOM,
+                                         "owner_type": "user", "owner_id": "u-1",
+                                         "schema": None})
+    return D.make_store("u-1")
+
+
+def test_le_catalogue_rend_le_numero_sous_LES_DEUX_noms(registre):
+    """Lister, créer, renommer — les trois remises du registre, la même clé.
+
+    `id` doit RESTER : le dashboard construit `/data/<id>` dessus. C'est un ajout,
+    pas un renommage, et ce banc fige les deux moitiés."""
+    remises = {
+        "list": registre.list_datastores()[0],
+        "create": registre.create_datastore("edition-vivier-2"),
+        "rename": registre.rename_datastore(NOM, "edition-vivier-3"),
+    }
+    sans_numero = {g: o for g, o in remises.items()
+                   if o.get(identite.CLE) != CATALOGUE_NS}
+    assert not sans_numero, (
+        f"remises du catalogue sans `{identite.CLE}` — l'agent qui suit la "
+        f"description de `data_rows` cherche cette clé-là : {sans_numero}")
+    sans_id = {g: o for g, o in remises.items() if o.get("id") != CATALOGUE_NS}
+    assert not sans_id, (
+        f"`id` a disparu : le dashboard bâtit `/data/<id>` dessus, c'est un "
+        f"AJOUT qui était demandé, pas un renommage : {sans_id}")
+
+
+def test_le_catalogue_declare_le_numero_au_contrat(registre):
+    """Le défaut d'oto#176 en creux : `DatastoreEntry` déclarait `ns_id` depuis le
+    07/09/2026 et rien ne le servait — un `Output` DÉCRIT, il ne sérialise pas. La
+    déclaration ne prouve donc rien seule ; c'est le couple qui prouve."""
+    from oto_mcp.capabilities.datastore import datastores as CAP
+
+    modeles = {"DatastoreEntry": CAP.DatastoreEntry,
+               "CreatedDatastore": CAP.CreatedDatastore,
+               "RenamedDatastore": CAP.RenamedDatastore}
+    absents = [n for n, m in modeles.items() if identite.CLE not in m.model_fields]
+    assert not absents, f"`{identite.CLE}` non déclaré au contrat de : {absents}"
+    # Et le contrat ne ment pas : la remise réelle porte la clé déclarée.
+    assert identite.CLE in registre.list_datastores()[0]
+
+
+def test_la_face_REST_du_renommage_rend_le_numero_aussi(registre, monkeypatch):
+    """Le renommage REST ne passe PAS par le store : il a son propre handler, et
+    c'est exactement la forme sous laquelle les deux faces ont déjà divergé."""
+    from oto_mcp.capabilities.datastore import datastores as CAP
+
+    monkeypatch.setattr(CAP, "govern_ns", lambda sub, ns: CATALOGUE_NS)
+    monkeypatch.setattr(CAP.db, "rename_datastore_by_id", lambda ns, nom: None)
+    out = CAP._rename_datastore(ResolvedCtx(sub="u-1"),
+                                CAP.RenameDatastoreInput(datastore=NOM, name="neuf"))
+    assert out[identite.CLE] == CATALOGUE_NS and out["datastore"] == "neuf"
+
+
+def test_le_texte_servi_du_catalogue_NOMME_la_cle(registre):
+    """Une clé qu'aucun texte n'annonce n'existe que pour qui la connaît déjà — et
+    c'est justement ce que le modèle REST a fait pendant dix jours."""
+    doc = _tool("data_list_datastores").fn.__doc__ or ""
+    assert identite.CLE in doc, (
+        "la description servie de `data_list_datastores` ne nomme pas la clé "
+        "qu'elle rend désormais")
