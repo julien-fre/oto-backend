@@ -793,8 +793,18 @@ PATCH /api/me/runs/{run_id} {outcome, note?}       → {outcome, rows_released}
   même compte : c'est au consommateur de lier SON run à SA session, et de ne jamais
   reprendre un `_claimed_run` lu sur une ligne. ⚠️ `_run_id` dans le CORPS d'un PATCH est
   refusé `400 jeton_mal_place` : le run se passe en en-tête.
+- **Le journal estampille le run** (oto#229) : la ligne `kind='rest'` d'un appel fait sous
+  `X-Oto-Run` porte son `run_id`, et l'org du run pour `org_id` — la timeline du run (et
+  celle de son org) montre donc les réservations et écritures faites entre l'ouverture et
+  la clôture, comme les appels MCP faits avec `_run_id`. ⚠️ Le journal
+  (`api.routes.RestCallLogger`) est un middleware EXTÉRIEUR qui écrit sa ligne APRÈS que
+  l'adaptateur a remis la ContextVar du run à zéro : il ne peut pas la lire. L'adaptateur
+  publie donc le run JUGÉ dans le scope ASGI (`_rest_adapter.CLE_RUN`), comme
+  l'authentification y publie le principal, et le journal le relit — aucune requête SQL
+  de plus. Un en-tête refusé (run inconnu, étranger, clos) n'estampille rien.
 
-Bancs : `tests/api/test_runs_rest.py` (vraie base, routes montées).
+Bancs : `tests/api/test_runs_rest.py` (vraie base, routes montées) ;
+`tests/api/test_runs_rest_journal_229.py` (le journal).
 
 ## Descriptif OpenAPI — `GET /openapi.json` (aussi `/api/openapi.json`)
 

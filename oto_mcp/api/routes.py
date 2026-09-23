@@ -356,6 +356,14 @@ class RestCallLogger:
             # JWT, et à écrire une ligne anonyme pour tout appel par jeton API ou
             # par jeton de délégation.
             principal = scope.get(api_base.CLE_PRINCIPAL) or {}
+            # Le run JUGÉ par l'adaptateur (oto#229), même motif que le principal :
+            # publié dans le scope, relu ici, zéro requête. Sous un run, l'org de la
+            # ligne est celle du run — comme `access.current_org` la rend au calllog
+            # MCP —, sans quoi la timeline d'org (`get_run(org_id=…)`) ne verrait
+            # pas un appel fait sans `X-Oto-Org`.
+            run = scope.get(_cap_rest_adapter.CLE_RUN) or {}
+            if run.get("org_id") is not None:
+                org = run["org_id"]
             sub = principal.get("sub") or _claimed_sub(request)
             route, masques = journal_secrets.route_and_secrets(scope.get("path", ""))
             row = {
@@ -382,6 +390,7 @@ class RestCallLogger:
                 # `CLE_VIEW_AS_APPLIQUE`. Jamais un remplacement de `sub` (l'opérateur
                 # réel reste le sub de la ligne, volontairement) : un champ EN PLUS.
                 "view_as_sub": scope.get(CLE_VIEW_AS_APPLIQUE),
+                "run_id": run.get("run_id"),
                 "ok": 200 <= code < 400,
                 "error": (f"HTTP {code}" if code >= 400 else None),
                 "duration_ms": int((time.monotonic() - started) * 1000),

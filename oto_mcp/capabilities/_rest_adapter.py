@@ -35,6 +35,14 @@ from ..json_body import InvalidJsonBody, read_json_body
 from ._types import AuthzDenied, Capability, NotModified, RawCtx
 from ._execution import execute
 
+# Clé du run JUGÉ de la requête (oto#229), déposée dans le `scope` ASGI — le même dict
+# que celui du journal REST (`api.routes.RestCallLogger`), qui la relit dans son
+# `finally`. ⚠️ Le journal ne peut pas lire la ContextVar du run : il écrit sa ligne
+# APRÈS que l'adaptateur l'a remise à zéro. Publiée seulement une fois l'en-tête jugé
+# (un run inconnu, étranger ou clos n'estampille rien), et sans relecture en base :
+# `{"run_id", "org_id"}` sont ceux que le jugement a déjà en main.
+CLE_RUN = "oto_run"
+
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
 
@@ -197,6 +205,7 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                                                      run_demande)
                 poses_run.append((session_org.reset_call_run,
                                   session_org.set_call_run(run_demande)))
+                request.scope[CLE_RUN] = {"run_id": run_demande, "org_id": org_du_run}
                 if org_du_run is not None:
                     poses_run.append((session_org.reset_call_run_org,
                                       session_org.set_call_run_org(org_du_run)))
