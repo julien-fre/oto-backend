@@ -103,6 +103,15 @@ def diagnose(sub: str, connector: str, *, org, group) -> Optional[Diagnosis]:
     # DEMANDÉ — c'est bien son activation et son ACL à lui qui le gouvernent.
     from .. import providers
     porteur = providers.credential_provider(connector)
+    # ⚠️ Un porteur qui ne DÉTIENT aucun credential (`secret_kind="none"` : droit,
+    # web, culture, foncier, osm… — hors `CREDENTIAL_PROVIDERS`) n'a PAS de couche 2.
+    # Faire quand même la marche rendait `forbidden` par construction (rien à
+    # résoudre), lu `no_credential` : la carte envoyait poser une clé qui n'existe
+    # pas, sur un connecteur dont la propre fiche dit `auth: none` (oto#173).
+    # `mode = None` = « pas de clé en jeu » — ni quota ni rejet à lire non plus.
+    if porteur not in providers.CREDENTIAL_PROVIDERS:
+        step = status_hints.pending_action(connector, sub, org, group, {"mode": None})
+        return Diagnosis(PENDING_STEP, step) if step else None
     mode = access.credential_mode_for(sub, connector, org=org, group=group)
     if mode == "forbidden":
         return Diagnosis(NO_CREDENTIAL, (

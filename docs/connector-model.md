@@ -231,7 +231,10 @@ séparément :
 **Le seam qui les lit ensemble : `oto_mcp/connectors/readiness.py`** (`diagnose`), qui
 rend la **PREMIÈRE** couche manquante dans l'ordre `option (3) → clé (2) → quota →
 clé REJETÉE par l'amont → étape restante` — plus le geste, relayé tel quel depuis
-`status_hints`. Deux surfaces le consomment, et **une troisième formulation est
+`status_hints`. ⚠️ Un connecteur **sans credential** (`secret_kind="none"`, hors
+`providers.CREDENTIAL_PROVIDERS` : `droit`, `web`, `culture`, `foncier`…) n'a **pas de
+couche 2** : la marche de clé est sautée (`mode = None`), sinon elle rend `forbidden`
+par construction et la carte envoie poser une clé qui n'existe pas (oto#173). Deux surfaces le consomment, et **une troisième formulation est
 interdite** : c'est ce qui avait déjà fait diverger `option_ok` et
 `status_for.subscribed` (corrigé le 07/07/2026).
 
