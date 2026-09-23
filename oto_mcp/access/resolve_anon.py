@@ -19,11 +19,12 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import credentials_store, org_store, providers
-from . import cascade, tenant_budget
+from . import cascade, quotas, tenant_budget
 from .resolved_credential import ResolvedCredential
 
 
-def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) -> ResolvedCredential:
+def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int],
+                             check_usage: bool = True) -> ResolvedCredential:
     """Résolution pour un endpoint MCP ANONYME (ADR 0032) : aucun `sub`, aucune session
     per-user → cascade réduite `org_secret > grant plateforme d'org > clé plateforme
     ouverte`, scopée sur l'org PROPRIÉTAIRE du projet. Pas de user_key/group (inexistants
@@ -93,6 +94,10 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
         return ResolvedCredential(provider, win.payload, False, "tenant",
                                   credentials_store.TENANT, win.entity_id,
                                   account=win.account)
+    # L'option payante relue à chaque usage, comme au chemin identifié (ADR 0070 §7) :
+    # l'org propriétaire du projet doit porter le droit vivant.
+    if check_usage:
+        quotas.exiger_option_payante(provider, None, org_id)
     # Même règle qu'au palier plateforme du chemin identifié : le secret reste
     # dans le `CascadeRung` (repr expurgé), jamais dans un dict nu de cette frame.
     return ResolvedCredential(provider, win.payload["secret"], True, "platform",

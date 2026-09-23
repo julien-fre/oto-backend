@@ -105,6 +105,8 @@ def test_resolve_credential_platform_config_from_meta(monkeypatch):
     monkeypatch.setattr(access.credentials_store, "get_credential_with_meta",
                         lambda et, eid, p, account="": {"secret": "PK", "meta": meta, "set_at": None})
     monkeypatch.setattr(access.db, "get_usage_today", lambda s, p: 0)
+    # Le droit de l'option payante a son banc (`test_option_relue_a_l_usage_live`).
+    monkeypatch.setattr(access, "exiger_option_payante", lambda *a: None)
     rc = access.resolve_credential("unipile", want="auto")
     assert rc.is_platform and rc.mode == "platform"
     assert rc.entity_type == access.credentials_store.PLATFORM

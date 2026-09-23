@@ -64,7 +64,7 @@ def resolve_credential(provider: str, want: str = "auto",
         anon = subdomain_project.current_anon_context()
         if anon is not None:
             return _note_resolved_instance(
-                resolve_anon._resolve_credential_anon(provider, want, anon.org_id))
+                resolve_anon._resolve_credential_anon(provider, want, anon.org_id, check_usage))
     sub = sub or scope.current_user_sub_or_raise()
     try:
         resolved = _resolve_credential_impl(provider, want, sub, account=account,
@@ -358,6 +358,8 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     if win.mode != "platform":
         return ResolvedCredential(provider, win.payload, False, win.mode,
                                   win.entity_type, win.entity_id, account=win.account)
+    if check_usage:  # option payante RELUE à chaque usage (ADR 0070 §7), sans repli
+        quotas.exiger_option_payante(provider, sub, active_org)
 
     # ADR 0044 §F R3 : le palier plateforme lit les instances scope PLATFORM du
     # coffre unifié (share_mode/share_down = accès ; meta.rate_limit* = quota).

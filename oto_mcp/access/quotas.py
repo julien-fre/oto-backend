@@ -19,9 +19,12 @@ from __future__ import annotations
 import os
 from typing import Optional
 
+from mcp.types import ErrorData, INVALID_PARAMS
+
 from .. import providers, db, grants_chain
 from ..auth.hooks import current_user_sub_from_token
-from . import entitlements, scope
+from ..mcp_errors import McpError
+from . import entitlements, heritage, scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : quota daily par
 # provider (fallback si pas d'env ni de grant).
@@ -49,6 +52,39 @@ def paid_option_for(connector: str) -> Optional[str]:
     return _PAID_OPTION_BY_CONNECTOR.get(
         connector) or _PAID_OPTION_BY_CONNECTOR.get(
         providers.credential_provider(connector))
+
+
+def paid_option_refusal(connector: str, org: "int | None") -> Optional[str]:
+    """Le refus à servir quand `connector` s'apprête à consommer la clé PLATEFORME pour
+    une org qui n'a pas (ou plus) le droit de son option payante — `None` si rien ne
+    s'y oppose. **Relu à chaque usage** (ADR 0070 §7) : une org dont l'essai ou
+    l'abonnement a pris fin cesse d'être servie dès l'appel suivant, pas au prochain
+    branchement d'un compte.
+
+    Le message NOMME la cause et ce qui la lève ; aucun repli silencieux."""
+    option = paid_option_for(connector)
+    if option is None:
+        return None
+    if org is not None and entitlements.org_has(int(org), option):
+        return None
+    porteur = providers.REGISTRY.get(providers.credential_provider(connector))
+    nom = (porteur.label if porteur and porteur.label else option)
+    if org is None:
+        return (f"L'option « {nom} » est un droit d'organisation, et aucune org qui "
+                "la porte ne couvre cet appel : travaille dans une org abonnée.")
+    return (f"L'option « {nom} » n'est pas active pour cette org : essai terminé "
+            "ou abonnement requis. Un admin de l'org peut s'abonner ; une clé "
+            f"`{providers.credential_provider(connector)}` propre reste servie.")
+
+
+def exiger_option_payante(connector: str, sub: "str | None", org: "int | None") -> None:
+    """Lève le refus de `paid_option_refusal` au palier PLATEFORME d'une résolution. Les
+    droits lus sont ceux de l'org que l'appelant peut consommer : pour le bénéficiaire
+    d'un projet partagé à qui rien n'est prêté, aucune (#480, `heritage.org_partagee`)."""
+    refus = paid_option_refusal(
+        connector, heritage.org_partagee(org, heritage.du_contexte(sub, org)))
+    if refus:
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=refus))
 
 
 def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNSET) -> bool:

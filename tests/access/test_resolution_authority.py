@@ -120,6 +120,8 @@ def test_connection_does_not_apply_execution_quota(vault, monkeypatch):
     win = cascade.CascadeRung("platform", "platform", "env",
                               {"label": "env", "secret": "KEY", "daily_quota": 1})
     monkeypatch.setattr(chain_shadow, "barreau_gagnant", lambda *a, **k: win)
+    # Le droit de l'option payante a son banc (`test_option_relue_a_l_usage_live`).
+    monkeypatch.setattr(access, "exiger_option_payante", lambda *a: None)
     reads = []
     monkeypatch.setattr(resolve, "_win_quota", lambda *a: reads.append(a) or (1, 1))
     assert access.resolve_credential("unipile", sub="u", check_usage=False).key == "KEY"

@@ -315,7 +315,10 @@ porte un droit payant.
 - **Elle ne retire que ce que ses sources ont posé** (`subscription`, `offered`,
   `partner`). Une autre étiquette ne lui appartient pas.
 - **La date ferme le droit toute seule** : aucune boucle n'a besoin de passer le jour
-  venu. `has` filtre en SQL sur `NOW()`.
+  venu. `has` filtre en SQL sur `NOW()`, et le droit est **relu à chaque usage** de la
+  clé plateforme (`quotas.exiger_option_payante`, au palier plateforme de la
+  résolution) : un canal branché sur la clé plateforme cesse de marcher à l'appel qui
+  suit l'échéance, avec un refus qui nomme la cause.
 - **La reprise** est la même fonction sur toutes les orgs (`reconcilier_tout`) : au
   démarrage (`reprise_droits` au journal, avec ses comptes) ou par la commande. Se
   vérifie par une lecture : `SELECT source, right_key, count(*) FROM

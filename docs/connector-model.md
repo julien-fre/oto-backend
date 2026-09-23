@@ -197,6 +197,16 @@ org, recopié en droit `offered` avec son échéance) ; l'abonnement pose les dr
 (source `subscription`). Le don sur la fiche **user** est encore posable, mais n'ouvre plus
 l'option payante.
 
+**Le droit est relu à CHAQUE usage de la clé plateforme** (lot 3 de #806) : au palier
+plateforme de `resolve._resolve_credential_impl` et de l'endpoint anonyme, quand
+`check_usage` est vrai, un connecteur qui exige une option payante refuse si l'org ne porte
+pas le droit vivant (`quotas.exiger_option_payante` ; pour le bénéficiaire d'un projet
+partagé à qui rien n'est prêté, aucune org ne le couvre, #480) — le refus nomme la cause,
+sans repli.
+Une clé propre (BYO) reste servie ; configurer une connexion (`check_usage=False`) ne
+change pas. Avant ce lot, l'option ne gardait que l'ENTRÉE : un siège déjà connecté
+continuait de fonctionner après la fin de l'abonnement.
+
 ---
 
 ## Lire les trois couches ENSEMBLE — `ready`, et pourquoi il a fallu l'inventer
