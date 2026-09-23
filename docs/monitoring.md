@@ -303,7 +303,7 @@ un outil, verbe en `op` :
 | `calls` | le journal brut filtré — chaque ligne porte `arg_keys`, jamais `args` | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
 | `call` | la fiche d'UN appel (`call.args` tels que journalisés + corrélation) | `call_id` |
 | `run` / `runs` | timeline d'un déroulé / déroulés récents | `run_id`, `limit` |
-| `rest` | lentille REST par route (`/api/*`) — **les gestes du tableau de bord sont ICI, pas dans `calls`** | `days`, `org_id`, `sub` |
+| `rest` | lentille REST par route (`/api/*`) — **les gestes du tableau de bord sont ICI, pas dans `calls`**. `by_status` ventile les erreurs par code HTTP (oto#179) : un 4xx attendu ne se lit plus comme une panne ; `status: null` = aucune réponse journalisée, c'est-à-dire une exception non rattrapée (500 servi plus haut) ou un client parti | `days`, `org_id`, `sub`, `route` |
 | `connectors` / `funnel` | santé connecteurs / activation | `days` (+ `org_id` pour `connectors`) |
 | `gaps` / `tool_quality` | signaux d'usage agrégés | `days` |
 

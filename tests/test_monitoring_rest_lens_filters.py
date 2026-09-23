@@ -19,7 +19,7 @@ class _Cur:
 
 
 class _Conn:
-    """Enregistre CHAQUE requête de la lentille (elle en fait deux)."""
+    """Enregistre CHAQUE requête de la lentille (elle en fait trois)."""
 
     def __init__(self, sink):
         self.sink = sink
@@ -43,20 +43,20 @@ def _run(monkeypatch, **kw):
 
 def test_sans_filtre_la_lentille_reste_plateforme(monkeypatch):
     out, vues = _run(monkeypatch, since_days=7)
-    assert len(vues) == 2
+    assert len(vues) == 3
     for sql, _ in vues:
         assert "sub = %s" not in sql and "org_id = %s" not in sql
     # Rien n'a été restreint : rien à annoncer (le contrat du dashboard ne bouge pas).
     assert "filters" not in out and "org_id_caveat" not in out
 
 
-def test_les_deux_requetes_portent_le_filtre_et_ses_parametres(monkeypatch):
-    """Les totaux et la ventilation par route sont DEUX requêtes : un filtre posé
-    sur une seule rendrait un total d'un compte et des routes de la plateforme —
+def test_les_trois_requetes_portent_le_filtre_et_ses_parametres(monkeypatch):
+    """Les totaux, la ventilation par route et celle par statut sont TROIS requêtes :
+    un filtre posé sur une seule rendrait un total d'un compte et des routes de la plateforme —
     incohérence muette, plus trompeuse que l'absence de filtre."""
     out, vues = _run(monkeypatch, since_days=30, org_id=42, sub="sub-jane")
 
-    assert len(vues) == 2
+    assert len(vues) == 3
     for sql, params in vues:
         assert "org_id = %s" in sql and "sub = %s" in sql
         assert sql.count("%s") == len(params), f"placeholders ≠ params : {params}"
@@ -64,14 +64,14 @@ def test_les_deux_requetes_portent_le_filtre_et_ses_parametres(monkeypatch):
     assert out["filters"] == {"org_id": 42, "sub": "sub-jane"}
 
 
-def test_route_ajoute_un_prefixe_like_aux_deux_requetes(monkeypatch):
+def test_route_ajoute_un_prefixe_like_aux_trois_requetes(monkeypatch):
     """oto-dashboard#125 : `by_route` est plafonné à `LIMIT 100` — une route à faible
     volume peut ne jamais y apparaître sans que rien ne le dise. `route` donne un
-    compte EXACT (pas de limite) en ajoutant un `LIKE route || '%'` aux DEUX requêtes,
+    compte EXACT (pas de limite) en ajoutant un `LIKE route || '%'` aux TROIS requêtes,
     comme `org_id`/`sub` — sinon totaux et ventilation divergeraient."""
     out, vues = _run(monkeypatch, since_days=30, route="/api/atlassian/oauth/start")
 
-    assert len(vues) == 2
+    assert len(vues) == 3
     for sql, params in vues:
         assert "tool LIKE %s" in sql
         assert sql.count("%s") == len(params), f"placeholders ≠ params : {params}"
@@ -100,7 +100,7 @@ def test_last_call_at_vient_du_max_de_la_requete_de_totaux(monkeypatch):
 
     class _ConnAvecDate:
         def execute(self, sql, params):
-            if "GROUP BY tool" not in sql:      # la requête de TOTAUX, pas by_route
+            if "GROUP BY" not in sql:      # la requête de TOTAUX, pas by_route/by_status
                 assert "MAX(created_at) AS last_call_at" in sql
             return _CurAvecDate()
 
@@ -113,6 +113,49 @@ def test_last_call_at_vient_du_max_de_la_requete_de_totaux(monkeypatch):
     monkeypatch.setattr(usage, "_connect", lambda: _ConnAvecDate())
     out = usage.rest_call_stats(since_days=7)
     assert out["last_call_at"] == "2026-09-01T10:00:00"
+
+
+def _run_statuts(monkeypatch, lignes):
+    """La lentille avec une ventilation d'erreurs donnée — rend la sortie et le SQL."""
+    vues: list = []
+
+    class _CurStatuts(_Cur):
+        def __init__(self, sql):
+            self.sql = sql
+
+        def fetchall(self):
+            return lignes if "GROUP BY error" in self.sql else []
+
+    class _ConnStatuts(_Conn):
+        def execute(self, sql, params):
+            self.sink.append((sql, params))
+            return _CurStatuts(sql)
+
+    monkeypatch.setattr(usage, "_connect", lambda: _ConnStatuts(vues))
+    return usage.rest_call_stats(since_days=7, route="POST /api/auth/token"), vues
+
+
+def test_by_status_distingue_les_4xx_des_5xx(monkeypatch):
+    """oto#179 : « ce 500 a-t-il mordu ? » — `error_count` mêle 4xx attendus et
+    pannes. Le code HTTP est déjà en base (`error = 'HTTP <code>'`)."""
+    out, vues = _run_statuts(monkeypatch, [
+        {"error": "HTTP 403", "calls": 40},
+        {"error": "HTTP 500", "calls": 3},
+        {"error": None, "calls": 1},
+    ])
+    assert out["by_status"] == [{"status": 403, "calls": 40},
+                                {"status": 500, "calls": 3},
+                                {"status": None, "calls": 1}]
+    (sql, params), = [v for v in vues if "GROUP BY error" in v[0]]
+    assert "NOT ok" in sql and "tool LIKE %s" in sql
+    assert list(params) == [7, "POST /api/auth/token%"]
+
+
+def test_by_status_leve_sur_une_erreur_hors_contrat(monkeypatch):
+    """Une ligne qui ne dit pas `HTTP <code>` n'est rangée nulle part en silence."""
+    import pytest
+    with pytest.raises(ValueError, match="hors contrat"):
+        _run_statuts(monkeypatch, [{"error": "boom", "calls": 1}])
 
 
 def test_le_scope_par_org_dit_ce_qu_il_laisse_dehors(monkeypatch):

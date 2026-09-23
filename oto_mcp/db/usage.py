@@ -1507,6 +1507,18 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
 _REST_ROUTE_SHAPE = "position(' /' in tool) > 0"
 
 
+def _rest_status(error: Optional[str]) -> Optional[int]:
+    """`'HTTP 503'` → 503 ; `None` → None (aucune réponse journalisée, cf.
+    `rest_call_stats`). Toute autre forme est un journal qui a changé de contrat :
+    on lève plutôt que de ranger la ligne dans une case qui mentirait."""
+    if error is None:
+        return None
+    m = re.fullmatch(r"HTTP (\d{3})", error)
+    if m is None:
+        raise ValueError(f"erreur REST hors contrat `HTTP <code>` : {error!r}")
+    return int(m.group(1))
+
+
 def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
                     sub: Optional[str] = None, route: Optional[str] = None) -> dict:
     """Lentille REST (ADR 0017, kind='rest') : volume + erreurs + latence des appels
@@ -1543,7 +1555,18 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
     Les lignes ANTÉRIEURES restent anonymes — on ne réécrit pas un journal. Un filtre
     `sub` sur une fenêtre qui les couvre sous-déclare, et c'est l'HISTORIQUE qui
     manque, pas l'activité. `token_kind` (`user` / `delegation`) distingue en outre,
-    depuis la même date, un geste fait par quelqu'un d'un travail exécuté en son nom."""
+    depuis la même date, un geste fait par quelqu'un d'un travail exécuté en son nom.
+
+    `by_status` (oto#179) VENTILE les erreurs par code HTTP, sur la même fenêtre et les
+    mêmes filtres (`route` compris) : « ce 500 a-t-il mordu ? » se lit sans confondre
+    les 4xx attendus avec les pannes. Le code vient de `error = 'HTTP <code>'`, écrit
+    par `RestCallLogger`. ⚠️ `status: null` = AUCUNE réponse n'a traversé le journal :
+    exception non rattrapée (le 500 est servi PLUS HAUT, par Starlette — c'est la forme
+    que prend un plantage, pas un 500 explicite) ou client parti. Toujours un défaut à
+    lire, jamais un zéro.
+
+    Index : les trois requêtes partagent la même clause, servie par
+    `idx_tool_calls_kind (kind, created_at DESC)` sur une fenêtre bornée (≤ 365 j)."""
     since_days = max(1, min(int(since_days), 365))
 
     def _where() -> tuple[str, list]:
@@ -1584,6 +1607,15 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
             """,
             tuple(wp),
         ).fetchall()
+        by_error = conn.execute(
+            f"""
+            SELECT error, COUNT(*) AS calls
+            FROM tool_calls WHERE {w} AND NOT ok
+            GROUP BY error
+            ORDER BY calls DESC
+            """,
+            tuple(wp),
+        ).fetchall()
     out = {
         "since_days": since_days,
         "total_calls": int((totals or {}).get("total") or 0),
@@ -1591,6 +1623,8 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
         "active_users": int((totals or {}).get("users") or 0),
         "last_call_at": (totals or {}).get("last_call_at"),
         "by_route": list(by_route),
+        "by_status": [{"status": _rest_status(r["error"]), "calls": int(r["calls"])}
+                      for r in by_error],
     }
     if org_id is not None or sub is not None or route is not None:
         # Le filtre APPLIQUÉ est rendu : c'est ce qui distingue « restreint à ce

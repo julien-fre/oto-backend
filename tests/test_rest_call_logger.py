@@ -82,6 +82,29 @@ def test_logs_error_status(monkeypatch):
     assert row["ok"] is False and row["error"] == "HTTP 403"
 
 
+def test_un_plantage_s_ecrit_sans_code(monkeypatch):
+    """Ce que `by_status: null` de la lentille REST veut dire (oto#179) : une exception
+    non rattrapée ne laisse passer AUCUNE réponse par ce middleware — le 500 est servi
+    plus haut. La ligne est en échec, sans code : c'est la forme d'un plantage."""
+    import pytest
+    captured = {}
+    monkeypatch.setattr(ar.db, "insert_tool_call", lambda row: captured.update(row))
+
+    async def plante(scope, receive, send):
+        raise KeyError("jeton")
+
+    async def drive():
+        scope = {"type": "http", "path": "/api/auth/token", "method": "POST",
+                 "headers": [], "query_string": b""}
+        with pytest.raises(KeyError):
+            await ar.RestCallLogger(plante)(scope, None, None)
+        await asyncio.sleep(0)
+        await asyncio.gather(*list(ar._REST_LOG_TASKS), return_exceptions=True)
+
+    asyncio.run(drive())
+    assert captured["ok"] is False and captured["error"] is None
+
+
 def test_passthrough_non_api_does_not_log(monkeypatch):
     row, sent = _run_mw(monkeypatch, path="/mcp", status=200)
     assert row == {}  # jamais journalisé → /mcp intact
