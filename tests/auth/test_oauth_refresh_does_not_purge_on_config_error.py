@@ -91,7 +91,7 @@ def test_dead_grant_still_raises_reauth(monkeypatch):
     from oto_mcp.auth import google as mod
     _patch_post(monkeypatch, mod, _Resp(400, '{"error":"invalid_grant"}'))
     with pytest.raises(mod.GoogleReauthRequired):
-        mod._refresh_access_token("tok")
+        mod._refresh_access_token("tok", "sub-1")
 
 
 def test_config_error_does_NOT_raise_reauth(monkeypatch):
@@ -101,6 +101,6 @@ def test_config_error_does_NOT_raise_reauth(monkeypatch):
     from oto_mcp.auth import google as mod
     _patch_post(monkeypatch, mod, _Resp(400, '{"error":"invalid_client"}'))
     with pytest.raises(Exception) as e:
-        mod._refresh_access_token("tok")
+        mod._refresh_access_token("tok", "sub-1")
     assert not isinstance(e.value, mod.GoogleReauthRequired), (
         "google : un invalid_client lève encore la réauth → purge du credential")

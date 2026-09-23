@@ -131,8 +131,10 @@ def test_l_url_de_consentement_filtre_le_front_avant_de_signer(monkeypatch):
     Sans ce filtrage, le state signerait une base de redirection arbitraire : une
     redirection ouverte, avec notre signature dessus."""
     monkeypatch.setattr(google_oauth, "_ctx_org", lambda sub: 42)
-    monkeypatch.setattr(google_oauth, "_client_id", lambda: "cid")
-    monkeypatch.setattr(google_oauth, "_redirect_uri", lambda: "https://oto/cb")
+    # L'app (client + rappel) se résout par sub depuis le cran tenant
+    # (`app_for`, 23/09/2026) — une seule valeur à stubber, à la place des deux.
+    monkeypatch.setattr(google_oauth, "app_for", lambda sub: google_oauth.OAuthApp(
+        client_id="cid", client_secret="sec", redirect_uri="https://oto/cb"))
 
     url = google_oauth.build_auth_url("sub-1", "https://attaquant.invalid")
     etat = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["state"][0]
@@ -148,7 +150,8 @@ def test_l_url_de_consentement_filtre_le_front_avant_de_signer(monkeypatch):
 
 @pytest.fixture
 def _echange_ok(monkeypatch):
-    monkeypatch.setattr(google_oauth, "exchange_code", lambda code: {"access_token": "t"})
+    monkeypatch.setattr(google_oauth, "exchange_code",
+                        lambda code, sub: {"access_token": "t"})
     monkeypatch.setattr(google_oauth, "persist_token", lambda *a, **k: None)
 
 
@@ -181,7 +184,7 @@ def test_un_echec_ramene_AUSSI_au_front_tiers(monkeypatch):
     """Le piège du retour OAuth : on soigne le succès et on oublie l'échec, donc
     la personne est renvoyée chez nous au pire moment — quand elle doit
     recommencer."""
-    def _boom(code):
+    def _boom(code, sub):
         raise RuntimeError("Google a refusé")
 
     monkeypatch.setattr(google_oauth, "exchange_code", _boom)

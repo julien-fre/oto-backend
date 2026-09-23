@@ -70,8 +70,20 @@ def _set(ctx: ResolvedCtx, inp: SetInput) -> dict:
             set_by=ctx.sub)
     except ValueError as e:
         raise AuthzDenied(400, "invalid_editor_app", str(e))
-    return {"connector": name, "data_center": inp.data_center.strip().lower(),
-            "callback_url": connector_flow.callback_url(name)}
+    key = inp.data_center.strip().lower()
+    return {"connector": name, "data_center": key,
+            "callback_url": connector_flow.callback_url(name, host=_tenant_host(key))}
+
+
+def _tenant_host(key: str) -> Optional[str]:
+    """Quand la clé de l'app est le SLUG d'un tenant à host déclaré, le rappel que
+    l'admin doit enregistrer chez le fournisseur est celui du tenant (cf.
+    `google_oauth.app_for`) — lui rendre le nôtre, c'est lui faire déclarer une URL
+    que le flux n'enverra jamais. Une clé qui n'est pas un tenant (région zoho) rend
+    `None` : le rappel de l'instance, l'état d'avant."""
+    from .. import tenancy
+    entry = tenancy.current().entry_for_slug(key)
+    return entry.hosts[0] if entry and entry.hosts else None
 
 
 def _delete(ctx: ResolvedCtx, inp: DeleteInput) -> dict:  # noqa: ARG001

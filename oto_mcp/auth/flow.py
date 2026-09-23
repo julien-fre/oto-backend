@@ -114,9 +114,18 @@ def read_state(audience: str, state: Optional[str], *,
 
 # --- URI de redirection --------------------------------------------------------
 
-def redirect_uri(path: str) -> str:
+def redirect_uri(path: str, *, host: Optional[str] = None) -> str:
     """URL publique + `path`. À enregistrer AU BYTE PRÈS chez le fournisseur — donc
-    jamais devinée : `config.public_base_url()` lève plutôt que de rendre un défaut."""
+    jamais devinée : `config.public_base_url()` lève plutôt que de rendre un défaut.
+
+    `host` : le rappel est posé sur CE host (toujours en https) plutôt que sur
+    l'adresse publique de l'instance — le host d'un TENANT, quand c'est l'app OAuth du
+    tenant qui demande le consentement (`google_oauth.app_for`). Un client OAuth
+    n'accepte que les domaines de son propriétaire : l'app de Tulina ne peut pas
+    rappeler chez nous, et la nôtre ne rappelle pas chez Tulina. Sans `host`, l'état
+    d'avant à l'octet près."""
+    if host:
+        return f"https://{host.strip().lower().rstrip('/')}/{path.lstrip('/')}"
     return f"{config.public_base_url()}/{path.lstrip('/')}"
 
 

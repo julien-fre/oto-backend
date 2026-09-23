@@ -652,7 +652,26 @@ articles-only). Avec, il ne reste que le geste utile : consentir.
   contre-épreuve sur un connecteur qui, lui, déclare le mode plateforme).
 - **Pose** : `POST /api/admin/editor-apps` (super admin, capacité
   `platform.editor_app.set`). **REST seulement** — un secret brut en argument d'outil
-  MCP transiterait par le contexte du modèle.
+  MCP transiterait par le contexte du modèle. La réponse rend le `callback_url` à
+  déclarer chez le fournisseur : celui du **tenant** quand la clé est son slug (cf.
+  ci-dessous), le nôtre sinon.
+- **Google, par TENANT** (23/09/2026) : la clé n'est pas une région mais le **slug du
+  tenant** (`editor:tulina`). Un partenaire qui veut SON écran de consentement (sa
+  marque, son projet Google Cloud, ses scopes vérifiés sous son nom) pose son client ici ;
+  `google_oauth.app_for(sub)` le sert à tout compte qualifié sous ce slug, et le rappel
+  passe sur le premier host déclaré du tenant (`tenants.hosts[0]`) — un client OAuth
+  n'accepte que les domaines de son propriétaire. Sans app posée : l'env
+  (`GOOGLE_WORKSPACE_CLIENT_ID/_SECRET`) et notre rappel, l'état d'avant. Une erreur de
+  coffre **remonte** (pas de repli silencieux sous notre marque, silences B7).
+  Consentement, échange du code et refresh emploient la MÊME app — un compte connecté
+  sous la nôtre avant la pose ne se rafraîchit plus sous celle du tenant
+  (`invalid_grant`) : marqué, invité à reconnecter, jamais purgé.
+- ⚠️ **Le blob d'une app d'éditeur a sa forme PROPRE** (`_pack_editor_app`, JSON des
+  deux champs), indépendante du schéma du connecteur. `pack_secret` en dépendait : sur
+  `google` (`secret_kind="oauth"`, schéma vide) il ne gardait que la première valeur —
+  le `client_secret` était perdu à la pose et `get_editor_app` rendait `None` sans un
+  mot. Byte-à-byte ce que zoho écrivait déjà (≥ 2 champs) : rien à migrer.
+  Figé par `tests/auth/test_google_tenant_app.py`.
 - **Conséquence de rotation** : `persist()` range une COPIE de l'app dans le credential
   né du consentement. Roter l'app d'éditeur ne casse donc pas les connexions déjà
   établies… jusqu'à leur prochain refresh, qui échouera avec l'ancien `client_secret`.

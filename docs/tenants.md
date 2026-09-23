@@ -290,6 +290,29 @@ tenant », l'arête tenant→org de 0053, l'étage tenant de l'endpoint anonyme,
 `tenant` dans `oto_instance op=list`. Reste côté dashboard : le mode `tenant` de `/api/me`
 (`keyStack.ts`, oto-front).
 
+## L'app Google du tenant — son écran de consentement (2026-09-23)
+
+Un tenant qui veut que ses utilisateurs consentent chez Google sous SA marque (son projet
+Google Cloud, ses scopes vérifiés sous son nom) pose son client OAuth comme **app
+d'éditeur** du connecteur `google`, keyée par son **slug** :
+`POST /api/admin/editor-apps {"connector": "google", "data_center": "<slug>", "client_id",
+"client_secret"}` — super admin, REST seulement, coffre chiffré (`docs/connector-vault.md`
+§app d'éditeur). Aucune colonne, aucun env : le mécanisme existait, Google ne le lisait pas.
+
+- **Le rappel est celui du tenant** : `https://<hosts[0]>/api/google/oauth/callback`
+  (rendu par la réponse de la pose). C'est CETTE URL qu'il déclare dans son client Google
+  — pas la nôtre, que son client n'accepterait pas. Son host doit donc router vers nous
+  (c'est déjà le cas d'un tenant servi) ; sans host déclaré, le rappel reste le nôtre.
+- **Sans app posée, rien ne change** : le tenant consent sous notre client (env) et notre
+  rappel. Poser l'app bascule TOUT compte du tenant d'un coup — consentement, échange,
+  refresh. Un compte connecté avant la pose ne se rafraîchit plus (`invalid_grant`) : il
+  est marqué et invité à reconnecter, comme tout grant mort.
+- ⚠️ **Le host du tenant arrive sur UNE instance** (la prod) : un consentement démarré en
+  preprod avec l'app du tenant rappelle en prod, où le state est vérifié avec le secret de
+  la prod. L'app d'un tenant se teste là où son host arrive.
+- Retirer l'app (`DELETE /api/admin/editor-apps/google/<slug>`) ramène le tenant sur la
+  nôtre — et rend ses comptes connectés sous la sienne à reconnecter.
+
 ## Le rôle « admin de tenant » et l'arête tenant→org (L-clés PR 2 — 2026-08-29)
 
 **Le rôle.** La sortie nommée du régime transitoire (0052 §Amendement 27/08 : l'opérateur du

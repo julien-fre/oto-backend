@@ -115,7 +115,9 @@ def make_routes(
         sub, org_id, return_app = parsed
 
         def _finish() -> None:
-            tokens = google_oauth.exchange_code(code)
+            # `sub` (qualifié, porté par le state) choisit l'app qui a demandé le
+            # consentement — celle du tenant ou la nôtre — et son rappel exact.
+            tokens = google_oauth.exchange_code(code, sub)
             google_oauth.persist_token(sub, org_id, tokens)
 
         try:

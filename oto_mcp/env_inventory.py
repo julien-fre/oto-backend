@@ -138,11 +138,14 @@ _REQUISES: tuple[Variable, ...] = (
              "relais actif, comportement d'origine — un opt-in par host, pas un "
              "défaut qui pointerait chez nous.", ("oto_mcp/auth/relay.py:73",)),
     Variable("GOOGLE_WORKSPACE_CLIENT_ID", Classe.REQUISE, None,
-             "Client OAuth Google Workspace. Obligatoire DE FAIT : lève nommé au "
-             "premier appel de `_client_id()`.", ("oto_mcp/auth/google.py:73",)),
+             "Client OAuth Google Workspace — NOTRE app, servie à tout compte dont le "
+             "tenant n'a pas posé la sienne en app d'éditeur (`google_oauth.app_for`). "
+             "Obligatoire DE FAIT : lève nommé au premier appel de `_client_id()`.",
+             ("oto_mcp/auth/google.py:92",)),
     Variable("GOOGLE_WORKSPACE_CLIENT_SECRET", Classe.REQUISE, None,
-             "Secret OAuth Google Workspace. Obligatoire DE FAIT : lève nommé au "
-             "premier appel de `_client_secret()`.", ("oto_mcp/auth/google.py:80",)),
+             "Secret OAuth Google Workspace (même repli). Obligatoire DE FAIT : lève "
+             "nommé au premier appel de `_client_secret()`.",
+             ("oto_mcp/auth/google.py:99",)),
     Variable("FOD_BASE_URL", Classe.REQUISE, None,
              "Base URL du service FOD (ADR 0028 — CCN, jurisprudence, lois, "
              "règlements, DVF). Obligatoire DE FAIT : lue nue au niveau module, "

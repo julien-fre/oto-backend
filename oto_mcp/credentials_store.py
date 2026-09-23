@@ -313,8 +313,22 @@ def platform_revoke(provider: str, scope: str, label: "str | None" = None) -> No
 # NUE (sans refresh_token) qui échouerait de façon opaque au premier appel. Figé par
 # `tests/test_editor_app.py`.
 #
-# Un seul appelant la lit : le flux de consentement du module connecteur
-# (`zoho_oauth.app_fields`). Jamais la résolution.
+# Seuls les flux de consentement des modules connecteurs la lisent
+# (`zoho_oauth.app_fields`, `google_oauth.app_for`). Jamais la résolution.
+#
+# ⚠️ **La forme du blob est FIXE, indépendante du schéma du connecteur.** Une app
+# d'éditeur est TOUJOURS `{client_id, client_secret}` — c'est sa définition, pas un
+# credential dont le connecteur déclarerait les champs. Passer par `pack_secret` la
+# rendait dépendante de `vault_fields` : sur `google` (`secret_kind="oauth"`, schéma
+# VIDE — le consentement a son propre flux, pas de formulaire), `pack_secret` ne garde
+# que la première valeur, donc le `client_secret` était PERDU à la pose et
+# `get_editor_app` rendait `None` sans un mot (mesuré le 23/09/2026, en amenant Google
+# sur ce cran). Le JSON explicite est byte-à-byte ce que `pack_secret` produisait déjà
+# pour zoho (≥ 2 champs) : les lignes existantes se relisent telles quelles.
+#
+# La CLÉ (`data_center`) est une RÉGION pour zoho — et le SLUG DU TENANT pour google,
+# dont l'app est celle du PRODUIT qui la publie (`editor:tulina`), pas d'une région.
+# Même rangement, même accès, même invariant : rien n'est ajouté au coffre.
 
 EDITOR_PREFIX = "editor:"
 
@@ -322,6 +336,29 @@ EDITOR_PREFIX = "editor:"
 def editor_label(data_center: str) -> str:
     """`entity_id` de l'app d'éditeur pour une région (`editor:eu`)."""
     return f"{EDITOR_PREFIX}{(data_center or '').strip().lower()}"
+
+
+def _pack_editor_app(fields: dict) -> str:
+    """Le blob d'une app d'éditeur : JSON des deux champs, toujours."""
+    return json.dumps({"client_id": fields["client_id"],
+                       "client_secret": fields["client_secret"]})
+
+
+def _unpack_editor_app(secret: str) -> dict:
+    """Inverse exact — lève `SecretUnpackError` sur un blob illisible, comme
+    `unpack_secret` : une app d'éditeur illisible est une erreur de coffre, pas une
+    absence (le silence ferait retomber sur le Self Client sans rien dire)."""
+    try:
+        loaded = json.loads(secret)
+    except (ValueError, TypeError) as e:
+        raise SecretUnpackError(
+            f"app d'éditeur illisible : le blob stocké n'est pas du JSON "
+            f"({type(e).__name__}). Reposer l'app, ou vérifier la clé maître du coffre.")
+    if not isinstance(loaded, dict):
+        raise SecretUnpackError(
+            f"app d'éditeur illisible : le blob stocké est un "
+            f"`{type(loaded).__name__}` JSON, pas un objet de champs.")
+    return loaded
 
 
 def set_editor_app(connector: str, data_center: str, fields: dict,
@@ -338,9 +375,7 @@ def set_editor_app(connector: str, data_center: str, fields: dict,
         raise ValueError("data_center requis")
     with _connect() as conn:
         _upsert(conn, PLATFORM, editor_label(data_center), connector, "",
-                pack_secret(connector, {"client_id": fields["client_id"],
-                                        "client_secret": fields["client_secret"]}),
-                set_by, None)
+                _pack_editor_app(fields), set_by, None)
 
 
 def get_editor_app(connector: str, data_center: str) -> Optional[dict]:
@@ -356,7 +391,7 @@ def get_editor_app(connector: str, data_center: str) -> Optional[dict]:
             (PLATFORM, label, connector)).fetchone()
     if not row:
         return None
-    fields = unpack_secret(connector, _reveal(row, PLATFORM, label, connector, "") or "")
+    fields = _unpack_editor_app(_reveal(row, PLATFORM, label, connector, "") or "")
     cid, sec = fields.get("client_id"), fields.get("client_secret")
     return {"client_id": cid, "client_secret": sec} if cid and sec else None
 
