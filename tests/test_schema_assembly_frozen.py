@@ -446,8 +446,14 @@ from oto_mcp.db import _schema, schema
 # EXISTS` laissé en place aurait fait RENAÎTRE la table au démarrage suivant le `DROP`
 # d'exploitation, qui reste une décision à part (docs/live-migrations.md).
 # 166 657 → 165 217 (−1 440, commentaire de remplacement compris).
-EMPREINTE = "9f9ec82ab3d5561a3d0ca1e27677ff623bb8cd49aa0b3de076119b53062721b9"
-LONGUEUR = 165217
+# 23/09/2026 (ADR 0070 §7, #806) — fragment NEUF `schema/entitlements.py`, en QUEUE de
+# `ASSEMBLAGE` (après `orgs`, qu'il référence) : la table `org_entitlements`, les droits
+# DÉCLARÉS par org. Hors du fragment `billing` : le cœur ne dépend pas du commerce.
+# ADDITIVE : rien ne la lit encore, et l'ancien code l'ignore. La révision Alembic
+# `0004_org_entitlements` exécute le même fragment.
+# 165 217 → 165 940 (+723, commentaires du fragment compris).
+EMPREINTE = "f8ae6ba6ea3502b57af0add16a6ae83004912346ca951548fa430785fd05d7b8"
+LONGUEUR = 165940
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

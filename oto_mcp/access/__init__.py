@@ -59,6 +59,8 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
 - `views`   — les vues minces : clé, champs, mode, option levée,
               résolvabilité d'une org.
 - `status`  — le snapshot par connecteur de `/api/me`.
+- `entitlements` — les droits DÉCLARÉS d'une org (ADR 0070 §7), relus à chaque
+              usage ; ne dépend que de `db`, jamais de `billing`.
 
 Le graphe est un DAG strict — aucun cycle, chaque flèche va vers le bas :
 
@@ -98,10 +100,10 @@ import sys
 import types
 
 from . import (scope, quotas, cascade, platform_grant, rbac, resolved_credential,
-               tenant_budget, resolve_anon, resolve, views, status)
+               tenant_budget, resolve_anon, resolve, views, status, entitlements)
 
 _MODULES = (scope, quotas, cascade, platform_grant, rbac, resolved_credential,
-            tenant_budget, resolve_anon, resolve, views, status)
+            tenant_budget, resolve_anon, resolve, views, status, entitlements)
 
 # Ré-export plat (publics + privés à un underscore ; les dunder restent au
 # package) + carte `nom -> modules qui le définissent`, qui sert la propagation

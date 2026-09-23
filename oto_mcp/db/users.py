@@ -453,6 +453,10 @@ _SUB_COLUMNS = [
     # la possède ». L'identifiant d'origine reste retrouvable par `sub_aliases`.
     ("connector_account_group_grants", "granted_by"),
     ("option_comps", "granted_by"), ("grants", "created_by"),
+    # Qui a posé un droit déclaré (ADR 0070 §7) : colonne d'AUTEUR, hors PK et sans FK.
+    # L'UPDATE nu ne touche que les lignes signées par l'ancien compte ; une étiquette
+    # de producteur (qui n'est pas un sub) reste telle quelle.
+    ("org_entitlements", "granted_by"),
     # Qui a posé une surcharge de propriété de connecteur (L6 pièce 2 c2). Colonne
     # d'AUTEUR, pas d'identité : un UPDATE nu suffit, comme pour les voisines.
     ("connector_settings", "set_by"),

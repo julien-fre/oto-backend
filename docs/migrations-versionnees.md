@@ -489,6 +489,13 @@ LIT (`runner_fleets.taken_by`) : jouée après la fusion, la préproduction rép
 fusion** — l'ancien code ignore la colonne. Chaque révision dit son ordre dans son
 en-tête : le lire avant de promouvoir.
 
+`0004_org_entitlements` (23/09/2026, ADR 0070 §7) crée une table NEUVE, que le
+démarrage crée aussi (`CREATE TABLE IF NOT EXISTS`, fragment `db/schema/entitlements.py`,
+que la révision exécute tel quel). Les deux sont idempotents l'un envers l'autre et
+rien ne lit encore la table : l'ordre est indifférent. Seul coût : la clé étrangère
+vers `orgs` prend un verrou sur `orgs` à la création, borné par `lock_timeout` des deux
+côtés.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà
