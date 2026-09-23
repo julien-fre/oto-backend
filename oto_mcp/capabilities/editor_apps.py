@@ -17,7 +17,8 @@ des secrets d'org).
 
 **La face du TENANT est ailleurs** (`tenant_apps`, 23/09/2026) : un admin de tenant pose
 SON app sous SON slug depuis `/api/admin/tenants/{slug}/apps/{connector}` — ici, la clé
-est libre (région zoho, slug de tenant…) et le geste reste celui de l'opérateur.
+est libre (région zoho, `tenant:<slug>` pour l'app d'un tenant) et le geste reste celui
+de l'opérateur.
 """
 from __future__ import annotations
 
@@ -80,14 +81,15 @@ def _set(ctx: ResolvedCtx, inp: SetInput) -> dict:
 
 
 def _tenant_host(key: str) -> Optional[str]:
-    """Quand la clé de l'app est le SLUG d'un tenant à host déclaré, le rappel que
-    l'admin doit enregistrer chez le fournisseur est celui du tenant (cf.
-    `google_oauth.app_for`) — lui rendre le nôtre, c'est lui faire déclarer une URL
-    que le flux n'enverra jamais. Une clé qui n'est pas un tenant (région zoho) rend
-    `None` : le rappel de l'instance, l'état d'avant."""
+    """Quand la clé de l'app désigne un TENANT (`tenant:<slug>`,
+    `credentials_store.tenant_app_key`), le rappel que l'admin doit enregistrer chez le
+    fournisseur est celui du tenant (cf. `google_oauth.app_for`) — lui rendre le nôtre,
+    c'est lui faire déclarer une URL que le flux n'enverra jamais. Une clé de RÉGION
+    rend `None` (le rappel de l'instance), même si un tenant porte le même nom : une
+    région n'est jamais lue comme un slug (revue de #1063)."""
     from .. import tenancy
-    entry = tenancy.current().entry_for_slug(key)
-    return entry.hosts[0] if entry and entry.hosts else None
+    slug = credentials_store.tenant_of_app_key(key)
+    return tenancy.current().callback_host(slug) if slug else None
 
 
 def _delete(ctx: ResolvedCtx, inp: DeleteInput) -> dict:  # noqa: ARG001

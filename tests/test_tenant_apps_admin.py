@@ -104,7 +104,7 @@ def test_la_pose_ecrit_sous_le_slug_de_la_route_et_nomme_le_rappel_du_tenant(
                         vu.update(connector=connector, key=key, fields=fields, set_by=set_by))
     out = tap._set_app(CTX, tap.TenantAppSetInput(
         slug=TULINA, connector="google", client_id=" cid ", client_secret=" sec "))
-    assert vu == {"connector": "google", "key": TULINA,
+    assert vu == {"connector": "google", "key": "tenant:tulina",
                   "fields": {"client_id": "cid", "client_secret": "sec"}, "set_by": "operateur"}
     assert out == {"ok": True, "slug": TULINA, "connector": "google",
                    "callback_url": RAPPEL_TULINA}
@@ -128,13 +128,13 @@ def test_le_tenant_primaire_est_refuse(registre, monkeypatch):
     assert ecrit == []
 
 
-def test_un_connecteur_sans_flux_de_consentement_est_refuse(registre, monkeypatch):
+def test_un_connecteur_qui_ne_lit_pas_l_app_du_tenant_est_refuse(registre, monkeypatch):
     ecrit = []
     monkeypatch.setattr(credentials_store, "set_editor_app", lambda *a, **k: ecrit.append(a))
     with pytest.raises(AuthzDenied) as e:
         tap._set_app(CTX, tap.TenantAppSetInput(
             slug=TULINA, connector="hunter", client_id="cid", client_secret="sec"))
-    assert e.value.status == 400 and e.value.code == "no_consent_flow"
+    assert e.value.status == 400 and e.value.code == "tenant_app_unsupported"
     assert ecrit == []
 
 
@@ -157,8 +157,8 @@ def test_un_slug_inconnu_est_un_404(registre, monkeypatch):
 
 def test_la_liste_ne_montre_que_les_apps_du_slug_et_aucun_secret(registre, monkeypatch):
     monkeypatch.setattr(credentials_store, "list_editor_apps", lambda connector=None: [
-        {"connector": "google", "data_center": TULINA, "set_at": "2026-09-23T10:00:00+00:00"},
-        {"connector": "google", "data_center": "pilote", "set_at": "2026-09-23T10:00:00+00:00"},
+        {"connector": "google", "data_center": "tenant:tulina", "set_at": "2026-09-23T10:00:00+00:00"},
+        {"connector": "google", "data_center": "tenant:pilote", "set_at": "2026-09-23T10:00:00+00:00"},
         {"connector": "zoho", "data_center": "eu", "set_at": "2026-09-23T10:00:00+00:00"}])
     out = tap._list_apps(CTX, tap.TenantAppsInput(slug=TULINA))
     assert out["slug"] == TULINA and out["host"] == "mcp.tulina.ai"

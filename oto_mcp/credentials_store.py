@@ -326,16 +326,35 @@ def platform_revoke(provider: str, scope: str, label: "str | None" = None) -> No
 # sur ce cran). Le JSON explicite est byte-à-byte ce que `pack_secret` produisait déjà
 # pour zoho (≥ 2 champs) : les lignes existantes se relisent telles quelles.
 #
-# La CLÉ (`data_center`) est une RÉGION pour zoho — et le SLUG DU TENANT pour google,
-# dont l'app est celle du PRODUIT qui la publie (`editor:tulina`), pas d'une région.
-# Même rangement, même accès, même invariant : rien n'est ajouté au coffre.
+# La CLÉ (`data_center`) est une RÉGION pour zoho — et, pour google, le tenant dont
+# l'app est celle du PRODUIT qui la publie, pas d'une région. ⚠️ Les deux ne partagent
+# PAS le même espace de noms : la clé d'un tenant est `tenant:<slug>`
+# (`tenant_app_key`, donc `editor:tenant:<slug>`), jamais le slug nu. Un tenant nommé
+# comme une région (`eu`, `com`…) aurait sinon posé, lu ou retiré l'app zoho de la
+# plateforme pour cette région (revue de #1063). Même rangement, même accès, même
+# invariant : rien n'est ajouté au coffre.
 
 EDITOR_PREFIX = "editor:"
+TENANT_APP_PREFIX = "tenant:"
 
 
 def editor_label(data_center: str) -> str:
     """`entity_id` de l'app d'éditeur pour une région (`editor:eu`)."""
     return f"{EDITOR_PREFIX}{(data_center or '').strip().lower()}"
+
+
+def tenant_app_key(slug: str) -> str:
+    """Clé d'app d'éditeur d'un TENANT (`tenant:tulina`) — jamais confondable avec une
+    région, aucune région ne portant ce préfixe."""
+    return f"{TENANT_APP_PREFIX}{(slug or '').strip().lower()}"
+
+
+def tenant_of_app_key(key: str) -> Optional[str]:
+    """Le slug désigné par une clé d'app d'éditeur, ou `None` pour une clé de région."""
+    k = (key or "").strip().lower()
+    if not k.startswith(TENANT_APP_PREFIX):
+        return None
+    return k[len(TENANT_APP_PREFIX):] or None
 
 
 def _pack_editor_app(fields: dict) -> str:

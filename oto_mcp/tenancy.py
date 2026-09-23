@@ -533,6 +533,22 @@ class IssuerRegistry:
         """Les hosts liés à un tenant, pour diagnostic (ordre stable)."""
         return tuple(sorted(self._by_host))
 
+    def callback_host(self, slug: Optional[str]) -> Optional[str]:
+        """Le host où poser le rappel OAuth de l'app d'un tenant : son PREMIER host
+        déclaré qu'il TIENT réellement — ou `None` (le rappel reste le nôtre).
+
+        `entry.hosts` garde un host même quand sa réclamation a été ignorée parce qu'un
+        autre tenant le tenait déjà (cf. `__init__`) : y poser un rappel enverrait le
+        code d'autorisation et le state signé chez l'autre. Seul `_by_host` dit qui
+        tient quoi. ⚠️ Ce qui ne se vérifie pas ici : que ce host ROUTE vers ce
+        backend — c'est la condition de la déclaration du tenant (`docs/tenants.md`)."""
+        entry = self.entry_for_slug(slug)
+        if entry is None:
+            return None
+        return next((h for h in entry.hosts
+                     if (held := self._by_host.get(h)) is not None and held.slug == entry.slug),
+                    None)
+
     def same_tenant(self, a: Optional[str], b: Optional[str]) -> bool:
         """Deux subs relèvent-ils du même tenant ? (garde d'alias, ADR 0052 §6 :
         pas de fédération d'identités entre tenants.)"""

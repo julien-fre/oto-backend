@@ -28,17 +28,23 @@ Setup ops :
 
 **L'app d'un TENANT** (23/09/2026) — un partenaire qui veut SON écran de consentement
 (sa marque, son projet Google Cloud, ses scopes vérifiés sous son nom) pose son client
-comme **app d'éditeur** du connecteur `google`, keyée par son SLUG (`editor:tulina`) :
-`POST /api/admin/editor-apps {connector: "google", data_center: "<slug>", client_id,
-client_secret}` — REST seulement, super admin, coffre chiffré, jamais l'env (cf.
-`credentials_store` §app d'éditeur). Dès qu'elle est posée, `app_for(sub)` la sert à
-tout compte qualifié sous ce tenant, et le rappel passe sur le PREMIER host déclaré du
-tenant (`tenants.hosts[0]`, ex. `https://mcp.tulina.ai/api/google/oauth/callback`) :
+comme **app d'éditeur** du connecteur `google`, dans l'espace de noms des tenants
+(`editor:tenant:<slug>`, `credentials_store.tenant_app_key`) : depuis SON tableau de bord
+(`tenant_apps`, `PUT /api/admin/tenants/{slug}/apps/google`) ou par l'opérateur
+(`POST /api/admin/editor-apps {connector: "google", data_center: "tenant:<slug>", …}`) —
+REST seulement, coffre chiffré, jamais l'env. Dès qu'elle est posée, `app_for(sub)` la
+sert à tout compte qualifié sous ce tenant, et le rappel passe sur le premier host que le
+tenant TIENT (`tenancy.callback_host`, ex. `https://<host>/api/google/oauth/callback`) :
 c'est CETTE URL que le partenaire déclare chez Google — son client n'accepte que ses
 domaines, pas les nôtres. Sans app posée, le tenant reste sur la nôtre et sur notre
-rappel : l'état d'avant, à l'octet près. ⚠️ Un compte connecté sous NOTRE app avant la
-pose ne se rafraîchit plus sous celle du tenant (Google : `invalid_grant`) — il est
-marqué et invité à reconnecter, comme tout grant mort ; rien n'est purgé.
+rappel : l'état d'avant, à l'octet près.
+⚠️ **Un jeton ne se rafraîchit qu'avec le client qui l'a émis.** Poser, changer ou retirer
+l'app d'un tenant rend inutilisables les jetons émis par l'app d'avant. Le client émetteur
+est noté sur le jeton (`persist_token` → meta `client_id` ; absent = notre app, celle de
+tous les jetons d'avant ce lot) : un jeton d'un autre client est refusé AVANT tout appel
+réseau, compte marqué, « reconnecte ce compte » — jamais purgé. Un client refusé par
+Google au refresh (`unauthorized_client`/`invalid_client`) est une `GoogleClientRejected`
+nommée, pas une erreur interne — et pas un grant mort (config ≠ révocation).
 ⚠️ Le host du tenant route vers UNE instance (la prod) : un consentement démarré en
 preprod avec l'app du tenant rappelle en prod — le state y est vérifié avec le secret de
 la prod. Tester l'app d'un tenant, c'est le faire là où son host arrive.
@@ -51,7 +57,7 @@ import base64
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -129,7 +135,9 @@ class OAuthApp:
     `origin` dit d'où elle vient (`tenant:<slug>` ou `env`) : pour le journal et les
     tests, jamais pour décider."""
     client_id: str
-    client_secret: str
+    # Hors du `repr` : une app finit dans un message d'assertion, un log de débogage,
+    # une trace — le secret n'a rien à y faire.
+    client_secret: str = field(repr=False)
     redirect_uri: str
     origin: str = "env"
 
@@ -140,8 +148,12 @@ def app_for(sub: str) -> OAuthApp:
     Le tenant se lit sur le sub qualifié (`tenancy.tenant_of`, par préfixe, jamais par
     découpe) — dérivé du jeton, un appelant ne peut pas revendiquer l'app d'un tenant
     auquel il n'appartient pas. L'app du tenant est l'app d'éditeur du connecteur
-    `google` keyée par son slug (`credentials_store.get_editor_app("google", slug)`),
-    et son rappel est posé sur le premier host déclaré du tenant.
+    `google` rangée dans l'espace de noms des tenants
+    (`credentials_store.tenant_app_key(slug)`), et son rappel est posé sur le premier
+    host que le tenant TIENT (`tenancy.callback_host`) — jamais sur un host qu'il a
+    déclaré mais qu'un autre tient : le code et le state signé partiraient chez lui.
+    ⚠️ Ce host doit ROUTER vers ce backend (condition de sa déclaration,
+    `docs/tenants.md`) : ce n'est pas vérifiable d'ici.
 
     ⚠️ Une erreur de coffre REMONTE, elle ne fait pas retomber sur l'env : sinon un
     partenaire dont l'app devient illisible verrait ses utilisateurs consentir sous
@@ -158,11 +170,10 @@ def app_for(sub: str) -> OAuthApp:
     from .. import tenancy  # lazy : évite tout cycle d'import au boot
     registre = tenancy.current()
     slug = registre.tenant_of(sub)
-    app = (credentials_store.get_editor_app("google", slug)
+    app = (credentials_store.get_editor_app("google", credentials_store.tenant_app_key(slug))
            if slug != tenancy.PRIMARY_SLUG else None)
     if app:
-        entry = registre.entry_for_slug(slug)
-        host = entry.hosts[0] if entry and entry.hosts else None
+        host = registre.callback_host(slug)
         return OAuthApp(client_id=app["client_id"], client_secret=app["client_secret"],
                         redirect_uri=oauth_flow.redirect_uri(_CALLBACK_PATH, host=host),
                         origin=f"tenant:{slug}")
@@ -275,8 +286,12 @@ def build_auth_url(sub: str, return_app: str = "") -> str:
         # quel compte Google connecter (clé du multi-compte).
         "prompt": "consent select_account",
         "state": make_state(sub, org_id, resolved_app),
-        "include_granted_scopes": "true",
     }
+    if app.origin == "env":
+        # Consentement incrémental : le jeton porte aussi les scopes déjà accordés à CE
+        # client. Sous notre client, ce sont les nôtres. Sous celui d'un partenaire, ce
+        # seraient ceux de ses AUTRES produits — hors de `SCOPES`, jamais demandés ici.
+        params["include_granted_scopes"] = "true"
     return f"{_AUTH_URL}?{urlencode(params)}"
 
 
@@ -323,9 +338,14 @@ def _fetch_email(access_token: str) -> str:
     return email
 
 
-def persist_token(sub: str, org_id: int, token_response: dict) -> str:
+def persist_token(sub: str, org_id: int, token_response: dict,
+                  client_id: Optional[str] = None) -> str:
     """Persiste les tokens (scope membre : l'org vient du state, capturée au
-    démarrage du flow) et renvoie l'email du compte Google connecté."""
+    démarrage du flow) et renvoie l'email du compte Google connecté.
+
+    `client_id` : le client qui a ÉMIS ce jeton, noté sur lui — un jeton ne se
+    rafraîchit qu'avec son émetteur (cf. `credentials_for`). Absent, c'est l'app que
+    `app_for(sub)` sert à cet instant, celle qui vient d'échanger le code."""
     refresh_token = token_response.get("refresh_token")
     if not refresh_token:
         # `build_auth_url` impose `prompt=consent` + `access_type=offline`,
@@ -348,6 +368,7 @@ def persist_token(sub: str, org_id: int, token_response: dict) -> str:
         scopes=scopes,
         access_token=access_token,
         expires_at=expires_at,
+        client_id=client_id or app_for(sub).client_id,
     )
     return email
 
@@ -362,6 +383,29 @@ class GoogleReauthRequired(RuntimeError):
     ne lui disait rien."""
 
 
+class GoogleClientRejected(RuntimeError):
+    """Google refuse le CLIENT OAuth au refresh (`unauthorized_client`,
+    `invalid_client`) : le jeton a été émis par un autre client, ou la configuration du
+    client est fausse (identifiant, secret).
+
+    `RuntimeError` pour la même raison que `GoogleReauthRequired` (les outils Google ne
+    traduisent qu'elles en refus lisible) — mais PAS une sous-classe : ce n'est pas un
+    grant mort, et le compte n'est pas marqué (`oauth_flow.grant_is_dead` : une config
+    fausse ne doit rien détruire ni faire accuser le compte)."""
+
+
+def _emis_par_un_autre_client(row: dict, app: "OAuthApp") -> bool:
+    """Le jeton de cette ligne a-t-il été émis par un autre client que `app` ?
+
+    Un jeton sans client noté date d'avant cette note : il vient de NOTRE app, la seule
+    qui existait alors — donc d'un autre client dès que l'app servie est celle d'un
+    tenant."""
+    emetteur = row.get("client_id")
+    if not emetteur:
+        return app.origin != "env"
+    return emetteur != app.client_id
+
+
 def _reconnecter(sub) -> str:
     """Où CE compte va reconnecter son Google — le tableau de bord de SON produit.
 
@@ -374,9 +418,12 @@ def _reconnecter(sub) -> str:
     return f"{config.dashboard_url_for(sub)}/ (section Google)"
 
 
-def _refresh_access_token(refresh_token: str, sub: str) -> dict:
+def _refresh_access_token(refresh_token: str, sub: str,
+                          app: Optional[OAuthApp] = None) -> dict:
+    """`app` : l'app déjà résolue par l'appelant (une lecture de coffre de moins) ;
+    absente, celle que `app_for(sub)` sert."""
     import requests
-    app = app_for(sub)
+    app = app or app_for(sub)
     r = requests.post(
         _TOKEN_URL,
         data={
@@ -393,6 +440,9 @@ def _refresh_access_token(refresh_token: str, sub: str) -> dict:
     body = (r.text or "")[:300]
     if r.status_code in (400, 401) and oauth_flow.grant_is_dead(r.status_code, body):
         raise GoogleReauthRequired(body)
+    if r.status_code in (400, 401) and any(
+            code in body.lower() for code in ("unauthorized_client", "invalid_client")):
+        raise GoogleClientRejected(body)
     r.raise_for_status()
     return r.json()
 
@@ -461,12 +511,34 @@ def credentials_for(sub: str, account: Optional[str] = None):
         except Exception:
             needs_refresh = True
 
+    # UNE lecture de l'app par appel (coffre + déchiffrement pour un compte tenant) :
+    # elle sert au contrôle d'émetteur, au refresh et à l'objet rendu.
+    app = app_for(sub)
+    member_id = credentials_store.member_id(org_id, sub)
+    email = row.get("google_email") or ""
+    if _emis_par_un_autre_client(row, app):
+        # L'app servie a changé depuis la connexion (posée, changée ou retirée) : ce
+        # jeton ne se rafraîchira plus. On le dit avant tout appel réseau — et avant
+        # qu'un access_token encore valide ne masque la panne pour une heure.
+        connector_health.mark_rejected(
+            credentials_store.MEMBER, member_id, "google", email,
+            "jeton émis par un autre client OAuth que l'app servie")
+        raise GoogleReauthRequired(
+            f"Le compte Google {email or '(sans email)'} a été connecté sous une autre app "
+            "OAuth que celle servie aujourd'hui (l'app de ton organisation a changé) : "
+            f"reconnecte ce compte sur {_reconnecter(sub)}. Rien n'a été fait.")
+
     if needs_refresh:
-        member_id = credentials_store.member_id(org_id, sub)
-        account = row.get("google_email") or ""
+        account = email
         scope = (credentials_store.MEMBER, member_id, account)
         try:
-            resp = _refresh_access_token(row["refresh_token"], sub)
+            resp = _refresh_access_token(row["refresh_token"], sub, app)
+        except GoogleClientRejected as e:
+            raise GoogleClientRejected(
+                f"Google refuse le client OAuth au rafraîchissement du compte "
+                f"{account or '(sans email)'} ({str(e)[:120]}) : la configuration de l'app "
+                "(identifiant, secret) est à vérifier par un administrateur. "
+                "Rien n'a été fait.") from e
         except GoogleReauthRequired as e:
             # Grant mort : on MARQUE (aide partagée oto#25 lot b2), jamais de purge —
             # même garde de portée que atlassian/folk/salesforce/zoho. On relève
@@ -490,8 +562,7 @@ def credentials_for(sub: str, account: Optional[str] = None):
         connector_health.record_health("google", scope, True, None)
 
     # Le client Google rafraîchit aussi DE LUI-MÊME (googleapiclient) : il lui faut
-    # l'app qui a délivré le jeton, pas forcément la nôtre.
-    app = app_for(sub)
+    # l'app qui a délivré le jeton — vérifié plus haut, c'est `app`.
     return Credentials(
         token=access_token,
         refresh_token=row["refresh_token"],

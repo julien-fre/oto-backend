@@ -3,7 +3,7 @@
 Un partenaire (Tulina) veut que ses utilisateurs consentent sous SA marque, dans SON
 projet Google Cloud. Le module Google lisait un seul client, dans l'env : l'app de la
 plateforme, pour tout le monde. Ce lot le fait lire l'app d'ÉDITEUR du connecteur
-`google` keyée par le slug du tenant (`editor:tulina`) — le cran que zoho employait
+`google` rangée dans l'espace de noms des tenants (`editor:tenant:tulina`) — le cran que zoho employait
 déjà par région — et pose le rappel sur le host déclaré du tenant, puisqu'un client
 OAuth n'accepte que les domaines de son propriétaire.
 
@@ -77,7 +77,7 @@ def _params(url: str) -> dict:
 
 def test_un_compte_du_tenant_consent_sous_l_app_du_tenant_et_rappelle_chez_lui(
         registre, monkeypatch):
-    _coffre(monkeypatch, {("google", "tulina"): APP_TULINA})
+    _coffre(monkeypatch, {("google", "tenant:tulina"): APP_TULINA})
     p = _params(google_oauth.build_auth_url("tulina:abc"))
     assert p["client_id"] == "cid-tulina"
     assert p["redirect_uri"] == RAPPEL_TULINA
@@ -88,7 +88,7 @@ def test_un_compte_du_tenant_consent_sous_l_app_du_tenant_et_rappelle_chez_lui(
 def test_l_echange_du_code_et_le_refresh_emploient_la_meme_app(registre, monkeypatch):
     """Le code ne s'échange qu'avec le client qui a demandé le consentement, et son
     rappel exact ; le jeton ne se rafraîchit qu'avec lui."""
-    _coffre(monkeypatch, {("google", "tulina"): APP_TULINA})
+    _coffre(monkeypatch, {("google", "tenant:tulina"): APP_TULINA})
     envois: list[dict] = []
 
     class _OK:
@@ -121,9 +121,11 @@ def test_credentials_for_rafraichit_et_instancie_avec_l_app_du_tenant(
         registre, monkeypatch):
     """Le chemin servi aux outils : le refresh transparent ET l'objet `Credentials`
     (qui rafraîchit aussi de lui-même, côté googleapiclient) portent l'app du tenant."""
-    _coffre(monkeypatch, {("google", "tulina"): APP_TULINA})
+    _coffre(monkeypatch, {("google", "tenant:tulina"): APP_TULINA})
+    # Un jeton ÉMIS par l'app du tenant (le client noté à la pose) : sans cette note,
+    # il serait réputé émis par la nôtre et refusé (« reconnecte »).
     row = {"google_email": "a@b.com", "refresh_token": "RT", "access_token": None,
-           "expires_at": None, "scopes": "s1"}
+           "expires_at": None, "scopes": "s1", "client_id": "cid-tulina"}
     monkeypatch.setattr(google_oauth.db, "get_google_oauth",
                         lambda sub, org, account=None: row)
     monkeypatch.setattr(google_oauth.db, "update_google_access_token",
@@ -167,7 +169,7 @@ def test_sans_app_posee_le_tenant_comme_le_primaire_restent_sur_la_notre(
 def test_l_app_d_un_autre_tenant_ne_sert_jamais(registre, monkeypatch):
     """L'app de Tulina n'est pas celle d'Acme, ni celle du tenant primaire : la clé est
     le slug LU SUR LE SUB, jamais « une app quelque part »."""
-    _coffre(monkeypatch, {("google", "tulina"): APP_TULINA})
+    _coffre(monkeypatch, {("google", "tenant:tulina"): APP_TULINA})
     assert google_oauth.app_for("acme:xyz").client_id == "cid-env"
     assert google_oauth.app_for("nu-sub").client_id == "cid-env"
 
@@ -186,7 +188,7 @@ def test_le_tenant_primaire_ne_sonde_jamais_le_coffre(registre, monkeypatch):
 def test_une_app_sans_host_declare_rappelle_chez_nous(registre, monkeypatch):
     """Sans host chez le tenant, le seul rappel possible est le nôtre — à lui de le
     déclarer chez Google (domaine autorisé). Nommé plutôt que deviné."""
-    _coffre(monkeypatch, {("google", "acme"): APP_ACME})
+    _coffre(monkeypatch, {("google", "tenant:acme"): APP_ACME})
     app = google_oauth.app_for("acme:xyz")
     assert app.client_id == "cid-acme" and app.redirect_uri == RAPPEL_NOTRE
 
@@ -240,10 +242,11 @@ def test_l_app_d_editeur_google_garde_son_client_secret(monkeypatch):
     monkeypatch.setattr(credentials_store, "_reveal",
                         lambda row, et, eid, c, a: stocke[(et, eid, c)])
 
-    credentials_store.set_editor_app("google", "tulina", dict(APP_TULINA))
-    blob = stocke[(credentials_store.PLATFORM, "editor:tulina", "google")]
+    cle = credentials_store.tenant_app_key("tulina")
+    credentials_store.set_editor_app("google", cle, dict(APP_TULINA))
+    blob = stocke[(credentials_store.PLATFORM, "editor:tenant:tulina", "google")]
     assert json.loads(blob) == APP_TULINA
-    assert credentials_store.get_editor_app("google", "tulina") == APP_TULINA
+    assert credentials_store.get_editor_app("google", cle) == APP_TULINA
 
 
 def test_le_blob_d_editeur_est_celui_que_zoho_ecrivait_deja():
@@ -269,10 +272,10 @@ class _Ctx2:
 
 def test_la_pose_sur_un_tenant_rend_le_rappel_du_tenant(registre, monkeypatch):
     """Ce que l'admin doit déclarer chez Google est le rappel que le flux ENVERRA :
-    celui du tenant pour une app keyée par son slug, le nôtre sinon (région zoho)."""
+    celui du tenant pour une app keyée `tenant:<slug>`, le nôtre sinon (région zoho)."""
     monkeypatch.setattr(credentials_store, "set_editor_app", lambda *a, **k: None)
     sur_tenant = editor_apps._set(_Ctx2(), editor_apps.SetInput(
-        connector="google", data_center="tulina", client_id="x", client_secret="y"))
+        connector="google", data_center="tenant:tulina", client_id="x", client_secret="y"))
     assert sur_tenant["callback_url"] == RAPPEL_TULINA
     sur_region = editor_apps._set(_Ctx2(), editor_apps.SetInput(
         connector="google", data_center="eu", client_id="x", client_secret="y"))
