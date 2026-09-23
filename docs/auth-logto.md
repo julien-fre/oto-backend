@@ -216,9 +216,15 @@ sait poser le rappel chez lui) :
      retire au même endroit.
 
 **Onboarding actuel = self-serve ouvert.** Le tenant a sign-up activé par
-email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire,
-mais c'est sans risque pour les clés serveur car les platform keys ne sont
-accessibles qu'avec un grant explicite (cf. `access/`).
+email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire, et
+**un compte neuf, sans aucun grant, résout déjà la clé plateforme des connecteurs du
+palier gratuit**, sous quota journalier — c'est voulu (tranché le 02/09/2026) : le
+palier gratuit est la découverte de la plateforme. Ce paragraphe affirmait jusqu'au
+23/09/2026 que les platform keys « ne sont accessibles qu'avec un grant explicite » :
+c'était faux (oto-backend#804). Ce que le palier ouvre, connecteur par connecteur et
+avec son quota, est tenu dans `SECURITY.md` §4 (« Free tier »), gardé contre le
+registre par `tests/test_securite_palier_gratuit.py`. Installer le connecteur n'est
+pas une garde : c'est un filtre d'affichage, que `oto_call` traverse.
 
 ## Jetons d'API `oto_` — authentification non-interactive
 

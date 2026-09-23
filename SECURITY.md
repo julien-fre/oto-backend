@@ -60,7 +60,24 @@ A **single trunk**, `main`, and no long-lived release branches.
 
 **Connector authorization.** Access is gated **at call time** inside credential resolution (`access.require_connector_access`), so a personal key does not bypass an organization's restriction. Absence of any access row means open to members; presence of one row makes it deny-by-default. Connector activation is likewise deny-by-default — `enabled: null` means off, not undetermined. Visibility masking above this gate **fails open by design** so a database blip cannot black out the surface; the call-time resolution behind it fails closed.
 
-**Credential cascade.** One walker (`oto_mcp/access/cascade.py`) resolves in order: member (scoped to the active organization) → personal cross-org instance → group → organization → platform key (metered, and only for providers declaring a platform auth mode). A named account found nowhere raises, never silently falls back to a platform key.
+**Credential cascade.** One walker (`oto_mcp/access/cascade.py`) resolves in order: member (scoped to the active organization) → personal cross-org instance → group → organization → platform key (metered, and only for providers declaring a platform auth mode; for the free-tier connectors below, reachable by **any** account without a grant). A named account found nowhere raises, never silently falls back to a platform key.
+
+**Free tier — what a brand-new account can call** (stated 2026-09-23, oto-backend#804). Sign-up is self-serve and open. An account with no grant, no option and no subscription already resolves the platform key of some connectors, within a daily cap. **This is intended**: it is how a new account discovers the platform. It is not a gap, and it must not be described as one that is closed. A connector is on the free tier when it declares `platform_key_open` in the registry (`oto_mcp/providers/`) **and** its platform key is stored in `open` sharing mode with no named grantee (`oto_mcp/access/platform_grant.py`). The second condition is database state, not code: read it per connector as `open_tier` on `GET /api/admin/connectors/{provider}/platform-access`.
+
+| connector | default daily cap, per user |
+|---|---|
+| `apollo` | 20 |
+| `hunter` | 5 |
+| `kaspr` | 5 |
+| `reddit` | 100 |
+| `serper` | 200 |
+| `serpapi` | 200 |
+| `searchapi` | 200 |
+| `tavily` | 100 |
+| `sirene` | no cap |
+| `unipile` (hosted messaging, and the channels that borrow its key) | no cap, but every use of the platform key requires the organization's paid option `unipile` |
+
+The cap counts per user and per key (`usage_today`). It is the key's own `rate_limit` when one is stored, otherwise `OTO_MCP_QUOTA_<PROVIDER>_DAILY`, otherwise the registry default above; an organization holding the declared right `platform_unmetered` has no cap (`oto_mcp/access/resolve.py`, `_win_quota`). A paid option (`unipile`) is a live declared right of the organization (`org_entitlements`, ADR 0070 §7), re-read on **every** use of the platform key (`quotas.exiger_option_payante`), not only when an account is connected; a right granted to a single person no longer opens it. **Installing a connector is not a gate**: it is a display filter, and `oto_call` reaches a connector that is exposed but not installed. For connectors moved to the grant chain (`grants_chain.CHAIN_CONNECTORS`), an account whose grant was revoked is refused, with no fall-back to the free tier. The table is held to the registry by `tests/test_securite_palier_gratuit.py`.
 
 **Shared projects do not lend the owner's keys** (since 2026-09-23, oto-backend#480). Opening a project makes its owning organization the call's context. Someone the project is shared with — a person, a team or a whole organization, the same rule for all three — who is **not a member** of that organization works with **their own keys**: the organization's shared keys, its platform allowances and its plan are not reachable (`oto_mcp/access/heritage.py`). The owner's keys are lent only if the sharer declares it on the share (`credentials="inherit"`), only if the sharer is a member of that organization, re-checked on every call, and revocable. Before this date the organization rung had no membership check, so a non-member recipient acting inside the project resolved the organization's keys.
 
