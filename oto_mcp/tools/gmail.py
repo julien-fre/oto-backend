@@ -31,7 +31,7 @@ import asyncio
 import os
 import shutil
 import tempfile
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -159,6 +159,8 @@ def register(mcp: FastMCP) -> None:
         filename: Optional[str] = None,
         index: int = 0,
         max_results: int = 20,
+        sheet: Optional[Union[int, str]] = None,
+        max_rows: Optional[int] = None,
         account: Optional[str] = None,
     ) -> dict:
         """A message in the user's mailbox — search, read, fetch an attachment,
@@ -178,6 +180,13 @@ def register(mcp: FastMCP) -> None:
           - **binary or large** (PDF, image, big file) → uploaded to temporary
             storage and returned as a short-lived signed URL: `{encoding: "url",
             url, expires_in}` (seconds). Fetch the URL to get the bytes.
+          - **spreadsheet (.xlsx)** → returned INLINE as CSV, one section per
+            sheet: `{encoding: "text", format: "csv", content, sheets,
+            sheet_names, truncated}`. Each section starts with `# sheet=<index>
+            name="…" rows_total=… rows_rendered=… truncated=…` then the CSV rows
+            (computed values, not formulas; dates ISO 8601). All sheets by
+            default, `max_rows` rows each (default 200, max 5000), size-capped:
+            if `truncated`, ask one sheet with `sheet` and/or raise `max_rows`.
           Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
         - **"drafts"**: list the user's Gmail drafts. Returns
           {drafts: [{id, message_id, to, subject, date, snippet}], count}.
@@ -199,12 +208,19 @@ def register(mcp: FastMCP) -> None:
             index: op="attachment" — 0-based tiebreaker if several attachments
                 share that name (e.g. inline images); default 0 = the first one.
             max_results: op="search"/"drafts" — max items to return (default 20).
+            sheet: op="attachment" of an .xlsx — the sheet to read, by name or
+                0-based index (see `sheet_names`). Omit for all sheets.
+            max_rows: op="attachment" of an .xlsx — rows per sheet (default 200,
+                max 5000).
             account: email of the Google account to use (default if omitted).
         """
         # Refus AVANT toute résolution de credential : une op inconnue n'atteint
         # jamais le client — donc jamais, par un chemin dérivé, une écriture.
         if op not in _MESSAGE_OPS:
             raise _bad(_MESSAGE_OPS_ERROR)
+        if (sheet is not None or max_rows is not None) and op != "attachment":
+            raise _bad(f"`sheet`/`max_rows` ne valent que pour op='attachment' d'un "
+                       f"tableur .xlsx (reçu op='{op}').")
         client = await _client_for_user_async(account)
 
         # ---- lectures --------------------------------------------------------
@@ -229,8 +245,8 @@ def register(mcp: FastMCP) -> None:
             try:
                 return await asyncio.to_thread(
                     file_content.render_for_agent, data, att_filename, mime,
-                    sub=sub, prefix="gmail-attachments")
-            except file_content.MediaUnavailable as e:
+                    sub=sub, prefix="gmail-attachments", sheet=sheet, max_rows=max_rows)
+            except (file_content.MediaUnavailable, file_content.SpreadsheetError) as e:
                 raise _bad(str(e))
 
         if op == "drafts":

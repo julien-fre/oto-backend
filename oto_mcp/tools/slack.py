@@ -15,7 +15,7 @@ otomata-tech/otomata-private#7.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Union
 
 from fastmcp import FastMCP
 
@@ -402,7 +402,8 @@ def register(mcp: FastMCP) -> None:
         return {"channel": info, "joined": True, "already_member": False}
 
     @mcp.tool()
-    def slack_download_file(file_id: str) -> dict:
+    def slack_download_file(file_id: str, sheet: Optional[Union[int, str]] = None,
+                            max_rows: Optional[int] = None) -> dict:
         """Download a file attached to a Slack message, by its file id.
 
         Get `file_id` from the `files[]` of a message returned by
@@ -412,11 +413,21 @@ def register(mcp: FastMCP) -> None:
         - **binary or large** (zip, image, PDF…) → uploaded to temporary storage
           and returned as a short-lived signed URL: `{encoding: "url", url,
           expires_in}` (seconds). Fetch the URL to get the bytes.
+        - **spreadsheet (.xlsx)** → returned INLINE as CSV, one section per sheet:
+          `{encoding: "text", format: "csv", content, sheets, sheet_names,
+          truncated}`. Each section starts with `# sheet=<index> name="…"
+          rows_total=… rows_rendered=… truncated=…` then the CSV rows (computed
+          values, not formulas; dates ISO 8601). All sheets by default,
+          `max_rows` rows each (default 200, max 5000), size-capped: if
+          `truncated`, ask one sheet with `sheet` and/or raise `max_rows`.
 
         Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
 
         Args:
             file_id: Slack file id (e.g. F0BG…), from a message's `files[].id`.
+            sheet: .xlsx only — the sheet to read, by name or 0-based index (see
+                `sheet_names`). Omit for all sheets.
+            max_rows: .xlsx only — rows per sheet (default 200, max 5000).
         """
         client, is_platform = _client()
         with _traduit():
@@ -425,8 +436,8 @@ def register(mcp: FastMCP) -> None:
         try:
             out = file_content.render_for_agent(
                 blob["data"], blob["filename"], blob["mimetype"],
-                sub=sub, prefix="slack-files")
-        except file_content.MediaUnavailable as e:
+                sub=sub, prefix="slack-files", sheet=sheet, max_rows=max_rows)
+        except (file_content.MediaUnavailable, file_content.SpreadsheetError) as e:
             raise ValueError(str(e))
         _record_if_platform(is_platform)
         return out

@@ -4,10 +4,16 @@ Partagé par les tools qui ramènent le contenu d'un fichier (PJ Gmail, fichier
 Drive…) : un petit contenu textuel est renvoyé INLINE (l'agent le lit), un binaire
 ou un gros fichier passe par une URL signée (`media_store.upload_private`). Le seuil
 inline évite d'injecter trop de tokens dans le contexte de l'agent.
+
+Un TABLEUR `.xlsx` est un binaire qu'on sait lire : il est rendu INLINE en CSV par
+feuille (`file_extract.render_xlsx_csv`, oto#181), borné au même seuil inline.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
+
+from .file_extract import (DEFAULT_SHEET_ROWS, NOT_A_SPREADSHEET, SpreadsheetError,
+                           is_spreadsheet, render_xlsx_csv)
 
 # Au-delà de cette taille, même un contenu textuel part en URL signée plutôt que
 # d'être injecté dans le contexte de l'agent (texte = tokens).
@@ -43,21 +49,44 @@ class MediaUnavailable(RuntimeError):
     URL signée est indisponible — l'appelant traduit en erreur de tool."""
 
 
-def render_for_agent(data: bytes, filename: str, mime: str, *, sub: str, prefix: str) -> dict:
+def render_for_agent(data: bytes, filename: str, mime: str, *, sub: str, prefix: str,
+                     sheet: Optional[Union[int, str]] = None,
+                     max_rows: Optional[int] = None) -> dict:
     """Rendu d'un contenu de fichier pour un agent MCP — **home unique** de la
     règle inline-vs-URL (ex-duplication gmail/drive/slack).
 
     - petit contenu textuel (≤ `INLINE_TEXT_CAP`) → INLINE
       `{encoding: "text", content}` (l'agent le lit) ;
     - binaire ou volumineux → dépôt privé S3 + **URL signée temporaire**
-      `{encoding: "url", url, expires_in}` (`media_store.upload_private`).
+      `{encoding: "url", url, expires_in}` (`media_store.upload_private`) ;
+    - tableur `.xlsx` → INLINE en CSV par feuille : `{encoding: "text",
+      format: "csv", content, sheets, sheet_names, truncated}`, restreint à la
+      feuille `sheet` (nom ou index) et borné à `max_rows` lignes par feuille et à
+      `INLINE_TEXT_CAP` caractères. `sheet`/`max_rows` sur un autre format lèvent
+      `SpreadsheetError` (`not_a_spreadsheet`) : jamais ignorés en silence.
 
     `prefix` = préfixe de clé S3 (`gmail-attachments`, `drive-files`,
     `slack-files`…) ; `sub` = propriétaire du dépôt. **Appel BLOQUANT** (I/O S3) :
     invoquer depuis un handler sync (threadpool) ou via `asyncio.to_thread`.
-    Lève `MediaUnavailable` si le stockage est absent (S3 non configuré).
+    Lève `MediaUnavailable` si le stockage est absent (S3 non configuré), et
+    `SpreadsheetError` (statut nommé) sur un tableur trop gros, forgé ou illisible.
     """
     out = {"filename": filename, "mimeType": mime, "size": len(data)}
+    if is_spreadsheet(filename, mime):
+        r = render_xlsx_csv(data, sheet=sheet,
+                            max_rows=DEFAULT_SHEET_ROWS if max_rows is None else max_rows,
+                            max_chars=INLINE_TEXT_CAP)
+        out.update(encoding="text", format="csv", content=r.text,
+                   sheets=[{"index": s.index, "name": s.name, "rows_total": s.rows_total,
+                            "rows_rendered": s.rows_rendered, "truncated": s.truncated}
+                           for s in r.sheets],
+                   sheet_names=list(r.sheet_names), truncated=r.truncated)
+        return out
+    if sheet is not None or max_rows is not None:
+        raise SpreadsheetError(
+            NOT_A_SPREADSHEET,
+            f"`sheet`/`max_rows` ne valent que pour un tableur .xlsx — « {filename} » "
+            f"({mime or 'type inconnu'}) n'en est pas un : relance sans ces paramètres.")
     text = as_text(data, mime)
     if text is not None and len(data) <= INLINE_TEXT_CAP:
         out.update(encoding="text", content=text)

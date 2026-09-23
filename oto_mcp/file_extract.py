@@ -281,31 +281,243 @@ def _extract_docx(data: bytes) -> Extraction:
                       detail=f"tronqué à {MAX_TEXT_CHARS} caractères" if tronque else "")
 
 
-@_register("xlsx")
-def _extract_xlsx(data: bytes) -> Extraction:
+# ── Tableurs : UNE lecture, deux formes (oto#181) ─────────────────────────────
+#
+# Un `.xlsx` sert deux lecteurs : l'AGENT, qui le reçoit par Drive, par mail ou par
+# Slack (`file_content.render_for_agent`), et l'INDEX de recherche des fichiers de
+# projet (`extract`, appelé par le worker). Ils partagent tout ce qui LIT — gardes
+# zip, ouverture en valeurs calculées, formatage d'une cellule, lignes vides de fin —
+# et ne diffèrent que par la forme rendue : du CSV par feuille pour l'agent, une
+# cellule par ligne pour l'index.
+
+# Borne de lignes PAR FEUILLE rendue à l'agent : le défaut, puis le plafond de ce
+# qu'il peut demander. Le défaut vise un aperçu lisible (quelques dizaines de milliers
+# de caractères pour un export ordinaire) ; le plafond reste sous la borne de
+# caractères de l'appelant, qui coupe de toute façon à la ligne.
+DEFAULT_SHEET_ROWS = 200
+MAX_SHEET_ROWS = 5_000
+
+SHEET_NOT_FOUND = "sheet_not_found"
+INVALID_ARGUMENT = "invalid_argument"
+NOT_A_SPREADSHEET = "not_a_spreadsheet"
+
+
+class SpreadsheetError(ValueError):
+    """Un tableur qu'on ne rend PAS, avec sa raison nommée — jamais un rendu vide.
+
+    `status` reprend les statuts du module (`too_large`, `rejected_dtd`, `failed`)
+    ou nomme un refus d'argument (`sheet_not_found`, `invalid_argument`,
+    `not_a_spreadsheet`). Le message est destiné à l'agent : il dit quoi faire."""
+
+    def __init__(self, status: str, detail: str):
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+def _open_workbook(data: bytes):
+    """Le classeur ouvert en VALEURS (`data_only`) et en flux (`read_only`), gardes
+    zip passées — ou `SpreadsheetError` nommée.
+
+    `data_only` : la valeur calculée qu'Excel a enregistrée, jamais le texte de la
+    formule. `read_only` : un export de 50 000 lignes ne se charge pas en entier."""
     from openpyxl import load_workbook
 
     refus = _zip_guards(data)
     if refus is not None:
-        return refus
+        raise SpreadsheetError(refus.status, f"tableur refusé ({refus.status}) : {refus.detail}")
     try:
-        # `read_only` + `data_only` : on veut les VALEURS, pas les formules, et sans
-        # charger le classeur entier en mémoire (un export de 50 000 lignes existe).
-        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        return load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    # noqa: SILENT — re-levée nommée (type d'exception, jamais le contenu du fichier)
+    except Exception as e:
+        raise SpreadsheetError(
+            FAILED, f"tableur illisible ({type(e).__name__}) : fichier corrompu, "
+                    f"chiffré ou pas un vrai .xlsx") from None
 
+
+def _cell_text(v) -> str:
+    """Une cellule en texte, comme l'export CSV d'un tableur : dates en ISO 8601
+    (la date seule quand l'heure est minuit — c'est ainsi qu'Excel stocke une date),
+    booléens TRUE/FALSE, nombre entier sans `.0`."""
+    import datetime as _dt
+
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, _dt.datetime):
+        if v.time() == _dt.time(0, 0):
+            return v.date().isoformat()
+        return v.isoformat()
+    if isinstance(v, (_dt.date, _dt.time)):
+        return v.isoformat()
+    if isinstance(v, float):
+        if v.is_integer() and abs(v) < 1e15:
+            return str(int(v))
+        return repr(v)
+    return str(v)
+
+
+def _sheet_rows(ws):
+    """Les lignes d'une feuille, cellules en texte, colonnes vides de fin retirées et
+    lignes vides de FIN omises (une ligne vide au milieu reste : elle sépare souvent
+    deux blocs). `read_only` ne connaît pas la vraie étendue d'une feuille — un format
+    posé sur la ligne 1 048 576 suffit à l'étirer —, d'où ce rognage."""
+    vides = 0
+    for row in ws.iter_rows(values_only=True):
+        cells = [_cell_text(v) for v in row]
+        while cells and cells[-1] == "":
+            cells.pop()
+        if not cells:
+            vides += 1
+            continue
+        for _ in range(vides):
+            yield []
+        vides = 0
+        yield cells
+
+
+@dataclass(frozen=True)
+class SheetRender:
+    """L'en-tête d'une feuille rendue : ce que l'agent doit savoir pour juger s'il a
+    TOUT vu (`truncated`) et comment demander la suite."""
+    index: int
+    name: str
+    rows_total: int
+    rows_rendered: int
+    truncated: bool
+
+    def header(self) -> str:
+        import json
+        return (f"# sheet={self.index} name={json.dumps(self.name, ensure_ascii=False)} "
+                f"rows_total={self.rows_total} rows_rendered={self.rows_rendered} "
+                f"truncated={str(self.truncated).lower()}")
+
+
+@dataclass(frozen=True)
+class SpreadsheetRender:
+    text: str
+    sheets: tuple            # les feuilles RENDUES (SheetRender)
+    sheet_names: tuple       # toutes les feuilles du classeur, par index
+    truncated: bool          # une feuille rendue incomplète, ou des feuilles omises
+
+
+def _resolve_sheet(names: list, sheet) -> int:
+    """`sheet` = nom exact, ou index (0 = première feuille). Le NOM prime : une feuille
+    peut s'appeler « 2024 »."""
+    if isinstance(sheet, str) and sheet in names:
+        return names.index(sheet)
+    idx = None
+    if isinstance(sheet, int) and not isinstance(sheet, bool):
+        idx = sheet
+    elif isinstance(sheet, str) and sheet.strip().isdigit():
+        idx = int(sheet.strip())
+    if idx is not None and 0 <= idx < len(names):
+        return idx
+    raise SpreadsheetError(
+        SHEET_NOT_FOUND,
+        f"feuille « {sheet} » introuvable — feuilles du classeur (index: nom) : "
+        + ", ".join(f'{i}: "{n}"' for i, n in enumerate(names)))
+
+
+def render_xlsx_csv(data: bytes, *, sheet=None, max_rows: int = DEFAULT_SHEET_ROWS,
+                    max_chars: int = MAX_TEXT_CHARS) -> SpreadsheetRender:
+    """Un `.xlsx` en CSV, une section par feuille — le rendu d'un tableur pour l'agent.
+
+    Chaque section commence par une ligne d'en-tête `# sheet=<index> name="…"
+    rows_total=… rows_rendered=… truncated=true|false`, suivie des lignes CSV ; les
+    sections sont séparées par une ligne vide. `sheet` (nom ou index) restreint à une
+    feuille ; sinon toutes sont rendues, dans l'ordre du classeur.
+
+    Deux bornes, toutes deux DITES dans l'en-tête : `max_rows` lignes par feuille, et
+    `max_chars` au total, en-têtes compris, coupé à la ligne (jamais une ligne CSV à
+    moitié ; seul l'en-tête de la feuille en cours peut déborder). Les feuilles que le
+    budget n'atteint plus ne sont pas rendues : une dernière ligne le dit, elles restent
+    dans `sheet_names` et l'agent les demande par `sheet`. `rows_total` d'une feuille
+    rendue est toujours compté en entier.
+
+    Lève `SpreadsheetError` (statut nommé) sur un fichier trop gros, forgé ou illisible,
+    une feuille inconnue ou une borne hors plage — jamais un rendu vide."""
+    import csv
+
+    if isinstance(max_rows, bool) or not isinstance(max_rows, int) \
+            or not 1 <= max_rows <= MAX_SHEET_ROWS:
+        raise SpreadsheetError(
+            INVALID_ARGUMENT, f"max_rows doit être un entier entre 1 et {MAX_SHEET_ROWS} "
+                              f"(reçu : {max_rows!r}).")
+    wb = _open_workbook(data)
+    try:
+        worksheets = list(wb.worksheets)
+        names = [str(ws.title) for ws in worksheets]
+        cibles = range(len(worksheets)) if sheet is None else [_resolve_sheet(names, sheet)]
+        budget = max_chars
+        sections, rendues = [], []
+        omises = 0
+        for i in cibles:
+            if budget <= 0:
+                omises += 1
+                continue
+            buf = io.StringIO()
+            w = csv.writer(buf, lineterminator="\n")
+            total = rendu = 0
+            for cells in _sheet_rows(worksheets[i]):
+                total += 1
+                if rendu >= max_rows or budget <= 0:
+                    continue
+                pos = buf.tell()
+                w.writerow(cells)
+                taille = buf.tell() - pos
+                if taille > budget:
+                    buf.seek(pos)
+                    buf.truncate()
+                    budget = 0
+                    continue
+                budget -= taille
+                rendu += 1
+            s = SheetRender(i, names[i], total, rendu, rendu < total)
+            rendues.append(s)
+            sections.append((s.header() + "\n" + buf.getvalue()).rstrip("\n"))
+            budget -= len(s.header()) + 2          # l'en-tête compte aussi
+        if omises:
+            # Budget épuisé : les feuilles suivantes ne sont PAS rendues, et c'est dit
+            # — une ligne, pas un en-tête par feuille (un classeur peut en porter des
+            # milliers, la borne ne tiendrait plus).
+            sections.append(f"# {omises} more sheet(s) not rendered (size limit) — "
+                            f"ask one with sheet=<index or name>, see sheet_names")
+    finally:
+        wb.close()
+    return SpreadsheetRender("\n\n".join(sections), tuple(rendues), tuple(names),
+                             bool(omises) or any(s.truncated for s in rendues))
+
+
+@_register("xlsx")
+def _extract_xlsx(data: bytes) -> Extraction:
+    """Le texte d'un tableur pour l'INDEX de recherche : le nom de chaque feuille puis
+    une cellule par ligne.
+
+    ⚠️ Pas le CSV rendu à l'agent (`render_xlsx_csv`), délibérément : le texte indexé
+    alimente la recherche plein texte et ses extraits surlignés, et une cellule par
+    ligne est la forme dont le classement a été mesuré. Passer au CSV changerait les
+    lexèmes (cellules jointes par des virgules) pour les SEULS fichiers extraits après
+    coup — l'index mêlerait deux formes. La lecture, elle, est partagée
+    (`_open_workbook`, `_sheet_rows`) : valeurs calculées, dates en ISO."""
+    try:
+        wb = _open_workbook(data)
+    except SpreadsheetError as e:
+        return Extraction(e.status, detail=e.detail)
+    try:
         def _cellules():
             for ws in wb.worksheets:
                 yield str(ws.title)
-                for row in ws.iter_rows(values_only=True):
-                    for v in row:
-                        if v is not None:
-                            yield str(v)
+                for cells in _sheet_rows(ws):
+                    yield from cells
 
         texte, tronque = _join_bounded(_cellules())
-        wb.close()
     # noqa: SILENT — verdict FAILED + type d'exception rendus à l'appelant
     except Exception as e:
         return Extraction(FAILED, detail=type(e).__name__)
+    finally:
+        wb.close()
     return Extraction(OK, texte,
                       detail=f"tronqué à {MAX_TEXT_CHARS} caractères" if tronque else "")
 
@@ -317,7 +529,8 @@ def supported_extensions() -> set:
 
 
 _MIME_EXT = {"application/pdf": "pdf", "text/plain": "txt", "text/markdown": "md",
-             "text/csv": "csv", "application/json": "json"}
+             "text/csv": "csv", "application/json": "json",
+             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx"}
 
 
 def _extension_of(filename: str, mime: str = "") -> str:
@@ -337,6 +550,12 @@ def _extension_of(filename: str, mime: str = "") -> str:
         return ext                      # présente : elle décide, supportée ou non
     # Sans extension (un upload d'API, un `blob`), le mime est tout ce qu'on a.
     return _MIME_EXT.get((mime or "").split(";")[0].strip().lower(), "")
+
+
+def is_spreadsheet(filename: str, mime: str = "") -> bool:
+    """Ce fichier se rend-il comme un tableur (`render_xlsx_csv`) ? Même routage que
+    l'extraction : l'extension fait autorité, le mime comble son absence."""
+    return _extension_of(filename, mime) == "xlsx"
 
 
 def extract(data: bytes, filename: str, mime: str = "") -> Extraction:

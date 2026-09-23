@@ -11,6 +11,7 @@ agis sur ton Google Workspace : mails, calendrier, tâches, feuilles de calcul, 
 - « qu'est-ce que j'ai à l'agenda demain ? crée un créneau de relance vendredi 10h »
 - « ajoute une tâche `relancer X` pour lundi », « lis l'onglet `leads` de cette sheet »
 - « partage ce dossier Drive en lecture à jane@… »
+- « lis le tableur `.xlsx` joint à ce mail, onglet `devis` » — un `.xlsx` (Drive `op=download`, pièce jointe `op=attachment`) revient en CSV par feuille, borné ; `sheet` choisit l'onglet, `max_rows` la borne de lignes
 
 ## note — l'app oto n'est pas publiée chez Google (décision du 2026-09-05)
 

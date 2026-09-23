@@ -31,7 +31,7 @@ l'argument — jamais de repli silencieux.
 from __future__ import annotations
 
 import asyncio
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -112,6 +112,8 @@ def register(mcp: FastMCP) -> None:
         parent_folder_id: Optional[str] = None,
         new_name: Optional[str] = None,
         move_to_folder: Optional[str] = None,
+        sheet: Optional[Union[int, str]] = None,
+        max_rows: Optional[int] = None,
         account: Optional[str] = None,
     ) -> dict:
         """A file (or folder) in the user's Drive — list, read, organise, delete.
@@ -131,6 +133,13 @@ def register(mcp: FastMCP) -> None:
           - **binary or large** (PDF, image, big file) → uploaded to temporary
             storage and returned as a short-lived signed URL: `{encoding: "url",
             url, expires_in}` (seconds). Fetch the URL to get the bytes.
+          - **spreadsheet (.xlsx)** → returned INLINE as CSV, one section per
+            sheet: `{encoding: "text", format: "csv", content, sheets,
+            sheet_names, truncated}`. Each section starts with `# sheet=<index>
+            name="…" rows_total=… rows_rendered=… truncated=…` then the CSV rows
+            (computed values, not formulas; dates ISO 8601). All sheets by
+            default, `max_rows` rows each (default 200, max 5000), size-capped:
+            if `truncated`, ask one sheet with `sheet` and/or raise `max_rows`.
           For a Google-native doc (Docs/Sheets/Slides), this fails — read those
           with op="export" instead (they are converted, not downloaded). Returns
           {filename, mimeType, size, encoding, content|url, expires_in?}.
@@ -173,8 +182,15 @@ def register(mcp: FastMCP) -> None:
             parent_folder_id: op="create_folder" — create it inside this folder.
             new_name: op="update" — new name (rename).
             move_to_folder: op="update" — destination folder id (move).
+            sheet: op="download" of an .xlsx — the sheet to read, by name or
+                0-based index (see `sheet_names`). Omit for all sheets.
+            max_rows: op="download" of an .xlsx — rows per sheet (default 200,
+                max 5000).
             account: email of the Google account to use (default if omitted).
         """
+        if (sheet is not None or max_rows is not None) and op != "download":
+            raise _bad(f"`sheet`/`max_rows` ne valent que pour op='download' d'un "
+                       f"tableur .xlsx (reçu op='{op}').")
         client = await _client_for_user_async(account)
 
         if op == "list":
@@ -197,8 +213,8 @@ def register(mcp: FastMCP) -> None:
             try:
                 return await asyncio.to_thread(
                     file_content.render_for_agent, data, filename, mime,
-                    sub=sub, prefix="drive-files")
-            except file_content.MediaUnavailable as e:
+                    sub=sub, prefix="drive-files", sheet=sheet, max_rows=max_rows)
+            except (file_content.MediaUnavailable, file_content.SpreadsheetError) as e:
                 raise _bad(str(e))
 
         if op == "export":

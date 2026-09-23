@@ -67,7 +67,7 @@ def client(monkeypatch):
     monkeypatch.setattr(D, "_client_for_user", lambda account=None: inst)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
     monkeypatch.setattr(D.file_content, "render_for_agent",
-                        lambda data, filename, mime, *, sub, prefix: {
+                        lambda data, filename, mime, *, sub, prefix, **_: {
                             "filename": filename, "mimeType": mime, "prefix": prefix,
                             "encoding": "text", "content": "…"})
     inst.get_file_bytes.return_value = {"data": b"hello", "filename": "notes.txt",
