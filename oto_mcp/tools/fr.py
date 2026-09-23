@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
@@ -73,6 +73,30 @@ def _split_legal_form(query: Optional[str]) -> Optional[tuple[str, str]]:
         return None
     form = parts[0].upper().strip(".")
     return (form, parts[1].strip()) if form in _LEGAL_FORM_CODES and parts[1].strip() else None
+
+
+# Les valeurs RÉELLES du champ BODACC `familleavis` (relevé de la lib france-opendata,
+# `bodacc.py`). Aucun étage en aval ne valide la valeur : elle part telle quelle dans la
+# requête, et une famille inconnue y rend ZÉRO annonce — lu par l'agent comme « aucune de
+# ces sociétés n'a eu de modification » (oto#206, mesuré sur « Modifications diverses »,
+# le LIBELLÉ que la sortie sert dans `famille`, recopié en entrée). Déclarées au schéma
+# ET revérifiées au corps : un appel interne ne passe pas par la validation du schéma.
+FamilleBodacc = Literal["collective", "conciliation", "creation", "divers", "dpc",
+                        "immatriculation", "modification", "radiation",
+                        "retablissement_professionnel", "vente"]
+_FAMILLES_BODACC = get_args(FamilleBodacc)
+
+
+def _famille_bodacc(famille: Optional[str]) -> Optional[str]:
+    """La famille BODACC si elle est admise, `None` pour toutes ; sinon un refus qui
+    NOMME les valeurs admises — jamais un zéro silencieux."""
+    if famille is None or famille in _FAMILLES_BODACC:
+        return famille
+    raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+        f"famille BODACC inconnue : {famille!r}. Valeurs admises : "
+        f"{', '.join(_FAMILLES_BODACC)} (ou omise pour toutes). La sortie donne un "
+        "libellé (ex. « Modifications diverses ») : l'entrée prend le code "
+        "(`modification`).")))
 
 
 def register(mcp: FastMCP) -> None:
@@ -641,7 +665,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def fr_events(
         siren: str,
-        famille: Optional[str] = None,
+        famille: Optional[FamilleBodacc] = None,
         limit: int = 20,
     ) -> dict:
         """List BODACC legal events for a company: creations, modifications,
@@ -649,16 +673,17 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             siren: SIREN number (9 digits).
-            famille: Filter by type — creation, modification, radiation, vente,
-                procedure_collective, dpc (dépôt des comptes).
+            famille: Filter by BODACC family code (the schema lists them, e.g.
+                collective, modification, vente, dpc = dépôt des comptes). Output
+                `familleavis_lib` is a label, not an input. None = all.
             limit: Max results (default 20).
         """
-        return bodacc.search_by_siren(siren, famille=famille, limit=limit)
+        return bodacc.search_by_siren(siren, famille=_famille_bodacc(famille), limit=limit)
 
     @mcp.tool()
     def fr_events_batch(
         sirens: list[str],
-        famille: Optional[str] = "collective",
+        famille: Optional[FamilleBodacc] = "collective",
     ) -> dict:
         """Check BODACC legal events for MANY companies at once (e.g. screen 700
         SIRENs for collective proceedings) — batched into a few upstream requests.
@@ -672,10 +697,12 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             sirens: list of SIRENs (9 digits).
-            famille: BODACC family filter. Default "collective" (procédures
-                collectives). Pass None for all families (creations, sales…).
+            famille: BODACC family CODE (the schema lists them). Default
+                "collective" (procédures collectives); None = all families. The
+                output `famille` is a LABEL ("Modifications diverses"), not an
+                input: pass the code ("modification"). Unknown values are refused.
         """
-        return bodacc.search_batch(sirens, famille=famille)
+        return bodacc.search_batch(sirens, famille=_famille_bodacc(famille))
 
     # --- Appels d'offres (BOAMP, open data) ---
 
