@@ -1065,9 +1065,16 @@ Ce qui le remplace, en trois pièces (`datastore/forcage.py`) :
   appel et hors de toute transaction** — l'évaluer sous le `FOR UPDATE` du verrou de
   ligne prendrait une seconde connexion du pool en tenant un verrou. Zéro SQL de plus sur
   le chemin nominal : sans demande, ou sans colonne `readonly` déclarée, rien n'est lu.
-- **Le refus nomme le geste**, dans les deux sens : sans le paramètre, il dit comment
-  forcer et à qui c'est ouvert ; avec le paramètre mais sans le palier, il dit qui peut,
-  et ne renvoie pas l'appelant au paramètre qu'il a déjà passé.
+- **Le refus nomme le geste À QUI PEUT S'EN SERVIR** : sans le paramètre, il dit comment
+  forcer et à qui c'est ouvert — c'est ce qui détourne du schéma. ⚠️ **Amendement du
+  13/09/2026 (oto#234) : à qui ne tient PAS le palier, il ne nomme plus rien du
+  forçage.** Un agent hébergé avait lu `readonly_override` dans son refus et l'avait
+  rejoué au coup suivant. Le nommer à qui ne peut pas s'en servir n'ouvre aucune
+  écriture — ça lui apprend qu'un levier existe. Ce refus-là dit donc que son accès ne
+  permet pas de passer outre (sans nommer ni le paramètre ni le palier), où va la
+  divergence (`<colonne>.comment`), et à qui demander la correction : qui possède le
+  tableau. Les **descriptions servies** (MCP, REST), elles, ne bougent pas : elles
+  s'adressent à tout le monde, et une capacité qu'aucun texte n'annonce n'existe pas.
 - **La trace est au journal des appels**, clé `readonly_forced` (ligne, colonne, valeur
   remplacée), à côté du `sub` que le journal stampe déjà — face MCP par
   `session_org.note_call_trace` + l'allowlist `server._TRACED_ARGS`, face REST par

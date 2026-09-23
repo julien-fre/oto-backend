@@ -21,9 +21,14 @@ Trois choses le tiennent, et il en faut trois :
   (`ownership.can_govern` : gérant, admin d'org, admin plateforme). L'un des deux
   suffit. Un accès en écriture PARTAGÉ (`data_share`) ne suffit PAS : un verrou que
   quiconque peut écrire peut lever ne protège de personne ;
-- **le refus qui nomme le geste** (`arbitrer`) — qui peut forcer, et comment. Un refus
-  qui dit seulement « colonne verrouillée » renvoie l'appelant chercher une manœuvre :
-  c'est exactement ce qui a produit le contournement ci-dessus ;
+- **le refus qui nomme le geste À QUI PEUT S'EN SERVIR** (`arbitrer`) — comment forcer,
+  et à qui c'est ouvert. Un refus qui dit seulement « colonne verrouillée » renvoie
+  l'appelant chercher une manœuvre : c'est exactement ce qui a produit le contournement
+  ci-dessus. ⚠️ **À qui ne tient PAS le palier, le refus ne nomme plus rien** (oto#234,
+  13/09/2026) : un agent avait lu `readonly_override` dans son refus et l'avait rejoué
+  au coup suivant. Nommer un levier à qui n'y a pas droit ne fait pas passer l'écriture
+  — ça apprend qu'il existe. Cette branche-là dit où va la divergence et à qui demander,
+  rien de plus ;
 - **la trace** — chaque substitution est relevée (ligne, colonne, valeur remplacée) et
   versée aux arguments du journal des appels (`server._TRACED_ARGS`), à côté du `sub`
   que le journal stampe déjà. ⚠️ Tranché le 02/09/2026 **en connaissance de cause** :
@@ -53,7 +58,9 @@ PARAMETRE = "readonly_override"
 MAX_RELEVE = 25
 MAX_VALEUR = 120
 
-# La phrase du palier, citée par les deux REFUS.
+# La phrase du palier, citée par LE refus qui nomme le geste — celui servi à qui peut
+# s'en servir. Depuis oto#234 (13/09/2026) la branche « palier non tenu » ne la cite
+# plus : elle ne nomme ni le paramètre, ni à qui il est ouvert.
 #
 # ⚠️ **Ce commentaire disait « une seule fois : […] la description servie aussi ». La
 # seconde moitié était fausse** (mesuré le 07/09/2026) : `PALIER` n'a AUCUNE référence
@@ -200,14 +207,18 @@ def arbitrer(forcage: Optional[Forcage], colonne: str,
             f"\"{colonne}\"]`) si tu voulais la remplacer ; {ou_va} sinon. "
             f"Ce que tu as nommé a été forcé normalement.")
     if forcage is not None and forcage.demande:
-        # Le palier n'est pas tenu. Ne pas répéter « passe le paramètre » : il est
-        # passé, et le redire enverrait chercher une manœuvre pour l'obtenir.
+        # Le palier n'est pas tenu : ce refus-ci NE NOMME PAS le paramètre (oto#234,
+        # tranché le 13/09/2026). Le nommer à qui ne peut pas s'en servir ne lui
+        # ouvre rien — ça lui apprend seulement qu'un levier existe, et l'envoie
+        # chercher comment l'obtenir : la manœuvre qu'on ferme. Il ne lui reste donc
+        # que ce qu'il PEUT faire — la couche `comment`, ou demander la correction.
+        # ⚠️ La branche par défaut, elle, continue de le nommer : son lecteur, lui,
+        # peut s'en servir, et c'est ce qui le détourne du schéma (#658, #668).
         return (
             f"`{colonne}` est une colonne du fichier source, non modifiable "
-            f"(`readonly`) — rien n'a été écrit, et `{PARAMETRE}` n'y change rien "
-            f"ici : forcer est réservé à {PALIER}, jamais à un simple accès en "
-            f"écriture partagé — sinon le verrou ne protégerait de personne. "
-            f"{ou_va}, ou demande la correction à qui possède le tableau.")
+            f"(`readonly`) — rien n'a été écrit, et ton accès sur ce tableau ne "
+            f"permet pas de passer outre : réessayer ne changera rien. "
+            f"{ou_va}, ou demande la correction à qui POSSÈDE le tableau.")
     return (
         f"`{colonne}` est une colonne du fichier source, non modifiable "
         f"(`readonly`) — rien n'a été écrit. {ou_va} ; la valeur reste celle du "

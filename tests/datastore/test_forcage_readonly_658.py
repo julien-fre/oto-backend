@@ -18,7 +18,9 @@ Ce que ce fichier éprouve, et qui doit ROUGIR si l'une des trois pièces tombe 
    il PEUT écrire (la prémisse est affirmée), et il ne force pas ;
 2. **le geste** — sans le paramètre, l'écriture reste refusée pour tout le monde, y
    compris le propriétaire ;
-3. **le refus qui nomme le geste** — les deux variantes disent qui peut forcer ;
+3. **le refus** — à qui PEUT forcer il nomme le geste et le palier ; à qui ne le peut
+   pas (palier non tenu) il ne nomme plus rien du forçage, seulement la sortie
+   praticable (oto#234, 13/09/2026) ;
 4. **la trace** — ce qui atterrit vraiment dans le journal, sur les DEUX faces.
 """
 from __future__ import annotations
@@ -204,7 +206,7 @@ def test_un_TIERS_qui_force_est_REFUSE_et_rien_n_est_ecrit(banc):
         store("partenaire").update_row("viviers", "r1", {"adresse": "2 rue B"},
                                        readonly_override=True)
     assert etat["maj"] == [] and etat["lignes"]["r1"]["adresse"] == "1 rue A"
-    assert "readonly_override" in str(exc.value)
+    assert "`adresse`" in str(exc.value) and "readonly" in str(exc.value)
 
 
 @pytest.mark.parametrize("sub", ["membre", "org_admin", "gerant", "partenaire"])
@@ -309,19 +311,27 @@ def test_le_refus_SANS_parametre_dit_comment_forcer_et_a_qui_c_est_ouvert(banc):
     assert exc.value.details == {"expected_column": "adresse.comment"}
 
 
-def test_le_refus_du_TIERS_dit_qui_peut_et_ne_le_renvoie_pas_au_parametre(banc):
-    """Il l'a déjà passé. Lui redire « passe-le » l'enverrait chercher une manœuvre
-    pour l'obtenir — le défaut qu'on ferme. Le refus nomme qui peut, et la sortie
-    praticable pour lui : la couche `comment`, ou demander au propriétaire."""
+def test_le_refus_du_TIERS_NE_NOMME_PLUS_le_parametre(banc):
+    """oto#234 — **la moitié qui a changé le 13/09/2026.** Ce refus-ci nommait le
+    paramètre pour dire qu'il n'y changeait rien ; un agent hébergé l'y a lu et l'a
+    rejoué au coup suivant. À qui ne tient pas le palier, le nommer n'ouvre aucune
+    écriture — ça lui apprend qu'un levier existe, et l'envoie chercher comment
+    l'obtenir : exactement la manœuvre que #658 ferme. Il ne reste donc que ce que
+    cet appelant PEUT faire : la couche `comment`, ou demander la correction.
+
+    ⚠️ Le symétrique est le test au-dessus : qui PEUT forcer, lui, lit le paramètre.
+    Les deux assertions se tiennent ensemble — relâcher celle-ci rouvre le fait
+    d'oto#234, relâcher l'autre rouvre #668."""
     store, _ = banc
     with pytest.raises(RowValidationError) as exc:
         store("partenaire").update_row("viviers", "r1", {"adresse": "2 rue B"},
                                        readonly_override=True)
     msg = str(exc.value)
-    assert "readonly_override" in msg and "readonly_override=true" not in msg
-    assert "PROPRIÉTAIRE" in msg and "GOUVERNE" in msg
-    assert "partagé" in msg                             # pourquoi lui, non
-    assert "`adresse.comment`" in msg
+    assert fcg.PARAMETRE not in msg                     # le geste, PAS nommé
+    assert "réservé à" not in msg                       # ni à qui il serait ouvert
+    assert "`adresse.comment`" in msg                   # où va la divergence
+    assert "POSSÈDE le tableau" in msg                  # à qui demander la correction
+    assert "réessayer" in msg                           # et que rejouer ne sert à rien
 
 
 # ══ 4. La trace — ce qui atterrit VRAIMENT dans le journal ═══════════════════
