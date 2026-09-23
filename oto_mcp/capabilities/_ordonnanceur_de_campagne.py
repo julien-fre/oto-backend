@@ -50,14 +50,14 @@ def _preneur(taken_by: Optional[str], op: str) -> str:
             400, "missing_fields",
             f"`{op}` exige `taken_by` : l'identifiant de l'ordonnanceur, stable à "
             "travers son redémarrage et distinct de tout autre ordonnanceur. C'est "
-            "lui qui dit, au redémarrage, si la campagne est la sienne.")
+            "lui qui dit, au redémarrage, si l'automatisation est la sienne.")
     return preneur
 
 
 def _flotte(fleet_id: int, org_id: int) -> dict:
     actuelle = db.get_fleet(fleet_id, org_id)
     if not actuelle:
-        raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
     return actuelle
 
 
@@ -76,13 +76,13 @@ def geste(org_id: int, op: str, fleet_id: int, taken_by: Optional[str],
             # Partir quand même doublerait ses exécutions.
             raise AuthzDenied(
                 409, "held_by_other",
-                "cette campagne tourne et un AUTRE ordonnanceur la tient : ne pars "
+                "cette automatisation tourne et un AUTRE ordonnanceur la tient : ne pars "
                 "pas, deux ordonnanceurs doubleraient ses exécutions. Si celui qui la "
                 "tient est mort, arrête-la (`op=stop`) puis réarme-la (`op=launch`) : "
                 "le réarmement la libère.")
         raise AuthzDenied(
             409, "not_takeable",
-            f"ce passage est `{actuelle['status']}` — on ne prend qu'une campagne "
+            f"cette automatisation est `{actuelle['status']}` — on n'en prend qu'une "
             "`armed`, ou `running` pour la reprendre.")
 
     if op == "beat":
@@ -117,7 +117,7 @@ def geste(org_id: int, op: str, fleet_id: int, taken_by: Optional[str],
             # deux cas il doit l'APPRENDRE, pas continuer en croyant la conduire.
             raise AuthzDenied(
                 409, "not_the_holder",
-                "tu ne tiens pas cette campagne (un autre ordonnanceur la tient, ou "
+                "tu ne tiens pas cette automatisation (un autre ordonnanceur la tient, ou "
                 "elle a été réarmée depuis que tu l'as prise) : arrête de la conduire.")
         return {"fleet": f, "stop_requested": f["status"] in ("stopping", "stopped"),
                 "beat_taken": vivant}
@@ -132,11 +132,11 @@ def geste(org_id: int, op: str, fleet_id: int, taken_by: Optional[str],
         if actuelle["status"] in ("stopping", "running"):
             raise AuthzDenied(
                 409, "not_the_holder",
-                "tu ne tiens pas cette campagne : l'arrêt s'accuse par l'ordonnanceur "
+                "tu ne tiens pas cette automatisation : l'arrêt s'accuse par l'ordonnanceur "
                 "qui la conduit, ou se constate seul quand plus aucune exécution ne "
                 "tourne.")
         raise AuthzDenied(
             409, "nothing_to_acknowledge",
-            f"ce passage est `{actuelle['status']}` — il n'y a pas d'arrêt en "
+            f"cette automatisation est `{actuelle['status']}` — il n'y a pas d'arrêt en "
             "cours à accuser.")
     return {"fleet": db.get_fleet(fleet_id, org_id)}

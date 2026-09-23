@@ -67,7 +67,7 @@ def test_create_est_refuse_quand_aucun_worker_nest_jamais_venu(monkeypatch):
                tools=["data_write"])
     assert (e.value.status, e.value.code) == (400, "no_runner_armed")
     # Le message doit dire QUOI FAIRE, pas seulement que c'est refusé.
-    assert "jamais sondé" in e.value.message
+    assert "rien n'a jamais exécuté" in e.value.message
     # ⚠️ Message PARTAGÉ avec `runner.fleets#launch` depuis le 17/09/2026
     # (`_modele.exige_un_runner`, oto-runner#13) — générique sur le VERBE
     # (« ce geste »), plus « pending » qui n'appartenait qu'aux déclencheurs.

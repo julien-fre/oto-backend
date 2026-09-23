@@ -552,7 +552,7 @@ def test_sans_runner_joignable_launch_est_refuse_et_dit_ce_qui_reste(
                         json={"op": "launch", "fleet_id": fid})
         assert (r.status_code, r.json().get("error")) == (400, "no_runner_armed"), r.text
         detail = r.json().get("detail", "")
-        assert "OTO_RUNNER_ARMED" in detail
+        assert "rien n'exécute les automatisations" in detail and "worker" not in detail
         assert "s'arrête (`stop`)" in detail, "le refus nomme ce qui reste ouvert"
         f = client.post(ROUTE, headers=_h(org["membre"]),
                         json={"op": "get", "fleet_id": fid}).json()["fleet"]

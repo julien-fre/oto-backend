@@ -854,17 +854,17 @@ def _exige_flotte_servie(statut: Optional[str]) -> None:
     refuse donc de les créer, hors des états que `stop` sait arrêter.
     """
     if statut is None:
-        raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
     if statut not in db.STATUTS_QUI_SERVENT:
         raise AuthzDenied(
             409, "fleet_not_serving",
-            f"cette campagne est `{statut}` : elle n'accepte une exécution que "
+            f"cette automatisation est `{statut}` : elle n'accepte une exécution que "
             "lorsqu'elle est armée (`armed`) ou en cours (`running`) — seuls états "
             "que `stop` sait arrêter. Une exécution ajoutée maintenant tournerait "
             "hors de portée de tout arrêt. Arme-la (`op=launch`, puis `op=take` si "
             "c'est ton ordonnanceur qui la prend) et reprends l'enfilement — une "
-            "campagne `stopping` doit d'abord atteindre `stopped` —, ou déclare "
-            "une autre campagne.")
+            "automatisation `stopping` doit d'abord atteindre `stopped` —, ou "
+            "déclares-en une autre.")
 
 
 def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
@@ -1050,10 +1050,10 @@ CAPABILITIES += [
                           "`claim` avec `org_key_only` mais sans `provider` : un "
                           "worker sans clé propre doit nommer le dépôt qu'il consomme"),
             DeclaredError(404, "fleet_not_found",
-                          "`enqueue fleet_id=` désignant une flotte qui n'est pas "
+                          "`enqueue fleet_id=` désignant une automatisation qui n'est pas "
                           "celle de l'org du porteur"),
             DeclaredError(409, "fleet_not_serving",
-                          "`enqueue fleet_id=` désignant une campagne ni armée ni en "
+                          "`enqueue fleet_id=` désignant une automatisation ni armée ni en "
                           "cours (`draft`, `stopping`, `stopped`…) : l'exécution "
                           "échapperait à `stop`"),
         ),

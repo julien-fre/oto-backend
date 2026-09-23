@@ -158,6 +158,31 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
 - **workers vus** `runner_workers` — la présence d'un runner pour une org,
   inscrite à CHAQUE sondage de la file (`op=claim`, y compris à vide).
 
+### Un refus parle le lexique produit, jamais la machine (oto#222, 23/09/2026)
+
+Le front affiche le texte d'un refus **mot pour mot** (« Refusé : {reason} ») : ce
+texte est une interface, pas un message de journal. Lexique arrêté le 17/09/2026,
+appliqué aux refus de `runner.fleets`, `runner.triggers`, de l'ordonnanceur
+(`_ordonnanceur_de_campagne`), de la garde partagée `_modele` et aux refus
+`fleet_*` de `runner.jobs` — messages ET descriptions déclarées au contrat :
+
+| terme servi | ce qu'il nomme | remplace |
+|---|---|---|
+| **automatisation** | ce qu'on déclare : quoi exécuter, et quand créer une exécution | flotte, campagne, déclencheur, programmation, passage |
+| genre **horaire** / **webhook** / **file** | une exécution par échéance / par événement reçu / tant qu'il reste du travail dans sa file | agent programmé, déclencheur webhook, flotte |
+| **exécution** | une boucle agentique qui tourne | job, travail |
+| **run** | le suivi d'une procédure (`run_start`/`run_finish`) | déroulé |
+
+⚠️ **Le runner et le worker ne sont jamais nommés** dans un refus servi à
+l'utilisateur : `no_runner_armed` dit l'effet (« rien n'exécute les automatisations
+de cette org pour l'instant »), `model_not_served` dit que la famille n'est pas
+servie. Ne changent pas : les **codes** (`fleet_not_found`, `trigger_not_found`,
+`no_runner_armed`…), les statuts HTTP, les noms d'outils, de routes et de champs
+(`fleet_id`, `trigger_id`, `runner.models`) — un nom de champ cité dans un refus se
+met entre backticks. Les refus de la face worker-only de `runner.jobs` (claim,
+verbes du worker) s'adressent à la machine et gardent son nom. Garde :
+`tests/test_refus_runner_lexique_222.py`.
+
 ### Deux `workers` homonymes : un plafond déclaré, un compte constaté (23/09/2026)
 
 | champ | ce qu'il vaut |
@@ -290,8 +315,8 @@ Le **sondage** prouve la présence même à vide : c'est le seul signal qui parl
 avant le premier job. D'où `runner_workers`, écrite en tête de `claim_next_job`.
 
 **La fenêtre est asymétrique, et c'est elle qui fixe la valeur**
-(`ARME_FENETRE_S`, 15 min). Un refus à tort se répare tout seul — le message dit
-quoi faire, et reposer le déclencheur trente secondes plus tard marche. Une
+(`ARME_FENETRE_S`, 15 min). Un refus à tort se répare tout seul — reposer le
+déclencheur trente secondes plus tard marche. Une
 acceptation à tort fabrique une promesse qui ment TOUS LES JOURS jusqu'à ce que
 quelqu'un s'aperçoive que le rapport n'arrive pas. On refuse du bon côté, avec
 une fenêtre assez large pour qu'un redéploiement ne la morde pas.
@@ -1259,7 +1284,8 @@ qui n'est pas censé rien changer.
 
 ⚠️ **L'ordre des refus est un contrat** : l'état du déclencheur se lit APRÈS la
 garde « aucun runner armé », jamais avant. Le lire d'abord ferait répondre
-« déclencheur inconnu » là où le serveur répond « aucun runner » — deux
+« automatisation inconnue » là où le serveur répond « rien n'exécute les
+automatisations de cette org » — deux
 diagnostics opposés, et celui qu'on retirerait est le seul qui dit quoi faire.
 
 **La forme générale du piège**, qui vaut au-delà d'ici : *« ne pas toucher » n'est

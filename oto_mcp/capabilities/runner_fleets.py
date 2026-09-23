@@ -316,7 +316,7 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: FleetInput) -> FleetInput:
 
 def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if not ctx.org_id:
-        raise AuthzDenied(400, "org_required", "les flottes sont org-scopées")
+        raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
     inp = _noms_canoniques(ctx, inp)
     # ⚠️ Bêta = une GARDE, pas une visibilité. `session_visibility` masque
     # `oto_fleet` de la LISTE d'outils des comptes sans l'option ; mais la même
@@ -335,7 +335,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if not beta:
         raise AuthzDenied(
             403, "beta_required",
-            "les passages d'agents sont en bêta : un admin pose l'option `beta` sur "
+            "les automatisations de genre file sont en bêta : un admin pose l'option `beta` sur "
             "ton compte ou ton org (`oto_admin_set_option`)")
 
     if inp.op == "create":
@@ -346,7 +346,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if inp.status is not None:
             raise AuthzDenied(
                 400, "status_not_settable",
-                "l'état d'un passage ne se pose pas à la création — une flotte naît "
+                "l'état d'une automatisation ne se pose pas à la création — elle naît "
                 "`draft`. `status` ne sert qu'à FILTRER `list`.")
         if inp.fleet_id is not None:
             raise AuthzDenied(
@@ -358,8 +358,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if manquants:
             raise AuthzDenied(
                 400, "missing_fields",
-                f"create exige : {', '.join(manquants)} — le nom du passage, la "
-                "procédure à jouer, et les outils (l'allowlist du run)")
+                f"create exige : {', '.join(manquants)} — le nom de l'automatisation, "
+                "la procédure à jouer, et les outils (l'allowlist de ses exécutions)")
         # La cible se DÉCLARE ou s'assume absente : un passage qui écrit dans un
         # tableau sans l'avoir nommé n'a aucun périmètre à opposer à un agent.
         if inp.row_filter is not None and not inp.namespace:
@@ -403,7 +403,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if inp.op == "get":
         f = db.get_fleet(inp.fleet_id, ctx.org_id)
         if not f:
-            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+            raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
         return {"fleet": f}
 
     if inp.op == "launch":
@@ -416,7 +416,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if not roles.is_org_admin(ctx.sub, ctx.org_id):
             raise AuthzDenied(
                 403, "org_admin_required",
-                "lancer un passage est réservé aux administrateurs de l'org : il "
+                "lancer une automatisation est réservé aux administrateurs de l'org : il "
                 "engage une dépense et des écritures chez un tiers. L'ARRÊTER, en "
                 "revanche, est ouvert à tout membre.")
         # ⚠️ Un déroulé ne LANCE pas. Un agent qui se relance lui-même coûte un
@@ -424,7 +424,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if _run_courant():
             raise AuthzDenied(
                 403, "not_from_a_run",
-                "un déroulé ne lance pas de passage — un agent qui se relance "
+                "un run ne lance pas d'automatisation — un agent qui se relance "
                 "lui-même dépense en boucle.")
         # ⚠️ Une campagne déclarée avant que la plateforme compose — ou par une
         # surface qui a laissé le champ vide — n'a pas d'instruction. L'armer
@@ -444,7 +444,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             if manquants:
                 raise AuthzDenied(
                     409, "tools_not_mounted",
-                    "ce passage déclare des outils absents de la boîte de l'org "
+                    "cette automatisation déclare des outils absents de la boîte de l'org "
                     f"visée : {', '.join(sorted(manquants))} — installe-les "
                     "(`oto_connector op=select`) ou retire-les de `tools` "
                     "(`op=update`) avant de lancer.")
@@ -486,11 +486,11 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if not f:
             actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
             if not actuelle:
-                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+                raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
             raise AuthzDenied(
                 409, "not_launchable",
-                f"ce passage est `{actuelle['status']}` — on n'arme que ce qui ne "
-                "tourne pas. Arrête-le d'abord, ou déclare une autre flotte.")
+                f"cette automatisation est `{actuelle['status']}` — on n'arme que ce qui "
+                "ne tourne pas. Arrête-la d'abord, ou déclare une autre automatisation.")
         # ⚠️ Le PIRE CAS, dit au moment où on engage — pas à lire dans une doc.
         # `max_rows` borne un nombre de travaux et `max_tokens_per_row` ce qu'un
         # travail peut coûter : leur produit est la dépense maximale du passage,
@@ -514,16 +514,16 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         if run and db.run_appartient_a_flotte(run, inp.fleet_id):
             raise AuthzDenied(
                 403, "not_your_own_fleet",
-                "un déroulé ne peut pas arrêter le passage qui l'exécute.")
+                "un run ne peut pas arrêter l'automatisation qui l'exécute.")
         f = db.demander_arret(inp.fleet_id, ctx.org_id,
                               inp.reason or "arrêt demandé")
         if not f:
             actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
             if not actuelle:
-                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+                raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
             raise AuthzDenied(
                 409, "not_stoppable",
-                f"ce passage est `{actuelle['status']}` — il n'y a rien à arrêter.")
+                f"cette automatisation est `{actuelle['status']}` — il n'y a rien à arrêter.")
         # ⚠️ `stopping`, pas `stopped` : l'ordre est POSÉ, la boucle ne l'a pas
         # encore lu. Le passage continue jusqu'à ce qu'elle accuse réception.
         return {"fleet": f}
@@ -537,7 +537,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if inp.op == "state":
         etat = db.fleet_state(inp.fleet_id, ctx.org_id)
         if not etat:
-            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+            raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
         # La file telle que l'ordonnanceur la voit, pour qui SUPERVISE la campagne
         # (14/09/2026) — jamais pour l'agent qui travaille (`_lignes_reservables`).
         etat["state"].update(_lignes_reservables.pour_le_superviseur(etat["fleet"]))
@@ -549,20 +549,20 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if inp.namespace is not None or inp.row_filter is not None:
         raise AuthzDenied(
             400, "target_is_frozen",
-            "la cible d'un passage ne se modifie pas — `namespace` et `row_filter` "
-            "sont figés à la déclaration. Un autre tableau, c'est une autre flotte.")
+            "la cible d'une automatisation ne se modifie pas — `namespace` et `row_filter` "
+            "sont figés à la déclaration. Un autre tableau, c'est une autre automatisation.")
     if inp.provider is not None or inp.model is not None:
         raise AuthzDenied(
             400, "context_is_frozen",
             "le contexte d'exécution ne se modifie pas — `provider` et `model` sont "
             "figés à la déclaration. Les changer en vol rendrait FAUSSE l'attribution "
-            "des lignes déjà écrites sous ce passage. Déclare une autre flotte.")
+            "des lignes déjà écrites sous cette automatisation. Déclares-en une autre.")
     if inp.descriptions_outils is not None:
         raise AuthzDenied(
             400, "context_is_frozen",
             "`descriptions_outils` ne se modifie pas — ce que l'agent lit des outils est "
             "du contexte d'exécution, figé à la déclaration comme le modèle. Le changer "
-            "en vol rendrait incomparables les lignes déjà écrites. Déclare une autre flotte.")
+            "en vol rendrait incomparables les lignes déjà écrites. Déclare une autre automatisation.")
     # ⚠️ `status` figure dans l'entrée parce qu'il FILTRE `list`. Le laisser tomber
     # en silence ici rendrait 200 avec la flotte inchangée — et c'est précisément le
     # geste qu'un agent privé de `stop` tenterait, en lisant un succès dans la
@@ -570,9 +570,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if inp.status is not None:
         raise AuthzDenied(
             400, "status_not_settable",
-            "l'état d'un passage ne se pose pas par `update` — `status` ne sert ici "
-            "qu'à FILTRER `list`. Démarrer et arrêter un passage appartiennent à "
-            "l'ordonnanceur, et ne sont servis par aucune face de cette capacité.")
+            "l'état d'une automatisation ne se pose pas par `update` — `status` ne sert "
+            "ici qu'à FILTRER `list`. Armer une automatisation, c'est `op=launch` ; "
+            "demander son arrêt, `op=stop`.")
     # ⚠️ La garde appartient au SEAM, pas au champ. Écrite champ par champ, elle
     # oublie exactement ceux auxquels personne n'a pensé : `procedure` — ce que la
     # flotte EXÉCUTE — et `project_id` rendaient 200 sans le moindre effet. Tout
@@ -586,17 +586,17 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         raise AuthzDenied(
             400, "missing_fields",
             "`tools` ne peut pas être vidé — c'est l'allowlist du run, et `create` "
-            "l'exige. Une flotte sans outils n'exécute rien.")
+            "l'exige. Une automatisation sans outils n'exécute rien.")
     fournis = {c for c, v in inp.model_dump(exclude_none=True).items()
                if c not in _STRUCTURELS}
     inertes = sorted(fournis - set(db.CHAMPS_MODIFIABLES))
     if inertes:
         raise AuthzDenied(
             400, "field_not_settable",
-            f"`update` ne pose pas : {', '.join(inertes)}. Ces champs se déclarent "
-            "à la création et ne se retouchent pas — une autre valeur, c'est une "
-            "autre flotte. Les champs modifiables sont : "
-            f"{', '.join(db.CHAMPS_MODIFIABLES)}.")
+            f"`update` ne pose pas : {', '.join(f'`{c}`' for c in inertes)}. Ces "
+            "champs se déclarent à la création et ne se retouchent pas — une autre "
+            "valeur, c'est une autre automatisation. Les champs modifiables sont : "
+            f"{', '.join(f'`{c}`' for c in db.CHAMPS_MODIFIABLES)}.")
     # `tools` reste modifiable, `descriptions_outils` non : une allowlist qui retirerait un
     # outil que le réglage nomme le rendrait inerte sans un mot (oto#241).
     if inp.tools is not None:
@@ -607,11 +607,11 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             raise AuthzDenied(
                 400, _descriptions_outils.CODE,
                 f"`tools` retirerait {', '.join(retires)}, que `descriptions_outils."
-                "entieres` nomme : le réglage de cette flotte cesserait d'agir. Garde ces "
-                "outils, ou déclare une autre flotte.")
+                "entieres` nomme : le réglage de cette automatisation cesserait d'agir. "
+                "Garde ces outils, ou déclare une autre automatisation.")
     f = db.update_fleet(inp.fleet_id, ctx.org_id, champs)
     if not f:
-        raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        raise AuthzDenied(404, "fleet_not_found", "automatisation inconnue")
     return {"fleet": f}
 
 
@@ -632,13 +632,13 @@ CAPABILITIES += [
         errors=(
             DeclaredError(400, "missing_fields",
                           "`create` sans `label`/`procedure`/`tools`, ou opération "
-                          "sur une flotte sans `fleet_id`"),
+                          "sur une automatisation sans `fleet_id`"),
             DeclaredError(400, "target_incomplete",
                           "`row_filter` sans `namespace` — un périmètre suppose un "
                           "tableau"),
             DeclaredError(400, "target_is_frozen",
                           "`namespace`/`row_filter` après la déclaration : la cible "
-                          "d'un passage ne se déplace pas"),
+                          "d'une automatisation ne se déplace pas"),
             DeclaredError(400, "context_is_frozen",
                           "`provider`/`model` après la déclaration : les changer "
                           "falsifierait l'attribution des lignes déjà écrites"),
@@ -655,28 +655,29 @@ CAPABILITIES += [
                           "`create` avec un `model` hors catalogue, un `provider` "
                           "qui le contredit, ou un `provider` sans `model`"),
             DeclaredError(400, "no_runner_armed",
-                          "`launch` dans une org qu'aucun worker vivant ne sonde : "
-                          "l'armement réussirait sans que rien ne s'exécute jamais"),
+                          "`launch` dans une org où rien n'exécute les automatisations "
+                          "pour l'instant : l'armement réussirait sans que rien ne "
+                          "s'exécute jamais"),
             DeclaredError(400, "model_not_served",
-                          "`launch` d'un passage dont aucun worker vivant ne sert "
-                          "la famille du modèle"),
+                          "`launch` d'une automatisation dont la famille de modèle "
+                          "n'est servie par rien en ce moment"),
             DeclaredError(400, "model_key_required",
-                          "`launch` d'un passage dans une org qui doit tourner sur SA "
+                          "`launch` d'une automatisation dans une org qui doit tourner sur SA "
                           "clé de modèle et ne l'a pas déposée"),
             DeclaredError(404, "fleet_not_found",
-                          "flotte inconnue dans l'org du porteur"),
+                          "automatisation inconnue dans l'org du porteur"),
             DeclaredError(409, "not_launchable",
-                          "`launch` d'une campagne déjà armée ou en cours"),
+                          "`launch` d'une automatisation déjà armée ou en cours"),
             DeclaredError(409, "not_stoppable",
-                          "`stop` d'une campagne ni armée ni en cours"),
+                          "`stop` d'une automatisation ni armée ni en cours"),
             DeclaredError(409, "not_takeable",
-                          "`take` d'une campagne ni `armed` ni `running`"),
+                          "`take` d'une automatisation ni `armed` ni `running`"),
             DeclaredError(409, "held_by_other",
-                          "`take` d'une campagne `running` qu'un AUTRE ordonnanceur "
+                          "`take` d'une automatisation `running` qu'un AUTRE ordonnanceur "
                           "tient : deux ordonnanceurs doubleraient ses exécutions"),
             DeclaredError(409, "not_the_holder",
                           "`beat`/`ack_stop` par un ordonnanceur qui ne tient pas "
-                          "(ou plus) la campagne"),
+                          "(ou plus) l'automatisation"),
             DeclaredError(409, "nothing_to_acknowledge",
                           "`ack_stop` sans arrêt en cours"),
         ),

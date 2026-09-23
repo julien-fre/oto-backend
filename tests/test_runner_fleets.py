@@ -67,7 +67,7 @@ def test_update_refuse_de_deplacer_la_cible_et_dit_pourquoi():
     with pytest.raises(AuthzDenied) as e:
         _appel(_ctx(), op="update", fleet_id=1, namespace="un-autre-tableau")
     assert e.value.code == "target_is_frozen"
-    assert "autre flotte" in e.value.message
+    assert "autre automatisation" in e.value.message
 
 
 def test_update_refuse_aussi_de_deplacer_le_seul_perimetre():

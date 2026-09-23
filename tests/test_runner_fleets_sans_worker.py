@@ -59,8 +59,10 @@ def test_launch_est_refuse_quand_aucun_worker_nest_joignable(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         _appel(_ctx(), op="launch", fleet_id=1)
     assert (e.value.status, e.value.code) == (400, "no_runner_armed")
-    # Le message doit dire QUOI FAIRE, pas seulement que c'est refusé…
-    assert "OTO_RUNNER_ARMED" in e.value.message
+    # Le message dit l'EFFET, jamais la machine (oto#222) : ni runner ni worker…
+    assert "rien n'exécute les automatisations" in e.value.message
+    assert "runner" not in e.value.message.lower()
+    assert "worker" not in e.value.message.lower()
     # …et ce qui RESTE ouvert, sur les deux surfaces qui partagent ce refus.
     assert "se supprime" in e.value.message
     assert "s'arrête (`stop`)" in e.value.message

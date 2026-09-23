@@ -358,8 +358,9 @@ def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None
         if poses:
             raise AuthzDenied(
                 400, "not_a_webhook",
-                f"{', '.join(poses)} ne s'applique qu'à un déclencheur `webhook` — "
-                "un agent programmé n'a pas de corps reçu ni de source à lisser.")
+                f"{', '.join(poses)} ne s'applique qu'à une automatisation `webhook` — "
+                "une automatisation horaire n'a pas de corps reçu ni de source à "
+                "lisser.")
         return
     stocke = actuel or {}
     mode = inp.payload_mode or stocke.get("payload_mode") or runner_hook.IGNORE
@@ -484,7 +485,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     passent par `_avec_tool_warnings`, qui est asynchrone, et se posent ensuite
     (`_ajouter_tool_warnings`)."""
     if not ctx.org_id:
-        raise AuthzDenied(400, "org_required", "les déclencheurs sont org-scopés")
+        raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
     inp = _noms_canoniques(ctx, inp)
 
     if inp.op == "create":
@@ -510,9 +511,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # PAUSE, pas la fermeture de la population.
             raise AuthzDenied(
                 403, "webhook_beta_only",
-                "les agents déclenchés par webhook sont en bêta fermée : cette "
-                "organisation n'y est pas encore. Un agent PROGRAMMÉ (`cron`) "
-                "reste disponible. Pour rejoindre la bêta, demande l'option "
+                "les automatisations webhook sont en bêta fermée : cette "
+                "organisation n'y est pas encore. Une automatisation HORAIRE "
+                "(`cron`) reste disponible. Pour rejoindre la bêta, demande l'option "
                 "`beta` sur l'organisation.")
         # ⚠️ Ce qu'on exige dépend du COUP D'ENVOI. Un déclencheur programmé exige
         # son cadencement ; un webhook n'en a pas — exiger `cron` de lui, ou
@@ -526,8 +527,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         if webhook and inp.cron:
             raise AuthzDenied(
                 400, "invalid_schedule",
-                "un déclencheur `webhook` n'a pas de cadencement : c'est la source "
-                "qui décide quand. Retire `cron`, ou déclare un agent programmé.")
+                "une automatisation `webhook` n'a pas de cadencement : c'est la source "
+                "qui décide quand. Retire `cron`, ou déclare une automatisation horaire.")
         _valide_le_webhook(inp)
         # ⚠️ `tools` n'est plus exigé : il se DÉDUIT de la procédure quand il
         # n'est pas fourni. C'est ce qui rend le geste possible depuis un bouton.
@@ -576,13 +577,14 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         deja = [d for d in db.triggers_for_procedure(ctx.org_id, inp.procedure)
                 if (d.get("kind") or "schedule") == genre]
         if deja:
-            quoi = ("déjà un agent déclenché par webhook" if webhook else
-                    f"déjà un agent programmé (cadencement `{deja[0]['cron']}`)")
+            quoi = ("déjà une automatisation webhook" if webhook else
+                    f"déjà une automatisation horaire (cadencement "
+                    f"`{deja[0]['cron']}`)")
             raise AuthzDenied(
                 409, "already_scheduled",
-                f"`{inp.procedure}` a {quoi} (#{deja[0]['id']}). Modifie-le plutôt "
-                "que d'en créer un second — un objet ne porte qu'un agent de "
-                "chaque genre.")
+                f"`{inp.procedure}` a {quoi} (#{deja[0]['id']}). Modifie-la plutôt "
+                "que d'en créer une seconde — un objet ne porte qu'une "
+                "automatisation de chaque genre.")
         secret = hache = None
         if webhook:
             secret, hache = runner_hook.nouveau_secret()
@@ -626,7 +628,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if inp.op == "get":
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         return {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
@@ -636,7 +638,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # Même 404 qu'un déclencheur inconnu : un agent programmé n'a pas de
             # secret, et le dire distinguerait « n'existe pas » de « pas le bon
             # genre » pour un appelant qui n'a pas à le savoir.
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         secret, hache = runner_hook.nouveau_secret()
         db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, hache)
         logger.warning("secret de webhook RENOUVELÉ pour le déclencheur %s (org %s) "
@@ -662,7 +664,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # (`perimer_travaux_du_declencheur` couvre `pending` ET `held`).
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         vides = db.perimer_travaux_du_declencheur(
             inp.trigger_id, ctx.org_id,
             raison="file vidée à la demande : ces occurrences n'ont jamais été "
@@ -678,7 +680,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         return {"ok": True}
 
     # update — partiel ; toute retouche du cadencement (cron OU tz) revalide et
@@ -710,7 +712,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
     if any(getattr(inp, c) is not None for c in _REGLAGES_WEBHOOK):
         if not _actuel():
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         # Jugés FUSIONNÉS avec l'état stocké, puis ÉCRITS. Avant ce lot ils
         # étaient acceptés et jamais écrits — un réglage inerte de plus.
         _valide_le_webhook(inp, _actuel())
@@ -723,14 +725,14 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 champs[col] = v
     if inp.cron is not None or inp.tz is not None:
         if not _actuel():
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         if _est_webhook():
             # Sans cette garde, un `cron` posé sur un webhook lui donnait une
             # échéance — et il partait à l'HORLOGE en plus de l'événement ; un
             # `tz` seul faisait valider un cron NULL et rendait 500.
             raise AuthzDenied(
                 400, "invalid_schedule",
-                "un déclencheur `webhook` n'a pas de cadencement : c'est la source "
+                "une automatisation `webhook` n'a pas de cadencement : c'est la source "
                 "qui décide quand. `cron` et `tz` ne s'y retouchent pas.")
         actuel = _actuel()
         cron = inp.cron if inp.cron is not None else actuel["cron"]
@@ -789,12 +791,12 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # l'occurrence suivante. Éteint, rien n'est promis : la retouche passe.
         actuel = _actuel()
         if not actuel:
-            raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         if actuel["enabled"]:
             _modele.exige_servi(db.runner_arme(ctx.org_id), famille)
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
-        raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
+        raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
     return {"trigger": _avec_hook(ctx.org_id, t)}
 
 
@@ -833,16 +835,16 @@ CAPABILITIES += [
         errors=(
             DeclaredError(400, "missing_fields",
                           "`create` sans `procedure`/`cron`/`tools`, ou une "
-                          "opération sur un déclencheur sans `trigger_id`"),
+                          "opération sur une automatisation sans `trigger_id`"),
             DeclaredError(403, "webhook_beta_only",
-                          "`create` d'un agent déclenché par webhook, hors de la "
+                          "`create` d'une automatisation webhook, hors de la "
                           "population bêta — un écran peut griser l'option et "
                           "dire pourquoi, plutôt que laisser tenter le geste"),
             DeclaredError(400, "invalid_schedule",
                           "cron malformé, fuseau inconnu, ou deux occurrences "
                           "espacées de moins de 5 minutes"),
             DeclaredError(400, "no_runner_armed",
-                          "aucun worker ne sonde la file de cette org : "
+                          "rien n'exécute les automatisations de cette org : "
                           "`create`, et `update enabled=true`, sont refusés "
                           "plutôt que de promettre une exécution qui n'aurait "
                           "pas lieu"),
@@ -850,15 +852,15 @@ CAPABILITIES += [
                           "`model` hors du catalogue servi (`runner.models` sur "
                           "`list`/`get`)"),
             DeclaredError(400, "model_not_served",
-                          "`model` d'une famille qu'aucun worker vivant ne sert : "
+                          "`model` d'une famille que rien ne sert en ce moment : "
                           "`create`, `update enabled=true` et le changement de "
-                          "modèle d'un déclencheur allumé sont refusés"),
+                          "modèle d'une automatisation allumée sont refusés"),
             DeclaredError(400, "model_key_required",
                           "l'org doit faire tourner ses agents sur SA clé de modèle "
                           "et ne l'a pas déposée : `create` et `update enabled=true` "
                           "sont refusés"),
             DeclaredError(404, "trigger_not_found",
-                          "déclencheur inconnu dans l'org du porteur"),
+                          "automatisation inconnue dans l'org du porteur"),
         ),
         rest=RestBinding(verb="POST", path="/api/me/runner/triggers"),
         description=(

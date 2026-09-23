@@ -28,21 +28,20 @@ def exige_un_runner(org_id: int) -> dict:
     if etat["armed"]:
         return etat
     if etat["last_seen"] is None:
-        detail = ("aucun worker n'a jamais sondé la file de cette org : rien "
-                  "n'exécuterait ce geste")
+        detail = ("rien n'a jamais exécuté d'automatisation pour cette org")
     else:
-        detail = (f"le dernier worker de cette org s'est tu le "
+        detail = (f"la dernière exécution possible pour cette org remonte au "
                   f"{etat['last_seen']} — au-delà de "
-                  f"{db.ARME_FENETRE_S // 60} minutes on ne le tient plus pour "
-                  f"présent")
+                  f"{db.ARME_FENETRE_S // 60} minutes, on ne la tient plus pour "
+                  f"assurée")
     raise AuthzDenied(
         400, "no_runner_armed",
-        f"aucun runner armé pour cette org ({detail}). L'exécution appartient "
-        "au worker, et sans worker le geste réussirait pour rien, sans erreur "
-        "— l'objet aurait l'air de marcher. Arme un worker pour cette org "
-        "(`OTO_RUNNER_ARMED=1` + un jeton de l'org, cf. otomata-tech/oto-runner), "
-        "puis reprends ce geste. Ce qui existe reste gérable sans worker : un "
-        "déclencheur se lit, se modifie et se supprime ; une campagne se lit, se "
+        f"rien n'exécute les automatisations de cette org pour l'instant "
+        f"({detail}). Le geste réussirait pour rien, sans erreur — "
+        "l'automatisation aurait l'air de marcher. Reprends-le quand l'exploitant "
+        "de la plateforme aura rétabli l'exécution pour cette org. Ce qui existe "
+        "reste gérable d'ici là : une automatisation horaire ou webhook se lit, se "
+        "modifie et se supprime ; une automatisation de genre file se lit, se "
         "modifie et s'arrête (`stop`).")
 
 
@@ -63,7 +62,7 @@ def famille_declaree(model: Optional[str],
                 400, "invalid_model",
                 f"`provider={provider}` sans `model` ne choisit rien : la famille se "
                 "déduit du modèle. Nomme un modèle, ou n'envoie ni l'un ni l'autre "
-                "(le worker tourne alors sur le sien).")
+                "(le modèle par défaut s'applique alors).")
         return None
     f = runner_models.famille(model)
     if f is None:
@@ -101,14 +100,14 @@ def exige_servi(etat: dict, famille: Optional[str]) -> None:
     servies = etat.get("families") or []
     if famille in servies:
         return
-    vivantes = (f"ceux qui sondent la file servent : {', '.join(servies)}"
-                if servies else "aucun worker vivant n'a déclaré de famille")
+    vivantes = (f"familles servies : {', '.join(servies)}"
+                if servies else "aucune famille n'est déclarée servie")
     raise AuthzDenied(
         400, "model_not_served",
-        f"aucun worker ne sert les modèles `{famille}` en ce moment ({vivantes}). "
-        "Le travail resterait en attente sans une erreur, puis périmerait. Choisis "
+        f"les modèles `{famille}` ne sont pas servis en ce moment ({vivantes}). "
+        "L'exécution resterait en attente sans une erreur, puis périmerait. Choisis "
         "un modèle servi (`runner.models` sur `op=list`), ou n'en nomme aucun : "
-        "le worker tourne alors sur le sien.")
+        "le modèle par défaut s'applique alors.")
 
 
 def etat_servi(etat: dict, org_id: Optional[int] = None) -> dict:
