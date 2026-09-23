@@ -20,6 +20,8 @@ def _no_grants(monkeypatch):
     """Défauts #55 : pas de pointeur opéré, pas de grant reçu."""
     monkeypatch.setattr(unipile_tool.db, "get_operated_account", lambda sub, prov: None)
     monkeypatch.setattr(unipile_tool.db, "granted_accounts_for", lambda sub, prov: {})
+    # #898 : aucun prêteur en pause par défaut.
+    monkeypatch.setattr(unipile_tool.db, "suspended_lenders_for", lambda sub, prov: {})
 
 
 def test_unipile_client_byo_passes_dsn(monkeypatch):
@@ -151,6 +153,23 @@ def test_project_pin_inert_after_revoke(monkeypatch):
     monkeypatch.setattr(unipile_tool.db, "list_unipile_accounts",
                         lambda sub: [{"account_id": "DEFAULT", "provider": "LINKEDIN"}])
     assert unipile_tool.unipile_client("LINKEDIN").account_id == "DEFAULT"
+
+
+def test_project_pin_on_a_paused_lender_is_a_NAMED_refusal(monkeypatch):
+    """#898 (arbitrage du 23/09/2026, option A) : le projet épingle un compte prêté
+    dont le prêteur est en pause — ni repli sur le défaut (on agirait sous une autre
+    identité que celle déclarée), ni « révoqué » : le refus nommé `lender_suspended`."""
+    _wire_basic(monkeypatch)
+    monkeypatch.setattr(access, "project_pinned_identity", lambda c: "OWNER_ACC")
+    monkeypatch.setattr(unipile_tool.db, "list_unipile_accounts",
+                        lambda sub: [{"account_id": "DEFAULT", "provider": "LINKEDIN"}])
+    monkeypatch.setattr(unipile_tool.db, "suspended_lenders_for",
+                        lambda sub, prov: {"OWNER_ACC": {"owner_sub": "owner",
+                                                         "owner_email": "o@x.io"}})
+    with pytest.raises(McpError, match="en pause") as e:
+        unipile_tool.unipile_client("LINKEDIN")
+    assert e.value.error.data == {"code": "lender_suspended", "retryable": False}
+    assert "o@x.io" in e.value.error.message
 
 
 def test_channel_reaches_the_client(monkeypatch):

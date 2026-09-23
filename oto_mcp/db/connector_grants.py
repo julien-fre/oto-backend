@@ -18,6 +18,14 @@ docstring de `granted_accounts_for` promettait déjà « déconnexion = disparit
 immédiate », promesse qu'aucun test n'exerçait et que le SQL ne tenait pas. Jamais
 constaté en prod (aucun signal, aucun ticket) mais jamais prouvé faux non plus —
 latent depuis la table d'origine (#55), pas introduit par l'extension groupe.
+
+⚠️ **Un prêteur mis en pause suspend ses prêts** (oto-backend#898, arbitrage du
+23/09/2026, option A). Le grant ne bouge pas — la pause n'écrit que trois colonnes de
+`users` —, mais la résolution rejoint l'état du PRÊTEUR à chaque appel : tant qu'il
+est en pause, le compte prêté n'est plus opérable, et au réveil il l'est de nouveau,
+sans rien reconfigurer (le grant et le pointeur du bénéficiaire sont restés en place).
+`suspended_lenders_for` rend ce que la pause retient, pour que le refus le NOMME
+plutôt que de se confondre avec une révocation.
 """
 from __future__ import annotations
 
@@ -78,7 +86,9 @@ def list_account_grants_to(grantee_sub: str) -> list[dict]:
     """Grants reçus PAR ce user (face « comptes que je peux opérer ») — nominatifs
     ET de groupe (UNION, `org_group_members` rejoint EN LIVE : un départ de groupe
     retire la ligne au prochain appel, sans rien à nettoyer côté grant).
-    `active=False` si le owner a déconnecté le canal (grant inerte).
+    `active=False` si le owner a déconnecté le canal OU s'il est en pause (grant
+    inerte) — `owner_suspended` dit lequel des deux (#898 : la pause du prêteur
+    suspend le prêt, et le bénéficiaire doit pouvoir le lire, pas le deviner).
     `owner_org_id`/`owner_org_name` = l'org sous laquelle le owner a connecté ce
     compte (`unipile_accounts.org_id`) — pour que l'UI dise D'OÙ vient le partage
     (le grant lui-même n'est pas scopé à une org). `via_group_id`/`via_group_name`
@@ -88,7 +98,9 @@ def list_account_grants_to(grantee_sub: str) -> list[dict]:
             "SELECT g.provider, g.owner_sub, u.email AS owner_email, "
             "u.name AS owner_name, ua.account_id, ua.account_name, "
             "ua.org_id AS owner_org_id, o.name AS owner_org_name, "
-            "g.granted_at, (ua.account_id IS NOT NULL) AS active, "
+            "g.granted_at, "
+            "(ua.account_id IS NOT NULL AND u.suspended_at IS NULL) AS active, "
+            "(u.suspended_at IS NOT NULL) AS owner_suspended, "
             "NULL::BIGINT AS via_group_id, NULL::TEXT AS via_group_name "
             "FROM connector_account_grants g "
             "LEFT JOIN users u ON u.sub = g.owner_sub "
@@ -101,7 +113,9 @@ def list_account_grants_to(grantee_sub: str) -> list[dict]:
             "SELECT gg.provider, gg.owner_sub, u.email AS owner_email, "
             "u.name AS owner_name, ua.account_id, ua.account_name, "
             "ua.org_id AS owner_org_id, o.name AS owner_org_name, "
-            "gg.granted_at, (ua.account_id IS NOT NULL) AS active, "
+            "gg.granted_at, "
+            "(ua.account_id IS NOT NULL AND u.suspended_at IS NULL) AS active, "
+            "(u.suspended_at IS NOT NULL) AS owner_suspended, "
             "gg.grantee_group_id AS via_group_id, grp.name AS via_group_name "
             "FROM connector_account_group_grants gg "
             "JOIN org_group_members m ON m.group_id = gg.grantee_group_id "
@@ -118,12 +132,16 @@ def list_account_grants_to(grantee_sub: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def granted_accounts_for(grantee_sub: str, provider: str) -> dict[str, dict]:
-    """LE check dur par appel : comptes que `grantee_sub` est autorisé à opérer
-    sur ce canal, `{account_id_live: {owner_sub, owner_email}}` — nominatifs ET
-    reçus via un groupe dont il est membre EN CE MOMENT (JOIN live, pas un
-    snapshot). INNER JOIN sur le compte NON DÉCONNECTÉ du owner ⇒ révocation,
-    départ du groupe OU déconnexion = disparition immédiate."""
+def _accounts_lent_to(grantee_sub: str, provider: str, *,
+                      owner_suspended: bool) -> dict[str, dict]:
+    """Comptes prêtés à `grantee_sub` sur ce canal (nominatifs ET via un groupe dont
+    il est membre EN CE MOMENT), filtrés sur l'état de pause du PRÊTEUR.
+
+    Une seule requête pour les deux lectures ci-dessous : le prêt vivant et le prêt
+    retenu par une pause ne diffèrent que par ce prédicat, et deux copies du même
+    `UNION ALL` finiraient par ne plus désigner les mêmes prêts."""
+    pause = ("u.suspended_at IS NOT NULL" if owner_suspended
+             else "u.suspended_at IS NULL")
     with _connect() as conn:
         rows = conn.execute(
             "SELECT ua.account_id, g.owner_sub, u.email AS owner_email "
@@ -131,8 +149,8 @@ def granted_accounts_for(grantee_sub: str, provider: str) -> dict[str, dict]:
             "JOIN unipile_accounts ua "
             "  ON ua.sub = g.owner_sub AND ua.provider = g.provider "
             "  AND ua.disconnected_at IS NULL "
-            "LEFT JOIN users u ON u.sub = g.owner_sub "
-            "WHERE g.grantee_sub = %s AND g.provider = %s "
+            "JOIN users u ON u.sub = g.owner_sub "
+            f"WHERE g.grantee_sub = %s AND g.provider = %s AND {pause} "
             "UNION ALL "
             "SELECT ua.account_id, gg.owner_sub, u.email AS owner_email "
             "FROM connector_account_group_grants gg "
@@ -140,12 +158,29 @@ def granted_accounts_for(grantee_sub: str, provider: str) -> dict[str, dict]:
             "JOIN unipile_accounts ua "
             "  ON ua.sub = gg.owner_sub AND ua.provider = gg.provider "
             "  AND ua.disconnected_at IS NULL "
-            "LEFT JOIN users u ON u.sub = gg.owner_sub "
-            "WHERE m.sub = %s AND gg.provider = %s",
+            "JOIN users u ON u.sub = gg.owner_sub "
+            f"WHERE m.sub = %s AND gg.provider = %s AND {pause}",
             (grantee_sub, provider, grantee_sub, provider),
         ).fetchall()
     return {r["account_id"]: {"owner_sub": r["owner_sub"],
                               "owner_email": r["owner_email"]} for r in rows}
+
+
+def granted_accounts_for(grantee_sub: str, provider: str) -> dict[str, dict]:
+    """LE check dur par appel : comptes que `grantee_sub` est autorisé à opérer
+    sur ce canal, `{account_id_live: {owner_sub, owner_email}}` — nominatifs ET
+    reçus via un groupe dont il est membre EN CE MOMENT (JOIN live, pas un
+    snapshot). INNER JOIN sur le compte NON DÉCONNECTÉ du owner ⇒ révocation,
+    départ du groupe OU déconnexion = disparition immédiate. Un prêteur EN PAUSE
+    n'y figure pas (#898) : son prêt reprend à son réveil."""
+    return _accounts_lent_to(grantee_sub, provider, owner_suspended=False)
+
+
+def suspended_lenders_for(grantee_sub: str, provider: str) -> dict[str, dict]:
+    """Les prêts que la PAUSE de leur prêteur retient (#898) — même forme que
+    `granted_accounts_for`. Ne donne aucun droit : sert à nommer le refus (« le
+    prêteur est en pause ») là où, sans elle, il se confondrait avec une révocation."""
+    return _accounts_lent_to(grantee_sub, provider, owner_suspended=True)
 
 
 def set_account_group_grant(owner_sub: str, provider: str, account_id: str,

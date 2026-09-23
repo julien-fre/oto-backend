@@ -160,6 +160,28 @@ def _own_account_ids(sub: str, provider: str) -> set[str]:
             if (a.get("provider") or "").upper() == p}
 
 
+def refuser_si_preteur_en_pause(sub: str, provider: str, account_id: str) -> None:
+    """Lève `PreteurEnPause` si `account_id` est prêté à `sub` par un compte EN PAUSE.
+
+    À appeler là où un compte prêté n'est pas (ou plus) opérable, AVANT le refus
+    générique : sans elle, la pause du prêteur se lirait « autorisation révoquée ou
+    compte déconnecté », et le bénéficiaire irait redemander un prêt qui n'a jamais
+    été retiré (#898, arbitrage du 23/09/2026 : option A)."""
+    from .. import db
+    preteur = db.suspended_lenders_for(sub, provider).get(account_id)
+    if preteur:
+        raise _preteur_en_pause(preteur, provider, account_id)
+
+
+def _preteur_en_pause(pret: dict, provider: str, account_id: str):
+    """Le refus nommé d'un prêt retenu, depuis une ligne de prêt (`owner_sub`,
+    `owner_email`) — un seul libellé pour les deux chemins qui le lèvent."""
+    from .. import account_suspension
+    return account_suspension.PreteurEnPause(
+        pret.get("owner_email") or pret["owner_sub"],
+        f"Le compte {provider.title()} `{account_id}`")
+
+
 def resolve_operated_account_id(sub: str, provider: str) -> str | None:
     """Compte Unipile opéré par `sub` sur ce canal (LE point de résolution #55/0051).
 
@@ -180,6 +202,7 @@ def resolve_operated_account_id(sub: str, provider: str) -> str | None:
     if pin:
         if pin in db.granted_accounts_for(sub, provider) or pin in _own_account_ids(sub, provider):
             return pin
+        refuser_si_preteur_en_pause(sub, provider, pin)
         raise ValueError(
             f"Le compte {provider.title()} épinglé (`_account=`) n'est ni le "
             "tien ni un compte qui t'est accordé — ou il n'est plus opérable. Liste les "
@@ -188,6 +211,8 @@ def resolve_operated_account_id(sub: str, provider: str) -> str | None:
     if op:
         if op["account_id"] in db.granted_accounts_for(sub, provider):
             return op["account_id"]
+        # Le pointeur N'EST PAS effacé : c'est lui qui fait revenir le prêt au réveil.
+        refuser_si_preteur_en_pause(sub, provider, op["account_id"])
         raise ValueError(
             f"Le compte {provider.title()} qui t'était accordé n'est plus opérable "
             "(autorisation révoquée ou compte déconnecté par son propriétaire). "
@@ -406,13 +431,20 @@ async def _unipile_select(sub: str, identity_id: str, canal: str | None = None) 
     # 1) Compte ACCORDÉ (#55) : pose le POINTEUR « identité opérée » — ne touche
     #    JAMAIS la ligne de connexion `unipile_accounts` du grantee. La validation
     #    = le grant vivant (deny-by-default), pas la clé.
-    g = next((r for r in db.list_account_grants_to(sub)
+    recus = db.list_account_grants_to(sub)
+    g = next((r for r in recus
               if r.get("active") and r["account_id"] == identity_id), None)
     if g:
         _exige_canal(g["provider"])
         db.set_operated_account(sub, g["provider"], identity_id, g["owner_sub"])
         return {"id": identity_id, "channel": g["provider"], "is_default": True,
                 "granted": True}
+    # 1bis) Compte prêté par un compte EN PAUSE (#898) : le grant existe, il est
+    #    retenu — le dire, plutôt que de tomber plus bas sur « compte inconnu ».
+    retenu = next((r for r in recus
+                   if r.get("owner_suspended") and r["account_id"] == identity_id), None)
+    if retenu:
+        raise _preteur_en_pause(retenu, retenu["provider"], identity_id)
     # 2) Retour à SOI (tout mode, y compris revente) : efface le pointeur du canal.
     own = next((a for a in db.list_unipile_accounts(sub)
                 if a["account_id"] == identity_id), None)

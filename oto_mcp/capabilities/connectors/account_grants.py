@@ -145,7 +145,11 @@ class GrantedToMe(BaseModel):
     owner_org_id: Optional[int] = None
     owner_org_name: Optional[str] = None
     granted_at: Optional[str] = None
-    active: bool
+    active: bool                            # false : canal déconnecté OU prêteur en pause
+    # Le propriétaire est EN PAUSE (#898) : le prêt est suspendu avec lui, pas révoqué,
+    # et reprend tel quel à son réveil. Sans ce champ, `active=false` se lirait
+    # « déconnecté » et renverrait vers un propriétaire qui ne peut rien y faire.
+    owner_suspended: bool = False
     # None = grant nominatif. Sinon, le groupe dont l'appartenance PORTE cet accès
     # (fan-out dynamique — un départ du groupe le fait disparaître au prochain appel).
     via_group_id: Optional[int] = None

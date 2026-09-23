@@ -70,8 +70,11 @@ def test_guard_group_pin_reader_and_org_admin(monkeypatch):
 
 # ── guard : share_side (prêt à un pair) ───────────────────────────────────────
 def test_guard_member_share_side_allows_beneficiary(monkeypatch):
-    # instance de "owner" dans l'org 8, prêtée à "bob"
+    # instance de "owner" dans l'org 8, prêtée à "bob" — prêteur vivant (#898 : la
+    # garde lit l'état de pause du prêteur ; le cas en pause est sur base réelle,
+    # tests/test_account_suspension_prets.py)
     _mock_sharing(monkeypatch, [], ["user:bob"])
+    monkeypatch.setattr(db, "get_suspension", lambda sub: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 99)  # org de l'APPELANT
     ref = instance_refs.parse_ref(instance_refs.make_member_ref(8, "owner", "zoho"))
     # bob emprunte : autorisé, co-pose SON org (99), pas celle de l'owner (8)

@@ -152,6 +152,16 @@ def _instance_side_shares_safe(entity_type: str, entity_id: str, provider: str,
         return []
 
 
+def _refuser_si_preteur_en_pause(ref) -> None:
+    """Un prêt `share_side` s'arrête avec la pause de son prêteur, et revient à son
+    réveil (#898, option A du 23/09/2026) : refus nommé `lender_suspended`."""
+    from .. import account_suspension
+    refus = account_suspension.refus_preteur(ref.sub, f"La clé `{ref.connector}`")
+    if refus is not None:
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=str(refus),
+                                 data={"code": refus.code, "retryable": False}))
+
+
 def guard_instance_access(sub: str, ref) -> Optional[int]:
     """Garde d'accès à une instance de connecteur par NIVEAU (ADR 0038 B6) — même
     sémantique que la projection B4 : member = MA ligne dans une org où je suis
@@ -187,6 +197,7 @@ def guard_instance_access(sub: str, ref) -> Optional[int]:
             credentials_store.MEMBER, credentials_store.member_id(ref.org_id, ref.sub),
             ref.connector, ref.account)
         if scope._sub_matches_scopes(sub, side):
+            _refuser_si_preteur_en_pause(ref)
             return scope.current_org(sub)
         raise McpError(ErrorData(
             code=INVALID_PARAMS,

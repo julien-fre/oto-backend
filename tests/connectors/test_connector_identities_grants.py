@@ -138,6 +138,8 @@ def test_resolver_pointer_revoked_raises(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.get_operated_account",
                         lambda sub, prov: {"account_id": "OWNER_ACC", "owner_sub": "owner"})
     monkeypatch.setattr("oto_mcp.db.granted_accounts_for", lambda sub, prov: {})
+    # #898 : le prêteur n'est pas en pause — c'est bien une révocation.
+    monkeypatch.setattr("oto_mcp.db.suspended_lenders_for", lambda sub, prov: {})
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id",
                         lambda sub, org, prov: pytest.fail("pas de repli silencieux"))
     with pytest.raises(ValueError, match="plus opérable"):

@@ -11,6 +11,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict
 from starlette.concurrency import run_in_threadpool
 
+from ... import account_suspension
 from ...connectors import identities as connector_identities
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -284,6 +285,10 @@ async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
         res = connector_identities.select_identity(ctx.sub, inp.connector, inp.identity_id, inp.scope)
         if inspect.isawaitable(res):
             res = await res
+    except account_suspension.PreteurEnPause as e:
+        # #898 : le compte existe et t'est prêté — c'est son prêteur qui est en pause.
+        # Un 404 « inconnu » enverrait chercher une identité qui n'a pas disparu.
+        raise AuthzDenied(403, account_suspension.CODE_PRETEUR, str(e))
     except ValueError as e:
         raise AuthzDenied(404, "unknown_identity", str(e))
     except AuthzDenied:

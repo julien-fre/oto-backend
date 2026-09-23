@@ -807,6 +807,15 @@ def _project_operated_account(anon, provider: str) -> str:
     return usable[0]
 
 
+def _refus_identite(e: ValueError):
+    """L'erreur de protocole d'une identité non opérable. Un prêt retenu par la
+    pause de son prêteur (#898) y porte son code (`lender_suspended`), pour qu'un
+    agent le distingue d'une révocation sans lire la phrase."""
+    code = getattr(e, "code", None)
+    return ErrorData(code=INVALID_PARAMS, message=str(e),
+                     **({"data": {"code": code, "retryable": False}} if code else {}))
+
+
 def unipile_client(provider: str = "LINKEDIN"):
     """Client Unipile du user pour un canal (LINKEDIN, WHATSAPP, …).
 
@@ -846,7 +855,7 @@ def unipile_client(provider: str = "LINKEDIN"):
     try:
         account_id = connector_identities.resolve_operated_account_id(sub, provider)
     except ValueError as e:  # pointeur opéré révoqué/déconnecté → erreur explicite
-        raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+        raise McpError(_refus_identite(e))
     # Pin projet (#57) : si le projet actif épingle un compte unipile, il prime sur le
     # défaut per-canal — MAIS seulement s'il appartient à CE user DANS CETTE org
     # (anti-usurpation + scope membre ADR 0033) OU lui est accordé par son propriétaire
@@ -865,6 +874,14 @@ def unipile_client(provider: str = "LINKEDIN"):
         or pinned in db.granted_accounts_for(sub, provider)
     ):
         account_id = pinned
+    elif pinned:
+        # Le projet épingle un compte PRÊTÉ par un compte en pause (#898) : ni le
+        # repli sur le défaut (on agirait sous une autre identité que celle que le
+        # projet déclare), ni un refus muet — le refus nommé.
+        try:
+            connector_identities.refuser_si_preteur_en_pause(sub, provider, pinned)
+        except ValueError as e:
+            raise McpError(_refus_identite(e))
     if not account_id:
         # La page vient du PRODUIT du compte : un client d'un tenant tiers envoyé
         # chez nous s'y crée un second compte, et plus rien ne se lie (cf.

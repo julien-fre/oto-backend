@@ -94,11 +94,29 @@ C'est la raison d'être du geste : le départ d'un membre laisse à l'org un pat
 qu'elle arbitre objet par objet, et **l'inaction ne doit pas détruire** (ADR 0062-D4).
 La pause est l'état dans lequel cet arbitrage peut prendre le temps qu'il prend.
 
-⚠️ **Effet à connaître** : un compte en pause qui **prêtait** un compte de connecteur
-(`connector_account_grants`) continue de le prêter — le bénéficiaire, lui, n'est pas
-en pause. C'est cohérent avec « rien n'est détaché », et le retrait d'un prêt reste un
-geste distinct et réversible (`oto_connector_access`). À regarder quand la pause vise
-quelqu'un dont les clés servaient à d'autres.
+⚠️ **Sauf ce qu'il prêtait : ses prêts s'arrêtent avec lui** (oto-backend#898,
+arbitrage du 23/09/2026, option A). Un compte de connecteur prêté
+(`connector_account_grants`, nominatif ou de groupe) et une clé prêtée à un pair
+(`share_side`, ADR 0044) cessent de servir leurs bénéficiaires pendant la pause. Rien
+n'est détaché pour autant : le grant, le `share_side` et le pointeur « identité
+opérée » du bénéficiaire restent écrits, c'est la **résolution** qui lit l'état du
+prêteur à chaque appel. Au réveil, le prêt revient tel quel, **sans rien
+reconfigurer**.
+
+Le bénéficiaire, lui, n'est pas en pause — il reçoit un **refus nommé**, code
+`lender_suspended`, qui dit que le prêteur est en pause, que le prêt n'est ni révoqué
+ni supprimé et qu'il reprendra à son réveil. Pas le motif de la pause : il appartient
+à l'exploitant. Où il tombe :
+
+| face | porte | refus |
+|---|---|---|
+| compte prêté, pointeur ou `_account=` | `connectors.identities.resolve_operated_account_id` | `PreteurEnPause` → `McpError`, `data.code=lender_suspended` |
+| compte prêté, épinglé par le projet | `tools.unipile.unipile_client` | idem |
+| compte prêté, choisi comme identité | `_unipile_select` → capacité `connectors.set_default_identity` | `403 lender_suspended` |
+| clé prêtée (`share_side`), `_instance=` ou binding | `access.rbac.guard_instance_access` | `McpError`, `data.code=lender_suspended` |
+
+À la lecture, `oto_connector_access` (`granted_to_me`) marque le prêt retenu
+`active=false, owner_suspended=true` — distinct d'un canal déconnecté.
 
 ### ④ Ce que voient les autres — et les sièges
 
@@ -273,7 +291,9 @@ rougit, pas un test de comportement.
 Fichiers : `tests/test_account_suspension_gates.py` (les quatre portes),
 `tests/test_account_suspension_authz.py` (qui peut, sur qui),
 `tests/test_account_suspension_db_live.py` (la résurrection et la fusion, sur SQL
-réel, avec le contrefactuel de chaque refus).
+réel, avec le contrefactuel de chaque refus),
+`tests/test_account_suspension_prets.py` (les prêts suspendus avec le prêteur et
+rendus au réveil, sur SQL réel, #898).
 
 ## 5. Coût de surface, chiffré
 
@@ -297,6 +317,9 @@ seulement, elle ne rendait rien à qui ne travaille qu'en MCP.
   appels (cf. ⑥).
 - **Pas de pause d'organisation.** L'archivage d'org existe (`org.archive`) et n'a
   aucun rapport : il ne touche pas les comptes de ses membres.
+- **Un endpoint de projet publié** (ADR 0032) qui agit sous le compte Unipile d'un
+  membre de l'org continue d'agir si ce membre est en pause : ce n'est pas un prêt à
+  une personne, et l'arbitrage du 23/09 ne l'a pas tranché (reste dans #898).
 - **Pas d'expiration automatique.** Une pause dure jusqu'à ce qu'on la lève. Un réveil
   qui tomberait tout seul serait, très exactement, la résurrection automatique que
   ce lot existe pour interdire.

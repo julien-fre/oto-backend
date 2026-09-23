@@ -40,6 +40,7 @@ def test_pin_own_account_ok(monkeypatch):
 
 def test_pin_not_operable_raises(monkeypatch):
     monkeypatch.setattr(db, "granted_accounts_for", _grants({}))
+    monkeypatch.setattr(db, "suspended_lenders_for", _grants({}))   # #898 : aucun prêteur en pause
     monkeypatch.setattr(db, "list_unipile_accounts", _own(["acc_own"]))
     monkeypatch.setattr(db, "get_operated_account", lambda s, p: None)
     tok = session_org.set_call_account("acc_stranger")
