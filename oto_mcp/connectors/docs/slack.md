@@ -3,7 +3,7 @@
 oto n'a pas encore d'app Slack publiée (« connecter en un clic ») : tu crées **ta** app dans ton workspace et tu colles ses tokens ici. Une manœuvre unique par workspace, ~5 minutes.
 - **bot token** (`xoxb-`) : lire les canaux, poster sous l'identité de l'app. C'est le token nominal.
 - **user token** (`xoxp-`) : poster **en ton nom**, et chercher (`search:read` n'existe qu'en user token). Optionnel.
-- l'un des deux suffit ; les deux ensemble = lecture par le bot + post en ton nom
+- l'un des deux suffit. Avec **les deux**, oto lit avec le bot et te fait **choisir qui écrit** à chaque envoi : `author="me"` (en ton nom) ou `author="app"` (sous le nom de l'app) — sans précision, l'envoi est refusé plutôt que parti sous le mauvais nom. La réponse dit qui a écrit et dans quel canal, et si ce canal est partagé avec l'extérieur.
 - à défaut, un admin peut te grant la clé plateforme de ton org
 
 ## setup — créer l'app en collant un manifeste (le plus court)
@@ -64,7 +64,7 @@ un token Slack est émis **par installation** : deux workspaces = deux jeux de t
 
 ## usage — ce que tu peux faire
 
-envoie et lis des messages slack en ton nom depuis claude.
+envoie et lis des messages slack depuis claude — en ton nom ou sous celui de l'app, selon les tokens posés.
 - « envoie un message dans #general » → `slack_post_message`
 - « dm jean par email » → `slack_find_user_by_email` puis `slack_open_dm` puis `slack_post_message`
 - « lis les derniers messages de ce canal » → `slack_read_history` (messages de premier niveau ; `oldest`/`latest` pour ne lire qu'une fenêtre)

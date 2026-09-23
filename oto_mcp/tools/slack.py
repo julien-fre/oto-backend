@@ -5,17 +5,17 @@ Per-user : chaque user pose son propre **user token** (`xoxp-`) sur
 (bootstrappée depuis `SLACK_USER_TOKEN`). La clé est résolue par appel via
 `access.resolve_api_key("slack")` — pas de token serveur partagé en clair.
 
-Tous les appels passent par le user token (`as_user=True`) : les messages
-apparaissent comme l'humain qui a installé l'app. ⚠️ Aujourd'hui ce `xoxp-` est
-posé à la main et souvent partagé en clé plateforme → tout le monde poste comme
-le même humain. La cible (per-user OAuth : clé app plateforme + `xoxp-` per-user,
-+ mode bot `xoxb-` pour les comptes de service) est suivie en
-otomata-tech/otomata-private#7.
+Un compte (un workspace) porte jusqu'à deux identités : l'app (`xoxb-`) et une
+personne (`xoxp-`). Les LECTURES sont routées par le client (canal → bot, DM →
+utilisateur). Les ÉCRITURES (poster, supprimer, réagir) prennent `author` :
+choisi par l'appelant, refusé s'il est ambigu ou sans jeton — jamais déduit
+(décision du 23/09). L'app publiée, installable en un clic, reste une cible :
+otomata-tech/oto#3.
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 from fastmcp import FastMCP
 
@@ -114,6 +114,42 @@ _GESTE_INVITATION = (
 )
 
 
+# Qui ÉCRIT dans Slack. Un compte peut porter deux identités — l'app (jeton de bot
+# `xoxb-`) et une personne (jeton utilisateur `xoxp-`) — et le client routait les
+# écritures sur la seconde dès qu'elle existait : un agent postait en ton nom sans
+# l'avoir choisi, ou sous le nom de l'app sans pouvoir faire autrement. Décision du
+# 23/09 : l'auteur se CHOISIT. Ambigu = refus nommé, la même règle que pour le
+# workspace — un message parti sous le mauvais nom ne se reprend pas.
+Auteur = Literal["me", "app"]
+
+
+def _auteur(bot: bool, user: bool, author: Optional[str]) -> bool:
+    """`as_user` à employer pour une écriture, ou un refus qui dit quoi passer.
+
+    Un seul jeton posé : il sert, rien à choisir. Les deux : l'appelant nomme
+    l'auteur. Un auteur demandé sans le jeton qui le porte : refus, jamais un repli
+    sur l'autre identité."""
+    if author is None:
+        if bot and user:
+            raise ValueError(
+                "Ce workspace porte deux identités Slack : précise qui écrit — "
+                "`author=\"me\"` (en ton nom, jeton utilisateur) ou `author=\"app\"` "
+                "(sous le nom de l'app, jeton de bot). Aucun défaut n'est pris : un "
+                "message parti sous le mauvais nom ne se reprend pas.")
+        return bool(user)
+    if author == "me" and not user:
+        raise ValueError(
+            "`author=\"me\"` impossible : ce workspace n'a pas de jeton utilisateur "
+            "(`xoxp-`). Seule l'app peut y écrire (`author=\"app\"`), ou pose un jeton "
+            "utilisateur sur la fiche du connecteur.")
+    if author == "app" and not bot:
+        raise ValueError(
+            "`author=\"app\"` impossible : ce workspace n'a pas de jeton de bot "
+            "(`xoxb-`). Seule ta personne peut y écrire (`author=\"me\"`), ou pose le "
+            "jeton de bot de l'app sur la fiche du connecteur.")
+    return author == "me"
+
+
 def _refus(e, channel: Optional[str] = None) -> ValueError:
     """Traduit un rejet Slack en refus ACTIONNABLE — signaux #510/#532/#549.
 
@@ -192,11 +228,12 @@ def register(mcp: FastMCP) -> None:
         except SlackError as e:
             raise _refus(e, channel) from e
 
-    def _client() -> tuple[SlackClient, bool]:
+    def _jetons() -> tuple[Optional[str], Optional[str], bool]:
         # BYO multi-champs (#25) : bot token (xoxb-) et/ou user token (xoxp-),
         # résolus par (sub, org active) via la cascade credential (user > groupe
-        # actif > org active). default_as_user suit la présence d'un user token
-        # (préserve le comportement legacy : un token unique = user token).
+        # actif > org active). ⚠️ C'est CE résultat qui dit quelles identités le
+        # compte porte — jamais les attributs du client, qui retombe sur des clés
+        # d'environnement quand un champ est vide.
         rc = access.resolve_credential("slack", want="byo")
         f = rc.fields
         bot = f.get("bot_token") or None
@@ -209,9 +246,33 @@ def register(mcp: FastMCP) -> None:
                 bot = raw
             elif raw:
                 user = raw
-        client = SlackClient(bot_token=bot, user_token=user,
-                             default_as_user=bool(user))
-        return client, rc.is_platform
+        return bot, user, rc.is_platform
+
+    def _client() -> tuple[SlackClient, bool]:
+        # LECTURES : le client route lui-même (canal → bot, DM → utilisateur).
+        bot, user, is_platform = _jetons()
+        return SlackClient(bot_token=bot, user_token=user,
+                           default_as_user=bool(user)), is_platform
+
+    def _ecrivain(author: Optional[str]) -> tuple[SlackClient, bool, str]:
+        # ÉCRITURES : l'auteur est choisi (`_auteur`), puis tenu pour tout l'appel.
+        bot, user, is_platform = _jetons()
+        as_user = _auteur(bool(bot), bool(user), author)
+        client = SlackClient(bot_token=bot, user_token=user, default_as_user=as_user)
+        return client, is_platform, "me" if as_user else "app"
+
+    def _ou(client: SlackClient, channel: str) -> dict:
+        """OÙ le message est arrivé, en clair. Un ID ne dit ni son nom ni à qui on
+        parle : le 02/09, une réponse destinée à Tulina est partie sur le canal de
+        JB. `shared_externally` dit qu'un tiers lit. Le message est PARTI quand on
+        arrive ici : un échec de lecture se nomme, il n'annule rien."""
+        try:
+            info = client.channel_info(channel).get("channel") or {}
+        except (SlackError, ValueError) as e:
+            return {"id": channel, "unknown": getattr(e, "error", None) or str(e)}
+        return {"id": channel, "name": info.get("name"),
+                "is_dm": bool(info.get("is_im")),
+                "shared_externally": bool(info.get("is_ext_shared"))}
 
     def _record_if_platform(is_platform: bool) -> None:
         if is_platform:
@@ -222,8 +283,10 @@ def register(mcp: FastMCP) -> None:
         channel: str,
         text: str,
         thread_ts: Optional[str] = None,
+        author: Optional[Auteur] = None,
     ) -> dict:
-        """Send a Slack message to a channel or DM (appears as you).
+        """Send a Slack message to a channel or DM. The response says who wrote
+        (`_author`) and where it landed (`_channel`: name, DM, shared externally).
 
         ⚠️ **Long text is SPLIT, never truncated.** Above ~4,000 characters the
         text goes out as SEVERAL messages: the first one where you asked, each
@@ -243,26 +306,33 @@ def register(mcp: FastMCP) -> None:
                 `slack_find_user_by_email` + `slack_open_dm` first to get the channel ID.
             text: Message text (Slack mrkdwn supported).
             thread_ts: Parent message ts to reply into a thread.
+            author: Who writes — `"me"` (as you, user token) or `"app"` (as the
+                Slack app, bot token). Required when the workspace holds both
+                tokens; with a single one, it is used and may be omitted.
         """
-        client, is_platform = _client()
+        client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.post_message(channel, text=text, thread_ts=thread_ts)
         _record_if_platform(is_platform)
-        return result
+        return {**result, "_author": qui, "_channel": _ou(client, channel)}
 
     @mcp.tool()
-    def slack_delete_message(channel: str, ts: str) -> dict:
-        """Delete a message you previously posted.
+    def slack_delete_message(channel: str, ts: str,
+                             author: Optional[Auteur] = None) -> dict:
+        """Delete a message previously posted — by the same author that posted it.
 
         Args:
             channel: Channel ID.
             ts: Message timestamp returned by `slack_post_message`.
+            author: Who writes — `"me"` (as you, user token) or `"app"` (as the
+                Slack app, bot token). Required when the workspace holds both
+                tokens; with a single one, it is used and may be omitted.
         """
-        client, is_platform = _client()
+        client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.delete_message(channel, ts)
         _record_if_platform(is_platform)
-        return result
+        return {**result, "_author": qui}
 
     @mcp.tool()
     def slack_list_channels(types: str = "public_channel") -> dict:
@@ -465,16 +535,20 @@ def register(mcp: FastMCP) -> None:
         return result
 
     @mcp.tool()
-    def slack_add_reaction(channel: str, ts: str, name: str) -> dict:
+    def slack_add_reaction(channel: str, ts: str, name: str,
+                           author: Optional[Auteur] = None) -> dict:
         """Add an emoji reaction to a message.
 
         Args:
             channel: Channel ID.
             ts: Message timestamp.
             name: Emoji name without colons (e.g. `white_check_mark`).
+            author: Who writes — `"me"` (as you, user token) or `"app"` (as the
+                Slack app, bot token). Required when the workspace holds both
+                tokens; with a single one, it is used and may be omitted.
         """
-        client, is_platform = _client()
+        client, is_platform, qui = _ecrivain(author)
         with _traduit(channel):
             result = client.add_reaction(channel, ts, name)
         _record_if_platform(is_platform)
-        return result
+        return {**result, "_author": qui}
