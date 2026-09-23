@@ -294,10 +294,20 @@ tenant », l'arête tenant→org de 0053, l'étage tenant de l'endpoint anonyme,
 
 Un tenant qui veut que ses utilisateurs consentent chez Google sous SA marque (son projet
 Google Cloud, ses scopes vérifiés sous son nom) pose son client OAuth comme **app
-d'éditeur** du connecteur `google`, keyée par son **slug** :
-`POST /api/admin/editor-apps {"connector": "google", "data_center": "<slug>", "client_id",
-"client_secret"}` — super admin, REST seulement, coffre chiffré (`docs/connector-vault.md`
-§app d'éditeur). Aucune colonne, aucun env : le mécanisme existait, Google ne le lisait pas.
+d'éditeur** du connecteur `google`, keyée par son **slug** — coffre chiffré
+(`docs/connector-vault.md` §app d'éditeur), aucune colonne, aucun env : le mécanisme
+existait, Google ne le lisait pas. Deux faces pour la poser, même ligne au coffre :
+
+- **la sienne**, depuis SON tableau de bord (`tenant_apps`) :
+  `PUT /api/admin/tenants/{slug}/apps/{connector} {"client_id", "client_secret"}` ;
+  `GET …/apps` (liste, jamais le secret, avec le rappel de chacune) ; `DELETE
+  …/apps/{connector}`. Plancher `TENANT_ADMIN_OF(slug)` comme ses clés : l'admin du
+  tenant (rôle lu sur le sub qualifié) OU le super admin. **Scopé au slug de la
+  route** : un admin de `pilote` ne voit ni ne pose rien sous `tulina`, et l'app d'un
+  tenant ne sert qu'aux comptes qualifiés sous son slug (`google_oauth.app_for`) —
+  jamais à un autre tenant, jamais à la plateforme ;
+- **celle de l'opérateur** (`platform.editor_app.set`, `POST /api/admin/editor-apps
+  {"connector", "data_center": "<slug>", …}`, super admin), la clé étant libre.
 
 - **Le rappel est celui du tenant** : `https://<hosts[0]>/api/google/oauth/callback`
   (rendu par la réponse de la pose). C'est CETTE URL qu'il déclare dans son client Google

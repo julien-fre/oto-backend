@@ -14,6 +14,10 @@ garantit cette séparation est documenté dans `credentials_store` §app d'édit
 **REST seulement, super admin** : la face MCP est délibérément absente — un secret brut
 en argument d'outil transiterait par le contexte du modèle (règle du repo, cf. la pose
 des secrets d'org).
+
+**La face du TENANT est ailleurs** (`tenant_apps`, 23/09/2026) : un admin de tenant pose
+SON app sous SON slug depuis `/api/admin/tenants/{slug}/apps/{connector}` — ici, la clé
+est libre (région zoho, slug de tenant…) et le geste reste celui de l'opérateur.
 """
 from __future__ import annotations
 
