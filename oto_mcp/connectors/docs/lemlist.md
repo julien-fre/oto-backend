@@ -15,6 +15,7 @@ le connecteur reflète les **141 routes documentées**, sans exception. par fami
 
 **leads** — `lemlist_create_lead`, `lemlist_lead`, `lemlist_enrich*`
 - « ajoute ce lead, trouve son email et vérifie-le »
+- un lead déjà dans une campagne n'est pas une erreur : `lemlist_create_lead` rend `created: false` avec `reason` (`already_in_other_campaign` / `already_in_campaign`) — le contact est déjà pris, compte-le comme tel
 - « mets ce lead en pause sur toutes les campagnes », « marque-le intéressé »
 - « importe les leads du filtre HubSpot X dans cette campagne »
 

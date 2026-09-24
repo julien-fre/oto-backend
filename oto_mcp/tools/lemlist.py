@@ -102,6 +102,24 @@ STATS_EPOCH = "2015-01-01T00:00:00.000Z"
 STATS_DETAIL = ("steps", "perChannel")
 
 
+#: Les deux refus de DOUBLON de `POST /campaigns/{id}/leads/`, reconnus à leur
+#: MESSAGE (corps en texte brut), jamais à leur statut : lemlist l'a changé sous nos
+#: pieds — « Lead already in other campaign » en 500 le 31/08/2026 (23 appels), le
+#: même en 409 le 09/09 (71 appels), « Lead already in the campaign » en 400
+#: (otomata-tech/oto#263). Ce n'est pas une panne : le contact est déjà pris, et
+#: l'agent doit le compter comme tel. Tout autre refus garde son chemin d'erreur.
+LEAD_DEJA_PRIS = {
+    "Lead already in other campaign": "already_in_other_campaign",
+    "Lead already in the campaign": "already_in_campaign",
+}
+
+
+def _lead_deja_pris(exc) -> Optional[str]:
+    """La `reason` d'un refus de doublon de lemlist, `None` pour tout autre refus."""
+    body = getattr(exc, "body", None)
+    return LEAD_DEJA_PRIS.get(body.strip()) if isinstance(body, str) else None
+
+
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
@@ -458,6 +476,11 @@ def register(mcp: FastMCP) -> None:
         `lemlist_launch_lead`/`lemlist_add_lead_variables`. If the campaign has
         review-before-send enabled, the lead is created paused and won't send
         until `lemlist_launch_lead` is called.
+
+        A lead lemlist refuses as a DUPLICATE is not an error: the call returns
+        `{created: false, reason, message, campaign_id, lead}` with `reason`
+        `already_in_other_campaign` or `already_in_campaign` — nothing was
+        created; count the contact as already taken and move on.
         """
         lead = {
             k: v for k, v in {
@@ -476,12 +499,21 @@ def register(mcp: FastMCP) -> None:
         }
         if custom_variables:
             lead.update(custom_variables)
+        from oto.tools.common.errors import UpstreamHTTPError
+
         client, is_platform = _client()
-        result = client.create_lead(
-            campaign_id, lead,
-            deduplicate=deduplicate, linkedin_enrichment=linkedin_enrichment,
-            find_email=find_email, verify_email=verify_email, find_phone=find_phone,
-        )
+        try:
+            result = client.create_lead(
+                campaign_id, lead,
+                deduplicate=deduplicate, linkedin_enrichment=linkedin_enrichment,
+                find_email=find_email, verify_email=verify_email, find_phone=find_phone,
+            )
+        except UpstreamHTTPError as e:
+            reason = _lead_deja_pris(e)
+            if reason is None:
+                raise
+            return {"created": False, "reason": reason, "message": e.body.strip(),
+                    "campaign_id": campaign_id, "lead": lead}
         _record_if_platform(is_platform)
         return result
 
