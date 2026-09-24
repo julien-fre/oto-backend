@@ -82,7 +82,10 @@ def test_un_autre_400_garde_son_erreur():
 
 
 def test_la_creation_normale_reste_intacte():
-    assert _creer(None) == {"_id": "lea_1", "campaignId": "cam_1", "email": "a@b.co"}
+    r = _creer(None)
+    assert {k: r[k] for k in ("_id", "campaignId", "email")} == {
+        "_id": "lea_1", "campaignId": "cam_1", "email": "a@b.co"}
+    assert r["review_state"] == "unknown"   # oto#264
 
 
 # --- oto#1071, #1072 : une campagne mal nommée ou introuvable ne passe jamais en silence ---

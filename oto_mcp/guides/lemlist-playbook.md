@@ -42,7 +42,7 @@ Conséquences, toutes vérifiées :
 5. lemlist_sequence(op="add_step", sequence_id="seq_…", step={"type":"email", …})
 6. lemlist_schedule(op="create"/"associate")     ← si la fenêtre par défaut ne convient pas
 7. lemlist_campaign(op="statutes")               ← LIT ce qui bloquerait : level 3 = bloquant
-8. lemlist_create_lead(campaign_id=…, email=…)   → lea_… (en attente de revue)
+8. lemlist_create_lead(campaign_id=…, email=…)   → lea_…, review_state "unknown" ← part ou retenu : lemlist_campaign(op="reports")
 9. lemlist_campaign_start(campaign_id=…)         ← masqué par défaut
 10. lemlist_launch_lead(lead_id="lea_…")         ← masqué par défaut : C'EST l'envoi
 ```
@@ -123,7 +123,7 @@ quoi faire, pas pour agir.
 | `segmentType is invalid` / `activate requires both segmentType and signalProcessingType` | Sur une watch list, `filters`, `segmentType`, `signalProcessingType` et `activate` sont TOUS obligatoires. Le message accuse les mauvais champs : c'est `activate` qui manque. |
 | `WRONG_METADATA_FORMAT` sur un bulk d'enrichissement | Les valeurs de `metadata` doivent être des **chaînes** : `{"row": "1"}`, pas `{"row": 1}`. |
 | Un export de leads rend une liste **vide** sur une campagne qui en a | Le défaut de lemlist filtre tout ; le connecteur force `state="all"` sur les **trois** routes de lecture de leads (`lemlist_lead op=list`, `lemlist_get_leads`, `lemlist_campaign op=export_leads`). Si tu passes `state` toi-même, sache ce que tu filtres. ⚠️ Le forçage n'existait que sur la route d'export jusqu'au 05/09/2026 : les deux autres rendaient `[]` sur une campagne pleine, alors que cette ligne annonçait déjà le contraire pour le connecteur entier. |
-| Savoir si un lead ajouté va PARTIR, avant d'écrire | `lemlist_campaign op="reports"` rend `totalCount`, `reviewedCount`, `inSequenceLeadCount` et `emailsSent`. Ces quatre nombres prouvent l'état du verrou de revue **sans envoyer quoi que ce soit** — mesuré le 04/09/2026 sur une campagne d'un lead : `1 / 0 / 0 / 0`. Ni `op="get"` ni la fiche du lead ne le disent : `isPaused` ne distingue pas « en attente de revue » de « prêt à partir ». |
+| Savoir si un lead ajouté va PARTIR, avant d'écrire | `lemlist_campaign op="reports"` rend `totalCount`, `reviewedCount`, `inSequenceLeadCount` et `emailsSent`. Ces quatre nombres prouvent l'état du verrou de revue **sans envoyer quoi que ce soit** — mesuré le 04/09/2026 sur une campagne d'un lead : `1 / 0 / 0 / 0`. Ni `op="get"` ni la fiche du lead ne le disent : `isPaused` ne distingue pas « en attente de revue » de « prêt à partir » — c'est pourquoi `lemlist_create_lead` l'écarte et rend `review_state: "unknown"` (oto#264). |
 | `already running` sur un start | Cf. piège n°1. |
 | `You can't pause campaigns that are not running` | Symétrique : la pause refuse une campagne à l'arrêt. |
 | `string indices must be integers` (historique) | `GET /campaigns?version=v2` rend un objet, pas un tableau. Corrigé ; si ça réapparaît, la forme a rebougé. |

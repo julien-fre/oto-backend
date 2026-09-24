@@ -126,6 +126,20 @@ def _campagne_introuvable(exc) -> bool:
             and body.strip() == "Campaign not found")
 
 
+#: Ce que `lemlist_create_lead` dit de la revue d'un lead créé (otomata-tech/oto#264) :
+#: « inconnu », parce que lemlist ne le dit NULLE PART dans cette réponse. Mesuré le
+#: 04/09/2026 : `isPaused` reste `false` qu'un lead soit retenu en revue ou parti ; seuls
+#: les compteurs de la campagne (`reviewedCount`, `inSequenceLeadCount`) les distinguent.
+#: `isPaused` est donc ÉCARTÉ de la réponse — laissé, il se lisait « l'envoi part ».
+REVIEW_STATE_UNKNOWN = "unknown"
+REVIEW_HINT = (
+    "lemlist ne dit pas, à la création, si ce lead attend une revue ou part en "
+    "séquence ; `isPaused` a été écarté car il ne le distingue pas. Pour le savoir : "
+    "lemlist_campaign(op=\"reports\") — si `reviewedCount` ou `inSequenceLeadCount` "
+    "ont monté avec l'ajout, le lead part ; seul `totalCount` qui monte = retenu en revue."
+)
+
+
 def _lead_deja_pris(exc) -> Optional[str]:
     """La `reason` d'un refus de doublon de lemlist, `None` pour tout autre refus."""
     body = getattr(exc, "body", None)
@@ -490,10 +504,13 @@ def register(mcp: FastMCP) -> None:
         Returns the created lead, including `_id` — pass it to
         `lemlist_launch_lead`/`lemlist_add_lead_variables`. A response without a
         lead `_id` is a named refusal (`lemlist_lead_not_created`), never a
-        success. If the campaign has review-before-send enabled, the lead is held
-        for review (lemlist counts it in the campaign's `reviewedCount`) and won't
-        send until `lemlist_launch_lead` is called — but its `isPaused` stays
-        `false`: that field does NOT reflect the review lock, don't use it to check.
+        success. `review_state` is always `"unknown"`: lemlist's answer does not
+        say whether the lead is held for review or already in sequence (its
+        `isPaused` does not tell them apart, so it is removed). To know if it
+        will send, read `lemlist_campaign(op="reports")`: `reviewedCount` or
+        `inSequenceLeadCount` rising with the add means it goes out; only
+        `totalCount` rising means it is held for review until
+        `lemlist_launch_lead`.
         A 404 « Campaign not found » is a named refusal
         (`lemlist_campaign_not_found`): the campaign is not reachable by the key
         in use for leads, even if its reports are.
@@ -558,7 +575,10 @@ def register(mcp: FastMCP) -> None:
                 "aucun lead n'a été créé. Vérifie l'id de campagne et les champs du "
                 "lead avant de réessayer.", campaign_id=campaign_id)
         _record_if_platform(is_platform)
-        return result
+        # oto#264 : l'état de revue n'est pas dans la réponse — le dire, et retirer
+        # le champ qui se lisait à tort comme sa réponse.
+        return {**project(result, drop=("isPaused",)),
+                "review_state": REVIEW_STATE_UNKNOWN, "review_hint": REVIEW_HINT}
 
     def _require_action(**flags: bool) -> None:
         if not any(flags.values()):
