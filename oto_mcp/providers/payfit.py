@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from ._model import _c
 
-# payfit : paie et RH, TOUT ce que l'API Partner documente — lecture et écriture.
+# payfit : paie et RH, TOUT ce que l'API Partner documente en LECTURE. Aucune
+# écriture n'est câblée (24/09/2026) : les ops d'écriture rendent
+# `payfit_write_not_wired` (cf. `tools/payfit_garde.py`).
 # keyed api_key (Bearer), BYO seulement : une clé API PayFit est créée par un
 # admin de l'entreprise et n'ouvre que cette entreprise — une clé plateforme
 # n'aurait aucun sens, et c'est aussi pourquoi un GROUPE de sociétés pose une
@@ -24,9 +26,8 @@ from ._model import _c
 CONNECTOR = _c(
     "payfit", ["payfit"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="PayFit",
-    help="paie et RH : entreprise, annuaire, contrats, absences, bulletins, "
-         "comptabilité de paie, temps de travail, mutuelle — et l'écriture "
-         "(collaborateur, contrat, absence) en dry-run par défaut",
+    help="paie et RH, en lecture : entreprise, annuaire, contrats, absences, "
+         "bulletins, comptabilité de paie, temps de travail, mutuelle",
     href="https://payfit.com",
     modules=("payfit", "payfit_paie", "payfit_social"),
     # Le mot de PayFit pour un « compte » : une clé = une ENTREPRISE, et un groupe en
@@ -48,8 +49,8 @@ DESCRIPTION = (
     "jours, essai, rupture), leurs absences, les bulletins (métadonnées et PDF), "
     "les écritures comptables de paie et leur export, le fichier de virement, "
     "l'état du cycle de paie, le temps de travail réalisé, les titres-restaurant, "
-    "la mutuelle et la prévoyance. Écriture possible — créer un collaborateur, un "
-    "contrat, une absence, l'annuler, affilier à une mutuelle — toujours en "
-    "dry-run par défaut. NIR, coordonnées bancaires et motif d'absence sont "
+    "la mutuelle et la prévoyance. En lecture seulement : le connecteur n'écrit "
+    "jamais dans PayFit — crée la clé avec des scopes de lecture. NIR, "
+    "coordonnées bancaires et motif d'absence sont "
     "masqués par un défaut serveur qu'un administrateur d'org peut lever."
 )

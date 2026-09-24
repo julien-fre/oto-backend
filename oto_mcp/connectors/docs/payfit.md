@@ -1,9 +1,10 @@
 ## prerequisite — ta clé api payfit
 
-connecte-toi à PayFit **en admin de l'entreprise**, puis **Intégrations → API** ([app.payfit.com/integrations/hub/api](https://app.payfit.com/integrations/hub/api)) → « Créer une clé » : donne-lui un libellé explicite et coche les scopes, puis copie-la — elle n'est plus affichée ensuite. colle-la dans tes clés de connecteur oto sous `payfit`.
-- **la clé décide de ce que tu verras** : oto sert tout ce que l'API expose, mais un champ qu'un scope absent ne renvoie pas n'existe pour personne. pour un pilotage RH et financier complet : `collaborators:read`, `collaborators:management:read`, `collaborators:contracts:read`, `collaborators:personal:read`, `collaborators:legal-identity:read`, `contracts:read`, `contracts:payslips:read`, `time:read`, `accounting:read`, `health-insurance:read`, `collaborators:meal-vouchers:read`
+connecte-toi à PayFit **en admin de l'entreprise**, puis **Intégrations → API** ([app.payfit.com/integrations/hub/api](https://app.payfit.com/integrations/hub/api)) → « Créer une clé » : donne-lui un libellé explicite et coche **uniquement des scopes de lecture**, puis copie-la — elle n'est plus affichée ensuite. colle-la dans tes clés de connecteur oto sous `payfit`.
+- **le connecteur ne fait que lire** : aucune écriture n'est câblée vers PayFit.
+- **la clé décide de ce que tu verras** : oto sert tout ce que l'API expose en lecture, mais un champ qu'un scope absent ne renvoie pas n'existe pour personne. pour un pilotage RH et financier complet : `collaborators:read`, `collaborators:management:read`, `collaborators:contracts:read`, `collaborators:personal:read`, `collaborators:legal-identity:read`, `contracts:read`, `contracts:payslips:read`, `time:read`, `accounting:read`, `health-insurance:read`, `collaborators:meal-vouchers:read`
 - scopes **sensibles**, à ne cocher que si tu en as l'usage : `collaborators:social-security:read` (NIR), `collaborators:bank-info:read` (IBAN), `payment-files:read` (fichier de virement)
-- scopes d'**écriture**, seulement si tu comptes écrire : `collaborators:write`, `collaborators:contracts:write`, `time:write`, `health-insurance:write`
+- **ne coche aucun scope d'écriture** (`collaborators:write`, `collaborators:contracts:write`, `time:write`, `health-insurance:write`) : le connecteur ne s'en sert pas. sur une clé existante qui en porte, ils ne servent à rien et peuvent être retirés côté PayFit
 - la clé n'ouvre **que ton entreprise** ; oto retrouve son identifiant tout seul (par introspection), tu n'as aucun identifiant à saisir
 - que l'accès API soit inclus ou payant selon l'offre PayFit n'est pas documenté publiquement ; l'accès partenaire (OAuth) est une autre voie, sur candidature
 - BYO seulement : pas de clé oto partagée
@@ -27,13 +28,14 @@ commence par `payfit_company()` : son `country` dit si les variantes françaises
 - « mutuelle et prévoyance » → `payfit_insurance()` pour les contrats de l'entreprise, `kind="provident"` pour la prévoyance
 - **le mois s'écrit `AAAAMM`** (`202601`), jamais `2026-01` : c'est la seule forme que PayFit accepte
 
-## note — écrire dans payfit
+## note — aucune écriture dans payfit
 
-quatre écritures existent, et toutes partent en **`dry_run=True` par défaut** : l'appel te rend ce qu'il enverrait, sans rien écrire. il faut passer `dry_run=False` délibérément.
-- `payfit_collaborator(op="create", …)` crée une **vraie personne** ; `invite_collaborator=True` lui **envoie un e-mail**
-- `payfit_contract(op="create", …)` la met **en paie**
-- `payfit_absence(op="create", …)` enregistre une absence **déjà validée** — cette API n'a aucun circuit d'approbation, ce que tu écris part en paie ; `op="cancel"` l'annule
-- `payfit_insurance(op="affiliate", …)` **remplace** l'affiliation du contrat : un id omis désaffilie. lis l'état courant (`payfit_contract(op="get", fr=True)`) avant d'écrire. `op="regularize"` recalcule des cotisations **déjà passées en paie**
+le connecteur **n'écrit jamais** dans PayFit, quel que soit l'argument. les ops d'écriture existent encore dans leurs outils, mais chacune rend le refus nommé `payfit_write_not_wired`, qui dit ce que l'appel aurait fait — rien n'est envoyé :
+- `payfit_collaborator(op="create")`, `payfit_contract(op="create")`
+- `payfit_absence(op="create")` et `op="cancel"`
+- `payfit_insurance(op="affiliate")` et `op="regularize"`
+
+il n'y a ni interrupteur d'org ni activation par un administrateur : la capacité n'existe pas dans le connecteur. une embauche, un contrat, une absence ou une affiliation se font dans PayFit même.
 
 ## note — ce que l'api payfit n'a pas
 
@@ -43,7 +45,7 @@ ces questions reviennent souvent et n'ont **aucun endpoint** — oto ne les fabr
 - **la DSN** : les contrats FR portent des champs *codés selon* la norme DSN (nature, statut, IDCC, motif de rupture), mais aucun dépôt ni récupération de DSN
 - **les plannings et les pointages** : seul un agrégat mensuel par contrat existe (`payfit_worked_time`)
 - **les soldes et compteurs de congés** (CP acquis/pris, RTT restants) : rien. ne les déduis pas d'une liste d'absences
-- **l'historique des avenants** et toute modification d'un contrat existant : un contrat se lit tel qu'il est aujourd'hui, et seule sa création s'écrit
+- **l'historique des avenants** et toute modification d'un contrat existant : un contrat se lit tel qu'il est aujourd'hui
 - **les notes de frais**, les avantages en nature en tant qu'objet
 - **les documents fiscaux** : ceux qui existent (`payfit_document`) sont **britanniques** ; sur une entreprise française la liste est vide, et c'est la bonne réponse
 

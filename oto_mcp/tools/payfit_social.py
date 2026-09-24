@@ -9,12 +9,9 @@ et salarial) ; l'affiliation est celle d'UN CONTRAT DE TRAVAIL. Lire le premier 
 dit pas qui est affilié : `affiliatedContractIds` le dit dans un sens,
 `healthInsuranceContractIds` d'un `payfit_contract(fr=True)` dans l'autre.
 
-⚠️ **Une affiliation REMPLACE, elle n'ajoute pas.** `op="affiliate"` pose la liste
-entière : un id omis désaffilie le salarié du contrat correspondant. Lire l'état
-courant avant d'écrire n'est pas une précaution, c'est la seule façon d'ajouter.
-
-⚠️ **Une régularisation recalcule des cotisations DÉJÀ PASSÉES EN PAIE** et se
-répercute sur un bulletin. C'est l'écriture la plus lourde de ce connecteur.
+**Aucune écriture n'est câblée** (24/09/2026) : `op="affiliate"` et
+`op="regularize"` rendent le refus nommé `payfit_write_not_wired`
+(`payfit_garde.not_wired`), sans clé ni appel à PayFit.
 
 Les documents fiscaux (`income_tax`) et de retraite automatique (`auto_enrolment`)
 sont **britanniques**. Il n'existe **aucun équivalent français** : ni DSN, ni
@@ -28,8 +25,8 @@ from typing import Literal, Optional
 from fastmcp import FastMCP
 
 from . import payfit_socle as S
-from .payfit_garde import (_client, is_dry, need, preview, refuse, refuse_ignored,
-                           refuse_unknown_op, run, serve_document)
+from .payfit_garde import (_client, need, not_wired, refuse_ignored, refuse_unknown_op,
+                           run, serve_document)
 
 
 def register(mcp: FastMCP) -> None:
@@ -42,12 +39,10 @@ def register(mcp: FastMCP) -> None:
         insurance_contract_ids: Optional[list] = None,
         employee_is_exempted: Optional[bool] = None,
         effective_date: Optional[str] = None,
-        dry_run: Optional[bool] = None,
         fields: Optional[list] = None,
     ) -> dict:
         """Complementary health insurance (mutuelle) and provident fund
-        (prévoyance) of a French PayFit company — the company's contracts, and one
-        employee's affiliation to them.
+        (prévoyance) of a French PayFit company — the company's contracts, read only.
 
         `kind` picks the family: `health` (mutuelle) or `provident` (prévoyance).
         Both read with the same scope upstream.
@@ -57,28 +52,17 @@ def register(mcp: FastMCP) -> None:
           population code, option, contribution base and method, employer and
           employee rates, and `affiliatedContractIds` (the employment contracts
           attached to it).
-        - **"affiliate"**: sets the employment contract's affiliation. ⚠️ It
-          **REPLACES** the whole list: an id you omit unaffiliates the employee
-          from it. Read the contract's current ids first
-          (`payfit_contract(op="get", fr=True)`) and send the full intended list.
-          `employee_is_exempted` only applies to `kind="health"`.
-        - **"regularize"**: asks PayFit for a retroactive health-insurance
-          regularization from `effective_date`. ⚠️ It recalculates contributions
-          that ALREADY went through payroll and lands on a payslip.
-          `kind="health"` only.
-
-        ⚠️ `dry_run` DEFAULTS TO TRUE on affiliate and regularize.
+        - **"affiliate"** and **"regularize"**: NOT WIRED — never write. They
+          answer the named refusal `payfit_write_not_wired`, saying what they would
+          have done; nothing is sent to PayFit. One employee's affiliation reads
+          from `payfit_contract(op="get", fr=True)`.
 
         Args:
             op: list (default) | affiliate | regularize.
             kind: health (default) | provident.
-            contract_id: op="affiliate"/"regularize" — the EMPLOYMENT contract.
-            insurance_contract_ids: op="affiliate"/"regularize" — ids from
-                `op="list"`. The complete intended list, not a delta.
-            employee_is_exempted: op="affiliate", kind="health" — the employee is
-                exempted from joining.
-            effective_date: op="regularize" — YYYY-MM-DD.
-            dry_run: op="affiliate"/"regularize" — default True.
+            contract_id / insurance_contract_ids / employee_is_exempted /
+                effective_date: op="affiliate"/"regularize" only — not wired,
+                nothing is sent.
             fields: op="list" — keep only these keys per row (`idContrat` always
                 kept); omitted or `["*"]` = the full view.
         """
@@ -86,46 +70,23 @@ def register(mcp: FastMCP) -> None:
             refuse_ignored(op, contract_id=contract_id,
                            insurance_contract_ids=insurance_contract_ids,
                            employee_is_exempted=employee_is_exempted,
-                           effective_date=effective_date, dry_run=dry_run)
+                           effective_date=effective_date)
             c = _client()
             env = (run(c.list_health_insurance_contracts) if kind == "health"
                    else run(c.list_provident_fund_contracts))
             return S.rows((env or {}).get("contracts"), "contracts", "idContrat",
                           fields=fields)
-        if op not in ("affiliate", "regularize"):
-            raise refuse_unknown_op(op, "list", "affiliate", "regularize")
-        need(op, contract_id=contract_id,
-             insurance_contract_ids=insurance_contract_ids)
-        refuse_ignored(op, fields=fields)
         if op == "affiliate":
-            refuse_ignored(op, effective_date=effective_date)
-            if kind == "provident":
-                refuse_ignored(op, employee_is_exempted=employee_is_exempted)
-            if is_dry(dry_run):
-                return preview(op, kind=kind, contract_id=contract_id,
-                               replaces_with=insurance_contract_ids,
-                               employee_is_exempted=employee_is_exempted)
-            c = _client()
-            if kind == "health":
-                return S.one(run(lambda: c.set_health_insurance(
-                    contract_id, health_insurance_contract_ids=insurance_contract_ids,
-                    employee_is_exempted=employee_is_exempted)), "affiliated")
-            return S.one(run(lambda: c.set_provident_fund(
-                contract_id, provident_fund_contract_ids=insurance_contract_ids)),
-                "affiliated")
-        if kind != "health":
-            raise refuse("PayFit : la régularisation n'existe que pour la mutuelle "
-                         "(kind='health') — l'API n'en a pas pour la prévoyance.")
-        need(op, effective_date=effective_date)
-        refuse_ignored(op, employee_is_exempted=employee_is_exempted)
-        if is_dry(dry_run):
-            return preview(op, contract_id=contract_id,
-                           insurance_contract_ids=insurance_contract_ids,
-                           effective_date=effective_date)
-        c = _client()
-        return S.one(run(lambda: c.request_health_insurance_regularization(
-            contract_id, health_insurance_contract_ids=insurance_contract_ids,
-            effective_date=effective_date)), "regularization")
+            famille = "mutuelle" if kind == "health" else "prévoyance"
+            raise not_wired(op, f"remplacé l'affiliation {famille} du contrat",
+                            contract_id=contract_id,
+                            insurance_contract_ids=insurance_contract_ids)
+        if op == "regularize":
+            raise not_wired(op, "demandé une régularisation de mutuelle",
+                            contract_id=contract_id,
+                            insurance_contract_ids=insurance_contract_ids,
+                            effective_date=effective_date)
+        raise refuse_unknown_op(op, "list", "affiliate", "regularize")
 
     @mcp.tool()
     def payfit_document(

@@ -1,5 +1,5 @@
-"""PayFit — logiciel de paie et RH. **Tout ce que l'API Partner documente**, en
-lecture et en écriture.
+"""PayFit — logiciel de paie et RH. **Tout ce que l'API Partner documente en
+lecture**. Aucune écriture n'est câblée (décision du 24/09/2026).
 
 Wrappe `oto.tools.payfit.PayfitClient` (Bearer, « Partner API » v1). keyed
 `api_key`, BYO (membre ou org) : une clé API PayFit est créée par un admin de
@@ -16,8 +16,11 @@ convention collective, forfait jours, motif de rupture, statut cadre dirigeant),
 absences, les bulletins (métadonnées et PDF), les écritures comptables de paie et
 leur export, le fichier de virement, l'état du cycle de paie, le temps de travail
 réalisé, les titres-restaurant, la mutuelle et la prévoyance, les documents. Et
-l'écriture : créer un collaborateur, un contrat, une absence, l'annuler, affilier un
-contrat à une mutuelle ou une prévoyance, demander une régularisation.
+**Aucune écriture** : créer un collaborateur, un contrat, une absence, l'annuler,
+affilier un contrat à une mutuelle ou demander une régularisation rendent le refus
+nommé `payfit_write_not_wired`, qui dit ce que l'appel aurait fait — rien n'est
+envoyé à PayFit, quel que soit l'argument. Ces ops restent dans leur enum pour que
+l'agent reçoive ce refus nommé et non « op inconnu ».
 
 Il n'y avait pas de choix à faire entre « servir la paie » et « protéger les
 personnes » : ce sont deux mécanismes différents.
@@ -45,17 +48,16 @@ quand le type est masqué. Le pourquoi complet : `payfit_socle`.
 
 Ce module :
 - `payfit_company` — l'entreprise de la clé ; `fr=True` ajoute SIREN/SIRET.
-- `payfit_collaborator` — list | get | create.
-- `payfit_contract` — list | get | create ; `fr=True` → variante FR.
-- `payfit_absence` — list | create | cancel.
+- `payfit_collaborator` — list | get ; create non câblé.
+- `payfit_contract` — list | get ; `fr=True` → variante FR ; create non câblé.
+- `payfit_absence` — list ; create et cancel non câblés.
 
 Modules frères (même clé, même client, montés par `Connector.modules`) :
 `payfit_paie` (bulletins, comptabilité et virements, état du cycle, temps de
 travail, titres-restaurant), `payfit_social` (mutuelle, prévoyance, documents).
 
 **Aucun argument n'est retenu au silence** (`is not None`) → `payfit_garde`.
-**Toute écriture est en `dry_run=True` par défaut** : l'appel rend ce qu'il ferait
-et n'écrit rien tant que `dry_run=False` n'est pas passé délibérément.
+**Aucune écriture n'est câblée** : `payfit_garde.not_wired`, sans clé ni client.
 
 Dérivé de la documentation et de la spec OpenAPI publiques (lues le 2026-09-17).
 **Aucun appel réel** : pas de clé disponible — ni la forme exacte des réponses, ni
@@ -69,7 +71,7 @@ from typing import Literal, Optional
 from fastmcp import FastMCP
 
 from . import payfit_socle as S
-from .payfit_garde import (_client, is_dry, limit_or_default, need, preview,
+from .payfit_garde import (_client, limit_or_default, need, not_wired,
                            refuse_ignored, refuse_unknown_op, register_probe, run)
 
 
@@ -108,12 +110,12 @@ def register(mcp: FastMCP) -> None:
         number_of_children: Optional[int] = None,
         gender: Optional[str] = None,
         invite_collaborator: Optional[bool] = None,
-        dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """The PayFit employee directory — read it, or hire into it.
+        """The PayFit employee directory — read only: this connector does not write
+        to PayFit.
 
         A collaborator carries what the API key's scopes allow: names, matricule,
         professional and personal emails, phones, addresses, manager, team,
@@ -125,33 +127,18 @@ def register(mcp: FastMCP) -> None:
         - **"list"** (default): the collaborators, optionally the one whose contract
           carries `email`. Paginated: pass back `next_cursor` as `cursor`.
         - **"get"**: one collaborator (`collaborator_id`).
-        - **"create"**: hires a person into PayFit. `first_name`, `last_name` and
-          `personal_email` are required. ⚠️ Creates a REAL person in a payroll
-          system, and `invite_collaborator=True` EMAILS them. A collaborator
-          created here has no contract yet — `payfit_contract(op="create")` is what
-          puts them on the payroll.
-
-        ⚠️ `dry_run` DEFAULTS TO TRUE on create: the call returns what it would
-        send and writes nothing. Pass `dry_run=False` deliberately to act.
+        - **"create"**: NOT WIRED — never writes. It answers the named refusal
+          `payfit_write_not_wired`, saying what it would have done; nothing is sent
+          to PayFit. Hiring is done in PayFit itself.
 
         Args:
             op: list (default) | get | create.
             collaborator_id: op="get".
             email: op="list" — exact contract email (not the login email).
-            first_name / last_name / personal_email: op="create", required.
-            other_name: op="create" — nom d'usage (FR), middle name (UK).
-            social_security_number: op="create" — length by country (FR 15, ES 14,
-                GB 12).
-            personal_address: op="create" — `{streetNumber, addressFirstLine,
-                addressSecondLine, city, state, postCode, country}` (country as a
-                2-letter ISO code).
-            birth_information: op="create" — `{birthDate, birthPlace,
-                birthCountry}`, birth date as YYYY-MM-DD in the past.
-            personal_phone_number: op="create".
-            number_of_children: op="create" — 0 to 20.
-            gender: op="create" — `MALE` or `FEMALE` (PayFit's closed set).
-            invite_collaborator: op="create" — sends the invitation email.
-            dry_run: op="create" — default True.
+            first_name / last_name / personal_email / other_name /
+                social_security_number / personal_address / birth_information /
+                personal_phone_number / number_of_children / gender /
+                invite_collaborator: op="create" only — not wired, nothing is sent.
             limit: op="list" — 1..50 (default 50).
             cursor: op="list" — `next_cursor` of the previous page.
             fields: op="list" — keep only these keys per row (`id` always kept);
@@ -165,8 +152,7 @@ def register(mcp: FastMCP) -> None:
             number_of_children=number_of_children, gender=gender,
             invite_collaborator=invite_collaborator)
         if op == "list":
-            refuse_ignored(op, collaborator_id=collaborator_id, dry_run=dry_run,
-                           **creation)
+            refuse_ignored(op, collaborator_id=collaborator_id, **creation)
             c = _client()
             return S.page(run(lambda: c.list_collaborators(
                 limit=limit_or_default(limit), cursor=cursor, email=email)),
@@ -174,20 +160,16 @@ def register(mcp: FastMCP) -> None:
         if op == "get":
             need(op, collaborator_id=collaborator_id)
             refuse_ignored(op, email=email, limit=limit, cursor=cursor, fields=fields,
-                           dry_run=dry_run, **creation)
+                           **creation)
             c = _client()
             return S.one(run(lambda: c.get_collaborator(collaborator_id)),
                          "collaborator", redaction=S.REDACTION)
         if op == "create":
-            need(op, first_name=first_name, last_name=last_name,
-                 personal_email=personal_email)
-            refuse_ignored(op, collaborator_id=collaborator_id, email=email,
-                           limit=limit, cursor=cursor, fields=fields)
-            if is_dry(dry_run):
-                return preview(op, collaborator={k: v for k, v in creation.items()
-                                                 if v is not None})
-            c = _client()
-            return S.one(run(lambda: c.create_collaborator(**creation)), "created")
+            # Ni le NIR ni l'adresse ne sont repris : ils finiraient au journal.
+            autres = sorted(k for k, v in creation.items()
+                            if v is not None and k not in ("first_name", "last_name"))
+            raise not_wired(op, "créé le collaborateur", first_name=first_name,
+                            last_name=last_name, champs_fournis=autres)
         raise refuse_unknown_op(op, "list", "get", "create")
 
     @mcp.tool()
@@ -199,13 +181,13 @@ def register(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         fr: Optional[bool] = None,
         include_in_progress: Optional[bool] = None,
-        dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """Employment contracts in PayFit: job title, status, start/end dates,
-        probation end date, weekly hours, full-time equivalent, collaborator id.
+        """Employment contracts in PayFit, read only: job title, status, start/end
+        dates, probation end date, weekly hours, full-time equivalent, collaborator
+        id.
 
         `fr=True` (French companies only) reads a DIFFERENT collection, and it is
         the only one that carries the contract nature (`natureContratDsn`: 01 CDI,
@@ -222,21 +204,17 @@ def register(mcp: FastMCP) -> None:
         `op`:
         - **"list"** (default): paginated; pass back `next_cursor` as `cursor`.
         - **"get"**: one contract (`contract_id`).
-        - **"create"**: creates a contract for an EXISTING collaborator
-          (`collaborator_id`, `job_title`, `start_date`). ⚠️ This is what puts a
-          real person on the payroll. France only.
-
-        ⚠️ `dry_run` DEFAULTS TO TRUE on create.
+        - **"create"**: NOT WIRED — never writes. It answers the named refusal
+          `payfit_write_not_wired`, saying what it would have done; nothing is sent
+          to PayFit.
 
         Args:
             op: list (default) | get | create.
             contract_id: op="get".
-            collaborator_id: op="create" — the person the contract belongs to.
-            job_title: op="create".
-            start_date: op="create" — YYYY-MM-DD.
+            collaborator_id / job_title / start_date: op="create" only — not wired,
+                nothing is sent.
             fr: op="list"/"get" — French variant (default False).
             include_in_progress: op="list" — also contracts still being created.
-            dry_run: op="create" — default True.
             limit: op="list" — 1..50 (default 50).
             cursor: op="list" — `next_cursor` of the previous page.
             fields: op="list" — keep only these keys per row (`contractId` always
@@ -244,7 +222,7 @@ def register(mcp: FastMCP) -> None:
         """
         if op == "list":
             refuse_ignored(op, contract_id=contract_id, collaborator_id=collaborator_id,
-                           job_title=job_title, start_date=start_date, dry_run=dry_run)
+                           job_title=job_title, start_date=start_date)
             c = _client()
             return S.page(run(lambda: c.list_contracts(
                 limit=limit_or_default(limit), cursor=cursor,
@@ -254,24 +232,14 @@ def register(mcp: FastMCP) -> None:
             need(op, contract_id=contract_id)
             refuse_ignored(op, collaborator_id=collaborator_id, job_title=job_title,
                            start_date=start_date, include_in_progress=include_in_progress,
-                           limit=limit, cursor=cursor, fields=fields, dry_run=dry_run)
+                           limit=limit, cursor=cursor, fields=fields)
             c = _client()
             return S.one(run(lambda: c.get_contract(contract_id, fr=bool(fr))),
                          "contract", redaction=S.REDACTION)
         if op == "create":
-            need(op, collaborator_id=collaborator_id, job_title=job_title,
-                 start_date=start_date)
-            refuse_ignored(op, contract_id=contract_id, fr=fr,
-                           include_in_progress=include_in_progress, limit=limit,
-                           cursor=cursor, fields=fields)
-            if is_dry(dry_run):
-                return preview(op, contract={"collaborator_id": collaborator_id,
-                                             "job_title": job_title,
-                                             "start_date": start_date})
-            c = _client()
-            return S.one(run(lambda: c.create_contract(
-                collaborator_id, job_title=job_title, start_date=start_date)),
-                "created")
+            raise not_wired(op, "créé un contrat de travail (mise en paie)",
+                            collaborator_id=collaborator_id, job_title=job_title,
+                            start_date=start_date)
         raise refuse_unknown_op(op, "list", "get", "create")
 
     @mcp.tool()
@@ -286,13 +254,12 @@ def register(mcp: FastMCP) -> None:
         end_moment: Optional[str] = None,
         comment: Optional[str] = None,
         status: Optional[list] = None,
-        dry_run: Optional[bool] = None,
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
         fields: Optional[list] = None,
     ) -> dict:
-        """Absences in PayFit: contract id, start and end (date + moment of day),
-        status, and the type.
+        """Absences in PayFit, read only: contract id, start and end (date + moment of
+        day), status, and the type.
 
         The type is served as **`absence_type`** (not `type`), alongside
         **`absence_category`**: `ordinary_leave` for paid leave, RTT, rest, unpaid
@@ -310,28 +277,19 @@ def register(mcp: FastMCP) -> None:
         `op`:
         - **"list"** (default): paginated; pass back `next_cursor` as `cursor`.
           There is no single-absence read upstream.
-        - **"create"**: records an absence that is **already approved** — there is
-          no approval workflow in this API, so this goes straight into payroll.
-        - **"cancel"**: cancels `absence_id`, optionally with a `comment`.
-
-        ⚠️ `dry_run` DEFAULTS TO TRUE on create and cancel.
+        - **"create"** and **"cancel"**: NOT WIRED — never write. They answer the
+          named refusal `payfit_write_not_wired`, saying what they would have done;
+          nothing is sent to PayFit.
 
         Args:
             op: list (default) | create | cancel.
-            absence_id: op="cancel".
-            contract_id: op="list" (filter) / op="create" (required).
-            absence_type: op="create" — PayFit's `CreateAbsenceType` value
-                (`fr_conges_payes`, `fr_rtt`, `fr_sans_solde`,
-                `fr_maladie_ordinaire`…). The creatable set is NOT the readable
-                set: maternity and work accidents cannot be created here.
+            contract_id: op="list" — filter.
             begin_date / end_date: op="list" — YYYY-MM-DD, absences overlapping the
-                window; op="create" — the absence's own start and end.
-            start_moment / end_moment: op="create" — `beginning-of-day`,
-                `middle-of-day` or `end-of-day` (defaults cover full days).
-            comment: op="cancel" — recorded on the cancellation.
+                window.
+            absence_id / absence_type / start_moment / end_moment / comment:
+                op="create"/"cancel" only — not wired, nothing is sent.
             status: op="list" — approved (PayFit's default) | pending_approval |
                 declined | cancelled | pending_cancellation | all.
-            dry_run: op="create"/"cancel" — default True.
             limit: op="list" — 1..50 (default 50).
             cursor: op="list" — `next_cursor` of the previous page.
             fields: op="list" — keep only these keys per row (`id` always kept);
@@ -340,7 +298,7 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             refuse_ignored(op, absence_id=absence_id, absence_type=absence_type,
                            start_moment=start_moment, end_moment=end_moment,
-                           comment=comment, dry_run=dry_run)
+                           comment=comment)
             c = _client()
             return S.page(run(lambda: c.list_absences(
                 limit=limit_or_default(limit), cursor=cursor, contract_id=contract_id,
@@ -348,31 +306,12 @@ def register(mcp: FastMCP) -> None:
                 "absences", "id", fields=fields, shape=S.absence,
                 redaction=S.REDACTION)
         if op == "create":
-            need(op, contract_id=contract_id, absence_type=absence_type,
-                 begin_date=begin_date, end_date=end_date)
-            refuse_ignored(op, absence_id=absence_id, comment=comment, status=status,
-                           limit=limit, cursor=cursor, fields=fields)
-            moments = {k: v for k, v in
-                       (("start_moment", start_moment), ("end_moment", end_moment))
-                       if v is not None}
-            if is_dry(dry_run):
-                return preview(op, absence={"contract_id": contract_id,
-                                            "absence_type": absence_type,
-                                            "begin_date": begin_date,
-                                            "end_date": end_date, **moments})
-            c = _client()
-            return S.one(run(lambda: c.create_absence(
-                contract_id=contract_id, absence_type=absence_type,
-                start_date=begin_date, end_date=end_date, **moments)), "created")
+            # Le motif (`absence_type`) n'est pas repris : donnée de santé, masquée
+            # par défaut, qui finirait au journal.
+            raise not_wired(op, "enregistré une absence validée (partie en paie)",
+                            contract_id=contract_id, begin_date=begin_date,
+                            end_date=end_date, start_moment=start_moment,
+                            end_moment=end_moment)
         if op == "cancel":
-            need(op, absence_id=absence_id)
-            refuse_ignored(op, contract_id=contract_id, absence_type=absence_type,
-                           begin_date=begin_date, end_date=end_date,
-                           start_moment=start_moment, end_moment=end_moment,
-                           status=status, limit=limit, cursor=cursor, fields=fields)
-            if is_dry(dry_run):
-                return preview(op, absence_id=absence_id, comment=comment)
-            c = _client()
-            run(lambda: c.cancel_absence(absence_id, comment=comment))
-            return {"cancelled": True, "absence_id": absence_id}
+            raise not_wired(op, "annulé l'absence", absence_id=absence_id)
         raise refuse_unknown_op(op, "list", "create", "cancel")

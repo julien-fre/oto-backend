@@ -4,13 +4,13 @@ rendu d'un fichier et la sonde, partagés par tous les modules d'outils du conne
 Séparés des modules d'outils pour tenir sous 500 lignes. Cinq règles vivent ici :
 
 - **aucun argument n'est retenu au silence** : « fourni » se lit `is not None`,
-  jamais la vérité — `dry_run=False` et `limit=0` sont des valeurs fournies ;
+  jamais la vérité — `fr=False` et `limit=0` sont des valeurs fournies ;
 - **une erreur amont se classe sur `status_code`**, jamais sur le texte du message ;
 - **une clé vide est refusée AVANT le client** : passée vide, `PayfitClient`
   résoudrait `PAYFIT_API_KEY` dans l'environnement du SERVEUR et travaillerait sur
   une autre entreprise que celle dont la clé est posée ;
-- **une écriture ne part jamais sans qu'on l'ait demandée** : `dry_run` vaut True
-  par défaut partout, et le refus qui suit est nommé ;
+- **aucune écriture n'est câblée** : toute op d'écriture rend le refus nommé
+  `payfit_write_not_wired`, sans résoudre la clé ni appeler PayFit (24/09/2026) ;
 - **un document ne sort que si la politique de l'org ne masque rien** : un PDF ou un
   fichier ne se filtre pas, donc il est verrouillé tant que les masques PayFit ne
   sont pas levés (`serve_document`).
@@ -85,28 +85,38 @@ def refuse_unknown_op(op: str, *allowed: str) -> McpError:
     return _bad(f"op={op!r} inconnu — attendu {', '.join(repr(a) for a in allowed)}.")
 
 
-def refuse(msg: str) -> McpError:
-    """Un refus NOMMÉ, pour ce que l'amont ne sait pas faire. Dire « op inconnu »
-    d'une op qui existe mais ne vaut pas dans ce cas ferait chercher une faute de
-    frappe là où il y a une limite de l'API."""
-    return _bad(msg)
-
-
 # ---------------------------------------------------------------------------
-# Écriture : le dry-run est le DÉFAUT, et son refus se lit
+# Écriture : NON CÂBLÉE, jamais (décision du 24/09/2026)
 # ---------------------------------------------------------------------------
 
-def is_dry(dry_run: Optional[bool]) -> bool:
-    """`None` (omis) vaut True : l'agent qui ne dit rien n'écrit pas."""
-    return dry_run is None or bool(dry_run)
+WRITE_NOT_WIRED = "payfit_write_not_wired"
 
 
-def preview(op: str, **what: Any) -> dict:
-    """Ce qu'une écriture RENDRAIT si elle partait — et la phrase exacte qui dit
-    comment la faire partir."""
-    return {"dry_run": True, "would": op, **what,
-            "note": f"Rien n'est écrit dans PayFit. Repasse avec dry_run=False pour "
-                    f"exécuter `{op}`."}
+def not_wired(op: str, action: str, **what: Any) -> McpError:
+    """Le refus de TOUTE écriture PayFit : rien n'est envoyé, quel que soit l'argument.
+    La capacité d'écrire n'existe pas dans le connecteur tant qu'on ne la décide pas —
+    pas d'interrupteur d'org, pas d'activation par un org_admin. Ni la clé ni le
+    client ne sont touchés : le refus ne dépend de rien.
+
+    Une ERREUR, pas un résultat : un `{"sent": false}` se lit trop vite comme un
+    succès, et un agent qui croit avoir mis quelqu'un en paie est pire qu'un agent
+    refusé. Même forme que les autres refus nommés (`connector_disabled`) : le code
+    dans le message ET dans `data`, `retryable: False`.
+
+    `what` décrit l'action à l'agent. L'appelant n'y met que des identifiants, des
+    dates et des libellés — jamais une valeur masquée par défaut (NIR, IBAN, motif
+    d'absence), qui finirait dans le journal des appels."""
+    decrit = {k: v for k, v in what.items() if v is not None and v != "" and v != []}
+    detail = ", ".join(f"{k}={v!r}" for k, v in decrit.items())
+    return McpError(ErrorData(
+        code=INVALID_PARAMS,
+        message=(f"Refus `{WRITE_NOT_WIRED}` : cela aurait {action}"
+                 f"{f' ({detail})' if detail else ''} — mais le connecteur ne câble "
+                 "pas l'API PayFit en écriture : rien n'a été envoyé à PayFit. Ce "
+                 "connecteur ne fait que lire ; l'écriture se fait dans PayFit même."),
+        data={"code": WRITE_NOT_WIRED, "retryable": False, "op": op,
+              "would_have": decrit},
+    ))
 
 
 # ---------------------------------------------------------------------------
