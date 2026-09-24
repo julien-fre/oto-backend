@@ -220,6 +220,10 @@ def register(mcp: FastMCP) -> None:
         l'emplacement de l'ancre. Moins d'ancres que de signataires → refus, et
         rien n'est créé.
 
+        Rend `{"demande_id", "document_id", "ancres", "signataires": [{"id",
+        "email"}]}` — à repasser tels quels à `yousign_envoyer`/`yousign_statut`/
+        `yousign_document_signe`.
+
         Args:
             nom: nom de la demande (1-128 caractères), visible par les
                 signataires dans l'email.
@@ -232,11 +236,6 @@ def register(mcp: FastMCP) -> None:
                 l'ancre `sN`.
             message_livraison: "email" (Yousign envoie le lien) ou "none"
                 (le lien est à distribuer soi-même : `yousign_envoyer` le rend).
-
-        Returns:
-            `{"demande_id", "document_id", "ancres", "signataires": [{"id",
-            "email"}]}` — à repasser tels quels à `yousign_envoyer`/
-            `yousign_statut`/`yousign_document_signe`.
         """
         pdf = _pdf(pdf_base64)
         infos = _signataires(signataires)
