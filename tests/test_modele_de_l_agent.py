@@ -296,7 +296,11 @@ def test_list_sert_le_catalogue_marque(monkeypatch):
     servis = {m["id"]: m["served"] for m in runner["models"]}
     assert servis == {"claude-sonnet-5": True, "claude-opus-5": True,
                       "claude-haiku-4-5": True, "mistral-large-2512": False,
-                      "mistral-medium-2604": False, "mistral-small-2603": False}
+                      "mistral-medium-2604": False, "mistral-small-2603": False,
+                      # L'abonnement personnel (OTO-130) est un dépôt comme un
+                      # autre pour le catalogue : servi quand un worker de cette
+                      # famille sonde la file, et jamais proposé par défaut ici.
+                      "sub:sonnet": False, "sub:opus": False, "sub:haiku": False}
     assert [m["id"] for m in runner["models"] if m["default"]] == ["claude-sonnet-5"]
     # Servi par la seule famille des workers de production : le défaut la suit.
     _runner(monkeypatch, familles=("mistral",))

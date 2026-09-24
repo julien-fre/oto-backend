@@ -1203,6 +1203,71 @@ box (sans `ANTHROPIC_API_KEY`), puis `runner.org_key_required=true` pour
 `anthropic` — qui fait refuser la pose d'un agent Claude sans clé, au moment où
 l'on peut encore la déposer, plutôt qu'à la réservation.
 
+### Un agent peut tourner sur l'ABONNEMENT de son demandeur (21/09/2026)
+
+Troisième façon de payer un modèle, après la clé de la plateforme et la clé de l'org :
+le **forfait personnel** de la personne qui possède l'agent (famille
+`claude_subscription`, modèles `sub:sonnet` / `sub:opus` / `sub:haiku`).
+
+**Le principe, et il n'est pas négociable.** Le travail s'exécute dans un **bac à sable
+qui appartient à la personne**, sur le programme officiel du fournisseur, non modifié, où
+elle s'est connectée **elle-même** par la procédure du fournisseur. La plateforme ne
+détient, ne stocke ni ne relaie aucune session : c'est la condition qui rend ce chemin
+licite, la politique du fournisseur interdisant à un tiers de collecter ou d'intermédier
+ces identifiants. D'où trois conséquences lisibles dans le code :
+
+- `user_model_subscriptions` n'a **aucune colonne de secret** — ni l'adresse du compte ;
+  elle porte un bac à sable, un état, un palier et une échéance ;
+- à la réservation, ce travail ne passe **pas** par la garde d'argent (`_avec_cle`) : il
+  n'y a aucune clé à chercher. Il gagne un `sandbox_id`, et rien d'autre ;
+- seul un **worker de plateforme** reçoit ce bac à sable, et seul lui peut faire arrêter
+  un travail faute de connexion — la file est ouverte aux membres, pas ce pouvoir.
+
+**Des ids PRÉFIXÉS.** La famille se DÉDUIT du modèle : `claude-sonnet-5` reste la voie
+« clé de l'org », `sub:sonnet` est la voie « abonnement ». Le worker retire le préfixe.
+
+**La couture du partage : `_abonnement.peut_agir_pour`.** Aujourd'hui le
+propriétaire seul. Une connexion d'abonnement s'administrera comme les autres
+connecteurs — partagée avec des personnes nommées, qui pourront alors modifier ses
+agents (arbitré le 21/09/2026). Ce jour-là, la règle change dans CETTE fonction et
+nulle part ailleurs. D'ici là, retoucher l'agent d'un autre est refusé, **sauf
+l'éteindre** : personne ne doit avoir besoin du propriétaire pour arrêter un agent.
+
+**Un forfait est PERSONNEL.** Trois refus, tous avant l'écriture :
+`subscription_not_connected` (poser sans connexion = un agent programmé qui ne tourne
+jamais), `subscription_personal_only` sur l'agent d'un collègue, et le même sur une
+**flotte**, même connectée — un passage appartient à l'organisation. Les TROIS chemins de
+pose sont gardés : création, rallumage, et retouche du modèle d'un agent allumé (celui
+qu'on oublie).
+
+**Deux règles de file, éteintes pour tout autre dépôt** (`claim_next_job`) :
+
+1. *Un travail à la fois par personne.* `NOT EXISTS` ne suffit pas — il lit un
+   instantané, et trois prises simultanées donnaient deux travaux en vol (mesuré). Un
+   verrou consultatif BLOQUANT est pris après la prise ; la prise en trop se défait par
+   un **point de sauvegarde**, jamais un rollback (la connexion peut être partagée).
+2. *Qui ne peut pas servir ATTEND, il n'échoue pas.* La personne est SAUTÉE tant
+   que son forfait est épuisé (`limit_reset_at` futur) **ou qu'elle doit se
+   reconnecter** (`needs_login`, `disconnected` — arbitré le 21/09/2026) : ses
+   travaux restent `pending`, aucune tentative brûlée, et ils repartent TOUT SEULS
+   à la reconnexion. Ce n'est pas un arriéré : le tick périme les occurrences
+   programmées restées en file, un webhook porte sa fraîcheur — seule la plus
+   récente attend vraiment. L'écran l'annonce (`waiting_jobs`). Ne s'ARRÊTE encore
+   que ce qui n'a rien à attendre : aucun bac à sable, aucun demandeur.
+   ⚠️ L'attente vit ICI et nulle part ailleurs : la garde du claim sert un `paused_limit`
+   sans discuter, sinon un plafond EXPIRÉ tuait le travail que la file venait de rendre.
+
+**Le worker rapporte ce qu'il a vu du forfait** (`result.abonnement` à `complete`). Le
+fournisseur annonce l'usage à CHAQUE exécution, pas seulement au refus — deux fenêtres,
+cinq heures et sept jours. La personne est mise en attente dès qu'une fenêtre atteint
+`_abonnement.SEUIL_D_ATTENTE`, **avant** qu'un travail soit refusé ; deux fenêtres
+saturées attendent la plus lointaine. Un rapport mal formé s'ignore et se journalise : il
+ne fait jamais échouer une conclusion. Seul un worker de plateforme est écouté.
+
+**Ce que ce dépôt ne fait PAS** : créer le bac à sable ni ouvrir le terminal de connexion
+(infrastructure), et facturer — la famille portée par le run (`modele_du_run`) suffit au
+service d'usage pour ne compter aucun jeton sur ces exécutions.
+
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 
 Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait

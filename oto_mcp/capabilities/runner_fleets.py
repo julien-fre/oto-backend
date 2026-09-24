@@ -60,8 +60,9 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from . import (_cle_exigee, _descriptions_outils, _instruction, _lignes_reservables,
-               _modele, _ordonnanceur_de_campagne, _outils_manquants)
+from . import (_abonnement, _cle_exigee, _descriptions_outils, _instruction,
+               _lignes_reservables, _modele, _ordonnanceur_de_campagne,
+               _outils_manquants)
 from .. import access, db, output_projection, runner_models, tool_alias
 from ..tool_visibility import BETA_OPTION
 
@@ -379,6 +380,11 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # famille DE CE MODÈLE compte (14/09/2026) — un passage sans modèle
         # n'exige rien.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # ⚠️ Un modèle d'ABONNEMENT ne se pose JAMAIS sur une flotte (OTO-130) :
+        # un passage appartient à l'organisation et ferait payer le forfait d'une
+        # personne pour le travail de tous. Refusé à la création, là où on peut
+        # encore choisir un modèle servi par une clé d'organisation.
+        _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True)
         descriptions = _descriptions_outils.valider(inp.descriptions_outils, inp.tools)
         return {"fleet": db.create_fleet(
             ctx.org_id, ctx.sub, label=inp.label, procedure=inp.procedure,
@@ -455,6 +461,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # Seule la famille DE CE MODÈLE compte (14/09/2026) — un passage sans
         # modèle (ou d'un modèle hors catalogue) n'exige rien.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # Un passage déclaré avant cette garde (ou dont le modèle a changé de
+        # nature) ne s'arme pas non plus sur un abonnement personnel.
+        _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True)
         # ⚠️ Armer un passage qu'AUCUN worker vivant ne réclame le laisse `armed`
         # pour toujours : personne ne fait jamais `prendre_flotte`, et le
         # symptôme lu depuis le produit est « l'ordonnanceur est mort » — un

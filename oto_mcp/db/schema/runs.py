@@ -466,4 +466,47 @@ CREATE TABLE IF NOT EXISTS runner_platform_depots (
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (worker_sub, depot)
 );
+
+-- L'ABONNEMENT d'une personne à un fournisseur de modèles (OTO-130) : son bac à
+-- sable, et ce qu'on sait de son état. Une LIGNE PAR PERSONNE, jamais par org :
+-- un abonnement Claude appartient à qui l'a payé, et la plateforme ne le partage
+-- à personne (un agent d'org ne tourne pas sur l'abonnement d'un membre).
+--
+-- ⚠️ **Aucune colonne ne porte de secret, et il n'y en aura jamais.** La session
+-- Claude vit dans le bac à sable de la personne, écrite là par le programme
+-- officiel au terme de SA propre procédure de connexion. La plateforme n'a pas le
+-- droit de la collecter, de la stocker ni de la relayer (politique Anthropic,
+-- « developers may not collect, store, or intermediate Claude.ai credentials or
+-- session tokens ») — et n'a pas non plus à le faire : elle lance le programme
+-- DANS le bac à sable, qui lit sa session lui-même.
+--
+-- ⚠️ Ni l'adresse e-mail ni l'org Anthropic de la personne : `claude auth status`
+-- les rend, on n'en garde RIEN. Le palier (`plan`) sert l'écran ; la méthode de
+-- connexion (`method`) dit si c'est bien un abonnement et pas une clé d'API.
+CREATE TABLE IF NOT EXISTS user_model_subscriptions (
+    sub TEXT NOT NULL REFERENCES users(sub) ON DELETE CASCADE,
+    -- La FAMILLE de modèles servie par cet abonnement (`runner_models`) —
+    -- `claude_subscription` aujourd'hui, `openai_subscription` le jour où Codex
+    -- suit le même chemin.
+    famille TEXT NOT NULL,
+    -- Le bac à sable de la personne, tel que l'infrastructure le nomme. Sa
+    -- DURABILITÉ est ce qui porte la connexion : le détruire déconnecte.
+    sandbox_id TEXT,
+    -- `connected` | `needs_login` | `paused_limit` | `disconnected`.
+    statut TEXT NOT NULL DEFAULT 'disconnected',
+    -- Ce que `claude auth status` rend et que l'écran montre : « Max », « pro »…
+    plan TEXT,
+    -- « claude.ai » — donc un abonnement. Toute autre valeur n'en est pas un.
+    method TEXT,
+    -- Quand le plafond du forfait se relâche. Tant qu'elle est dans le futur et
+    -- que le statut est `paused_limit`, la réservation SAUTE les travaux de cette
+    -- personne (`claim_next_job`) : ils attendent, ils n'échouent pas.
+    limit_reset_at TIMESTAMPTZ,
+    -- Dernière preuve que la connexion tenait : une exécution qui n'a pas fini
+    -- sur « déconnecté ».
+    last_ok_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (sub, famille)
+);
 """

@@ -22,7 +22,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import _cle_exigee, _instruction, _modele
+from . import _abonnement, _cle_exigee, _instruction, _modele
 from .. import (access, db, runner_hook, runner_models, runner_tick,
                 session_visibility, tool_alias, tool_registry, tool_visibility)
 from ..tools import catalogue as tool_catalogue
@@ -562,6 +562,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # l'on peut encore la déposer, plutôt qu'à la première occurrence. Seule la
         # famille DE CE MODÈLE compte (14/09/2026) — pas toutes celles exigées.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
+        # Un modèle d'ABONNEMENT (OTO-130) ne se pose que sur SON propre agent, et
+        # que si la connexion est ouverte : posé sans elle, l'agent aurait l'air
+        # programmé sans jamais tourner. À la création, le propriétaire EST
+        # l'appelant — rien à comparer, seule la connexion se vérifie.
+        _abonnement.exiger_a_la_pose(ctx.sub, None, famille)
         # ⚠️ UN SEUL agent programmé par objet (tranché le 03/09). L'agent est une
         # PROPRIÉTÉ de la procédure, pas une collection : deux agents sur le même
         # objet, c'est deux réponses à « est-ce que ça tourne ? », et l'écran
@@ -760,6 +765,10 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         famille_pose = (famille if inp.model is not None
                         else runner_models.famille((actuel or {}).get("model")))
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille_pose)
+        # Même garde qu'à la création, sur le propriétaire STOCKÉ : rallumer
+        # l'agent d'un collègue posé sur un abonnement ferait payer son forfait
+        # pour le travail d'un autre.
+        _abonnement.exiger_a_la_pose(ctx.sub, (actuel or {}).get("sub"), famille_pose)
         # ⚠️ **RALLUMER REPREND LE RYTHME, ça ne rembobine pas** (arbitré le
         # 02/09, #826). Une échéance figée pendant l'extinction est restée dans
         # le PASSÉ : sans ce recalcul, le tick voyait le déclencheur dû à la
@@ -794,6 +803,21 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         if actuel["enabled"]:
             _modele.exige_servi(db.runner_arme(ctx.org_id), famille)
+            # ⚠️ Le TROISIÈME chemin de pose, oublié au premier jet (revue du
+            # 21/09/2026) : retoucher le modèle d'un agent ALLUMÉ ne passe ni par
+            # la création ni par le rallumage. Sans cette garde, un collègue
+            # pointait l'agent vivant de quelqu'un d'autre sur le forfait de
+            # celui-ci, dès l'occurrence suivante.
+            _abonnement.exiger_a_la_pose(ctx.sub, actuel.get("sub"), famille)
+    # ⚠️ EN DERNIER, juste avant d'écrire : l'ordre des refus est un contrat, et
+    # cette garde ne doit en déplacer aucun. Elle juge la famille EFFECTIVE —
+    # celle qu'on pose, sinon celle qui est stockée.
+    actuel = _actuel()
+    if actuel:
+        _abonnement.exiger_le_droit_de_modifier(
+            ctx.sub, actuel,
+            famille if inp.model is not None
+            else runner_models.famille(actuel.get("model")), champs)
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")

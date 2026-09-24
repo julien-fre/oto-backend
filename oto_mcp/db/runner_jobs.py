@@ -21,12 +21,25 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from .. import runner_models
 from ._conn import _connect
 
 # Backoff linéaire simple : un échec renvoie le job dans la file à +30 s × tentatives.
 # Pas d'exponentiel en V1 — les échecs attendus (amont LLM en vrac) se lissent, et un
 # job vraiment cassé atteint son plafond en minutes, pas en heures.
 _BACKOFF_S = 30
+#: Les familles servies par un ABONNEMENT personnel (OTO-130) — lues du catalogue,
+#: jamais recopiées. `runner_models` est PUR : la base peut le lire sans remonter
+#: d'une couche (c'est déjà ce que fait la capacité).
+_FAMILLES_ABONNEMENT = runner_models.FAMILLES_PERSONNELLES
+
+
+def _abonnement_personnel(depot: Optional[str]) -> bool:
+    """Ce worker sert-il un abonnement personnel ? Les gardes de `claim_next_job`
+    qui n'ont de sens que pour un forfait ne s'allument que là."""
+    return bool(depot) and depot in _FAMILLES_ABONNEMENT
+
+
 _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le tour d'un run
 
 # Plafond d'une page de file. Il existait déjà — enfoui dans le LIMIT, appliqué sans
@@ -457,10 +470,16 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
         # reprise d'un fil), jamais un bail repris sur un run ouvert. La trace
         # (`_CHAMP_PLATEFORME`) s'écrit dans la MÊME écriture que le détachement.
         from .usage import _run_closure
+        abonnement = _abonnement_personnel(depot)
+        if abonnement:
+            # Point de sauvegarde, et non un rollback : la connexion peut être
+            # PARTAGÉE avec un appelant (`_emprunt_partage`), dont une annulation
+            # entière déferait aussi les écritures. Seule la prise se défait.
+            conn.execute("SAVEPOINT prise_abonnement")
         row = conn.execute(
             f"""
             WITH pris AS (
-                SELECT id, kind, run_id FROM runner_jobs
+                SELECT rj.id, rj.kind, rj.run_id FROM runner_jobs rj
                  WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
                    -- ⚠️ La forme `status IN (...) AND (status = 'pending' OR ...)`
                    -- n'est pas cosmétique : le `OR` nu d'avant (17/09/2026, cf.
@@ -483,6 +502,39 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                    -- aussi dans les commentaires SQL.)
                    AND (payload->>'model_family' = %s
                         OR (payload->>'model_family' IS NULL AND NOT %s))
+                   -- ⚠️ ABONNEMENT (OTO-130), et seulement lui : les deux clauses
+                   -- ci-dessous sont NEUTRES pour tout autre dépôt (le booléen les
+                   -- éteint), parce qu'elles décrivent ce qu'est un forfait
+                   -- personnel et non une file.
+                   --
+                   -- 1. UN travail à la fois par PERSONNE. Le bac à sable est le
+                   --    sien, et deux exécutions concurrentes y partagent une même
+                   --    session : le rafraîchissement du jeton se joue entre elles.
+                   --    Tant que ce n'est pas mesuré (question U4 du plan), la file
+                   --    sérialise — une attente est réparable, une session cassée
+                   --    déconnecte la personne.
+                   AND (NOT %s::boolean OR NOT EXISTS (
+                           SELECT 1 FROM runner_jobs vol
+                            WHERE vol.sub = rj.sub AND vol.status = 'claimed'
+                              AND vol.lease_until > NOW()
+                              AND vol.payload->>'model_family' = rj.payload->>'model_family'))
+                   -- 2. La personne qui ne peut pas servir ATTEND, elle n'échoue pas.
+                   --    Forfait épuisé : jusqu'à son échéance (sans échéance connue,
+                   --    rien ne freine — on retente, le fournisseur tranche).
+                   --    Session perdue ou déconnexion voulue : jusqu'à ce qu'elle se
+                   --    reconnecte (décidé le 21/09/2026). Arrêter ces travaux un
+                   --    par un tuait l'agent pour un état RÉPARABLE ; en attente,
+                   --    ils repartent tout seuls à la reconnexion. Ce n'est pas un
+                   --    arriéré qui s'accumule : le tick périme les occurrences
+                   --    programmées restées en file, et un webhook porte sa
+                   --    fraîcheur — seule la plus récente attend vraiment.
+                   AND (NOT %s::boolean OR NOT EXISTS (
+                           SELECT 1 FROM user_model_subscriptions ab
+                            WHERE ab.sub = rj.sub
+                              AND ab.famille = rj.payload->>'model_family'
+                              AND (ab.statut IN ('needs_login', 'disconnected')
+                                   OR (ab.statut = 'paused_limit'
+                                       AND ab.limit_reset_at > NOW()))))
                  ORDER BY due_at
                    FOR UPDATE SKIP LOCKED
                  LIMIT 1
@@ -508,10 +560,70 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
                       j.lease_until, j.sub, j.org_id
             """,
-            (org_id, org_id, depot or "", bool(famille_seule), worker_sub,
-             int(lease_seconds)),
+            (org_id, org_id, depot or "", bool(famille_seule),
+             # Les deux gardes d'abonnement, éteintes pour tout autre dépôt.
+             _abonnement_personnel(depot), _abonnement_personnel(depot),
+             worker_sub, int(lease_seconds)),
         ).fetchone()
+        if abonnement:
+            if row and _deja_en_vol(conn, dict(row)):
+                # Un autre worker a pris, AU MÊME INSTANT, un autre travail de la
+                # même personne. Cette prise-ci se défait : le travail retourne
+                # `pending`, sa tentative n'est pas comptée, et il repartira quand
+                # l'autre conclura.
+                conn.execute("ROLLBACK TO SAVEPOINT prise_abonnement")
+                row = None
+            conn.execute("RELEASE SAVEPOINT prise_abonnement")
     return dict(row) if row else None
+
+
+def porteur_et_famille(job_id: int) -> Optional[dict]:
+    """`{sub, model_family}` d'un travail — de quoi adresser le rapport de forfait à
+    la conclusion (OTO-130).
+
+    Une lecture À PART, et non deux colonnes de plus au `RETURNING` de
+    `complete_job` : ce retour est un contrat (`{status, run_id}`) que six bancs
+    tiennent à l'octet, et l'élargir pour un à-côté ferait bouger tous ses
+    lecteurs pour une famille qui n'en concerne qu'un."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT sub, payload->>'model_family' AS model_family "
+            "FROM runner_jobs WHERE id = %s", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def _deja_en_vol(conn, pris: dict) -> bool:
+    """Un AUTRE travail de la même personne, de la même famille, est-il en vol ?
+
+    ⚠️ **Pourquoi la clause `NOT EXISTS` de la réservation ne suffit pas** (mesuré
+    le 21/09/2026, trois prises simultanées → deux travaux en vol) : elle lit un
+    INSTANTANÉ. Deux réservations parallèles prennent chacune un travail différent
+    de la même personne, et aucune ne voit la prise de l'autre — elle n'est pas
+    encore committée.
+
+    D'où le verrou consultatif, pris APRÈS la prise et BLOQUANT : les réservations
+    d'une même personne passent une à une. La première ne voit que la sienne et
+    garde ; la suivante attend le commit de la première, puis relit — en READ
+    COMMITTED, chaque ordre a son instantané, donc elle VOIT la prise committée —
+    et se défait. Le verrou tombe avec la transaction : aucun état à nettoyer.
+
+    Pas d'interblocage possible : la seconde tient sa ligne et attend le verrou ;
+    la première tient le verrou et n'a besoin d'aucune ligne de la seconde."""
+    porteur = pris.get("sub")
+    if not porteur:
+        return False
+    famille = (pris.get("payload") or {}).get("model_family")
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"abonnement:{famille}:{porteur}",))
+    return conn.execute(
+        """
+        SELECT 1 FROM runner_jobs
+         WHERE sub = %s AND id <> %s AND status = 'claimed'
+           AND lease_until > NOW() AND payload->>'model_family' = %s
+         LIMIT 1
+        """,
+        (porteur, pris["id"], famille),
+    ).fetchone() is not None
 
 
 def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:
@@ -532,6 +644,43 @@ def refuser_pour_identite(job_id: int, worker_sub: str, raison: str) -> bool:
     faux ici et enverrait chercher au mauvais endroit.
     """
     return arreter_definitivement(job_id, worker_sub, raison)
+
+
+def rendre_a_la_file(job_id: int, worker_sub: str, raison: str,
+                     delai_s: int = 60) -> bool:
+    """Défait une prise SANS la compter : le travail retourne `pending`.
+
+    L'inverse exact d'`arreter_definitivement`, pour un motif qui se RÉPARE sans
+    toucher au travail — son demandeur doit se reconnecter à son abonnement
+    (OTO-130). La réservation saute déjà ces personnes ; ceci ne sert qu'à la
+    course où l'état change entre la prise et la garde. La tentative est rendue
+    (`attempts - 1`) : le travail n'a rien tenté, et trois de ces courses ne
+    doivent pas le tuer. La raison s'écrit quand même — un travail qui attend dit
+    pourquoi."""
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'pending', claimed_by = NULL, lease_until = NULL,
+                   attempts = GREATEST(attempts - 1, 0),
+                   due_at = NOW() + make_interval(secs => %s), last_error = %s
+             WHERE id = %s AND claimed_by = %s AND status = 'claimed'
+            """,
+            (int(delai_s), raison, job_id, worker_sub),
+        )
+        return bool(cur.rowcount)
+
+
+def travaux_en_attente_d_abonnement(sub: str, famille: str) -> int:
+    """Combien de travaux de cette personne attendent SA reconnexion (ou la fin de
+    son plafond) — ce que l'écran annonce : « 3 travaux repartiront »."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM runner_jobs "
+            "WHERE sub = %s AND status = 'pending' "
+            "AND payload->>'model_family' = %s",
+            (sub, famille)).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def arreter_definitivement(job_id: int, worker_sub: str, raison: str) -> bool:
