@@ -568,6 +568,27 @@ l'ancien code de production garde l'auteur précédent jusqu'à sa prochaine éc
 rejouer le remplissage après le tag referme cette fenêtre. Le retour arrière retire les
 deux colonnes.
 
+`0014_droits_portee_personne` et `0015_droits_valeur_obligatoire` (24/09/2026,
+oto-backend#1066, après `0013_pages_versions_regroupees`) donnent à `org_entitlements` sa
+forme cible — portée personne (`sub`), `value` jamais vide, unicité
+`org_entitlements_une_ligne` (`UNIQUE NULLS NOT DISTINCT (org_id, sub, right_key,
+source)`) à la place de la clé primaire (`docs/droits-declares.md`). **Deux révisions,
+deux moments**, parce que le code d'avant pose `value` NULL et fait `ON CONFLICT (org_id,
+right_key, source)` :
+
+- **0014 AVANT la fusion** : `ADD COLUMN sub`, `value` NULL → 1, la contrainte. Additive
+  pour l'ancien code (vérifié sur vraie base : il réécrit et pose encore du NULL après
+  elle) ; le code du lot, lui, lit `sub` et cible la contrainte — sans elle, chaque
+  lecture de droit en préproduction répondrait `UndefinedColumn` ;
+- **0015 APRÈS le tag de production** : `value` NULL → 1 encore (les lignes posées par
+  l'ancien code entre-temps), `SET NOT NULL`, `DROP CONSTRAINT org_entitlements_pkey`.
+  Jouée avant le tag, elle ferait échouer la réconciliation des droits de la
+  production — y compris juste après l'activation d'un abonnement.
+
+Les deux sont idempotentes (une base neuve a déjà la forme : chaque geste est sauté) et
+bornées par `lock_timeout`. La 0004 porte désormais son propre `CREATE TABLE` (celui de sa
+date) au lieu d'exécuter le fragment courant, qui a pris la forme cible.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

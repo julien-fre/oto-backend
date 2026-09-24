@@ -59,8 +59,8 @@ def _declarer(org, **kw):
 def test_declare_ouvre_les_droits_jusqu_a_la_fin_et_declare_les_licences(live):
     org = _org()
     st = _declarer(org, ends_at=DANS_UN_AN, unit_amount=2500, reference="CTR-TEST-1")
-    assert _lignes(org) == {("unipile", "contract"): (None, DANS_UN_AN),
-                            (PLATFORM_UNMETERED, "contract"): (None, DANS_UN_AN),
+    assert _lignes(org) == {("unipile", "contract"): (1, DANS_UN_AN),
+                            (PLATFORM_UNMETERED, "contract"): (1, DANS_UN_AN),
                             (MEMBERS_MAX, "contract"): (12, DANS_UN_AN)}
     assert org_has(org, "unipile")
     assert st["provider"] == "contract" and st["comp"] is False
@@ -75,13 +75,13 @@ def test_echu_les_droits_sont_fermes_puis_le_renouvellement_les_rouvre(live):
     assert billing.status(org)["subscribed"] is False
     _declarer(org, starts_at=MAINTENANT - timedelta(days=60), ends_at=DANS_UN_AN)
     assert org_has(org, "unipile")
-    assert _lignes(org)[("unipile", "contract")] == (None, DANS_UN_AN)
+    assert _lignes(org)[("unipile", "contract")] == (1, DANS_UN_AN)
 
 
 def test_sans_date_de_fin_les_droits_sont_ouverts_sans_echeance(live):
     org = _org()
     _declarer(org)
-    assert _lignes(org)[("unipile", "contract")] == (None, None)
+    assert _lignes(org)[("unipile", "contract")] == (1, None)
     assert org_has(org, "unipile")
 
 
@@ -91,7 +91,7 @@ def test_la_resiliation_pose_la_fin_de_la_periode_en_cours(live):
     _declarer(org, starts_at=debut)
     st = billing.admin_cancel_contract(org)
     fin = billing._contract_period_end(debut, "month", datetime.now(timezone.utc))
-    assert _lignes(org)[("unipile", "contract")] == (None, fin)
+    assert _lignes(org)[("unipile", "contract")] == (1, fin)
     assert MAINTENANT < fin <= MAINTENANT + timedelta(days=31)
     assert st["contract"]["ends_at"] is not None and st["canceled_at"] is not None
     assert org_has(org, "unipile"), "le droit court jusqu'à la fin posée"

@@ -160,8 +160,8 @@ def test_le_don_fait_a_une_personne_n_ecrit_rien(live):
 
 def test_elle_ne_retire_que_ce_que_ses_sources_ont_pose(live):
     org = _org()
-    E.grant(org, "unipile", "trial", expires_at=DANS_UN_MOIS)
-    E.grant(org, "unipile", "offered")          # posé sans raison d'être : retiré
+    E.grant(org, "unipile", "trial", value=1, expires_at=DANS_UN_MOIS)
+    E.grant(org, "unipile", "offered", value=1)  # posé sans raison d'être : retiré
     out = billing_droits.reconcilier(org)
     assert out == {"poses": 0, "retires": 1}
     assert _lignes(org) == {("unipile", "trial"): DANS_UN_MOIS}

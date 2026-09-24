@@ -180,6 +180,16 @@ _REQUISES: tuple[Variable, ...] = (
     Variable("OTO_DASHBOARD_BASE_URL", Classe.REQUISE, None,
              "Troisième variable de la cascade `dashboard_url()` — voir `OTO_APP_URL`.",
              ("oto_mcp/config.py:229",)),
+    Variable("OTO_ENTITLEMENT_DEFAULTS", Classe.REQUISE, None,
+             "Les défauts des droits déclarés (ADR 0070 §7, #1066) : la valeur de chaque "
+             "droit du catalogue pour qui n'en a aucun posé, en JSON — "
+             '`{"unipile": 0, "platform_unmetered": 0, "unipile_seats": 5, '
+             '"members_max": "unlimited", "platform_key:*": 0, "platform_key:<c>": n}` '
+             "(oui/non = 1/0, nombre >= 0 ou `unlimited`, joker `platform_key:*` et "
+             "surcharges par connecteur). Une clé du catalogue ni déclarée ni couverte "
+             "refuse le démarrage. `scripts/defauts_des_droits.py` imprime ceux de "
+             "l'instance historique, dérivés du registre.",
+             ("oto_mcp/access/entitlements.py:42", "oto_mcp/server.py:997")),
 )
 
 

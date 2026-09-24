@@ -12,8 +12,9 @@ from oto_mcp import access
 
 def _wire(monkeypatch, *, droits=(), user_comp=False, org_comp=False, org=7):
     """`droits` = les (org, droit) vivants dans `org_entitlements`."""
-    monkeypatch.setattr(access.db_entitlements, "has",
-                        lambda oid, droit: (oid, droit) in set(droits))
+    monkeypatch.setattr(access.db_entitlements, "max_value",
+                        lambda oid, sub, droit, now=None:
+                        1 if (oid, droit) in set(droits) else None)
     monkeypatch.setattr(access.db, "has_option_comp",
                         lambda et, eid, opt: user_comp if et == "user" else org_comp)
     monkeypatch.setattr(access, "current_org", lambda sub: org)
@@ -39,8 +40,8 @@ def test_le_don_d_org_brut_ne_suffit_pas_c_est_le_droit_declare_qui_compte(monke
 def test_sans_org_pas_d_option_payante(monkeypatch):
     called = {}
     _wire(monkeypatch, user_comp=True, org=None)
-    monkeypatch.setattr(access.db_entitlements, "has",
-                        lambda oid, droit: called.update(oid=oid) or True)
+    monkeypatch.setattr(access.db_entitlements, "max_value",
+                        lambda oid, sub, droit, now=None: called.update(oid=oid) or 1)
     assert access.has_option("u1", "unipile") is False
     assert called == {}, "sans org, aucun droit n'est interrogé"
 

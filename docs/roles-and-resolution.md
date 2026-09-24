@@ -109,7 +109,7 @@ près (cliquet `tests/test_access_surface_frozen.py`).
 | ------------------- | --------------------------------------------------------------------- |
 | `access/scope.py`   | rôle plateforme (`get_user_role`, `is_super_admin`, `is_platform_operator`), contexte de l'appel (`current_org`/`current_group`/`current_project`, `_UNSET`), appartenance à un scope de partage, ce que le projet ÉPINGLE (`project_pinned_identity`/`_instance`, slots) |
 | `access/quotas.py`  | `quota_for`, `record_platform_usage`, `paid_option_for`, `has_option` (option payante = `entitlements.org_has`) |
-| `access/entitlements.py` | `org_has`, `PLATFORM_UNMETERED` — les droits déclarés de l'org (ADR 0070 §7), jamais `billing` |
+| `access/entitlements.py` | `value_for` (le point de lecture unique : org + personne, le plus généreux, sinon le défaut déclaré par l'instance), `org_has`, `verifier_defauts` — les droits déclarés (ADR 0070 §7, `docs/droits-declares.md`), jamais `billing` |
 | `access/cascade.py` | `walk_cascade`/`cascade_winner`, `CascadeRung`/`CascadeProbe`, `PRESENCE_PROBE`/`FETCH_PROBE`/`preloaded_presence_probe`, `group_secret_map`, le palier plateforme, `ORG_SHAREABLE_PROVIDERS` |
 | `access/rbac.py`    | `org_admin_hidden_tools` (+ équipe), `guard_instance_access`, `reachable_instances`(+`_map`, `_team_key`), `resolve_field_filter` |
 | `access/indices.py` | le texte des refus « rien ne résout » : `_revoked_hint` (clé retirée), `_reachable_hint` (instances à portée, et le projet LISIBLE qui épingle déjà une instance → `_project=<id>`, #499) — lecture seule, fail-soft |

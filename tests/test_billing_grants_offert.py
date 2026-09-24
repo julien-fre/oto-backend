@@ -144,8 +144,9 @@ def test_le_cockpit_dorg_sert_le_meme_verdict_que_le_seam(monkeypatch):
     # une org qui PAYAIT s'y affichait « non souscrite ». Il lit le droit déclaré.
     from oto_mcp.capabilities.connectors import activation as cap
 
-    monkeypatch.setattr(access.db_entitlements, "has",
-                        lambda oid, droit: (oid, droit) == (9, "unipile"))
+    monkeypatch.setattr(access.db_entitlements, "max_value",
+                        lambda oid, sub, droit, now=None:
+                        1 if (oid, droit) == (9, "unipile") else None)
     assert cap._org_subscribed(9, "unipile") is True
     monkeypatch.setattr(access, "current_org", lambda sub: 9)
     assert access.has_option("moi", "unipile") is True
@@ -155,7 +156,8 @@ def test_le_don_personnel_du_requerant_n_ouvre_rien(monkeypatch):
     # Ni pour l'org, ni pour lui : seule l'org porte un droit payant.
     monkeypatch.setattr(access.db, "has_option_comp",
                         lambda et, eid, opt: et == "user")
-    monkeypatch.setattr(access.db_entitlements, "has", lambda oid, droit: False)
+    monkeypatch.setattr(access.db_entitlements, "max_value",
+                        lambda oid, sub, droit, now=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 9)
     assert access.org_has(9, "unipile") is False
     assert access.has_option("moi", "unipile") is False

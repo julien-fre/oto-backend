@@ -28,6 +28,14 @@ _INDEX = re.compile(
     r"CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s+ON\s+(\w+)\s*"
     r"\(([^)]*)\)\s*(?:WHERE\s+([^;]+?))?\s*;", re.I | re.S)
 
+# Une contrainte UNIQUE de TABLE, déclarée dans son `CREATE TABLE` — PostgreSQL la porte
+# par un index unique, avec la même menace pour un UPDATE nu (#1066 :
+# `org_entitlements_une_ligne`, `UNIQUE NULLS NOT DISTINCT`, qui tient avec `sub` nul).
+_TABLE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*?)\n\);",
+                    re.I | re.S)
+_CONTRAINTE_UNIQUE = re.compile(
+    r"\bUNIQUE\s+(?:NULLS\s+(?:NOT\s+)?DISTINCT\s+)?\(([^)]*)\)", re.I)
+
 
 def _index_du_ddl() -> list[tuple]:
     trouves = []
@@ -35,6 +43,10 @@ def _index_du_ddl() -> list[tuple]:
         cols = frozenset(c.strip() for c in m.group(3).split(","))
         pred = " ".join((m.group(4) or "").split())
         trouves.append((m.group(2), cols, pred))
+    for t in _TABLE.finditer(_SCHEMA):
+        for c in _CONTRAINTE_UNIQUE.finditer(t.group(2)):
+            trouves.append((t.group(1), frozenset(x.strip() for x in c.group(1).split(",")),
+                            ""))
     return trouves
 
 

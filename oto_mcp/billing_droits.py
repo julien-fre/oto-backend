@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from . import billing
+from . import entitlements_catalogue as catalogue
 from .db import billing as db_billing
 from .db import entitlements as db_entitlements
 
@@ -53,7 +54,7 @@ SOURCES = (SOURCE_SUBSCRIPTION, SOURCE_OFFERED, SOURCE_PARTNER, SOURCE_CONTRACT)
 AUTEUR = "billing"
 
 # Une ligne voulue : (droit, source) → (échéance, auteur, valeur, début). Échéance `None`
-# = sans échéance ; valeur `None` = pas d'avis ; début `None` = maintenant.
+# = sans échéance ; valeur jamais vide (oui/non = 1, #1066) ; début `None` = maintenant.
 _Voulus = dict[tuple[str, str], tuple]
 
 
@@ -78,7 +79,7 @@ def _plus_tardive(a: Optional[datetime], b: Optional[datetime]) -> Optional[date
 
 
 def _poser(voulus: _Voulus, droit: str, source: str, fin: Optional[datetime],
-           auteur: Optional[str] = AUTEUR, *, valeur: Optional[int] = None,
+           auteur: Optional[str] = AUTEUR, *, valeur: int = 1,
            debut: Optional[datetime] = None) -> None:
     cle = (droit, source)
     if cle in voulus:
@@ -146,6 +147,10 @@ def droits_voulus(org_id: int) -> _Voulus:
     if etat:
         _droits_de_l_abonnement(etat, partenaire, voulus)
     for don in db_billing.org_option_comp_bounds(org_id):
+        if don["option"] not in catalogue.FIXES:
+            # Un don d'option hors catalogue (`beta`, un drapeau de population) n'est pas
+            # un droit déclaré : la pose le refuserait (#1066). Il reste lu là où il vit.
+            continue
         if partenaire:
             _poser(voulus, don["option"], SOURCE_PARTNER, None, don["granted_by"])
         else:

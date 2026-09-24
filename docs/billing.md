@@ -304,8 +304,10 @@ après chaque geste qui change l'état de l'org.
 | abonnement réglé hors plateforme (`contract`) | `contract` | sa date de fin, ou aucune ; + `members_max` = licences |
 
 Un plan pose ses `options` et, s'il est `unmetered`, `platform_unmetered`
-(`billing.plan_rights`). **Le don fait à une PERSONNE n'écrit rien** : seule l'org
-porte un droit payant.
+(`billing.plan_rights`), valeur `1` (oui). **Le don fait à une PERSONNE n'écrit rien** :
+seule l'org porte un droit payant. Un don d'option d'org **hors catalogue** (`beta`)
+n'est pas posé en droit (#1066). Le modèle — catalogue, portée, `value_for`, défauts
+d'instance — est dans `docs/droits-declares.md`.
 
 - **Rejouable, pas événementielle.** Qui l'appelle : `confirm` (les deux branches,
   pour que le rejeu du webhook rattrape une pose ratée), `cancel`, `resume`,
@@ -316,7 +318,7 @@ porte un droit payant.
 - **Elle ne retire que ce que ses sources ont posé** (`subscription`, `offered`,
   `partner`). Une autre étiquette ne lui appartient pas.
 - **La date ferme le droit toute seule** : aucune boucle n'a besoin de passer le jour
-  venu. `has` filtre en SQL sur `NOW()`, et le droit est **relu à chaque usage** de la
+  venu. `access.entitlements.value_for` filtre en SQL sur l'horloge de la base, et le droit est **relu à chaque usage** de la
   clé plateforme (`quotas.exiger_option_payante`, au palier plateforme de la
   résolution) : un canal branché sur la clé plateforme cesse de marcher à l'appel qui
   suit l'échéance, avec un refus qui nomme la cause.

@@ -498,8 +498,16 @@ from oto_mcp.db import _schema, schema
 # fragment n'en porte aucune vers l'extérieur. `CREATE TABLE IF NOT EXISTS` d'une table
 # neuve : rien ne se réécrit sur la base PARTAGÉE. Recalculée sur 74f8ff8e + #1043 :
 # 171 478 → 174 235 (+2 757, commentaire compris).
-EMPREINTE = "550f9788cb866fad9b09db24e381b6f457ad9265ce709c3ac96966633df226b4"
-LONGUEUR = 174235
+# 24/09/2026 (oto-backend#1066) — `org_entitlements` prend sa forme cible dans le fragment
+# `schema/entitlements` : `sub` (NULL = ligne d'org, sinon une personne dans l'org),
+# `value` NOT NULL, et l'unicité `org_entitlements_une_ligne` UNIQUE NULLS NOT DISTINCT
+# (org_id, sub, right_key, source) DANS le `CREATE TABLE` à la place de la PK. Ne sert
+# qu'à une base NEUVE ; la base PARTAGÉE reçoit la forme par les révisions Alembic
+# `0014_droits_portee_personne` (avant la fusion) et `0015_droits_valeur_obligatoire`
+# (après le tag de production), pas par le démarrage. Recalculée sur bd66b92c :
+# 174 235 → 174 403 (+168, commentaires compris).
+EMPREINTE = "a93aaba3946305ee400081d5ec2f8a39f77c915076dc073151cfc1bc0bdd09c0"
+LONGUEUR = 174403
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

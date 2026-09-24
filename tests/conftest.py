@@ -132,6 +132,19 @@ def _adresse_du_tableau_de_bord(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OTO_APP_URL", "https://manage.oto.cx")
 
 
+# ── Les défauts des droits déclarés (`access.entitlements`, #1066) — REQUISE : sans
+# déclaration, la lecture d'un droit lève. La valeur gréée est celle de l'instance
+# historique (`scripts/defauts_des_droits.py`) pour les clés fixes, et `0` pour toute
+# clé de plateforme : ce que le code lisait avant le lot (aucun droit = non).
+DEFAUTS_DES_DROITS = ('{"unipile": 0, "platform_unmetered": 0, "unipile_seats": 5, '
+                      '"members_max": "unlimited", "platform_key:*": 0}')
+
+
+@pytest.fixture(autouse=True)
+def _defauts_des_droits(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OTO_ENTITLEMENT_DEFAULTS", DEFAUTS_DES_DROITS)
+
+
 # ── Email transactionnel (`oto_mcp/email.py`, devenues REQUISE le 16/09/2026, #968) —
 # aucun banc n'affirme sur leur valeur littérale (les envois réels sont mockés/
 # court-circuités par l'absence d'`OTO_MAILER_SEND_BEARER` en test) : les anciens

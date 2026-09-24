@@ -70,7 +70,7 @@ def _org(nom: str) -> int:
 
 def _droit(org: int, **kw) -> None:
     from oto_mcp.db import entitlements
-    entitlements.grant(org, "unipile", "test", **kw)
+    entitlements.grant(org, "unipile", "test", value=1, **kw)
 
 
 def _compte(instance, org: int, account_id: str, *, sub: str = "u-proprio",

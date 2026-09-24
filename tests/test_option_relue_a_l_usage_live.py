@@ -69,7 +69,7 @@ def _resoudre(provider="unipile", check_usage=True):
 
 def test_droit_echu_refus_qui_nomme_la_cause(live, gagnant):
     gagnant["org"] = org = _org()
-    E.grant(org, "unipile", "offered", expires_at=HIER)
+    E.grant(org, "unipile", "offered", value=1, expires_at=HIER)
     with pytest.raises(McpError) as e:
         _resoudre()
     msg = str(e.value)
@@ -85,7 +85,7 @@ def test_un_canal_suit_le_droit_de_son_porteur(live, gagnant):
 
 def test_droit_vivant_servi(live, gagnant):
     gagnant["org"] = org = _org()
-    E.grant(org, "unipile", "subscription", expires_at=DEMAIN)
+    E.grant(org, "unipile", "subscription", value=1, expires_at=DEMAIN)
     rc = _resoudre()
     assert rc.is_platform is True and rc.key == "CLE-PLATEFORME"
 
@@ -116,11 +116,11 @@ def test_un_connecteur_sans_option_payante_n_est_pas_concerne(live, gagnant):
 
 def test_endpoint_anonyme_droit_echu_refuse_vivant_servi(live, gagnant):
     org = _org()
-    E.grant(org, "unipile", "offered", expires_at=HIER)
+    E.grant(org, "unipile", "offered", value=1, expires_at=HIER)
     with pytest.raises(McpError) as e:
         resolve_anon._resolve_credential_anon("unipile", "auto", org)
     assert "essai terminé ou abonnement requis" in str(e.value)
-    E.grant(org, "unipile", "subscription", expires_at=DEMAIN)
+    E.grant(org, "unipile", "subscription", value=1, expires_at=DEMAIN)
     assert resolve_anon._resolve_credential_anon("unipile", "auto", org).is_platform
 
 
@@ -135,7 +135,7 @@ def test_le_beneficiaire_d_un_projet_partage_sans_pret_n_herite_pas_du_droit(
     """#480 : l'org d'un projet partagé ne couvre pas le bénéficiaire à qui rien n'est
     prêté — son droit payant non plus."""
     gagnant["org"] = org = _org()
-    E.grant(org, "unipile", "subscription", expires_at=DEMAIN)
+    E.grant(org, "unipile", "subscription", value=1, expires_at=DEMAIN)
     monkeypatch.setattr(heritage, "du_contexte", lambda sub, o: SimpleNamespace(
         sub=sub, org=o, membre=False, org_heritee=False))
     with pytest.raises(McpError):

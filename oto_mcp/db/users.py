@@ -337,6 +337,11 @@ _UNIQUE_INDEX_SUB_TABLES = (
     # le même mail, ce que la campagne promet d'éviter. Les lignes `kind='test'` ne
     # sont sous aucune unicité et suivent toutes, sans dédoublonnage.
     ("outreach_sends", "sub", ("campaign",), "{a}.kind = 'send'"),
+    # Les droits déclarés d'une PERSONNE dans une org (#1066) : unicité
+    # `org_entitlements_une_ligne` = `(org_id, sub, right_key, source)`. Un droit suit la
+    # personne ; si les deux comptes portent la même ligne, celle du compte survivant
+    # reste (le producteur la repose de toute façon à sa prochaine réconciliation).
+    ("org_entitlements", "sub", ("org_id", "right_key", "source"), None),
 )
 
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
@@ -455,6 +460,9 @@ _SUB_COLUMNS = [
     # L'UPDATE nu ne touche que les lignes signées par l'ancien compte ; une étiquette
     # de producteur (qui n'est pas un sub) reste telle quelle.
     ("org_entitlements", "granted_by"),
+    # La PORTÉE personne d'un droit déclaré (#1066) : sous index unique, dédoublonnée
+    # d'abord par `_UNIQUE_INDEX_SUB_TABLES`, puis repointée ici.
+    ("org_entitlements", "sub"),
     # Qui a déclaré un abonnement réglé hors plateforme — colonne d'AUTEUR, sans FK.
     ("billing_contracts", "granted_by"),
     # Qui a posé une surcharge de propriété de connecteur (L6 pièce 2 c2). Colonne

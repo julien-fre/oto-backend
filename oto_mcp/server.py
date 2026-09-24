@@ -990,6 +990,12 @@ def main():
     oauth_relay.verifier_configuration()
     logging.getLogger("uvicorn.access").addFilter(oauth_relay.FiltreJournalAcces())
 
+    # Droits déclarés (ADR 0070 §7, #1066) : l'instance déclare la valeur de chaque droit
+    # du catalogue pour qui n'en a aucun posé. Une clé sans défaut déclaré refuse le
+    # démarrage ICI, avant d'avoir rien écrit — jamais un 0 silencieux au premier usage.
+    from .access import entitlements as droits_declares
+    droits_declares.verifier_defauts()
+
     # Les boucles de fond, composées AVANT de préparer la base : un process qui ne sait
     # pas s'il est la production refuse de démarrer ICI, sans avoir rien écrit (plus
     # loin, un démarrage avorté a déjà joué init_db et les backfills). Hors production,
