@@ -2693,6 +2693,57 @@ recréation, cascade par le code et à la main, `data` non objet, révision `001
 `tests/datastore/test_historique_ligne_273.py` (`deletion`, ligne recréée, ligne
 supprimée sans révision).
 
+### La rétention — 90 jours, sauf l'origine (oto#273, décision du 23/09/2026)
+
+Les révisions de plus de `OTO_JOURNAL_REVISIONS_RETENTION_DAYS` jours (**90** par défaut)
+sont purgées, **sauf celles de `source = 'import'` d'une ligne qui existe encore** :
+c'est l'origine de la donnée (M4 la projettera). Une ligne supprimée rend son import à la
+règle commune ; supprimée puis recréée sous le même `_id`, aussi (la révision de
+suppression, plus récente, le dit). Les révisions de suppression suivent la règle
+commune.
+
+- **Qui** : `oto-mcp maintenance revisions` (`maintenance.revisions`), dans `all`, donc
+  dans le timer quotidien `oto-mcp-maintenance.timer` (03:20, prod seulement : la base
+  est partagée). Un travail à part de `retention` : chacun son réglage, et un réglage
+  illisible ici ne prive pas les runs de leur purge (fail-open par travail).
+- **Le réglage** est lu à CHAQUE tir (`journal_revisions.retention_jours`) : le changer
+  ne demande ni déploiement ni redémarrage. Illisible (pas un entier, ou moins d'un
+  jour), le travail LÈVE — une ligne `ÉCHEC` au journal du timer, jamais un repli
+  silencieux sur 90, ni un 0 qui purgerait tout.
+- **Comment** (`db/retention_revisions.py`) : par lots de 1 000 révisions, chacun sa
+  transaction, en avançant sur la clé primaire (`id > curseur ORDER BY id LIMIT 1000`),
+  une requête par lot (sélection, prédicat, `DELETE … USING`). La table n'a pas d'index
+  sur `at` : filtrer sur `at` seul la parcourrait entière à chaque lot. `id` est
+  monotone et suit `at` à la durée d'une transaction près, donc la purge s'arrête au
+  premier lot sans AUCUNE révision assez vieille : elle ne lit que la zone ancienne, plus
+  un lot. Plafond de 1 000 lots par passage (`complet: false` : le suivant reprend). Les
+  imports gardés sont relus à chaque passage ; leur nombre est celui des lignes importées
+  vivantes. Aucun verrou long : des verrous de ligne sur 1 000 révisions au plus, que
+  personne d'autre ne modifie.
+- **À blanc** : `oto-mcp maintenance revisions --dry-run` compte ce qui partirait (un
+  parcours de la table, pour une lecture à la main).
+
+Le prédicat, pour une révision `r` :
+
+```sql
+r.at < now() - make_interval(days => 90) AND (
+    r.source IS DISTINCT FROM 'import'
+    OR NOT EXISTS (SELECT 1 FROM datastore_rows l
+                    WHERE l.ns_id = r.ns_id AND l.row_id = r.row_id)
+    OR EXISTS (SELECT 1 FROM datastore_row_revisions s
+                WHERE s.ns_id = r.ns_id AND s.row_id = r.row_id
+                  AND s.suppression AND s.id > r.id))
+```
+
+**Effacement d'une personne** : l'ADR 0062-D2 le décide, mais le dépôt n'a pas encore de
+chemin qui l'exécute (aucun geste de produit ne supprime un compte ; le seul `DELETE FROM
+users` est la fusion de comptes de `db.migrate_sub`, qui ne touche aucun tableau). Le
+jour où il existera et supprimera des tableaux ou des lignes, la cascade de
+`user_datastores` emportera leur historique ; s'il efface des lignes une à une, chacune
+laissera une révision de suppression portant ses valeurs, qu'il faudra purger avec elles.
+
+**Banc** : `tests/datastore/test_retention_revisions_273.py` (base réelle).
+
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 
 **Le constat.** Dans une ligne JSONB stockée, une colonne jamais écrite n'existe pas : elle était

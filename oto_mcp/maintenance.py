@@ -10,6 +10,9 @@ rollback sans que rien n'ait changé dans le lot.
 Ils sont ici, chacun nommé, chacun jouable seul :
 
     oto-mcp maintenance retention     purge du fil des runs + des runs sans faits
+    oto-mcp maintenance revisions     purge du journal des révisions de ligne au-delà
+                                          de OTO_JOURNAL_REVISIONS_RETENTION_DAYS (90 j),
+                                          sauf l'import d'une ligne vivante (oto#273)
     oto-mcp maintenance blocks        re-projection du corps des nœuds en blocs
     oto-mcp maintenance key-indexes   index d'unicité de clé métier par namespace
     oto-mcp maintenance instagram-tokens  renouvellement des autorisations
@@ -100,6 +103,26 @@ def retention(*, dry_run: bool = False) -> dict:
     out["orphan_runs"] = usage.prune_orphan_runs(_JOURNAL_RETENTION_DAYS)
     out["run_messages"] = run_thread.prune_run_messages(_RUN_THREAD_RETENTION_DAYS)
     return out
+
+
+def revisions(*, dry_run: bool = False) -> dict:
+    """Purge le journal des révisions de ligne au-delà de sa rétention (oto#273).
+
+    `OTO_JOURNAL_REVISIONS_RETENTION_DAYS` jours, 90 par défaut, lu à CHAQUE tir (le
+    changer ne demande pas de redémarrer) ; illisible, le travail lève — journalisé en
+    échec, les autres continuent. Les révisions `import` d'une ligne qui existe encore
+    sont gardées : c'est l'origine de la donnée. Par lots bornés, chacun sa transaction
+    (`db/retention_revisions.py`) : jamais un verrou long sur une table que chaque
+    écriture de ligne alimente.
+
+    Un travail à part de `retention`, et pas une ligne de plus dedans : chacun a son
+    réglage, et un réglage illisible ici ne doit pas priver les runs de leur purge."""
+    from .db import journal_revisions, retention_revisions
+    jours = journal_revisions.retention_jours()
+    if dry_run:
+        return {"retention_days": jours,
+                "purgeables": retention_revisions.compter_purgeables(jours)}
+    return {"retention_days": jours, **retention_revisions.purger_revisions(jours)}
 
 
 def blocks(*, dry_run: bool = False) -> dict:
@@ -238,7 +261,7 @@ def check_boot(*, dry_run: bool = True) -> dict:
     return {"replayed": True, "committed": False}
 
 
-# Ce que `all` enchaîne — l'ordre compte : la purge d'abord (elle réduit ce que les
+# Ce que `all` enchaîne — l'ordre compte : les purges d'abord (elles réduisent ce que les
 # deux suivants ont à regarder), la re-projection ensuite, les index en dernier
 # (seuls à poser du DDL). `key-index-rebuild` et `check-boot` n'y sont PAS : le
 # premier change l'état de la prod pour la première fois (#421), le second est un
@@ -486,6 +509,7 @@ def droits(*, dry_run: bool = False) -> dict:
 
 _TRAVAUX: dict[str, Callable[..., dict]] = {
     "retention": retention,
+    "revisions": revisions,
     "blocks": blocks,
     "key-indexes": key_indexes,
     "key-index-rebuild": key_index_rebuild,
@@ -514,7 +538,7 @@ _ACTES = ("journal-tokens", "residu-projete", "oauth-relay-callbacks")
 # événement de fin de droit.
 # ⚠️ `droits` AVANT `unipile-fin-de-droit` : la fin de droit lit `org_entitlements`, que
 # `droits` vient de réaligner sur l'état du commerce.
-_ALL = ("retention", "blocks", "key-indexes", "alertes-credential",
+_ALL = ("retention", "revisions", "blocks", "key-indexes", "alertes-credential",
         "instagram-tokens", "droits", "unipile-fin-de-droit")
 
 

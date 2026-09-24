@@ -282,6 +282,12 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_JOURNAL_RETENTION_DAYS", Classe.REGLAGE, "90",
              "Rétention (jours) du journal d'appels avant purge en maintenance.",
              ("oto_mcp/maintenance.py:57",)),
+    Variable("OTO_JOURNAL_REVISIONS_RETENTION_DAYS", Classe.REGLAGE, "90",
+             "Rétention (jours) du journal des révisions de ligne du datastore "
+             "(oto#273) : `oto-mcp maintenance revisions` purge au-delà, sauf les "
+             "révisions `import` d'une ligne qui existe encore. Lue à chaque tir ; "
+             "illisible (pas un entier ≥ 1), le travail LÈVE.",
+             ("oto_mcp/db/journal_revisions.py:116",)),
     Variable("OTO_MCP_RUN_THREAD_RETENTION_DAYS", Classe.REGLAGE, "30",
              "Rétention (jours) des fils de run avant purge.",
              ("oto_mcp/maintenance.py:63",)),

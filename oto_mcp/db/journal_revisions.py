@@ -101,6 +101,30 @@ def journal_coupe() -> bool:
     return brut == "off"
 
 
+RETENTION_DEFAUT = 90
+
+
+def retention_jours() -> int:
+    """La fenêtre de rétention du journal, en jours (`OTO_JOURNAL_REVISIONS_RETENTION_DAYS`,
+    défaut 90 — décision du 23/09 dans oto#273). La purge (`db/retention_revisions.py`,
+    travail `revisions` de `oto-mcp maintenance`) retire ce qui est plus vieux, sauf
+    les révisions d'import d'une ligne qui existe encore.
+
+    Illisible (pas un entier, ou moins d'un jour) : lève. Une rétention mal écrite ne
+    doit pas se lire « défaut » en silence, ni « 0 » — qui purgerait tout."""
+    # Nom LITTÉRAL : l'inventaire (`env_inventory.py`) trouve ses lectures par l'AST.
+    lu = os.environ.get("OTO_JOURNAL_REVISIONS_RETENTION_DAYS", str(RETENTION_DEFAUT))
+    try:
+        jours = int(lu.strip())
+    except ValueError:
+        jours = 0
+    if jours < 1:
+        raise ValueError(
+            f"OTO_JOURNAL_REVISIONS_RETENTION_DAYS={lu!r} : valeur illisible, attendu un "
+            f"nombre entier de jours (1 ou plus)")
+    return jours
+
+
 # Une seule instruction par branche : le diff se calcule dans le moteur, clé par clé,
 # sans boucle PL/pgSQL. `jsonb_object_agg` sur zéro ligne rend NULL : c'est « rien n'a
 # changé », et rien ne s'écrit.

@@ -225,6 +225,11 @@ systemctl list-timers oto-mcp-maintenance.timer           # le prochain tir
 sudo -E env $(cat /opt/oto-mcp/.env | xargs) \
   /opt/oto-mcp/.venv/bin/oto-mcp maintenance retention --dry-run
 #   retention | blocks | key-indexes            les travaux du timer
+#   revisions                                   (timer) purge du journal des révisions
+#                                               de ligne au-delà de
+#                                               OTO_JOURNAL_REVISIONS_RETENTION_DAYS
+#                                               (90 j), sauf l'import d'une ligne
+#                                               vivante — docs/datastore.md
 #   alertes-credential | all                    (idem : `all` joue le timer)
 #   instagram-tokens                            renouvelle les autorisations
 #                                               Instagram avant leur terme. ⚠️ Ce
