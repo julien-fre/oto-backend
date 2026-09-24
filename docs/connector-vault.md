@@ -806,3 +806,39 @@ Pas de framework de tests dans le repo → validation manuelle sur **PG16 jetabl
 # fix = purge → re-OAuth). `status_for` doit utiliser `credential_status` (présence
 # sans déchiffrer), jamais `get_credential_with_meta`, pour ne pas 500 /api/me.
 ```
+
+## Déplacer des clés d'org vers les clés personnelles d'un membre (ops, 24/09/2026)
+
+Restreindre un connecteur, c'est **placer la clé au bon niveau** (ADR 0053 D1) : la
+réservation d'un connecteur à une partie des membres (`connector_acl`) disparaît. Une
+org qui s'en servait pour réserver ses clés à UNE personne doit voir ces clés devenir
+les clés personnelles de cette personne avant le retrait. Le geste est
+`scripts/deplacer_cles_org_vers_membre.py` — jamais un `UPDATE` : l'AAD porte
+`entity_type:entity_id`, donc une ligne se **déchiffre avec le sceau de l'org puis se
+réécrit** par `_upsert` (sceau du membre, `member_id(org, sub)`), et l'ancienne sort
+par `_delete` (son instance s'archive, la nouvelle naît), comme `backfill_member_scope`.
+
+```bash
+# dry-run (défaut) : rejoue les écritures ET la relecture dans une transaction, puis ANNULE
+python -m scripts.deplacer_cles_org_vers_membre --org <id> --sub <sub> --connectors a,b,c
+# valide
+python -m scripts.deplacer_cles_org_vers_membre --org <id> --sub <sub> --connectors a,b,c --apply
+```
+
+- **Une transaction**, lignes d'org verrouillées (`FOR UPDATE`), `statement_timeout`
+  15 s, `lock_timeout` 5 s ; `set_by` et `meta` gardés (plus une trace `_deplacement`).
+- **Relecture avant validation** : déchiffrement au niveau membre, empreinte SHA-256
+  égale à l'original, ligne d'org absente — sinon ROLLBACK (sortie 4).
+- **La clé du membre n'est jamais touchée** : un compte nommé déjà pris renomme la clé
+  DÉPLACÉE (`<compte>-org-<org>`, `principal-org-<org>` pour la ligne sans nom) ; une
+  coexistence impossible (mono-compte, ligne sans nom côté membre) est un refus.
+- **Refus d'ensemble en `--apply`** (sortie 3, rien d'écrit) : connecteur sans clé
+  d'org ou sans clé personnelle possible, collision non résoluble, ou objet qui désigne
+  encore une instance d'org déplacée (lien de projet, arête `grants`, déclencheur,
+  flotte) — `--force-orphan-bindings` passe outre ce dernier cas, en le disant.
+- **Impact** affiché : autres membres de l'org, et par connecteur ceux qui résolvent la
+  clé d'org aujourd'hui et la perdront (`--show-members` pour les subs). Le partage de
+  l'instance d'org n'est pas repris (compté).
+- **Aucun secret** dans la sortie ni les logs (banc
+  `tests/test_deplacer_cles_org_vers_membre.py`). Même prérequis que ci-dessus :
+  `OTO_MCP_MASTER_KEY` doit être chargée comme au boot.
