@@ -479,8 +479,14 @@ from oto_mcp.db import _schema, schema
 # existante : révision Alembic `0010_tool_calls_result_shape`, pas le démarrage (table
 # de plusieurs millions de lignes). Recalculée sur le tronc qui porte #806 et #521 :
 # 168 453 → 169 421 (+968, commentaire compris).
-EMPREINTE = "54cb852176175f7fa525fb185e52891e3f8e52f830510588f6f9fd6aa89d0e6f"
-LONGUEUR = 169421
+# 23/09/2026 (otomata-tech/oto#273, M1) — fragment NEUF `schema.datastore.REVISIONS`,
+# assemblé juste après `DATASTORE` (sa FK vise `user_datastores`) : la table
+# `datastore_row_revisions`, en ajout seul, écrite par déclencheur. `CREATE TABLE IF NOT
+# EXISTS` d'une table neuve : rien ne se réécrit sur la base PARTAGÉE ; son index et ses
+# déclencheurs sont posés par `_init.py`, sous garde de catalogue.
+# 169 421 → 170 587 (+1 166, commentaire compris), recalculée sur le tronc 88ec6bc8.
+EMPREINTE = "75f2727e7b9f5de8649c1c49fe60243a5ab9b4c3d11dfc37ee5e803e690f2a47"
+LONGUEUR = 170587
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

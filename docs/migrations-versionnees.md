@@ -532,6 +532,17 @@ sans elle, chaque insertion de journal échouerait en `UndefinedColumn`, avalée
 lignes, où chaque appel écrit. Sa contrainte de vocabulaire fermé est posée `NOT VALID` :
 aucun parcours des lignes existantes sous le verrou exclusif.
 
+`0011_journal_revisions_ligne` (24/09/2026, oto#273 M1, après `0010_tool_calls_result_shape`) crée la table NEUVE
+`datastore_row_revisions`, que le démarrage crée aussi (fragment
+`db/schema/datastore.py::REVISIONS`, exécuté tel quel par la révision). Même régime que
+0004 : idempotents l'un envers l'autre, ordre indifférent — rien ne lit la table en M1.
+Seul coût : la clé étrangère vers `user_datastores` prend un verrou à la création,
+borné par `lock_timeout`. L'index, la fonction et les deux déclencheurs AFTER sur
+`datastore_rows` restent au démarrage (`db/journal_revisions.py`, sous garde de
+catalogue) : ils suivent le code servi. Le retour arrière retire d'abord déclencheurs et
+fonction — qui feraient sinon échouer chaque écriture de ligne sur une table absente —,
+puis la table ET ses lignes ; le démarrage suivant repose tout.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

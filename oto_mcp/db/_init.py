@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import connector_instances, revision
+from . import connector_instances, journal_revisions, revision
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -757,6 +757,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # base partagée). Posé seulement s'il manque — cf. `db/revision.py`. Appelé par le
     # MODULE, pas par nom importé : un banc de chute doit pouvoir le remplacer.
     revision.poser_revision_de_ligne(conn)
+    # Le JOURNAL des révisions (oto#273, M1 : écriture fantôme). APRÈS `rev`, qu'il
+    # recopie, et après `_SCHEMA`, qui crée sa table. Index et déclencheurs posés
+    # seulement s'ils manquent — cf. `db/journal_revisions.py`.
+    journal_revisions.poser_journal_des_revisions(conn)
     # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas (ADR 0032 §6 /
     # 0029, B6 : mode typé optionnel d'un namespace). La conversion #317 juste
     # après LIT `d.schema` : sur une base qui existe déjà, la colonne n'arrive

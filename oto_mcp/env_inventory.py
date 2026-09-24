@@ -250,6 +250,11 @@ _REGLAGES: tuple[Variable, ...] = (
              "place (oto#140 J2). Une valeur illisible LÈVE plutôt que de retomber sur "
              "le défaut.",
              ("oto_mcp/datastore/vide_remplace.py:44",)),
+    Variable("OTO_JOURNAL_REVISIONS", Classe.REGLAGE, "on",
+             "Interrupteur du journal des révisions de ligne du datastore (oto#273) : "
+             "`off` le coupe pour les écritures de CE processus, sans redéployer (un "
+             "redémarrage suffit). Toute autre valeur que `on`/`off` LÈVE au boot.",
+             ("oto_mcp/db/journal_revisions.py:70",)),
     Variable("OTO_MOTS_DEPRECIES_REFUSES_LE", Classe.REGLAGE, None,
              "Déplace la date par défaut "
              "(`datastore/mots_deprecies.py:MOTS_DEPRECIES_REFUSES_LE`, 2026-10-08) à "

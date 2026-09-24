@@ -89,3 +89,29 @@ CREATE TABLE IF NOT EXISTS datastore_rows (
 -- (`datastore_shares` — legacy remplacée par `resource_grants`, ADR 0030 — DROPpée
 --  en Phase H B2, 10/07.)
 """
+
+# journal des révisions de ligne (oto#273)
+REVISIONS = """
+-- JOURNAL des révisions de ligne (oto#273, M1 : écriture fantôme, aucune lecture).
+-- En ajout seul, écrit par les déclencheurs `datastore_rows_30_journal_*`
+-- (`db/journal_revisions.py`), jamais par le code. `diff` = {champ: {avant, apres}},
+-- valeurs entières ; un côté absent n'a pas sa clé. Pas de FK vers la LIGNE : les
+-- révisions d'une ligne supprimée restent. FK vers le TABLEAU, en cascade : un tableau
+-- supprimé emporte son historique, quel que soit le code qui le supprime — la même
+-- raison qui fait écrire le journal par PostgreSQL. L'index `(ns_id, row_id, rev)` est
+-- posé par `_init.py`, sous garde de catalogue : ici, `CREATE INDEX IF NOT EXISTS`
+-- reprendrait à chaque boot un verrou SHARE qui bloque chaque écriture de ligne.
+-- Estampille (acteur, run, source, geste) : M2, NULL en M1.
+CREATE TABLE IF NOT EXISTS datastore_row_revisions (
+    id BIGSERIAL PRIMARY KEY,
+    ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
+    row_id TEXT NOT NULL,
+    rev BIGINT NOT NULL,
+    diff JSONB NOT NULL,
+    acteur TEXT,
+    run_id TEXT,
+    source TEXT,
+    geste_id TEXT,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""

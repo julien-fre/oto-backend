@@ -18,7 +18,7 @@ from psycopg_pool import ConnectionPool
 
 from .. import providers
 from ..config import require_env
-from . import _hors_boucle
+from . import _hors_boucle, journal_revisions
 
 def _normalize_value(v: Any) -> Any:
     # Match the string shape SQLite returned ("YYYY-MM-DD HH:MM:SS") so downstream
@@ -77,6 +77,10 @@ def _connect_options() -> str:
     parts = [f"-c idle_in_transaction_session_timeout={idle}"]
     if stmt and stmt != "0":
         parts.append(f"-c statement_timeout={stmt}")
+    # L'interrupteur du journal des révisions (oto#273) : lu par le déclencheur, par
+    # connexion, donc pour les seules écritures de CE processus. Posé seulement coupé.
+    if journal_revisions.journal_coupe():
+        parts.append(f"-c {journal_revisions.REGLAGE_PG}=off")
     return " ".join(parts)
 
 

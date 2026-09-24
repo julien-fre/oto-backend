@@ -32,6 +32,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.legal.LEGAL,              # acceptations et documents légaux
     schema.connectors.ACL,           # RBAC connecteur interne à l'org
     schema.datastore.DATASTORE,      # namespaces et lignes du datastore
+    schema.datastore.REVISIONS,      # journal des révisions de ligne (oto#273)
     schema.projects.PROJECTS,        # projets, pages, révisions, liens
     schema.embeddings.EMBEDDINGS,    # vecteurs (pages, sources aux, chunks, lignes)
     schema.projects.PROJECT_FILES,   # activité et fichiers d'un projet

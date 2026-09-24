@@ -2384,6 +2384,65 @@ concurrente, suppression sous bail, libération forcée après reprise par un se
 ligne abandonnée, zéro écriture partielle et aucune entrée de journal sur un refus), plus
 le rejeu de chaque refus déclaré sur la route servie.
 
+## Journal des révisions de ligne — M1, écriture fantôme (oto#273, 23/09/2026)
+
+Le couple `origine`/`actuel` ne garde que deux états, sans auteur ni date. oto#273 le
+remplace par un **journal des révisions** ; le jalon M1 ne fait qu'**écrire** : aucune
+lecture, aucune route, aucun outil, aucun texte servi. On mesure le volume deux semaines
+avant d'y brancher quoi que ce soit.
+
+- **Table** `datastore_row_revisions` (`db/schema/datastore.py`, `CREATE TABLE IF NOT
+  EXISTS` au boot et par la révision Alembic `0011_journal_revisions_ligne`) : `id`,
+  `ns_id`, `row_id`, `rev`, `diff jsonb`, `acteur`, `run_id`, `source`, `geste_id`, `at`.
+  Index `(ns_id, row_id, rev)`, NON unique : une ligne supprimée puis recréée sous le
+  même id repart de `rev` 0.
+- **Écrite par PostgreSQL**, comme `rev` et pour la même raison (bleu/vert sur base
+  partagée) : deux déclencheurs `AFTER` sur `datastore_rows` (`db/journal_revisions.py`),
+  `datastore_rows_30_journal_insert` et `datastore_rows_30_journal_update … WHEN
+  (OLD.data IS DISTINCT FROM NEW.data)`. `AFTER` parce qu'il lit la `rev` déjà avancée et
+  couvre l'INSERT ; la condition sur `data` seule fait qu'un mouvement de bail
+  (`claimed_*`), `claims`, `updated_at` ou `embed_dirty` n'appelle même pas la fonction.
+- **Le diff** : `{champ: {"avant": v, "apres": v}}`, calculé clé par clé dans le
+  déclencheur, valeurs ENTIÈRES (couches comprises). Un côté absent n'a pas sa clé :
+  `{"apres": 1}` = ajouté, `{"avant": 1}` = retiré, `{"avant": null, "apres": 2}` = une
+  valeur `null` remplacée. Une insertion porte tous ses champs en `apres`. Une écriture
+  sans effet n'écrit rien. Les **valeurs sont stockées** : la règle « noms de colonnes
+  seuls » (`origine_ecritures`) ne vaut pas ici, par décision d'oto#273.
+- **Ce qui reste, ce qui part** : pas de FK vers la ligne, donc les révisions d'une ligne
+  supprimée RESTENT. FK `ON DELETE CASCADE` vers `user_datastores` : un tableau supprimé
+  emporte son historique, quel que soit le chemin qui le supprime. ⚠️ `data_drop_column`
+  écrit UNE révision par ligne qui portait la colonne, valeur retirée comprise.
+- **Estampille** (acteur, run, source, geste) : M2. Les colonnes sont nullables et la
+  fonction lit déjà `oto.acteur`, `oto.run_id`, `oto.source`, `oto.geste_id`
+  (`current_setting(…, true)`) — qu'aucun code ne pose : `NULL` partout en M1.
+- **Interrupteur** `OTO_JOURNAL_REVISIONS=off` (défaut `on`) : le pool ouvre ses
+  connexions avec `-c oto.journal_revisions=off`, lu par la fonction. Il coupe les
+  écritures de CE processus seulement (la fonction est commune à la prod et à la préprod
+  sur la base partagée) ; il se change par l'environnement et un redémarrage, sans
+  redéployer. Toute autre valeur LÈVE à l'ouverture du pool.
+
+**Mesure du volume** (deux semaines, par jour et par tableau ; `octets` = taille des
+lignes du journal, hors en-têtes de tuple et index) :
+
+```sql
+SELECT date_trunc('day', r.at)::date AS jour, r.ns_id,
+       count(*)                      AS revisions,
+       sum(pg_column_size(r.*))      AS octets,
+       max(pg_column_size(r.diff))   AS diff_max
+  FROM datastore_row_revisions r
+ WHERE r.at >= now() - interval '14 days'
+ GROUP BY 1, 2
+ ORDER BY 1 DESC, revisions DESC;
+
+-- L'emprise réelle, index et TOAST compris :
+SELECT pg_size_pretty(pg_total_relation_size('datastore_row_revisions'));
+```
+
+Aucun index sur `at` : la mesure parcourt la table, ce qui est le bon prix pour deux
+semaines de données et une requête à la main.
+
+**Banc** : `tests/datastore/test_journal_revisions_273.py` (base réelle).
+
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 
 **Le constat.** Dans une ligne JSONB stockée, une colonne jamais écrite n'existe pas : elle était
