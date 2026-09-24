@@ -303,6 +303,10 @@ class ViewAsMiddleware:
                                                                   view_user))
                 operateur_token = session_org.set_view_as_operator(sub)
         usr_token = session_org.set_view_user(view_user) if view_user is not None else None
+        # Écriture acceptée, publiée pour TOUTE requête (lecture comprise) : `/api/me`
+        # en dit la lecture seule (oto#212) sans rejuger l'en-tête.
+        accepte_token = (session_org.set_view_as_write_accepted(True)
+                         if view_user is not None and ecriture_acceptee else None)
         org_token = session_org.set_view_org(view_org) if view_org is not None else None
         grp_token = session_org.set_view_group(view_group) if view_group is not None else None
         try:
@@ -312,6 +316,8 @@ class ViewAsMiddleware:
                 session_org.reset_view_group(grp_token)
             if org_token is not None:
                 session_org.reset_view_org(org_token)
+            if accepte_token is not None:
+                session_org.reset_view_as_write_accepted(accepte_token)
             if usr_token is not None:
                 session_org.reset_view_user(usr_token)
             if operateur_token is not None:

@@ -334,6 +334,28 @@ def current_view_as_operator() -> Optional[str]:
     return _VIEW_AS_OPERATOR.get()
 
 
+# L'écriture en « voir en tant que » est ACCEPTÉE pour la requête courante — même
+# jugement que celui qui laisse passer une écriture (cible appliquée + `X-Oto-View-As-
+# Write: 1` + super_admin, ViewAsMiddleware), posé AUSSI sur une lecture : `/api/me`
+# en tire `view_as_read_only` (oto#212). Ne porte aucune identité : l'opérateur d'une
+# écriture reste `current_view_as_operator`, posé seulement quand on écrit.
+_VIEW_AS_WRITE_ACCEPTED: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "oto_view_as_write_accepted", default=False)
+
+
+def set_view_as_write_accepted(accepted: bool) -> contextvars.Token:
+    return _VIEW_AS_WRITE_ACCEPTED.set(accepted)
+
+
+def reset_view_as_write_accepted(token: contextvars.Token) -> None:
+    _VIEW_AS_WRITE_ACCEPTED.reset(token)
+
+
+def view_as_write_accepted() -> bool:
+    """Vrai ssi la vue est appliquée ET son écriture acceptée par le middleware."""
+    return _VIEW_AS_WRITE_ACCEPTED.get()
+
+
 # ── Axe ÉQUIPE (groupe) — même mécanique que l'org (ADR 0023 étendu) ─────────
 # Le store ne garde QUE des group_id réels ; « pas de groupe » (niveau org) se
 # DÉRIVE = override d'org présent SANS override de groupe ⇒ niveau org. Ça tient

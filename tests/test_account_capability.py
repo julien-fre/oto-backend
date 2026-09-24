@@ -158,6 +158,30 @@ def test_sans_vue_appliquee_pas_de_lecture_seule(monkeypatch, socle, entetes):
     assert _me_par_le_middleware(monkeypatch, entetes)["view_as_read_only"] is False
 
 
+# L'écriture ACCEPTÉE (super_admin + `X-Oto-View-As-Write: 1`, 24/09) lève la lecture
+# seule : le serveur accepte alors les écritures, l'écran doit proposer les gestes. Le
+# jugement est celui que `ViewAsMiddleware` applique déjà à l'en-tête, jamais refait.
+
+def test_ecriture_acceptee_leve_la_lecture_seule(monkeypatch, socle):
+    monkeypatch.setattr(ma.access, "is_super_admin", lambda sub: True)
+    out = _me_par_le_middleware(
+        monkeypatch, {"X-Oto-View-As": "u-cible", "X-Oto-View-As-Write": "1"})
+    assert out["view_as_read_only"] is False
+
+
+@pytest.mark.parametrize("super_admin, entetes", [
+    (True, {"X-Oto-View-As": "u-cible"}),
+    (True, {"X-Oto-View-As": "u-cible", "X-Oto-View-As-Write": "0"}),
+    (False, {"X-Oto-View-As": "u-cible", "X-Oto-View-As-Write": "1"}),
+], ids=["en-tete-absent", "en-tete-invalide", "operateur-non-super-admin"])
+def test_ecriture_non_acceptee_reste_en_lecture_seule(monkeypatch, socle, super_admin,
+                                                      entetes):
+    """En-tête absent ou refusé par le middleware (un `admin` de supervision n'écrit
+    pas, 403 `view_as_write_forbidden`) : la consultation reste en lecture seule."""
+    monkeypatch.setattr(ma.access, "is_super_admin", lambda sub: super_admin)
+    assert _me_par_le_middleware(monkeypatch, entetes)["view_as_read_only"] is True
+
+
 def test_hors_org_les_champs_d_org_sont_nuls_pas_absents(monkeypatch, socle):
     """Un compte sans org rend les mêmes clés, à `null` — un front qui teste la
     PRÉSENCE d'une clé ne doit pas basculer de branche selon l'état du compte."""

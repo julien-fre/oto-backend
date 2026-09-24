@@ -131,6 +131,8 @@ class MeView(BaseModel):
     # a ses rôles), alors que le middleware refuse toute écriture (403
     # `view_as_read_only`). Ce flag est donc le SEUL qui dise la lecture seule de ce
     # mode ; un front calcule son droit d'écrire sur les deux. Hors vue : False.
+    # Écriture acceptée (super_admin + `X-Oto-View-As-Write: 1`, 24/09) : False, le
+    # serveur accepte alors les écritures (oto#212).
     view_as_read_only: bool = False
     # Espace privé mono-membre : le front adapte son vocabulaire (un « solo » ne lit
     # jamais « org » ni « équipe »).
@@ -300,8 +302,11 @@ def _me(ctx: ResolvedCtx, inp: MeInput) -> dict:
         "org_role": org_role,
         "active_org_readonly": active_org_readonly,
         # Posé par `ViewAsMiddleware` APRÈS ses gardes (opérateur, cible existante
-        # ≠ soi) : une vue refusée ou sans effet le laisse à None → False.
-        "view_as_read_only": session_org.current_view_user() is not None,
+        # ≠ soi) : une vue refusée ou sans effet le laisse à None → False. Une
+        # écriture ACCEPTÉE (super_admin + `X-Oto-View-As-Write: 1`, jugée par le
+        # même middleware) lève la lecture seule.
+        "view_as_read_only": (session_org.current_view_user() is not None
+                              and not session_org.view_as_write_accepted()),
         "active_org_is_personal": active_org_is_personal,
         "active_org_require_mfa": active_org_require_mfa,
         "home_org": home_org,
