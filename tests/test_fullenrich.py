@@ -74,12 +74,13 @@ def test_enrich_linkedin_does_not_trace_on_a_rejected_submission():
 # passent par `res.get(...)` sur un client simulé : ils tiennent sur le pin actuel,
 # que le champ y soit déjà ou non.
 
-def _result(fetched: dict, *, is_platform: bool = True):
-    with patch("oto_mcp.access.resolve_api_key", return_value=("fake-key", is_platform)), \
+def _result(fetched: dict, *, is_platform: bool = True, **kw):
+    rc = SimpleNamespace(key="fake-key", is_platform=is_platform)
+    with patch("oto_mcp.access.resolve_credential", return_value=rc), \
          patch("oto_mcp.tools.fullenrich.session_org.note_call_trace") as trace, \
          patch("oto.tools.fullenrich.client.FullenrichClient") as client_cls:
         client_cls.return_value.fetch.return_value = fetched
-        out = _tool("fullenrich_result").fn(enrichment_id="enr_789")
+        out = _tool("fullenrich_result").fn(enrichment_id="enr_789", **kw)
     return out, trace
 
 
@@ -165,3 +166,91 @@ def test_the_found_counts_reach_the_journal_and_bill_only_on_the_target_row():
     assert row["args"] == {"enrichment_id": "enr_789", "found_work_emails": 2,
                            "found_personal_emails": 1, "found_phones": 2}
     assert row["quantity"] == 25
+
+
+# ── Relever un job n'est jamais une boucle sans fin (signaux #943, #990, #1027-#1029) ──
+
+def _en_cours(status="IN_PROGRESS"):
+    return {"status": status, "profiles": None, "cost_credits": None}
+
+
+def test_le_releve_ne_verifie_pas_le_quota_plateforme():
+    """#943 : le quota est débité à la SOUMISSION ; le relevé ne consomme rien. Le
+    vérifier rendait le résultat d'un job déjà payé illisible le jour même."""
+    rc = SimpleNamespace(key="fake-key", is_platform=True)
+    with patch("oto_mcp.access.resolve_credential", return_value=rc) as resolve, \
+         patch("oto_mcp.tools.fullenrich.session_org.note_call_trace"), \
+         patch("oto.tools.fullenrich.client.FullenrichClient") as client_cls:
+        client_cls.return_value.fetch.return_value = _en_cours()
+        _tool("fullenrich_result").fn(enrichment_id="enr_789")
+    resolve.assert_called_once_with("fullenrich", check_usage=False)
+
+
+def test_un_job_en_cours_dit_quand_repasser():
+    out, _ = _result(_en_cours())
+    assert out["done"] is False and out["retry_after_s"] == 30
+
+
+def test_une_limite_de_debit_dit_d_attendre_plus():
+    out, _ = _result(_en_cours("RATE_LIMIT"))
+    assert out["done"] is False and out["retry_after_s"] == 60
+
+
+@pytest.mark.parametrize("status,code", [
+    ("CANCELED", "fullenrich_job_canceled"),
+    ("NOT_FOUND", "fullenrich_job_not_found"),
+    ("UNKNOWN", "fullenrich_job_status_unknown"),
+    ("ÉTRANGE", "fullenrich_job_status_unknown"),
+])
+def test_un_statut_terminal_est_un_refus_nomme_pas_un_en_cours(status, code):
+    from oto_mcp.mcp_errors import McpError
+    with pytest.raises(McpError) as e:
+        _result(_en_cours(status))
+    assert e.value.error.data["code"] == code
+    assert e.value.error.data["retryable"] is False
+    assert code in e.value.error.message
+
+
+def test_une_erreur_de_l_amont_est_nommee_pas_interne():
+    from oto_mcp.mcp_errors import McpError
+    rc = SimpleNamespace(key="fake-key", is_platform=False)
+    with patch("oto_mcp.access.resolve_credential", return_value=rc), \
+         patch("oto_mcp.tools.fullenrich.session_org.note_call_trace"), \
+         patch("oto.tools.fullenrich.client.FullenrichClient") as client_cls:
+        client_cls.return_value.fetch.side_effect = RuntimeError("FullEnrich GET 502: bad gateway")
+        with pytest.raises(McpError) as e:
+            _tool("fullenrich_result").fn(enrichment_id="enr_789")
+    assert e.value.error.data["code"] == "fullenrich_upstream_error"
+    assert "502" in e.value.error.message
+
+
+def test_la_soumission_rend_son_heure():
+    with patch("oto_mcp.access.resolve_api_key", return_value=("fake-key", False)), \
+         patch("oto_mcp.tools.fullenrich.session_org.note_call_trace"), \
+         patch("oto.tools.fullenrich.client.FullenrichClient") as client_cls:
+        client_cls.return_value.submit.return_value = "enr_1"
+        out = _tool("fullenrich_enrich_linkedin").fn(contacts=_contacts(1))
+    import datetime as dt
+    assert dt.datetime.fromisoformat(out["submitted_at"]).tzinfo is not None
+
+
+def test_passe_le_plafond_le_releve_dit_d_arreter():
+    import datetime as dt
+    vieux = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=25)).isoformat()
+    out, _ = _result(_en_cours(), submitted_at=vieux)
+    assert out["done"] is False
+    assert out["verdict"] == "still_running_after_20_min"
+    assert "ne resoumets pas" in out["next_step"].lower() or "do not resubmit" in out["next_step"].lower()
+
+
+def test_sous_le_plafond_pas_de_verdict():
+    import datetime as dt
+    recent = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).isoformat()
+    out, _ = _result(_en_cours(), submitted_at=recent)
+    assert "verdict" not in out
+
+
+def test_une_heure_de_soumission_illisible_est_refusee():
+    from oto_mcp.mcp_errors import McpError
+    with pytest.raises(McpError, match="submitted_at"):
+        _result(_en_cours(), submitted_at="hier")

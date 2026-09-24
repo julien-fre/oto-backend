@@ -22,6 +22,7 @@ consommateur le compte une fois par son `enrichment_id` (le `job_id` de la lenti
 """
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Optional
 
 from fastmcp import FastMCP
@@ -32,6 +33,39 @@ from .. import access, session_org
 from ..connectors import verify as connector_verify
 
 _CREDITS_URL = "https://app.fullenrich.com/api/v1/account/credits"
+
+# Relever un job ne doit jamais devenir une boucle sans fin côté agent (signaux
+# #990, #1027-#1029). Un statut encore en cours dit QUAND repasser ; un statut qui ne
+# changera plus est un refus NOMMÉ ; passé ce plafond depuis la soumission, le relevé
+# dit d'arrêter (un job de 100 contacts finit d'ordinaire en moins de 4 minutes).
+_REPASSER_S = {"CREATED": 30, "IN_PROGRESS": 30, "RATE_LIMIT": 60}
+_PLAFOND_MIN = 20
+_TERMINAUX = {
+    "CANCELED": ("fullenrich_job_canceled",
+                 "le job a été annulé chez FullEnrich : il ne rendra aucun résultat."),
+    "NOT_FOUND": ("fullenrich_job_not_found",
+                  "FullEnrich ne connaît pas (ou plus) ce job — id erroné ou job expiré."),
+}
+
+
+def _refus(code: str, message: str, **data) -> McpError:
+    return McpError(ErrorData(code=INVALID_PARAMS, message=f"Refus `{code}` : {message}",
+                              data={"code": code, "retryable": False, **data}))
+
+
+def _minutes_depuis(submitted_at: Optional[str]) -> Optional[float]:
+    if submitted_at is None:
+        return None
+    try:
+        t = _dt.datetime.fromisoformat(submitted_at)
+    except ValueError:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=("`submitted_at` illisible : repasse tel quel le `submitted_at` "
+                     "rendu par fullenrich_enrich_linkedin (ISO 8601 avec fuseau).")))
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=_dt.timezone.utc)
+    return (_dt.datetime.now(_dt.timezone.utc) - t).total_seconds() / 60
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:
@@ -123,30 +157,68 @@ def register(mcp: FastMCP) -> None:
         return {
             "enrichment_id": enrichment_id,
             "submitted": len(contacts),
-            "next_step": ("Job accepted. Call fullenrich_result(enrichment_id) "
-                          "in ~30s (typical completion 30s-4min)."),
+            "submitted_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            "next_step": ("Job accepted. Call fullenrich_result(enrichment_id, "
+                          "submitted_at) in ~30s (typical completion 30s-4min)."),
         }
 
     @mcp.tool()
-    def fullenrich_result(enrichment_id: str) -> dict:
+    def fullenrich_result(enrichment_id: str, submitted_at: Optional[str] = None) -> dict:
         """Collect the result of a FullEnrich job submitted with fullenrich_enrich_linkedin.
 
-        Single status check, returns immediately. If `done` is false, wait ~20-30s
-        and call again (jobs typically finish in 30s-4min). When done, `profiles`
-        holds one entry per submitted contact: {found, linkedin_slug, full_name,
-        title, company_name, phones[], work_emails[], personal_emails[], location}.
+        Single status check, returns immediately. Returns `{done: false, status,
+        retry_after_s, next_step}` while the job runs — call again after
+        `retry_after_s` seconds (jobs typically finish in 30s-4min). Pass the
+        `submitted_at` the submission returned: past 20 minutes the answer adds
+        `verdict: "still_running_after_20_min"` and says to STOP polling — do not
+        resubmit the same contacts, it would be billed twice. A job that will never
+        finish (canceled, unknown or expired id) is a named refusal, not a status to
+        poll. When done, returns `{done: true, status: "FINISHED", profiles}` with one
+        entry per submitted contact: {found, linkedin_slug, full_name, title,
+        company_name, phones[], work_emails[], personal_emails[], location}.
+        Reading a result never consumes the platform quota (the submission does).
+
+        Args:
+            enrichment_id: the `enrichment_id` returned by fullenrich_enrich_linkedin.
+            submitted_at: the `submitted_at` returned by the same call.
         """
-        client, _ = _client()
-        res = client.fetch(enrichment_id)
-        if res["status"] != "FINISHED":
+        from oto.tools.fullenrich.client import FullenrichClient
+        # Le quota plateforme est débité à la SOUMISSION : le relevé ne consomme rien
+        # et ne le vérifie pas — sinon un job déjà payé devenait illisible le jour même
+        # que le quota s'épuisait (#943).
+        rc = access.resolve_credential("fullenrich", check_usage=False)
+        try:
+            res = FullenrichClient(api_key=rc.key).fetch(enrichment_id)
+        except RuntimeError as e:
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=f"Refus `fullenrich_upstream_error` : {e}",
+                data={"code": "fullenrich_upstream_error", "retryable": True}))
+        status = res["status"]
+        if status != "FINISHED":
             # Un relevé de statut n'a rien consommé chez FullEnrich : un zéro TRACÉ,
             # pas une absence — un consommateur du métrage lit l'absence comme 1.
             session_org.note_call_trace(quantity=0)
-            return {
-                "done": False,
-                "status": res["status"],
-                "next_step": "Still running — call fullenrich_result again in ~20-30s.",
-            }
+            if status not in _REPASSER_S:
+                code, pourquoi = _TERMINAUX.get(status, (
+                    "fullenrich_job_status_unknown",
+                    f"FullEnrich rend le statut « {status} », qui ne mène pas à un résultat."))
+                raise _refus(code, f"{pourquoi} Ne relève plus ce job ; resoumets les "
+                                   "contacts seulement si tu en as encore besoin (nouvelle "
+                                   "facturation).", status=status, enrichment_id=enrichment_id)
+            out = {"done": False, "status": status,
+                   "retry_after_s": _REPASSER_S[status],
+                   "next_step": (f"Still running — call fullenrich_result again in "
+                                 f"~{_REPASSER_S[status]}s.")}
+            ecoule = _minutes_depuis(submitted_at)
+            if ecoule is not None and ecoule >= _PLAFOND_MIN:
+                out["verdict"] = f"still_running_after_{_PLAFOND_MIN}_min"
+                out["next_step"] = (
+                    f"Still running after {int(ecoule)} minutes: stop polling now. "
+                    "Report it as blocked (with the enrichment_id) and read the result "
+                    "later with the same id — do not resubmit the same contacts, they "
+                    "would be billed twice.")
+            return out
         # Métrage (facturation du partenaire), INCONDITIONNEL (clé plateforme OU BYO), comme
         # `fullenrich_enrich_linkedin` : le consommateur filtre sur `key_mode`.
         #   • `quantity` = les crédits que FULLENRICH a déduits pour ce job —
