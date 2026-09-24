@@ -20,6 +20,8 @@ origami tient des tables de leads et fait rédiger puis envoyer des campagnes mu
 
 - **lancer envoie pour de vrai** (emails + messages LinkedIn à des personnes réelles) : relire les personnes enrôlées et le texte AVANT `dry_run=False` ; il n'y a pas de rappel
 - `origami_campaign_create` avec `block_prior_contacts=True` (défaut) écarte toute personne déjà enrôlée auparavant, MÊME dans un brouillon supprimé jamais envoyé — passer False seulement si ces enrôlements n'ont jamais envoyé à personne
+- les réglages `block_prior_contacts` / `block_active_duplicates` sont DEMANDÉS, pas garantis : Origami les a ignorés sur des campagnes créées par l'appel. Relire `origami_campaigns(op="get")` → `settings` après le déroulé ; les redire en toutes lettres dans `instructions` les a fait tenir en pratique ; sinon, bascule à la main dans Origami
+- un déroulé refusé `aucune_action` peut laisser dans l'interface Origami un brouillon « Ready to launch » invisible à l'API : relancer UNE fois, et faire vérifier la liste des campagnes par un humain avant de relancer encore
 - les clés de lignes sont les **slugs** des colonnes d'entrée (avec des tirets), pas les noms affichés — un slug inconnu est refusé (400 UNKNOWN_FIELDS)
 - `enrich=False` par défaut à l'upsert : l'enrichissement dépense des crédits, il se demande explicitement
 - la suppression est en deux temps ; le tool re-lit la campagne et ne dit « supprimée » que sur un 404

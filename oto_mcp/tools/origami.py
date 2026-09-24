@@ -187,7 +187,13 @@ def _refuse_si_rien_n_a_ete_fait(res: dict) -> dict:
                     "comme fait. Geste : vérifie l'état réel avec "
                     "origami_campaigns(op='list_for_table', table_id=…) — s'il n'y a "
                     "pas de campagne, relance origami_campaign_create (même table, même "
-                    "brief) ; si le brief visait une campagne existante, lis-la avec "
+                    "brief), UNE fois : ⚠️ un déroulé refusé ainsi a pu laisser dans "
+                    "l'interface Origami un brouillon « Ready to launch » que l'API ne "
+                    "voit pas, et chaque relance en ajoute un ; dis-le à l'humain, qui "
+                    "vérifie la liste des campagnes dans Origami et supprime les "
+                    "doublons, et ne relance pas en boucle (pendant une panne du "
+                    "fournisseur, huit relances de suite n'ont rien créé). Si le brief "
+                    "visait une campagne existante, lis-la avec "
                     "op='get' et op='people' (un nombre de personnes trouvées qui monte "
                     "sans que les contactées suivent signale des séquences sans "
                     "destinataire). Le défaut est chez le fournisseur : son déroulé se "
@@ -580,13 +586,21 @@ def register(mcp: FastMCP) -> None:
         done NOTHING, with prose that names a campaign and a slug that were never
         created (measured 2026-09-09: three times in a row on one table) — or
         report people added while its action list is empty. `origami_run_get`
-        REFUSES such a run (error `aucune_action`, nothing was created: verify the
-        table with `origami_campaigns(op="list_for_table")`, then relaunch). The
+        REFUSES such a run (error `aucune_action`, nothing reachable was created:
+        verify the table with `origami_campaigns(op="list_for_table")`, then
+        relaunch ONCE — such a run may still leave a draft shell visible only in the
+        Origami interface, invisible to every verb here, and each relaunch adds
+        one; tell the human to check the campaign list in Origami). The
         state that settles it is the campaign itself: if found rises while
         contacted does not, the new sequences have no recipient and nothing will
         ever send to them.
 
-        Settings (persisted on the campaign, read back in `settings`):
+        Settings — REQUESTED, not guaranteed: Origami has been measured ignoring
+        them on a campaign this call created (2026-09-13, reproduced). Always read
+        what governs with `origami_campaigns(op="get")` → `settings` once the run
+        is done; stating the setting in words in `instructions` as well has made it
+        stick in practice. If it is still wrong, the fix is a human toggle in
+        Origami:
         - `block_prior_contacts=True` (default): auto-cancels every person who was
           EVER enrolled in a previous campaign — INCLUDING people who sat in a
           deleted, never-sent draft. Pass False ONLY when the prior enrolments were
@@ -655,9 +669,10 @@ def register(mcp: FastMCP) -> None:
         `include="transcript"`, economics with `include="stats"`). Poll until
         `status != "running"`, then read the drafted campaign with
         `origami_campaigns`. A terminal run whose action list is EMPTY is
-        REFUSED (error `aucune_action`): it created nothing, whatever its prose
-        says — verify with `origami_campaigns(op="list_for_table")`, then relaunch
-        `origami_campaign_create`.
+        REFUSED (error `aucune_action`): it created nothing reachable, whatever its
+        prose says — verify with `origami_campaigns(op="list_for_table")`, then
+        relaunch `origami_campaign_create` ONCE (a refused run may leave a draft
+        shell visible only in the Origami interface; each relaunch adds one).
 
         Args:
             agent_id: from `origami_campaign_create` → `agent_id`.
