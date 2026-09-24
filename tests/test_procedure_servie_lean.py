@@ -170,6 +170,8 @@ def _ecriture(monkeypatch, courant: str | None):
     ecrit: dict = {}
 
     def _get_instruction(otype, oid, slug, version=None):
+        if version is not None:           # la version écrite, relue (empreinte, oto#133)
+            return {"body_md": ecrit["body_md"]}
         return None if courant is None else {"slug": slug, "title": "T", "description": "d",
                                              "version": 7, "body_md": courant, "slots": []}
 
@@ -238,8 +240,10 @@ def test_un_scope_omis_ecrit_ailleurs_et_perd_le_dessin(monkeypatch):
     # 2. Le dessin, lui, est resté chez l'org : il n'y a rien à relire chez soi.
     vus = []
 
-    def _get_instruction(otype, oid, slug):
+    def _get_instruction(otype, oid, slug, version=None):
         vus.append(otype)
+        if version is not None:           # la version écrite, relue (empreinte, oto#133)
+            return {"body_md": relu}
         return None                       # rien de stocké au palier personnel
     monkeypatch.setattr(oi.org_store, "get_instruction", _get_instruction)
     monkeypatch.setattr(oi.org_store, "set_instruction", lambda *a, **k: 1)

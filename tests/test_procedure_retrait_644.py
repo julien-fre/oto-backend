@@ -171,7 +171,7 @@ def test_un_corps_precedent_illisible_ne_casse_pas_l_ecriture(monkeypatch):
         appels["n"] += 1
         if appels["n"] == 1:
             raise RuntimeError("corps précédent illisible")
-        return {"slots": []}
+        return {"slots": [], "body_md": "## Neuf\ntexte"}
     monkeypatch.setattr(oi.org_store, "set_instruction", lambda *a, **k: 3)
     monkeypatch.setattr(oi.org_store, "get_instruction", _lecture)
 

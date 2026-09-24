@@ -26,8 +26,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from ... import (deprecations, guide_store, org_store, procedure_diagram, roles,
-                 tool_alias)
+from ... import (deprecations, guide_store, org_store, procedure_diagram,
+                 procedure_empreinte, roles, tool_alias)
 from .._auteurs import nommer_l_auteur, nommer_les_auteurs
 from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, capacite_autorise
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -222,6 +222,9 @@ class GroupInstructionWritten(BaseModel):
     set: bool
     # Le SCHÉMA manquant. `None` = rien à signaler.
     diagram_warning: Optional[str] = None
+    # SHA-256 (hex) du corps RELU EN BASE pour cette version (oto#133), à comparer à
+    # celui de l'envoi blancs de tête et de fin retirés (cf. `procedure_empreinte`).
+    body_sha256: str
 
 
 class GroupInstructionDeleted(BaseModel):
@@ -338,6 +341,7 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
     # Une procédure d'équipe est une procédure : même exigence de schéma qu'au grain org
     # (front tiers, issue #108), même régime — un warning, jamais un refus.
     return {"group_id": inp.group_id, "slug": slug, "version": version, "set": True,
+            **procedure_empreinte.empreinte_check("group", inp.group_id, slug, version),
             **procedure_diagram.diagram_check(body_md)}
 
 

@@ -98,7 +98,9 @@ _SANS_DIGEST = "## Goal\n\nUne procédure qui n'ouvre sur aucun bloc de citation
 
 def _set_org(monkeypatch, body):
     monkeypatch.setattr(oi.org_store, "set_instruction", lambda *a, **k: 3)
-    monkeypatch.setattr(oi.org_store, "get_instruction", lambda *a, **k: {"slots": []})
+    # La relecture rend le corps posé (empreinte de la version écrite, oto#133).
+    monkeypatch.setattr(oi.org_store, "get_instruction",
+                        lambda *a, **k: {"slots": [], "body_md": body})
 
     async def _wc(body_md, **k):
         return {"referenced_tools": [], "unresolved_tools": []}
@@ -117,6 +119,8 @@ def test_ecrire_une_procedure_sans_le_bloc_ne_produit_plus_davertissement(monkey
 
 def test_le_palier_equipe_non_plus(monkeypatch):
     monkeypatch.setattr(gd.org_store, "set_instruction", lambda *a, **k: 2)
+    monkeypatch.setattr(gd.org_store, "get_instruction",   # empreinte, oto#133
+                        lambda *a, **k: {"body_md": _SANS_DIGEST})
 
     class _GInp(_Inp):
         group_id = 4

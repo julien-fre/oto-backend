@@ -230,6 +230,23 @@ run y perd 10 à 20 %, et les règles transversales (le filtre sur la société,
 blanche des champs, la borne de 255 caractères) vivent hors des étapes. La seule
 économie qui tienne est de servir MOINS, sur les blocs que la forme délimite.
 
+## L'écriture rend l'empreinte du corps stocké (oto#133, 24/09/2026)
+
+Publier un corps ne rendait rien qui prouve que la base avait gardé ce texte-là : il
+fallait relire (`op=get`) et comparer à la main — contrôle qui a trouvé dix-huit lignes
+servies aux agents qu'aucun fichier source ne contenait. `op=set`/`op=create` (et leurs
+faces REST, `PUT /api/groups/{id}/instructions/{slug}` compris) rendent désormais
+**`body_sha256`** : le SHA-256 hex des octets UTF-8 du corps **relu en base pour la
+version écrite** (`procedure_empreinte.empreinte_check`, sur la révision — pas la ligne
+vivante, qu'une édition concurrente a pu déjà remplacer). Jamais l'empreinte de l'envoi :
+c'est l'écart entre les deux qu'on veut voir.
+
+⚠️ Le corps stocké n'est pas l'envoi à l'octet près : blancs de tête et de fin retirés,
+outils cités sous un nom de produit ramenés au canonique, dessin remis à la place du
+marqueur. Comparer donc au SHA-256 de l'envoi **stripé** (`sha256sum` d'un fichier qui
+finit par `\n` ne correspondra jamais) ; un écart qui subsiste dit que la base porte autre
+chose que ce qu'on croit avoir publié.
+
 ## Renommer un outil = migrer les procédures
 
 Une procédure référence ses outils par `<tool:slug>` (ADR 0014), et ces refs vivent **en DB, par

@@ -144,7 +144,10 @@ def test_relire_puis_reenregistrer_rend_le_texte_dorigine(tenant_acme, monkeypat
 
 def test_une_procedure_secrit_au_canonique(tenant_acme, registre, monkeypatch):
     ecrit: dict = {}
-    monkeypatch.setattr(oi.org_store, "get_instruction", lambda *a, **k: None)
+    # Rien avant ; la version écrite, elle, se relit (empreinte, oto#133).
+    monkeypatch.setattr(oi.org_store, "get_instruction",
+                        lambda o, i, s, version=None: (
+                            None if version is None else {"body_md": ecrit["body_md"]}))
 
     def _set_instruction(otype, oid, slug, body_md, **kw):
         ecrit["body_md"] = body_md
@@ -175,6 +178,8 @@ def test_une_procedure_dequipe_secrit_au_canonique(tenant_acme, registre, monkey
     ecrit: dict = {}
     monkeypatch.setattr(org_store, "set_instruction",
                         lambda *a, **k: ecrit.update(body=a[3]) or 2)
+    monkeypatch.setattr(org_store, "get_instruction",   # empreinte, oto#133
+                        lambda *a, **k: {"body_md": ecrit["body"]})
     groups_guide._set(types.SimpleNamespace(sub=_SUB_TENANT, org_id=2, group_id=None),
                       groups_guide.InstrSetInput(group_id=7, slug="relance",
                                                  body_md="<tool:acme_call>"))

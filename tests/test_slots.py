@@ -117,6 +117,7 @@ def _wire_set(monkeypatch, existing=None):
     # #662, `must_create`/`expected_version`, sont arrivées par là).
     def _set(owner_type, owner_id, slug, body_md, title=None, description=None,
              set_by=None, slots=None, must_create=False, expected_version=None):
+        calls["body_md"] = body_md
         calls["owner"] = (owner_type, owner_id)
         calls["slots"] = slots
         calls["garde"] = (must_create, expected_version)
@@ -124,7 +125,11 @@ def _wire_set(monkeypatch, existing=None):
 
     monkeypatch.setattr(oi.org_store, "set_instruction", _set)
     monkeypatch.setattr(oi.org_store, "get_instruction",
-                        lambda otype, oid, slug, version=None: existing)
+                        lambda otype, oid, slug, version=None: (
+                            # après l'écriture : la version écrite relue (oto#133)
+                            {"body_md": calls["body_md"]}
+                            if version is not None and "body_md" in calls
+                            else existing))
 
     async def _wc(body_md, mcp_instance=None):
         return {"referenced_tools": [], "unresolved_tools": []}

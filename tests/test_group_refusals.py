@@ -47,6 +47,8 @@ def test_ecrire_le_readme_comme_procedure_est_un_400_nomme(monkeypatch):
 def test_un_slug_normal_passe_toujours(monkeypatch):
     """Garde-fou du garde-fou : le refus ne doit pas manger les procédures légitimes."""
     monkeypatch.setattr(org_store, "set_instruction", lambda *a, **k: 3)
+    # La version écrite est relue pour son empreinte (oto#133).
+    monkeypatch.setattr(org_store, "get_instruction", lambda *a, **k: {"body_md": "x"})
     out = groups_guide._set(
         _Ctx(), groups_guide.InstrSetInput(group_id=7, slug="relance", body_md="x"))
     assert out["version"] == 3 and out["slug"] == "relance"

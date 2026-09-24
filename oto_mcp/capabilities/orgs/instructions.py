@@ -32,7 +32,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from ... import (access, db, deprecations, group_store, guide_store, org_store,
-                procedure_diagram, procedure_retrait, roles,
+                procedure_diagram, procedure_empreinte, procedure_retrait, roles,
                 slots as slots_mod, tool_alias, tool_registry)
 from .._auteurs import nommer_l_auteur, nommer_les_auteurs
 from .._authz import (ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER,
@@ -388,6 +388,10 @@ class InstructionWritten(BaseModel):
     # « resserrée » enlève par construction, et rien d'autre ne le dit. `None` = aucune
     # SECTION entière n'a disparu — ce qui ne veut pas dire que rien n'a été retiré.
     retrait_warning: Optional[str] = None
+    # SHA-256 (hex) du corps RELU EN BASE pour cette version (oto#133) — pas de l'envoi.
+    # À comparer au SHA-256 de ce qu'on a envoyé, blancs de tête et de fin retirés :
+    # un écart = la base porte autre chose (cf. `procedure_empreinte`).
+    body_sha256: str
 
 
 class InstructionDescribed(BaseModel):
@@ -1256,6 +1260,7 @@ def _write_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> tupl
     ecrite = org_store.get_instruction(*owner, norm) or {}
     effective_slots = slots_in if slots_in is not None else (ecrite.get("slots") or [])
     return {"ok": True, **_scope_ref(owner), "slug": norm,
+            **procedure_empreinte.empreinte_check(*owner, norm, version),
             **({"guide_id": ecrite["id"]} if ecrite.get("id") is not None else {}),
             **_note_de_portee(owner), "version": version, "set": True,
             **({"reverted_from": from_version} if from_version is not None else {}),
@@ -1563,7 +1568,9 @@ CAPABILITIES += [
                      "in the prose as <slot:name> (never a hardcoded instance: the project "
                      "binds name→instance). "
                      "Response returns cross-check warnings "
-                     "(unresolved/unreferenced slots, suggestions, `diagram_warning`). "
+                     "(unresolved/unreferenced slots, suggestions, `diagram_warning`) "
+                     "and `body_sha256`, the SHA-256 of the body as STORED (trimmed) — "
+                     "compare it with your own to prove the write. "
                      "`org` pins the write to "
                      "an EXPLICIT org id (default = your active org) — pass it to stay robust "
                      "if a reconnect dropped your session org; you must be org_admin of it. "

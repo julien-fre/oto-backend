@@ -303,7 +303,10 @@ CAPABILITIES += [
             "body by public slug) / publish (share one of your org's skills; visibility="
             "public|unlisted) / fork (copy a public entry into your org, optional `new_slug`) "
             "/ unpublish (`id`). An ARCHIVED procedure is left out of op=list; op=get "
-            "still reads it by slug, with `archived_at` set."),
+            "still reads it by slug, with `archived_at` set. set/create answer "
+            "`body_sha256`, the SHA-256 of the body as STORED (trimmed, tool names "
+            "canonical): compare it with your hash of the trimmed body you sent — a "
+            "mismatch means the stored text is not what you published."),
         mcp=orgs_instructions._GUIDE_GET_TOOL,
     ),
 ]

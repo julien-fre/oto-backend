@@ -119,7 +119,9 @@ class _Inp:
 def _set_org(monkeypatch, body):
     monkeypatch.setattr(oi.org_store, "set_instruction",
                         lambda *a, **k: 3)
-    monkeypatch.setattr(oi.org_store, "get_instruction", lambda *a, **k: {"slots": []})
+    # La relecture de la version écrite (empreinte, oto#133) rend le corps posé.
+    monkeypatch.setattr(oi.org_store, "get_instruction",
+                        lambda *a, **k: {"slots": [], "body_md": body})
 
     async def _wc(body_md, **k):
         return {"referenced_tools": [], "unresolved_tools": []}
@@ -147,6 +149,8 @@ def test_org_set_is_silent_when_the_drawing_is_there(monkeypatch):
 def test_group_set_is_silent_without_drawing(monkeypatch):
     """Une procédure d'équipe est une procédure : même régime."""
     monkeypatch.setattr(gd.org_store, "set_instruction", lambda *a, **k: 2)
+    monkeypatch.setattr(gd.org_store, "get_instruction",
+                        lambda *a, **k: {"body_md": "corps relu"})
 
     class _GInp(_Inp):
         group_id = 4
