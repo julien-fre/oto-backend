@@ -59,7 +59,6 @@ def test_revoked_hint_best_effort_on_db_error(monkeypatch):
 # --- intégration : le refus RÉEL de _resolve_credential_impl porte le hint -----
 
 def _wire_no_credential(monkeypatch, *, org=35):
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda prov: None)
     monkeypatch.setattr(access, "current_org", lambda sub: org)

@@ -111,7 +111,7 @@ près (cliquet `tests/test_access_surface_frozen.py`).
 | `access/quotas.py`  | `quota_for`, `record_platform_usage`, `paid_option_for`, `has_option` (option payante = `entitlements.org_has`) |
 | `access/entitlements.py` | `org_has`, `PLATFORM_UNMETERED` — les droits déclarés de l'org (ADR 0070 §7), jamais `billing` |
 | `access/cascade.py` | `walk_cascade`/`cascade_winner`, `CascadeRung`/`CascadeProbe`, `PRESENCE_PROBE`/`FETCH_PROBE`/`preloaded_presence_probe`, `group_secret_map`, le palier plateforme, `ORG_SHAREABLE_PROVIDERS` |
-| `access/rbac.py`    | `rbac_denied_connectors` (+ équipe), `org_admin_hidden_tools` (+ équipe), `require_connector_access`, `guard_instance_access`, `reachable_instances`(+`_map`, `_team_key`), `resolve_field_filter` |
+| `access/rbac.py`    | `org_admin_hidden_tools` (+ équipe), `guard_instance_access`, `reachable_instances`(+`_map`, `_team_key`), `resolve_field_filter` |
 | `access/indices.py` | le texte des refus « rien ne résout » : `_revoked_hint` (clé retirée), `_reachable_hint` (instances à portée, et le projet LISIBLE qui épingle déjà une instance → `_project=<id>`, #499) — lecture seule, fail-soft |
 | `access/resolve.py` | `ResolvedCredential`, `resolve_credential` et son `_impl`, la résolution d'une instance épinglée, `_resolve_credential_anon`, `platform_quota_hint` (sonde en lecture seule du quota jour, sans consommer — oto-backend#710) |
 | `access/views.py`   | `resolve_api_key`, `resolve_credential_fields`, `credential_mode_for`, `option_open`, `connector_resolvable_for_org`, `BYO_MODES` (⚠️ `resolve_mount_token` y a vécu jusqu'au 2026-09-09 — retiré avec la fédération MCP, ADR 0069) |
@@ -192,10 +192,10 @@ verdicts sont comparés, classés et comptés dans `access_shadow_l7`. Rien de c
 est servi ne change — l'observation ne peut ni lever, ni modifier un verdict, et
 `OTO_L7_SHADOW=0` l'éteint sans déploiement.
 
-Le point à retenir pour qui lit la cascade : **quatre divergences sont ATTENDUES**,
+Le point à retenir pour qui lit la cascade : **ces divergences sont ATTENDUES**,
 et ce sont des décisions de l'ADR, pas des bugs — la chaîne lit **toutes** les
 équipes du sujet quand la cascade ne lit que l'**active** (`elargissement_equipe`) ;
-elle ignore `connector_acl`, que 0053-D1 dissout (`restriction_acl`) ; elle n'a pas
+elle n'a pas
 de bénéficiaire « tout le monde » pour une clé plateforme ouverte
 (`free_tier_hors_modele`, comblé par une arête explicite en PR 2) ; et son ensemble
 atteignable est scopé à l'org, là où la cascade suit une clé personnelle cross-org
@@ -213,7 +213,8 @@ d'aujourd'hui à l'octet près. Le retour arrière est le drapeau et un redémar
 un revert ; c'est par-process, donc basculer la préprod ne bascule pas la prod.
 L'inversion ne réécrit **pas** le fetch — elle réutilise la sonde que `resolve` a déjà
 composée, avec sa sélection de compte et sa suspension : seule la traversée change. Sous
-`chain`, la restriction `connector_acl` ne refuse plus (D1 la dissout) mais reste comptée.
+La restriction `connector_acl` (et sa classe `restriction_acl`) a disparu le 24/09/2026,
+des deux côtés du drapeau : restreindre, c'est placer la clé au bon niveau (0053-D1).
 
 **L'arête « tout le monde »** (`grants_chain.EVERYONE`, le scope `platform`) dit ce
 qu'une clé plateforme ouverte disait et qu'aucune arête ne savait exprimer. Elle est

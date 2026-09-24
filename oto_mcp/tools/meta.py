@@ -357,9 +357,9 @@ def register(mcp: FastMCP) -> None:
         # SÉCURITÉ — visibilité-only (ADR 0031) : (dés)activer un outil = préférence
         # d'AFFICHAGE, jamais une autorisation. Rendre un outil visible ne donne PAS
         # accès à son credential. L'accès réel d'un connecteur sensible est gardé au
-        # call-time, indépendamment de cette visibilité : `resolve_credential` →
-        # `require_connector_access` (ADR 0025, réservation par département/membre) +
-        # le cran d'activation + la résolution du credential bridge (ADR 0034). Plus
+        # call-time, indépendamment de cette visibilité : `resolve_credential` (la clé
+        # posée au bon niveau, ADR 0053 D1) + le cran d'activation + la résolution du
+        # credential bridge (ADR 0034). Plus
         # de garde « grant-only » ici (concept retiré : `is_grant_only` est mort).
         org = _active_org(sub)
         db.remove_user_disabled_tool(sub, name, org)

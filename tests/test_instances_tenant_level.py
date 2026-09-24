@@ -35,7 +35,6 @@ def socle(monkeypatch):
     monkeypatch.setattr(group_store, "list_groups_for_user", lambda s, o=None: [])
     monkeypatch.setattr(db, "list_grants_for_user", lambda s: [])
     monkeypatch.setattr(db, "list_org_grants", lambda o: [])
-    monkeypatch.setattr(access, "rbac_denied_connectors", lambda s, o: set())
     monkeypatch.setattr(ci, "_stamp_instance_identity", lambda out: [i.pop("_vault_key", None) for i in out])
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda s, o: False)

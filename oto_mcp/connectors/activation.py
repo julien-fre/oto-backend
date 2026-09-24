@@ -136,34 +136,6 @@ def fanout_availability(conn, source: str, targets: tuple[str, ...]) -> int:
     return n
 
 
-def fanout_acl(conn, source: str, targets: tuple[str, ...]) -> int:
-    """Étend à `targets` l'ACL (`connector_acl`) de `source`.
-
-    L'ACL est deny-by-default À LA PRÉSENCE (ADR 0025) : ≥1 ligne pour
-    (scope, connector) ⟹ RESTREINT, aucune ⟹ ouvert. Un connecteur scindé dont
-    l'ACL ne suit pas devient donc OUVERT À TOUS — la restriction ne « reste pas
-    en place par défaut », elle s'ÉVAPORE. C'est le sens du fail-open qui rend ce
-    geste obligatoire, et pas seulement souhaitable : une org qui avait réservé la
-    messagerie à son équipe commerciale l'ouvrirait à tout le monde le jour du split,
-    sans rien faire et sans rien voir.
-
-    `granted_by` est conservé (l'audit dit QUI a posé la restriction d'origine) ;
-    `granted_at` repart à NOW() par défaut de colonne — la ligne est neuve, la
-    dater du geste original ferait croire à une décision qui n'a pas eu lieu."""
-    n = 0
-    for cible in targets:
-        cur = conn.execute(
-            "INSERT INTO connector_acl "
-            "       (scope_type, scope_id, connector, principal_type, principal_id, granted_by) "
-            "SELECT scope_type, scope_id, %s, principal_type, principal_id, granted_by "
-            "  FROM connector_acl WHERE connector = %s "
-            "ON CONFLICT DO NOTHING",
-            (cible, source),
-        )
-        n += cur.rowcount or 0
-    return n
-
-
 # --- résolution (pure) ------------------------------------------------------
 
 def _resolve(global_map: dict[str, bool], override_map: dict[str, bool]) -> set[str]:

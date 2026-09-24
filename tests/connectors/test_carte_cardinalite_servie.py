@@ -135,13 +135,9 @@ def test_la_vitrine_ANONYME_suit_en_revanche_la_surcharge_PLATEFORME(monkeypatch
 # ─── Surface 2 : `connectors.me` (le seam du panneau de connexion du dashboard) ────
 
 def _catalogue_me(monkeypatch, org) -> list:
-    """Appelle le VRAI `_visible_catalog`, avec activation et RBAC stubés."""
+    """Appelle le VRAI `_visible_catalog`, avec l'activation stubée."""
     monkeypatch.setattr(connectors_selection.connector_activation, "exposed_connectors",
                         lambda org_id=None: {c.name for c in providers.REGISTRY.values()})
-    monkeypatch.setattr(connectors_selection.access, "rbac_denied_connectors",
-                        lambda sub, org_id: set())
-    monkeypatch.setattr(connectors_selection.access, "is_platform_operator",
-                        lambda sub: False)
     return connectors_selection._visible_catalog(ResolvedCtx(sub=SUB, org_id=org))
 
 

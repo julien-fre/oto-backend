@@ -24,7 +24,6 @@ FINANCE, SALES, ORG = 31, 32, 35
 @pytest.fixture()
 def dept(monkeypatch):
     """Deux départements, chacun son credential http (base_url scopé)."""
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s: None)
     monkeypatch.setattr(access, "current_org", lambda sub: ORG)
     from oto_mcp import org_store
     # `http` est multi-compte depuis #409 (credential multi-champs) : les paliers
@@ -114,7 +113,6 @@ def test_projection_org_admin_sees_all_departments(monkeypatch):
     monkeypatch.setattr(ci.db, "list_grants_for_user", lambda sub: [])
     monkeypatch.setattr(ci.db, "list_org_grants", lambda org: [])
     monkeypatch.setattr(ci.credentials_store, "list_platform_credentials", lambda provider=None: [])
-    monkeypatch.setattr(ci.db, "org_restricted_connectors", lambda org: set())
     monkeypatch.setattr(ci.access, "is_super_admin", lambda sub: False)
 
     admin = ci._list_instances(ResolvedCtx(sub="admin", org_id=ORG),

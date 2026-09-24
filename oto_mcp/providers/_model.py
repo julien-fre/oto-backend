@@ -209,12 +209,11 @@ class Connector:
     # et son option (couche 3) vivent sous le connecteur NOMMÉ ici. Le cas d'usage
     # est un fournisseur dont UNE clé ouvre N *connexions* qu'on veut gouverner
     # séparément — unipile : une clé d'abonnement, six canaux, chacun sa carte, son
-    # activation, son ACL et sa sélection.
+    # activation et sa sélection.
     #
     # ⚠️ Deux questions cohabitent alors, et CHAQUE site doit choisir laquelle il pose :
-    #   · « quel connecteur est APPELÉ ? »  → les gates : activation, ACL
-    #     (`require_connector_access`), sélection, visibilité de session, pin
-    #     `_instance=`. C'est le nom NU.
+    #   · « quel connecteur est APPELÉ ? »  → les gates : activation, sélection,
+    #     visibilité de session, pin `_instance=`. C'est le nom NU.
     #   · « quel connecteur PORTE la clé ? » → le coffre, la cascade, le quota, la
     #     clé plateforme, l'option. C'est `providers.credential_provider(nom)`.
     # Confondre les deux redonne exactement la divergence de 2026-07-07 (carte « clé

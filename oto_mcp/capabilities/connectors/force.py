@@ -12,8 +12,8 @@ ligne active n'est pas réécrite ; une PAUSE ou un RETRAIT de sa part n'est jam
 défait, et le geste est alors REFUSÉ (avec la date du retrait) plutôt que de répondre
 `ok` sur un geste qui n'a rien fait. Plus aucune préférence par outil n'est écrite.
 
-Installer n'est pas autoriser (§E1) : l'accès réel reste gardé à l'appel (credential,
-restrictions ADR 0025). autz `ORG_ADMIN_OF` : l'org_admin gouverne SON org.
+Installer n'est pas autoriser (§E1) : l'accès réel reste gardé à l'appel (credential).
+autz `ORG_ADMIN_OF` : l'org_admin gouverne SON org.
 """
 from __future__ import annotations
 

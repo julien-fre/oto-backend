@@ -179,7 +179,6 @@ async def test_me_credential_set_ne_gele_pas_la_boucle(monkeypatch):
     from oto_mcp.connectors import verify as connector_verify
     ecrit = []
     monkeypatch.setattr(mc.access, "current_org", lambda sub: 35)
-    monkeypatch.setattr(mc.access, "require_connector_access", lambda p, s: None)
     monkeypatch.setattr(mc.db, "upsert_user", _lente())
     monkeypatch.setattr(credentials_store, "set_credential",
                         lambda *a, **k: ecrit.append(k) or time.sleep(_LECTURE_S))

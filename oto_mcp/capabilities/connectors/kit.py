@@ -53,9 +53,6 @@ class KitChange(BaseModel):
     removed_by_member: Optional[int] = None  # retiré par le membre lui-même : laissé retiré
     # Poussée seulement : la date à laquelle le membre l'a retiré lui-même.
     removed_at: Optional[str] = None
-    # Parmi les `installed`, combien une restriction d'accès (org ou équipe active)
-    # masque. `null` = non calculé (une lecture a échoué) — jamais un zéro supposé.
-    masked_by_access: Optional[int] = None
     uninstalled: Optional[int] = None        # retrait : désinstallé chez D membres
     # Retrait : membres qui le GARDENT, par provenance de leur installation — `membre`,
     # `admin`, `socle`, `inconnue` (décision Q1 : seul ce que le kit a posé part).

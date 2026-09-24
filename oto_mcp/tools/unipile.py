@@ -839,11 +839,8 @@ def unipile_client(provider: str = "LINKEDIN"):
     from .. import subdomain_project
     from ..connectors import identities as connector_identities
     # Résolution sous le connecteur du CANAL (split du 2026-08-28), pas sous
-    # `unipile` : c'est ce qui fait passer l'appel par les gates DE CE CANAL —
-    # `require_connector_access` (ACL d'org, backstop dur) est appliqué sur le nom
-    # que la résolution reçoit. Résoudre sous `unipile` gaterait les six canaux
-    # ensemble et une org qui a réservé WhatsApp à un département verrait le gate
-    # muet. La CLÉ, elle, reste celle du compte : la délégation
+    # `unipile` : c'est ce qui fait passer l'appel par les gates DE CE CANAL (les
+    # gates s'appliquent au nom que la résolution reçoit). La CLÉ, elle, reste celle du compte : la délégation
     # (`Connector.credential_of`) la ramène sur `unipile` dans la cascade.
     # Canal hors registre ⟹ on retombe sur le porteur (comportement d'avant).
     canal_con = providers.connector_for_hosted_channel(provider)

@@ -313,22 +313,14 @@ def test_un_lien_de_projet_se_lit_sous_les_deux_noms(monkeypatch):
         assert tu._project_operated_account(_Anon(), "WHATSAPP") == "acc_1", liens
 
 
-def test_le_gate_dacces_porte_le_nom_NU_pas_celui_du_porteur(monkeypatch):
-    """LA frontière du split, en un test.
-
-    `require_connector_access` est le backstop DUR de l'ACL d'org (ADR 0025) — il
-    mord même sur une clé BYO. Il doit recevoir le connecteur APPELÉ, sinon une org
-    qui réserve WhatsApp à un département verrait le gate évalué sur `unipile` :
-    les six canaux redeviendraient indivisibles, ce que le split existe pour défaire.
-
-    La clé, elle, part bien sous le porteur — l'autre moitié de la frontière. Les
-    deux assertions doivent tenir ENSEMBLE : chacune seule passerait sur une
-    implémentation qui a tout normalisé, ou sur une qui n'a rien normalisé."""
+def test_la_cascade_recoit_le_nom_NU_et_normalise_elle_meme(monkeypatch):
+    """LA frontière du split, côté clé : la résolution reçoit le connecteur APPELÉ
+    (le canal), et c'est la cascade qui le ramène au porteur, une fois, en son sein.
+    (L'autre moitié — un gate d'ACL sur le nom nu — est partie le 24/09/2026 avec
+    la restriction d'accès, ADR 0053 D1.)"""
     from oto_mcp.access import resolve as res
 
-    gates, marches = [], []
-    monkeypatch.setattr(res.rbac, "require_connector_access",
-                        lambda p, sub=None: gates.append(p))
+    marches = []
     monkeypatch.setattr(res.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(res.session_org, "current_call_account", lambda: None)
     monkeypatch.setattr(res.scope, "project_pinned_instance", lambda p: None)
@@ -339,7 +331,6 @@ def test_le_gate_dacces_porte_le_nom_NU_pas_celui_du_porteur(monkeypatch):
     with pytest.raises(Exception):
         res._resolve_credential_impl("whatsapp", "auto", "u1")
 
-    assert gates == ["whatsapp"], "le gate d'accès doit voir le canal APPELÉ"
     assert marches == ["whatsapp"], "la cascade reçoit le nom nu…"
     # …et c'est ELLE qui normalise, une fois, en son sein (cf. walk_cascade).
     assert providers.credential_provider(marches[0]) == "unipile"
@@ -386,7 +377,6 @@ def test_une_identite_epinglee_resout_sur_la_cle_du_compte(monkeypatch, canal):
         return "SECRET"
 
     monkeypatch.setattr(res.credentials_store, "get_credential", _get_credential)
-    monkeypatch.setattr(res.rbac, "require_connector_access", lambda p, sub=None: None)
     monkeypatch.setattr(res.session_org, "current_call_instance", lambda: _RefEpingle())
     monkeypatch.setattr(res.session_org, "current_call_account", lambda: None)
     monkeypatch.setattr(res.scope, "current_org", lambda s: 1)
@@ -413,7 +403,6 @@ def test_un_projet_relie_a_une_instance_resout_aussi(monkeypatch, canal):
         return "SECRET"
 
     monkeypatch.setattr(res.credentials_store, "get_credential", _get_credential)
-    monkeypatch.setattr(res.rbac, "require_connector_access", lambda p, sub=None: None)
     monkeypatch.setattr(res.rbac, "guard_instance_access",
                         lambda sub, ref: gardes.append(ref))
     monkeypatch.setattr(res.session_org, "current_call_instance", lambda: None)

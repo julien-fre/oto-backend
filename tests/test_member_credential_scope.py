@@ -45,7 +45,6 @@ def test_member_key_does_not_cross_orgs(monkeypatch):
 # --- 2. cascade : la clé membre suit l'org de contexte ---------------------------
 
 def _wire_resolution(monkeypatch, *, org_of_key: int, current: int):
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: current)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(
@@ -73,6 +72,22 @@ def test_resolve_member_key_absent_from_other_org(monkeypatch):
     _wire_resolution(monkeypatch, org_of_key=1, current=2)
     with pytest.raises(McpError):
         access.resolve_credential("pennylane", sub="u1", emit_on_failure=False)
+
+
+def test_la_cle_perso_d_un_membre_n_est_jamais_resolue_pour_un_autre(monkeypatch):
+    """Ce qui remplace la restriction « vers le bas » (retirée le 24/09/2026, ADR 0053
+    D1) : réserver une clé à une personne, c'est la poser en clé PERSO. Son porteur
+    la résout ; un autre membre de la MÊME org — admin compris — ne la résout jamais
+    (pennylane = byo-only : rien d'autre ne résout, donc refus, pas la clé d'à côté)."""
+    _wire_resolution(monkeypatch, org_of_key=1, current=1)
+    monkeypatch.setattr(
+        access.db, "get_member_api_key",
+        lambda sub, org, prov, account="": "K-TRACY" if (sub, org) == ("tracy", 1) else None)
+    rc = access.resolve_credential("pennylane", sub="tracy")
+    assert rc.key == "K-TRACY" and rc.entity_id == "1:tracy"
+    for autre in ("collegue", "admin-de-l-org"):
+        with pytest.raises(McpError):
+            access.resolve_credential("pennylane", sub=autre, emit_on_failure=False)
 
 
 def test_credential_mode_for_scopes_third_party_org(monkeypatch):

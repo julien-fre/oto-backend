@@ -80,7 +80,7 @@ def test_la_lentille_rend_la_fenetre_sans_500(live):
     from oto_mcp.capabilities import access_shadow_admin as lentille
     from oto_mcp.db import access_shadow as db_shadow
 
-    db_shadow.bump_shadow("hunter", 0, "restriction_acl", 1,
+    db_shadow.bump_shadow("hunter", 0, "elargissement_equipe", 1,
                           {"sub_h": "abcd1234", "ancien": "aucun",
                            "chaine": "org/org"})
     # `origine="toutes"` : ce test porte sur la FORME de la réponse, pas sur le
@@ -91,7 +91,7 @@ def test_la_lentille_rend_la_fenetre_sans_500(live):
     servi = lentille.ShadowOut(**out)          # la validation de la face servie
 
     ligne = [l for l in servi.lignes if l.connector == "hunter"][0]
-    assert ligne.classe == "restriction_acl" and ligne.n == 1
+    assert ligne.classe == "elargissement_equipe" and ligne.n == 1
     assert ligne.sample["sub_h"] == "abcd1234"
     # Les horodatages sortent tels quels — des chaînes ISO, pas des objets ni None.
     assert ligne.first_at and ligne.first_at.startswith(ligne.day)

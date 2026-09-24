@@ -64,7 +64,6 @@ REFUS = ("aucune_cle", "cle_propre_exigee", "quota", "compte_introuvable")
 
 @pytest.fixture
 def refus(monkeypatch):
-    monkeypatch.setattr(chain_shadow, "garde_acl", lambda *a, **k: None)
     monkeypatch.setattr(session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(session_org, "current_call_account", lambda: "compte-x")
     monkeypatch.setattr(scope, "project_pinned_instance", lambda *a, **k: None)

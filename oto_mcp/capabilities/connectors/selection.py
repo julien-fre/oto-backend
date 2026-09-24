@@ -231,8 +231,7 @@ class ConnectorSelectionState(BaseModel):
 
 def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     """Catalogue exposé pour l'org active du caller — miroir du filtrage de
-    `api_routes_public.connectors_catalog` : activation (plafond) + RBAC org (ADR 0025).
-    L'admin plateforme voit tout l'exposé.
+    `api_routes_public.connectors_catalog` : activation (plafond).
 
     ⚠️ **La ligne servie sort d'ici avec sa cardinalité EFFECTIVE**, pas celle du code
     (oto-backend#732). `providers.public_catalog()` pose `auth.cardinality` depuis le
@@ -242,20 +241,7 @@ def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     carte vers `connectors.me` ET `oto_search`, donc le seul endroit où l'on ne peut pas
     en oublier un."""
     exposed = connector_activation.exposed_connectors(ctx.org_id)
-    is_admin = access.is_platform_operator(ctx.sub)
-    # RBAC connecteur interne à l'org (ADR 0025) : un connecteur restreint dans l'org
-    # n'apparaît dans la marketplace du membre que s'il y est autorisé (département/user).
-    # Miroir de l'enforcement call-time (seam unique `rbac_denied_connectors`, escalade
-    # super_admin + org_admin incluse) → « voir en tant que » reflète l'effet réel.
-    denied = access.rbac_denied_connectors(ctx.sub, ctx.org_id)
-    out = []
-    for c in providers.public_catalog():
-        if c["name"] not in exposed:
-            continue
-        # RBAC org : refusé au membre + pas admin plateforme → masqué.
-        if c["name"] in denied and not is_admin:
-            continue
-        out.append(c)
+    out = [c for c in providers.public_catalog() if c["name"] in exposed]
     return connector_cardinality.overlay_for_org(out, ctx.org_id)
 
 
@@ -439,8 +425,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         # Présent SEULEMENT si une instance est à portée → la ligne se distingue au
         # lieu d'ajouter un champ vide sur 40 lignes. Volontairement distinct de
         # `recommended` (= baseline de l'org) : surcharger ce dernier ferait mentir
-        # le réglage d'org. C'est de la VISIBILITÉ : le gate dur reste
-        # `require_connector_access` à l'appel.
+        # le réglage d'org. C'est de la VISIBILITÉ : l'accès se juge à l'appel.
         if reach.get(c["name"]):
             row["reachable_instances"] = reach[c["name"]]
         # Provenance et retrait (ADR 0050 §E7) : posés seulement quand ils disent
@@ -613,8 +598,8 @@ CAPABILITIES += [
                     "stays that way); a connector taken out of the kit is uninstalled where the "
                     "kit installed it, and nowhere else. Connectors already in the kit are not "
                     "replayed. Returns, per changed "
-                    "connector, installed / already_active / paused / removed_by_member / "
-                    "masked_by_access. Members' agents see it at their NEXT conversation. "
+                    "connector, installed / already_active / paused / removed_by_member. "
+                    "Members' agents see it at their NEXT conversation. "
                     "ADDING a connector unknown to the catalog or not available for your org "
                     "is REFUSED, naming why — nothing is written. A connector already in the "
                     "kit that your org has since cut stays in it: installed, hidden for "

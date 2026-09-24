@@ -11,7 +11,6 @@ from oto_mcp import access
 def _no_byo_no_grant(monkeypatch):
     """Aucune clé BYO (user/group/org) ni instance plateforme par défaut → chemin plateforme
     (ADR 0044 §F : la clé plateforme est une instance scope PLATFORM du coffre unifié)."""
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access.db, "get_member_api_key", lambda sub, org, p: None)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access, "current_org", lambda sub: None)

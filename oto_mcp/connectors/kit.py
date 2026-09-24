@@ -40,8 +40,7 @@ La POUSSÉE à un membre (décision Q2) installe chez lui seul, provenance `admi
 les mêmes exceptions — elle ne touche pas au kit, et ne défait jamais son retrait.
 
 La réponse est chiffrée par connecteur : installé chez N, déjà actif chez M, laissé
-chez P qui l'ont en pause, laissé chez R qui l'ont retiré eux-mêmes, dont K qu'une
-restriction d'accès masque. Visible à l'écran tout de suite ; pour l'agent d'un
+chez P qui l'ont en pause, laissé chez R qui l'ont retiré eux-mêmes. Visible à l'écran tout de suite ; pour l'agent d'un
 membre, à sa PROCHAINE conversation — le registre d'outils est figé à l'ouverture.
 """
 from __future__ import annotations
@@ -143,25 +142,6 @@ def _dedupe(noms: Iterable[str]) -> list[str]:
     return out
 
 
-def _masques(org_id: int, connecteur: str, subs: list[str]) -> Optional[int]:
-    """Parmi `subs` (ceux chez qui le connecteur vient d'être posé), combien une
-    restriction d'accès masque — les deux paliers que `compute_hidden_tools`
-    applique (org, ADR 0025 ; équipe active, ADR 0012). `None` = non calculé (une
-    lecture a échoué) : jamais un zéro qu'on n'a pas mesuré."""
-    from .. import access
-    try:
-        n = 0
-        for s in subs:
-            if (connecteur in access.rbac_denied_connectors(s, org_id)
-                    or connecteur in access.group_rbac_denied_connectors(
-                        s, access.current_group(s))):
-                n += 1
-        return n
-    # noqa: SILENT — un compteur non calculé se DIT (None), il ne se devine pas
-    except Exception:
-        return None
-
-
 def appliquer(org_id: int, *, kit: Optional[Iterable[str]] = None,
               ajouter: Iterable[str] = (), retirer: Iterable[str] = (),
               pousser_a: Optional[str] = None) -> dict:
@@ -204,18 +184,14 @@ def appliquer(org_id: int, *, kit: Optional[Iterable[str]] = None,
             (org_id,)).fetchall()]
         origine = sel.ADMIN if pousser_a is not None else sel.KIT
         effets: list[dict] = []
-        poses: dict[str, list[str]] = {}
         for c in ajouts:
             comptes = {"installed": 0, "already_active": 0, "paused": 0,
                        "removed_by_member": 0}
-            poses[c] = []
             retire_le = None
             for m in membres:
                 issue = sel.install_for_member(conn, m, c, org_id, origine)
                 comptes[issue] += 1
-                if issue == "installed":
-                    poses[c].append(m)
-                elif issue == "removed_by_member" and pousser_a is not None:
+                if issue == "removed_by_member" and pousser_a is not None:
                     retire_le = conn.execute(
                         "SELECT removed_at FROM connector_selection_removed "
                         "WHERE sub = %s AND org_id = %s AND connector = %s",
@@ -236,9 +212,6 @@ def appliquer(org_id: int, *, kit: Optional[Iterable[str]] = None,
                 (org_id, c, membres)).fetchall()}
             effets.append({"connector": c, "change": REMOVED,
                            "uninstalled": cur.rowcount or 0, "kept": reste})
-    for e in effets:
-        if e["change"] == ADDED:
-            e["masked_by_access"] = _masques(org_id, e["connector"], poses[e["connector"]])
     unchanged = [n for n in nommes if n not in ajouts and n not in retraits]
     cut = coupes(org_id, apres)
     out = {"org_id": org_id, "kit": apres, "members": len(membres),

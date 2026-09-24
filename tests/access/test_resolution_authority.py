@@ -22,9 +22,6 @@ def vault(monkeypatch):
     monkeypatch.setattr(scope, "project_pinned_instance", lambda p: None)
     monkeypatch.setattr(scope, "project_pinned_identity", lambda p: None)
     monkeypatch.setattr(session_org, "current_call_instance", lambda: None)
-    monkeypatch.setattr(access.rbac, "require_connector_access", lambda *a: None)
-    monkeypatch.setattr(access.rbac, "rbac_denied_connectors", lambda *a: set())
-    monkeypatch.setattr(access.rbac, "group_rbac_denied_connectors", lambda *a: set())
     monkeypatch.setattr(cascade, "_is_multi_account", lambda *a: False)
     monkeypatch.setattr(cascade, "personal_instance_org", lambda *a, **k: None)
     monkeypatch.setattr(credentials_store, "has_credential",

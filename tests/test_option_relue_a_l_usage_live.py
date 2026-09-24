@@ -50,7 +50,6 @@ def _barreau(mode: str):
 def gagnant(monkeypatch):
     """La cascade est court-circuitée : seul le barreau gagnant compte ici."""
     etat = {"mode": "platform", "org": None}
-    monkeypatch.setattr(access.chain_shadow, "garde_acl", lambda *a, **k: None)
     monkeypatch.setattr(access.chain_shadow, "barreau_gagnant",
                         lambda *a, **k: _barreau(etat["mode"]))
     monkeypatch.setattr(access.cascade, "cascade_winner",

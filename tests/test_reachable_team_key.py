@@ -106,7 +106,6 @@ def test_reachable_instances_non_admin_stays_membership_only(monkeypatch):
 
 
 def test_resolution_failure_mentions_reachable_team(monkeypatch):
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda prov: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 35)
@@ -124,7 +123,6 @@ def test_resolution_failure_mentions_reachable_team(monkeypatch):
 
 
 def test_resolution_failure_lists_other_org(monkeypatch):
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda prov: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 35)
@@ -144,7 +142,6 @@ def test_resolution_failure_lists_other_org(monkeypatch):
 
 
 def test_resolution_failure_plain_without_team(monkeypatch):
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda prov: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 35)

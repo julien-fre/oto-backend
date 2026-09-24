@@ -121,22 +121,16 @@ def test_connecteur_du_kit_coupe_est_installe_mais_pas_vu_et_dit_pourquoi(live, 
     assert [c["name"] for c in out["connectors"]] == ["folk", "osm"] and out["installed_not_seen"] == []
 
 
-def test_pause_et_restriction_sont_nommees(live, instance, monkeypatch):
-    from oto_mcp import db
+def test_la_pause_est_nommee(live, instance, monkeypatch):
     admin, m = "e10-pr-admin", "e10-pr-m"
-    org = _org("E10 pause restriction", admin, m)
+    org = _org("E10 pause", admin, m)
     stub_authz(monkeypatch, org_id=org)
     assert call("connectors.select", sub=m, path_params={"name": "hunter"})[0] == 200
     assert call("connectors.pause", sub=m, path_params={"name": "hunter"})[0] == 200
-    assert call("connectors.select", sub=m, path_params={"name": "kaspr"})[0] == 200
-    with db._connect() as c:      # kaspr réservé à l'admin (ADR 0025) : m est restreint
-        c.execute("INSERT INTO connector_acl (scope_type, scope_id, connector, principal_type, "
-                  "principal_id, granted_by) VALUES ('org', %s, 'kaspr', 'user', %s, %s)",
-                  (str(org), admin, admin))
     out = _route(monkeypatch, m, org)
     assert out["tools"] == _poignee_de_main(instance, m, org) == ["data_rows", "oto_whoami"]
     assert {(x["name"], x["state"], x["origin"], x["reason"]) for x in out["installed_not_seen"]} == {
-        ("hunter", "paused", "membre", "paused"), ("kaspr", "active", "membre", "restricted")}
+        ("hunter", "paused", "membre", "paused")}
 
 
 def test_sans_instance_liee_la_vue_dit_indisponible_jamais_zero(live, monkeypatch):

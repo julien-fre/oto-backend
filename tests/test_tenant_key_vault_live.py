@@ -164,7 +164,6 @@ def test_l_instance_nait_a_la_pose_et_s_archive_au_retrait(coffre_vide):
 @pytest.fixture
 def contexte(monkeypatch):
     """L'org de contexte, hors session MCP — le seam `current_org` la rend."""
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: ORG)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda p: None)

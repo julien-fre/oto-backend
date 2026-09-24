@@ -31,7 +31,6 @@ def vault(monkeypatch):
                         "connector": connector, "account": account, "meta": meta})
 
     monkeypatch.setattr(mc.access, "current_org", lambda sub: 35)
-    monkeypatch.setattr(mc.access, "require_connector_access", lambda p, s: None)
     monkeypatch.setattr(mc.db, "upsert_user", lambda sub: None)
     monkeypatch.setattr(mc.credentials_store, "set_credential", _set_credential)
     monkeypatch.setattr(mc.credentials_store, "guard_account_write",
@@ -122,18 +121,6 @@ def test_pose_anonyme_la_ou_des_comptes_nommes_existent(monkeypatch, vault):
             credentials_store.NamedAccountRequired("précise `account`")))
     code, out = _post({"key": "K"})
     assert code == 409 and out["error"] == "account_required"
-
-
-def test_connecteur_restreint_refuse_la_pose(monkeypatch, vault):
-    """RBAC (ADR 0025) : la pose suit l'usage — sinon on poserait une clé inerte."""
-    from oto_mcp.mcp_errors import McpError
-    from mcp.types import ErrorData, INVALID_PARAMS
-    stub_authz(monkeypatch)
-    monkeypatch.setattr(mc.access, "require_connector_access",
-                        lambda p, s: (_ for _ in ()).throw(
-                            McpError(ErrorData(code=INVALID_PARAMS, message="réservé"))))
-    code, out = _post({"key": "K"})
-    assert code == 403 and out["error"] == "connector_restricted"
 
 
 def test_sans_org_de_contexte(monkeypatch, vault):

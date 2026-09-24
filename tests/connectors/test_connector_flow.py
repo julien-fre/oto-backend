@@ -246,7 +246,6 @@ async def _both_flows(monkeypatch) -> dict[str, dict]:
                         lambda *a, **k: "https://accounts.zoho.eu/oauth/v2/auth?x=1")
     monkeypatch.setattr(salesforce_oauth, "build_auth_url",
                         lambda *a, **k: "https://login.salesforce.com/services/oauth2/authorize?x=1")
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     ctx = SimpleNamespace(sub="u-1", org_id=1)
     return {n: (await connector_flow.start(n, ctx, {"data_center": "eu"})).as_dict()
             for n in ("zoho", "salesforce")}

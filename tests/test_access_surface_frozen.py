@@ -48,13 +48,13 @@ _SURFACE = """
     credentials_store current_group current_org current_project
     current_user_sub_from_token current_user_sub_or_raise dataclass db
     get_user_role grants_chain group_admin_hidden_tools
-    group_rbac_denied_connectors group_store guard_instance_access has_option
+    group_store guard_instance_access has_option
     instance_refs is_platform_operator is_super_admin logger logging
     option_open org_admin_hidden_tools org_store os paid_option_for
     personal_instance_org preloaded_presence_probe project_declared_identities
     project_pinned_identity project_pinned_instance quota_for
-    rbac_denied_connectors reachable_instances reachable_instances_map
-    reachable_team_key record_platform_usage require_connector_access
+    reachable_instances reachable_instances_map
+    reachable_team_key record_platform_usage
     resolve_api_key resolve_credential resolve_credential_fields
     resolve_field_filter resolve_datastore_ref
     resolve_slot_tableau session_org status_for status_hints
@@ -92,31 +92,33 @@ def test_l_inventaire_n_est_pas_vide():
     (oto-backend#935), et le nom n'avait aucun lecteur hors d'`access/resolve.py`.
     89 → 88 le 23/09/2026 : `_org_unmetered` retiré — il demandait son forfait au
     commerce ; la levée du quota est désormais le droit déclaré `platform_unmetered`
-    (`access.org_has`, ADR 0070 §7, oto-backend#806).
+    (`access.org_has`, ADR 0070 §7, oto-backend#806). 88 → 85 le 24/09/2026 :
+    `require_connector_access`, `rbac_denied_connectors` et
+    `group_rbac_denied_connectors` retirés avec la restriction d'accès « vers le
+    bas » (ADR 0053 D1 : restreindre, c'est placer la clé au bon niveau) — le
+    concept n'existe plus, ses trois seams non plus.
     Ce compte n'est pas décoratif — c'est lui
     qui oblige à écrire POURQUOI la surface bouge. Une baisse qu'on ne peut pas
     justifier nom par nom est un rabotage, pas un nettoyage.
     """
-    assert len(_SURFACE) == 88
+    assert len(_SURFACE) == 85
 
 
 def test_une_ecriture_sur_la_facade_traverse_les_sous_modules(monkeypatch):
     """`monkeypatch.setattr(access, …)` doit atteindre le VOISIN qui appelle.
 
-    Ici : `require_connector_access` vit dans `access/rbac.py` et lit l'org par
+    Ici : `resolve_field_filter` vit dans `access/rbac.py` et lit l'org par
     `scope.current_org`. Patcher la façade doit donc changer l'org QU'IL VOIT —
     sinon tous les tests qui posent une org de contexte de cette façon (et il y en
     a une centaine) exerceraient l'org réelle sans le dire.
     """
     vues = []
+    monkeypatch.setattr(access, "current_user_sub_from_token", lambda: "u1")
     monkeypatch.setattr(access, "current_org", lambda sub: 4242)
-    monkeypatch.setattr(access, "current_group", lambda sub: None)
-    monkeypatch.setattr(access, "rbac_denied_connectors",
-                        lambda sub, org: (vues.append(org), set())[1])
-    monkeypatch.setattr(access, "group_rbac_denied_connectors",
-                        lambda sub, group: set())
+    monkeypatch.setattr(access.org_store, "get_org_field_filters",
+                        lambda org: (vues.append(org), {})[1])
 
-    access.require_connector_access("serper", sub="u1")
+    access.resolve_field_filter("serper")
 
     assert vues == [4242]
 

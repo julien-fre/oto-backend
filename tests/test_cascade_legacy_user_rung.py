@@ -99,7 +99,6 @@ def _wire(monkeypatch, vault: dict, *, current_org=1):
     # le sujet ici est le barreau legacy, pas la sélection de compte.
     from oto_mcp.access import cascade as _cascade
     monkeypatch.setattr(_cascade, "_is_multi_account", lambda p, o=None: False)
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: current_org)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.db, "get_member_api_key",

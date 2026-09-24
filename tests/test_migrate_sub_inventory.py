@@ -144,6 +144,11 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
         # la version précédente de ce commentaire proposait de le faire. Le compte
         # migré repose ses clés : ce sont des instances neuves, nommées à la pose.
         ("connector_instances", "owner_id"),
+        # La restriction d'accès « vers le bas » a disparu le 24/09/2026 (ADR 0053 D1) :
+        # plus aucun code ne lit ni n'écrit `connector_acl`, qui reste déclarée tant
+        # qu'un DDL posé à la main ne l'a pas retirée. Repointer une table morte serait
+        # une écriture de plus dans un geste qui n'en a pas besoin.
+        ("connector_acl", "principal_id"), ("connector_acl", "granted_by"),
         # Repointée par l'étape 3 bis de migrate_sub, FILTRÉE sur grantee_kind='user'
         # (la colonne porte aussi des ids d'org) — pas un UPDATE nu d'inventaire.
         ("grants", "grantee_id"),

@@ -6,7 +6,7 @@ compte qu'il opère (`unipile_operated_accounts`). Deux plans distincts : le gra
 = le DROIT (deny-by-default, révocable, audité) ; le pointeur = le CHOIX courant,
 jamais un droit (revalidé contre les grants vivants à chaque appel).
 
-⚠️ Pas de fail-open ici (≠ RBAC ADR 0025) : ce chemin est le backstop d'identité
+⚠️ Pas de fail-open ici : ce chemin est le backstop d'identité
 — une erreur infra doit lever, pas laisser passer une usurpation.
 
 ⚠️ **Corrigé le 2026-09-02** (trouvé en écrivant les tests DB réels de l'extension

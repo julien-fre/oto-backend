@@ -379,17 +379,9 @@ def _set_preparer(ctx: ResolvedCtx, inp: CredentialSetInput) -> _PoseCredentiell
 
     Synchrone : `_set` l'exécute dans le threadpool. La vérification, elle, parle à un
     service tiers et s'attend dans la boucle (`connector_verify.run` est asynchrone)."""
-    from ..mcp_errors import McpError
     from .. import status_hints
 
     c = _exiger_credentialable(inp.provider, pose=True)
-    # RBAC connecteur (ADR 0025) : aligner la POSE sur l'USAGE — un membre non autorisé
-    # sur un connecteur RESTREINT dans son org ne peut pas poser de clé perso (sinon une
-    # clé inerte serait posable hors UI). Même seam que la résolution.
-    try:
-        access.require_connector_access(inp.provider, ctx.sub)
-    except McpError as e:
-        raise AuthzDenied(403, "connector_restricted", e.error.message)
 
     body = inp.fields
     db.upsert_user(ctx.sub)
@@ -657,9 +649,6 @@ CAPABILITIES += [
                 DeclaredError(400, "verify_failed",
                               "la clé a été refusée par le service : elle n'est PAS "
                               "enregistrée, il n'y a rien à retirer"),
-                DeclaredError(403, "connector_restricted",
-                              "une règle d'org ou d'équipe interdit ce connecteur à "
-                              "cet acteur"),
                 DeclaredError(409, "account_required",
                               "connecteur multi-compte sans `account` : il faut "
                               "nommer le compte, sans quoi la pose est ambiguë"),

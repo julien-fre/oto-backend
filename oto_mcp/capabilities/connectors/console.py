@@ -1,6 +1,6 @@
 """Console connecteurs MCP consolidée (ADR 0047, B1) — fusion `*_op`.
 
-Réunit les 26 tools MCP de la famille connecteurs en 6, un par objet métier,
+Réunit les tools MCP de la famille connecteurs en 5, un par objet métier,
 verbe en param `op` (+ `scope` org|équipe quand le grain existe aux deux
 niveaux) — le pattern de la console admin (`admin_console.py`) appliqué à la
 surface non-admin. L'autz reste DÉCLARÉE (combinateur `BY_OP`, clé `(op, scope)`
@@ -8,8 +8,7 @@ quand le palier dépend des deux) ; les handlers de domaine sont réutilisés te
 quels (on construit leur Input spécifique) ; les faces REST des capacités
 d'origine ne bougent pas — seul leur binding `mcp=` est retiré.
 
-Concepts : `oto_connector_activation` (exposition org/équipe),
-`oto_connector_access` (RBAC ADR 0025, org/équipe), `oto_connector`
+Concepts : `oto_connector_activation` (exposition org/équipe), `oto_connector`
 (marketplace + actes d'org : force/recommend), `oto_instance` (instances
 ADR 0038/0044 : list/lend/verify), `oto_identity` (sélecteur d'identité
 ADR 0024), `oto_account_access` (comptes partagés #55).
@@ -22,7 +21,6 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from . import (account_grants as connectors_account_grants,
-               acl as connectors_acl,
                activation as connectors_activation,
                force as connectors_force,
                identities as connectors_identities,
@@ -80,42 +78,6 @@ def _activation(ctx: ResolvedCtx, inp: ActivationInput) -> dict:
             raise AuthzDenied(400, "missing_enabled", "`enabled` requis pour set.")
         return a._group_set(ctx, a.GroupActivationSetInput(group_id=gid, name=name, enabled=inp.enabled))
     return a._group_clear(ctx, a.GroupActivationClearInput(group_id=gid, name=name))
-
-
-# ── oto_connector_access : list / grant / revoke · scope org|group (ADR 0025) ─
-class AccessInput(BaseModel):
-    op: Literal["list", "grant", "revoke"]
-    scope: Literal["org", "group"] = "org"
-    org_id: Optional[int] = None
-    group_id: Optional[int] = None
-    connector: Optional[str] = None
-    principal_type: Optional[Literal["group", "user"]] = None  # scope=org
-    principal_id: Optional[str] = None                          # scope=org
-    member: Optional[str] = None                                # scope=group : sub
-
-
-def _access(ctx: ResolvedCtx, inp: AccessInput) -> dict:
-    acl = connectors_acl
-    if inp.scope == "org":
-        oid = _need(inp.org_id, "missing_org", "`org_id` requis pour scope=org.")
-        if inp.op == "list":
-            return acl._list_acl(ctx, acl.AclListInput(org_id=oid))
-        set_inp = acl.AclSetInput(
-            org_id=oid,
-            connector=_need(inp.connector, "missing_connector", "`connector` requis."),
-            principal_type=_need(inp.principal_type, "missing_principal",
-                                 "`principal_type` (group|user) requis pour scope=org."),
-            principal_id=_need(inp.principal_id, "missing_principal",
-                               "`principal_id` requis pour scope=org."))
-        return acl._grant(ctx, set_inp) if inp.op == "grant" else acl._revoke(ctx, set_inp)
-    gid = _need(inp.group_id, "missing_group", "`group_id` requis pour scope=group.")
-    if inp.op == "list":
-        return acl._group_list_acl(ctx, acl.GroupAclListInput(group_id=gid))
-    set_inp = acl.GroupAclSetInput(
-        group_id=gid,
-        connector=_need(inp.connector, "missing_connector", "`connector` requis."),
-        member=_need(inp.member, "missing_member", "`member` (sub) requis pour scope=group."))
-    return acl._group_grant(ctx, set_inp) if inp.op == "grant" else acl._group_revoke(ctx, set_inp)
 
 
 # ── oto_connector : list / select / pause / unselect · force / recommend ─────
@@ -255,25 +217,6 @@ CAPABILITIES += [
             "back to the level above). scope=org (`org_id`; list=member, set/clear=org admin) "
             "| group (`group_id`; list=member, set/clear=team lead). Takes effect next session."),
         mcp="oto_connector_activation",
-    ),
-    Capability(
-        key="connectors.console.access", handler=_access, Input=AccessInput,
-        authz=BY_OP({
-            ("list", "org"): ORG_ADMIN_OF("org_id"),
-            ("grant", "org"): ORG_ADMIN_OF("org_id"),
-            ("revoke", "org"): ORG_ADMIN_OF("org_id"),
-            ("list", "group"): GROUP_MEMBER_OF("group_id"),
-            ("grant", "group"): GROUP_ADMIN_OF("group_id"),
-            ("revoke", "group"): GROUP_ADMIN_OF("group_id"),
-        }, fields=("op", "scope")),
-        refresh_visibility=True,
-        description=(
-            "Connector access rules — internal RBAC (ADR 0025): reserve a connector to a "
-            "subset; the first principal makes it restricted (deny-by-default), removing the "
-            "last reopens it. op=list / grant / revoke. scope=org (`org_id`, org admin; "
-            "principal_type=group|user + principal_id) | group (`group_id`, team lead; "
-            "`member`=sub — narrows the org's rules, never expands them)."),
-        mcp="oto_connector_access",
     ),
     Capability(
         key="connectors.console.connector", handler=_connector, Input=ConnectorInput,

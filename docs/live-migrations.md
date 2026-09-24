@@ -105,10 +105,10 @@ ailleurs que chez nous.
 
 ## Les pièges
 
-- **Fail-open silencieux sur les gates** : `require_connector_access` et
-  `session_visibility` avalent les erreurs DB (fail-open voulu par palier). Pendant une
-  fenêtre de migration ratée, le deny se dégrade en allow SANS erreur visible — vérifier
-  les surfaces RBAC en lecture réelle après chaque boot, pas seulement le smoke HTTP.
+- **Fail-open silencieux sur les gates** : `session_visibility` avale les erreurs DB
+  (fail-open voulu par palier). Pendant une fenêtre de migration ratée, le masquage se
+  dégrade en affichage SANS erreur visible — vérifier les surfaces de visibilité en lecture
+  réelle après chaque boot, pas seulement le smoke HTTP.
 - **`gh pr merge` juste après `pr create`** : le check `guard` n'est pas encore rapporté
   → GitHub répond « add --admin » et NE merge PAS (silencieux dans un script). Attendre
   `gh pr checks | grep 'guard.*pass'` avant de merger ; re-vérifier `state=MERGED` et

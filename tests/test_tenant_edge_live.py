@@ -97,7 +97,6 @@ def cle_tenant(live):
 
 @pytest.fixture
 def contexte(monkeypatch):
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: ORG)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda p: None)

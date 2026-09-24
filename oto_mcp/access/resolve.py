@@ -11,7 +11,7 @@ défaut ; le type rendu vit dans `resolved_credential` (tous deux extraits d'ici
 2026-08-29, cliquet des 500 lignes, #584).
 
 Dépend de tout ce qui est en dessous : `scope` (contexte, épinglages du projet),
-`rbac` (backstop RBAC, garde d'instance, hint d'erreur), `cascade` (le walker),
+`rbac` (garde d'instance, hint d'erreur), `cascade` (le walker),
 `quotas` (le plafond du palier plateforme). Les vues minces qui s'appuient
 dessus (`resolve_api_key`, `resolve_credential_fields`…) vivent dans `views`.
 """
@@ -144,11 +144,6 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     None ⇒ épinglage projet, sinon compte unique auto, sinon McpError (voir plus bas).
     Lève une McpError actionnable si rien ne résout."""
     sub = sub or scope.current_user_sub_or_raise()
-    # RBAC connecteur interne à l'org (ADR 0025) — backstop DUR : un connecteur
-    # restreint dans l'org du sub n'est résolu que pour les principals autorisés
-    # (département/user). Avant toute résolution → couvre keyed/fields/BYO.
-    # Qui a le dernier mot sur ce refus dépend du lot L7 : cf. `chain_shadow`.
-    acl_refus = chain_shadow.garde_acl(provider, sub, want=want)
 
     # Instance EXPLICITE de l'appel (`_instance=`, ADR 0038 §C/B6) : si le ref épinglé
     # vise CE provider, on résout EXACTEMENT cette ligne du coffre — jamais de
@@ -306,7 +301,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # calcule à côté et se compare. Même sonde, mêmes gardes en aval : seule la
     # traversée change. Détail et réversibilité : `chain_shadow.barreau_gagnant`.
     win = chain_shadow.barreau_gagnant(
-        provider, sub, active_org, probe=probe, want=want, acl_refus=acl_refus,
+        provider, sub, active_org, probe=probe, want=want,
         group=lambda: scope.current_group(sub))
 
     # Garde post-marche (review #399 F2) : un compte NOMMÉ (param/axe/épinglage)
@@ -458,8 +453,7 @@ def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential
     """Résolution EN DUR d'une instance explicite (`_instance=` OU binding de projet,
     ADR 0038 B6/B5) : lit exactement la ligne du coffre que le ref désigne. L'ACCÈS
     a été gardé par `guard_instance_access` (à la pose pour l'axe ; re-gardé pour
-    l'APPELANT sur le chemin binding) ; le RBAC connecteur (ADR 0025) a été rejoué
-    par l'appelant. Ligne absente = McpError actionnable, JAMAIS de fallback vers
+    l'APPELANT sur le chemin binding). Ligne absente = McpError actionnable, JAMAIS de fallback vers
     un autre palier (§C : agir sous une autre identité que celle demandée est
     interdit)."""
     from .. import instance_refs

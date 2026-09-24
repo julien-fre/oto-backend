@@ -255,8 +255,6 @@ def socle(monkeypatch):
     monkeypatch.setattr(SV.access, "get_user_role", lambda sub: "member")
     monkeypatch.setattr(SV.access, "org_admin_hidden_tools", lambda org: set())
     monkeypatch.setattr(SV.access, "group_admin_hidden_tools", lambda g: set())
-    monkeypatch.setattr(SV.access, "rbac_denied_connectors", lambda s, o: set())
-    monkeypatch.setattr(SV.access, "group_rbac_denied_connectors", lambda s, g: set())
     monkeypatch.setattr(SV.db, "list_user_disabled_tools", lambda s, o: [])
     monkeypatch.setattr(SV.db, "list_user_enabled_tools", lambda s, o: [])
     monkeypatch.setattr(SV.connector_activation, "exposed_connectors", lambda o: set())

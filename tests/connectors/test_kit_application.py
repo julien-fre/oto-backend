@@ -243,20 +243,3 @@ def test_le_geste_est_une_seule_transaction(live, monkeypatch):
     assert len(appels) == 2
     assert not org_store.get_org_default_connectors(org)          # kit non écrit
     assert _ligne(appels[0], org, "hunter") is None                # premier membre annulé
-
-
-# ── K : parmi les installés, ceux qu'une restriction d'accès masque ───────────────
-
-def test_la_reponse_compte_ceux_qu_une_restriction_masque(live, monkeypatch):
-    from oto_mcp import db
-    admin, autorise, restreint = "k2-acl-admin", "k2-acl-ok", "k2-acl-non"
-    org = _org("Kit2 acl", admin, autorise, restreint)
-    with db._connect() as c:     # hunter réservé à un membre (ADR 0025) ; l'admin transcende
-        c.execute("INSERT INTO connector_acl (scope_type, scope_id, connector, principal_type, "
-                  "principal_id, granted_by) VALUES ('org', %s, 'hunter', 'user', %s, %s)",
-                  (str(org), autorise, admin))
-    corps = _geste(monkeypatch, "connectors.recommend", admin, org, connectors=["hunter"])
-    ch = _ch(corps, "hunter")
-    assert ch["installed"] == 3 and ch["masked_by_access"] == 1
-    assert _vus_par_l_agent(restreint, org) == set()     # installé, masqué : E1
-    assert _vus_par_l_agent(autorise, org) == {"hunter"}

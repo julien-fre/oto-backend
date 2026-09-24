@@ -53,11 +53,10 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register("gocardless", _verify)
 
     def _client() -> GoCardlessClient:
-        # Garde d'accès = la résolution du credential : `resolve_api_key` passe par
-        # `resolve_credential` → `require_connector_access` (ADR 0025), qui applique
-        # la restriction d'org par département/membre (un client réserve gocardless
-        # à la compta, group 3). Plus de `require_namespace` : gocardless n'est pas
-        # grant_only au registre → c'était un no-op (ADR 0031).
+        # Garde d'accès = la résolution du credential : une clé posée au niveau de
+        # la compta (équipe) ne se résout que pour ses membres (ADR 0053 D1). Plus de
+        # `require_namespace` : gocardless n'est pas grant_only au registre → c'était
+        # un no-op (ADR 0031).
         key, _is_platform = access.resolve_api_key("gocardless")
         return GoCardlessClient(api_key=key)
 

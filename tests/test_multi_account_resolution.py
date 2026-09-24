@@ -22,7 +22,6 @@ class _MultiCon:
 
 @pytest.fixture(autouse=True)
 def _wire(monkeypatch):
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 1)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.providers, "connector_for_provider", lambda p: _MultiCon())

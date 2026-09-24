@@ -205,7 +205,6 @@ def test_le_drapeau_par_defaut_et_mal_orthographie_valent_legacy(monkeypatch):
 
 def _harnais(monkeypatch):
     """La forme prod : aucune clé BYO, la clé plateforme ouverte, quota 200."""
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access.db, "get_member_api_key", lambda sub, org, p: None)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access, "current_org", lambda sub: None)
@@ -236,32 +235,6 @@ def test_sous_chain_la_meme_cle_est_servie_que_sous_legacy(monkeypatch):
     assert (apres.key, apres.is_platform, apres.mode, apres.entity_type,
             apres.entity_id) == (avant.key, avant.is_platform, avant.mode,
                                  avant.entity_type, avant.entity_id)
-
-
-def test_sous_chain_une_restriction_d_acl_ne_refuse_plus_mais_reste_comptee(monkeypatch):
-    """0053-D1 dissout les lignes de restriction. Le refus tombe — et il est compté des
-    deux côtés du drapeau, sinon la classe disparaîtrait au moment où elle devient
-    intéressante."""
-    from oto_mcp.mcp_errors import McpError
-    from mcp.types import ErrorData, INVALID_PARAMS
-    _harnais(monkeypatch)
-    _aretes(monkeypatch, [_edge(grants_chain.EVERYONE, quota=200)])
-    vues: list = []
-    monkeypatch.setattr(db_shadow, "bump_shadow",
-                        lambda c, o, k, n=1, sample=None: vues.append(k))
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: (_ for _ in ()).throw(
-        McpError(ErrorData(code=INVALID_PARAMS, message="réservé"))))
-
-    monkeypatch.setenv("OTO_L7_DECIDE", "legacy")
-    with pytest.raises(McpError):
-        access.resolve_credential("serper", sub="u", emit_on_failure=False)
-    assert chain_shadow.RESTRICTION_ACL in vues
-
-    vues.clear()
-    monkeypatch.setenv("OTO_L7_DECIDE", "chain")
-    rc = access.resolve_credential("serper", sub="u")   # ne lève plus
-    assert rc.key == "PLAT"
-    assert chain_shadow.RESTRICTION_ACL in vues
 
 
 def test_sous_chain_un_releve_inverse_qui_explose_ne_casse_pas_la_resolution(monkeypatch):

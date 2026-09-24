@@ -7,8 +7,8 @@ description: >-
   master ± override org + availability self_serve/platform_granted), authentification
   (cascade resolve_api_key BYO-user > groupe > org > tenant > clé plateforme), et option de
   connecteur (has_option d'une option payante = droit déclaré de l'org, org_entitlements,
-  ADR 0070 §7 ; option_open = has_option ∪ BYO). Explique aussi le RBAC interne org-connector-access
-  (ADR 0025). À lire AVANT de toucher activation, clés ou options ; les autres docs
+  ADR 0070 §7 ; option_open = has_option ∪ BYO). Restreindre un connecteur = placer la clé au
+  bon niveau (ADR 0053 D1). À lire AVANT de toucher activation, clés ou options ; les autres docs
   (connector-vault, roles-and-resolution) sont le détail de chaque couche.
 adr:
   - "0025"
@@ -37,13 +37,13 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
 > **⚠️ Un connecteur peut ne PAS porter sa propre clé** (`Connector.credential_of`,
 > split unipile du 2026-08-28). Les canaux hébergés — `linkedin_unipile`,
 > `whatsapp`, `telegram`, `instagram` — ont leur **couche 1**
-> en propre (activation, ACL, sélection : c'est tout l'intérêt du split) mais
+> en propre (activation, sélection : c'est tout l'intérêt du split) mais
 > empruntent les **couches 2 et 3** au compte `unipile`. Deux questions cohabitent
 > donc, et tout site doit choisir laquelle il pose :
 >
 > | la question | ce qu'elle gouverne | le nom à employer |
 > |---|---|---|
-> | qui a le DROIT d'appeler ? | couche 1 + `require_connector_access` | le nom **NU** |
+> | qui a le DROIT d'appeler ? | couche 1 | le nom **NU** |
 > | avec quelle CLÉ ? | couche 2, couche 3, quota, clé plateforme, **pin `_instance=`** | `providers.credential_provider(nom)` |
 >
 > Le pin `_instance=` est du côté **clé** parce qu'un ref d'instance nomme une LIGNE
@@ -71,26 +71,13 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
   refusé `connector_disabled`, cran et geste de réouverture nommés (#1064).
 - Surfaces : `/platform/connectors` (master + clé plateforme, super_admin) ; `/org/connectors`
   (override org).
-- **RBAC interne à l'org (ADR 0025)** — grain plus fin que l'org entière : un org_admin réserve
-  un connecteur à des **départements (groupes)** et/ou **membres** via `org_connector_access`
-  (présence de ≥1 ligne ⟹ RESTREINT/deny-by-default ; absence ⟹ ouvert). **DUR** (réemploi du
-  patron grant-only). **3 surfaces d'enforcement cohérentes** : (a) visibilité MCP (`session_visibility`
-  masque les tools), (b) **marketplace dashboard** (`/api/me/connectors` via `connectors_selection._visible_catalog`
-  → la page `/console/connectors` du membre, donc « voir en tant que » reflète l'effet réel), (c) **backstop
-  call-time** `access.require_connector_access` dans `resolve_credential` → bloque **même avec une clé BYO**.
-  super_admin bypasse ; fail-open sur erreur infra.
-  ⚠️ **Sur la FICHE, ce fail-open se dit** (`/api/me`, `access.status_for` — oto#42 règle 1,
-  04/09/2026). Les deux paliers (org, équipe) y sont lus sous leur propre `try/except` ; quand
-  l'un tombe, `rbac_restricted: false` sortait pour tout le monde et « rien ne te restreint »
-  était indistinguable de « personne n'a pu vérifier ». La valeur servie ne change pas — le
-  fail-open est le bon choix, un mur affiché à tort arrête quelqu'un que rien ne bloque, et une
-  restriction vraie est de toute façon appliquée au call-time par le même seam — mais l'entrée
-  porte désormais `rbac_restricted_measured: false` + `rbac_restricted_hint` (quel palier est
-  muet, et que l'appel serait refusé quand même). **Sur écart seulement**, et **jamais sur un
-  `rbac_restricted: true`** : celui-là reste établi même si l'autre palier est tombé, l'union
-  des refus ne pouvant que croître.
-  Surface : `oto_{list,set,clear}_connector_access` / `/api/orgs/{id}/connectors/{acl,…/access}`
-  (`ORG_ADMIN_OF`) + levier « accès » sur la carte `/org/connectors`.
+- **Plus de restriction « vers le bas » (retirée le 24/09/2026, ADR 0053 D1).** Réserver un
+  connecteur à une partie des membres d'une org ou d'une équipe (ex-RBAC ADR 0025 / 0012 B2,
+  table `connector_acl`, outil `oto_connector_access`, routes `/api/{orgs,groups}/{id}/connectors/…/access`)
+  n'existe plus. **Restreindre, c'est placer la clé au bon niveau** : une clé perso ne se résout
+  que pour son porteur, une clé d'équipe que pour les membres de l'équipe, une clé d'org pour
+  toute l'org. La table `connector_acl` n'est plus lue ; elle reste déclarée (schéma gelé) jusqu'à
+  un DDL posé à la main.
 
 ## Couche 2 — Authentification (quelle clé ?)
 

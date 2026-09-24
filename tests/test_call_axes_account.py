@@ -240,7 +240,6 @@ async def test_on_call_tool_ignores_axis_on_non_applicable_tool():
 def _wire_multi_account(monkeypatch, provider, org, sub, accounts, keys):
     """Stub le coffre + org active pour un provider multi-compte."""
     monkeypatch.setattr(access, "current_org", lambda s: org)
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access, "_is_multi_account", lambda p, org=None: True)
     monkeypatch.setattr(access, "project_pinned_identity", lambda p, project_id=None: None)
     monkeypatch.setattr(credentials_store, "list_accounts",
@@ -281,7 +280,6 @@ def _wire_multi_account_with_meta(monkeypatch, provider, org, sub, accounts_meta
     exercer la résolution par défaut `oto_identity(op='set')` → `meta.is_default`,
     lue par `_member_fetch` avant de lever l'ambiguïté)."""
     monkeypatch.setattr(access, "current_org", lambda s: org)
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access, "_is_multi_account", lambda p, org=None: True)
     monkeypatch.setattr(access, "project_pinned_identity", lambda p, project_id=None: None)
     monkeypatch.setattr(credentials_store, "list_accounts",

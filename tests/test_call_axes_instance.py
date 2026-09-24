@@ -102,7 +102,6 @@ def test_pin_instance_none_is_inert():
 @pytest.fixture()
 def resolution(monkeypatch):
     """Neutralise les à-côtés de la résolution ; le coffre est un dict contrôlé."""
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s: None)
     vault: dict = {}   # (etype, eid, provider, account) -> secret
     monkeypatch.setattr(credentials_store, "get_credential",
                         lambda et, eid, prov, acc="": vault.get((et, eid, prov, acc)))

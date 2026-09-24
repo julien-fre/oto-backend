@@ -236,7 +236,7 @@ def _enable(ctx: ResolvedCtx, inp: ToolNameInput) -> dict:
 
     Visibilité-only (ADR 0031) — même modèle que le meta-tool `oto_enable_tool` :
     activer = préférence d'affichage, pas une autorisation (accès réel gardé au
-    call-time : credential + require_connector_access ADR 0025 + activation).
+    call-time : credential + activation).
     """
     org = access.current_org(ctx.sub) or 0
     db.remove_user_disabled_tool(ctx.sub, inp.name, org)

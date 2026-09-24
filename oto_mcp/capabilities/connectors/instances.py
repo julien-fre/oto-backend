@@ -293,20 +293,6 @@ def _platform_instance(provider: str, label: str, via: str, extra: dict) -> dict
     }
 
 
-def _hidden_connectors(sub: str, org: Optional[int]) -> set:
-    """Filtre RBAC ADR 0025 — MIROIR de `access.require_connector_access` en mode
-    filtre, via le seam unique `rbac_denied_connectors` (escalade super_admin +
-    org_admin incluse). Même parti pris fail-open loggé que le pré-gate (gate de
-    confort sur un listing ; la résolution réelle re-gate en dur à l'appel).
-    Sans org active : pas de filtre."""
-    try:
-        return access.rbac_denied_connectors(sub, org)
-    except Exception:
-        logger.warning("instances: filtre RBAC indisponible (fail-open)",
-                       exc_info=True)
-        return set()
-
-
 def _platform_eligible(provider: str) -> bool:
     """Le chemin plateforme de la cascade est gaté sur `auth_modes` (cf.
     `resolve_credential`) : un provider byo-only ne résout JAMAIS une clé
@@ -496,9 +482,8 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
 
     # 5. PARTAGÉ AVEC MOI (ADR 0044 share_side) : instances d'AUTRES dont le
     # share_side me vise (nominatif `user:` ou via un de mes groupes). Cross-org
-    # possible (le prêt nominatif = consentement). Le pin résout la clé de l'owner ;
-    # `require_connector_access` re-gate MON org à l'appel (le filtre RBAC ci-dessous
-    # le reflète déjà). Dédup par ref (une instance de groupe déjà listée en §2 ne
+    # possible (le prêt nominatif = consentement). Le pin résout la clé de l'owner.
+    # Dédup par ref (une instance de groupe déjà listée en §2 ne
     # réapparaît pas).
     my_scopes = [f"user:{sub}"]
     if org is not None:
@@ -567,10 +552,7 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
         logger.warning("instances: 'perso cross-org' indisponible (fail-open)",
                        exc_info=True)
 
-    # Filtre RBAC (ADR 0025, fail-open loggé) puis filtres d'input.
-    hidden = _hidden_connectors(sub, org)
-    if hidden:
-        out = [i for i in out if i["connector"] not in hidden]
+    # Filtres d'input.
     if inp.connector:
         out = [i for i in out if i["connector"] == inp.connector]
     if inp.level:

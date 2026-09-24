@@ -69,10 +69,11 @@ WhatsApp depuis la carte Telegram.
 `connector_account_grants`, `unipile_operated_accounts`, `unipile_pending`) étaient
 déjà keyées par CANAL (`provider` = `LINKEDIN`/`WHATSAPP`/…), jamais par connecteur.
 
-**Ce qui a dû migrer** (boot, `db/_init.py` — trois fail-* qui penchent dans deux
+**Ce qui a dû migrer** (boot, `db/_init.py` — des fail-* qui penchent dans deux
 directions opposées et n'auraient rien levé) : `connector_availability` (pas de
 ligne ⟹ **OFF** : la messagerie s'éteindrait pour tous), `connector_acl` (pas de
-ligne ⟹ **OUVERT** : une restriction d'org s'évaporerait), `user_selected_connectors`
+ligne ⟹ **OUVERT** : une restriction d'org s'évaporerait — fan-out retiré le 24/09/2026
+avec la restriction elle-même, ADR 0053 D1), `user_selected_connectors`
 (non-sélectionné ⟹ **MASQUÉ** : les membres perdraient la surface), plus
 `orgs.default_connectors`. Fan-out 1→6 ; `unipile` SURVIT (c'est un split, pas un
 renommage). Aucun des six noms n'a jamais été un connecteur, donc aucune ligne
@@ -472,8 +473,8 @@ gère sa propre instance — était oublié dans un seul) → carte incohérente
 Bloqué (rouge) ». Règle : pas d'option ⟹ ouvert ; sinon **BYO** OU `has_option` (comp/abonnement).
 Le **front est backend-driven** (rend `option_ok`/`subscribed`, 0 RBAC recodée client) → il devient
 durable car il lit un flag cohérent. **Ne jamais recoder une règle d'accès côté front** : ajouter
-un flag backend. Le gate DUR (qui peut utiliser) reste `require_connector_access` (ADR 0025, couvre
-le BYO — « pas de clé perso qui contourne ») ; il gate aussi la **pose** (`api_key_save` → 403).
+un flag backend. Qui peut utiliser = à qui la clé se résout (ADR 0053 D1 : la clé posée au bon
+niveau ; la restriction par ACL, ADR 0025, a disparu le 24/09/2026).
 
 **Le feed est servi en VUE DE TRI (#384, 2026-08-11).** `linkedin_unipile_post(op="feed",
 limit=40)` rendait **65-67 Ko**, au-delà du plafond d'un résultat MCP : sur la procédure

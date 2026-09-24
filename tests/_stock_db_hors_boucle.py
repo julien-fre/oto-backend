@@ -43,7 +43,7 @@ STOCK: dict[str, str] = {
     "oto_mcp.call_axes::resolve_org_guarded":
         "[dormant] require_axis_sub",
     "oto_mcp.capabilities.agent_toolbox::_toolbox":
-        "access.current_group, access.group_rbac_denied_connectors, access.rbac_denied_connectors, connector_activation.exposed_connectors, connector_selection.list_selection_detail",
+        "connector_activation.exposed_connectors, connector_selection.list_selection_detail",
     "oto_mcp.capabilities.browser_sessions::_finalize":
         "access.current_group, access.current_org, roles.can_admin_group, roles.is_org_admin",
     "oto_mcp.capabilities.connectors.console::_instance":

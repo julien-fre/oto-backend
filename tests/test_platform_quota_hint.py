@@ -40,7 +40,6 @@ _INSTANCE = [{"label": "env", "share_mode": "open", "share_down": [],
 def _platform_only(monkeypatch):
     """Aucune clé BYO (user/group/org) ni grant nominatif → seule l'instance
     `open` du coffre peut gagner (ADR 0044 §F)."""
-    monkeypatch.setattr(access.rbac, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(db, "get_member_api_key", lambda sub, org, p: None)
     monkeypatch.setattr(access.scope, "current_group", lambda sub: None)
     monkeypatch.setattr(access.scope, "current_org", lambda sub: None)
@@ -73,7 +72,6 @@ def test_hint_remaining_floors_at_zero_over_quota(_platform_only, monkeypatch):
 def test_hint_is_none_without_a_platform_grant(monkeypatch):
     """Aucune instance plateforme configurée : la question ne se pose pas — on
     ne rend PAS un faux 0/0 qui se lirait comme un quota épuisé."""
-    monkeypatch.setattr(access.rbac, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(db, "get_member_api_key", lambda sub, org, p: None)
     monkeypatch.setattr(access.scope, "current_group", lambda sub: None)
     monkeypatch.setattr(access.scope, "current_org", lambda sub: None)

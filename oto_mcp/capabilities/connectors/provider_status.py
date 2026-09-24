@@ -25,11 +25,11 @@ from pydantic import BaseModel, Field
 class ProviderStatus(BaseModel):
     """L'accès effectif à un connecteur, pour l'acteur et dans l'org active.
 
-    ⚠️ **Trois refus différents, qu'un écran ne doit pas confondre** :
-    `mode='forbidden'` = aucune clé ne résout ; `rbac_restricted` = l'accès t'est
-    refusé par une règle ; `health_ko` = la clé est là mais elle ne répond plus.
-    Les afficher pareil produit le mur « demande à un admin » devant quelqu'un que
-    rien ne bloque — le faux diagnostic réparé le 2026-07-16.
+    ⚠️ **Deux refus différents, qu'un écran ne doit pas confondre** :
+    `mode='forbidden'` = aucune clé ne résout ; `health_ko` = la clé est là mais elle
+    ne répond plus. Il n'existe plus de règle qui réserve un connecteur à une partie
+    des membres (retirée le 24/09/2026, ADR 0053 D1) : aucun écran ne doit afficher
+    « réservé à certaines équipes ».
     """
 
     mode: str = Field(description=(
@@ -78,31 +78,11 @@ class ProviderStatus(BaseModel):
     identity_id: Optional[str] = None
     identity_label: Optional[str] = None
 
-    # ── Les trois verdicts qu'un écran doit distinguer ────────────────────────
+    # ── Les verdicts qu'un écran doit distinguer ─────────────────────────────
     pending_action: Optional[str] = Field(default=None, description=(
         "L'étape qui reste à faire alors que la clé résout déjà — lier un canal, par "
         "exemple. Renseignée par le module du connecteur, `null` partout où il n'y a "
         "rien à faire. ⚠️ Ce n'est PAS un refus : l'accès existe, il est incomplet."))
-    rbac_restricted: bool = Field(default=False, description=(
-        "Une règle d'org ou d'équipe refuse ce connecteur à cet acteur. ⚠️ À ne pas "
-        "confondre avec `mode='forbidden'`, qui dit seulement qu'aucune clé ne "
-        "résout : afficher « réservé à certaines équipes » sur une simple absence de "
-        "clé oppose un mur à quelqu'un que rien ne bloque. ⚠️ Fail-open : un incident "
-        "de lecture rend `false`, jamais une restriction inventée — une absence de "
-        "restriction annoncée ne prouve donc pas l'accès. Ce cas-là n'est plus muet : "
-        "il pose `rbac_restricted_measured: false` juste en dessous."))
-    rbac_restricted_measured: Optional[bool] = Field(default=None, description=(
-        "La règle ci-dessus a-t-elle été LUE ? Absent = oui. `false` = non (hoquet de "
-        "base sur le palier org ou équipe) : `rbac_restricted` vaut alors `false` par "
-        "DÉFAUT et non par constat — « on n'a pas su » et « rien ne te restreint » "
-        "sortiraient sinon du même booléen (oto#42, règle 1). ⚠️ Jamais posé sur une "
-        "entrée `rbac_restricted: true` : un refus reste établi même si l'autre palier "
-        "est tombé, l'union des refus ne pouvant que croître."))
-    rbac_restricted_hint: Optional[str] = Field(default=None, description=(
-        "Quel palier n'a pas répondu et quoi en faire, en clair — présent exactement "
-        "quand `rbac_restricted_measured` est `false`. ⚠️ Il dit aussi que l'accès "
-        "n'est pas ouvert pour autant : l'enforcement au moment de l'appel "
-        "(`require_connector_access`) refuse indépendamment de cette fiche."))
     health_ko: Optional[bool] = Field(default=None, description=(
         "La clé est posée mais le connecteur ne répond plus (session expirée, jeton "
         "révoqué…), constaté par la sonde de vérification et **persistant** jusqu'à "

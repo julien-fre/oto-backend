@@ -8,8 +8,7 @@ Owner-scopé : `SUB_ONLY`, le handler ne touche QUE la ligne du coffre du caller
 (`member_id(org courante, sub)`) → on ne prête jamais que sa propre clé.
 
 ⚠️ `share_down` (RESTREINDRE une clé partagée d'org/équipe) est l'axe OPPOSÉ (deny-by-
-default) et le MÊME primitif que `org_connector_access` (§B.bis) — surface d'écriture
-distincte, à unifier, non exposée ici.
+default) — surface d'écriture distincte, non exposée ici.
 """
 from __future__ import annotations
 

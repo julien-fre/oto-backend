@@ -51,8 +51,6 @@ def compte(monkeypatch):
     monkeypatch.setattr(sv.access, "get_user_role", lambda s: "member")
     monkeypatch.setattr(sv.access, "org_admin_hidden_tools", lambda o: set())
     monkeypatch.setattr(sv.access, "group_admin_hidden_tools", lambda g: set())
-    monkeypatch.setattr(sv.access, "rbac_denied_connectors", lambda s, o: set())
-    monkeypatch.setattr(sv.access, "group_rbac_denied_connectors", lambda s, g: set())
     monkeypatch.setattr(sv.access, "has_option", lambda s, opt, org=None: True)
     exposes = {c.name for c in providers._REGISTRY_LIST} - {_NON_EXPOSE}
     monkeypatch.setattr(sv.connector_activation, "exposed_connectors", lambda org: exposes)

@@ -1,9 +1,7 @@
-"""Qui a le DROIT — la gouvernance d'accès, hors résolution (ADR 0025/0012/0044).
+"""Qui a le DROIT — la gouvernance d'accès, hors résolution (ADR 0031/0038/0044).
 
-Quatre familles, toutes des GARDES ou des ÉNUMÉRATIONS, jamais une résolution :
+Trois familles, toutes des GARDES ou des ÉNUMÉRATIONS, jamais une résolution :
 
-- **RBAC connecteur** par org (0025) et par équipe (0012 B2) + le backstop
-  call-time `require_connector_access` ;
 - **visibilité de tools** masqués par l'org_admin ou le chef d'équipe (0031) ;
 - **partage d'instance** : la garde de niveau d'une instance épinglée (0038 B6)
   et les prêts nominatifs `share_side` (0044) ;
@@ -13,6 +11,11 @@ Quatre familles, toutes des GARDES ou des ÉNUMÉRATIONS, jamais une résolution
 S'y ajoute `resolve_field_filter` : la politique de REDACTION de l'org active —
 même nature (ce que l'org gouverne s'applique à l'acteur), autre surface (les
 champs de la réponse plutôt que l'accès au connecteur).
+
+Il n'y a plus de RBAC connecteur (ADR 0025/0012 B2, retiré le 24/09/2026) :
+réserver un connecteur à une partie des membres n'existe plus. Restreindre, c'est
+PLACER la clé au bon niveau (ADR 0053 D1) — une clé perso n'est résolue que pour
+son porteur, une clé d'équipe que pour les membres de l'équipe.
 
 Dépend de `scope` (rôle, contexte, appartenance) et de `cascade` (la liste des
 connecteurs org-partageables). Ne dépend PAS de la résolution : c'est elle qui
@@ -31,52 +34,6 @@ from ..auth.hooks import current_user_sub_from_token
 from . import cascade, scope
 
 logger = logging.getLogger(__name__)
-
-
-class ConnectorAccessDenied(McpError):
-    """Le connecteur est réservé par une ACL, indépendamment de la clé disponible."""
-
-
-def rbac_denied_connectors(sub: str, org: Optional[int]) -> set:
-    """Connecteurs REFUSÉS à `sub` dans `org` par le RBAC interne (ADR 0025) — seam
-    UNIQUE des 4 surfaces (call-time `require_connector_access`, visibilité session,
-    listing d'instances, marketplace). Escalade descendante alignée sur `roles.py` :
-    super_admin ET **org_admin de l'org** transcendent la restriction — l'admin
-    gouverne l'ACL (`org_connector_access`), lui en interdire l'USAGE était une
-    incohérence (un connecteur réservé à une équipe restait inaccessible — et même
-    invisible — à l'admin de l'org). LÈVE sur hoquet DB : chaque surface garde sa
-    propre règle fail-open (le call-time logue, les listings best-effort)."""
-    if org is None:
-        return set()
-    if scope.is_super_admin(sub):
-        return set()
-    from .. import roles
-    if roles.is_org_admin(sub, org):
-        return set()
-    restricted = db.org_restricted_connectors(org)
-    if not restricted:
-        return set()
-    return set(restricted) - set(db.member_allowed_connectors(sub, org))
-
-
-def group_rbac_denied_connectors(sub: str, group: Optional[int]) -> set:
-    """Connecteurs REFUSÉS à `sub` par le RBAC d'ÉQUIPE (ADR 0012 B2) — mirror de
-    `rbac_denied_connectors` au grain équipe, NARROWING de l'org (une équipe réserve
-    un connecteur à un sous-ensemble de SES membres ; elle ne peut que restreindre
-    davantage). Bypass descendant (roles.py) : super_admin, org_admin de l'org parente
-    ET group_admin (chef) de l'équipe transcendent — celui qui gouverne l'ACL n'en est
-    jamais victime. LÈVE sur hoquet DB (le call-time logue, fail-open par palier)."""
-    if group is None:
-        return set()
-    if scope.is_super_admin(sub):
-        return set()
-    from .. import roles
-    if roles.can_admin_group(sub, group):   # chef d'équipe OU org_admin parent (escalade)
-        return set()
-    restricted = db.group_restricted_connectors(group)
-    if not restricted:
-        return set()
-    return set(restricted) - set(db.group_member_allowed_connectors(sub, group))
 
 
 def org_admin_hidden_tools(org: Optional[int]) -> set:
@@ -102,37 +59,6 @@ def group_admin_hidden_tools(group: Optional[int]) -> set:
     if group is None:
         return set()
     return set(db.list_group_disabled_tools(group))
-
-
-def require_connector_access(provider: str, sub: Optional[str] = None) -> None:
-    """Backstop call-time du RBAC connecteur (ADR 0025 org + 0012 B2 équipe) : si
-    `provider` est RESTREINT dans l'org active OU dans l'ÉQUIPE active du `sub` et qu'il
-    n'y est pas autorisé, lève. **DUR** — appelé dans `resolve_credential` (couvre keyed
-    + fields + BYO : pas de clé perso qui contourne). Bypass par palier (super_admin /
-    org_admin / group_admin — escalade des deux seams) ; pas d'org/équipe active →
-    restriction non applicable ; stdio local (sub=None) = accès complet. L'équipe ne peut
-    que RESTREINDRE davantage (le verdict est un OR org|équipe — monotone). Fail-open
-    INDÉPENDANT par palier : un hoquet de la DB d'équipe ne désactive pas l'org."""
-    sub = sub or current_user_sub_from_token()
-    if sub is None:
-        return
-    denied = False
-    try:
-        denied = provider in rbac_denied_connectors(sub, scope.current_org(sub))
-    except Exception as e:
-        logger.warning("require_connector_access org fail-open %s/%s: %s", sub, provider, e)
-    try:
-        denied = denied or provider in group_rbac_denied_connectors(sub, scope.current_group(sub))
-    except Exception as e:
-        logger.warning("require_connector_access group fail-open %s/%s: %s", sub, provider, e)
-    if denied:
-        raise ConnectorAccessDenied(ErrorData(
-            code=INVALID_PARAMS,
-            message=(
-                f"Le connecteur `{provider}` est réservé à certaines équipes/personnes "
-                f"de ton organisation. Demande l'accès à un admin de ton org (ou de ton équipe)."
-            ),
-        ))
 
 
 def _instance_side_shares_safe(entity_type: str, entity_id: str, provider: str,

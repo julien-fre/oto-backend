@@ -9,8 +9,8 @@ un connecteur hors du socle `default_active` est simplement non-installé
 
 Modèle de visibilité effective : un tool est visible sauf s'il est désactivé
 (toggle perso) ou masqué par défaut ; `enabled_override` prime pour rendre visible
-un masqué-par-défaut. La gouvernance d'accès (activation org, RBAC connecteur
-ADR 0025, credential) est appliquée AILLEURS — la visibilité n'est PAS une barrière
+un masqué-par-défaut. La gouvernance d'accès (activation org, credential) est
+appliquée AILLEURS — la visibilité n'est PAS une barrière
 de sécurité (ADR 0031).
 """
 from __future__ import annotations

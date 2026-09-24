@@ -73,7 +73,6 @@ def test_une_exception_du_palier_plateforme_ne_ramasse_pas_le_secret(monkeypatch
     from oto_mcp.access import cascade, quotas, rbac, resolve, scope
 
     SECRET = "sk_live_TRESSECRET"
-    monkeypatch.setattr(rbac, "require_connector_access", lambda p, s: None)
     monkeypatch.setattr(session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(scope, "project_pinned_instance", lambda p: None)
     monkeypatch.setattr(scope, "current_org", lambda s: 1)

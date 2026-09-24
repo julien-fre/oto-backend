@@ -16,9 +16,9 @@ ce qu'on installe et ce qu'on jette.
    priment, mais ils court-circuitent déjà la marche en amont (`resolve`), donc ce
    qui reste ici est la **proximité** : `user > group > org > platform`.
 
-Et surtout **ce qu'il ne calcule pas** : la restriction de `connector_acl`. C'est
-0053-D1 — restreindre, c'est PLACER l'ownership au bon niveau, jamais poser une
-interdiction par-dessus.
+Il n'y a aucune restriction par-dessus : 0053-D1 — restreindre, c'est PLACER
+l'ownership au bon niveau, jamais poser une interdiction par-dessus (la table
+`connector_acl` n'est plus lue depuis le 24/09/2026).
 
 **Deux règles de méthode, tenues mécaniquement :**
 
@@ -161,7 +161,6 @@ def _paliers(sub: str, provider: str, org: Optional[int], want: str,
     Les crans du connecteur (byo_user, org-partageable, palier plateforme déclaré,
     instance suspendue) sont lus à leur source — ce sont des propriétés de
     l'instance, pas des autorisations, et ils valent des deux côtés de la fenêtre.
-    La restriction `connector_acl`, elle, n'est PAS lue : c'est le fond du lot.
     """
     porteur = providers.credential_provider(provider)
     # Projet PARTAGÉ (#480) : mêmes gardes que le walker, lues au même verdict.

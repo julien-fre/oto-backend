@@ -3,8 +3,7 @@
 **Ce que ce module n'est pas.** Il ne décide rien, ne refuse rien, ne change pas d'un
 octet ce qui est servi. Il observe. Le seul effet visible de son existence est une
 ligne de plus dans `access_shadow_l7` — et le jour où la fenêtre est concluante, le
-droit de retourner l'autorité (PR 2), puis de retirer `walk_cascade` et
-`connector_acl` (PR 3).
+droit de retourner l'autorité (PR 2), puis de retirer `walk_cascade` (PR 3).
 
 **Ce qu'il calcule.** La résolution telle que [0053-D2](blueprint) la pose :
 
@@ -14,12 +13,12 @@ droit de retourner l'autorité (PR 2), puis de retirer `walk_cascade` et
    priment, mais ils court-circuitent déjà la marche en amont (`resolve`), donc ce
    qui reste ici est la **proximité** : `user > group > org > platform`.
 
-Et surtout **ce qu'il ne calcule pas** : la restriction de `connector_acl`. C'est
-0053-D1 — restreindre, c'est PLACER l'ownership au bon niveau, jamais poser une
-interdiction par-dessus. Les endroits où la restriction mord sont donc des
-divergences ATTENDUES, et c'est exactement ce qu'on est venu compter.
+Aucune des deux voies ne connaît de restriction d'accès par-dessus : 0053-D1 —
+restreindre, c'est PLACER l'ownership au bon niveau, jamais poser une interdiction
+par-dessus. La table `connector_acl` n'est plus lue depuis le 24/09/2026 (la classe
+`restriction_acl`, qui comptait ses refus, est partie avec elle).
 
-## Les quatre écarts qu'on sait nommer d'avance
+## Les écarts qu'on sait nommer d'avance
 
 Relevé prod du 2026-08-29 — ils ne sont pas des anomalies, ce sont les décisions de
 0053 qui deviennent visibles. Une divergence qui n'entre dans aucun est `inconnu`,
@@ -28,7 +27,6 @@ et c'est la seule que la fenêtre doit voir à zéro.
 | classe | ce qui la produit |
 |---|---|
 | `elargissement_equipe` | la cascade ne lit que l'équipe **ACTIVE** ; l'ensemble atteignable lit **toutes** les équipes du sujet dans l'org. Un membre de « finance » actif dans « sales » ne résout rien aujourd'hui et résoudrait la clé de finance demain. **Comptée par org**, parce que c'est un comportement servi qui change chez un client nommé |
-| `restriction_acl` | l'ancien chemin a refusé sur `connector_acl` (D1 dissout la table). 4 couples (org, connecteur) mordent en prod, pour 7 refus de personne |
 | `free_tier_hors_modele` | l'ancien chemin gagne le palier plateforme par le free-tier OUVERT (`share_mode='open'`, `share_down` vide) — et 0053 n'a **pas** de bénéficiaire « tout le monde ». C'était le seul vrai trou du modèle ; **tranché le 29/08 : une arête « tout le monde » explicite d'abord, l'extinction mesurée connecteur par connecteur ensuite.** Cette classe doit donc tomber à **zéro** avant le retrait (PR 3), et c'est l'arête posée en PR 2 qui l'y amène |
 | `partage_hors_modele` | la clé plateforme est FERMÉE sur une allowlist (`share_down`) **et aucune arête ne l'exprime**. Sœur de la précédente, autre remède : ce sont les arêtes NOMINATIVES qui manquent. Le semis de L5 ne couvrait que les connecteurs basculés, donc toute clé fermée hors de cette liste est dans ce cas. Vécu le 29/08 : 17 observations sur `aiark` et `apify` tombaient en `inconnu` faute de ce nom — une divergence parfaitement explicable qui fermait la porte pour une raison fausse |
 | `perso_cross_org` | l'instance personnelle cross-org (#172) : la cascade suit la clé du sujet dans une AUTRE org, l'ensemble atteignable de 0053 est scopé à l'org de contexte |
@@ -59,7 +57,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from ..mcp_errors import McpError
 from .. import credentials_store, grants_chain, providers
 from ..db import access_shadow as db_shadow
 from ..db import grants as db_grants
@@ -72,13 +69,12 @@ logger = logging.getLogger(__name__)
 # (« zéro inconnu ») se déplacerait toute seule.
 ACCORD = "accord"
 ELARGISSEMENT_EQUIPE = "elargissement_equipe"
-RESTRICTION_ACL = "restriction_acl"
 # Reprises de `chain_resolution`, qui les constate — jamais redéclarées.
 FREE_TIER_HORS_MODELE = chain_resolution.FREE_TIER_HORS_MODELE
 PARTAGE_HORS_MODELE = chain_resolution.PARTAGE_HORS_MODELE
 PERSO_CROSS_ORG = "perso_cross_org"
 INCONNU = "inconnu"
-CLASSES = (ACCORD, ELARGISSEMENT_EQUIPE, RESTRICTION_ACL, FREE_TIER_HORS_MODELE,
+CLASSES = (ACCORD, ELARGISSEMENT_EQUIPE, FREE_TIER_HORS_MODELE,
            PARTAGE_HORS_MODELE, PERSO_CROSS_ORG, INCONNU)
 
 # Période de versement de l'ACCORD, en secondes. L'accord est le cas nominal : le
@@ -104,13 +100,10 @@ def _key(x) -> Optional[tuple]:
             str(getattr(x, "entity_id", None)))
 
 
-def classify(legacy, chain: Optional[chain_resolution.ChainPick], *, acl_refus: bool,
+def classify(legacy, chain: Optional[chain_resolution.ChainPick], *,
              hors_modele: Optional[str] = None) -> str:
     """La classe d'un couple de verdicts. Fonction PURE — c'est elle que le test
     exerce sur les formes relevées en prod, sans base."""
-    if acl_refus:
-        # L'ancien chemin a refusé avant même de marcher. Les deux refusent ⟹ accord.
-        return RESTRICTION_ACL if chain is not None else ACCORD
     if _key(legacy) == _key(chain):
         return ACCORD
     if legacy is not None and getattr(legacy, "via", "local") == "cross_org":
@@ -166,16 +159,16 @@ def _compte_accord(connector: str, org_id: int) -> None:
 
 
 def observe(provider: str, sub: Optional[str], org: Optional[int], legacy, *,
-            want: str = "auto", acl_refus: bool = False) -> None:
+            want: str = "auto") -> None:
     """Compare les deux voies et range le résultat. **Best-effort absolu** : aucune
     exception ne sort d'ici, aucune valeur n'en revient. Appelée depuis `resolve`,
-    après la marche — ou depuis le refus d'ACL, qui se produit avant elle."""
+    après la marche."""
     if not sub or not _enabled():
         return
     try:
         porteur = providers.credential_provider(provider)
         chain, hors_modele = chain_resolution.chain_verdict(sub, porteur, org=org, want=want)
-        classe = classify(legacy, chain, acl_refus=acl_refus, hors_modele=hors_modele)
+        classe = classify(legacy, chain, hors_modele=hors_modele)
         if classe == ACCORD:
             _compte_accord(porteur, int(org or 0))
             return
@@ -192,21 +185,6 @@ def observe(provider: str, sub: Optional[str], org: Optional[int], legacy, *,
         # Un shadow qui casserait une résolution serait pire que pas de shadow.
         logger.warning("shadow L7 : observation échouée (%s) — la résolution servie "
                        "n'est PAS affectée", provider, exc_info=True)
-
-
-def observe_acl_refus(provider: str, sub: Optional[str], *, want: str = "auto") -> None:
-    """`observe` pour le refus d'ACL, qui survient AVANT que `resolve` n'ait résolu
-    l'org de contexte. L'org se lit ici, dans un try à elle : sur ce chemin on est
-    déjà à l'intérieur d'un `except McpError`, et une exception d'observation y
-    REMPLACERAIT le refus servi par une erreur sans rapport."""
-    if not sub or not _enabled():
-        return
-    try:
-        org = scope.current_org(sub)
-    except Exception:  # noqa: BLE001
-        logger.debug("shadow L7 : org de contexte illisible au refus d'ACL", exc_info=True)
-        return
-    observe(provider, sub, org, None, want=want, acl_refus=True)
 
 
 # ── L'INVERSION : qui décide, et comment on revient en arrière ────────────────
@@ -255,7 +233,7 @@ def resolution_rungs(sub, provider: str, *, org, group, probe, want="auto"):
 
 
 def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "auto",
-           deja_observe: bool = False, group=scope._UNSET):
+           group=scope._UNSET):
     """La chaîne DÉCIDE, l'ancien chemin calcule et se compare — le miroir exact de la
     PR 1, l'autorité retournée.
 
@@ -263,10 +241,7 @@ def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "a
     suite de `resolve` (garde du compte nommé, quota, `ResolvedCredential`) ne change
     pas d'une ligne. Ne lève jamais **pour observer** ; les McpError de la SONDE (un
     compte nommé introuvable, une ambiguïté multi-comptes), elles, remontent comme
-    avant — ce sont des erreurs servies, pas de l'observation.
-
-    `deja_observe` : le refus d'ACL a déjà été compté à son site (il se produit avant
-    la marche), on ne le compte pas deux fois."""
+    avant — ce sont des erreurs servies, pas de l'observation."""
     porteur = providers.credential_provider(provider)
     # Le FETCH garde le nom que le walker lui passait — la traversée change, la
     # lecture non.
@@ -279,8 +254,7 @@ def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "a
     # ferait bouger ce qu'il mesure au moment où on corrige la lecture.
     rung = next(resolution_rungs(sub, provider, org=org, group=group,
                                  probe=probe, want=want), None)
-    if not deja_observe:
-        _observe_inverse(porteur, sub, org, want=want)
+    _observe_inverse(porteur, sub, org, want=want)
     return rung
 
 
@@ -300,7 +274,7 @@ def _observe_inverse(porteur: str, sub: str, org: Optional[int], *, want: str) -
         legacy = cascade.cascade_winner(
             sub, porteur, org=org, group=lambda: _scope.current_group(sub),
             probe=cascade.PRESENCE_PROBE, want=want)
-        classe = classify(legacy, chain, acl_refus=False, hors_modele=hors_modele)
+        classe = classify(legacy, chain, hors_modele=hors_modele)
         if classe == ACCORD:
             _compte_accord(porteur, int(org or 0))
             return
@@ -315,37 +289,14 @@ def _observe_inverse(porteur: str, sub: str, org: Optional[int], *, want: str) -
                        "chaîne n'est PAS affectée", porteur, exc_info=True)
 
 
-# ── Les deux seams que `resolve` appelle, et qui portent tout le lot ──────────
-# Ils vivent ICI et pas dans `resolve` pour une raison de sujet : le chemin de
+# ── Le seam que `resolve` appelle, et qui porte tout le lot ──────────────────
+# Il vit ICI et pas dans `resolve` pour une raison de sujet : le chemin de
 # résolution n'a pas à savoir qu'un drapeau existe, ni comment il s'écrit. Il demande
-# « quel barreau gagne ? » et « ce refus tient-il ? » ; ce module répond, et c'est lui
-# qu'on lit le jour où l'on retire l'ancien chemin.
-
-def garde_acl(provider: str, sub: str, *, want: str = "auto") -> bool:
-    """Joue le backstop RBAC connecteur (ADR 0025) et dit s'il a REFUSÉ.
-
-    Sous `legacy` — le défaut — le refus relève, à l'identique : rien ne change.
-    Sous l'autorité de la chaîne, il n'existe plus : 0053-D1 dissout les lignes de
-    restriction — restreindre, c'est PLACER l'ownership au bon niveau, jamais poser
-    une interdiction par-dessus. Le refus est alors **compté puis laissé tomber**, et
-    le booléen rendu dit à la marche qu'elle n'a plus à le compter une seconde fois.
-
-    L'observation a lieu AVANT de relever, des deux côtés du drapeau : sans ça, la
-    classe qui compte le plus (`restriction_acl`) serait la seule qu'on ne verrait
-    jamais — celle qui ne se produit que là où l'ancien chemin refuse."""
-    from . import rbac
-    try:
-        rbac.require_connector_access(provider, sub)
-        return False
-    except McpError:
-        observe_acl_refus(provider, sub, want=want)
-        if not chain_decides():
-            raise
-        return True
-
+# « quel barreau gagne ? » ; ce module répond, et c'est lui qu'on lit le jour où l'on
+# retire l'ancien chemin.
 
 def barreau_gagnant(provider: str, sub: str, org: Optional[int], *, probe,
-                    group, want: str = "auto", acl_refus: bool = False):
+                    group, want: str = "auto"):
     """Le barreau qui gagne — **et c'est un drapeau qui dit laquelle des deux voies
     l'a désigné.**
 
@@ -359,8 +310,7 @@ def barreau_gagnant(provider: str, sub: str, org: Optional[int], *, probe,
     servi est le barreau, pas la mesure."""
     from . import cascade
     if chain_decides():
-        return decide(provider, sub, org, probe=probe, want=want,
-                      deja_observe=acl_refus, group=group)
+        return decide(provider, sub, org, probe=probe, want=want, group=group)
     win = cascade.cascade_winner(sub, provider, org=org, group=group, probe=probe,
                                  want=want)
     observe(provider, sub, org, win, want=want)

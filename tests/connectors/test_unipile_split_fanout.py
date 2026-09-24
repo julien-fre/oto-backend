@@ -1,19 +1,18 @@
 """Le fan-out 1→N d'un connecteur SCINDÉ, exercé contre un vrai PostgreSQL.
 
 Un split déplace un connecteur dans le REGISTRE ; les tables de gouvernance, elles,
-ne connaissent que l'ancien nom. Trois d'entre elles penchent du mauvais côté quand
+ne connaissent que l'ancien nom. Deux d'entre elles penchent du mauvais côté quand
 un nom leur est inconnu, et c'est ce qui rend le fan-out obligatoire plutôt que
-soigneux :
+soigneux (une troisième, `connector_acl`, a disparu le 24/09/2026 avec la
+restriction d'accès — ADR 0053 D1) :
 
 - `connector_availability` — pas de ligne ⟹ **OFF** (deny-by-default). Sans fan-out,
   la messagerie hébergée s'éteint pour TOUT LE MONDE au premier boot du split.
-- `connector_acl`          — pas de ligne ⟹ **OUVERT** (ADR 0025). Sans fan-out, une
-  org qui avait réservé la messagerie à une équipe l'ouvre à tous.
 - `user_selected_connectors` — non-sélectionné ⟹ **MASQUÉ** (ADR 0050). Sans
   fan-out, les membres qui l'avaient installée perdent la surface, sans un mot.
 
-Les trois échouent SILENCIEUSEMENT, dans deux directions opposées : deux ferment ce
-qui devait rester ouvert, une ouvre ce qui devait rester fermé. Aucune ne lève.
+Les deux échouent SILENCIEUSEMENT, en fermant ce qui devait rester ouvert. Aucune ne
+lève.
 
 Le test s'exerce contre un vrai PostgreSQL (fixture `pg_module_dsn`) parce que ce qui casse
 ici est la PK : la sélection est keyée `(sub, org_id, connector)` et le fan-out
@@ -39,21 +38,10 @@ def conn(pg_module_dsn):
     from psycopg.rows import dict_row
     with psycopg.connect(pg_module_dsn, row_factory=dict_row, autocommit=True) as c:
         for t in ("user_selected_connectors", "connector_selection_seeded",
-                  "connector_availability", "connector_acl"):
+                  "connector_availability"):
             c.execute(f"DROP TABLE IF EXISTS {t}")
         sel.init_schema(c)
         act.init_schema(c)
-        c.execute("""
-            CREATE TABLE connector_acl (
-                scope_type TEXT NOT NULL CHECK (scope_type IN ('org', 'group')),
-                scope_id TEXT NOT NULL,
-                connector TEXT NOT NULL,
-                principal_type TEXT NOT NULL CHECK (principal_type IN ('group', 'user')),
-                principal_id TEXT NOT NULL,
-                granted_by TEXT,
-                granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (scope_type, scope_id, connector, principal_type, principal_id)
-            )""")
         yield c
 
 
@@ -151,35 +139,6 @@ def test_un_reglage_deja_pose_sur_une_cible_gagne(conn):
     row = conn.execute("SELECT enabled FROM connector_availability WHERE "
                        "scope_type='platform' AND connector='whatsapp'").fetchone()
     assert row["enabled"] is False
-
-
-# --- ACL ----------------------------------------------------------------------
-
-def test_lacl_suit_sinon_la_restriction_sevapore(conn):
-    """L'ACL est deny-by-default À LA PRÉSENCE : une table vide vaut OUVERT.
-
-    C'est l'inverse des deux autres, et c'est ce qui rend l'oubli invisible — rien
-    ne casse, tout s'ouvre. Une org qui avait réservé la messagerie à son équipe
-    commerciale l'offrirait à tout le monde, sans geste et sans trace."""
-    conn.execute(
-        "INSERT INTO connector_acl "
-        "  (scope_type, scope_id, connector, principal_type, principal_id, granted_by) "
-        "VALUES ('org', '7', 'unipile', 'group', '3', 'admin1')")
-    assert act.fanout_acl(conn, "unipile", CANAUX) == 6
-    rows = list(conn.execute("SELECT connector, principal_id, granted_by "
-                             "FROM connector_acl WHERE scope_type='org' AND scope_id='7'"))
-    assert {r["connector"] for r in rows} == {"unipile", *CANAUX}
-    # L'audit de la décision d'origine voyage : qui a posé la restriction est un
-    # fait, la re-dater du geste de migration serait inventer une décision.
-    assert all(r["granted_by"] == "admin1" and r["principal_id"] == "3" for r in rows)
-
-
-def test_une_org_sans_acl_reste_ouverte(conn):
-    """Le fan-out ne FABRIQUE pas de restriction : sans ligne source, rien ne
-    naît — sinon le split fermerait la messagerie chez qui ne l'avait jamais
-    restreinte."""
-    assert act.fanout_acl(conn, "unipile", CANAUX) == 0
-    assert not list(conn.execute("SELECT 1 FROM connector_acl"))
 
 
 # --- la sentinelle : un déménagement est vrai UNE fois -------------------------

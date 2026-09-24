@@ -65,7 +65,6 @@ def test_walk_omits_suspended_rung_from_status(monkeypatch):
 # stub de sonde qui avait masqué le bug).
 
 def _wire_real_resolution(monkeypatch, *, suspended, org=1):
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: org)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.db, "get_member_api_key",

@@ -18,7 +18,6 @@ import secrets
 from .mcp_errors import McpError
 from . import access, db, unipile_binding
 from .access.resolve import CredentialUnavailable
-from .access.rbac import ConnectorAccessDenied
 from . import config
 
 logger = logging.getLogger(__name__)
@@ -144,7 +143,7 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
                 "Un compte ne peut activer qu'UN produit premium.")
     # Gate d'ACCÈS du CANAL (split du 2026-08-28). Depuis que chaque canal est un
     # connecteur, « qui peut connecter WhatsApp » se règle par canal — activation
-    # d'org et ACL comprises. Le gate vit ICI, dans le corps partagé, et pas
+    # d'org comprise. Le gate vit ICI, dans le corps partagé, et pas
     # seulement dans la capacité REST générique : le tool `unipile_connect_start` et
     # l'ancienne route `POST /api/unipile/connect` passent par là sans elle, et un
     # gate qu'un seul des trois chemins applique n'en est pas un.
@@ -162,8 +161,6 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
     except CredentialUnavailable:
         raise ConnectRefused(404, "unipile_not_configured",
                              "Unipile n'est pas configuré (ni clé BYO ni clé plateforme).")
-    except ConnectorAccessDenied as e:
-        raise ConnectRefused(403, "connector_restricted", e.error.message) from e
     except McpError as e:
         raise ConnectRefused(400, "credential_resolution_failed", e.error.message) from e
     api_key = credential.key

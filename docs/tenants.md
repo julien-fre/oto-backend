@@ -178,7 +178,7 @@ description: >-
 > L'historique (`runs.sub`, `project_activity.sub`, `runner_triggers.sub`,
 > `tool_calls.effective_sub`) et les attributions (`resolved_by`/`created_by`/
 > `granted_by`/`set_by`/`requested_by` de 10 tables) sont repointés par `_SUB_COLUMNS` ;
-> `legal_acceptances`, `connector_acl.principal_id` et `option_comps.entity_id` passent
+> `legal_acceptances` et `option_comps.entity_id` passent
 > par le patron PK (`_PK_SUB_TABLES` — sub jamais numérique ⟹ l'UPDATE ne touche que les
 > lignes user) ; ⚠️ **le JOURNAL des acceptations (`legal_acceptance_events`, #487) est
 > ajouté à `_SUB_COLUMNS` et PAS au patron PK** — il n'a aucune unicité, et dédupliquer

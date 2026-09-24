@@ -1391,29 +1391,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     from ..connectors import activation as _conn_act
     _conn_act.init_schema(conn)
     _conn_act.seed_initial(conn)
-    # Chantier ACL (cadrage 10/07, B1) : copie legacy → `connector_acl` unifiée,
-    # à CHAQUE boot tant que les tables legacy existent (fenêtre canari/prod :
-    # la prod écrit encore les legacy jusqu'à promotion). Gardée `to_regclass` :
-    # après le DROP (B2), no-op. Grants immutables → DO NOTHING suffit (une
-    # révocation prod pendant la fenêtre ressuscite jusqu'à promotion — assumé,
-    # fenêtre de quelques minutes).
-    if conn.execute("SELECT to_regclass('org_connector_access') AS t").fetchone()["t"]:
-        conn.execute(
-            "INSERT INTO connector_acl (scope_type, scope_id, connector, "
-            "                           principal_type, principal_id, granted_by, granted_at) "
-            "SELECT 'org', org_id::text, connector, principal_type, principal_id, "
-            "       granted_by, granted_at FROM org_connector_access "
-            "ON CONFLICT DO NOTHING")
-    if conn.execute("SELECT to_regclass('group_connector_access') AS t").fetchone()["t"]:
-        conn.execute(
-            "INSERT INTO connector_acl (scope_type, scope_id, connector, "
-            "                           principal_type, principal_id, granted_by, granted_at) "
-            "SELECT 'group', group_id::text, connector, 'user', principal_sub, "
-            "       granted_by, granted_at FROM group_connector_access "
-            "ON CONFLICT DO NOTHING")
-    # Chantier ACL B2 (le B1 est PROMU prod — plus AUCUN code ne lit les 4 tables
-    # legacy, les copies ci-dessus sont gardées to_regclass) : DROP. Dernière
-    # copie exécutée juste avant, même boot — rien ne se perd.
+    # Chantier ACL B2 : les 4 tables legacy ne sont plus lues par aucun code — DROP.
+    # (La table qui les avait remplacées, `connector_acl`, n'est plus lue non plus
+    # depuis le 24/09/2026 : la restriction d'accès « vers le bas » a disparu, ADR
+    # 0053 D1. Elle reste déclarée tant qu'un DDL posé à la main ne l'a pas retirée.)
     conn.execute("DROP TABLE IF EXISTS org_connector_access")
     conn.execute("DROP TABLE IF EXISTS group_connector_access")
     conn.execute("DROP TABLE IF EXISTS connector_activation")
@@ -1454,18 +1435,17 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # --- SPLIT `unipile` → le compte + ses six CONNEXIONS (2026-08-28) -------
     # Le connecteur `unipile` portait sept namespaces : le sien et les six
     # canaux hébergés. Chacun est désormais un connecteur à part entière, ce qui
-    # lui donne activation, ACL, sélection et visibilité PROPRES — mais le rend
+    # lui donne activation, sélection et visibilité PROPRES — mais le rend
     # aussi INCONNU de toutes les tables de gouvernance, où seul `unipile`
-    # existe. Trois fan-out, dans cet ordre, et chacun corrige un fail-* qui
-    # penche du mauvais côté :
+    # existe. Deux fan-out, dans cet ordre, et chacun corrige un fail-* qui
+    # penche du mauvais côté (un troisième étendait l'ACL ; il est parti avec la
+    # restriction d'accès le 24/09/2026) :
     #   · availability — un connecteur sans ligne platform est OFF
     #     (deny-by-default) : sans ce geste, la messagerie hébergée s'éteint
     #     pour TOUT LE MONDE au premier boot du split ;
-    #   · ACL          — une ACL vide est OUVERTE (ADR 0025) : sans ce geste,
-    #     une org qui avait réservé la messagerie à une équipe l'ouvre à tous ;
     #   · sélection    — non-sélectionné = masqué (ADR 0050) : sans ce geste,
     #     les membres qui avaient installé unipile perdent la surface.
-    # Les trois sont idempotents (ON CONFLICT DO NOTHING) et ne TOUCHENT PAS
+    # Les deux sont idempotents (ON CONFLICT DO NOTHING) et ne TOUCHENT PAS
     # `unipile`, qui survit comme compte fournisseur — c'est ce qui distingue un
     # split d'un renommage, et pourquoi `rename_selection` ne convenait pas.
     #
@@ -1480,7 +1460,7 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # sienne (`unselect` est un DELETE). Rejoués à chaque boot, ils réinstallaient
     # donc ce qu'on venait de retirer : un canal désélectionné revenait actif au
     # redémarrage, avec ses cinq voisins. Idem pour une disponibilité éteinte à la
-    # main et une ACL d'org effacée. Un déménagement est vrai UNE fois ; ce qui
+    # main. Un déménagement est vrai UNE fois ; ce qui
     # doit rester rejouable, c'est le boot, pas l'écriture (cf.
     # `split_fanout_pending`, qui explique aussi pourquoi la prod est marquée
     # sans réécriture).
@@ -1491,7 +1471,6 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     _CANAUX_UNIPILE = ("linkedin_unipile", "whatsapp", "telegram", "instagram")
     if _conn_sel.split_fanout_pending(conn, _CANAUX_UNIPILE):
         _conn_act_split.fanout_availability(conn, "unipile", _CANAUX_UNIPILE)
-        _conn_act_split.fanout_acl(conn, "unipile", _CANAUX_UNIPILE)
         _conn_sel.fanout_selection(conn, "unipile", _CANAUX_UNIPILE)
         # Proposition d'org (`orgs.default_connectors`, consultatif) : une org qui
         # RECOMMANDAIT unipile recommande ses canaux. Sous la MÊME sentinelle et

@@ -27,7 +27,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import access, providers, session_visibility, tool_registry
+from .. import providers, session_visibility, tool_registry
 from ..connectors import activation as connector_activation
 from ..connectors import selection as connector_selection
 from ..tool_visibility import namespace_of
@@ -54,14 +54,13 @@ class InstalledNotSeen(BaseModel):
     """Un connecteur INSTALLÉ dont l'agent ne voit aucun outil, et pourquoi.
 
     `paused` = le membre l'a mis en pause ; `cut` = l'org (ou la plateforme) l'a coupé —
-    il revient seul à la réouverture ; `restricted` = une règle d'accès de l'org ou de
-    l'équipe active le réserve à d'autres ; `no_tools` = installé mais aucun outil monté
+    il revient seul à la réouverture ; `no_tools` = installé mais aucun outil monté
     sous ce nom (module non chargé)."""
     name: str
     label: str
     state: Literal["active", "paused"]
     origin: Optional[str] = None
-    reason: Literal["paused", "cut", "restricted", "no_tools"]
+    reason: Literal["paused", "cut", "no_tools"]
 
 
 class AgentToolbox(BaseModel):
@@ -75,14 +74,11 @@ class AgentToolbox(BaseModel):
     installed_not_seen: Optional[list[InstalledNotSeen]] = None
 
 
-def _reason(name: str, state: str, sub: str, org: Optional[int], exposed: set,
-            denied: set) -> str:
+def _reason(name: str, state: str, exposed: set) -> str:
     if state == connector_selection.PAUSED:
         return "paused"
     if name not in exposed:
         return "cut"
-    if name in denied:
-        return "restricted"
     return "no_tools"
 
 
@@ -115,21 +111,12 @@ async def _toolbox(ctx: ResolvedCtx, inp: AgentToolboxInput) -> dict:
     not_seen = []
     if any(name not in par_connecteur for name in detail):
         exposed = connector_activation.exposed_connectors(ctx.org_id)
-        try:
-            denied = set(access.rbac_denied_connectors(ctx.sub, ctx.org_id)) | set(
-                access.group_rbac_denied_connectors(ctx.sub, access.current_group(ctx.sub)))
-        except Exception as e:
-            # Même régime fail-open que le handshake : sans lecture des règles, on ne
-            # peut pas dire « restreint » — on dira `no_tools`, et le journal le porte.
-            logger.warning("agent-toolbox : règles d'accès illisibles pour %s: %s", ctx.sub, e)
-            denied = set()
         for name, d in sorted(detail.items()):
             if name in par_connecteur or name not in providers.REGISTRY:
                 continue
             not_seen.append({"name": name, "label": providers.REGISTRY[name].label,
                              "state": d["state"], "origin": d["origin"],
-                             "reason": _reason(name, d["state"], ctx.sub, ctx.org_id,
-                                               exposed, denied)})
+                             "reason": _reason(name, d["state"], exposed)})
     return {"org_id": ctx.org_id, "available": True, "tools": visible,
             "tools_total": len(names), "spine_tools": spine,
             "connectors": seen, "installed_not_seen": not_seen}
@@ -142,7 +129,7 @@ CAPABILITIES += [
         description="What this user's agent actually sees at the start of a conversation, "
                     "for the consulted org (X-Oto-Org): the exact list of visible tools, "
                     "grouped by connector, plus the installed connectors whose tools are "
-                    "hidden and why (paused / cut / restricted / no_tools). Computed by the "
+                    "hidden and why (paused / cut / no_tools). Computed by the "
                     "handshake's own visibility function — read this instead of recomputing "
                     "'active connectors' client-side. available:false = could not be derived, "
                     "never 'no tools'.",

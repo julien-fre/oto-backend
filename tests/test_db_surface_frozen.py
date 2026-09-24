@@ -42,7 +42,7 @@ _SURFACE = """
     backfill_unipile_member_scope backlinks billing bkey_index_expr
     bound_unipile_account_ids bump_counter cancel_scheduled_email
     claim_due_scheduled_emails clear_account_grant clear_aux_dirty
-    clear_connector_access clear_embed_dirty clear_group_connector_access
+    clear_embed_dirty
     clear_member_api_key clear_operated_account clear_operated_pointers_to
     clear_option_comp clear_row_dirty clear_unipile_account
     connector_failure_stats connector_grants consume_upload_token
@@ -80,18 +80,18 @@ _SURFACE = """
     get_row_embedding_sha get_run get_tool_call get_unipile_account
     get_unipile_account_id get_unipile_feed_synced_at get_usage_today get_user
     get_user_by_email get_users_by_email google grant_resource granted_accounts_for grants
-    group_key group_member_allowed_connectors group_restricted_connectors
+    group_key
     guides has_member_api_key has_option_comp hashlib increment_usage
     index_ddl init_db insert_billing_payment insert_grant insert_run
     insert_tool_call insert_usage_signal instruction_usage
     is_comp_subscription is_tool_disabled_for json keys leaf_read_sql legal
     list_account_grants_by_owner list_account_grants_to
     list_all_datastores list_all_projects list_api_tokens
-    list_billing_payments list_connector_access
+    list_billing_payments
     list_datastores_for_owners list_datastores_granted_to
     list_dirty_aux list_dirty_docs list_dirty_rows
     list_doc_revisions list_docs_for_project list_google_accounts
-    list_grants_for_user list_group_connector_access list_group_disabled_tools
+    list_grants_for_user list_group_disabled_tools
     list_guides_db list_member_projects list_option_comps
     list_option_comps_for_option list_org_disabled_tools list_org_grants
     list_platform_instructions list_project_activity list_project_files
@@ -104,9 +104,9 @@ _SURFACE = """
     list_user_enabled_tools list_users list_users_with_grants
     live_edges_for_grantee log_project_activity logger logging
     mark_cancel_at_period_end mark_scheduled_failed mark_scheduled_sent
-    member_allowed_connectors member_instance_suspended
+    member_instance_suspended
     migrate_business_key_indexes migrate_sub move_doc move_doc_to_project
-    open_billing_payments org_adoption org_restricted_connectors
+    open_billing_payments org_adoption
     org_unipile_account_ids os paths platform_instructions
     project_grant_counts project_labels project_run_stats project_run_tools
     project_runs project_spine projects prune_tool_calls psycopg
@@ -127,9 +127,9 @@ _SURFACE = """
     search_procedures_fts search_project_briefs seat_binding_elsewhere secrets
     seed_guide_db seed_init_guide_db seed_platform_instruction
     set_account_grant set_avatar_url set_comp_subscription
-    set_connector_access set_datastore_schema set_datastore_semantic
+    set_datastore_schema set_datastore_semantic
     set_default_google_account set_doc_public set_google_oauth
-    set_group_connector_access set_guide_db set_init_guide_db
+    set_guide_db set_init_guide_db
     set_member_api_key set_operated_account set_option_comp
     set_org_unipile_limit set_platform_instruction set_project_file_public
     set_project_mcp_instructions set_project_mcp_publication
@@ -160,6 +160,14 @@ _RETIRES = {
        for nom in ("add_doc_change_request", "get_doc_change_request",
                    "list_change_requests_by_project", "list_change_requests_by_requester",
                    "list_doc_change_requests", "resolve_doc_change_request")},
+    **{nom: ("24/09/2026 — la restriction d'accès « vers le bas » d'un connecteur "
+             "disparaît (ADR 0053 D1 : restreindre, c'est placer la clé au bon niveau). "
+             "`connector_acl` n'est plus lue ; la table reste jusqu'à un DDL posé à la main")
+       for nom in ("set_connector_access", "clear_connector_access",
+                   "list_connector_access", "org_restricted_connectors",
+                   "member_allowed_connectors", "set_group_connector_access",
+                   "clear_group_connector_access", "list_group_connector_access",
+                   "group_restricted_connectors", "group_member_allowed_connectors")},
 }
 
 

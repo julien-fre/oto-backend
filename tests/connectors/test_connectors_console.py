@@ -10,7 +10,7 @@ import asyncio
 import pytest
 
 from oto_mcp.capabilities.connectors import console as cc
-from oto_mcp.capabilities.connectors import account_grants as connectors_account_grants, acl as connectors_acl, activation as connectors_activation, force as connectors_force, identities as connectors_identities, instances as connectors_instances, selection as connectors_selection, sharing as connectors_sharing, verify as connectors_verify
+from oto_mcp.capabilities.connectors import account_grants as connectors_account_grants, activation as connectors_activation, force as connectors_force, identities as connectors_identities, instances as connectors_instances, selection as connectors_selection, sharing as connectors_sharing, verify as connectors_verify
 from oto_mcp.capabilities._authz import BY_OP
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
@@ -57,37 +57,6 @@ def test_activation_required_fields():
     with pytest.raises(AuthzDenied) as e:
         cc._activation(CTX, A(op="list", scope="group"))        # scope=group sans group_id
     assert e.value.code == "missing_group"
-
-
-# ── oto_connector_access ────────────────────────────────────────────────────
-def test_access_routes(monkeypatch):
-    for h in ("_list_acl", "_grant", "_revoke", "_group_list_acl", "_group_grant", "_group_revoke"):
-        monkeypatch.setattr(connectors_acl, h, _tag(h))
-    A = cc.AccessInput
-    assert cc._access(CTX, A(op="list", org_id=1))["called"] == "_list_acl"
-    out = cc._access(CTX, A(op="grant", org_id=1, connector="folk",
-                            principal_type="group", principal_id="7"))
-    assert out["called"] == "_grant" and out["inp"].principal_id == "7"
-    assert cc._access(CTX, A(op="revoke", org_id=1, connector="folk",
-                             principal_type="user", principal_id="s"))["called"] == "_revoke"
-    assert cc._access(CTX, A(op="list", scope="group", group_id=3))["called"] == "_group_list_acl"
-    out = cc._access(CTX, A(op="grant", scope="group", group_id=3, connector="folk", member="s"))
-    assert out["called"] == "_group_grant" and out["inp"].member == "s"
-    assert cc._access(CTX, A(op="revoke", scope="group", group_id=3, connector="folk",
-                             member="s"))["called"] == "_group_revoke"
-
-
-def test_access_required_fields():
-    A = cc.AccessInput
-    with pytest.raises(AuthzDenied) as e:
-        cc._access(CTX, A(op="grant", org_id=1))
-    assert e.value.code == "missing_connector"
-    with pytest.raises(AuthzDenied) as e:
-        cc._access(CTX, A(op="grant", org_id=1, connector="folk"))
-    assert e.value.code == "missing_principal"
-    with pytest.raises(AuthzDenied) as e:
-        cc._access(CTX, A(op="grant", scope="group", group_id=3, connector="folk"))
-    assert e.value.code == "missing_member"
 
 
 # ── oto_connector ───────────────────────────────────────────────────────────
@@ -214,7 +183,6 @@ def test_console_carries_the_mcp_surface():
     caps = {c.key: c for c in CAPABILITIES}
     expected = {
         "connectors.console.activation": "oto_connector_activation",
-        "connectors.console.access": "oto_connector_access",
         "connectors.console.connector": "oto_connector",
         "connectors.console.instance": "oto_instance",
         "connectors.console.identity": "oto_identity",
@@ -227,8 +195,6 @@ def test_console_carries_the_mcp_surface():
         "connectors.activation.org_list", "connectors.activation.set_org",
         "connectors.activation.clear_org", "connectors.activation.group_list",
         "connectors.activation.set_group", "connectors.activation.clear_group",
-        "connectors.acl.list", "connectors.acl.grant", "connectors.acl.revoke",
-        "connectors.acl.group_list", "connectors.acl.group_grant", "connectors.acl.group_revoke",
         "connectors.me", "connectors.select", "connectors.pause", "connectors.unselect",
         "connectors.recommend", "connectors.force.member", "connectors.instances.list",
         "connectors.identities", "connectors.set_default_identity",

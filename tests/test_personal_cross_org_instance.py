@@ -67,7 +67,6 @@ def test_personal_instance_org_none_when_no_member_key(monkeypatch):
 
 def _wire_resolution(monkeypatch, *, current, key_orgs, personal=None):
     """current = org de contexte ; key_orgs = orgs portant une clé membre unipile."""
-    monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: current)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(

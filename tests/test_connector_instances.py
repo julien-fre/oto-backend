@@ -119,7 +119,7 @@ _FAKE_REGISTRY = {
 
 @pytest.fixture()
 def seams(monkeypatch):
-    """Environnement neutre : coffre vide, aucun groupe/grant, RBAC ouvert,
+    """Environnement neutre : coffre vide, aucun groupe/grant,
     pas de super_admin. Chaque test relève les seams qui l'intéressent en
     peuplant `env.vault` / re-monkeypatchant dans le namespace du module."""
     vault: dict = {}   # (entity_type, entity_id) -> [rows]
@@ -150,9 +150,6 @@ def seams(monkeypatch):
     # ADR 0044 §F : le free-tier de la projection lit credentials_store.list_platform_credentials.
     monkeypatch.setattr(ci.credentials_store, "list_platform_credentials",
                         lambda provider=None: [])
-    monkeypatch.setattr(ci.db, "org_restricted_connectors", lambda org_id: set())
-    monkeypatch.setattr(ci.db, "member_allowed_connectors",
-                        lambda sub, org_id: set())
     monkeypatch.setattr(ci.access, "is_super_admin", lambda sub: False)
     import oto_mcp.roles as roles_mod
     monkeypatch.setattr(roles_mod, "is_org_admin", lambda sub, org: False)
@@ -301,43 +298,6 @@ def test_platform_gated_on_auth_modes(seams):
     seams.vault[_member_key()] = [_row("brevo")]
     out = _run()
     assert out["count"] == 1 and out["instances"][0]["level"] == "member"
-
-
-def test_rbac_masks_restricted_without_allow(seams):
-    seams.vault[_member_key()] = [_row("zoho")]
-    seams.vault[("org", str(ORG))] = [_row("zoho"), _row("hunter")]
-    seams.monkeypatch.setattr(ci.db, "list_grants_for_user", lambda sub: [
-        {"platform_key_id": 11, "provider": "zoho", "label": "k",
-         "granted_at": "x", "granted_by": None, "daily_quota": None}])
-    seams.monkeypatch.setattr(ci.db, "org_restricted_connectors",
-                              lambda org_id: {"zoho"})
-    out = _run()
-    # zoho masqué sur les 4 familles ; hunter (non restreint) reste.
-    assert {i["connector"] for i in out["instances"]} == {"hunter"}
-    # Avec allow → visible.
-    seams.monkeypatch.setattr(ci.db, "member_allowed_connectors",
-                              lambda sub, org_id: {"zoho"})
-    assert {i["connector"] for i in _run()["instances"]} == {"hunter", "zoho"}
-
-
-def test_rbac_super_admin_bypasses(seams):
-    seams.vault[_member_key()] = [_row("zoho")]
-    seams.monkeypatch.setattr(ci.db, "org_restricted_connectors",
-                              lambda org_id: {"zoho"})
-    seams.monkeypatch.setattr(ci.access, "is_super_admin", lambda sub: True)
-    assert _run()["count"] == 1
-
-
-def test_rbac_fail_open_logged(seams, caplog):
-    seams.vault[_member_key()] = [_row("zoho")]
-
-    def _boom(org_id):
-        raise RuntimeError("db down")
-    seams.monkeypatch.setattr(ci.db, "org_restricted_connectors", _boom)
-    with caplog.at_level(logging.WARNING, logger=ci.logger.name):
-        out = _run()
-    assert out["count"] == 1                       # fail-open : tout listé
-    assert any("fail-open" in r.message for r in caplog.records)
 
 
 def test_meta_bearer_never_serialized(seams):

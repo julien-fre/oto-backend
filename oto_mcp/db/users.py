@@ -286,13 +286,6 @@ _PK_SUB_TABLES = (
     #   son patron ne change pas. Le JOURNAL, lui, n'a aucune unicité et se repointe
     #   nu — cf. `legal_acceptance_events` dans `_SUB_COLUMNS`.
     ("legal_acceptances", "sub", ("doc_slug",)),
-    # - la réservation de connecteur (gouvernance d'équipe/org) visait un identifiant
-    #   mort : le membre re-fusionné perdait l'accès réservé. `principal_id` mélange
-    #   group_id numérique et sub — un sub Logto n'est jamais un entier, l'UPDATE
-    #   `col=old_sub` ne peut toucher que les lignes user (même argument que
-    #   `resource_grants.principal_id`).
-    ("connector_acl", "principal_id",
-     ("scope_type", "scope_id", "connector", "principal_type")),
     # - une option offerte (comp) cessait de s'appliquer au compte fusionné — le
     #   symptôme nommé par la carte CLAUDE.md. `entity_id` mélange org_id numérique
     #   et sub : même argument de non-collision.
@@ -446,7 +439,7 @@ _SUB_COLUMNS = [
     ("project_files", "created_by"),
     ("doc_change_requests", "requested_by"), ("doc_change_requests", "resolved_by"),
     ("scheduled_emails", "created_by"), ("connector_credentials", "set_by"),
-    ("connector_account_grants", "granted_by"), ("connector_acl", "granted_by"),
+    ("connector_account_grants", "granted_by"),
     # Le pendant GROUPE (oto#40). Colonne d'AUTEUR, hors PK et SANS FK : elle
     # survit donc au `DELETE FROM users` de l'étape 4 en désignant une ligne `users`
     # qui n'existe plus. Ne pas la repointer ne CONSERVE pas la trace — ça la rend

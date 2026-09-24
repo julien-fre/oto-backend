@@ -72,7 +72,6 @@ def test_le_banc_voit_bien_les_quatre_familles_et_les_ajouts():
     assert len(produites) >= 15, sorted(produites)
     assert "mode" in produites                    # les quatre familles
     assert "identity_label" in produites          # famille cookie seule
-    assert "rbac_restricted" in produites         # posé après coup, sur chaque entrée
     assert "health_reason" in produites           # posé après coup, conditionnel
 
 
@@ -94,9 +93,10 @@ def test_aucun_champ_declare_ne_reste_jamais_produit():
         f"déclarés par ProviderStatus mais jamais produits : {sorted(fantomes)}")
 
 
-def test_les_trois_refus_restent_trois_champs_distincts():
-    """« Aucune clé ne résout », « l'accès t'est refusé » et « la clé ne répond plus »
-    sont trois états qu'un écran doit distinguer. Les fondre en un seul a déjà produit
-    un mur « réservé à certaines équipes » devant quelqu'un que rien ne bloquait."""
-    for champ in ("mode", "rbac_restricted", "health_ko"):
+def test_les_deux_refus_restent_deux_champs_distincts():
+    """« Aucune clé ne résout » et « la clé ne répond plus » sont deux états qu'un écran
+    doit distinguer. (Le troisième, « l'accès t'est refusé par une règle », a disparu le
+    24/09/2026 avec la restriction d'accès : `rbac_restricted` n'est plus servi.)"""
+    for champ in ("mode", "health_ko"):
         assert champ in _declarees()
+    assert "rbac_restricted" not in _declarees()

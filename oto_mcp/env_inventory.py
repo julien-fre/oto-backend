@@ -410,11 +410,11 @@ _REGLAGES: tuple[Variable, ...] = (
              "Tick du runner d'agents.", ("oto_mcp/runner_tick.py:163",)),
     Variable("OTO_L7_SHADOW", Classe.REGLAGE, "1",
              "Écrit l'observation shadow de la fenêtre L7 sans en changer l'issue.",
-             ("oto_mcp/access/chain_shadow.py:93",)),
+             ("oto_mcp/access/chain_shadow.py:89",)),
     Variable("OTO_L7_DECIDE", Classe.REGLAGE, "",
              "Fait PASSER la fenêtre L7 de l'observation à la décision — vide = "
              "observe seulement.",
-             ("oto_mcp/access/chain_shadow.py:231",)),
+             ("oto_mcp/access/chain_shadow.py:209",)),
     Variable("OTO_ALERTE_CREDENTIAL", Classe.REGLAGE, "",
              "Cible d'alerte quand un credential attendu manque en maintenance.",
              ("oto_mcp/maintenance.py:337", "oto_mcp/maintenance.py:341")),

@@ -52,7 +52,7 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
               payante = droit déclaré de l'org, via `entitlements`).
 - `cascade` — le walker UNIQUE `perso > cross-org > équipe > org > plateforme`,
               ses trois sondes, le palier plateforme.
-- `rbac`    — qui a le droit : RBAC connecteur org/équipe, tools masqués, garde
+- `rbac`    — qui a le droit : tools masqués, garde
               d'instance et prêts, instances à portée, filtre de redaction.
 - `indices` — le TEXTE des refus « rien ne résout » : clé retirée, instances à
               portée, projet qui épingle déjà (#499). Lecture seule, fail-soft.

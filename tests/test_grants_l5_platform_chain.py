@@ -120,7 +120,6 @@ def test_edge_quota_produces_the_same_refusal_as_before(vault, monkeypatch):
     """Quota épuisé ⟹ le MÊME refus qu'avant, mot pour mot : c'est le plafond porté
     par l'arête qui alimente le message historique, pas un nouveau chemin d'erreur."""
     from oto_mcp.mcp_errors import McpError
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda p, *a: None)
     monkeypatch.setattr(access, "current_org", lambda sub: None)
@@ -323,7 +322,6 @@ def _resolved_ref(monkeypatch, rung):
     """Fait résoudre un credential et rend ce que le relevé de l'appel a retenu."""
     from oto_mcp import session_org
 
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access, "_resolve_credential_impl", lambda *a, **k: rung)
     holder: dict = {}
     token = session_org.set_call_trace(holder)
@@ -357,7 +355,6 @@ def test_the_trace_never_breaks_a_resolution(monkeypatch):
                         lambda **k: (_ for _ in ()).throw(RuntimeError("journal HS")))
     weird = access.ResolvedCredential("fullenrich", "SECRET", False, "user",
                                       "member", "pas-un-id")
-    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access, "_resolve_credential_impl", lambda *a, **k: weird)
     assert access.resolve_credential("fullenrich", sub="s") is weird
 

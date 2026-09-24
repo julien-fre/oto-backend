@@ -115,7 +115,7 @@ ni supprimé et qu'il reprendra à son réveil. Pas le motif de la pause : il ap
 | compte prêté, choisi comme identité | `_unipile_select` → capacité `connectors.set_default_identity` | `403 lender_suspended` |
 | clé prêtée (`share_side`), `_instance=` ou binding | `access.rbac.guard_instance_access` | `McpError`, `data.code=lender_suspended` |
 
-À la lecture, `oto_connector_access` (`granted_to_me`) marque le prêt retenu
+À la lecture, `oto_account_access` (`granted_to_me`) marque le prêt retenu
 `active=false, owner_suspended=true` — distinct d'un canal déconnecté.
 
 ### ④ Ce que voient les autres — et les sièges

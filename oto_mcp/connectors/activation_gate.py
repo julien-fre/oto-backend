@@ -14,8 +14,8 @@ Le middleware de contexte (`CallContextMiddleware`, appel direct) et `oto_call`
 `run_org.pin_for_call`, juste avant le handler.
 
 **Fail-closed** : une lecture d'activation qui échoue fait échouer l'appel, elle
-ne le laisse pas passer. Sans sub (stdio local), rien n'est gardé — même régime
-que `access.require_connector_access`, la surface multi-utilisateur seule est visée.
+ne le laisse pas passer. Sans sub (stdio local), rien n'est gardé : la surface
+multi-utilisateur seule est visée.
 Les outils plateforme (`oto_*`, `data_*`, `run_*`…) n'ont pas de connecteur au
 registre : jamais gardés, sans lecture de base.
 """

@@ -185,7 +185,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   = il prend bien une clé, mais pas à ce palier — le refus **nomme le palier** qui
   l'accepte (`http` : `scope=org`) et, pour le `POST` qui n'a pas de `scope`, la route
   qui la pose (`PUT /api/orgs/{id}/secrets/{provider}`). Autres refus :
-  `403 connector_restricted` (RBAC ADR 0025 — la pose suit l'usage), `400 missing_credentials`
+  `400 missing_credentials`
   (le champ vide est NOMMÉ), `409 account_required` (pose anonyme là où des comptes nommés
   existent), `400 single_account_connector` (compte nommé sur un connecteur qui ne les
   résout pas), `400 verify_failed` (sonde avant persistance, #106). `DELETE` prend
@@ -198,7 +198,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   le tool : la poser masque, la retirer démasque. Contre-intuitif, historique, figé par
   test. La bascule est **visibilité-only** (ADR 0031) : `enabled` est une préférence
   d'affichage, jamais une autorisation — l'accès réel reste gardé au call-time
-  (credential + RBAC connecteur ADR 0025 + activation). Un tool **protégé** (anti-lockout)
+  (credential + activation). Un tool **protégé** (anti-lockout)
   refuse le masquage en `400 protected_tool:<nom>`.
   `…/registry` = le registre BOOT (ADR 0014), immunisé à la visibilité de session : il dit
   ce qui EXISTE, pas ce qui m'est visible ; sa `description` est un résumé d'une ligne, la

@@ -15,7 +15,6 @@ from __future__ import annotations
 from typing import Optional
 
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
 
 from ...connectors import flow as connector_flow
 from .._authz import ORG_MEMBER
@@ -46,8 +45,7 @@ class ConnectorConnectStarted(BaseModel):
     met `connector`, Salesforce le `scope` retenu). Un client qui lit `details`
     accepte de savoir quel connecteur il branche : le seam ne le lui demande pas.
     (Le refus de connecteur, lui, n'arrive jamais ici : un connecteur sans flux
-    déclaré répond 400 `no_connection_flow`, un connecteur réservé par l'org 403
-    `connector_restricted`.)"""
+    déclaré répond 400 `no_connection_flow`.)"""
 
     auth_url: str
     details: dict = Field(
@@ -58,21 +56,11 @@ class ConnectorConnectStarted(BaseModel):
 
 
 async def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
-    from ...mcp_errors import McpError
-    from ... import access
     if not connector_flow.supports(inp.name):
         raise AuthzDenied(
             400, "no_connection_flow",
             f"« {inp.name} » n'a pas de flux de connexion : son credential se pose "
             "au formulaire de la fiche.")
-    # MÊME gate que l'usage (ADR 0025) : on n'ouvre pas un consentement pour un
-    # connecteur que l'org a réservé. Aligné sur `api_key_save`, qui gate déjà la POSE
-    # — jusqu'ici les deux capacités de démarrage divergeaient là-dessus (salesforce
-    # gardait, zoho non).
-    try:
-        await run_in_threadpool(access.require_connector_access, inp.name, ctx.sub)
-    except McpError as e:
-        raise AuthzDenied(403, "connector_restricted", e.error.message)
     return (await connector_flow.start(inp.name, ctx, inp.params or {})).as_dict()
 
 
@@ -86,10 +74,7 @@ CAPABILITIES += [
         mcp=None,     # les faces MCP par connecteur existent déjà (oto_zoho_connect…)
         errors=(DeclaredError(400, "no_connection_flow",
                               "ce connecteur n'a pas de flux de connexion : sa "
-                              "clé se POSE, elle ne se demande pas"),
-                DeclaredError(403, "connector_restricted",
-                              "une règle d'org ou d'équipe interdit ce "
-                              "connecteur à cet acteur"),),
+                              "clé se POSE, elle ne se demande pas"),),
         rest=RestBinding(verb="POST", path="/api/me/connectors/{name}/connect"),
         description=("Démarre le flux de connexion déclaré par ce connecteur et renvoie "
                      "l'URL de consentement à ouvrir. Les valeurs attendues sont "

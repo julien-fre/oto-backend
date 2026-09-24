@@ -65,9 +65,9 @@ def test_aucun_autre_verbe_de_connexion_ne_traine_sous_le_prefixe_transverse():
     Un troisième verbe de connexion nommé `oto_…_connect` demain retomberait dans le
     même trou, et personne ne le verrait — la faute n'a aucun symptôme à l'exécution."""
     # ⚠️ Le motif vise une TERMINAISON, pas une sous-chaîne : « connect » est contenu
-    # dans « connector », et `oto_connector` / `oto_connector_access` /
-    # `oto_connector_activation` sont de la GOUVERNANCE transverse — leur place est
-    # bien sous le préfixe commun. Ma première version les accusait tous les trois.
+    # dans « connector », et `oto_connector` / `oto_connector_activation` sont de la
+    # GOUVERNANCE transverse — leur place est bien sous le préfixe commun. Ma première
+    # version les accusait tous.
     fautifs = [
         c.mcp for c in CAPABILITIES
         if c.mcp and c.mcp.startswith("oto_")

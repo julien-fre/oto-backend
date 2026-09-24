@@ -1,7 +1,7 @@
 """Capacité admin : lire la fenêtre de double lecture L7 (blueprint ADR 0053).
 
 La fenêtre décide d'un lot IRRÉVERSIBLE — retourner l'autorité vers la chaîne de
-grants, puis retirer `walk_cascade` et `connector_acl`. Sa porte est une phrase
+grants, puis retirer `walk_cascade`. Sa porte est une phrase
 courte : *zéro divergence de classe « inconnu » pendant N jours, avec un
 dénominateur non nul*. Cette capacité rend cette phrase lisible **sans `psql` sur
 la base partagée** — c'est sa seule raison d'être.
@@ -184,12 +184,11 @@ CAPABILITIES += [
             "decides; every pair of verdicts is compared and filed under a closed set "
             "of classes. op=read (`days`, default 7; optional `connector`, `classe`) → "
             "one row per day x connector x org x class, with the first sample of the "
-            "day (sub is hashed, never in clear), plus a `verdict` block. Four "
+            "day (sub is hashed, never in clear), plus a `verdict` block. These "
             "divergence classes are EXPECTED and named by the ADR — "
             "`elargissement_equipe` (the chain reads every team of the caller, the "
             "cascade only the ACTIVE one; counted per org because it changes served "
-            "behaviour), `restriction_acl` (D1 dissolves connector_acl), "
-            "`free_tier_hors_modele` (an open platform key has no grantee in 0053 — "
+            "behaviour), `free_tier_hors_modele` (an open platform key has no grantee in 0053 — "
             "the everyone-edge exists now (grants_chain.EVERYONE, the platform scope), so this counts what is LEFT to migrate and reaches zero once the seeding command has run), "
             "`partage_hors_modele` (its sibling: a platform key CLOSED on an allowlist "
             "that no edge accounts for — the NOMINAL edges are missing, L5 only seeded "

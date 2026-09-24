@@ -171,21 +171,18 @@ Ajoute `active_group`, `active_group_name`, `group_role` (effectif) ;
 Migré de la carte : le détail des paliers, du fail-open par palier et des
 capacités n'a pas sa place dans un index.
 
-**gouvernance de connecteur (ADR 0012 B1/B2, restrict-only — 08/07/2026)** — le chef
-  d'équipe peut, pour SON équipe : **couper** un connecteur (lignes scope 'group' de
-  `connector_availability`, coupures seules) et **réserver** un connecteur à des membres
-  (lignes scope 'group' de `connector_acl`).
+**gouvernance de connecteur (ADR 0012 B1, restrict-only — 08/07/2026)** — le chef
+  d'équipe peut, pour SON équipe, **couper** un connecteur (lignes scope 'group' de
+  `connector_availability`, coupures seules).
   **INVARIANT MONOTONE** : l'équipe ne peut que RÉTRÉCIR ce que l'org expose, jamais élargir
   (platform ⊇ org ⊇ group). Dispo = **visibilité** (`session_visibility`, fail-open,
   `connector_activation.effective_for_group`/`group_cut_connectors`) **et appel**
   (`connectors/activation_gate.py`, refus `connector_disabled`, direct comme par `oto_call`,
-  #1064). Accès = **gate DUR** :
-  seam `access.group_rbac_denied_connectors` (mirror de `rbac_denied_connectors`, bypass
-  super/org_admin/group_admin) ; `require_connector_access` = `org_block OR grp_block` à
-  **fail-open INDÉPENDANT par palier** (un hoquet DB d'équipe ne désactive pas l'org).
-  Capacités `connectors.activation.{group_list,set_group,clear_group}` +
-  `connectors.acl.{group_list,group_grant,group_revoke}` (GROUP_*). REST
-  `/api/groups/{id}/connectors[/{name}]/activation` + `.../access`.
+  #1064).
+  Capacités `connectors.activation.{group_list,set_group,clear_group}` (GROUP_*). REST
+  `/api/groups/{id}/connectors[/{name}]/activation`.
+  **Réserver un connecteur à des membres (ex-ADR 0012 B2) n'existe plus depuis le
+  24/09/2026** (ADR 0053 D1) : on pose la clé au niveau de l'équipe, ou en clé perso.
 
 ## Ce que la carte en disait (migré le 2026-08-27)
 

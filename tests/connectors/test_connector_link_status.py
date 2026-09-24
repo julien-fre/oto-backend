@@ -103,7 +103,7 @@ def test_la_sante_legacy_est_relayee(monkeypatch):
 def test_la_sante_absente_ne_pose_rien(monkeypatch):
     """Tant que rien n'a été constaté (`health_ko=None`), l'entrée ne porte ni
     `health_ko` ni `health_reason` — un champ toujours présent deviendrait du bruit
-    (même règle que `rbac_restricted_measured`, cf. `provider_status.py`)."""
+    (cf. `provider_status.py`)."""
     from oto_mcp import access
 
     monkeypatch.setattr(connector_link, "state",

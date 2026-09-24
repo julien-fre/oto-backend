@@ -77,8 +77,7 @@ def test_les_deux_cas_de_prod_sont_NOMMES_et_plus_inconnus(sans_arete, monkeypat
     assert pick is None, "aucune arête ⟹ la chaîne se tait"
     assert hors_modele == chain_shadow.PARTAGE_HORS_MODELE
 
-    classe = chain_shadow.classify(_legacy("acme"), None, acl_refus=False,
-                                   hors_modele=hors_modele)
+    classe = chain_shadow.classify(_legacy("acme"), None, hors_modele=hors_modele)
     assert classe == chain_shadow.PARTAGE_HORS_MODELE
     assert classe != chain_shadow.INCONNU, (
         "une divergence explicable ne doit jamais fermer la porte du retrait")
@@ -104,8 +103,7 @@ def test_une_cle_FERMEE_avec_son_arete_ne_diverge_plus(sans_arete, monkeypatch):
     pick, hors_modele = chain_resolution._platform_pick("d57fbbb3", "aiark", 196)
     assert pick is not None and pick.entity_id == "acme"
     assert hors_modele is None
-    assert chain_shadow.classify(_legacy("acme"), pick, acl_refus=False,
-                                 hors_modele=hors_modele) == chain_shadow.ACCORD
+    assert chain_shadow.classify(_legacy("acme"), pick, hors_modele=hors_modele) == chain_shadow.ACCORD
 
 
 def test_inconnu_reste_ATTEIGNABLE(sans_arete):
@@ -113,7 +111,6 @@ def test_inconnu_reste_ATTEIGNABLE(sans_arete):
     pas rendre `inconnu` inatteignable, sinon le garde-fou ne garde plus rien."""
     autre = chain_resolution.ChainPick("user", credentials_store.MEMBER, "196:u")
     assert chain_shadow.classify(cascade.CascadeRung("org", "org", "196", "K"), autre,
-                                 acl_refus=False,
                                  hors_modele=None) == chain_shadow.INCONNU
 
 

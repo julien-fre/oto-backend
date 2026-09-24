@@ -331,26 +331,3 @@ def test_le_resolveur_recoit_le_nom_du_CANAL_pas_celui_du_porteur(monkeypatch):
         "l'autorisation ne serait plus réglable canal par canal")
     assert vu["check_usage"] is False, (
         "configurer une connexion ne consomme pas un appel fournisseur")
-
-
-def test_un_canal_refuse_par_ACL_rend_403_et_ne_va_PAS_chez_le_fournisseur(monkeypatch):
-    """Le refus existe dans le code, aucun banc ne le couvrait — ni avant ni après.
-    Un refus que rien n'éprouve n'est pas un refus, c'est une intention."""
-    from mcp.types import ErrorData, INVALID_REQUEST
-    from oto_mcp.access.rbac import ConnectorAccessDenied
-
-    _wire(monkeypatch)
-    _FakeClient.last_kwargs = None
-
-    def _refuse(*a, **k):
-        raise ConnectorAccessDenied(ErrorData(
-            code=INVALID_REQUEST, message="`linkedin_unipile` est réservé."))
-
-    monkeypatch.setattr(access, "resolve_credential", _refuse)
-    with pytest.raises(ConnectRefused) as e:
-        _run(hosted_auth_url("u1", "linkedin"))
-    assert e.value.status == 403
-    assert e.value.code == "connector_restricted"
-    assert _FakeClient.last_kwargs is None, (
-        "un canal refusé ne doit RIEN demander au fournisseur : sinon le refus "
-        "arrive après avoir déjà agi")

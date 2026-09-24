@@ -41,14 +41,12 @@ _DERIVE_ORG = object()
 
 # Les COUCHES du masquage, nommées. Deux familles : celles qui ne touchent qu'à
 # l'AFFICHAGE (l'outil reste appelable par `oto_call`, ADR 0036) et celles derrière
-# lesquelles une garde d'appel existe aussi (activation, RBAC, bêta, plancher de
-# rôle) — un outil masqué par l'une d'elles n'est pas appelable. Le catalogue
+# lesquelles une garde d'appel existe aussi (activation, bêta, plancher de rôle) —
+# un outil masqué par l'une d'elles n'est pas appelable. Le catalogue
 # (`oto_list_my_tools`) en dérive l'état de chaque outil : « installé »,
 # « installable » ou « non exposé » — sans recopier une seule des règles ci-dessous.
 COUCHE_TOGGLE = "toggle"              # désactivé par la personne, par un admin, ou masqué par défaut
 COUCHE_ACTIVATION = "activation"      # connecteur non exposé à l'org (ou coupé par l'équipe)
-COUCHE_RBAC = "rbac"                  # connecteur réservé dans l'org (ADR 0025)
-COUCHE_RBAC_EQUIPE = "rbac_group"     # connecteur réservé dans l'équipe (ADR 0012 B2)
 COUCHE_SELECTION = "selection"        # connecteur non installé / en pause dans la boîte
 COUCHE_BETA = "beta"                  # surface bêta sans l'option
 COUCHE_HORS_DE_PORTEE = "hors_de_portee"   # plancher de rôle plateforme non atteint
@@ -121,7 +119,7 @@ def _resolve_toggle_context(sub: str, org):
     except Exception as e:
         # Sur erreur DB : repli neutre (rien de désactivé). La sécurité d'accès ne
         # dépend PAS de cette visibilité — elle est gardée au call-time (credential
-        # + require_connector_access ADR 0025 + activation + remote credential).
+        # + activation + remote credential).
         logger.warning("Cannot read tool visibility for %s: %s", sub, e)
         disabled, enabled_override, role_plateforme = set(), set(), "member"
         active_org, prof_org = None, 0
@@ -142,9 +140,8 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
     # Denylist ADMIN (org + équipe active) : gouvernance de visibilité au grain
     # TOOL, PAS une barrière de sécurité (ADR 0031) — l'override perso positif lu
     # ci-dessus (`enabled_override`) la lève toujours, `effective_disabled` en
-    # décide via `is_tool_visible`. Fail-OPEN INDÉPENDANT par palier (miroir de
-    # `require_connector_access`) : un hoquet sur l'équipe ne doit pas priver
-    # l'org de son denylist, et inversement.
+    # décide via `is_tool_visible`. Fail-OPEN INDÉPENDANT par palier : un hoquet
+    # sur l'équipe ne doit pas priver l'org de son denylist, et inversement.
     admin_hidden: set[str] = set()
     try:
         admin_hidden |= access.org_admin_hidden_tools(active_org)
@@ -181,35 +178,6 @@ def _compute_couches(sub: str, active_org, prof_org, role_plateforme: str,
     # (La règle dédiée « bridges remote per-namespace » a été retirée — ADR 0034 B4 :
     # le connecteur `bridge` universel suit le régime commun ci-dessus ; sans
     # credential, l'exécution lève proprement.)
-    # RBAC connecteur interne à l'org (ADR 0025) : un connecteur RESTREINT dans
-    # l'org active est masqué pour un membre non autorisé (département/user). Le
-    # backstop DUR est au call-time (`resolve_credential` → `require_connector_access`) ;
-    # ici = ergonomie (best-effort, fail-OPEN sur glitch — le call-time garantit).
-    # Seam unique `rbac_denied_connectors` (escalade super_admin + org_admin incluse).
-    try:
-        deny = access.rbac_denied_connectors(sub, active_org)
-        if deny:
-            couches[COUCHE_RBAC] = {
-                n for n in all_names
-                if (c := providers.connector_for_namespace(namespace_of(n))) is not None
-                and c.name in deny
-            }
-    except Exception as e:
-        logger.warning("org connector RBAC visibility skipped for %s (fail-open): %s", sub, e)
-    # RBAC connecteur au grain ÉQUIPE (ADR 0012 B2) : l'équipe ACTIVE peut réserver un
-    # connecteur à un sous-ensemble de ses membres — masqué pour les autres (narrowing
-    # de l'org). Backstop DUR au call-time (`require_connector_access`) ; ici ergonomie
-    # (best-effort, fail-OPEN).
-    try:
-        g_deny = access.group_rbac_denied_connectors(sub, access.current_group(sub))
-        if g_deny:
-            couches[COUCHE_RBAC_EQUIPE] = {
-                n for n in all_names
-                if (c := providers.connector_for_namespace(namespace_of(n))) is not None
-                and c.name in g_deny
-            }
-    except Exception as e:
-        logger.warning("group connector RBAC visibility skipped for %s (fail-open): %s", sub, e)
     # Sélection marketplace (ADR 0019/0050) : régime NOMINAL « non-sélectionné =
     # masqué ». Un connecteur en PAUSE ou non-installé masque ses tools. Le seed
     # de la 1re session d'un (sub, org) installe le socle `default_active` ∩ exposé
