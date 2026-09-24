@@ -16,7 +16,7 @@ requête ou par id). Deux tools restent SEULS :
   consomment) — même cas que `zoho_modules`, fusionner de la découverte pure
   n'homogénéise rien ;
 - `gmail_compose` : ses ~12 paramètres de rédaction (body/to/subject/reply_to/cc/
-  bcc/html/from_name/markdown/attachments/mode) ne recouvrent AUCUN paramètre des
+  bcc/html/from_name/markdown/attachments/mode/sign) ne recouvrent AUCUN paramètre des
   ops ci-dessus — c'est une variante disjointe, qui pèserait dans le schéma
   exactement ce qu'elle pèse aujourd'hui séparée (critère = homogénéité des
   paramètres, pas le comptage).
@@ -128,6 +128,26 @@ def _resolve_attachments(attachments):
     except Exception:
         cleanup()
         raise
+
+
+def _signed_html(body: str, html: Optional[str], markdown: bool, signature: str) -> str:
+    """Le corps HTML du message, signature du compte apposée après `--`.
+
+    L'API Gmail n'appose JAMAIS la signature : c'est le client web qui l'ajoute à la
+    composition (oto#178, retours 794/795). La signature est du HTML, donc le corps
+    doit l'être aussi : `html` tel quel, sinon le markdown rendu — le même rendu que
+    GmailClient ferait lui-même —, sinon le texte brut échappé, sauts de ligne gardés
+    (`markdown=False` veut dire « pas de markdown », pas « pas de HTML »)."""
+    if html is not None:
+        corps = html
+    elif markdown:
+        from oto.tools.google.gmail.lib.gmail_client import _markdown_to_html_fragment
+        corps = _markdown_to_html_fragment(body)
+    else:
+        import html as html_mod
+        corps = ('<div dir="ltr">' + html_mod.escape(body).replace("\n", "<br>")
+                 + "</div>")
+    return f"{corps}<br>--<br>{signature}"
 
 
 def register(mcp: FastMCP) -> None:
@@ -306,6 +326,7 @@ def register(mcp: FastMCP) -> None:
         markdown: bool = True,
         account: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
+        sign: bool = True,
     ) -> dict:
         """Compose an email — **saved as a DRAFT by default**, or sent explicitly.
 
@@ -325,6 +346,12 @@ def register(mcp: FastMCP) -> None:
         the message ids. Always read `kind` before reporting what you did: it is the
         only field that states the act.
 
+        The sending account's Gmail signature is appended by default, after `--`,
+        like the Gmail web client does (the API never adds it on its own) — so do
+        NOT write a sign-off block of your own in `body`. `signature` in the answer
+        says what happened: "appended", "none_configured" (the account has no
+        signature — nothing was added), or "disabled" (`sign=False`).
+
         Args:
             body: message body (rendered from markdown to HTML by default).
             mode: "draft" (default) saves for human review; "send" delivers it now.
@@ -337,6 +364,8 @@ def register(mcp: FastMCP) -> None:
             from_name: optional display name for the From header.
             markdown: render `body` from markdown when `html` is absent (default True).
             account: email of the Google account to use (default if omitted).
+            sign: append the account's Gmail signature (default True); False sends
+                the body alone.
             attachments: files to attach, as `source` refs oto resolves server-side
                 (the agent has no local disk). Each item — `kind` selects the origin:
                 - Drive: `{"kind":"drive","file_id":"<id>"}` (id from drive_list/metadata)
@@ -349,6 +378,21 @@ def register(mcp: FastMCP) -> None:
         if mode not in ("send", "draft"):
             raise _bad("mode doit être 'send' ou 'draft'.")
         client = await _client_for_user_async(account)
+        signature_etat = "disabled"
+        if sign:
+            try:
+                signature = await asyncio.to_thread(client.get_signature)
+            except Exception as e:
+                # Pas d'envoi SANS la signature attendue en silence : refus nommé,
+                # avec le geste qui aboutit si l'appelant accepte de s'en passer.
+                raise _bad(f"Lecture de la signature Gmail impossible ({e}) — rien "
+                           "n'a été envoyé. Réessaie, ou passe `sign=False` pour "
+                           "composer sans signature.")
+            if signature:
+                html = _signed_html(body, html, markdown, signature)
+                signature_etat = "appended"
+            else:
+                signature_etat = "none_configured"
         try:
             # oto-backend#867 lot 2 — chaque pièce jointe (drive/gmail/url) est
             # résolue par un appel HTTP synchrone (file_source.resolve), en série :
@@ -374,6 +418,7 @@ def register(mcp: FastMCP) -> None:
             Payé le 14/08 : trois mails partis chez une cliente."""
             out = dict(res) if isinstance(res, dict) else {"result": res}
             out["kind"] = "draft" if mode == "draft" else "sent"
+            out["signature"] = signature_etat
             return out
 
         try:

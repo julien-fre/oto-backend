@@ -8,6 +8,7 @@ va sur le **dashboard oto**, section Google, et clique **connect** : tu autorise
 agis sur ton Google Workspace : mails, calendrier, tâches, feuilles de calcul, fichiers Drive et messages Chat.
 - « cherche les mails non lus de cette semaine et archive les newsletters »
 - « rédige un brouillon de réponse à ce mail » ou « envoie-le »
+- `gmail_compose` appose la **signature Gmail** du compte émetteur (après `--`), comme le client web — l'API Gmail ne le fait jamais seule. `sign=False` compose sans ; la réponse dit `signature` : `appended`, `none_configured` (le compte n'en a pas) ou `disabled`
 - « qu'est-ce que j'ai à l'agenda demain ? crée un créneau de relance vendredi 10h »
 - « ajoute une tâche `relancer X` pour lundi », « lis l'onglet `leads` de cette sheet »
 - « partage ce dossier Drive en lecture à jane@… »
