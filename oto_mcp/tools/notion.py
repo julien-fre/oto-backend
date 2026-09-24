@@ -10,9 +10,11 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
+from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
 from ..connectors import verify as connector_verify
+from ..mcp_errors import McpError
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
@@ -43,7 +45,8 @@ def _verify(fields: dict, config: dict | None = None) -> None:
             f"réponse inattendue : {str(infos)[:200]}")
 
 
-def _zero_warning(query: str, filter_type: Optional[str]) -> str:
+def _zero_warning(query: str, filter_type: Optional[str],
+                  edited_on: Optional[str] = None) -> str:
     """L'avertissement qu'un `notion_search` VIDE porte (otomata-tech/oto#184).
 
     Un jeton valide auquel rien n'est partagé répond EXACTEMENT comme un espace qui
@@ -57,6 +60,13 @@ def _zero_warning(query: str, filter_type: Optional[str]) -> str:
     contre l'API Notion, et un diagnostic faux enverrait réparer un partage sain."""
     geste = ("partager la page ou la base voulue avec l'intégration, côté "
              "workspace Notion (menu `...` → Connexions)")
+    if edited_on:
+        return (
+            f"Zéro objet édité le {edited_on} (jour UTC). Sur Notion, ce zéro ne "
+            "distingue PAS « rien n'a bougé ce jour-là » de « rien n'est partagé avec "
+            "l'intégration ». Pour trancher : relance `notion_search` avec `query=\"\"`, "
+            "sans `filter_type` ni `edited_on` — si elle rend aussi zéro, l'intégration "
+            f"ne voit vraisemblablement rien : {geste}.")
     if query or filter_type:
         return (
             "Zéro résultat. Sur Notion, un zéro ne distingue PAS « rien ne "
@@ -86,6 +96,7 @@ def register(mcp: FastMCP) -> None:
         query: str,
         filter_type: Optional[str] = None,
         sort: str = "relevance",
+        edited_on: Optional[str] = None,
     ) -> dict:
         """Search the workspace (pages + databases shared with the integration).
 
@@ -93,14 +104,30 @@ def register(mcp: FastMCP) -> None:
         `results` may mean "nothing shared", not "nothing matches". An empty
         answer carries a `warning` saying how to tell the two apart.
 
+        `edited_on` answers "what changed that day": EVERY object whose
+        `last_edited_time` falls on that UTC calendar day, most recent first,
+        in one answer (walked server-side until the day is passed — cost tracks
+        what changed, not workspace size). `sort` does not apply then.
+
         Args:
             query: text to match; "" lists everything the integration can see.
             filter_type: "page" or "database" to restrict object type.
             sort: "relevance" (default) or "last_edited_time".
+            edited_on: "YYYY-MM-DD" (UTC day) — only objects last edited that day.
         """
-        result = _client().search(query, filter_type=filter_type, sort=sort)
+        client = _client()
+        if edited_on:
+            try:
+                objets = client.search_edited_on(
+                    edited_on, filter_type=filter_type, query=query)
+            except ValueError as e:  # date mal formée — le seul ValueError de la méthode
+                raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e))) from e
+            result = {"results": objets, "edited_on": edited_on}
+        else:
+            result = client.search(query, filter_type=filter_type, sort=sort)
         if not result.get("results"):
-            result = {**result, "warning": _zero_warning(query, filter_type)}
+            result = {**result,
+                      "warning": _zero_warning(query, filter_type, edited_on)}
         return result
 
     @mcp.tool()

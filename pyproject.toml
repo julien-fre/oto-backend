@@ -201,7 +201,7 @@ dependencies = [
     # en silence par Slack à 40 000 (#711/#613) ; notion : `search_edited_on` — /search
     # ne FILTRE pas sur last_edited_time (axe de TRI seulement), on pagine trié
     # décroissant et on s'arrête à la première page plus vieille, donc « rien n'a changé »
-    # redevient calculé et non inféré (#468/#469 — câblage MCP côté ici encore à faire) ;
+    # redevient calculé et non inféré (#468/#469 — servi par `notion_search(edited_on=…)`, oto#259) ;
     # secrets : un `secret_provider` CONFIGURÉ dont le magasin est absent avertit une fois
     # par process au lieu de résoudre tous les secrets à leur défaut (constaté en prod le
     # 28/08), et un nom de fournisseur inconnu LÈVE au lieu de retomber sur `file` ;
