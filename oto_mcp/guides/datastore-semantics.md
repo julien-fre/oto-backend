@@ -402,6 +402,13 @@ l'autre, à l'identique.
   elle **fusionne** les valeurs des champs sous une même clé, elle ne croise pas ;
   REST prend une colonne.
 - **`key=` du lot** : MCP seulement ; REST joue toujours la clé déclarée.
+- **Refus de schéma : la charge à renvoyer.** Un refus de validation (requis manquant,
+  type ou format, sous-champ inconnu, couche exigée) porte le fragment de `row` à
+  renvoyer : seuls les champs à corriger, un gabarit `<…>` à la place de chaque valeur
+  (`"<texte>"`, `"<nombre>"`, `"<a | b>"`), `| @empty` là où ce geste est permis, et dans
+  une liste l'élément fautif SEUL, désigné par son `of.key` (sinon son rang, dans
+  `a_renvoyer_elements`). MCP : en fin de message. REST : `details.a_renvoyer`. Remplace
+  les gabarits et réécris ; une liste se renvoie entière, cet élément corrigé à sa place.
 - **Refus.** MCP : erreur `INVALID_PARAMS` qui porte le message. REST : 400 nommé
   (`row_invalid`, `business_key_required`, `invalid_row_input`, `jeton_mal_place`,
   `invalid_filters`…), 403 `datastore_read_only` (tableau partagé en lecture seule),

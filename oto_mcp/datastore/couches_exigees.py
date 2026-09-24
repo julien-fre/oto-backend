@@ -27,7 +27,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .couches import _is_empty, LAYER_KEYS, ORIGIN_LAYER, split_layer, SYSTEM_ORIGIN, unwrap
-from .declaration import _fields, _walk_fields
+from . import charge_a_renvoyer as car
+from .declaration import _fields, _walk_fields, cle_d_element
+from .phrases_de_refus import gabarit
 
 # ── les couches EXIGÉES (oto#75, barreau 1) ──────────────────────────────────
 #
@@ -50,6 +52,12 @@ _A_QUOI_SERT_LA_COUCHE = {
     "link": "l'URL de la source",
     ORIGIN_LAYER: "ce qui tenait lieu de valeur avant",
 }
+
+
+def gabarit_de_couche(couche: str) -> str:
+    """Ce que la charge à renvoyer met à la place d'une couche (oto#135) : ce qu'elle
+    porte, entre chevrons — la même clause que le refus."""
+    return f"<{_A_QUOI_SERT_LA_COUCHE.get(couche, 'texte')}>"
 
 
 def required_layers_of(field: Any) -> tuple[str, ...]:
@@ -108,7 +116,9 @@ def _refus_de_couche(fpath: str, cle: str, manquantes: tuple,
 
 def _couches_exigees_errors(fields: list, data: dict, path: str,
                             written: Optional[set] = None, *,
-                            top: bool = True) -> list[str]:
+                            top: bool = True,
+                            charge: Optional[dict] = None,
+                            chemin: tuple = car.RACINE) -> list[str]:
     """Les refus de couche manquante d'un (sous-)record.
 
     `written` (premier niveau SEULEMENT) = les clés que le geste NOMME. La garde s'y
@@ -126,7 +136,10 @@ def _couches_exigees_errors(fields: list, data: dict, path: str,
     au grain de la colonne (`_merge_column` n'est pas récursif) : réémettre une liste,
     c'est réémettre chacun de ses éléments, donc chaque sous-champ est posé par le
     geste. Il n'y a rien à restreindre plus bas — et restreindre par `written`, qui ne
-    contient que des noms de tête, y refuserait TOUT."""
+    contient que des noms de tête, y refuserait TOUT.
+
+    `charge`/`chemin` = la charge à renvoyer (oto#135) : la colonne fautive y reçoit sa
+    valeur et les couches manquantes, en gabarits (`charge_a_renvoyer`)."""
     errors: list[str] = []
     for f in fields:
         if not isinstance(f, dict):
@@ -163,11 +176,17 @@ def _couches_exigees_errors(fields: list, data: dict, path: str,
             manquantes = tuple(c for c in exigees if _is_empty(posees.get(c)))
             if manquantes:
                 errors.append(_refus_de_couche(fpath, key, manquantes, exigees))
-        errors.extend(_couches_exigees_sous(f, unwrap(brut), fpath))
+                car.noter(charge, car.champ(chemin, key),
+                          {"valeur": gabarit(f),
+                           **{c: gabarit_de_couche(c) for c in manquantes}})
+        errors.extend(_couches_exigees_sous(f, unwrap(brut), fpath,
+                                            charge=charge, chemin=car.champ(chemin, key)))
     return errors
 
 
-def _couches_exigees_sous(field: dict, valeur: Any, path: str) -> list[str]:
+def _couches_exigees_sous(field: dict, valeur: Any, path: str, *,
+                          charge: Optional[dict] = None,
+                          chemin: tuple = car.RACINE) -> list[str]:
     """La portée DESCEND dans les composites — l'issue l'exige sur les sous-champs
     d'une liste, et c'est là que la perte est la plus lourde : une liste réémise
     remplace l'ancienne EN BLOC, couches comprises.
@@ -179,7 +198,8 @@ def _couches_exigees_sous(field: dict, valeur: Any, path: str) -> list[str]:
     ftype = field.get("type")
     if ftype == "object" and isinstance(valeur, dict):
         sub = [x for x in (field.get("fields") or []) if isinstance(x, dict)]
-        return _couches_exigees_errors(sub, valeur, path, None, top=False)
+        return _couches_exigees_errors(sub, valeur, path, None, top=False,
+                                       charge=charge, chemin=chemin)
     if ftype == "list" and isinstance(valeur, list):
         of = field.get("of")
         sub = ([x for x in (of.get("fields") or []) if isinstance(x, dict)]
@@ -188,15 +208,20 @@ def _couches_exigees_sous(field: dict, valeur: Any, path: str) -> list[str]:
             return []
         errors: list[str] = []
         vus: set = set()
+        cle_id = cle_d_element(field)
         for i, item in enumerate(valeur):
             if not isinstance(item, dict):
                 continue
+            ident = unwrap(item.get(cle_id)) if cle_id else None
+            ichemin = car.element(chemin, i, (cle_id, ident)
+                                  if isinstance(ident, (str, int)) and ident != "" else None)
             for sf in sub:
                 cle = sf.get("key")
                 if not isinstance(cle, str) or cle in vus:
                     continue
                 msgs = _couches_exigees_errors([sf], item, f"{path}[{i}]",
-                                               None, top=False)
+                                               None, top=False,
+                                               charge=charge, chemin=ichemin)
                 if msgs:
                     vus.add(cle)
                     errors.extend(msgs)
@@ -205,7 +230,8 @@ def _couches_exigees_sous(field: dict, valeur: Any, path: str) -> list[str]:
 
 
 def couches_manquantes(schema: Optional[dict], merged: dict, *,
-                       written: Optional[set] = None) -> list[str]:
+                       written: Optional[set] = None,
+                       charge: Optional[dict] = None) -> list[str]:
     """Les colonnes qui portent une valeur sans la couche que leur schéma exige.
 
     ⚠️ **Armée par sa PROPRE déclaration**, comme le cycle de vie et pour la même
@@ -219,4 +245,4 @@ def couches_manquantes(schema: Optional[dict], merged: dict, *,
     fields = _fields(schema)
     if not any(required_layers_of(f) for f in _walk_fields(fields)):
         return []
-    return _couches_exigees_errors(fields, merged, "", written)
+    return _couches_exigees_errors(fields, merged, "", written, charge=charge)

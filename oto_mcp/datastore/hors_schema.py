@@ -29,6 +29,7 @@ from typing import Optional
 
 from .couches import LAYER_KEYS, split_layer
 from .declaration import _fields
+from .phrases_de_refus import cle_la_plus_proche
 
 def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     """Clés de la row ÉCRITE qu'aucun field du schéma ne déclare (chemins pointés
@@ -107,9 +108,13 @@ def _unknown_subkey_refusal(path: str, fields: list) -> str:
     déclarés, dans leur ordre), et pourquoi ce n'est pas la même chose qu'au premier
     niveau — là, une clé inconnue crée une colonne libre que l'interface affiche ;
     ici, elle n'a nulle part où exister."""
-    dispo = ", ".join(f"`{f['key']}`" for f in fields
-                      if isinstance(f, dict) and isinstance(f.get("key"), str)
-                      and f["key"])
+    noms = [f["key"] for f in fields
+            if isinstance(f, dict) and isinstance(f.get("key"), str) and f["key"]]
+    dispo = ", ".join(f"`{n}`" for n in noms)
+    # oto#135 : la clé déclarée la plus proche, quand il y en a une — `emial` a une
+    # destination, et le refus la dit au lieu de faire relire la liste.
+    proche = cle_la_plus_proche(path.rpartition(".")[2], noms)
+    dispo += f" (le plus proche : `{proche}`)" if proche else ""
     return (f"{path}: attribut non déclaré — le tableau est en format `strict` et ce "
             f"sous-record ferme ses attributs : {dispo}. Rien n'a été écrit. "
             "Contrairement à une colonne de premier niveau, un attribut inconnu ne "

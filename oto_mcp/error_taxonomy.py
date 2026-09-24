@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+from difflib import get_close_matches
 from typing import Iterator, Optional
 
 from fastmcp.exceptions import NotFoundError
@@ -114,8 +115,30 @@ _TYPES_DE_SIGNATURE = frozenset({"unexpected_keyword_argument", "missing_argumen
 _TITRE_D_OUTIL = re.compile(r"^(?:call\[)?([A-Za-z_]\w*)\]?$")
 
 
-def _arg_error_message(exc) -> str:
+def outil_de_signature(exc) -> Optional[str]:
+    """Le nom de l'outil dont la SIGNATURE a refusé les arguments, ou `None`.
+
+    FastMCP 3 titre l'erreur `call[data_write]` : le nom se LIT dans le titre. Le titre
+    d'une erreur de MODÈLE nomme une classe, jamais servi comme nom d'outil."""
+    err = next((e for e in _chain(exc) if isinstance(e, ValidationError)), None)
+    if err is None:
+        return None
+    try:
+        signature = any((d.get("type") or "") in _TYPES_DE_SIGNATURE for d in err.errors())
+    # noqa: SILENT — forme pydantic inattendue : pas de nom d'outil, le message reste
+    except Exception:  # noqa: BLE001
+        return None
+    m = _TITRE_D_OUTIL.match(err.title or "") if signature else None
+    return m.group(1) if m else None
+
+
+def _arg_error_message(exc, parametres: Optional[list] = None) -> str:
     """« Arguments invalides » qui NOMME la clé fautive — parité avec la face REST.
+
+    `parametres` = les paramètres de l'outil, quand la surface les connaît
+    (`ErrorEnvelopeMiddleware`) : une clé inconnue qui ressemble à l'un d'eux rend le
+    geste à rejouer (« Rejoue `data_write(…)` avec `rows=` à la place de
+    `rows_data` », oto#135) au lieu de faire relire le schéma entier.
 
     La face REST refuse un champ inconnu en nommant l'excédent ET les attendus
     (`_rest_adapter`, 400 `unknown_fields`) ; la face MCP disait « vérifie les paramètres
@@ -130,12 +153,10 @@ def _arg_error_message(exc) -> str:
         return "Arguments invalides — vérifie les paramètres de l'outil."
     inconnus, manquants, autres = [], [], []
     valeurs: dict = {}
-    signature = False
     try:
         for d in err.errors():
             cle = ".".join(str(p) for p in (d.get("loc") or ())) or "?"
             kind = d.get("type") or ""
-            signature = signature or kind in _TYPES_DE_SIGNATURE
             # FastMCP 3 type une clé inconnue `unexpected_keyword_argument` (oto#135).
             if kind in ("extra_forbidden", "unexpected_keyword_argument"):
                 inconnus.append(cle)
@@ -147,14 +168,21 @@ def _arg_error_message(exc) -> str:
     # noqa: SILENT — message d'aide dégradé, la taxonomie rend son défaut
     except Exception:      # forme pydantic inattendue : on ne casse pas le message
         return "Arguments invalides — vérifie les paramètres de l'outil."
-    # Le titre d'un MODÈLE nomme une classe : jamais servi comme nom d'outil.
-    m = _TITRE_D_OUTIL.match(err.title or "") if signature else None
-    outil = m.group(1) if m else None
+    outil = outil_de_signature(err)
     from . import deprecations  # tardif : la taxonomie est importée partout
     for cle in inconnus:
         refus = deprecations.refus_parametre_renomme(cle, valeurs.get(cle), outil)
         if refus:  # le nom neuf n'est alors pas « requis absent » : il est mal nommé
             return "Arguments invalides — " + refus
+    # oto#135 : une clé inconnue qui ressemble à un paramètre de l'outil a une
+    # destination — le refus la dit, et le paramètre ainsi nommé n'est plus un
+    # « requis absent » : il est mal écrit.
+    proches = {}
+    for cle in inconnus:
+        trouve = get_close_matches(cle, list(parametres or ()), n=1, cutoff=0.6)
+        if trouve:
+            proches[cle] = trouve[0]
+    manquants = [c for c in manquants if c not in proches.values()]
     bouts = []
     if inconnus:
         bouts.append(f"champ(s) non reconnu(s) : {', '.join(inconnus)}")
@@ -165,7 +193,14 @@ def _arg_error_message(exc) -> str:
     if not bouts:
         return "Arguments invalides — vérifie les paramètres de l'outil."
     schema = f'oto_tool_schema(name="{outil}")' if outil else "oto_tool_schema(name=…)"
-    return "Arguments invalides — " + " · ".join(bouts) + f". Le schéma exact : {schema}."
+    rejeu = ""
+    if proches:
+        appel = f"`{outil}(…)`" if outil else "le même appel"
+        rejeu = (f" Rejoue {appel} avec "
+                 + ", ".join(f"`{p}=` à la place de `{c}`" for c, p in proches.items())
+                 + ".")
+    return ("Arguments invalides — " + " · ".join(bouts) + "." + rejeu
+            + f" Le schéma exact : {schema}.")
 
 
 def _is_oauth_exchange_refused(exc) -> bool:
@@ -364,7 +399,7 @@ def _looks_like_timeout(exc) -> bool:
     return False
 
 
-def classify(exc) -> ErrorInfo:
+def classify(exc, parametres: Optional[list] = None) -> ErrorInfo:
     """Classe une exception de tool en `ErrorInfo` au contrat uniforme.
 
     Ordre : (1) `McpError` qu'on a levée (message curé conservé) ; (2) args pydantic
@@ -384,7 +419,7 @@ def classify(exc) -> ErrorInfo:
 
     # (2) Arguments rejetés (le LLM a passé de mauvais paramètres) — en NOMMANT la clé.
     if _is_arg_validation_error(exc):
-        return ErrorInfo("invalid_input", False, _arg_error_message(exc))
+        return ErrorInfo("invalid_input", False, _arg_error_message(exc, parametres))
 
     # (2b) Refus de dispatch fastmcp : l'outil est enregistré côté serveur mais pas
     # monté dans CETTE session (connecteur non installé / masqué). Rendu actionnable

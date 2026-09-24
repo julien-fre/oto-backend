@@ -6,7 +6,8 @@ exécute une procédure écrite par un autre n'a jamais lu le schéma ; le refus
 souvent le seul texte qu'il verra sur cette colonne. Mesuré : un refus qui nomme le
 geste exact est suivi dans la minute, un refus brut fait rejouer le même appel.
 
-- `_forme_attendue` — ce que la colonne ACCEPTE, en une clause ;
+- `_forme_attendue` — ce que la colonne ACCEPTE, en une clause ; `gabarit`, sa forme
+  courte, tient la place de la valeur dans la charge à renvoyer (oto#135) ;
 - `_gated_by` — quelle colonne en rend une autre requise, **dérivé de la
   déclaration**, jamais deviné par ressemblance de nom ;
 - `_cause_required_when` — POURQUOI c'est requis, en français plutôt qu'en `repr` ;
@@ -24,7 +25,8 @@ lues — sans qu'aucun banc ne rougisse.
 """
 from __future__ import annotations
 
-from typing import Any
+from difflib import get_close_matches
+from typing import Any, Optional
 
 from .declaration import max_length_of, pattern_of
 
@@ -52,6 +54,46 @@ def _forme_attendue(field: dict) -> str:
     if motif:
         bouts.append(f"de motif `{motif}`")
     return ", ".join(bouts)
+
+
+#: Le mot du gabarit, par type déclaré — la forme courte de `_forme_attendue`.
+_MOT_DU_TYPE = {None: "texte", "text": "texte", "number": "nombre", "bool": "true | false",
+                "date": "date AAAA-MM-JJ", "datetime": "date-heure ISO 8601",
+                "url": "URL http(s)", "email": "e-mail", "json": "json",
+                "enum": "valeur", "object": "objet", "list": "liste"}
+
+
+def gabarit(field: dict) -> Any:
+    """Ce que le refus met À LA PLACE de la valeur dans la charge à renvoyer (oto#135) :
+    `"<texte>"`, `"<nombre>"`, `"<a | b>"`, avec la borne et le motif quand il y en a.
+
+    Un gabarit et pas un exemple : un exemple serait recopié à la lettre — mesuré, les
+    agents reproduisent la forme montrée —, un `<…>` ne se confond avec aucune valeur.
+    Un objet rend ses sous-champs REQUIS, puisque c'est eux qu'il faut écrire. Dérivé
+    des mêmes lecteurs que `_forme_attendue` (`max_length_of`, `pattern_of`)."""
+    ftype = field.get("type")
+    if ftype == "object":
+        requis = {str(x["key"]): gabarit(x) for x in (field.get("fields") or [])
+                  if isinstance(x, dict) and x.get("key") and x.get("required")}
+        if requis:
+            return requis
+    options = [str(o) for o in (field.get("options") or [])]
+    bouts = [" | ".join(options) if options else _MOT_DU_TYPE.get(ftype, str(ftype))]
+    ml = max_length_of(field)
+    if ml:
+        bouts.append(f"≤ {ml} caractères")
+    motif = pattern_of(field)
+    if motif:
+        bouts.append(f"motif {motif}")
+    return "<" + ", ".join(bouts) + ">"
+
+
+def cle_la_plus_proche(cle: str, candidates: list) -> Optional[str]:
+    """Le nom déclaré qui ressemble le plus à `cle`, ou `None` : une faute de frappe
+    (`emial`) a une destination, un nom sans parent n'en a pas — et un pointeur inventé
+    enverrait écrire là où rien n'attend la valeur."""
+    trouve = get_close_matches(cle, [str(c) for c in candidates], n=1, cutoff=0.6)
+    return trouve[0] if trouve else None
 
 
 def _gated_by(fields: list) -> dict:

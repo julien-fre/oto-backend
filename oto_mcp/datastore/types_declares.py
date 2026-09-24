@@ -41,7 +41,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .couches import unwrap
+from . import charge_a_renvoyer as car
 from .declaration import _fields
+from .phrases_de_refus import gabarit
 
 #: Les types dont la déclaration ARME le contrôle. Chacun a été mesuré sur le parc
 #: avant d'entrer ici — on ne branche pas une règle sans savoir ce qu'elle refusera.
@@ -71,7 +73,8 @@ def _juge(valeur: Any, ftype: str) -> bool:
 
 def types_trahis(schema: Optional[dict], merged: dict, *,
                  written: Optional[set] = None,
-                 gelees: Optional[list] = None) -> list[str]:
+                 gelees: Optional[list] = None,
+                 charge: Optional[dict] = None) -> list[str]:
     """Les colonnes dont la valeur ne tient pas le type que leur schéma déclare.
 
     Rend des phrases prêtes à servir : la faute, puis le geste. La valeur est DÉBALLÉE
@@ -86,6 +89,9 @@ def types_trahis(schema: Optional[dict], merged: dict, *,
     défaut qu'elle n'a pas causé, avec un message qui prétend à tort qu'elle
     l'a envoyée. `written=None` (insert/remplacement, toute la row est écrite)
     garde l'ancien comportement : tout est jugé.
+
+    `charge` = la charge à renvoyer (oto#135) : la colonne refusée y reçoit son
+    gabarit (`charge_a_renvoyer`).
     """
     if not isinstance(merged, dict):
         return []
@@ -106,6 +112,7 @@ def types_trahis(schema: Optional[dict], merged: dict, *,
                  + (f". Pour écrire : {quoi}" if quoi else ""))
         if written is None or cle in written:
             out.append(refus)
+            car.noter(charge, car.champ(car.RACINE, cle), gabarit(f))
         elif gelees is not None:
             gelees.append({"champ": str(cle), "refus": refus})
     return out

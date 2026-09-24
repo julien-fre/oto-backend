@@ -947,7 +947,8 @@ CAPABILITIES += [
                           "la ligne fusionnée est refusée par le schéma strict ou par "
                           "le cycle de vie (transition non déclarée) : le message nomme "
                           "les champs fautifs, `details.expected_column` la colonne "
-                          "quand il y en a une"),
+                          "quand il y en a une, `details.a_renvoyer` le fragment de "
+                          "ligne à renvoyer (gabarits `<…>` à remplacer)"),
         ),
         description=("Modifie une ligne (patch partiel ; le corps EST le patch). "
                      "`?expected_revision=` (query, jamais le corps) = la `_revision` "

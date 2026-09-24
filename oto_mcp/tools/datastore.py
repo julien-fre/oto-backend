@@ -21,6 +21,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
 from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
+from ..datastore import charge_a_renvoyer
 from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
 from ..datastore import versions as dsver
@@ -36,6 +37,7 @@ from ..datastore.core import (
     DatastoreReadOnly,
     RowLocked,
     RowNotFound,
+    RowValidationError,
     make_org_store,
     make_store,
 )
@@ -843,6 +845,12 @@ def register(mcp: FastMCP) -> None:
         `of.key`, only the elements your write CHANGES are judged: an element sent
         back unchanged never blocks yours — its defect comes back in `hors_type`.
 
+        A schema refusal ends with the payload to send back: only the fields to fix,
+        a `<…>` template in place of each value, `| @empty` where that is allowed —
+        `{"contacts": [{"role": "RH", "nom": "<texte> | @empty"}]}`. Fill the
+        templates and write again; a list goes back WHOLE, that element fixed in
+        its place (by its `of.key`, else its rank), the others as they were.
+
         ⚠️ **A write DESTROYS what is in the column.** On an open column there is no
         undo and no history: the previous value is gone the moment yours lands. If
         the value was supplied by the table's owner and you overwrite it, they get
@@ -1069,6 +1077,12 @@ def register(mcp: FastMCP) -> None:
                    **identite.numero(store.dernier_tableau)}
             hint = _project_hint(datastore)
             return {**out, "project_hint": hint} if hint else out
+        except RowValidationError as e:
+            # oto#135 : la face MCP n'a pas d'enveloppe structurée — la charge à
+            # renvoyer (`details.a_renvoyer`, rendue telle quelle par REST) finit le
+            # message. AVANT `ValueError`, dont elle dérive.
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                str(e) + charge_a_renvoyer.clause(e.details))))
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except DatastoreNotFound as e:

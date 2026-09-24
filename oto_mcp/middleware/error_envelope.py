@@ -21,6 +21,25 @@ def _reachable_suffix(connector: str) -> str:
     return access._reachable_hint(sub, access.current_org(sub), connector)
 
 
+async def _parametres_de(context, exc) -> list:
+    """Les paramètres de l'outil dont la SIGNATURE a refusé l'appel (oto#135) — ce qui
+    permet au refus de dire le paramètre le plus proche d'une clé inconnue.
+
+    L'outil est celui que NOMME l'erreur (`call[data_write]`), pas celui de la requête :
+    derrière `oto_call`, c'est l'outil appelé qui a refusé. Lu dans le catalogue BRUT
+    (outils masqués compris, même raison que `oto_tool_schema`), et seulement sur ce
+    chemin d'erreur."""
+    from fastmcp.server.providers.base import Provider
+    nom = error_taxonomy.outil_de_signature(exc)
+    ctx = getattr(context, "fastmcp_context", None)
+    if not nom or ctx is None:
+        return []
+    for t in await Provider.list_tools(ctx.fastmcp):
+        if t.name == nom:
+            return list(((t.parameters or {}).get("properties") or {}))
+    return []
+
+
 class ErrorEnvelopeMiddleware(Middleware):
     """Contrat d'erreur uniforme rendu à l'agent (D2, oto-backend#124).
 
@@ -41,7 +60,14 @@ class ErrorEnvelopeMiddleware(Middleware):
         try:
             return await call_next(context)
         except Exception as e:
-            info = error_taxonomy.classify(e)
+            parametres: list = []
+            if error_taxonomy._is_arg_validation_error(e):
+                try:
+                    parametres = await _parametres_de(context, e)
+                # noqa: SILENT — un indice de plus : échouer à lire le catalogue ne doit jamais masquer le refus d'origine
+                except Exception:  # noqa: BLE001
+                    parametres = []
+            info = error_taxonomy.classify(e, parametres)
             data = {"code": info.code, "retryable": info.retryable}
             hint = info.hint
             # Outil non monté = le PREMIER mur. Sans ça l'agent installe le

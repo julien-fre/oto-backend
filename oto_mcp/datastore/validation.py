@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 from .couches import (_is_empty, CLES_INTERNES, LAYER_KEYS, VIDE_DELIBERE, layer_value,
                       split_layer, unknown_layers, unwrap, vide_assume)
+from . import charge_a_renvoyer as car
 from .options_declarees import hors_des_options, montrable
 from .motifs import _pattern_re
 from .declaration import (_fields, cle_d_element, max_length_of, pattern_of, status_field,
@@ -32,10 +33,10 @@ from .etats_declares import etats_trahis
 from .types_declares import types_trahis
 from .cycle_de_vie import lifecycle_of, refus_de_transition
 from .hors_schema import _unknown_subkey_refusal, _unknown_subkeys
-from .couches_exigees import couches_manquantes
+from .couches_exigees import couches_manquantes, gabarit_de_couche
 from .phrases_de_refus import (
     _forme_attendue, _gated_by, _cause_required_when, _clause_aiguillage,
-    _clause_un_seul_appel,
+    _clause_un_seul_appel, cle_la_plus_proche, gabarit,
 )
 
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
@@ -135,8 +136,15 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
                 closed: bool = False,
                 hors: Optional[list] = None,
                 ecrits: Optional[set] = None,
-                gelees: Optional[list] = None) -> list[str]:
+                gelees: Optional[list] = None,
+                charge: Optional[dict] = None,
+                chemin: tuple = car.RACINE,
+                decl: Optional[dict] = None) -> list[str]:
     """Erreurs de conformité d'UNE valeur à un type déclaré (récursif).
+
+    `charge`/`chemin` = la charge à renvoyer (oto#135) et l'endroit de cette valeur
+    (`charge_a_renvoyer`) : une faute note le gabarit de sa déclaration (`decl`, sinon
+    reconstituée des arguments). `charge` absente = rien à noter.
 
     `ecrits` (liste seulement) = les rangs des éléments que le geste écrit
     (`elements_reecrits`), `None` = tous. Un élément NON écrit n'est pas jugé contre
@@ -153,21 +161,30 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
     que l'appelant puisse ÉCARTER la valeur sans reparser le message — un refus
     français relu comme un contrat est un contrat déguisé. Optionnel par
     construction : ce validateur reste pur si personne ne le lui passe."""
+    decl = decl or {"type": ftype, "fields": fields, "of": of, "options": options}
+
+    def _faute(errs: list[str]) -> list[str]:
+        if errs:
+            car.noter(charge, chemin, gabarit(decl))
+        return errs
+
     if ftype == "enum":
         # `options` absentes ⇒ enum libre (le client rend un select vide, pas d'erreur).
         if not isinstance(value, str):
-            return [f"{path}: attendu une valeur d'énumération, reçu {value!r}"]
-        return _hors_options(value, options, path, hors)
+            return _faute([f"{path}: attendu une valeur d'énumération, reçu {value!r}"])
+        return _faute(_hors_options(value, options, path, hors))
     if ftype == "object":
         if not isinstance(value, dict):
-            return [f"{path}: attendu object, reçu {type(value).__name__}"]
-        return _row_errors(fields or [], value, path, closed=closed, hors=hors)
+            return _faute([f"{path}: attendu object, reçu {type(value).__name__}"])
+        return _row_errors(fields or [], value, path, closed=closed, hors=hors,
+                           charge=charge, chemin=chemin)
     if ftype == "list":
         if not isinstance(value, list):
-            return [f"{path}: attendu list, reçu {type(value).__name__}"]
+            return _faute([f"{path}: attendu list, reçu {type(value).__name__}"])
         errors: list[str] = []
         of = of or {}
         sub_fields = of.get("fields")
+        cle = of.get("key") if isinstance(of.get("key"), str) else None
         # Un attribut inconnu se nomme UNE fois pour toute la colonne, sur le premier
         # élément qui le porte : les items d'une liste partagent leur déclaration,
         # donc 300 contacts fautifs diraient 300 fois la même chose. Même borne que
@@ -181,19 +198,29 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
             # Un élément non écrit se juge à part : ni dans le refus, ni dans le relevé
             # `hors` (qui ÉCARTERAIT une valeur que le geste n'a pas posée).
             cible = errors if ecrit else []
+            # L'élément SEUL, désigné par son identité quand la liste en déclare une
+            # (oto#135) : jamais la liste entière dans la charge.
+            ident = unwrap(item.get(cle)) if cle and isinstance(item, dict) else None
+            ichemin = car.element(chemin, i, (cle, ident)
+                                  if isinstance(ident, (str, int)) and ident != "" else None)
+            icharge = charge if ecrit else None
             if isinstance(sub_fields, list):
                 if not isinstance(item, dict):
                     cible.append(f"{ipath}: attendu object, reçu {type(item).__name__}")
+                    car.noter(icharge, ichemin, gabarit({"type": "object",
+                                                         "fields": sub_fields}))
                 else:
                     cible.extend(_row_errors(
                         [x for x in sub_fields if isinstance(x, dict)], item, ipath,
                         closed=closed, vus=vus if ecrit else vus_geles,
-                        hors=hors if ecrit else None))
+                        hors=hors if ecrit else None,
+                        charge=icharge, chemin=ichemin, cle_d_identite=cle))
             elif of.get("type") or of.get("options"):
                 cible.extend(_type_error(item, of.get("type"), ipath,
                                          of.get("fields"), of.get("of"),
                                          of.get("options"), closed=closed,
-                                         hors=hors if ecrit else None))
+                                         hors=hors if ecrit else None,
+                                         charge=icharge, chemin=ichemin, decl=of))
             if not ecrit and gelees is not None:
                 gelees.extend({"champ": e.split(":", 1)[0], "refus": e} for e in cible)
         return errors
@@ -201,7 +228,8 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
     # d'abord la forme, puis l'appartenance, jamais les deux sur une même valeur. Deux
     # refus pour un seul relevé `hors` feraient refuser la fiche entière, là où
     # l'écriture sait écarter la valeur et écrire le reste (#667).
-    return _conformite_scalaire(value, ftype, path) or _hors_options(value, options, path, hors)
+    return _faute(_conformite_scalaire(value, ftype, path)
+                  or _hors_options(value, options, path, hors))
 
 
 #: oto#204 : ce qu'un refus de requis dit du vide ASSUMÉ. Deux gestes, et le second ferme
@@ -220,7 +248,10 @@ def _row_errors(fields: list, data: dict, path: str,
                 details: Optional[dict] = None,
                 hors: Optional[list] = None,
                 gelees: Optional[list] = None,
-                en_place: Optional[dict] = None) -> list[str]:
+                en_place: Optional[dict] = None,
+                charge: Optional[dict] = None,
+                chemin: tuple = car.RACINE,
+                cle_d_identite: Optional[str] = None) -> list[str]:
     """Erreurs d'un (sous-)record. `written` = clés effectivement RÉÉCRITES par ce
     geste (None = toutes) : la borne de longueur, le motif, la fermeture d'un
     composite **et le TYPE** s'y restreignent — eux seuls, cf. `validate_row`. La
@@ -233,6 +264,12 @@ def _row_errors(fields: list, data: dict, path: str,
     `en_place` (premier niveau) = la ligne EN PLACE avant la fusion, quand il y en a une.
     Elle ne sert qu'aux listes fusionnées par élément (`of.key`) : seuls les éléments
     que le geste écrit y sont jugés (`elements_reecrits`, oto#137).
+
+    `charge`/`chemin` = la charge à renvoyer et l'endroit de ce (sous-)record (oto#135,
+    `charge_a_renvoyer`) : chaque faute y note le gabarit du champ à corriger. Propagée
+    aux sous-records, à la différence de `details` : un chemin structuré n'est pas
+    ambigu. `cle_d_identite` = le `of.key` de la liste dont ce record est un élément —
+    `@empty` n'y est pas une alternative.
 
     `strict` = le tableau déclare `strict: true`. Il n'interdit rien ICI (une clé
     inconnue au premier niveau crée une colonne libre, droit du contrat 0016 : elle
@@ -263,6 +300,12 @@ def _row_errors(fields: list, data: dict, path: str,
                 vus.add(cle)
             errors.append(_unknown_subkey_refusal(
                 f"{path}.{cle}" if path else cle, fields))
+            # La charge nomme la clé DÉCLARÉE la plus proche, avec son gabarit : la
+            # valeur envoyée sous le mauvais nom n'est pas recopiée.
+            par_cle = {str(x["key"]): x for x in fields if x.get("key")}
+            proche = cle_la_plus_proche(cle, list(par_cle))
+            if proche is not None:
+                car.noter(charge, car.champ(chemin, proche), gabarit(par_cle[proche]))
     # Les colonnes-AIGUILLAGE de ce niveau, et ce qu'elles rendent requis.
     portes = _gated_by(fields)
     for f in fields:
@@ -273,10 +316,18 @@ def _row_errors(fields: list, data: dict, path: str,
         # Le marqueur du vide assumé (oto#204) est une clé INTERNE, pas un sous-champ.
         inconnues = [k for k in unknown_layers(data.get(key)) if k not in CLES_INTERNES]
         if inconnues:
+            proches = [cle_la_plus_proche(k, list(LAYER_KEYS)) for k in inconnues]
+            dites = [f"`{p}` pour {k!r}" for k, p in zip(inconnues, proches) if p]
             errors.append(
                 f"{fpath}: sous-champ(s) inconnu(s) {', '.join(repr(k) for k in inconnues)}"
-                f" — disponibles : {', '.join(LAYER_KEYS)}. Une couche stockée sans "
-                "être lue donnerait l'illusion d'une provenance renseignée.")
+                f" — disponibles : {', '.join(LAYER_KEYS)}"
+                + (f" (le plus proche : {', '.join(dites)})" if dites else "")
+                + ". Une couche stockée sans être lue donnerait l'illusion d'une "
+                "provenance renseignée.")
+            for p in proches:
+                if p:
+                    car.noter(charge, car.champ(car.champ(chemin, str(key)), p),
+                              gabarit_de_couche(p))
         # Déballer avant de juger : c'est la VALEUR qui doit respecter le type, la
         # borne et les options — pas son enveloppe. Sans ça un schéma strict refuse
         # toute écriture en couches, donc la primitive est inutilisable là où elle
@@ -299,6 +350,12 @@ def _row_errors(fields: list, data: dict, path: str,
         # inécritable toute ligne portant déjà un attribut hors format, y compris
         # pour un patch sans rapport (les 23 lignes gelées d'oto-backend#284).
         pose = written is None or key in written
+        # Où ce champ vit dans la charge à renvoyer (oto#135). Une cible de couche
+        # (`qualification.comment`) s'y écrit comme elle s'écrit : sous sa colonne.
+        fchemin = car.champ(chemin, base)
+        if layer:
+            fchemin = car.champ(fchemin, layer)
+        fcharge = charge if pose else None
         required = bool(f.get("required"))
         rw = f.get("required_when")
         if not required and isinstance(rw, dict) and rw:
@@ -345,6 +402,11 @@ def _row_errors(fields: list, data: dict, path: str,
                               + _CLAUSE_VIDE_ASSUME)
                 if details is not None:
                     details.setdefault("expected_column", str(key))
+                attendu = gabarit(f)
+                car.noter(charge, fchemin,
+                          car.avec_vide(attendu)
+                          if not layer and car.vide_permis(chemin, str(key), cle_d_identite)
+                          else attendu)
             continue
         # `options` sans type compte aussi (#98) : la liste est déclarée, la valeur doit
         # y être — le type absent dit seulement qu'il n'y a pas de FORME à tenir.
@@ -355,7 +417,8 @@ def _row_errors(fields: list, data: dict, path: str,
             errs_type = _type_error(value, f.get("type"), fpath,
                                     f.get("fields"), f.get("of"), f.get("options"),
                                     closed=closed or (strict and pose),
-                                    hors=hors, ecrits=ecrits, gelees=gelees)
+                                    hors=hors, ecrits=ecrits, gelees=gelees,
+                                    charge=fcharge, chemin=fchemin, decl=f)
             # #545 : la colonne qui vient de refuser est-elle un AIGUILLAGE dont une
             # autre colonne dépend ? Alors la chaîne libre qu'on y a écrite a une
             # destination déclarée, et le refus doit la donner — c'est le cas
@@ -373,6 +436,8 @@ def _row_errors(fields: list, data: dict, path: str,
                     f"({_forme_attendue(cible)}), pas dans `{key}`")
                 if details is not None:
                     details.setdefault("expected_column", str(cible.get("key")))
+                car.noter(fcharge, car.champ(chemin, str(cible.get("key"))),
+                          gabarit(cible))
                 # #667 : cette valeur-là a une DESTINATION déclarée — elle est mal
                 # rangée, pas indésirable. L'écarter écrirait une fiche qui prétend
                 # ne pas avoir été retraitée, et l'agent verrait un succès : la
@@ -405,6 +470,8 @@ def _row_errors(fields: list, data: dict, path: str,
             # compris sur un champ sans rapport — le défaut que le type venait de
             # quitter, laissé sur son voisin immédiat.
             trop = f"{fpath}: {len(value)} éléments, maximum {mi}"
+            # Pas de charge : dire QUELS éléments retirer demanderait de recopier la
+            # liste, et c'est à l'agent de choisir.
             if pose:
                 errors.append(trop)
             elif gelees is not None:
@@ -417,6 +484,7 @@ def _row_errors(fields: list, data: dict, path: str,
                 # La longueur CONSTATÉE autant que la borne : un refus qui ne dit
                 # pas de combien on dépasse fait deviner (signal #383).
                 errors.append(f"{fpath}: {n} caractères, maximum {ml}")
+                car.noter(fcharge, fchemin, gabarit(f))
                 trop_long = True
         # #387 : la FORME, là où la taille ne sépare rien. Restreint aux clés que le
         # geste ÉCRIT, comme la borne et pour la même raison : la validation porte
@@ -435,6 +503,7 @@ def _row_errors(fields: list, data: dict, path: str,
                 # ligne pour savoir ce qui coince.
                 errors.append(
                     f"{fpath}: {texte!r} ne suit pas le motif `{motif}`")
+                car.noter(fcharge, fchemin, gabarit(f))
     return errors
 
 
@@ -484,21 +553,29 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     `en_place` = la ligne EN PLACE, sur les chemins qui fusionnent (patch, clé métier) :
     dans une liste fusionnée par élément (`of.key`), un élément que le geste n'écrit
     pas n'est pas jugé contre lui — ce qui y cloche part dans `gelees` (oto#137).
-    Absente (création, remplacement), tout ce qui est posé vient du geste."""
+    Absente (création, remplacement), tout ce qui est posé vient du geste.
+
+    ⚠️ **`details` porte aussi la CHARGE À RENVOYER** (oto#135) : `a_renvoyer`, un
+    fragment de `row` qui ne contient que les champs à corriger, marqués d'un gabarit,
+    et `a_renvoyer_elements` quand ce sont des éléments de liste
+    (`charge_a_renvoyer.rendre`). Quatre familles la notent : requis manquant,
+    type ou format, sous-champ inconnu, couche exigée."""
     errors: list[str] = []
+    charge: Optional[dict] = {} if details is not None else None
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
         errors.extend(_row_errors(_fields(schema), merged, "", written,
                                   strict=bool(schema.get("strict")),
                                   details=details, hors=hors, gelees=gelees,
-                                  en_place=en_place))
+                                  en_place=en_place, charge=charge))
     # oto#75 barreau 1 : HORS du garde `validation_active`, comme le cycle de vie
     # ci-dessous — la déclaration `required_layers` s'arme elle-même.
-    errors.extend(couches_manquantes(schema, merged, written=written))
+    errors.extend(couches_manquantes(schema, merged, written=written, charge=charge))
     # 08/09/2026 — même raison, même place : un `type` déclaré s'arme lui-même. Le
     # contrôle existait sous `validation_active` et n'y voyait rien passer (0 violation
     # sur 88 tableaux) pendant que 248 tableaux sans validation en portaient 118.
-    errors.extend(types_trahis(schema, merged, written=written, gelees=gelees))
+    errors.extend(types_trahis(schema, merged, written=written, gelees=gelees,
+                               charge=charge))
     # 09/09/2026 — le cran suivant de la même famille : une colonne SECONDAIRE qui
     # déclare ses états les fait respecter, elle aussi. Seule la file était vérifiée ;
     # 131 colonnes du parc déclaraient une liste que personne n'appliquait. Mesuré
@@ -551,4 +628,6 @@ def validate_row(schema: Optional[dict], merged: dict, *,
                         errors.append(refus_de_transition(
                             str(key), str(unwrap(prev_status)), str(new),
                             sorted(allowed)))
+    if errors and charge:
+        details.update(car.rendre(charge))
     return errors

@@ -2669,3 +2669,41 @@ identité en double (remplacée en bloc par la fusion), tout est jugé.
 déclaration) juge encore tous les éléments d'une liste réécrite.
 
 Bancs : `tests/datastore/test_exigences_en_profondeur_oto137.py`.
+
+## La charge à renvoyer — un refus donne la forme qui marche (oto#135, 24/09/2026)
+
+Un refus de validation porte `details["a_renvoyer"]` : un fragment de `row` calculé depuis
+la DÉCLARATION (`charge_a_renvoyer.py`), jamais depuis la donnée. Seuls les champs à
+corriger y figurent, chacun marqué d'un gabarit (`phrases_de_refus.gabarit` : `"<texte>"`,
+`"<nombre>"`, `"<a | b>"`, borne et motif compris ; un objet rend ses sous-champs requis ;
+une couche, ce qu'elle porte — `gabarit_de_couche`). `| @empty` s'ajoute sur un requis
+manquant là où le geste est permis : colonne, attribut d'élément de liste — pas l'identité
+`of.key`, pas un sous-champ d'objet, pas une cible de couche.
+
+Dans une liste, l'élément fautif SEUL : son identité `of.key` recopiée (la seule donnée
+qui l'est), sinon son rang, et `details["a_renvoyer_elements"]` nomme les éléments visés
+(`contacts[role=DAF]`, `contacts[1]`). Jamais la liste entière.
+
+**Le chemin est STRUCTURÉ.** Le validateur note au fil de sa descente un tuple de segments
+(`("k", clé)`, `("e", rang, identité)`) et une feuille ; `rendre` assemble. Aucune phrase
+n'est reparsée. Quatre familles notent : requis manquant (`_row_errors`), type ou format
+(`_type_error`, borne, motif, et `types_trahis` sur un tableau souple), sous-champ inconnu
+(attribut d'un composite fermé → la clé déclarée la plus proche, `cle_la_plus_proche` ;
+couche mal orthographiée → la couche la plus proche), couche exigée (`couches_exigees`).
+Rien n'est noté pour une colonne gelée ni pour un élément que le geste n'écrit pas ; ni pour
+`max_items` (quels éléments retirer est le choix de l'agent).
+
+**Les faces.** REST rend `details` tel quel (`_write_refusal`). MCP n'a pas d'enveloppe :
+`data_write` attrape `RowValidationError` avant `ValueError` et finit le message par
+`charge_a_renvoyer.clause` — la charge en JSON, et pour une liste la règle du renvoi (la
+liste entière, l'élément corrigé à sa place : un élément omis est retiré). Un lot garde
+`details` en changeant de désignation (`lots.py`).
+
+**Le refus de signature** (`error_taxonomy._arg_error_message`) nomme en plus le paramètre
+le plus proche d'une clé inconnue — « Rejoue `data_write(…)` avec `rows=` à la place de
+`rows_data` » — et ne dit plus « requis absent » un paramètre simplement mal écrit.
+`ErrorEnvelopeMiddleware` lit les paramètres de l'outil que NOMME l'erreur
+(`outil_de_signature`, derrière `oto_call` compris) dans le catalogue brut.
+
+Bancs : `tests/datastore/test_charge_a_renvoyer_oto135.py`,
+`tests/test_parametre_le_plus_proche_135.py`.
