@@ -484,7 +484,11 @@ CREATE TABLE IF NOT EXISTS runner_platform_depots (
 -- les rend, on n'en garde RIEN. Le palier (`plan`) sert l'écran ; la méthode de
 -- connexion (`method`) dit si c'est bien un abonnement et pas une clé d'API.
 CREATE TABLE IF NOT EXISTS user_model_subscriptions (
-    sub TEXT NOT NULL REFERENCES users(sub) ON DELETE CASCADE,
+    -- ⚠️ Sans `REFERENCES users` : la réservation (`claim_next_job`) lit cette table, donc
+    -- elle vit dans le fragment `runs`, que des bancs jouent seul sur une base vierge —
+    -- et ce fragment ne porte aucune FK vers l'extérieur (`runner_jobs.sub` non plus).
+    -- Une fusion de comptes la suit par `migrate_sub` (`_PK_SUB_TABLES`).
+    sub TEXT NOT NULL,
     -- La FAMILLE de modèles servie par cet abonnement (`runner_models`) —
     -- `claude_subscription` aujourd'hui, `openai_subscription` le jour où Codex
     -- suit le même chemin.

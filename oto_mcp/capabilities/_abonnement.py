@@ -22,10 +22,10 @@ ne traverse pas le backend — c'est la condition qui rend ce chemin licite.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .. import runner_models
+from .. import access, runner_models
 from ..db import runner_jobs as db_runner_jobs
 from ..db import user_subscriptions
 from ._types import AuthzDenied
@@ -37,6 +37,17 @@ logger = logging.getLogger(__name__)
 #: exécution (`rate_limit_event`, mesuré le 21/09/2026) : attendre le refus, c'est
 #: brûler une tentative du travail pour apprendre ce qu'on savait déjà.
 SEUIL_D_ATTENTE = 0.95
+
+#: L'OPTION qui ouvre ce chemin à une personne (`oto_admin_set_option`, entité
+#: `user`). Ouvert nominativement, jamais par défaut : un abonnement personnel
+#: sur une plateforme partagée reste un usage que le fournisseur n'a pas
+#: confirmé par écrit (24/09/2026) — on l'ouvre à des personnes nommées.
+OPTION = "claude_subscription"
+
+#: La borne d'une échéance de plafond rapportée par un worker. Les fenêtres du
+#: fournisseur durent cinq heures ou sept jours : au-delà, le rapport est faux
+#: (une unité, un worker fautif), et le croire suspendrait la personne sans fin.
+ECHEANCE_MAX = timedelta(days=8)
 
 #: Les familles servies par un abonnement personnel. Dérivée du catalogue, jamais
 #: recopiée : le jour où Codex suit le même chemin, il suffit de l'y déclarer.
@@ -142,6 +153,16 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
     return False, statut, bac
 
 
+def exiger_ouvert(sub: str, famille: str) -> None:
+    """Ce chemin n'est ouvert qu'aux personnes qui portent l'option `OPTION`."""
+    if not access.has_option(sub, OPTION):
+        raise AuthzDenied(
+            403, "subscription_not_enabled",
+            f"les modèles `{famille}` tournent sur l'abonnement personnel de qui les "
+            "pose, et ce chemin n'est ouvert qu'à des personnes nommées. Demande-le à "
+            "l'équipe oto.")
+
+
 def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[str],
                      *, flotte: bool = False) -> None:
     """Le refus LISIBLE au moment de poser un agent sur un abonnement.
@@ -150,6 +171,7 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
     l'appelant qui le devient)."""
     if not est_abonnement(famille):
         return
+    exiger_ouvert(sub, famille)
     if flotte:
         raise AuthzDenied(
             400, "subscription_personal_only",
@@ -222,7 +244,10 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
                          if isinstance(f, dict)
                          and isinstance(f.get("resetsAt"), (int, float))]
         if echeances or refuse:
-            quand = (datetime.fromtimestamp(max(echeances), tz=timezone.utc)
+            # Bornée AVANT la conversion : une échéance en millisecondes déborde `fromtimestamp`,
+            # et la levée faisait ignorer le rapport entier.
+            borne = (datetime.now(timezone.utc) + ECHEANCE_MAX).timestamp()
+            quand = (datetime.fromtimestamp(min(max(echeances), borne), tz=timezone.utc)
                      if echeances else None)
             user_subscriptions.marquer_statut(
                 porteur, famille, user_subscriptions.PLAFOND, limit_reset_at=quand,

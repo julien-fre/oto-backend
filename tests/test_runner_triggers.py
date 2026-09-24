@@ -117,7 +117,7 @@ def test_update_du_cron_seul_revalide_avec_le_fuseau_effectif(monkeypatch):
                         lambda i, o: {"id": i, "cron": "5 6 * * *", "tz": "UTC"})
     vu = {}
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda i, o, champs: vu.update(champs) or {"id": i, **champs})
+                        lambda i, o, champs, **k: vu.update(champs) or {"id": i, **champs})
     _appel(_ctx(), op="update", trigger_id=3, cron="10 7 * * *")
     assert vu["tz"] == "UTC" and vu["cron"] == "10 7 * * *"
     assert vu["next_due"].astimezone(datetime.timezone.utc).hour == 7

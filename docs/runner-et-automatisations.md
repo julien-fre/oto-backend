@@ -1264,9 +1264,27 @@ cinq heures et sept jours. La personne est mise en attente dès qu'une fenêtre 
 saturées attendent la plus lointaine. Un rapport mal formé s'ignore et se journalise : il
 ne fait jamais échouer une conclusion. Seul un worker de plateforme est écouté.
 
-**Ce que ce dépôt ne fait PAS** : créer le bac à sable ni ouvrir le terminal de connexion
-(infrastructure), et facturer — la famille portée par le run (`modele_du_run`) suffit au
-service d'usage pour ne compter aucun jeton sur ces exécutions.
+**Ouvert à des personnes NOMMÉES (24/09/2026).** L'option `claude_subscription`
+(`oto_admin_set_option`, entité `user`) ouvre le chemin ; sans elle, `subscription_not_
+enabled` avant tout autre refus. La garde vit dans `_abonnement.exiger_ouvert`, relue par
+les QUATRE chemins de pose — le quatrième, `runner_jobs op=enqueue`, était ouvert jusqu'à
+la revue du 23/09 (une flotte s'y enfilait sur un forfait) — et par les routes de
+connexion.
+
+**La ferme (24/09/2026).** Les bacs vivent sur une box dédiée, `ferme-0`
+(`otomata-tech/ferme-claude`) : un bac = un utilisateur Unix, chaque run une unité
+systemd bridée. Son agent n'écoute que sur le réseau privé ; le backend le joint par
+`oto_mcp.ferme` (`OTO_FERME_URL`, `OTO_FERME_TOKEN`). Se connecter se fait en deux temps,
+sans terminal : `POST /api/me/model-subscriptions/{family}/login` rend l'URL du
+fournisseur, que la personne ouvre dans SON navigateur ; `PUT …/login/code` remet au
+programme du bac le code affiché — à usage unique, inutilisable hors du bac. La
+session naît et reste dans le bac. Effacer (`?destroy=true`) DÉTRUIT le bac par la ferme
+avant d'oublier la ligne ; un échec se dit (502), la ligne reste, coupée. Le worker de la
+famille (oto-runner, `OTO_RUNNER_PROVIDER=claude-subscription`) tourne sur la même box.
+
+**Ce que ce dépôt ne fait PAS** : facturer — la famille portée par le run
+(`modele_du_run`) suffit au service d'usage pour ne compter aucun jeton sur ces
+exécutions.
 
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 

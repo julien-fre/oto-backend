@@ -135,6 +135,60 @@ def test_une_autre_famille_garde_le_chemin_des_cles(monkeypatch):
     assert "clé" in servi["delegation_refusee"]
 
 
+@pytest.fixture(autouse=True)
+def _option_ouverte(monkeypatch):
+    """Ces bancs jugent les AUTRES refus : l'option est posée. Son absence a son banc."""
+    ouverts: set = {_PORTEUR, "un-collegue", "quelqu-un-d-autre"}
+    monkeypatch.setattr(_abonnement.access, "has_option",
+                        lambda sub, option, **k: option == _abonnement.OPTION and sub in ouverts)
+    return ouverts
+
+
+class TestOption:
+    """Le chemin n'est ouvert qu'à des personnes NOMMÉES (option `claude_subscription`)."""
+
+    def test_sans_l_option_la_pose_est_refusee_avant_tout_le_reste(self, _abonnements,
+                                                                   _option_ouverte):
+        _option_ouverte.discard(_PORTEUR)
+        _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE, "sandbox_id": _BAC}
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_a_la_pose(_PORTEUR, _PORTEUR, _FAMILLE)
+        assert e.value.code == "subscription_not_enabled"
+
+    def test_un_modele_ordinaire_ne_demande_aucune_option(self, _option_ouverte):
+        _option_ouverte.clear()
+        _abonnement.exiger_a_la_pose(_PORTEUR, _PORTEUR, "anthropic")
+
+
+class TestEnfilage:
+    """Le QUATRIÈME chemin de pose : un travail enfilé à la main (revue du 23/09/2026)."""
+
+    def _ctx(self):
+        from oto_mcp.capabilities._types import ResolvedCtx
+        return ResolvedCtx(sub=_PORTEUR, org_id=2)
+
+    def test_une_flotte_ne_s_enfile_pas_sur_un_abonnement(self, _abonnements):
+        _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE, "sandbox_id": _BAC}
+        with pytest.raises(Exception) as e:
+            RJ._charge_et_modele(self._ctx(), RJ.JobsInput(
+                op="enqueue", kind="start", fleet_id=9,
+                payload={"input": "vas-y", "model": "sub:sonnet"}))
+        assert e.value.code == "subscription_personal_only"
+
+    def test_sans_l_option_rien_ne_s_enfile(self, _abonnements, _option_ouverte):
+        _option_ouverte.clear()
+        with pytest.raises(Exception) as e:
+            RJ._charge_et_modele(self._ctx(), RJ.JobsInput(
+                op="enqueue", kind="start", payload={"input": "vas-y", "model": "sub:sonnet"}))
+        assert e.value.code == "subscription_not_enabled"
+
+    def test_connecte_et_ouvert_s_enfile(self, _abonnements):
+        _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.CONNECTE, "sandbox_id": _BAC}
+        charge = RJ._charge_et_modele(self._ctx(), RJ.JobsInput(
+            op="enqueue", kind="start", payload={"input": "vas-y", "model": "sub:sonnet"}))
+        assert charge["model_family"] == _FAMILLE
+
+
 class TestPose:
     """Le refus LISIBLE au moment de poser un agent sur un abonnement."""
 
@@ -256,6 +310,16 @@ class TestRapport:
 
     def _conclu(self, famille=_FAMILLE, sub=_PORTEUR):
         return {"status": "done", "run_id": None, "sub": sub, "model_family": famille}
+
+    def test_une_echeance_aberrante_est_BORNEE(self, _ecrits):
+        """Un `resetsAt` en millisecondes suspendrait la personne pour des siècles."""
+        from datetime import datetime, timezone
+        _abonnement.noter_rapport(self._conclu(), True, {"abonnement": {
+            "etat": "allowed",
+            "fenetres": {"five_hour": {"utilization": 1.0, "resetsAt": 1790216400000}}}})
+        ((_, statut, k),) = _ecrits
+        assert statut == US.PLAFOND
+        assert k["limit_reset_at"] <= datetime.now(timezone.utc) + _abonnement.ECHEANCE_MAX
 
     def _fenetres(self, cinq_h=0.07, sept_j=0.49):
         return {"five_hour": {"utilization": cinq_h, "resetsAt": 1790029800},

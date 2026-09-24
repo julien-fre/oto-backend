@@ -883,6 +883,11 @@ def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
             raise AuthzDenied(400, "invalid_model", "`payload.model` est un nom de modèle")
         _modele.famille_declaree(model)
         charge.update(runner_models.charge(model))
+        # Le QUATRIÈME chemin de pose (revue du 23/09/2026) : un travail enfilé à la
+        # main sur un modèle d'abonnement passe la même garde qu'un agent posé —
+        # sinon une flotte, ou un membre sans l'option, contournait les trois autres.
+        _abonnement.exiger_a_la_pose(ctx.sub, None, charge.get("model_family"),
+                                     flotte=inp.fleet_id is not None)
     return charge if (charge or inp.payload is not None) else None
 
 

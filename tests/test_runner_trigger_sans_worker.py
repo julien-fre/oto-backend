@@ -122,14 +122,14 @@ def test_eteindre_reste_ouvert_sans_runner(monkeypatch):
     _arme(monkeypatch, armed=False, workers=0, last_seen=None)
     vu = {}
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda i, o, champs: vu.update(champs) or {"id": i})
+                        lambda i, o, champs, **k: vu.update(champs) or {"id": i})
     _appel(_ctx(), op="update", trigger_id=6, enabled=False)
     assert vu == {"enabled": False}
 
 
 def test_corriger_et_supprimer_restent_ouverts_sans_runner(monkeypatch):
     _arme(monkeypatch, armed=False, workers=0, last_seen=None)
-    monkeypatch.setattr(RT.db, "update_trigger", lambda i, o, c: {"id": i, **c})
+    monkeypatch.setattr(RT.db, "update_trigger", lambda i, o, c, **k: {"id": i, **c})
     _appel(_ctx(), op="update", trigger_id=6, label="mort, à ranger")
     monkeypatch.setattr(RT.db, "delete_trigger", lambda i, o: True)
     assert _appel(_ctx(), op="delete", trigger_id=6) == {"ok": True}

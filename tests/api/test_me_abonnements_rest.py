@@ -123,13 +123,85 @@ def test_me_deconnecter_GARDE_le_bac_a_sable(client, abonne):
     assert ligne["sandbox_id"], "le bac reste : se reconnecter est une connexion, pas tout refaire"
 
 
-def test_effacer_mon_bac_detruit_la_ligne_ENTIERE(client, abonne):
+@pytest.fixture
+def ferme(monkeypatch):
+    """La ferme, doublée : ce qu'on lui a demandé, et ce qu'elle répond."""
+    from oto_mcp import ferme as F
+    from oto_mcp.capabilities import _abonnement
+    appels: list = []
+    etat = {"loggedIn": True, "subscriptionType": "max", "authMethod": "claude.ai",
+            "email": "secret@fournisseur.invalid", "orgName": "Org du fournisseur"}
+    monkeypatch.setattr(F, "creer", lambda bac: appels.append(("creer", bac)))
+    monkeypatch.setattr(F, "demarrer_connexion",
+                        lambda bac, email=None: appels.append(("login", bac)) or
+                        "https://claude.com/cai/oauth/authorize?x=1")
+    monkeypatch.setattr(F, "transmettre_code",
+                        lambda bac, code: appels.append(("code", bac, code)) or etat)
+    monkeypatch.setattr(F, "detruire", lambda bac: appels.append(("detruire", bac)))
+    monkeypatch.setattr(_abonnement.access, "has_option",
+                        lambda sub, option, **k: sub != "usr_abo_autre")
+    return {"appels": appels, "etat": etat}
+
+
+def test_me_connecter_en_deux_temps_ouvre_MON_bac(client, gens, ferme):
+    from oto_mcp import ferme as F
+    from oto_mcp.db import user_subscriptions as US
+    US.oublier(gens["moi"], _FAMILLE)
+    r = client.post(f"{ROUTE}/{_FAMILLE}/login", json={}, headers=_h(gens["moi"]))
+    assert r.status_code == 200, r.text
+    assert r.json()["url"].startswith("https://claude.com/")
+    r = client.put(f"{ROUTE}/{_FAMILLE}/login/code", json={"code": "abc#def"},
+                   headers=_h(gens["moi"]))
+    assert r.status_code == 200, r.text
+    assert r.json()["statut"] == "connected" and r.json()["plan"] == "max"
+    bac = F.bac_de(gens["moi"])
+    assert ferme["appels"] == [("creer", bac), ("login", bac), ("code", bac, "abc#def")]
+    assert US.get_subscription(gens["moi"], _FAMILLE)["sandbox_id"] == bac
+    # Ce que le programme a lu du compte du fournisseur ne ressort pas.
+    for interdit in ("secret@", "org du fournisseur"):
+        assert interdit not in r.text.lower()
+
+
+def test_sans_l_option_on_ne_se_connecte_pas(client, gens, ferme):
+    r = client.post(f"{ROUTE}/{_FAMILLE}/login", json={}, headers=_h(gens["autre"]))
+    assert r.status_code == 403 and r.json()["error"] == "subscription_not_enabled"
+    assert ferme["appels"] == []
+
+
+def test_un_code_qui_n_ouvre_pas_de_session_ne_connecte_rien(client, gens, ferme):
+    from oto_mcp.db import user_subscriptions as US
+    US.oublier(gens["moi"], _FAMILLE)
+    ferme["etat"]["loggedIn"] = False
+    r = client.put(f"{ROUTE}/{_FAMILLE}/login/code", json={"code": "faux"},
+                   headers=_h(gens["moi"]))
+    assert r.status_code == 422 and r.json()["error"] == "login_failed"
+    assert US.get_subscription(gens["moi"], _FAMILLE) is None
+
+
+def test_une_destruction_qui_echoue_se_DIT_et_n_efface_rien(client, abonne, ferme,
+                                                            monkeypatch):
+    from oto_mcp import ferme as F
+    from oto_mcp.db import user_subscriptions as US
+
+    def en_panne(bac):
+        raise F.FermeIndisponible("injoignable")
+    monkeypatch.setattr(F, "detruire", en_panne)
+    r = client.delete(f"{ROUTE}/{_FAMILLE}?destroy=true", headers=_h(abonne["moi"]))
+    assert r.status_code == 502 and r.json()["error"] == "farm_unavailable"
+    ligne = US.get_subscription(abonne["moi"], _FAMILLE)
+    assert ligne is not None and ligne["statut"] == US.DECONNECTE, \
+        "la ligne reste, coupée : plus rien n'y part, et le geste se refait"
+
+
+def test_effacer_mon_bac_detruit_la_ligne_ENTIERE(client, abonne, ferme):
     from oto_mcp.db import user_subscriptions as US
     # ⚠️ En QUERY : l'adaptateur n'ouvre pas les corps de DELETE, et un corps
     # ignoré aurait rendu le drapeau inerte — 200 rendu, rien détruit.
     r = client.delete(f"{ROUTE}/{_FAMILLE}?destroy=true", headers=_h(abonne["moi"]))
     assert r.status_code == 200, r.text
     assert r.json()["sandbox_destroyed"] is True
+    assert ferme["appels"] == [("detruire", f"bac-{abonne['moi']}")], \
+        "le bac est VRAIMENT détruit par la ferme, pas seulement oublié"
     assert US.get_subscription(abonne["moi"], _FAMILLE) is None
     # Et celle de l'autre personne n'a pas bougé.
     assert US.get_subscription(abonne["autre"], _FAMILLE) is not None

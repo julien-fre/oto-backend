@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from .. import runner_models
 from ._conn import _connect
 
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
@@ -78,9 +79,15 @@ def get_trigger(trigger_id: int, org_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Optional[dict]:
+def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
+                   hors_abonnement_d_autrui: Optional[str] = None) -> Optional[dict]:
     """Mise à jour partielle, org-scopée. `champs` ne contient QUE des colonnes
-    déjà validées par la capacité (jamais de SQL construit sur l'entrée brute)."""
+    déjà validées par la capacité (jamais de SQL construit sur l'entrée brute).
+
+    `hors_abonnement_d_autrui=<sub>` : n'écrit PAS un déclencheur posé sur l'abonnement
+    d'une autre personne que `<sub>` (rend None, comme un déclencheur inconnu). La
+    garde vit dans l'écriture pour qu'une retouche ordinaire ne relise rien : c'est
+    l'appelant qui relit, et seulement quand rien n'a été écrit."""
     autorises = {"label", "procedure", "project_id", "tools", "input", "max_steps",
                  "model", "cron", "tz", "enabled", "next_due",
                  # Le webhook. ⚠️ `kind` n'y est PAS : un déclencheur ne change pas
@@ -109,8 +116,13 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
     with _connect() as conn:
         row = conn.execute(
             f"UPDATE runner_triggers SET {', '.join(sets)} "
-            f"WHERE id = %s AND org_id = %s RETURNING {_COLS}",
-            (*vals, trigger_id, org_id),
+            f"WHERE id = %s AND org_id = %s"
+            + ("" if hors_abonnement_d_autrui is None else
+               " AND (model IS NULL OR NOT (model = ANY(%s)) OR sub = %s)")
+            + f" RETURNING {_COLS}",
+            (*vals, trigger_id, org_id,
+             *(() if hors_abonnement_d_autrui is None else
+               (list(runner_models.MODELES_PERSONNELS), hors_abonnement_d_autrui))),
         ).fetchone()
     # ⚠️ ÉTEINDRE, c'est aussi cesser de tiquer — donc cesser de périmer. Un
     # déclencheur désactivé laissait ses occurrences en attente pour toujours,

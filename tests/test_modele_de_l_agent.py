@@ -238,7 +238,7 @@ def retouche(monkeypatch):
                      "model": None}}
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(vu["stocke"]))
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda i, o, champs: vu.update(champs=champs) or {"id": i, **champs})
+                        lambda i, o, champs, **k: vu.update(champs=champs) or {"id": i, **champs})
     return vu
 
 

@@ -380,6 +380,10 @@ GET,HEAD /api/me/model-subscriptions -> _handler
 OPTIONS /api/me/model-subscriptions -> options_handler
 DELETE /api/me/model-subscriptions/{family} -> _handler
 OPTIONS /api/me/model-subscriptions/{family} -> options_handler
+POST /api/me/model-subscriptions/{family}/login -> _handler
+OPTIONS /api/me/model-subscriptions/{family}/login -> options_handler
+PUT /api/me/model-subscriptions/{family}/login/code -> _handler
+OPTIONS /api/me/model-subscriptions/{family}/login/code -> options_handler
 POST /api/me/connectors/{name}/session/start -> _handler
 OPTIONS /api/me/connectors/{name}/session/start -> options_handler
 POST /api/me/connectors/{name}/session/finalize -> _handler

@@ -85,6 +85,9 @@ FAMILLES = frozenset(m.family for m in MODELES)
 #: nom (`*_subscription`) est la seule source : la base (`db/runner_jobs`) et la garde
 #: (`capabilities/_abonnement`) la relisent d'ici, jamais d'une liste recopiée.
 FAMILLES_PERSONNELLES = frozenset(f for f in FAMILLES if f.endswith("_subscription"))
+#: Les modèles qui tournent sur l'abonnement d'une personne — ce que l'écriture d'une
+#: retouche confronte au modèle STOCKÉ, sans relire le déclencheur (`update_trigger`).
+MODELES_PERSONNELS = tuple(m.id for m in MODELES if m.family in FAMILLES_PERSONNELLES)
 
 
 def famille(model: Optional[str]) -> Optional[str]:

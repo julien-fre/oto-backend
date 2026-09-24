@@ -812,14 +812,28 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # ⚠️ EN DERNIER, juste avant d'écrire : l'ordre des refus est un contrat, et
     # cette garde ne doit en déplacer aucun. Elle juge la famille EFFECTIVE —
     # celle qu'on pose, sinon celle qui est stockée.
-    actuel = _actuel()
-    if actuel:
+    #
+    # ⚠️ Sans relire le déclencheur pour une retouche ordinaire (renommer, corriger
+    # un cron) : c'est un contrat (`test_une_retouche_ordinaire_ne_LIT_pas_le_
+    # declencheur`), et la lecture cassait les retouches d'une org sans runner. Le
+    # modèle STOCKÉ se juge dans l'écriture (`hors_abonnement_d_autrui`) ; on ne
+    # relit que pour POSER un modèle d'abonnement, ou pour dire pourquoi rien n'a
+    # été écrit.
+    def _juger(actuel: dict) -> None:
         _abonnement.exiger_le_droit_de_modifier(
             ctx.sub, actuel,
             famille if inp.model is not None
             else runner_models.famille(actuel.get("model")), champs)
-    t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
+
+    if inp.model is not None and _abonnement.est_abonnement(famille) and _actuel():
+        _juger(_actuel())
+    eteindre = set(champs) <= {"enabled"} and champs.get("enabled") is False
+    t = db.update_trigger(inp.trigger_id, ctx.org_id, champs,
+                          hors_abonnement_d_autrui=None if eteindre else ctx.sub)
     if not t:
+        lu.pop("t", None)   # relu APRÈS l'écriture refusée : l'état qui l'a refusée
+        if _actuel():
+            _juger(_actuel())
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
     return {"trigger": _avec_hook(ctx.org_id, t)}
 

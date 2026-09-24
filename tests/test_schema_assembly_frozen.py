@@ -489,8 +489,13 @@ from oto_mcp.db import _schema, schema
 # partage, NULLABLE (NULL = sans échéance), sans index. Base existante : révision Alembic
 # `0012_partages_echeance`, pas le démarrage (table lue par chaque contrôle d'accès).
 # Recalculée sur le tronc 00a32612 : 170 587 → 170 929 (+342, commentaire compris).
-EMPREINTE = "ba72cbe99d4a59211b07563b388afc8094002961e07da4838000b9347ee5d72b"
-LONGUEUR = 170929
+# 24/09/2026 (oto-backend#1043, OTO-130) — table NEUVE `user_model_subscriptions`, dans
+# le fragment `runs` (la réservation la lit), SANS clé étrangère vers `users` : le
+# fragment n'en porte aucune vers l'extérieur. `CREATE TABLE IF NOT EXISTS` d'une table
+# neuve : rien ne se réécrit sur la base PARTAGÉE. Recalculée sur le tronc + #1043 :
+# 170 929 → 173 686 (+2 757, commentaire compris).
+EMPREINTE = "effdf802b5a059170c0d4bc8458fa5d5284cdf62718a681d74078a409fd3349d"
+LONGUEUR = 173686
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -261,6 +261,9 @@ _MEMBERSHIP_TABLES = (("org_members", "org_id"), ("org_group_members", "group_id
 # `(table, colonne de sub, reste de la PK)`.
 _PK_SUB_TABLES = (
     ("unipile_operated_accounts", "sub", ("provider",)),
+    # L'abonnement d'une personne (OTO-130) suit le compte fusionné : sa ligne porte
+    # le `sandbox_id`, que le worker relit — le bac reste celui où elle s'est connectée.
+    ("user_model_subscriptions", "sub", ("famille",)),
     ("connector_account_grants", "owner_sub", ("provider", "grantee_sub")),
     ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
     # Le même prêt, cible GROUPE (oto#40) : `owner_sub` entre dans la PK
