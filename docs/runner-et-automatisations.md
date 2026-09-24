@@ -1247,7 +1247,7 @@ Troisième façon de payer un modèle, après la clé de la plateforme et la cl�
 le **forfait personnel** de la personne qui possède l'agent (famille
 `claude_subscription`, modèles `sub:sonnet` / `sub:opus` / `sub:haiku`).
 
-**Le principe, et il n'est pas négociable.** Le travail s'exécute dans un **bac à sable
+**Le principe, et il n'est pas négociable.** Le travail s'exécute dans un **sandbox
 qui appartient à la personne**, sur le programme officiel du fournisseur, non modifié, où
 elle s'est connectée **elle-même** par la procédure du fournisseur. La plateforme ne
 détient, ne stocke ni ne relaie aucune session : c'est la condition qui rend ce chemin
@@ -1255,10 +1255,10 @@ licite, la politique du fournisseur interdisant à un tiers de collecter ou d'in
 ces identifiants. D'où trois conséquences lisibles dans le code :
 
 - `user_model_subscriptions` n'a **aucune colonne de secret** — ni l'adresse du compte ;
-  elle porte un bac à sable, un état, un palier et une échéance ;
+  elle porte un sandbox, un état, un palier et une échéance ;
 - à la réservation, ce travail ne passe **pas** par la garde d'argent (`_avec_cle`) : il
   n'y a aucune clé à chercher. Il gagne un `sandbox_id`, et rien d'autre ;
-- seul un **worker de plateforme** reçoit ce bac à sable, et seul lui peut faire arrêter
+- seul un **worker de plateforme** reçoit ce sandbox, et seul lui peut faire arrêter
   un travail faute de connexion — la file est ouverte aux membres, pas ce pouvoir.
 
 **Des ids PRÉFIXÉS.** La famille se DÉDUIT du modèle : `claude-sonnet-5` reste la voie
@@ -1291,7 +1291,7 @@ qu'on oublie).
    à la reconnexion. Ce n'est pas un arriéré : le tick périme les occurrences
    programmées restées en file, un webhook porte sa fraîcheur — seule la plus
    récente attend vraiment. L'écran l'annonce (`waiting_jobs`). Ne s'ARRÊTE encore
-   que ce qui n'a rien à attendre : aucun bac à sable, aucun demandeur.
+   que ce qui n'a rien à attendre : aucun sandbox, aucun demandeur.
    ⚠️ L'attente vit ICI et nulle part ailleurs : la garde du claim sert un `paused_limit`
    sans discuter, sinon un plafond EXPIRÉ tuait le travail que la file venait de rendre.
 
@@ -1309,14 +1309,14 @@ les QUATRE chemins de pose — le quatrième, `runner_jobs op=enqueue`, était o
 la revue du 23/09 (une flotte s'y enfilait sur un forfait) — et par les routes de
 connexion.
 
-**La ferme (24/09/2026).** Les bacs vivent sur une box dédiée, `ferme-0`
-(`otomata-tech/ferme-claude`) : un bac = un utilisateur Unix, chaque run une unité
+**La ferme (24/09/2026).** Les sandboxes vivent sur une box dédiée, `ferme-0`
+(`otomata-tech/claude-sandbox-manager`) : un sandbox = un utilisateur Unix, chaque run une unité
 systemd bridée. Son agent n'écoute que sur le réseau privé ; le backend le joint par
 `oto_mcp.ferme` (`OTO_FERME_URL`, `OTO_FERME_TOKEN`). Se connecter se fait en deux temps,
 sans terminal : `POST /api/me/model-subscriptions/{family}/login` rend l'URL du
 fournisseur, que la personne ouvre dans SON navigateur ; `PUT …/login/code` remet au
-programme du bac le code affiché — à usage unique, inutilisable hors du bac. La
-session naît et reste dans le bac. Effacer (`?destroy=true`) DÉTRUIT le bac par la ferme
+programme du sandbox le code affiché — à usage unique, inutilisable hors du sandbox. La
+session naît et reste dans le sandbox. Effacer (`?destroy=true`) DÉTRUIT le sandbox par la ferme
 avant d'oublier la ligne ; un échec se dit (502), la ligne reste, coupée. Le worker de la
 famille (oto-runner, `OTO_RUNNER_PROVIDER=claude-subscription`) tourne sur la même box.
 

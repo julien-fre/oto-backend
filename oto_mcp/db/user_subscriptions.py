@@ -1,13 +1,13 @@
 """L'ABONNEMENT d'une personne à un fournisseur de modèles (OTO-130).
 
 Une ligne par (personne, famille) dans `user_model_subscriptions`. Ce qu'elle
-porte : le bac à sable où le programme officiel du fournisseur est installé, et
+porte : le sandbox où le programme officiel du fournisseur est installé, et
 l'état de la connexion que la personne y a ouverte ELLE-MÊME.
 
 ⚠️ **Rien ici n'est un secret, et rien ne doit le devenir.** La session Claude
-vit dans le bac à sable, écrite par le programme au terme de sa propre procédure
+vit dans le sandbox, écrite par le programme au terme de sa propre procédure
 de connexion. La collecter, la stocker ou la relayer nous est INTERDIT (politique
-Anthropic) et nous est inutile : le travail s'exécute dans le bac à sable, où le
+Anthropic) et nous est inutile : le travail s'exécute dans le sandbox, où le
 programme lit sa session tout seul. Une fonction qui rendrait une session n'a
 donc pas sa place dans ce module — ni ailleurs.
 
@@ -56,9 +56,9 @@ def list_subscriptions(sub: str) -> list[dict]:
 
 
 def upsert_sandbox(sub: str, famille: str, sandbox_id: str) -> dict:
-    """Pose (ou retrouve) le bac à sable d'une personne, sans toucher à son état.
+    """Pose (ou retrouve) le sandbox d'une personne, sans toucher à son état.
 
-    ⚠️ Le statut n'est PAS remis à `connected` ici : poser un bac à sable n'est pas
+    ⚠️ Le statut n'est PAS remis à `connected` ici : poser un sandbox n'est pas
     s'y connecter. C'est la sonde (`claude auth status`, rapportée par
     `marquer_statut`) qui l'établit — elle seule a vu une session valide."""
     with _connect() as conn:
@@ -78,7 +78,7 @@ def marquer_statut(sub: str, famille: str, statut: str, *,
                    limit_reset_at: Optional[Any] = None,
                    ok: bool = False,
                    observe: bool = False) -> Optional[dict]:
-    """Écrit l'état observé. Ne crée RIEN : sans bac à sable, il n'y a rien à
+    """Écrit l'état observé. Ne crée RIEN : sans sandbox, il n'y a rien à
     décrire, et une ligne née d'un rapport de worker serait une connexion qui
     n'a jamais eu lieu.
 
@@ -118,11 +118,11 @@ def marquer_statut(sub: str, famille: str, statut: str, *,
 
 
 def oublier(sub: str, famille: str) -> Optional[str]:
-    """Efface la ligne et rend le bac à sable à détruire, s'il y en avait un.
+    """Efface la ligne et rend le sandbox à détruire, s'il y en avait un.
 
     ⚠️ L'ordre importe : la ligne part d'abord, la destruction suit côté
-    infrastructure. Une destruction qui échoue laisse un bac à sable orphelin —
-    coûteux, mais muet ; l'inverse laisserait une personne « connectée » sur un bac
+    infrastructure. Une destruction qui échoue laisse un sandbox orphelin —
+    coûteux, mais muet ; l'inverse laisserait une personne « connectée » sur un sandbox
     à sable qui n'existe plus, donc des travaux réservés qui ne tourneront jamais."""
     with _connect() as conn:
         row = conn.execute(

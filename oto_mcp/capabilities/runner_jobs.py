@@ -515,7 +515,7 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     famille = _abonnement.famille_du_travail(job)
     if _abonnement.est_abonnement(famille):
         # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
-        # ce travail tournera dans le bac à sable de SON DEMANDEUR, sur le programme
+        # ce travail tournera dans le sandbox de SON DEMANDEUR, sur le programme
         # officiel du fournisseur, avec la session qu'il y a ouverte lui-même. La
         # plateforme ne paie rien, ne détient rien, ne relaie rien. Laisser la garde
         # d'argent d'en dessous s'exécuter le ferait refuser `_SANS_CLE_DEPOSEE` —
@@ -524,7 +524,7 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
         # ⚠️ APRÈS la garde `worker` ci-dessus, pas avant (revue du 21/09/2026) : la
         # file n'est pas réservée aux workers. Placée plus haut, cette branche
         # laissait un simple membre ARRÊTER DÉFINITIVEMENT le travail d'un collègue
-        # non connecté, et lui rendait le bac à sable d'un autre.
+        # non connecté, et lui rendait le sandbox d'un autre.
         return _avec_abonnement(job, famille, appelant)
     # ⚠️ LA GARDE D'ARGENT (`_cle_exigee`), et seulement pour un WORKER : c'est lui
     # qui retombe sur la clé de SON environnement — la nôtre — quand le travail
@@ -567,18 +567,18 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
 
 
 def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
-    """Le travail d'un abonnement, servi avec le BAC À SABLE de son porteur.
+    """Le travail d'un abonnement, servi avec le SANDBOX de son porteur.
 
     Ce que le worker reçoit en plus : `sandbox_id`. Jamais de clé, jamais de
-    session — il exécutera le programme officiel DANS ce bac à sable, qui lit la
+    session — il exécutera le programme officiel DANS ce sandbox, qui lit la
     sienne tout seul.
 
     ⚠️ Un porteur sans connexion ARRÊTE le travail, raison écrite. Le remettre en
     file le ferait reprendre par le worker suivant, indéfiniment, sans que
     personne n'apprenne pourquoi — la leçon de `_refuser_sans_cle`.
     """
-    servable, statut, bac = _abonnement.servable(job.get("sub"), famille)
-    if not servable and _abonnement.reparable(statut, bac):
+    servable, statut, sandbox = _abonnement.servable(job.get("sub"), famille)
+    if not servable and _abonnement.reparable(statut, sandbox):
         # ⚠️ RENDU à la file, pas arrêté (21/09/2026) : la personne doit se
         # reconnecter, et ce n'est pas la faute du travail. La réservation saute
         # déjà ces personnes — n'arrive ici que la course où l'état a changé entre
@@ -590,11 +590,11 @@ def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
     if not servable:
         return _refuser_sans_cle(job, appelant,
                                  _abonnement.raison_du_refus(famille, statut))
-    # Trace de REMISE, comme pour une clé : qui, quelle org, quel bac à sable. Elle
+    # Trace de REMISE, comme pour une clé : qui, quelle org, quel sandbox. Elle
     # ne peut rien révéler d'un secret — il n'y en a pas dans ce chemin.
-    logger.info("abonnement `%s` servi à %s pour l'org %s (travail %s, bac %s)",
-                famille, appelant, job.get("org_id"), job.get("id"), bac)
-    return {**job, "sandbox_id": bac}
+    logger.info("abonnement `%s` servi à %s pour l'org %s (travail %s, sandbox %s)",
+                famille, appelant, job.get("org_id"), job.get("id"), sandbox)
+    return {**job, "sandbox_id": sandbox}
 
 
 _SANS_DEPOT = (
@@ -973,8 +973,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         bail = max(30, min(inp.lease_seconds, 3600))
         # ⚠️ Un worker d'ABONNEMENT ne prend QUE sa famille, qu'il l'ait demandé ou
         # non (revue du 21/09/2026). Il n'exécute rien lui-même : tout part dans le
-        # bac à sable du demandeur. Un travail SANS famille — l'agent historique
-        # posé sans modèle — n'a aucun bac à sable : servi à ce worker, il échoue à
+        # sandbox du demandeur. Un travail SANS famille — l'agent historique
+        # posé sans modèle — n'a aucun sandbox : servi à ce worker, il échoue à
         # coup sûr, tentative après tentative. Le drapeau `org_key_only` le
         # garantissait déjà… à condition que l'unité systemd le pose. Une garde qui
         # dépend d'une variable d'environnement bien écrite n'en est pas une.

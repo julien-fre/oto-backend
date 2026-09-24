@@ -3,7 +3,7 @@
 Ce que ces bancs tiennent, et qui n'est pas négociable :
 
 1. **Aucune clé n'est cherchée** pour un travail d'abonnement — ni celle de
-   l'org, ni celle de la plateforme. Le travail s'exécute dans le bac à sable de
+   l'org, ni celle de la plateforme. Le travail s'exécute dans le sandbox de
    son demandeur, où le programme officiel lit la session que cette personne y a
    ouverte elle-même. Un chemin qui irait au coffre serait la preuve que la
    plateforme paie, ou intermédie, ce qu'elle n'a pas le droit d'intermédier.
@@ -24,7 +24,7 @@ from oto_mcp.db import user_subscriptions as US
 _WORKER = "svc-runner-worker"
 _PORTEUR = "personne-qui-paie"
 _FAMILLE = "claude_subscription"
-_BAC = "bac-a-sable-1"
+_BAC = "sandbox-a-sable-1"
 
 
 def _travail(sub=_PORTEUR, famille=_FAMILLE, **extra):
@@ -87,7 +87,7 @@ def test_jamais_connecte_arrete_le_travail_en_le_disant(_abonnements, _refus_san
 def test_sans_bac_a_sable_il_n_y_a_RIEN_a_attendre_le_travail_s_arrete(
         _abonnements, _refus_sans_base):
     """Depuis le 21/09/2026, qui doit se RECONNECTER voit ses travaux attendre (banc
-    plus bas). Ce qui s'arrête encore : l'état sans bac à sable — personne ne
+    plus bas). Ce qui s'arrête encore : l'état sans sandbox — personne ne
     reviendra « reconnecter » ce qui n'a jamais existé, et un travail en attente
     éternelle est un silence."""
     _abonnements[(_PORTEUR, _FAMILLE)] = {"statut": US.A_RECONNECTER,
@@ -114,7 +114,7 @@ def test_un_plafond_n_est_jamais_un_refus_a_la_garde(_abonnements):
 def test_un_simple_membre_ne_recoit_ni_bac_a_sable_ni_pouvoir_d_arreter(
         _abonnements, _refus_sans_base, monkeypatch):
     """La file n'est pas réservée aux workers : un membre d'org peut réserver. Il ne
-    doit ni recevoir le bac à sable d'un collègue, ni — pire — pouvoir ARRÊTER
+    doit ni recevoir le sandbox d'un collègue, ni — pire — pouvoir ARRÊTER
     DÉFINITIVEMENT son travail parce que ce collègue n'est pas connecté."""
     monkeypatch.setattr(RJ, "_depot_pose", lambda org, depot: False)
     servi = RJ._avec_cle(_travail(), _FAMILLE, "un-membre-ordinaire",

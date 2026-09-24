@@ -1,7 +1,7 @@
 """La garde des travaux qui tournent sur l'ABONNEMENT d'une personne (OTO-130).
 
 Un travail de famille `claude_subscription` ne consomme NI la clé de son org NI
-celle de la plateforme : il s'exécute dans le bac à sable de son demandeur, sur le
+celle de la plateforme : il s'exécute dans le sandbox de son demandeur, sur le
 programme officiel du fournisseur, où cette personne s'est connectée elle-même.
 
 Trois refus nommés, tous à l'écriture ou à la réservation, jamais silencieux :
@@ -10,13 +10,13 @@ Trois refus nommés, tous à l'écriture ou à la réservation, jamais silencieu
    propriétaire. Une flotte, ou l'agent d'un collègue, ferait payer le forfait
    d'une personne pour le travail d'une autre.
 2. `subscription_not_connected` — la personne n'a pas (ou plus) de session
-   ouverte dans son bac à sable.
+   ouverte dans son sandbox.
 3. Au claim, un travail dont le porteur n'est plus connecté est ARRÊTÉ avec sa
    raison, comme un travail sans clé déposée : le remettre en file le ferait
    reprendre indéfiniment par le worker suivant.
 
 ⚠️ **Ce module ne lit jamais de session.** Il lit un ÉTAT (`user_model_
-subscriptions.statut`), écrit par la sonde du bac à sable. La session elle-même
+subscriptions.statut`), écrit par la sonde du sandbox. La session elle-même
 ne traverse pas le backend — c'est la condition qui rend ce chemin licite.
 """
 from __future__ import annotations
@@ -75,12 +75,12 @@ def raison_du_refus(famille: str, statut: Optional[str]) -> str:
     return _PAS_CONNECTE.format(famille=famille, statut=statut or "jamais connectée")
 
 
-def reparable(statut: Optional[str], bac: Optional[str]) -> bool:
+def reparable(statut: Optional[str], sandbox: Optional[str]) -> bool:
     """Cet état se répare-t-il SANS toucher au travail ? Oui dès que la personne a
-    un bac à sable et n'a qu'à s'y reconnecter. Non quand il n'y a rien à attendre :
-    ni bac à sable, ni ligne — personne ne reviendra « reconnecter » ce qui n'a
+    un sandbox et n'a qu'à s'y reconnecter. Non quand il n'y a rien à attendre :
+    ni sandbox, ni ligne — personne ne reviendra « reconnecter » ce qui n'a
     jamais existé, et un travail en attente éternelle est un silence."""
-    return bool(bac) and statut in (user_subscriptions.A_RECONNECTER,
+    return bool(sandbox) and statut in (user_subscriptions.A_RECONNECTER,
                                     user_subscriptions.DECONNECTE)
 
 
@@ -136,11 +136,11 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
     if not sub:
         return False, None, None
     ligne = user_subscriptions.get_subscription(sub, famille) or {}
-    statut, bac = ligne.get("statut"), ligne.get("sandbox_id")
-    if not bac:
+    statut, sandbox = ligne.get("statut"), ligne.get("sandbox_id")
+    if not sandbox:
         return False, statut, None
     if statut == user_subscriptions.CONNECTE:
-        return True, statut, bac
+        return True, statut, sandbox
     if statut == user_subscriptions.PLAFOND:
         # ⚠️ Un plafond n'est JAMAIS un refus ici (corrigé le 21/09/2026). Tant que
         # son échéance est future, la réservation saute la personne — ce travail
@@ -149,8 +149,8 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
         # rendait le travail et la garde le tuait (mesuré en base). On sert ; si
         # le forfait est encore épuisé, le fournisseur le dira, et le worker
         # rapportera une nouvelle échéance.
-        return True, statut, bac
-    return False, statut, bac
+        return True, statut, sandbox
+    return False, statut, sandbox
 
 
 def exiger_ouvert(sub: str, famille: str) -> None:

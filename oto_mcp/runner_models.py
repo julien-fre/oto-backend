@@ -60,7 +60,7 @@ MODELES: tuple[Modele, ...] = (
     Modele("mistral-small-2603", "Mistral Small", "mistral", effort="high",
            max_output_tokens=16000),
     # ⚠️ L'ABONNEMENT de la personne (OTO-130), pas une clé : ces travaux tournent
-    # dans SON bac à sable, sur le programme Claude Code officiel où elle s'est
+    # dans SON sandbox, sur le programme Claude Code officiel où elle s'est
     # connectée elle-même. La famille est donc un dépôt qu'AUCUNE org ne dépose et
     # que la plateforme ne paie pas — `FAMILLES_PERSONNELLES` ci-dessous dit à la
     # garde d'argent de ne pas aller chercher une clé qui n'existe pas.

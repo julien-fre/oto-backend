@@ -408,8 +408,8 @@ _REGLAGES: tuple[Variable, ...] = (
              "Expose la facturation (REST/MCP/dashboard/runner) — off par défaut.",
              ("oto_mcp/billing.py:78",)),
     Variable("OTO_FERME_URL", Classe.REQUISE, None,
-             "L'agent de la ferme des bacs d'abonnement (réseau privé du parc, "
-             "`http://172.16.16.2:8190`). Sans lui, se connecter ou effacer son bac "
+             "L'agent de la ferme des sandboxes d'abonnement (réseau privé du parc, "
+             "`http://172.16.16.2:8190`). Sans lui, se connecter ou effacer son sandbox "
              "échoue en 502 nommé ; rien d'autre n'en dépend.",
              ("oto_mcp/ferme.py:45",)),
     Variable("OTO_FERME_TOKEN", Classe.REQUISE, None,

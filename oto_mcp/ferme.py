@@ -1,13 +1,13 @@
-"""Le client de l'agent de la FERME — la box où vivent les bacs à sable d'abonnement.
+"""Le client de l'agent de la FERME — la box où vivent les sandboxes d'abonnement.
 
-Un bac = un espace de la box (`otomata-tech/ferme-claude`) où une personne a connecté
+Un sandbox = un espace de la box (`otomata-tech/claude-sandbox-manager`) où une personne a connecté
 elle-même son abonnement au programme officiel du fournisseur. L'agent de la box le
 crée, y ouvre la connexion, le détruit ; le backend ne fait que le lui demander.
 
 ⚠️ **Rien de ce qui passe ici n'est un identifiant d'abonnement.** La connexion rend
 une URL du fournisseur, que la personne ouvre dans SON navigateur ; le code qu'elle
 colle en retour est à usage unique et ne vaut rien hors du programme qui détient le
-vérifieur, dans le bac. La session, elle, ne sort jamais du bac.
+vérifieur, dans le sandbox. La session, elle, ne sort jamais du sandbox.
 
 L'agent n'écoute que sur le réseau privé du parc (`OTO_FERME_URL`), derrière un jeton
 partagé (`OTO_FERME_TOKEN`, 1Password « Ferme de Claude — jeton de l agent »).
@@ -35,8 +35,8 @@ class FermeIndisponible(RuntimeError):
         self.statut = statut
 
 
-def bac_de(sub: str) -> str:
-    """Le bac d'une personne : un nom stable, qui ne dit pas qui elle est."""
+def sandbox_de(sub: str) -> str:
+    """Le sandbox d'une personne : un nom stable, qui ne dit pas qui elle est."""
     return "u" + hashlib.sha256(sub.encode()).hexdigest()[:20]
 
 
@@ -58,20 +58,20 @@ def _appel(methode: str, chemin: str, corps: Optional[dict] = None, *,
     return r.json()
 
 
-def creer(bac: str) -> None:
-    _appel("PUT", f"/api/bacs/{bac}")
+def creer(sandbox: str) -> None:
+    _appel("PUT", f"/api/sandboxes/{sandbox}")
 
 
-def demarrer_connexion(bac: str, email: Optional[str] = None) -> str:
+def demarrer_connexion(sandbox: str, email: Optional[str] = None) -> str:
     """Rend l'URL du fournisseur où la personne se connecte."""
-    return _appel("POST", f"/api/bacs/{bac}/login", {"email": email} if email else {})["url"]
+    return _appel("POST", f"/api/sandboxes/{sandbox}/login", {"email": email} if email else {})["url"]
 
 
-def transmettre_code(bac: str, code: str) -> dict:
-    """Rend l'état du bac après l'échange (`loggedIn`, `subscriptionType`, …)."""
-    return _appel("PUT", f"/api/bacs/{bac}/login/code", {"code": code})
+def transmettre_code(sandbox: str, code: str) -> dict:
+    """Rend l'état du sandbox après l'échange (`loggedIn`, `subscriptionType`, …)."""
+    return _appel("PUT", f"/api/sandboxes/{sandbox}/login/code", {"code": code})
 
 
-def detruire(bac: str) -> None:
-    """Déconnecte la session du fournisseur, puis efface le bac et tout ce qu'il contient."""
-    _appel("DELETE", f"/api/bacs/{bac}", absent_ok=True)   # déjà absent = déjà détruit
+def detruire(sandbox: str) -> None:
+    """Déconnecte la session du fournisseur, puis efface le sandbox et tout ce qu'il contient."""
+    _appel("DELETE", f"/api/sandboxes/{sandbox}", absent_ok=True)   # déjà absent = déjà détruit

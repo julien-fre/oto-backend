@@ -1,4 +1,4 @@
-"""Mes ABONNEMENTS de modèles — les lire, me connecter, me déconnecter, effacer mon bac.
+"""Mes ABONNEMENTS de modèles — les lire, me connecter, me déconnecter, effacer mon sandbox.
 
 L'écran « Fournisseurs de modèles » d'une personne (OTO-130). Cinq gestes, tous
 au palier MEMBRE : un abonnement appartient à qui le paie, et personne d'autre —
@@ -7,15 +7,15 @@ pas même un admin de son org — n'a à le lire ni à le couper.
 **Ce qui n'est PAS ici, et ne le sera pas :**
 
 - *Poser un identifiant.* Il n'y en a aucun à poser. La personne se connecte
-  DANS son bac à sable, par la procédure du fournisseur, et la session n'en sort
+  DANS son sandbox, par la procédure du fournisseur, et la session n'en sort
   jamais. Une route qui recevrait un jeton d'abonnement serait exactement ce que
   la politique du fournisseur interdit (« developers may not collect, store, or
   intermediate »), et rendrait illicite tout le chemin.
 
 **Se connecter** passe par la ferme (`oto_mcp.ferme`) en deux temps : la route rend
 l'URL du fournisseur, que la personne ouvre dans SON navigateur ; elle y colle le
-code affiché, que la route remet au programme du bac. Ce code est à usage unique et
-inutilisable hors du bac : la session naît et reste dans le bac.
+code affiché, que la route remet au programme du sandbox. Ce code est à usage unique et
+inutilisable hors du sandbox : la session naît et reste dans le sandbox.
 
 **Pas de face MCP** (`mcp=None`) : ces gestes sont ceux d'un écran de réglages,
 et « déconnecte-moi » n'est pas une capacité qu'un agent doive pouvoir invoquer
@@ -52,8 +52,8 @@ class AbonnementInput(BaseModel):
         description=("The model family this subscription serves, e.g. "
                      "`claude_subscription`."))
     # ⚠️ Deux gestes distincts, et la distinction est la seule chose qui compte
-    # ici : se DÉCONNECTER laisse le bac à sable (se reconnecter ne recommence
-    # pas de zéro) ; EFFACER détruit le bac, donc la session avec.
+    # ici : se DÉCONNECTER laisse le sandbox (se reconnecter ne recommence
+    # pas de zéro) ; EFFACER détruit le sandbox, donc la session avec.
     #
     # ⚠️ En QUERY (`?destroy=true`), pas dans un corps : l'adaptateur ne lit un
     # corps sur DELETE que sur opt-in (`reads_body`), et aucune route du dépôt ne
@@ -146,7 +146,7 @@ def _exiger_famille(famille: str) -> None:
 
 
 def _par_la_ferme(geste):
-    """Un geste de la ferme, ou un refus nommé : l'échec d'un bac ne sort jamais en 500."""
+    """Un geste de la ferme, ou un refus nommé : l'échec d'un sandbox ne sort jamais en 500."""
     try:
         return geste()
     except ferme.FermeIndisponible as e:
@@ -162,22 +162,22 @@ def _par_la_ferme(geste):
 def _connecter(ctx: ResolvedCtx, inp: ConnexionInput) -> dict:
     _exiger_famille(inp.family)
     _abonnement.exiger_ouvert(ctx.sub, inp.family)
-    bac = ferme.bac_de(ctx.sub)
-    _par_la_ferme(lambda: ferme.creer(bac))
-    return {"url": _par_la_ferme(lambda: ferme.demarrer_connexion(bac, inp.email))}
+    sandbox = ferme.sandbox_de(ctx.sub)
+    _par_la_ferme(lambda: ferme.creer(sandbox))
+    return {"url": _par_la_ferme(lambda: ferme.demarrer_connexion(sandbox, inp.email))}
 
 
 def _valider_code(ctx: ResolvedCtx, inp: CodeInput) -> dict:
     _exiger_famille(inp.family)
     _abonnement.exiger_ouvert(ctx.sub, inp.family)
-    bac = ferme.bac_de(ctx.sub)
-    etat = _par_la_ferme(lambda: ferme.transmettre_code(bac, inp.code))
+    sandbox = ferme.sandbox_de(ctx.sub)
+    etat = _par_la_ferme(lambda: ferme.transmettre_code(sandbox, inp.code))
     if not etat.get("loggedIn"):
         raise AuthzDenied(422, "login_failed",
                           "le fournisseur n'a pas ouvert de session. Recommence depuis le début.")
     # La connexion est un geste de la PERSONNE (pas une observation) : elle défait
     # une déconnexion. Le palier est ce que le programme a lu — ni adresse ni org.
-    db.user_subscriptions.upsert_sandbox(ctx.sub, inp.family, bac)
+    db.user_subscriptions.upsert_sandbox(ctx.sub, inp.family, sandbox)
     ligne = db.user_subscriptions.marquer_statut(
         ctx.sub, inp.family, db.user_subscriptions.CONNECTE,
         plan=etat.get("subscriptionType"), method=etat.get("authMethod"), ok=True)
@@ -192,7 +192,7 @@ def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
         raise AuthzDenied(404, "not_connected",
                           f"aucun abonnement `{inp.family}` pour toi.")
     if not inp.destroy:
-        # ⚠️ On marque `disconnected` SANS toucher au bac à sable, et c'est le
+        # ⚠️ On marque `disconnected` SANS toucher au sandbox, et c'est le
         # geste courant : la session y dort encore, mais plus aucun travail n'y
         # part (`claim`). Détruire par défaut ferait payer une reconnexion
         # complète à qui voulait juste mettre en pause.
@@ -200,19 +200,19 @@ def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
             ctx.sub, inp.family, db.user_subscriptions.DECONNECTE)
         return {"ok": True, "family": inp.family, "sandbox_destroyed": False}
 
-    # ⚠️ Le bac est DÉTRUIT avant que la ligne parte (revue du 23/09/2026). L'ordre
+    # ⚠️ Le sandbox est DÉTRUIT avant que la ligne parte (revue du 23/09/2026). L'ordre
     # inverse rendait `sandbox_destroyed: true` sans rien détruire, et l'identifiant
-    # du bac ne survivait que dans un log : la session de la personne restait chez
+    # du sandbox ne survivait que dans un log : la session de la personne restait chez
     # nous alors qu'on lui disait l'inverse. Une destruction qui échoue se DIT (502),
     # la ligne reste, et le geste se refait.
-    bac = ligne.get("sandbox_id")
-    if bac:
-        # D'abord couper : plus aucun travail ne part vers un bac en cours de destruction.
+    sandbox = ligne.get("sandbox_id")
+    if sandbox:
+        # D'abord couper : plus aucun travail ne part vers un sandbox en cours de destruction.
         db.user_subscriptions.marquer_statut(
             ctx.sub, inp.family, db.user_subscriptions.DECONNECTE)
-        _par_la_ferme(lambda: ferme.detruire(bac))
+        _par_la_ferme(lambda: ferme.detruire(sandbox))
     db.user_subscriptions.oublier(ctx.sub, inp.family)
-    return {"ok": True, "family": inp.family, "sandbox_destroyed": bool(bac)}
+    return {"ok": True, "family": inp.family, "sandbox_destroyed": bool(sandbox)}
 
 
 _DOC_LISTE = """List YOUR model subscriptions and their state.
@@ -262,7 +262,7 @@ CAPABILITIES += [
             DeclaredError(404, "not_connected",
                           "aucun abonnement de cette famille pour cette personne"),
             DeclaredError(502, "farm_unavailable",
-                          "la destruction du bac a échoué : rien n'est effacé"),
+                          "la destruction du sandbox a échoué : rien n'est effacé"),
         ),
         rest=RestBinding("DELETE", _PATH_UN),
     ),
@@ -275,7 +275,7 @@ CAPABILITIES += [
                           "une famille qui n'est pas servie par abonnement"),
             DeclaredError(403, "subscription_not_enabled",
                           "ce chemin n'est pas ouvert à cette personne"),
-            DeclaredError(502, "farm_unavailable", "la ferme des bacs ne répond pas"),
+            DeclaredError(502, "farm_unavailable", "la ferme des sandboxes ne répond pas"),
         ),
         rest=RestBinding("POST", _PATH_CONNEXION),
     ),
@@ -290,7 +290,7 @@ CAPABILITIES += [
                           "ce chemin n'est pas ouvert à cette personne"),
             DeclaredError(409, "login_failed", "aucune connexion en attente"),
             DeclaredError(422, "login_failed", "le fournisseur n'a pas ouvert de session"),
-            DeclaredError(502, "farm_unavailable", "la ferme des bacs ne répond pas"),
+            DeclaredError(502, "farm_unavailable", "la ferme des sandboxes ne répond pas"),
         ),
         rest=RestBinding("PUT", _PATH_CODE),
     ),

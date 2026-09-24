@@ -108,7 +108,7 @@ def test_un_forfait_epuise_attend_son_echeance_puis_REPART(live):
     from oto_mcp.db import user_subscriptions as US
     from oto_mcp.db._conn import _connect
     d = _personne("abo-d")
-    US.upsert_sandbox(d, _FAMILLE, "bac-d")
+    US.upsert_sandbox(d, _FAMILLE, "sandbox-d")
     with _connect() as conn:
         futur = conn.execute("SELECT NOW() + interval '1 hour' AS t").fetchone()["t"]
         passe = conn.execute("SELECT NOW() - interval '1 minute' AS t").fetchone()["t"]
@@ -119,8 +119,8 @@ def test_un_forfait_epuise_attend_son_echeance_puis_REPART(live):
     US.marquer_statut(d, _FAMILLE, US.PLAFOND, limit_reset_at=passe)
     pris = _claim(9403)
     assert pris and pris["id"] == travail, "échéance passée : la file le rend"
-    servable, _, bac = _abonnement.servable(d, _FAMILLE)
-    assert servable and bac == "bac-d", (
+    servable, _, sandbox = _abonnement.servable(d, _FAMILLE)
+    assert servable and sandbox == "sandbox-d", (
         "la garde doit servir ce que la file vient de rendre — sinon le travail "
         "est tué par un plafond expiré")
 
@@ -154,7 +154,7 @@ def test_la_boucle_entiere_un_rapport_met_en_attente_et_la_file_SAUTE(live):
     from oto_mcp.db import user_subscriptions as US
     from oto_mcp.db._conn import _connect
     f = _personne("abo-f")
-    US.upsert_sandbox(f, _FAMILLE, "bac-f")
+    US.upsert_sandbox(f, _FAMILLE, "sandbox-f")
     US.marquer_statut(f, _FAMILLE, US.CONNECTE, ok=True)
     premier, second = _travail(9405, f), _travail(9405, f)
     assert _claim(9405)["id"] == premier
@@ -187,7 +187,7 @@ def test_un_travail_EN_VOL_ne_reconnecte_PAS_qui_vient_de_se_deconnecter(live):
     from oto_mcp.capabilities import _abonnement
     from oto_mcp.db import user_subscriptions as US
     g = _personne("abo-g")
-    US.upsert_sandbox(g, _FAMILLE, "bac-g")
+    US.upsert_sandbox(g, _FAMILLE, "sandbox-g")
     US.marquer_statut(g, _FAMILLE, US.CONNECTE, ok=True)
     conclu = {"sub": g, "model_family": _FAMILLE}
 
@@ -212,7 +212,7 @@ def test_qui_doit_se_reconnecter_voit_ses_travaux_ATTENDRE_puis_REPARTIR(live, e
     from oto_mcp.db._conn import _connect
     org = 9410 + ["needs_login", "disconnected"].index(etat)
     h = _personne(f"abo-h-{etat}")
-    US.upsert_sandbox(h, _FAMILLE, "bac-h")
+    US.upsert_sandbox(h, _FAMILLE, "sandbox-h")
     US.marquer_statut(h, _FAMILLE, etat)
     travail = _travail(org, h)
 
