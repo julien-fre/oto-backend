@@ -147,7 +147,7 @@ PROTECTED_TOOLS: frozenset[str] = frozenset(
      # l'agent doit pouvoir charger le how-to (ex. bulk-load) en toute session.
      "oto_guide",
      # Dispatch universel (ADR 0036) : `oto_call` matérialise à la demande un outil
-     # NON listé (FOD, connecteur non activé…) sans l'exposer durablement — il DOIT
+     # NON listé (FOD, connecteur non installé…) sans l'exposer durablement — il DOIT
      # rester atteignable même sous visibilité restrictive, sinon le catalogue latent
      # est inaccessible. `oto_tool_schema` = son handoff de schéma (même raison).
      "oto_call", "oto_tool_schema",

@@ -65,7 +65,10 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
   org (sinon hérite du master).
 - **`availability`** (registre `providers/`, déclaré dans `providers/<nom>.py`) : `self_serve` (l'user l'installe lui-même, BYO
   possible) | `platform_granted` (deny-by-default, débloqué par un **grant de namespace** admin).
-- Appliqué à la **visibilité par session** (middleware) + au catalogue `/api/connectors`.
+- Appliqué à la **visibilité par session** (middleware, fail-open) + au catalogue `/api/connectors`,
+  et **à l'appel** (`connectors/activation_gate.py`, fail-closed) : direct comme par `oto_call`,
+  un outil d'un connecteur coupé pour l'org — ou l'équipe — sous laquelle l'appel résout est
+  refusé `connector_disabled`, cran et geste de réouverture nommés (#1064).
 - Surfaces : `/platform/connectors` (master + clé plateforme, super_admin) ; `/org/connectors`
   (override org).
 - **RBAC interne à l'org (ADR 0025)** — grain plus fin que l'org entière : un org_admin réserve

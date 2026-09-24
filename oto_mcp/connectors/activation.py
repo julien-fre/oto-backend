@@ -185,23 +185,47 @@ def effective_for_group(exposed: set[str], group_cut: set[str]) -> set[str]:
 
 def is_exposed(connector: str, org_id: Optional[int] = None) -> bool:
     """exposé = override d'org si défini, sinon master plateforme, sinon OFF."""
+    return cran_qui_coupe(connector, org_id) is None
+
+
+def cran_qui_coupe(connector: str, org_id: Optional[int] = None,
+                   group_id: Optional[int] = None) -> Optional[str]:
+    """Le cran qui COUPE `connector` pour (org, équipe), ou `None` s'il est exposé.
+
+    Même résolution que `effective_for_group(exposed_connectors(org), group_cut…)`,
+    pour UN connecteur : `'org'` = override d'org à OFF ; `'platform'` = pas
+    d'override d'org et master OFF ou absent (deny-by-default) ; `'group'` = exposé
+    pour l'org mais coupé par l'équipe `group_id`. Nommer le cran, c'est nommer QUI
+    peut rouvrir — ce que le refus d'appel (`activation_gate`) dit à l'agent."""
     from .. import db
 
     with db._connect() as conn:
+        org_row = None
         if org_id is not None:
-            row = conn.execute(
+            org_row = conn.execute(
                 "SELECT enabled FROM connector_availability "
                 "WHERE scope_type = 'org' AND scope_id = %s AND connector = %s",
                 (str(org_id), connector),
             ).fetchone()
-            if row is not None:
-                return bool(row["enabled"])
-        row = conn.execute(
-            "SELECT enabled FROM connector_availability "
-            "WHERE scope_type = 'platform' AND connector = %s",
-            (connector,),
-        ).fetchone()
-        return bool(row["enabled"]) if row is not None else False
+        if org_row is not None:
+            if not org_row["enabled"]:
+                return "org"
+        else:
+            row = conn.execute(
+                "SELECT enabled FROM connector_availability "
+                "WHERE scope_type = 'platform' AND connector = %s",
+                (connector,),
+            ).fetchone()
+            if row is None or not row["enabled"]:
+                return "platform"
+        if group_id is not None and conn.execute(
+                "SELECT 1 FROM connector_availability "
+                "WHERE scope_type = 'group' AND scope_id = %s AND connector = %s "
+                "AND enabled = FALSE",
+                (str(group_id), connector),
+        ).fetchone() is not None:
+            return "group"
+    return None
 
 
 def exposed_connectors(org_id: Optional[int] = None) -> set[str]:

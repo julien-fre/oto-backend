@@ -177,7 +177,9 @@ capacités n'a pas sa place dans un index.
   (lignes scope 'group' de `connector_acl`).
   **INVARIANT MONOTONE** : l'équipe ne peut que RÉTRÉCIR ce que l'org expose, jamais élargir
   (platform ⊇ org ⊇ group). Dispo = **visibilité** (`session_visibility`, fail-open,
-  `connector_activation.effective_for_group`/`group_cut_connectors`). Accès = **gate DUR** :
+  `connector_activation.effective_for_group`/`group_cut_connectors`) **et appel**
+  (`connectors/activation_gate.py`, refus `connector_disabled`, direct comme par `oto_call`,
+  #1064). Accès = **gate DUR** :
   seam `access.group_rbac_denied_connectors` (mirror de `rbac_denied_connectors`, bypass
   super/org_admin/group_admin) ; `require_connector_access` = `org_block OR grp_block` à
   **fail-open INDÉPENDANT par palier** (un hoquet DB d'équipe ne désactive pas l'org).

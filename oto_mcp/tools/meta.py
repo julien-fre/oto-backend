@@ -27,6 +27,7 @@ from .. import (access, call_axes, calllog, db, deprecations, error_taxonomy, gu
                 outils_retires, providers, redaction, run_org, session_org, tool_alias,
                 tool_registry)
 from ..auth.hooks import current_user_sub_from_token
+from ..connectors import activation_gate
 from ..tool_visibility import (
     PROTECTED_TOOLS,
     is_default_hidden,
@@ -371,7 +372,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def oto_tool_schema(name: str, ctx: Context) -> dict:
         """Return the input JSON Schema of ANY oto tool by name — even one that is
-        NOT currently listed (hidden by default, connector not activated, FOD…).
+        NOT currently listed (hidden by default, connector not installed, FOD…).
 
         Use this to learn the exact `arguments` shape before calling a latent tool
         with `oto_call`. Tool names come from `oto_list_my_tools`.
@@ -404,7 +405,7 @@ def register(mcp: FastMCP) -> None:
                        _org: Optional[int] = None, _run_id: Optional[str] = None,
                        *, ctx: Context):
         """Call ANY oto tool by name — including one that is NOT listed (hidden by
-        default, connector not activated, FOD…), for a single call, WITHOUT adding it
+        default, connector not installed, FOD…), for a single call, WITHOUT adding it
         durably to your toolbox.
 
         Use this when you need a tool that does not appear in your tool list. If the
@@ -414,8 +415,10 @@ def register(mcp: FastMCP) -> None:
         here — they are always visible: call them directly.
 
         This bypasses only the DISPLAY filter, never access control: the target's
-        call-time gates (credential, connector RBAC, activation, admin autz) and the
-        org field-redaction policy apply exactly as for a direct call (ADR 0036).
+        call-time gates (connector activation for the org/team the call resolves
+        under — refused `connector_disabled` —, credential, connector RBAC, admin
+        authz) and the org field-redaction policy apply exactly as for a direct call
+        (ADR 0036).
 
         Call-context tokens (ADR 0038) are PREFIXED `_` — `_group`, `_project`,
         `_instance`, `_account`, `_run_id` — and may be included INSIDE `arguments`:
@@ -506,6 +509,11 @@ def register(mcp: FastMCP) -> None:
             # L'org du RUN (#639), après les axes — même règle que le middleware :
             # sans `_org=`, la cible se résout dans l'org du run, appartenance gardée.
             undo.extend(await run_org.pin_for_call())
+            # L'activation du connecteur de la CIBLE, contre l'org et l'équipe que les
+            # axes viennent de poser — même garde, même place, que le middleware de
+            # contexte pour un appel direct (#1064). Ici plutôt qu'à la visibilité :
+            # celle-ci est un filtre d'affichage, que `oto_call` traverse par construction.
+            await activation_gate.require_active(name)
         except BaseException:
             for _reset, _tok in reversed(undo):
                 _reset(_tok)

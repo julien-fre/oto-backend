@@ -8,6 +8,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import call_axes, guide_run, redaction, run_org, session_org
 from ..auth.hooks import current_user_sub_from_token
+from ..connectors import activation_gate
 from ..tool_visibility import namespace_of
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,9 @@ class CallContextMiddleware(Middleware):
             # résout dans l'org du run, appartenance gardée (refus nommé, jamais un
             # repli sur la maison). Une lecture par run, hors boucle.
             undo.extend(await run_org.pin_for_call())
+            # L'activation du connecteur, contre l'org et l'équipe que le contexte vient
+            # de poser — même garde, même place, que dans `oto_call` (#1064).
+            await activation_gate.require_active(name)
             return _echo_account(await call_next(context), _cible(name, args))
         finally:
             for reset, tok in reversed(undo):

@@ -546,7 +546,10 @@ rien ne rendait navigable et que rien ne tenait.
   Gate à la **VISIBILITÉ par session** (`UserDisabledToolsMiddleware` + `connector_
   activation`, **fail-open**) : `register_all` charge tout inconditionnellement, le
   middleware masque les tools d'un connecteur non activé pour l'org → (dés)activer
-  prend effet à la session suivante **sans restart**, override par org OK. Filtre
+  prend effet à la session suivante **sans restart**, override par org OK. La
+  visibilité n'est pas la garde : à l'APPEL, direct comme par `oto_call`,
+  `connectors/activation_gate.py` refuse `connector_disabled` (org et équipe de
+  l'appel, fail-closed — #1064). Filtre
   aussi `/api/connectors` (catalogue) ; overlays catalogue `family` (dérivée) +
   `category` (curée) + `publisher` (curé, `_PUBLISHER_BY_CONNECTOR` **ou** le champ
   `publisher` de l'entrée — deux chemins, et l'absence des deux ne retombe plus sur
