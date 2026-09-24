@@ -485,8 +485,12 @@ from oto_mcp.db import _schema, schema
 # EXISTS` d'une table neuve : rien ne se réécrit sur la base PARTAGÉE ; son index et ses
 # déclencheurs sont posés par `_init.py`, sous garde de catalogue.
 # 169 421 → 170 587 (+1 166, commentaire compris), recalculée sur le tronc 88ec6bc8.
-EMPREINTE = "75f2727e7b9f5de8649c1c49fe60243a5ab9b4c3d11dfc37ee5e803e690f2a47"
-LONGUEUR = 170587
+# 24/09/2026 (otomata-tech/oto#39) — `resource_grants.expires_at` : l'échéance d'un
+# partage, NULLABLE (NULL = sans échéance), sans index. Base existante : révision Alembic
+# `0012_partages_echeance`, pas le démarrage (table lue par chaque contrôle d'accès).
+# Recalculée sur le tronc 00a32612 : 170 587 → 170 929 (+342, commentaire compris).
+EMPREINTE = "ba72cbe99d4a59211b07563b388afc8094002961e07da4838000b9347ee5d72b"
+LONGUEUR = 170929
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

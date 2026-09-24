@@ -380,12 +380,15 @@ def can_govern(sub: str, resource_type: str, resource_id: str) -> bool:
 def grant(
     resource_type: str, resource_id: str, principal_type: str, principal_id: str,
     permission: Optional[str] = None, *, role: Optional[str] = None,
-    granted_by: Optional[str] = None,
-) -> None:
+    granted_by: Optional[str] = None, ttl_days: Optional[int] = None,
+):
     """Accorde un RÔLE (ADR 0048) à un principal. `role` ∈ {viewer, editor, manager}
-    prime ; à défaut `permission` read/write est mappé (rétro-compat)."""
-    db.grant_resource(resource_type, resource_id, principal_type, principal_id,
-                      permission=permission, granted_by=granted_by, role=role)
+    prime ; à défaut `permission` read/write est mappé (rétro-compat). `ttl_days` pose
+    l'échéance (otomata-tech/oto#39, règle d'omission : `db.grant_resource`). Rend
+    l'échéance écrite, None = sans échéance."""
+    return db.grant_resource(resource_type, resource_id, principal_type, principal_id,
+                             permission=permission, granted_by=granted_by, role=role,
+                             ttl_days=ttl_days)
 
 
 def revoke(resource_type: str, resource_id: str, principal_type: str, principal_id: str) -> bool:

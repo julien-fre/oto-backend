@@ -103,6 +103,17 @@ class ResourceInput(BaseModel):
         "Project share only — which keys the recipient works with. `own` (default): "
         "their own keys. `inherit`: also the project owner's org/team keys, bounded "
         "by YOUR rights (you must be a member of the owner org). Omitted = unchanged."))
+    # otomata-tech/oto#39 — l'échéance d'un partage, sous le nom qu'elle porte sur les
+    # jetons (`ttl_days`). ⚠️ STRICTE, contrairement aux jetons, qui lisent « pas
+    # d'expiration » dans toute valeur illisible : ici une échéance mal écrite serait un
+    # partage éternel que son auteur croit borné — refusée (`invalid_input`), jamais
+    # lue comme « sans échéance ». Omis : un partage vivant garde la sienne, un neuf ou
+    # un échu n'en a pas (`db.grant_resource`). Optionnel : le cliquet du schéma servi
+    # (`resources_input_legacy.json`) est regravé dans le même commit.
+    ttl_days: Optional[int] = Field(default=None, ge=1, strict=True, description=(
+        "Share only (person/team/org): the share EXPIRES after this many days (integer "
+        "≥ 1) — past it, the recipient loses access. Omitted: an active share keeps its "
+        "expiry, a new or expired one has none. Nobody is reminded before it expires."))
     confirm_transfer: bool = False          # transfer : lever la confirmation anti-lockout (perte de contrôle assumée)
 
     # L'avis de l'alias daté qui a servi l'appel (`deprecations.VALEURS`), ou None.
@@ -328,6 +339,9 @@ def _grants_view(resource_type: str, resource_id: str) -> list[dict]:
          # (read/write) conservé pour rétro-compat des consommateurs existants.
          "role": g.get("role"), "permission": g.get("permission"),
          "granted_at": g.get("granted_at"),
+         # oto#39 : l'échéance (null = sans), et le partage échu reste listé, marqué —
+         # comme un jeton expiré, que son propriétaire constate au lieu de le perdre.
+         "expires_at": g.get("expires_at"), "expired": bool(g.get("expired")),
          # #480 : avec quelles clés ce bénéficiaire travaille (projets seulement).
          **({"credentials": heritages.get((g.get("principal_type"),
                                            str(g.get("principal_id"))), heritage.OWN)}
@@ -423,7 +437,8 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
                      principal: Optional[tuple[str, str]] = None,
                      role: str = "viewer",
                      new_owner: Optional[tuple[str, str]] = None,
-                     credentials: str = heritage.OWN) -> list[dict]:
+                     credentials: str = heritage.OWN,
+                     ttl_days: Optional[int] = None) -> list[dict]:
     """Livraison d'un projet COMPLET (#52) : répercute le geste (share/transfer) sur
     les entités liées (`project_links`). Par entité gouvernée par l'acteur :
     - `tableau`  → même geste (grant au même principal — user/org/groupe, `can_access`
@@ -438,6 +453,7 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
       #480) ;
     - `doc` → page Documents = contenu interne à SON projet propriétaire (partager CE
       projet la propage) ; hors périmètre du geste ici → `skipped`.
+    L'échéance du partage (`ttl_days`, oto#39) voyage avec lui sur chaque grant posé.
     Les docs/fichiers du projet suivent d'office (ils héritent de son accès).
     Ne lève jamais : chaque entité rapporte `status` (le geste principal a réussi)."""
     report: list[dict] = []
@@ -451,7 +467,7 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
                     entry["reason"] = "not_governed"
                 elif op == "share":
                     ownership.grant("datastore_namespace", ref, principal[0], principal[1],
-                                    role=role, granted_by=sub)
+                                    role=role, granted_by=sub, ttl_days=ttl_days)
                     entry["status"] = "shared"
                     entry["role"] = role
                     entry["permission"] = _PERMISSION_OF_ROLE.get(role, "write")
@@ -466,7 +482,7 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
                     # LECTEUR toujours : le partagé consomme la procédure, il n'édite pas
                     # le master (modèle licence — oto garde la main et pousse les màj).
                     ownership.grant(KIND_OF["procedure"], ref, principal[0], principal[1],
-                                    role="viewer", granted_by=sub)
+                                    role="viewer", granted_by=sub, ttl_days=ttl_days)
                     entry["status"] = "shared"
                     entry["role"] = "viewer"
                     entry["permission"] = "read"
@@ -548,6 +564,14 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
     # Le kind d'`ownership` (valeur en base) de la famille publique demandée. Tout
     # appel à `ownership` passe par lui, jamais par `inp.resource_type`.
     kind = KIND_OF[inp.resource_type]
+
+    if inp.ttl_days is not None and (inp.op != "share"
+                                     or inp.audience in (*_PUBLICATION_AUDIENCE, "private")):
+        raise AuthzDenied(
+            400, "ttl_days_grant_only",
+            "`ttl_days` ne se déclare que sur le partage d'une ressource à une personne, "
+            "une équipe ou une org (op=share, audience person/team/org) : c'est "
+            "l'échéance de CE partage.")
 
     if inp.op == "list":
         # PLATEFORME → tout ; sinon → ce que l'acteur gouverne (perso + orgs/groupes
@@ -662,9 +686,11 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
             page.require_viewer(role)
         ptype, pid, plabel = _share_principal(ctx.sub, inp)
         creds = _share_credentials(ctx.sub, inp, rid)
-        ownership.grant(kind, rid, ptype, pid, role=role, granted_by=ctx.sub)
+        expires_at = ownership.grant(kind, rid, ptype, pid, role=role, granted_by=ctx.sub,
+                                     ttl_days=inp.ttl_days)
         out = {"ok": True, "resource_id": rid, "shared_with": plabel,
-               "principal_type": ptype, "role": role, "permission": perm}
+               "principal_type": ptype, "role": role, "permission": perm,
+               "expires_at": expires_at}
         if creds is not None:
             heritage.declarer(int(rid), ptype, pid, creds, ctx.sub)
             out["credentials"] = creds
@@ -677,7 +703,8 @@ def _gouverner(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         if inp.cascade and inp.resource_type == "project":
             out["cascade"] = _cascade_project(
                 ctx.sub, int(rid), "share", principal=(ptype, pid), role=role,
-                credentials=creds or heritage.mode_de(int(rid), ptype, pid))
+                credentials=creds or heritage.mode_de(int(rid), ptype, pid),
+                ttl_days=inp.ttl_days)
             db.log_project_activity(int(rid), ctx.sub, "project.deliver",
                                     f"share → {plabel}")
         # Notifier le bénéficiaire (best-effort). UNE fois, au niveau capability —
@@ -731,6 +758,18 @@ CREDENTIALS_DESCRIPTION = (
     "unshare to revoke. op=get shows each grant's `credentials`.")
 
 
+# otomata-tech/oto#39 — l'échéance d'un partage, servie aux deux surfaces, écrite une fois.
+EXPIRY_DESCRIPTION = (
+    "EXPIRY (`ttl_days`, share to person/team/org only; refused with "
+    "`ttl_days_grant_only` elsewhere): the share expires after N days — past it the "
+    "recipient loses access (content, listings, lent keys), with NO reminder before. "
+    "Omitted on a re-share: an active share keeps its expiry, an expired one is reopened "
+    "without one; to remove an expiry, unshare then share. With cascade=true the linked "
+    "tableaux/procedures get the same expiry. op=share returns `expires_at` (null = none); "
+    "op=get lists each grant's `expires_at` and `expired` — an expired share stays "
+    "listed, marked, until unshared.")
+
+
 CAPABILITIES += [
     Capability(
         key="resources.govern",
@@ -768,6 +807,7 @@ CAPABILITIES += [
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). " + CREDENTIALS_DESCRIPTION
+            + " " + EXPIRY_DESCRIPTION
             + " resource_type ∈ {datastore_namespace, "
             "project, procedure, doc} — it is the discriminant, and it also decides which shape "
             "comes back. " + TRANSFER_PROCEDURE + " " + page.DESCRIPTION

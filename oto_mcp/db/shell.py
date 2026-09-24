@@ -28,6 +28,7 @@ import hashlib
 from typing import Iterable, Optional
 
 from ._conn import _connect
+from ._partage_vivant import PARTAGE_VIVANT
 
 # Un nœud du rail : ce qu'il faut pour l'ADRESSER, le RANGER et l'AFFICHER — jamais
 # son corps. Le rail est le chrome ; le contenu se lit en ouvrant le nœud.
@@ -111,7 +112,7 @@ def direct_grants(sub: str) -> list[dict]:
         rows = conn.execute(
             "SELECT resource_type, resource_id, granted_by, granted_at, role "
             "FROM resource_grants "
-            "WHERE principal_type = 'user' AND principal_id = %s",
+            f"WHERE principal_type = 'user' AND principal_id = %s AND {PARTAGE_VIVANT}",
             (sub,)).fetchall()
     return [dict(r) for r in rows]
 

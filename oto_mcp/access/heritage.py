@@ -29,7 +29,9 @@ grants (ADR 0053) — `grants.resource_kind = 'project_credentials'`, émise par
 partageur (`grantor = user:<sub>`), reçue par le principal du partage. Il ouvre le
 barreau org (et le barreau de l'équipe propriétaire) **tant que le partageur les
 atteint lui-même** : la borne se relit à chaque appel, elle ne se fige pas au partage.
-Révoquer = archiver l'arête (`credentials="own"`, ou `unshare`).
+Révoquer = archiver l'arête (`credentials="own"`, ou `unshare`). Le prêt ne survit pas
+à l'échéance du partage qui le porte (otomata-tech/oto#39) : l'arête n'est lue que pour
+un principal dont le partage du projet est vivant.
 
 **Coût.** Le verdict se calcule UNE fois, à la pose de `_project=` (threadpool,
 `call_axes`), et voyage dans un contextvar. Le walker ne fait qu'y lire : zéro requête
@@ -111,9 +113,17 @@ def evaluer(sub: str, project_id: int, org: Optional[int], groupe_proprio: Optio
         return None
     from ..db import grants as db_grants
     pairs = ownership.accessor_scope(sub).principal_pairs()
+    aretes = [e for e in db_grants.edges_for(ref_projet(project_id), pairs)
+              if e.get("revoked_at") is None and e.get("resource_kind") == RESOURCE_KIND]
+    # Le prêt vit sur une arête de `grants`, qui ne connaît pas l'échéance du partage
+    # (otomata-tech/oto#39) : il ne vaut que pour un principal dont le partage du
+    # projet est ENCORE vivant. Échu, le partage n'ouvre plus rien — les clés non plus.
+    # Lu seulement s'il y a un prêt à borner : sans arête, la pose ne paie rien de plus.
+    vivants = (db.principals_with_live_grant("project", str(int(project_id)))
+               if aretes else set())
     org_heritee, groupe_herite = False, None
-    for e in db_grants.edges_for(ref_projet(project_id), pairs):
-        if e.get("revoked_at") is not None or e.get("resource_kind") != RESOURCE_KIND:
+    for e in aretes:
+        if (e.get("grantee_kind"), str(e.get("grantee_id"))) not in vivants:
             continue
         partageur = e.get("grantor_id") if e.get("grantor_kind") == "user" else None
         if not partageur:

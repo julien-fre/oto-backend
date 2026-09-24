@@ -37,6 +37,7 @@ from typing import Optional
 import psycopg
 
 from ._conn import _connect
+from ._partage_vivant import PARTAGE_VIVANT, PARTAGE_VIVANT_G, partage_vivant
 from .users import upsert_user
 
 logger = logging.getLogger(__name__)
@@ -155,6 +156,7 @@ def resolve_datastore_ns(
             "  OR EXISTS ("
             "       SELECT 1 FROM resource_grants g"
             "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
+            f"          AND {PARTAGE_VIVANT_G}"
             "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
             "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
             "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
@@ -199,6 +201,7 @@ def resolve_datastore_ids_by_name(
             "  OR EXISTS ("
             "       SELECT 1 FROM resource_grants g"
             "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
+            f"          AND {PARTAGE_VIVANT_G}"
             "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
             "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
             "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
@@ -231,7 +234,7 @@ def list_datastores_granted_to(
             "       max(g.permission) AS permission "
             "FROM resource_grants g "
             "JOIN user_datastores d ON d.id::text = g.resource_id "
-            "WHERE g.resource_type = 'datastore_namespace' AND ("
+            f"WHERE g.resource_type = 'datastore_namespace' AND {PARTAGE_VIVANT_G} AND ("
             "     (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
             "  OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ) "
             # ⚠️ L'exclusion « AND NOT (owner_type='user' AND owner_id=sub) » est
@@ -269,6 +272,7 @@ def list_datastores_shared_to_user(sub: str) -> list[dict]:
             "FROM resource_grants g "
             "JOIN user_datastores d ON d.id::text = g.resource_id "
             "WHERE g.resource_type = 'datastore_namespace' "
+            f"  AND {PARTAGE_VIVANT_G} "
             "  AND g.principal_type = 'user' AND g.principal_id = %(sub)s "
             "  AND NOT (d.owner_type = 'user' AND d.owner_id = %(sub)s) "
             "ORDER BY d.namespace",
@@ -388,26 +392,43 @@ def _normalize_role(role: Optional[str], permission: Optional[str]) -> str:
 def grant_resource(
     resource_type: str, resource_id: str, principal_type: str, principal_id: str,
     permission: Optional[str] = None, granted_by: Optional[str] = None,
-    role: Optional[str] = None,
-) -> None:
+    role: Optional[str] = None, ttl_days: Optional[int] = None,
+) -> Optional[object]:
     """Accorde (ou met à jour) un RÔLE à un principal sur une ressource (ADR 0048).
     `role` ∈ {viewer, editor, manager} prime ; à défaut `permission` read/write est mappé
     (rétro-compat). `permission` (plan CONTENU) est TOUJOURS dérivée du rôle (viewer→read,
     editor/manager→write) → tout le SQL du plan contenu reste inchangé. Idempotent :
-    ON CONFLICT met à jour rôle + permission."""
+    ON CONFLICT met à jour rôle + permission.
+
+    L'échéance (otomata-tech/oto#39) : `ttl_days` (entier ≥ 1) la pose à `NOW() + N
+    jours`. Omis, un partage VIVANT garde la sienne — un re-partage qui ne change qu'un
+    rôle ne retire pas une échéance en silence — et un partage neuf ou ÉCHU n'en a pas :
+    re-partager ce qui a expiré le rouvre, sans le laisser mort-né. Rend l'échéance
+    ÉCRITE (None = sans échéance), pour que la réponse décrive la base."""
+    if ttl_days is not None and (isinstance(ttl_days, bool) or int(ttl_days) < 1):
+        raise ValueError(f"ttl_days doit être un entier ≥ 1 (reçu {ttl_days!r})")
     eff_role = _normalize_role(role, permission)
     eff_perm = _ROLE_TO_PERMISSION[eff_role]
+    ttl = int(ttl_days) if ttl_days is not None else None
     with _connect() as conn:
-        conn.execute(
+        row = conn.execute(
             "INSERT INTO resource_grants "
-            "(resource_type, resource_id, principal_type, principal_id, permission, role, granted_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "(resource_type, resource_id, principal_type, principal_id, permission, role, "
+            " granted_by, expires_at) "
+            "VALUES (%(rt)s, %(rid)s, %(pt)s, %(pid)s, %(perm)s, %(role)s, %(by)s, "
+            "        NOW() + make_interval(days => %(ttl)s::int)) "
             "ON CONFLICT (resource_type, resource_id, principal_type, principal_id) "
             "DO UPDATE SET permission = EXCLUDED.permission, role = EXCLUDED.role, "
-            "granted_by = EXCLUDED.granted_by",
-            (resource_type, resource_id, principal_type, principal_id,
-             eff_perm, eff_role, granted_by),
-        )
+            "granted_by = EXCLUDED.granted_by, "
+            "expires_at = CASE WHEN %(ttl)s::int IS NOT NULL THEN EXCLUDED.expires_at "
+            f"                 WHEN {partage_vivant('resource_grants')} "
+            "                 THEN resource_grants.expires_at END "
+            "RETURNING expires_at",
+            {"rt": resource_type, "rid": resource_id, "pt": principal_type,
+             "pid": principal_id, "perm": eff_perm, "role": eff_role, "by": granted_by,
+             "ttl": ttl},
+        ).fetchone()
+    return row["expires_at"] if row else None
 
 
 def revoke_resource_grant(
@@ -428,18 +449,38 @@ def get_resource_grant(
     with _connect() as conn:
         row = conn.execute(
             "SELECT permission, role FROM resource_grants WHERE resource_type = %s AND resource_id = %s "
-            "AND principal_type = %s AND principal_id = %s",
+            f"AND principal_type = %s AND principal_id = %s AND {PARTAGE_VIVANT}",
             (resource_type, resource_id, principal_type, principal_id),
         ).fetchone()
         return dict(row) if row else None
 
 
-def list_resource_grants(resource_type: str, resource_id: str) -> list[dict]:
-    """Bénéficiaires d'une ressource (principal + permission + email si user), pour
-    l'UI de gestion du partage."""
+def principals_with_live_grant(resource_type: str, resource_id: str) -> set[tuple[str, str]]:
+    """Les principals `(type, id)` qui tiennent un partage VIVANT de cette ressource —
+    ce que l'héritage des clés d'un projet (`access/heritage.evaluer`) croise avec ses
+    arêtes : un prêt de clés ne survit pas à l'échéance du partage qui le porte."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT g.principal_type, g.principal_id, g.permission, g.role, g.granted_at, u.email "
+            "SELECT principal_type, principal_id FROM resource_grants "
+            f"WHERE resource_type = %s AND resource_id = %s AND {PARTAGE_VIVANT}",
+            (resource_type, resource_id),
+        ).fetchall()
+    return {(r["principal_type"], str(r["principal_id"])) for r in rows}
+
+
+def list_resource_grants(resource_type: str, resource_id: str) -> list[dict]:
+    """Bénéficiaires d'une ressource (principal + permission + email si user), pour
+    l'UI de gestion du partage.
+
+    ⚠️ La SEULE lecture qui rend les partages ÉCHUS (otomata-tech/oto#39), marqués
+    `expired` : comme un jeton expiré, que son propriétaire doit pouvoir constater
+    expiré plutôt que le voir disparaître. Elle ne donne aucun accès — elle répond à
+    « à qui l'ai-je partagé, et jusqu'à quand ? »."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT g.principal_type, g.principal_id, g.permission, g.role, g.granted_at, "
+            "       g.expires_at, (g.expires_at IS NOT NULL AND g.expires_at <= NOW()) AS expired, "
+            "       u.email "
             "FROM resource_grants g "
             "LEFT JOIN users u ON g.principal_type = 'user' AND u.sub = g.principal_id "
             "WHERE g.resource_type = %s AND g.resource_id = %s "

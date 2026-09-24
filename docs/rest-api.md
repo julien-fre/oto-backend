@@ -682,6 +682,13 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   script ; et ce qui l'empêche de revenir est un cliquet dédié
   (`tests/resources_input_legacy.json`, fige le schéma d'entrée servi de l'héritée).
 
+- **L'échéance d'un partage — `ttl_days` sur `POST /api/resources[/v2]` `op=share`**
+  (otomata-tech/oto#39, 24/09/2026). Entier ≥ 1, audiences `person`/`team`/`org` ; ailleurs
+  `400 ttl_days_grant_only`, illisible `400 invalid_input`. La réponse rend `expires_at`
+  (null = sans échéance) ; `op=get` rend pour chaque grant `expires_at` et `expired` — un
+  partage échu reste listé, marqué, et ne donne plus aucun accès. Règles complètes :
+  `docs/ownership.md` § « L'échéance d'un partage ».
+
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 
 L'adaptateur verse la query string telle quelle — `dict(request.query_params)`, donc **des

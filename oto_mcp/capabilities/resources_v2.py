@@ -37,7 +37,8 @@ from ._authz import RESOURCE_GOVERN
 from ._types import Capability, RestBinding
 from .docs import partage as page
 from .registry import CAPABILITIES
-from .resources import CREDENTIALS_DESCRIPTION, TRANSFER_PROCEDURE, ResourceInput, _resources
+from .resources import (CREDENTIALS_DESCRIPTION, EXPIRY_DESCRIPTION, TRANSFER_PROCEDURE,
+                        ResourceInput, _resources)
 from .resources_contract import REFUS, ResourceOut, ResourceType
 
 
@@ -108,6 +109,7 @@ CAPABILITIES += [
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). " + CREDENTIALS_DESCRIPTION
+            + " " + EXPIRY_DESCRIPTION
             + " DELIVER A FULL PROJECT (#52): "
             "share/transfer a project with cascade=true to carry its linked entities in one "
             "gesture — linked tableaux get the same share/transfer, linked procedures are "

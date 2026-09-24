@@ -23,7 +23,7 @@ def _wire(monkeypatch, *, member_of=(42,), group=GROUP):
                         lambda gid: dict(group) if group and gid == group["id"] else None)
     monkeypatch.setattr(R.roles, "is_org_member", lambda sub, oid: oid in member_of)
     # ADR 0048 : grant keyé par RÔLE ; on enregistre la permission dérivée (assertions read/write).
-    def _grant(rt, rid, pt, pid, perm=None, granted_by=None, role=None):
+    def _grant(rt, rid, pt, pid, perm=None, granted_by=None, role=None, ttl_days=None):
         eff = perm or {"viewer": "read", "editor": "write", "manager": "write"}.get(role, "write")
         calls["grants"].append((rt, rid, pt, pid, eff))
     monkeypatch.setattr(R.ownership, "grant", _grant)

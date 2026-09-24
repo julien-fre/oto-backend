@@ -182,6 +182,36 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 > l'état existant intact (un re-partage qui ne change qu'un rôle ne retire pas un prêt) ;
 > `op=get` rend le `credentials` de chaque grant d'un projet.
 
+## L'échéance d'un partage (otomata-tech/oto#39, 24/09/2026)
+
+> **La règle.** Un partage de ressource (audience × rôle, ADR 0048) peut porter une
+> échéance, comme un jeton d'API depuis le 04/09 : `oto_resource[_v2] op=share … ttl_days=N`
+> (`POST /api/resources[/v2]`), entier ≥ 1, audiences `person`/`team`/`org` seulement
+> (ailleurs : `400 ttl_days_grant_only` ; une valeur illisible : `400 invalid_input`,
+> jamais lue comme « sans échéance », contrairement aux jetons). Passée l'échéance, le
+> partage **ne donne plus rien** : ni le contenu, ni les listes (projets, tableaux, pages
+> reçus, pastille « partagé »), ni le prêt des clés d'un projet (`credentials="inherit"`).
+> **Aucun rappel** avant l'échéance (décision du 24/09 ; il attend otomata-tech/oto#272).
+
+> **Stockage.** `resource_grants.expires_at TIMESTAMPTZ`, NULL = sans échéance — tout
+> partage d'avant garde son sens. Base existante : révision Alembic
+> `0012_partages_echeance`, jouée **avant la fusion** (le code lit la colonne à chaque
+> contrôle d'accès). **Le refus vit dans chaque LECTURE** de la table, par un seul
+> prédicat (`db/_partage_vivant.py`) ; `tests/test_partages_echeance_39.py` refuse toute
+> lecture de `resource_grants` qui ne le porte pas, sauf exemption motivée. La seule :
+> `list_resource_grants`, la liste de gouvernance d'`op=get`, qui rend le partage échu
+> **marqué** (`expires_at`, `expired: true`) au lieu de le taire — le propriétaire le
+> constate, comme un jeton expiré. Elle n'ouvre aucun accès.
+
+> **Re-partager.** Omis, `ttl_days` laisse à un partage VIVANT son échéance (un
+> re-partage qui ne change qu'un rôle ne la retire pas en silence) ; un partage neuf ou
+> ÉCHU n'en reçoit pas (re-partager ce qui a expiré le rouvre). Retirer une échéance :
+> `unshare` puis `share`. `cascade=true` pose la même échéance sur les tableaux et
+> procédures liés. L'héritage des clés (`access/heritage.evaluer`) ne lit une arête
+> `project_credentials` que pour un principal dont le partage du projet est vivant.
+> Hors périmètre : `data_share` (partage d'un tableau par sa propre surface) ne pose pas
+> d'échéance.
+
 ## Partager UNE page sans son projet (kind `doc`, signal #1084)
 
 > **Le besoin.** Faire lire une page d'un projet à des personnes d'une autre org sans leur

@@ -2,7 +2,8 @@
 
 Lus depuis les deux bouts : ce qu'une personne REÇOIT (`list_docs_granted_to`, sa liste
 « partagées avec moi »), et ce qu'un propriétaire a partagé page par page
-(`list_shared_docs`, la liste de gouvernance d'`oto_resource`). Écrire et révoquer ne
+(`list_shared_docs`, la liste de gouvernance d'`oto_resource`). Un partage échu
+(otomata-tech/oto#39) ne compte dans aucune des deux : la page n'est plus partagée. Écrire et révoquer ne
 passent pas ici : ce sont les grants génériques (`grant_resource`,
 `revoke_resource_grant`), comme pour les trois autres familles.
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ._conn import _connect
+from ._partage_vivant import PARTAGE_VIVANT_G
 
 # = `capabilities/docs/common.DOC_RTYPE`, recopié : la couche `db` ne remonte jamais
 # chercher une constante dans les capacités (ADR 0004, sens unique).
@@ -37,7 +39,7 @@ def list_docs_granted_to(principals: list[tuple[str, str]]) -> list[dict]:
             "JOIN projects p ON p.id = d.project_id "
             "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
             "  ON g.principal_type = pr.t AND g.principal_id = pr.i "
-            "WHERE g.resource_type = %s AND p.archived_at IS NULL "
+            f"WHERE g.resource_type = %s AND p.archived_at IS NULL AND {PARTAGE_VIVANT_G} "
             "ORDER BY d.id, g.granted_at",
             ([p[0] for p in principals], [p[1] for p in principals], _RTYPE_PAGE),
         ).fetchall()
@@ -58,7 +60,7 @@ def list_shared_docs(owners: Optional[list[tuple[str, str]]]) -> list[dict]:
                 "  ON p.owner_type = o.t AND p.owner_id = o.i ")
         args += [[o[0] for o in owners], [o[1] for o in owners]]
     sql += ("WHERE EXISTS (SELECT 1 FROM resource_grants g WHERE g.resource_type = %s "
-            "              AND g.resource_id = d.id::text) "
+            f"              AND g.resource_id = d.id::text AND {PARTAGE_VIVANT_G}) "
             "ORDER BY d.updated_at DESC")
     args.append(_RTYPE_PAGE)
     with _connect() as conn:

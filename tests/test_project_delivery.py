@@ -45,7 +45,7 @@ def _wire(monkeypatch, *, governed=("11", "77")):
     monkeypatch.setattr(R.ownership, "would_retain_control", lambda sub, ot, oid: True)
     # ADR 0048 : grant est désormais keyé par RÔLE (viewer/editor/manager) ; on
     # enregistre la permission dérivée pour garder les assertions read/write lisibles.
-    def _grant(rt, rid, pt, pid, perm=None, granted_by=None, role=None):
+    def _grant(rt, rid, pt, pid, perm=None, granted_by=None, role=None, ttl_days=None):
         eff = perm or {"viewer": "read", "editor": "write", "manager": "write"}.get(role, "write")
         calls["grants"].append((rt, rid, pt, pid, eff))
     monkeypatch.setattr(R.ownership, "grant", _grant)
@@ -267,7 +267,7 @@ def test_transfer_cascade_vers_une_equipe_garde_l_org_de_chaque_tableau(monkeypa
 def test_cascade_entity_failure_does_not_break_delivery(monkeypatch):
     calls = _wire(monkeypatch)
 
-    def _boom(rt, rid, pt, pid, perm=None, granted_by=None, role=None):
+    def _boom(rt, rid, pt, pid, perm=None, granted_by=None, role=None, ttl_days=None):
         if rt == "datastore_namespace":
             raise RuntimeError("pg down")
         eff = perm or {"viewer": "read", "editor": "write", "manager": "write"}.get(role, "write")

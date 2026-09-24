@@ -18,6 +18,7 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 from ._conn import _connect
+from ._partage_vivant import PARTAGE_VIVANT, PARTAGE_VIVANT_G
 from . import backlinks as _backlinks
 from .datastore import (
     create_datastore,
@@ -121,7 +122,7 @@ def list_projects_for_owners(owners: list[tuple[str, str]], *,
 
 
 def project_grant_counts(project_ids: list[int]) -> dict[int, int]:
-    """Nombre de partages (`resource_grants`) par projet, en UNE requête — alimente la
+    """Nombre de partages VIVANTS (`resource_grants`, échus exclus — oto#39) par projet, en UNE requête — alimente la
     pastille « partagé » de l'index (ADR 0032, refonte UX). `resource_id` est stocké en
     texte (l'id du projet) → comparaison sur un tableau de str. Projets sans grant absents
     de la map (get(...) = 0)."""
@@ -130,7 +131,7 @@ def project_grant_counts(project_ids: list[int]) -> dict[int, int]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT resource_id, count(*) AS n FROM resource_grants "
-            "WHERE resource_type = 'project' AND resource_id = ANY(%s) "
+            f"WHERE resource_type = 'project' AND resource_id = ANY(%s) AND {PARTAGE_VIVANT} "
             "GROUP BY resource_id",
             ([str(p) for p in project_ids],),
         ).fetchall()
@@ -153,7 +154,7 @@ def list_projects_granted_to(principals: list[tuple[str, str]]) -> list[dict]:
             "JOIN projects p ON p.id = g.resource_id::bigint "
             "JOIN unnest(%s::text[], %s::text[]) AS pr(t, i) "
             "  ON g.principal_type = pr.t AND g.principal_id = pr.i "
-            "WHERE g.resource_type = 'project' AND p.archived_at IS NULL "
+            f"WHERE g.resource_type = 'project' AND p.archived_at IS NULL AND {PARTAGE_VIVANT_G} "
             f"GROUP BY {', '.join('p.' + c.strip() for c in _PROJECT_COLS.split(','))} "
             "ORDER BY p.updated_at DESC",
             (ptypes, pids),

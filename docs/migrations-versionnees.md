@@ -543,6 +543,14 @@ catalogue) : ils suivent le code servi. Le retour arrière retire d'abord décle
 fonction — qui feraient sinon échouer chaque écriture de ligne sur une table absente —,
 puis la table ET ses lignes ; le démarrage suivant repose tout.
 
+`0012_partages_echeance` (24/09/2026, otomata-tech/oto#39, après `0011_journal_revisions_ligne`) ajoute
+une colonne nullable à `resource_grants` (`expires_at`, l'échéance d'un partage), que le code
+du même lot LIT dans chaque contrôle d'accès à un contenu (le prédicat
+`db/_partage_vivant.py`) : comme 0007 et 0010, elle se joue **avant la fusion**, sinon
+chaque lecture de partage répondrait `UndefinedColumn`. Pas au démarrage : la table est lue
+par chaque contrôle d'accès, et l'`ALTER` y prend un verrou exclusif, borné par
+`lock_timeout`. Le retour arrière retire la colonne : un partage échu redevient valide.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

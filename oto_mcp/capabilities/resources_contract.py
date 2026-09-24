@@ -85,6 +85,10 @@ class ResourceGrant(BaseModel):
     # #480 — sur un PROJET seulement : avec quelles clés ce bénéficiaire y travaille
     # (`own` = les siennes ; `inherit` = celles du propriétaire lui sont prêtées).
     credentials: Optional[Literal["own", "inherit"]] = None
+    # otomata-tech/oto#39 — l'échéance du partage (null = sans échéance), et s'il est
+    # ÉCHU : il reste listé, marqué, comme un jeton expiré — il ne donne plus rien.
+    expires_at: Optional[str] = None
+    expired: bool = False
 
 
 class _OwnedResource(BaseModel):
@@ -220,6 +224,8 @@ class ResourceShared(_Avertissement):
     permission: str
     # #480 — rendu sur le partage d'un PROJET : les clés que ce partage déclare.
     credentials: Optional[Literal["own", "inherit"]] = None
+    # otomata-tech/oto#39 — l'échéance ÉCRITE en base (null = sans échéance).
+    expires_at: Optional[str] = None
     cascade: Optional[list[CascadeEntry]] = None
     notified: Optional[bool] = None
 
@@ -322,6 +328,9 @@ REFUS: tuple[DeclaredError, ...] = (
     DeclaredError(400, "credentials_project_share_only",
                   "`credentials` sur autre chose que le partage d'un projet à une "
                   "personne, une équipe ou une org"),
+    DeclaredError(400, "ttl_days_grant_only",
+                  "`ttl_days` hors du partage d'une ressource à une personne, une équipe "
+                  "ou une org (autre op, ou audience public/secret/private)"),
     DeclaredError(400, "publication_unsupported",
                   "audience `public`/`secret`/`private` sur autre chose qu'un "
                   "projet — seul un projet se publie"),

@@ -34,6 +34,11 @@ CREATE TABLE IF NOT EXISTS resource_grants (
     role TEXT NOT NULL DEFAULT 'editor' CHECK (role IN ('viewer', 'editor', 'manager')),
     granted_by TEXT,
     granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- otomata-tech/oto#39 : l'échéance du partage. NULL = sans échéance. Échu, le
+    -- partage ne donne plus rien : toute lecture de cette table filtre
+    -- `db._partage_vivant` (garde : tests/test_partages_echeance_39.py). La ligne
+    -- reste, visible du propriétaire dans `op=get`, comme un jeton expiré.
+    expires_at TIMESTAMPTZ,
     PRIMARY KEY (resource_type, resource_id, principal_type, principal_id)
 );
 CREATE INDEX IF NOT EXISTS idx_resource_grants_principal

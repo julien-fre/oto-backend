@@ -193,7 +193,7 @@ def test_share_role_manager_grants_manager(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_shared_email", lambda *a, **k: True)
     seen = {}
     monkeypatch.setattr(R.ownership, "grant",
-                        lambda rt, rid, pt, pid, perm=None, granted_by=None, role=None:
+                        lambda rt, rid, pt, pid, perm=None, granted_by=None, role=None, ttl_days=None:
                         seen.update(rt=rt, pid=pid, role=role, perm=perm))
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                             resource_id="7", email="u2@x.co", role="manager"))
@@ -208,7 +208,7 @@ def test_share_legacy_permission_maps_to_role(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_shared_email", lambda *a, **k: True)
     seen = {}
     monkeypatch.setattr(R.ownership, "grant",
-                        lambda rt, rid, pt, pid, perm=None, granted_by=None, role=None:
+                        lambda rt, rid, pt, pid, perm=None, granted_by=None, role=None, ttl_days=None:
                         seen.update(role=role))
     R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                       resource_id="7", email="u2@x.co", permission="read"))
