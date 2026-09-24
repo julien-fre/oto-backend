@@ -64,7 +64,7 @@ class ProjectInput(BaseModel):
     mcp_expose_datastore: Optional[bool] = None  # `secret` uniquement : exposer les tools data_* en LECTURE (tableaux liés au projet, sous l'autorité de l'org). None = DÉFAUT exposé au partage secret (#193) ; passer False pour refermer
     mcp_expose_datastore_write: Optional[bool] = None  # opt-in ADDITIONNEL (#193) : autoriser l'ÉCRITURE (data_write/data_set_schema) ; sans objet si la lecture n'est pas exposée — défaut False (lecture seule)
     mcp_expose_docs: Optional[bool] = None  # `secret` uniquement : exposer les PAGES du projet (oto_doc en LECTURE) au destinataire. Défaut False — les pages portent des notes internes, les exposer par défaut serait une fuite par surprise.
-    mcp_instructions_md: Optional[str] = None  # prose SERVIE AU DESTINATAIRE de l'endpoint (ce que son agent lit au branchement) — ≠ brief_md, qui reste interne. "" efface.
+    mcp_instructions_md: Optional[str] = None  # publish_mcp ET update (#597, sans republier) : prose SERVIE AU DESTINATAIRE de l'endpoint (ce que son agent lit au branchement) — ≠ brief_md, qui reste interne. "" efface.
     # update : périmètre d'URL du projet (#605) — motifs `hôte/chemin/` (ex. `linkedin.com/in/`) que les outils de recherche ÉCARTENT (en le disant) et que les outils d'extraction REFUSENT ; un domaine entier s'écrit explicitement `hôte/*`, un hôte nu est refusé. `[]` retire. Porté aussi par l'endpoint publié du projet, sans republication.
     excluded_url_prefixes: Optional[list[str]] = Field(default=None, description=(
         "update: `host/path/` patterns search tools drop and extraction tools refuse "
@@ -122,6 +122,12 @@ class ProjectInput(BaseModel):
         "list/list_templates: output projection. Omitted returns the INDEX (no "
         "briefs); `[\"*\"]` returns whole records; a list of names picks columns."))
     slot: Optional[str] = None         # ADR 0035 (B2) : nom de SLOT que ce lien binde — vocabulaire DU PROJET (unicité (projet, slot) → 409 slot_taken). Fait correspondre le lien aux slots déclarés par les procédures (<slot:name>). Binder un slot TABLEAU dont la procédure déclare un `schema` cible provisionne le namespace vierge avec ce schéma (ADR 0046)
+
+
+# Les champs de la PUBLICATION que seul `publish_mcp` pose (#597) — `mcp_instructions_md`
+# en est exclu : c'est le seul que `op=update` corrige.
+_CHAMPS_DE_PUBLICATION = ("mcp_slug", "mcp_access", "mcp_tools", "mcp_expose_datastore",
+                          "mcp_expose_datastore_write", "mcp_expose_docs")
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -908,6 +914,22 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         if inp.is_template is not None:
             _require(ownership.can_govern(sub, RTYPE, rid), "forbidden",
                      "Publier un modèle est réservé au propriétaire / admin.", 403)
+        # De la PUBLICATION, l'update ne prend que l'instruction servie (#597). Corriger
+        # une phrase imposait de rejouer `publish_mcp` — donc de redéclarer accès et
+        # outils — et une session prudente s'en abstenait : l'instruction périmée
+        # restait servie. Le reste de la publication (slug, accès, outils, opt-ins)
+        # se redéclare par `publish_mcp` ; ici il serait IGNORÉ, donc refusé (#1007).
+        a_republier = [n for n in _CHAMPS_DE_PUBLICATION if getattr(inp, n) is not None]
+        _require(not a_republier, "publication_field_on_update",
+                 f"`op=update` ne touche pas à la publication ({', '.join(a_republier)}), "
+                 "et rien n'a été modifié. Seule `mcp_instructions_md` s'y corrige ; "
+                 "le reste se redéclare par `op=publish_mcp`.")
+        # Ce que l'agent d'un TIERS lit au branchement : même autorité que la
+        # publication elle-même, pas un simple write.
+        if inp.mcp_instructions_md is not None:
+            _require(ownership.can_govern(sub, RTYPE, rid), "forbidden",
+                     "Corriger l'instruction servie par l'endpoint publié est réservé "
+                     "au propriétaire / admin.", 403)
         if inp.excluded_url_prefixes is not None:
             # Périmètre d'URL (#605) : normalisé À LA POSE, refus nommé sur un motif
             # trop large (un hôte nu) ou malformé — rien n'est stocké d'un lot faux.
@@ -922,6 +944,11 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                           brief_md=inp.brief_md, is_template=inp.is_template,
                           icon=inp.icon)
         db.log_project_activity(int(inp.project_id), sub, "project.update", inp.name or None)
+        if inp.mcp_instructions_md is not None:
+            # L'instruction SEULE : slug, accès, outils et opt-ins ne bougent pas.
+            db.set_project_mcp_instructions(int(inp.project_id), inp.mcp_instructions_md)
+            db.log_project_activity(int(inp.project_id), sub,
+                                    "project.update_mcp_instructions", None)
         return _view(db.get_project_by_id(int(inp.project_id)), sub)
 
     if inp.op == "copy":
@@ -1520,7 +1547,9 @@ CAPABILITIES += [
             "update (name, icon = an emoji shown in the lists and headers (\"\" clears it), brief_md, is_template = publish/unpublish "
             "as a copyable model, excluded_url_prefixes = URL prefixes such as `linkedin.com/in/` "
             "that search tools drop and extraction tools refuse under this project — a whole "
-            "host must be written `host/*`, `[]` clears) / copy (deep-copy a project you can read — its own or a model "
+            "host must be written `host/*`, `[]` clears, mcp_instructions_md = the prose "
+            "the published endpoint serves its recipients, fixed WITHOUT republishing — "
+            "slug, access and tools stay as they are; owner/admin only) / copy (deep-copy a project you can read — its own or a model "
             "— into a NEW project in your active org: brief + doc tree + links + raw files; "
             "a tableau link stays a POINTER to the same namespace by default (config.provision "
             "absent/`shared`), but with config.provision=`empty`|`seeded` it is PROVISIONED — a "

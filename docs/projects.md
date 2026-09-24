@@ -292,6 +292,19 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > par projet — **zéro DNS** à chaque publication. **Surface web** : annuaire public **oto.ninja/apps**
 > (`web/AppsView.vue`) via `GET /api/public/mcp-projects` (CORS `*`, liste les projets `anonymous` publiés).
 
+> **Corriger l'instruction servie sans republier (oto-backend#597, 24/09/2026).**
+> `oto_project(op="update", project_id=…, mcp_instructions_md="…")` réécrit la prose que
+> l'endpoint sert à son destinataire, et **elle seule** : slug, accès, outils et opt-ins
+> ne bougent pas (`db.set_project_mcp_instructions`, une colonne). Autz **`can_govern`**
+> — comme `publish_mcp` : c'est ce que l'agent d'un tiers lit au branchement —, journal
+> `project.update_mcp_instructions`, `""` efface. Avant, la seule voie était de rejouer
+> `publish_mcp` en redéclarant accès et outils ; une session prudente s'en abstenait pour
+> une phrase, et une instruction périmée restait servie (29/08 : une clause retirée du
+> brief, encore servie au destinataire). Les AUTRES champs de publication (`mcp_slug`,
+> `mcp_access`, `mcp_tools`, `mcp_expose_*`) sont **refusés** sur `op=update`
+> (`publication_field_on_update`, rien d'écrit) plutôt qu'ignorés : ils se redéclarent
+> par `publish_mcp`.
+
 ## Périmètre d'URL d'un projet — `excluded_url_prefixes` (#605, 2026-08-29)
 
 **Le besoin.** Un contrat client peut exclure la CONSULTATION de certaines pages — le cas
