@@ -121,6 +121,20 @@ def register(mcp: FastMCP) -> None:
                        "`data_to_get` n'y sont pour rien : ni les corriger ni "
                        "réessayer n'y changera quoi que ce soit tant que le compte "
                        "n'est pas rechargé.")
+            elif status == 429:
+                # 429 = Kaspr limite le DÉBIT (otomata-tech/oto#144). La branche
+                # générique rendait « Vérifie le profil LinkedIn » — vingt fois en
+                # trente secondes le 28/08/2026 —, la seule piste qui ne peut rien
+                # donner quand il suffit d'attendre. Levé en `UpstreamHTTPError`
+                # 429 et non en McpError : la taxonomie le classe alors
+                # `rate_limited` / `retryable: true`, le seul verdict juste ici (une
+                # McpError serait `invalid_input` / `retryable: false`).
+                from oto.tools.common.errors import UpstreamHTTPError
+                raise UpstreamHTTPError(429, (
+                    "Kaspr limite le débit (429) — ni le profil ni `data_to_get` "
+                    "n'y sont pour rien. Espace tes appels : attends quelques "
+                    "secondes, puis rejoue le même appel à l'identique."),
+                    service="kaspr") from e
             else:
                 msg = (f"Kaspr n'a pas pu enrichir `{linkedin_id}` ({e}). Vérifie le "
                        f"profil LinkedIn (slug ou URL valide).")

@@ -79,6 +79,8 @@ QUOTA_AUTORISE = {
     "fullenrich",
     # `tests/test_sonde_lusha.py::test_un_compte_a_SEC_est_un_refus_de_QUOTA_pas_d_AUTH`
     "lusha",
+    # `tests/test_sonde_aiark.py::test_un_compte_a_SEC_est_un_refus_de_QUOTA_pas_d_AUTH`
+    "aiark",
 }
 
 

@@ -236,3 +236,97 @@ def test_le_402_ne_renvoie_pas_verifier_le_profil():
     assert "profil" not in msg.lower() or "n'y sont pour rien" in msg, msg
     # le refus doit couper la boucle de reprise, pas l'encourager
     assert "réessayer" in msg or "rechargé" in msg, msg
+
+
+# --- AI Ark 402 : même défaut, jamais posé (otomata-tech/oto#144) --------------
+
+def _message_du_402_aiark(is_platform: bool = False) -> str:
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import aiark
+
+    class _Stub:
+        def __init__(self, *a, **k):
+            pass
+
+        def search_people(self, **k):
+            raise _Boom402()
+
+    with patch("oto.tools.aiark.client.AiArkClient", _Stub), \
+            patch("oto_mcp.access.resolve_api_key", return_value=("k", is_platform)):
+        m = FastMCP("t")
+        aiark.register(m)
+        fn = asyncio.run(m.get_tool("linkedin_aiark_search")).fn
+        with pytest.raises(McpError) as e:
+            fn(op="people", size=40)
+        return e.value.error.message
+
+
+def test_le_402_aiark_nomme_le_compte_et_coupe_la_boucle_de_reprise():
+    """Relevé le 17/08 puis le 07/09/2026 : un 402 AI Ark rendu « n'a pas pu traiter
+    la requête » ; l'agent rejouait en `size=3` une requête déjà réussie en
+    `size=40`, puis s'arrêtait à 120 lignes sur 438 sans savoir pourquoi."""
+    msg = _message_du_402_aiark()
+    assert "n'a pas pu traiter" not in msg, msg
+    assert "402" in msg and "crédits" in msg, msg
+    assert "pas ton entrée" in msg, msg
+    assert "`size`" in msg and "réessayer" in msg, msg
+    assert "Recharge le compte chez AI Ark" in msg, msg
+
+
+def test_le_402_aiark_sur_la_cle_plateforme_ne_dit_pas_de_recharger():
+    """Sur la clé plateforme, le compte n'est pas celui de l'appelant : le geste
+    utile est de le signaler ou de poser sa clé, pas de recharger."""
+    msg = _message_du_402_aiark(is_platform=True)
+    assert "fournis par oto" in msg and "feedback" in msg, msg
+    assert "Recharge le compte chez AI Ark" not in msg, msg
+
+
+# --- Kaspr 429 : attendre, pas relire le profil (otomata-tech/oto#144) ---------
+
+class _Resp429:
+    status_code = 429
+
+
+class _Boom429(Exception):
+    """Réplique de forme d'une `requests.HTTPError` 429."""
+    response = _Resp429()
+
+
+def _erreur_du_429_kaspr() -> Exception:
+    from oto_mcp.tools import kaspr
+
+    class _Stub:
+        def __init__(self, *a, **k):
+            pass
+
+        def enrich_linkedin(self, **k):
+            raise _Boom429()
+
+    with patch("oto.tools.kaspr.client.KasprClient", _Stub), \
+            patch("oto_mcp.access.resolve_api_key", return_value=("k", False)):
+        m = FastMCP("t")
+        kaspr.register(m)
+        fn = asyncio.run(m.get_tool("kaspr_enrich_linkedin")).fn
+        with pytest.raises(Exception) as e:
+            fn(linkedin_id="jane-doe")
+        return e.value
+
+
+def test_le_429_kaspr_ne_renvoie_pas_verifier_le_profil():
+    """Vingt occurrences en rafale sur trente secondes le 28/08/2026, chacune
+    rendue « Vérifie le profil (slug ou URL valide) »."""
+    from oto_mcp.error_taxonomy import classify
+
+    info = classify(_erreur_du_429_kaspr())
+    assert "Vérifie le profil" not in info.message, info.message
+    assert "429" in info.message and "attends" in info.message, info.message
+
+
+def test_le_429_kaspr_est_classe_rejouable():
+    """Le verdict machine suit le texte : `rate_limited` / `retryable: true` — une
+    McpError l'aurait rendu `invalid_input` / `retryable: false`."""
+    from oto_mcp.error_taxonomy import classify
+
+    info = classify(_erreur_du_429_kaspr())
+    assert info.code == "rate_limited", info
+    assert info.retryable is True, info

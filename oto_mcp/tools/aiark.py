@@ -238,20 +238,37 @@ def _appel_avec_reprise(fn, client):
             time.sleep(_TRANSPORT_PAUSE_S)
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde « tester la connexion » : la clé authentifie-t-elle vraiment ?
+def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
+    """Sonde « tester la connexion » — couvre `auth+quota` (otomata-tech/oto#144).
 
-    `verify_key()` (oto-core) fait un GET crédits sans effet de bord — 401 sur
-    clé invalide. Lève — le message remonte tel quel à l'UI.
+    `verify_key()` (oto-core) fait un GET crédits sans effet de bord — 401 sur clé
+    invalide — et rend `{"valid": True, "credits": <int>}`. Le solde était jeté :
+    sur un compte à zéro la clé authentifie parfaitement, la sonde restait verte et
+    un préflight partait travailler pour prendre des 402 en cours de route. On le
+    LIT donc, et un compte à sec lève `QuotaEpuise` (verdict `no_quota`).
+
+    ⚠️ Un solde positif ne garantit pas qu'un appel passera : AI Ark refuse PAR
+    POINT D'ACCÈS (mesuré le 07/09/2026 : `op="people"` en 402 pendant que
+    `op="companies"` répondait, même compte, même instant). La sonde prouve « la
+    clé authentifie et le compte n'est pas à zéro », rien de plus.
     """
     from oto.tools.aiark.client import AiArkClient
-    AiArkClient(api_key=fields["key"]).verify_key()
+
+    restant = AiArkClient(api_key=fields["key"]).verify_key().get("credits")
+    if not isinstance(restant, int):
+        raise RuntimeError(
+            f"AI Ark a répondu sans solde de crédits lisible : {str(restant)[:200]}")
+    if restant <= 0:
+        raise connector_verify.QuotaEpuise(
+            "La clé AI Ark est bonne, mais le compte est à sec (0 crédit restant). "
+            "Recharge le compte chez AI Ark — reconnecter n'y changerait rien.")
+    return {"quota": {"restant": restant, "unite": "crédits"}}
 
 
 def register(mcp: FastMCP) -> None:
     from oto.tools.aiark.client import AiArkClient
 
-    connector_verify.register("aiark", _verify)
+    connector_verify.register("aiark", _verify, couvre=connector_verify.AUTH_QUOTA)
 
     def _client() -> tuple[AiArkClient, bool]:
         key, is_platform = access.resolve_api_key("aiark")
@@ -292,6 +309,24 @@ def register(mcp: FastMCP) -> None:
                        "tentative, différée.")
             elif status == 401:
                 msg = "Clé AI Ark invalide ou révoquée (401). Vérifie la clé posée."
+            elif status == 402:
+                # 402 = le COMPTE refuse, faute de crédits (otomata-tech/oto#144).
+                # Rendu par la branche générique, il disait « n'a pas pu traiter la
+                # requête » : l'agent corrigeait son entrée, rejouait une requête
+                # déjà réussie en `size=3`, puis s'arrêtait sans savoir pourquoi
+                # (run arrêté à 120 lignes sur 438, 17/08/2026). Le refus est PAR
+                # POINT D'ACCÈS : `op="companies"` peut répondre pendant que
+                # `op="people"` rend 402 — ce n'est pas un indice sur l'entrée.
+                recharge = ("Ces crédits sont fournis par oto : signale-le "
+                            "(`feedback`, signal='gap'), ou pose ta propre clé AI Ark."
+                            if is_platform else
+                            "Recharge le compte chez AI Ark, puis reprends là où tu "
+                            "t'es arrêté.")
+                msg = ("AI Ark a refusé l'appel faute de crédits (402) — c'est le "
+                       "compte qui est à sec sur ce point d'accès, pas ton entrée. "
+                       "Ni réduire `size`, ni changer de page ou de filtres, ni "
+                       f"réessayer n'y changera rien tant qu'il n'est pas rechargé. "
+                       f"{recharge}")
             else:
                 msg = f"AI Ark n'a pas pu traiter la requête ({e})."
             raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
