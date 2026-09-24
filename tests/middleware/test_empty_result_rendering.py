@@ -351,3 +351,54 @@ class _ResultatFactice:
         self.structured_content = payload
         self.content = []
         self.is_error = False
+
+
+# --- oto#237 : un COMPTAGE demandé rend son nombre, 0 compris ---------------
+
+def _data_rows(total: int):
+    """La forme exacte de la branche `count_only` de `data_rows`."""
+    def data_rows(count_only: bool = False) -> dict:
+        return {"total": total, "ns_id": 7} if count_only else {"total": total, "rows": []}
+    return data_rows
+
+
+def _servir_avec(m: FastMCP, nom: str, arguments: dict):
+    async def appel():
+        async with Client(m) as c:
+            return await c.call_tool(nom, arguments)
+    r = asyncio.run(appel())
+    return "".join(getattr(b, "text", "") for b in r.content), r.structured_content
+
+
+@pytest.mark.parametrize("total", [0, 1])
+def test_un_comptage_demande_rend_la_MEME_forme_quel_que_soit_le_nombre(total):
+    """RED avant le correctif : 0 sortait en « Aucun résultat… », 1 en `{"total": 1}`.
+    Un agent qui lit `total` devait gérer deux formes pour une seule question."""
+    texte, structure = _servir_avec(_banc(_data_rows(total), nom="data_rows"),
+                                    "data_rows", {"count_only": True})
+    assert texte.replace(" ", "") == f'{{"total":{total},"ns_id":7}}'
+    assert structure == {"total": total, "ns_id": 7}
+
+
+def test_la_recherche_vide_du_meme_outil_reste_une_phrase():
+    """L'exception tient au COMPTAGE demandé, pas à l'outil : la page vide de
+    `data_rows` garde le rendu du vide (oto#32)."""
+    texte, _ = _servir_avec(_banc(_data_rows(0), nom="data_rows"), "data_rows", {})
+    assert texte == redaction.empty_message("data_rows")
+
+
+@pytest.mark.parametrize("nom,args,attendu", [
+    ("data_rows", {"count_only": True}, True),
+    ("data_rows", {"count_only": "true"}, True),
+    ("data_rows", {"count_only": False}, False),
+    ("data_rows", {}, False),
+    ("fr_search", {"count_only": True}, False),       # liste FERMÉE, déclarée
+    ("oto_call", {"name": "data_rows", "arguments": {"count_only": True}}, True),
+    ("oto_call", {"name": "data_rows", "arguments": {}}, False),
+    ("oto_call", {"name": "data_rows", "count_only": True}, False),
+])
+def test_le_comptage_se_juge_sur_l_outil_VISE(nom, args, attendu):
+    from types import SimpleNamespace
+
+    from oto_mcp.middleware.empty_result import _comptage_demande
+    assert _comptage_demande(SimpleNamespace(name=nom, arguments=args)) is attendu

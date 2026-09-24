@@ -201,6 +201,27 @@ _WRITE_ACK_KEYS = ("ok", "dry_run", "created", "updated", "deleted", "removed",
                    "released", "trashed", "archived")
 
 
+#: Les COMPTAGES demandés explicitement : outil → l'argument qui le demande (oto#237).
+#: Leur réponse EST le nombre, 0 compris : `{"total": 0, …}` n'est pas « rien trouvé »,
+#: c'est la réponse à la question posée. Rendu du vide, il servait une phrase là où le
+#: même appel sert `{"total": 1, …}` — deux formes pour un seul champ, que l'agent
+#: devait deviner. Liste FERMÉE et déclarée, jamais déduite de la forme : un `count: 0`
+#: posé à côté d'une collection (la convention maison, cf. `_COLLECTION_KEYS`) reste le
+#: signal d'une recherche vide.
+COMPTAGES_EXPLICITES: dict[str, str] = {"data_rows": "count_only"}
+
+
+def est_un_comptage(tool_name: str, arguments: dict | None) -> bool:
+    """Vrai quand l'appel DEMANDE un comptage (`COMPTAGES_EXPLICITES`) : sa réponse se
+    sert telle quelle, jamais en phrase de vide. `arguments` = ceux de l'outil visé
+    (sous `oto_call`, ceux qu'il transmet), bruts : un client peut poser `"true"`."""
+    arg = COMPTAGES_EXPLICITES.get(tool_name)
+    if not arg or not isinstance(arguments, dict):
+        return False
+    v = arguments.get(arg)
+    return v is True or (isinstance(v, str) and v.strip().lower() == "true")
+
+
 def empty_message(tool_name: str) -> str:
     """Phrase à servir pour un résultat vide de `tool_name` : son gabarit déclaré,
     sinon la phrase générique."""

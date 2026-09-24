@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastmcp.server.middleware import Middleware
 
 from .. import redaction
+from .call_context import _cible
 
 
 class EmptyResultMiddleware(Middleware):
@@ -43,4 +44,19 @@ class EmptyResultMiddleware(Middleware):
             return result
         if not redaction.sert_du_vide(result):
             return result
+        # oto#237 : un COMPTAGE demandé rend son nombre, 0 compris — même forme que
+        # pour 1, jamais la phrase d'une recherche vide.
+        if _comptage_demande(context.message):
+            return result
         return redaction.render_empty(result, getattr(context.message, "name", "") or "")
+
+
+def _comptage_demande(message) -> bool:
+    """L'appel demande-t-il un comptage ? Sous `oto_call` (ADR 0036), c'est la CIBLE
+    et les arguments qu'il lui transmet qui décident, pas le dispatch."""
+    nom = getattr(message, "name", "") or ""
+    args = getattr(message, "arguments", None) or {}
+    cible = _cible(nom, args)
+    if cible != nom:
+        args = args.get("arguments") or {}
+    return redaction.est_un_comptage(cible, args)
