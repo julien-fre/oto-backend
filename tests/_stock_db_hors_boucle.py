@@ -106,8 +106,6 @@ STOCK: dict[str, str] = {
         "_context_id",
     "oto_mcp.tools.browser::register.<locals>.browser_fetch":
         "_context_id",
-    "oto_mcp.tools.crunchbase::_api":
-        "_context_id",
     "oto_mcp.tools.crunchbase::register.<locals>.crunchbase_connect_status":
         "[dormant] _sub",
     "oto_mcp.tools.drive::register.<locals>.drive_file":

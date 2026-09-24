@@ -29,9 +29,12 @@ from urllib.parse import quote, urlencode
 from fastmcp import Context, FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
+from starlette.concurrency import run_in_threadpool
 
 from .. import access, browser_session, browserbase
 from ..auth.hooks import current_user_sub_from_token
+from ..access.resolved_credential import ResolvedCredential
+from ..connectors import health as connector_health
 
 # Couple (API privée, page d'origine) propre à Crunchbase. Le `fetch` est
 # same-origin avec l'app (www.crunchbase.com) → il porte les cookies de session ;
@@ -104,11 +107,24 @@ def _sub() -> str:
     return sub
 
 
-def _context_id() -> str:
-    """Context Browserbase de l'utilisateur (= sa session Crunchbase loguée), résolu
-    du coffre. Lève une McpError actionnable si Crunchbase n'est pas connecté."""
+# Session expirée : la reconnexion est HUMAINE (login dans la Live View, SSO/captcha/
+# 2FA gérés par la personne) — aucun renouvellement automatique possible. Le message
+# le dit à l'agent pour qu'il continue sans cette source au lieu de réessayer.
+SESSION_EXPIREE = (
+    "Session Crunchbase expirée ou déconnectée : une personne doit la reconnecter "
+    "(`crunchbase_connect_start`, login dans la Live View) — aucune reconnexion "
+    "automatique n'est possible. D'ici là, chaque appel Crunchbase échouera : "
+    "continue sans cette source et signale-la comme injoignable. La fiche du "
+    "connecteur l'indique désormais « à reconnecter ».")
+
+
+def _session() -> ResolvedCredential:
+    """Credential Crunchbase de l'utilisateur : son Context Browserbase (= sa session
+    Crunchbase loguée), résolu du coffre, AVEC la ligne qui l'a servi (pour la marquer
+    rejetée). Lève une McpError actionnable si Crunchbase n'est pas connecté. SQL :
+    à appeler hors de la boucle."""
     try:
-        return access.resolve_credential("crunchbase", want="byo").key
+        return access.resolve_credential("crunchbase", want="byo")
     except McpError:
         raise _err("Crunchbase non connecté. Lance `crunchbase_connect_start` pour te "
                    "loguer (une fois) via la Live View.")
@@ -130,14 +146,21 @@ async def _api(method: str, path: str, body: Optional[dict] = None) -> dict:
     if not browserbase.is_configured():
         raise _err("Browserbase non configuré côté plateforme "
                    "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
-    ctx_id = _context_id()
+    rc = await run_in_threadpool(_session)
     try:
-        res = await browserbase.run_fetch(ctx_id, method, path, body, base=_API, app=_APP)
+        res = await browserbase.run_fetch(rc.key, method, path, body, base=_API, app=_APP)
     except browserbase.BrowserbaseError as e:
         raise _err(f"Exécution Browserbase échouée : {e}", code=INTERNAL_ERROR)
     st = res.get("status")
     if st in (401, 403):
-        raise _err("Session Crunchbase expirée / déconnectée — relance `crunchbase_connect_start`.")
+        # Signaux #1070/#1076/#1149/#1163 : l'expiration n'apparaissait qu'aux
+        # agents, run après run, pendant six jours. Marquer la ligne RÉELLEMENT
+        # servie rend la fiche « à reconnecter » pour la personne qui peut agir ;
+        # la reconnexion réécrit la ligne et efface la marque.
+        await run_in_threadpool(connector_health.mark_rejected, rc.entity_type,
+                                rc.entity_id, "crunchbase", rc.account,
+                                f"session expirée (HTTP {st})")
+        raise _err(SESSION_EXPIREE)
     if not (200 <= (st or 0) < 300):
         raise _err(f"Crunchbase a renvoyé {st} : {str(res.get('data'))[:200]}", code=INTERNAL_ERROR)
     return res["data"]
