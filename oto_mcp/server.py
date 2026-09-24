@@ -707,6 +707,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.account_suspended import AccountSuspendedMiddleware
     instance.add_middleware(AccountSuspendedMiddleware())
 
+    # 0 quater. Rappel du CONTEXTE D'ORG en tête de la réponse (oto-backend#1041) :
+    # tant que l'appelant n'a pas lu `oto_context` depuis la dernière modification du
+    # README de l'org de l'appel. Plus EXTERNE que le rendu du vide et le corps
+    # markdown, qui remplacent tout le canal texte (plus interne, la ligne serait
+    # effacée) ; sous `UnSeulCanal`, qui garde le contenu tel quel. Le verdict, lui, se
+    # prend dans la portée du contexte d'appel (`ConstatContexte`, sous lui).
+    from .middleware.rappel_contexte import (ConstatContexteMiddleware,
+                                             RappelContexteMiddleware)
+    instance.add_middleware(RappelContexteMiddleware())
+
     # 1. Rendu du VIDE en PHRASE (otomata-tech/oto#32) : un résultat sans aucun
     # résultat ne part JAMAIS en structure nue dans le canal texte, qui fait dégénérer
     # le décodage du modèle. Plus EXTERNE que la rédaction et que l'écho de compte,
@@ -724,8 +734,9 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # 180, page 481 §11.3) l'excluait déjà : « l'assemblage doit tenir dans une
     # requête ordinaire, SANS ÉTAT CONSERVÉ ENTRE APPELS ». Le symptôme mesuré en
     # prod (livraison dépendante de qui a appelé en dernier, sous un jeton partagé)
-    # était la conséquence directe de cet état. Un successeur devra être sans état ;
-    # le besoin, lui, reste ouvert : oto-backend#478.
+    # était la conséquence directe de cet état. Son successeur SANS ÉTAT est le
+    # rappel ci-dessus (0 quater, oto-backend#1041) : une ligne, pas le bloc, et un
+    # verdict lu dans la base (date du README contre journal des lectures).
 
     # 1b. Un corps markdown se sert en markdown, pas en JSON échappé (+4 à +7 % de
     # jetons mesurés sur le même texte) — sous `EmptyResult` (une fiche n'est jamais
@@ -742,6 +753,9 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     instance.add_middleware(
         CallContextMiddleware(_mcp_adapter.reserved_org_tool_names(_cap_registry.CAPABILITIES))
     )
+    # 2 bis. Le verdict du rappel de contexte (0 quater) — DANS la portée du contexte
+    # d'appel, qui porte l'org de l'appel (`_org=`, projet, run), et hors boucle.
+    instance.add_middleware(ConstatContexteMiddleware())
 
     # 3. Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
     # politique de l'org active — sous le contexte d'appel (lit la bonne org), au-dessus

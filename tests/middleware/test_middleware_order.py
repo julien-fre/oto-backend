@@ -22,7 +22,12 @@ invariants gardés ici :
   résultat sur les deux canaux (le rendu du vide, la rédaction, l'écho de compte) :
   plus interne, l'un d'eux rétablirait le canal qu'il vient de retirer. Sous `ToolAlias`
   parce que l'ensemble des outils qui gardent leur schéma est nommé au nom CANONIQUE.
-- `EmptyResultMiddleware` juste dessous — il sert un résultat VIDE en PHRASE, et doit
+- `RappelContexteMiddleware` juste dessous (oto-backend#1041) — il pose la ligne de
+  rappel du contexte d'org EN TÊTE du canal texte, donc au-dessus de tout ce qui
+  REMPLACE ce canal (le rendu du vide, le corps markdown) : plus interne, la ligne
+  serait effacée. Son verdict, `ConstatContexteMiddleware`, est juste sous
+  `CallContext` : il lui faut l'org de l'appel, que ce dernier pose et retire.
+- `EmptyResultMiddleware` dessous — il sert un résultat VIDE en PHRASE, et doit
   donc tourner APRÈS tout ce qui réémet le payload en JSON dans le canal texte (la
   rédaction, l'écho de compte). Plus interne, la structure qu'il vient de retirer du
   texte y serait rétablie par le middleware suivant (oto#32).
@@ -50,9 +55,11 @@ OURS = [
     "IdentityScopeMiddleware",
     "ToolAliasMiddleware",
     "UnSeulCanalMiddleware",
+    "RappelContexteMiddleware",
     "EmptyResultMiddleware",
     "MarkdownBodyMiddleware",
     "CallContextMiddleware",
+    "ConstatContexteMiddleware",
     "FieldRedactionMiddleware",
     "ErrorEnvelopeMiddleware",
     "UserDisabledToolsMiddleware",

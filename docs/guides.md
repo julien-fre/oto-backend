@@ -361,6 +361,31 @@ démarrage » ne tient que pour les clients qui livrent l'artefact entier. Pour 
 autres (Claude Code, claude.ai — #478), la lecture au démarrage EST le canal : le socle
 prescrit `oto_guide op=read slug=notice` puis `oto_context`, et la description
 d'`oto_context` (toujours livrée, elle) porte la même consigne.
+
+**Le rappel dans les réponses d'outils (oto-backend#1041, 24/09/2026).** Prescrire la
+lecture ne suffisait pas : mesuré sur une org cliente, `oto_context` appelé 6 fois contre 46
+lectures de procédure, et un README réécrit reçu par personne. Désormais, tant que l'appelant
+n'a pas lu `oto_context` **pour l'org de l'appel** depuis la dernière modification d'une
+couche de README qu'il cumule (org, équipe active, note de l'utilisateur), **chaque réponse
+d'outil porte en tête une ligne** — « contexte de l'org « X » non lu, ou modifié depuis ta
+dernière lecture : appelle `oto_context` (`_org=N`) » — qui disparaît dès la lecture.
+- **Verdict sans état de session** (ADR 0038) : `db.contexte_non_lu`, UNE requête — les
+  couches par l'index d'identité, le journal `tool_calls` par `idx_tool_call_log_tool` —
+  prise hors boucle, cachée `TTL_S` = 60 s par `(compte, org)` (`oto_mcp/rappel_contexte.py`).
+  Le cache ne décide rien que la base ne dise, sauf la lecture qu'on vient de servir, qui
+  éteint le rappel tout de suite (la ligne du journal s'écrit en tâche de fond).
+- **Bornes** : ni sur `oto_context` ni sur `oto_whoami` ; rien pour une org sans README ;
+  rien pour un travail du runner (jeton de délégation — son allowlist est fixée, il ne
+  pourrait pas suivre le rappel) ; une ligne ≤ 300 caractères (nom d'org coupé à 60), jamais
+  le README lui-même.
+- **Plomberie** (`middleware/rappel_contexte.py`) : la ligne est posée AU-DESSUS du rendu du
+  vide et du corps markdown (qui remplacent tout le canal texte), le verdict est pris SOUS
+  le contexte d'appel (qui porte l'org de l'appel) — ordre gardé par
+  `tests/middleware/test_middleware_order.py`.
+- ⚠️ **Canal texte seulement** : un outil qui garde un canal structuré (schéma déclaré, app)
+  est lu sur ce canal-là par certains clients, qui ne verront pas la ligne. ⚠️ Elle n'entre
+  pas dans `tool_calls.result_size` (le journal est plus interne qu'elle) : sa taille est
+  bornée et mesurée par `tests/test_rappel_contexte_1041.py`, pas par le journal.
 Les **guides nommés (skills)** ne sont pas des outils → absents de `tools/list` → `on_list_tools`
 **enrichit la description de `oto_procedure`** avec leur index per-**(compte, org, équipe
 active)** (`instructions.skills_index_md`, Tool non-frozen → `model_copy`). ⚠️ Les TROIS

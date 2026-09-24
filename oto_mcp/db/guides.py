@@ -346,6 +346,50 @@ def set_init_guide_db(scope: str, owner_id: str, slug: str,
         return dict(row)
 
 
+def contexte_non_lu(sub: str, org_id: int,
+                    couches: list[tuple[str, str, str]]) -> Optional[str]:
+    """Le NOM de l'org quand son contexte est à rappeler à `sub`, sinon `None`
+    (oto-backend#1041) — UNE requête.
+
+    À rappeler = l'org porte un readme d'init NON VIDE, et `sub` n'a pas lu
+    `oto_context` sous cette org (journal `tool_calls`, appel réussi) depuis la
+    dernière modification d'une des `couches` cumulées `[(scope, owner_id, slug)]`
+    (org, équipe active, note de l'utilisateur) qui porte un corps. Une org sans
+    readme ne déclenche rien, quelles que soient les autres couches.
+
+    Tout vient de la base — aucun état de session : le verdict vaut sur tous les
+    clients, et suit un readme réécrit en cours de session. Coût : les couches par
+    l'index d'identité (`public_id`), le journal par `idx_tool_call_log_tool` (les
+    lignes `oto_context` sont une fraction du journal), borné par la date de référence."""
+    if not couches:
+        return None
+    pids = ", ".join([_PID] * len(couches))
+    params: list = [x for c in couches for x in (c[0], str(c[1]), c[2])]
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            WITH ref AS (
+                SELECT max(updated_at) AS at,
+                       bool_or(owner_type = 'org') AS org_a_un_readme
+                FROM nodes
+                WHERE public_id IN ({pids}) AND props->>'delivery' = 'init'
+                  AND COALESCE(props->>'body_md', '') ~ '\\S'
+            )
+            SELECT o.name
+            FROM ref JOIN orgs o ON o.id = %s
+            WHERE ref.org_a_un_readme
+              AND NOT EXISTS (
+                  SELECT 1 FROM tool_calls l
+                  WHERE l.tool = 'oto_context' AND l.kind = 'mcp' AND l.ok
+                    AND l.sub = %s AND l.org_id = %s AND l.created_at >= ref.at)
+            """,
+            (*params, int(org_id), sub, int(org_id)),
+        ).fetchone()
+    if not row:
+        return None
+    return row["name"] or f"#{org_id}"
+
+
 def seed_init_guide_db(scope: str, owner_id: str, slug: str, body_md: str) -> None:
     """Pose le défaut d'un readme INIT s'il n'existe pas (boot, idempotent). Ne touche
     JAMAIS une ligne déjà éditée."""
