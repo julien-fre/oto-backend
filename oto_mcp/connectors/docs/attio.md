@@ -3,7 +3,7 @@
 attio expose une clé api par workspace. va dans les [réglages développeur de ton workspace attio](https://app.attio.com), section **api**, et crée une clé (access token).
 - colle-la dans oto sur ton compte (`/account`), connecteur **attio**
 - pas de clé plateforme partagée : chacun pose la sienne
-- pense à cocher les droits records + notes + tasks + lists selon ce que tu veux faire
+- pense à cocher les droits records + notes + tasks + lists selon ce que tu veux faire ; pour toucher au schéma (attributs, options, étapes de deal), le droit `object_configuration:read-write` (`list_configuration:read-write` pour une liste)
 - note : le connecteur mcp attio officiel est souvent préféré ; oto garde le code pour les implems custom
 
 ## usage — ce que tu peux faire
@@ -13,3 +13,4 @@ pilote ton crm attio (companies, people, deals) + notes, tasks, lists et comment
 - « crée un contact jean dupont chez acme » → `attio_record(op="create", object="people")`
 - « ajoute une note sur ce deal » → `attio_note(op="create")` (titre + markdown, attaché au record)
 - « liste mes tâches en cours » → `attio_task(op="list")`, et `attio_task(op="create")` pour en ajouter une
+- « ajoute l'étape négociation à mes deals » → `attio_attribute(op="statuses", target="objects", identifier="deals", attribute="stage")` pour relire l'existant, puis `attio_attribute(op="create_status", title=…)` ; même geste pour une option de sélection (`op="create_option"`) ou un attribut neuf (`op="create"`, `definition`). ⚠️ écrit le schéma du crm, et l'api attio ne sait pas le défaire

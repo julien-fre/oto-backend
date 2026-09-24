@@ -72,7 +72,9 @@ désormais REFUSÉ en le nommant plutôt qu'accepté sans effet.
 
 ⚠️ Ce module ÉCRIT sur un CRM RÉEL (données clients) : `op="create"`/`"update"`/
 `"delete"` d'`attio_record`, `attio_note`, `attio_task`, `attio_list`,
-`attio_entry` et `attio_comment`. Le défaut de CHAQUE tool est une LECTURE
+`attio_entry` et `attio_comment` — et son SCHÉMA : `op="create"`/`"create_option"`/
+`"create_status"` d'`attio_attribute` (oto#256), que l'API ne sait pas défaire
+(aucun DELETE sur un attribut, une option ou une étape). Le défaut de CHAQUE tool est une LECTURE
 (`op="list"`, `"query"` ou `"threads"`) — un appel sans `op` ne peut ni écrire ni
 supprimer. Une op inconnue est refusée AVANT même la résolution de la clé.
 """
@@ -113,7 +115,8 @@ _TaskSort = Literal["created_at:asc", "created_at:desc",
                      "completed_at:asc", "completed_at:desc"]
 _MeetingSort = Literal["start_asc", "start_desc"]
 _ObjectOp = Literal["list", "get", "views"]
-_AttributeOp = Literal["list", "get", "options", "statuses"]
+_AttributeOp = Literal["list", "get", "options", "statuses",
+                       "create", "create_option", "create_status"]
 
 _RECORD_OBJECTS = get_args(_RecordObject)
 _RECORD_OPS = get_args(_RecordOp)
@@ -1044,23 +1047,42 @@ def register(mcp: FastMCP) -> None:
         identifier: str,
         op: _AttributeOp = "list",
         attribute: Optional[str] = None,
+        definition: Optional[dict] = None,
+        title: Optional[str] = None,
     ) -> dict:
-        """An attribute (the schema) of an object or of a list — list, read, and
-        read the options/statuses of a select/status attribute.
+        """An attribute (the schema) of an object or of a list — read it, and
+        add an attribute, a select option or a status (e.g. a deal stage).
 
         `op`:
         - **"list"** (default): list attributes (schema) on an object or list.
         - **"get"**: get a single attribute definition.
         - **"options"**: list the select options for a select-type attribute.
         - **"statuses"**: list the statuses for a status-type attribute.
+        - **"create"** — ⚠️ WRITES THE SCHEMA: add an attribute from `definition`.
+        - **"create_option"** — ⚠️ WRITES THE SCHEMA: add the option `title` to
+          the select attribute `attribute`.
+        - **"create_status"** — ⚠️ WRITES THE SCHEMA: add the status `title` to
+          the status attribute `attribute` (`attribute="stage"` on deals: a new
+          deal stage).
 
-        Read-only.
+        Attio's API has no delete for an attribute, an option or a status:
+        read the schema first, and create only what is missing.
+        The key needs the `object_configuration:read-write` scope
+        (`list_configuration:read-write` for a list).
 
         Args:
             target: "objects" or "lists" — which family `identifier` belongs to.
             identifier: object/list ID or slug (e.g. "companies").
-            op: list (default) | get | options | statuses.
-            attribute: op="get"/"options"/"statuses" — attribute ID or slug.
+            op: list (default) | get | options | statuses | create |
+                create_option | create_status.
+            attribute: op="get"/"options"/"statuses"/"create_option"/
+                "create_status" — attribute ID or slug.
+            definition: op="create" — Attio's attribute object, sent as is:
+                `title`, `description`, `api_slug`, `type` (text, number,
+                select, status, date, record-reference…), `is_required`,
+                `is_unique`, `is_multiselect`, `config` (`{}` for most types).
+            title: op="create_option"/"create_status" — the option or status
+                label.
         """
         if op not in _ATTRIBUTE_OPS:
             raise _bad(_one_of("op", _ATTRIBUTE_OPS))
@@ -1077,6 +1099,17 @@ def register(mcp: FastMCP) -> None:
         elif op == "statuses":
             result = client.attributes.statuses(target, identifier,
                                                 _need(attribute, "attribute", op))
+        elif op == "create":
+            result = client.attributes.create(target, identifier,
+                                              _need(definition, "definition", op))
+        elif op == "create_option":
+            result = client.attributes.create_option(
+                target, identifier, _need(attribute, "attribute", op),
+                _need(title, "title", op))
+        elif op == "create_status":
+            result = client.attributes.create_status(
+                target, identifier, _need(attribute, "attribute", op),
+                _need(title, "title", op))
         else:
             raise _bad(_one_of("op", _ATTRIBUTE_OPS))
 

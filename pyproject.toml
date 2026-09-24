@@ -49,6 +49,7 @@ dependencies = [
     # branche : on n'écrit pas dans le dépôt d'autrui (l'API Contents rend 404 dessus).
     # Le mainteneur bump ici, puis `update-branch` la PR. L'atomicité du revert cède
     # devant ça. Cf. docs/contributions-forks.md (amendement du 2026-09-01).
+    # v1.143.0 = attio : créer un attribut, une option de sélection, une étape (oto#256).
     # v1.142.0 = fullenrich : `fetch` rend un statut (IN_PROGRESS, NOT_FOUND, RATE_LIMIT)
     # sur les réponses d'erreur HTTP documentées qui disent l'état du job, au lieu de
     # lever. Sert oto-backend : `fullenrich_result` ne boucle plus sur une erreur interne.
@@ -321,7 +322,7 @@ dependencies = [
     # antérieur, pip ignore un extra inconnu (avec un avertissement) — le
     # connecteur marcherait par accident, en tirant les deux libs du socle. Cette
     # ligne et ce tag se déplacent donc ENSEMBLE.
-    "oto-core[anonymize,planity] @ git+https://github.com/otomata-tech/oto-core.git@v1.142.0",
+    "oto-core[anonymize,planity] @ git+https://github.com/otomata-tech/oto-core.git@v1.143.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

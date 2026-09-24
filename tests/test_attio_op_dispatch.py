@@ -61,7 +61,9 @@ def _assert_no_stray_write(client, expected: str = ""):
     for name, _args, _kwargs in client.mock_calls:
         if name == expected:
             continue
-        assert name.rsplit(".", 1)[-1] not in _WRITE_VERBS, (
+        # `create_option`/`create_status` (schéma, oto#256) écrivent aussi : le
+        # verbe se lit AVANT le premier `_`.
+        assert name.rsplit(".", 1)[-1].split("_")[0] not in _WRITE_VERBS, (
             f"écriture collatérale : {name} (attendu : {expected or 'aucune'})")
 
 
@@ -347,6 +349,23 @@ def test_attribute_target_can_be_lists(client):
     assert client.attributes.list.call_args.args == ("lists", "l1")
 
 
+def test_schema_writes_carry_the_target_and_the_payload(client):
+    """oto#256 — la définition part TELLE QUELLE, sur la cible nommée ; l'option et
+    l'étape visent l'attribut passé, jamais un défaut."""
+    tool = _tool("attio_attribute")
+    definition = {"title": "Source", "api_slug": "source", "type": "select"}
+    tool(target="lists", identifier="pipeline", op="create", definition=definition)
+    assert client.attributes.create.call_args.args == ("lists", "pipeline", definition)
+    tool(target="objects", identifier="companies", op="create_option",
+         attribute="source", title="Salon")
+    assert client.attributes.create_option.call_args.args == (
+        "objects", "companies", "source", "Salon")
+    tool(target="objects", identifier="deals", op="create_status",
+         attribute="stage", title="Négociation")
+    assert client.attributes.create_status.call_args.args == (
+        "objects", "deals", "stage", "Négociation")
+
+
 # --- écritures : la méthode attendue, et AUCUNE voisine dangereuse ------------
 
 @pytest.mark.parametrize("tool,kwargs,path", [
@@ -384,6 +403,15 @@ def test_attribute_target_can_be_lists(client):
     ("attio_comment", {"op": "create", "content": "hop", "author_id": "wm1",
                        "thread_id": "th1"}, "comments.create"),
     ("attio_comment", {"op": "delete", "comment_id": "c1"}, "comments.delete"),
+    ("attio_attribute", {"target": "objects", "identifier": "companies",
+                         "op": "create", "definition": {"title": "Source"}},
+     "attributes.create"),
+    ("attio_attribute", {"target": "objects", "identifier": "companies",
+                         "op": "create_option", "attribute": "source",
+                         "title": "Salon"}, "attributes.create_option"),
+    ("attio_attribute", {"target": "objects", "identifier": "deals",
+                         "op": "create_status", "attribute": "stage",
+                         "title": "Négociation"}, "attributes.create_status"),
 ])
 def test_write_ops_call_exactly_one_write_method(client, tool, kwargs, path):
     """Une op d'écriture appelle SA méthode, et rien d'autre qui écrive."""
@@ -460,6 +488,16 @@ def test_unknown_op_is_refused_with_the_allowed_list(client, tool, minimal):
      "attribute"),
     ("attio_attribute", "statuses", {"target": "objects", "identifier": "companies"},
      "attribute"),
+    ("attio_attribute", "create", {"target": "objects", "identifier": "companies"},
+     "definition"),
+    ("attio_attribute", "create_option", {"target": "objects",
+                                          "identifier": "companies"}, "attribute"),
+    ("attio_attribute", "create_option", {"target": "objects", "identifier": "companies",
+                                          "attribute": "source"}, "title"),
+    ("attio_attribute", "create_status", {"target": "objects", "identifier": "deals"},
+     "attribute"),
+    ("attio_attribute", "create_status", {"target": "objects", "identifier": "deals",
+                                          "attribute": "stage"}, "title"),
 ])
 def test_missing_required_arg_names_the_op_and_the_arg(
         client, tool, op, kwargs, missing):
@@ -478,6 +516,10 @@ def test_missing_required_arg_names_the_op_and_the_arg(
     ("attio_entry", "update", {"list_id_or_slug": "l1", "entry_id": "e1",
                                "entry_values": {}}),
     ("attio_list", "update", {"list_id_or_slug": "l1", "attributes": {}}),
+    ("attio_attribute", "create", {"target": "objects", "identifier": "companies",
+                                   "definition": {}}),
+    ("attio_attribute", "create_option", {"target": "objects", "identifier": "companies",
+                                          "attribute": "source", "title": ""}),
 ])
 def test_empty_payload_counts_as_missing_on_writes(client, tool, op, kwargs):
     """Un dict VIDE sur une écriture = rien à écrire : créerait un record vide,
