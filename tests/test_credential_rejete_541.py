@@ -12,7 +12,7 @@ Or `linear` déclare `verifiable: true`, la sonde `oto_instance op=verify` exist
    clé qui résout a été REJETÉE. Une clé morte donne donc `ready: true`.
 2. **Le verdict ne s'enregistre même pas là où il tombe.** `oto_instance op=verify`
    sans `level` (le geste par défaut) résout la cascade ; si c'est une clé d'ORG qui
-   répond — le seul palier possible pour `linear`, `byo_org` only — la cible de santé
+   répond — par exemple la clé d'org de `linear` — la cible de santé
    vaut `None` et rien n'est écrit. L'utilisateur voit `ok:false`, puis retourne sur
    une carte verte.
 3. **Au moment de l'appel, le message est celui de l'amont, brut.** `tools/linear.py`
@@ -100,7 +100,7 @@ def test_verify_niveau_auto_enregistre_le_verdict_sur_la_cle_dorg(monkeypatch):
     """Le geste par défaut (`op=verify` sans `level`) doit laisser une trace.
 
     La cible de santé n'était posée que si la clé EFFECTIVE était celle du membre :
-    pour un connecteur `byo_org` only comme `linear`, la cascade résout au palier org
+    quand la cascade résout au palier org (la clé d'org de `linear`, par exemple),
     et rien n'était écrit. L'utilisateur lisait `ok:false` sur la sonde, et la carte
     restait verte derrière lui."""
     from oto_mcp.capabilities.connectors import verify as V

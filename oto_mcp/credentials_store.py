@@ -820,9 +820,8 @@ def credential_health(entity_type: str, entity_id: str, connector: str,
     `connectors/health.py` (`record_health`/`mark_rejected`, oto#25 lot b2 — extraite
     de `capabilities/connectors/verify.py`, son seul écrivain jusque-là). Ils
     n'avaient jusqu'au 2026-09-03 qu'un seul lecteur, `access.status_for`, qui ne
-    regarde QUE les clés de palier MEMBRE : le verdict porté par une clé d'ORG — le
-    seul palier possible d'un connecteur `byo_org` only comme `linear` — n'était lu
-    nulle part (#541). Rend la RAISON et pas un booléen : « rejetée » sans le motif du
+    regarde QUE les clés de palier MEMBRE : le verdict porté par une clé d'ORG (par
+    exemple celle de `linear`, alors `byo_org` only) n'était lu nulle part (#541). Rend la RAISON et pas un booléen : « rejetée » sans le motif du
     fournisseur envoie chercher à l'aveugle."""
     with _connect() as c:
         row = c.execute(

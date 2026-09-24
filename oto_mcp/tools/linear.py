@@ -2,11 +2,11 @@
 
 Wraps `oto.tools.linear.client.LinearClient` (GraphQL, single endpoint,
 `Authorization: <key>` — no `Bearer` prefix, see the client's module
-docstring). keyed `api_key`, **byo_org only** (no `byo_user`, no platform
-key): a Linear API key is workspace-scoped by nature, and unlike a
-per-vendor credit pool (AI Ark, cf. the retired `linkedin` connector,
-oto-backend#279) there's no shared-pool rationale for a platform key here —
-each org that wants Linear posts its own workspace key.
+docstring). keyed `api_key`, **byo_user + byo_org**, no platform key: a
+Linear API key is a personal key that acts as its holder, so it can be posted
+for oneself or for the org (like notion or slack). Unlike a per-vendor credit
+pool (AI Ark, cf. the retired `linkedin` connector, oto-backend#279) there's
+no shared-pool rationale for a platform key here.
 
 **8 tools, one per business object** (ADR 0047, silae) :
 - `linear_issue` — the core object. op=list/get/search/create/update/

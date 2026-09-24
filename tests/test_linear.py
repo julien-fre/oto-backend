@@ -55,12 +55,13 @@ def _fn_with_mock_client():
 
 # --- registre -----------------------------------------------------------------
 
-def test_linear_is_keyed_byo_org_only_connector():
+def test_linear_is_keyed_byo_user_and_byo_org_connector():
+    """Une clé API Linear est personnelle (elle agit au nom de son porteur) :
+    elle se pose pour soi ou pour l'org, jamais comme clé plateforme (24/09)."""
     c = providers.REGISTRY["linear"]
     assert c.kind == "tools"
     assert c.keyed and c.secret_kind == "api_key"
-    assert c.auth_modes == frozenset({"byo_org"})
-    assert "byo_user" not in c.auth_modes
+    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
     assert "platform" not in c.auth_modes
     assert c.default_active is False
     assert c.default_quota == 0

@@ -1,7 +1,7 @@
 ## prerequisite — clé api linear
 
 crée une clé API personnelle dans Linear (Settings → Security & access → Personal API keys — voir la [doc développeur](https://linear.app/developers)), puis colle-la dans oto.
-- byo_org only : pas de clé oto partagée, et pas de clé personnelle par membre — une seule clé pour toute l'org (une clé API Linear est scopée au workspace)
+- clé personnelle ou clé d'org : la clé API Linear agit au nom de son porteur. Pose-la dans tes réglages pour toi seul, ou au niveau de l'org si elle doit servir à tous. Pas de clé oto partagée.
 - limites : 5 000 requêtes/heure et 3 000 000 points de complexité/heure par clé
 
 ## usage — issues, projets, cycles, équipes, labels, commentaires, webhooks
