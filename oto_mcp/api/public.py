@@ -224,20 +224,26 @@ def public_doc_view(request: Request) -> Response:
     from .. import brand
     marque = (brand.marque_du_proprietaire(doc.get("owner_type"), doc.get("owner_id"))
               if doc else None)
-    if not doc:
-        if wants_json:
-            return _json_error(request, 404, "not_found")
-        return HTMLResponse(public_doc_page.render_missing(), status_code=404)
     # Les trois variantes portent le MÊME secret d'URL (le jeton) : les en-têtes qui
     # empêchent sa fuite (cache partagé, Referer, sniffing, cadre) doivent porter sur
     # les trois, pas seulement sur celle qu'on a regardée en premier — c'est l'oubli
-    # qui a laissé passer markdown et JSON nus (oto-backend#565).
+    # qui a laissé passer markdown et JSON nus (oto-backend#565). La CSP est celle de
+    # la page HTML (`entetes_securite`) ; sur les deux autres variantes elle est inerte.
+    from ..entetes_securite import CSP_DOC_PUBLIC
     _entetes_page_a_jeton = {
         "Cache-Control": "private, max-age=300",
         "Referrer-Policy": "no-referrer",
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
+        "Content-Security-Policy": CSP_DOC_PUBLIC,
     }
+    if not doc:
+        if wants_json:
+            return _json_error(request, 404, "not_found")
+        # La page d'un jeton périmé porte le jeton dans son URL comme les autres.
+        # Jamais en cache, lui : un jeton re-partagé ne doit pas rester « introuvable ».
+        return HTMLResponse(public_doc_page.render_missing(), status_code=404,
+                            headers={**_entetes_page_a_jeton, "Cache-Control": "no-store"})
     title, body_md = doc["title"], doc.get("body_md") or ""
     if wants_json:
         return _json(request, {"title": title, "body_md": body_md,

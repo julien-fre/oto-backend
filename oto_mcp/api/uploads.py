@@ -36,6 +36,24 @@ from .. import db
 from .base import _json, _json_error
 
 
+# Le seul script de la page, en constante : la CSP l'autorise par son EMPREINTE
+# (`entetes_securite.csp_upload`), calculée sur cette chaîne même — le modifier sans
+# que la politique suive est impossible.
+_SCRIPT_UPLOAD = (
+    'const f=document.getElementById("f"),m=document.getElementById("msg");'
+    'f.addEventListener("submit",async e=>{e.preventDefault();'
+    'const fi=document.getElementById("file");'
+    'if(!fi.files.length){return}'
+    'const fd=new FormData();fd.append("file",fi.files[0]);'
+    'm.textContent="Envoi…";m.className="msg";'
+    'try{const r=await fetch(location.href,{method:"POST",body:fd});'
+    'const j=await r.json().catch(()=>({}));'
+    'if(r.ok){f.style.display="none";m.textContent="✓ Reçu. Tu peux fermer cette page."+(j.url?" URL publique : "+j.url:"");m.className="msg ok"}'
+    'else{m.textContent="Échec : "+(j.error||r.status)+(j.detail?" — "+j.detail:"");m.className="msg err"}'
+    '}catch(err){m.textContent="Erreur réseau.";m.className="msg err"}});'
+)
+
+
 def _upload_page_html(label: str | None) -> str:
     """Page d'upload autoportée d'un lien signé (#105, fallback humain). `label` None
     = lien invalide/expiré (message, sans formulaire). Le POST du fichier se fait vers
@@ -50,19 +68,7 @@ def _upload_page_html(label: str | None) -> str:
             '<form id="f"><input type="file" name="file" id="file" required>'
             '<button type="submit">Envoyer</button></form>'
             '<p id="msg" class="msg"></p>'
-            '<script>'
-            'const f=document.getElementById("f"),m=document.getElementById("msg");'
-            'f.addEventListener("submit",async e=>{e.preventDefault();'
-            'const fi=document.getElementById("file");'
-            'if(!fi.files.length){return}'
-            'const fd=new FormData();fd.append("file",fi.files[0]);'
-            'm.textContent="Envoi…";m.className="msg";'
-            'try{const r=await fetch(location.href,{method:"POST",body:fd});'
-            'const j=await r.json().catch(()=>({}));'
-            'if(r.ok){f.style.display="none";m.textContent="✓ Reçu. Tu peux fermer cette page."+(j.url?" URL publique : "+j.url:"");m.className="msg ok"}'
-            'else{m.textContent="Échec : "+(j.error||r.status)+(j.detail?" — "+j.detail:"");m.className="msg err"}'
-            '}catch(err){m.textContent="Erreur réseau.";m.className="msg err"}});'
-            '</script>')
+            f'<script>{_SCRIPT_UPLOAD}</script>')
     return (
         '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -182,7 +188,9 @@ async def upload_form(request: Request) -> Response:
     au GET (seulement au POST du fichier). Autoportée (aucun asset externe)."""
     from .. import upload_tokens
     payload = upload_tokens.verify(request.path_params.get("token", ""))
-    headers = {"Cache-Control": "private", "Referrer-Policy": "no-referrer"}
+    from ..entetes_securite import csp_upload
+    headers = {"Cache-Control": "private", "Referrer-Policy": "no-referrer",
+               "Content-Security-Policy": csp_upload(_SCRIPT_UPLOAD)}
     if payload is None:
         return HTMLResponse(_upload_page_html(None), status_code=401, headers=headers)
     return HTMLResponse(
