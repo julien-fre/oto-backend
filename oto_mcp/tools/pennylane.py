@@ -7,7 +7,8 @@ visible que par lui.
 
 **Surface consolidée (ADR 0047 appliqué à un connecteur)** : un tool par OBJET
 métier, le verbe en paramètre `op` — `pennylane_customer`, `pennylane_invoice`
-(ventes), `pennylane_supplier` / `pennylane_supplier_invoice` (achats), plus un
+(ventes), `pennylane_supplier` (achats ; les factures d'achat vivent dans
+`pennylane_achats.py`, `pennylane_supplier_invoice`), plus un
 `pennylane_ref` unique pour les référentiels en lecture seule (société, exercices,
 plan comptable, catégories, modèles de facture, produits). Restent nommés les
 verbes hétérogènes que la fusion ne factoriserait pas : `pennylane_transactions`,
@@ -371,75 +372,6 @@ def register(mcp: FastMCP) -> None:
             return _ecrit(lambda: c.create_supplier(_need(name, "name", op), **(fields or {})),
                           "la création de fournisseur")
         raise _bad("op doit être 'list' ou 'create'")
-
-    @mcp.tool()
-    def pennylane_supplier_invoice(
-        op: Literal["list", "import"] = "list",
-        max_pages: Optional[int] = None,
-        file_attachment_id: Optional[int] = None,
-        supplier_id: Optional[int] = None,
-        date: Optional[str] = None,
-        deadline: Optional[str] = None,
-        currency_amount_before_tax: Optional[str] = None,
-        currency_amount: Optional[str] = None,
-        currency_tax: Optional[str] = None,
-        invoice_lines: Optional[list[dict]] = None,
-        currency: str = "EUR",
-        external_reference: Optional[str] = None,
-        import_as_incomplete: bool = False,
-        invoice_number: Optional[str] = None,
-        label: Optional[str] = None,
-    ) -> dict | list:
-        """Factures d'ACHAT (factures fournisseurs reçues) — le côté « dépenses ».
-
-        `op` :
-        - "list" : l'inventaire des factures reçues, à confronter aux décaissements
-          pour un rapprochement bancaire (sens dépense ↔ facture fournisseur) ou
-          pour repérer ce qui reste à payer. ⚠️ Sans `max_pages`, TOUT l'historique
-          d'achats revient (peut dépasser la limite de tokens) — commencer petit
-          puis élargir. Ne liste pas les fournisseurs eux-mêmes
-          (`pennylane_supplier`).
-        - "import" : crée la facture d'achat depuis un PDF déjà posté. Flux en deux
-          temps : `pennylane_upload_file(...)` → `file_attachment_id`, puis ceci.
-          Pennylane ne fait PAS d'OCR — YOU (ayant lu le PDF) fournis les champs.
-          Les montants sont des STRINGS. Crée un brouillon ; le rapprocher ensuite
-          à une transaction bancaire avec
-          `pennylane_match(invoice_id, transaction_id, invoice_type="supplier")`.
-
-        Args:
-            op: "list" (défaut) | "import".
-            max_pages: op="list" — borne la pagination (⚠️ voir ci-dessus).
-            file_attachment_id: op="import" — id renvoyé par `pennylane_upload_file`.
-            supplier_id: op="import" — fournisseur (company_supplier) existant
-                (`pennylane_supplier`).
-            date / deadline: op="import" — dates ISO (facture / échéance de paiement).
-            currency_amount_before_tax / currency_amount / currency_tax:
-                op="import" — montants en STRING : HT / TTC / TVA, dans la devise.
-            invoice_lines: op="import" — ≥1 ligne (label, montants… au schéma de
-                ligne Pennylane).
-            currency: défaut EUR. external_reference: clé d'idempotence / de trace.
-            import_as_incomplete: marquer le brouillon incomplet si des données
-                manquent.
-            invoice_number / label: numéro fournisseur / libellé comptable.
-        """
-        c = _client()
-        if op == "list":
-            return c.get_supplier_invoices(max_pages=max_pages)
-        if op == "import":
-            return _ecrit(lambda: c.import_supplier_invoice(
-                file_attachment_id=_need(file_attachment_id, "file_attachment_id", op),
-                supplier_id=_need(supplier_id, "supplier_id", op),
-                date=_need(date, "date", op), deadline=_need(deadline, "deadline", op),
-                currency_amount_before_tax=_need(
-                    currency_amount_before_tax, "currency_amount_before_tax", op),
-                currency_amount=_need(currency_amount, "currency_amount", op),
-                currency_tax=_need(currency_tax, "currency_tax", op),
-                invoice_lines=_need(invoice_lines, "invoice_lines", op),
-                currency=currency, external_reference=external_reference,
-                import_as_incomplete=import_as_incomplete,
-                invoice_number=invoice_number, label=label,
-            ), "l'import de facture d'achat")
-        raise _bad("op doit être 'list' ou 'import'")
 
     @mcp.tool()
     def pennylane_upload_file(source: dict, account: Optional[str] = None) -> dict:

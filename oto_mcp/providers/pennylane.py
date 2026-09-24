@@ -10,10 +10,10 @@ from ._model import _c
 CONNECTOR = _c(
     "pennylane", ["pennylane"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
-    # Le grand livre et les devis sont des domaines à eux : leur propre module,
-    # même clé et même namespace (`pennylane_*`, le gate d'activation lit le 1er
-    # token).
-    modules=("pennylane", "pennylane_ledger", "pennylane_devis"),
+    # Le grand livre, les devis et les factures d'achat sont des domaines à eux :
+    # leur propre module, même clé et même namespace (`pennylane_*`, le gate
+    # d'activation lit le 1er token).
+    modules=("pennylane", "pennylane_ledger", "pennylane_devis", "pennylane_achats"),
     label="Pennylane", help="compta", href="https://app.pennylane.com",
 )
 
