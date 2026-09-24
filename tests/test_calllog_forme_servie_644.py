@@ -221,6 +221,8 @@ def test_la_revision_pose_la_colonne_que_le_boot_ne_pose_pas(live, pg_module_dsn
     assert not _a_la_colonne(pg_module_dsn), "le démarrage ne pose pas cette colonne"
 
     cfg = _alembic()
+    # Le registre à la révision d'avant : une base neuve naît à la tête (#969).
+    command.stamp(cfg, "0009_coffre_secret_obligatoire")
     command.upgrade(cfg, "0010_tool_calls_result_shape")
     assert _a_la_colonne(pg_module_dsn), "la révision n'a rien écrit"
     with psycopg.connect(pg_module_dsn, autocommit=True) as c:

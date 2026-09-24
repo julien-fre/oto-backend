@@ -46,6 +46,9 @@ def base_d_avant(live, pg_module_dsn):
         c.execute("ALTER TABLE user_api_tokens DROP COLUMN revoked_at, "
                   "DROP COLUMN revoked_by, DROP COLUMN revoked_reason")
     assert not _colonnes(pg_module_dsn), "le point de départ doit être celui d'avant"
+    # …et son registre, à la révision d'avant : une base neuve naît à la tête (#969).
+    from alembic import command
+    command.stamp(_alembic(), "0006_unipile_fin_de_droit")
     return pg_module_dsn
 
 

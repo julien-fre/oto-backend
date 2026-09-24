@@ -220,7 +220,7 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `silences-2026-08-27.md` — `except` muets, `# noqa: SILENT`
 - `redaction.md` — rédaction de champs, résultat servi, **un seul canal** (le structuré se mérite)
 - `live-migrations.md` — migrations vivantes, base partagée ; un ordre de boot sans rien à faire ne part pas (`db/_ddl_garde.py`, zéro verrou fort sur base à jour)
-- `migrations-versionnees.md` — ce que le boot exécute
+- `migrations-versionnees.md` — ce que le boot exécute ; une base neuve naît estampillée à la tête du registre Alembic, jamais une base existante (`db/_version_alembic.py`, §5.2)
 - `sirene-stock.md` — DuckDB sur parquet INSEE
 - `connector-test-gate-theirstack-origami.md` — porte de test locale
 - `billing.md` — abonnement par org, Mollie, TVA, **avantage offert / échéance / usage inclus**

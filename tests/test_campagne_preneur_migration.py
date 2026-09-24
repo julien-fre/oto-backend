@@ -47,6 +47,9 @@ def base_d_avant(live, pg_module_dsn):
     with psycopg.connect(pg_module_dsn, autocommit=True) as c:
         c.execute("ALTER TABLE runner_fleets DROP COLUMN taken_by")
     assert not _a_la_colonne(pg_module_dsn), "le point de départ doit être celui d'avant"
+    # …et son registre, à la révision d'avant : une base neuve naît à la tête (#969).
+    from alembic import command
+    command.stamp(_alembic(), "0002_runner_jobs_index_vivant")
     return pg_module_dsn
 
 

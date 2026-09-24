@@ -423,6 +423,8 @@ n'aurait de toute façon su qu'ajouter des colonnes, et c'est déjà le travail 
 | `oto_mcp/db/migrations/env.py` | la connexion, lue dans `DATABASE_URL` comme le pool applicatif, et le **verrou consultatif** |
 | `oto_mcp/db/migrations/versions/` | une révision par changement |
 | `tests/test_migrations_registre.py` | la file reste unique : un seul point de départ, une seule fin, chaque révision décrite |
+| `oto_mcp/db/_version_alembic.py` | la version d'une base **neuve**, posée par le démarrage (§5.2) |
+| `tests/test_boot_pose_la_version.py` | les trois cas du §5.2, sur vraie base |
 
 **Le verrou n'est pas fourni par l'outil** : Alembic n'en pose aucun. `env.py` prend un
 verrou consultatif PostgreSQL avant d'écrire et le rend ensuite. Ce n'est pas une
@@ -449,9 +451,11 @@ migration concurrente **attend** le verrou. Il ne touche à aucune base réelle.
 > déjà en cours, sa propre transaction ne faisait plus rien, et tout était annulé à la
 > fermeture de la connexion. Le succès déguisé parfait — invisible sans une vraie base.
 
-⚠️ **Un geste reste à faire sur la base**, une seule fois : `alembic stamp head`. Il
-écrit que le point de départ est atteint, sans rien rejouer. C'est une écriture sur la
-base de production — elle passe par la procédure de production, pas par un déploiement.
+⚠️ **Sur une base qui existait avant le registre** (la nôtre), un geste se fait une seule
+fois : `alembic stamp head`. Il écrit que le point de départ est atteint, sans rien
+rejouer. C'est une écriture sur la base de production — elle passe par la procédure de
+production, pas par un déploiement. **Une base NEUVE, elle, reçoit sa version du
+démarrage** (§5.2).
 
 ### 5.1 Chaque révision suivante s'applique À LA MAIN, pas au déploiement (17/09/2026)
 
@@ -563,6 +567,36 @@ sous `lock_timeout` : ≈ 18 s par million de pages sur la base de test — mesu
 l'ancien code de production garde l'auteur précédent jusqu'à sa prochaine écriture ;
 rejouer le remplissage après le tag referme cette fenêtre. Le retour arrière retire les
 deux colonnes.
+
+### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
+
+Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose
+sur une base existante est aussi dans le `CREATE TABLE` de son fragment. Elle naît donc
+**dans l'état d'après toutes les révisions** — et, jusqu'ici, sans rien dans
+`alembic_version`. Un `alembic upgrade head` joué plus tard sur elle aurait rejoué tout
+le registre sur un schéma qui le porte déjà. Le geste juste sur une base neuve est
+`stamp head`, jamais `upgrade` depuis zéro ; c'est le démarrage qui le fait
+(`oto_mcp/db/_version_alembic.py`, appelé par `apply_boot_schema`) :
+
+| état constaté **avant le premier ordre du démarrage**, sous son verrou consultatif | ce que fait le démarrage |
+|---|---|
+| **neuve** — le schéma courant ne contient aucune table | crée `alembic_version` (forme d'Alembic) et y écrit la tête du registre, **en fin de la même transaction** que le schéma |
+| **versionnée** — `alembic_version` existe, quelle que soit sa révision | n'y touche jamais ; sa tenue est à Alembic (§5.1) |
+| **sans version** — des tables, pas d'`alembic_version` | n'estampille pas (on ignore quelles révisions elle a reçues) et **le dit en erreur** à chaque démarrage |
+
+Ce n'est pas une migration (ADR 0065) : aucune révision n'est exécutée, seule la version
+est écrite, et seulement là où le démarrage vient de créer le schéma entier. La tête est
+lue dans le registre (`oto_mcp/db/migrations/versions/`) ; un registre à plusieurs têtes
+fait échouer le démarrage d'une base neuve plutôt que d'en choisir une.
+
+**Une base « sans version »** se traite à la main : établir la dernière révision que son
+schéma porte déjà (lire l'en-tête de chaque révision et le catalogue), puis
+`alembic stamp <révision>` et `alembic upgrade head`.
+
+⚠️ **Ce que le stamp suppose** : que le démarrage produise bien l'état de la tête — c'est
+la discipline de chaque révision (poser aussi sa colonne dans le fragment du schéma).
+Rien ne compare encore le schéma d'une base neuve à celui d'une base remise à niveau par
+`upgrade`.
 
 ## 6. Références
 

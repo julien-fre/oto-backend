@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import connector_instances, journal_revisions, revision
+from . import _version_alembic, connector_instances, journal_revisions, revision
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -252,6 +252,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         "SELECT set_config('lock_timeout', %s, true)",
         (os.environ.get("OTO_MCP_INIT_DB_LOCK_TIMEOUT_MS", "5000"),),
     )
+    # AVANT tout ordre, sous le verrou : la base est-elle NEUVE (aucune table) ? C'est
+    # ce constat, et lui seul, qui autorise à poser la version Alembic en fin de
+    # transaction (#969, `_version_alembic`). Constaté après le premier `CREATE`, il
+    # verrait toujours une base existante.
+    etat_registre = _version_alembic.constater(conn)
     # AVANT _SCHEMA : renomme l'ancienne tool_call_log vers le schéma canonique
     # (sinon CREATE IF NOT EXISTS poserait une tool_calls vide à côté).
     _migrate_tool_call_log(conn)
@@ -1626,6 +1631,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # mesuré, pas supposé, et rejoué par le garde-fou.
     conn.execute("CREATE OR REPLACE VIEW guide_library AS "
                  "SELECT * FROM doctrine_library")
+
+    # ── #969 : la version Alembic d'une base neuve ──────────────────────────────
+    # Tout à la fin, dans CETTE transaction : le schéma entier vient d'être créé,
+    # la base est à la tête du registre. Une base versionnée n'est jamais touchée ;
+    # une base existante sans version est dite, jamais devinée.
+    _version_alembic.conclure(conn, etat_registre)
 
 
 def _pose_cascade_blocs(conn: psycopg.Connection) -> None:

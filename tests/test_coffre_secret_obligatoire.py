@@ -53,6 +53,9 @@ def base_d_avant(live, pg_module_dsn):
     with psycopg.connect(pg_module_dsn, autocommit=True) as c:
         c.execute("ALTER TABLE connector_credentials ALTER COLUMN secret_enc DROP NOT NULL")
     assert _nullable(pg_module_dsn)
+    # …et son registre, à la révision d'avant : une base neuve naît à la tête (#969).
+    from alembic import command
+    command.stamp(_alembic(), "0008_billing_contracts")
     return pg_module_dsn
 
 
