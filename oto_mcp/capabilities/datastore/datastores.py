@@ -305,14 +305,20 @@ CAPABILITIES += [
         # propre face. L'ADR 0068 tranche l'écart dans le sens de CETTE face-ci : le
         # tableau naît personnel des deux côtés, et les deux textes disent la même
         # chose parce que les deux faces font la même chose.
+        # ⚠️ 24/09/2026 (oto#154) : elle disait aussi que le propriétaire « ne se change
+        # pas après coup ». Faux — le transfert existe, et c'est la sortie du partage
+        # invisible. L'avertissement et `docs/rest-api.md` avaient été corrigés le
+        # 08/09 ; cette description-ci était restée.
         description=("Crée un tableau. Par défaut il est PERSONNEL (visible de toi "
                      "seul — ni les autres membres de ton org, ni ses administrateurs) ; "
                      "passe `owner: {type: \"org\"|\"group\", id: N}` pour qu'il "
                      "appartienne à l'org ou à l'équipe, et soit lisible de tous ses "
                      "membres. ⚠️ L'en-tête `X-Oto-Org` NE CHANGE PAS le propriétaire : "
                      "il décide sous quelle org on lit et écrit, jamais à qui appartient "
-                     "ce qu'on crée — seul `owner` le fait, et il ne se change pas après "
-                     "coup. Créé sous cet en-tête sans `owner`, le tableau naît personnel "
+                     "ce qu'on crée — seul `owner` le fait à la création. Ensuite, le "
+                     "propriétaire se change par TRANSFERT (`oto_resource op=transfer`, "
+                     "`POST /api/resources`, réservé au propriétaire ou à un admin). "
+                     "Créé sous cet en-tête sans `owner`, le tableau naît personnel "
                      "et tout continue de fonctionner pour TOI : c'est au second agent, "
                      "ou au collègue qui ne le trouve pas, que ça se voit. La réponse "
                      "rend le propriétaire et vous avertit dans ce cas précis."),
