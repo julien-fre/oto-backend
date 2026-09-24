@@ -233,7 +233,7 @@ FERME = {**SCHEMA, "key_required": True}
 
 
 def _refus_mcp(data_write, **kw) -> str:
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError) as exc:
         data_write(**kw)
     return exc.value.error.message
