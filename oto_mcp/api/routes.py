@@ -46,6 +46,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -63,6 +64,7 @@ from . import (accords as api_routes_accords,
                zoho as api_routes_zoho)
 from ..capabilities import _rest_adapter as _cap_rest_adapter
 from ..capabilities import registry as _cap_registry
+from ..capabilities._authz import CODE_HORS_VUE
 # Primitives partagées (auth, CORS, réponses JSON, préflight, `bind`) : elles ont
 # quitté ce fichier pour `base.py` le 2026-08-27, sous les modules de
 # domaine qui les appellent (sinon l'import serait circulaire). RÉ-EXPORTÉES ici :
@@ -180,6 +182,160 @@ async def _peek_op(receive):
     return op, replay
 
 
+# ── Vue BORNÉE d'un org_admin (oto#270) ─────────────────────────────────────
+# Un org_admin « voit en tant que » un membre de SON org O, en lecture seule, pour
+# vérifier ce que ce membre voit (onboarding). Même middleware, même garde de lecture
+# seule, même journal que la vue d'opérateur ; en plus, la vue est BORNÉE à O :
+# - O est obligatoire (`X-Oto-Org`, ou l'org de `X-Oto-Group`), l'appelant en est
+#   admin RÉEL, la cible membre RÉEL, et n'est pas opérateur plateforme (ses droits
+#   déborderaient toute org) ;
+# - aucune écriture, jamais : l'écriture acceptée reste au super_admin ;
+# - seules les LECTURES listées ci-dessous passent — liste fermée, refus nommé
+#   (`view_as_hors_org`) pour tout le reste, jamais servi « au cas où » ;
+# - `/api/orgs/{id}` et `/api/groups/{id}` sont épinglés sur O ;
+# - dans la requête, `session_org.current_view_as_bound_org()` vaut O : le seam
+#   `ownership` et l'adaptateur des capacités s'y bornent (cf. `docs/org-context.md`).
+#
+# Chaque entrée est une lecture VÉRIFIÉE bornée à O. Les absences sont voulues :
+# jetons API, grants de comptes connecteurs, tableaux partagés « avec moi »,
+# abonnements de modèles, instances de connecteurs (elles portent les clés membre des
+# AUTRES orgs), facturation, légal, bibliothèques, gouvernance de ressources, alias
+# `/api/datastore/namespaces/*`, admin — toutes « compte entier » ou hors du sujet.
+_LECTURES_VUE_BORNEE: dict[tuple[str, str], frozenset | None] = {
+    # Surfaces sans donnée de compte.
+    ("GET", "/api/version"): None,
+    ("GET", "/api/mcp/catalog"): None,
+    ("GET", "/api/connectors"): None,
+    ("GET", "/api/openapi.json"): None,
+    ("GET", "/api/billing/plans"): None,
+    # Le compte, vu dans O.
+    ("GET", "/api/me"): None,
+    ("GET", "/api/me/orgs"): None,
+    ("GET", "/api/me/profile"): None,
+    ("GET", "/api/me/agent-context"): None,
+    ("GET", "/api/me/agent-toolbox"): None,
+    ("GET", "/api/me/calls"): None,
+    ("GET", "/api/me/activity-summary"): None,
+    ("GET", "/api/me/recent-changes"): None,
+    ("GET", "/api/me/search"): None,
+    ("GET", "/api/me/shell"): None,
+    # Guides, readmes et procédures (perso compris : ils suivent la personne).
+    ("GET", "/api/me/guides"): None,
+    ("GET", "/api/me/guides/{scope}/{slug}"): None,
+    ("GET", "/api/me/guides/{guide_id}"): None,
+    ("GET", "/api/me/instructions"): None,
+    ("GET", "/api/me/instructions/{slug}"): None,
+    ("GET", "/api/me/instructions/{slug}/versions"): None,
+    ("GET", "/api/me/instructions/{slug}/usage"): None,
+    # Boîte à outils effective dans O (statuts, jamais un secret).
+    ("GET", "/api/me/tools"): None,
+    ("GET", "/api/me/tools/registry"): None,
+    ("GET", "/api/me/tools/{name}/detail"): None,
+    ("GET", "/api/me/connectors"): None,
+    ("GET", "/api/me/connectors/{name}/oauth-status"): None,
+    ("GET", "/api/me/connectors/{provider}/effect"): None,
+    ("GET", "/api/settings/api-keys/{provider}"): None,
+    # Projets, pages, nœuds.
+    ("POST", "/api/me/projects"): frozenset({
+        "list", "list_templates", "get", "inventory", "activity", "runs", "lint",
+        "handoff"}),
+    ("GET", "/api/me/projects/{project_id}"): None,
+    ("GET", "/api/me/projects/{project_id}/files"): None,
+    ("GET", "/api/me/projects/{id}/export"): None,
+    ("POST", "/api/me/docs"): frozenset({
+        "get", "list", "revisions", "backlinks", "search", "shared_with_me"}),
+    ("GET", "/api/me/nodes/{node_id}"): None,
+    ("GET", "/api/me/nodes/{node_id}/rows"): None,
+    ("POST", "/api/me/functions"): frozenset({"list", "get", "versions"}),
+    ("POST", "/api/me/kb"): frozenset({"get"}),
+    # Runner et fils de runs de O.
+    ("POST", "/api/me/runner/fleets"): frozenset({"list", "get", "state"}),
+    ("POST", "/api/me/runner/jobs"): frozenset({"list", "get"}),
+    ("POST", "/api/me/runner/triggers"): frozenset({"list", "get", "deliveries"}),
+    ("POST", "/api/me/runs/thread"): frozenset({"read"}),
+    # Tableaux.
+    ("GET", "/api/datastores"): None,
+    ("GET", "/api/datastores/{datastore}/rows"): None,
+    ("GET", "/api/datastores/{datastore}/rows/export.csv"): None,
+    ("GET", "/api/datastores/{datastore}/rows/{row_id}"): None,
+    ("GET", "/api/datastores/{datastore}/rows/{row_id}/history"): None,
+    ("GET", "/api/datastores/{datastore}/rows/{row_id}/activity"): None,
+    ("GET", "/api/datastores/{datastore}/schema"): None,
+    ("GET", "/api/datastores/{datastore}/activity"): None,
+    ("GET", "/api/datastores/{datastore}/aggregate"): None,
+    ("GET", "/api/datastores/{datastore}/queue"): None,
+    ("GET", "/api/datastores/{datastore}/share"): None,
+    ("GET", "/api/datastores/{datastore}/url"): None,
+}
+# Toute lecture de `/api/orgs/{id}/…` et `/api/groups/{id}/…` passe, ÉPINGLÉE sur O.
+_ORG_DANS_LE_CHEMIN = re.compile(r"^/api/orgs/([^/]+)(?:/|$)")
+_EQUIPE_DANS_LE_CHEMIN = re.compile(r"^/api/groups/([^/]+)(?:/|$)")
+
+
+def _gabarit(chemin: str) -> re.Pattern:
+    return re.compile("^" + re.sub(r"\{[^}]+\}", "[^/]+", chemin) + "$")
+
+
+_LECTURES_VUE_BORNEE_RE = [(verbe, _gabarit(chemin), ops)
+                           for (verbe, chemin), ops in _LECTURES_VUE_BORNEE.items()]
+
+
+def _juger_vue_bornee(sub: str, cible: str, view_org: int | None,
+                      view_group: int | None, candidat_sous_domaine: int | None,
+                      porte_un_run: bool) -> tuple[int | None, tuple | None]:
+    """La vue « en tant que » d'un NON-opérateur : `(org O, None)` si elle est ouverte,
+    `(None, None)` si elle est sans effet (cible = soi), `(None, (statut, code,
+    détail))` si elle est refusée. Toutes les gardes, en une fois, hors de la boucle."""
+    from .. import access, group_store, org_store, roles
+    org = view_org if view_org else None
+    if view_group:
+        g = group_store.get_group(view_group)
+        if g is None:
+            return None, (403, "forbidden", None)
+        if org is not None and int(g["org_id"]) != org:
+            return None, (403, CODE_HORS_VUE, "L'équipe n'est pas dans l'org consultée.")
+        org = int(g["org_id"])
+    if org is None:
+        return None, (400, "view_as_org_required",
+                      "Un org_admin voit « en tant que » dans SON org : `X-Oto-Org` "
+                      "(ou `X-Oto-Group`) est requis.")
+    if org_store.get_org_role(org, sub) != roles.ORG_ADMIN:
+        return None, (403, "forbidden", None)
+    if cible == sub:
+        return None, None
+    if org_store.get_org_role(org, cible) is None:
+        return None, (403, CODE_HORS_VUE, "La cible n'est pas membre de cette org.")
+    if access.is_platform_operator(cible):
+        return None, (403, CODE_HORS_VUE,
+                      "La cible est opérateur plateforme : ses droits débordent toute "
+                      "org, sa vue ne se borne pas.")
+    if view_group and not roles.can_read_group(cible, view_group):
+        return None, (403, CODE_HORS_VUE, "La cible ne lit pas cette équipe.")
+    if candidat_sous_domaine is not None and candidat_sous_domaine != org:
+        return None, (403, CODE_HORS_VUE, "Le sous-domaine désigne une autre org.")
+    if porte_un_run:
+        return None, (403, CODE_HORS_VUE,
+                      "`X-Oto-Run` place la requête dans l'org du run : pas en vue bornée.")
+    return org, None
+
+
+def _lecture_vue_bornee(methode: str, chemin: str, op: str | None, org: int) -> str | None:
+    """None si la lecture est ouverte en vue bornée à `org` ; sinon le motif du refus."""
+    from .. import group_store
+    if methode == "GET":
+        m = _ORG_DANS_LE_CHEMIN.match(chemin)
+        if m:
+            return None if m.group(1) == str(org) else "une autre org"
+        m = _EQUIPE_DANS_LE_CHEMIN.match(chemin)
+        if m:
+            g = group_store.get_group(int(m.group(1))) if m.group(1).isdigit() else None
+            return None if g is not None and int(g["org_id"]) == org else "une autre équipe"
+    for verbe, gabarit, ops in _LECTURES_VUE_BORNEE_RE:
+        if verbe == methode and gabarit.match(chemin) and (ops is None or op in ops):
+            return None
+    return "cette route"
+
+
 # La cible du « voir en tant que » que `ViewAsMiddleware` a APPLIQUÉE à la requête,
 # déposée dans le `scope` ASGI — le MÊME dict que celui de `RestCallLogger`, qui
 # l'enveloppe et la relit dans son `finally` (même mécanique que `CLE_PRINCIPAL`).
@@ -230,14 +386,26 @@ class ViewAsMiddleware:
         # n'a de sens qu'avec une cible APPLIQUÉE ; son droit (super_admin) est jugé
         # plus bas, et seulement si la requête écrit vraiment.
         ecriture_demandee = False
-        if view_user:  # « voir en tant que » : opérateur plateforme + cible existe
-            if not await run_in_threadpool(access.is_platform_operator, sub):
-                return await _json_error(request, 403, "forbidden")(scope, receive, send)
-            if view_user == sub or await run_in_threadpool(db.get_user, view_user) is None:
-                view_user = None  # cible = soi ou inconnue → pas de consultation (no-op)
+        borne = None  # org O d'une vue bornée d'org_admin (oto#270), sinon None
+        if view_user:  # « voir en tant que » : opérateur plateforme, ou org_admin borné
+            if await run_in_threadpool(access.is_platform_operator, sub):
+                if view_user == sub or await run_in_threadpool(db.get_user, view_user) is None:
+                    view_user = None  # cible = soi ou inconnue → pas de consultation (no-op)
+                else:
+                    read_only = True
+                    ecriture_demandee = _parse_view_write(request)
             else:
-                read_only = True
-                ecriture_demandee = _parse_view_write(request)
+                borne, refus = await run_in_threadpool(
+                    _juger_vue_bornee, sub, view_user, view_org, view_group,
+                    session_org.current_subdomain_candidate(),
+                    bool((request.headers.get("x-oto-run") or "").strip()))
+                if refus is not None:
+                    return await _json_error(request, *refus)(scope, receive, send)
+                if borne is None:
+                    view_user = None  # cible = soi → pas de consultation (no-op)
+                else:
+                    read_only = True
+                    ecriture_demandee = _parse_view_write(request)
         # Écriture ACCEPTÉE : cible appliquée + en-tête + opérateur super_admin.
         ecriture_acceptee = (ecriture_demandee
                              and await run_in_threadpool(access.is_super_admin, sub))
@@ -272,6 +440,7 @@ class ViewAsMiddleware:
         # ou write sans op) → 403, SAUF écriture en view-as ACCEPTÉE (super_admin +
         # `X-Oto-View-As-Write: 1`). Le corps est rejoué intact au handler.
         ecriture = False
+        op = None
         if read_only and request.method != "GET":
             op, receive = await _peek_op(receive)
             if op not in _READ_OPS:
@@ -291,6 +460,16 @@ class ViewAsMiddleware:
                     # inspection, comme avant.
                     return await _json_error(request, 403, "forbidden")(scope, receive, send)
                 ecriture = True
+        if borne is not None:
+            # Vue bornée : la requête est une lecture (garde ci-dessus) ; reste à savoir
+            # si c'est une lecture OUVERTE, et dans O.
+            motif = await run_in_threadpool(_lecture_vue_bornee, request.method,
+                                            scope.get("path", ""), op, borne)
+            if motif is not None:
+                return await _json_error(
+                    request, 403, CODE_HORS_VUE,
+                    f"Vue « en tant que » bornée à l'org #{borne} : {motif} n'y est pas "
+                    "ouverte.")(scope, receive, send)
         operateur_token = None
         if view_user is not None:
             # Publié pour le journal : APRÈS toutes les gardes (un 403 est sorti plus
@@ -309,9 +488,13 @@ class ViewAsMiddleware:
                          if view_user is not None and ecriture_acceptee else None)
         org_token = session_org.set_view_org(view_org) if view_org is not None else None
         grp_token = session_org.set_view_group(view_group) if view_group is not None else None
+        borne_token = (session_org.set_view_as_bound_org(borne)
+                       if borne is not None else None)
         try:
             return await self.app(scope, receive, send)
         finally:
+            if borne_token is not None:
+                session_org.reset_view_as_bound_org(borne_token)
             if grp_token is not None:
                 session_org.reset_view_group(grp_token)
             if org_token is not None:
