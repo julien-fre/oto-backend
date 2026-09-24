@@ -17,10 +17,23 @@ et normalise. Le delta réellement servi était `+75`.
 D'où la règle qui accompagne ce script : **le delta d'une PR sort d'ici, pas d'un
 comptage à la main.**
 
-**Ce qu'il mesure, et pourquoi c'est ça** : il monte les outils **comme le serveur les
-monte** (`tools.register_all` puis `capabilities._mcp_adapter.register`, la séquence de
-`server.py`), puis lit ce que `tools/list` rendrait. C'est le texte que le modèle reçoit
-à chaque connexion — donc la seule longueur qui pèse sur son comportement.
+**Ce qu'il mesure, et pourquoi c'est ça** : il construit le serveur **par la fonction
+même qui le construit** (`server._build_mcp`) et lit `tools/list` **à travers la chaîne de
+middlewares**. C'est le texte que le modèle reçoit à chaque connexion — donc la seule
+longueur qui pèse sur son comportement.
+
+⚠️ **Middlewares compris, et c'est la seconde erreur datée (#794).** Jusqu'au 24/09/2026,
+il recopiait la séquence de montage (`register_all` puis l'adaptateur de capacités) sur
+un `FastMCP` nu, SANS middleware. Il ne voyait donc pas ce que `CallContextMiddleware`
+injecte au listing : les axes d'appel (`_org`, `_project`, `_group`, `_instance`,
+`_run_id`…) — mesuré ce jour-là, 718 schémas sur 778 différaient du servi, et trois
+outils manquaient. L'issue #754 affirmait sur la foi de ce relevé que les outils `data_*`
+n'acceptaient aucun `_org` : ils l'annonçaient depuis le 4 juillet.
+
+Il mesure le servi à un appelant **sans identité** : ce qui dépend de QUI appelle (l'axe
+`_account` annoncé à qui atteint plusieurs comptes, l'index des guides dans la
+description d'`oto_procedure`, les outils masqués par utilisateur, le préfixe d'un
+tenant) n'est pas dans le relevé, et le rapport le dit en tête.
 
 Usage :
 
@@ -51,11 +64,14 @@ RACINE = Path(__file__).resolve().parent.parent
 
 
 def _monter() -> list:
-    """Monte les outils dans l'ordre du serveur et rend ce que `tools/list` servirait.
+    """Construit le serveur comme il se construit et rend ce que `tools/list` sert.
 
-    L'ordre compte : `register_all` d'abord (il remplit les registres de seams), les
-    capacités ensuite — c'est la séquence de `server.py`. Monter autrement rendrait une
-    surface différente de celle qui est servie, ce qui viderait la mesure de son sens.
+    `server._build_mcp` et non une recopie de sa séquence : la recopie a divergé sans
+    bruit (#794 — ni middleware, ni les montages ajoutés depuis), et une mesure qui
+    rejoue le montage à sa façon mesure sa façon. `list_tools()` exécute la chaîne de
+    middlewares (c'est son défaut dans FastMCP) : les axes injectés au listing sont
+    dans le relevé comme ils sont dans la réponse. Construire ne prépare pas la base
+    (`_build_mcp`, docstring) : le relevé tourne sans elle.
 
     ⚠️ **La racine du dépôt passe DEVANT tout le reste dans le chemin d'import.** Sans
     ça, `python scripts/empreinte_servie.py` met `scripts/` en tête et `oto_mcp` est
@@ -64,25 +80,9 @@ def _monter() -> list:
     et un `--diff` comparerait deux choses sans rapport. Vécu le 29/08 : le premier
     relevé annonçait quinze outils modifiés par une PR qui n'en touchait aucun."""
     sys.path.insert(0, str(RACINE))
-    from fastmcp import FastMCP
+    from oto_mcp import server
 
-    from oto_mcp.capabilities import _mcp_adapter
-    from oto_mcp.capabilities import registry as cap_registry
-    from oto_mcp.tools import register_all
-
-    mcp = FastMCP("empreinte-servie")
-    register_all(mcp)
-    _mcp_adapter.register(mcp, cap_registry.CAPABILITIES)
-    # Le geste de montage qui suit dans `server._build_mcp` : le schéma de sortie
-    # DÉDUIT est effacé. Absent sur un état du tronc antérieur au module — là, ce qui
-    # est servi EST le schéma déduit, et c'est ce que le relevé doit mesurer.
-    try:
-        from oto_mcp.middleware.un_seul_canal import retirer_les_schemas_vides
-    except ImportError:
-        pass
-    else:
-        retirer_les_schemas_vides(mcp)
-    return asyncio.run(mcp.list_tools())
+    return asyncio.run(server._build_mcp("noauth").list_tools())
 
 
 def portee() -> dict:
@@ -112,6 +112,9 @@ def portee() -> dict:
     return {
         "base": base,
         "raison": raison,
+        # Le relevé liste à travers les middlewares, SANS identité (#794) : ce qu'ils
+        # ajoutent selon l'appelant n'y est pas. Le dire, pas le laisser supposer.
+        "appelant": "anonyme",
         "connecteurs_montables": [],
         "connecteurs_montes": [],
         "non_regardes": [],
@@ -121,13 +124,16 @@ def portee() -> dict:
 def _phrase_portee(p: dict) -> str:
     """La portée en une ligne, celle qui coiffe le rapport."""
     manque = p["non_regardes"]
+    appelant = ("servi à un appelant SANS identité, middlewares compris — ce qu'ils "
+                "ajoutent selon QUI appelle (axe `_account`, guides nommés, outils "
+                "masqués, préfixe de tenant) n'est pas mesuré")
     if not manque:
         return ("portée : tous les outils servis viennent du CODE — rien n'est laissé "
-                "de côté (plus aucun montage distant depuis l'ADR 0069)")
+                f"de côté (plus aucun montage distant depuis l'ADR 0069) ; {appelant}")
     detail = f" ({p['raison']})" if p["raison"] else ""
     return (f"portée : outils montés par le CODE. NON comparés : "
             f"{len(manque)} connecteur(s) monté(s) par la base — base {p['base']}{detail} : "
-            f"{', '.join(manque)}")
+            f"{', '.join(manque)} ; {appelant}")
 
 
 def relever(noms: list[str] | None = None) -> dict:

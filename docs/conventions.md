@@ -312,6 +312,12 @@ rien ne rendait navigable et que rien ne tenait.
   autrement » de « la moitié du correctif manque ». *Une convention qui demande un
   chiffre sans dire d'où il sort produit des chiffres différents chez chacun.* Le
   script mesure aussi le **schéma d'entrée**, qui pèse autant qu'une phrase.
+  ⚠️ **Il lit `tools/list` à travers les middlewares, comme le client (#794).** Il
+  montait les outils sur un serveur nu, et ne voyait donc pas les axes d'appel que
+  `CallContextMiddleware` injecte au listing (`_org`, `_project`, `_run_id`…) : 718
+  schémas sur 778 différaient du servi le 24/09/2026. Il construit désormais le serveur
+  par `server._build_mcp`, et sa ligne de portée dit ce qui reste hors relevé — ce qui
+  dépend de QUI appelle, puisqu'il liste sans identité.
   ⚠️ **Et un rapport d'empreinte NOMME CE QU'IL NE REGARDE PAS.** Le code ne décide pas
   seul ce qui est servi : l'**exposition** d'un connecteur est gouvernée par la base
   (`connector_activation`, ADR 0010/0011), donc un relevé pris sans base l'ignore

@@ -179,3 +179,42 @@ def test_deux_portees_differentes_refusent_de_se_soustraire():
     assert _portees_comparables(meme, dict(meme)) is True
     autre = {"base": "indisponible", "connecteurs_montes": ["a"]}
     assert _portees_comparables(meme, autre) is False
+
+
+# ── Le servi, middlewares compris (#794) ─────────────────────────────────────
+
+def test_le_releve_VOIT_un_axe_que_seul_le_middleware_injecte():
+    """#794 — le relevé montait les outils sur un serveur NU : il ne voyait pas les axes
+    d'appel que `CallContextMiddleware` ajoute au schéma au moment de `tools/list`, et
+    jamais la signature Python. L'issue #754 en a tiré que `data_write` n'acceptait
+    aucun `_org`, alors qu'il l'annonçait.
+
+    Le témoin : un axe connu pour n'exister QUE par le middleware doit apparaître dans
+    le schéma relevé. Un instrument qu'on n'a jamais vu voir ne prouve rien."""
+    sys.path.insert(0, str(RACINE))
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from scripts.empreinte_servie import _monter
+
+    from oto_mcp.tools import register_all
+
+    nu = FastMCP("sans-middleware")
+    register_all(nu)
+    brut = {t.name: t for t in asyncio.run(nu.list_tools())}
+    assert "_org" not in (brut["data_write"].parameters or {}).get("properties", {}), (
+        "le témoin suppose un axe ABSENT du montage nu — sinon il ne prouve rien")
+    outils = {t.name: t for t in _monter()}
+    props = (outils["data_write"].parameters or {}).get("properties", {})
+    assert "_org" in props, "l'axe injecté au listing doit être dans le relevé"
+
+
+def test_la_portee_dit_que_le_releve_est_ANONYME():
+    """Il liste sans identité : ce qui dépend de l'appelant n'y est pas, et le rapport
+    le dit plutôt que de le laisser supposer."""
+    sys.path.insert(0, str(RACINE))
+    from scripts.empreinte_servie import _phrase_portee, portee
+    p = portee()
+    assert p["appelant"] == "anonyme"
+    assert "SANS identité" in _phrase_portee(p)
