@@ -666,7 +666,7 @@ def projects_pinning_instance(project_ids: list[int], connector: str) -> list[di
 
 # --- Docs (pages markdown arborescentes d'un projet, incrément 3) -------------
 _DOC_COLS = ("id, project_id, parent_id, title, description, position, body_md, kind, public_token, "
-             "created_by, created_at, updated_at")
+             "created_by, created_at, updated_at, updated_by")
 
 
 def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
@@ -677,12 +677,13 @@ def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
     # est posé dès la création, le tri (parent_id, position, title) reste stable.
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO docs (project_id, parent_id, title, body_md, kind, created_by, description, position) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, "
+            "INSERT INTO docs (project_id, parent_id, title, body_md, kind, created_by, updated_by, "
+            "description, position) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
             "  COALESCE((SELECT MAX(position) FROM docs "
             "            WHERE project_id = %s AND parent_id IS NOT DISTINCT FROM %s), 0) + 16) "
             "RETURNING id",
-            (project_id, parent_id, title, body_md, kind, created_by, description,
+            (project_id, parent_id, title, body_md, kind, created_by, created_by, description,
              project_id, parent_id),
         ).fetchone()
         conn.execute("UPDATE projects SET updated_at = NOW() WHERE id = %s", (project_id,))
@@ -810,12 +811,45 @@ def doc_rev(title: Optional[str], body_md: Optional[str]) -> str:
     return h.hexdigest()[:16]
 
 
+# La porte par laquelle est entrée une écriture de page, gardée sur l'instantané
+# qu'elle a remplacé (`doc_revisions.face`). `mcp` = un tool de l'agent
+# (`session_org.FACE_MCP`) ; `rest` = les routes `/api/*` (le dashboard, un front tiers).
+DOC_FACE_MCP = "mcp"
+DOC_FACE_REST = "rest"
+_DOC_FACES = frozenset({DOC_FACE_MCP, DOC_FACE_REST})
+
+# oto#274 — une rafale d'enregistrements de l'écran ne fait qu'UNE version. Fenêtre FIXE,
+# comptée depuis l'instantané qui a ouvert la rafale (jamais depuis la dernière frappe) :
+# une session d'écriture continue produit au plus une version toutes les 5 minutes, jamais
+# une seule version pour une heure de travail.
+FENETRE_REGROUPEMENT = "5 minutes"
+
+
 def update_doc(doc_id: int, *, title: Optional[str] = None,
                body_md: Optional[str] = None, kind: Optional[str] = None,
                edited_by: Optional[str] = None,
                description: Optional[str] = None,
                expected_rev: Optional[str] = None,
+               face: Optional[str] = None,
+               regroupable: bool = False,
                trace: Optional[dict] = None) -> None:
+    """Écrit une page et archive l'état qu'elle remplace (`doc_revisions`).
+
+    `face` : la porte de l'appel (`DOC_FACE_MCP` / `DOC_FACE_REST`), gardée sur
+    l'instantané ; None = un appel hors des deux portes (script, test).
+
+    `regroupable` (oto#274) : l'appelant accepte que cette écriture rejoigne la rafale
+    en cours. L'instantané n'est alors PAS pris si le dernier de la page vient du même
+    compte, par la face REST comme celle-ci, et a moins de `FENETRE_REGROUPEMENT` :
+    l'état d'avant la rafale reste la version restaurable, et la page porte la dernière
+    frappe. Tout le reste crée une version : l'agent (MCP), un autre compte, un auteur
+    inconnu, une restauration (`regroupable=False`), une fenêtre dépassée.
+
+    Le regroupement ne supprime ni ne réécrit aucune révision — il saute un `INSERT`.
+    Les `id` déjà servis (restauration, liens) restent donc valides, et `expected_rev`,
+    haché du contenu de `docs`, n'en dépend pas."""
+    if face is not None and face not in _DOC_FACES:
+        raise ValueError(f"face de page inconnue : {face!r}")
     sets: list[str] = []
     params: list = []
     if title is not None:
@@ -836,7 +870,11 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
     # Sémantique (lot 3) : titre/corps change ⇒ ré-indexer (outbox).
     if title is not None or body_md is not None:
         sets.append("embed_dirty = TRUE")
+    # L'auteur de la dernière modification va avec sa date (oto#274, volet 2) : même
+    # instruction, jamais l'une sans l'autre. None = écrivain inconnu, servi tel quel.
     sets.append("updated_at = NOW()")
+    sets.append("updated_by = %s")
+    params.append(edited_by)
     params.append(doc_id)
     with _connect() as conn:
         # Snapshot de l'état ANTÉRIEUR avant d'écrire (chaîne de versions, ADR 0032 §3 B4c).
@@ -848,11 +886,12 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
             cur = doc_rev(prior["title"], prior["body_md"])
             if cur != expected_rev:
                 raise DocConflict(cur)
-        if prior is not None:
+        if prior is not None and not _rejoint_la_rafale(conn, doc_id, edited_by, face,
+                                                        regroupable):
             conn.execute(
-                "INSERT INTO doc_revisions (doc_id, title, body_md, edited_by) "
-                "VALUES (%s, %s, %s, %s)",
-                (doc_id, prior["title"], prior["body_md"], edited_by),
+                "INSERT INTO doc_revisions (doc_id, title, body_md, edited_by, face) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (doc_id, prior["title"], prior["body_md"], edited_by, face),
             )
         conn.execute(f"UPDATE docs SET {', '.join(sets)} WHERE id = %s", tuple(params))
         from .search import stamp_rank_vector
@@ -873,6 +912,27 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
                                   (doc_id,)).fetchone()
             if pr is not None:
                 _backlinks.reresolve_referrers(conn, pr["project_id"], prior["title"], title)
+
+
+def _rejoint_la_rafale(conn, doc_id: int, edited_by: Optional[str],
+                       face: Optional[str], regroupable: bool) -> bool:
+    """Vrai si cette écriture prolonge la rafale ouverte par le dernier instantané
+    (oto#274). Lu sous le `FOR UPDATE` de `update_doc` : deux écritures concurrentes
+    ne voient pas le même « dernier instantané ».
+
+    Le dernier instantané dit qui a fait la dernière écriture, et par quelle porte :
+    une écriture regroupée n'en crée pas, mais elle ne s'y ajoute que si auteur et
+    porte sont les mêmes. Auteur inconnu (None) : jamais regroupé — deux inconnus ne
+    sont pas « le même compte »."""
+    if not (regroupable and face == DOC_FACE_REST and edited_by):
+        return False
+    row = conn.execute(
+        "SELECT edited_by, face, created_at > NOW() - %s::interval AS recente "
+        "FROM doc_revisions WHERE doc_id = %s "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        (FENETRE_REGROUPEMENT, doc_id)).fetchone()
+    return bool(row and row["recente"] and row["edited_by"] == edited_by
+                and row["face"] == DOC_FACE_REST)
 
 
 def list_doc_revisions(doc_id: int, limit: int = 50) -> list[dict]:
@@ -1074,8 +1134,11 @@ def move_doc(doc_id: int, new_parent_id: Optional[int],
             return
         pid = row["project_id"]
         _refuse_le_cycle(conn, doc_id, new_parent_id)
-        conn.execute("UPDATE docs SET parent_id = %s, updated_at = NOW() WHERE id = %s",
-                     (new_parent_id, doc_id))
+        # Un déplacement date la page sans en connaître l'auteur ici : `updated_by`
+        # repasse à NULL — l'ancien auteur n'est pas reconduit sur un geste qu'il n'a
+        # pas fait (oto#274, même règle que `recent_changes`).
+        conn.execute("UPDATE docs SET parent_id = %s, updated_at = NOW(), updated_by = NULL "
+                     "WHERE id = %s", (new_parent_id, doc_id))
         sibs = conn.execute(
             "SELECT id FROM docs WHERE project_id = %s "
             "AND parent_id IS NOT DISTINCT FROM %s AND id <> %s "
@@ -1105,8 +1168,8 @@ def move_doc_to_project(doc_id: int, target_project_id: int,
             return 0
         conn.execute("UPDATE docs SET project_id = %s WHERE id = ANY(%s)",
                      (target_project_id, subtree))
-        conn.execute("UPDATE docs SET parent_id = %s, updated_at = NOW() WHERE id = %s",
-                     (new_parent_id, doc_id))
+        conn.execute("UPDATE docs SET parent_id = %s, updated_at = NOW(), updated_by = NULL "
+                     "WHERE id = %s", (new_parent_id, doc_id))
         # Réindexe la fratrie de destination (mêmes entiers ×16 que move_doc).
         sibs = [r["id"] for r in conn.execute(
             "SELECT id FROM docs WHERE project_id = %s "

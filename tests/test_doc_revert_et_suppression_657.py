@@ -44,13 +44,14 @@ REV = {"id": 42, "doc_id": 3, "title": "Titre d'avant", "body_md": "corps d'avan
 
 @pytest.fixture
 def seams(monkeypatch):
-    rec = {"update": [], "delete": [], "revision": [], "count": []}
+    rec = {"update": [], "delete": [], "revision": [], "count": [], "regroupable": []}
     monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     monkeypatch.setattr(db, "get_doc_by_id", lambda i: dict(DOC, id=i) if i == 3 else None)
     monkeypatch.setattr(db, "update_doc",
                         lambda did, title=None, body_md=None, kind=None, edited_by=None,
-                        description=None, expected_rev=None:
-                        rec["update"].append((did, title, body_md, edited_by, expected_rev)))
+                        description=None, expected_rev=None, face=None, regroupable=False:
+                        rec["regroupable"].append(regroupable)
+                        or rec["update"].append((did, title, body_md, edited_by, expected_rev)))
     monkeypatch.setattr(db, "get_doc_revision",
                         lambda did, rid: rec["revision"].append((did, rid)) or (
                             dict(REV) if (did, rid) == (3, 42) else None))
@@ -80,6 +81,8 @@ def test_revert_passe_par_update_doc_donc_snapshotte_l_etat_courant(seams):
     UPDATE de son cru perdrait les quatre d'un coup, et personne ne le verrait."""
     D._doc(CTX, D.DocInput(op="revert", doc_id=3, revision_id=42))
     assert len(seams["update"]) == 1, "l'écriture ne doit passer que par update_doc"
+    # oto#274 : jamais regroupée avec une rafale du dashboard — l'état remplacé est gardé.
+    assert seams["regroupable"] == [False]
 
 
 def test_revert_honore_expected_rev(seams):

@@ -489,8 +489,12 @@ from oto_mcp.db import _schema, schema
 # partage, NULLABLE (NULL = sans échéance), sans index. Base existante : révision Alembic
 # `0012_partages_echeance`, pas le démarrage (table lue par chaque contrôle d'accès).
 # Recalculée sur le tronc 00a32612 : 170 587 → 170 929 (+342, commentaire compris).
-EMPREINTE = "ba72cbe99d4a59211b07563b388afc8094002961e07da4838000b9347ee5d72b"
-LONGUEUR = 170929
+# 24/09/2026 (otomata-tech/oto#274) — `docs.updated_by` (l'auteur de la dernière
+# modification) et `doc_revisions.face` (la porte de l'écriture), NULLABLES, sans index.
+# Base existante : révision Alembic `0013_pages_versions_regroupees`, pas le démarrage.
+# Recalculée sur 94dfcfcf : 170 929 → 171 478 (+549, commentaires compris).
+EMPREINTE = "27975c920932d9160767c371e199ab9a729afcca347654f02ecb1edf2cf958cc"
+LONGUEUR = 171478
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

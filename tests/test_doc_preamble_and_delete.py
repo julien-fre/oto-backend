@@ -103,7 +103,7 @@ def seams(monkeypatch):
     monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
 
     def _update(did, title=None, body_md=None, kind=None, edited_by=None,
-                description=None, expected_rev=None):
+                description=None, expected_rev=None, face=None, regroupable=False):
         etat["appels"].append({"doc_id": did, "expected_rev": expected_rev,
                                "edited_by": edited_by, "body_md": body_md})
         if body_md is not None:

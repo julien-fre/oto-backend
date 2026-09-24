@@ -70,8 +70,9 @@ class RecentChange(BaseModel):
     # Procédure seulement : sa référence lisible et son palier (0059-D3 : les deux).
     slug: Optional[str] = None
     scope: Optional[Literal["user", "org", "group"]] = None
-    # Qui a fait CETTE modification, quand la donnée existe (révision appariée à la
-    # microseconde, cf. `db/recent_changes.py`). `null` = inconnu, jamais deviné.
+    # Qui a fait CETTE modification, quand la donnée existe (page : `docs.updated_by` ;
+    # procédure : révision appariée à la microseconde, cf. `db/recent_changes.py`).
+    # `null` = inconnu, jamais deviné.
     author: Optional[RecentChangeAuthor] = None
     updated_at: str
 

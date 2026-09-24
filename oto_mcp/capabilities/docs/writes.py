@@ -3,6 +3,8 @@
 
 Toute écriture de corps passe par `db.update_doc` : c'est lui qui prend le snapshot de
 révision, re-résout les backlinks, propage un renommage et détecte le conflit optimiste.
+`update` et `patch` s'y déclarent `regroupable` : une rafale d'enregistrements du
+dashboard ne fait qu'une version (oto#274) ; `revert` ne l'est pas.
 Un UPDATE de son cru perdrait les quatre — la règle vaut aussi pour `patch` et `revert`,
 qui vivent à côté.
 """
@@ -72,7 +74,7 @@ def update(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         db.update_doc(int(inp.doc_id), title=(inp.title.strip() if inp.title else None),
                       body_md=inp.body_md, kind=inp.kind, edited_by=sub,
                       description=inp.description, expected_rev=inp.expected_rev,
-                      trace=trace)
+                      face=common.face_de_l_appel(), regroupable=True, trace=trace)
     except db.DocConflict as e:
         # Écrasement concurrent évité : le doc a changé depuis la lecture du client.
         require(False, "conflict",

@@ -155,7 +155,8 @@ def patch(sub: Optional[str], inp, row: dict, pid: int) -> dict:
                          "même version.")}
     try:
         db.update_doc(int(inp.doc_id), body_md=new_body, edited_by=sub,
-                      expected_rev=inp.expected_rev)
+                      expected_rev=inp.expected_rev, face=common.face_de_l_appel(),
+                      regroupable=True)
     except db.DocConflict as e:
         require(False, "conflict",
                 f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "

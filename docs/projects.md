@@ -84,6 +84,19 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > Le raisonnement complet, la mesure et le relevé de production (0 cycle) sont dans
 > `docs/noeuds.md` — même défaut, même correction, une table plus loin.
 
+> **Une rafale d'enregistrements ne fait qu'une version (oto#274, 24/09).** Le dashboard
+> enregistre une page après 4 s d'inactivité ; chaque enregistrement empilait un instantané.
+> `update_doc` ne le prend plus quand l'écriture (`update`/`patch`, face REST) suit un
+> instantané du **même compte**, par la **face REST**, vieux de **moins de 5 minutes** —
+> fenêtre fixe, comptée depuis l'instantané qui a ouvert la rafale : une session continue
+> produit une version toutes les 5 minutes, jamais une seule pour l'heure. L'état d'avant la
+> rafale reste la version restaurable. Toujours une version : l'agent (MCP), un autre compte,
+> un écrivain inconnu, une restauration (`revert`), une fenêtre dépassée. Aucune révision
+> n'est effacée ni réécrite (on saute un `INSERT`) : les `revision_id` servis restent
+> valides, et `expected_rev`, haché du contenu, n'en dépend pas. La porte de chaque version
+> est gardée (`doc_revisions.face`) ; la page sert `updated_by`, l'auteur de la dernière
+> modification (`null` après un déplacement), sur `op=get` et `op=list`.
+
 > **Un `unlink` qui n'a rien retiré le DIT (#699, 04/09).** `op=unlink` répondait `ok: true`
 > sur un no-op — le lien visé figurait encore dans les `links` de la réponse à ce même appel.
 > Deux causes, une seule correction. (1) Le **rowcount** de `remove_project_link` existait et

@@ -551,6 +551,19 @@ chaque lecture de partage répondrait `UndefinedColumn`. Pas au démarrage : la 
 par chaque contrôle d'accès, et l'`ALTER` y prend un verrou exclusif, borné par
 `lock_timeout`. Le retour arrière retire la colonne : un partage échu redevient valide.
 
+`0013_pages_versions_regroupees` (24/09/2026, otomata-tech/oto#274, après `0012_partages_echeance`)
+ajoute deux colonnes nullables, `docs.updated_by` (l'auteur de la dernière modification) et
+`doc_revisions.face` (la porte, `mcp` ou `rest`, de l'écriture qui a remplacé l'instantané),
+que le code du même lot ÉCRIT à chaque écriture de page : comme 0007 et 0010, elle se joue
+**avant la fusion**. Pas au démarrage : `docs` est lue par chaque lecture de page. Elle
+remplit `updated_by` depuis la révision appariée (la règle que servaient les « modifications
+récentes »), **par tranches de 5 000 identifiants hors de la transaction des `ALTER`**, chacune
+sous `lock_timeout` : ≈ 18 s par million de pages sur la base de test — mesurer
+`count(*)` de `docs` avant de la jouer. Entre la fusion et le tag, une page modifiée par
+l'ancien code de production garde l'auteur précédent jusqu'à sa prochaine écriture ;
+rejouer le remplissage après le tag referme cette fenêtre. Le retour arrière retire les
+deux colonnes.
+
 ## 6. Références
 
 - `docs/live-migrations.md` — la danse en N lots, les techniques et les pièges déjà

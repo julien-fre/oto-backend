@@ -28,7 +28,8 @@ BODY = "Contexte et procédure interne. " * 130
 def _pages(n: int) -> list[dict]:
     return [{"id": i, "project_id": 7, "parent_id": None, "title": f"Page {i}",
              "description": None, "position": i, "body_md": BODY, "kind": "doc",
-             "created_at": "2026-08-14", "updated_at": "2026-08-14"} for i in range(n)]
+             "created_at": "2026-08-14", "updated_at": "2026-08-14",
+             "updated_by": "google-oauth2|104857312345678901234"} for i in range(n)]
 
 
 @pytest.fixture
@@ -60,9 +61,14 @@ def test_le_budget_d_une_liste_suit_le_NOMBRE_de_pages_pas_leur_taille(docs_seam
     brut = D._doc(CTX, D.DocInput(op="list", project_id=7, fields=["*"]))
     # 37 pages de 4 000 c. : le brut dépasse le plafond d'un tool result, l'index tient.
     assert _size(brut) > 140_000
-    assert _size(out) < 12_000
+    # 24/09/2026 (oto#274) : 12 000 → 14 000 et 320 → 380 par élément. La ligne porte
+    # désormais `updated_by` (l'auteur de la dernière modification, que l'écran affiche
+    # dans la liste), un identifiant de compte d'une quarantaine de caractères : mesuré
+    # 13 238 (358 par page) avec un identifiant réaliste, contre ~11 300 avant. Un
+    # champ par ligne, pas un corps : le budget suit toujours le NOMBRE de pages.
+    assert _size(out) < 14_000
     # Et le budget par élément est BORNÉ, quelle que soit la page.
-    assert _size(out) / 37 < 320
+    assert _size(out) / 37 < 380
 
 
 def test_le_brut_reste_atteignable_et_ne_ment_pas(docs_seam):

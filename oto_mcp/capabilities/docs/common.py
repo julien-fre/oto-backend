@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ... import db, ownership
+from ... import db, ownership, session_org
 from .._types import AuthzDenied
 
 PROJECT_RTYPE = "project"
@@ -30,6 +30,15 @@ DOC_RTYPE = "doc"
 # est bâti sur un `sub` (projets accessibles). Le destinataire lit l'arbre (`list`)
 # puis la page (`get`) — pas de chemin de recherche tant qu'il n'est pas scopé.
 SHARED_READ_OPS = frozenset({"list", "get", "revisions", "backlinks"})
+
+
+def face_de_l_appel() -> str:
+    """La porte de l'écriture en cours, pour `db.update_doc` (oto#274) : `mcp` si l'appel
+    est entré par un tool, sinon `rest` — une capacité du domaine n'a que ces deux
+    portes, et `session_org.current_call_face()` n'est posée que sur la face MCP."""
+    if session_org.current_call_face() == session_org.FACE_MCP:
+        return db.DOC_FACE_MCP
+    return db.DOC_FACE_REST
 
 
 def require(cond, code: str, msg: str, status: int = 400) -> None:

@@ -87,11 +87,11 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   traverse toutes mes orgs) ; les procédures de mes paliers (moi, l'org active, mes équipes
   — toutes pour un admin d'org, la règle de `roles.can_read_group`). Une procédure qu'on
   m'a seulement **partagée** n'y figure pas. **Dérivée** : ni table ni journal, les
-  `updated_at` que les deux stores tiennent déjà. ⚠️ **L'auteur n'est jamais déduit** : ni
-  `docs` ni `org_instructions` ne portent « qui a fait la dernière modification » ; il vient
-  de la révision écrite dans la **même transaction** que la modification (égalité exacte
-  des horodatages). Page jamais modifiée = son créateur ; page déplacée, procédure
-  transférée, révision sans auteur = `null`. **Sans org active : 200 et `items: []`**,
+  `updated_at` que les deux stores tiennent déjà. ⚠️ **L'auteur n'est jamais déduit** : une
+  page le porte (`docs.updated_by`, posé avec `updated_at` : créateur, puis auteur de chaque
+  écriture, `null` après un déplacement — oto#274) ; une procédure, qui ne le porte pas, le
+  tient de la révision écrite dans la **même transaction** que la modification (égalité
+  exacte des horodatages). Page déplacée, procédure transférée, écrivain inconnu = `null`. **Sans org active : 200 et `items: []`**,
   jamais un 400 — l'accueil charge l'îlot d'office.
 - `POST|DELETE /api/me/avatar` — upload (multipart `file`, png/jpeg/webp ≤ 2 Mo) / efface
   l'avatar user → Scaleway Object Storage, URL publique en DB. ⚠️ **Les deux verbes ne

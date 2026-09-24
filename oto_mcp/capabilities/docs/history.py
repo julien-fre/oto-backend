@@ -42,8 +42,12 @@ def revert(sub: Optional[str], inp, row: dict, pid: int) -> dict:
         # Passe par `update_doc` comme tout chemin d'écriture : snapshot de l'état
         # courant, backlinks re-résolus, renommage propagé, conflit optimiste — un
         # UPDATE de son cru perdrait les quatre.
+        # Jamais `regroupable` (oto#274) : une restauration crée toujours sa version,
+        # même au milieu d'une rafale du dashboard — sinon l'état qu'elle remplace
+        # disparaîtrait de l'historique.
         db.update_doc(int(inp.doc_id), title=rev["title"], body_md=rev["body_md"],
-                      edited_by=sub, expected_rev=inp.expected_rev)
+                      edited_by=sub, expected_rev=inp.expected_rev,
+                      face=common.face_de_l_appel())
     except db.DocConflict as e:
         require(False, "conflict",
                 f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "

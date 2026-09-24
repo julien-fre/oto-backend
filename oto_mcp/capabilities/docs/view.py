@@ -67,7 +67,10 @@ def doc_url(sub: Optional[str], row: dict) -> Optional[str]:
 def view(row: dict, sub: Optional[str] = None) -> dict:
     out = {k: row.get(k) for k in
            ("id", "project_id", "parent_id", "title", "description", "position",
-            "body_md", "kind", "created_at", "updated_at")}
+            "body_md", "kind", "created_at", "updated_at", "updated_by")}
+    # `updated_by` (oto#274) : le compte de la dernière modification, avec sa date —
+    # un identifiant, que l'écran résout en nom ; `null` = inconnu (page déplacée
+    # depuis, écrivain anonyme), jamais deviné.
     # L'adresse web de la page, à côté de son id (#599).
     out["url"] = doc_url(sub, row)
     # rev = ETag de contenu : à relire par le client et repasser en `expected_rev`

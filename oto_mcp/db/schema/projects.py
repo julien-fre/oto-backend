@@ -114,14 +114,21 @@ CREATE TABLE IF NOT EXISTS docs (
     public_token TEXT,
     created_by TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- oto#274 : le compte de la dernière modification, posé avec `updated_at` (création,
+    -- écriture ; NULL après un déplacement ou un écrivain inconnu). Base existante :
+    -- révision Alembic `0013_pages_versions_regroupees`, qui le remplit.
+    updated_by TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_docs_project ON docs(project_id);
 CREATE INDEX IF NOT EXISTS idx_docs_parent ON docs(parent_id);
 
 -- Historique de versions d'un Doc (ADR 0032 §3, B4c) : à chaque mise à jour, l'état
 -- ANTÉRIEUR (title + body_md) est snapshotté ici avant écriture → chaîne de versions
--- consultable. `edited_by` = qui a posé la nouvelle version (a remplacé ce snapshot).
+-- consultable. `edited_by` = qui a posé la nouvelle version (a remplacé ce snapshot),
+-- `face` = par quelle porte ('mcp' | 'rest' ; NULL = hors des deux, ou antérieur à
+-- oto#274). Une rafale d'enregistrements du dashboard (même compte, face REST, moins de
+-- 5 min depuis l'instantané qui l'a ouverte) n'en ajoute pas (`db.projects.update_doc`).
 -- CASCADE sur la suppression du doc. Pas de revue/validation (auto-accept, cf. réunion).
 CREATE TABLE IF NOT EXISTS doc_revisions (
     id BIGSERIAL PRIMARY KEY,
@@ -129,7 +136,8 @@ CREATE TABLE IF NOT EXISTS doc_revisions (
     title TEXT NOT NULL,
     body_md TEXT NOT NULL DEFAULT '',
     edited_by TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    face TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_doc_revisions_doc ON doc_revisions(doc_id, created_at DESC);
 
