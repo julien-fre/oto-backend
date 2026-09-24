@@ -12,6 +12,11 @@ de *kinds* (`RESOURCE_KINDS`). Deux plans de permission, jamais confondus :
 La lecture opérateur d'une ressource perso reste l'exception **auditée** (view-as
 REST, ADR 0023) — aucun chemin de lecture privilégié ici.
 
+**Vue bornée (oto#270)** : quand un org_admin « voit en tant que » un membre de son org
+O, `session_org.current_view_as_bound_org()` vaut O et ce seam ne rend visible que ce
+que le membre voit DANS O (`vue_bornee`, `visible_in_org`). Hors de cette vue, chaque
+fonction suit son chemin d'avant, à l'identique.
+
 Sens unique (ADR 0004) : lit `db`/`roles`/`org_store`/`group_store`, jamais l'inverse.
 """
 from __future__ import annotations
@@ -19,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from . import db, group_store, org_origin, org_store, roles
+from . import db, group_store, org_origin, org_store, roles, session_org
 
 
 # --- Scope de l'acteur (les principals sous lesquels il peut accéder) --------
@@ -42,9 +47,25 @@ class AccessorScope:
         return self.principal_pairs()
 
 
+def vue_bornee() -> Optional[int]:
+    """L'org O d'une vue « en tant que » posée par un org_admin (oto#270), sinon None.
+
+    Posée par `ViewAsMiddleware` après ses gardes, jamais ailleurs. Toute fonction de
+    ce seam qui la lit garde, quand elle vaut None, son chemin d'avant À L'IDENTIQUE."""
+    return session_org.current_view_as_bound_org()
+
+
 def accessor_scope(sub: str) -> AccessorScope:
-    org_ids = [int(o["org_id"]) for o in org_store.list_orgs_for_user(sub)]
-    group_ids = [int(g["group_id"]) for g in group_store.list_groups_for_user(sub)]
+    borne = vue_bornee()
+    if borne is None:
+        org_ids = [int(o["org_id"]) for o in org_store.list_orgs_for_user(sub)]
+        group_ids = [int(g["group_id"]) for g in group_store.list_groups_for_user(sub)]
+    else:
+        # Vue bornée : l'acteur n'existe que dans O — ni ses autres orgs, ni leurs
+        # équipes. C'est ce qui ferme la découverte cross-org (`can_access`, partages).
+        org_ids = [borne] if roles.is_org_member(sub, borne) else []
+        group_ids = [int(g["group_id"])
+                     for g in group_store.list_groups_for_user(sub, borne)]
     return AccessorScope(sub=sub, org_ids=org_ids, group_ids=group_ids)
 
 
@@ -120,7 +141,9 @@ def accessible_project_ids(sub: str, org_id: Optional[int],
             continue
         ids.append(rid)
         seen.add(rid)
-    return ids
+    # Vue bornée : « cherchable ⇔ lisible » tient aussi en vue — la liste passe par la
+    # même règle que la lecture par id (un partage personnel reçu n'y entre pas).
+    return borner_a_la_vue(sub, "project", ids)
 
 
 def visible_in_org(sub: str, org_id: Optional[int],
@@ -131,12 +154,77 @@ def visible_in_org(sub: str, org_id: Optional[int],
     l'acteur) est trop large pour une lecture/ouverture contextuelle : il laisse
     atteindre une ressource d'une AUTRE de mes orgs, hors contexte (fuite cross-org,
     cf. l'incident projet). À utiliser pour toute lecture/action par-id scopée à l'org
-    active ; `can_access` reste le plan CONTENU (découverte/partage cross-org)."""
+    active ; `can_access` reste le plan CONTENU (découverte/partage cross-org).
+
+    **En vue bornée à O (oto#270)**, la règle se resserre, ici et une seule fois :
+    - le contexte est O, et rien d'autre ;
+    - une ressource PERSO du membre n'est visible que si elle DESCEND dans O : son
+      kind la range dans une org (`context_org`, directement ou par son parent) et
+      c'est O ; un kind qui ne range pas ses ressources perso (tableau, procédure
+      personnelle) les fait suivre la personne partout, O compris ;
+    - un partage PERSONNEL reçu (`principal = user`) ne compte pas : il n'appartient à
+      aucune org, c'est l'espace du membre, pas celui de O."""
+    borne = vue_bornee()
+    if borne is not None and (org_id is None or int(org_id) != borne):
+        return False
     o = owner_of(resource_type, resource_id)
-    if o is not None and owner_in_scope(sub, org_id, o):
+    if o is not None and owner_in_scope(sub, org_id, o) and not (
+            borne is not None
+            and _perso_range_hors_de(sub, resource_type, resource_id, o, borne)):
         return True
+    principals = active_org_principals(sub, org_id)
+    if borne is not None:
+        principals = [p for p in principals if p[0] != "user"]
     return any(db.get_resource_grant(resource_type, resource_id, pt, pid) is not None
-               for pt, pid in active_org_principals(sub, org_id))
+               for pt, pid in principals)
+
+
+def _rangement(resource_type: str, resource_id: str) -> tuple[bool, Optional[int]]:
+    """`(le kind range-t-il ses ressources perso dans une org ?, l'org de rangement)`.
+
+    Un kind qui enregistre `context_org` (le projet) range ; une page se range comme
+    son projet (`governed_by`) ; les autres ne rangent pas."""
+    k = _kind(resource_type)
+    if k.context_org is not None:
+        return True, k.context_org(resource_id)
+    if k.governed_by is not None:
+        parent = k.governed_by(resource_id)
+        return _rangement(*parent) if parent is not None else (True, None)
+    return False, None
+
+
+def _perso_range_hors_de(sub: str, resource_type: str, resource_id: str,
+                         owner: tuple, org_id: int) -> bool:
+    """Ressource perso de `sub`, rangée ailleurs qu'en `org_id` (ou nulle part, pour un
+    kind qui range) — donc invisible dans une vue bornée à `org_id`."""
+    if (str(owner[0]), str(owner[1])) != ("user", sub):
+        return False
+    range_, org = _rangement(resource_type, resource_id)
+    return range_ and (org is None or int(org) != int(org_id))
+
+
+def borner_a_la_vue(sub: str, resource_type: str, items: list,
+                    rid: Callable[[object], object] = lambda x: x) -> list:
+    """Hors vue bornée : `items` tel quel (même objet). En vue bornée à O : ceux que
+    `visible_in_org` rend visibles dans O — la règle appliquée à une LISTE, pour les
+    listes qui ne passent pas par elle (partages reçus, tableaux accordés…)."""
+    borne = vue_bornee()
+    if borne is None:
+        return items
+    return [it for it in items
+            if visible_in_org(sub, borne, resource_type, str(rid(it)))]
+
+
+def partages_dans_la_vue(sub: str, grants: list[dict]) -> list[dict]:
+    """Les partages (`resource_grants`) reçus par `sub`, bornés à la vue : hors vue,
+    tels quels ; en vue bornée, seuls ceux dont la ressource est visible dans O. Un type
+    de ressource hors du registre ne se prouve pas dans O : il ne passe pas."""
+    borne = vue_bornee()
+    if borne is None:
+        return grants
+    return [g for g in grants
+            if g.get("resource_type") in RESOURCE_KINDS
+            and visible_in_org(sub, borne, g["resource_type"], str(g["resource_id"]))]
 
 
 def owner_in_scope(sub: str, org_id: Optional[int],
@@ -159,6 +247,10 @@ def owner_in_scope(sub: str, org_id: Optional[int],
     Quatre voies, aucune n'est une fuite cross-org :
     """
     if owner is None:
+        return False
+    # Vue bornée (oto#270) : pas d'autre contexte que O.
+    borne = vue_bornee()
+    if borne is not None and (org_id is None or int(org_id) != borne):
         return False
     otype, oid = str(owner[0]), str(owner[1])
     # 1. L'org active elle-même.
@@ -249,7 +341,13 @@ def _owner_match_content(sub: str, owner_type: str, owner_id: str) -> bool:
 
 def can_access(sub: str, resource_type: str, resource_id: str, want: str = "read") -> bool:
     """Plan CONTENU. `want` ∈ {read, write}. Owner-match (perso/org/groupe) donne
-    read+write ; sinon un grant suffisant (write requis pour écrire)."""
+    read+write ; sinon un grant suffisant (write requis pour écrire).
+
+    En vue bornée à O (oto#270) : d'abord visible DANS O (`visible_in_org`), puis la
+    règle ordinaire — l'intersection, jamais plus large que l'une ou l'autre."""
+    borne = vue_bornee()
+    if borne is not None and not visible_in_org(sub, borne, resource_type, resource_id):
+        return False
     owner = owner_of(resource_type, resource_id)
     if owner is None:
         return False

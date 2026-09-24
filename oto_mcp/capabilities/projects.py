@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org, url_perimeter)
-from ._authz import SUB_ONLY
+from ._authz import SUB_ONLY, refus_hors_vue
 from . import _portee, _publication
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -653,9 +653,12 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                     "can_write": ownership.can_access(sub, RTYPE, str(r["id"]), "write")}
 
         def _received(principals: list[tuple[str, str]], seen: set) -> list[dict]:
+            # Vue bornée (oto#270) : un partage reçu ne passe que visible dans O.
+            recus = ownership.borner_a_la_vue(sub, RTYPE,
+                                              db.list_projects_granted_to(principals),
+                                              rid=lambda r: r["id"])
             return [{**_enrich(r, True), "permission": r.get("permission")}
-                    for r in db.list_projects_granted_to(principals)
-                    if r["id"] not in seen]
+                    for r in recus if r["id"] not in seen]
 
         if inp.archived:
             _require(inp.scope != "me", "unsupported_scope",
@@ -744,6 +747,10 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         # sous vingt runs déjà clos. Les runs d'un PROJET, eux, se demandent en nommant
         # le projet, et rendent tout (c'est la pastille ok/échec du viewer).
         from .. import run_status
+        if ownership.vue_bornee() is not None:
+            # Toutes orgs confondues par construction (cf. `db.my_runs`) : en vue bornée,
+            # les runs se lisent par projet, ou dans la lentille de l'org.
+            raise refus_hors_vue("la liste des runs ouverts du compte (toutes orgs)")
         runs = db.my_runs(sub, limit=20, open_only=True)
         return {"scope": "mine", "open_only": True,
                 "runs": [{**r, "status": run_status.describe(r)} for r in runs]}

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 import logging
 
-from ... import access, billing, db, org_store
+from ... import access, billing, db, org_store, session_org
 from ...tool_visibility import BETA_OPTION
 from .._authz import ORG_MEMBER_OF, PLATFORM_ADMIN, SUB_ONLY
 # Le quota de création vit avec la capacité qui REFUSE (`org.create`) : le lire ici
@@ -224,7 +224,12 @@ def _beta_dans(sub: str, org_id: int) -> bool:
 
 def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
     orgs, active = [], None
+    # Vue bornée à O (oto#270) : la cible n'est vue que dans O — ses autres orgs n'y
+    # figurent pas, et O n'est « active » que si c'est bien sa maison.
+    borne = session_org.current_view_as_bound_org()
     for o in org_store.list_orgs_for_user(ctx.sub):
+        if borne is not None and int(o["org_id"]) != borne:
+            continue
         if o["is_active"]:
             active = o["org_id"]
         orgs.append({  # superset REST(id/member_count/my_role) + MCP(org_id/role/active)

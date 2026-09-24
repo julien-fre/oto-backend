@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import logging
 
-from . import providers, run_status, tool_alias
+from . import ownership, providers, run_status, tool_alias
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,10 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         # l'exposition au handshake : le client ouvre le projet livré en un message.
         seen = {r.get("id") for r in rows}
         principals = [("org", str(org_id))] + ([("user", sub)] if sub else [])
-        rows += [r for r in db.list_projects_granted_to(principals)
+        # Vue bornée (oto#270) : un partage personnel reçu n'est pas de l'org consultée.
+        rows += [r for r in ownership.borner_a_la_vue(
+                     sub, "project", db.list_projects_granted_to(principals),
+                     rid=lambda r: r["id"])
                  if r.get("id") not in seen]
         projects = [r.get("name") or f"#{r.get('id')}" for r in rows[:5]]
     # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)

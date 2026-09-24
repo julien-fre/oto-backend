@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 from .. import client_trace, geste
 from ..json_body import InvalidJsonBody, read_json_body
-from ._authz import accepts_service
+from ._authz import accepts_service, refus_hors_vue
 from ._types import AuthzDenied, Capability, NotModified, RawCtx
 from ._execution import execute
 
@@ -244,6 +244,13 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                 faite DANS le thread — aucune capacité n'en fait, et le jour où l'une
                 s'y mettrait, c'est ici que ça se saurait."""
                 ctx_ = cap.authz(RawCtx(sub=sub), inp)
+                # Vue « en tant que » BORNÉE à O (oto#270) : quelle que soit la façon
+                # dont la règle a résolu l'org (en-tête, chemin, champ d'entrée, projet
+                # visé), elle doit être O. Un seul verrou pour les ~200 routes générées.
+                from .. import session_org
+                borne = session_org.current_view_as_bound_org()
+                if borne is not None and ctx_.org_id != borne:
+                    raise refus_hors_vue("cette requête")
                 # Symétrique du seuil MCP : la face HTTP se nomme, elle aussi. Sans ça
                 # « pas mcp » serait la seule façon de reconnaître REST — donc un
                 # adaptateur muet passerait pour la face humaine.

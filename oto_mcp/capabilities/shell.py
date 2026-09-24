@@ -44,7 +44,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from .. import access, group_store, org_store, run_status
+from .. import access, group_store, org_store, ownership, run_status
 from ..connectors import selection as connector_selection
 from ..db import project_nodes
 from ..db import shell as db_shell
@@ -409,7 +409,8 @@ def _compose(ctx: ResolvedCtx) -> dict:
         nodes=prive))
 
     # ── `shared` : les partages DIRECTS, moins ce qu'une autre section range déjà ──
-    grants = db_shell.direct_grants(sub)
+    # Vue bornée (oto#270) : seuls les partages dont la ressource est visible dans O.
+    grants = ownership.partages_dans_la_vue(sub, db_shell.direct_grants(sub))
     par_id, sans_noeud = db_shell.resolve_grant_nodes(grants)
     deja_rangés = {l["public_id"] for l in lignes}
     candidats = [pid for pid in par_id if pid not in deja_rangés]

@@ -245,13 +245,20 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                 datastore, sub=self.sub, org_ids=org_ids, group_ids=group_ids)
         except db.AdresseAmbigue as e:
             raise DatastoreAmbigu(e.adresse, par_id=e.par_id, par_nom=e.par_nom) from None
-        if not ns:
+        # Vue bornée (oto#270) : ni le tableau tenu par un run, ni l'indice d'une autre
+        # org — les deux sortent de O par construction.
+        borne = ownership.vue_bornee() if self.acting_org is None else None
+        if not ns and borne is None:
             # #631 : le run sait où il travaille — sa réservation porte le tableau.
             ns = hors_org.tenu_par_le_run(self.sub, datastore)
         if not ns:
-            raise DatastoreNotFound(datastore, indice=hors_org.indice_autre_org(
-                self.sub, datastore, org_ids[0] if org_ids else None))
+            raise DatastoreNotFound(datastore, indice=None if borne is not None else (
+                hors_org.indice_autre_org(self.sub, datastore,
+                                          org_ids[0] if org_ids else None)))
         ns_id = int(ns["id"])
+        if borne is not None and not ownership.visible_in_org(
+                self.sub, borne, ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id)):
+            raise DatastoreNotFound(datastore)
         # Scope dur d'endpoint partagé : hors des tableaux liés au projet ⇒ invisible
         # (anti-fuite #193 ; DatastoreNotFound plutôt que Forbidden — on ne divulgue pas
         # l'existence d'un datastore hors périmètre).

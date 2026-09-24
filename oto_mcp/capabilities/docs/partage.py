@@ -128,7 +128,10 @@ def recus(sub: str, scope: Optional[str] = None, org_id: Optional[int] = None) -
     Une entrée NOMME la page, elle ne la livre pas : le corps se lit par `op=get`.
     `url` est None quand l'appelant n'a que la page — l'adresse servie ouvre la page
     dans son projet, qu'il ne lit pas (cf. `reads.get`)."""
-    rows = db.list_docs_granted_to(_principaux(sub, scope, org_id))
+    # Vue bornée (oto#270) : seules les pages visibles dans O, quelle que soit la portée.
+    rows = ownership.borner_a_la_vue(sub, common.DOC_RTYPE,
+                                     db.list_docs_granted_to(_principaux(sub, scope, org_id)),
+                                     rid=lambda r: r["id"])
     noms = db_shell.names_of(r.get("granted_by") for r in rows)
     docs = [{
         "id": r["id"],

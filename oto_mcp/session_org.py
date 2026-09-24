@@ -356,6 +356,30 @@ def view_as_write_accepted() -> bool:
     return _VIEW_AS_WRITE_ACCEPTED.get()
 
 
+# « Voir en tant que » posé par un ORG_ADMIN (oto#270) : l'org O à laquelle la vue est
+# BORNÉE. Posé par ViewAsMiddleware, APRÈS ses gardes (admin réel de O, cible membre
+# réel de O, lecture seule), et nulle part ailleurs. Lu par le seam `ownership`
+# (visibilité des ressources), l'adaptateur REST des capacités (org résolue = O) et les
+# rares listes « compte entier ». None = pas de vue bornée : tous ces chemins sont
+# alors STRICTEMENT ceux d'avant — c'est la garantie que les chemins normaux ne bougent
+# pas. Une vue d'opérateur plateforme ne le pose pas (elle n'est pas bornée à une org).
+_VIEW_AS_BOUND_ORG: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "oto_view_as_bound_org", default=None)
+
+
+def set_view_as_bound_org(org_id: int) -> contextvars.Token:
+    return _VIEW_AS_BOUND_ORG.set(int(org_id))
+
+
+def reset_view_as_bound_org(token: contextvars.Token) -> None:
+    _VIEW_AS_BOUND_ORG.reset(token)
+
+
+def current_view_as_bound_org() -> Optional[int]:
+    """L'org O d'une vue « en tant que » posée par un org_admin, ou None (aucune)."""
+    return _VIEW_AS_BOUND_ORG.get()
+
+
 # ── Axe ÉQUIPE (groupe) — même mécanique que l'org (ADR 0023 étendu) ─────────
 # Le store ne garde QUE des group_id réels ; « pas de groupe » (niveau org) se
 # DÉRIVE = override d'org présent SANS override de groupe ⇒ niveau org. Ça tient

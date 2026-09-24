@@ -38,7 +38,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import access, db, roles, run_status, session_org
+from .. import access, db, ownership, roles, run_status, session_org
 from ._authz import ORG_MEMBER, SUB_ONLY
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -80,6 +80,11 @@ def _head_or_404(ctx: ResolvedCtx, run_id: str) -> dict:
 
 def _thread(ctx: ResolvedCtx, inp: ThreadInput) -> dict:
     head = _head_or_404(ctx, inp.run_id)
+    # Vue bornée (oto#270) : un run d'une autre org n'existe pas ici — même 404 que
+    # « inconnu », pour ne pas dire qu'il existe ailleurs.
+    borne = ownership.vue_bornee()
+    if borne is not None and head.get("org_id") != borne:
+        raise AuthzDenied(404, "run_not_found", "run inconnu")
     est_proprio = head.get("sub") == ctx.sub
     est_admin_org = bool(head.get("org_id")) and roles.is_org_admin(ctx.sub, head["org_id"])
 

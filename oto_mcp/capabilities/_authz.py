@@ -49,6 +49,21 @@ def _refus_org_admin(org_id, autres: Optional[str] = None) -> AuthzDenied:
     return AuthzDenied(403, "forbidden", phrase + (f" {autres}" if autres else ""))
 
 
+#: Le refus d'une vue « en tant que » BORNÉE à une org (oto#270) : un org_admin qui
+#: consulte un membre ne voit que ce que ce membre voit dans l'org O. Un seul code pour
+#: le middleware (`api/routes.py`), l'adaptateur REST et les listes « compte entier ».
+CODE_HORS_VUE = "view_as_hors_org"
+
+
+def refus_hors_vue(quoi: str) -> AuthzDenied:
+    """LE refus d'une lecture qui sortirait de l'org d'une vue bornée — il la nomme."""
+    from .. import session_org
+    borne = session_org.current_view_as_bound_org()
+    return AuthzDenied(403, CODE_HORS_VUE,
+                       f"Vue « en tant que » bornée à l'org #{borne} : {quoi} sort de "
+                       "cette org, la lecture est refusée.")
+
+
 def _require_sub(raw: RawCtx) -> str:
     if not raw.sub:
         raise AuthzDenied(401, "auth_required", "Authentification requise.")

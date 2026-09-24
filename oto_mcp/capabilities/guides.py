@@ -26,8 +26,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import guide_store, tool_alias
-from ._authz import SUB_ONLY
+from .. import group_store, guide_store, session_org, tool_alias
+from ._authz import SUB_ONLY, refus_hors_vue
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -83,6 +83,10 @@ class GuideOpInput(BaseModel):
 def _target_org(ctx: ResolvedCtx, owner_id: Optional[str]) -> int:
     """L'org visée : celle passée explicitement (dashboard, route par-id), sinon l'active."""
     if owner_id:
+        # Vue bornée (oto#270) : une autre org que O n'est pas lisible ici.
+        borne = session_org.current_view_as_bound_org()
+        if borne is not None and int(owner_id) != borne:
+            raise refus_hors_vue(f"l'org #{owner_id}")
         return int(owner_id)
     if ctx.org_id is None:
         raise AuthzDenied(400, "no_active_org", "Aucune org active — vois `oto_use_org`.")
@@ -94,6 +98,11 @@ def _target_group(ctx: ResolvedCtx, owner_id: Optional[str]) -> int:
     UNE équipe donnée doit passer son id — l'équipe « active » est un contexte de session,
     pas ce que l'écran a sous les yeux."""
     if owner_id:
+        # Vue bornée (oto#270) : une équipe hors de O n'est pas lisible ici.
+        borne = session_org.current_view_as_bound_org()
+        if borne is not None and (group_store.get_group(int(owner_id)) or {}).get(
+                "org_id") != borne:
+            raise refus_hors_vue(f"l'équipe #{owner_id}")
         return int(owner_id)
     from .. import access
     gid = ctx.group_id if ctx.group_id is not None else access.current_group(ctx.sub)

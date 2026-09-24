@@ -256,7 +256,9 @@ def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
     seen = {r["id"] for r in rows}
     rows += [r for r in db.list_datastores_granted_to(sub, [org_id], gids)
              if r["id"] not in seen]
-    return rows
+    # Vue bornée (oto#270) : même règle que la liste des tableaux.
+    return ownership.borner_a_la_vue(sub, ownership.TYPE_RESSOURCE_DATASTORE, rows,
+                                     rid=lambda r: r["id"])
 
 
 def _stamp_origins(hits: list[dict], sub: str, org_id: int,

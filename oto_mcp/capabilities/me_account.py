@@ -287,6 +287,14 @@ def _me(ctx: ResolvedCtx, inp: MeInput) -> dict:
         home_group_name = hg["name"] if hg else None
     elif home_group is not None:
         home_group_name = active_group_name
+    # Vue bornée à O (oto#270) : les défauts persistants de la cible qui vivent dans une
+    # AUTRE org ne sont pas de O — masqués (null), jamais nommés.
+    borne = session_org.current_view_as_bound_org()
+    if borne is not None and home_org != borne:
+        home_org, home_org_name = None, None
+    if borne is not None and home_group is not None and (
+            group_store.get_group(home_group) or {}).get("org_id") != borne:
+        home_group, home_group_name = None, None
     return {
         "sub": sub,
         "email": user.get("email"),

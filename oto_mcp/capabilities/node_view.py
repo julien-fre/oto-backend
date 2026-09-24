@@ -365,7 +365,8 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
             # Le second chemin ne se paie QUE s'il sert : la voie du propriétaire couvre
             # la quasi-totalité des ouvertures, et lire tous les grants d'une personne
             # pour confirmer ce qu'on sait déjà serait une requête par ouverture de page.
-            par_id, _ = db_shell.resolve_grant_nodes(db_shell.direct_grants(ctx.sub))
+            par_id, _ = db_shell.resolve_grant_nodes(
+                ownership.partages_dans_la_vue(ctx.sub, db_shell.direct_grants(ctx.sub)))
             partages = set(par_id)
         if not _lisible(ctx, fiche, partages):
             raise _introuvable()

@@ -163,7 +163,11 @@ class RegistreMixin:
         # Scope dur d'endpoint partagé : ne lister QUE les tableaux liés au projet.
         if self.allowed_ns_ids is not None:
             return [e for e in out.values() if int(e["id"]) in self.allowed_ns_ids]
-        return list(out.values())
+        if self.acting_org is not None:
+            return list(out.values())
+        # Vue bornée (oto#270) : le partage reçu en propre n'est pas de O.
+        return ownership.borner_a_la_vue(self.sub, ownership.TYPE_RESSOURCE_DATASTORE,
+                                         list(out.values()), rid=lambda e: e["id"])
 
     def _default_owner(self) -> tuple[str, str]:
         """Owner d'un datastore créé sans précision = **la personne** (ADR 0068).
