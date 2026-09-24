@@ -97,3 +97,27 @@ def test_a_non_dict_row_is_left_alone():
     out = project({"organic": ["brut", {"title": "t", "x": 1}]},
                   items_path="organic", item_drop=("x",))
     assert out["organic"] == ["brut", {"title": "t"}]
+
+
+# --- missing_fields : nommer ce que `fields` a demandé et qu'aucune ligne porte (oto#174)
+
+def test_missing_fields_nomme_les_cles_qu_aucune_ligne_ne_porte():
+    from oto_mcp.output_projection import missing_fields
+
+    page = {"a": [{"x": 1}, {"x": 2, "y": None}], "b": [{"z": 3}]}
+    assert missing_fields(page, items_paths=("a", "b"),
+                          fields=["w", "x", "y", "z", "w"]) == ["w"]
+
+
+def test_missing_fields_une_page_vide_ne_prouve_aucune_absence():
+    from oto_mcp.output_projection import missing_fields
+
+    assert missing_fields({"a": []}, items_paths=("a",), fields=["x"]) == []
+    assert missing_fields({}, items_paths=("a.b",), fields=["x"]) == []
+
+
+def test_missing_fields_suit_un_chemin_pointe():
+    from oto_mcp.output_projection import missing_fields
+
+    assert missing_fields({"data": {"rows": [{"x": 1}]}}, items_paths=("data.rows",),
+                          fields=["x", "y"]) == ["y"]

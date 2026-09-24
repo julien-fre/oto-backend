@@ -184,6 +184,10 @@ def register(mcp: FastMCP) -> None:
                 ["name", "primary_domain", "linkedin_url"]); the envelope
                 (pagination, totals) is kept. Use it when paginating: a full page
                 at per_page=100 is ~113 000 characters, past some clients' cap.
+                A requested key that NO organization of the page carries is
+                listed in `missing_fields` — this endpoint does not return it,
+                so do not write it as an empty column: the exact headcount,
+                industry and country come from apollo_enrich_organization.
         """
         client, _ = _client()
         found = client.search_organizations(
@@ -206,7 +210,21 @@ def register(mcp: FastMCP) -> None:
         # un chemin absent : le chaînage est sûr dans les deux sens.
         out = output_projection.project(found, items_path="organizations",
                                         fields=fields)
-        return output_projection.project(out, items_path="accounts", fields=fields)
+        out = output_projection.project(out, items_path="accounts", fields=fields)
+        # Une clé demandée qu'aucune ligne ne porte tombait sans un mot, et
+        # l'appelant l'écrivait vide en aval (oto#174). On la nomme, avec la
+        # source qui la porte — même patron que `missing_properties` de HubSpot.
+        absentes = output_projection.missing_fields(
+            found, items_paths=("organizations", "accounts"), fields=fields)
+        if absentes:
+            out["missing_fields"] = absentes
+            out["missing_fields_hint"] = (
+                "Aucune organisation de cette page ne porte ces clés : la recherche "
+                "Apollo ne les rend pas. L'effectif exact (`estimated_num_employees`), "
+                "le secteur et le pays viennent d'`apollo_enrich_organization` "
+                "(ou `apollo_bulk_enrich_organizations`, 10 par appel) — ne les "
+                "écris pas vides.")
+        return out
 
     @mcp.tool()
     def apollo_enrich_organization(domain: str) -> dict:

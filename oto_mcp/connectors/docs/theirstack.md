@@ -13,7 +13,7 @@ theirstack agrège les offres d'emploi publiées par les entreprises (sites carr
 
 ## note — crédits, couverture et noms exacts
 
-- les crédits se comptent au record ENTREPRISE rendu : un crédit entreprise déverrouille toutes ses offres + technologies + firmographie ; `limit` borne la dépense, `metadata.truncated_*` dit ce qui n'a pas été rendu faute de crédits
+- les crédits se comptent au record ENTREPRISE rendu : un crédit entreprise déverrouille toutes ses offres + technologies + firmographie ; `limit` borne la dépense, `metadata.truncated_*` dit ce qui n'a pas été rendu faute de crédits. TheirStack ne renvoie aucun compteur de crédits consommés : chaque réponse porte `credits_estimes` (1 par offre, 3 par entreprise rendue), une estimation d'après le barème publié ; le solde réel se lit dans le tableau de bord TheirStack
 - couverture partielle sur les petites entreprises (≈ 8 % des petits grossistes français vus dans le pilote) : une réponse `data: []` est NORMALE, pas une erreur — inutile de réessayer
 - `company_names` est une correspondance EXACTE et sensible à la casse ; pour élargir, passer `company_name_case_insensitive_or`, `company_name_partial_match_or` ou `company_domain_or` dans `extra`
 - `extra` ouvre toute la DSL éditeur (~110 filtres jobs, ~60 entreprises) : voir la [référence API](https://theirstack.com/en/docs/api-reference)

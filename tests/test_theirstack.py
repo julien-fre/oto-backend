@@ -165,7 +165,37 @@ def test_companies_search_empty_result_is_not_an_error():
         cls.return_value.search_companies.return_value = {
             "metadata": {"total_results": 0, "truncated_results": 0}, "data": []}
         out = _tool("theirstack_companies_search").fn(company_names=["Inconnue SARL"])
-    assert out == {"metadata": {"total_results": 0, "truncated_results": 0}, "data": []}
+    assert out["metadata"] == {"total_results": 0, "truncated_results": 0}
+    assert out["data"] == []
+    assert out["credits_estimes"] == 0   # une page vide ne coûte rien
+
+
+# --- crédits : TheirStack ne rend aucun compteur, on l'estime (oto#174) --------
+
+def test_jobs_search_estime_un_credit_par_offre_rendue():
+    """Retour 819 (08/09/2026) : des procédures disaient « compte les crédits depuis
+    `metadata` » — l'API n'en rend aucun. L'estimation suit le barème publié."""
+    with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
+        cls.return_value.search_jobs.return_value = {"metadata": {}, "data": [_JOB] * 4}
+        out = _tool("theirstack_jobs_search").fn(company_names=["PUIG & FILS"])
+    assert out["credits_estimes"] == 4
+    assert "barème publié" in out["credits_estimes_source"]
+    assert "credit-balance" in out["credits_estimes_source"]
+
+
+def test_companies_search_estime_trois_credits_par_entreprise_meme_en_full():
+    with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
+        cls.return_value.search_companies.return_value = {
+            "metadata": {}, "data": [_COMPANY] * 2}
+        out = _tool("theirstack_companies_search").fn(company_names=["X"], full=True)
+    assert out["credits_estimes"] == 6
+    assert out["data"] == [_COMPANY] * 2      # le brut reste intact
+
+
+def test_la_description_servie_dit_que_l_amont_ne_rend_aucun_compteur(all_tools):
+    for name in EXPECTED_TOOLS:
+        desc = all_tools[name].description
+        assert "credits_estimes" in desc and "NO credit counter" in desc, name
 
 
 # --- métrage par unité (facturation du partenaire, 21/08) ─────────────────────

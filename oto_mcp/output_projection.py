@@ -77,6 +77,36 @@ def project(payload: Any, *, drop: Iterable[str] = (), items_path: Optional[str]
     return out
 
 
+def _rows_at(payload: Any, items_path: str) -> list:
+    """La liste au bout de `items_path`, ou `[]` si le chemin ne mène à aucune liste."""
+    node = payload
+    for p in items_path.split("."):
+        if not isinstance(node, dict):
+            return []
+        node = node.get(p)
+    return node if isinstance(node, list) else []
+
+
+def missing_fields(payload: Any, *, items_paths: Iterable[str],
+                   fields: Iterable[str]) -> list[str]:
+    """Les clés de `fields` qu'AUCUNE ligne des listes `items_paths` ne porte.
+
+    `project(fields=…)` garde ce qui existe et tait le reste : une clé demandée que
+    l'endpoint ne rend jamais disparaît sans un mot, et l'appelant écrit une colonne
+    vide en aval (oto#174, `apollo_search_organizations` : `industry`,
+    `estimated_num_employees`, `country` demandés, jamais rendus). Cette fonction
+    rend ce silence nommable ; au connecteur de dire où trouver la donnée.
+
+    Pur. Ordre de la demande conservé. Une page SANS ligne ne prouve l'absence de
+    rien : elle rend `[]` — nommer « absentes » toutes les clés d'une page vide
+    ferait passer un résultat vide pour un défaut de projection."""
+    rows = [r for path in items_paths for r in _rows_at(payload, path)
+            if isinstance(r, dict)]
+    if not rows:
+        return []
+    return [f for f in dict.fromkeys(fields) if not any(f in r for r in rows)]
+
+
 RAW = "*"  # `fields=["*"]` — le chemin vers le brut, même jeton que data_rows/le feed
 
 

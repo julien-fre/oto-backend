@@ -29,6 +29,8 @@ Facturation : le crédit se compte au record ENTREPRISE rendu — un crédit ent
 Le spec OpenAPI (17/08/2026) le chiffre en crédits API : 1 par offre rendue sur
 jobs/search, 3 par entreprise sur companies/search — dans les deux cas `limit` borne
 la dépense, et `metadata.truncated_*` dit ce qui n'a PAS été rendu faute de crédits.
+TheirStack ne rend AUCUN compteur de crédits consommés : chaque réponse porte
+`credits_estimes`, notre estimation d'après ce barème (oto#174), étiquetée comme telle.
 Couverture partielle sur les PME (≈ 8 % des petits grossistes français vus dans le
 pilote) : `data: []` est un résultat NORMAL, pas une erreur — ne pas réessayer.
 
@@ -109,6 +111,32 @@ def _project(result: Any, fields: tuple, full: bool) -> Any:
     return output_projection.project(result, items_path="data", fields=fields)
 
 
+#: Le barème publié (spec OpenAPI, 17/08/2026), en crédits API par record rendu.
+_CREDITS_PAR_OFFRE = 1
+_CREDITS_PAR_ENTREPRISE = 3
+
+
+def _with_credit_estimate(result: Any, par_record: int, unite: str) -> Any:
+    """Ajoute `credits_estimes` à l'enveloppe (oto#174).
+
+    TheirStack ne rend AUCUN compteur de crédits — ni dans `metadata`, ni en
+    en-tête ; seul un appel de solde à part le donne. Des procédures disaient
+    pourtant « compte les crédits depuis `metadata` » : impossible, et l'appelant
+    dépassait son budget sans le savoir. Le backend connaît le barème et le nombre
+    de records rendus (c'est déjà le métrage, `_trace_quantity`) : on le dit, en
+    l'étiquetant ESTIMÉ — ce n'est pas un relevé du fournisseur."""
+    if not (isinstance(result, dict) and isinstance(result.get("data"), list)):
+        return result
+    out = dict(result)
+    out["credits_estimes"] = par_record * len(result["data"])
+    out["credits_estimes_source"] = (
+        f"Estimé d'après le barème publié ({par_record} crédit(s) par {unite} "
+        "rendue), pas un compteur : TheirStack n'en renvoie aucun. Le solde réel "
+        "se lit dans le tableau de bord TheirStack (API : "
+        "GET /v0/billing/credit-balance).")
+    return out
+
+
 def _trace_quantity(result: Any) -> None:
     """Métrage par unité (facturation du partenaire, 21/08) — le nombre de records RENDUS
     dans `data`, avant projection (`_project` ne change jamais la longueur de
@@ -183,8 +211,12 @@ def register(mcp: FastMCP) -> None:
         not retry, move on.
 
         Returns `{metadata: {total_results?, truncated_results, truncated_companies,
-        total_companies?}, data: [{company, job_title, date_posted, url, location}]}`
-        (`full=True` → the raw records instead).
+        total_companies?}, data: [{company, job_title, date_posted, url, location}],
+        credits_estimes, credits_estimes_source}` (`full=True` → the raw records
+        instead). TheirStack returns NO credit counter (not in `metadata`, not in a
+        header): `credits_estimes` is OUR estimate from the published rate (1 per
+        job returned) — sum it to track a budget; the real balance is on the
+        TheirStack dashboard.
 
         ⚠️ The company DOMAIN is NULLABLE (raw records, `full=True`): the same
         company can come back without it, from one day to the next. An exclusion or
@@ -229,7 +261,8 @@ def register(mcp: FastMCP) -> None:
         result = _run(lambda: client.search_jobs(payload))
         _record_platform_usage(result, is_platform)
         _trace_quantity(result)
-        return _project(result, _JOB_FIELDS, full)
+        return _with_credit_estimate(_project(result, _JOB_FIELDS, full),
+                                     _CREDITS_PAR_OFFRE, "offre")
 
     @mcp.tool()
     def theirstack_companies_search(
@@ -253,8 +286,12 @@ def register(mcp: FastMCP) -> None:
         not the filter, cut the list.
 
         Returns `{metadata: {…, truncated_companies, total_companies?}, data: [{name,
-        domain, employee_count, industry, technology_names}]}` (`full=True` → the raw
-        records instead).
+        domain, employee_count, industry, technology_names}], credits_estimes,
+        credits_estimes_source}` (`full=True` → the raw records instead).
+        TheirStack returns NO credit counter (not in `metadata`, not in a header):
+        `credits_estimes` is OUR estimate from the published rate (3 per company
+        returned) — sum it to track a budget; the real balance is on the
+        TheirStack dashboard.
 
         Args:
             company_names: exact company names, CASE-SENSITIVE (`company_name_or`).
@@ -288,4 +325,5 @@ def register(mcp: FastMCP) -> None:
         result = _run(lambda: client.search_companies(payload))
         _record_platform_usage(result, is_platform)
         _trace_quantity(result)
-        return _project(result, _COMPANY_FIELDS, full)
+        return _with_credit_estimate(_project(result, _COMPANY_FIELDS, full),
+                                     _CREDITS_PAR_ENTREPRISE, "entreprise")

@@ -114,3 +114,36 @@ def test_fields_projects_BOTH_lists_and_keeps_the_envelope(monkeypatch):
     assert out["accounts"] == [{"name": "Beta", "primary_domain": "beta.fr"}]
     # l'enveloppe reste : sans elle, l'agent croit avoir tout vu
     assert out["pagination"] == {"page": 1, "total_entries": 490}
+
+
+# --- `missing_fields` : une clé demandée jamais rendue se NOMME (oto#174) -----
+
+def test_une_cle_demandee_que_la_page_ne_porte_pas_est_nommee(monkeypatch):
+    """Retour 820 (08/09/2026) : `industry`, `estimated_num_employees`, `country`
+    demandés, seuls `name/primary_domain` rendus — les autres tombaient sans un mot
+    et l'appelant les écrivait VIDES en aval. La réponse les nomme désormais, avec
+    la source qui les porte."""
+    out = _search_orgs(monkeypatch, name="acme",
+                       fields=["name", "industry", "estimated_num_employees"])
+    assert out["organizations"] == [{"name": "Acme"}]
+    assert out["missing_fields"] == ["industry", "estimated_num_employees"]
+    assert "apollo_enrich_organization" in out["missing_fields_hint"]
+
+
+def test_une_cle_portee_par_une_seule_liste_n_est_pas_absente(monkeypatch):
+    """`owned_by_organization_id` n'est que sur `accounts` : présente sur la page,
+    elle n'est pas « absente » — la dire telle enverrait enrichir pour rien."""
+    out = _search_orgs(monkeypatch, name="acme",
+                       fields=["name", "owned_by_organization_id"])
+    assert "missing_fields" not in out
+    assert "missing_fields_hint" not in out
+
+
+def test_la_description_servie_annonce_missing_fields():
+    from fastmcp import FastMCP
+    from oto_mcp.tools import apollo as apollo_tool
+
+    m = FastMCP("t")
+    apollo_tool.register(m)
+    params = asyncio.run(m.get_tool("apollo_search_organizations")).parameters
+    assert "missing_fields" in params["properties"]["fields"]["description"]
