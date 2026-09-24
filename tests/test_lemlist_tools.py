@@ -73,15 +73,16 @@ def test_create_lead_drops_none_fields_and_merges_custom_variables():
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
+        inst.create_lead.return_value = {"_id": "lea_1"}
         tool = _tool("lemlist_create_lead")
 
         tool.fn(
-            campaign_id="camp_1", email="a@acme.fr", first_name="A",
+            campaign_id="cam_1", email="a@acme.fr", first_name="A",
             custom_variables={"industry": "SaaS"},
         )
 
         args, kwargs = inst.create_lead.call_args
-        assert args[0] == "camp_1"
+        assert args[0] == "cam_1"
         lead = args[1]
         assert lead == {"email": "a@acme.fr", "firstName": "A", "industry": "SaaS"}
         assert kwargs == {
@@ -94,9 +95,10 @@ def test_create_lead_forwards_enrichment_flags():
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
+        inst.create_lead.return_value = {"_id": "lea_1"}
         tool = _tool("lemlist_create_lead")
 
-        tool.fn(campaign_id="camp_1", email="a@acme.fr", find_email=True, deduplicate=True)
+        tool.fn(campaign_id="cam_1", email="a@acme.fr", find_email=True, deduplicate=True)
 
         kwargs = inst.create_lead.call_args.kwargs
         assert kwargs["find_email"] is True

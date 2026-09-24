@@ -114,6 +114,18 @@ LEAD_DEJA_PRIS = {
 }
 
 
+def _refus(code: str, message: str, **data) -> McpError:
+    return McpError(ErrorData(code=INVALID_PARAMS, message=f"Refus `{code}` : {message}",
+                              data={"code": code, "retryable": False, **data}))
+
+
+def _campagne_introuvable(exc) -> bool:
+    """Le 404 « Campaign not found » de `POST /campaigns/{id}/leads/` (doc API)."""
+    body = getattr(exc, "body", None)
+    return (getattr(exc, "status_code", None) == 404 and isinstance(body, str)
+            and body.strip() == "Campaign not found")
+
+
 def _lead_deja_pris(exc) -> Optional[str]:
     """La `reason` d'un refus de doublon de lemlist, `None` pour tout autre refus."""
     body = getattr(exc, "body", None)
@@ -472,10 +484,19 @@ def register(mcp: FastMCP) -> None:
         `find_email`/`verify_email` find or verify the email, `find_phone`
         finds a phone number.
 
+        `campaign_id` is lemlist's campaign id as it returns it, WITH its `cam_`
+        prefix (`cam_A1B2C3…`) — an id without it is refused before any call.
+
         Returns the created lead, including `_id` — pass it to
-        `lemlist_launch_lead`/`lemlist_add_lead_variables`. If the campaign has
-        review-before-send enabled, the lead is created paused and won't send
-        until `lemlist_launch_lead` is called.
+        `lemlist_launch_lead`/`lemlist_add_lead_variables`. A response without a
+        lead `_id` is a named refusal (`lemlist_lead_not_created`), never a
+        success. If the campaign has review-before-send enabled, the lead is held
+        for review (lemlist counts it in the campaign's `reviewedCount`) and won't
+        send until `lemlist_launch_lead` is called — but its `isPaused` stays
+        `false`: that field does NOT reflect the review lock, don't use it to check.
+        A 404 « Campaign not found » is a named refusal
+        (`lemlist_campaign_not_found`): the campaign is not reachable by the key
+        in use for leads, even if its reports are.
 
         A lead lemlist refuses as a DUPLICATE is not an error: the call returns
         `{created: false, reason, message, campaign_id, lead}` with `reason`
@@ -501,6 +522,13 @@ def register(mcp: FastMCP) -> None:
             lead.update(custom_variables)
         from oto.tools.common.errors import UpstreamHTTPError
 
+        if not campaign_id.startswith("cam_"):
+            # oto#1072 : sans le préfixe, lemlist répondait 200 SANS créer de lead.
+            raise _refus(
+                "lemlist_campaign_id_format",
+                f"`campaign_id` doit être l'id lemlist avec son préfixe `cam_` "
+                f"(ex. `cam_{campaign_id}`), tel que lemlist_campaign le rend. "
+                "Rien n'a été envoyé.", campaign_id=campaign_id)
         client, is_platform = _client()
         try:
             result = client.create_lead(
@@ -509,11 +537,26 @@ def register(mcp: FastMCP) -> None:
                 find_email=find_email, verify_email=verify_email, find_phone=find_phone,
             )
         except UpstreamHTTPError as e:
+            if _campagne_introuvable(e):
+                raise _refus(
+                    "lemlist_campaign_not_found",
+                    f"lemlist ne trouve pas la campagne `{campaign_id}` pour la clé "
+                    "utilisée (404). Vérifie l'id avec lemlist_campaign, et que la "
+                    "campagne appartient à l'équipe lemlist de cette clé (`_account` / "
+                    "`_instance`) : ses rapports peuvent rester lisibles quand ses leads "
+                    "ne le sont pas. Rien n'a été créé.", campaign_id=campaign_id)
             reason = _lead_deja_pris(e)
             if reason is None:
                 raise
             return {"created": False, "reason": reason, "message": e.body.strip(),
                     "campaign_id": campaign_id, "lead": lead}
+        if not (isinstance(result, dict) and result.get("_id")):
+            # oto#1072 : un succès vide, sans lead créé, se lisait comme une réussite.
+            raise _refus(
+                "lemlist_lead_not_created",
+                f"lemlist a répondu sans id de lead pour la campagne `{campaign_id}` : "
+                "aucun lead n'a été créé. Vérifie l'id de campagne et les champs du "
+                "lead avant de réessayer.", campaign_id=campaign_id)
         _record_if_platform(is_platform)
         return result
 
@@ -797,10 +840,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def lemlist_launch_lead(lead_id: str) -> dict:
-        """Launch a lead that's paused for manual review.
+        """Launch a lead held for manual review.
 
         Only relevant for a campaign with review-before-send enabled — such a
-        campaign leaves a newly created lead paused until launched. Returns
+        campaign holds a newly created lead in review until launched (counted in
+        the campaign's `reviewedCount`; the lead's `isPaused` stays `false`). Returns
         `{"ok": true}` on success; raises with a lemlist error code if it can't
         launch (already launched, paused, no sender available, invalid AI
         variable, campaign step errors…).
