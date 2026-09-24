@@ -55,7 +55,9 @@ def test_create_exige_ses_champs(client):
 
 
 def test_list_passe_les_filtres(client):
-    _tool()(op="list", status="accepted", customer_id=12, max_pages=1)
+    client.list_quotes.return_value = [{"id": 1}]
+    assert _tool()(op="list", status="accepted", customer_id=12, max_pages=1) == {
+        "quotes": [{"id": 1}]}
     client.list_quotes.assert_called_once_with(max_pages=1, status="accepted",
                                                customer_id=12)
 
@@ -69,7 +71,8 @@ def test_un_statut_inconnu_est_refuse_sans_appel(client):
 def test_get_et_lines(client):
     _tool()(op="get", quote_id=7)
     client.get_quote.assert_called_once_with(7)
-    _tool()(op="lines", quote_id=7)
+    client.get_quote_lines.return_value = [{"id": 3}]
+    assert _tool()(op="lines", quote_id=7) == {"quote_id": 7, "lines": [{"id": 3}]}
     client.get_quote_lines.assert_called_once_with(7)
 
 

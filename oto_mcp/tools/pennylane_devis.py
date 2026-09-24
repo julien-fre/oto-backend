@@ -42,15 +42,15 @@ def register(mcp: FastMCP) -> None:
         customer_invoice_template_id: Optional[int] = None,
         status: Optional[str] = None,
         max_pages: Optional[int] = None,
-    ) -> dict | list:
+    ) -> dict:
         """DEVIS de vente (quotes) — le document qui précède la facture.
 
         `op` :
-        - "list" : les devis, filtrables par `status` et `customer_id` (filtre
-          serveur). ⚠️ Sans `max_pages`, TOUT l'historique revient — commencer petit.
+        - "list" : rend `{quotes: [...]}`, les devis, filtrables par `status` et
+          `customer_id` (filtre serveur). ⚠️ Sans `max_pages`, TOUT l'historique revient — commencer petit.
         - "get" (`quote_id`) : le devis complet, dont `status`, `quote_number`,
           `public_file_url` (le PDF) et `linked_invoices`.
-        - "lines" (`quote_id`) : ses lignes.
+        - "lines" (`quote_id`) : rend `{quote_id, lines: [...]}`, ses lignes.
         - "pdf" (`quote_id`) : rend `{quote_id, quote_number, public_file_url,
           filename}` — le lien du PDF à joindre à un mail. ⚠️ Le lien EXPIRE
           (30 minutes) : le relire juste avant de s'en servir, jamais le stocker.
@@ -99,12 +99,13 @@ def register(mcp: FastMCP) -> None:
             raise _bad(f"status inconnu : {status!r} — attendu : {', '.join(_STATUTS)}")
         c = _client()
         if op == "list":
-            return c.list_quotes(max_pages=max_pages, status=status,
-                                 customer_id=customer_id)
+            return {"quotes": c.list_quotes(max_pages=max_pages, status=status,
+                                            customer_id=customer_id)}
         if op == "get":
             return c.get_quote(_need(quote_id, "quote_id", op))
         if op == "lines":
-            return c.get_quote_lines(_need(quote_id, "quote_id", op))
+            return {"quote_id": quote_id,
+                    "lines": c.get_quote_lines(_need(quote_id, "quote_id", op))}
         if op == "pdf":
             devis = c.get_quote(_need(quote_id, "quote_id", op))
             url = (devis or {}).get("public_file_url")
