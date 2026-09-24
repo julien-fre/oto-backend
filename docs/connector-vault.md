@@ -807,38 +807,58 @@ Pas de framework de tests dans le repo → validation manuelle sur **PG16 jetabl
 # sans déchiffrer), jamais `get_credential_with_meta`, pour ne pas 500 /api/me.
 ```
 
-## Déplacer des clés d'org vers les clés personnelles d'un membre (ops, 24/09/2026)
+## Déplacer des clés d'org vers un membre ou une équipe dédiée (ops, 24/09/2026)
 
 Restreindre un connecteur, c'est **placer la clé au bon niveau** (ADR 0053 D1) : la
 réservation d'un connecteur à une partie des membres (`connector_acl`) disparaît. Une
-org qui s'en servait pour réserver ses clés à UNE personne doit voir ces clés devenir
-les clés personnelles de cette personne avant le retrait. Le geste est
-`scripts/deplacer_cles_org_vers_membre.py` — jamais un `UPDATE` : l'AAD porte
-`entity_type:entity_id`, donc une ligne se **déchiffre avec le sceau de l'org puis se
-réécrit** par `_upsert` (sceau du membre, `member_id(org, sub)`), et l'ancienne sort
-par `_delete` (son instance s'archive, la nouvelle naît), comme `backfill_member_scope`.
+org qui s'en servait pour réserver ses clés doit voir ces clés descendre au bon niveau
+avant le retrait — les clés personnelles d'UN membre (`--vers membre`), ou une ÉQUIPE
+dédiée (`--vers equipe`). Le geste est `scripts/deplacer_cles_org.py` — jamais un
+`UPDATE` : l'AAD porte `entity_type:entity_id`, donc une ligne se **déchiffre avec le
+sceau de l'org puis se réécrit** par `_upsert` (sceau du membre, `member_id(org, sub)`,
+ou de l'équipe, `group:<id>`), et l'ancienne sort par `_delete` (son instance
+s'archive, la nouvelle naît), comme `backfill_member_scope`.
 
 ```bash
-# dry-run (défaut) : rejoue les écritures ET la relecture dans une transaction, puis ANNULE
-python -m scripts.deplacer_cles_org_vers_membre --org <id> --sub <sub> --connectors a,b,c
-# valide
-python -m scripts.deplacer_cles_org_vers_membre --org <id> --sub <sub> --connectors a,b,c --apply
+# passe à blanc (défaut) : rejoue les écritures ET la relecture dans une transaction, puis ANNULE
+python -m scripts.deplacer_cles_org --org <id> --sub <sub> --connectors a,b,c --vers membre
+python -m scripts.deplacer_cles_org --org <id> --sub <sub> --connectors a,b,c \
+    --vers equipe --equipe-nom "<nom>" [--rendre-active]
+# valide : la même commande + --apply
 ```
 
 - **Une transaction**, lignes d'org verrouillées (`FOR UPDATE`), `statement_timeout`
   15 s, `lock_timeout` 5 s ; `set_by` et `meta` gardés (plus une trace `_deplacement`).
-- **Relecture avant validation** : déchiffrement au niveau membre, empreinte SHA-256
-  égale à l'original, ligne d'org absente — sinon ROLLBACK (sortie 4).
-- **La clé du membre n'est jamais touchée** : un compte nommé déjà pris renomme la clé
-  DÉPLACÉE (`<compte>-org-<org>`, `principal-org-<org>` pour la ligne sans nom) ; une
-  coexistence impossible (mono-compte, ligne sans nom côté membre) est un refus.
+- **Relecture avant validation** : déchiffrement au niveau cible, empreinte SHA-256
+  égale à l'original, ligne d'org absente — sinon ROLLBACK (sortie 4), création de
+  l'équipe comprise.
+- **`--vers equipe`** crée l'équipe dans la même transaction : `--sub` en est le chef
+  (`group_admin`, `created_by`), y entrent en `group_member` tous ceux qui résolvent
+  AUJOURD'HUI une des clés d'org (les `org_admin`, qui échappaient à la réservation ;
+  les autorisés de `connector_acl` ; tout membre si le connecteur n'était pas
+  réservé) — lus en base au lancement. Un connecteur non org-partageable est refusé :
+  le walker ne lit le palier équipe que pour un connecteur org-partageable.
+- ⚠️ **Une clé d'équipe n'est lue que dans l'équipe ACTIVE** (`scope.current_group` :
+  `_group=` de l'appel, consultation, sinon l'équipe « maison », UNE par sub toutes
+  orgs confondues) ou par un pin de l'instance (`_instance=`, lien de projet). Une
+  équipe neuve n'est active pour personne : `--rendre-active` la rend active pour ses
+  membres dont l'org active est déjà cette org et qui n'ont aucune équipe active ; les
+  autres sont comptés, à régler à la main (basculer leur équipe active retirerait ses
+  clés ; changer leur org active changerait leur boîte à outils MCP, #1058).
+- **`--vers membre` : la clé du membre n'est jamais touchée** : un compte nommé déjà
+  pris renomme la clé DÉPLACÉE (`<compte>-org-<org>`, `principal-org-<org>` pour la
+  ligne sans nom) ; une coexistence impossible (mono-compte, ligne sans nom côté
+  membre) est un refus.
 - **Refus d'ensemble en `--apply`** (sortie 3, rien d'écrit) : connecteur sans clé
-  d'org ou sans clé personnelle possible, collision non résoluble, ou objet qui désigne
-  encore une instance d'org déplacée (lien de projet, arête `grants`, déclencheur,
-  flotte) — `--force-orphan-bindings` passe outre ce dernier cas, en le disant.
-- **Impact** affiché : autres membres de l'org, et par connecteur ceux qui résolvent la
-  clé d'org aujourd'hui et la perdront (`--show-members` pour les subs). Le partage de
-  l'instance d'org n'est pas repris (compté).
-- **Aucun secret** dans la sortie ni les logs (banc
-  `tests/test_deplacer_cles_org_vers_membre.py`). Même prérequis que ci-dessus :
-  `OTO_MCP_MASTER_KEY` doit être chargée comme au boot.
+  d'org ou non lisible au niveau cible, collision non résoluble, équipe du même nom
+  déjà présente, ou objet qui désigne encore une instance d'org déplacée (lien de
+  projet, arête `grants`, déclencheur, flotte) — `--force-orphan-bindings` passe outre
+  ce dernier cas, en le disant.
+- **Impact** affiché : autres membres de l'org ; en `--vers membre`, par connecteur,
+  ceux qui résolvent la clé d'org aujourd'hui et la perdront ; en `--vers equipe`, les
+  membres de l'équipe et leur équipe active (`--show-members` pour les subs). Les
+  partages de l'instance d'org ne sont pas repris (comptés) : `share_down` ne vit plus
+  que sur les clés plateforme, `share_side` n'est lu qu'au niveau membre, et
+  `share_mode='open'` est la valeur par défaut, pas un partage.
+- **Aucun secret** dans la sortie ni les logs (banc `tests/test_deplacer_cles_org.py`).
+  Même prérequis que ci-dessus : `OTO_MCP_MASTER_KEY` doit être chargée comme au boot.

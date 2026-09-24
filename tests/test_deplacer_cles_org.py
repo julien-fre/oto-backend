@@ -1,5 +1,5 @@
-"""Le script qui déplace des clés d'org vers les clés personnelles d'un membre, contre un
-vrai PostgreSQL (`scripts/deplacer_cles_org_vers_membre.py`).
+"""Le script qui déplace des clés d'org vers les clés personnelles d'un membre ou vers une
+équipe dédiée, contre un vrai PostgreSQL (`scripts/deplacer_cles_org.py`).
 
 Ce qui coûterait le plus cher à rater, dans l'ordre :
 1. **un secret affiché** — aucune sortie ni aucun log ne porte la valeur ;
@@ -76,13 +76,16 @@ def base(live):
 
 @pytest.fixture
 def propre(base):
-    _exec("DELETE FROM connector_credentials WHERE entity_type IN ('org','member')")
+    _exec("DELETE FROM connector_credentials WHERE entity_type IN ('org','member','group')")
     _exec("DELETE FROM project_links")
+    _exec("DELETE FROM org_groups WHERE org_id = %s", (ORG,))
+    _exec("UPDATE org_members SET is_active = (org_id = %s) WHERE org_id IN (%s, %s)",
+          (ORG, ORG, AUTRE_ORG))
     yield
 
 
 def _lancer(*connectors, **kw):
-    from scripts.deplacer_cles_org_vers_membre import deplacer
+    from scripts.deplacer_cles_org import deplacer
     sortie = []
     code = deplacer(kw.pop("org", ORG), kw.pop("sub", CIBLE), list(connectors),
                     out=sortie.append, **kw)
@@ -190,7 +193,7 @@ def test_impact_compte_les_membres_qui_perdent(propre):
 
 
 def test_relecture_en_echec_annule_tout(propre, monkeypatch):
-    import scripts.deplacer_cles_org_vers_membre as script
+    import scripts.deplacer_cles_org as script
     _poser(cs.ORG, ORG, MULTI, "")
     empreintes = iter(["a", "b"])            # l'écriture et la relecture divergent
     monkeypatch.setattr(script, "_empreinte", lambda _secret: next(empreintes))
@@ -204,10 +207,175 @@ def test_relecture_en_echec_annule_tout(propre, monkeypatch):
 def test_aucun_secret_dans_la_sortie_ni_les_logs(propre, caplog, capsys):
     _poser(cs.ORG, ORG, MULTI, "")
     caplog.set_level(logging.DEBUG)
-    from scripts.deplacer_cles_org_vers_membre import main
+    from scripts.deplacer_cles_org import main
     assert main(["--org", str(ORG), "--sub", CIBLE, "--connectors", MULTI,
-                 "--show-members"]) == 0
-    assert main(["--org", str(ORG), "--sub", CIBLE, "--connectors", MULTI, "--apply"]) == 0
+                 "--vers", "membre", "--show-members"]) == 0
+    assert main(["--org", str(ORG), "--sub", CIBLE, "--connectors", MULTI,
+                 "--vers", "membre", "--apply"]) == 0
     capture = capsys.readouterr()
     for texte in (capture.out, capture.err, caplog.text):
         assert SECRET not in texte
+
+
+# --- vers une ÉQUIPE dédiée ---------------------------------------------------
+
+NON_LUE_EN_EQUIPE = "crunchbase"   # byo_user, pas org-partageable : jamais lue en équipe
+ORG_ONLY = "linear"                # org-partageable, pas byo_user : lue en équipe
+EQUIPE = "Clés réservées"
+
+
+def _equipe():
+    return _one("SELECT id FROM org_groups WHERE org_id = %s AND name = %s", (ORG, EQUIPE))
+
+
+def _membres_equipe(gid):
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        return {r["sub"]: r["group_role"] for r in conn.execute(
+            "SELECT sub, group_role FROM org_group_members WHERE group_id = %s", (gid,))}
+
+
+def _reserver(connector, sub):
+    _exec("INSERT INTO connector_acl (scope_type, scope_id, connector, principal_type, "
+          "principal_id) VALUES ('org', %s, %s, 'user', %s) ON CONFLICT DO NOTHING",
+          (str(ORG), connector, sub))
+
+
+@pytest.fixture
+def sans_acl(propre):
+    _exec("DELETE FROM connector_acl WHERE scope_id = %s", (str(ORG),))
+    yield
+    _exec("DELETE FROM connector_acl WHERE scope_id = %s", (str(ORG),))
+
+
+def _vers_equipe(*connectors, **kw):
+    return _lancer(*connectors, vers="equipe", equipe_nom=EQUIPE, **kw)
+
+
+def test_equipe_passe_a_blanc_ne_cree_rien(sans_acl):
+    _poser(cs.ORG, ORG, MULTI, "")
+    code, sortie = _vers_equipe(MULTI)
+    assert code == 0, sortie
+    assert "ANNULÉ" in sortie and "à créer" in sortie
+    assert _equipe() is None
+    assert _ligne(cs.ORG, ORG, MULTI, "") is not None
+
+
+def test_equipe_apply_cree_l_equipe_avec_ceux_qui_resolvent_et_deplace(sans_acl):
+    # Réservé à CIBLE : aujourd'hui seuls CIBLE et l'org_admin le résolvent.
+    _poser(cs.ORG, ORG, MULTI, "", meta={"note": "gardée"}, set_by=CIBLE)
+    _poser(cs.ORG, ORG, ORG_ONLY, "")
+    _reserver(MULTI, CIBLE)
+    _reserver(ORG_ONLY, CIBLE)
+    code, sortie = _vers_equipe(MULTI, ORG_ONLY, apply=True)
+    assert code == 0, sortie
+    gid = _equipe()["id"]
+    assert _membres_equipe(gid) == {CIBLE: "group_admin", ADMIN: "group_member"}
+    for connector in (MULTI, ORG_ONLY):
+        row = _ligne("group", gid, connector, "")
+        assert row is not None and _ligne(cs.ORG, ORG, connector, "") is None
+        assert crypto.decrypt(row["secret_enc"], cs._aad("group", str(gid), connector, "")) == SECRET
+        with pytest.raises(Exception):
+            crypto.decrypt(row["secret_enc"], cs._aad(cs.ORG, str(ORG), connector, ""))
+    row = _ligne("group", gid, MULTI, "")
+    assert row["set_by"] == CIBLE and row["meta"]["note"] == "gardée"
+    assert row["meta"]["_deplacement"]["to"] == "equipe"
+
+
+def test_equipe_sans_reservation_embarque_tous_les_membres(sans_acl):
+    _poser(cs.ORG, ORG, MULTI, "")
+    assert _vers_equipe(MULTI, apply=True)[0] == 0
+    assert set(_membres_equipe(_equipe()["id"])) == {CIBLE, ADMIN, MEMBRE}
+
+
+def test_equipe_connecteur_non_lu_au_palier_equipe_refuse_tout(sans_acl):
+    _poser(cs.ORG, ORG, MULTI, "")
+    _poser(cs.ORG, ORG, NON_LUE_EN_EQUIPE, "")
+    code, sortie = _vers_equipe(MULTI, NON_LUE_EN_EQUIPE, apply=True)
+    assert code == 3, sortie
+    assert f"REFUS {NON_LUE_EN_EQUIPE}" in sortie
+    assert _equipe() is None
+    assert _ligne(cs.ORG, ORG, MULTI, "") is not None
+
+
+def test_equipe_deja_existante_refuse(sans_acl):
+    _poser(cs.ORG, ORG, MULTI, "")
+    _exec("INSERT INTO org_groups (org_id, name) VALUES (%s, %s)", (ORG, EQUIPE.upper()))
+    code, sortie = _vers_equipe(MULTI, apply=True)
+    assert code == 3, sortie
+    assert "REFUS équipe" in sortie
+    assert _ligne(cs.ORG, ORG, MULTI, "") is not None
+
+
+def test_equipe_relecture_en_echec_annule_aussi_la_creation(sans_acl, monkeypatch):
+    import scripts.deplacer_cles_org as script
+    _poser(cs.ORG, ORG, MULTI, "")
+    empreintes = iter(["a", "b"])
+    monkeypatch.setattr(script, "_empreinte", lambda _secret: next(empreintes))
+    code, sortie = _vers_equipe(MULTI, apply=True)
+    assert code == 4, sortie
+    assert _equipe() is None
+    assert _ligne(cs.ORG, ORG, MULTI, "") is not None
+
+
+def test_equipe_la_cle_n_est_lue_que_dans_l_equipe_active(sans_acl):
+    """Point 1 : un membre de l'équipe résout la clé d'équipe quand l'équipe est
+    son équipe ACTIVE ; sans elle (équipe neuve, pas `--rendre-active`), il ne la
+    résout pas ; un non-membre ne la résout jamais."""
+    from oto_mcp.access import scope
+    _poser(cs.ORG, ORG, MULTI, "")
+    _reserver(MULTI, CIBLE)
+    assert _vers_equipe(MULTI, apply=True)[0] == 0
+    gid = _equipe()["id"]
+    assert scope.current_group(CIBLE) is None          # équipe neuve : active de personne
+    _exec("DELETE FROM org_group_members WHERE group_id = %s", (gid,))
+    _exec("DELETE FROM org_groups WHERE id = %s", (gid,))
+    _poser(cs.ORG, ORG, MULTI, "")
+    code, sortie = _vers_equipe(MULTI, apply=True, rendre_active=True)
+    assert code == 0, sortie
+    gid = _equipe()["id"]
+    assert "équipe rendue active pour 2 membre(s)" in sortie
+    for s in (CIBLE, ADMIN):
+        assert scope.current_group(s) == gid
+        from oto_mcp import group_store
+        assert group_store.get_group_secret(scope.current_group(s), MULTI) == SECRET
+    assert scope.current_group(MEMBRE) is None         # hors équipe : jamais la clé
+
+
+def test_rendre_active_ne_touche_pas_une_autre_equipe_active(sans_acl):
+    _poser(cs.ORG, ORG, MULTI, "")
+    autre = _one("INSERT INTO org_groups (org_id, name) VALUES (%s, 'autre') RETURNING id",
+                 (ORG,))["id"]
+    _exec("INSERT INTO org_group_members (group_id, sub, group_role, is_active) "
+          "VALUES (%s, %s, 'group_member', TRUE)", (autre, ADMIN))
+    code, sortie = _vers_equipe(MULTI, apply=True, rendre_active=True)
+    assert code == 0, sortie
+    assert "autre équipe 1" in sortie
+    from oto_mcp.access import scope
+    assert scope.current_group(ADMIN) == autre         # laissé tel quel, compté
+
+
+def test_equipe_aucun_secret_dans_la_sortie_ni_les_logs(sans_acl, caplog, capsys):
+    _poser(cs.ORG, ORG, MULTI, "")
+    caplog.set_level(logging.DEBUG)
+    from scripts.deplacer_cles_org import main
+    base = ["--org", str(ORG), "--sub", CIBLE, "--connectors", MULTI,
+            "--vers", "equipe", "--equipe-nom", EQUIPE, "--show-members"]
+    assert main(base) == 0
+    assert main(base + ["--rendre-active", "--apply"]) == 0
+    capture = capsys.readouterr()
+    for texte in (capture.out, capture.err, caplog.text):
+        assert SECRET not in texte
+
+
+def test_partage_par_defaut_n_est_pas_compte(sans_acl):
+    """`share_mode='open'` est la valeur PAR DÉFAUT : ce n'est pas un partage. La
+    première version du script comptait chaque ligne (« 14 partages » sur 14)."""
+    _poser(cs.ORG, ORG, MULTI, "")
+    code, sortie = _lancer(MULTI)
+    assert code == 0, sortie
+    assert "partage d'instance" not in sortie
+    _exec("UPDATE connector_credentials SET share_side = '[\"user:x\"]'::jsonb "
+          "WHERE entity_type = 'org' AND entity_id = %s AND connector = %s", (str(ORG), MULTI))
+    code, sortie = _lancer(MULTI)
+    assert "partage d'instance non repris sur 1 ligne(s)" in sortie
