@@ -62,7 +62,9 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   lecture) ; `view_as_read_only` = « voir en tant que » appliqué (`X-Oto-View-As`) : la
   réponse est celle de la cible, dont `active_org_readonly` est faux, alors que toute
   écriture est refusée (403 `view_as_read_only`). Un écran n'écrit que si les DEUX sont
-  faux (oto#212). Les deux lentilles d'activité sont scopées **(sub, org active)** : jamais un
+  faux (oto#212) — sauf écriture en view-as ACCEPTÉE (`X-Oto-View-As-Write: 1`, super_admin
+  seul, `docs/org-context.md`) : `view_as_read_only` décrit le mode sans acceptation, le front
+  qui a obtenu le geste d'acceptation l'envoie et écrit sous la cible. Les deux lentilles d'activité sont scopées **(sub, org active)** : jamais un
   autre membre, jamais une autre org — filtres `?limit=` (défaut 200, plafond dur 1000),
   `?tool=` (nom EXACT), `?errors=1|true` (littéral : `?errors=yes` ne filtre pas), `?days=`.
   ⚠️ **Le repli de saisie est conservé** : `?days=abc` rend 200 avec la fenêtre par défaut,

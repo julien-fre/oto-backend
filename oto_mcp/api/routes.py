@@ -123,6 +123,13 @@ def _parse_view_user(request: Request) -> str | None:
     return raw.strip() or None
 
 
+def _parse_view_write(request: Request) -> bool:
+    """Geste d'ACCEPTATION de l'écriture en « voir en tant que » (header
+    `X-Oto-View-As-Write: 1`). Sans lui, une consultation reste en lecture seule.
+    Validé (super_admin + cible appliquée) dans le middleware, jamais cru seul."""
+    return (request.headers.get("x-oto-view-as-write") or "").strip() == "1"
+
+
 # Ops de LECTURE des endpoints op-aware (POST `{op:…}`). Le dashboard LIT en POST
 # (`{op:'list'}`, `{op:'get'}`, …) — une garde par méthode HTTP bloquerait donc les
 # lectures. En consultation LECTURE SEULE (view-as user / inspection org opérateur),
@@ -181,6 +188,13 @@ async def _peek_op(receive):
 # cible qu'il avait saisie, une cible = soi ou inconnue passait `ok` avec la colonne
 # remplie. Seul le middleware qui applique la vue sait ce qui a été appliqué.
 CLE_VIEW_AS_APPLIQUE = "oto_view_as_applique"
+# Écriture en « voir en tant que » ACCEPTÉE et exécutée (super_admin + en-tête
+# d'acceptation) : le marqueur du journal (`args.view_as_write`), et l'org sous
+# laquelle elle s'écrit (celle de la consultation, sinon l'org de contexte de la
+# CIBLE) — sans elle, une pose faite sans `X-Oto-Org` n'apparaîtrait dans le journal
+# d'aucune org.
+CLE_VIEW_AS_ECRITURE = "oto_view_as_ecriture"
+CLE_VIEW_AS_ORG = "oto_view_as_org"
 
 
 class ViewAsMiddleware:
@@ -212,13 +226,21 @@ class ViewAsMiddleware:
             return await self.app(scope, receive, send)
         from .. import access, db, group_store, org_store, roles, session_org
         read_only = False  # consultation en LECTURE SEULE (view-as user OU inspection org opérateur)
-        if view_user:  # « voir en tant que » : opérateur plateforme + cible existe + LECTURE SEULE
+        # Écriture en « voir en tant que » demandée par le geste d'acceptation. Elle
+        # n'a de sens qu'avec une cible APPLIQUÉE ; son droit (super_admin) est jugé
+        # plus bas, et seulement si la requête écrit vraiment.
+        ecriture_demandee = False
+        if view_user:  # « voir en tant que » : opérateur plateforme + cible existe
             if not await run_in_threadpool(access.is_platform_operator, sub):
                 return await _json_error(request, 403, "forbidden")(scope, receive, send)
             if view_user == sub or await run_in_threadpool(db.get_user, view_user) is None:
                 view_user = None  # cible = soi ou inconnue → pas de consultation (no-op)
             else:
                 read_only = True
+                ecriture_demandee = _parse_view_write(request)
+        # Écriture ACCEPTÉE : cible appliquée + en-tête + opérateur super_admin.
+        ecriture_acceptee = (ecriture_demandee
+                             and await run_in_threadpool(access.is_super_admin, sub))
         if view_group:  # équipe consultée → valide la lecture + DÉRIVE son org parente (invariant)
             g = await run_in_threadpool(group_store.get_group, view_group)
             if g is None or not await run_in_threadpool(roles.can_read_group, sub, view_group):
@@ -247,15 +269,39 @@ class ViewAsMiddleware:
         # Garde LECTURE SEULE : le dashboard LIT en POST op-aware (`{op:'list'|'get'}`),
         # donc on ne peut pas gater par méthode. Sur une requête non-GET, on lit l'`op`
         # du corps : seules les OPS DE LECTURE passent ; toute mutation (op d'écriture,
-        # ou write sans op) → 403. Le corps est rejoué intact au handler.
+        # ou write sans op) → 403, SAUF écriture en view-as ACCEPTÉE (super_admin +
+        # `X-Oto-View-As-Write: 1`). Le corps est rejoué intact au handler.
+        ecriture = False
         if read_only and request.method != "GET":
             op, receive = await _peek_op(receive)
             if op not in _READ_OPS:
-                return await _json_error(request, 403, "view_as_read_only")(scope, receive, send)
+                if not ecriture_demandee:
+                    return await _json_error(request, 403, "view_as_read_only")(scope, receive, send)
+                if not ecriture_acceptee:
+                    return await _json_error(request, 403, "view_as_write_forbidden")(
+                        scope, receive, send)
+                if view_org and (
+                        await run_in_threadpool(org_store.get_org_role, view_org, view_user)
+                        is None
+                        or (view_group and not await run_in_threadpool(
+                            roles.can_read_group, view_user, view_group))):
+                    # C'est la CIBLE qui agit : elle doit être membre de l'org (et de
+                    # l'équipe) consultée. On n'écrit pas en son nom dans une org qui
+                    # n'est pas la sienne (anti-IDOR) ; une LECTURE y reste permise en
+                    # inspection, comme avant.
+                    return await _json_error(request, 403, "forbidden")(scope, receive, send)
+                ecriture = True
+        operateur_token = None
         if view_user is not None:
             # Publié pour le journal : APRÈS toutes les gardes (un 403 est sorti plus
             # haut, une cible = soi ou inconnue a été remise à None).
             scope[CLE_VIEW_AS_APPLIQUE] = view_user
+            if ecriture:
+                scope[CLE_VIEW_AS_ECRITURE] = True
+                scope[CLE_VIEW_AS_ORG] = (view_org if view_org is not None else
+                                          await run_in_threadpool(access.current_org,
+                                                                  view_user))
+                operateur_token = session_org.set_view_as_operator(sub)
         usr_token = session_org.set_view_user(view_user) if view_user is not None else None
         org_token = session_org.set_view_org(view_org) if view_org is not None else None
         grp_token = session_org.set_view_group(view_group) if view_group is not None else None
@@ -268,6 +314,8 @@ class ViewAsMiddleware:
                 session_org.reset_view_org(org_token)
             if usr_token is not None:
                 session_org.reset_view_user(usr_token)
+            if operateur_token is not None:
+                session_org.reset_view_as_operator(operateur_token)
 
 
 # --- Journalisation des appels REST dans le flux unifié (ADR 0017, kind='rest') ---
@@ -366,6 +414,14 @@ class RestCallLogger:
                 org = run["org_id"]
             sub = principal.get("sub") or _claimed_sub(request)
             route, masques = journal_secrets.route_and_secrets(scope.get("path", ""))
+            ecriture_view_as = bool(scope.get(CLE_VIEW_AS_ECRITURE))
+            if ecriture_view_as:
+                # Une écriture faite AU NOM d'un autre compte : le marqueur la distingue
+                # d'une consultation, et son org est celle où elle a agi (même sans
+                # `X-Oto-Org`), pour que le journal de l'org de la cible la montre.
+                masques = {**(masques or {}), "view_as_write": True}
+                if org is None:
+                    org = scope.get(CLE_VIEW_AS_ORG)
             row = {
                 "kind": "rest",
                 "tool": f"{method} {route}",

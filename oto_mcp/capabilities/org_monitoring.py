@@ -836,6 +836,44 @@ def _connections(ctx: ResolvedCtx, inp: OrgConnectionsInput) -> dict:
 
 _MEMBER_OF = ORG_MEMBER_OF("org_id")
 
+class ViewAsWriteRow(BaseModel):
+    """Une écriture faite AU NOM d'un membre par un opérateur plateforme : « saisi
+    par `operator_email` en tant que `target_email` ». Jamais d'argument ni de secret."""
+    id: int
+    called_at: Optional[str] = None
+    route: Optional[str] = None
+    ok: Optional[bool] = None
+    error: Optional[str] = None
+    operator_sub: Optional[str] = None
+    operator_email: Optional[str] = None
+    target_sub: Optional[str] = None
+    target_email: Optional[str] = None
+
+
+class OrgViewAsWrites(BaseModel):
+    """Les écritures faites en « voir en tant que » sous cette org, plus récentes
+    d'abord (fenêtre `days`, défaut 30). Vide = aucune sur la fenêtre."""
+    writes: list[ViewAsWriteRow]
+
+
+class OrgViewAsWritesInput(BaseModel):
+    org_id: int
+    days: Optional[int] = None
+    limit: int = 200
+
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 200)
+
+
+def _view_as_writes(ctx: ResolvedCtx, inp: OrgViewAsWritesInput) -> dict:
+    rows = db.list_view_as_writes(inp.org_id, days=inp.days, limit=inp.limit)
+    return {"writes": [{**r, "called_at": (str(r["called_at"])
+                                            if r.get("called_at") is not None else None)}
+                       for r in rows]}
+
+
 _ADMIN_OF = ORG_ADMIN_OF("org_id")
 
 CAPABILITIES += [
@@ -870,6 +908,14 @@ CAPABILITIES += [
                            "just the count. Filters: `signal` (tool_feedback|gap), "
                            "`tool` (target), `status`. Org admin only.",
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/signals", _ID)),
+    Capability(key="org.monitoring.view_as_writes", handler=_view_as_writes,
+               Input=OrgViewAsWritesInput, authz=_ADMIN_OF, mcp=None,
+               Output=OrgViewAsWrites,
+               description="Writes made ON BEHALF of a member of this org by a platform "
+                           "operator (view-as with explicit write acceptance): who "
+                           "(operator), as whom (target), which route, when, outcome. "
+                           "Never arguments nor secrets. Org admin only.",
+               rest=RestBinding("GET", "/api/orgs/{id}/monitoring/view-as", _ID)),
     Capability(key="org.monitoring.connectors", handler=_connectors, Input=OrgWindowInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgConnectorHealth,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/connectors", _ID)),

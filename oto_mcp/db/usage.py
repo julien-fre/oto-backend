@@ -1698,6 +1698,41 @@ def list_rest_calls(
         return list(rows)
 
 
+def list_view_as_writes(org_id: int, days: Optional[int] = None,
+                        limit: int = 200) -> list[dict]:
+    """Les ÉCRITURES faites AU NOM d'un membre de l'org par un opérateur plateforme
+    (« voir en tant que » + geste d'acceptation), plus récentes d'abord.
+
+    Ce que l'org doit pouvoir voir : QUI a écrit (`operator_*` = le porteur réel du
+    bearer, `tool_calls.sub`), EN TANT QUE qui (`target_*` = `view_as_sub`), quelle
+    route, quand, avec quel résultat. Seules les lignes marquées `args.view_as_write`
+    (posé par `RestCallLogger` sur une écriture ACCEPTÉE) — une consultation n'y
+    figure pas. Jamais d'arguments ni de secret : le journal REST n'écrit pas le corps.
+    `days` défaut 30, plafonné à 365 ; `limit` plafonné à 200."""
+    limit = max(1, min(int(limit), 200))
+    since_days = max(1, min(int(days or 30), 365))
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT l.id, l.created_at AS called_at, l.tool AS route, l.ok, l.error,
+                   l.sub AS operator_sub, COALESCE(uo.email, l.email) AS operator_email,
+                   l.view_as_sub AS target_sub, ut.email AS target_email
+            FROM tool_calls l
+            LEFT JOIN users uo ON uo.sub = l.sub
+            LEFT JOIN users ut ON ut.sub = l.view_as_sub
+            WHERE l.kind = 'rest' AND {_REST_ROUTE_SHAPE}
+              AND l.org_id = %s
+              AND l.view_as_sub IS NOT NULL
+              AND (l.args ->> 'view_as_write') = 'true'
+              AND l.created_at >= NOW() - make_interval(days => %s)
+            ORDER BY l.created_at DESC, l.id DESC
+            LIMIT %s
+            """,
+            (int(org_id), since_days, limit),
+        ).fetchall()
+        return list(rows)
+
+
 def connector_failure_stats(since_days: int = 7, *, org_id: Optional[int] = None) -> dict:
     """Lentille santé connecteurs (ADR 0017, kind='connector') : échecs de résolution
     de credential par provider — combien, combien d'users distincts touchés, dernier

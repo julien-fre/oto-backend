@@ -96,7 +96,7 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As, X-Oto-Run",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As, X-Oto-View-As-Write, X-Oto-Run",
             # Sans cette ligne, `X-Oto-Version` (oto#33) part sur le fil mais reste
             # ILLISIBLE au dashboard : un navigateur ne donne à `fetch` que les
             # en-têtes de réponse explicitement exposés. Un en-tête qu'aucun de nos
@@ -130,9 +130,10 @@ def _locale_from_accept_language(header: str | None) -> str | None:
 
 
 def _maybe_view_as(real_sub: str, apply_view_as: bool) -> str:
-    """Applique le « voir en tant que » (axe user, REST lecture seule) : si un sub
-    de consultation est posé pour la requête (par ViewAsMiddleware, qui a DÉJÀ validé
-    opérateur + cible + GET), renvoie ce sub cible ; sinon le sub réel. `apply_view_as`
+    """Applique le « voir en tant que » (axe user, REST) : si un sub de consultation
+    est posé pour la requête (par ViewAsMiddleware, qui a DÉJÀ validé opérateur +
+    cible, et soit une lecture, soit une écriture ACCEPTÉE par un super_admin),
+    renvoie ce sub cible ; sinon le sub réel. `apply_view_as`
     False = chemin du middleware lui-même (qui doit voir le sub RÉEL pour gater)."""
     if not apply_view_as:
         return real_sub

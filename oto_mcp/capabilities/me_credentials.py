@@ -482,6 +482,12 @@ def _set_ecrire(ctx: ResolvedCtx, inp: CredentialSetInput, pose: _PoseCredentiel
         meta = {"verified_at": datetime.now(timezone.utc).isoformat()}
     # Les champs rangés dans `meta` (`in_meta`) : `pack_secret` les a laissés hors du chiffré.
     meta = {**(meta or {}), **credentials_store.meta_fields(inp.provider, fields)} or None
+    # Pose faite par un opérateur en « voir en tant que » (écriture acceptée) : la clé
+    # est celle de la cible (`set_by` = elle), mais on garde QUI l'a saisie.
+    from .. import session_org
+    operateur = session_org.current_view_as_operator()
+    if operateur:
+        meta = {**(meta or {}), "set_by_operator": operateur}
     credentials_store.set_credential(
         credentials_store.MEMBER, eid, inp.provider, secret, set_by=ctx.sub,
         account=account, meta=meta)

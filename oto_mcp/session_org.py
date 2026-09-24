@@ -313,6 +313,27 @@ def current_view_user() -> Optional[str]:
     return _VIEW_USER.get()
 
 
+# L'OPÉRATEUR d'une écriture en « voir en tant que » ACCEPTÉE (super_admin +
+# `X-Oto-View-As-Write: 1`, validé par ViewAsMiddleware). Posé seulement dans ce cas :
+# une écriture faite sous l'identité de la cible doit pouvoir nommer qui l'a saisie
+# (ex. `meta.set_by_operator` d'une clé perso). None partout ailleurs.
+_VIEW_AS_OPERATOR: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "oto_view_as_operator", default=None)
+
+
+def set_view_as_operator(sub: Optional[str]) -> contextvars.Token:
+    return _VIEW_AS_OPERATOR.set(sub)
+
+
+def reset_view_as_operator(token: contextvars.Token) -> None:
+    _VIEW_AS_OPERATOR.reset(token)
+
+
+def current_view_as_operator() -> Optional[str]:
+    """Opérateur réel d'une écriture en view-as acceptée (None = pas ce cas)."""
+    return _VIEW_AS_OPERATOR.get()
+
+
 # ── Axe ÉQUIPE (groupe) — même mécanique que l'org (ADR 0023 étendu) ─────────
 # Le store ne garde QUE des group_id réels ; « pas de groupe » (niveau org) se
 # DÉRIVE = override d'org présent SANS override de groupe ⇒ niveau org. Ça tient
