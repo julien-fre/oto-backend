@@ -225,7 +225,8 @@ def test_tableau_echu_ne_donne_plus_acces(monde):
     _echoir("datastore_namespace", m["ns"], ("user", benef))
     assert not ownership.can_access(benef, "datastore_namespace", str(m["ns"]))
     assert db.resolve_datastore_ns(ns_nom, sub=benef, org_ids=[], group_ids=[]) is None
-    assert db.resolve_datastore_ids_by_name([ns_nom], sub=benef, org_ids=[], group_ids=[]) == {}
+    assert db.resolve_datastore_ids_by_name(
+        [ns_nom], sub=benef, org_ids=[], group_ids=[]) == ({}, set())
     assert db.list_datastores_shared_to_user(benef) == []
 
 

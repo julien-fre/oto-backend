@@ -311,7 +311,7 @@ SLOT_PREFIX = "slot:"
 
 
 def resolve_datastore_ref(namespace: str) -> str:
-    """Résout une référence de tableau : `slot:<name>` → le nom RÉEL du namespace
+    """Résout une référence de tableau : `slot:<name>` → l'IDENTIFIANT du tableau
     bindé par le projet actif ; un nom nu passe inchangé (zéro magie sur les noms
     littéraux).
 
@@ -330,8 +330,8 @@ def resolve_datastore_ref(namespace: str) -> str:
 
 def resolve_slot_tableau(name: str) -> str:
     """Résout un slot `tableau` contre les bindings du projet ACTIF (ADR 0035 B3) →
-    le NOM réel du namespace. **Enforcement serveur, jamais de fallback** : pas de
-    projet actif, slot non bindé, ou binding pendouillant (namespace disparu) ⇒
+    l'IDENTIFIANT du tableau bindé (#365 — jamais son nom). **Enforcement serveur, jamais
+    de fallback** : pas de projet actif, slot non bindé, ou binding pendouillant ⇒
     `McpError` ACTIONNABLE — on n'interprète jamais `slot:x` comme un nom littéral
     et on ne « prend jamais le premier tableau venu »."""
     from .. import slots as slots_mod
@@ -361,18 +361,27 @@ def resolve_slot_tableau(name: str) -> str:
                         "Aucun slot tableau bindé dans ce projet. ")
                      + f"Binde-le : `oto_project op=link project_id={pid} "
                        f"target_type=tableau target_ref=<id> slot='{name}'`.")))
-    # ⚠️ **La clé NEUVE, et c'est un chemin critique.** `slot:` est la façon dont les
+    # ⚠️ **L'IDENTIFIANT, jamais le nom (#365).** `slot:` est la façon dont les
     # procédures adressent « le tableau de ce projet » sans nom en dur : tout passe par
-    # ici. `namespace` est doublée jusqu'à `RETRAIT_DATASTORE` (08/11/2026) puis
-    # disparaît — un lecteur resté dessus aurait alors rendu `None` sur des slots
-    # parfaitement valides, et le refus ci-dessous aurait accusé le BINDING au lieu de
-    # la lecture. Toutes les procédures à slot seraient tombées le même jour, en
-    # accusant l'utilisateur.
-    ns = match[0].get("datastore")
-    if not ns:
+    # ici. On rendait le NOM du tableau bindé, que le store résolvait ensuite dans la
+    # portée de l'APPELANT — son « vivier » perso passait donc devant le « vivier » que
+    # le projet a bindé, et la procédure écrivait chez l'homonyme, sans erreur. Le
+    # binding désigne un tableau précis : on rend son identifiant (`datastore_id`,
+    # résolu dans la portée du PROPRIÉTAIRE du projet, `db.list_project_links`).
+    lien = match[0]
+    if lien.get("datastore_ambigu"):
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(f"le slot `{name}` du projet #{pid} désigne son tableau par le NOM "
+                     f"« {lien.get('target_ref')} », que plusieurs tableaux portent dans "
+                     "la portée du projet — rien n'est servi. Re-binde-le par identifiant "
+                     f"(`oto_project op=link project_id={pid} target_type=tableau "
+                     f"target_ref=<id> slot='{name}'`).")))
+    ns_id = lien.get("datastore_id")
+    if ns_id is None:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(f"le slot `{name}` du projet #{pid} pointe un tableau qui ne résout "
-                     f"plus (ref `{match[0].get('target_ref')}`) — re-binde-le sur un "
+                     f"plus (ref `{lien.get('target_ref')}`) — re-binde-le sur un "
                      "tableau existant (`oto_project op=link`).")))
-    return ns
+    return str(int(ns_id))

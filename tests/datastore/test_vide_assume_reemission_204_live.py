@@ -420,7 +420,8 @@ def test_aucune_fuite_au_defaut_ni_sur_la_page_publique(client, base, monkeypatc
     projet = {"id": 5, "name": "Projet démo", "brief_md": "", "mcp_access": "secret",
               "mcp_expose_datastore": True, "mcp_expose_docs": True}
     monkeypatch.setattr(db, "list_project_links", lambda pid: [
-        {"target_type": "tableau", "target_ref": "22", "label": "Vivier", "datastore": ns}])
+        {"target_type": "tableau", "target_ref": "22", "label": "Vivier", "datastore": ns,
+         "datastore_id": 22}])
     monkeypatch.setattr(db, "list_docs_for_project", lambda pid: [])
     monkeypatch.setattr(db, "get_datastore_by_id",
                         lambda _rid: {"datastore": ns, "schema": SCHEMA})

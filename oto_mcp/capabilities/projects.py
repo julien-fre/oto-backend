@@ -1387,8 +1387,9 @@ class ProjectAudit(BaseModel):
     projets sert le même nom sous une forme allégée (checks en mémoire seuls, pour
     éviter un N+1) : `inert_procedures` y est toujours vide et les procédures
     cassées n'y remontent pas. Deux payloads, deux profondeurs."""
-    # Lien dont la cible n'existe plus : namespace de tableau disparu, procédure qui
-    # ne résout plus, connecteur absent du registre. `{target_type, target_ref, why}`.
+    # Lien dont la cible n'existe plus : namespace de tableau disparu (ou nom de tableau
+    # AMBIGU dans la portée du projet, #365), procédure qui ne résout plus, connecteur
+    # absent du registre. `{target_type, target_ref, why}`.
     dead_links: list[dict]
     # Procédure liée dont des slots ne sont bindés par aucun lien de CE projet —
     # elle est exécutable mais incomplète. `{procedure, ref, slots}`.
@@ -1462,7 +1463,8 @@ class ProjectRead(BaseModel):
     # `cross_project: true` quand la même cible est liée par un AUTRE projet — la
     # toucher retombe ailleurs. ⚠️ `datastore` est un LIBELLÉ, `datastore_id` l'ADRESSE :
     # `target_ref` est tantôt l'un tantôt l'autre (#117), `datastore_id` porte toujours
-    # le même sens ou n'est pas là (oto#160).
+    # le même sens ou n'est pas là (oto#160) ; `datastore_ambigu: true` quand le NOM
+    # porté désigne plusieurs tableaux dans la portée du propriétaire (#365).
     links: list[dict]
     audit: ProjectAudit
     # Présent SEULEMENT si `include=['spine']` a été demandé — l'arbre des pages dans
@@ -1602,7 +1604,9 @@ CAPABILITIES += [
             "OWNER's scope) — address THIS project's table with `datastore_id` in the data_* "
             "tools, never by hardcoding a name: several tables can carry one name, and at equal "
             "name resolution prefers the CALLER's own personal table. No `datastore_id` = this "
-            "link does not resolve to a single table here — say so instead of guessing. "
+            "link does not resolve to a single table here (`datastore_ambigu: true` = its "
+            "NAME designates several tables in the owner's scope) — say so instead of "
+            "guessing. "
             "EVERY project carries `url` — the web address to OPEN it, in the reader's "
             "own product; hand it over as-is when asked \"where is it?\", never rebuild "
             "one from a pattern (`null` = that reader's product has no such view). "

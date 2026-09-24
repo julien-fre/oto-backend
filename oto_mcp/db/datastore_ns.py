@@ -126,6 +126,22 @@ def list_datastores_for_owners(owners: list[tuple[str, str]]) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+class AdresseAmbigue(LookupError):
+    """Une adresse de tableau en CHIFFRES désigne deux tableaux visibles : celui dont
+    c'est l'IDENTIFIANT, et un autre dont c'est le NOM (#365).
+
+    Levée plutôt que tranchée. Les ponts qui adressent un tableau par sa clé (fiche de
+    nœud, lignes d'un nœud, `slot:`) passent l'identifiant en chiffres ; préférer le
+    nom — l'ancienne règle — laissait un tableau NOMMÉ « 77 », posé par n'importe quel
+    membre de l'org, capter tout ce qui visait le tableau 77. Préférer l'identifiant
+    trahirait à l'inverse qui a nommé son tableau « 2024 ». Aucun des deux n'est sûr :
+    on refuse, en nommant les deux."""
+
+    def __init__(self, adresse: str, par_id: int, par_nom: int):
+        self.adresse, self.par_id, self.par_nom = adresse, par_id, par_nom
+        super().__init__(adresse)
+
+
 def resolve_datastore_ns(
     namespace: str, *, sub: str, org_ids: list[int], group_ids: list[int],
 ) -> Optional[dict]:
@@ -138,13 +154,17 @@ def resolve_datastore_ns(
     (le picker dashboard, `EntityPickerDialog`) alors que l'agent lie par **nom** — les deux
     doivent résoudre (sinon l'aperçu tableau tombait en 404 → « Aperçu indisponible »). Le
     prédicat de VISIBILITÉ est identique quelle que soit la clé (aucun IDOR : un id hors de
-    la portée de l'acteur ne résout pas). Collision improbable (un namespace nommé « 109 »
-    vs un id 109) → le match par NOM est préféré."""
+    la portée de l'acteur ne résout pas).
+
+    ⚠️ **Des chiffres qui sont À LA FOIS l'identifiant d'un tableau visible et le nom
+    d'un autre** lèvent `AdresseAmbigue` (#365) : c'était le nom qui gagnait, en
+    silence, et les ponts qui adressent un tableau par sa clé passent justement des
+    chiffres."""
     org_txt = [str(o) for o in org_ids]
     grp_txt = [str(g) for g in group_ids]
     ns_id = int(namespace) if str(namespace).isdigit() else None
     with _connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.schema, d.created_at "
             "FROM user_datastores d "
             "WHERE (d.namespace = %(ns)s OR d.id = %(nsid)s) AND ("
@@ -163,36 +183,52 @@ def resolve_datastore_ns(
             ") "
             "ORDER BY CASE WHEN d.namespace = %(ns)s THEN 0 ELSE 1 END, "
             "         CASE WHEN d.owner_type='user' AND d.owner_id=%(sub)s THEN 0 "
-            "              WHEN d.owner_type='org' THEN 1 ELSE 2 END "
-            "LIMIT 1",
+            "              WHEN d.owner_type='org' THEN 1 ELSE 2 END",
             {"ns": namespace, "nsid": ns_id, "sub": sub, "org": org_txt, "grp": grp_txt},
-        ).fetchone()
-        return dict(row) if row else None
+        ).fetchall()
+    if not rows:
+        return None
+    premier = dict(rows[0])
+    if ns_id is not None and int(premier["id"]) != ns_id \
+            and any(int(r["id"]) == ns_id for r in rows):
+        raise AdresseAmbigue(str(namespace), par_id=ns_id, par_nom=int(premier["id"]))
+    return premier
 
 
 def resolve_datastore_ids_by_name(
     names: list[str], *, sub: str, org_ids: list[int], group_ids: list[int],
-) -> dict[str, int]:
+) -> tuple[dict[str, int], set[str]]:
     """Les identifiants des tableaux NOMMÉS `names`, vus par un principal donné — même
-    prédicat de visibilité et même priorité que `resolve_datastore_ns`, en UNE requête
-    pour toute la liste. Un nom qui ne résout pas dans cette portée est simplement
-    absent du résultat : l'appelant garde le nom et n'invente pas d'identifiant.
+    prédicat de visibilité que `resolve_datastore_ns`, en UNE requête pour toute la
+    liste. Rend `(résolus, ambigus)` : un nom qui ne résout pas dans cette portée est
+    absent des deux — l'appelant garde le nom et n'invente pas d'identifiant.
 
     ⚠️ **Le principal n'est pas forcément celui qui LIT, et c'est tout l'objet.** Un
     lien de projet qui désigne son tableau par un NOM doit désigner le MÊME tableau
     pour quiconque ouvre le projet. Résolu une fois ici, au nom du PROPRIÉTAIRE du
     projet, l'identifiant est stable et se sert tel quel ; refait chez chaque lecteur,
-    il dérive vers l'homonyme personnel de chacun — la priorité `owner_type='user' AND
-    owner_id=sub` est faite pour ça et n'a pas de sens hors de son propriétaire. C'est
-    exactement le défaut d'oto#160, et c'est pourquoi cette résolution appartient au
-    serveur : un écran qui la referait la referait faux."""
+    il dérive vers l'homonyme personnel de chacun (oto#160). C'est pourquoi cette
+    résolution appartient au serveur : un écran qui la referait la referait faux.
+
+    ⚠️ **Un nom qui désigne plusieurs tableaux au même rang est AMBIGU, pas résolu**
+    (#365). Rang, du plus spécifique au plus large : possédé en perso par `sub`, par
+    une équipe de la portée, par une org de la portée, puis reçu en partage. Le premier
+    rang qui trouve gagne — c'est la règle du propriétaire, qui reconnaît d'abord ce
+    qu'il possède. Mais deux tableaux
+    « vivier » partagés par deux orgs différentes sont au même rang, et le plus petit
+    identifiant l'emportait en silence : le lien pointait l'un ou l'autre selon l'ordre
+    de création. Ce nom-là sort dans `ambigus`, et personne ne le sert."""
     if not names:
-        return {}
+        return {}, set()
     org_txt = [str(o) for o in org_ids]
     grp_txt = [str(g) for g in group_ids]
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT ON (d.namespace) d.namespace, d.id "
+            "SELECT d.namespace, d.id, "
+            "       CASE WHEN d.owner_type = 'user' AND d.owner_id = %(sub)s THEN 0 "
+            "            WHEN d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s) THEN 1 "
+            "            WHEN d.owner_type = 'org' AND d.owner_id = ANY(%(org)s) THEN 2 "
+            "            ELSE 3 END AS rang "
             "FROM user_datastores d "
             "WHERE d.namespace = ANY(%(names)s) AND ("
             "     (d.owner_type = 'user' AND d.owner_id = %(sub)s)"
@@ -205,13 +241,18 @@ def resolve_datastore_ids_by_name(
             "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
             "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
             "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
-            ") "
-            "ORDER BY d.namespace, "
-            "         CASE WHEN d.owner_type='user' AND d.owner_id=%(sub)s THEN 0 "
-            "              WHEN d.owner_type='org' THEN 1 ELSE 2 END, d.id",
+            ")",
             {"names": list(names), "sub": sub, "org": org_txt, "grp": grp_txt},
         ).fetchall()
-        return {r["namespace"]: int(r["id"]) for r in rows}
+    meilleurs: dict[str, tuple[int, set[int]]] = {}
+    for r in rows:
+        rang, ids = meilleurs.get(r["namespace"], (4, set()))
+        if r["rang"] < rang:
+            meilleurs[r["namespace"]] = (r["rang"], {int(r["id"])})
+        elif r["rang"] == rang:
+            ids.add(int(r["id"]))
+    resolus = {nom: next(iter(ids)) for nom, (_, ids) in meilleurs.items() if len(ids) == 1}
+    return resolus, {nom for nom, (_, ids) in meilleurs.items() if len(ids) > 1}
 
 
 def list_datastores_granted_to(

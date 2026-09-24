@@ -252,7 +252,8 @@ from oto_mcp import access  # noqa: E402
 from oto_mcp.tools import datastore as ds  # noqa: E402
 
 _LINKS = [
-    {"target_type": "tableau", "target_ref": "9", "slot": "sortie", "datastore": "leads_q3", "namespace": "leads_q3"},
+    {"target_type": "tableau", "target_ref": "9", "slot": "sortie", "datastore": "leads_q3",
+     "datastore_id": 9, "namespace": "leads_q3"},
     {"target_type": "tableau", "target_ref": "12", "slot": "source", "namespace": "pool_pme"},
     {"target_type": "connecteur", "target_ref": "folk", "slot": None},
 ]
@@ -265,8 +266,20 @@ def _wire_resolve(monkeypatch, project=7, links=_LINKS):
 
 def test_resolve_slot_ok(monkeypatch):
     _wire_resolve(monkeypatch)
-    assert access.resolve_slot_tableau("sortie") == "leads_q3"
-    assert access.resolve_slot_tableau(" Sortie ") == "leads_q3"   # normalisé
+    # L'IDENTIFIANT du tableau bindé, jamais son nom (#365) : un nom se résoudrait
+    # chez l'homonyme perso de l'appelant.
+    assert access.resolve_slot_tableau("sortie") == "9"
+    assert access.resolve_slot_tableau(" Sortie ") == "9"   # normalisé
+
+
+def test_resolve_slot_ambigu_est_refuse_en_le_nommant(monkeypatch):
+    """#365 : un binding par NOM que plusieurs tableaux portent dans la portée du
+    projet ne sert AUCUN des deux."""
+    _wire_resolve(monkeypatch, links=[{"target_type": "tableau", "target_ref": "vivier",
+                                       "slot": "sortie", "datastore_ambigu": True}])
+    with pytest.raises(McpError) as e:
+        access.resolve_slot_tableau("sortie")
+    assert "« vivier »" in str(e.value) and "target_ref=<id>" in str(e.value)
 
 
 def test_resolve_slot_no_project_actionable(monkeypatch):
@@ -301,8 +314,8 @@ def test_resolve_slot_invalid_name(monkeypatch):
 def test_ns_helper_passthrough_and_resolution(monkeypatch):
     _wire_resolve(monkeypatch)
     assert ds._ns("timetrack") == "timetrack"          # nom nu : zéro magie
-    assert ds._ns("slot:sortie") == "leads_q3"
-    assert ds._ns("  SLOT:sortie ") == "leads_q3"      # préfixe insensible à la casse
+    assert ds._ns("slot:sortie") == "9"
+    assert ds._ns("  SLOT:sortie ") == "9"      # préfixe insensible à la casse
     with pytest.raises(McpError):
         ds._ns("slot:fantome")
 

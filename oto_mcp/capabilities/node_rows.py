@@ -32,12 +32,15 @@ personne ne bouge.
 et nœud qui n'est pas un tableau. Distinguer la troisième dirait « il existe, et c'est
 une page » — donc renseignerait sur un contenu qu'on n'a pas le droit de voir.
 
-⚠️ **La garde d'identité qui n'était pas demandée.** Un nœud-tableau désigne son
-namespace par son TITRE, et le store résout un namespace par NOM dans le scope de
-l'appelant. Deux tableaux homonymes dans deux scopes atteignables suffiraient donc à
-servir les lignes d'un autre tableau que celui qu'on a ouvert — sans erreur, avec les
-bonnes colonnes, et personne ne le verrait. On vérifie donc que le namespace résolu est
-bien CELUI que le nœud désigne (`props.legacy_id`), et on refuse sinon.
+⚠️ **Le tableau se désigne par sa CLÉ, jamais par son nom (#365).** Le nœud portait
+son namespace par son TITRE, et le store résout un nom dans le scope de l'appelant :
+deux tableaux homonymes dans deux scopes atteignables suffisaient à servir les lignes
+d'un autre tableau que celui qu'on a ouvert — sans erreur, avec les bonnes colonnes.
+La première garde (v1.134.0) résolvait encore le NOM puis refusait s'il tombait
+ailleurs : sûre, mais elle rendait 404 à qui voyait le bon tableau ET un homonyme
+mieux classé. On résout désormais l'IDENTIFIANT posé par la recopie
+(`node_keys.datastore_de`), et on vérifie que le store rend bien ce tableau-là — un
+tableau NOMMÉ comme cet identifiant ne doit pas pouvoir s'y substituer.
 """
 from __future__ import annotations
 
@@ -53,6 +56,7 @@ from ..datastore.errors import InvalidCursor
 from ..db import node_tables as db_node_tables
 from ..db import node_view as db_node
 from ._authz import ORG_MEMBER
+from .node_keys import datastore_de
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding,
                      cap_limit)
 from .registry import CAPABILITIES
@@ -231,25 +235,25 @@ def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
     # le store chercherait un nom qui n'y existe pas, et refuserait la lecture d'un
     # tableau parfaitement lisible. Le second chemin meurt avec le résidu de la
     # recopie ; celui-ci reste.
-    if props.get("legacy_id") is None:
+    namespace = datastore_de(props.get("legacy"), props.get("legacy_id"))
+    if namespace is None:
         return _natif(inp, fiche, props)
-    namespace = props.get("title") or ""
     store = ds.make_store(ctx.sub)
     try:
         # La résolution du store EST le contrôle d'accès : visible dans l'org active,
         # possédé ou accordé. On ne réécrit pas cette règle — une seconde définition
-        # de « à portée » divergerait de la première.
+        # de « à portée » divergerait de la première. Elle reçoit l'IDENTIFIANT, pas
+        # le titre (#365) : un nom se résout chez l'homonyme de l'appelant.
         ns_id = store._resolve(namespace)
-    except Exception:
+    except ds.DatastoreNotFound:
         raise _introuvable()
 
-    legacy = props.get("legacy_id")
-    if legacy is not None and int(ns_id) != int(legacy):
-        # Le nom a résolu ailleurs que le nœud ne désigne : deux homonymes dans deux
-        # scopes atteignables. Servir cette page rendrait les lignes d'un AUTRE tableau,
-        # avec les bonnes colonnes et sans la moindre erreur.
-        logger.warning("node_rows: %s désigne ns %s, le nom a résolu ns %s",
-                       inp.node_id, legacy, ns_id)
+    if int(ns_id) != int(namespace):
+        # Le store a rendu un AUTRE tableau que celui que le nœud désigne : un tableau
+        # NOMMÉ comme cet identifiant, seul visible des deux. Servir cette page rendrait
+        # les lignes d'un autre tableau, avec les bonnes colonnes et sans erreur.
+        logger.warning("node_rows: %s désigne ns %s, le store a rendu ns %s",
+                       inp.node_id, namespace, ns_id)
         raise _introuvable()
 
     filtres = _filtres(inp.filter)

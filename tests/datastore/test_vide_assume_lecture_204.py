@@ -167,7 +167,7 @@ def test_la_page_publique_d_un_tableau_partage_ne_montre_pas_le_marqueur(monkeyp
               "mcp_expose_datastore": True, "mcp_expose_docs": True}
     monkeypatch.setattr(db, "list_project_links", lambda pid: [
         {"target_type": "tableau", "target_ref": "22", "label": "Vivier",
-         "datastore": "vivier"}])
+         "datastore": "vivier", "datastore_id": 22}])
     monkeypatch.setattr(db, "list_docs_for_project", lambda pid: [])
     monkeypatch.setattr(db, "get_datastore_by_id",
                         lambda rid: {"datastore": "vivier", "schema": SCHEMA})

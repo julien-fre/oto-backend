@@ -9,14 +9,14 @@ import pytest
 
 from oto_mcp.capabilities import node_rows as R
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
-from oto_mcp.datastore.errors import InvalidCursor
+from oto_mcp.datastore.errors import DatastoreNotFound, InvalidCursor
 from oto_mcp.db import datastore as db_datastore
 
 CTX = ResolvedCtx(sub="u1", org_id=2)
 
 TABLE = {"id": 5, "public_id": "nod_tbl", "parent_id": None, "kind": "tableau",
          "owner_type": "org", "owner_id": "2", "position": 0,
-         "props": {"title": "vivier", "legacy_id": 12,
+         "props": {"title": "vivier", "legacy": "tbl", "legacy_id": 12,
                    "child_schema": {"fields": [
                        {"key": "nom", "label": "Nom"},
                        {"key": "score", "label": "Score", "type": "number"}]}},
@@ -33,8 +33,9 @@ class _Store:
         self.filtres_page = self.filtres_compte = None
 
     def _resolve(self, datastore):
+        self.adresse = datastore
         if self.ns_id is None:
-            raise RuntimeError("DatastoreNotFound")
+            raise DatastoreNotFound(datastore)
         return self.ns_id
 
     def _schema_of(self, ns_id):
@@ -100,10 +101,17 @@ def test_inexistant_interdit_et_PAS_UN_TABLEAU_rendent_le_MEME_refus(seams):
 
 # ── La garde d'homonymie : le bug qui n'aurait produit AUCUNE erreur ────────────
 def test_un_nom_qui_resout_AILLEURS_est_refuse(seams):
-    seams["store"] = _Store(ns_id=999)         # le nom a résolu un AUTRE tableau
+    seams["store"] = _Store(ns_id=999)         # l'adresse a résolu un AUTRE tableau
     with pytest.raises(AuthzDenied) as e:
         R._compose(CTX, R.NodeRowsInput(node_id="nod_tbl"))
     assert e.value.status == 404
+
+
+def test_le_tableau_est_adresse_par_sa_CLE_jamais_par_son_titre(seams):
+    """#365 : le titre se résout chez l'homonyme de l'appelant ; la clé, non."""
+    R._compose(CTX, R.NodeRowsInput(node_id="nod_tbl"))
+    assert seams["store"].adresse == "12"
+    assert seams["store"].vu["datastore"] == "12"
     # Sans cette garde : les lignes d'un autre tableau, avec les bonnes colonnes,
     # sans erreur, et personne ne le voit.
 
@@ -216,7 +224,7 @@ def test_les_cellules_sont_des_CHAINES_deja_rendues(seams):
 def test_une_table_LIBRE_rend_tous_ses_champs_utilisateur(seams):
     # 29 des 83 tableaux de production ne déclarent aucun schéma : borner aux colonnes
     # déclarées rendrait leur écran vide.
-    seams["fiche"] = {**TABLE, "props": {"title": "vivier", "legacy_id": 12}}
+    seams["fiche"] = {**TABLE, "props": {"title": "vivier", "legacy": "tbl", "legacy_id": 12}}
     seams["store"] = _Store(page={"rows": [
         {"_id": "r1", "_created_at": "2026-01-01", "libre": "oui"}], "next_cursor": None})
     out = R._compose(CTX, R.NodeRowsInput(node_id="nod_tbl"))

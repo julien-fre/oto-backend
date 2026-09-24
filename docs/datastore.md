@@ -192,6 +192,18 @@ en forme par `datastore/identite.py` (source unique des deux clés, des deux fac
 résolution, `ns_id` vaut `null` et `datastore` retombe sur l'adresse reçue : **la présence
 du numéro est la preuve que le tableau a été atteint**.
 
+⚠️ **Des chiffres qui désignent DEUX tableaux sont REFUSÉS (#365, 24/09/2026).** Une
+adresse accepte un nom ou un numéro, et un nom peut être fait de chiffres : quand
+`"77"` est à la fois le numéro d'un tableau visible et le NOM d'un autre, c'était le nom
+qui gagnait, en silence. Or les ponts qui désignent un tableau par sa clé (fiche de
+nœud, lignes d'un nœud, `slot:`) passent justement ce numéro — un tableau nommé « 77 »,
+posé par n'importe quel membre, captait donc tout ce qui visait le tableau 77.
+`db.resolve_datastore_ns` lève `AdresseAmbigue`, que le store rend en
+`DatastoreAmbigu` : sous-classe de `DatastoreNotFound`, pour que chaque surface qui
+refuse « introuvable » refuse aussi ce cas sans une ligne de plus, avec un `indice` qui
+nomme les deux tableaux. Ni l'un ni l'autre n'est servi : préférer le numéro trahirait
+qui a nommé son tableau « 2024 ».
+
 ⚠️ **`data_rows(id=…)` et `GET …/rows/{row_id}` n'en portent RIEN, exprès.** Leur corps
 EST la ligne, et c'est l'objet même que la plateforme invite à relire puis republier tel
 quel (promotion de `_id`, #354/#390) : une clé de réponse posée dedans reviendrait en

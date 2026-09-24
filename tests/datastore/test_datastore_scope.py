@@ -189,20 +189,21 @@ def test_org_store_resolve_outside_scope_not_found(monkeypatch):
 
 
 def test_anon_project_scope_resolves_name_and_id_links(monkeypatch):
-    # Le scope d'un endpoint partagé résout les liens tableau par ID **et** par NOM
+    # Le scope d'un endpoint partagé couvre les liens tableau par ID **et** par NOM
     # (liens legacy d'avant la normalisation nom→id — vécu sur le projet Marché preprod
-    # où data_list_datastores revenait vide car les refs étaient des noms).
+    # où data_list_datastores revenait vide car les refs étaient des noms). Les deux
+    # arrivent RÉSOLUS par `db.list_project_links` (`datastore_id`) ; un nom qui n'y
+    # aboutit pas à un tableau unique (hors portée, ambigu, #365) n'expose rien.
     from oto_mcp.tools import datastore as TD
-    from oto_mcp import subdomain_project as sp
-    monkeypatch.setattr(sp, "current_anon_org", lambda: 81)
     monkeypatch.setattr(TD.db, "list_project_links", lambda pid: [
-        {"target_type": "tableau", "target_ref": "70"},               # id numérique
-        {"target_type": "tableau", "target_ref": "accords_worklist"}, # NOM (legacy)
+        {"target_type": "tableau", "target_ref": "70", "datastore_id": 70},
+        {"target_type": "tableau", "target_ref": "accords_worklist", "datastore_id": 67},
+        {"target_type": "tableau", "target_ref": "vivier", "datastore_ambigu": True},
+        {"target_type": "tableau", "target_ref": "ailleurs"},          # hors portée
         {"target_type": "procedure", "target_ref": "x"},              # ignoré (pas tableau)
     ])
     monkeypatch.setattr(TD.db, "get_datastore",
-                        lambda ot, oid, name: {"id": 67}
-                        if (ot, oid, name) == ("org", "81", "accords_worklist") else None)
+                        lambda *a: pytest.fail("résolution par nom hors de list_project_links"))
     assert TD._anon_project_tableau_ns_ids(7) == frozenset({70, 67})
     assert TD._anon_project_tableau_ns_ids(None) == frozenset()   # pas de projet → rien
 

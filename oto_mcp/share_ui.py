@@ -637,31 +637,20 @@ def _connectors_from_tools(tools: list[str]) -> tuple[list[dict], list[str]]:
     return connectors, loose
 
 
-def _tableau_entries(project: dict, links: list) -> list[dict]:
-    """Tableaux liés au projet, résolus en `{id, label}` — accepte un lien référencé par
-    ID numérique OU par NOM (liens legacy d'avant la normalisation nom→id, même contrat
-    que `tools.datastore._anon_project_tableau_ns_ids`). Un lien par nom est résolu contre
-    le datastore de l'org/user propriétaire du projet ; namespace introuvable ⇒ lien ignoré
-    (jamais de 404 dur sur l'index). Sans ça la page web ne montrait QUE les liens par id."""
-    from . import db
-    owner_type = str(project.get("owner_type") or "org")
-    owner_id = str(project.get("owner_id") or "")
-    out: list[dict] = []
-    for l in links:
-        if l.get("target_type") != "tableau":
-            continue
-        ref = str(l.get("target_ref") or "").strip()
-        if not ref:
-            continue
-        if ref.isdigit():
-            out.append({"id": int(ref), "role": l.get("role"),
-                        "label": l.get("label") or l.get("datastore") or f"#{ref}"})
-        elif owner_id:
-            ns = db.get_datastore(owner_type, owner_id, ref)
-            if ns:
-                out.append({"id": int(ns["id"]), "role": l.get("role"),
-                            "label": l.get("label") or l.get("datastore") or ref})
-    return out
+def _tableau_entries(links: list) -> list[dict]:
+    """Tableaux liés au projet, en `{id, label}` — l'identifiant que
+    `db.list_project_links` a résolu (`datastore_id`), et lui seul.
+
+    ⚠️ **Plus aucune résolution par NOM ici (#365).** Un lien par nom se résolvait contre
+    le seul propriétaire EXACT du projet, pendant que le rail le résolvait dans sa
+    portée (org de contexte d'un projet perso, partages) : deux règles pour le même
+    lien, donc deux tableaux possibles. La résolution vit en UN endroit, et un lien qui
+    n'y aboutit pas à un tableau unique (disparu, hors portée, ambigu) n'est pas montré
+    — jamais de 404 dur sur l'index."""
+    return [{"id": int(l["datastore_id"]), "role": l.get("role"),
+             "label": l.get("label") or l.get("datastore") or f"#{l['datastore_id']}"}
+            for l in links
+            if l.get("target_type") == "tableau" and l.get("datastore_id") is not None]
 
 
 # ── Routeur (lectures DB SYNC → appeler en threadpool) ────────────────────────
@@ -694,7 +683,7 @@ def build_page(project: dict, path: str, *, offset: int = 0,
              "role": l.get("role")}
             for l in links
             if l.get("target_type") == "procedure" and str(l.get("target_ref", "")).isdigit()]
-        tables = (_tableau_entries(project, links) if show_data else [])
+        tables = (_tableau_entries(links) if show_data else [])
         # Docs : les pages de l'arbre du projet, sur opt-in seulement — sans lui on ne
         # les LIT même pas (titre et chapô en disent déjà trop). (Le lien `doc` — pointeur
         # manuel vers une page d'un autre projet — a été retiré, lot 3 chantier 0.4.)
@@ -731,7 +720,7 @@ def build_page(project: dict, path: str, *, offset: int = 0,
                                 role=link.get("role"), marque=marque), 200
 
         if section == "data":
-            allowed = {t["id"] for t in _tableau_entries(project, links)}
+            allowed = {t["id"] for t in _tableau_entries(links)}
             ns = db.get_datastore_by_id(rid) if (show_data and rid in allowed) else None
             if not ns:
                 return render_not_found(marque=marque), 404

@@ -1,37 +1,46 @@
-"""Fix #117 : un lien projet `tableau` créé par NOM (target_ref = nom, pas id) doit
-résoudre son `namespace` — sinon `resolve_slot_tableau` le voyait « ne résout plus ».
-`_apply_tableau_name_refs` attache le nom quand le namespace existe, sans toucher aux
-liens déjà résolus (chemin id) ni aux non-tableaux."""
+"""Un lien projet `tableau` créé par NOM (#117) ne « vit » que s'il RÉSOUT dans la
+portée du propriétaire du projet (#365).
+
+Jusqu'au 24/09/2026, le libellé `datastore` se posait dès qu'un tableau de ce nom
+existait N'IMPORTE OÙ sur la plateforme : un lien d'une org vivait grâce au « vivier »
+d'une autre, l'audit ne le voyait pas mort, et `slot:` rendait ce nom à résoudre chez
+l'appelant. `_apply_tableau_name_ids` pose désormais le libellé ET l'identifiant
+ensemble, sur un nom résolu dans la portée — ou `datastore_ambigu` — ou rien."""
 from __future__ import annotations
 
 from oto_mcp.db import projects as P
 
 
-def test_name_ref_existing_gets_namespace():
+def test_un_nom_resolu_dans_la_portee_recoit_son_libelle_et_son_identifiant():
     links = [{"target_type": "tableau", "target_ref": "vivier-pmi"}]
-    P._apply_tableau_name_refs(links, {"vivier-pmi", "autre"})
-    assert links[0]["datastore"] == "vivier-pmi"
+    P._apply_tableau_name_ids(links, {"vivier-pmi": 41, "autre": 42})
+    assert links[0]["datastore"] == "vivier-pmi" and links[0]["datastore_id"] == 41
 
 
-def test_name_ref_missing_stays_unresolved():
-    links = [{"target_type": "tableau", "target_ref": "disparu"}]
-    P._apply_tableau_name_refs(links, {"vivier-pmi"})
-    assert "datastore" not in links[0]          # dead-link préservé (signalé à l'usage)
+def test_un_nom_qui_n_existe_QU_AILLEURS_reste_non_resolu():
+    """La simple existence du nom sur la plateforme ne suffit plus : hors portée, le
+    lien est mort pour ce projet — l'audit le dit, `slot:` le refuse."""
+    links = [{"target_type": "tableau", "target_ref": "vivier"}]
+    P._apply_tableau_name_ids(links, {})
+    assert "datastore" not in links[0] and "datastore_id" not in links[0]
+
+
+def test_un_nom_AMBIGU_ne_recoit_ni_libelle_ni_identifiant():
+    links = [{"target_type": "tableau", "target_ref": "vivier"}]
+    P._apply_tableau_name_ids(links, {}, {"vivier"})
+    assert links[0]["datastore_ambigu"] is True
+    assert "datastore" not in links[0] and "datastore_id" not in links[0]
 
 
 def test_id_resolved_link_untouched():
-    # déjà résolu par le chemin id → ne pas écraser
-    # ⚠️ La forme RÉELLE d'un lien résolu depuis le 09/09/2026 : les deux clés, posées
-    # ensemble par `_apply_tableau_names`. `namespace` seul n'est plus produit — et le
-    # second chemin se déclenche sur `datastore`, celle qui survivra au 08/11.
     links = [{"target_type": "tableau", "target_ref": "109",
-              "datastore": "vivier-pmi"}]
-    P._apply_tableau_name_refs(links, {"109"})   # même si "109" existait comme nom
-    assert links[0]["datastore"] == "vivier-pmi"
-    assert links[0]["datastore"] == "vivier-pmi"
+              "datastore": "vivier-pmi", "datastore_id": 109}]
+    P._apply_tableau_name_ids(links, {"109": 7}, {"109"})
+    assert links[0] == {"target_type": "tableau", "target_ref": "109",
+                        "datastore": "vivier-pmi", "datastore_id": 109}
 
 
 def test_non_tableau_untouched():
     links = [{"target_type": "connecteur", "target_ref": "folk"}]
-    P._apply_tableau_name_refs(links, {"folk"})
-    assert "namespace" not in links[0]
+    P._apply_tableau_name_ids(links, {"folk": 3}, {"folk"})
+    assert links[0] == {"target_type": "connecteur", "target_ref": "folk"}

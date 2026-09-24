@@ -182,6 +182,11 @@ def test_un_lien_deja_identifie_n_est_pas_reecrit():
     ({"owner_type": "group", "owner_id": "9", "context_org_id": None,
       "created_by": "un-membre"},
      {"sub": "", "org_ids": [], "group_ids": [9]}),
+    # Une équipe range couramment ses tableaux dans son org PARENTE (#365) : la même
+    # règle qu'à la pose du lien. L'équipe passe devant à nom égal (rang, db).
+    ({"owner_type": "group", "owner_id": "9", "context_org_id": None,
+      "group_org_id": 5, "created_by": "un-membre"},
+     {"sub": "", "org_ids": [5], "group_ids": [9]}),
 ])
 def test_la_portee_est_celle_du_PROPRIETAIRE_du_projet(proprio, attendu):
     portee = _portee_du_projet(proprio)

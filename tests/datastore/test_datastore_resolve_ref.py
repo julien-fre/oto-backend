@@ -1,10 +1,14 @@
 """resolve_datastore_ns accepte id OU nom (fix « Aperçu indisponible » : le picker projet
 stocke le target_ref = id numérique, l'endpoint résolvait par nom → 404). On capture les
 params passés à SQL — un ref tout-chiffres pose `nsid` (int), un nom laisse `nsid=None`.
-La sémantique SQL réelle (anti-IDOR, préférence nom) est validée contre un vrai Postgres."""
+La sémantique SQL réelle (anti-IDOR) est validée contre un vrai Postgres ; l'ambiguïté
+chiffres = id d'un tableau ET nom d'un autre (#365) l'est ici et sur le montage réel
+(`tests/test_homonymes_ponts_365.py`)."""
 from __future__ import annotations
 
 import contextlib
+
+import pytest
 
 from oto_mcp.db import datastore as DB
 
@@ -15,6 +19,13 @@ class _Cur:
 
     def fetchone(self):
         return self._row
+
+    def fetchall(self):
+        # Une liste de lignes rangées comme le SQL les range (le nom d'abord) ; une
+        # ligne seule reste une ligne seule.
+        if self._row is None:
+            return []
+        return list(self._row) if isinstance(self._row, list) else [self._row]
 
 
 class _Conn:
@@ -62,3 +73,19 @@ def test_visibility_predicate_still_present(monkeypatch):
     DB.resolve_datastore_ns("109", sub="u1", org_ids=[42], group_ids=[])
     sql = cap["sql"]
     assert "resource_grants" in sql and "d.owner_id = %(sub)s" in sql
+
+
+def test_des_chiffres_qui_sont_AUSSI_le_nom_d_un_autre_tableau_sont_refuses(monkeypatch):
+    """#365 : le nom gagnait en silence — un tableau NOMMÉ « 109 » captait tout ce qui
+    visait le tableau 109, et les ponts adressent désormais les tableaux par numéro."""
+    cap = {}
+    _patch(monkeypatch, cap, row=[{"id": 7, "datastore": "109"}, {"id": 109, "datastore": "x"}])
+    with pytest.raises(DB.AdresseAmbigue) as e:
+        DB.resolve_datastore_ns("109", sub="u1", org_ids=[42], group_ids=[])
+    assert (e.value.par_id, e.value.par_nom) == (109, 7)
+
+
+def test_le_nom_qui_EST_l_identifiant_n_est_pas_ambigu(monkeypatch):
+    cap = {}
+    _patch(monkeypatch, cap, row=[{"id": 109, "datastore": "109"}])
+    assert DB.resolve_datastore_ns("109", sub="u1", org_ids=[42], group_ids=[])["id"] == 109

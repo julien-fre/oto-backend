@@ -38,6 +38,7 @@ from ._conn import _connect, _connect_autocommit
 # Le tableau et sa propriété : extraits dans `datastore_ns` (#325), ré-exportés ici
 # pour que la surface plate `db.<fn>` et tous les appelants restent inchangés.
 from .datastore_ns import (  # noqa: F401
+    AdresseAmbigue,
     count_datastore_rows_for_ns,
     create_datastore,
     delete_datastore_by_id,

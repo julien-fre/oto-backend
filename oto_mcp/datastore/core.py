@@ -51,6 +51,7 @@ from .reserves import (
 from .errors import (  # noqa: F401
     BusinessKeyRequired,
     InvalidCursor,
+    DatastoreAmbigu,
     DatastoreExists,
     DatastoreForbidden,
     DatastoreNotFound,
@@ -239,8 +240,11 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         accordé à son contexte). `write=True` exige le droit d'écriture via
         `ownership.can_access`."""
         org_ids, group_ids = self._active_scope()
-        ns = db.resolve_datastore_ns(
-            datastore, sub=self.sub, org_ids=org_ids, group_ids=group_ids)
+        try:
+            ns = db.resolve_datastore_ns(
+                datastore, sub=self.sub, org_ids=org_ids, group_ids=group_ids)
+        except db.AdresseAmbigue as e:
+            raise DatastoreAmbigu(e.adresse, par_id=e.par_id, par_nom=e.par_nom) from None
         if not ns:
             # #631 : le run sait où il travaille — sa réservation porte le tableau.
             ns = hors_org.tenu_par_le_run(self.sub, datastore)

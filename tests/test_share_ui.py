@@ -1,5 +1,7 @@
 """UI web navigable d'un projet partagé (`share_ui.py`, ADR 0032) — routeur `build_page`
 (gating fail-closed par appartenance au projet), rendus, dérivation de colonnes."""
+import pytest
+
 from oto_mcp import db, org_store, share_ui
 
 # `secret` = partage navigable, ET les deux opt-ins posés : c'est le projet dont le
@@ -11,7 +13,10 @@ _PROJECT = {"id": 5, "name": "Projet démo", "brief_md": "Un projet de démonstr
 
 _LINKS = [
     {"target_type": "procedure", "target_ref": "11", "label": "Enrichir", "title": "Enrichissement"},
-    {"target_type": "tableau", "target_ref": "22", "label": "Prospects", "datastore": "prospects"},
+    # La forme RÉELLE de `db.list_project_links` : un lien tableau résolu porte son
+    # `datastore_id` — la seule clé que la page lit (#365).
+    {"target_type": "tableau", "target_ref": "22", "label": "Prospects", "datastore": "prospects",
+     "datastore_id": 22},
     {"target_type": "connecteur", "target_ref": "serper"},  # ignoré (pas navigable)
 ]
 
@@ -199,27 +204,37 @@ def test_data_not_linked_is_404(monkeypatch):
     assert status == 404
 
 
-# Lien tableau par NOM (legacy, avant normalisation nom→id) : la page web doit le
-# résoudre contre le datastore de l'org propriétaire — sinon il était jeté par `isdigit()`
-# et le datastore n'apparaissait pas (régression vécue projet Marché #8).
+# Lien tableau par NOM (legacy, avant normalisation nom→id) : la page web le montre —
+# sinon il était jeté par `isdigit()` et le datastore n'apparaissait pas (régression vécue
+# sur un projet partagé). Elle ne le résout plus elle-même (#365) : elle lit le
+# `datastore_id` que `db.list_project_links` a résolu dans la portée du propriétaire,
+# comme le rail et l'endpoint partagé — une règle, un lieu.
 _PROJECT_OWNED = {**_PROJECT, "owner_type": "org", "owner_id": "81"}
 _LINKS_BY_NAME = [
-    {"target_type": "tableau", "target_ref": "accords_dormants", "label": "Vivier national"},
+    {"target_type": "tableau", "target_ref": "accords_dormants", "label": "Vivier national",
+     "datastore": "accords_dormants", "datastore_id": 65},
+    # Hors portée, ou AMBIGU : pas d'identifiant, donc rien de montré ni de servi.
+    {"target_type": "tableau", "target_ref": "vivier", "label": "Ambigu",
+     "datastore_ambigu": True},
 ]
+
+
+def _pas_de_resolution_par_nom(monkeypatch):
+    monkeypatch.setattr(db, "get_datastore", lambda *a: pytest.fail(
+        "la page résout un nom elle-même : seconde règle, second tableau possible"))
 
 
 def test_index_lists_tableau_linked_by_name(monkeypatch):
     _wire(monkeypatch, links=_LINKS_BY_NAME)
-    monkeypatch.setattr(db, "get_datastore",
-                        lambda ot, oid, name: {"id": 65} if name == "accords_dormants" else None)
+    _pas_de_resolution_par_nom(monkeypatch)
     html, _ = share_ui.build_page(_PROJECT_OWNED, "/", connect_url="u")
     assert "Vivier national" in html and "/data/65" in html
+    assert "Ambigu" not in html
 
 
 def test_data_allowed_via_name_link(monkeypatch):
     _wire(monkeypatch, links=_LINKS_BY_NAME)
-    monkeypatch.setattr(db, "get_datastore",
-                        lambda ot, oid, name: {"id": 65} if name == "accords_dormants" else None)
+    _pas_de_resolution_par_nom(monkeypatch)
     monkeypatch.setattr(db, "get_datastore_by_id",
                         lambda rid: {"datastore": "accords_dormants", "schema": None})
     monkeypatch.setattr(db, "datastore_count_rows", lambda rid: 1)
@@ -342,7 +357,8 @@ _LINKS_WITH_ROLE = [
     {"target_type": "procedure", "target_ref": "11", "label": "Enrichir",
      "title": "Enrichissement", "role": "Ce que chaque agent worker exécute, une ligne à la fois."},
     {"target_type": "tableau", "target_ref": "22", "label": "Prospects",
-     "datastore": "prospects", "role": "Périmètre sourcé par convention collective."},
+     "datastore": "prospects", "datastore_id": 22,
+     "role": "Périmètre sourcé par convention collective."},
 ]
 
 

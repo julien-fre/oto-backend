@@ -54,8 +54,8 @@ from ..db import project_nodes
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, NotModified, ResolvedCtx, RestBinding
-from .node_keys import (EditSurface, NoeudIncoherent, doc_id_de, edit_surface_de,
-                        exiger_poignee)
+from .node_keys import (EditSurface, NoeudIncoherent, datastore_de, doc_id_de,
+                        edit_surface_de, exiger_poignee)
 from .node_procedure_ref import ProcedureRef, procedure_ref_of
 from .registry import CAPABILITIES
 
@@ -176,28 +176,25 @@ class NodeOut(BaseModel):
         "La surface CANONIQUE qui écrit ce nœud : node | doc | project | procedure | "
         "datastore | guide. Pas une permission : écrire reste jugé par la garde de "
         "propriété. `guide` n'a aucune poignée sur cette fiche."))
-    # Tableau : le NOM DU TABLEAU à repasser aux surfaces `data_*`.
+    # Tableau : l'ADRESSE du tableau à repasser aux surfaces `data_*` — son IDENTIFIANT.
     #
-    # ⚠️ Il vaut aujourd'hui la même chose que `name`, et c'est une COÏNCIDENCE qu'on
-    # dissout exprès : la projection pose `title = datastore`, mais le modèle veut que
-    # l'adresse devienne une position dans l'arbre, pas un nom. Le jour où c'est
-    # fait, un client qui lisait `name` comme une adresse casserait **sans que rien ne
-    # le prévienne**. La poignée est donc déclarée maintenant, tant qu'elle est facile
-    # à tenir — même geste que `doc_id`/`project_id`. Absent sur une page.
+    # ⚠️ **C'était son NOM jusqu'au 24/09/2026 (#365), et un nom n'est pas une adresse.**
+    # Le store résout un nom dans la portée de l'appelant, où « vivier », « leads » ou
+    # « contacts » existent souvent en plusieurs exemplaires (perso, équipe, org) : un
+    # client qui enchaînait « ouvrir ce tableau » puis « y écrire » écrivait chez
+    # l'homonyme, sans erreur. La poignée avait été déclarée à part de `name` pour que
+    # ce jour-là seule cette ligne change : c'est fait, dans `node_keys.datastore_de`.
+    # `null` sur une page ET sur un tableau né ici — il n'a aucun tableau du store
+    # derrière lui, et son titre y désignerait l'homonyme de l'appelant.
     #
     # Nom de la clé : `datastore` depuis le 10/09/2026 (ex-`namespace`, bascule sèche,
-    # sans doublon). Cette poignée-ci était la DERNIÈRE du sens « tableau » à porter
-    # l'ancien nom : elle avait échappé à la bascule parce que son module s'appelle
-    # `node_view` et que le filtre triait sur le nom du module, pas sur ce que la clé
-    # désigne.
+    # sans doublon).
     datastore: Optional[str] = Field(default=None, description=(
-        "Tableau : le nom du tableau à repasser aux surfaces `data_*`. `null` sur "
-        "une page. ⚠️ **C'est un NOM, et un nom peut désigner deux tableaux.** Les "
-        "écritures de lignes le résolvent dans le scope de l'appelant, où « vivier », "
-        "« leads » ou « contacts » existent souvent en plusieurs exemplaires (perso, "
-        "équipe, org) : deux homonymes atteignables suffisent à écrire dans l'autre, "
-        "sans erreur. Tant que l'écriture au grain du nœud n'existe pas, un client qui "
-        "enchaîne « ouvrir ce tableau » puis « y écrire » assume cette ambiguïté."))
+        "Table copied from the datastore: its IDENTIFIER (digits, as a string) to pass "
+        "as `datastore` to the `data_*` surfaces — never its name, which resolves in "
+        "YOUR scope and can land on a homonym (a personal « vivier » beside the org's). "
+        "`null` on a page and on a table born in the node model (read its rows through "
+        "the node rows surface)."))
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.
@@ -394,9 +391,9 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
         "project_id": project_id,
         "pinned": bool(props.get("pinned")),
         "edit_surface": surface,
-        # Le point UNIQUE où l'adresse du tableau se résout : le jour où `title` cesse
-        # d'être cette adresse, c'est cette ligne qui change, et les clients ne bougent pas.
-        "datastore": (props.get("title") or None) if nature == "table" else None,
+        # L'adresse du tableau : sa CLÉ, jamais son titre (#365, `node_keys.datastore_de`).
+        "datastore": (datastore_de(props.get("legacy"), props.get("legacy_id"))
+                      if nature == "table" else None),
         "trail": [c.model_dump() for c in _fil(fiche, chaine, lu["freres"] if lu else None)],
         "modified": NodeModified(
             at=str(fiche["updated_at"]) if fiche.get("updated_at") else None,

@@ -262,9 +262,11 @@ def test_R6_le_readme_injecte_s_adresse_sans_slug(client, org):
 
 # ── R7 : un stockage incohérent se refuse au propriétaire, se tait au tiers ───
 
-def test_R7_un_tableau_herite_au_nom_vide_ne_sert_pas_de_poignee_nulle(client, org, caplog):
+def test_R7_un_tableau_herite_sans_cle_ne_sert_pas_de_poignee_nulle(client, org, caplog):
+    # La poignée d'un tableau est son NUMÉRO depuis #365 (`node_keys.datastore_de`), plus
+    # son nom : c'est donc une clé absente, et non un nom vide, qui la rend nulle.
     sub = org["membre"]
-    nid = _pose_heritee(sub, "tableau", {"legacy": "tbl", "legacy_id": 5, "title": ""})
+    nid = _pose_heritee(sub, "tableau", {"legacy": "tbl", "title": "vivier"})
     with caplog.at_level(logging.ERROR, logger="oto_mcp.capabilities.node_view"):
         r = _get(client, sub, nid)
     assert r.status_code == 500, r.text

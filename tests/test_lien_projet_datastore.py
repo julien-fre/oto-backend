@@ -13,7 +13,7 @@ range ce lieu sous la même échéance que le reste.
 """
 from __future__ import annotations
 
-from oto_mcp.db.projects import _apply_tableau_names, _apply_tableau_name_refs
+from oto_mcp.db.projects import _apply_tableau_names, _apply_tableau_name_ids
 
 
 def test_le_chemin_par_ID_sert_le_nom_du_tableau():
@@ -32,7 +32,7 @@ def test_le_chemin_par_NOM_sert_le_nom_du_tableau():
     """Le chemin de l'agent (#117) : `target_ref` EST déjà le nom du tableau."""
     liens = [{"target_type": "tableau", "target_ref": "un-vivier"}]
     _apply_tableau_names(liens, {})                      # rien à résoudre par id
-    _apply_tableau_name_refs(liens, {"un-vivier"})
+    _apply_tableau_name_ids(liens, {"un-vivier": 12})    # résolu dans la portée (#365)
     assert liens[0]["datastore"] == "un-vivier"
     assert "namespace" not in liens[0]
 
@@ -46,13 +46,14 @@ def test_un_tableau_DISPARU_ne_pose_aucune_des_deux():
 
 
 def test_le_second_chemin_se_declenche_sur_la_cle_NEUVE():
-    """⚠️ `_apply_tableau_name_refs` ne s'applique qu'aux liens non encore résolus. S'il
-    testait `namespace` alors que le premier chemin pose `datastore`, il repasserait sur
-    un lien déjà résolu — ou l'inverse le jour où le doublon partira."""
+    """⚠️ Le chemin par nom ne s'applique qu'aux liens non encore résolus : il teste
+    `datastore_id`, que le premier chemin pose. Sinon il repasserait sur un lien déjà
+    résolu."""
     deja = [{"target_type": "tableau", "target_ref": "174",
-             "datastore": "resolu-par-id"}]
-    _apply_tableau_name_refs(deja, {"174"})
+             "datastore": "resolu-par-id", "datastore_id": 174}]
+    _apply_tableau_name_ids(deja, {"174": 9})
     assert deja[0]["datastore"] == "resolu-par-id", "un lien déjà résolu n'est pas réécrit"
+    assert deja[0]["datastore_id"] == 174
 
 
 def test_aucun_lecteur_interne_ne_depend_du_nom_qui_DISPARAIT():

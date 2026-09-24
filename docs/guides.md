@@ -417,7 +417,9 @@ quand un connecteur à identités est référencé sans slot). Écriture : `oto_
 revisions + revert + `copy_instruction_to_org` + publish/fork bibliothèque +
 `duplicate_project`. **Runtime (B3)** : les tools `data_*` acceptent
 `namespace='slot:<name>'` → `access.resolve_slot_tableau` résout contre les bindings du
-**projet actif** ; pas de projet / slot non bindé / binding pendouillant = **McpError
+**projet actif**, et rend le NUMÉRO du tableau bindé, jamais son nom (#365 : un nom se
+résolvait ensuite chez l'homonyme de l'appelant) ; pas de projet / slot non bindé / binding
+pendouillant = **McpError
 actionnable, jamais de fallback** (bracelet serveur 0023) ; `data_create_namespace`
 refuse le préfixe (un slot binde un tableau existant). Bloc A : §« Slots » (⚠️ prose
 seedée en DB — une évolution du texte passe par `oto_admin_platform_instructions`, pas

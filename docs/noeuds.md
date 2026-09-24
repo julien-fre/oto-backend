@@ -93,6 +93,19 @@ fonction : elle refuse une copie (`409 node_projete`) **et désormais une couche
 inconnue, les deux clés ensemble ou une poignée absente lèvent `noeud_incoherent` au lieu de
 retomber sur `node`. Contrat complet : `docs/rest-api.md` § Surface nœuds.
 
+**Un tableau recopié se désigne par sa CLÉ, jamais par son titre (#365, 24/09/2026).**
+Le store résout un NOM dans la portée de l'appelant (perso > org > partages), où
+« vivier » ou « leads » existent en plusieurs exemplaires : un pont qui passe le titre
+du nœud sert l'homonyme de l'appelant, sans erreur. L'adresse d'un tableau recopié est
+donc son identifiant (`props.legacy_id`), dérivé en un seul point
+(`capabilities/node_keys.datastore_de`) et lu par ses deux consommateurs : la poignée
+`datastore` de la fiche (un NUMÉRO en chaîne depuis le 24/09, `null` sur un tableau né
+ici — son titre n'y désignerait que l'homonyme) et `oto_node_rows`, qui résout ce
+numéro puis vérifie que le store a bien rendu CE tableau. Une garde de la suite
+(`tests/test_homonymes_ponts_365.py`) refuse qu'une fonction de nœud mêle le titre et
+l'adressage d'un tableau, et qu'un résolveur par nom soit appelé hors des lieux
+déclarés.
+
 **Corps actif et projections.** `nodes.props.body_md` porte le corps courant ; les
 surfaces page et guide le modifient, et l'ouverture `oto_node` lit ses blocs. Ces
 écritures maintiennent désormais les blocs **dans la même transaction**, ainsi que

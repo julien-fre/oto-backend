@@ -6,11 +6,12 @@ Le nœud servi portait déjà de quoi répondre, mais pas de quoi le DIRE :
   Comme le modèle a retiré le genre `project` exprès (0054-D5 : le genre dit ce que
   l'objet EST, pas ce qu'il joue), l'épingle est **la seule chose** qui distingue une
   racine d'une page ordinaire — et elle n'était pas servie ;
-- **l'adresse du tableau** (`datastore`) vaut aujourd'hui la même chose que son nom,
-  parce que la projection pose `title = datastore`. **C'est une coïncidence, et elle est
-  vouée à disparaître** : le modèle veut que cette adresse devienne une position dans
-  l'arbre. Le jour où c'est fait, un client qui lisait `name` comme une adresse casse
-  **sans que rien ne le prévienne**.
+- **l'adresse du tableau** (`datastore`) a valu le NOM du tableau jusqu'au 24/09/2026 :
+  la projection pose `title = datastore`, et c'était une coïncidence vouée à
+  disparaître. Elle a disparu pour une raison de sécurité (#365) — un nom se résout
+  dans la portée de l'appelant, donc chez son homonyme — et c'est désormais
+  l'IDENTIFIANT du tableau recopié. La poignée tenue à part de `name` a joué son rôle :
+  une seule ligne a changé.
 
 La clé s'appelait `namespace` jusqu'au 10/09/2026. Le renommage du sens « tableau » l'a
 trouvée en dernier : elle avait échappé au tri parce qu'on triait sur le nom du module
@@ -73,19 +74,17 @@ def test_lepingle_vient_des_props_et_pas_du_genre():
         assert interdit not in src, "l'épingle est déduite du genre — le genre n'en a plus"
 
 
-def test_l_adresse_DIT_qu_un_nom_peut_etre_ambigu():
-    """Servir un nom sans dire qu'il peut en désigner deux, c'est transmettre le piège
-    avec la poignée.
-
-    Les écritures de lignes résolvent ce nom dans le scope de l'appelant, où les noms
-    banals (« vivier », « leads », « contacts ») existent souvent en plusieurs
-    exemplaires. Tant que l'écriture au grain du nœud n'existe pas, un client qui
-    enchaîne « ouvrir ce tableau » puis « y écrire » assume cette ambiguïté — il doit
-    au moins la connaître. Ajouté le 2026-09-01 (#650, point 1).
-    """
+def test_l_adresse_est_un_IDENTIFIANT_et_le_contrat_le_dit():
+    """#365 : la poignée était un NOM, résolu dans la portée de l'appelant — deux
+    homonymes atteignables (« vivier » perso et « vivier » d'org) suffisaient à écrire
+    dans l'autre, sans erreur. Elle est désormais l'identifiant du tableau recopié, et
+    la description doit le dire : un client qui la lirait comme un nom la recomposerait
+    à partir de `name`, et rouvrirait la faille de son côté."""
     description = (NodeOut.model_json_schema()["properties"]["datastore"]
                    .get("description") or "")
-    assert description.strip(), "`datastore` est servi sans description"
-    assert "NOM" in description, (
-        "la description ne dit pas que la poignée est un nom résolu dans un scope, "
-        "donc potentiellement ambigu")
+    assert "IDENTIFIER" in description and "homonym" in description, (
+        "la description ne dit pas que la poignée est un identifiant, ni pourquoi un nom "
+        "ne suffit pas")
+    src = inspect.getsource(node_view._compose)
+    assert "datastore_de(" in src and '"datastore": (props.get("title")' not in src, (
+        "l'adresse du tableau est redevenue son titre")

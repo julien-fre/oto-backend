@@ -39,6 +39,25 @@ def doc_id_de(legacy: Optional[str], legacy_id) -> Optional[int]:
     return int(legacy_id) if legacy == "doc" and legacy_id is not None else None
 
 
+def datastore_de(legacy: Optional[str], legacy_id) -> Optional[str]:
+    """L'ADRESSE du tableau d'origine d'un nœud recopié — son identifiant, jamais son nom.
+
+    ⚠️ **Le nom d'un tableau n'est pas une adresse** (#365). Le store résout un nom
+    dans la portée de l'APPELANT (perso > org > partages) : « vivier », « leads »,
+    « contacts » y existent couramment en plusieurs exemplaires, et un nœud qui
+    désignait son tableau par son titre servait les lignes d'un AUTRE tableau que
+    celui qu'on avait ouvert — sans erreur, avec des colonnes plausibles. L'identifiant
+    est celui que la recopie a posé (`db/nodes.convert_tables`), et le store l'accepte
+    partout où il accepte un nom.
+
+    Deux lecteurs, UNE règle : la poignée `datastore` de la fiche (`node_view`) et la
+    lecture des lignes (`node_rows`). `None` pour tout ce qui n'est pas un tableau
+    recopié — un tableau NÉ ICI n'a aucun tableau du store derrière lui, et lui prêter
+    son titre comme adresse l'enverrait sur l'homonyme que l'appelant a sous la main.
+    """
+    return str(int(legacy_id)) if legacy == "tbl" and legacy_id is not None else None
+
+
 # ── La surface d'édition (oto#198) ─────────────────────────────────────────────
 
 EditSurface = Literal["node", "doc", "project", "procedure", "datastore", "guide"]
@@ -102,10 +121,9 @@ def exiger_poignee(surface: str, corps: Mapping) -> None:
     """La poignée que `surface` exige est-elle dans le corps servi ? Sinon, incohérent.
 
     Par construction, chaque poignée vient d'une colonne source non nulle et plus rien ne
-    réécrit les nœuds convertis depuis l'arrêt de la recopie (01/09/2026). **Un cas reste
-    POSSIBLE et n'a pas été mesuré** : un tableau au nom vide — `user_datastores.namespace`
-    est NOT NULL, pas non vide, et aucune validation lue ne refuse la chaîne vide. Il tombe
-    ici avec les autres, plutôt que de servir `datastore: null` sur un tableau.
+    réécrit les nœuds convertis depuis l'arrêt de la recopie (01/09/2026). Celle d'un
+    tableau est son identifiant (`datastore_de`, #365) : un tableau recopié sans
+    `legacy_id` tombe ici, plutôt que de servir `datastore: null` sur un tableau.
     """
     cle = POIGNEE_PAR_SURFACE[surface]
     if cle is not None and corps.get(cle) in (None, ""):

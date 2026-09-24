@@ -112,6 +112,23 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > vise les refs BRUTES stockées, dans les deux sens. `op=link` reste inchangé : il canonise, et
 > refuse un nom introuvable (`unknown_tableau`) — on ne rouvre pas la porte aux liens morts.
 
+> **Un lien par NOM se résout dans la portée du PROPRIÉTAIRE, une fois, et nulle part
+> ailleurs (#365, 24/09/2026).** `db.list_project_links` est le seul lieu où un lien
+> `tableau` posé par nom devient un tableau : dans la portée du propriétaire du projet
+> (`_portee_du_projet` — le porteur et son org de contexte, l'org, ou l'équipe et son org
+> PARENTE), rang du plus spécifique au plus large (perso, équipe, org, partages). Trois
+> dérives fermées : (1) le libellé `datastore` se posait dès que le nom existait
+> N'IMPORTE OÙ sur la plateforme — un lien « vivait » grâce au tableau d'une autre org ;
+> il ne se pose plus qu'avec `datastore_id`, et l'audit voit ce lien mort ; (2) deux
+> tableaux au MÊME rang (deux partages homonymes) donnaient le plus petit id en silence :
+> le lien porte `datastore_ambigu: true`, n'a ni libellé ni identifiant, et l'audit le
+> range dans `dead_links` en le disant ; (3) **`slot:` rendait le NOM du tableau bindé**,
+> que le store résolvait ensuite chez l'appelant — son « vivier » perso passait devant
+> celui du projet. Il rend désormais `datastore_id`, et refuse un binding ambigu en le
+> nommant. L'endpoint MCP partagé et la page partagée lisent le même `datastore_id`
+> au lieu de refaire chacun leur résolution (le premier cherchait dans l'org et
+> exposait, sur un projet d'équipe, le tableau de l'org au lieu de celui de l'équipe).
+
 > **Push out-of-bande de gros contenu par un agent (issue #105).** Écrire un GROS contenu
 > via `oto_doc(body_md=…)`/multipart le fait transiter INLINE par le contexte du LLM (coût
 > tokens + troncature/paraphrase sur du verbatim). **`oto_upload_url(target)`** (capacité

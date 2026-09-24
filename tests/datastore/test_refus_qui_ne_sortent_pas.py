@@ -106,6 +106,12 @@ def test_aucune_exception_du_module_ne_sort_hors_des_types_traduits():
             continue                       # traduite par `_write_refusal`
         if f"except {nom}" in attrapees:
             continue                       # attrapée nommément
+        # Attrapée par son PARENT, nommé : `DatastoreAmbigu` (#365) dérive de
+        # `DatastoreNotFound` exprès, pour que chaque surface qui refuse
+        # « introuvable » refuse aussi l'ambiguïté. `Exception` n'y compte pas.
+        if any(f"except {b.__name__}" in attrapees for b in obj.__mro__[1:]
+               if b.__module__ == ds_errors.__name__):
+            continue
         orphelines.append(nom)
 
     assert not orphelines, (

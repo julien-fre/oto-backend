@@ -176,7 +176,7 @@ class _Store:
 
 _TABLE = {"id": 5, "public_id": "nod_tbl", "parent_id": None, "kind": "tableau",
           "owner_type": "org", "owner_id": "2", "position": 0,
-          "props": {"title": "vivier", "legacy_id": 12,
+          "props": {"title": "vivier", "legacy": "tbl", "legacy_id": 12,
                     "child_schema": {"fields": [{"key": "nom", "label": "Nom"}]}},
           "created_at": "2026-08-01", "updated_at": "2026-08-01"}
 

@@ -103,7 +103,15 @@ def audit_project(project_id: int, links: Optional[list[dict]] = None, *,
             if t == "tableau":
                 # Lit la clé NEUVE : `namespace` est doublée jusqu'au 08/11/2026 et
                 # disparaîtra — un lecteur interne qui s'y accroche casserait ce jour-là.
-                if not l.get("datastore"):
+                if l.get("datastore_ambigu"):
+                    # #365 : le nom désigne plusieurs tableaux dans la portée du projet.
+                    # Il en existe trop, pas pas assez — mais rien ne le sert tant qu'il
+                    # n'est pas re-lié par identifiant : pour qui s'en sert, il est mort.
+                    dead.append({"target_type": t, "target_ref": l.get("target_ref"),
+                                 "slot": l.get("slot"),
+                                 "why": "ce nom désigne plusieurs tableaux dans la portée "
+                                        "du projet — re-lie-le par identifiant"})
+                elif not l.get("datastore"):
                     dead.append({"target_type": t, "target_ref": l.get("target_ref"),
                                  "slot": l.get("slot"),
                                  "why": "le tableau pointé n'existe plus"})

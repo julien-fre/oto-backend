@@ -481,15 +481,17 @@ couche de contexte n'en ont pas non plus.
 | `legacy = doc` | `doc` | `POST /api/me/docs` | `doc_id` |
 | `legacy = prj` | `project` | `oto_project` | `project_id` |
 | `legacy = prc` | `procedure` | `oto_procedure` | `procedure` |
-| `legacy = tbl` | `datastore` | `/api/datastores/{datastore}` | `datastore` |
+| `legacy = tbl` | `datastore` | `/api/datastores/{datastore}` | `datastore` (le NUMÉRO du tableau, #365) |
 | clé `delivery` présente, quelle que soit sa valeur | `guide` | `oto_guide`, `PUT /api/me/guides/{scope}/{slug}` | aucune sur la fiche |
 
 Dérivé en un seul point (`capabilities/node_keys.edit_surface_de`), que lit aussi la garde
 d'écriture : la fiche annonce exactement ce que `POST /api/me/nodes/edit` accepte. Un stockage
 incohérent — famille d'origine inconnue, `legacy` et `delivery` ensemble, poignée requise
 absente — rend `500 noeud_incoherent` après la garde de lecture, jamais une fiche à poignée
-nulle. Un tableau hérité au nom vide est **possible** dans le schéma et n'a pas été mesuré en
-production. L'ajout du champ fait tourner `rev` une fois pour tous les nœuds.
+nulle. La poignée `datastore` d'un tableau est son **numéro** (en chaîne), jamais son nom :
+un nom se résout dans la portée de l'appelant, donc chez son homonyme (#365, 24/09/2026 —
+`rev` a tourné une fois de plus pour tous les tableaux). L'ajout du champ fait tourner `rev`
+une fois pour tous les nœuds.
 
 **Écrire un nœud natif — `POST /api/me/nodes/edit`.** Créer une racine privée :
 `{"op":"create","kind":"page","scope":"user","title":"…"}` → `200

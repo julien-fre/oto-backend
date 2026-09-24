@@ -83,7 +83,7 @@ def test_les_familles_sont_EXACTEMENT_celles_que_posent_les_conversions():
     ("doc", {"doc_id": 12}),
     ("project", {"project_id": 7}),
     ("procedure", {"procedure": {"id": 3, "slug": "relance", "scope": "org"}}),
-    ("datastore", {"datastore": "vivier"}),
+    ("datastore", {"datastore": "12"}),
     ("guide", {}),
 ])
 def test_une_poignee_servie_passe(surface, corps):

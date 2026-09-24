@@ -149,6 +149,24 @@ class DatastoreNotFound(Exception):
         super().__init__(*([datastore] if datastore is not None else []))
 
 
+class DatastoreAmbigu(DatastoreNotFound):
+    """Des chiffres qui désignent DEUX tableaux visibles : l'un par son identifiant,
+    l'autre par son nom (#365, `db.AdresseAmbigue`).
+
+    Sous-classe de `DatastoreNotFound`, à dessein : les quelque quarante surfaces qui
+    rattrapent déjà « introuvable » refusent donc aussi ce cas, sans une ligne de plus,
+    au lieu de le laisser sortir en 500. Le refus porte son explication dans `indice`,
+    que la face MCP rend telle quelle — il ne sert ni l'un ni l'autre."""
+
+    def __init__(self, datastore: str, *, par_id: int, par_nom: int):
+        super().__init__(datastore, indice=(
+            f"`{datastore}` désigne DEUX tableaux que tu vois : celui dont c'est "
+            f"l'identifiant ({par_id}), et un autre NOMMÉ « {datastore} » "
+            f"(identifiant {par_nom}). Rien n'est servi. Son propriétaire lève "
+            "l'ambiguïté en le renommant (`data_rename_datastore`)."))
+        self.par_id, self.par_nom = par_id, par_nom
+
+
 class RowNotFound(Exception):
     pass
 

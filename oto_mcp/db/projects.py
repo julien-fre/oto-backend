@@ -506,38 +506,39 @@ def _apply_tableau_names(links: list[dict], name_by_id: dict[int, str]) -> None:
                 l["datastore_id"] = int(l["target_ref"])
 
 
-def _apply_tableau_name_refs(links: list[dict], existing: set) -> None:
-    """Attache le NOM à un lien `tableau` dont le `target_ref` EST déjà un nom (≠ id
-    numérique), quand ce namespace existe (fix #117 : un lien créé par NOM — l'agent lie
-    ainsi, le dashboard lie par id — résout maintenant, plus de slot « qui ne résout
-    plus »). Pur (mutation en place). Ref-nom inexistant → pas de clé `namespace` (le lien
-    reste, dead-link signalé à l'usage). Symétrique de `_apply_tableau_names` (chemin id)."""
-    for l in links:
-        if (l.get("target_type") == "tableau" and not l.get("datastore")
-                and l.get("target_ref") in existing):
-            l["datastore"] = l["target_ref"]
-
-
 def _portee_du_projet(proprio: dict) -> dict:
     """Le principal dans la portée duquel se résout un lien posé par NOM : le
     PROPRIÉTAIRE du projet (ADR 0030), jamais celui qui lit.
 
     Un projet perso résout comme son porteur — plus, s'il en a un, son org de contexte,
     parce qu'un projet perso ouvert dans une org y lie couramment un tableau d'org. Un
-    projet d'org ou d'équipe résout comme cette org / cette équipe, et pas comme un
-    membre : le lien appartient au projet, pas à qui l'ouvre."""
+    projet d'org résout comme cette org, un projet d'équipe comme cette équipe — plus
+    son org PARENTE, où l'équipe range couramment ses tableaux (la même règle que la
+    normalisation nom→id à la pose du lien, `capabilities/projects._tableau_owner_candidates`).
+    Jamais comme un membre : le lien appartient au projet, pas à qui l'ouvre.
+
+    ⚠️ L'org parente d'une équipe y est entrée le 24/09/2026 (#365) : tant que `slot:`
+    rendait le NOM du tableau, un lien d'équipe vers un tableau de l'org se résolvait
+    chez l'appelant, qui voyait l'org. Maintenant qu'il rend l'identifiant résolu ICI,
+    l'omettre aurait rendu ces liens morts. À nom égal, l'équipe passe devant son org
+    (`resolve_datastore_ids_by_name`, rang)."""
     t, oid = proprio["owner_type"], str(proprio["owner_id"])
     ctx = proprio.get("context_org_id")
     if t == "org":
         return {"sub": "", "org_ids": [int(oid)], "group_ids": []}
     if t == "group":
-        return {"sub": "", "org_ids": [], "group_ids": [int(oid)]}
+        parente = proprio.get("group_org_id")
+        return {"sub": "", "org_ids": [int(parente)] if parente else [],
+                "group_ids": [int(oid)]}
     return {"sub": oid, "org_ids": [int(ctx)] if ctx else [], "group_ids": []}
 
 
-def _apply_tableau_name_ids(links: list[dict], id_by_name: dict[str, int]) -> None:
-    """Attache l'IDENTIFIANT à un lien `tableau` dont le `target_ref` est un NOM, quand
-    ce nom résout dans la portée du PROPRIÉTAIRE du projet. Pur (mutation en place).
+def _apply_tableau_name_ids(links: list[dict], id_by_name: dict[str, int],
+                            ambigus: set = frozenset()) -> None:
+    """Résout un lien `tableau` dont le `target_ref` est un NOM, dans la portée du
+    PROPRIÉTAIRE du projet : il reçoit son IDENTIFIANT (`datastore_id`) et son libellé
+    (`datastore`), ou `datastore_ambigu` si ce nom y désigne plusieurs tableaux au même
+    rang. Pur (mutation en place).
 
     ⚠️ **Pourquoi le serveur le résout, et pourquoi dans cette portée-là.** À nom égal,
     la résolution préfère le tableau personnel du demandeur : un écran qui résoudrait
@@ -547,12 +548,21 @@ def _apply_tableau_name_ids(links: list[dict], id_by_name: dict[str, int]) -> No
     projet, l'identifiant désigne le même tableau pour tout le monde ; celui qui n'y a
     pas droit reçoit un refus franc, pas une réponse plausible et fausse.
 
-    Nom non résolu dans cette portée → pas de clé (le lien garde son nom, et l'écran
-    n'a alors pas le droit de prétendre l'ouvrir)."""
+    ⚠️ **Et le libellé ne se pose QUE sur un nom résolu dans cette portée** (#365).
+    Il se posait dès qu'un tableau de ce nom existait N'IMPORTE OÙ sur la plateforme
+    (#117) : un lien d'une org « vivait » grâce au « vivier » d'une autre, l'audit ne le
+    signalait pas mort, et `slot:` rendait ce nom à résoudre chez l'appelant — donc
+    chez son homonyme. Nom non résolu dans la portée → aucune des deux clés : le lien
+    garde son nom, et rien n'a le droit de prétendre l'ouvrir."""
     for l in links:
-        if (l.get("target_type") == "tableau" and l.get("datastore_id") is None
-                and l.get("target_ref") in id_by_name):
-            l["datastore_id"] = id_by_name[l["target_ref"]]
+        if l.get("target_type") != "tableau" or l.get("datastore_id") is not None:
+            continue
+        ref = l.get("target_ref")
+        if ref in ambigus:
+            l["datastore_ambigu"] = True
+        elif ref in id_by_name:
+            l["datastore"] = ref
+            l["datastore_id"] = id_by_name[ref]
 
 
 def _apply_procedure_titles(links: list[dict], title_by_id: dict[int, str]) -> None:
@@ -605,25 +615,18 @@ def list_project_links(project_id: int) -> list[dict]:
                 "SELECT id, namespace FROM user_datastores WHERE id = ANY(%s)", (ids,),
             ).fetchall()
             _apply_tableau_names(out, {r["id"]: r["namespace"] for r in nrows})
-        # Miroir #117 : un lien tableau peut porter target_ref = NOM (créé par l'agent)
-        # et non un id (dashboard) — résoudre AUSSI ces refs-nom existants, sinon le slot
-        # tombait en « ne résout plus » alors que le namespace existe bel et bien.
+        # Un lien tableau peut porter target_ref = NOM (créé par l'agent, #117) et non
+        # un id (dashboard). Son IDENTIFIANT se résout dans la portée du PROPRIÉTAIRE du
+        # projet (oto#160) — jamais par la simple existence du nom ailleurs (#365) : la
+        # résolution est faite ici pour qu'elle soit la MÊME chez tous les lecteurs.
         name_refs = [l["target_ref"] for l in out
                      if l.get("target_type") == "tableau" and not l.get("datastore")
                      and l.get("target_ref") and not str(l["target_ref"]).isdigit()]
-        if name_refs:
-            erows = conn.execute(
-                "SELECT DISTINCT namespace FROM user_datastores WHERE namespace = ANY(%s)",
-                (name_refs,),
-            ).fetchall()
-            _apply_tableau_name_refs(out, {r["namespace"] for r in erows})
-        # ⚠️ Et l'IDENTIFIANT de ces refs-nom, résolu dans la portée du PROPRIÉTAIRE du
-        # projet (oto#160) : le nom seul est ambigu, la résolution est faite ici pour
-        # qu'elle soit la MÊME chez tous les lecteurs. Requête à part de celle du
-        # dessus, à dessein — elle ne juge pas l'existence (portée mondiale, clé
-        # `datastore`, comportement inchangé) mais la VISIBILITÉ pour un principal.
         proprio = conn.execute(
-            "SELECT owner_type, owner_id, context_org_id FROM projects WHERE id = %s",
+            "SELECT p.owner_type, p.owner_id, p.context_org_id, g.org_id AS group_org_id "
+            "FROM projects p LEFT JOIN org_groups g "
+            "  ON p.owner_type = 'group' AND g.id::text = p.owner_id "
+            "WHERE p.id = %s",
             (project_id,)).fetchone() if name_refs else None
         # Idem pour les titres de guide des procédures (id stable, ADR 0032).
         doc_ids = [int(l["target_ref"]) for l in out
@@ -639,7 +642,7 @@ def list_project_links(project_id: int) -> list[dict]:
     # Hors de la connexion ci-dessus : le résolveur ouvre la sienne, et deux
     # acquisitions imbriquées sur le pool s'interbloquent quand il est étroit.
     if name_refs and proprio is not None:
-        _apply_tableau_name_ids(out, resolve_datastore_ids_by_name(
+        _apply_tableau_name_ids(out, *resolve_datastore_ids_by_name(
             name_refs, **_portee_du_projet(proprio)))
     return out
 
