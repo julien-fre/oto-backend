@@ -11,6 +11,15 @@ Le journal montre les **deux surfaces** : `kind='mcp'` = appel d'agent, `kind='r
 Avant, seul le MCP était visible — un clic de transition dans le dashboard ne laissait
 aucune trace exploitable, d'où l'angle mort « quelle ligne vient de changer d'état ? ».
 
+**Les écritures viennent du journal des révisions** (oto#273, M3) : chaque appel qui a
+écrit la ligne porte ses `revisions` — valeurs avant et après, acteur, run, source —
+rattachées par le geste (`geste_id` = `tool_calls.call_uid`). Une écriture que
+`tool_calls` ne connaît pas (upload signé, formules, maintenance, SQL à la main) devient
+une entrée `kind='revision'`. `tool_calls` reste la source de ce que le journal n'a pas :
+lectures, réservations, refus. ⚠️ Les révisions écrites avant l'estampille (M1, sans
+`geste_id`) ne se rattachent à aucun appel : elles apparaissent en `kind='revision'` À
+CÔTÉ de l'appel qui les a faites.
+
 Autz : `SUB_ONLY` au seuil, le vrai gate est la LECTURE du datastore — résolu par le
 store (scopé org active + ownership), jamais par l'id nu passé en path. Un datastore
 hors périmètre est un 404 (on ne divulgue pas son existence), comme partout ailleurs
@@ -25,7 +34,9 @@ from pydantic import BaseModel, Field
 from ... import db
 from ...datastore.identite import Adresse
 from ...datastore import journal as datastore_journal
+from ...datastore import schema as dsv2
 from ...datastore.core import DatastoreNotFound, RowNotFound, make_store
+from ...db import historique
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -44,6 +55,11 @@ from .common import EntreeDatastore, HORODATAGE
 # **Un chiffre qui décrit une purge dont il ne dépend pas finit toujours par mentir.**
 # D'où l'import : si la rétention change, cette annonce change avec elle.
 from ...maintenance import _JOURNAL_RETENTION_DAYS as RETENTION_DAYS
+
+
+# La page du parcours d'une ligne : celle que `db.datastore_row_activity` rendait déjà
+# par défaut, appliquée aussi aux révisions et au parcours fusionné.
+LIMITE_PARCOURS = 50
 
 
 class RowActivityInput(EntreeDatastore):
@@ -79,6 +95,57 @@ def _attach_emails(entries: list[dict]) -> list[dict]:
     return entries
 
 
+def _entree_de_revision(row_id: str, revisions: list[dict],
+                        status_key: Optional[str]) -> dict:
+    """Une écriture que `tool_calls` ne connaît pas → entrée `kind='revision'`, par le
+    MÊME producteur que les appels (`_ds_activity_entry`) : mêmes clés, toujours.
+    `revisions` est le geste entier, plus récente d'abord."""
+    derniere = revisions[0]
+    champs = sorted({k for r in revisions for k in (r["diff"] or {})})
+    statut = [r["diff"][status_key] for r in reversed(revisions)
+              if status_key and status_key in (r["diff"] or {})]
+    acteur = derniere["acteur"]
+    return db._ds_activity_entry({
+        "created_at": derniere["at"],
+        "kind": "revision",
+        "ok": True,
+        # Un sub résout son email à la lecture ; `service:<nom>` n'en a pas.
+        "sub": acteur if acteur and not acteur.startswith("service:") else None,
+        "run_id": derniere["run_id"],
+        "call_uid": derniere["geste_id"],
+        # Déballé, comme le relevé d'une mutation (`journal.status_of`, #586) : une
+        # colonne d'état à couches afficherait son enveloppe.
+        "args": {"id": row_id, "fields": champs,
+                 "from_status": dsv2.unwrap(statut[0].get("avant")) if statut else None,
+                 "to_status": dsv2.unwrap(statut[-1].get("apres")) if statut else None},
+    })
+
+
+def _joindre_les_revisions(activity: list[dict], ns_id: Optional[int], row_id: str,
+                           status_key: Optional[str], limit: int) -> list[dict]:
+    """Pose sur chaque appel les révisions de CETTE ligne qu'il a écrites (par le
+    geste), et ajoute une entrée pour chaque écriture qu'aucun appel ne porte. Rend le
+    parcours trié du plus récent au plus ancien, borné à `limit`."""
+    if ns_id is None:
+        return activity
+    par_geste: dict = {}
+    for r in historique.revisions_de_ligne(ns_id, row_id, limit=limit)[:limit]:
+        # Sans geste (écrite avant l'estampille), une révision est son propre geste.
+        par_geste.setdefault(r["geste_id"] or ("revision", r["id"]), []).append(r)
+    for entree in activity:
+        revisions = par_geste.pop(entree.get("geste_id"), None) if entree.get("geste_id") else None
+        if revisions:
+            entree.update(revisions=revisions, source=revisions[0]["source"],
+                          acteur=revisions[0]["acteur"])
+    for revisions in par_geste.values():
+        entree = _entree_de_revision(row_id, revisions, status_key)
+        entree.update(revisions=revisions, source=revisions[0]["source"],
+                      acteur=revisions[0]["acteur"])
+        activity.append(entree)
+    activity.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    return activity[:limit]
+
+
 def _row_activity(ctx: ResolvedCtx, inp: RowActivityInput) -> dict:
     store = _store(ctx.sub)
     try:
@@ -95,7 +162,9 @@ def _row_activity(ctx: ResolvedCtx, inp: RowActivityInput) -> dict:
     # remonterait les gestes d'une autre org).
     activity = db.datastore_row_activity(
         inp.row_id, str(key_value) if key_value is not None else None,
-        owner_type=nsctx.owner_type, owner_id=nsctx.owner_id)
+        owner_type=nsctx.owner_type, owner_id=nsctx.owner_id, limit=LIMITE_PARCOURS)
+    activity = _joindre_les_revisions(activity, nsctx.ns_id, inp.row_id,
+                                      nsctx.status_key, LIMITE_PARCOURS)
     # Toutes ces entrées parlent de CETTE ligne (c'est le critère de la requête) → son
     # libellé les qualifie toutes, y compris celles matchées par clé métier dont les
     # args ne portent pas d'`id`. Pas de relecture : la ligne est déjà là.
@@ -148,6 +217,8 @@ class ActivityEntry(BaseModel):
     created_at: Optional[str] = Field(default=None, description=HORODATAGE)
     # `mcp` = geste d'agent, `rest` = geste fait au cockpit. Les DEUX sont journalisés
     # (avant, filtrer `mcp` laissait le parcours vide pour qui travaille au dashboard).
+    # `revision` (oto#273) = une écriture lue dans le journal des révisions, qu'aucun
+    # appel journalisé ne porte : `tool` y est `null`.
     kind: Optional[str] = None
     tool: Optional[str] = None
     sub: Optional[str] = None
@@ -176,20 +247,37 @@ class ActivityEntry(BaseModel):
     row_id: Optional[str] = None
     row_title: Optional[str] = None              # posé sur le parcours d'UNE ligne
     fields: list[str] = Field(default=[], description=(
-        "Les NOMS des champs touchés par l'écriture — **jamais leurs valeurs**. "
-        "Bornés à 50 noms, chacun tronqué à 64 caractères : le journal dit ce qui a "
-        "changé, il n'est pas une copie de la donnée. `[]` sur un geste qui ne touche "
-        "aucun champ (une lecture) et sur les lignes antérieures à ce relevé. "
-        "⚠️ **Le delta n'est pas servi** : pour savoir ce que valait une colonne "
-        "avant, il y a `from_status`/`to_status` sur le statut, et rien pour les "
-        "autres champs — c'est un choix, pas un oubli (un journal qui porterait les "
-        "deux états serait un second domicile pour une donnée qui en a déjà un)."))
+        "Les NOMS des champs touchés par l'écriture, relevés dans les arguments de "
+        "l'appel. Bornés à 50 noms, chacun tronqué à 64 caractères. `[]` sur un geste "
+        "qui ne touche aucun champ (une lecture) et sur les lignes antérieures à ce "
+        "relevé. Les VALEURS avant et après ne sont pas ici : elles sont dans "
+        "`revisions` (journal des révisions, oto#273), sur le parcours d'une ligne."))
     # La transition de statut, relevée PENDANT la mutation et non relue après : une
     # relecture courrait avec une écriture concurrente, et le cockpit proposerait
     # d'annuler vers un état que la ligne n'a jamais eu (cf. `rows.py::_update_row`).
     # `null` des deux côtés sur un geste qui ne touche pas au statut.
     from_status: Optional[str] = None
     to_status: Optional[str] = None
+
+    # ── Le journal des révisions (oto#273, M3) — les VALEURS ─────────────────
+    geste_id: Optional[str] = Field(default=None, description=(
+        "Le geste : `call_uid` de l'appel, le même que le `geste_id` des révisions "
+        "qu'il a écrites."))
+    source: Optional[str] = Field(default=None, description=(
+        "Sur une écriture : la face selon le journal (`import`, `agent`, `console`, "
+        "`api`, `upload`, `system`). `null` sur ce que le journal ne voit pas (lecture, "
+        "réservation, refus) et sur le parcours d'un tableau entier."))
+    acteur: Optional[str] = Field(default=None, description=(
+        "Sur une écriture : l'acteur selon le journal — un sub, ou `service:<nom>`."))
+    revisions: list[dict] = Field(default=[], description=(
+        "Parcours d'une ligne seulement : les révisions de CETTE ligne que ce geste a "
+        "écrites, plus récente d'abord — `{id, rev, at, acteur, run_id, source, "
+        "geste_id, diff: {colonne: {avant, apres}}}`, valeurs comprises (la forme de "
+        "`GET …/rows/{row_id}/history`). `[]` sur une lecture, une réservation, un "
+        "refus, et sur une écriture antérieure au journal (" + historique.MISE_EN_SERVICE
+        + "). `kind='revision'` = une écriture qu'aucun appel journalisé ne porte "
+        "(upload signé, travail de fond, écriture hors serveur, ou antérieure à "
+        "l'estampille)."))
 
 
 class DatastoreActivity(BaseModel):

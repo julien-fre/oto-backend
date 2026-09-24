@@ -644,6 +644,8 @@ POST /api/datastores/{datastore}/drop_column -> _handler
 OPTIONS /api/datastores/{datastore}/drop_column -> options_handler
 PATCH /api/datastores/{datastore}/schema -> _handler
 OPTIONS /api/datastores/{datastore}/schema -> options_handler
+GET,HEAD /api/datastores/{datastore}/rows/{row_id}/history -> _handler
+OPTIONS /api/datastores/{datastore}/rows/{row_id}/history -> options_handler
 POST /api/me/automations/fire -> _handler
 OPTIONS /api/me/automations/fire -> options_handler
 POST /api/me/runs/thread -> _handler
@@ -716,6 +718,8 @@ POST /api/datastore/namespaces/{namespace}/rows/{row_id}/claim -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/rows/{row_id}/claim -> options_handler
 POST /api/datastore/namespaces/{namespace}/rows/{row_id}/release -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/rows/{row_id}/release -> options_handler
+GET,HEAD /api/datastore/namespaces/{namespace}/rows/{row_id}/history -> alias_deprecie
+OPTIONS /api/datastore/namespaces/{namespace}/rows/{row_id}/history -> options_handler
 GET,HEAD /api/datastore/namespaces/{namespace}/rows/{row_id}/activity -> alias_deprecie
 OPTIONS /api/datastore/namespaces/{namespace}/rows/{row_id}/activity -> options_handler
 GET,HEAD /api/me/doctrines/library -> alias_deprecie

@@ -370,6 +370,7 @@ déclarée ; sur une ligne seule, seule la clé déclarée joue.
 | file de travail | `data_claim_next`, `data_release` | `POST …/claim_next` ; `POST …/rows/{row_id}/claim` ; `POST …/rows/{row_id}/release` ; `GET …/queue` |
 | agrégat | `data_aggregate` | `GET …/aggregate` |
 | partage | `data_share` | `GET`/`POST`/`DELETE …/share` |
+| historique d'une ligne | `data_row_history` | `GET …/rows/{row_id}/history` |
 | activité | — | `GET …/activity` ; `GET …/rows/{row_id}/activity` |
 
 `{tableau}` est le **numéro** du tableau (son nom marche encore, en cours de retrait —

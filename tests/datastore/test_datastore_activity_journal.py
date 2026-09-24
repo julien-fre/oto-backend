@@ -299,6 +299,8 @@ def test_row_activity_surface_labels_entries_with_the_title(monkeypatch):
                         lambda row_id, key_value=None, **kw: [{"row_id": "row-1",
                                                                "row_title": None}])
     monkeypatch.setattr(dsa.db, "emails_by_subs", lambda subs: {})
+    # Le journal des révisions (oto#273) : son banc est `test_historique_ligne_273.py`.
+    monkeypatch.setattr(dsa.historique, "revisions_de_ligne", lambda *a, **kw: [])
 
     from oto_mcp.capabilities._types import ResolvedCtx
     out = dsa._row_activity(ResolvedCtx(sub="u-1"),

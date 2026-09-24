@@ -2414,7 +2414,7 @@ le rejeu de chaque refus déclaré sur la route servie.
 Le couple `origine`/`actuel` ne garde que deux états, sans auteur ni date. oto#273 le
 remplace par un **journal des révisions** ; le jalon M1 ne fait qu'**écrire** : aucune
 lecture, aucune route, aucun outil, aucun texte servi. On mesure le volume deux semaines
-avant d'y brancher quoi que ce soit.
+avant d'y brancher quoi que ce soit. La lecture arrive en M3 (plus bas).
 
 - **Table** `datastore_row_revisions` (`db/schema/datastore.py`, `CREATE TABLE IF NOT
   EXISTS` au boot et par la révision Alembic `0011_journal_revisions_ligne`) : `id`,
@@ -2541,6 +2541,55 @@ SELECT r.at, r.row_id, r.rev, r.source, r.acteur, r.run_id, t.tool
 
 **Banc** : `tests/datastore/test_estampille_273.py` (base réelle, chaque face par son
 vrai chemin).
+
+### La lecture — M3 (oto#273, 24/09/2026)
+
+**L'historique d'une ligne** : `GET /api/datastores/{datastore}/rows/{row_id}/history`, et
+sur la face agent `data_row_history` — une seule capacité (`me.datastore.row_history`,
+`capabilities/datastore/history.py`). La lecture du journal vit dans `db/historique.py`,
+seul module à lire la table (`journal_revisions.py` est importé par `_conn.py`, il ne peut
+pas ouvrir de connexion).
+
+- **Réponse** : `{datastore, ns_id, row_id, row_deleted, champ, coverage, revisions,
+  next_before_id}` ; chaque révision porte `id, rev, at, acteur, run_id, source,
+  geste_id, diff`. Plus récente d'abord, par `id` décroissant (pas par `rev` : une ligne
+  supprimée puis recréée repart de `rev` 0).
+- **Paramètres** : `champ=<colonne>` ne garde que les révisions qui touchent cette colonne
+  et ne rend que sa partie du diff (`champ` vide = 400) ; `limit` (50 par défaut, 200 au
+  plus) ; `before_id` = le `next_before_id` de la page précédente.
+- **Accès** : celui de la lecture de la ligne (le store résout le tableau : org active,
+  ownership, périmètre d'un endpoint partagé ; hors périmètre = 404). **Une ligne
+  supprimée** garde son historique, lisible par qui GOUVERNE le tableau
+  (`ownership.can_govern`), avec `row_deleted: true`. Un simple lecteur reçoit
+  `404 row_not_found`, comme sur un identifiant inconnu : la suppression n'est pas une
+  révision, rien ne distingue les deux cas dans le journal, et lui servir les valeurs
+  d'une ligne que le propriétaire a retirée n'est pas son droit. Sans aucune révision,
+  même le gouverneur reçoit un 404.
+- **Face agent** : les colonnes `agent_access: "none"` sortent des diffs ; une révision
+  qui ne touchait qu'elles disparaît de la page.
+- **Couverture** (`coverage`) : `journal_since` = `historique.MISE_EN_SERVICE`
+  (`2026-09-24`, une CONSTANTE : commit M1 sur le tronc à 07:42Z, prod `v1.341.0` à
+  08:26Z, la préprod partageant la base a pu poser les déclencheurs entre les deux ; pas
+  `min(at)`, que la rétention déplacera), `insert_recorded` (une `rev` 0 est dans le
+  journal ; faux = la ligne existait avant, son historique commence en cours de vie),
+  `first_revision_at`, `total_revisions`, et `note`, la phrase servie : une ligne sans
+  révision n'est PAS une ligne jamais modifiée, et `OTO_JOURNAL_REVISIONS=off` laisse
+  des trous. La description de l'outil le dit aussi.
+
+**Le parcours d'une ligne lit les valeurs** (`GET …/rows/{row_id}/activity`,
+`capabilities/datastore/activity.py`). Les entrées gagnent quatre champs, aucun ne part :
+`geste_id` (le `call_uid` de l'appel), `source`, `acteur` et `revisions` (la forme de
+`/history`). Chaque appel qui a écrit la ligne porte ses révisions, rattachées par le
+geste ; une écriture qu'aucun appel ne porte (upload signé, formules, maintenance, SQL à
+la main) devient une entrée `kind='revision'`, `tool: null`. `tool_calls` reste la
+source des lectures, réservations et refus. Pour que la face REST se rattache,
+`calllog.log_rest_call` verse désormais le geste en `call_uid` sur la ligne de SENS
+(`data_*`), comme la ligne de route le faisait déjà. ⚠️ Les révisions écrites avant
+l'estampille (M1, `geste_id` NULL) ne se rattachent à rien : elles s'affichent en
+`kind='revision'` à côté de l'appel qui les a faites. L'activité d'un TABLEAU
+(`…/activity`) ne lit pas le journal : ses entrées portent les nouveaux champs vides.
+
+**Banc** : `tests/datastore/test_historique_ligne_273.py` (base réelle, vraies routes).
 
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 

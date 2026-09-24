@@ -107,17 +107,26 @@ def test_la_surface_n_ajoute_aucune_cle(monkeypatch):
     monkeypatch.setattr(dsa, "make_store", lambda sub: _Store())
     monkeypatch.setattr(dsa.datastore_journal, "context",
                         lambda store, ns, **kw: type("C", (), {
-                            "owner_type": "org", "owner_id": "2",
+                            "owner_type": "org", "owner_id": "2", "ns_id": 160,
+                            "status_key": "statut",
                             "title_key": "societe", "name": ns})())
     monkeypatch.setattr(dsa.db, "datastore_row_activity",
                         lambda *a, **kw: [usage._ds_activity_entry(dict(LIGNE_SQL))])
     monkeypatch.setattr(dsa.db, "emails_by_subs", lambda subs: {})
+    # oto#273 : une écriture qu'aucun appel ne porte devient une entrée `revision`,
+    # fabriquée par la surface — elle doit porter exactement les mêmes clés.
+    monkeypatch.setattr(dsa.historique, "revisions_de_ligne", lambda *a, **kw: [{
+        "id": 1, "rev": 3, "at": "2026-09-01 09:00:00", "acteur": "service:formules",
+        "run_id": None, "source": "system", "geste_id": "g-1",
+        "diff": {"statut": {"avant": "a", "apres": "b"}}}])
 
     out = dsa._row_activity(ResolvedCtx(sub="u-1"),
                             dsa.RowActivityInput(datastore="160", row_id="row-1"))
 
-    servies = set(out["activity"][0])
-    assert servies == _declarees(), {
-        "en trop sur le fil": sorted(servies - _declarees()),
-        "promises et absentes": sorted(_declarees() - servies),
-    }
+    assert [e["kind"] for e in out["activity"]] == ["rest", "revision"]
+    for entree in out["activity"]:
+        servies = set(entree)
+        assert servies == _declarees(), {
+            "en trop sur le fil": sorted(servies - _declarees()),
+            "promises et absentes": sorted(_declarees() - servies),
+        }

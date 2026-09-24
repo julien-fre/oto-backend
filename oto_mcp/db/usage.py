@@ -2090,7 +2090,7 @@ def get_usage_today(sub: str, tool: str) -> int:
 # puis sa clôture par `_run_closure`.
 _DS_ACTIVITY_SELECT = f"""
             SELECT l.created_at, l.kind, l.tool, l.args, l.ok, l.error, l.sub, l.email,
-                   l.run_id, r.run_label, r.doctrine, r.outcome
+                   l.run_id, l.call_uid, r.run_label, r.doctrine, r.outcome
             FROM tool_calls l
             LEFT JOIN LATERAL (
                 SELECT s.args->>'label'    AS run_label,
@@ -2156,6 +2156,15 @@ def _ds_activity_entry(r: dict) -> dict:
         "fields": [str(f) for f in fields] if isinstance(fields, list) else [],
         "from_status": args.get("from_status"),
         "to_status": args.get("to_status"),
+        # Le geste (oto#273) : le `call_uid` de l'appel, que le journal des révisions
+        # porte en `geste_id`. C'est par lui que le parcours d'une ligne rattache à
+        # l'appel les révisions qu'il a écrites (`capabilities/datastore/activity.py`),
+        # qui y posent aussi `source`, `acteur` et `revisions`. Vides ici : `tool_calls`
+        # ne connaît pas les valeurs.
+        "geste_id": r.get("call_uid"),
+        "source": None,
+        "acteur": None,
+        "revisions": [],
     })
 
 

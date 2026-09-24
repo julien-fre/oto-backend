@@ -267,6 +267,12 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
         "org_id": org_id,
         "duration_ms": duration_ms,
     }
+    # Le geste de la requête (oto#273) : la ligne de route (`RestCallLogger`) le porte
+    # déjà en `call_uid`, celle-ci le porte aussi. C'est elle que lit le parcours d'une
+    # ligne, qui y rattache par lui les révisions que la requête a écrites.
+    en_cours = geste.courant()
+    if en_cours is not None:
+        row["call_uid"] = en_cours.geste_id
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

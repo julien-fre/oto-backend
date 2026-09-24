@@ -1,8 +1,8 @@
 """Le JOURNAL des révisions de ligne — ce que chaque révision a changé, valeurs comprises.
 
-oto#273, jalon M1 : **écriture fantôme**. Le déclencheur écrit, personne ne lit : ni API,
-ni outil, ni texte servi. On mesure le volume deux semaines (`docs/datastore.md` §Journal
-des révisions) avant de construire dessus.
+oto#273, jalon M1 : le déclencheur écrit, ce module le pose. La LECTURE (M3) vit dans
+`db/historique.py`, qui sert `GET …/rows/{row_id}/history`, `data_row_history` et le
+parcours d'une ligne (`docs/datastore.md` §Journal des révisions).
 
 **Pourquoi un déclencheur, comme `rev`.** Pour la même raison que `db/revision.py` : la
 base est partagée entre la préproduction et la production, et une écriture de l'ANCIEN
