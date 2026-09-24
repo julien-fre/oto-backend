@@ -31,7 +31,9 @@ from ..datastore.schema import (
     status_field,
     terminal_states,
 )
+from .. import geste
 from ._conn import _connect
+from .estampille import ecriture_de_lignes
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +141,11 @@ def abandonner_les_lignes_a_bout(ns_id: int, *, max_claims: Optional[int] = None
         where += " AND row_id = ANY(%s)"
         params.append(cibles)
     abandonnees: list[dict] = []
-    with _connect() as conn:
+    # L'abandon est une décision du SERVEUR, pas de l'appel qui l'a déclenchée (une
+    # réservation, un relâchement, la fermeture d'un run) : même geste, pour qu'on
+    # retrouve l'appel, mais `system` et l'acteur de la file (oto#273).
+    with geste.comme(geste.SYSTEM, acteur=geste.service("file-de-travail")), \
+            ecriture_de_lignes() as conn:
         # Verrouillées avant d'être réécrites : entre le relevé et l'UPDATE, un
         # claim concurrent poserait un bail sur une ligne qu'on s'apprête à sortir
         # de la file — et le travail commencé serait perdu sans un mot.

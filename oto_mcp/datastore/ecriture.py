@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from psycopg.errors import UniqueViolation
 
-from .. import db
+from .. import db, geste
 from . import acces_agent as aga
 from . import schema as dsv2
 from .columns import (
@@ -53,6 +53,7 @@ class EcritureMixin:
 
     # --- row ops -------------------------------------------------------------
 
+    @geste.import_si_donnees_d_origine
     def append_row(self, datastore: str, data: dict, *,
                    trace: Optional[dict] = None,
                    readonly_override: bool = False,

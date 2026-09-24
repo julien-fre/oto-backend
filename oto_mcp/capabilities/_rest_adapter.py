@@ -30,10 +30,14 @@ from starlette.routing import Route
 
 logger = logging.getLogger(__name__)
 
-from .. import client_trace
+from .. import client_trace, geste
 from ..json_body import InvalidJsonBody, read_json_body
 from ._types import AuthzDenied, Capability, NotModified, RawCtx
 from ._execution import execute
+
+# Le principal que l'authentification REST dépose dans le scope (`api.base`). Nom
+# recopié et non importé : la couche capacité ne dépend pas de `api` (ADR 0004).
+_CLE_PRINCIPAL = "oto_principal"
 
 # Clé du run JUGÉ de la requête (oto#229), déposée dans le `scope` ASGI — le même dict
 # que celui du journal REST (`api.routes.RestCallLogger`), qui la relit dans son
@@ -42,6 +46,11 @@ from ._execution import execute
 # (un run inconnu, étranger ou clos n'estampille rien), et sans relecture en base :
 # `{"run_id", "org_id"}` sont ceux que le jugement a déjà en main.
 CLE_RUN = "oto_run"
+
+# Clé du GESTE de la requête (oto#273), même motif : son identifiant estampille les
+# lignes écrites par la requête (journal des révisions) ET la ligne `tool_calls` du
+# journal REST (`call_uid`), qui le relit dans son `finally`.
+CLE_GESTE = "oto_geste"
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
@@ -186,6 +195,17 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                                     request.headers.get("x-forwarded-for"),
                                     request.client.host if request.client else None),
             user_agent=request.headers.get("user-agent"))
+        # Le GESTE de la requête (oto#273), autour du handler comme l'empreinte : QUI
+        # écrit et par quel porteur, tel que l'authentification l'a résolu
+        # (`api.base._publier_principal`). Le porteur réel, jamais la cible d'un
+        # « en tant que » — même règle que le journal REST. Sans principal publié
+        # (un `authenticate` de test), rien n'est posé : l'écriture dira `system`.
+        principal = request.scope.get(_CLE_PRINCIPAL)
+        jeton_geste = None
+        if principal:
+            jeton_geste = geste.poser(geste.source_rest(principal.get("token_kind")),
+                                      principal.get("sub"))
+            request.scope[CLE_GESTE] = geste.courant().geste_id
         # Le RUN de la requête (oto#227), porté par `X-Oto-Run` — le seul titulaire qu'une
         # garde de bail reconnaisse. Jugé HORS de la boucle et AVANT la capacité (une
         # requête SQL, refus nommé sans écriture), puis posé là où le MCP pose `_run_id` :
@@ -245,6 +265,8 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         finally:
             for reset, jeton in reversed(poses_run):
                 reset(jeton)
+            if jeton_geste is not None:
+                geste.retirer(jeton_geste)
             client_trace.reset(jeton_client)
         if isinstance(result, NotModified):
             # 304 : **sans corps**, c'est la spec et c'est tout l'intérêt — le client

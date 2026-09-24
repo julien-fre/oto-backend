@@ -447,6 +447,9 @@ class RestCallLogger:
                 # réel reste le sub de la ligne, volontairement) : un champ EN PLUS.
                 "view_as_sub": scope.get(CLE_VIEW_AS_APPLIQUE),
                 "run_id": run.get("run_id"),
+                # Le geste de la requête (oto#273) : le même identifiant que celui
+                # estampillé sur les lignes qu'elle a écrites. NULL hors capacité.
+                "call_uid": scope.get(_cap_rest_adapter.CLE_GESTE),
                 "ok": 200 <= code < 400,
                 "error": (f"HTTP {code}" if code >= 400 else None),
                 "duration_ms": int((time.monotonic() - started) * 1000),

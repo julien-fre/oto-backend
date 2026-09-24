@@ -26,11 +26,11 @@ ENTIÈRE (couches comprises). Un champ absent d'un côté n'a PAS la clé de ce 
 `null` qui a changé. Absent, `null` et `[]` restent trois états (`db/revision.py`).
 Une insertion porte tous ses champs en `apres`. Une écriture sans effet n'écrit rien.
 
-**L'estampille (acteur, run, source, geste) est M2.** Les colonnes existent, nullables,
-et la fonction les lit déjà dans des réglages de transaction `oto.acteur`, `oto.run_id`,
-`oto.source`, `oto.geste_id` — qu'AUCUN code ne pose en M1 : elles restent `NULL`. M2
-n'aura qu'à les poser (`SET LOCAL`, jamais `SET` : une connexion du pool sert tout le
-monde).
+**L'estampille (acteur, run, source, geste), M2.** La fonction la lit dans des réglages
+de transaction `oto.acteur`, `oto.run_id`, `oto.source`, `oto.geste_id`, que le serveur
+pose au point de passage de toute écriture de ligne (`db/estampille.py`, `set_config(…,
+true)`, jamais `SET` : une connexion du pool sert tout le monde). Une écriture qui ne
+passe pas par le serveur ne pose rien : ses colonnes restent `NULL`.
 
 **L'interrupteur** `OTO_JOURNAL_REVISIONS=off` (défaut `on`) coupe le journal POUR LES
 ÉCRITURES DE CE PROCESSUS : le pool ouvre ses connexions avec

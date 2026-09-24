@@ -160,10 +160,13 @@ def test_a_dotted_key_really_STORED_is_purged_not_refused(store):
 @pytest.fixture()
 def pg_rows(pg_module_dsn, monkeypatch):
     """Une table `datastore_rows` minimale + `db.datastore._connect` redirigé
-    dessus : c'est la VRAIE fonction et son vrai SQL qui s'exécutent."""
+    dessus : c'est la VRAIE fonction et son vrai SQL qui s'exécutent. La purge
+    ouvre sa transaction au point de passage des écritures de ligne (oto#273) :
+    redirigé lui aussi, l'estampille comprise."""
     psycopg = pytest.importorskip("psycopg")
     from psycopg.rows import dict_row
     from oto_mcp.db import datastore as dbds
+    from oto_mcp.db import estampille
 
     conn = psycopg.connect(pg_module_dsn, row_factory=dict_row, autocommit=True)
     conn.execute("DROP TABLE IF EXISTS datastore_rows")
@@ -177,6 +180,7 @@ def pg_rows(pg_module_dsn, monkeypatch):
         def __exit__(self, *a): return False
 
     monkeypatch.setattr(dbds, "_connect", lambda *a, **k: _Ctx())
+    monkeypatch.setattr(estampille, "_connect", lambda *a, **k: _Ctx())
     try:
         yield conn, dbds
     finally:

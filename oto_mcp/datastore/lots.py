@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 from psycopg.errors import UniqueViolation
 
-from .. import db
+from .. import db, geste
 from . import acces_agent as aga
 from . import schema as dsv2
 from .columns import (
@@ -61,6 +61,7 @@ class LotsMixin:
                 else "aucune ligne écrite avant l'arrêt")
         return f"ligne {rang}/{total} du lot{ref} · {etat}"
 
+    @geste.import_si_donnees_d_origine
     def _write_rows_to_ns(self, ns_id: int, rows: list, *, key: Optional[str],
                           readonly_override: bool = False,
                           origine_override: bool = False,

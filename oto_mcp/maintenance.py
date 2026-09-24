@@ -134,6 +134,7 @@ def key_indexes(*, dry_run: bool = False) -> dict:
     les autres, ni le reste de la maintenance. Son chemin d'écriture reste
     l'applicatif historique tant que son index n'est pas posé.
     """
+    from . import geste
     from .db import datastore as ds
     targets = ds.datastores_with_key()
     manquants = [ns for ns in targets if not ds.datastore_has_key_index(ns["id"])]
@@ -142,7 +143,9 @@ def key_indexes(*, dry_run: bool = False) -> dict:
     poses, resorbes, echecs = 0, 0, 0
     for ns in manquants:
         try:
-            removed = ds.datastore_merge_key_duplicates(ns["id"], ns["key"])
+            # Travail de fond : `system` / `service:maintenance` au journal (oto#273).
+            with geste.interne("maintenance"):
+                removed = ds.datastore_merge_key_duplicates(ns["id"], ns["key"])
             # `bornee=False` : travail de FOND. Les bornes du DDL à chaud existent
             # pour qu'un appel de requête n'attende pas ; ici, attendre son tour ne
             # dessert personne — et borner garantirait qu'un index sur une table très

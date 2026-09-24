@@ -32,7 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from .. import db
+from .. import db, geste
 from .base import _json, _json_error
 
 
@@ -135,8 +135,15 @@ async def _do_signed_upload(request: Request, payload: dict, data: bytes,
     # Consommer AVANT de matérialiser (anti-rejeu / double-écriture).
     if not await run_in_threadpool(db.consume_upload_token, payload["jti"]):
         return _json_error(request, 409, "token_already_used")
+    # Le GESTE (oto#273) : `upload`. Il ne devient `import` que si le jeton a scellé
+    # `donnees_d_origine=true` au mint — c'est le store qui requalifie, comme pour toute
+    # face : un fichier n'est pas une origine parce qu'il est un fichier. L'acteur est
+    # le compte scellé au jeton (celui qui l'a frappé, pas le porteur anonyme du lien),
+    # et le geste est le jeton lui-même : son `jti`, à usage unique, désigne ce dépôt.
     try:
-        result = await run_in_threadpool(upload_tokens.materialize, sub, target, data, ct)
+        with geste.portee(geste.UPLOAD, sub, payload["jti"]):
+            result = await run_in_threadpool(upload_tokens.materialize, sub, target,
+                                             data, ct)
     except upload_tokens.UploadError as e:
         return _json_error(request, e.status, e.code)
     return _json(request, result)

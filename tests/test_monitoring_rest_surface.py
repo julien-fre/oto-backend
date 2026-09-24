@@ -29,6 +29,9 @@ class FakeReq:
         self.method = method
         self.headers = {}
         self.client = None
+        # Le `scope` ASGI : l'adaptateur y lit le principal publié par
+        # l'authentification, et y dépose le geste de la requête (oto#273).
+        self.scope = {}
 
     async def json(self):
         return {}

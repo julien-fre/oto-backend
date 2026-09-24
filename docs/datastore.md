@@ -2437,9 +2437,9 @@ avant d'y brancher quoi que ce soit.
   supprimée RESTENT. FK `ON DELETE CASCADE` vers `user_datastores` : un tableau supprimé
   emporte son historique, quel que soit le chemin qui le supprime. ⚠️ `data_drop_column`
   écrit UNE révision par ligne qui portait la colonne, valeur retirée comprise.
-- **Estampille** (acteur, run, source, geste) : M2. Les colonnes sont nullables et la
-  fonction lit déjà `oto.acteur`, `oto.run_id`, `oto.source`, `oto.geste_id`
-  (`current_setting(…, true)`) — qu'aucun code ne pose : `NULL` partout en M1.
+- **Estampille** (acteur, run, source, geste) : posée par le serveur depuis M2, voir
+  la section suivante. La fonction lit `oto.acteur`, `oto.run_id`, `oto.source`,
+  `oto.geste_id` (`current_setting(…, true)`, `''` lu comme `NULL`).
 - **Interrupteur** `OTO_JOURNAL_REVISIONS=off` (défaut `on`) : le pool ouvre ses
   connexions avec `-c oto.journal_revisions=off`, lu par la fonction. Il coupe les
   écritures de CE processus seulement (la fonction est commune à la prod et à la préprod
@@ -2467,6 +2467,80 @@ Aucun index sur `at` : la mesure parcourt la table, ce qui est le bon prix pour 
 semaines de données et une requête à la main.
 
 **Banc** : `tests/datastore/test_journal_revisions_273.py` (base réelle).
+
+### L'estampille — M2 (oto#273, 24/09/2026)
+
+Chaque révision dit **qui** a écrit, **par quelle face**, **dans quel geste** et **sous
+quel run**. Aucune lecture en M2 : ni route, ni outil, ni texte servi.
+
+**Le point de passage** : `db.estampille.ecriture_de_lignes()`. Toute écriture de
+`datastore_rows.data` du serveur ouvre sa transaction là, et nulle part ailleurs : une
+connexion, une transaction explicite (même sur une connexion en autocommit), puis
+`set_config('oto.*', …, true)` — l'équivalent de `SET LOCAL`, la valeur meurt avec la
+transaction et ne suit pas la connexion dans le pool. Écrivains aujourd'hui :
+`datastore_insert_row`, `datastore_upsert_row`, `datastore_merge_row_locked`,
+`datastore_capturer_origine`, `datastore_drop_column`, `datastore_merge_key_duplicates`
+(`db/datastore.py`) et `abandonner_les_lignes_a_bout` (`db/rowabandon.py`).
+`tests/datastore/test_estampille_273.py` parcourt l'AST du paquet : une requête qui
+écrit `data` hors de ce point, ou un écrivain nouveau non nommé, fait échouer le banc.
+Coût : un aller-retour (`SELECT set_config(…)` ×4) par transaction d'écriture.
+
+**Le contexte** : `oto_mcp/geste.py`, une `ContextVar` par requête (même modèle que les
+axes d'appel de `session_org`), posée à l'entrée de chaque face et remise à zéro à la
+sortie. Le run n'y est pas : c'est l'axe `session_org.current_call_run()`, lu au moment
+d'écrire (`_run_id=` ou la pile de session en MCP, `X-Oto-Run` en REST).
+
+| face | posé par | `source` | `acteur` | `geste_id` |
+|---|---|---|---|---|
+| outil MCP (`data_*`, apps comprises) | `calllog.ToolCallLogger` | `agent` | sub de l'appelant | `call_uid` de la ligne `tool_calls` |
+| REST, session interactive (JWT) — la console | `capabilities._rest_adapter` | `console` | sub du porteur | neuf, versé à `tool_calls.call_uid` |
+| REST, jeton `oto_` (utilisateur ou délégation) | idem | `api` | sub du porteur | idem |
+| REST, secret de worker (`otow_`) | idem | `system` | `worker_sub` | idem |
+| upload signé vers un tableau (NDJSON, CSV) | `api.uploads` | `upload` | sub scellé au jeton | `jti` du jeton |
+| `donnees_d_origine=true` (toute face, upload compris : scellé au jeton au mint) | le store, `@geste.import_si_donnees_d_origine` | `import` | inchangé | inchangé |
+| abandon d'une ligne à bout de reprises | `db/rowabandon.py` | `system` | `service:file-de-travail` | celui de l'appel qui l'a déclenché |
+| boucle des formules | `formula_backfill_worker` | `system` | `service:formules` | neuf, par tour |
+| maintenance `key-indexes` (fusion des doublons) | `maintenance.key_indexes` | `system` | `service:maintenance` | neuf, par tableau |
+| aucun contexte connu | — | `system` | `NULL` | neuf, par transaction |
+| **hors serveur** : SQL à la main, migration, ancien code pendant une bascule | — | `NULL` | `NULL` | `NULL` |
+
+Règles, dans l'ordre où elles s'appliquent :
+
+1. `import` si et seulement si l'appel DÉCLARE `donnees_d_origine=true`, quelle que
+   soit la face : il apporte la donnée telle qu'elle a été remise. Pour un upload signé,
+   la déclaration est faite au mint (`oto_upload_url … donnees_d_origine=true`) et
+   scellée dans le jeton. C'est ce qui permettra à M4 de projeter l'origine sur la
+   première révision `import` sans y compter un fichier quelconque. L'acteur et le geste
+   restent ceux de l'appel.
+2. Sinon, la **face** : MCP = `agent` (le serveur ne distingue pas un agent d'un clic
+   humain dans une app MCP, `data_review_decide` compris) ; REST = `console` pour une
+   session interactive, `api` pour un jeton, `system` pour un worker de plateforme ;
+   upload signé non déclaré = `upload`.
+3. Une écriture que le **serveur** décide seul (abandon, formules, maintenance) est
+   `system`, avec un acteur `service:<nom>` — jamais le sub de l'appel qui l'a
+   déclenchée.
+4. Sans contexte : `system` et acteur `NULL` — l'écriture dit qu'on ne sait pas qui,
+   elle ne s'invente pas d'auteur. `NULL` en `source` est réservé à ce qui n'est pas
+   passé par le serveur.
+
+L'acteur est toujours le **porteur réel** : sous un « voir en tant que » en écriture,
+c'est l'opérateur, pas la cible (même règle que `tool_calls.sub`). Un geste = un appel
+d'outil ou une requête REST : toutes les lignes d'un lot le partagent, deux appels en
+ont deux. Le geste relie une révision à SA ligne `tool_calls` (`call_uid`), en MCP comme
+en REST.
+
+Pour lire l'estampille à la main :
+
+```sql
+SELECT r.at, r.row_id, r.rev, r.source, r.acteur, r.run_id, t.tool
+  FROM datastore_row_revisions r
+  LEFT JOIN tool_calls t ON t.call_uid = r.geste_id
+ WHERE r.ns_id = $1
+ ORDER BY r.id DESC LIMIT 50;
+```
+
+**Banc** : `tests/datastore/test_estampille_273.py` (base réelle, chaque face par son
+vrai chemin).
 
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 

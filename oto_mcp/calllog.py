@@ -27,7 +27,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from fastmcp.server.middleware import Middleware
 
-from . import journal_secrets
+from . import geste, journal_secrets
 from .db._hors_boucle import HorsBoucle
 from .db.journal_calls import ARGS_CLIENT_KEY, ARGS_TRUNCATED_KEY
 
@@ -542,6 +542,10 @@ class ToolCallLogger(Middleware):
         }
         poser_emetteur(row)
         await self._poser_identite(row)
+        # Le GESTE de l'appel (oto#273) : ce que le journal des révisions de ligne
+        # estampille sur toute ligne écrite pendant l'appel. Son identifiant EST
+        # `call_uid` — une révision se relie à SA ligne `tool_calls` sans heuristique.
+        jeton_geste = geste.poser(geste.AGENT, row.get("sub"), row["call_uid"])
         t0 = time.monotonic()
         try:
             result = await call_next(context)
@@ -549,6 +553,8 @@ class ToolCallLogger(Middleware):
             self._record({**row, "ok": False, "error": str(e)[:MAX_ERROR_CHARS],
                           "error_kind": _error_kind(e)}, t0)
             raise
+        finally:
+            geste.retirer(jeton_geste)
         ok, error = True, None
         if context.message.name == "oto_call":
             # `oto_call` (ADR 0036) ne lève JAMAIS sur l'échec de sa cible — il le

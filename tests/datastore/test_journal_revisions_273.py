@@ -56,9 +56,11 @@ def _ecrire(ns_id: int, data: dict, row_id: str = "r1") -> None:
 
 def test_insertion_porte_tous_ses_champs_en_apres(live):
     ns_id = _table({"nom": "A", "score": 3})
-    revs = _revisions(ns_id)
-    assert revs == [{"rev": 0, "diff": {"nom": {"apres": "A"}, "score": {"apres": 3}},
-                     "acteur": None, "run_id": None, "source": None, "geste_id": None}]
+    (rev,) = _revisions(ns_id)
+    # L'estampille (M2) a son banc : `test_estampille_273.py`. Ici, sans contexte.
+    assert rev.pop("geste_id")
+    assert rev == {"rev": 0, "diff": {"nom": {"apres": "A"}, "score": {"apres": 3}},
+                   "acteur": None, "run_id": None, "source": "system"}
 
 
 def test_mise_a_jour_d_un_champ_ne_journalise_que_lui(live):

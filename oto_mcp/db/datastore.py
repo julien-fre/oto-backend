@@ -33,6 +33,7 @@ from .paths import (  # noqa: F401
     split_list_path,
 )
 from ._conn import _connect, _connect_autocommit
+from .estampille import ecriture_de_lignes
 # Construction des requêtes : extraite dans `query` (#325), ré-exportée ici pour que
 # la surface plate `db.<fn>` et tous les appelants restent inchangés.
 # Le tableau et sa propriété : extraits dans `datastore_ns` (#325), ré-exportés ici
@@ -97,7 +98,7 @@ def datastore_insert_row(ns_id: int, row_id: str, data: dict,
                          updated_at: Optional[str] = None) -> dict:
     """Insère une row. `created_at`/`updated_at` optionnels (override pour le
     backfill ; sinon NOW())."""
-    with _connect() as conn:
+    with ecriture_de_lignes() as conn:
         row = conn.execute(
             "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at, embed_dirty) "
             "VALUES (%s, %s, %s::jsonb, COALESCE(%s::timestamptz, NOW()), COALESCE(%s::timestamptz, NOW()), "
@@ -116,7 +117,7 @@ def datastore_upsert_row(ns_id: int, row_id: str, data: dict) -> tuple[dict, boo
     re-poser le même `row_id` remplace `data` au lieu de dupliquer (sert la
     dédup par clé stable, ex. urn LinkedIn). Renvoie `(row, inserted)` où
     `inserted` est True si la row n'existait pas (ON CONFLICT non déclenché)."""
-    with _connect() as conn:
+    with ecriture_de_lignes() as conn:
         row = conn.execute(
             "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at, embed_dirty) "
             "VALUES (%s, %s, %s::jsonb, NOW(), NOW(), "
@@ -220,41 +221,40 @@ def datastore_capturer_origine(ns_id: int, champs: list[str]) -> int:
     if not champs:
         return 0
     touchees = 0
-    with _connect() as conn:
-        with conn.transaction():
-            for champ in champs:
-                # On remplace la COLONNE entière, pas une sous-clé : `jsonb_set`
-                # ne sait pas créer un chemin dans une valeur plate (une chaîne
-                # reste une chaîne, et la mise à jour ne fait rien — silencieusement).
-                # ⚠️ On pose le marqueur « origine inconnue », PAS la valeur courante
-                # (oto#70). Sur une ligne déjà travaillée, cette valeur est celle d'un
-                # AGENT : la présenter comme origine est exactement ce que la définition
-                # interdit — « l'origine est la valeur posée au départ, à l'import ».
-                # v1.207.0 la capturait, et la vraie valeur d'import était perdue sans
-                # que rien ne le dise (S1) ; sur une colonne vide à l'import, l'origine
-                # devenait même indiscernable d'un import de la valeur d'agent (S2).
-                #
-                # ⚠️ Et on ne cherche PAS à distinguer « ligne jamais retouchée » :
-                # `datastore_insert_row` accepte `created_at`/`updated_at` en override,
-                # donc les comparer serait une heuristique. Une sémantique de donnée ne
-                # se fonde pas sur une heuristique — on dit qu'on ne sait pas.
-                q = _sql.SQL(
-                    "UPDATE datastore_rows SET data = jsonb_set(data, {chemin}, "
-                    "  CASE WHEN jsonb_typeof(data->{k}) = 'object' "
-                    # déjà enveloppée : on AJOUTE l'origine à côté des autres couches
-                    "       THEN (data->{k}) || jsonb_build_object('origine', {inconnue}) "
-                    # plate : on l'enveloppe, sa valeur reste la valeur
-                    "       ELSE jsonb_build_object('valeur', data->{k}, "
-                    "                               'origine', {inconnue}) END, true) "
-                    "WHERE ns_id = %s "
-                    # existe, et n'a pas déjà une origine
-                    "  AND data ? {k} "
-                    "  AND NOT (jsonb_typeof(data->{k}) = 'object' "
-                    "           AND data->{k} ? 'origine')"
-                ).format(k=_sql.Literal(str(champ)),
-                         chemin=_sql.Literal("{" + str(champ) + "}"),
-                         inconnue=_sql.Literal(ORIGINE_INCONNUE))
-                touchees += conn.execute(q, (ns_id,)).rowcount
+    with ecriture_de_lignes() as conn:
+        for champ in champs:
+            # On remplace la COLONNE entière, pas une sous-clé : `jsonb_set`
+            # ne sait pas créer un chemin dans une valeur plate (une chaîne
+            # reste une chaîne, et la mise à jour ne fait rien — silencieusement).
+            # ⚠️ On pose le marqueur « origine inconnue », PAS la valeur courante
+            # (oto#70). Sur une ligne déjà travaillée, cette valeur est celle d'un
+            # AGENT : la présenter comme origine est exactement ce que la définition
+            # interdit — « l'origine est la valeur posée au départ, à l'import ».
+            # v1.207.0 la capturait, et la vraie valeur d'import était perdue sans
+            # que rien ne le dise (S1) ; sur une colonne vide à l'import, l'origine
+            # devenait même indiscernable d'un import de la valeur d'agent (S2).
+            #
+            # ⚠️ Et on ne cherche PAS à distinguer « ligne jamais retouchée » :
+            # `datastore_insert_row` accepte `created_at`/`updated_at` en override,
+            # donc les comparer serait une heuristique. Une sémantique de donnée ne
+            # se fonde pas sur une heuristique — on dit qu'on ne sait pas.
+            q = _sql.SQL(
+                "UPDATE datastore_rows SET data = jsonb_set(data, {chemin}, "
+                "  CASE WHEN jsonb_typeof(data->{k}) = 'object' "
+                # déjà enveloppée : on AJOUTE l'origine à côté des autres couches
+                "       THEN (data->{k}) || jsonb_build_object('origine', {inconnue}) "
+                # plate : on l'enveloppe, sa valeur reste la valeur
+                "       ELSE jsonb_build_object('valeur', data->{k}, "
+                "                               'origine', {inconnue}) END, true) "
+                "WHERE ns_id = %s "
+                # existe, et n'a pas déjà une origine
+                "  AND data ? {k} "
+                "  AND NOT (jsonb_typeof(data->{k}) = 'object' "
+                "           AND data->{k} ? 'origine')"
+            ).format(k=_sql.Literal(str(champ)),
+                     chemin=_sql.Literal("{" + str(champ) + "}"),
+                     inconnue=_sql.Literal(ORIGINE_INCONNUE))
+            touchees += conn.execute(q, (ns_id,)).rowcount
     return touchees
 
 
@@ -421,7 +421,7 @@ def datastore_drop_column(ns_id: int, key: str) -> int:
         "UPDATE datastore_rows SET data = data - {k} "
         " WHERE ns_id = %s AND data ? {k}"
     ).format(k=_sql.Literal(str(key)))
-    with _connect() as conn:
+    with ecriture_de_lignes() as conn:
         return conn.execute(q, (ns_id,)).rowcount or 0
 
 
@@ -485,7 +485,7 @@ def datastore_merge_key_duplicates(ns_id: int, key: str) -> int:
     with _connect() as conn:
         values = [r["value"] for r in conn.execute(dup_q, (ns_id,)).fetchall()]
     for value in values:
-        with _connect() as conn:
+        with ecriture_de_lignes() as conn:
             group = conn.execute(rows_q, (ns_id, value)).fetchall()
             if len(group) < 2:
                 continue  # résorbé entre-temps
@@ -1176,44 +1176,43 @@ def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: st
     jamais fait. Divergence PRÉEXISTANTE, conservée telle quelle et nommée ici plutôt
     que corrigée en passant : l'étendre au lot doublerait les UPDATE d'un import.
     """
-    with _connect() as conn:
-        with conn.transaction():
-            # Le bail est lu DANS le même verrou que la donnée (#317) : le lire
-            # avant, sur une autre connexion, laisserait la fenêtre où un claim
-            # s'intercale entre le contrôle et l'écriture — le défaut exact que
-            # `FOR UPDATE` a été posé pour fermer sur `data` (#197). La révision, pour
-            # la même raison.
-            locked = conn.execute(
-                "SELECT data, rev, claimed_by, claimed_until, claimed_run "
-                "FROM datastore_rows WHERE ns_id = %s AND row_id = %s FOR UPDATE",
-                (ns_id, row_id),
-            ).fetchone()
-            if locked is None:
-                return None
-            if lease_guard is not None:
-                lease_guard(locked)
-            if expected_revision is not None \
-                    and int(locked["rev"]) != int(expected_revision):
-                from ..datastore.errors import RevisionConflict
-                raise RevisionConflict(row_id, expected_revision, locked["rev"])
-            current = locked["data"]
-            if not isinstance(current, dict):
-                current = json.loads(current) if current else {}
-            merged = apply_fn(current)
-            row = conn.execute(
-                "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz, "
-                # cf. `datastore_upsert_row` : toute écriture de la ligne remet le
-                # compteur de reprises à zéro et la rouvre à la file (#433).
-                "       claims = 0, abandon_reason = NULL "
-                "WHERE ns_id = %s AND row_id = %s "
-                "RETURNING row_id, created_at, updated_at, data, rev",
-                (json.dumps(merged), updated_at, ns_id, row_id),
-            ).fetchone()
-            if rafraichir_rang:
-                from .search import stamp_rank_vector
-                stamp_rank_vector(conn, "datastore_rows", "ns_id = %s AND row_id = %s",
-                                  (ns_id, row_id))
-            return dict(row), merged
+    with ecriture_de_lignes() as conn:
+        # Le bail est lu DANS le même verrou que la donnée (#317) : le lire
+        # avant, sur une autre connexion, laisserait la fenêtre où un claim
+        # s'intercale entre le contrôle et l'écriture — le défaut exact que
+        # `FOR UPDATE` a été posé pour fermer sur `data` (#197). La révision, pour
+        # la même raison.
+        locked = conn.execute(
+            "SELECT data, rev, claimed_by, claimed_until, claimed_run "
+            "FROM datastore_rows WHERE ns_id = %s AND row_id = %s FOR UPDATE",
+            (ns_id, row_id),
+        ).fetchone()
+        if locked is None:
+            return None
+        if lease_guard is not None:
+            lease_guard(locked)
+        if expected_revision is not None \
+                and int(locked["rev"]) != int(expected_revision):
+            from ..datastore.errors import RevisionConflict
+            raise RevisionConflict(row_id, expected_revision, locked["rev"])
+        current = locked["data"]
+        if not isinstance(current, dict):
+            current = json.loads(current) if current else {}
+        merged = apply_fn(current)
+        row = conn.execute(
+            "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz, "
+            # cf. `datastore_upsert_row` : toute écriture de la ligne remet le
+            # compteur de reprises à zéro et la rouvre à la file (#433).
+            "       claims = 0, abandon_reason = NULL "
+            "WHERE ns_id = %s AND row_id = %s "
+            "RETURNING row_id, created_at, updated_at, data, rev",
+            (json.dumps(merged), updated_at, ns_id, row_id),
+        ).fetchone()
+        if rafraichir_rang:
+            from .search import stamp_rank_vector
+            stamp_rank_vector(conn, "datastore_rows", "ns_id = %s AND row_id = %s",
+                              (ns_id, row_id))
+        return dict(row), merged
 
 
 def datastore_delete_row(ns_id: int, row_id: str, *, lease_guard=None,

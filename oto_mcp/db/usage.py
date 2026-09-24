@@ -75,8 +75,9 @@ def insert_tool_call(row: dict) -> None:
                 bool(row.get("ok")), row.get("error"), row.get("duration_ms"),
                 row.get("session_id"), row.get("run_id"), row.get("org_id"),
                 row.get("client_id"), row.get("sentry_event_id"),
-                # #117 — discriminant par appel. Absents des gestes REST et des
-                # écritures hors MCP : la ligne les porte à NULL, sans branche ici.
+                # #117 — discriminant par appel. `request_id` et `effective_sub` sont
+                # absents des gestes REST ; `call_uid` y porte le geste de la requête
+                # (oto#273), NULL hors capacité. La ligne les porte à NULL, sans branche.
                 row.get("request_id"), row.get("call_uid"), row.get("effective_sub"),
                 # oto#25 lot (b1) — résultat de la taxonomie sur échec, NULL sur
                 # succès et sur les gestes REST (calllog._error_kind ne les touche pas).

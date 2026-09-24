@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from psycopg.errors import UniqueViolation
 
-from .. import db
+from .. import db, geste
 from . import acces_agent as aga
 from . import mots_deprecies as mdp
 from . import reliques as rq
@@ -57,6 +57,7 @@ from .reserves import refuser_champs_reserves
 class EcritureParIdMixin:
     """Le patch par `id` du store. Composé par `DatastorePg`."""
 
+    @geste.import_si_donnees_d_origine
     def update_row(self, datastore: str, row_id: str, patch: dict, *,
                    trace: Optional[dict] = None,
                    readonly_override: bool = False,

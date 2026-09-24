@@ -20,7 +20,7 @@ import logging
 
 from starlette.concurrency import run_in_threadpool
 
-from . import db
+from . import db, geste
 from .datastore import formule as dsformule
 from .datastore import schema as dsv2
 from .datastore.outils import _now_iso
@@ -48,6 +48,8 @@ def _appliquer_formules_en_place(schema: dict, merged: dict) -> None:
         merged[cle] = couches
 
 
+# Travail de fond : ses révisions portent `system` / `service:formules` (oto#273).
+@geste.interne("formules")
 def _backfill_round() -> dict:
     """Un tour SYNC (threadpool) : une tranche par namespace dirty. Renvoie
     `{ns_id: nombre_de_rows_traitees}`."""
