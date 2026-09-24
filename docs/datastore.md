@@ -1181,8 +1181,10 @@ est **refusée**, en nommant la colonne et **en disant où écrire** :
 > `qualification: valeur posée sans \`comment\` — cette colonne exige que la valeur
 > arrive AVEC sa provenance. Écris-la en couches, dans le MÊME appel :
 > `"qualification": {"valeur": <ta valeur>, "comment": "…"}` (\`comment\` = d'où vient la
-> valeur, en clair). Poser la valeur seule au tour suivant emporterait la couche. Une
-> valeur vide, ou une couche posée sans valeur, ne déclenche rien.`
+> valeur, en clair). Poser la valeur seule au tour suivant emporterait la couche. Pour
+> compléter une valeur déjà en place sans la réécrire, nomme les couches SANS \`valeur\`
+> (\`"qualification": {"comment": "…"}\`) : un geste qui ne pose aucune valeur, ou une
+> valeur vide, n'est jamais soumis à cette exigence.`
 
 **Ce que la garde ne fait pas.** Elle n'empêche pas un commentaire **faux**. Elle oblige à
 **nommer une source**, ce qui rend le mensonge vérifiable ; la vérité reste à la relecture
@@ -1192,6 +1194,14 @@ sur pièces.
 
 - une valeur nulle, vide, ou une **couche posée seule sans valeur** ne déclenche rien —
   c'est la forme légitime d'une remarque ;
+- **la garde juge le GESTE, pas la case en place** (complément du 11/09/2026, corrigé le
+  24/09/2026) : un geste qui ne nomme pas `valeur` (`{"origine": …}`, `{"comment": …}`)
+  n'arme pas l'exigence sur la valeur déjà là, même si elle n'a pas la couche. Avant,
+  nommer la colonne pour n'y poser que l'origine était refusé par un texte qui affirmait
+  le contraire. Les chemins qui fusionnent (lot par clé métier, patch par `id`) passent
+  ce que le geste a nommé (`pose`) jusqu'à la garde ; la création et le remplacement
+  n'en ont pas besoin, le fusionné y est le posé. Nommer `valeur`, même identique à
+  celle en place, reste une pose ;
 - la portée descend dans les composites : sous-champs d'un `object`, et sous-champs des
   éléments d'une `list` (une liste réémise remplace l'ancienne **en bloc**, couches
   comprises — c'est là que la perte est la plus lourde). Un sous-champ fautif se nomme

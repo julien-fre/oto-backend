@@ -136,7 +136,8 @@ class ControlesMixin:
     def _ecarter(self, schema: Optional[dict], merged: dict, errors: list,
                  hors: list, *, prev_status=None,
                  written: Optional[set] = None,
-                 en_place: Optional[dict] = None) -> Optional[list]:
+                 en_place: Optional[dict] = None,
+                 pose: Optional[dict] = None) -> Optional[list]:
         """Écarte les valeurs hors options et rend leur relevé — ou None pour
         refuser tout, comme avant (#667).
 
@@ -192,7 +193,7 @@ class ControlesMixin:
         if not any(not dsv2.est_vide(v) for v in reste.values()):
             return None
         if dsv2.validate_row(schema, essai, prev_status=prev_status,
-                             written=written, en_place=en_place):
+                             written=written, en_place=en_place, pose=pose):
             return None
         for h in hors:
             dsec.retirer(merged, str(h.get("champ") or ""))
@@ -218,6 +219,7 @@ class ControlesMixin:
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None,
                    en_place: Optional[dict] = None,
+                   pose: Optional[dict] = None,
                    lot: bool = False, creation: bool = False) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
         déclare ni strict/required/max_length ni lifecycle (défaut 0016 soft).
@@ -226,7 +228,9 @@ class ControlesMixin:
         où tout est écrit) : borne `max_length` restreinte à celles-là, cf.
         `dsv2.validate_row`. `en_place` = la ligne en place sur les chemins qui
         fusionnent : un élément de liste `of.key` que le geste n'écrit pas n'est pas
-        jugé contre lui (oto#137).
+        jugé contre lui (oto#137). `pose` = ce que le geste a nommé par colonne, AVANT
+        fusion, sur ces mêmes chemins : une couche posée seule n'arme pas
+        `required_layers` sur la valeur en place (oto#75).
 
         C'est aussi LE seam d'écriture — tous les chemins (append, batch, merge de
         clé métier, upsert, patch) y passent — donc l'endroit unique où relever les
@@ -251,7 +255,7 @@ class ControlesMixin:
         gelees: list = []
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
                                    written=written, details=details, hors=hors,
-                                   gelees=gelees, en_place=en_place)
+                                   gelees=gelees, en_place=en_place, pose=pose)
         # Ce que ce geste n'écrit pas et qui ne passe plus le format déclaré. Relevé
         # même quand l'écriture réussit — c'est justement le cas normal : l'appelant
         # touche une autre colonne, et il est le seul à passer par cette ligne.
@@ -262,7 +266,7 @@ class ControlesMixin:
             # refus — et toute combinaison avec un autre refus — retombe ici.
             ecartes = self._ecarter(schema, merged, errors, hors,
                                     prev_status=prev_status, written=written,
-                                    en_place=en_place)
+                                    en_place=en_place, pose=pose)
             if ecartes is None:
                 raise RowValidationError(errors, details=details)  # rien à relever
             self.off_rejected.extend(ecartes)

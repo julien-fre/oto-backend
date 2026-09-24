@@ -26,7 +26,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .couches import _is_empty, LAYER_KEYS, ORIGIN_LAYER, split_layer, SYSTEM_ORIGIN, unwrap
+from .couches import (_is_empty, LAYER_KEYS, names_layers, ORIGIN_LAYER, split_layer,
+                      SYSTEM_ORIGIN, unwrap, VALUE_LAYER)
 from . import charge_a_renvoyer as car
 from .declaration import _fields, _walk_fields, cle_d_element
 from .phrases_de_refus import gabarit
@@ -93,6 +94,22 @@ def required_layers_of(field: Any) -> tuple[str, ...]:
     return tuple(c for c in declarees if isinstance(c, str) and c in LAYER_KEYS)
 
 
+def _pose_une_valeur(brut: Any) -> bool:
+    """CE geste pose-t-il une valeur dans la colonne, ou seulement des couches ?
+
+    oto#75, complément du 11/09/2026 : la garde jugeait la case EN PLACE (le résultat
+    fusionné), pas ce que l'écriture nommait. Nommer la colonne pour n'y poser QUE
+    l'origine armait l'exigence sur la valeur héritée du passé : le même appel passait
+    ou cassait selon l'état de la case. Une écriture en couches (`{"origine": {…}}`,
+    `{"comment": "…"}`) qui ne nomme AUCUNE `valeur` ne pose rien de neuf : c'est la
+    forme légitime d'une remarque, et c'est justement le geste qui complète une
+    valeur en place à qui manque la couche exigée.
+
+    Toute autre forme (scalaire, liste, `None`, dict qui NOMME `valeur`) compte comme
+    une pose ; le vide se juge ensuite sur le résultat fusionné, comme avant."""
+    return not (names_layers(brut) and VALUE_LAYER not in brut)
+
+
 def _refus_de_couche(fpath: str, cle: str, manquantes: tuple,
                      exigees: tuple) -> str:
     """Le refus, et surtout SA DESTINATION.
@@ -106,19 +123,27 @@ def _refus_de_couche(fpath: str, cle: str, manquantes: tuple,
     couches = ", ".join(f'"{c}": "…"' for c in exigees)
     detail = " ; ".join(f"`{c}` = {_A_QUOI_SERT_LA_COUCHE[c]}"
                         for c in exigees if c in _A_QUOI_SERT_LA_COUCHE)
+    # oto#75, complément du 11/09/2026 : le refus finissait par « une couche posée
+    # sans valeur ne déclenche rien » alors qu'il tombait sur une origine posée seule.
+    # Il ne tombe plus que sur un geste qui POSE une valeur (`_pose_une_valeur`) ; la
+    # clause dit désormais ce qu'elle garantit, et la forme qui complète une valeur
+    # déjà en place sans la renvoyer.
     return (
         f"{fpath}: valeur posée sans {noms} — cette colonne exige que la valeur "
         f"arrive AVEC sa provenance. Écris-la en couches, dans le MÊME appel : "
         f'`"{cle}": {{"valeur": <ta valeur>, {couches}}}` ({detail}). '
-        f"Poser la valeur seule au tour suivant emporterait la couche. Une valeur "
-        f"vide, ou une couche posée sans valeur, ne déclenche rien.")
+        f"Poser la valeur seule au tour suivant emporterait la couche. Pour compléter "
+        f"une valeur déjà en place sans la réécrire, nomme les couches SANS `valeur` "
+        f'(`"{cle}": {{{couches}}}`) : un geste qui ne pose aucune valeur, ou une '
+        f"valeur vide, n'est jamais soumis à cette exigence.")
 
 
 def _couches_exigees_errors(fields: list, data: dict, path: str,
                             written: Optional[set] = None, *,
                             top: bool = True,
                             charge: Optional[dict] = None,
-                            chemin: tuple = car.RACINE) -> list[str]:
+                            chemin: tuple = car.RACINE,
+                            pose: Optional[dict] = None) -> list[str]:
     """Les refus de couche manquante d'un (sous-)record.
 
     `written` (premier niveau SEULEMENT) = les clés que le geste NOMME. La garde s'y
@@ -139,7 +164,13 @@ def _couches_exigees_errors(fields: list, data: dict, path: str,
     contient que des noms de tête, y refuserait TOUT.
 
     `charge`/`chemin` = la charge à renvoyer (oto#135) : la colonne fautive y reçoit sa
-    valeur et les couches manquantes, en gabarits (`charge_a_renvoyer`)."""
+    valeur et les couches manquantes, en gabarits (`charge_a_renvoyer`).
+
+    `pose` (premier niveau SEULEMENT, comme `written`) = ce que CE geste a nommé par
+    colonne, AVANT fusion (oto#75, complément du 11/09/2026). `data` est le résultat
+    FUSIONNÉ : sans `pose`, une écriture qui ne nomme que l'origine héritait
+    l'exigence de la valeur déjà en place. `None` sur la création et le remplacement,
+    où `data` EST ce que le geste pose."""
     errors: list[str] = []
     for f in fields:
         if not isinstance(f, dict):
@@ -163,6 +194,10 @@ def _couches_exigees_errors(fields: list, data: dict, path: str,
             # `role: "status"` a disparu (08/09/2026) : l'état est la colonne qui
             # porte le `lifecycle`. L'exemption suit le bloc, pas l'étiquette.
             if f.get("readonly") is True or isinstance(f.get("lifecycle"), dict):
+                continue
+            # Jugé sur le POSÉ, jamais sur le fusionné : sinon la case EN PLACE arme
+            # l'exigence à la place du geste (`_pose_une_valeur`).
+            if pose is not None and key in pose and not _pose_une_valeur(pose[key]):
                 continue
         brut = data.get(key)
         # Le VIDE ne déclenche rien — ni une valeur nulle, ni une couche posée seule
@@ -231,7 +266,8 @@ def _couches_exigees_sous(field: dict, valeur: Any, path: str, *,
 
 def couches_manquantes(schema: Optional[dict], merged: dict, *,
                        written: Optional[set] = None,
-                       charge: Optional[dict] = None) -> list[str]:
+                       charge: Optional[dict] = None,
+                       pose: Optional[dict] = None) -> list[str]:
     """Les colonnes qui portent une valeur sans la couche que leur schéma exige.
 
     ⚠️ **Armée par sa PROPRE déclaration**, comme le cycle de vie et pour la même
@@ -239,10 +275,14 @@ def couches_manquantes(schema: Optional[dict], merged: dict, *,
     (types, requis, composites fermés) : l'élargir ferait basculer dans ce régime, du
     jour au lendemain, les tableaux qui portent DÉJÀ l'attribut, sur des règles qu'ils
     n'ont jamais demandées. Déclarer `required_layers`, c'est demander qu'on fasse
-    respecter `required_layers` — pas le reste."""
+    respecter `required_layers` — pas le reste.
+
+    `pose` = ce que CE geste a nommé par colonne, avant fusion — cf.
+    `_couches_exigees_errors`."""
     if not isinstance(schema, dict):
         return []
     fields = _fields(schema)
     if not any(required_layers_of(f) for f in _walk_fields(fields)):
         return []
-    return _couches_exigees_errors(fields, merged, "", written, charge=charge)
+    return _couches_exigees_errors(fields, merged, "", written, charge=charge,
+                                   pose=pose)

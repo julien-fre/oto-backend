@@ -432,3 +432,134 @@ def test_store_une_pose_illisible_reste_REFUSEE_en_nommant_la_colonne(live, mauv
             {"key": "ref", "type": "text"},
             {"key": "qualif", "type": "text", "required_layers": mauvaise}]})
     assert "qualif: required_layers" in str(capture.value), capture.value
+
+
+# ── complément du 11/09/2026 : la garde juge le GESTE, pas la case en place ──
+#
+# Le tableau de l'issue, rejoué. Avant ce complément, la garde jugeait le résultat
+# FUSIONNÉ : nommer la colonne pour n'y poser que l'origine armait l'exigence sur la
+# valeur déjà là — le cas 1 était refusé par un texte qui disait « une couche posée
+# sans valeur ne déclenche rien ». Les cinq passent désormais, et le refus ne tombe
+# plus que sur un geste qui POSE une valeur.
+
+_ORIG = "import du fichier fournisseur"
+_NUE = {"ref": "r1", "qualif": "PME"}
+_COMMENTEE = {"ref": "r1", "qualif": {"valeur": "PME", "comment": "INSEE"}}
+_VIERGE = {"ref": "r1"}
+
+#: (quoi, case en place, ce que le geste pose sur `qualif`)
+_TABLEAU_DU_11_09 = [
+    ("valeur sans comment, origine seule", _NUE, {"origine": _ORIG}),
+    ("valeur avec comment, origine seule", _COMMENTEE, {"origine": _ORIG}),
+    ("valeur sans comment, comment + origine", _NUE,
+     {"comment": "INSEE", "origine": _ORIG}),
+    ("valeur sans comment, valeur identique + comment + origine", _NUE,
+     {"valeur": "PME", "comment": "INSEE", "origine": _ORIG}),
+    ("case vide, origine seule", _VIERGE, {"origine": _ORIG}),
+]
+
+
+def _fusion(en_place: dict, cle: str, pose) -> dict:
+    """La fusion du chemin d'écriture, colonne par colonne (`_merge_column`)."""
+    from oto_mcp.datastore.columns import _merge_column
+    merged = dict(en_place)
+    merged[cle] = _merge_column(en_place.get(cle), pose,
+                                dsv2.champ_declare(_SCHEMA, cle))
+    return merged
+
+
+@pytest.mark.parametrize("quoi,en_place,pose", _TABLEAU_DU_11_09,
+                         ids=[c[0] for c in _TABLEAU_DU_11_09])
+def test_le_tableau_du_11_09_passe_au_validateur(quoi, en_place, pose):
+    merged = _fusion(en_place, "qualif", pose)
+    assert dsv2.validate_row(_SCHEMA, merged, written={"qualif"},
+                             pose={"qualif": pose}) == [], quoi
+
+
+def test_sans_pose_le_validateur_juge_le_fusionne_comme_avant():
+    """`pose` absent (création, remplacement) : le fusionné EST le posé. Le cas 1 lu
+    sans `pose` refuse toujours — c'est ce qui prouve que la correction tient à ce
+    paramètre, et qu'un appelant qui l'oublierait referait le défaut."""
+    merged = _fusion(_NUE, "qualif", {"origine": _ORIG})
+    assert dsv2.validate_row(_SCHEMA, merged, written={"qualif"})
+
+
+@pytest.mark.parametrize("pose", ["ETI", {"valeur": "ETI", "origine": _ORIG},
+                                  {"valeur": "PME", "origine": _ORIG}])
+def test_un_geste_qui_POSE_une_valeur_reste_soumis(pose):
+    """L'autre moitié : nommer `valeur` — même identique — reste une pose, et sans
+    `comment` elle est refusée. La correction n'ouvre pas de porte à la valeur nue."""
+    merged = _fusion(_NUE, "qualif", pose)
+    assert dsv2.validate_row(_SCHEMA, merged, written={"qualif"},
+                             pose={"qualif": pose})
+
+
+def test_le_refus_ne_se_contredit_plus_et_donne_la_forme_sans_valeur():
+    (msg,) = dsv2.validate_row(_SCHEMA, {"qualif": "x"}, written={"qualif"},
+                               pose={"qualif": "x"})
+    assert "une couche posée sans valeur, ne déclenche rien" not in msg
+    assert '`"qualif": {"comment": "…"}`' in msg          # compléter sans réécrire
+    assert '"qualif": {"valeur": <ta valeur>, "comment": "…"}' in msg
+
+
+def _ligne_en_place(en_place: dict):
+    from oto_mcp import db
+    ns, ns_id = _table()
+    db.datastore_insert_row(ns_id, "r-en-place", dict(en_place))
+    return ns, ns_id
+
+
+def _attendu(en_place: dict, pose: dict) -> dict:
+    """Ce que la base doit porter après le geste : la fusion, rien d'autre."""
+    return _fusion(en_place, "qualif", pose)["qualif"]
+
+
+@pytest.mark.parametrize("quoi,en_place,pose", _TABLEAU_DU_11_09,
+                         ids=[c[0] for c in _TABLEAU_DU_11_09])
+@pytest.mark.parametrize("geste", ["patch par id", "lot par clé"])
+def test_face_OUTIL_le_tableau_du_11_09(live, face_outil, quoi, en_place, pose, geste):
+    ns, ns_id = _ligne_en_place(en_place)
+    if geste == "patch par id":
+        _appeler(face_outil, datastore=ns, id="r-en-place", row={"qualif": pose},
+                 origine_override=True)
+    else:
+        _appeler(face_outil, datastore=ns, rows=[{"ref": "r1", "qualif": pose}],
+                 key="ref", origine_override=True)
+    (ligne,) = _lignes(ns_id)
+    assert ligne["qualif"] == _attendu(en_place, pose), quoi
+
+
+@pytest.mark.parametrize("quoi,en_place,pose", _TABLEAU_DU_11_09,
+                         ids=[c[0] for c in _TABLEAU_DU_11_09])
+@pytest.mark.parametrize("geste", ["update_row", "write_rows"])
+def test_face_REST_le_tableau_du_11_09(live, monkeypatch, quoi, en_place, pose, geste):
+    from _datastore_rest import call, stub_authz
+
+    stub_authz(monkeypatch, org_id=None)
+    ns, ns_id = _ligne_en_place(en_place)
+    if geste == "update_row":
+        code, corps = call("me.datastore.update_row",
+                           path_params={"datastore": ns, "row_id": "r-en-place"},
+                           body={"qualif": pose}, query=b"origine_override=true",
+                           sub=SUB)
+    else:
+        code, corps = call("me.datastore.write_rows", path_params={"datastore": ns},
+                           body={"rows": [{"ref": "r1", "qualif": pose}], "key": "ref",
+                                 "origine_override": True}, sub=SUB)
+    assert code == 200, (quoi, corps)
+    (ligne,) = _lignes(ns_id)
+    assert ligne["qualif"] == _attendu(en_place, pose), quoi
+
+
+def test_face_REST_une_valeur_neuve_sans_comment_reste_refusee(live, monkeypatch):
+    """Le cran tient toujours là où il doit : la valeur change, sans provenance."""
+    from _datastore_rest import call, stub_authz
+
+    stub_authz(monkeypatch, org_id=None)
+    ns, ns_id = _ligne_en_place(_NUE)
+    code, corps = call("me.datastore.update_row",
+                       path_params={"datastore": ns, "row_id": "r-en-place"},
+                       body={"qualif": {"valeur": "ETI", "origine": _ORIG}},
+                       query=b"origine_override=true", sub=SUB)
+    assert code == 400 and corps["error"] == "row_invalid", corps
+    assert _lignes(ns_id)[0]["qualif"] == "PME"

@@ -683,7 +683,9 @@ def register(mcp: FastMCP) -> None:
           arrive WITH its provenance, in the SAME call
           (`"col": {"valeur": …, "comment": "where it comes from"}`). A null or
           empty value, and a layer posted alone without a value (a note beside the
-          value, not an assumed empty — that is `@empty`), trigger nothing.
+          value, not an assumed empty — that is `@empty`), trigger nothing — even
+          when the value already in place lacks the layer: that is how you add it
+          (`"col": {"comment": …}`), without re-sending the value.
           Applies to sub-fields of objects and of list items too; never to
           `readonly` nor the lifecycle column; never to a column this
           write does not name. It arms ITSELF — no `strict` needed. ⚠️ It does NOT

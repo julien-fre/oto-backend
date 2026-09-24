@@ -513,7 +513,8 @@ def validate_row(schema: Optional[dict], merged: dict, *,
                  details: Optional[dict] = None,
                  hors: Optional[list] = None,
                  gelees: Optional[list] = None,
-                 en_place: Optional[dict] = None) -> list[str]:
+                 en_place: Optional[dict] = None,
+                 pose: Optional[dict] = None) -> list[str]:
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
@@ -559,7 +560,11 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     fragment de `row` qui ne contient que les champs à corriger, marqués d'un gabarit,
     et `a_renvoyer_elements` quand ce sont des éléments de liste
     (`charge_a_renvoyer.rendre`). Quatre familles la notent : requis manquant,
-    type ou format, sous-champ inconnu, couche exigée."""
+    type ou format, sous-champ inconnu, couche exigée.
+
+    `pose` = ce que CE geste a nommé par colonne, AVANT fusion, sur les chemins qui
+    fusionnent. Seul `required_layers` le lit (oto#75, complément du 11/09/2026) : une
+    écriture qui ne pose que des couches ne juge pas la valeur EN PLACE."""
     errors: list[str] = []
     charge: Optional[dict] = {} if details is not None else None
     if validation_active(schema):
@@ -570,7 +575,8 @@ def validate_row(schema: Optional[dict], merged: dict, *,
                                   en_place=en_place, charge=charge))
     # oto#75 barreau 1 : HORS du garde `validation_active`, comme le cycle de vie
     # ci-dessous — la déclaration `required_layers` s'arme elle-même.
-    errors.extend(couches_manquantes(schema, merged, written=written, charge=charge))
+    errors.extend(couches_manquantes(schema, merged, written=written, charge=charge,
+                                     pose=pose))
     # 08/09/2026 — même raison, même place : un `type` déclaré s'arme lui-même. Le
     # contrôle existait sous `validation_active` et n'y voyait rien passer (0 violation
     # sur 88 tableaux) pendant que 248 tableaux sans validation en portaient 118.

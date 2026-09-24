@@ -177,7 +177,7 @@ class EcritureParIdMixin:
             # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
             # Seule la borne de longueur se limite aux clés du patch (#383).
             self._check_row(schema, data, prev_status=prev_status, written=written,
-                            en_place=avant)
+                            en_place=avant, pose=pose)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
             if annonce:
