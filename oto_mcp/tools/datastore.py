@@ -970,8 +970,11 @@ def register(mcp: FastMCP) -> None:
                 empty cell gets nothing — the client handed over nothing there,
                 which is not the same as handing over an empty value.
             rows: BATCH mode — a list of row dicts written in one call.
-            key: BATCH only (with `rows=[…]`) — business key field for upsert/dedup
-                (else `schema.key`). Refused alongside `row`.
+            key: BATCH (with `rows=[…]`) — business key field for upsert/dedup
+                (else `schema.key`). Alongside a single `row`, accepted only when it
+                names the table's DECLARED business key, `row` carries its value and
+                no `id` is given (the single write already upserts on it); refused
+                otherwise — wrap the row in `rows=[…]` to dedup on another column.
             readonly_override: `true` = overwrite the `readonly` columns THIS CALL
                 writes, instead of being refused. Owner or governor of the table
                 only ; valid for this call alone ; journaled.
@@ -1010,9 +1013,17 @@ def register(mcp: FastMCP) -> None:
             # refusé. Ne fermer que `@claimed` corrigerait un cas et laisserait la
             # classe entière — le prochain agent écrirait `key="_id"` ou `key="siren"`
             # et repartirait pour dix écritures muettes.
+            #
+            # Une exception, et une seule : `key` qui nomme la clé métier DÉCLARÉE,
+            # avec sa valeur dans `row` et sans `id=`. L'écriture unitaire rapproche
+            # déjà sur elle : le paramètre est réglé, pas ignoré (signaux 986, 1125,
+            # 1135, 1154 — l'idiome « upsert sur la clé » s'écrit ainsi).
             if key is not None and rows is None:
-                raise McpError(ErrorData(code=INVALID_PARAMS,
-                                         message=jetons.refus_de_key_sans_lot(key)))
+                declaree = (store.get_schema(datastore) or {}).get("key")
+                if not jetons.key_unitaire_redondant(key, declaree, row, id):
+                    raise McpError(ErrorData(
+                        code=INVALID_PARAMS,
+                        message=jetons.refus_de_key_sans_lot(key, declaree)))
             # MÊME axe que `key` juste au-dessus : une précondition sans ligne désignée
             # ne compare rien. Offerte, elle sera réglée ; ignorée, l'écriture partirait
             # sans la protection que l'appelant croit avoir demandée.

@@ -720,6 +720,14 @@ rendre un tableau inécrivable. Il est annoncé par `enforced` (#389) via une so
 interroge la fonction qui décide : il ne se prouve pas sur une ROW, puisqu'il se juge
 contre le CONTENU du tableau.
 
+**`key=` sur une écriture de ligne SEULE** (signaux 986, 1125, 1135, 1154) : refusé depuis
+le 09/09 parce qu'il n'était passé à rien, SAUF quand il nomme la clé métier **déclarée**,
+que `row` en porte la valeur et qu'aucun `id=` ne vise de ligne — l'écriture unitaire
+rapproche déjà sur cette clé, le paramètre est alors réglé et non ignoré
+(`jetons.key_unitaire_redondant`). Toute autre colonne se dédouble par le lot, même
+pour une seule ligne : `rows=[{…}]` avec `key=` ; le refus le dit et nomme la clé
+déclarée.
+
 **La clé métier RÉÉCRITE par un patch sur `id` (#527).** Le geste voisin de #516, un cran
 plus grave : là-bas on crée une ligne orpheline qu'on peut retrouver, ici on rend
 orpheline une ligne qu'on ne retrouvera plus. Mesuré le 28/08/2026 : `data_write(id=…)` avec

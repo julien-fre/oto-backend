@@ -144,7 +144,28 @@ def verifier_retire(champ: str, valeur: object) -> None:
         f"`{champ}` — {conduite}.")
 
 
-def refus_de_key_sans_lot(key: object) -> str:
+def key_unitaire_redondant(key: object, declaree: Optional[str], row: object,
+                           id: object) -> bool:
+    """Vrai quand un `key=` posé sur une écriture UNITAIRE ne fait que redire ce qu'elle
+    fait déjà : il nomme la clé métier DÉCLARÉE du tableau, la ligne en porte la valeur,
+    et aucun `id=` ne vise de ligne. L'écriture unitaire rapproche d'elle-même sur cette
+    clé (`append_row` : upsert sur `schema.key`) — le paramètre est alors RÉGLÉ, pas
+    ignoré, et le refuser coûtait un aller-retour à chaque procédure qui l'écrit
+    (signaux 986, 1125, 1135, 1154 : l'idiome « upsert sur la clé métier » s'écrit
+    naturellement ainsi, et une ligne de journal de plusieurs milliers de caractères
+    était renvoyée entière).
+
+    ⚠️ Tout le reste reste refusé (`refus_de_key_sans_lot`) : une autre colonne que la
+    clé déclarée ne rapproche RIEN sur ce chemin, un `id=` vise déjà sa ligne, et une
+    clé sans valeur dans `row` créerait une ligne sans clé — l'incident du 09/09."""
+    if not (isinstance(key, str) and key and isinstance(declaree, str) and declaree):
+        return False
+    if key != declaree or id is not None or not isinstance(row, dict):
+        return False
+    return row.get(key) is not None
+
+
+def refus_de_key_sans_lot(key: object, declaree: Optional[str] = None) -> str:
     """Le refus d'un `key=` posé sur une écriture UNITAIRE — il ne sert qu'au lot.
 
     ⚠️ **Il lève d'abord si `key` porte un jeton RETIRÉ** : « `@claimed` a été retiré,
@@ -167,14 +188,21 @@ def refus_de_key_sans_lot(key: object) -> str:
     `@claimed` : ne fermer qu'elle corrigerait un cas et laisserait la classe entière.
     """
     verifier_retire("key", key)
+    clause = (f" La clé métier déclarée de ce tableau est `{declaree}` : une écriture "
+              f"unitaire accepte `key={declaree!r}` quand `row` en porte la valeur, et "
+              f"sans `id=`." if isinstance(declaree, str) and declaree else
+              " Ce tableau ne déclare pas de clé métier.")
     return (
         f"`key={key!r}` n'a aucun effet sur une écriture unitaire — il ne sert qu'au "
-        f"mode LOT, où il nomme la colonne de dédup de `rows`. Rien n'a été écrit.\n"
+        f"mode LOT, où il nomme la colonne de dédup de `rows`. Rien n'a été écrit."
+        f"{clause}\n"
         f"• pour VISER une ligne existante : `data_write(datastore=…, id=\"<le _id "
         f"rendu par data_claim_next ou data_rows>\", row={{…}})` ;\n"
         f"• pour la retrouver par sa CLÉ MÉTIER : mets la valeur dans `row` — "
         f"l'écriture unitaire rapproche d'elle-même sur la clé déclarée du tableau ;\n"
-        f"• pour DÉDOUBLER un lot : `data_write(datastore=…, rows=[…], key={key!r})`.")
+        f"• pour DÉDOUBLER sur `{key}`, même une seule ligne : "
+        f"`data_write(datastore=…, rows=[{{…}}], key={key!r})` — la même ligne "
+        f"enveloppée dans `rows=[…]`.")
 
 
 def verifier_adresse(champ: str, valeur: object) -> None:
