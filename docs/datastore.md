@@ -2471,7 +2471,8 @@ avant d'y brancher quoi que ce soit. La lecture arrive en M3 (plus bas).
 
 - **Table** `datastore_row_revisions` (`db/schema/datastore.py`, `CREATE TABLE IF NOT
   EXISTS` au boot et par la révision Alembic `0011_journal_revisions_ligne`) : `id`,
-  `ns_id`, `row_id`, `rev`, `diff jsonb`, `acteur`, `run_id`, `source`, `geste_id`, `at`.
+  `ns_id`, `row_id`, `rev`, `diff jsonb`, `acteur`, `run_id`, `source`, `geste_id`, `at`,
+  et depuis la révision `0016_journal_suppression` `suppression` (plus bas).
   Index `(ns_id, row_id, rev)`, NON unique : une ligne supprimée puis recréée sous le
   même id repart de `rev` 0.
 - **Écrite par PostgreSQL**, comme `rev` et pour la même raison (bleu/vert sur base
@@ -2487,8 +2488,9 @@ avant d'y brancher quoi que ce soit. La lecture arrive en M3 (plus bas).
   sans effet n'écrit rien. Les **valeurs sont stockées** : la règle « noms de colonnes
   seuls » (`origine_ecritures`) ne vaut pas ici, par décision d'oto#273.
 - **Ce qui reste, ce qui part** : pas de FK vers la ligne, donc les révisions d'une ligne
-  supprimée RESTENT. FK `ON DELETE CASCADE` vers `user_datastores` : un tableau supprimé
-  emporte son historique, quel que soit le chemin qui le supprime. ⚠️ `data_drop_column`
+  supprimée RESTENT, et la suppression en ajoute une (plus bas). FK `ON DELETE CASCADE`
+  vers `user_datastores` : un tableau supprimé emporte son historique, quel que soit le
+  chemin qui le supprime. ⚠️ `data_drop_column`
   écrit UNE révision par ligne qui portait la colonne, valeur retirée comprise.
 - **Estampille** (acteur, run, source, geste) : posée par le serveur depuis M2, voir
   la section suivante. La fonction lit `oto.acteur`, `oto.run_id`, `oto.source`,
@@ -2532,10 +2534,11 @@ connexion, une transaction explicite (même sur une connexion en autocommit), pu
 `set_config('oto.*', …, true)` — l'équivalent de `SET LOCAL`, la valeur meurt avec la
 transaction et ne suit pas la connexion dans le pool. Écrivains aujourd'hui :
 `datastore_insert_row`, `datastore_upsert_row`, `datastore_merge_row_locked`,
-`datastore_capturer_origine`, `datastore_drop_column`, `datastore_merge_key_duplicates`
-(`db/datastore.py`) et `abandonner_les_lignes_a_bout` (`db/rowabandon.py`).
-`tests/datastore/test_estampille_273.py` parcourt l'AST du paquet : une requête qui
-écrit `data` hors de ce point, ou un écrivain nouveau non nommé, fait échouer le banc.
+`datastore_capturer_origine`, `datastore_drop_column`, `datastore_merge_key_duplicates`,
+`datastore_delete_row` (`db/datastore.py`) et `abandonner_les_lignes_a_bout`
+(`db/rowabandon.py`). `tests/datastore/test_estampille_273.py` parcourt l'AST du paquet :
+une requête qui écrit `data` ou supprime une ligne hors de ce point, ou un écrivain
+nouveau non nommé, fait échouer le banc.
 Coût : un aller-retour (`SELECT set_config(…)` ×4) par transaction d'écriture.
 
 **Le contexte** : `oto_mcp/geste.py`, une `ContextVar` par requête (même modèle que les
@@ -2613,11 +2616,11 @@ pas ouvrir de connexion).
 - **Accès** : celui de la lecture de la ligne (le store résout le tableau : org active,
   ownership, périmètre d'un endpoint partagé ; hors périmètre = 404). **Une ligne
   supprimée** garde son historique, lisible par qui GOUVERNE le tableau
-  (`ownership.can_govern`), avec `row_deleted: true`. Un simple lecteur reçoit
-  `404 row_not_found`, comme sur un identifiant inconnu : la suppression n'est pas une
-  révision, rien ne distingue les deux cas dans le journal, et lui servir les valeurs
-  d'une ligne que le propriétaire a retirée n'est pas son droit. Sans aucune révision,
-  même le gouverneur reçoit un 404.
+  (`ownership.can_govern`), avec `row_deleted: true` et `deletion` (plus bas). Un simple
+  lecteur reçoit `404 row_not_found`, comme sur un identifiant inconnu : lui servir les
+  valeurs d'une ligne que le propriétaire a retirée n'est pas son droit, et lui dire
+  qu'elle a existé divulguerait un fait qu'il ne peut plus lire ailleurs. Sans aucune
+  révision, même le gouverneur reçoit un 404.
 - **Face agent** : les colonnes `agent_access: "none"` sortent des diffs ; une révision
   qui ne touchait qu'elles disparaît de la page.
 - **Couverture** (`coverage`) : `journal_since` = `historique.MISE_EN_SERVICE`
@@ -2643,6 +2646,52 @@ l'estampille (M1, `geste_id` NULL) ne se rattachent à rien : elles s'affichent 
 (`…/activity`) ne lit pas le journal : ses entrées portent les nouveaux champs vides.
 
 **Banc** : `tests/datastore/test_historique_ligne_273.py` (base réelle, vraies routes).
+
+### La suppression est une révision (oto#273, 24/09/2026)
+
+Jusqu'ici, supprimer une ligne ne laissait rien au journal : ses révisions restaient,
+mais rien ne disait qu'elle était partie, ni qui l'avait supprimée, ni avec quelles
+valeurs.
+
+- **La forme** : une révision `suppression = true`, `diff` = tous les champs de la ligne
+  en `avant` (`{"a": {"avant": 1}, "note": {"avant": null}}`, `{}` pour une ligne vide),
+  `rev` = celle de la ligne au moment où elle part, l'estampille de qui l'a supprimée.
+  Une COLONNE plutôt qu'une convention dans `diff` : une mise à jour qui retire tous les
+  champs a le même diff, et une clé réservée dans `diff` pourrait être le nom d'une
+  colonne. `rev` 0 porté par une suppression ne compte pas pour une insertion
+  (`coverage.insert_recorded`).
+- **Écrite par PostgreSQL** : `datastore_rows_30_journal_delete`, `AFTER DELETE FOR EACH
+  ROW`, sur sa PROPRE fonction `datastore_journal_suppression()`. Pas dans
+  `datastore_journal_revision()` : celle-là est reposée à chaque démarrage par toute
+  version servie sur la base partagée, et une version d'avant ne sait pas traiter
+  `DELETE` — ses écritures lèveraient, et chaque suppression de ligne avec. Même
+  interrupteur (`OTO_JOURNAL_REVISIONS=off`), même refus silencieux et signalé
+  (`WARNING`) d'un `data` qui n'est pas un objet. Estampillée : `datastore_delete_row`
+  passe désormais par `ecriture_de_lignes()`, comme la fusion des doublons.
+- **Un tableau supprimé** : la cascade depuis `user_datastores` supprime ses lignes et
+  son historique. Le déclencheur de suppression de chaque ligne s'exécute alors que le
+  tableau n'existe déjà plus : il le constate (`NOT EXISTS … user_datastores`) et
+  n'écrit rien. Sans cette garde, la révision violerait la clé étrangère et la
+  suppression du tableau échouerait. L'historique d'un tableau supprimé part avec lui :
+  c'est voulu.
+- **La lecture** : chaque révision de `/history` porte `suppression`. La réponse gagne
+  `deletion` (`id, at, acteur, run_id, source, geste_id`) : la révision de suppression
+  quand la ligne n'existe plus et que sa révision la plus récente en est une. Elle n'est
+  jamais masquée à la face agent, même vidée de ses colonnes cachées. `row_deleted` reste
+  lu sur le TABLEAU : le journal peut avoir des trous (`off`), et une ligne recréée
+  pendant un trou existe malgré la suppression qui la précède au journal. Une ligne
+  supprimée avant le déploiement est `row_deleted: true`, `deletion: null`.
+- **Colonne** : révision Alembic `0016_journal_suppression`, ET démarrage (sous garde de
+  catalogue, avant la fonction qui l'écrit) ; ordre indifférent
+  (`docs/migrations-versionnees.md`).
+- **Ce que le parcours d'une ligne en montre** : rien de plus, puisqu'il exige une ligne
+  vivante ; une ligne recréée sous le même `_id` y montre la suppression parmi ses
+  révisions.
+
+**Banc** : `tests/datastore/test_journal_revisions_273.py` (suppression, ligne vide,
+recréation, cascade par le code et à la main, `data` non objet, révision `0016`) et
+`tests/datastore/test_historique_ligne_273.py` (`deletion`, ligne recréée, ligne
+supprimée sans révision).
 
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 

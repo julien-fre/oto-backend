@@ -41,10 +41,12 @@ COUVERTURE = (
     f"{MISE_EN_SERVICE} au matin (UTC) : ce qui a été écrit avant n'y figure pas, et une "
     f"ligne sans révision n'est PAS une ligne jamais modifiée. Il peut avoir des trous : "
     f"coupé par `{VARIABLE}=off`, il n'écrit rien. `rev` 0 est une insertion ; sous un "
-    f"même `row_id`, elle revient si la ligne a été supprimée puis recréée. La "
-    f"suppression d'une ligne n'est pas une révision.")
+    f"même `row_id`, elle revient si la ligne a été supprimée puis recréée. Une "
+    f"suppression est une révision (`suppression: true`, toutes les valeurs en "
+    f"`avant`) depuis que le journal les enregistre : une ligne absente sans révision "
+    f"de suppression a pu être supprimée quand même, avant.")
 
-_COLONNES = "id, rev, at, acteur, run_id, source, geste_id"
+_COLONNES = "id, rev, at, acteur, run_id, source, geste_id, suppression"
 
 
 def revisions_de_ligne(ns_id: int, row_id: str, *, champ: Optional[str] = None,
@@ -74,12 +76,21 @@ def revisions_de_ligne(ns_id: int, row_id: str, *, champ: Optional[str] = None,
 
 def bilan_de_ligne(ns_id: int, row_id: str) -> dict:
     """Ce que le journal sait d'une ligne, tous champs confondus : combien de
-    révisions, la date de la première, et si une insertion y figure. `rev` 0 n'est
-    portée que par une insertion : le déclencheur de révision avance `rev` à toute mise
-    à jour de `data`, avant que le journal ne la lise."""
+    révisions, la date de la première, si une insertion y figure, et `suppression` :
+    la plus récente révision quand c'est une suppression (sans son diff), sinon `None`.
+
+    Une écriture en `rev` 0 n'est portée que par une insertion : le déclencheur de
+    révision avance `rev` à toute mise à jour de `data`, avant que le journal ne la
+    lise. Une suppression recopie la `rev` de la ligne qui part, 0 compris : elle ne
+    compte pas pour une insertion."""
+    params = (int(ns_id), str(row_id))
     with _connect() as conn:
-        return dict(conn.execute(
+        bilan = dict(conn.execute(
             f"SELECT count(*) AS revisions, min(at) AS premiere, "
-            f"COALESCE(bool_or(rev = 0), false) AS insertion "
-            f"FROM {TABLE} WHERE ns_id = %s AND row_id = %s",
-            (int(ns_id), str(row_id))).fetchone())
+            f"COALESCE(bool_or(rev = 0 AND NOT suppression), false) AS insertion "
+            f"FROM {TABLE} WHERE ns_id = %s AND row_id = %s", params).fetchone())
+        derniere = conn.execute(
+            f"SELECT {_COLONNES} FROM {TABLE} WHERE ns_id = %s AND row_id = %s "
+            f"ORDER BY id DESC LIMIT 1", params).fetchone()
+    bilan["suppression"] = dict(derniere) if derniere and derniere["suppression"] else None
+    return bilan

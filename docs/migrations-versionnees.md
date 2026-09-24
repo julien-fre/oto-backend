@@ -589,6 +589,20 @@ Les deux sont idempotentes (une base neuve a déjà la forme : chaque geste est 
 bornées par `lock_timeout`. La 0004 porte désormais son propre `CREATE TABLE` (celui de sa
 date) au lieu d'exécuter le fragment courant, qui a pris la forme cible.
 
+`0016_journal_suppression` (24/09/2026, oto#273, après `0015_droits_valeur_obligatoire`)
+ajoute `datastore_row_revisions.suppression BOOLEAN NOT NULL DEFAULT false` : la
+suppression d'une ligne devient une révision. Défaut constant, donc écriture de catalogue
+seule ; l'`AccessExclusiveLock` sur le journal (que chaque écriture de ligne alimente) est
+borné par `lock_timeout`. **Ordre indifférent**, comme 0011 : le démarrage pose la même
+colonne s'il ne la trouve pas (`journal_revisions.DDL_COLONNE_SUPPRESSION`, sous garde de
+catalogue), AVANT la fonction et le déclencheur `AFTER DELETE` qui l'écrivent — un
+déclencheur posé sans sa colonne ferait échouer chaque suppression de ligne. L'ancien code
+ne lit ni n'écrit la colonne (ses révisions prennent `false`). Le retour arrière retire
+d'abord le déclencheur et la fonction de suppression, puis la colonne ; celui de 0011
+retire aussi ce déclencheur, qui survivrait sinon à la table qu'il écrit. 0011 exécute
+toujours le fragment courant, qui porte la colonne : sur une base qui rejoue le registre,
+0016 est alors sans effet.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

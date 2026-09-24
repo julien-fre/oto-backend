@@ -4,8 +4,8 @@ Chaque révision dit qui a écrit (`acteur`), par quelle face (`source`), dans q
 (`geste_id`) et sous quel run (`run_id`). Tout se juge sur ce que porte la BASE, par
 une connexion fraîche, après être passé par le VRAI chemin de chaque face :
 
-1. **la garde** — aucune requête du paquet qui écrit `datastore_rows.data` n'échappe au
-   point de passage `db.estampille.ecriture_de_lignes` ;
+1. **la garde** — aucune requête du paquet qui écrit `datastore_rows.data`, ni qui
+   supprime une ligne, n'échappe au point de passage `db.estampille.ecriture_de_lignes` ;
 2. **sans contexte** — `system`, acteur NULL, un geste quand même ;
 3. **MCP** — `agent`, le sub, le run de `_run_id`, et le geste = `call_uid` de la ligne
    `tool_calls` ; un lot partage UN geste, deux appels en ont deux ; un import
@@ -65,6 +65,7 @@ def _run() -> str:
 
 _ECRIT_DATA = re.compile(
     r"INSERT\s+INTO\s+datastore_rows\b"
+    r"|DELETE\s+FROM\s+datastore_rows\b"
     r"|UPDATE\s+datastore_rows\s+SET\b(?:(?!\bWHERE\b)[\s\S])*?\bdata\s*=",
     re.IGNORECASE)
 
@@ -74,7 +75,7 @@ _ECRIVAINS = {
     "oto_mcp/db/datastore.py": {
         "datastore_insert_row", "datastore_upsert_row", "datastore_capturer_origine",
         "datastore_drop_column", "datastore_merge_key_duplicates",
-        "datastore_merge_row_locked"},
+        "datastore_merge_row_locked", "datastore_delete_row"},
     "oto_mcp/db/rowabandon.py": {"abandonner_les_lignes_a_bout"},
 }
 

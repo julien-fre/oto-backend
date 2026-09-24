@@ -8,7 +8,8 @@ Sur une VRAIE base et par les VRAIES routes : ce qui se juge ici, c'est ce que l
 2. la couverture est DITE : date de mise en service, insertion journalisée ou non — une
    ligne antérieure au journal ne se présente pas comme « jamais modifiée » ;
 3. l'accès : un lecteur lit l'historique d'une ligne vivante ; une ligne supprimée ne se
-   lit que par qui gouverne le tableau ; une ligne inconnue est un 404 ;
+   lit que par qui gouverne le tableau, sa suppression en tête (`deletion`) ; une ligne
+   inconnue est un 404 ;
 4. la face agent : `data_row_history` est la même capacité, les colonnes masquées aux
    agents sortent des diffs ;
 5. le parcours (`…/activity`) : l'appel REST porte ses révisions, valeurs comprises ;
@@ -176,7 +177,41 @@ def test_un_lecteur_lit_la_ligne_vivante_pas_la_ligne_supprimee(rest):
     assert (r.status_code, r.json()["error"]) == (404, "row_not_found")
     out = _historique(rest, ns, rid).json()
     assert out["row_deleted"] is True, "le propriétaire gouverne : il lit"
-    assert [e["rev"] for e in out["revisions"]] == [0]
+    assert [(e["rev"], e["suppression"]) for e in out["revisions"]] == [
+        (0, True), (0, False)], "la suppression est la révision la plus récente"
+    suppression = out["revisions"][0]
+    assert suppression["diff"] == {"n": {"avant": 1}}
+    assert (suppression["source"], suppression["acteur"]) == ("console", A)
+    assert out["deletion"] == {k: suppression[k] for k in
+                               ("id", "at", "acteur", "run_id", "source", "geste_id")}
+    assert out["coverage"]["insert_recorded"] is True, \
+        "la `rev` 0 de la suppression ne compte pas pour une insertion"
+
+
+def test_ligne_supprimee_avant_le_journal_des_suppressions(rest):
+    """Supprimée sans révision de suppression (avant qu'elles ne soient journalisées,
+    ou journal coupé) : `row_deleted` vient du tableau, `deletion` est `null`."""
+    ns, ns_id = _table()
+    rid = _ligne(rest, ns, {"n": 1})
+    assert rest.delete(f"/api/datastores/{ns}/rows/{rid}", headers=_h()).status_code == 200
+    _sql("DELETE FROM datastore_row_revisions WHERE ns_id = %s AND suppression", ns_id)
+    out = _historique(rest, ns, rid).json()
+    assert (out["row_deleted"], out["deletion"]) == (True, None)
+    assert [e["suppression"] for e in out["revisions"]] == [False]
+
+
+def test_ligne_recreee_n_est_pas_supprimee(rest):
+    """Une suppression suivie d'une recréation sous le même `_id` : la ligne vit, et
+    `deletion` ne s'affiche pas — la suppression reste lisible dans la liste."""
+    from oto_mcp import db
+    ns, ns_id = _table()
+    rid = _ligne(rest, ns, {"n": 1})
+    assert rest.delete(f"/api/datastores/{ns}/rows/{rid}", headers=_h()).status_code == 200
+    db.datastore_insert_row(ns_id, rid, {"n": 2})
+    out = _historique(rest, ns, rid).json()
+    assert (out["row_deleted"], out["deletion"]) == (False, None)
+    assert [(e["rev"], e["suppression"]) for e in out["revisions"]] == [
+        (0, False), (0, True), (0, False)]
 
 
 def test_ligne_inconnue_et_tableau_hors_perimetre(rest):

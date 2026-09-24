@@ -11,13 +11,20 @@ active, ownership, périmètre d'un endpoint partagé), comme `GET …/rows/{row
 tableau hors périmètre est un 404.
 
 **Une ligne supprimée garde son historique**, et il ne se lit que par qui GOUVERNE le
-tableau (`ownership.can_govern` : propriétaire ou escalade, ADR 0030). La suppression
-n'étant pas une révision, rien ne distingue dans le journal une ligne supprimée d'un
-identifiant jamais vu. Un simple lecteur reçoit donc `404 row_not_found` sur une ligne
-absente, qu'elle ait existé ou non : lui ouvrir l'historique d'une ligne disparue
-servirait les valeurs d'une donnée que le propriétaire a retirée, et lui dire qu'elle a
-existé divulguerait un fait qu'il ne peut plus lire ailleurs. Le gouverneur lit
-l'historique, avec `row_deleted: true` ; sans aucune révision, c'est aussi un 404.
+tableau (`ownership.can_govern` : propriétaire ou escalade, ADR 0030). Un simple lecteur
+reçoit `404 row_not_found` sur une ligne absente, qu'elle ait existé ou non : lui ouvrir
+l'historique d'une ligne disparue servirait les valeurs d'une donnée que le propriétaire
+a retirée, et lui dire qu'elle a existé divulguerait un fait qu'il ne peut plus lire
+ailleurs. Le gouverneur lit l'historique, avec `row_deleted: true` ; sans aucune
+révision, c'est aussi un 404.
+
+**La suppression est une révision** (`suppression: true`, toutes les valeurs en
+`avant`, l'estampille de qui l'a faite). Quand la plus récente révision de la ligne en
+est une, `deletion` la résume (qui, quand, par quelle face). `row_deleted` reste lu sur
+le tableau, pas déduit du journal : le journal peut avoir des trous
+(`OTO_JOURNAL_REVISIONS=off`), et une ligne recréée pendant un trou existe bel et bien
+malgré la suppression qui la précède au journal. Une ligne supprimée avant que le
+journal n'enregistre les suppressions est `row_deleted: true` avec `deletion: null`.
 
 **Face agent** : les colonnes masquées aux agents (`agent_access: "none"`) sont retirées
 des diffs, et une révision qui ne touchait qu'elles disparaît de la page.
@@ -78,7 +85,8 @@ class Revision(BaseModel):
     id: int = Field(description="Identifiant de la révision dans le journal, monotone.")
     rev: int = Field(description=(
         "La révision de la ligne après cette écriture. 0 = insertion ; elle revient "
-        "si la ligne a été supprimée puis recréée sous le même `row_id`."))
+        "si la ligne a été supprimée puis recréée sous le même `row_id`. Une "
+        "suppression porte la `rev` de la ligne qui part."))
     at: Optional[str] = Field(default=None, description=HORODATAGE)
     acteur: Optional[str] = Field(default=None, description=(
         "Qui a écrit : le sub du porteur réel, `service:<nom>` pour un travail de fond, "
@@ -93,6 +101,18 @@ class Revision(BaseModel):
     diff: dict[str, Any] = Field(description=(
         "`{colonne: {avant, apres}}`, valeurs entières (couches comprises). Un côté "
         "absent n'a pas sa clé : `{apres}` seul = ajoutée, `{avant}` seul = retirée."))
+    suppression: bool = Field(description=(
+        "Vrai : la ligne a été SUPPRIMÉE par ce geste, `diff` porte toutes ses valeurs "
+        "en `avant`, et `rev` est celle de la ligne qui est partie."))
+
+
+class Deletion(BaseModel):
+    id: int = Field(description="La révision de suppression dans le journal.")
+    at: Optional[str] = Field(default=None, description=HORODATAGE)
+    acteur: Optional[str] = None
+    run_id: Optional[str] = None
+    source: Optional[str] = None
+    geste_id: Optional[str] = None
 
 
 class Coverage(BaseModel):
@@ -115,6 +135,11 @@ class RowHistory(BaseModel):
     row_deleted: bool = Field(description=(
         "La ligne n'existe plus : son historique reste lisible par qui gouverne le "
         "tableau."))
+    deletion: Optional[Deletion] = Field(default=None, description=(
+        "La suppression telle que le journal l'a vue (qui, quand, par quelle face), "
+        "quand la ligne n'existe plus et que sa révision la plus récente est une "
+        "suppression. `null` sur une ligne supprimée avant que le journal "
+        "n'enregistre les suppressions."))
     champ: Optional[str] = None
     coverage: Coverage
     revisions: list[Revision]
@@ -144,6 +169,7 @@ def _row_history(ctx: ResolvedCtx, inp: RowHistoryInput) -> dict:
     bilan = historique.bilan_de_ligne(ns_id, row_id)
     if supprimee and not bilan["revisions"]:
         raise AuthzDenied(404, "row_not_found")
+    suppression = bilan["suppression"] if supprimee else None
 
     cachees = _masquees(ns_id)
     limit = max(1, min(LIMITE_MAX, inp.limit))
@@ -155,13 +181,14 @@ def _row_history(ctx: ResolvedCtx, inp: RowHistoryInput) -> dict:
         diff = {k: v for k, v in (r["diff"] or {}).items() if k not in cachees}
         # Une révision vide reste (l'insertion d'une ligne sans colonne) ; celle que le
         # masquage a vidée part : elle ne dirait à l'agent que « quelque chose de caché
-        # a changé ici ».
-        if diff or not r["diff"]:
+        # a changé ici ». Une suppression reste toujours : elle dit un fait visible.
+        if diff or not r["diff"] or r["suppression"]:
             revisions.append({**r, "diff": diff})
     return {
         **identite.de_releve(store.dernier_tableau, ns),
         "row_id": row_id,
         "row_deleted": supprimee,
+        "deletion": suppression and {k: suppression[k] for k in Deletion.model_fields},
         "champ": inp.champ,
         "coverage": {
             "journal_since": historique.MISE_EN_SERVICE,
@@ -207,9 +234,11 @@ CAPABILITIES += [
             f"{historique.MISE_EN_SERVICE}. A row with NO revision is NOT a row that "
             "was never modified: it may simply not have been written since. "
             "`coverage.insert_recorded: false` means the row predates the journal and "
-            "its history starts mid-life. A deleted row keeps its history, readable "
-            "only by whoever governs the table (`row_deleted: true`); deleting is not "
-            "itself a revision."
+            "its history starts mid-life. Deleting a row IS a revision "
+            "(`suppression: true`, every value under `avant`, stamped with who deleted "
+            "it). A deleted row keeps its history, readable only by whoever governs the "
+            "table (`row_deleted: true`, `deletion` = who and when, `null` if it was "
+            "deleted before the journal recorded deletions)."
         ),
     ),
 ]

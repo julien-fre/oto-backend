@@ -17,14 +17,32 @@ couvre l'INSERT que le déclencheur de révision ignore, et sa condition `WHEN` 
 seule écarte un mouvement de bail SANS appeler la fonction — le coût d'une réservation,
 d'un renouvellement ou d'une libération reste exactement celui d'aujourd'hui.
 
-Deux déclencheurs et une fonction : la condition d'un déclencheur d'INSERT ne peut pas
-nommer `OLD`, donc INSERT et UPDATE ne partagent pas le même `WHEN`.
+Trois déclencheurs et deux fonctions : la condition d'un déclencheur d'INSERT ne peut
+pas nommer `OLD`, donc INSERT et UPDATE ne partagent pas le même `WHEN` ; la suppression
+a sa propre fonction (plus bas).
 
 **La forme du diff** : `{champ: {"avant": v, "apres": v}}`, clé par clé de `data`, valeur
 ENTIÈRE (couches comprises). Un champ absent d'un côté n'a PAS la clé de ce côté :
 `{"apres": 1}` est un ajout, `{"avant": 1}` un retrait, `{"avant": null}` une valeur
 `null` qui a changé. Absent, `null` et `[]` restent trois états (`db/revision.py`).
 Une insertion porte tous ses champs en `apres`. Une écriture sans effet n'écrit rien.
+
+**La suppression d'une ligne est une révision** (`suppression = true`) : tous ses champs
+en `avant`, la `rev` de la ligne au moment où elle part, l'estampille de qui l'a
+supprimée. Une colonne plutôt qu'une convention dans `diff` : une mise à jour qui retire
+tous les champs a exactement le même diff, et une clé réservée dans `diff` pourrait être
+le nom d'une colonne de l'utilisateur. Sa FONCTION est une autre que celle des écritures
+(`NOM_FONCTION_SUPPRESSION`) : le corps de `NOM_FONCTION` est reposé à chaque démarrage
+par TOUTE version servie sur la base partagée, et une version d'avant la suppression ne
+sait pas traiter `TG_OP = 'DELETE'` (sans `NEW`, son `INSERT` lèverait sur `ns_id` NULL,
+et chaque suppression de ligne échouerait avec elle).
+
+⚠️ **Un tableau supprimé** part avec ses lignes (`ON DELETE CASCADE` depuis
+`user_datastores`) et son historique (même cascade). Le déclencheur de suppression le
+voit : le tableau n'existe déjà plus quand il s'exécute, et journaliser là écrirait une
+révision orpheline — la clé étrangère la refuserait, et la suppression du tableau avec.
+Il n'écrit donc rien quand le tableau est parti : c'est voulu, l'historique d'un tableau
+supprimé part avec lui.
 
 **L'estampille (acteur, run, source, geste), M2.** La fonction la lit dans des réglages
 de transaction `oto.acteur`, `oto.run_id`, `oto.source`, `oto.geste_id`, que le serveur
@@ -43,7 +61,7 @@ production. Toute autre valeur que `on`/`off` LÈVE — à l'ouverture du pool, 
 prend un verrou `SHARE ROW EXCLUSIVE` sur `datastore_rows`, et `CREATE INDEX` un verrou
 `SHARE` sur le journal que chaque écriture de ligne alimente. Les reprendre à chaque
 démarrage bloquerait les écritures de la production. Changer une CONDITION, c'est un
-nouveau nom et le retrait explicite de l'ancien ; la FONCTION, elle, est reposée à
+nouveau nom et le retrait explicite de l'ancien ; les FONCTIONS, elles, sont reposées à
 chaque démarrage — sans verrou de table.
 """
 from __future__ import annotations
@@ -59,6 +77,14 @@ NOM_FONCTION = "datastore_journal_revision"
 # d'une table s'exécutent eux aussi dans l'ordre alphabétique de leur nom.
 DECLENCHEUR_INSERT = "datastore_rows_30_journal_insert"
 DECLENCHEUR_UPDATE = "datastore_rows_30_journal_update"
+DECLENCHEUR_DELETE = "datastore_rows_30_journal_delete"
+NOM_FONCTION_SUPPRESSION = "datastore_journal_suppression"
+# La marque d'une révision de suppression. Même forme dans le `CREATE TABLE`
+# (`db/schema/datastore.py::REVISIONS`), dans la révision `0016` et ci-dessous : une
+# base neuve, une base migrée et une base que le démarrage rattrape ont la même colonne.
+COLONNE_SUPPRESSION = "suppression"
+DDL_COLONNE_SUPPRESSION = (f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS "
+                           f"{COLONNE_SUPPRESSION} BOOLEAN NOT NULL DEFAULT false")
 # Le bail (`claimed_*`), `claims`, `rev`, `updated_at` : aucun ne fait une révision.
 CONDITION_UPDATE = "OLD.data IS DISTINCT FROM NEW.data"
 
@@ -131,8 +157,45 @@ BEGIN
 END $$"""
 
 
+# La suppression : tous les champs de la ligne en `avant`, jamais de condition `WHEN`
+# (une ligne vide qui part est une suppression aussi, son diff est `{}`). Mêmes règles
+# que `_FONCTION` : l'interrupteur, et un `data` qui n'est pas un objet n'écrit rien et
+# le dit. La garde du tableau d'abord : pendant la cascade d'un `DELETE` de
+# `user_datastores`, la ligne du tableau est déjà supprimée pour cette requête.
+_FONCTION_SUPPRESSION = f"""
+CREATE OR REPLACE FUNCTION {NOM_FONCTION_SUPPRESSION}() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    d jsonb;
+BEGIN
+    IF current_setting('{REGLAGE_PG}', true) = 'off' THEN
+        RETURN NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM user_datastores WHERE id = OLD.ns_id) THEN
+        RETURN NULL;
+    END IF;
+    IF jsonb_typeof(OLD.data) <> 'object' THEN
+        RAISE WARNING '{NOM_FONCTION_SUPPRESSION} : data n''est pas un objet JSON '
+                      '(ns_id=%, row_id=%, avant=%) : suppression non journalisée',
+                      OLD.ns_id, OLD.row_id, jsonb_typeof(OLD.data);
+        RETURN NULL;
+    END IF;
+    SELECT COALESCE(jsonb_object_agg(e.k, jsonb_build_object('avant', e.v)),
+                    '{{}}'::jsonb)
+      INTO d FROM jsonb_each(OLD.data) AS e(k, v);
+    INSERT INTO {TABLE} (ns_id, row_id, rev, diff, {COLONNE_SUPPRESSION},
+                         acteur, run_id, source, geste_id)
+    VALUES (OLD.ns_id, OLD.row_id, OLD.rev, d, true,
+            NULLIF(current_setting('oto.acteur', true), ''),
+            NULLIF(current_setting('oto.run_id', true), ''),
+            NULLIF(current_setting('oto.source', true), ''),
+            NULLIF(current_setting('oto.geste_id', true), ''));
+    RETURN NULL;
+END $$"""
+
+
 def poser_journal_des_revisions(conn) -> list[str]:
-    """Index, fonction, déclencheurs — sur la connexion DDL du boot, APRÈS `_SCHEMA`
+    """Index, colonne `suppression`, fonctions, déclencheurs — sur la connexion DDL du boot, APRÈS `_SCHEMA`
     (qui crée la table) et après `revision.poser_revision_de_ligne` (qui crée `rev`).
     Rend les noms de ce qui vient d'être créé (vide au boot ordinaire)."""
     poses: list[str] = []
@@ -144,10 +207,20 @@ def poser_journal_des_revisions(conn) -> list[str]:
         conn.execute(f"CREATE INDEX IF NOT EXISTS {INDEX} "
                      f"ON {TABLE} (ns_id, row_id, rev)")
         poses.append(INDEX)
+    # La colonne AVANT la fonction qui l'écrit. Sur une base à jour, le catalogue le
+    # dit et l'`ALTER` n'est pas envoyé : il prendrait sinon un `AccessExclusiveLock`
+    # sur le journal, que chaque écriture de ligne alimente.
+    if conn.execute("SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = %s AND column_name = %s",
+                    (TABLE, COLONNE_SUPPRESSION)).fetchone() is None:
+        conn.execute(DDL_COLONNE_SUPPRESSION)
+        poses.append(f"{TABLE}.{COLONNE_SUPPRESSION}")
     conn.execute(_FONCTION)
-    for nom, quand, condition in (
-            (DECLENCHEUR_INSERT, "INSERT", None),
-            (DECLENCHEUR_UPDATE, "UPDATE", CONDITION_UPDATE)):
+    conn.execute(_FONCTION_SUPPRESSION)
+    for nom, quand, condition, fonction in (
+            (DECLENCHEUR_INSERT, "INSERT", None, NOM_FONCTION),
+            (DECLENCHEUR_UPDATE, "UPDATE", CONDITION_UPDATE, NOM_FONCTION),
+            (DECLENCHEUR_DELETE, "DELETE", None, NOM_FONCTION_SUPPRESSION)):
         if conn.execute(
                 "SELECT 1 FROM pg_trigger "
                 "WHERE tgrelid = 'datastore_rows'::regclass AND tgname = %s",
@@ -156,6 +229,6 @@ def poser_journal_des_revisions(conn) -> list[str]:
         when = f"WHEN ({condition}) " if condition else ""
         conn.execute(
             f"CREATE TRIGGER {nom} AFTER {quand} ON datastore_rows "
-            f"FOR EACH ROW {when}EXECUTE FUNCTION {NOM_FONCTION}()")
+            f"FOR EACH ROW {when}EXECUTE FUNCTION {fonction}()")
         poses.append(nom)
     return poses

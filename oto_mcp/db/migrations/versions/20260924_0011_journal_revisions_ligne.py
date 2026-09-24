@@ -24,7 +24,9 @@ from __future__ import annotations
 
 from alembic import op
 
-from oto_mcp.db.journal_revisions import DECLENCHEUR_INSERT, DECLENCHEUR_UPDATE, NOM_FONCTION
+from oto_mcp.db.journal_revisions import (
+    DECLENCHEUR_DELETE, DECLENCHEUR_INSERT, DECLENCHEUR_UPDATE, NOM_FONCTION,
+    NOM_FONCTION_SUPPRESSION)
 from oto_mcp.db.schema.datastore import REVISIONS
 
 revision = "0011_journal_revisions_ligne"
@@ -42,7 +44,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute(_ATTENTE_MAX)
-    for declencheur in (DECLENCHEUR_INSERT, DECLENCHEUR_UPDATE):
+    # Le déclencheur de suppression aussi (posé par le démarrage depuis `0016`) : sur
+    # une base que le boot a rattrapée, il survivrait sinon à la table qu'il écrit.
+    for declencheur in (DECLENCHEUR_INSERT, DECLENCHEUR_UPDATE, DECLENCHEUR_DELETE):
         op.execute(f"DROP TRIGGER IF EXISTS {declencheur} ON datastore_rows")
-    op.execute(f"DROP FUNCTION IF EXISTS {NOM_FONCTION}()")
+    for fonction in (NOM_FONCTION, NOM_FONCTION_SUPPRESSION):
+        op.execute(f"DROP FUNCTION IF EXISTS {fonction}()")
     op.execute("DROP TABLE IF EXISTS datastore_row_revisions")

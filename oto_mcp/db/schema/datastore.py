@@ -101,7 +101,10 @@ REVISIONS = """
 -- raison qui fait écrire le journal par PostgreSQL. L'index `(ns_id, row_id, rev)` est
 -- posé par `_init.py`, sous garde de catalogue : ici, `CREATE INDEX IF NOT EXISTS`
 -- reprendrait à chaque boot un verrou SHARE qui bloque chaque écriture de ligne.
--- Estampille (acteur, run, source, geste) : M2, NULL en M1.
+-- Estampille (acteur, run, source, geste) : M2, NULL en M1. `suppression` : la
+-- révision que laisse la suppression de la ligne (tous ses champs en `avant`) ; sur
+-- une base existante, la colonne vient de la révision `0016` ou du démarrage
+-- (`journal_revisions.DDL_COLONNE_SUPPRESSION`, même forme).
 CREATE TABLE IF NOT EXISTS datastore_row_revisions (
     id BIGSERIAL PRIMARY KEY,
     ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
@@ -112,6 +115,7 @@ CREATE TABLE IF NOT EXISTS datastore_row_revisions (
     run_id TEXT,
     source TEXT,
     geste_id TEXT,
-    at TIMESTAMPTZ NOT NULL DEFAULT now()
+    at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    suppression BOOLEAN NOT NULL DEFAULT false
 );
 """

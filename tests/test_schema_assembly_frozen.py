@@ -506,8 +506,13 @@ from oto_mcp.db import _schema, schema
 # `0014_droits_portee_personne` (avant la fusion) et `0015_droits_valeur_obligatoire`
 # (après le tag de production), pas par le démarrage. Recalculée sur bd66b92c :
 # 174 235 → 174 403 (+168, commentaires compris).
-EMPREINTE = "a93aaba3946305ee400081d5ec2f8a39f77c915076dc073151cfc1bc0bdd09c0"
-LONGUEUR = 174403
+# 24/09/2026 (oto#273) — `datastore_row_revisions` prend `suppression BOOLEAN NOT NULL
+# DEFAULT false` : la suppression d'une ligne devient une révision. Base neuve par le
+# fragment `schema/datastore::REVISIONS` ; base existante par la révision Alembic
+# `0016_journal_suppression` ou le démarrage (`journal_revisions.DDL_COLONNE_SUPPRESSION`,
+# même forme). 174 403 → 174 695 (+292, commentaire compris).
+EMPREINTE = "29beec2816b60ce8f5cc21de6bfeb06be2d9c12e568ef33b033c29838b7d933b"
+LONGUEUR = 174695
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
