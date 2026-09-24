@@ -170,7 +170,7 @@ def _trigger_db(monkeypatch, **etat):
                                      "last_seen": "2026-09-02 20:00:00"})
     vu = {}
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda i, o, champs: vu.update(champs) or {"id": i, **champs})
+                        lambda i, o, champs, **k: vu.update(champs) or {"id": i, **champs})
     monkeypatch.setattr(RT.db, "comptage_perime", lambda org, tid: {})
     return vu
 

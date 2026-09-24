@@ -25,7 +25,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import _cle_exigee, _lignes_reservables, _modele, _ordre_de_service
+from . import (_abonnement, _cle_exigee, _lignes_reservables, _modele,
+               _ordre_de_service)
 from .. import db, runner_consigne, runner_models, tool_alias
 from ._authz import WORKER_OR_ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -121,6 +122,17 @@ class JobResult(BaseModel):
     stopped: Optional[str] = None
     steps: Optional[int] = None
     tool_counts: Optional[dict[str, int]] = None
+    abonnement: Optional[dict[str, Any]] = Field(
+        None, description=(
+            "Subscription jobs only (`model_family` ending in `_subscription`): what "
+            "the worker SAW of the requester's plan while running. Shape: `{etat, "
+            "deconnecte?, fenetres: {<window>: {utilization, resetsAt}}}` — `etat` "
+            "and the windows are copied from the provider's `rate_limit_event` "
+            "(`rate_limit_info.status`, `unifiedWindows`), `resetsAt` in epoch "
+            "seconds. The backend pauses the requester's subscription jobs when a "
+            "window reaches its threshold, until that window resets. "
+            "`deconnecte: true` = the program found no valid session: the person "
+            "must reconnect. Never a credential, never the account's email."))
     valeurs_cliente_reparees: Optional[list[str]] = Field(
         None, description=(
             "Guard post: the client's own values the harness had to PUT BACK on the "
@@ -500,6 +512,20 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
                            "ce n'est pas un worker de plateforme",
                            depot, appelant, job["org_id"], job.get("id"))
         return job
+    famille = _abonnement.famille_du_travail(job)
+    if _abonnement.est_abonnement(famille):
+        # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
+        # ce travail tournera dans le bac à sable de SON DEMANDEUR, sur le programme
+        # officiel du fournisseur, avec la session qu'il y a ouverte lui-même. La
+        # plateforme ne paie rien, ne détient rien, ne relaie rien. Laisser la garde
+        # d'argent d'en dessous s'exécuter le ferait refuser `_SANS_CLE_DEPOSEE` —
+        # une clé que personne ne déposera jamais pour cette famille.
+        #
+        # ⚠️ APRÈS la garde `worker` ci-dessus, pas avant (revue du 21/09/2026) : la
+        # file n'est pas réservée aux workers. Placée plus haut, cette branche
+        # laissait un simple membre ARRÊTER DÉFINITIVEMENT le travail d'un collègue
+        # non connecté, et lui rendait le bac à sable d'un autre.
+        return _avec_abonnement(job, famille, appelant)
     # ⚠️ LA GARDE D'ARGENT (`_cle_exigee`), et seulement pour un WORKER : c'est lui
     # qui retombe sur la clé de SON environnement — la nôtre — quand le travail
     # n'en porte pas. Un membre qui réserve tourne sur ce qu'il a, pas sur nous.
@@ -538,6 +564,37 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
     # Le workspace part À CÔTÉ de la clé, s'il est posé — et reste hors de la trace
     # ci-dessus comme elle.
     return {**job, "model_key": cle, **({"model_workspace": workspace} if workspace else {})}
+
+
+def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
+    """Le travail d'un abonnement, servi avec le BAC À SABLE de son porteur.
+
+    Ce que le worker reçoit en plus : `sandbox_id`. Jamais de clé, jamais de
+    session — il exécutera le programme officiel DANS ce bac à sable, qui lit la
+    sienne tout seul.
+
+    ⚠️ Un porteur sans connexion ARRÊTE le travail, raison écrite. Le remettre en
+    file le ferait reprendre par le worker suivant, indéfiniment, sans que
+    personne n'apprenne pourquoi — la leçon de `_refuser_sans_cle`.
+    """
+    servable, statut, bac = _abonnement.servable(job.get("sub"), famille)
+    if not servable and _abonnement.reparable(statut, bac):
+        # ⚠️ RENDU à la file, pas arrêté (21/09/2026) : la personne doit se
+        # reconnecter, et ce n'est pas la faute du travail. La réservation saute
+        # déjà ces personnes — n'arrive ici que la course où l'état a changé entre
+        # la prise et cette garde. `delegation_refusee` reste le champ que le
+        # worker DÉPLOYÉ sait lire : il n'exécute pas et ne conclut pas.
+        raison = _abonnement.raison_de_l_attente(famille, statut)
+        db.rendre_a_la_file(job["id"], appelant, raison)
+        return {**job, "delegation_refusee": raison, "delegated_token": None}
+    if not servable:
+        return _refuser_sans_cle(job, appelant,
+                                 _abonnement.raison_du_refus(famille, statut))
+    # Trace de REMISE, comme pour une clé : qui, quelle org, quel bac à sable. Elle
+    # ne peut rien révéler d'un secret — il n'y en a pas dans ce chemin.
+    logger.info("abonnement `%s` servi à %s pour l'org %s (travail %s, bac %s)",
+                famille, appelant, job.get("org_id"), job.get("id"), bac)
+    return {**job, "sandbox_id": bac}
 
 
 _SANS_DEPOT = (
@@ -826,6 +883,11 @@ def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
             raise AuthzDenied(400, "invalid_model", "`payload.model` est un nom de modèle")
         _modele.famille_declaree(model)
         charge.update(runner_models.charge(model))
+        # Le QUATRIÈME chemin de pose (revue du 23/09/2026) : un travail enfilé à la
+        # main sur un modèle d'abonnement passe la même garde qu'un agent posé —
+        # sinon une flotte, ou un membre sans l'option, contournait les trois autres.
+        _abonnement.exiger_a_la_pose(ctx.sub, None, charge.get("model_family"),
+                                     flotte=inp.fleet_id is not None)
     return charge if (charge or inp.payload is not None) else None
 
 
@@ -937,8 +999,16 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
                 "la clé de l'organisation doit nommer QUEL dépôt il consomme — "
                 "sans lui, il n'y a aucune clé à attendre et rien à servir.")
         bail = max(30, min(inp.lease_seconds, 3600))
+        # ⚠️ Un worker d'ABONNEMENT ne prend QUE sa famille, qu'il l'ait demandé ou
+        # non (revue du 21/09/2026). Il n'exécute rien lui-même : tout part dans le
+        # bac à sable du demandeur. Un travail SANS famille — l'agent historique
+        # posé sans modèle — n'a aucun bac à sable : servi à ce worker, il échoue à
+        # coup sûr, tentative après tentative. Le drapeau `org_key_only` le
+        # garantissait déjà… à condition que l'unité systemd le pose. Une garde qui
+        # dépend d'une variable d'environnement bien écrite n'en est pas une.
+        famille_seule = inp.org_key_only or _abonnement.est_abonnement(inp.provider)
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                depot=inp.provider, famille_seule=inp.org_key_only)
+                                depot=inp.provider, famille_seule=famille_seule)
         if job is None:
             # ⚠️ La file vide n'est pas la fin de l'histoire : une CAMPAGNE en
             # cours est une règle qui produit des travaux, et c'est ici qu'on
@@ -954,7 +1024,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             panne = _produire_pour_une_campagne(ctx.org_id, bail)
             job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
                                     depot=inp.provider,
-                                    famille_seule=inp.org_key_only)
+                                    famille_seule=famille_seule)
             if job is None and panne:
                 # « Rien à faire » et « je n'ai pas pu regarder » ne se disent
                 # pas de la même façon. Les confondre a coûté des jours de
@@ -1023,6 +1093,12 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # Déjà re-claimé après bail mort, ou jamais à lui : on ne conclut pas
             # ce qui ne nous appartient plus.
             raise AuthzDenied(404, "job_not_found", "job inconnu")
+        # Ce que le worker a vu du FORFAIT (OTO-130) se porte sur la connexion du
+        # demandeur. ⚠️ Worker de plateforme SEULEMENT : la conclusion est ouverte
+        # à qui tient la prise, et un membre qui aurait réservé le travail d'un
+        # collègue pourrait sinon le mettre en attente d'un rapport inventé.
+        if ctx.platform_worker:
+            _abonnement.noter_rapport_du_travail(inp.job_id, inp.ok, inp.result)
         # Le run de l'appel d'abord (c'est celui que le worker vient d'exécuter),
         # sinon celui que le job connaît (`bind_run`, ou un `continue`).
         return {"ok": True, "status": res["status"],

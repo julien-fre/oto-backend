@@ -541,7 +541,7 @@ def retouche(monkeypatch):
               "payload_mode": "ignore", "payload_fields": None}
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(stocke))
     monkeypatch.setattr(RT.db, "update_trigger",
-                        lambda i, o, champs: vu.update(champs) or {"id": i, **champs})
+                        lambda i, o, champs, **k: vu.update(champs) or {"id": i, **champs})
     vu["stocke"] = stocke
     return vu
 
@@ -618,7 +618,7 @@ def test_une_retouche_ordinaire_ne_LIT_pas_le_declencheur(monkeypatch):
     lit rien — et la garde du genre ne doit pas l'avoir cassé."""
     monkeypatch.setattr(RT.db, "get_trigger",
                         lambda i, o: (_ for _ in ()).throw(AssertionError("lu")))
-    monkeypatch.setattr(RT.db, "update_trigger", lambda i, o, c: {"id": i, **c})
+    monkeypatch.setattr(RT.db, "update_trigger", lambda i, o, c, **k: {"id": i, **c})
     _appel(op="update", trigger_id=5, label="renommé")
 
 

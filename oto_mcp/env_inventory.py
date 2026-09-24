@@ -397,6 +397,15 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_BILLING_ENABLED", Classe.REGLAGE, "0",
              "Expose la facturation (REST/MCP/dashboard/runner) — off par défaut.",
              ("oto_mcp/billing.py:78",)),
+    Variable("OTO_FERME_URL", Classe.REQUISE, None,
+             "L'agent de la ferme des bacs d'abonnement (réseau privé du parc, "
+             "`http://172.16.16.2:8190`). Sans lui, se connecter ou effacer son bac "
+             "échoue en 502 nommé ; rien d'autre n'en dépend.",
+             ("oto_mcp/ferme.py:45",)),
+    Variable("OTO_FERME_TOKEN", Classe.REQUISE, None,
+             "Le jeton de l'agent de la ferme (1Password « Ferme de Claude — jeton de "
+             "l agent »). Même sort que OTO_FERME_URL.",
+             ("oto_mcp/ferme.py:45",)),
     Variable("OTO_RUNNER_TICK_ENABLED", Classe.REGLAGE, "1",
              "Tick du runner d'agents.", ("oto_mcp/runner_tick.py:163",)),
     Variable("OTO_L7_SHADOW", Classe.REGLAGE, "1",

@@ -493,8 +493,13 @@ from oto_mcp.db import _schema, schema
 # modification) et `doc_revisions.face` (la porte de l'écriture), NULLABLES, sans index.
 # Base existante : révision Alembic `0013_pages_versions_regroupees`, pas le démarrage.
 # Recalculée sur 94dfcfcf : 170 929 → 171 478 (+549, commentaires compris).
-EMPREINTE = "27975c920932d9160767c371e199ab9a729afcca347654f02ecb1edf2cf958cc"
-LONGUEUR = 171478
+# 24/09/2026 (oto-backend#1043, OTO-130) — table NEUVE `user_model_subscriptions`, dans
+# le fragment `runs` (la réservation la lit), SANS clé étrangère vers `users` : le
+# fragment n'en porte aucune vers l'extérieur. `CREATE TABLE IF NOT EXISTS` d'une table
+# neuve : rien ne se réécrit sur la base PARTAGÉE. Recalculée sur 74f8ff8e + #1043 :
+# 171 478 → 174 235 (+2 757, commentaire compris).
+EMPREINTE = "550f9788cb866fad9b09db24e381b6f457ad9265ce709c3ac96966633df226b4"
+LONGUEUR = 174235
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
