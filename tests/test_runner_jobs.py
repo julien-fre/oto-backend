@@ -245,7 +245,10 @@ def test_le_resultat_fait_l_aller_retour_en_base(live):
 # la campagne, la découpait, et battait pour dire qu'il vivait.
 
 CAMPAGNE = {"id": 12, "org_id": 7, "sub": "celui-qui-a-declare", "label": "passage-editeurs",
-            "procedure": "enrichissement", "project_id": 220, "namespace": "tableau",
+            "procedure": "enrichissement", "project_id": 220,
+            # #1067 : une campagne garde l'IDENTIFIANT de son tableau, jamais son nom —
+            # un nom déclencherait sa reprise (lecture de base) dans ce banc sans base.
+            "namespace": "77",
             "tools": ["data_claim_next", "data_write"], "input": "file {namespace}",
             "row_filter": {"statut": "a_enrichir"}, "max_steps": 40,
             "max_tokens_per_row": 80000}
@@ -275,7 +278,7 @@ def test_la_consigne_commandee_ne_porte_AUCUN_marqueur_en_litteral(campagne, mon
     _appel(_ctx(), op="claim")
     servi = campagne["payload"]["input"]
     assert "{" not in servi.replace('{"statut"', ""), f"marqueur resté en littéral : {servi!r}"
-    assert servi.startswith("file tableau filtre ")
+    assert servi.startswith("file 77 filtre ")
 
 
 def test_le_travail_porte_l_identite_du_DECLARANT_pas_du_worker(campagne):
