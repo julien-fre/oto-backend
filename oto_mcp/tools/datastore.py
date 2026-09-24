@@ -612,7 +612,7 @@ def register(mcp: FastMCP) -> None:
 
         A typed datastore renders as readable cards/records instead of a flat table.
         `schema` = {"fields": [{"key": str, "label"?: str, "type"?: "text|number|date|
-        datetime|bool|json|object|list|url|email|enum",
+        datetime|bool|json|object|list|url|email|phone|enum",
         "display"?: "title", "role"?: "status|metric|note|qualif"}],
         "key"?: str, "strict"?: bool}.
         ⚠️ **An attribute nobody reads is accepted in SILENCE**, so a typo disarms the
@@ -674,10 +674,14 @@ def register(mcp: FastMCP) -> None:
           matches is refused), `field.max_length: <int>` on a SCALAR field, and
           `field.pattern: "<regex>"` for its SHAPE when the size does not separate
           anything (a code, a snake_case identifier) — `re.search`, so anchor it
-          yourself (`^…$`). `pattern` REQUIRES `max_length` on the same field (≤1000):
-          the cost of a regex is bounded against what it reads, and oto refuses what
-          it cannot price — an ambiguous repeated group, a backreference, a lookaround
-          are rejected AT DECLARATION TIME, each naming why.
+          yourself (`^…$`). A `pattern` applies on its own: the value it reads is
+          bounded by `max_length` when declared (≤1000), else by 1000 characters —
+          a longer value is refused. The cost of a regex is bounded against that
+          length, and oto refuses what it cannot price — an ambiguous repeated
+          group, a backreference, a lookaround are rejected AT DECLARATION TIME,
+          each naming why. `type: "phone"` holds a phone number: international
+          (`+`, country code — E.164) preferred, national digits accepted, spaces,
+          dots and dashes allowed; a sentence or an identifier is refused.
           `field.required_layers: ["comment"]` refuses a write that leaves a
           NON-EMPTY value in that column without posting the layer — the value must
           arrive WITH its provenance, in the SAME call

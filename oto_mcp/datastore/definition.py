@@ -39,6 +39,7 @@ from .declaration import (
     COMPOSITE_TYPES,
     DISPLAY_TITLE,
     _fields,
+    borne_du_motif,
     max_length_of,
     readonly_fields,
     SCALAR_TYPES,
@@ -445,7 +446,9 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
         # contrat. Trois refus, chacun nommant sa raison.
         motif = f.get("pattern")
         if motif is not None:
-            bornes = max_length_of(f)
+            # oto#103 (24/09/2026) : un motif SEUL s'accepte. Son coût se majore contre
+            # la borne de lecture — `max_length`, sinon `PATTERN_MAX_SUBJECT`.
+            bornes = borne_du_motif(f)
             if not isinstance(motif, str) or not motif:
                 errors.append(
                     f"{fpath}: pattern doit être une expression régulière (une "
@@ -454,15 +457,6 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
                 errors.append(
                     f"{fpath}: pattern ne contraint qu'un champ scalaire "
                     f"(type={ftype} — pose-le sur le sous-champ concerné)")
-            elif not bornes:
-                # La borne n'est pas un confort : c'est elle qui rend le coût du
-                # motif majorable. Sans sujet borné, aucune garantie — et le motif
-                # tourne dans la boucle UNIQUE du serveur, à chaque écriture.
-                errors.append(
-                    f"{fpath}: pattern exige max_length sur le même champ — le coût "
-                    f"d'un motif se majore contre la longueur de ce qu'il lit, et "
-                    f"oto n'exécute pas ce dont elle ne sait pas majorer le prix "
-                    f"(borne le champ, puis repose le motif)")
             elif bornes > PATTERN_MAX_SUBJECT:
                 errors.append(
                     f"{fpath}: pattern sur un champ borné à {bornes} caractères — "
@@ -471,7 +465,15 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
             else:
                 raison = pattern_refusal(motif, bornes)
                 if raison:
-                    errors.append(f"{fpath}: pattern {motif!r} refusé — {raison}")
+                    # Sans borne déclarée, le coût se majore sur la borne par défaut :
+                    # le dire, sinon l'auteur ne sait pas que borner le champ peut
+                    # suffire à faire passer le même motif.
+                    sans_borne = ("" if max_length_of(f) else
+                                  f" (sans `max_length`, le motif se majore sur "
+                                  f"{PATTERN_MAX_SUBJECT} caractères : borner le "
+                                  f"champ peut suffire)")
+                    errors.append(f"{fpath}: pattern {motif!r} refusé — {raison}"
+                                  f"{sans_borne}")
         # #586/#606 : les champs que l'appelant n'écrit pas. Sur une cible de couche,
         # `_COLUMN_ONLY_KEYS` a déjà parlé.
         if not layer:

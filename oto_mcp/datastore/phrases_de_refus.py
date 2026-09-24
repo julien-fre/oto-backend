@@ -45,6 +45,8 @@ def _forme_attendue(field: dict) -> str:
         bouts.append("une valeur parmi " + " | ".join(options))
     elif ftype in (None, "text"):
         bouts.append("du texte libre")
+    elif ftype in _FORME_DU_TYPE:
+        bouts.append(_FORME_DU_TYPE[ftype])
     else:
         bouts.append(f"une valeur de type `{ftype}`")
     ml = max_length_of(field)
@@ -56,10 +58,17 @@ def _forme_attendue(field: dict) -> str:
     return ", ".join(bouts)
 
 
+#: Les types dont le NOM ne dit pas la forme — `_forme_attendue` la dit en clair.
+_FORME_DU_TYPE = {
+    "phone": ("un numéro de téléphone — de préférence international : `+`, indicatif, "
+              "numéro (E.164) ; espaces et tirets acceptés"),
+}
+
 #: Le mot du gabarit, par type déclaré — la forme courte de `_forme_attendue`.
 _MOT_DU_TYPE = {None: "texte", "text": "texte", "number": "nombre", "bool": "true | false",
                 "date": "date AAAA-MM-JJ", "datetime": "date-heure ISO 8601",
-                "url": "URL http(s)", "email": "e-mail", "json": "json",
+                "url": "URL http(s)", "email": "e-mail",
+                "phone": "téléphone, +indicatif de préférence", "json": "json",
                 "enum": "valeur", "object": "objet", "list": "liste"}
 
 

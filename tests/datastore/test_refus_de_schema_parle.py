@@ -34,9 +34,11 @@ from oto_mcp.datastore.errors import SchemaDefinitionError
 # ── Les refus qui ne parlent que de la déclaration envoyée ───────────────────
 
 @pytest.mark.parametrize("nom,champ,attendu", [
-    ("un motif sans borne de longueur",
-     {"key": "notes", "type": "text", "pattern": r"\[serper:[0-9]+\]"},
-     "max_length"),
+    # Le cas d'origine (« pattern exige max_length ») n'est plus un refus depuis
+    # oto#103 : un motif seul s'applique. Un motif au coût non majorable, si.
+    ("un motif au coût non majorable",
+     {"key": "notes", "type": "text", "pattern": r"(a+)+$"},
+     "pattern"),
     ("un type inconnu",
      {"key": "notes", "type": "texte"},
      "type"),

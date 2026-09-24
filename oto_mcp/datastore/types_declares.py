@@ -47,7 +47,9 @@ from .phrases_de_refus import gabarit
 
 #: Les types dont la déclaration ARME le contrôle. Chacun a été mesuré sur le parc
 #: avant d'entrer ici — on ne branche pas une règle sans savoir ce qu'elle refusera.
-TYPES_ARMES = ("number", "bool", "date", "datetime", "email")
+#: `phone` (oto#103, 24/09/2026) entre armé d'emblée : type neuf, aucune colonne du parc
+#: ne le porte encore, donc rien d'existant à refuser.
+TYPES_ARMES = ("number", "bool", "date", "datetime", "email", "phone")
 
 #: Ce qu'il faut faire, par type — la DESTINATION du refus, pas seulement sa cause.
 _OU_METTRE_QUOI = {
@@ -55,6 +57,10 @@ _OU_METTRE_QUOI = {
               "le doute, l'échec d'une recherche — va dans `<colonne>.comment`. Si "
               "aucune adresse n'a été trouvée, OMETS la colonne : une absence ne "
               "s'écrit pas comme une valeur"),
+    "phone": ("écris le numéro seul, de préférence au format international (`+`, "
+              "indicatif, puis le numéro — espaces et tirets acceptés) ; le poste, le "
+              "contexte ou la source vont dans `<colonne>.comment`. Si aucun numéro "
+              "n'a été trouvé, OMETS la colonne"),
     "number": ("écris le nombre seul ; l'unité, l'exercice ou la tranche vont dans "
                "`<colonne>.comment`"),
     "date": "écris la date au format `AAAA-MM-JJ` ; la précision va dans `.comment`",

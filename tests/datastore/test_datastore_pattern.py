@@ -86,11 +86,13 @@ def test_une_regex_invalide_est_refusee_a_la_pose():
     assert any("pattern" in e for e in errs), errs
 
 
-def test_un_motif_sans_borne_est_refuse():
-    """Le budget d'exploration se calcule CONTRE la longueur du sujet : sans sujet
-    borné il n'y a pas de budget, donc pas de garantie — on refuse en le disant."""
-    errs = _pose({"fields": [{"key": "x", "pattern": "^[a-z]+$"}]})
-    assert any("max_length" in e for e in errs), errs
+def test_un_motif_sans_borne_se_majore_sur_la_borne_par_defaut():
+    """Le budget d'exploration se calcule CONTRE la longueur du sujet. Depuis oto#103
+    un motif SEUL est accepté : son sujet est borné par `PATTERN_MAX_SUBJECT`, et le
+    refus d'un motif trop cher le dit — borner le champ peut suffire."""
+    assert _pose({"fields": [{"key": "x", "pattern": "^[a-z]+$"}]}) == []
+    errs = _pose({"fields": [{"key": "x", "pattern": "^.*a.*$"}]})
+    assert errs and "sans `max_length`" in errs[0], errs
 
 
 def test_un_motif_sur_un_composite_est_refuse():

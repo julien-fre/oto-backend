@@ -37,8 +37,10 @@ from .motifs import PATTERN_MAX_SUBJECT, pattern_refusal
 
 # validation reste volontairement permissive — le schéma guide le rendu, il ne
 # transforme pas le datastore en base contrainte.
+# `url`, `email`, `phone` : les types MÉTIER, ceux dont le rendu et la validation
+# valent partout (arbitré le 24/09/2026, oto#103). Le reste se contraint par `pattern`.
 SCALAR_TYPES = ("text", "number", "date", "datetime", "bool", "json",
-                "url", "email", "enum", "formula")
+                "url", "email", "phone", "enum", "formula")
 COMPOSITE_TYPES = ("object", "list")
 
 
@@ -124,18 +126,30 @@ def pattern_of(field: dict) -> Optional[str]:
     était encore ignorée — ne doit pas faire exploser une écriture. C'est
     `_validate_fields_def` qui REFUSE, à la pose, devant celui qui peut corriger.
 
-    Trois conditions, chacune vérifiée à la pose : une chaîne, sur un champ scalaire,
-    et sur un champ BORNÉ. La borne n'est pas un confort — c'est elle qui rend le
-    coût du motif majorable (cf. `pattern_refusal`)."""
+    Deux conditions, vérifiées à la pose : une chaîne, sur un champ scalaire. Le coût
+    se majore contre la borne de LECTURE (`borne_du_motif`) : `max_length` s'il est
+    déclaré, sinon `PATTERN_MAX_SUBJECT` — au-delà, la valeur est refusée avant que le
+    motif ne s'exécute (`validation._row_errors`).
+
+    ⚠️ **Jusqu'au 24/09/2026, un motif sans `max_length` n'était pas lu** (oto#103) :
+    la pose le refusait, et un schéma plus ancien qui le portait gardait un motif
+    inerte — accepté, servi, et sans effet. Un motif seul s'applique désormais."""
     src = field.get("pattern")
     if not isinstance(src, str) or not src:
         return None
     if field.get("type") in COMPOSITE_TYPES:
         return None
-    ml = max_length_of(field)
-    if not ml or ml > PATTERN_MAX_SUBJECT:
+    borne = borne_du_motif(field)
+    if borne > PATTERN_MAX_SUBJECT:
         return None
-    return None if pattern_refusal(src, ml) else src
+    return None if pattern_refusal(src, borne) else src
+
+
+def borne_du_motif(field: dict) -> int:
+    """La longueur maximale sur laquelle le motif d'un champ s'exécute : sa borne
+    `max_length`, sinon `PATTERN_MAX_SUBJECT`. UNE règle pour la pose, la lecture et
+    l'écriture — trois copies divergeraient au premier cas limite."""
+    return max_length_of(field) or PATTERN_MAX_SUBJECT
 
 
 def top_level_bounds(schema: Optional[dict]) -> dict[str, int]:
@@ -336,9 +350,12 @@ def title_field(schema: Optional[dict]) -> Optional[dict]:
 def _exige(field: dict, *, sous_record: bool) -> bool:
     """Ce field porte-t-il une exigence que seule la validation fait respecter ?
 
-    `required`, `required_when`, `max_length` et `max_items` à toute profondeur ;
-    `options` dans un sous-record seulement (cf. `validation_active`)."""
-    if field.get("required") or field.get("required_when") or max_length_of(field):
+    `required`, `required_when`, `max_length`, `pattern` et `max_items` à toute
+    profondeur ; `options` dans un sous-record seulement (cf. `validation_active`).
+    `pattern` y est depuis qu'un motif seul s'applique (oto#103, 24/09/2026) : sans
+    lui, un motif posé sans borne sur un tableau souple ne serait jamais exécuté."""
+    if field.get("required") or field.get("required_when") or max_length_of(field) \
+            or pattern_of(field):
         return True
     mi = field.get("max_items")
     if isinstance(mi, int) and not isinstance(mi, bool) and mi > 0:
@@ -350,7 +367,8 @@ def validation_active(schema: Optional[dict]) -> bool:
     """La validation d'écriture est OPT-IN : `schema.strict` truthy, OU au moins une
     EXIGENCE déclarée, à n'importe quelle profondeur. Sans ça, écriture soft (0016).
 
-    Une exigence, c'est `required`, `required_when`, `max_length` ou `max_items` —
+    Une exigence, c'est `required`, `required_when`, `max_length`, `pattern` ou
+    `max_items` —
     posée sur une colonne, sur un sous-champ d'objet ou sur l'attribut d'un élément
     de liste — et `options` posée DANS un sous-record. Déclarer l'exigence EST la
     demande de la faire respecter.

@@ -27,8 +27,9 @@ from .couches import (_is_empty, CLES_INTERNES, LAYER_KEYS, VIDE_DELIBERE, layer
 from . import charge_a_renvoyer as car
 from .options_declarees import hors_des_options, montrable
 from .motifs import _pattern_re
-from .declaration import (_fields, cle_d_element, max_length_of, pattern_of, status_field,
-                          validation_active)
+from .declaration import (_fields, borne_du_motif, cle_d_element, max_length_of,
+                          pattern_of, status_field, validation_active)
+from . import telephone
 from .etats_declares import etats_trahis
 from .types_declares import types_trahis
 from .cycle_de_vie import lifecycle_of, refus_de_transition
@@ -74,6 +75,13 @@ def _conformite_scalaire(value: Any, ftype: Optional[str], path: str) -> list[st
         if isinstance(value, str) and "@" in value and " " not in value.strip():
             return []
         return [f"{path}: attendu un e-mail, reçu {value!r}"]
+    if ftype == "phone":
+        # oto#103 : jugé sur la forme COMPACTE (`telephone.normaliser`) — la mise en
+        # forme lisible passe, une phrase ou un identifiant ne passe pas.
+        if telephone.est_un_numero(value):
+            return []
+        return [f"{path}: attendu un numéro de téléphone (international `+` et "
+                f"indicatif, ou national en chiffres), reçu {value!r}"]
     return []
 
 
@@ -497,7 +505,16 @@ def _row_errors(fields: list, data: dict, path: str,
         motif = pattern_of(f)
         if motif and pose and not trop_long:
             texte = value if isinstance(value, str) else str(value)
-            if not _pattern_re(motif).search(texte):
+            # oto#103 : un motif SANS `max_length` s'applique ; le coût en a été majoré
+            # contre `borne_du_motif`, et c'est cette borne qui garantit qu'il ne
+            # s'exécute que sur un sujet de taille connue. Au-delà : refus, sans
+            # exécuter le motif.
+            if len(texte) > borne_du_motif(f):
+                errors.append(
+                    f"{fpath}: {len(texte)} caractères — une colonne à motif se lit sur "
+                    f"{borne_du_motif(f)} caractères au plus")
+                car.noter(fcharge, fchemin, gabarit(f))
+            elif not _pattern_re(motif).search(texte):
                 # La valeur CONSTATÉE autant que le motif attendu : sans le motif, le
                 # refus ne laisse rien à corriger ; sans la valeur, il fait relire la
                 # ligne pour savoir ce qui coince.

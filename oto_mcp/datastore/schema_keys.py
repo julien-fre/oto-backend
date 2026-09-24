@@ -42,6 +42,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .declaration import COMPOSITE_TYPES, SCALAR_TYPES
+
 
 @dataclass(frozen=True)
 class Cle:
@@ -62,7 +64,8 @@ class Cle:
 CLES: tuple[Cle, ...] = (
     # — structure, lues des deux côtés —
     Cle("key", ("validateur", "front"), "le nom de la colonne (ou `colonne.couche`)"),
-    Cle("type", ("validateur", "front"), "le type de la valeur"),
+    Cle("type", ("validateur", "front"),
+        "le type de la valeur : " + " | ".join(SCALAR_TYPES + COMPOSITE_TYPES)),
     Cle("of", ("validateur", "front"), "le type des éléments d'une liste", True),
     Cle("fields", ("validateur", "front"), "les sous-champs d'un objet", True),
     # — crans de garde, lus par le validateur —

@@ -873,6 +873,28 @@ donc geler aucune ligne existante. Un motif hérité qui ne passerait pas le gar
 INERTE à l'écriture (`pattern_of` est muette, comme `max_length_of` sur une borne mal
 formée) mais fait REFUSER la prochaine pose du schéma : c'est là qu'on peut encore corriger.
 
+**Un motif SEUL s'applique (oto#103, arbitré le 24/09/2026).** `max_length` n'est plus
+obligatoire : le sujet d'un motif est borné par `max_length` s'il est déclaré, sinon par
+`PATTERN_MAX_SUBJECT` (1 000) — une règle, `declaration.borne_du_motif`, pour la pose, la
+lecture et l'écriture. Le budget se calcule contre cette borne ; à l'écriture, une valeur
+plus longue est refusée **sans exécuter le motif**. `pattern` arme la validation comme
+`max_length` (`_exige`). Avant, un motif sans borne était refusé à la pose et, hérité d'un
+schéma plus ancien, restait inerte : accepté, servi, sans effet. ⚠️ Un tableau souple dont
+la seule exigence est un motif sans borne bascule donc en validation (types, `options` de
+premier niveau comprises) : la requête qui les compte se lance avant la mise en prod.
+
+**Le type `phone` (oto#103, arbitré le 24/09/2026).** La famille des types métier reste
+limitée à ceux dont le rendu et la validation valent partout : `url`, `email`, `phone`. Le
+reste (SIREN, IBAN, code postal…) se contraint par un `pattern` posé par le consommateur.
+`datastore/telephone.py` juge le numéro sur sa forme compacte (`normaliser`) : séparateurs
+retirés (espaces, points, tirets, barres, parenthèses, `(0)` après l'indicatif), `00` en
+tête lu comme `+` ; passe l'international E.164 (`+`, indicatif qui ne commence pas par 0,
+7 à 15 chiffres) ou un national de 6 à 15 chiffres. Armé par sa déclaration comme `email`
+(`types_declares.TYPES_ARMES`), avec la destination du refus (`.comment` pour le poste ou la
+source, omettre la colonne si rien n'a été trouvé). ⚠️ La valeur n'est **pas réécrite** en
+base : la réécrire changerait son identité face à la fusion, et un même numéro remis dans
+une autre mise en forme emporterait ses couches.
+
 **Les champs que l'appelant n'écrit pas (#586, #606 ; 29/08/2026).** **Deux**
 crans de colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans
 `datastore/reserves.py`), pour deux gestes mesurés sur la même campagne contre la
@@ -1943,6 +1965,7 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `datastore/schema.py` | **une FAÇADE, plus un corps** : elle ré-exporte les douze modules ci-dessous et rien d'autre. Une cinquantaine de sites importent `datastore.schema` — ce contrat les tient tous |
 | `datastore/couches.py` | le vocabulaire des couches d'une cellule et leurs formes |
 | `datastore/motifs.py` | le COÛT d'un `pattern` — la garde qui empêche un motif de figer le serveur |
+| `datastore/telephone.py` | le type `phone` : la forme compacte d'un numéro (`normaliser`), que la validation juge (oto#103) |
 | `datastore/declaration.py` | LIRE une déclaration : « que déclare ce schéma ? » |
 | `datastore/cycle_de_vie.py` | états, transitions, terminaux, plafond de reprises, périmètre |
 | `datastore/hors_schema.py` | une clé que la déclaration ne nomme pas — signalée en haut, refusée dessous |
@@ -2824,7 +2847,8 @@ et ni `options` ni `max_items` nulle part. Un schéma dont la seule exigence viv
 `nom` déclaré requis.
 
 **L'armement** (`declaration.validation_active`, `_exige`) : `strict`, ou `required`,
-`required_when`, `max_length`, `max_items` à toute profondeur (`_walk_fields`), ou
+`required_when`, `max_length`, `pattern` (depuis oto#103), `max_items` à toute profondeur
+(`_walk_fields`), ou
 `options` dans un sous-record. ⚠️ `options` de premier niveau n'arme toujours pas : c'est le
 régime souple déclaré (#319), que `non_applique.py` dit à la pose et à l'écriture — l'armer
 basculerait tous les tableaux souples à options. Mesuré en production avant la bascule : un
