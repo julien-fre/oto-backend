@@ -7,7 +7,7 @@ notion s'ouvre via une **intégration interne**. crée-la sur [notion.so/my-inte
 ## usage — ce que tu peux faire
 
 lis et écris pages, databases et blocs notion partagés avec ton intégration.
-- « retrouve la page roadmap » → `notion_search` — un zéro peut vouloir dire « rien n'est partagé avec l'intégration » : la réponse porte alors un `warning` qui dit comment trancher (relancer avec `query=""`)
+- « retrouve la page roadmap » → `notion_search` — un zéro peut vouloir dire « rien n'est partagé avec l'intégration » : la réponse porte alors un `warning` qui dit comment trancher (relancer avec `query=""`). une réponse rend au plus 100 objets : `has_more: true` → repasse son `next_cursor` en `cursor` pour la page suivante
 - « qu'est-ce qui a changé hier dans notion ? » → `notion_search` avec `query=""` et `edited_on="AAAA-MM-JJ"` (jour UTC) : tous les objets édités ce jour-là, en une réponse
 - « liste les lignes de cette base où statut = à faire » → `notion_query_database` (avec filtre)
 - « crée une page sous ce projet » → `notion_create_page`

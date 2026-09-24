@@ -30,8 +30,8 @@ class _FauxClient:
     def __init__(self, reponse):
         self.reponse, self.appels = reponse, []
 
-    def search(self, query, filter_type=None, sort="relevance"):
-        self.appels.append((query, filter_type, sort))
+    def search(self, query, filter_type=None, sort="relevance", start_cursor=None):
+        self.appels.append((query, filter_type, sort, start_cursor))
         return self.reponse
 
 

@@ -12,7 +12,7 @@ from typing import Optional
 from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, output_projection
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
@@ -97,6 +97,8 @@ def register(mcp: FastMCP) -> None:
         filter_type: Optional[str] = None,
         sort: str = "relevance",
         edited_on: Optional[str] = None,
+        cursor: Optional[str] = None,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Search the workspace (pages + databases shared with the integration).
 
@@ -104,18 +106,30 @@ def register(mcp: FastMCP) -> None:
         `results` may mean "nothing shared", not "nothing matches". An empty
         answer carries a `warning` saying how to tell the two apart.
 
+        Returns ONE page (at most 100 objects). `has_more: true` means there is
+        more: pass the answer's `next_cursor` back as `cursor`, same other args.
+
         `edited_on` answers "what changed that day": EVERY object whose
         `last_edited_time` falls on that UTC calendar day, most recent first,
         in one answer (walked server-side until the day is passed — cost tracks
-        what changed, not workspace size). `sort` does not apply then.
+        what changed, not workspace size). `sort` and `cursor` do not apply then.
+
+        `fields` keeps only these keys in each object; the envelope
+        (`has_more`, `next_cursor`) always stays.
 
         Args:
             query: text to match; "" lists everything the integration can see.
             filter_type: "page" or "database" to restrict object type.
             sort: "relevance" (default) or "last_edited_time".
             edited_on: "YYYY-MM-DD" (UTC day) — only objects last edited that day.
+            cursor: `next_cursor` of the previous answer, to read the next page.
+            fields: keys kept in each object (e.g. ["id", "url", "last_edited_time"]).
         """
         client = _client()
+        if edited_on and cursor:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                "`edited_on` rend déjà tout le jour en une réponse : il ne se "
+                "pagine pas, retire `cursor`.")))
         if edited_on:
             try:
                 objets = client.search_edited_on(
@@ -124,11 +138,12 @@ def register(mcp: FastMCP) -> None:
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e))) from e
             result = {"results": objets, "edited_on": edited_on}
         else:
-            result = client.search(query, filter_type=filter_type, sort=sort)
+            result = client.search(query, filter_type=filter_type, sort=sort,
+                                   start_cursor=cursor)
         if not result.get("results"):
             result = {**result,
                       "warning": _zero_warning(query, filter_type, edited_on)}
-        return result
+        return output_projection.project(result, items_path="results", fields=fields)
 
     @mcp.tool()
     def notion_get_page(page_id: str) -> dict:
