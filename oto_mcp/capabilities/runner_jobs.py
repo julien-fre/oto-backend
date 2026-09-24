@@ -643,36 +643,6 @@ _SANS_PORTEUR = (
 _CAMPAGNE_MUETTE: dict[int, tuple[str, float]] = {}
 
 
-def _id_du_tableau_vise(f: dict) -> Optional[int]:
-    """L'identifiant du tableau que ce passage vise — résolu ICI, au nom de QUI a
-    déclaré la campagne, et emporté par la charge utile du travail.
-
-    ⚠️ **Pourquoi ici et pas à l'écran.** Un passage ne stocke qu'un NOM
-    (`runner_fleets.namespace`), et `resolve_datastore_ns` préfère, à nom égal, le
-    tableau personnel du DEMANDEUR. Un écran qui refait cette résolution la refait donc
-    avec son propre demandeur : qui ouvre le travail d'un collègue, ou détient un
-    homonyme de ce que la campagne vise, se voyait peindre les lignes du SIEN sous le
-    bon libellé, sans un mot (oto#160). Résolu au nom de `f["sub"]`, l'identifiant
-    désigne exactement le tableau sur lequel l'agent va travailler — même sub, même
-    priorité que le store qu'il utilisera — et il vaut pour tous les lecteurs.
-
-    ⚠️ **Fail-open, comme tout ce chemin.** Un nom qui ne résout plus (tableau supprimé,
-    renommé, sorti de la portée) ne doit pas empêcher une campagne de produire : on rend
-    `None`, et le travail part avec son seul nom. C'est aussi ce que portent tous les
-    travaux ENFILÉS AVANT ce changement — la charge utile est persistée, elle ne se
-    réécrit pas. L'écran doit donc savoir vivre sans, et ne pas prétendre ouvrir un
-    tableau qu'il ne sait pas désigner."""
-    try:
-        # La résolution vit avec le comptage des lignes réservables, qui en a besoin
-        # aussi : une seule façon de dire quel tableau une campagne vise.
-        row = _lignes_reservables.tableau_vise(f)
-        return int(row["id"]) if row else None
-    except Exception:  # noqa: BLE001 — voir le fail-open ci-dessus
-        logger.warning("campagne %s : tableau « %s » non résolu — le travail part sans "
-                       "son identifiant", f.get("id"), f.get("namespace"), exc_info=True)
-        return None
-
-
 def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[str]:
     """Fabrique UN travail pour une campagne en cours de l'org, s'il y en a une.
 
@@ -752,6 +722,9 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
         f = db.campagne_a_servir(org_id, _ordre_de_service.ordonner)
         if not f or not f.get("sub"):
             return None
+        # Une campagne d'avant #1067 garde le NOM de son tableau : son identifiant est
+        # posé ici, au premier travail, avant que la consigne ne le cite.
+        f = _lignes_reservables.fixer_le_tableau(f)
         message = runner_consigne.composer(f)
         travail = db.enqueue_job(
             # L'org de la CAMPAGNE, jamais celle de l'appelant : un worker de
@@ -760,11 +733,10 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
             payload={"procedure": f["procedure"], "tools": list(f.get("tools") or ()),
                      "project_id": f.get("project_id"), "org_id": f["org_id"],
                      "namespace": f.get("namespace"),
-                     # L'IDENTIFIANT du tableau, à côté de son nom (oto#160). Le nom
-                     # seul ne désigne rien de sûr : à nom égal la résolution préfère
-                     # le tableau PERSONNEL du demandeur, donc un écran qui le
-                     # résoudrait le résoudrait avec SON demandeur — celui qui lit.
-                     "datastore_id": _id_du_tableau_vise(f),
+                     # L'IDENTIFIANT du tableau (oto#160), celui que la campagne garde
+                     # depuis sa déclaration (#1067) : un écran qui résoudrait un nom le
+                     # résoudrait avec SON demandeur — celui qui lit.
+                     "datastore_id": _lignes_reservables.cle_de_campagne(f),
                      "fleet": f.get("label"),
                      "max_steps": f.get("max_steps"),
                      "max_tokens": f.get("max_tokens_per_row"),

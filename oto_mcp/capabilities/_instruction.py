@@ -51,12 +51,10 @@ def de_file(slug: str, namespace: Optional[str],
     courant, et un agent sans état n'en a pas un stable — l'instruction enseignait donc
     un geste dont une part des exécutions ne pouvait pas aboutir.
 
-    ⚠️ **La cible est nommée telle qu'elle a été DÉCLARÉE** — c'est ce que l'opérateur a
-    écrit, et le résoudre ici ferait échouer la déclaration d'une campagne sur un tableau
-    qu'on ne peut pas encore voir. Ce qui bascule l'usage, c'est la suite : la réservation
-    rend le `ns_id` du tableau, et le protocole dit d'employer CE numéro dans les appels
-    d'après. Un agent recopie la forme qu'on lui montre ; on lui montre donc la forme
-    d'arrivée, prise là où elle est vraie.
+    ⚠️ **La cible est l'IDENTIFIANT que la campagne garde** (#1067) : résolue une fois à
+    la déclaration, dans la portée du déclarant. La nommer par son nom faisait réserver
+    l'agent dans SA portée, donc chez un homonyme apparu depuis. La réservation rend le
+    même `ns_id`, et le protocole dit d'employer ce numéro dans les appels d'après.
     """
     if not namespace:
         return derivee(slug)

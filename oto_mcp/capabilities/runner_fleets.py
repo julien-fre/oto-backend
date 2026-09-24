@@ -120,7 +120,11 @@ class FleetInput(BaseModel):
     label: Optional[str] = None
     procedure: Optional[str] = None
     tools: Optional[list[str]] = None
-    namespace: Optional[str] = None
+    namespace: Optional[str] = Field(None, description=(
+        "create: the target table, by id or name. Resolved ONCE, at declaration, in "
+        "the declarer's scope, and kept as the table's id — served back in "
+        "`namespace`. A name that several tables carry at the same rank is refused "
+        "(`datastore_ambigu`)."))
     row_filter: Optional[dict] = None
     project_id: Optional[int] = None
     input: Optional[str] = None
@@ -160,6 +164,8 @@ class Fleet(BaseModel):
     tools: Optional[list[str]] = None
     input: Optional[str] = None
     max_steps: Optional[int] = None
+    #: L'IDENTIFIANT du tableau visé, résolu à la déclaration (#1067) ; un nom = une
+    #: automatisation d'avant, fixée au premier armement ou travail.
     namespace: Optional[str] = None
     row_filter: Optional[dict] = None
     provider: Optional[str] = None
@@ -276,8 +282,12 @@ class FleetState(BaseModel):
         "partial, failed, blocked); `open` = not finished, `unknown` = no run start "
         "on record."))
     rows: Optional[FleetRows] = None
-    rows_unavailable: Optional[Literal["no_table", "table_not_found",
-                                       "no_status_column"]] = None
+    rows_unavailable: Optional[Literal["no_table", "table_not_found", "table_ambiguous",
+                                       "no_status_column"]] = Field(None, description=(
+        "Why `rows` is null: `no_table` (no target), `table_not_found` (the table is "
+        "gone or out of the declarer's reach), `table_ambiguous` (a pass declared "
+        "before its table was kept by id, whose name no longer designates one table), "
+        "`no_status_column`."))
     # L'issue des travaux TERMINÉS (oto#243), à côté de `done` : là où l'on regarde.
     empty_jobs: Optional[int] = Field(None, description=(
         "Finished jobs that called `data_claim_next` and got no row."))
@@ -363,6 +373,28 @@ def _noms_canoniques(ctx: ResolvedCtx, inp: FleetInput) -> FleetInput:
     return inp.model_copy(update=maj) if maj else inp
 
 
+def _cible_a_la_declaration(ctx: ResolvedCtx, adresse: Optional[str]) -> Optional[str]:
+    """La cible d'une automatisation, résolue UNE fois ici et gardée par son
+    IDENTIFIANT (#1067) — `None` sans cible. Un nom se résout dans la portée du
+    déclarant (`_lignes_reservables.cle_a_la_declaration`) : ce qui lit l'automatisation
+    ensuite passe par l'identifiant, et un homonyme apparu plus tard n'y change rien.
+    Rien ne répond → 404 ; plusieurs tableaux à ce nom au même rang → 409 nommé."""
+    adresse = (adresse or "").strip()
+    if not adresse:
+        return None
+    try:
+        cle = _lignes_reservables.cle_a_la_declaration(
+            adresse, sub=ctx.sub, org_id=ctx.org_id)
+    except _lignes_reservables.TableauAmbigu as e:
+        raise AuthzDenied(409, "datastore_ambigu", str(e)) from None
+    if cle is None:
+        raise AuthzDenied(
+            404, "datastore_not_found",
+            f"aucun tableau « {adresse} » dans ta portée : une automatisation vise un "
+            "tableau qui existe, désigné par son nom ou son identifiant.")
+    return str(cle)
+
+
 def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
@@ -434,12 +466,13 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # encore choisir un modèle servi par une clé d'organisation.
         _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True)
         descriptions = _descriptions_outils.valider(inp.descriptions_outils, inp.tools)
+        cible = _cible_a_la_declaration(ctx, inp.namespace)
         return {"fleet": db.create_fleet(
             ctx.org_id, ctx.sub, label=inp.label, procedure=inp.procedure,
-            tools=inp.tools, namespace=inp.namespace, row_filter=inp.row_filter,
+            tools=inp.tools, namespace=cible, row_filter=inp.row_filter,
             project_id=inp.project_id, max_steps=inp.max_steps,
             input=inp.input or _instruction.de_file(
-                inp.procedure, inp.namespace, inp.row_filter),
+                inp.procedure, cible, inp.row_filter),
             provider=famille, model=inp.model or None,
             temperature=inp.temperature, workers=inp.workers or 1,
             max_rows=inp.max_rows, max_tokens=inp.max_tokens,
@@ -527,6 +560,13 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # n'importe quel worker le sert.
         if famille:
             _modele.exige_servi(etat, famille)
+        # Une automatisation d'avant #1067 garde le NOM de son tableau : on pose son
+        # identifiant avant d'armer, là où un refus n'a encore rien engagé.
+        if avant:
+            try:
+                avant = _lignes_reservables.fixer_le_tableau(avant)
+            except _lignes_reservables.TableauAmbigu as e:
+                raise AuthzDenied(409, "datastore_ambigu", str(e)) from None
         if avant and avant.get("procedure") and not (avant.get("input") or "").strip():
             db.update_fleet(inp.fleet_id, ctx.org_id, {"input": _instruction.de_file(
                 avant["procedure"], avant.get("namespace"), avant.get("row_filter"))})
@@ -724,6 +764,14 @@ CAPABILITIES += [
             DeclaredError(400, "model_key_required",
                           "`launch` d'une automatisation dans une org qui doit tourner sur SA "
                           "clé de modèle et ne l'a pas déposée"),
+            DeclaredError(404, "datastore_not_found",
+                          "`create` sur un `namespace` qu'aucun tableau de la portée "
+                          "du déclarant ne porte"),
+            DeclaredError(409, "datastore_ambigu",
+                          "`create` sur un nom que plusieurs tableaux portent au même "
+                          "rang de la portée du déclarant, ou `launch` d'une "
+                          "automatisation d'avant #1067 dont le nom ne désigne plus un "
+                          "seul tableau"),
             DeclaredError(404, "fleet_not_found",
                           "automatisation inconnue dans l'org du porteur"),
             DeclaredError(409, "not_launchable",

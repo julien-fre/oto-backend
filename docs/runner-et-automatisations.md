@@ -122,17 +122,31 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   `running` qui ne bat plus n'est pas une concurrence à attendre), `taken_by` dit
   QUEL ordonnanceur la tient (voir « Qui tient une campagne » plus bas), et la
   table est créée AVANT `runner_jobs`, qui la référence.
-  ⚠️ **La cible n'est stockée que par son NOM, et un nom ne désigne rien de sûr**
-  (11/09/2026, oto#160). À nom égal, `resolve_datastore_ns` préfère le tableau
-  PERSONNEL du demandeur — et le demandeur est celui qui APPELLE. Un écran qui
-  résolvait `payload["namespace"]` le résolvait donc avec SON lecteur : ouvrir le
-  travail d'un collègue, ou détenir un homonyme de ce que la campagne vise, peignait
-  les lignes du sien sous le bon libellé, sans un mot. La charge utile d'un travail
-  emporte désormais `datastore_id`, résolu à l'enfilage **au nom de `fleet["sub"]`**
-  — le sub sous lequel l'agent travaillera, donc la même priorité que le store qu'il
-  utilisera. Fail-open : un nom qui ne résout plus rend `None` et le travail part
-  quand même. ⚠️ **Un travail est PERSISTÉ** : ceux enfilés avant ce jour n'auront
-  jamais cet identifiant — le dashboard montre alors le nom sans prétendre l'ouvrir.
+  ⚠️ **La cible est gardée par son IDENTIFIANT, résolu une fois à la déclaration**
+  (#1067, dernier pont de #365). Elle était gardée par son NOM et résolue à chaque
+  lecture dans la portée du déclarant : un homonyme apparu ensuite (un « vivier » perso
+  devant celui de l'org) captait le compte de l'ordonnanceur, l'état servi (`rows`) et
+  la file de l'agent, sans erreur. `op=create` résout `namespace` (nom ou identifiant)
+  dans la portée du déclarant — perso, ses équipes de l'org, l'org, ses partages —
+  selon la règle des liens de projet (`resolve_datastore_ids_by_name`, le rang le plus
+  proche gagne) : rien ne répond → `404 datastore_not_found`, deux tableaux au même
+  rang → `409 datastore_ambigu`. `runner_fleets.namespace` garde l'identifiant, servi
+  tel quel ; la consigne composée cite ce numéro, `{namespace}` le rend, et la charge
+  utile d'un travail emporte `datastore_id` (oto#160) sans rien résoudre. Tout ce qui
+  lit la campagne ensuite (`_lignes_reservables.tableau_vise`) lit par cet identifiant,
+  sous la portée du déclarant dans l'org de la campagne (`ownership.visible_in_org`) :
+  sorti de sa portée, le tableau ne se compte plus (`table_not_found`).
+  **Les campagnes d'avant**, qui ne gardent qu'un nom, sont reprises sans migration :
+  lues en résolvant ce nom (lecture, sans écrire), puis FIXÉES au premier armement ou
+  au premier travail produit (`fixer_le_tableau` : `namespace` ← identifiant, et la
+  consigne si c'est celle que la plateforme avait composée ; une consigne écrite à la
+  main n'est pas réécrite). ⚠️ Jamais deviner : le nom est résolu par la règle de la
+  déclaration ET par celle qui servait jusqu'ici (`resolve_datastore_ns`, perso > org >
+  le reste) ; s'ils divergent (une équipe et son org portent le même nom), la campagne
+  n'est pas servie, l'état dit `table_ambiguous` et l'armement rend `409
+  datastore_ambigu` — on en déclare une autre sur le bon identifiant. ⚠️ **Un travail
+  est PERSISTÉ** : ceux enfilés avant le 11/09/2026 n'ont pas d'identifiant — le
+  dashboard montre alors le nom sans prétendre l'ouvrir.
   Banc : `tests/test_designation_par_identifiant.py`.
   ⚠️ **SEPT états, parce que deux d'entre eux séparent une INTENTION d'un FAIT**
   (R4b, 01/09/2026) : `armed` (on a DEMANDÉ que ça tourne, `op=launch`) ≠

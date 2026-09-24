@@ -35,7 +35,7 @@ from typing import Optional
 
 from .. import db
 from ..datastore.schema import abandon_state_of, status_field, terminal_states
-from ._lignes_reservables import tableau_vise
+from ._lignes_reservables import TableauAmbigu, tableau_vise
 
 #: La clé d'une ligne sans valeur de statut — une valeur de statut n'est jamais vide.
 SANS_STATUT = "(none)"
@@ -49,12 +49,17 @@ def pour_le_superviseur(f: dict) -> dict:
     """`{rows, rows_unavailable}` pour UNE automatisation.
 
     `rows_unavailable` dit pourquoi il n'y a pas de ventilation : `no_table` (elle ne
-    vise aucun tableau), `table_not_found` (le nom ne résout plus pour qui l'a
-    déclarée), `no_status_column` (le schéma ne déclare aucune colonne
-    `role="status"` : l'issue d'une ligne n'y a pas de place)."""
+    vise aucun tableau), `table_not_found` (son tableau n'existe plus ou n'est plus
+    visible de qui l'a déclarée), `table_ambiguous` (déclarée avant #1067, son NOM ne
+    désigne plus un seul tableau — `_lignes_reservables._cle_heritee`),
+    `no_status_column` (le schéma ne déclare aucune colonne `role="status"` : l'issue
+    d'une ligne n'y a pas de place)."""
     if not (f.get("namespace") or "").strip():
         return _indisponible("no_table")
-    t = tableau_vise(f)
+    try:
+        t = tableau_vise(f)
+    except TableauAmbigu:
+        return _indisponible("table_ambiguous")
     if t is None:
         return _indisponible("table_not_found")
     schema = t.get("schema")

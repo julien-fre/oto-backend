@@ -97,7 +97,9 @@ def org(live):
     # Les flottes sont une surface BÊTA : sans l'option, la route refuse
     # `beta_required` (rejoué plus bas, sur une org qui ne l'a pas).
     db.set_option_comp("org", str(oid), "beta", granted_by="test")
-    return {"id": oid, "membre": membre}
+    # La cible se résout À LA DÉCLARATION (#1067) : elle existe dans la portée.
+    ns = db.create_datastore("org", str(oid), "un-tableau")
+    return {"id": oid, "membre": membre, "ns": ns}
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -275,6 +277,25 @@ def test_un_champ_non_modifiable_ne_rend_pas_200_sans_effet(client, org, flotte)
     f = client.post(ROUTE, headers=_h(org["membre"]),
                     json={"op": "get", "fleet_id": flotte["id"]}).json()["fleet"]
     assert f["procedure"] == "enrichissement"
+
+
+def test_la_cible_est_gardee_par_son_identifiant_sur_la_route(flotte, org):
+    assert flotte["namespace"] == str(org["ns"])
+
+
+def test_une_cible_introuvable_ou_ambigue_est_refusee_sur_la_route(client, org):
+    """#1067 : la cible se résout une fois, à la déclaration, dans la portée du
+    déclarant — rien qui y réponde, ou deux tableaux au même rang, est refusé."""
+    from oto_mcp import db, group_store
+    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    assert _refus(client, org, {**base, "namespace": "nulle-part"}
+                  ) == (404, "datastore_not_found")
+    for i in (1, 2):
+        g = group_store.create_group(org["id"], f"equipe-doublon-{i}")
+        group_store.add_group_member(g, org["membre"])
+        db.create_datastore("group", str(g), "doublon")
+    assert _refus(client, org, {**base, "namespace": "doublon"}
+                  ) == (409, "datastore_ambigu")
 
 
 def test_un_perimetre_sans_tableau_est_refuse_sur_la_route(client, org):

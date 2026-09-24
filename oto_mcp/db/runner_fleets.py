@@ -359,6 +359,24 @@ def update_fleet(fleet_id: int, org_id: int, champs: dict[str, Any]) -> Optional
     return dict(row) if row else None
 
 
+def fixer_tableau_de_campagne(fleet_id: int, *, ancien: str, cle: int,
+                              consigne_composee: str, consigne: str) -> Optional[dict]:
+    """Remplace le NOM qu'une campagne d'avant #1067 garde de son tableau par son
+    IDENTIFIANT — `capabilities/_lignes_reservables.fixer_le_tableau` l'a résolu sans
+    ambiguïté. Ce n'est pas déplacer la cible : c'est le même tableau, désigné par sa
+    clé. Conditionnel sur l'ancien nom (deux sondages concurrents : le second ne fait
+    rien) ; la consigne n'est réécrite que si c'est celle que la plateforme a composée.
+    Rend la campagne telle qu'en base, ou `None` si elle a déjà changé."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE runner_fleets SET namespace = %s, "
+            "       input = CASE WHEN input = %s THEN %s ELSE input END "
+            f"WHERE id = %s AND namespace = %s RETURNING {_COLS}",
+            (str(int(cle)), consigne_composee, consigne, fleet_id, ancien),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def set_status(fleet_id: int, org_id: int, statut: str,
                raison: Optional[str] = None) -> Optional[dict]:
     """Change l'état, et ÉCRIT la raison quand le passage s'arrête.

@@ -213,9 +213,13 @@ EXEMPTIONS = {
     ("oto_mcp/capabilities/projects.py", "_resolve_tableau_id"):
         "normalisation nom→id À LA POSE du lien, sur les propriétaires du projet ; "
         "l'identifiant retenu est rendu à qui pose le lien (`rewritten_from`)",
-    ("oto_mcp/capabilities/_lignes_reservables.py", "tableau_vise"):
-        "dette hors #365 : une flotte déclare son tableau par NOM, résolu au nom de "
-        "qui l'a déclarée — ni nœud ni lien de projet ; à re-keyer avec la flotte",
+    ("oto_mcp/capabilities/_lignes_reservables.py", "cle_a_la_declaration"):
+        "résolution nom→id À LA DÉCLARATION d'une automatisation, dans la portée du "
+        "déclarant, ambiguïté refusée (#1067) ; l'identifiant retenu est gardé et servi",
+    ("oto_mcp/capabilities/_lignes_reservables.py", "_cle_heritee"):
+        "reprise des automatisations d'avant #1067 qui ne gardent qu'un nom : refusée si "
+        "l'ancienne règle et celle de la déclaration divergent, fixée au premier "
+        "armement ou travail — à retirer quand plus aucune ne garde un nom",
 }
 
 #: Les modules qui lisent un NŒUD. Aucune de leurs fonctions ne mêle le titre d'un

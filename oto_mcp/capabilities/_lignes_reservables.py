@@ -60,18 +60,132 @@ _ECHEC = object()
 _SIGNALE: dict[int, tuple[str, float]] = {}
 
 
+class TableauAmbigu(LookupError):
+    """L'adresse d'un tableau désigne plusieurs tableaux dans la portée du déclarant —
+    rien n'est retenu (#1067). Le message nomme le cas et le geste qui le lève."""
+
+
+def _portee_du_declarant(sub: str, org_id: int) -> dict:
+    """La portée où une campagne désigne son tableau : celle de QUI l'a déclarée, dans
+    l'org de la campagne — son perso, ses équipes de cette org, l'org, ses partages.
+    C'est aussi la portée sous laquelle ses agents travaillent (`fleet["sub"]`)."""
+    from .. import group_store
+    groupes = [int(g["group_id"])
+               for g in group_store.list_groups_for_user(sub, int(org_id))]
+    return {"sub": sub, "org_ids": [int(org_id)], "group_ids": groupes}
+
+
+def cle_a_la_declaration(adresse: str, *, sub: str, org_id: int) -> Optional[int]:
+    """L'IDENTIFIANT du tableau qu'une campagne désigne, résolu UNE fois, à sa
+    déclaration, dans la portée de son déclarant (#1067) — `None` si rien ne répond à
+    cette adresse. LÈVE `TableauAmbigu` quand elle en désigne plusieurs.
+
+    ⚠️ **Le nom d'un tableau n'est pas une adresse** (#365). La campagne gardait le NOM
+    et le résolvait à chaque lecture : un homonyme apparu ensuite dans la portée (un
+    « vivier » perso devant celui de l'org) captait le compte, l'état et la file, sans
+    erreur. Résolue ici une fois, la campagne garde l'identifiant, et ce qui la lit
+    ensuite passe par lui (`tableau_vise`).
+
+    Même règle que les liens de projet (`resolve_datastore_ids_by_name`) : le rang le
+    plus proche du déclarant gagne (perso, équipe, org, partage), deux candidats au
+    même rang sont ambigus. Des chiffres désignent l'identifiant — ou un tableau ainsi
+    NOMMÉ, et les deux à la fois sont ambigus (`db.AdresseAmbigue`)."""
+    portee = _portee_du_declarant(sub, org_id)
+    if adresse.isdigit():
+        try:
+            t = db.resolve_datastore_ns(adresse, **portee)
+        except db.AdresseAmbigue as e:
+            raise TableauAmbigu(
+                f"`{adresse}` est l'identifiant d'un tableau ({e.par_id}) et le NOM d'un "
+                f"autre ({e.par_nom}) : désigne-le par l'autre voie, ou renomme celui qui "
+                "prête à confusion (`data_rename_datastore`).") from None
+        return int(t["id"]) if t else None
+    resolus, ambigus = db.resolve_datastore_ids_by_name([adresse], **portee)
+    if adresse in ambigus:
+        raise TableauAmbigu(
+            f"plusieurs tableaux s'appellent « {adresse} » au même rang de ta portée : "
+            "désigne le tien par son identifiant (`data_list_datastores`).")
+    return resolus.get(adresse)
+
+
+def _cle_heritee(f: dict) -> Optional[int]:
+    """La clé d'une campagne déclarée AVANT #1067, qui ne garde que le NOM de son
+    tableau — `None` s'il ne résout plus. LÈVE `TableauAmbigu`.
+
+    ⚠️ **Jamais deviner.** Le nom est résolu comme à la déclaration
+    (`cle_a_la_declaration`) ET comme la campagne le résolvait jusqu'ici
+    (`resolve_datastore_ns`, perso > org > le reste) : si les deux règles ne désignent
+    pas le même tableau, la campagne ne sait plus lequel elle visait, et elle est
+    refusée plutôt que tranchée. Les chemins d'écriture fixent ensuite cette clé
+    (`fixer_le_tableau`). À retirer quand plus aucune campagne ne garde un nom."""
+    nom = f["namespace"].strip()
+    cle = cle_a_la_declaration(nom, sub=f["sub"], org_id=f["org_id"])
+    if cle is None:
+        return None
+    servi = db.resolve_datastore_ns(nom, **_portee_du_declarant(f["sub"], f["org_id"]))
+    if servi is None or int(servi["id"]) != cle:
+        raise TableauAmbigu(
+            f"cette automatisation désigne son tableau par le nom « {nom} », qui ne "
+            "désigne plus un seul tableau de façon sûre : déclares-en une autre sur "
+            "l'identifiant du bon tableau.")
+    return cle
+
+
+def cle_de_campagne(f: dict) -> Optional[int]:
+    """L'identifiant que la campagne garde (`runner_fleets.namespace`), sans lecture :
+    `None` si elle ne vise aucun tableau, ou si elle ne garde encore qu'un NOM."""
+    ns = (f.get("namespace") or "").strip()
+    return int(ns) if ns.isdigit() else None
+
+
 def tableau_vise(f: dict) -> Optional[dict]:
-    """La ligne `user_datastores` que ce passage vise, résolue au nom de QUI l'a déclaré
-    (`f["sub"]`) — None s'il ne vise aucun tableau ou si le nom ne résout pas. LÈVE sur
-    une panne de lecture : l'appelant choisit s'il s'en passe."""
+    """La ligne `user_datastores` que cette campagne vise, lue par son IDENTIFIANT —
+    `None` si elle ne vise aucun tableau, ou si ce tableau n'est plus visible de son
+    déclarant dans l'org de la campagne. LÈVE `TableauAmbigu` (campagne d'avant #1067,
+    `_cle_heritee`) et sur une panne de lecture : l'appelant choisit s'il s'en passe.
+
+    ⚠️ Aucune résolution par nom ici : un homonyme apparu dans la portée de qui que ce
+    soit ne change pas le tableau d'une campagne déclarée."""
     ns = (f.get("namespace") or "").strip()
     if not ns or not f.get("sub"):
         return None
-    from .. import group_store
-    org = int(f["org_id"])
-    groupes = [int(g["group_id"])
-               for g in group_store.list_groups_for_user(f["sub"], org)]
-    return db.resolve_datastore_ns(ns, sub=f["sub"], org_ids=[org], group_ids=groupes)
+    ns_id = cle_de_campagne(f) if ns.isdigit() else _cle_heritee(f)
+    if ns_id is None:
+        return None
+    from .. import ownership
+    if not ownership.visible_in_org(f["sub"], int(f["org_id"]),
+                                    ownership.TYPE_RESSOURCE_DATASTORE, str(ns_id)):
+        return None
+    return db.get_datastore_by_id(ns_id)
+
+
+def fixer_le_tableau(f: dict) -> dict:
+    """Pose l'identifiant d'une campagne déclarée avant #1067 — sur un chemin
+    d'ÉCRITURE seulement (armement, production d'un travail), jamais sur une lecture.
+    Rend la campagne telle qu'elle est en base ; inchangée si elle garde déjà son
+    identifiant, ou si son nom ne résout plus (son compte échoue, elle n'est pas
+    servie). LÈVE `TableauAmbigu`.
+
+    La consigne composée par la plateforme (`_instruction.de_file`) suit : elle nommait
+    la file par son nom, l'agent la réservait donc dans SA portée. Une consigne écrite
+    à la main n'est pas réécrite — son marqueur `{namespace}` rend l'identifiant."""
+    ns = (f.get("namespace") or "").strip()
+    if not ns or ns.isdigit() or not f.get("sub"):
+        return f
+    cle = _cle_heritee(f)
+    if cle is None:
+        return f
+    from . import _instruction
+    composee = _instruction.de_file(f.get("procedure") or "", ns, f.get("row_filter"))
+    fixee = db.fixer_tableau_de_campagne(
+        int(f["id"]), ancien=f["namespace"], cle=cle, consigne_composee=composee,
+        consigne=_instruction.de_file(f.get("procedure") or "", str(cle),
+                                      f.get("row_filter")))
+    # `None` : un sondage concurrent l'a fixée entre-temps — on relit ce qu'il a posé.
+    relue = fixee or db.get_fleet(int(f["id"]), int(f["org_id"]))
+    if relue is None:
+        raise LookupError(f"automatisation {f['id']} disparue pendant sa reprise")
+    return relue
 
 
 def _signature(f: dict) -> str:

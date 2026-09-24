@@ -9,10 +9,9 @@ plausible et fausse, pire qu'une erreur.
 
 Deux surfaces ne recevaient qu'un nom, et ce banc tient ce que le serveur y ajoute :
 
-- la **charge utile d'un travail de runner** : le passage ne stocke qu'un nom
-  (`runner_fleets.namespace`). Il est résolu au nom de QUI A DÉCLARÉ la campagne — le
-  sub sous lequel l'agent travaillera, donc la même priorité que le store qu'il
-  utilisera — et l'identifiant part avec le travail ;
+- la **charge utile d'un travail de runner** : la campagne garde l'IDENTIFIANT de son
+  tableau, résolu une fois à sa déclaration dans la portée de QUI l'a déclarée (#1067),
+  et il part tel quel avec le travail ;
 - le **lien de projet vers un tableau** : `target_ref` est tantôt un id (posé par le
   dashboard), tantôt un nom (posé par un agent, #117). `datastore_id` porte toujours le
   même sens, ou n'est pas là — et il est résolu dans la portée du **propriétaire du
@@ -59,48 +58,20 @@ def test_le_nom_seul_ne_designe_pas_le_meme_tableau_selon_qui_demande():
     assert _faux_resolve("clients", sub="lecteur", org_ids=[], group_ids=[])["id"] == 41
 
 
-def test_l_identifiant_est_resolu_au_nom_de_QUI_A_DECLARE_la_campagne(monkeypatch):
-    """…et pas au nom de qui lit. C'est ce qui rend la réponse la même pour tous."""
-    monkeypatch.setattr(cap.db, "resolve_datastore_ns", _faux_resolve)
-    monkeypatch.setattr("oto_mcp.group_store.list_groups_for_user",
-                        lambda sub, org: [])
-    campagne = {"id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "clients"}
-    assert cap._id_du_tableau_vise(campagne) == 77
+def _refuse_toute_resolution(*a, **k):
+    raise AssertionError("une résolution par NOM à l'enfilage")
 
 
-def test_un_nom_qui_ne_resout_plus_ne_bloque_PAS_la_campagne(monkeypatch):
-    """Fail-open : tableau supprimé, renommé, sorti de portée → pas d'identifiant, et
-    le travail part quand même. L'écran montrera le nom sans prétendre l'ouvrir."""
-    monkeypatch.setattr(cap.db, "resolve_datastore_ns", _faux_resolve)
-    monkeypatch.setattr("oto_mcp.group_store.list_groups_for_user",
-                        lambda sub, org: [])
-    absente = {"id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "disparu"}
-    assert cap._id_du_tableau_vise(absente) is None
-    # Un passage SANS cible (une campagne peut n'en avoir aucune) : aucune requête.
-    assert cap._id_du_tableau_vise({"id": 3, "org_id": 2, "sub": "s"}) is None
-
-
-def test_une_resolution_qui_LEVE_ne_casse_pas_le_sondage(monkeypatch):
-    """Ce chemin tourne à chaque sondage de chaque worker. Une panne de résolution ne
-    doit pas arrêter les automatisations de toute l'org — elle coûte un lien, pas un
-    service."""
-    def boum(*a, **k):
-        raise RuntimeError("base indisponible")
-    monkeypatch.setattr(cap.db, "resolve_datastore_ns", boum)
-    monkeypatch.setattr("oto_mcp.group_store.list_groups_for_user",
-                        lambda sub, org: [])
-    assert cap._id_du_tableau_vise(
-        {"id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "clients"}) is None
-
-
-def test_la_charge_utile_EMPORTE_l_identifiant(monkeypatch):
-    """⚠️ Le banc qui compte : une fonction qui résout bien ne sert à rien si la clé
-    n'entre pas dans le payload. On regarde ce qui est réellement enfilé."""
+def test_la_charge_utile_EMPORTE_l_identifiant_que_la_campagne_garde(monkeypatch):
+    """⚠️ Le banc qui compte : on regarde ce qui est réellement enfilé. Depuis #1067 la
+    campagne garde l'IDENTIFIANT de son tableau, résolu à sa déclaration dans la portée
+    de son déclarant (`tests/test_campagne_tableau_par_cle_1067.py`) : l'enfilage ne
+    résout plus rien par nom, il emporte la clé gardée."""
     enfiles: list[dict] = []
     monkeypatch.setattr(cap.db, "arreter_campagnes_epuisees", lambda org: [])
     monkeypatch.setattr(cap.db, "accuser_arrets_effectifs", lambda org: [])
     monkeypatch.setattr(cap.db, "campagne_a_servir", lambda org, _ordonner: {
-        "id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "clients",
+        "id": 3, "org_id": 2, "sub": "campagne-sub", "namespace": "77",
         "procedure": "relance", "tools": ["data_rows"], "label": "vivier",
         "input": "traite {namespace}", "project_id": None, "max_steps": 8,
         "max_tokens_per_row": None, "temperature": None, "row_filter": None,
@@ -108,17 +79,21 @@ def test_la_charge_utile_EMPORTE_l_identifiant(monkeypatch):
     monkeypatch.setattr(cap.db, "marquer_demarree", lambda fid: None)
     monkeypatch.setattr(cap.db, "enqueue_job",
                         lambda *a, **k: enfiles.append(k.get("payload") or {}))
-    monkeypatch.setattr(cap.db, "resolve_datastore_ns", _faux_resolve)
-    monkeypatch.setattr("oto_mcp.group_store.list_groups_for_user",
-                        lambda sub, org: [])
+    monkeypatch.setattr(cap.db, "resolve_datastore_ns", _refuse_toute_resolution)
+    monkeypatch.setattr(cap.db, "resolve_datastore_ids_by_name", _refuse_toute_resolution)
 
     assert cap._produire_pour_une_campagne(2, 60) is None
     assert len(enfiles) == 1
     payload = enfiles[0]
-    assert payload["datastore_id"] == 77, "l'identifiant, résolu pour la campagne"
-    # ⚠️ Le NOM reste : c'est le libellé que l'écran affiche, et le worker s'en sert
-    # encore. Les deux voyagent — l'un désigne, l'autre se lit.
-    assert payload["namespace"] == "clients"
+    assert payload["datastore_id"] == 77, "l'identifiant gardé par la campagne"
+    assert payload["namespace"] == "77"
+    assert payload["input"] == "traite 77", "la consigne cite la clé, pas un nom"
+
+
+def test_une_campagne_sans_cible_n_emporte_aucun_identifiant():
+    from oto_mcp.capabilities import _lignes_reservables
+    assert _lignes_reservables.cle_de_campagne({"id": 3, "namespace": None}) is None
+    assert _lignes_reservables.cle_de_campagne({"id": 3, "namespace": "clients"}) is None
 
 
 # ── ② le lien de projet vers un tableau ──────────────────────────────────────
