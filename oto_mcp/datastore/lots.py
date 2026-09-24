@@ -149,7 +149,8 @@ class LotsMixin:
                     if dk != key and dkv is not None and str(dkv) != "":
                         existing_id = db.datastore_find_row_id_by_key(ns_id, dk, dkv)
                     if existing_id is None:
-                        raise _refus_de_creation(nom_ns, dk, dkv)
+                        raise _refus_de_creation(nom_ns, dk, dkv, schema=schema,
+                                                 ligne=user_data, cle_du_lot=key)
                 if existing_id is not None:
                     self._merge_into_row(ns_id, existing_id, user_data, schema=schema,
                                          forcage=forcage,
@@ -225,7 +226,7 @@ class LotsMixin:
                 # `BusinessKeyRequired` dérive, pour être actionnable côté MCP.
                 raise BusinessKeyRequired(
                     e.motif, key=e.key, datastore=e.datastore, value=e.value,
-                    row=self._designation_de_lot(rang, total, key, data,
+                    details=e.details, row=self._designation_de_lot(rang, total, key, data,
                                                  inserted + updated)) from None
             except RowValidationError as e:
                 # Le refus GARDE sa classe : les surfaces s'en servent pour choisir

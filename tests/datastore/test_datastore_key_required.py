@@ -319,3 +319,84 @@ def test_527_la_cle_annotee_est_jugee_sur_sa_valeur(banc):
     st.update_row("viviers", "r-existante",
                   {"siren": {"valeur": "552081317", "comment": "registre"}})
     assert not any("clé métier" in n for n in st.off_notices)
+
+
+# ── oto#151 §3 : le refus DISTINGUE la clé absente de la clé inconnue ─────────
+#
+# Un client REST pur a reçu « la clé métier n'est pas renseignée » pour une clé qu'il
+# venait d'envoyer, et en a conclu qu'il fallait chercher ailleurs. Les deux cas
+# tombaient sur le même code, sans `details` : un front ne pouvait les séparer qu'en
+# reparsant la phrase. Le refus porte désormais `details` — la clé, si l'écriture la
+# portait, la valeur refusée — et la charge à renvoyer (`a_renvoyer`, oto#135).
+
+_FERME_MOTIF = {"key": "siren", "key_required": True,
+                "fields": [{"key": "siren", "type": "text", "max_length": 9,
+                            "pattern": r"^\d{9}$"},
+                           {"key": "code", "type": "text"},
+                           {"key": "raison_sociale", "type": "text"}]}
+_GABARIT_SIREN = r"<texte, ≤ 9 caractères, motif ^\d{9}$>"
+
+
+def test_151_la_cle_ABSENTE_est_dite_absente_et_structuree(banc):
+    st, etat = banc
+    etat["schema"] = _FERME_MOTIF
+    with pytest.raises(BusinessKeyRequired) as exc:
+        st.append_row("viviers", {"raison_sociale": "ACME"})
+    assert exc.value.details == {"key": "siren", "cle_portee": False,
+                                 "a_renvoyer": {"siren": _GABARIT_SIREN}}
+    assert str(exc.value).startswith("cette écriture ne porte pas `siren`")
+
+
+def test_151_la_cle_PORTEE_mais_inconnue_est_dite_portee(banc):
+    st, etat = banc
+    etat["schema"] = _FERME_MOTIF
+    with pytest.raises(BusinessKeyRequired) as exc:
+        st.append_row("viviers", {"siren": {"valeur": "349763571", "comment": "fichier"}})
+    assert exc.value.details == {"key": "siren", "cle_portee": True,
+                                 "valeur": "349763571",
+                                 "a_renvoyer": {"siren": _GABARIT_SIREN}}
+    msg = str(exc.value)
+    assert msg.startswith("cette écriture porte `siren` = '349763571'")
+    assert "n'est pas renseign" not in msg
+
+
+def test_151_le_lot_garde_les_details_en_nommant_la_ligne(banc):
+    st, etat = banc
+    etat["schema"] = _FERME_MOTIF
+    with pytest.raises(BusinessKeyRequired) as exc:
+        st._write_rows_to_ns(7, [{"siren": "552081317"}, {"siren": "389256712"}],
+                             key="siren")
+    assert "ligne 2/2" in str(exc.value)
+    assert exc.value.details["cle_portee"] is True
+    assert exc.value.details["valeur"] == "389256712"
+
+
+def test_151_le_lot_qui_dedoublonne_sur_une_AUTRE_colonne_le_dit(banc):
+    """Le lot porte une clé — celle de `key=` — mais pas la clé DÉCLARÉE, seule jugée
+    par le cran. « `siren` n'est pas renseigné » laissait croire la sienne ignorée."""
+    st, etat = banc
+    etat["schema"] = _FERME_MOTIF
+    with pytest.raises(BusinessKeyRequired) as exc:
+        st._write_rows_to_ns(7, [{"code": "C1", "raison_sociale": "X"}], key="code")
+    assert exc.value.details["cle_portee"] is False
+    assert exc.value.details["cle_du_lot"] == "code"
+    msg = str(exc.value)
+    assert "`code`" in msg and "clé DÉCLARÉE" in msg
+
+
+def test_151_un_champ_nomme_key_dans_la_ligne_est_nomme(banc):
+    """Le geste du rapport : `key` posé dans le corps pour désigner la clé. Sur
+    l'écriture d'une ligne, le corps EST la ligne : `key` y est une colonne."""
+    st, etat = banc
+    etat["schema"] = _FERME_MOTIF
+    with pytest.raises(BusinessKeyRequired) as exc:
+        st.append_row("viviers", {"key": "siren", "raison_sociale": "ACME"})
+    assert "`key` est lu comme une COLONNE" in str(exc.value)
+
+
+def test_151_la_face_REST_rend_les_details():
+    from oto_mcp.capabilities.datastore.rows import _write_refusal
+
+    details = {"key": "siren", "cle_portee": False, "a_renvoyer": {"siren": "<texte>"}}
+    refus = _write_refusal(BusinessKeyRequired("x", key="siren", details=details))
+    assert refus.code == "business_key_required" and refus.details == details

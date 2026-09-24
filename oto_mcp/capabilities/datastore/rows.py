@@ -619,6 +619,7 @@ def _write_refusal(e: Exception) -> AuthzDenied:
     un front qui reçoit `invalid_row_input` ne peut que réafficher une phrase, alors
     que `business_key_required` lui dit QUOI proposer — viser une ligne existante.
     Elle dérive de `ValueError` elle aussi : l'ordre des branches reste le contrat.
+    Ses `details` (oto#151) disent si l'écriture PORTAIT la clé, et la charge à renvoyer.
 
     `details` (#545) passe avec, quand le refus en porte : `expected_column` dit au
     front QUEL champ pointer, sans reparser la phrase française du message — la
@@ -632,7 +633,7 @@ def _write_refusal(e: Exception) -> AuthzDenied:
         # le geste est d'attendre la fin du bail, ou de libérer la ligne.
         return AuthzDenied(409, "row_locked", str(e))
     if isinstance(e, BusinessKeyRequired):
-        return AuthzDenied(400, "business_key_required", str(e))
+        return AuthzDenied(400, "business_key_required", str(e), e.details)
     if isinstance(e, RowValidationError):
         return AuthzDenied(400, "row_invalid", str(e), e.details)
     return AuthzDenied(400, "invalid_row_input", str(e))
@@ -904,7 +905,9 @@ CAPABILITIES += [
             DeclaredError(400, "business_key_required",
                           "le tableau exige sa clé métier à la création et une ligne "
                           "du lot ne la porte pas, ou ne désigne aucune ligne "
-                          "existante : le message nomme la ligne"),
+                          "existante : le message nomme la ligne ; "
+                          "`details.cle_portee` dit si elle portait la clé, "
+                          "`details.a_renvoyer` le fragment à renvoyer"),
         ),
         description=("Écrit un LOT de lignes en un appel — le même geste que "
                      "`data_write(rows=[…])` côté agent : même moteur, mêmes refus, "

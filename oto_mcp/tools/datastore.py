@@ -31,6 +31,7 @@ from ..datastore import schema as dsv2
 from ..datastore.core import (
     indice_de_liberation,
     InvalidCursor,
+    BusinessKeyRequired,
     DatastoreExists,
     DatastoreForbidden,
     DatastoreNotFound,
@@ -1077,10 +1078,11 @@ def register(mcp: FastMCP) -> None:
                    **identite.numero(store.dernier_tableau)}
             hint = _project_hint(datastore)
             return {**out, "project_hint": hint} if hint else out
-        except RowValidationError as e:
+        except (RowValidationError, BusinessKeyRequired) as e:
             # oto#135 : la face MCP n'a pas d'enveloppe structurée — la charge à
             # renvoyer (`details.a_renvoyer`, rendue telle quelle par REST) finit le
-            # message. AVANT `ValueError`, dont elle dérive.
+            # message. AVANT `ValueError`, dont les deux dérivent. oto#151 : le refus
+            # de clé métier la porte aussi.
             raise McpError(ErrorData(code=INVALID_PARAMS, message=(
                 str(e) + charge_a_renvoyer.clause(e.details))))
         except ValueError as e:

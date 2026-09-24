@@ -16,7 +16,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from ..db.query import ds_filter_specs as _filter_specs
+from . import charge_a_renvoyer as car
+from .declaration import champ_declare
 from .errors import BusinessKeyRequired, InvalidCursor
+from .phrases_de_refus import gabarit
 from .reserves import iso_utc
 
 
@@ -153,15 +156,16 @@ def _current_run() -> Optional[str]:
         return None
 
 
-def _refus_de_creation(datastore: str, key: str,
-                       value: Any = None) -> BusinessKeyRequired:
+def _refus_de_creation(datastore: str, key: str, value: Any = None, *,
+                       schema: Optional[dict], ligne: dict,
+                       cle_du_lot: Optional[str] = None) -> BusinessKeyRequired:
     """Le refus d'une CRÉATION sur un tableau fermé (`key_required`, #516).
 
     Deux formes, parce que les deux gestes qui l'atteignent sont différents — et que
     dire « clé requise » à qui vient d'en fournir une le ferait chercher longtemps :
 
-    - **la clé n'est pas renseignée** : le geste du 28/08, une ligne née sans `siren`
-      sur un tableau qui en déclare un ;
+    - **l'écriture ne porte pas la clé** : le geste du 28/08, une ligne née sans
+      `siren` sur un tableau qui en déclare un ;
     - **la clé ne désigne aucune ligne** : le geste du 29/08, un SIREN inconnu qui a
       fabriqué une entreprise fictive. La valeur refusée est DITE — sans elle, il
       reste à deviner si c'est la valeur ou le tableau qui est en cause.
@@ -182,6 +186,12 @@ def _refus_de_creation(datastore: str, key: str,
     sortie existait, documentée dans `docs/datastore.md` et dans la description de
     `data_patch_schema` — nulle part où la lit celui qui vient d'être refusé.
 
+    ⚠️ **La forme se lit aussi sans la phrase** (oto#151) : `details` porte `cle_portee`
+    et la charge à renvoyer (`a_renvoyer`, gabarit de la colonne-clé DÉCLARÉE). Un client
+    REST qui venait d'envoyer sa clé a lu « n'est pas renseigné » : il avait posé `key`
+    dans le corps, lu comme une colonne, ou dédoublonnait son lot sur une AUTRE colonne
+    (`cle_du_lot`) que la clé déclarée, seule jugée par le cran. Les deux sont nommés.
+
     Le cran ne bouge pas pour autant : la sortie passe par le SCHÉMA, jamais par un
     paramètre « forcer » sur l'écriture (#516 — un bouton force devient un réflexe,
     et le cran redevient une étiquette)."""
@@ -195,14 +205,27 @@ def _refus_de_creation(datastore: str, key: str,
         f"data_patch_schema(datastore='{datastore}', key_required=false), ton "
         f"écriture, puis data_patch_schema(datastore='{datastore}', "
         f"key_required=true) pour refermer.")
-    if value is None or str(value) == "":
-        return BusinessKeyRequired(
-            f"`{key}`, la clé métier de `{datastore}`, n'est pas renseigné : {ferme} "
-            f"{sortie} Sinon renseigne `{key}` avec la valeur que porte la ligne "
-            f"visée. {naissance}",
-            key=key, datastore=datastore)
-    return BusinessKeyRequired(
-        f"aucune ligne de `{datastore}` ne porte `{key}` = {str(value)!r} : {ferme} "
-        f"Vérifie la valeur (une clé inventée créerait une ligne que rien ne "
-        f"rapproche). {sortie} {naissance}",
-        key=key, datastore=datastore, value=value)
+    portee = value is not None and str(value) != ""
+    details: dict = {"key": key, "cle_portee": portee}
+    if portee:
+        details["valeur"] = value
+        message = (
+            f"cette écriture porte `{key}` = {str(value)!r}, mais aucune ligne de "
+            f"`{datastore}` n'a cette valeur : {ferme} Vérifie la valeur (une clé "
+            f"inventée créerait une ligne que rien ne rapproche). {sortie} {naissance}")
+    else:
+        message = (f"cette écriture ne porte pas `{key}`, la clé métier de "
+                   f"`{datastore}` : {ferme}")
+        if cle_du_lot and cle_du_lot != key and ligne.get(cle_du_lot) is not None:
+            details["cle_du_lot"] = cle_du_lot
+            message += (f" Ce lot dédoublonne sur `{cle_du_lot}`, que la ligne porte ; "
+                        f"le cran, lui, se juge sur la clé DÉCLARÉE `{key}`.")
+        elif key != "key" and isinstance(ligne.get("key"), str):
+            message += (f" `key` est lu comme une COLONNE de la ligne, pas comme le nom "
+                        f"de la clé : écris `{key}` lui-même, avec sa valeur.")
+        message += (f" {sortie} Sinon renseigne `{key}` avec la valeur que porte la "
+                    f"ligne visée. {naissance}")
+    details.update(car.rendre({car.champ(car.RACINE, key):
+                               gabarit(champ_declare(schema, key) or {})}))
+    return BusinessKeyRequired(message, key=key, datastore=datastore,
+                               value=value if portee else None, details=details)

@@ -89,10 +89,17 @@ class BusinessKeyRequired(ValueError):
 
     Le refus porte de quoi AGIR : la clé, la valeur refusée quand il y en a une, et
     le geste (viser la ligne par son identifiant). `row` = la désignation de la ligne
-    fautive quand le geste en visait plusieurs, comme `RowValidationError` (#412)."""
+    fautive quand le geste en visait plusieurs, comme `RowValidationError` (#412).
+
+    `details` (oto#151) : ce que le refus a de STRUCTURÉ — `key`, `cle_portee` (l'écriture
+    portait-elle une valeur de la clé ?), `valeur` quand oui, `cle_du_lot` quand le lot
+    dédoublonnait sur une autre colonne, et la charge à renvoyer (`a_renvoyer`, oto#135).
+    Sans lui, « clé absente » et « clé inconnue » ne se séparaient qu'en reparsant la
+    phrase : un client REST qui venait d'envoyer sa clé lisait qu'elle manquait."""
 
     def __init__(self, message: str, *, key: str, datastore: Optional[str] = None,
-                 value: Any = None, row: Optional[str] = None):
+                 value: Any = None, row: Optional[str] = None,
+                 details: Optional[dict] = None):
         # Le motif NU est conservé : le batch reconstruit le même refus en lui
         # ajoutant sa désignation de ligne, sans reformuler le message.
         self.motif = message
@@ -100,6 +107,7 @@ class BusinessKeyRequired(ValueError):
         self.datastore = datastore
         self.value = value
         self.row = row
+        self.details = details
         super().__init__(f"{row} : {message}" if row else message)
 
 

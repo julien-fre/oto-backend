@@ -154,7 +154,8 @@ class EcritureMixin:
         # Refuser AVANT `_check_row` : la validation de schéma parlerait des champs
         # d'une ligne qui ne doit pas naître.
         if dsv2.key_required_of(schema):
-            raise _refus_de_creation(ns.get("datastore") or datastore, key, kv)
+            raise _refus_de_creation(ns.get("datastore") or datastore, key, kv,
+                                     schema=schema, ligne=user_data)
         # #390 (3ᵉ demande) : une ligne CRÉÉE sans la clé métier déclarée est non
         # rapprochable — aucune écriture ultérieure ne la retrouvera par sa clé, et
         # le batch qui dédouble passera à côté. C'est la forme résiduelle de

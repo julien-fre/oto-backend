@@ -225,3 +225,43 @@ def test_les_deux_faces_rendent_la_meme_enveloppe_et_les_memes_notices(client, d
     assert rest["notices"] and rest["notices"] == mcp["notices"]
     for cle in ("inserted", "updated", "count", "key"):
         assert rest[cle] == mcp[cle], cle
+
+
+# ── §3 : `business_key_required` distingue la clé absente de la clé inconnue ──
+
+FERME = {**SCHEMA, "key_required": True}
+
+
+def _refus_mcp(data_write, **kw) -> str:
+    from mcp.shared.exceptions import McpError
+    with pytest.raises(McpError) as exc:
+        data_write(**kw)
+    return exc.value.error.message
+
+
+@pytest.mark.parametrize("ligne, portee", [({"siren": "999", "nom": "X"}, True),
+                                          ({"nom": "X"}, False)])
+def test_le_refus_de_cle_dit_si_l_ecriture_la_portait_sur_les_deux_faces(
+        client, data_write, ligne, portee):
+    """Même refus, quatre chemins : REST ligne, REST lot, `data_write(row=)`,
+    `data_write(rows=)`. REST porte `details` ; MCP, qui n'a pas d'enveloppe, finit
+    son message par la charge à renvoyer. Rien n'est écrit."""
+    ns, ns_id = _table(FERME)
+    attendu = {"key": "siren", "cle_portee": portee,
+               **({"valeur": "999"} if portee else {}),
+               "a_renvoyer": {"siren": "<texte>"}}
+    ouverture = ("cette écriture porte `siren` = '999'" if portee
+                 else "cette écriture ne porte pas `siren`")
+    for r in (client.post(f"/api/datastores/{ns}/rows", headers=_h(), json=ligne),
+              _lot(client, ns, {"rows": [ligne]})):
+        assert r.status_code == 400, r.text
+        corps = r.json()
+        assert corps["error"] == "business_key_required"
+        assert corps["details"] == attendu
+        assert ouverture in corps["detail"]
+    for kw in ({"row": ligne}, {"rows": [ligne]}):
+        msg = _refus_mcp(data_write, datastore=ns, **kw)
+        assert ouverture in msg
+        assert msg.endswith('À renvoyer, les gabarits `<…>` remplacés : '
+                            '{"siren": "<texte>"}.')
+    assert _base(ns_id) == {}

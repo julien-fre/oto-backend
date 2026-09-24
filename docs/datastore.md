@@ -672,6 +672,19 @@ REST `400 business_key_required`) au lieu de créer une ligne.
   inconnue** : c'est cette porte-là que le cran ferme, et rien d'autre ne le pouvait
   (une garde de comptage côté runner ne voit qu'APRÈS).
 
+⚠️ **La distinction se lit aussi sans la phrase (oto#151 §3).** Les deux formes sortaient
+sous le même code, sans `details`, et la première s'ouvrait sur « n'est pas renseigné » :
+un client REST qui venait d'envoyer `"key": "<clé>"` dans son corps l'a lu comme un refus
+de ce qu'il avait envoyé. Le refus s'ouvre maintenant sur « cette écriture porte `siren` =
+… » ou « cette écriture ne porte pas `siren` », et porte `details` : `key`, `cle_portee`,
+`valeur` (si portée), `a_renvoyer` (gabarit de la colonne-clé déclarée, oto#135) et
+`cle_du_lot` quand un lot dédoublonnait sur une AUTRE colonne que la ligne portait. Un
+champ `key` dans la ligne est nommé : c'est une colonne, pas le nom de la clé. REST rend
+`details` ; `data_write` finit son message par la charge (`charge_a_renvoyer.clause`),
+ligne seule comme lot — le lot garde `details` en changeant de désignation. Bancs :
+`tests/datastore/test_datastore_key_required.py` (`test_151_*`),
+`tests/api/test_rest_lot_oto151_live.py`.
+
 **Le défaut ne bouge pas** : sans `key_required`, la création reste possible et reste
 signalée par le `notices` de #390. Le cran est une déclaration du propriétaire du
 tableau, jamais une politique de plateforme — un tableau se remplit souvent avant

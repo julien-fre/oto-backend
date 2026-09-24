@@ -349,6 +349,10 @@ sans valeur de clé est créée quand même et la réponse le signale (`notices`
 `key_required: true` ferme le tableau : une écriture qui ne désigne aucune ligne
 existante — ni `id`, ni valeur de clé déjà portée ; une clé simplement **nouvelle**
 compte comme inconnue — est **refusée** (`business_key_required`) au lieu de créer.
+Le refus dit si l'écriture PORTAIT la clé (« porte `siren` = … » : la valeur est
+inconnue) ou non (« ne porte pas `siren` ») ; REST : `details.cle_portee`, `details.valeur`,
+`details.a_renvoyer`. Un lot dédoublonné par `key=` sur une autre colonne est jugé sur
+la clé DÉCLARÉE.
 Ouvrir, écrire, refermer : `data_patch_schema(key_required=false)` puis `…=true`.
 
 Un **lot** (`data_write(rows=[…])`, `oto_upload_url`) n'est pas atomique : il s'arrête à
