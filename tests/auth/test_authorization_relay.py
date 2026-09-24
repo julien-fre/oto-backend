@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import types
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlparse
 
 import httpx
@@ -507,11 +508,21 @@ def test_une_panne_amont_rend_une_erreur_json_nommee(client, annuaire, reponse, 
 def test_le_seau_par_ip_arrete_une_rafale_et_ne_se_contourne_pas(monkeypatch, annuaire, registre,
                                                                   pair, xff):
     _env(monkeypatch)
+    # Horloge GELÉE, pour `relay` seul : `_seau_ok` recharge le seau au prorata du temps
+    # RÉEL écoulé entre deux appels (`time.monotonic()`). Sur une machine chargée, le simple
+    # aller-retour des 65 requêtes de cette rafale laisse passer assez de secondes pour
+    # rendre un ou deux jetons — flaky en CI (`4 >= 5` puis vert à la relance). Une vraie
+    # rafale tient dans un instant ; on le simule en figeant l'horloge QUE `relay` lit
+    # (`relay.time`, pas le module `time` global — asyncio en dépend pour ses délais, y
+    # compris ceux, réels, que `_client_http`/`_poster` peuvent encore attendre ailleurs).
+    # Avec le temps figé le seau ne se remplit plus pendant la boucle : le compte de refus
+    # devient exact, plus seulement une borne basse.
+    monkeypatch.setattr(relay, "time", types.SimpleNamespace(monotonic=lambda: 1_000_000.0))
     c = TestClient(_app(), client=(pair, 50000))
     statuts = [_echanger(c, _RAFRAICHIR, **{"cf-connecting-ip": f"192.0.2.{i}",
                                             "x-forwarded-for": xff.format(i=i)}).status_code
                for i in range(int(relay._SEAU_RAFALE) + 5)]
-    assert statuts.count(429) >= 5
+    assert statuts.count(429) == 5, statuts
 
 
 def test_le_proxy_de_la_box_distingue_ses_clients(monkeypatch, annuaire, registre):

@@ -330,7 +330,17 @@ def test_RALLUMER_rend_la_file_sans_la_faire_partir_d_un_coup(live):
             (str(t["id"]),)).fetchall()
     ecarts = [r["d"] for r in rows]
     assert ecarts[0] >= -1, "rien ne part avant maintenant"
-    assert all(b - a >= 3600 - 1e-4 for a, b in zip(ecarts, ecarts[1:])), (
+    # Tolérance NOMMÉE, à la seconde : chaque livraison vit sa propre transaction (son
+    # propre `NOW()`), donc l'écart entre deux créneaux consécutifs porte le temps RÉEL
+    # écoulé entre deux appels Python successifs — quelques millisecondes ici, jusqu'à
+    # une seconde sur une CI chargée. Une égalité stricte au flottant y voyait un
+    # espacement « perdu » (ex. CI : [-0.002921, 3599.999433, 7199.00185, 10799.004216])
+    # alors que l'heure était bien tenue à la milliseconde ou à la seconde près. On
+    # affirme toujours l'espacement d'une heure, juste avec une marge explicite plutôt
+    # qu'une précision d'horloge qu'aucune machine ne garantit.
+    TOLERANCE_ESPACEMENT_S = 1.0
+    assert all(b - a == pytest.approx(3600, abs=TOLERANCE_ESPACEMENT_S)
+               for a, b in zip(ecarts, ecarts[1:])), (
         f"l'espacement d'une heure est perdu : {ecarts}")
     # Et le lissage suit : la livraison suivante passe derrière la file rendue.
     assert _livrer(t, secret)[0] > ecarts[-1] - 1
