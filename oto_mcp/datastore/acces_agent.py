@@ -74,7 +74,7 @@ garde posée au mauvais endroit couperait la file de travail.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .. import session_org
 
@@ -308,8 +308,8 @@ def _acces_declares(schema: Optional[dict]) -> dict:
 
 
 def refus_de_schema(ancien: Optional[dict], nouveau: Optional[dict],
-                    *, geste: str) -> Optional[str]:
-    """Le refus d'un geste de SCHÉMA venu d'un agent, ou `None` s'il passe.
+                    *, geste: str, a_titre: Callable[[], bool]) -> Optional[str]:
+    """Le refus d'un geste de SCHÉMA sur l'accès agent, ou `None` s'il passe.
 
     Sans ce cran, la capacité serait décorative : il suffirait à un agent de poser
     `agent_access: "write"` (ou de reposer le schéma sans la colonne) pour rouvrir ce
@@ -325,17 +325,27 @@ def refus_de_schema(ancien: Optional[dict], nouveau: Optional[dict],
       compris. C'est le piège du `_id` relu puis réécrit, à l'échelle du format. La
       destination est nommée : `data_patch_schema`, qui fusionne par clé et ne peut pas
       détruire ce qu'il ne nomme pas ;
-    - **déclarer, changer ou retirer `agent_access`** — un agent ne décide pas de ce qui
-      lui est servi. Jugé sur le DELTA `ancien → nouveau`, jamais sur la présence de
-      l'attribut : un patch légitime réémet les champs tels qu'il les a lus, réglage
-      compris, et le refuser arrêterait tout patch sur un tableau réglé. Le poser sur
-      une colonne NEUVE est refusé aussi : sinon l'agent s'en déclare un en `"write"`
-      et le cran ne mord jamais.
+    - **déclarer, changer ou retirer `agent_access`** — réservé au TITRE, pas à la
+      face (oto#93) : `a_titre()` dit si l'appelant possède le tableau ou le gouverne,
+      le palier du forçage de `readonly` (`_peut_forcer`). Le jugement portait sur la
+      porte d'entrée : le propriétaire qui passait par un outil était traité en
+      exécutant, alors que le forçage voisin lui était ouvert. Désormais une session
+      qui possède ou gouverne pose le réglage par l'outil comme par l'écran ; qui n'a
+      reçu qu'un accès en écriture partagé ne le pose ni par l'un ni par l'autre.
+      Jugé sur le DELTA `ancien → nouveau`, jamais sur la présence de l'attribut : un
+      patch légitime réémet les champs tels qu'il les a lus, réglage compris, et le
+      refuser arrêterait tout patch sur un tableau réglé. Le poser sur une colonne
+      NEUVE compte aussi : sinon un exécutant s'en déclare un en `"write"` et le cran
+      ne mord jamais. `a_titre` n'est appelé que si le réglage bouge : le palier coûte
+      une lecture d'ownership, le chemin nominal n'en paie aucune.
+
+    Le premier refus reste une affaire de FACE, et c'est voulu : il tient à ce que
+    l'appelant VOIT, et la face agent masque les colonnes `none` à tout le monde,
+    propriétaire compris.
     """
-    if not appel_d_agent():
-        return None
     avant, apres = _acces_declares(ancien), _acces_declares(nouveau)
-    if geste == "schema" and any(v is not None for v in avant.values()):
+    if appel_d_agent() and geste == "schema" \
+            and any(v is not None for v in avant.values()):
         return (
             "ce tableau porte des colonnes dont l'accès agent est déclaré, et tu ne "
             "les vois pas toutes : poser un schéma le REMPLACE, celui-ci les "
@@ -344,13 +354,15 @@ def refus_de_schema(ancien: Optional[dict], nouveau: Optional[dict],
             "écrit, et rejouer cet appel rendra le même refus.")
     bouge = sorted({k for k, v in apres.items() if v != avant.get(k)}
                    | {k for k, v in avant.items() if v is not None and k not in apres})
-    if bouge:
+    if bouge and not a_titre():
         noms = ", ".join(f"`{k}`" for k in bouge)
         return (
-            f"`{CLE}` dit à qui une colonne est servie — c'est le propriétaire du "
-            f"tableau qui le décide, depuis son écran, jamais un agent. Ton geste le "
+            f"`{CLE}` dit à qui une colonne est servie — seul qui POSSÈDE ce tableau "
+            f"(lui, son org, son équipe) ou le GOUVERNE le décide, par l'outil comme "
+            f"par l'écran ; un accès en écriture partagé ne suffit pas. Ton geste le "
             f"pose, le change ou le retire sur {noms} : laisse cet attribut tel que le "
             f"schéma le porte et le reste de ta déclaration passera. Rien n'a été "
             f"écrit, et rejouer cet appel rendra le même refus — si une colonne te "
-            f"manque pour travailler, dis-le dans ton compte rendu.")
+            f"manque pour travailler, dis-le dans ton compte rendu ou au propriétaire "
+            f"du tableau.")
     return None

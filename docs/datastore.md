@@ -1317,13 +1317,25 @@ la sortie de `set_schema` (`data_get_schema`, `data_patch_schema`, l'index de
 continue de lire le schéma ENTIER par `_schema_of` : masquer à la validation ferait
 passer l'écriture de l'agent comme un champ hors schéma.
 
-**Le réglage ne se rouvre pas depuis la face agent** (`acces_agent.refus_de_schema`,
-câblé dans `set_schema`, donc aussi dans `patch_schema` qui y repasse) : un agent ne
-pose, ne change ni ne retire `agent_access` — jugé sur le DELTA ancien→nouveau, pour
-qu'un patch qui TRANSPORTE le réglage passe —, et il ne repose pas un schéma entier sur
-un tableau réglé (`set_schema` REMPLACE, et il n'en voit qu'une partie : le refus nomme
-`data_patch_schema`). Sans ce cran la capacité serait décorative — la manœuvre « lever,
-écrire, refermer » de #658/#668 n'aurait même pas eu besoin de refermer.
+**Le réglage ne se rouvre pas sans TITRE** (`acces_agent.refus_de_schema`, câblé dans
+`set_schema`, donc aussi dans `patch_schema` qui y repasse) : poser, changer ou retirer
+`agent_access` est réservé à qui **possède** le tableau (lui, son org, son équipe) ou le
+**gouverne** — le palier du forçage de `readonly` (`_peut_forcer`), par l'outil comme
+par l'écran. Qui n'a reçu qu'un accès en écriture partagé est refusé sur les deux faces.
+Jugé sur le DELTA ancien→nouveau, pour qu'un patch qui TRANSPORTE le réglage passe (et
+le palier n'est interrogé que si le réglage bouge). Sans ce cran la capacité serait
+décorative — la manœuvre « lever, écrire, refermer » de #658/#668 n'aurait même pas eu
+besoin de refermer.
+
+⚠️ **Jusqu'au 24/09/2026, ce refus regardait la FACE** (oto#93) : tout appel par un
+outil était refusé, propriétaire compris, alors que le forçage voisin de `readonly` lui
+était ouvert sous le même palier ; et l'écran laissait passer un simple écrivain
+partagé. Les deux crans suivent désormais la même règle.
+
+Le second refus, lui, reste une affaire de **face** : sur la face agent, on ne repose
+pas un schéma entier sur un tableau réglé (`set_schema` REMPLACE, et la face agent
+masque les colonnes `none` à tout appelant, propriétaire compris : le refus nomme
+`data_patch_schema`).
 
 ⚠️ **Ce que le masquage N'EST PAS, et ce qu'il ne couvre pas.** Une colonne masquée
 n'est pas supprimée : la valeur reste, l'écran la lit et l'écrit, les exports du

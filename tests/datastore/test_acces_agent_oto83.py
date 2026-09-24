@@ -12,8 +12,9 @@ Ce banc figes les quatre choses qui rendent le cran réel plutôt que décoratif
 2. **la ligne servie** perd la colonne, ses couches et ses alias plats — et la BASE ne
    perd rien ;
 3. **l'écriture est refusée**, et le refus NOMME une destination réelle du tableau ;
-4. **le réglage ne se rouvre pas depuis la face agent** — sans quoi il suffirait de
-   poser `agent_access: "write"` puis d'écrire.
+4. **le réglage ne se rouvre pas sans TITRE** — sans quoi il suffirait de poser
+   `agent_access: "write"` puis d'écrire. Depuis oto#93, c'est le titre (possède ou
+   gouverne, le palier du forçage de `readonly`) qui décide, plus la face.
 
 ⚠️ Chaque épreuve porte son contrôle négatif : la même chose hors face agent doit
 passer. Un banc qui ne mesure que le refus serait vert avec une garde qui refuse TOUT.
@@ -345,41 +346,75 @@ def test_le_vocabulaire_declare_la_cle():
     assert "agent_access" in dsv2.interpreted_keys()
 
 
-# ── 5. Le réglage ne se rouvre pas depuis la face agent ──────────────────────
+# ── 5. Le réglage ne se rouvre pas sans TITRE (oto#93) ───────────────────────
+
+
+def _titre(tenu: bool):
+    return lambda: tenu
+
+
+def _jamais():
+    raise AssertionError("le palier ne doit pas être interrogé quand rien ne bouge")
 
 
 def test_hors_face_agent_le_proprietaire_fait_ce_qu_il_veut():
     assert aga.refus_de_schema(SCHEMA, {"fields": [{"key": "ref"}]},
-                               geste="schema") is None
-    assert aga.refus_de_schema(SCHEMA, SCHEMA, geste="patch") is None
+                               geste="schema", a_titre=_titre(True)) is None
+    assert aga.refus_de_schema(SCHEMA, SCHEMA, geste="patch", a_titre=_jamais) is None
 
 
 def test_un_agent_ne_repose_pas_un_schema_dont_il_ne_voit_qu_une_part(face_agent):
     """`set_schema` REMPLACE. Le schéma qu'un agent relit ne porte pas les colonnes
     masquées : le reposer les efface, réglage compris. C'est le piège du `_id` relu
-    puis réécrit, à l'échelle du format."""
-    msg = aga.refus_de_schema(SCHEMA, aga.schema_servi(SCHEMA), geste="schema")
+    puis réécrit, à l'échelle du format. Refus de FACE, titre ou pas : la face agent
+    masque la colonne au propriétaire aussi."""
+    msg = aga.refus_de_schema(SCHEMA, aga.schema_servi(SCHEMA), geste="schema",
+                              a_titre=_titre(True))
     assert msg and "data_patch_schema" in msg
 
 
 def test_un_patch_qui_TRANSPORTE_le_reglage_passe(face_agent):
     """Sans ce contrôle négatif, la garde arrêterait tout patch sur un tableau réglé —
-    un cran qui ferme le tableau entier au lieu d'une colonne."""
+    un cran qui ferme le tableau entier au lieu d'une colonne. Et le palier n'est pas
+    interrogé : le chemin nominal ne paie aucune lecture d'ownership."""
     fusionne = {**SCHEMA, "fields": SCHEMA["fields"] + [{"key": "neuve"}]}
-    assert aga.refus_de_schema(SCHEMA, fusionne, geste="patch") is None
+    assert aga.refus_de_schema(SCHEMA, fusionne, geste="patch", a_titre=_jamais) is None
 
 
-@pytest.mark.parametrize("apres,quoi", [
+_GESTES_SUR_LE_REGLAGE = [
     ([{"key": "suivi_commercial", "agent_access": "write"}], "changé"),
     ([{"key": "suivi_commercial"}], "retiré"),
     ([{"key": "ref", "agent_access": "none"}], "posé ailleurs"),
-])
-def test_un_agent_ne_pose_ni_ne_change_ni_ne_retire_le_reglage(face_agent, apres, quoi):
+]
+
+
+def _avec(apres):
     autres = [f for f in SCHEMA["fields"]
               if f["key"] not in {f2["key"] for f2 in apres}]
-    msg = aga.refus_de_schema(SCHEMA, {**SCHEMA, "fields": autres + apres},
-                              geste="patch")
-    assert msg and "agent_access" in msg, quoi
+    return {**SCHEMA, "fields": autres + apres}
+
+
+@pytest.mark.parametrize("face", [True, False], ids=["outil", "écran"])
+@pytest.mark.parametrize("apres,quoi", _GESTES_SUR_LE_REGLAGE)
+def test_sans_titre_on_ne_pose_ni_ne_change_ni_ne_retire_le_reglage(apres, quoi, face):
+    """Qui n'a reçu qu'un accès en écriture partagé : refusé, PAR LES DEUX FACES —
+    c'est le titre qui décide, plus la porte."""
+    jeton = session_org.set_call_face(session_org.FACE_MCP) if face else None
+    try:
+        msg = aga.refus_de_schema(SCHEMA, _avec(apres), geste="patch",
+                                  a_titre=_titre(False))
+    finally:
+        if jeton is not None:
+            session_org.reset_call_face(jeton)
+    assert msg and "agent_access" in msg and "GOUVERNE" in msg, quoi
+
+
+@pytest.mark.parametrize("apres,quoi", _GESTES_SUR_LE_REGLAGE)
+def test_le_TITRE_pose_le_reglage_par_l_outil(face_agent, apres, quoi):
+    """oto#93 : le propriétaire, ou qui gouverne, qui passe par un outil n'est plus
+    traité en exécutant — comme pour le forçage de `readonly`."""
+    assert aga.refus_de_schema(SCHEMA, _avec(apres), geste="patch",
+                               a_titre=_titre(True)) is None, quoi
 
 
 # ── 6. Bout en bout, sur du vrai SQL ─────────────────────────────────────────
@@ -469,7 +504,7 @@ def test_bout_en_bout_l_ecran_du_proprietaire_ne_perd_RIEN(live, monkeypatch):
     assert _blob(ns_id, ligne["_id"])["suivi_commercial"] == "gagné"
 
 
-def test_bout_en_bout_un_agent_ne_rouvre_pas_le_reglage(live):
+def test_bout_en_bout_un_agent_ne_rouvre_pas_le_reglage(live, monkeypatch):
     """L'épreuve de chute l'a exigée : les épreuves unitaires de `refus_de_schema`
     restaient VERTES quand on retirait la garde de `set_schema` — elles prouvaient que
     la fonction décide bien, pas qu'on l'appelle. C'est ici que le CÂBLAGE se mesure.
@@ -477,6 +512,9 @@ def test_bout_en_bout_un_agent_ne_rouvre_pas_le_reglage(live):
     Sans lui, le cran serait décoratif : un agent pose `agent_access: "write"`, écrit,
     et rien n'a jamais eu à être refermé."""
     st, ns, ns_id = _table()
+    # Un EXÉCUTANT : il écrit, sans posséder ni gouverner (oto#93). Le palier réel est
+    # éprouvé par `test_forcage_readonly_658` ; ici se mesure le CÂBLAGE.
+    monkeypatch.setattr(st, "_peut_forcer", lambda ns_id: False)
 
     jeton = session_org.set_call_face(session_org.FACE_MCP)
     try:
@@ -500,7 +538,33 @@ def test_bout_en_bout_un_agent_ne_rouvre_pas_le_reglage(live):
     finally:
         session_org.reset_call_face(jeton)
 
-    # Le réglage est INTACT, et le propriétaire, lui, repose ce qu'il veut.
+    # Le réglage est INTACT…
     stocke = st.get_schema(ns)
     assert aga.acces_declare(stocke, "suivi_commercial") == "none"
-    assert st.set_schema(ns, SCHEMA)["datastore"] == ns
+    # …et le même exécutant est refusé depuis l'ÉCRAN aussi : le titre, pas la face.
+    with pytest.raises(ValueError) as ecran:
+        st.patch_schema(ns, fields=[{"key": "suivi_commercial",
+                                     "agent_access": "write"}])
+    assert "agent_access" in str(ecran.value)
+
+
+def test_bout_en_bout_le_PROPRIETAIRE_regle_l_acces_par_l_outil(live):
+    """oto#93 : le propriétaire du tableau, sur la face agent, pose, change et retire
+    le réglage — avec son VRAI titre (ownership en base), sans doublure."""
+    st, ns, ns_id = _table()
+    jeton = session_org.set_call_face(session_org.FACE_MCP)
+    try:
+        st.patch_schema(ns, fields=[{"key": "note", "type": "text",
+                                     "agent_access": "read"}])
+        st.patch_schema(ns, fields=[{"key": "suivi_commercial",
+                                     "agent_access": "write"}])
+        # Le refus de FACE reste : reposer un schéma entier effacerait ce qu'il ne voit
+        # pas — la face agent masque la colonne `none` au propriétaire aussi.
+        with pytest.raises(ValueError) as pose:
+            st.set_schema(ns, st.get_schema(ns))
+        assert "data_patch_schema" in str(pose.value)
+    finally:
+        session_org.reset_call_face(jeton)
+    stocke = st.get_schema(ns)
+    assert aga.acces_declare(stocke, "note") == "read"
+    assert aga.acces_declare(stocke, "suivi_commercial") == "write"

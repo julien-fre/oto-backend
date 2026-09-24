@@ -137,12 +137,14 @@ class SchemaOpsMixin:
         # L'ancien schéma est lu plus haut (oto#82). Ce qui compte ici reste vrai : le
         # RELEVÉ d'effacement ne se calcule qu'après les refus — un refus n'a rien
         # effacé, et l'annoncer ferait chercher un dégât imaginaire.
-        # oto#83 : un agent ne décide pas de ce qui lui est servi, et il ne repose pas
-        # un format dont il ne voit qu'une partie. Ici plutôt que dans les surfaces :
+        # oto#83 : un agent ne repose pas un format dont il ne voit qu'une partie, et
+        # l'accès agent se règle au TITRE (possède ou gouverne, oto#93 — le palier du
+        # forçage de `readonly`), plus à la face. Ici plutôt que dans les surfaces :
         # `patch_schema` repasse par cette méthode, donc les deux gestes sont couverts
         # par une seule garde — et elle tombe AVANT `set_datastore_schema`, rien n'est
         # écrit quand elle refuse.
-        if (refus := aga.refus_de_schema(ancien, schema, geste=geste)):
+        if (refus := aga.refus_de_schema(ancien, schema, geste=geste,
+                                         a_titre=lambda: self._peut_forcer(ns_id))):
             raise SchemaDefinitionError(refus)
         efface = dsv2.declarations_effacees(ancien, schema, retraits_annonces)
         db.set_datastore_schema(ns_id, schema)
