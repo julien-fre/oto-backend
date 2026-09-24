@@ -64,6 +64,12 @@ def render_for_agent(data: bytes, filename: str, mime: str, *, sub: str, prefix:
       feuille `sheet` (nom ou index) et borné à `max_rows` lignes par feuille et à
       `INLINE_TEXT_CAP` caractères. `sheet`/`max_rows` sur un autre format lèvent
       `SpreadsheetError` (`not_a_spreadsheet`) : jamais ignorés en silence.
+      **Tronqué** → le fichier BRUT complet est AUSSI déposé en privé : `raw_url`
+      + `raw_expires_in` (signal #1152, 24/09/2026 : un tableur de 2 414 lignes rendu
+      à 200 n'avait aucun chemin vers ses données — or on le veut entier pour le
+      charger dans un tableau ou le ranger). Le CSV inline reste : c'est lui que
+      l'agent lit. Stockage indisponible → `raw_unavailable` le DIT, le rendu inline
+      n'échoue pas pour autant.
 
     `prefix` = préfixe de clé S3 (`gmail-attachments`, `drive-files`,
     `slack-files`…) ; `sub` = propriétaire du dépôt. **Appel BLOQUANT** (I/O S3) :
@@ -81,6 +87,8 @@ def render_for_agent(data: bytes, filename: str, mime: str, *, sub: str, prefix:
                             "rows_rendered": s.rows_rendered, "truncated": s.truncated}
                            for s in r.sheets],
                    sheet_names=list(r.sheet_names), truncated=r.truncated)
+        if r.truncated:
+            _joindre_le_brut(out, data, filename, mime, sub=sub, prefix=prefix)
         return out
     if sheet is not None or max_rows is not None:
         raise SpreadsheetError(
@@ -101,3 +109,22 @@ def render_for_agent(data: bytes, filename: str, mime: str, *, sub: str, prefix:
         )
     out.update(encoding="url", url=url, expires_in=media_store.presign_expiry())
     return out
+
+
+def _joindre_le_brut(out: dict, data: bytes, filename: str, mime: str, *, sub: str,
+                     prefix: str) -> None:
+    """Dépose le fichier ORIGINAL (tableur tronqué) et en rend l'URL signée.
+
+    Un stockage absent ne fait pas échouer le rendu : le CSV inline est juste et
+    utile. Mais l'absence se DIT (`raw_unavailable`) — jamais un `raw_url` manquant
+    en silence, qu'un agent lirait « pas de fichier complet »."""
+    from . import media_store
+    try:
+        out["raw_url"] = media_store.upload_private(prefix, sub, data, mime, filename)
+    except media_store.MediaError as e:
+        out["raw_unavailable"] = (
+            f"fichier brut non déposé : stockage temporaire indisponible ({e}). Le "
+            "rendu CSV ci-dessus est tronqué ; relance avec `sheet` et un `max_rows` "
+            "plus haut pour lire plus de lignes.")
+        return
+    out["raw_expires_in"] = media_store.presign_expiry()

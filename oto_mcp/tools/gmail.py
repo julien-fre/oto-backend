@@ -206,7 +206,10 @@ def register(mcp: FastMCP) -> None:
             name="…" rows_total=… rows_rendered=… truncated=…` then the CSV rows
             (computed values, not formulas; dates ISO 8601). All sheets by
             default, `max_rows` rows each (default 200, max 5000), size-capped:
-            if `truncated`, ask one sheet with `sheet` and/or raise `max_rows`.
+            if `truncated`, ask one sheet with `sheet` and/or raise `max_rows`;
+            a truncated render also carries `raw_url` (+ `raw_expires_in`, seconds):
+            a short-lived signed URL to the FULL original file, e.g. to load it
+            into a table or store it.
           Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
         - **"drafts"**: list the user's Gmail drafts. Returns
           {drafts: [{id, message_id, to, subject, date, snippet}], count}.

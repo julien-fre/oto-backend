@@ -180,8 +180,19 @@ def _pas_de_s3(monkeypatch):
     monkeypatch.setattr(media_store, "upload_private", _interdit)
 
 
+def _s3_qui_note(monkeypatch) -> list:
+    deposes = []
+
+    def _depot(prefix, sub, data, mime, filename):
+        deposes.append((prefix, sub, data, mime, filename))
+        return "https://signed/brut"
+    monkeypatch.setattr(media_store, "upload_private", _depot)
+    monkeypatch.setattr(media_store, "presign_expiry", lambda: 3600)
+    return deposes
+
+
 def test_render_for_agent_rend_un_xlsx_en_csv_inline(monkeypatch):
-    _pas_de_s3(monkeypatch)
+    _s3_qui_note(monkeypatch)
     out = file_content.render_for_agent(XLSX, "devis.xlsx", MIME, sub="s", prefix="drive-files")
     assert out["encoding"] == "text" and out["format"] == "csv"
     assert out["sheet_names"] == ["Devis", "Vide", "Articles"]
@@ -201,9 +212,36 @@ def test_render_for_agent_transmet_sheet_et_max_rows(monkeypatch):
 
 
 def test_le_mime_suffit_quand_le_nom_n_a_pas_d_extension(monkeypatch):
-    _pas_de_s3(monkeypatch)
+    _s3_qui_note(monkeypatch)
     out = file_content.render_for_agent(XLSX, "export", MIME, sub="s", prefix="p")
     assert out["format"] == "csv"
+
+
+def test_un_tableur_tronque_donne_aussi_le_fichier_brut(monkeypatch):
+    """Signal #1152 : rendu à 200 lignes sur 2 414, sans chemin vers les données. Le
+    CSV inline reste (l'agent le lit) ; le fichier ORIGINAL part en URL signée."""
+    deposes = _s3_qui_note(monkeypatch)
+    out = file_content.render_for_agent(XLSX, "devis.xlsx", MIME, sub="s",
+                                        prefix="gmail-attachments")
+    assert out["truncated"] is True and out["encoding"] == "text"
+    assert out["raw_url"] == "https://signed/brut" and out["raw_expires_in"] == 3600
+    assert deposes == [("gmail-attachments", "s", XLSX, MIME, "devis.xlsx")]
+
+
+def test_un_tableur_entier_ne_depose_rien(monkeypatch):
+    _pas_de_s3(monkeypatch)
+    out = file_content.render_for_agent(XLSX, "devis.xlsx", MIME, sub="s", prefix="p",
+                                        sheet="Articles", max_rows=1000)
+    assert out["truncated"] is False and "raw_url" not in out
+
+
+def test_sans_stockage_le_tronque_le_dit_sans_echouer(monkeypatch):
+    def _pas_de_bucket(*a, **k):
+        raise media_store.MediaError(503, "storage_unavailable", "S3 non configuré")
+    monkeypatch.setattr(media_store, "upload_private", _pas_de_bucket)
+    out = file_content.render_for_agent(XLSX, "devis.xlsx", MIME, sub="s", prefix="p")
+    assert out["truncated"] is True and "raw_url" not in out
+    assert "S3 non configuré" in out["raw_unavailable"]
 
 
 def test_sheet_sur_un_fichier_qui_n_est_pas_un_tableur_est_refuse():
