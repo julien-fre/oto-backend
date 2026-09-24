@@ -21,7 +21,7 @@ import pathlib
 import pytest
 
 from oto_mcp import session_org, tenancy
-from oto_mcp.access import cascade, chain_shadow, rbac, resolve, scope
+from oto_mcp.access import cascade, chain_shadow, indices, resolve, scope
 from oto_mcp.connectors import readiness
 from oto_mcp.mcp_errors import McpError
 
@@ -69,8 +69,8 @@ def refus(monkeypatch):
     monkeypatch.setattr(session_org, "current_call_account", lambda: "compte-x")
     monkeypatch.setattr(scope, "project_pinned_instance", lambda *a, **k: None)
     monkeypatch.setattr(scope, "current_org", lambda sub: 7)
-    monkeypatch.setattr(rbac, "_revoked_hint", lambda *a, **k: "")
-    monkeypatch.setattr(rbac, "_reachable_hint", lambda *a, **k: "")
+    monkeypatch.setattr(indices, "_revoked_hint", lambda *a, **k: "")
+    monkeypatch.setattr(indices, "_reachable_hint", lambda *a, **k: "")
     monkeypatch.setattr(resolve, "_win_quota", lambda *a, **k: (5, 5))
 
     def _message(sub, cas):

@@ -643,6 +643,26 @@ def list_project_links(project_id: int) -> list[dict]:
     return out
 
 
+def projects_pinning_instance(project_ids: list[int], connector: str) -> list[dict]:
+    """`[{id, name}]` des projets de `project_ids`, non archivés, qui BINDENT une
+    instance `connector` (`project_links.config.instance_ref`, ADR 0038 B5) — en UNE
+    requête. Le filtre de visibilité est À L'APPELANT : cette fonction ne lit que les
+    ids qu'on lui passe (oto-backend#499, hint « rien ne résout »)."""
+    if not project_ids:
+        return []
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT p.id, p.name FROM project_links pl "
+            "JOIN projects p ON p.id = pl.project_id "
+            "WHERE pl.project_id = ANY(%s) AND pl.target_type = 'connecteur' "
+            "  AND pl.target_ref = %s AND COALESCE(pl.config->>'instance_ref', '') <> '' "
+            "  AND p.archived_at IS NULL "
+            "ORDER BY p.id",
+            (list(project_ids), connector),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --- Docs (pages markdown arborescentes d'un projet, incrément 3) -------------
 _DOC_COLS = ("id, project_id, parent_id, title, description, position, body_md, kind, public_token, "
              "created_by, created_at, updated_at")

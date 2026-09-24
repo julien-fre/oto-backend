@@ -54,12 +54,15 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
               ses trois sondes, le palier plateforme.
 - `rbac`    — qui a le droit : RBAC connecteur org/équipe, tools masqués, garde
               d'instance et prêts, instances à portée, filtre de redaction.
+- `indices` — le TEXTE des refus « rien ne résout » : clé retirée, instances à
+              portée, projet qui épingle déjà (#499). Lecture seule, fail-soft.
 - `resolved_credential` — le TYPE rendu par toute résolution (extrait le 29/08, #584).
 - `tenant_budget` — le budget par org de l'arête tenant→org (L-clés PR 2), appliqué
               à la résolution d'un gagnant tenant.
 - `resolve_anon` — la résolution de l'endpoint MCP anonyme (ADR 0032), extraite de
               `resolve` le 29/08 (#584). L'étage tenant n'y vient que d'une arête.
-- `resolve` — la résolution réelle d'un credential (chemin chaud).
+- `resolve` — la résolution réelle d'un credential (chemin chaud) ; ses refus
+              portent les `indices`.
 - `views`   — les vues minces : clé, champs, mode, option levée,
               résolvabilité d'une org.
 - `status`  — le snapshot par connecteur de `/api/me`.
@@ -74,8 +77,10 @@ Le graphe est un DAG strict — aucun cycle, chaque flèche va vers le bas :
             quotas   cascade                 (quotas → entitlements ; cascade → scope)
                 ↑     ↑  ↖
                 |    rbac                    (rbac → scope, cascade)
-                |   ↗   ↑
-              resolve   |                    (resolve → scope, quotas, rbac, cascade)
+                |   ↗   ↑  ↖
+                |  |    |   indices          (indices → rbac)
+                |  |    |  ↗
+              resolve   |                    (resolve → scope, quotas, rbac, indices, cascade)
                 ↑       |
               views   status                 (status → scope, quotas, rbac, cascade)
 ```
@@ -103,10 +108,10 @@ import logging
 import sys
 import types
 
-from . import (scope, quotas, cascade, platform_grant, rbac, resolved_credential,
+from . import (scope, quotas, cascade, platform_grant, rbac, indices, resolved_credential,
                tenant_budget, resolve_anon, resolve, views, status, entitlements)
 
-_MODULES = (scope, quotas, cascade, platform_grant, rbac, resolved_credential,
+_MODULES = (scope, quotas, cascade, platform_grant, rbac, indices, resolved_credential,
             tenant_budget, resolve_anon, resolve, views, status, entitlements)
 
 # Ré-export plat (publics + privés à un underscore ; les dunder restent au

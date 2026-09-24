@@ -28,8 +28,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import links
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store,
                 session_org, tenant_vault)
-from . import (cascade, chain_shadow, entitlements, heritage, quotas, rbac, resolve_anon,
-               scope, tenant_budget)
+from . import (cascade, chain_shadow, entitlements, heritage, indices, quotas, rbac,
+               resolve_anon, scope, tenant_budget)
 from .resolved_credential import ResolvedCredential
 
 logger = logging.getLogger(__name__)
@@ -328,8 +328,8 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                 message=(
                     f"Aucun credential `{provider}` configuré pour toi. Renseigne-le"
                     f"{links.ou_poser_la_cle(sub, org=lien_org, connecteur=provider)}."
-                    + rbac._revoked_hint(sub, active_org, provider)
-                    + rbac._reachable_hint(sub, active_org, provider)
+                    + indices._revoked_hint(sub, active_org, provider)
+                    + indices._reachable_hint(sub, active_org, provider)
                     + heritage.indice_refus(sub, active_org, provider)
                 ),
             ))
@@ -346,8 +346,8 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                 f"Aucune clé `{porteur}` configurée pour toi. Soit pose ta propre "
                 f"clé{links.ou_poser_la_cle(sub, org=lien_org, connecteur=porteur)}, "
                 f"soit demande à un admin de te grant un accès à une clé plateforme."
-                + rbac._revoked_hint(sub, active_org, porteur)
-                + rbac._reachable_hint(sub, active_org, porteur)
+                + indices._revoked_hint(sub, active_org, porteur)
+                + indices._reachable_hint(sub, active_org, porteur)
                 + heritage.indice_refus(sub, active_org, porteur)
             ),
         ))
