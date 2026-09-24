@@ -161,25 +161,30 @@ def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
     return f"{slug}:{sub}"
 
 
-def unverified_issuer(token: Optional[str]) -> Optional[str]:
-    """Claim `iss` du jeton, **sans vérifier la signature** — il ne sert qu'à CHOISIR
-    le verifier, qui revalidera l'émetteur pour de vrai (signature + `iss`).
+def unverified_claims(token: Optional[str]) -> dict:
+    """Les claims du jeton, **sans vérifier la signature** — ils ne servent qu'à
+    CHOISIR un verifier, qui revalidera tout pour de vrai. `{}` si ce n'est pas un JWT.
 
     Décodage à la main plutôt qu'avec une lib : ça garde visible le fait que rien
     n'est vérifié ici, et n'ajoute pas une dépendance sur un chemin d'auth.
     """
     if not token or not isinstance(token, str):
-        return None
+        return {}
     parts = token.split(".")
     if len(parts) != 3:
-        return None
+        return {}
     try:
         pad = parts[1] + "=" * (-len(parts[1]) % 4)
         claims = json.loads(base64.urlsafe_b64decode(pad))
     except (ValueError, binascii.Error, UnicodeDecodeError):
-        return None
-    iss = claims.get("iss") if isinstance(claims, dict) else None
-    return normalize_issuer(iss)
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def unverified_issuer(token: Optional[str]) -> Optional[str]:
+    """Claim `iss` du jeton, non vérifié (`unverified_claims`) — il ne sert qu'à
+    CHOISIR le verifier, qui revalidera l'émetteur (signature + `iss`)."""
+    return normalize_issuer(unverified_claims(token).get("iss"))
 
 
 def normalize_issuer(issuer) -> Optional[str]:

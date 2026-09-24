@@ -52,6 +52,12 @@ def _refus_org_admin(org_id, autres: Optional[str] = None) -> AuthzDenied:
 def _require_sub(raw: RawCtx) -> str:
     if not raw.sub:
         raise AuthzDenied(401, "auth_required", "Authentification requise.")
+    # Une identité de SERVICE n'est pas un compte : toute règle qui en exige un la
+    # refuse, et seule `SERVICE_ROLE` la lit. Second verrou après `allow_service`.
+    from ..auth import service_identity
+    if service_identity.current() is not None:
+        raise AuthzDenied(403, "service_forbidden",
+                          "Ce geste demande un compte, pas une identité de service.")
     return raw.sub
 
 
@@ -127,6 +133,45 @@ def PROJECT_SHARED_READ(raw: RawCtx, inp: Optional[BaseModel] = None) -> Resolve
     if pid is None or not subdomain_project.current_anon_docs_exposed():
         raise AuthzDenied(401, "auth_required", "Authentification requise.")
     return ResolvedCtx(sub=None, org_id=subdomain_project.current_anon_org(), role=None)
+
+
+def SERVICE_ROLE(role: str):
+    """Une identité de SERVICE portant `role` (oto-backend#1068) — jamais un compte,
+    fût-il super admin, et réciproquement un service ne passe aucune autre règle.
+
+    Le service est reconnu par ce que l'authentification REST a POSÉ après avoir
+    vérifié son jeton (`auth.service_identity`), jamais par la forme de son `sub`.
+    Il n'a pas d'org : `org_id=None` est un fait, la cible vient de l'input."""
+    from ..auth import service_identity
+    if role not in service_identity.ROLES:
+        raise ValueError(f"rôle de service inconnu : {role!r}")
+
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        p = service_identity.current()
+        if p is None:
+            raise AuthzDenied(403, "service_required",
+                              f"Réservé à l'identité de service « {role} ».")
+        if raw.sub != p["sub"]:
+            raise AuthzDenied(401, "service_identity_mismatch",
+                              "le principal authentifié n'est pas le service posé.")
+        if role not in p["roles"]:
+            raise AuthzDenied(403, "service_role_missing",
+                              f"Ce service ne porte pas le rôle « {role} ».")
+        return ResolvedCtx(sub=p["sub"], org_id=None, role=f"service:{role}")
+    # Lu par l'adaptateur REST pour ouvrir l'authentification au service.
+    rule.accepts_service = True
+    return rule
+
+
+COMMERCE_SERVICE = SERVICE_ROLE("commerce")
+
+
+def accepts_service(rule) -> bool:
+    """Au moins une branche de `rule` lit une identité de service (`BY_OP` expose
+    ses branches ; `ADMIN_BY_OP` ne les expose pas et n'en accepte donc pas)."""
+    if getattr(rule, "accepts_service", False):
+        return True
+    return any(accepts_service(r) for r in getattr(rule, "autz_branches", ()))
 
 
 def ORG_MEMBER(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:

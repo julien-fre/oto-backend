@@ -32,7 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .. import db
-from ..auth import platform_worker, token_scopes
+from ..auth import platform_worker, service_identity, token_scopes
 from ..tenant_migration import alias_drain_armed
 from .. import account_suspension
 
@@ -184,6 +184,7 @@ async def _authenticate(
     allow_query_token: bool = False,
     apply_view_as: bool = True,
     allow_api_token: bool = True,
+    allow_service: bool = False,
 ) -> tuple[str | None, JSONResponse | None]:
     """Résout l'appelant (JWT Logto **ou** jeton API `oto_`) et **garde la portée**.
 
@@ -191,6 +192,10 @@ async def _authenticate(
     porteur de jeton y est refusé. Réservé à la gestion des jetons eux-mêmes — un
     jeton qui peut en créer d'autres rend sa fuite auto-entretenue (révoquer le
     jeton fuité ne suffit plus, l'attaquant s'en est fait un second, non-expirant).
+
+    `allow_service=True` = la route accepte une identité de SERVICE
+    (`auth.service_identity`). Faux par défaut : seule une capacité dont la règle
+    lit ce principal l'ouvre (`_rest_adapter`).
     """
     auth = request.headers.get("authorization", "")
     token: str | None = None
@@ -209,6 +214,7 @@ async def _authenticate(
     # que CETTE requête est celle d'un worker. Posée à None d'abord : elle ne
     # survit jamais d'une requête à l'autre par oubli.
     platform_worker.set_current(None)
+    service_identity.set_current(None)
     if token.startswith(db.WORKER_SECRET_PREFIX):
         token_scopes.set_current(None)
         if not allow_api_token:
@@ -288,8 +294,25 @@ async def _authenticate(
                            token_kind=row.get("token_kind"))
         return servi, None
 
-    # Sinon, JWT Logto (session interactive) — jamais de portée de jeton.
+    # Sinon, JWT Logto — jamais de portée de jeton.
     token_scopes.set_current(None)
+
+    # Client MACHINE d'un service (oto-backend#1068) : reconnu à l'audience qu'il
+    # revendique, puis vérifié pour de vrai. Comme le worker : aucune ligne `users`,
+    # aucune pause, aucun view-as — un identifiant vérifié, pas un compte.
+    if service_identity.adresse_aux_services(token):
+        if not allow_service:
+            return None, _json_error(
+                request, 403, "service_forbidden",
+                "Cette route n'est pas ouverte à une identité de service.")
+        try:
+            principal = await service_identity.verifier_jeton(token)
+        except service_identity.ServiceRefuse as refus:
+            return None, _json_error(request, refus.status, refus.code, refus.detail)
+        service_identity.set_current(principal)
+        _publier_principal(request, principal["sub"], token_kind="service")
+        return principal["sub"], None
+
     access_token = await verifier.verify_token(token)
     if not access_token or not getattr(access_token, "claims", None):
         return None, _json_error(request, 401, "invalid_token")

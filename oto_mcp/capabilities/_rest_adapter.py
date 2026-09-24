@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 from .. import client_trace, geste
 from ..json_body import InvalidJsonBody, read_json_body
+from ._authz import accepts_service
 from ._types import AuthzDenied, Capability, NotModified, RawCtx
 from ._execution import execute
 
@@ -75,15 +76,19 @@ def _champs_liste(model) -> frozenset:
 
 def _make_handler(cap: Capability, binding, verifier, authenticate, json_response, json_error):
     champs_liste = _champs_liste(cap.Input)
+    # Une identité de service n'est acceptée qu'ici, et seulement pour une capacité
+    # dont la règle la LIT (`_authz.SERVICE_ROLE`, oto-backend#1068). Calculé au montage.
+    kwargs_auth: dict = {}
+    if not binding.allow_api_token:
+        kwargs_auth["allow_api_token"] = False
+    if accepts_service(cap.authz):
+        kwargs_auth["allow_service"] = True
 
     async def _handler(request: Request) -> JSONResponse:
-        # `allow_api_token` n'est passé QUE lorsqu'il vaut False : le défaut reste un
-        # appel à deux arguments, donc les appelants (et les stubs de test) écrits avant
-        # ce cran continuent de fonctionner tels quels.
-        if binding.allow_api_token:
-            sub, err = await authenticate(request, verifier)
-        else:
-            sub, err = await authenticate(request, verifier, allow_api_token=False)
+        # Les options ne sont passées QUE lorsqu'elles quittent leur défaut : le défaut
+        # reste un appel à deux arguments, donc les appelants (et les stubs de test)
+        # écrits avant ces crans continuent de fonctionner tels quels.
+        sub, err = await authenticate(request, verifier, **kwargs_auth)
         if err:
             return err
         data: dict = {}

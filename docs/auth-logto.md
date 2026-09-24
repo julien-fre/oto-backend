@@ -243,6 +243,33 @@ Procédure côté utilisateur = guide plateforme `claude-tag` (+ template public
 `otomata-tech/oto-claude-tag-template`, Claude Tag n'acceptant qu'un dépôt privé
 comme source de plugins).
 
+## Identité de service — un client machine, pas un compte (#1068, 24/09/2026)
+
+Un service consommateur de l'API (le commerce, ADR 0070 §7.4(b)) parle au cœur sous
+son propre nom : un client machine de l'annuaire (`client_credentials`), jamais une
+ligne `users`. Le cœur vérifie un jeton et garde un identifiant ; il ne possède pas
+l'annuaire. Code : `oto_mcp/auth/service_identity.py`.
+
+- **Déclaré dans l'annuaire de l'instance, rien dans l'env** : une ressource d'API
+  d'identifiant `<OTO_MCP_PUBLIC_URL>/api/service`, sa permission `commerce`, un rôle
+  machine qui la porte, et l'application machine qui a ce rôle. Sans ressource, aucun
+  service n'existe.
+- **Reconnu à l'audience, vérifié pour de vrai** : `_authenticate` lit l'`aud` non
+  vérifié pour choisir, puis le verifier des services revalide signature, émetteur
+  (primaire seulement), audience stricte et expiration. Le jeton doit être celui d'une
+  machine (`sub == client_id`) et porter un rôle du catalogue (`ROLES`) dans `scope`.
+  Le verifier des personnes (audience MCP) refuse ce jeton : un service n'entre
+  jamais par la face agent.
+- **Refusé par défaut, deux verrous** : `_authenticate(allow_service=False)` le refuse
+  (`service_forbidden`) sur toute route qui ne l'ouvre pas ; l'adaptateur REST ne
+  l'ouvre que pour une capacité dont la règle le lit (`_authz.SERVICE_ROLE`,
+  `COMMERCE_SERVICE`). Et `_require_sub` le refuse dans toute autre règle.
+- **Journalisé à son nom** : principal `service:<client_id>`, `token_kind="service"`.
+  Aucun `upsert_user`, aucune pause, aucun view-as.
+
+Refus nommés : `service_forbidden`, `service_machine_required`, `service_role_missing`,
+`service_required`, `invalid_token`. Banc : `tests/test_service_identity_1068.py`.
+
 ## Coexistence multi-domaine (pré-cutover, 2026-07-02)
 
 Avant le cutover ADR 0040 (cf. ci-dessous), `mcp.oto.cx/mcp` servait le MCP en
