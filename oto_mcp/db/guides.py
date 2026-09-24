@@ -380,10 +380,12 @@ def contexte_non_lu(sub: str, org_id: int,
             WHERE ref.org_a_un_readme
               AND NOT EXISTS (
                   SELECT 1 FROM tool_calls l
-                  WHERE l.tool = 'oto_context' AND l.kind = 'mcp' AND l.ok
+                  WHERE l.tool = 'oto_context' AND l.kind = %s AND l.ok
                     AND l.sub = %s AND l.org_id = %s AND l.created_at >= ref.at)
             """,
-            (*params, int(org_id), sub, int(org_id)),
+            # `kind` du JOURNAL (face d'appel), passé en paramètre : cette façade ne
+            # nomme qu'un seul genre de NŒUD, `{_KIND}` (test_nodes_m1_migration).
+            (*params, int(org_id), "mcp", sub, int(org_id)),
         ).fetchone()
     if not row:
         return None

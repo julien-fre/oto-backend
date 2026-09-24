@@ -183,9 +183,12 @@ def test_aucune_ecriture_d_arguments_n_echappe_a_la_fabrique():
 
 
 def test_le_banc_distingue_bien_les_exceptions_du_reste():
-    """Témoin des exceptions : elles doivent rester TROIS, une par forme nommée
-    ci-dessus. Élargie par inadvertance, n'importe laquelle laisserait passer une
-    écriture directe."""
+    """Témoin des exceptions : une par forme nommée ci-dessus, sauf l'enrichissement
+    qui en compte DEUX — le sink (`server._calllog_sink`, entités résolues) et
+    l'émetteur déclaré (`calllog.poser_emetteur`, otomata-tech/oto#187 : nom et
+    version du client lus sur la session, bornés, jamais une valeur de l'appelant).
+    Élargie par inadvertance, n'importe laquelle laisserait passer une écriture
+    directe."""
     modules = _modules_du_journal()
     comptes = {"handshake": 0, "enrichissement": 0, "empreinte": 0, "fabrique": 0}
     for _nom, arbre in modules:
@@ -199,7 +202,7 @@ def test_le_banc_distingue_bien_les_exceptions_du_reste():
             elif _est_l_empreinte_de_route(valeur, arbre):
                 comptes["empreinte"] += 1
     assert comptes["handshake"] == 1, comptes
-    assert comptes["enrichissement"] == 1, comptes
+    assert comptes["enrichissement"] == 2, comptes
     assert comptes["empreinte"] == 1, comptes
     assert comptes["fabrique"] >= 3, (
         f"le banc ne voit plus les écritures MCP, REST et dispatchée : {comptes}")
