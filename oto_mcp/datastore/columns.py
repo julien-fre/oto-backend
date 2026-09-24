@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 from . import couches as dsl
 from . import schema as dsv2
 from . import vide_remplace as vr
+from .declaration import cle_d_element
 from .errors import RowValidationError
 
 # Les colonnes de la PLATEFORME : elles vivent dans la ligne sans être des
@@ -335,7 +336,7 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
             continue
         champ = dsv2.champ_declare(schema, col) or {}
         _mots_dans_la_case(val, str(col), errors, fiches=champ.get("type") != "json",
-                           cle_item=_cle_d_item(champ))
+                           cle_item=cle_d_element(champ))
     if errors:
         raise RowValidationError(errors)
 
@@ -905,24 +906,6 @@ def ignores_report(records: list) -> dict:
     return {"valeurs_ignorees": nommes, "valeurs_ignorees_hint": hint}
 
 
-def _cle_d_item(champ: Any) -> Optional[str]:
-    """Le champ qui IDENTIFIE un élément d'une liste — `of.key`, ou `None`.
-
-    Même mot que la clé métier d'une ligne (`schema.key`), un cran plus bas et pour la
-    même raison : dire ce qui fait qu'un élément est « le même » d'une écriture à
-    l'autre. Sans elle, une liste se remplace en bloc, comme depuis toujours.
-
-    ⚠️ **C'est une identité de CRÉNEAU, pas de personne** (tranché le 08/09/2026). Le
-    bon candidat est une catégorie stable et fermée — `contact_rh`, `contact_paie` —
-    et surtout pas un email ou un nom. Que l'occupant d'un créneau change (Jane
-    remplacée par Doe après une passe d'agent) est le geste NORMAL que ce mécanisme
-    doit servir ; apparier des gens sur leur nom serait au contraire le mode d'échec
-    qu'on refuse."""
-    of = champ.get("of") if isinstance(champ, dict) else None
-    cle = of.get("key") if isinstance(of, dict) else None
-    return cle if isinstance(cle, str) and cle else None
-
-
 def _index_par_cle(items: Any, cle: str) -> dict:
     """`{valeur d'identité: élément}` — et le premier gagne sur un doublon.
 
@@ -1166,7 +1149,7 @@ def _merge_column(existing: Any, new: Any, champ: Any = None) -> Any:
     servi à une cliente comme sa propre donnée."""
     # Une LISTE dont le schéma déclare l'identité de ses éléments se fusionne
     # élément par élément ; sans déclaration, elle se remplace en bloc, comme avant.
-    cle_item = _cle_d_item(champ)
+    cle_item = cle_d_element(champ)
     if isinstance(new, list):
         if cle_item:
             # ⚠️ **La colonne en place peut porter des COUCHES autour de sa liste** —

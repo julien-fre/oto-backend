@@ -26,7 +26,8 @@ from .couches import (_is_empty, CLES_INTERNES, LAYER_KEYS, VIDE_DELIBERE, layer
                       split_layer, unknown_layers, unwrap, vide_assume)
 from .options_declarees import hors_des_options, montrable
 from .motifs import _pattern_re
-from .declaration import _fields, max_length_of, pattern_of, status_field, validation_active
+from .declaration import (_fields, cle_d_element, max_length_of, pattern_of, status_field,
+                          validation_active)
 from .etats_declares import etats_trahis
 from .types_declares import types_trahis
 from .cycle_de_vie import lifecycle_of, refus_de_transition
@@ -96,12 +97,52 @@ def _hors_options(value: Any, options: Optional[list], path: str,
     return [f"{path}: valeur {montrable(value)!r} hors options ({', '.join(allowed)})"]
 
 
+def elements_reecrits(apres: Any, en_place: Any, cle: Optional[str]) -> Optional[set]:
+    """Les RANGS des éléments de `apres` que le geste a écrits — `None` = tous.
+
+    Ne se distingue que sur une liste fusionnée ÉLÉMENT PAR ÉLÉMENT (`of.key`, cf.
+    `columns._merge_items`, dont c'est la lecture) : un élément est écrit s'il est
+    neuf, sans identité, ou s'il sort de la fusion différent de celui qui portait son
+    identité en place. Un élément renvoyé tel quel — le geste normal : relire la
+    liste, corriger UN contact, tout renvoyer — sort identique, il n'est pas écrit.
+
+    `None` (tous écrits) sans `of.key`, sans état antérieur connu (création,
+    remplacement), ou quand la liste en place porte une identité en double : la
+    fusion l'a alors remplacée en bloc, tout ce qui est là vient du geste."""
+    if not cle or not isinstance(apres, list) or not isinstance(en_place, list):
+        return None
+    index: dict = {}
+    for it in en_place:
+        if not isinstance(it, dict):
+            continue
+        v = unwrap(it.get(cle))
+        if v in (None, ""):
+            continue
+        if v in index:
+            return None
+        index[v] = it
+    ecrits: set = set()
+    for i, it in enumerate(apres):
+        v = unwrap(it.get(cle)) if isinstance(it, dict) else None
+        if v in (None, "") or index.get(v) != it:
+            ecrits.add(i)
+    return ecrits
+
+
 def _type_error(value: Any, ftype: Optional[str], path: str,
                 fields: Optional[list] = None, of: Optional[dict] = None,
                 options: Optional[list] = None, *,
                 closed: bool = False,
-                hors: Optional[list] = None) -> list[str]:
+                hors: Optional[list] = None,
+                ecrits: Optional[set] = None,
+                gelees: Optional[list] = None) -> list[str]:
     """Erreurs de conformité d'UNE valeur à un type déclaré (récursif).
+
+    `ecrits` (liste seulement) = les rangs des éléments que le geste écrit
+    (`elements_reecrits`), `None` = tous. Un élément NON écrit n'est pas jugé contre
+    le geste : ce qui cloche en lui part dans `gelees`, comme une colonne non écrite
+    (oto#137). Sans ça, un ancien contact incomplet bloquerait l'écriture d'un autre,
+    et le seul geste possible serait de réparer ce qu'on n'est pas venu toucher.
 
     `closed` = le référentiel de CE composite est fermé (#544) : un attribut que sa
     déclaration ne nomme pas est refusé, au lieu d'être traversé en silence. Il se
@@ -133,20 +174,28 @@ def _type_error(value: Any, ftype: Optional[str], path: str,
         # l'agrégation du relevé `hors_schema` (`clé[].sous_clé`), et même raison :
         # un refus qu'on ne peut pas lire ne vaut pas mieux qu'un silence.
         vus: set = set()
+        vus_geles: set = set()
         for i, item in enumerate(value):
             ipath = f"{path}[{i}]"
+            ecrit = ecrits is None or i in ecrits
+            # Un élément non écrit se juge à part : ni dans le refus, ni dans le relevé
+            # `hors` (qui ÉCARTERAIT une valeur que le geste n'a pas posée).
+            cible = errors if ecrit else []
             if isinstance(sub_fields, list):
                 if not isinstance(item, dict):
-                    errors.append(f"{ipath}: attendu object, reçu {type(item).__name__}")
+                    cible.append(f"{ipath}: attendu object, reçu {type(item).__name__}")
                 else:
-                    errors.extend(_row_errors(
+                    cible.extend(_row_errors(
                         [x for x in sub_fields if isinstance(x, dict)], item, ipath,
-                        closed=closed, vus=vus, hors=hors))
+                        closed=closed, vus=vus if ecrit else vus_geles,
+                        hors=hors if ecrit else None))
             elif of.get("type") or of.get("options"):
-                errors.extend(_type_error(item, of.get("type"), ipath,
-                                          of.get("fields"), of.get("of"),
-                                          of.get("options"), closed=closed,
-                                          hors=hors))
+                cible.extend(_type_error(item, of.get("type"), ipath,
+                                         of.get("fields"), of.get("of"),
+                                         of.get("options"), closed=closed,
+                                         hors=hors if ecrit else None))
+            if not ecrit and gelees is not None:
+                gelees.extend({"champ": e.split(":", 1)[0], "refus": e} for e in cible)
         return errors
     # Tout autre type scalaire — et l'absence de type — passe par la MÊME liste (#98) :
     # d'abord la forme, puis l'appartenance, jamais les deux sur une même valeur. Deux
@@ -170,7 +219,8 @@ def _row_errors(fields: list, data: dict, path: str,
                 vus: Optional[set] = None,
                 details: Optional[dict] = None,
                 hors: Optional[list] = None,
-                gelees: Optional[list] = None) -> list[str]:
+                gelees: Optional[list] = None,
+                en_place: Optional[dict] = None) -> list[str]:
     """Erreurs d'un (sous-)record. `written` = clés effectivement RÉÉCRITES par ce
     geste (None = toutes) : la borne de longueur, le motif, la fermeture d'un
     composite **et le TYPE** s'y restreignent — eux seuls, cf. `validate_row`. La
@@ -179,6 +229,10 @@ def _row_errors(fields: list, data: dict, path: str,
 
     `gelees` = liste OUT (patron `hors`) où part le type qui échoue sur une colonne
     que le geste **n'écrit pas**. Elle ne refuse plus : elle se DIT.
+
+    `en_place` (premier niveau) = la ligne EN PLACE avant la fusion, quand il y en a une.
+    Elle ne sert qu'aux listes fusionnées par élément (`of.key`) : seuls les éléments
+    que le geste écrit y sont jugés (`elements_reecrits`, oto#137).
 
     `strict` = le tableau déclare `strict: true`. Il n'interdit rien ICI (une clé
     inconnue au premier niveau crée une colonne libre, droit du contrat 0016 : elle
@@ -295,10 +349,13 @@ def _row_errors(fields: list, data: dict, path: str,
         # `options` sans type compte aussi (#98) : la liste est déclarée, la valeur doit
         # y être — le type absent dit seulement qu'il n'y a pas de FORME à tenir.
         if f.get("type") or f.get("options"):
+            ecrits = (elements_reecrits(value, unwrap((en_place or {}).get(key)),
+                                        cle_d_element(f))
+                      if pose and en_place is not None else None)
             errs_type = _type_error(value, f.get("type"), fpath,
                                     f.get("fields"), f.get("of"), f.get("options"),
                                     closed=closed or (strict and pose),
-                                    hors=hors)
+                                    hors=hors, ecrits=ecrits, gelees=gelees)
             # #545 : la colonne qui vient de refuser est-elle un AIGUILLAGE dont une
             # autre colonne dépend ? Alors la chaîne libre qu'on y a écrite a une
             # destination déclarée, et le refus doit la donner — c'est le cas
@@ -386,7 +443,8 @@ def validate_row(schema: Optional[dict], merged: dict, *,
                  written: Optional[set] = None,
                  details: Optional[dict] = None,
                  hors: Optional[list] = None,
-                 gelees: Optional[list] = None) -> list[str]:
+                 gelees: Optional[list] = None,
+                 en_place: Optional[dict] = None) -> list[str]:
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
@@ -421,13 +479,19 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     `details` (dict mutable, optionnel) = le refus STRUCTURÉ, rempli en chemin —
     aujourd'hui `expected_column`, la colonne où la valeur aurait dû atterrir (#545).
     Optionnel par construction : un validateur PUR ne doit pas exiger un accumulateur
-    de ses appelants pour rendre ses erreurs."""
+    de ses appelants pour rendre ses erreurs.
+
+    `en_place` = la ligne EN PLACE, sur les chemins qui fusionnent (patch, clé métier) :
+    dans une liste fusionnée par élément (`of.key`), un élément que le geste n'écrit
+    pas n'est pas jugé contre lui — ce qui y cloche part dans `gelees` (oto#137).
+    Absente (création, remplacement), tout ce qui est posé vient du geste."""
     errors: list[str] = []
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
         errors.extend(_row_errors(_fields(schema), merged, "", written,
                                   strict=bool(schema.get("strict")),
-                                  details=details, hors=hors, gelees=gelees))
+                                  details=details, hors=hors, gelees=gelees,
+                                  en_place=en_place))
     # oto#75 barreau 1 : HORS du garde `validation_active`, comme le cycle de vie
     # ci-dessous — la déclaration `required_layers` s'arme elle-même.
     errors.extend(couches_manquantes(schema, merged, written=written))

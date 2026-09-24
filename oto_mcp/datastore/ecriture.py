@@ -317,7 +317,7 @@ class EcritureMixin:
             # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
             # se réarmer sur une colonne préservée, dont la valeur n'a pas bougé.
             self._check_row(schema, merged, prev_status=prev_status,
-                            written=set(pose), lot=lot)
+                            written=set(pose), en_place=current or {}, lot=lot)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
             if annonce:

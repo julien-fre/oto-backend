@@ -347,6 +347,20 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
         ftype = f.get("type")
         if ftype is not None and ftype not in SCALAR_TYPES + COMPOSITE_TYPES:
             errors.append(f"{fpath}: type inconnu {ftype!r}")
+        # oto#137 : des sous-champs sous une colonne SANS type. La validation ne
+        # descend que dans un composite déclaré comme tel (`type`) : ses sous-champs,
+        # et leurs exigences, ne seraient jamais lus. Une garde acceptée et inerte est
+        # pire qu'une garde absente — on cesse de la chercher. Mesuré le 24/09/2026 :
+        # aucun schéma de production ne porte cette forme, le refus ne casse personne.
+        if ftype is None and ("fields" in f or "of" in f):
+            porte = "fields" if "fields" in f else "of"
+            forme = ('"type": "object", "fields": [...]' if porte == "fields"
+                     else '"type": "list", "of": {...}')
+            errors.append(
+                f"{fpath}: `{porte}` déclaré sans `type` — les sous-champs ne sont lus "
+                f"que sous une colonne composite typée, et ceux-ci ne seraient jamais "
+                f"validés : leurs exigences resteraient inertes. Déclare "
+                f"{{\"key\": \"{key}\", {forme}}}.")
         if ftype == "object":
             sub = f.get("fields")
             if not isinstance(sub, list) or not sub:
@@ -359,6 +373,16 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
             if of is None:
                 errors.append(f"{fpath}: type=list exige of:<field-def>")
             elif isinstance(of, dict):
+                # oto#137 : `max_items` borne la LISTE, et le validateur ne le lit que
+                # là. Posé sur l'objet qui décrit un élément, il était accepté et ne
+                # faisait rien. Mesuré le 24/09/2026 : aucun schéma ne porte la forme.
+                if "max_items" in of:
+                    errors.append(
+                        f"{fpath}.of: `max_items` borne le nombre d'éléments de la "
+                        f"LISTE, pas un élément — posé dans `of`, personne ne le lit. "
+                        f"Pose-le sur la colonne, à côté de son type : "
+                        f"{{\"key\": \"{key}\", \"type\": \"list\", "
+                        f"\"max_items\": {of['max_items']!r}, \"of\": {{...}}}}.")
                 if isinstance(of.get("fields"), list):
                     _validate_fields_def(
                         [x for x in of["fields"] if isinstance(x, dict)], fpath, errors)

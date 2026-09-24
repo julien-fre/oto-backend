@@ -2636,3 +2636,36 @@ par id, la suppression, la libération et les deux réservations — l'ajout att
 
 Bancs : `tests/datastore/test_vide_assume_reemission_204.py` et `…_204_live.py`.
 
+
+## Les exigences en profondeur — J4 du contrat d'écriture (oto#137, 24/09/2026)
+
+**Le défaut.** `validation_active` cherchait `required`/`required_when` au seul premier
+niveau (par crainte d'armer rétroactivement des schémas posés), `max_length` en profondeur,
+et ni `options` ni `max_items` nulle part. Un schéma dont la seule exigence vivait dans un
+élément de liste était accepté, validation éteinte : zéro erreur sur un contact sans son
+`nom` déclaré requis.
+
+**L'armement** (`declaration.validation_active`, `_exige`) : `strict`, ou `required`,
+`required_when`, `max_length`, `max_items` à toute profondeur (`_walk_fields`), ou
+`options` dans un sous-record. ⚠️ `options` de premier niveau n'arme toujours pas : c'est le
+régime souple déclaré (#319), que `non_applique.py` dit à la pose et à l'écriture — l'armer
+basculerait tous les tableaux souples à options. Mesuré en production avant la bascule : un
+seul tableau change de régime (34 lignes, les `options` de deux listes) et aucune ligne
+existante ne viole un `required` de sous-champ. Livré sans préavis.
+
+**Les formes inertes, refusées à la pose** (`definition._validate_fields_def`) :
+`max_items` dans `of` (il borne la liste, se pose à côté de `type: "list"`), et `fields`/`of`
+sous une colonne sans `type` — la validation ne descend que dans un composite typé. Le refus
+donne la forme correcte. Aucun schéma de production ne porte ces formes (mesuré le 24/09).
+
+**Liste à `of.key` : seuls les éléments ÉCRITS sont jugés** (`validation.elements_reecrits`).
+Les chemins qui fusionnent (`_merge_into_row`, `update_row`) passent la ligne en place
+(`en_place`) jusqu'à `validate_row` ; la fusion par créneau a déjà eu lieu, et un élément qui en
+sort identique à celui de même identité en place n'est pas écrit : ce qui y cloche part dans
+`gelees` (`hors_type` de la réponse), comme une colonne non écrite. Un élément neuf, sans
+identité ou modifié est jugé. Sans `of.key`, sans ligne en place, ou sur une liste en place à
+identité en double (remplacée en bloc par la fusion), tout est jugé.
+⚠️ Hors de portée : `required_layers` (`couches_exigees.py`, armé par sa propre
+déclaration) juge encore tous les éléments d'une liste réécrite.
+
+Bancs : `tests/datastore/test_exigences_en_profondeur_oto137.py`.

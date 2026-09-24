@@ -70,6 +70,24 @@ def declares_field(schema: Optional[dict], key: str) -> bool:
     return any(f.get("key") == key for f in _fields(schema))
 
 
+def cle_d_element(champ: object) -> Optional[str]:
+    """Le champ qui IDENTIFIE un élément d'une liste — `of.key`, ou `None`.
+
+    Même mot que la clé métier d'une ligne (`schema.key`), un cran plus bas et pour la
+    même raison : dire ce qui fait qu'un élément est « le même » d'une écriture à
+    l'autre. Sans elle, une liste se remplace en bloc, comme depuis toujours.
+
+    ⚠️ **C'est une identité de CRÉNEAU, pas de personne** (tranché le 08/09/2026). Le
+    bon candidat est une catégorie stable et fermée — `contact_rh`, `contact_paie` —
+    et surtout pas un email ou un nom. Que l'occupant d'un créneau change (Jane
+    remplacée par Doe après une passe d'agent) est le geste NORMAL que ce mécanisme
+    doit servir ; apparier des gens sur leur nom serait au contraire le mode d'échec
+    qu'on refuse."""
+    of = champ.get("of") if isinstance(champ, dict) else None
+    cle = of.get("key") if isinstance(of, dict) else None
+    return cle if isinstance(cle, str) and cle else None
+
+
 def _walk_fields(fields: list) -> Iterator[dict]:
     """Tous les fields, sous-records COMPRIS (`object.fields`, `list.of[.fields]`)."""
     for f in fields:
@@ -315,29 +333,54 @@ def title_field(schema: Optional[dict]) -> Optional[dict]:
     return None
 
 
+def _exige(field: dict, *, sous_record: bool) -> bool:
+    """Ce field porte-t-il une exigence que seule la validation fait respecter ?
+
+    `required`, `required_when`, `max_length` et `max_items` à toute profondeur ;
+    `options` dans un sous-record seulement (cf. `validation_active`)."""
+    if field.get("required") or field.get("required_when") or max_length_of(field):
+        return True
+    mi = field.get("max_items")
+    if isinstance(mi, int) and not isinstance(mi, bool) and mi > 0:
+        return True
+    return sous_record and bool(field.get("options"))
+
+
 def validation_active(schema: Optional[dict]) -> bool:
-    """La validation d'écriture est OPT-IN : `schema.strict` truthy, OU au moins un
-    field déclarant `required`/`required_when`/`max_length`. Sans ça, écriture
-    soft (0016).
+    """La validation d'écriture est OPT-IN : `schema.strict` truthy, OU au moins une
+    EXIGENCE déclarée, à n'importe quelle profondeur. Sans ça, écriture soft (0016).
 
-    `max_length` compte au même titre que `required` — sans quoi une borne posée
-    sur un schéma qui n'a aucun requis serait INERTE, silencieusement (signal
-    #383). Elle est cherchée en PROFONDEUR (sous-records inclus), là où
-    required/required_when sont lus sur les seules entrées DÉCLARÉES ICI : élargir
-    ces deux-là activerait rétroactivement la validation de schémas déjà posés,
-    alors que déclarer une borne EST la demande de la faire respecter.
+    Une exigence, c'est `required`, `required_when`, `max_length` ou `max_items` —
+    posée sur une colonne, sur un sous-champ d'objet ou sur l'attribut d'un élément
+    de liste — et `options` posée DANS un sous-record. Déclarer l'exigence EST la
+    demande de la faire respecter.
 
-    ⚠️ « entrée déclarée ici » ≠ « colonne » depuis #377 : une cible de COUCHE
-    (`qualification.comment`) est une entrée de cette liste comme une autre, et
-    active donc bien la validation. Ce qui reste hors de portée, c'est la
-    profondeur — un requis enfoui dans un sous-record."""
+    ⚠️ **La profondeur est arrivée le 24/09/2026 (oto#137), et son absence était un
+    défaut.** `required` et `required_when` n'étaient lus qu'au premier niveau, par
+    crainte d'armer rétroactivement des schémas déjà posés. Le prix était pire : un
+    schéma dont la seule exigence vivait dans un élément de liste (« chaque contact a
+    un nom ») était accepté, et la validation restait éteinte — une garde déclarée
+    qui n'existe pas. Mesuré avant la bascule : un seul tableau de production changeait
+    de régime (34 lignes, les `options` de deux listes), et aucune ligne existante ne
+    violait un `required` de sous-champ.
+
+    ⚠️ **`options` au PREMIER niveau n'arme toujours pas**, et c'est délibéré : sur un
+    tableau souple, une liste de colonne est indicative, et `non_applique.py` le dit à
+    la pose comme à l'écriture. L'armer basculerait d'un coup tous les tableaux souples
+    qui en portent (#319). Dans un sous-record, il n'y a ni avertissement ni relevé
+    SQL de l'existant : une liste inerte y serait muette — elle arme.
+
+    Une cible de COUCHE (`qualification.comment`, #377) est une entrée de la liste des
+    champs comme une autre, et arme la validation comme elle."""
     if not isinstance(schema, dict):
         return False
     if schema.get("strict"):
         return True
-    if any(f.get("required") or f.get("required_when") for f in _fields(schema)):
+    haut = _fields(schema)
+    if any(_exige(f, sous_record=False) for f in haut):
         return True
-    return any(max_length_of(f) for f in _walk_fields(_fields(schema)))
+    return any(_exige(f, sous_record=True)
+               for f in _walk_fields(haut) if not any(f is h for h in haut))
 
 
 def key_required_of(schema: Optional[dict]) -> bool:

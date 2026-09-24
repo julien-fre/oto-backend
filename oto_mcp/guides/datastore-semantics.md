@@ -302,6 +302,25 @@ n'y réservera jamais rien. Une colonne avec ses `options`, ou l'ancienne étiqu
 ressemble à un état sans en être un — la réponse te le dit plutôt que de te laisser
 conclure de son silence.
 
+## 4 septies. Une exigence déclarée s'applique, à toute profondeur
+
+La validation d'un tableau s'arme dès que son schéma déclare une exigence : `strict`,
+ou `required`, `required_when`, `max_length`, `max_items` sur une colonne, un
+sous-champ d'objet ou l'attribut d'un élément de liste — et `options` dans un
+sous-champ. « Chaque contact porte un nom » se déclare sur `of.fields`, et il est
+tenu. Seules les `options` d'une colonne de premier niveau restent indicatives hors
+`strict` ; la réponse le dit.
+
+Deux formes qui ne s'appliqueraient pas sont **refusées à la pose**, avec la bonne :
+`max_items` se pose sur la liste (`{"type": "list", "max_items": 3, "of": {…}}`),
+jamais dans `of` ; des sous-champs (`fields`, `of`) exigent le `type` de leur colonne
+(`object` ou `list`).
+
+Dans une liste à `of.key`, seuls les éléments que ton écriture **change** sont jugés.
+Un élément renvoyé tel quel, qui ne respectait pas une exigence posée après lui, ne
+bloque pas ton écriture : il est signalé dans `hors_type`, à corriger quand tu y
+reviens.
+
 ## 5. Ce que `readonly: true` protège — et ne protège pas
 
 Une colonne `readonly` (schéma) verrouille la **valeur** d'une ligne en place : une

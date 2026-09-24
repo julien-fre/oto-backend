@@ -838,6 +838,11 @@ def register(mcp: FastMCP) -> None:
         empty stays `"@empty"`. Refused on an element's identity (`of.key`), in a list
         of plain values, and inside an object or a `json` column.
 
+        A requirement declared on a sub-field (`required`, `options`, `max_length`…
+        on an element's `nom`) is enforced like one on a column. In a list with
+        `of.key`, only the elements your write CHANGES are judged: an element sent
+        back unchanged never blocks yours — its defect comes back in `hors_type`.
+
         ⚠️ **A write DESTROYS what is in the column.** On an open column there is no
         undo and no history: the previous value is gone the moment yours lands. If
         the value was supplied by the table's owner and you overwrite it, they get

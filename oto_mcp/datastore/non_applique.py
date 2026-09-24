@@ -3,10 +3,12 @@
 Trois faits qu'un schéma laisse croire et que le moteur ne tient pas — dits au moment
 où ils comptent, à la pose comme à l'écriture, jamais six semaines plus tard :
 
-- **`options` hors régime strict ne contraint rien.** `validation_active` ne s'arme
-  que sur `strict`/`required`/`required_when`/`max_length` : un tableau qui déclare
-  une liste de choix et rien d'autre accepte tout. `options_not_enforced` le dit à la
-  pose, `unenforced_options` nomme la valeur hors liste à l'écriture ;
+- **`options` de COLONNE hors régime strict ne contraint rien.** `validation_active`
+  s'arme sur `strict` et sur les exigences (`required`, `required_when`,
+  `max_length`, `max_items`) à toute profondeur, mais `options` ne l'arme que DANS un
+  sous-record (oto#137) : un tableau qui déclare une liste de choix sur une colonne
+  et rien d'autre accepte tout. `options_not_enforced` le dit à la pose,
+  `unenforced_options` nomme la valeur hors liste à l'écriture ;
 
   ⚠️ **Et en régime STRICT, jusqu'au 10/09/2026, `options` ne contraignait que les
   `enum`** (#98) : sur un texte, un json ou une colonne sans type, une valeur hors
@@ -50,8 +52,9 @@ from .cycle_de_vie import (abandon_state_of, claimable_of, lifecycle_of,
 
 # ── Options déclarées mais non appliquées (#319) ─────────────────────────────
 #
-# `validation_active` ne s'arme que sur `strict` / `required` / `required_when` /
-# `max_length` — **`options` n'y est pas**. Un tableau qui déclare
+# `validation_active` s'arme sur `strict` et sur les exigences à toute profondeur, mais
+# **`options` de premier niveau n'y est pas** (dans un sous-record, elle arme : oto#137).
+# Un tableau qui déclare
 # `options: ["oui","non","inconnu"]` et rien d'autre accepte « Peut-être » sans un mot.
 #
 # Le défaut a été signalé sur pièce par une mission, et il est aggravé par #316 : cet
