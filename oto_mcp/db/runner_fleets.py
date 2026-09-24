@@ -580,4 +580,65 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
     # Un passage sans aucun travail rattaché le DIT, au lieu de rendre des
     # compteurs à zéro qu'on lirait comme « rien ne s'est passé ».
     etat["no_jobs_attached"] = etat["jobs_total"] == 0
+    etat["runs_by_outcome"] = issues_des_runs(fleet_id, org_id)
     return {"fleet": fleet, "state": etat}
+
+
+def issues_des_runs(fleet_id: int, org_id: int) -> dict[str, int]:
+    """Combien de runs de ce passage ont conclu par chaque issue (oto#77).
+
+    ⚠️ **Un travail `done` ne dit rien de son issue** : il s'est arrêté de lui-même,
+    y compris quand l'agent a conclu `failed` ou `partial`. L'issue est celle que
+    l'agent a DÉCLARÉE au `run_finish` — lue du FAIT au journal (`_run_closure`),
+    jamais de `runs.outcome`, écriture de confort qui se rate en silence.
+
+    Clés : les issues déclarées telles quelles (`done`, `partial`, `failed`,
+    `blocked`), `open` pour un run ouvert sans clôture, `unknown` pour un run dont le
+    journal n'a aucune ouverture. Un travail sans run n'y entre pas : il n'a pas
+    d'issue à dire (`reservation_unmeasured` le compte déjà)."""
+    from .usage import _run_closure
+    with _connect() as conn:
+        lignes = conn.execute(
+            f"""
+            WITH r AS (SELECT DISTINCT run_id FROM runner_jobs
+                        WHERE fleet_id = %s AND org_id = %s AND run_id IS NOT NULL)
+            SELECT CASE WHEN s.run_id IS NULL THEN 'unknown'
+                        ELSE COALESCE(f.args->>'outcome', 'open') END AS issue,
+                   COUNT(*)::int AS runs
+              FROM r
+              LEFT JOIN LATERAL (
+                  SELECT o.run_id, o.created_at, o.sub
+                    FROM tool_calls o
+                   WHERE o.tool = 'run_start' AND o.run_id = r.run_id
+                   ORDER BY o.created_at DESC
+                   LIMIT 1
+              ) s ON TRUE{_run_closure("s")}
+             GROUP BY 1
+            """,
+            (fleet_id, org_id),
+        ).fetchall()
+    return {str(x["issue"]): int(x["runs"]) for x in lignes}
+
+
+def lignes_par_statut(ns_id: int, colonne: str, perimetre: dict) -> list[dict]:
+    """Les lignes du PÉRIMÈTRE d'un passage, comptées par valeur de leur colonne de
+    statut et par motif d'abandon posé par la plateforme (oto#77).
+
+    Rend `[{statut, abandon_reason, lignes}]`. `statut` est la VALEUR lue (plate ou
+    à couches, `field_read_sql`), `None` quand la ligne n'en a pas. Le périmètre
+    passe par la grammaire de filtre du tableau — la même que la réservation —, sans
+    le périmètre réclamable : on compte aussi les lignes SORTIES de la file, c'est
+    précisément leur issue qu'on cherche."""
+    from .paths import field_read_sql
+    from .query import _ds_filter_clauses, ds_filter_specs
+    lecture, lparams = field_read_sql(colonne)
+    clauses, fparams = _ds_filter_clauses(ds_filter_specs(perimetre))
+    where = "".join(f" AND {c}" for c in clauses)
+    with _connect() as conn:
+        lignes = conn.execute(
+            f"SELECT {lecture} AS statut, abandon_reason, COUNT(*)::int AS lignes "
+            f"  FROM datastore_rows WHERE ns_id = %s{where} "
+            "  GROUP BY 1, 2",
+            (*lparams, ns_id, *fparams),
+        ).fetchall()
+    return [dict(x) for x in lignes]

@@ -561,6 +561,30 @@ statut — un travail reste `done` ou `failed` :
 - `reservation_unmeasured` et `usage_unknown` : ce qui n'est pas mesuré se compte, il
   ne se lit jamais comme un zéro.
 
+**Les compteurs de travaux ne disent rien des LIGNES** (oto#77, 24/09/2026). Mesuré sur
+une automatisation d'essai à trois lignes : onze travaux `done`, zéro `failed`, zéro
+`abandoned`, et au tableau une ligne enrichie, deux abandonnées après trois réservations
+sans écriture. Un travail qui rend sa ligne sans l'écrire s'arrête de lui-même, donc il
+est `done` ; `failed` et `abandoned` comptent des travaux en erreur, jamais des lignes.
+L'état porte donc deux comptes de plus, que les descriptions servies nomment :
+- `rows` : les lignes du PÉRIMÈTRE ventilées par valeur finale de leur colonne de
+  statut (`role="status"`, lue au schéma), puis rangées selon le cycle de vie —
+  `concluded` (terminal hors abandon), `abandoned` (l'état d'abandon, avec
+  `abandon_reasons` : le motif posé par la plateforme, `null` quand c'est une écriture
+  qui y a versé la ligne), `open`. Le périmètre est le `row_filter` **privé de sa
+  clause de statut** ; un filtre qui ne borne que le statut ventile tout le tableau, et
+  `scope: "table"` le dit. Sans ventilation possible, `rows_unavailable` dit pourquoi
+  (`no_table`, `table_not_found`, `no_status_column`). Lu au tableau par
+  `capabilities/_lignes_de_campagne.py`, jamais à l'agent qui travaille ;
+- `runs_by_outcome` : l'issue que chaque exécution a déclarée à `run_finish` (`done`,
+  `partial`, `failed`, `blocked`), lue du FAIT au journal (`_run_closure`) et non de
+  `runs.outcome` ; `open` = pas de clôture, `unknown` = aucune ouverture au journal.
+
+⚠️ Ce n'est **pas une attribution par run** : une ligne abandonnée perd son
+`claimed_run`, et le journal des révisions ne porte pas encore de run (oto#273, M2).
+Une ligne du périmètre déjà terminale avant l'automatisation y figure aussi. Preuves :
+`tests/test_etat_de_flotte_lignes_db.py`.
+
 Trois régimes se sont succédé :
 - la plus ancienne armée d'abord : une chaîne de passes armée d'un coup restait
   figée sur la première, même vide ;

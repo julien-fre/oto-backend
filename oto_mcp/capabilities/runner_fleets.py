@@ -61,8 +61,8 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from . import (_abonnement, _cle_exigee, _descriptions_outils, _instruction,
-               _lignes_reservables, _modele, _ordonnanceur_de_campagne,
-               _outils_manquants)
+               _lignes_de_campagne, _lignes_reservables, _modele,
+               _ordonnanceur_de_campagne, _outils_manquants)
 from .. import access, db, output_projection, runner_models, tool_alias
 from ..tool_visibility import BETA_OPTION
 
@@ -217,8 +217,44 @@ class FleetCard(BaseModel):
     input_sha256: Optional[str] = None
 
 
+class AbandonReason(BaseModel):
+    reason: Optional[str] = Field(None, description=(
+        "The reason the platform recorded when it took the row out of the queue. "
+        "null: the row was put in the abandon state by a write, not by the platform."))
+    rows: int
+
+
+class FleetRows(BaseModel):
+    """Ce que sont devenues les LIGNES d'une automatisation (oto#77) — lues au
+    tableau, par la valeur finale de leur colonne de statut. Les compteurs de
+    travaux n'en disent rien : un travail qui rend sa ligne sans l'écrire est `done`
+    (`capabilities/_lignes_de_campagne.py`)."""
+    scope: Literal["perimeter", "table"] = Field(description=(
+        "`perimeter`: the rows the automation's `row_filter` designates, its status "
+        "clause removed. `table`: the filter bounds only the status, so these are ALL "
+        "the rows of the table — this automation's rows cannot be told apart."))
+    status_column: str
+    perimeter: dict = Field(description="The filter these rows were counted under.")
+    total: int
+    by_status: dict[str, int] = Field(description=(
+        "Rows per final value of the status column, as written. `(none)` = no value."))
+    terminal_states: list[str]
+    abandon_state: Optional[str] = None
+    concluded: Optional[int] = Field(None, description=(
+        "Rows in a terminal state other than the abandon state — whether that means "
+        "done or discarded is in `by_status`. null: no terminal state is declared."))
+    abandoned: Optional[int] = Field(None, description=(
+        "Rows in the abandon state: they FAILED and left the queue. null: the "
+        "lifecycle declares no abandon state."))
+    open: Optional[int] = Field(None, description=(
+        "Rows not in a terminal state yet. null: no terminal state is declared."))
+    abandon_reasons: list[AbandonReason] = Field(description=(
+        "Why the abandoned rows were abandoned, grouped by reason."))
+
+
 class FleetState(BaseModel):
-    """L'avancement d'un passage, agrégé sur ses travaux.
+    """L'avancement d'un passage : ses TRAVAUX, ses RUNS et ses LIGNES — trois
+    comptes qui ne se déduisent pas l'un de l'autre (oto#77).
 
     `no_jobs_attached` est DÉCLARÉ plutôt que déduit de compteurs à zéro :
     un zéro qui peut vouloir dire « rien trouvé » ou « personne n'a regardé » est
@@ -227,9 +263,21 @@ class FleetState(BaseModel):
     jobs_total: int
     pending: Optional[int] = None
     claimed: Optional[int] = None
-    done: Optional[int] = None
-    failed: Optional[int] = None
-    abandoned: Optional[int] = None
+    done: Optional[int] = Field(None, description=(
+        "JOBS that ended by themselves. Says nothing about the rows: a job that gives "
+        "its row back unwritten still ends `done` — read `rows`."))
+    failed: Optional[int] = Field(None, description=(
+        "JOBS that errored (a row never counts here — see `rows.abandoned`)."))
+    abandoned: Optional[int] = Field(None, description=(
+        "JOBS that errored with no attempt left (a row never counts here — see "
+        "`rows.abandoned`)."))
+    runs_by_outcome: Optional[dict[str, int]] = Field(None, description=(
+        "Runs of these jobs by the outcome the agent declared at `run_finish` (done, "
+        "partial, failed, blocked); `open` = not finished, `unknown` = no run start "
+        "on record."))
+    rows: Optional[FleetRows] = None
+    rows_unavailable: Optional[Literal["no_table", "table_not_found",
+                                       "no_status_column"]] = None
     # L'issue des travaux TERMINÉS (oto#243), à côté de `done` : là où l'on regarde.
     empty_jobs: Optional[int] = Field(None, description=(
         "Finished jobs that called `data_claim_next` and got no row."))
@@ -550,6 +598,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # La file telle que l'ordonnanceur la voit, pour qui SUPERVISE la campagne
         # (14/09/2026) — jamais pour l'agent qui travaille (`_lignes_reservables`).
         etat["state"].update(_lignes_reservables.pour_le_superviseur(etat["fleet"]))
+        # Ce que sont devenues les LIGNES (oto#77) : sans elles, onze travaux `done`
+        # se lisaient comme un succès sur deux lignes abandonnées sur trois.
+        etat["state"].update(_lignes_de_campagne.pour_le_superviseur(etat["fleet"]))
         return etat
 
     # update — partiel, et jamais sur la cible ni sur l'état.
@@ -734,7 +785,13 @@ CAPABILITIES += [
             "`stopped_after_write` — plus `reservable_rows`, what the scheduler still "
             "sees to serve — and says `no_jobs_attached` "
             "explicitly rather than returning zeros you would read as 'nothing "
-            "happened'. The TARGET is frozen at declaration: redirecting a running "
+            "happened'. ⚠️ Those counters count JOBS, never rows: a job that gives its "
+            "row back unwritten still ends `done`, so `done` = `jobs_total` with "
+            "`failed` = 0 is NOT a success. What became of the ROWS is in `rows` — per "
+            "final status value, `concluded`, `abandoned` (failed, with the reason) and "
+            "`open`, read from the table itself — and what each execution concluded is "
+            "in `runs_by_outcome` (done / partial / failed / blocked). Report the "
+            "outcome from `rows`, and say its `scope`. The TARGET is frozen at declaration: redirecting a running "
             "pass to another table is what declaring exists to prevent; the "
             "execution context (`provider`/`model`) is frozen too, since changing it "
             "mid-flight falsifies the attribution of rows already written — declare "

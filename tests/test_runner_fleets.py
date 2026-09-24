@@ -130,6 +130,9 @@ def test_l_etat_porte_la_file_que_voit_l_ordonnanceur_et_pourquoi_elle_manque(mo
               "row_filter": {"passe": "2"}}
     monkeypatch.setattr(db, "fleet_state", lambda fid, org: {
         "fleet": dict(flotte), "state": {"jobs_total": 3, "no_jobs_attached": False}})
+    # Les lignes ont leur banc, sur une vraie base (`test_etat_de_flotte_lignes_db.py`).
+    monkeypatch.setattr(RF._lignes_de_campagne, "pour_le_superviseur",
+                        lambda f: {"rows": None, "rows_unavailable": "no_table"})
     for comptes, attendu in (({7: 12}, (12, None)), ({7: None}, (None, "no_table")),
                              ({}, (None, "count_failed"))):
         monkeypatch.setattr(RF._lignes_reservables, "lignes_reservables",
