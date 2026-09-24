@@ -11,6 +11,8 @@ interroge factures, transactions et balance, et solde les paiements non rapproch
 - `pennylane_trial_balance` la balance comptable sur une période, `pennylane_ref(kind="ledger_accounts")` le plan comptable
 - `pennylane_invoice(op="list")` / `pennylane_supplier_invoice(op="list")` les factures, `pennylane_transactions` les mouvements bancaires
 - `pennylane_match` lettre une transaction avec sa facture (réversible) pour ne pas laisser une facture payée en `late`
+- devis : `pennylane_quote(op="create")` (pas de brouillon : il naît `pending`) → `op="pdf"` pour le lien du PDF à joindre à un mail (lien qui expire, à relire juste avant) → `op="set_status"` (`accepted` à la signature) → `op="to_invoice"` crée la facture en **brouillon**, que `pennylane_invoice(op="finalize")` puis `op="send"` émettent **après validation humaine**
+- plusieurs instances pennylane dans une org (perso et société) : sans `_instance`, la clé personnelle répond d'abord — pour deviser ou facturer au nom de la société, passer `_instance="org:<id>:pennylane"`
 - flux avoir supervisé : `pennylane_ref(kind="products")` (résoudre le `product_id`, jamais le deviner) → `pennylane_invoice(op="find")` (anti-doublon) → `pennylane_invoice(op="credit_note")` (brouillon **standalone**, lignes en positif — la négativation « avoir » est appliquée côté serveur) → `pennylane_invoice(op="finalize")` puis `op="send"` **après validation humaine**
 
 ## note — périmètre de projet (#605, 2026-08-29)
