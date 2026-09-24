@@ -100,8 +100,8 @@ du code le 23/09/2026, oto#239 — son DROP reste un geste d'exploitation),
 `oto_mcp/guides/*.md` sont les **seeds** : le semis de démarrage empreinte ce qu'il pose, met à jour un guide dont la
 base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis par `oto_admin_guides_semis`, geste unique
 `scripts/aligner_guides_plateforme.py` (oto#236, `docs/guides.md`, `docs/alias-deprecies.md`).
-`ToolCallLogger` journalise chaque appel dans `tool_calls` (identité = `sub`), lu par trois lentilles (membre / org /
-plateforme) ; exceptions vers **Sentry** · ⚠️ ne trace ni la connexion d'un connecteur ni `tools/list` → **compte actif
+`ToolCallLogger` journalise chaque appel dans `tool_calls` (identité = `sub` ; **émetteur déclaré** = client MCP sous
+`args._client` + `token_kind`, lisible jamais opposable), lu par trois lentilles (membre / org / plateforme) ; exceptions vers **Sentry** · ⚠️ ne trace ni la connexion d'un connecteur ni `tools/list` → **compte actif
 ≠ usage** · jamais un jeton en clair ; la table est la **source de vérité des exécutions** (ADR 0017, `docs/monitoring.md`).
 
 ## Données & autres sous-systèmes

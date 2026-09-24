@@ -1025,7 +1025,9 @@ def list_tool_calls(
     `arg_keys` : les clés des arguments journalisés, triées, `[]` sans argument
     (`journal_calls.ARG_KEYS_SQL`, #634) — de quoi savoir QUELS arguments un appel
     portait sans ouvrir sa fiche, et sans jamais rendre une valeur — et, à côté,
-    `result_shape` (#644) : la FORME de ce que l'outil a rendu, jamais son contenu."""
+    `result_shape` (#644) : la FORME de ce que l'outil a rendu, jamais son contenu.
+    L'ÉMETTEUR déclaré (`client_name`, `client_version`, `token_kind` —
+    `journal_calls.EMITTER_SQL`, oto#187) : quel logiciel client, par quel jeton."""
     limit = max(1, min(int(limit), 1000))
     # Les filtres de la PAGE et ceux de son plancher (#630) sortent de la même
     # construction — c'est ce qui rend les deux comptes comparables.
@@ -1046,7 +1048,7 @@ def list_tool_calls(
             SELECT l.id, l.sub, u.email, u.name, l.tool AS tool_name, l.created_at AS called_at,
                    l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id,
                    l.sentry_event_id, {journal_calls.ARG_KEYS_SQL} AS arg_keys,
-                   l.result_shape, l.quantity, l.key_mode
+                   l.result_shape, l.quantity, l.key_mode, {journal_calls.EMITTER_SQL}
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             {where}
@@ -1062,15 +1064,18 @@ def get_tool_call(call_id: int) -> Optional[dict]:
     """Fiche d'UN appel (investigation plateforme) : la ligne complète, args inclus
     (bornés à l'écriture par `truncated_args`, toute coupe déclarée dans
     `args._truncated` — #413) + forme du résultat (`result_shape`, #644) +
-    axes de corrélation (session_id, run_id, org_id + nom, client_id)."""
+    axes de corrélation (session_id, run_id, org_id + nom, client_id) + émetteur déclaré
+    (`client_name`/`client_version`/`token_kind`, oto#187) et le jeton nommé
+    (`token_id`, jamais sa valeur)."""
     with _connect() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT l.id, l.kind, l.server, l.sub, COALESCE(u.email, l.email) AS email,
                    u.name, l.tool, l.args, l.ok, l.error, l.error_kind, l.duration_ms,
                    l.created_at,
                    l.session_id, l.run_id, l.org_id, o.name AS org_name, l.client_id,
-                   l.sentry_event_id, l.result_shape, l.quantity, l.key_mode
+                   l.sentry_event_id, l.result_shape, l.quantity, l.key_mode,
+                   {journal_calls.EMITTER_SQL}, l.token_id
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             LEFT JOIN orgs o ON o.id = l.org_id
@@ -1136,7 +1141,8 @@ def export_tool_calls_for_org(
     Appels émis **sous** `org_id` (colonne `tool_calls.org_id`, stampée par le seam
     `current_org` au moment de l'appel — scope EXACT, pas l'appartenance des
     membres), récent d'abord, fenêtre `[since, until_effectif]` (ISO timestamptz,
-    bornes incluses). JAMAIS d'args ni de secret (garantie calllog).
+    bornes incluses). JAMAIS d'args ni de secret (garantie calllog) — seul l'ÉMETTEUR
+    déclaré en est extrait (`journal_calls.EMITTER_SQL`, oto#187).
 
     - `total` — la population de la FENÊTRE, indépendante de `limit` et de `before`.
     - `calls` — au plus `limit` lignes.
@@ -1181,7 +1187,8 @@ def export_tool_calls_for_org(
         rows = conn.execute(
             f"""
             SELECT l.id, l.created_at, l.sub, u.email, l.tool, l.ok, l.error,
-                   l.duration_ms, {_AUDIT_KEYSET_AT} AS _keyset_at
+                   l.duration_ms, {journal_calls.EMITTER_SQL},
+                   {_AUDIT_KEYSET_AT} AS _keyset_at
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             WHERE {' AND '.join(page_clauses)}
@@ -1434,7 +1441,9 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
                    COUNT(*) FILTER (WHERE NOT ok) AS errors,
                    COUNT(DISTINCT sub) AS users,
                    COALESCE(SUM(result_size), 0) AS served_chars,
-                   COUNT(result_size) AS sized_calls
+                   COUNT(result_size) AS sized_calls,
+                   COUNT(*) FILTER (WHERE args->'{journal_calls.ARGS_CLIENT_KEY}'->>'name'
+                                    IS NOT NULL) AS emitter_named
             FROM tool_calls WHERE {w}
             """,
             tuple(wp),
@@ -1477,6 +1486,17 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
             """,
             tuple(wlp),
         ).fetchall()
+        # oto#187 — les ÉMETTEURS déclarés de la fenêtre (logiciel client), du plus
+        # actif au moins actif ; `NULL` = ligne sans émetteur (antérieure au lot).
+        by_emitter = conn.execute(
+            f"""
+            SELECT args->'{journal_calls.ARGS_CLIENT_KEY}'->>'name' AS client_name,
+                   COUNT(*) AS calls
+            FROM tool_calls WHERE {w}
+            GROUP BY 1 ORDER BY calls DESC LIMIT 50
+            """,
+            tuple(wp),
+        ).fetchall()
         by_day = conn.execute(
             f"""
             SELECT to_char(created_at::date, 'YYYY-MM-DD') AS day,
@@ -1497,6 +1517,10 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
         # `total_calls`, qui compte aussi les appels non mesurés.
         "served_chars": int((totals or {}).get("served_chars") or 0),
         "sized_calls": int((totals or {}).get("sized_calls") or 0),
+        # oto#187 — la COUVERTURE de l'émetteur : sur `total_calls`, combien portent un
+        # logiciel client nommé. Déclaré par le client : lisible, jamais opposable.
+        "emitter_named_calls": int((totals or {}).get("emitter_named") or 0),
+        "by_emitter": list(by_emitter),
         "by_tool": list(by_tool),
         "by_user": list(by_user),
         "by_day": list(by_day),

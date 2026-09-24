@@ -35,7 +35,8 @@ Org-scoping = **exact** : on filtre `tool_calls.org_id` (l'org sous laquelle l'a
 membres (un membre de N orgs ne pollue donc pas l'export). ⚠ Les appels antérieurs à la
 colonne `org_id` (NULL) n'apparaissent dans aucun export — non reconstructibles.
 Jamais d'args ni de secret (garantie calllog) — colonnes : horodatage, user (sub/email),
-outil, namespace, durée, ok, erreur.
+outil, namespace, durée, ok, erreur, et l'ÉMETTEUR déclaré (logiciel client + version,
+mode de jeton — otomata-tech/oto#187 : déclaré par le client, lisible, jamais opposable).
 """
 from __future__ import annotations
 
@@ -129,6 +130,15 @@ class AuditCall(BaseModel):
     duration_ms: Optional[int] = None
     # Dérivé du nom d'outil (1er token avant `_`), None si `tool` est vide.
     namespace: Optional[str] = None
+    # L'ÉMETTEUR DÉCLARÉ (otomata-tech/oto#187) : le logiciel client que la session a
+    # nommé à son `initialize` (`client_name`/`client_version`) et le mode de jeton
+    # (`token_kind` : `user` | `delegation` ; `None` = session OAuth, ou ligne antérieure).
+    # ⚠️ DÉCLARÉ par le client : lisible, jamais opposable — une surface (runner, CLI
+    # d'agent, client web), pas la présence d'un humain. `None` partout = ligne
+    # antérieure au lot.
+    client_name: Optional[str] = None
+    client_version: Optional[str] = None
+    token_kind: Optional[str] = None
 
 
 class AuditExport(BaseModel):

@@ -45,11 +45,26 @@ from ._conn import _connect
 # La clé réservée qui DÉCLARE une coupe (#413, `calllog.truncated_args`) n'est pas un
 # argument : elle est exclue des clés rendues. La coupe se lit sur la fiche.
 ARGS_TRUNCATED_KEY = "_truncated"
+# La clé réservée qui porte l'ÉMETTEUR DÉCLARÉ de l'appel (otomata-tech/oto#187,
+# `calllog.poser_emetteur`) : `{"name", "version"}` du logiciel client, tel que sa
+# session l'a déclaré à l'`initialize`. Pas un argument non plus : exclue des clés.
+ARGS_CLIENT_KEY = "_client"
 ARG_KEYS_SQL = (
     "COALESCE((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys("
     "CASE WHEN jsonb_typeof(l.args) = 'object' THEN l.args ELSE '{}'::jsonb END) k "
-    f"WHERE k <> '{ARGS_TRUNCATED_KEY}'), "
+    f"WHERE k NOT IN ('{ARGS_TRUNCATED_KEY}', '{ARGS_CLIENT_KEY}')), "
     "ARRAY[]::text[])"
+)
+
+# L'émetteur d'une ligne, servi par chaque lecture du journal (liste, fiche, export
+# d'audit) : le logiciel client DÉCLARÉ et le mode de jeton. `client_name` NULL = ligne
+# antérieure à oto#187, ou appel hors session MCP ; `token_kind` NULL = session OAuth
+# (aucun jeton nommé) — ou ligne antérieure. ⚠️ Déclaré par le client : lisible,
+# jamais opposable.
+EMITTER_SQL = (
+    f"l.args->'{ARGS_CLIENT_KEY}'->>'name' AS client_name, "
+    f"l.args->'{ARGS_CLIENT_KEY}'->>'version' AS client_version, "
+    "l.token_kind"
 )
 
 

@@ -231,6 +231,37 @@ par la fiche (`call.result_shape`) et par chaque ligne de la liste, à côté d'
 Colonne posée sur la base existante par la révision `0010_tool_calls_result_shape`, jouée
 **avant la fusion** (`docs/migrations-versionnees.md` §5.1).
 
+### L'émetteur d'un appel : le client déclaré et le jeton (otomata-tech/oto#187, 2026-09-24)
+
+Le nom du logiciel client (`clientInfo` du handshake MCP) était reçu à **chaque**
+`initialize` et gardé sur la ligne `kind='protocol'` — jamais sur l'appel, et aucune
+lecture ne le rendait. `client_id` (le `azp` du JWT) était NULL sur trois appels sur
+quatre (runner, jetons d'API), et `token_kind` NULL sur 100 % des appels MCP (le claim
+était perdu à la vérification du jeton).
+
+Chaque ligne `kind='mcp'` porte désormais son **émetteur déclaré**, posé par une règle
+unique, `calllog.poser_emetteur`, pour les deux écrivains (middleware et cible d'`oto_call`) :
+
+- le **logiciel client** sous la clé réservée **`args._client`** = `{"name", "version"}`,
+  lu sur la session servie (`session.client_params.clientInfo`, aucune base). Une clé du
+  JSON existant plutôt qu'une colonne : le journal compte des millions de lignes, et
+  l'émetteur se **lit** (fiche, liste, export, couverture), il ne se filtre sur aucun chemin
+  chaud. Exclue des `arg_keys`, comme `_truncated` ;
+- le **jeton nommé** dans les colonnes existantes `token_id` / `token_kind`
+  (`user` | `delegation`), relus du jeton de la requête (`auth.hooks.current_token_axes`).
+  Absents = session OAuth (aucun jeton nommé ; `client_id` dit alors l'application).
+
+Servi par **toutes les lectures du journal** (`journal_calls.EMITTER_SQL`) : la liste
+(plateforme, org, membre), la fiche (plus `token_id`) et l'**export d'audit** d'une org
+(`client_name`, `client_version`, `token_kind`). La couverture se lit dans l'agrégat
+(`op=summary`) : `emitter_named_calls` sur `total_calls`, et `by_emitter`.
+
+⚠️ **Déclaré par le client : lisible, jamais opposable.** `clientInfo` est ce que le
+client écrit ; il distingue des **surfaces** (runner, CLI d'agent, client web, script),
+pas la présence d'un humain au clavier — et rien ne doit s'en servir pour refuser un appel.
+⚠️ Les lignes antérieures au lot n'ont pas d'émetteur : on ne réécrit pas un journal
+(la jointure par `session_id` avec la ligne de handshake reste possible à la main).
+
 ## Ce qui n'est PAS tracé
 
 ⚠️ **Les refus du TRANSPORT l'étaient — ils ne le sont plus (11/09/2026).** Une requête

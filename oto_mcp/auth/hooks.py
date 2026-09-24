@@ -113,6 +113,21 @@ def current_client_id_from_token() -> Optional[str]:
     return None
 
 
+def current_token_axes() -> dict:
+    """`{token_id, token_kind}` du jeton NOMMÉ de la requête MCP en cours — quel jeton a
+    servi, jamais sa valeur (otomata-tech/oto#187). Posés par `server._verify_api_token`
+    sur un jeton d'API (`kind` : `user` | `delegation`) ; `{}` pour une session OAuth
+    (aucun jeton nommé) et hors requête MCP. Lecture de contexte, aucune base."""
+    try:
+        from fastmcp.server.dependencies import get_access_token  # type: ignore
+        token = get_access_token()
+    # noqa: SILENT — hors contexte de requête MCP : aucun jeton à nommer
+    except Exception:
+        return {}
+    claims = getattr(token, "claims", None) or {}
+    return {k: claims[k] for k in ("token_id", "token_kind") if claims.get(k) is not None}
+
+
 def current_user_sub_from_token() -> Optional[str]:
     """Sub de l'utilisateur courant depuis le bearer JWT MCP (ou l'override REST)."""
     override = _sub_override.get()

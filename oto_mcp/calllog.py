@@ -29,7 +29,7 @@ from fastmcp.server.middleware import Middleware
 
 from . import journal_secrets
 from .db._hors_boucle import HorsBoucle
-from .db.journal_calls import ARGS_TRUNCATED_KEY
+from .db.journal_calls import ARGS_CLIENT_KEY, ARGS_TRUNCATED_KEY
 
 
 
@@ -65,6 +65,57 @@ def apply_call_trace(row: dict, trace: Optional[dict], traced_args: tuple) -> di
     return row
 
 logger = logging.getLogger("oto_mcp.calllog")
+
+def emetteur_declare() -> Optional[dict]:
+    """Le logiciel client que la session MCP de l'appel en cours a DÉCLARÉ à son
+    `initialize` (`clientInfo` : `{"name", "version"}`), ou `None` hors session MCP.
+
+    Le serveur le reçoit à chaque handshake et la ligne `kind='protocol'` le garde ;
+    aucun appel ne le portait (otomata-tech/oto#187). Lu ICI, sur la session servie —
+    une lecture d'attribut, aucune base, aucun identifiant fourni par l'appel.
+
+    ⚠️ **Déclaré, donc lisible, jamais opposable** : un client écrit ce qu'il veut dans
+    `clientInfo`. Télémétrie par SURFACE (runner, CLI d'agent, client web, script),
+    jamais une frontière d'autorisation — rien ne doit s'en servir pour refuser."""
+    from fastmcp.server.dependencies import get_context
+    try:
+        # Un contexte sans session (appel interne, banc) n'a pas de client à nommer.
+        session = getattr(get_context(), "session", None)
+    except RuntimeError:
+        # Hors requête MCP (REST, script), ou session pas encore établie.
+        return None
+    params = getattr(session, "client_params", None)
+    info = getattr(params, "clientInfo", None)
+    nom = getattr(info, "name", None)
+    if not nom:
+        return None
+    return {"name": str(nom)[:MAX_FIELD_CHARS],
+            "version": (str(info.version)[:MAX_FIELD_CHARS]
+                        if getattr(info, "version", None) else None)}
+
+
+def poser_emetteur(row: dict) -> dict:
+    """Verse l'ÉMETTEUR DÉCLARÉ d'un appel dans sa ligne de journal (otomata-tech/oto#187)
+    — UNE règle pour les deux écrivains d'une ligne `kind='mcp'` : le middleware
+    (`ToolCallLogger.on_call_tool`) et la cible d'`oto_call` (`tools/meta`).
+
+    - le logiciel client (`emetteur_declare`) sous la clé réservée `args._client`
+      (`ARGS_CLIENT_KEY`, exclue des `arg_keys`) : une clé du JSON existant plutôt
+      qu'une colonne — le journal a des millions de lignes, et l'émetteur se LIT
+      (fiche, liste, export, couverture), il ne se filtre pas sur un chemin chaud ;
+    - le jeton NOMMÉ employé (`token_id`, `token_kind` : `user` | `delegation`), déjà
+      colonnes, jusqu'ici jamais posées sur la face MCP. Absents = session OAuth
+      (aucun jeton nommé : le client porte alors son `client_id`).
+
+    Lectures de contexte seules (session servie, jeton de la requête) : appelable
+    depuis la boucle."""
+    emetteur = emetteur_declare()
+    if emetteur:
+        row["args"] = {**(row.get("args") or {}), ARGS_CLIENT_KEY: emetteur}
+    from .auth.hooks import current_token_axes
+    row.update(current_token_axes())
+    return row
+
 
 # Borne PAR VALEUR d'argument (oto-backend#413). Décision d'Alexis du 06/09/2026 : le
 # journal garde les arguments, et c'est l'ACCÈS qui se restreint (#563) — la coupe à
@@ -489,6 +540,7 @@ class ToolCallLogger(Middleware):
             # de CETTE requête, sans dépendre d'un identifiant fourni par le client.
             "call_uid": uuid.uuid4().hex,
         }
+        poser_emetteur(row)
         await self._poser_identite(row)
         t0 = time.monotonic()
         try:

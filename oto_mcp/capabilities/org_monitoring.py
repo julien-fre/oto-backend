@@ -80,6 +80,11 @@ class DayStat(BaseModel):
     errors: int
 
 
+class EmitterStat(BaseModel):
+    client_name: Optional[str] = None   # None = ligne sans émetteur (antérieure à oto#187)
+    calls: int
+
+
 class OrgMonitoringSummary(BaseModel):
     """Agrégats d'activité de l'org sur `since_days`.
 
@@ -98,6 +103,11 @@ class OrgMonitoringSummary(BaseModel):
     total_calls: int
     error_count: int
     active_users: int
+    # oto#187 — la couverture de l'émetteur : sur `total_calls`, combien portent un
+    # logiciel client NOMMÉ ; `by_emitter` les ventile (50 premiers, `client_name`
+    # `None` = lignes sans émetteur, antérieures au lot). Déclaré : jamais opposable.
+    emitter_named_calls: int = 0
+    by_emitter: list[EmitterStat] = []
     by_tool: list[ToolStat]
     by_user: list[UserStat]
     by_day: list[DayStat]
@@ -141,6 +151,15 @@ class CallRow(BaseModel):
     # Sous quelle clé l'appel est passé (`user|group|org|tenant|platform`).
     # `None` = aucun credential résolu, ou ligne antérieure à la colonne.
     key_mode: Optional[str] = None
+    # L'ÉMETTEUR DÉCLARÉ (otomata-tech/oto#187) : le logiciel client que la session a
+    # nommé à son `initialize` (`client_name`/`client_version`) et le mode de jeton
+    # (`token_kind` : `user` | `delegation` ; `None` = session OAuth, ou ligne antérieure).
+    # ⚠️ DÉCLARÉ par le client : lisible, jamais opposable — une surface (runner, CLI
+    # d'agent, client web), pas la présence d'un humain. `None` partout = ligne
+    # antérieure au lot.
+    client_name: Optional[str] = None
+    client_version: Optional[str] = None
+    token_kind: Optional[str] = None
 
 
 class OrgCalls(BaseModel):
@@ -191,6 +210,17 @@ class CallDetail(BaseModel):
     sentry_event_id: Optional[str] = None
     # FORME du résultat servi (#644) — même vocabulaire que `CallRow.result_shape`.
     result_shape: Optional[str] = None
+    # L'ÉMETTEUR DÉCLARÉ (otomata-tech/oto#187) : le logiciel client que la session a
+    # nommé à son `initialize` (`client_name`/`client_version`) et le mode de jeton
+    # (`token_kind` : `user` | `delegation` ; `None` = session OAuth, ou ligne antérieure).
+    # ⚠️ DÉCLARÉ par le client : lisible, jamais opposable — une surface (runner, CLI
+    # d'agent, client web), pas la présence d'un humain. `None` partout = ligne
+    # antérieure au lot.
+    client_name: Optional[str] = None
+    client_version: Optional[str] = None
+    token_kind: Optional[str] = None
+    # Le jeton NOMMÉ employé (son id, jamais sa valeur) — `None` en session OAuth.
+    token_id: Optional[int] = None
 
 
 class OrgCall(BaseModel):

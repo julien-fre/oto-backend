@@ -116,8 +116,11 @@ class _IatGatedVerifier(JWTVerifier):
         # `token_kind` (`user` / `delegation`) voyage avec le jeton : c'est ce qui dit, au
         # bord du protocole, qu'un appel est un travail du runner et non une personne
         # (`tool_alias.prefix_for` lui sert les noms canoniques de son allowlist).
+        # `token_id` avec lui : le journal nomme le jeton employé (`calllog.poser_emetteur`,
+        # otomata-tech/oto#187) — il était perdu ici, donc NULL sur 100 % des appels MCP.
         return AccessToken(token=token, client_id="oto_api_token", scopes=[],
                            subject=sub, claims={"sub": sub,
+                                                "token_id": row.get("token_id"),
                                                 "token_kind": row.get("token_kind")})
 
     def _route(self, token) -> tuple:

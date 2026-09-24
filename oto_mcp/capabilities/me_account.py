@@ -170,6 +170,15 @@ class ToolCall(BaseModel):
     # Id d'événement Sentry, quand l'échec en a produit un — permet d'ouvrir la trace
     # sans chercher par horodatage.
     sentry_event_id: Optional[str] = None
+    # L'ÉMETTEUR DÉCLARÉ (otomata-tech/oto#187) : le logiciel client que la session a
+    # nommé à son `initialize` (`client_name`/`client_version`) et le mode de jeton
+    # (`token_kind` : `user` | `delegation` ; `None` = session OAuth, ou ligne antérieure).
+    # ⚠️ DÉCLARÉ par le client : lisible, jamais opposable — une surface (runner, CLI
+    # d'agent, client web), pas la présence d'un humain. `None` partout = ligne
+    # antérieure au lot.
+    client_name: Optional[str] = None
+    client_version: Optional[str] = None
+    token_kind: Optional[str] = None
 
 
 class MyCallsView(BaseModel):

@@ -185,6 +185,9 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
             # ses axes — pas l'org maison qu'on relirait après coup.
             "org_id": access.current_org(sub) if org_id is _UNSET else org_id,
         }
+        # L'émetteur déclaré (client + jeton nommé), même règle que la ligne
+        # d'enveloppe : sans elle, la cible d'un dispatch n'aurait pas d'émetteur.
+        calllog.poser_emetteur(row)
         # La même règle que le sink du middleware : sans elle, la cible d'un dispatch
         # n'avait ni `key_mode` ni `quantity`, donc n'était jamais facturée.
         # La liste fermée des clés versées dans `args` vit dans `server` (import au
