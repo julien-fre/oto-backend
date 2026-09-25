@@ -59,6 +59,16 @@ def test_chaque_capacite_est_ouverte_au_service_et_a_lui_seul(cle, monkeypatch):
     assert refus.value.code == "service_required"
 
 
+def test_une_date_sans_fuseau_sort_en_utc_explicite():
+    """#1073 : une colonne de la base servie rendait `created_at` sans fuseau, et le
+    commerce ne pouvait pas la comparer à une date réelle."""
+    from oto_mcp.capabilities import service_commerce as sc
+    assert sc._iso(datetime(2026, 9, 25, 11, 0)) == "2026-09-25T11:00:00+00:00"
+    paris = timezone(timedelta(hours=2))
+    assert sc._iso(datetime(2026, 9, 25, 13, 0, tzinfo=paris)) == "2026-09-25T13:00:00+02:00"
+    assert sc._iso(None) is None
+
+
 # ── sur une vraie base ───────────────────────────────────────────────────────
 
 def _org(archivee: bool = False) -> int:

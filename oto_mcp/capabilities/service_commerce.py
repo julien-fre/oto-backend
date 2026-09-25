@@ -37,7 +37,14 @@ def _org_ou_404(org_id: int) -> None:
 
 
 def _iso(v) -> Optional[str]:
-    return v.isoformat() if isinstance(v, datetime) else (str(v) if v is not None else None)
+    """Une date rendue au service porte TOUJOURS son fuseau (#1073). Une valeur sans
+    fuseau — une colonne de la base servie qui ne suit pas son type déclaré — sort en UTC
+    explicite : un consommateur ne compare jamais une date ambiguë."""
+    if v is None:
+        return None
+    if not isinstance(v, datetime):
+        return str(v)
+    return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).isoformat()
 
 
 # ── Les orgs ─────────────────────────────────────────────────────────────────
