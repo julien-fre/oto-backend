@@ -145,6 +145,8 @@ _DECLARATIONS: tuple[str, ...] = (
     "osm",
     "frenchtech",
     "infosec",
+    # Open data aussi, mais des États-Unis : salaires et emploi par métier (OEWS).
+    "bls",
     # --- connecteurs API tiers (clients oto-core déjà écrits, câblés 2026-06-19) ---
     "hubspot",
     "brevo",
@@ -231,6 +233,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "payfit",
     # --- un audio du projet devient une page du projet — ADR 0074, #674 -----
     "transcription",
+    # --- référentiel des métiers US — câblé 2026-09-22 ------------------------
+    # Le pendant keyé de `bls` : O*NET nomme le métier, BLS en donne les salaires.
+    "onet",
     # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
     # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
     # servent aucun tool : le worker la consomme pour le compte de l'org.
