@@ -535,8 +535,14 @@ from oto_mcp.db import _schema, schema
 # IF NOT EXISTS` de tables neuves : rien ne se réécrit sur la base PARTAGÉE, l'ancien
 # code les ignore ; base existante aussi par la révision Alembic `0020_pool_abonnements`.
 # 176 890 → 179 367 (+2 477, commentaires compris).
-EMPREINTE = "1f5a888d950037baa6048336fae5210abd9aefbc94951d78cc2c159a6764e73c"
-LONGUEUR = 179367
+# 25/09/2026 — les LIMITES d'un run déclarées sur l'agent : `runner_triggers.max_tokens`,
+# `runner_triggers.max_run_seconds` et `runner_fleets.max_run_seconds`, INT NULLABLES
+# sans défaut (NULL = celles de l'exécuteur). Base neuve par les fragments
+# `schema/runs.py` ; base existante par la révision Alembic `0021_limites_du_run` ou le
+# démarrage (`ADD COLUMN IF NOT EXISTS`). Rien ne se réécrit sur la base PARTAGÉE,
+# l'ancien code les ignore. 179 367 → 179 669 (+302, commentaires compris).
+EMPREINTE = "f4bf829d4ddfe5c02a0e2ce736c859580984af5d5c0cba75bc54ce86dee8c480"
+LONGUEUR = 179669
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
