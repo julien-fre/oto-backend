@@ -2757,9 +2757,24 @@ crée son tableau (`upsert_row`), et le vivier provisionné par la copie d'un pr
 où la copie est rangée). Une garde d'AST (`tests/datastore/test_contexte_org_160.py`)
 refuse une voie qui l'omettrait.
 
-**Phase 1 seulement** : la donnée est posée, la liste ne change pas. `list_datastores`
-passe toujours par `ownership.active_org_principals`, qui ajoute `("user", sub)` sans
-condition. La phase 2 filtrera le personnel sur `context_org_id = org active`.
+**La liste, depuis la phase 2 (25/09/2026)** : `list_datastores` — donc
+`GET /api/datastores`, `data_list_datastores`, l'index de `data_app` et la vérification
+des tableaux d'un jeton porté — et la recherche (`search._accessible_namespaces`, en
+parité) passent le jeu possédé par `ownership.tableaux_du_contexte` : un tableau
+personnel de l'appelant n'y figure que si `context_org_id` = l'org active **ou** NULL.
+Les tableaux d'org, d'équipe et reçus ne changent pas ; « partagés avec moi »
+(`GET /api/me/datastores/shared`) non plus.
+
+C'est un filtre de **liste**, pas un droit :
+- `ownership.active_org_principals` n'a pas bougé — il sert aussi `visible_in_org` et
+  les listes de projets et de pages ; le personnel y reste un principal de l'acteur ;
+- l'accès ne change pas : `resolve_datastore_ns` résout un personnel de l'appelant, par
+  son **numéro** comme par son nom, depuis n'importe quelle org, et `can_access` le lui
+  ouvre en propriétaire. Un tableau créé dans A s'ouvre donc depuis B ; il n'est
+  seulement plus listé dans B ;
+- `oto_resource op=list` (plan de gouvernance, toutes les orgs de l'acteur) ne filtre pas.
+
+Banc : `tests/datastore/test_liste_par_org_160.py`.
 
 **Les personnels d'avant la colonne** : la révision `0018_contexte_org_rempli` remplit
 ceux qu'une trace désigne sans ambiguïté — le journal des appels (la création, même

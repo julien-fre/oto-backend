@@ -241,7 +241,8 @@ def search(sub: str, org_id: int, q: str, *,
 
 
 def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
-    """Namespaces datastore du CONTEXTE : owners (org + moi + mes groupes) ∪ grants
+    """Namespaces datastore du CONTEXTE : owners (org + moi + mes groupes, mes
+    personnels réduits à ceux de cette org, `ownership.tableaux_du_contexte`) ∪ grants
     org/groupe — parité EXACTE du listing datastore (mêmes fonctions db, sujet du
     tripwire d'étanchéité).
     ⚠️ Cette parité était FAUSSE du 04/09 (ADR 0068) au 04/09 (#870) : la liste, elle,
@@ -252,7 +253,8 @@ def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
     → l'invariant « cherchable ⇔ lisible » tient au grain ligne par héritage du ns."""
     principals = ownership.active_org_principals(sub, org_id)
     gids = [int(p[1]) for p in principals if p[0] == "group"]
-    rows = db.list_datastores_for_owners(principals)
+    rows = ownership.tableaux_du_contexte(sub, org_id,
+                                         db.list_datastores_for_owners(principals))
     seen = {r["id"] for r in rows}
     rows += [r for r in db.list_datastores_granted_to(sub, [org_id], gids)
              if r["id"] not in seen]

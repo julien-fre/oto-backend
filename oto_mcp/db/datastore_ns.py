@@ -125,14 +125,16 @@ def set_datastore_semantic(ns_id: int, enabled: bool) -> int:
 
 
 def list_datastores_for_owners(owners: list[tuple[str, str]]) -> list[dict]:
-    """Namespaces possédés par l'un des `(owner_type, owner_id)` fournis."""
+    """Namespaces possédés par l'un des `(owner_type, owner_id)` fournis. Rend
+    `context_org_id`, que les listes par org lisent (`ownership.tableaux_du_contexte`)."""
     if not owners:
         return []
     otypes = [o[0] for o in owners]
     oids = [o[1] for o in owners]
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.schema, d.created_at "
+            "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.schema, "
+            "       d.created_at, d.context_org_id "
             "FROM user_datastores d "
             "JOIN unnest(%s::text[], %s::text[]) AS o(t, i) "
             "  ON d.owner_type = o.t AND d.owner_id = o.i "

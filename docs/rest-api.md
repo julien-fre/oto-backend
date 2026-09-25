@@ -740,6 +740,10 @@ créateur continuent de réussir** : rien ne cloche de son côté. Ça se décou
 agent, ou au collègue qui ne trouve pas le tableau et conclut qu'il n'existe pas — une
 heure perdue, vécue (otomata-tech/oto#45).
 
+L'en-tête décide en revanche **où un tableau personnel est LISTÉ** (oto#160) :
+`GET /api/datastores` ne le rend que dans l'org où il a été créé (`X-Oto-Org`, ou l'org
+active). Depuis une autre org il n'est pas listé, mais son numéro l'ouvre toujours.
+
 La réponse (201) rend donc **qui possède** : `{datastore, id, url, owner_type, owner_id,
 is_personal}`, plus un champ **`avertissement`** dans ce cas précis — et seulement dans
 ce cas : posé quand une org était *explicitement demandée* et que le tableau naît

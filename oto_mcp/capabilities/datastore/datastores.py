@@ -287,7 +287,11 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,  # `data_list_datastores` tient déjà la face agent
         rest=RestBinding(verb="GET", path=_BASE),
-        description="Liste les tableaux visibles dans l'org active (possédés et partagés).",
+        description=("Liste les tableaux visibles dans l'org active : ceux de l'org et "
+                     "de tes équipes, ceux partagés à l'org ou à tes équipes, et TES "
+                     "tableaux personnels créés dans cette org (plus ceux d'avant dont "
+                     "l'org de création est inconnue). Un personnel créé dans une autre "
+                     "org est listé là-bas, pas ici ; il s'ouvre toujours par son numéro."),
     ),
     Capability(
         key="me.datastore.create_datastore",
@@ -321,7 +325,9 @@ CAPABILITIES += [
                      "Créé sous cet en-tête sans `owner`, le tableau naît personnel "
                      "et tout continue de fonctionner pour TOI : c'est au second agent, "
                      "ou au collègue qui ne le trouve pas, que ça se voit. La réponse "
-                     "rend le propriétaire et vous avertit dans ce cas précis."),
+                     "rend le propriétaire et vous avertit dans ce cas précis. Un "
+                     "tableau personnel n'est LISTÉ que dans l'org où il a été créé "
+                     "(`X-Oto-Org`, ou l'org active) ; son numéro l'ouvre partout."),
     ),
     Capability(
         key="me.datastore.delete_datastore",

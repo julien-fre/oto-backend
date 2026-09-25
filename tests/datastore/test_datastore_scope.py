@@ -268,6 +268,12 @@ def test_parite_recherche_liste(monkeypatch):
             f"la {nom} n'interroge plus le même jeu de propriétaires que l'autre : "
             "l'invariant « cherchable ⇔ lisible » se rompt en silence, et c'est le "
             "sens de l'écart qui décide s'il cache ou s'il fuit")
+        # oto#160 : et elles le réduisent de la même façon — un personnel créé dans
+        # une autre org n'est ni listé ni cherchable ici. Jeux comparés sur base
+        # réelle : `test_liste_par_org_160.py::test_la_recherche_reste_en_parite…`.
+        assert "tableaux_du_contexte" in src, (
+            f"la {nom} ne réduit plus les personnels à l'org de leur création : "
+            "l'autre face, si")
     # Et le jeu lui-même porte bien les trois paliers, dans l'org active seulement.
     monkeypatch.setattr(ownership.group_store, "list_groups_for_user",
                         lambda sub, org: [{"group_id": 5}])

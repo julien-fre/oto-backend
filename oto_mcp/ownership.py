@@ -97,6 +97,26 @@ def active_org_principals(sub: str, org_id: Optional[int]) -> list[tuple[str, st
         for g in group_store.list_groups_for_user(sub, org_id)]
 
 
+def tableaux_du_contexte(sub: str, org_id: Optional[int], lignes: list) -> list:
+    """Les tableaux POSSÉDÉS d'une liste par org (ceux que `active_org_principals` a
+    ramenés), moins les personnels de `sub` créés dans une AUTRE org (oto#160).
+
+    Un personnel porte l'org de sa création (`context_org_id`) : il n'apparaît que là.
+    NULL — créé avant la colonne et que rien n'a permis de reconstituer — le laisse
+    visible dans toutes les orgs de son propriétaire, comme avant. Les tableaux d'org,
+    d'équipe et reçus ne sont pas touchés.
+
+    ⚠️ C'est un filtre de LISTE, jamais un droit : `active_org_principals` reste
+    inchangé, parce qu'il sert aussi `visible_in_org` et les listes de projets et de
+    pages ; et le tableau reste ouvrable par son numéro ou son nom depuis n'importe
+    quelle org (`resolve_datastore_ns` résout le personnel sans condition d'org)."""
+    return [n for n in lignes
+            if not (n.get("owner_type") == "user" and n.get("owner_id") == sub
+                    and n.get("context_org_id") is not None
+                    and org_id is not None
+                    and int(n["context_org_id"]) != int(org_id))]
+
+
 def project_scope_owners(sub: str, org_id: Optional[int]) -> list[tuple[str, str]]:
     """Owners du CONTEXTE projet de l'org active (lot 3 Ship 1, factorisation du
     scoping d'`oto_project op=list`) : l'org active + ses pôles (ADR 0049 — mes

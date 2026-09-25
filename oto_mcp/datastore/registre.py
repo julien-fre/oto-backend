@@ -122,7 +122,9 @@ class RegistreMixin:
 
     def list_datastores(self) -> list[dict]:
         """Datastores visibles DANS L'ORG ACTIVE (l'org est le contexte, ADR 0023) :
-        possédés par l'org active + accordés à elle ou à MES équipes dans cette org
+        possédés par l'org active + MES tableaux personnels créés dans cette org, ou
+        d'avant la colonne qui le dit (oto#160, `ownership.tableaux_du_contexte`) +
+        accordés à elle ou à MES équipes dans cette org
         (grants d'org/groupe — tous mes groupes de l'org active, pas seulement le
         groupe actif : un partage d'équipe doit se voir sans basculer). Un datastore
         possédé par une AUTRE org — ou partagé à l'acteur *en propre* (grant user,
@@ -154,7 +156,12 @@ class RegistreMixin:
         owned = proprios + [("group", str(g)) for g in group_ids
                             if ("group", str(g)) not in proprios]
         out: dict[int, dict] = {}
-        for n in db.list_datastores_for_owners(owned):
+        possedes = db.list_datastores_for_owners(owned)
+        if self.acting_org is None:
+            # oto#160 : un personnel n'est listé que dans l'org où il a été créé (NULL :
+            # partout). Filtre de LISTE — l'ouvrir par son numéro reste permis.
+            possedes = ownership.tableaux_du_contexte(self.sub, org, possedes)
+        for n in possedes:
             out[int(n["id"])] = self._entry(n, shared=False)
         for n in db.list_datastores_granted_to(self.sub, org_ids, group_ids):
             if int(n["id"]) in out:
