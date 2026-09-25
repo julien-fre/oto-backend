@@ -545,3 +545,51 @@ CREATE TABLE IF NOT EXISTS org_model_subscription_limits (
     PRIMARY KEY (org_id, famille)
 );
 """
+
+# le POOL d'org des abonnements : le mode de l'org et les prêts de ses membres
+MODEL_SUBSCRIPTION_POOL = """
+-- Le MODE d'une org pour une famille d'abonnement. Sans ligne : `personnel` — chaque
+-- travail tourne sur l'abonnement de SON demandeur. `pool` : les travaux de l'org
+-- tournent sur l'abonnement d'un membre qui l'a PRÊTÉ (table suivante), flottes
+-- comprises. Réglé par un admin de l'org.
+--
+-- ⚠️ Une table À PART du plafond (`org_model_subscription_limits`), et non une
+-- colonne de plus : sa `limite_pct` est NOT NULL (une ligne = un plafond réglé), et un
+-- mode posé sans plafond l'aurait rendue nullable — une ligne à `limite_pct` NULL,
+-- écrite par ce code sur la base PARTAGÉE, fait lever le code d'avant qui lit la même
+-- table (`seuil`, la route d'org). Deux tables neuves, rien de relâché.
+CREATE TABLE IF NOT EXISTS org_model_subscription_modes (
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    famille TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK (mode IN ('personnel', 'pool')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Qui l'a réglé (un admin de l'org).
+    updated_by TEXT,
+    PRIMARY KEY (org_id, famille)
+);
+
+-- Le PRÊT d'un abonnement au pool d'UNE org : opt-in explicite, par membre ET par
+-- org — une personne de deux orgs choisit laquelle son forfait sert. Sans ligne,
+-- rien n'est prêté. Retirer la ligne vaut pour le travail SUIVANT (le run en cours
+-- finit). Inerte tant que l'org n'est pas en mode `pool`, que la personne n'en est
+-- plus membre, ou que son abonnement n'est pas connecté : la réservation joint les
+-- trois (`claim_next_job`).
+--
+-- ⚠️ Sans clé étrangère vers `user_model_subscriptions` : une fusion de comptes
+-- (`migrate_sub`) repointe les deux tables chacune de son côté, et la cascade d'une
+-- FK composite effacerait le prêt au dédoublonnage de l'abonnement. `oublier` (le
+-- sandbox effacé) retire les prêts dans la même transaction.
+CREATE TABLE IF NOT EXISTS user_model_subscription_loans (
+    sub TEXT NOT NULL,
+    famille TEXT NOT NULL,
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- La dernière fois que ce prêt a SERVI un travail du pool (posée à la réservation,
+    -- sur tous les prêts de l'abonnement) : le pool prend le prêteur servi le MOINS
+    -- récemment. NULL = jamais servi, pris en premier.
+    servi_at TIMESTAMPTZ,
+    PRIMARY KEY (sub, famille, org_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_model_subscription_loans_org
+    ON user_model_subscription_loans(org_id, famille);
+"""

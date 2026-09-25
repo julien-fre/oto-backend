@@ -9,18 +9,24 @@ la réinitialisation — le run en cours finit toujours. Sans réglage, le défa
 (`PATCH /api/me/model-subscriptions/{family}`), jamais relâcher : le seuil effectif
 est le min des deux, calculé par `_abonnement.seuil` et nulle part ailleurs.
 
+Le MODE de l'org, sur la même ressource : `personnel` (défaut — chaque travail sur
+l'abonnement de son demandeur) ou `pool` (sur l'abonnement d'un membre qui l'a prêté à
+l'org, flottes comprises ; `org_subscription_pool`). Réglé à part
+(`PUT …/{family}/mode`) : un plafond et un mode ne se règlent pas dans le même geste,
+et un corps partiel ne dirait pas lequel des deux on voulait laisser.
+
 Lecture = membre ; écriture = org_admin. Une déclaration → deux surfaces : REST
 `/api/orgs/{id}/model-subscriptions/{family}` ici, MCP par la console
 `oto_org_settings domain=model_subscriptions` (`org_console.py`).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from ... import org_store
-from ...db import org_subscription_limits
+from ...db import org_subscription_limits, org_subscription_pool
 from .. import _abonnement
 from .._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
 from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -29,6 +35,7 @@ from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
 _PATH = "/api/orgs/{id}/model-subscriptions/{family}"
+_PATH_MODE = "/api/orgs/{id}/model-subscriptions/{family}/mode"
 
 
 class OrgPlafond(BaseModel):
@@ -43,6 +50,15 @@ class OrgPlafond(BaseModel):
         description="`true` = the org has set nothing; this is the platform default.")
     updated_at: Optional[str] = None
     updated_by: Optional[str] = None
+    mode: str = Field(
+        description=("`personnel` (default): each job runs on the subscription of the "
+                     "member who asked for it. `pool`: the org's jobs — fleets included "
+                     "— run on the subscription of a member who LENT theirs to this org "
+                     "(`PATCH /api/me/model-subscriptions/{family}` `lent_to`), the "
+                     "least recently used free one first."))
+    pool_size: int = Field(
+        description=("How many members currently lend this org a usable (connected) "
+                     "subscription. In `pool` mode, zero means the org's jobs wait."))
 
 
 class GetOrgPlafondInput(BaseModel):
@@ -58,6 +74,13 @@ class SetOrgPlafondInput(BaseModel):
         ..., description="1..100, or `null` to go back to the platform default.")
 
 
+class SetOrgModeInput(BaseModel):
+    org_id: int
+    family: str
+    mode: Literal["personnel", "pool"] = Field(
+        description="`personnel` (each requester's own subscription) or `pool`.")
+
+
 def _exiger(org_id: int, famille: str) -> None:
     if not org_store.get_org(org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{org_id} inconnue.")
@@ -69,16 +92,19 @@ def _exiger(org_id: int, famille: str) -> None:
 
 
 def _servi(org_id: int, famille: str) -> dict:
+    pool = {"mode": ((org_subscription_pool.get_mode(org_id, famille) or {}).get("mode")
+                     or org_subscription_pool.PERSONNEL),
+            "pool_size": org_subscription_pool.taille_du_pool(org_id, famille)}
     ligne = org_subscription_limits.get_limite(org_id, famille)
     if not ligne:
         return {"org_id": org_id, "family": famille,
                 "limit_pct": _abonnement.DEFAUT_LIMITE_PCT, "default": True,
-                "updated_at": None, "updated_by": None}
+                "updated_at": None, "updated_by": None, **pool}
     quand = ligne.get("updated_at")
     return {"org_id": org_id, "family": famille, "limit_pct": ligne["limite_pct"],
             "default": False,
             "updated_at": quand.isoformat() if hasattr(quand, "isoformat") else quand,
-            "updated_by": ligne.get("updated_by")}
+            "updated_by": ligne.get("updated_by"), **pool}
 
 
 # `def`, pas `async def` : I/O bloquante (psycopg), servie en threadpool
@@ -99,6 +125,16 @@ def _set_plafond(ctx: ResolvedCtx, inp: SetOrgPlafondInput) -> dict:
     return _servi(inp.org_id, inp.family)
 
 
+def _set_mode(ctx: ResolvedCtx, inp: SetOrgModeInput) -> dict:
+    """Le MODE de l'org. Il vaut pour le travail SUIVANT : un run en cours finit sur
+    l'abonnement qui l'a pris. Passer en `pool` sans prêteur est permis (les membres
+    prêtent ensuite) — `pool_size` le dit, et la pose d'un agent le refuse tant qu'il
+    est nul."""
+    _exiger(inp.org_id, inp.family)
+    org_subscription_pool.poser_mode(inp.org_id, inp.family, inp.mode, ctx.sub)
+    return _servi(inp.org_id, inp.family)
+
+
 _ERREURS = (
     DeclaredError(404, "unknown_org", "l'org n'existe pas"),
     DeclaredError(400, "unknown_family", "une famille qui n'est pas servie par abonnement"),
@@ -113,7 +149,9 @@ CAPABILITIES += [
                      "of each member's provider account TOTAL usage (5-hour and 7-day "
                      "windows) the org's jobs may reach before the next ones wait for "
                      "the reset. `default: true` = not set, platform default (80). A "
-                     "member may set a LOWER cap for themselves; the lower one applies."),
+                     "member may set a LOWER cap for themselves; the lower one applies. "
+                     "Also returns the org's `mode` (`personnel` | `pool`) and its "
+                     "`pool_size` (members lending a usable subscription)."),
         rest=RestBinding("GET", _PATH, _ID),
     ),
     Capability(
@@ -126,5 +164,19 @@ CAPABILITIES += [
                      "go back to the platform default (80). Applies from the next job "
                      "report; a running job is never cut. Org admin."),
         rest=RestBinding("PUT", _PATH, _ID),
+    ),
+    Capability(
+        key="org.model_subscriptions.set_mode", handler=_set_mode, Input=SetOrgModeInput,
+        authz=ORG_ADMIN_OF("org_id"), Output=OrgPlafond, errors=_ERREURS,
+        description=("Set how the org's jobs on a personal model subscription family "
+                     "(e.g. `claude_subscription`) are paid for. `personnel` (default): "
+                     "each job runs on the subscription of the member who asked for it; "
+                     "fleets are refused. `pool`: jobs — fleets included — run on the "
+                     "subscription of a member who explicitly LENT theirs to this org, "
+                     "the least recently used free one first; with no lender available "
+                     "they wait, none fail. Each lender's own cap applies to their "
+                     "account (the lower of the org's cap and theirs). Applies from the "
+                     "next job; a running job is never cut. Org admin."),
+        rest=RestBinding("PUT", _PATH_MODE, _ID),
     ),
 ]

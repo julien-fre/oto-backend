@@ -446,11 +446,13 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # famille DE CE MODÈLE compte (14/09/2026) — un passage sans modèle
         # n'exige rien.
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
-        # ⚠️ Un modèle d'ABONNEMENT ne se pose JAMAIS sur une flotte (OTO-130) :
-        # un passage appartient à l'organisation et ferait payer le forfait d'une
-        # personne pour le travail de tous. Refusé à la création, là où on peut
-        # encore choisir un modèle servi par une clé d'organisation.
-        _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True)
+        # ⚠️ Un modèle d'ABONNEMENT ne se pose sur une flotte QUE si l'org tourne en
+        # mode pool (OTO-130) : un passage appartient à l'organisation, et hors pool
+        # il ferait payer le forfait d'une personne pour le travail de tous. Refusé
+        # à la création, là où on peut encore choisir un modèle servi par une clé
+        # d'organisation ; en pool, il faut qu'un membre y prête un abonnement.
+        _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True,
+                                     org_id=ctx.org_id)
         descriptions = _descriptions_outils.valider(inp.descriptions_outils, inp.tools)
         cible = _cible_a_la_declaration(ctx, inp.namespace)
         return {"fleet": db.create_fleet(
@@ -536,7 +538,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille)
         # Un passage déclaré avant cette garde (ou dont le modèle a changé de
         # nature) ne s'arme pas non plus sur un abonnement personnel.
-        _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True)
+        _abonnement.exiger_a_la_pose(ctx.sub, None, famille, flotte=True,
+                                     org_id=ctx.org_id)
         # ⚠️ Armer un passage qu'AUCUN worker vivant ne réclame le laisse `armed`
         # pour toujours : personne ne fait jamais `prendre_flotte`, et le
         # symptôme lu depuis le produit est « l'ordonnanceur est mort » — un

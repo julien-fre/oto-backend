@@ -75,6 +75,120 @@ _TRACE_RUN_CLOS = f"""
                END))"""
 
 
+#: La clé de `_plateforme` qui dit QUEL abonnement sert un travail pris : le `sub` du
+#: porteur du forfait, posé à CHAQUE réservation d'un travail d'abonnement. En mode
+#: personnel c'est le demandeur ; en mode pool, le membre qui a prêté le sien. Lue par
+#: la sérialisation (un travail à la fois PAR ABONNEMENT, quel que soit le mode qui l'y
+#: a mis), par la remise du sandbox et par le rapport de forfait.
+#:
+#: ⚠️ Dans la charge (`_plateforme`, que seul le serveur écrit) et non dans une colonne :
+#: aucun `ALTER` sur `runner_jobs`, la table la plus sondée de la base PARTAGÉE.
+_CLE_FORFAIT = "abonnement"
+
+#: Le porteur du forfait d'un travail, en SQL. Un travail pris avant que la clé
+#: n'existe tournait sur l'abonnement de son demandeur : c'est ce que dit le COALESCE,
+#: pas un repli.
+_FORFAIT_SQL = (f"COALESCE({{a}}.payload->'{_CHAMP_PLATEFORME}'->>'{_CLE_FORFAIT}', "
+                "{a}.sub)")
+
+
+def _en_vol(porteur: str, famille: str) -> str:
+    """« Un travail servi par l'abonnement `porteur` de `famille` est en vol » — la
+    seule écriture de la sérialisation, que la file, le pool et `_deja_en_vol` lisent."""
+    return f"""EXISTS (
+                SELECT 1 FROM runner_jobs vol
+                 WHERE vol.status = 'claimed' AND vol.lease_until > NOW()
+                   AND vol.payload->>'model_family' = {famille}
+                   AND {_FORFAIT_SQL.format(a="vol")} = {porteur})"""
+
+
+_CHARGE_PRISE = f"CASE WHEN clos.a IS NULL THEN j.payload ELSE {_TRACE_RUN_CLOS} END"
+
+#: La famille du travail examiné par la réservation.
+_FAMILLE_RJ = "rj.payload->>'model_family'"
+
+
+def _fragments_abonnement(abonnement: bool) -> dict:
+    """Ce que la réservation ajoute pour un dépôt d'ABONNEMENT (OTO-130) — et RIEN
+    pour tout autre dépôt : le SQL d'un worker de clé ne nomme même pas les tables du
+    pool. Ces clauses décrivent ce qu'est un forfait, pas ce qu'est une file.
+
+    **Mode personnel** (défaut d'une org) — le travail tourne sur l'abonnement de SON
+    demandeur, `rj.sub` :
+
+    1. UN travail à la fois par ABONNEMENT. Le bac à sable est celui de la personne,
+       et deux exécutions concurrentes y partagent une même session : le
+       rafraîchissement du jeton se joue entre elles. Tant que ce n'est pas mesuré
+       (question U4 du plan), la file sérialise — une attente est réparable, une
+       session cassée déconnecte la personne. « En vol sur cet abonnement » compte
+       aussi les travaux qu'il sert pour le POOL d'une org (`_en_vol`).
+    2. La personne qui ne peut pas servir ATTEND, elle n'échoue pas. Forfait épuisé :
+       jusqu'à son échéance (sans échéance connue, rien ne freine — on retente, le
+       fournisseur tranche). Session perdue ou déconnexion voulue : jusqu'à ce
+       qu'elle se reconnecte (décidé le 21/09/2026). Arrêter ces travaux un par un
+       tuait l'agent pour un état RÉPARABLE ; en attente, ils repartent tout seuls à
+       la reconnexion. Ce n'est pas un arriéré qui s'accumule : le tick périme les
+       occurrences programmées restées en file, et un webhook porte sa fraîcheur.
+
+    **Mode pool** (`org_model_subscription_modes`, réglé par l'org du travail) — le
+    travail tourne sur l'abonnement d'un membre de CETTE org qui l'a PRÊTÉ
+    (`user_model_subscription_loans`), toujours membre, servable (même règle que la
+    clause 2 : `org_subscription_pool.PRETEUR_SERVABLE`) et sans travail en vol. Le
+    prêteur servi le MOINS récemment d'abord (`servi_at`, NULL en tête). Aucun de
+    libre : le travail ATTEND, `pending`, aucune tentative brûlée — jamais un échec.
+    L'état du demandeur ne compte pas : il n'est pas celui qui paie.
+
+    Le porteur choisi s'écrit dans la charge (`_plateforme.abonnement`) par la même
+    écriture que la prise ; `_deja_en_vol` tranche ensuite la course de deux
+    réservations simultanées sur le même abonnement."""
+    if not abonnement:
+        return {"colonnes_forfait": "", "jointure_pret": "", "clause_abonnement": "",
+                "verrou_de": "", "charge_prise": _CHARGE_PRISE, "retour_preteur": ""}
+    from .org_subscription_pool import PRET_VIVANT, PRETEUR_SERVABLE
+    en_pool = f"""EXISTS (
+                SELECT 1 FROM org_model_subscription_modes m
+                 WHERE m.org_id = rj.org_id AND m.famille = {_FAMILLE_RJ}
+                   AND m.mode = 'pool')"""
+    return {
+        "colonnes_forfait": ", pret.sub AS preteur, COALESCE(pret.sub, rj.sub) AS forfait",
+        # ⚠️ LATERAL, et `FOR UPDATE OF rj` : la ligne du prêteur n'est pas verrouillée
+        # (une jointure externe ne se verrouille pas), la course entre deux prises sur
+        # le même prêteur se tranche au verrou consultatif de `_deja_en_vol`.
+        "jointure_pret": f"""LEFT JOIN LATERAL (
+                    SELECT l.sub FROM user_model_subscription_loans l
+                      JOIN org_model_subscription_modes m
+                        ON m.org_id = l.org_id AND m.famille = l.famille
+                       AND m.mode = 'pool'
+                      {PRET_VIVANT}
+                     WHERE l.org_id = rj.org_id AND l.famille = {_FAMILLE_RJ}
+                       AND {PRETEUR_SERVABLE}
+                       AND NOT {_en_vol("l.sub", "l.famille")}
+                     ORDER BY l.servi_at NULLS FIRST, l.created_at, l.sub
+                     LIMIT 1) pret ON TRUE""",
+        "clause_abonnement": f"""AND CASE WHEN {en_pool}
+                        THEN pret.sub IS NOT NULL
+                        ELSE NOT {_en_vol("rj.sub", _FAMILLE_RJ)}
+                             AND NOT EXISTS (
+                                 SELECT 1 FROM user_model_subscriptions ab
+                                  WHERE ab.sub = rj.sub
+                                    AND ab.famille = {_FAMILLE_RJ}
+                                    AND (ab.statut IN ('needs_login', 'disconnected')
+                                         OR (ab.statut = 'paused_limit'
+                                             AND ab.limit_reset_at > NOW())))
+                   END""",
+        "verrou_de": "OF rj ",
+        "charge_prise": f"""(SELECT jsonb_set(
+                        c.charge, '{{{_CHAMP_PLATEFORME}}}',
+                        COALESCE(c.charge->'{_CHAMP_PLATEFORME}', '{{}}'::jsonb)
+                        || jsonb_build_object('{_CLE_FORFAIT}', pris.forfait))
+                     FROM (SELECT COALESCE({_CHARGE_PRISE}, '{{}}'::jsonb) AS charge) c)""",
+        # `fleet_id` : la remise refuse une flotte hors pool (`_avec_abonnement`) — un
+        # passage armé en pool, dont l'org est repassée en personnel, ferait sinon
+        # payer le forfait de son créateur pour le travail de tous.
+        "retour_preteur": ", j.fleet_id, pris.preteur AS _preteur",
+    }
+
+
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 run_id: Optional[str] = None, max_attempts: int = 3,
                 fleet_id: Optional[int] = None,
@@ -476,10 +590,12 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             # PARTAGÉE avec un appelant (`_emprunt_partage`), dont une annulation
             # entière déferait aussi les écritures. Seule la prise se défait.
             conn.execute("SAVEPOINT prise_abonnement")
+        frag = _fragments_abonnement(abonnement)
         row = conn.execute(
             f"""
             WITH pris AS (
-                SELECT rj.id, rj.kind, rj.run_id FROM runner_jobs rj
+                SELECT rj.id, rj.kind, rj.run_id{frag['colonnes_forfait']} FROM runner_jobs rj
+                {frag['jointure_pret']}
                  WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
                    -- ⚠️ La forme `status IN (...) AND (status = 'pending' OR ...)`
                    -- n'est pas cosmétique : le `OR` nu d'avant (17/09/2026, cf.
@@ -502,41 +618,9 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                    -- aussi dans les commentaires SQL.)
                    AND (payload->>'model_family' = %s
                         OR (payload->>'model_family' IS NULL AND NOT %s))
-                   -- ⚠️ ABONNEMENT (OTO-130), et seulement lui : les deux clauses
-                   -- ci-dessous sont NEUTRES pour tout autre dépôt (le booléen les
-                   -- éteint), parce qu'elles décrivent ce qu'est un forfait
-                   -- personnel et non une file.
-                   --
-                   -- 1. UN travail à la fois par PERSONNE. Le bac à sable est le
-                   --    sien, et deux exécutions concurrentes y partagent une même
-                   --    session : le rafraîchissement du jeton se joue entre elles.
-                   --    Tant que ce n'est pas mesuré (question U4 du plan), la file
-                   --    sérialise — une attente est réparable, une session cassée
-                   --    déconnecte la personne.
-                   AND (NOT %s::boolean OR NOT EXISTS (
-                           SELECT 1 FROM runner_jobs vol
-                            WHERE vol.sub = rj.sub AND vol.status = 'claimed'
-                              AND vol.lease_until > NOW()
-                              AND vol.payload->>'model_family' = rj.payload->>'model_family'))
-                   -- 2. La personne qui ne peut pas servir ATTEND, elle n'échoue pas.
-                   --    Forfait épuisé : jusqu'à son échéance (sans échéance connue,
-                   --    rien ne freine — on retente, le fournisseur tranche).
-                   --    Session perdue ou déconnexion voulue : jusqu'à ce qu'elle se
-                   --    reconnecte (décidé le 21/09/2026). Arrêter ces travaux un
-                   --    par un tuait l'agent pour un état RÉPARABLE ; en attente,
-                   --    ils repartent tout seuls à la reconnexion. Ce n'est pas un
-                   --    arriéré qui s'accumule : le tick périme les occurrences
-                   --    programmées restées en file, et un webhook porte sa
-                   --    fraîcheur — seule la plus récente attend vraiment.
-                   AND (NOT %s::boolean OR NOT EXISTS (
-                           SELECT 1 FROM user_model_subscriptions ab
-                            WHERE ab.sub = rj.sub
-                              AND ab.famille = rj.payload->>'model_family'
-                              AND (ab.statut IN ('needs_login', 'disconnected')
-                                   OR (ab.statut = 'paused_limit'
-                                       AND ab.limit_reset_at > NOW()))))
+                   {frag['clause_abonnement']}
                  ORDER BY due_at
-                   FOR UPDATE SKIP LOCKED
+                   FOR UPDATE {frag['verrou_de']}SKIP LOCKED
                  LIMIT 1
             ), clos AS (
                 -- Le DERNIER `run_start` du run, et sa clôture : même lecture que
@@ -553,34 +637,42 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                SET status = 'claimed', claimed_by = %s, attempts = j.attempts + 1,
                    lease_until = NOW() + make_interval(secs => %s),
                    run_id  = CASE WHEN clos.a IS NULL THEN j.run_id END,
-                   payload = CASE WHEN clos.a IS NULL THEN j.payload
-                                  ELSE {_TRACE_RUN_CLOS} END
+                   payload = {frag['charge_prise']}
               FROM pris LEFT JOIN clos ON TRUE
              WHERE j.id = pris.id
             RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
-                      j.lease_until, j.sub, j.org_id
+                      j.lease_until, j.sub, j.org_id{frag['retour_preteur']}
             """,
             (org_id, org_id, depot or "", bool(famille_seule),
-             # Les deux gardes d'abonnement, éteintes pour tout autre dépôt.
-             _abonnement_personnel(depot), _abonnement_personnel(depot),
              worker_sub, int(lease_seconds)),
         ).fetchone()
+        row = dict(row) if row else None
         if abonnement:
-            if row and _deja_en_vol(conn, dict(row)):
-                # Un autre worker a pris, AU MÊME INSTANT, un autre travail de la
-                # même personne. Cette prise-ci se défait : le travail retourne
-                # `pending`, sa tentative n'est pas comptée, et il repartira quand
-                # l'autre conclura.
+            preteur = row.pop("_preteur", None) if row else None
+            if row and _deja_en_vol(conn, row):
+                # Un autre worker a pris, AU MÊME INSTANT, un autre travail servi par
+                # le MÊME abonnement (le même demandeur, ou le même prêteur du pool).
+                # Cette prise-ci se défait : le travail retourne `pending`, sa
+                # tentative n'est pas comptée, et il repartira au sondage suivant —
+                # sur un autre prêteur s'il y en a un de libre.
                 conn.execute("ROLLBACK TO SAVEPOINT prise_abonnement")
                 row = None
+            elif row and preteur:
+                # Le tourniquet du pool : ce prêteur passe en DERNIER, dans toutes
+                # les orgs auxquelles il prête (un forfait, une file d'attente).
+                conn.execute(
+                    "UPDATE user_model_subscription_loans SET servi_at = NOW() "
+                    "WHERE sub = %s AND famille = %s",
+                    (preteur, (row.get("payload") or {}).get("model_family")))
             conn.execute("RELEASE SAVEPOINT prise_abonnement")
-    return dict(row) if row else None
+    return row
 
 
 def porteur_et_famille(job_id: int) -> Optional[dict]:
-    """`{sub, org_id, model_family}` d'un travail — de quoi adresser le rapport de
-    forfait à la conclusion (OTO-130), et lire le plafond que son ORG a réglé
-    (`_abonnement.seuil`).
+    """`{sub, org_id, model_family, abonnement}` d'un travail — de quoi adresser le
+    rapport de forfait à la conclusion (OTO-130) à l'abonnement qui l'a SERVI
+    (`abonnement` : le demandeur, ou le prêteur du pool), et lire le plafond que son
+    ORG a réglé (`_abonnement.seuil`).
 
     Une lecture À PART, et non deux colonnes de plus au `RETURNING` de
     `complete_job` : ce retour est un contrat (`{status, run_id}`) que six bancs
@@ -588,42 +680,55 @@ def porteur_et_famille(job_id: int) -> Optional[dict]:
     lecteurs pour une famille qui n'en concerne qu'un."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT sub, org_id, payload->>'model_family' AS model_family "
+            "SELECT sub, org_id, payload->>'model_family' AS model_family, "
+            f"{_FORFAIT_SQL.format(a='runner_jobs')} AS abonnement "
             "FROM runner_jobs WHERE id = %s", (job_id,)).fetchone()
     return dict(row) if row else None
 
 
+def porteur_du_forfait(job: dict) -> Optional[str]:
+    """Le `sub` dont l'ABONNEMENT sert ce travail pris : celui que la réservation a
+    écrit (`_plateforme.abonnement`), sinon son demandeur — la lecture Python de
+    `_FORFAIT_SQL`, pour la remise du sandbox."""
+    plateforme = (job.get("payload") or {}).get(_CHAMP_PLATEFORME) or {}
+    return plateforme.get(_CLE_FORFAIT) or job.get("sub")
+
+
 def _deja_en_vol(conn, pris: dict) -> bool:
-    """Un AUTRE travail de la même personne, de la même famille, est-il en vol ?
+    """Un AUTRE travail servi par le même ABONNEMENT (même porteur du forfait, même
+    famille) est-il en vol ? Le porteur est le demandeur en mode personnel, le
+    prêteur en mode pool : une seule sérialisation pour les deux, parce qu'un bac à
+    sable ne sait pas pour qui il travaille.
 
     ⚠️ **Pourquoi la clause `NOT EXISTS` de la réservation ne suffit pas** (mesuré
     le 21/09/2026, trois prises simultanées → deux travaux en vol) : elle lit un
     INSTANTANÉ. Deux réservations parallèles prennent chacune un travail différent
-    de la même personne, et aucune ne voit la prise de l'autre — elle n'est pas
-    encore committée.
+    servi par le même abonnement, et aucune ne voit la prise de l'autre — elle n'est
+    pas encore committée. Même course en mode pool : deux workers choisissent le même
+    prêteur, libre dans leurs deux instantanés.
 
     D'où le verrou consultatif, pris APRÈS la prise et BLOQUANT : les réservations
-    d'une même personne passent une à une. La première ne voit que la sienne et
+    d'un même abonnement passent une à une. La première ne voit que la sienne et
     garde ; la suivante attend le commit de la première, puis relit — en READ
     COMMITTED, chaque ordre a son instantané, donc elle VOIT la prise committée —
     et se défait. Le verrou tombe avec la transaction : aucun état à nettoyer.
 
     Pas d'interblocage possible : la seconde tient sa ligne et attend le verrou ;
     la première tient le verrou et n'a besoin d'aucune ligne de la seconde."""
-    porteur = pris.get("sub")
+    porteur = porteur_du_forfait(pris)
     if not porteur:
         return False
     famille = (pris.get("payload") or {}).get("model_family")
     conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                  (f"abonnement:{famille}:{porteur}",))
     return conn.execute(
-        """
-        SELECT 1 FROM runner_jobs
-         WHERE sub = %s AND id <> %s AND status = 'claimed'
-           AND lease_until > NOW() AND payload->>'model_family' = %s
+        f"""
+        SELECT 1 FROM runner_jobs j
+         WHERE j.id <> %s AND j.status = 'claimed' AND j.lease_until > NOW()
+           AND j.payload->>'model_family' = %s AND {_FORFAIT_SQL.format(a="j")} = %s
          LIMIT 1
         """,
-        (porteur, pris["id"], famille),
+        (pris["id"], famille, porteur),
     ).fetchone() is not None
 
 

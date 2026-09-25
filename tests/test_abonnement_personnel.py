@@ -45,6 +45,14 @@ def _refus_sans_base(monkeypatch):
     return arrets
 
 
+@pytest.fixture(autouse=True)
+def _mode_personnel(monkeypatch):
+    """L'org de ces bancs n'a réglé aucun mode : `personnel`, le défaut. Le mode `pool`
+    a ses propres bancs (`test_pool_abonnements*.py`)."""
+    from oto_mcp.db import org_subscription_pool
+    monkeypatch.setattr(org_subscription_pool, "get_mode", lambda org_id, famille: None)
+
+
 @pytest.fixture
 def _abonnements(monkeypatch):
     """L'état des abonnements, en mémoire — et la TRACE des lectures du coffre.

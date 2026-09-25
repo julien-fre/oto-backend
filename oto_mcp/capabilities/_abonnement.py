@@ -15,6 +15,14 @@ Trois refus nommés, tous à l'écriture ou à la réservation, jamais silencieu
    raison, comme un travail sans clé déposée : le remettre en file le ferait
    reprendre indéfiniment par le worker suivant.
 
+**Le POOL d'org** (25/09/2026). Une org peut passer une famille en mode `pool`
+(`org_subscription_pool`) : ses travaux tournent alors sur l'abonnement d'un membre
+qui l'a PRÊTÉ à cette org (opt-in, par org), choisi à la réservation — le moins
+récemment servi, libre, servable. Le demandeur n'a plus besoin d'une connexion à
+lui (il porte toujours l'option), une flotte y passe, et le forfait rapporté est
+celui du PRÊTEUR, sous SON seuil (min du plafond de l'org du travail et du sien).
+Le mode personnel reste le défaut, à l'octet près.
+
 ⚠️ **Ce module ne lit jamais de session.** Il lit un ÉTAT (`user_model_
 subscriptions.statut`), écrit par la sonde du sandbox. La session elle-même
 ne traverse pas le backend — c'est la condition qui rend ce chemin licite.
@@ -26,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .. import access, runner_models
-from ..db import org_subscription_limits
+from ..db import org_subscription_limits, org_subscription_pool
 from ..db import runner_jobs as db_runner_jobs
 from ..db import user_subscriptions
 from ._types import AuthzDenied
@@ -88,10 +96,29 @@ def reparable(statut: Optional[str], sandbox: Optional[str]) -> bool:
                                     user_subscriptions.DECONNECTE)
 
 
-def raison_de_l_attente(famille: str, statut: Optional[str]) -> str:
+def raison_de_l_attente(famille: str, statut: Optional[str], *, pool: bool = False) -> str:
+    if pool:
+        return (f"en attente : ce travail tourne sur le pool `{famille}` de "
+                f"l'organisation, et l'abonnement prêté qui devait le servir ne peut "
+                f"plus ({statut or 'retiré'}). Il repartira sur le prochain abonnement "
+                "prêté disponible.")
     return (f"en attente : ce travail tourne sur l'abonnement `{famille}` de son "
             f"demandeur, qui doit s'y reconnecter ({statut}). Il repartira tout seul "
             "à la reconnexion (Réglages › Fournisseurs de modèles).")
+
+
+def en_pool(org_id: Optional[int], famille: Optional[str]) -> bool:
+    """L'org sert-elle cette famille par son POOL (abonnements prêtés par ses
+    membres) plutôt que par l'abonnement de chaque demandeur ? Réglé par l'org
+    (`org.model_subscriptions`), `personnel` par défaut."""
+    return est_abonnement(famille) and org_subscription_pool.en_pool(org_id, famille)
+
+
+_FLOTTE_HORS_POOL = (
+    "les modèles `{famille}` tournent ici sur l'abonnement d'UNE personne : une flotte "
+    "appartient à l'organisation et ferait payer son forfait pour le travail de tous. "
+    "Choisis un modèle servi par une clé d'organisation, ou demande à un admin de "
+    "passer l'organisation en mode pool (des membres y prêtent leur abonnement).")
 
 
 def peut_agir_pour(sub: str, proprietaire: Optional[str], famille: str) -> bool:
@@ -168,26 +195,43 @@ def exiger_ouvert(sub: str, famille: str) -> None:
 
 
 def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[str],
-                     *, flotte: bool = False) -> None:
+                     *, flotte: bool = False, org_id: Optional[int] = None) -> None:
     """Le refus LISIBLE au moment de poser un agent sur un abonnement.
 
     `proprietaire` = le `sub` de l'agent existant (None à la création : c'est
-    l'appelant qui le devient)."""
+    l'appelant qui le devient). `org_id` = l'org où l'agent tournera : c'est son MODE
+    qui dit quel abonnement paiera.
+
+    **En mode pool**, ce n'est plus la connexion du demandeur qui se juge (il ne paie
+    pas) mais le pool : au moins un membre de l'org doit lui prêter un abonnement
+    servable, sinon l'agent resterait programmé sans jamais tourner. Une flotte y
+    passe. L'option, elle, se porte toujours : le chemin reste ouvert nommément.
+
+    ⚠️ La propriété de l'agent se juge dans les DEUX modes (`peut_agir_pour`) :
+    l'org peut repasser en personnel, et l'agent d'un autre retouché pendant le pool
+    tournerait alors sur SON forfait avec les consignes d'un autre."""
     if not est_abonnement(famille):
         return
     exiger_ouvert(sub, famille)
-    if flotte:
-        raise AuthzDenied(
-            400, "subscription_personal_only",
-            f"les modèles `{famille}` tournent sur l'abonnement d'UNE personne : une "
-            "flotte appartient à l'organisation et ferait payer son forfait pour le "
-            "travail de tous. Choisis un modèle servi par une clé d'organisation.")
+    pool = en_pool(org_id, famille)
+    if flotte and not pool:
+        raise AuthzDenied(400, "subscription_personal_only",
+                          _FLOTTE_HORS_POOL.format(famille=famille))
     if not peut_agir_pour(sub, proprietaire, famille):
         raise AuthzDenied(
             400, "subscription_personal_only",
             f"cet agent appartient à quelqu'un d'autre, et les modèles `{famille}` "
             "tournent sur l'abonnement de leur propriétaire. Seule la personne qui "
             "possède l'agent peut le poser sur le sien.")
+    if pool:
+        if not org_subscription_pool.taille_du_pool(org_id, famille):
+            raise AuthzDenied(
+                400, "subscription_pool_empty",
+                f"l'organisation fait tourner les modèles `{famille}` sur son pool, et "
+                "aucun membre n'y prête d'abonnement connecté. Un membre doit prêter le "
+                "sien (Réglages › Fournisseurs de modèles), puis pose l'agent : posé sur "
+                "un pool vide, il resterait programmé sans jamais tourner.")
+        return
     servable_, statut, _ = servable(sub, famille)
     if not servable_:
         etat = statut or "jamais connectée"
@@ -227,7 +271,8 @@ def seuil(sub: str, org_id: Optional[int], famille: str) -> float:
 
 def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
     """Ce que le worker a VU du forfait en exécutant ce travail, porté sur la
-    connexion de son demandeur. Appelé à la conclusion, pour un worker de
+    connexion qui l'a SERVI (`conclu["abonnement"]` : le demandeur en mode personnel,
+    le prêteur en mode pool — le seuil est alors le SIEN dans l'org du travail). Appelé à la conclusion, pour un worker de
     plateforme seulement (l'appelant le garantit).
 
     Le rapport voyage dans le résultat déclaré, clé `abonnement` :
@@ -248,7 +293,10 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
     formé se journalise et s'ignore — faire échouer `complete` pour lui laisserait
     un travail TERMINÉ re-servi à l'expiration de son bail.
     """
-    famille, porteur = conclu.get("model_family"), conclu.get("sub")
+    # Le porteur du FORFAIT, pas forcément le demandeur : en mode pool, c'est le
+    # membre qui a prêté son abonnement — sa connexion, son plafond perso.
+    famille = conclu.get("model_family")
+    porteur = conclu.get("abonnement") or conclu.get("sub")
     if not est_abonnement(famille) or not porteur:
         return
     try:

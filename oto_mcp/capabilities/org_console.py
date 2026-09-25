@@ -27,6 +27,7 @@ from ._authz import (
     ORG_MEMBER_OF,
     SUB_ONLY,
 )
+from ..db import org_subscription_pool
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
 
@@ -101,6 +102,7 @@ class OrgSettingsInput(BaseModel):
     # model_subscriptions :
     family: Optional[str] = None             # get/set : claude_subscription
     limit_pct: Optional[int] = None          # set : 1..100, null (EXPLICITE) = défaut
+    mode: Optional[str] = None               # set : personnel | pool (seul, sans limit_pct)
 
 
 def _org_settings(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
@@ -148,6 +150,19 @@ def _plafond_abonnements(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
                    f"`family` (ex. claude_subscription) requis pour {inp.op}.")
     if inp.op == "get":
         return ms._get_plafond(ctx, ms.GetOrgPlafondInput(org_id=inp.org_id, family=family))
+    if inp.op == "set" and inp.mode is not None:
+        # Le MODE se règle SEUL. Sur cette face, un `limit_pct` omis et un `null`
+        # arrivent identiques (fastmcp remplit les défauts) : un `set` qui porterait
+        # les deux ne dirait pas si le plafond devait revenir au défaut.
+        if inp.limit_pct is not None:
+            raise AuthzDenied(400, "one_setting_per_call",
+                              "`mode` se règle seul : un appel pour le mode, un autre "
+                              "pour `limit_pct`.")
+        if inp.mode not in org_subscription_pool.MODES:
+            raise AuthzDenied(400, "invalid_mode",
+                              "`mode` vaut `personnel` ou `pool`.")
+        return ms._set_mode(ctx, ms.SetOrgModeInput(
+            org_id=inp.org_id, family=family, mode=inp.mode))
     if inp.op == "set":
         # `null` revient au défaut : c'est un GESTE, donc il se dit. Un `set` sans
         # `limit_pct` du tout est une erreur, pas un retour silencieux au défaut.
@@ -266,7 +281,10 @@ CAPABILITIES += [
             "`limit_pct` 1..100 = max % of each member's provider account TOTAL usage "
             "(5-hour and 7-day windows) before the org's next jobs wait for the reset, or "
             "null = back to the default 80; a member may only set a lower cap for "
-            "themselves). op=get is member, set is org admin."),
+            "themselves; OR, in a separate call, `mode` personnel|pool — `pool` runs the "
+            "org's jobs, fleets included, on subscriptions members explicitly lent to the "
+            "org, least recently used first; get also returns `mode` and `pool_size`). "
+            "op=get is member, set is org admin."),
         mcp="oto_org_settings",
     ),
     Capability(

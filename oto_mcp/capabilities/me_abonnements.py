@@ -13,6 +13,11 @@ pas même un admin de son org — n'a à le lire ni à le couper.
   la politique du fournisseur interdit (« developers may not collect, store, or
   intermediate »), et rendrait illicite tout le chemin.
 
+**Prêter au pool d'une org** (`lent_to`, sur le même `PATCH` que le plafond) : opt-in
+explicite, PAR ORG — une personne de deux orgs choisit laquelle son forfait sert. Le
+prêt ne sert que si l'org est en mode `pool` et que la personne en est membre ; il se
+retire pour le travail suivant, jamais pour celui en cours.
+
 **Se connecter** passe par la ferme (`oto_mcp.ferme`) en deux temps : la route rend
 l'URL du fournisseur, que la personne ouvre dans SON navigateur ; elle y colle le
 code affiché, que la route remet au programme du sandbox. Ce code est à usage unique et
@@ -29,7 +34,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .. import db, ferme
+from .. import db, ferme, org_store
 from . import _abonnement
 from ._authz import SUB_ONLY
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -86,11 +91,21 @@ class CodeInput(BaseModel):
 
 class PlafondInput(BaseModel):
     family: str = Field(description="The model family, e.g. `claude_subscription`.")
-    # Requis, nullable : l'omettre est une erreur de forme, `null` est un geste.
+    # Omis = inchangé, `null` = retiré : la distinction passe par `model_fields_set`,
+    # que la face REST (seule face de ce geste) garde intacte. Au moins un des deux
+    # champs doit être là.
     limit_pct: Optional[int] = Field(
-        ..., description=("Your own consumption cap, in % (1..100) of your provider "
-                          "account's TOTAL usage (5-hour and 7-day windows, your "
-                          "personal use included). `null` removes it."))
+        None, description=("Your own consumption cap, in % (1..100) of your provider "
+                           "account's TOTAL usage (5-hour and 7-day windows, your "
+                           "personal use included). `null` removes it; omitted leaves "
+                           "it unchanged."))
+    lent_to: Optional[list[int]] = Field(
+        None, description=("The orgs whose POOL you lend this subscription to — the "
+                           "whole set, replacing the previous one (`[]` lends to none). "
+                           "Opt-in, per org: it serves an org's jobs only while that "
+                           "org runs in `pool` mode and you are a member. Removing an "
+                           "org applies from its next job; a running one is never cut. "
+                           "Omitted leaves it unchanged."))
 
 
 class Abonnement(BaseModel):
@@ -112,6 +127,10 @@ class Abonnement(BaseModel):
         None, description=("YOUR own consumption cap, in % of the account's total usage "
                            "(`null` = none). It can only tighten your org's cap "
                            "(default 80 %): the lower of the two applies."))
+    lent_to: list[int] = Field(
+        default_factory=list,
+        description=("The orgs whose pool you lend this subscription to. Each lender's "
+                     "own cap still applies to their account."))
     waiting_jobs: int = Field(
         0, description=("How many of your jobs are queued on this subscription right "
                         "now. While you are signed out, need to reconnect, or wait on "
@@ -141,15 +160,20 @@ def _servi(ligne: dict) -> dict:
             "limit_pct": ligne.get("limite_pct")}
 
 
+def _complet(sub: str, ligne: dict) -> dict:
+    """Un abonnement tel que l'écran le montre : son état, ses prêts, sa file."""
+    return {**_servi(ligne),
+            "lent_to": db.org_subscription_pool.orgs_pretees(sub, ligne["famille"]),
+            "waiting_jobs": db.travaux_en_attente_d_abonnement(sub, ligne["famille"])}
+
+
 # ⚠️ `def`, pas `async def` (`docs/event-loop-perf.md`) : ces deux handlers ne font que
 # de l'I/O BLOQUANTE (psycopg). Un `async def` sans `await` s'exécute DANS la boucle
 # et gèle tout le serveur le temps de la requête ; un `def` part en threadpool.
 # Écrits `async` au premier jet — les bancs passaient, c'est la prod qui aurait gelé.
 def _liste(ctx: ResolvedCtx, inp: AbonnementsInput) -> dict:
     return {"subscriptions": [
-        {**_servi(l),
-         "waiting_jobs": db.travaux_en_attente_d_abonnement(ctx.sub, l["famille"])}
-        for l in db.user_subscriptions.list_subscriptions(ctx.sub)]}
+        _complet(ctx.sub, l) for l in db.user_subscriptions.list_subscriptions(ctx.sub)]}
 
 
 def _exiger_famille(famille: str) -> None:
@@ -196,8 +220,7 @@ def _valider_code(ctx: ResolvedCtx, inp: CodeInput) -> dict:
     ligne = db.user_subscriptions.marquer_statut(
         ctx.sub, inp.family, db.user_subscriptions.CONNECTE,
         plan=etat.get("subscriptionType"), method=etat.get("authMethod"), ok=True)
-    return {**_servi(ligne),
-            "waiting_jobs": db.travaux_en_attente_d_abonnement(ctx.sub, inp.family)}
+    return _complet(ctx.sub, ligne)
 
 
 def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
@@ -230,17 +253,44 @@ def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
     return {"ok": True, "family": inp.family, "sandbox_destroyed": bool(sandbox)}
 
 
+def _exiger_membre_de(sub: str, org_ids: list[int]) -> None:
+    """On ne prête qu'aux orgs dont on est membre — et le pool ne sert, de toute
+    façon, que tant qu'on l'est (`org_subscription_pool.PRET_VIVANT`)."""
+    etrangeres = sorted({o for o in org_ids if not org_store.get_org_role(o, sub)})
+    if etrangeres:
+        raise AuthzDenied(
+            403, "not_org_member",
+            f"tu n'es pas membre de l'org {', '.join(f'#{o}' for o in etrangeres)} : "
+            "on ne prête son abonnement qu'au pool d'une org dont on est membre.")
+
+
 def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
-    """Mon plafond PERSO. Il ne s'écrit que sur MA ligne : sans abonnement, rien à
-    plafonner (404) ; et il ne relâche jamais celui de l'org (`_abonnement.seuil`)."""
+    """Mon plafond PERSO, et mes PRÊTS au pool de mes orgs. Ils ne s'écrivent que sur
+    MA ligne : sans abonnement, rien à plafonner ni à prêter (404) ; le plafond ne
+    relâche jamais celui de l'org (`_abonnement.seuil`), et il s'applique à MON
+    compte aussi quand il sert le pool d'une org."""
     _exiger_famille(inp.family)
-    _abonnement.exiger_limite_valide(inp.limit_pct)
-    ligne = db.user_subscriptions.poser_limite(ctx.sub, inp.family, inp.limit_pct)
+    poser_plafond = "limit_pct" in inp.model_fields_set
+    if not poser_plafond and inp.lent_to is None:
+        raise AuthzDenied(400, "nothing_to_change",
+                          "rien à changer : envoie `limit_pct`, `lent_to`, ou les deux.")
+    if poser_plafond:
+        _abonnement.exiger_limite_valide(inp.limit_pct)
+    if inp.lent_to:
+        # Prêter, c'est ouvrir SON forfait au travail des autres : réservé, comme se
+        # connecter, aux personnes qui portent l'option. Retirer ses prêts, jamais.
+        _abonnement.exiger_ouvert(ctx.sub, inp.family)
+        _exiger_membre_de(ctx.sub, inp.lent_to)
+    ligne = db.user_subscriptions.get_subscription(ctx.sub, inp.family)
     if not ligne:
         raise AuthzDenied(404, "not_connected",
                           f"aucun abonnement `{inp.family}` pour toi.")
-    return {**_servi(ligne),
-            "waiting_jobs": db.travaux_en_attente_d_abonnement(ctx.sub, inp.family)}
+    if poser_plafond:
+        ligne = db.user_subscriptions.poser_limite(ctx.sub, inp.family,
+                                                   inp.limit_pct) or ligne
+    if inp.lent_to is not None:
+        db.org_subscription_pool.poser_prets(ctx.sub, inp.family, inp.lent_to)
+    return _complet(ctx.sub, ligne)
 
 
 _DOC_LISTE = """List YOUR model subscriptions and their state.
@@ -264,14 +314,23 @@ _DOC_CODE = """Finish connecting a model subscription with the code the provider
 The code is single-use and only works inside your sandbox. On success the
 subscription is `connected` and your jobs on it can run."""
 
-_DOC_PLAFOND = """Set (or remove, `null`) YOUR own consumption cap on a model subscription.
+_DOC_PLAFOND = """Set YOUR own consumption cap on a model subscription, and/or the orgs you lend it to.
 
-The cap is a share, in % (1..100), of your provider account's TOTAL usage — the
-5-hour and 7-day windows the provider reports, your personal use included. Once a
-window reaches it, your agents' next jobs WAIT for the window to reset; a job
-already running is never cut. Your organisation sets its own cap (80 % unless it
-chose otherwise): the LOWER of the two applies, so yours can only keep more room
-for yourself, never raise the org's."""
+`limit_pct`: a share, in % (1..100), of your provider account's TOTAL usage — the
+5-hour and 7-day windows the provider reports, your personal use included (`null`
+removes it). Once a window reaches it, the next jobs on your subscription WAIT for the
+window to reset; a job already running is never cut. Your organisation sets its own
+cap (80 % unless it chose otherwise): the LOWER of the two applies, so yours can only
+keep more room for yourself, never raise the org's.
+
+`lent_to`: the orgs whose POOL you lend this subscription to (the whole set; `[]`
+lends to none). Explicit and per org: nothing is lent by default. It only serves an
+org that runs its jobs in `pool` mode, and only while you are a member; the pool
+takes the least recently used free lender, so your subscription runs one job at a
+time, yours included. Your cap applies to those jobs too. Removing an org applies
+from its next job.
+
+Send at least one of the two; an omitted field is left unchanged."""
 
 _DOC_RETIRER = """Sign out of a model subscription, or destroy its sandbox.
 
@@ -311,6 +370,11 @@ CAPABILITIES += [
             DeclaredError(400, "unknown_family",
                           "une famille qui n'est pas servie par abonnement"),
             DeclaredError(400, "invalid_limit", "`limit_pct` hors de 1..100"),
+            DeclaredError(400, "nothing_to_change", "ni `limit_pct` ni `lent_to`"),
+            DeclaredError(403, "subscription_not_enabled",
+                          "prêter n'est pas ouvert à cette personne"),
+            DeclaredError(403, "not_org_member",
+                          "`lent_to` nomme une org dont la personne n'est pas membre"),
             DeclaredError(404, "not_connected",
                           "aucun abonnement de cette famille pour cette personne"),
         ),

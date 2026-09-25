@@ -527,8 +527,16 @@ from oto_mcp.db import _schema, schema
 # neuve ; base existante par la révision Alembic `0019_plafond_abonnements` ou le
 # démarrage (`user_subscriptions.DDL_COLONNE_LIMITE`, même forme, sous garde de
 # catalogue). 175 224 → 176 890 (+1 666, commentaires compris).
-EMPREINTE = "3d9a2444fe1e6eeb1bae9d97ffc22d62c0f5ea6139005706a13333b8bcfcc4f7"
-LONGUEUR = 176890
+# 25/09/2026 — le POOL d'org des abonnements. Constante NEUVE
+# `schema/runs.py::MODEL_SUBSCRIPTION_POOL`, en QUEUE d'`ASSEMBLAGE` après
+# `MODEL_SUBSCRIPTION_LIMITS` (FK vers `orgs`) : les tables `org_model_subscription_modes`
+# (le mode personnel | pool d'une org) et `user_model_subscription_loans` (le prêt d'un
+# abonnement au pool d'une org), et l'index de la seconde, posé avec elle. `CREATE TABLE
+# IF NOT EXISTS` de tables neuves : rien ne se réécrit sur la base PARTAGÉE, l'ancien
+# code les ignore ; base existante aussi par la révision Alembic `0020_pool_abonnements`.
+# 176 890 → 179 367 (+2 477, commentaires compris).
+EMPREINTE = "1f5a888d950037baa6048336fae5210abd9aefbc94951d78cc2c159a6764e73c"
+LONGUEUR = 179367
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

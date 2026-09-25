@@ -63,6 +63,8 @@ from . import (
     # NON aplati : ses verbes (`get_limite`, `poser_limite`) homonymes de ceux de
     # `user_subscriptions` — appelé `db.org_subscription_limits.<fn>`.
     org_subscription_limits,
+    # NON aplati non plus : le pool d'org (mode, prêts) — `db.org_subscription_pool.<fn>`.
+    org_subscription_pool,
     journal_calls,
     # NON aplati ci-dessous (comme `access_shadow`) : ses noms de domaine
     # (`audience`, `journal`…) sont trop communs pour la surface plate `db.*`.

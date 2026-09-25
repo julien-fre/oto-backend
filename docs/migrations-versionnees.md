@@ -646,6 +646,18 @@ ni l'une ni l'autre. Le code du lot LIT la colonne à chaque lecture d'abonnemen
 jouer avant la fusion ferme la fenêtre où un démarrage raté sur `lock_timeout` la
 laisserait absente. Le retour arrière retire la colonne puis la table.
 
+`0020_pool_abonnements` (25/09/2026, après `0019_plafond_abonnements`) crée les deux
+tables NEUVES du pool d'org des abonnements (fragment
+`db/schema/runs.py::MODEL_SUBSCRIPTION_POOL`, exécuté tel quel) :
+`org_model_subscription_modes` (le mode `personnel` | `pool` d'une org, par famille) et
+`user_model_subscription_loans` (le prêt d'un abonnement au pool d'une org), clés
+étrangères vers `orgs` bornées par `lock_timeout`. **Aucun `ALTER`** : l'abonnement qui
+sert un travail s'écrit dans sa charge (`_plateforme.abonnement`), pas dans une colonne
+de `runner_jobs`. Le démarrage crée les mêmes tables s'il ne les trouve pas ; l'ancien
+code ne les lit pas. Le code du lot les LIT à chaque réservation d'un travail
+d'abonnement : la jouer **avant la fusion**, comme 0019. Le retour arrière retire les
+deux tables.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

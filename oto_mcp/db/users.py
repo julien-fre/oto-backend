@@ -264,6 +264,9 @@ _PK_SUB_TABLES = (
     # L'abonnement d'une personne (OTO-130) suit le compte fusionné : sa ligne porte
     # le `sandbox_id`, que le worker relit — le sandbox reste celui où elle s'est connectée.
     ("user_model_subscriptions", "sub", ("famille",)),
+    # Ses PRÊTS au pool de ses orgs le suivent aussi : un prêt est un consentement, il
+    # ne se redemande pas parce que le compte a changé d'identifiant.
+    ("user_model_subscription_loans", "sub", ("famille", "org_id")),
     ("connector_account_grants", "owner_sub", ("provider", "grantee_sub")),
     ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
     # Le même prêt, cible GROUPE (oto#40) : `owner_sub` entre dans la PK
@@ -472,6 +475,8 @@ _SUB_COLUMNS = [
     ("tenant_admins", "granted_by"),
     # Qui a réglé le plafond des abonnements d'une org — colonne d'AUTEUR, sans FK.
     ("org_model_subscription_limits", "updated_by"),
+    # Qui a réglé le MODE (personnel / pool) d'une org — colonne d'AUTEUR, sans FK.
+    ("org_model_subscription_modes", "updated_by"),
     # Les relances reçues, et qui les a déclenchées. Le TITULAIRE (`sub`) est sous
     # index unique partiel : l'UPDATE nu ci-dessous ne suffit pas seul, il est
     # précédé du retrait de l'étape 2 quinquies (`_UNIQUE_INDEX_SUB_TABLES`).

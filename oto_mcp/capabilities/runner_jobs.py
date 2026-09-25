@@ -574,7 +574,8 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
 
 
 def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
-    """Le travail d'un abonnement, servi avec le SANDBOX de son porteur.
+    """Le travail d'un abonnement, servi avec le SANDBOX de l'abonnement qui le paie
+    (son demandeur, ou le membre qui a prêté le sien au pool de l'org).
 
     Ce que le worker reçoit en plus : `sandbox_id`. Jamais de clé, jamais de
     session — il exécutera le programme officiel DANS ce sandbox, qui lit la
@@ -584,23 +585,35 @@ def _avec_abonnement(job: dict, famille: str, appelant: str) -> dict:
     file le ferait reprendre par le worker suivant, indéfiniment, sans que
     personne n'apprenne pourquoi — la leçon de `_refuser_sans_cle`.
     """
-    servable, statut, sandbox = _abonnement.servable(job.get("sub"), famille)
-    if not servable and _abonnement.reparable(statut, sandbox):
+    # L'abonnement qui PAIE : celui que la réservation a choisi — le demandeur en
+    # mode personnel, un prêteur du pool sinon (`db.porteur_du_forfait`).
+    porteur = db.porteur_du_forfait(job)
+    pool = _abonnement.en_pool(job.get("org_id"), famille)
+    if job.get("fleet_id") and not pool:
+        # Un passage armé pendant le pool, dont l'org est repassée en personnel :
+        # servi ici, il ferait payer le forfait de son créateur pour le travail de
+        # tous — la faute que la pose refuse (`subscription_personal_only`).
+        return _refuser_sans_cle(job, appelant,
+                                 _abonnement._FLOTTE_HORS_POOL.format(famille=famille))
+    servable, statut, sandbox = _abonnement.servable(porteur, famille)
+    if not servable and (pool or _abonnement.reparable(statut, sandbox)):
         # ⚠️ RENDU à la file, pas arrêté (21/09/2026) : la personne doit se
         # reconnecter, et ce n'est pas la faute du travail. La réservation saute
         # déjà ces personnes — n'arrive ici que la course où l'état a changé entre
         # la prise et cette garde. `delegation_refusee` reste le champ que le
         # worker DÉPLOYÉ sait lire : il n'exécute pas et ne conclut pas.
-        raison = _abonnement.raison_de_l_attente(famille, statut)
+        # En POOL, toujours rendu : un autre prêteur servira le travail.
+        raison = _abonnement.raison_de_l_attente(famille, statut, pool=pool)
         db.rendre_a_la_file(job["id"], appelant, raison)
         return {**job, "delegation_refusee": raison, "delegated_token": None}
     if not servable:
         return _refuser_sans_cle(job, appelant,
                                  _abonnement.raison_du_refus(famille, statut))
-    # Trace de REMISE, comme pour une clé : qui, quelle org, quel sandbox. Elle
-    # ne peut rien révéler d'un secret — il n'y en a pas dans ce chemin.
-    logger.info("abonnement `%s` servi à %s pour l'org %s (travail %s, sandbox %s)",
-                famille, appelant, job.get("org_id"), job.get("id"), sandbox)
+    # Trace de REMISE, comme pour une clé : qui, quelle org, quel sandbox, et de qui
+    # est le forfait. Elle ne peut rien révéler d'un secret — il n'y en a pas ici.
+    logger.info("abonnement `%s` servi à %s pour l'org %s (travail %s, sandbox %s%s)",
+                famille, appelant, job.get("org_id"), job.get("id"), sandbox,
+                ", prêté au pool" if pool else "")
     return {**job, "sandbox_id": sandbox}
 
 
@@ -872,7 +885,7 @@ def _charge_et_modele(ctx: ResolvedCtx, inp: JobsInput) -> Optional[dict]:
         # main sur un modèle d'abonnement passe la même garde qu'un agent posé —
         # sinon une flotte, ou un membre sans l'option, contournait les trois autres.
         _abonnement.exiger_a_la_pose(ctx.sub, None, charge.get("model_family"),
-                                     flotte=inp.fleet_id is not None)
+                                     flotte=inp.fleet_id is not None, org_id=ctx.org_id)
     return charge if (charge or inp.payload is not None) else None
 
 

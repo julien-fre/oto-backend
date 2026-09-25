@@ -1336,6 +1336,51 @@ que le fournisseur rapporte, usage perso compris —, la même pour les deux fen
   franchie ; ce sont les travaux SUIVANTS qui attendent la réinitialisation, jamais une
   exécution coupée. Un réglage modifié vaut à partir du rapport suivant.
 
+**Le POOL d'org (25/09/2026).** Deux modes, réglés PAR ORG et par famille :
+`personnel` (défaut — tout ce qui précède, à l'octet près) et `pool` — les travaux de
+l'org tournent sur l'abonnement d'un membre qui l'a **prêté à cette org**.
+
+- **Le mode** : `oto_org_settings domain=model_subscriptions op=set mode=personnel|pool`
+  (admin d'org ; un appel pour le mode, un autre pour le plafond), REST
+  `PUT /api/orgs/{id}/model-subscriptions/{family}/mode`, lu par le `GET` de la même
+  ressource avec `pool_size` (membres qui prêtent un abonnement servable). Table
+  `org_model_subscription_modes` ; sans ligne, `personnel`. Une table à part du plafond :
+  sa `limite_pct` est `NOT NULL`, et la relâcher aurait fait lever le code d'avant sur la
+  base partagée.
+- **Le prêt** : opt-in explicite, désactivé par défaut, **par org** — une personne de deux
+  orgs choisit laquelle son forfait sert. `PATCH /api/me/model-subscriptions/{family}`
+  `{"lent_to": [org_id, …]}` (l'ensemble, qui remplace ; `[]` = rien ; membre de chaque org
+  nommée, sinon `403 not_org_member` ; porter l'option pour prêter), rendu par la liste
+  (`lent_to`). Table `user_model_subscription_loans` (`sub, famille, org_id`). Un prêt ne
+  sert que si l'org est en `pool`, que la personne en est TOUJOURS membre et que son
+  abonnement est servable — la réservation joint les trois, rien à nettoyer au départ d'un
+  membre. Retirer un prêt vaut pour le travail SUIVANT ; effacer le sandbox efface ses prêts.
+- **Le choix du sandbox, à la réservation** (`claim_next_job`, dépôt d'abonnement
+  seulement — le SQL des autres dépôts ne nomme pas ces tables) : pour un travail d'une org
+  en `pool`, un prêteur de CETTE org, membre, connecté (ou `paused_limit` échu), **sans
+  travail en vol**, le **moins récemment servi** d'abord (`servi_at`, posé à chaque service
+  sur tous ses prêts). Aucun de libre : le travail **attend** (`pending`, aucune tentative
+  brûlée), jamais un échec. L'état du demandeur ne compte pas : il ne paie pas.
+- **Un travail à la fois PAR ABONNEMENT**, tous modes confondus : l'abonnement qui sert un
+  travail s'écrit dans sa charge à la prise (`payload._plateforme.abonnement`, le demandeur
+  en personnel, le prêteur en pool — aucun `ALTER` sur `runner_jobs`), et la sérialisation
+  comme le verrou consultatif portent sur lui. Un prêteur qui a un travail perso en vol
+  n'est pas choisi, et inversement ; deux workers simultanés sur le même prêteur : le second
+  se défait par le point de sauvegarde.
+- **À qui va le forfait** : `_avec_abonnement` remet le `sandbox_id` du PRÊTEUR ;
+  `noter_rapport` écrit sur SA connexion (plafond, reconnexion), sous SON seuil — le min du
+  plafond de l'org du travail et de son plafond perso. Un prêteur au plafond est sauté par
+  la réservation comme une personne au plafond.
+- **Les gardes de pose** : en `pool`, le demandeur porte l'option mais n'a pas besoin
+  d'une connexion à lui ; la pose exige un pool non vide (`subscription_pool_empty` sinon) ;
+  **une flotte y passe**. En `personnel`, les refus d'avant restent. La propriété d'un agent
+  se juge dans les deux modes (l'org peut repasser en personnel : l'agent d'un autre
+  retouché pendant le pool tournerait alors sur son forfait). Une flotte armée en pool dont
+  l'org repasse en personnel est arrêtée à la remise, raison écrite, plutôt que servie sur
+  le forfait de son créateur.
+- **Le run en cours n'est jamais coupé** : changer de mode, retirer un prêt ou franchir un
+  plafond vaut pour les travaux suivants.
+
 **Ouvert à des personnes NOMMÉES (24/09/2026).** L'option `claude_subscription`
 (`oto_admin_set_option`, entité `user`) ouvre le chemin ; sans elle, `subscription_not_
 enabled` avant tout autre refus. La garde vit dans `_abonnement.exiger_ouvert`, relue par

@@ -149,10 +149,14 @@ def oublier(sub: str, famille: str) -> Optional[str]:
     infrastructure. Une destruction qui échoue laisse un sandbox orphelin —
     coûteux, mais muet ; l'inverse laisserait une personne « connectée » sur un sandbox
     à sable qui n'existe plus, donc des travaux réservés qui ne tourneront jamais."""
+    from .org_subscription_pool import oublier_prets
     with _connect() as conn:
         row = conn.execute(
             "DELETE FROM user_model_subscriptions WHERE sub = %s AND famille = %s "
             "RETURNING sandbox_id",
             (sub, famille),
         ).fetchone()
+        # Ses PRÊTS aux pools d'org partent avec lui, dans la même transaction : un
+        # abonnement reconnecté plus tard ne reprête rien sans un nouveau geste.
+        oublier_prets(sub, famille, conn=conn)
     return (dict(row).get("sandbox_id") if row else None)
