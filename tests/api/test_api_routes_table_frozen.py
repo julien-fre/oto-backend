@@ -86,6 +86,7 @@ def test_table_de_routes_figee():
 # `ViewAsMiddleware` compris. Posé plus interne, `duration_ms` cesserait de compter
 # la résolution de consultation, et `org_id` serait lu avant d'être établi.
 _ASGI = [
+    "McpAccueilMiddleware",           # corps du 401 de /mcp (#1071)
     "TenantChallengeMiddleware",      # 401 host-aware (ADR 0052 L3)
     "api_routes.ViewAsMiddleware",    # org/équipe/user de consultation (ADR 0023)
     "subdomain_org.SubdomainOrgMiddleware",  # org épinglée par le Host

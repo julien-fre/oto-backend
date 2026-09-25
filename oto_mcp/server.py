@@ -1077,6 +1077,12 @@ def main():
                 app.router.routes.insert(0, route)
             logger.info("DCR facade active (claude app %s)", claude_app_id)
 
+        # Le 401 de `/mcp` dit ce qu'est oto et comment s'y connecter (#1071) : corps
+        # seulement, statut et `WWW-Authenticate` intacts, hôte principal d'oto
+        # seulement. Cf. `mcp_accueil`.
+        from .mcp_accueil import McpAccueilMiddleware
+        app.add_middleware(McpAccueilMiddleware)
+
         # Découverte sensible au host (ADR 0052 L3) : sur un host réclamé par un
         # tenant tiers, le 401 doit pointer SON PRM, pas le nôtre. Pass-through total
         # tant qu'aucun tenant ne déclare de host — l'état d'aujourd'hui.

@@ -25,6 +25,17 @@ aujourd'hui `auth.oto.ninja/oidc`). Sur 401, le header `WWW-Authenticate` pointe
 `/.well-known/oauth-protected-resource/mcp` (RFC 9728) ce qui amorce le discovery OAuth
 côté client MCP.
 
+### Le corps du 401 de `/mcp` (#1071)
+
+Le 401 naît dans `RequireAuthMiddleware` de fastmcp : corps vide sans jeton, JSON
+`{error, error_description}` sur jeton invalide. `mcp_accueil.McpAccueilMiddleware` (ASGI,
+posé par `main`) y ajoute un court texte — ce qu'est oto, `https://oto.cx/llms.txt`, les
+trois gestes pour se connecter : corps vide → `text/plain` ; JSON → le même JSON avec un
+champ `help`. **Le statut, `WWW-Authenticate` et la découverte ne changent pas.** Servi
+**sur l'hôte principal d'oto seulement** (`mcp.oto.cx`, `mcp.oto.ninja`, liste fermée) :
+une instance servie ailleurs, l'hôte d'un tenant, l'endpoint d'une org ou d'un projet
+gardent le 401 d'avant — le texte est de notre marque.
+
 ## Registre d'émetteurs & sub qualifié par tenant (ADR 0052, lot L2)
 
 Le verifier n'est plus mono-émetteur : `server._build_verifier` construit un **registre
