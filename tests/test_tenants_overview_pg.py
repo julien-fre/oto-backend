@@ -156,3 +156,53 @@ def test_les_comptes_les_plus_actifs_dabord(base):
     comptes = db.get_tenant_overview("acme", days=30)["comptes_recents"]
     assert comptes[0]["sub"] == "acme:carla" and comptes[0]["appels"] == 1
     assert comptes[-1]["appels"] == 0   # l'inactif reste servi, en fin de liste
+
+
+# ── la fiche d'un tenant tiers : bornée à ses comptes, mêmes chiffres ─────────
+
+def test_la_fiche_dun_tenant_tiers_dit_la_meme_chose_que_la_liste(base):
+    """Deux chemins, une fiche (25/09/2026) : la passe générique classe toute la
+    plateforme ; la fiche d'un tenant tiers part de SES comptes et lit le journal par
+    sub. Les compteurs doivent coïncider — sinon la console du partenaire et l'écran
+    plateforme se contrediraient sur les mêmes 30 jours."""
+    from oto_mcp import db
+    ligne = _par_slug(db.list_tenants_overview(days=30))["acme"]
+    fiche = db.get_tenant_overview("acme", days=30)
+    for k in ("orgs", "orgs_archivees", "comptes", "comptes_actifs", "appels",
+              "orgs_desalignees", "dernier_compte_at", "last_seen_at"):
+        assert fiche[k] == ligne[k], k
+    assert fiche["authenticates"] is True and fiche["primary"] is False
+    assert [o["name"] for o in fiche["orgs_recentes"]] == ["Acme"]
+    assert fiche["orgs_recentes"][0]["membres"] == 0
+
+
+def test_la_fiche_tiers_ne_compte_ni_les_appels_ni_les_comptes_dun_autre_tenant(base):
+    """Le cœur du chemin borné : un compte `globex:` très actif ne bouge aucun
+    compteur d'Acme, et un appel hors fenêtre d'un compte Acme non plus."""
+    from oto_mcp import db
+    base.execute("INSERT INTO users (sub, email) VALUES ('globex:eve', 'eve@ex.test')")
+    base.execute("INSERT INTO tool_calls (sub, tool, kind) SELECT 'globex:eve', 'fr_search', 'mcp' "
+                 "FROM generate_series(1, 25)")
+    base.execute("INSERT INTO tool_calls (sub, tool, kind, created_at) VALUES "
+                 "('acme:dan', 'fr_search', 'mcp', NOW() - INTERVAL '45 days')")
+    acme = db.get_tenant_overview("acme", days=30)
+    assert (acme["comptes"], acme["appels"], acme["comptes_actifs"]) == (2, 1, 1)
+    assert [c["sub"] for c in acme["comptes_recents"]] == ["acme:carla", "acme:dan"]
+    assert acme["comptes_recents"][1]["last_seen_at"] is None   # hors fenêtre
+    globex = db.get_tenant_overview("globex", days=30)
+    assert (globex["comptes"], globex["appels"], globex["comptes_actifs"]) == (1, 25, 1)
+
+
+def test_lecart_dun_tenant_tiers_nomme_le_tenant_du_createur(base):
+    """Une org rattachée à Acme mais créée par un sub NU : l'écart existe dans ce
+    sens aussi, et son adresse dit `oto`."""
+    from oto_mcp import db
+    acme_id = base.execute("SELECT id FROM tenants WHERE slug='acme'").fetchone()["id"]
+    base.execute("INSERT INTO orgs (name, created_by, tenant_id) VALUES "
+                 "('Greffée', 'alice', %s)", (acme_id,))
+    fiche = db.get_tenant_overview("acme", days=30)
+    assert fiche["orgs_desalignees"] == 1
+    assert [(o["name"], o["tenant_du_createur"]) for o in fiche["orgs_desalignees_detail"]] == [
+        ("Greffée", "oto")]
+    # Et la liste (passe générique) compte le même écart.
+    assert _par_slug(db.list_tenants_overview(days=30))["acme"]["orgs_desalignees"] == 1

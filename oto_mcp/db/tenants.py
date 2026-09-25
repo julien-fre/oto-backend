@@ -307,7 +307,28 @@ def get_tenant_overview(slug: str, *, days: int = 30) -> dict | None:
 
     `None` si le slug n'existe pas — l'appelant en fait un 404, jamais une fiche vide
     (qui se lirait comme « ce tenant existe et n'a rien »).
+
+    Deux chemins pour la MÊME fiche (mesuré le 25/09/2026 sur la console de Tulina :
+    **97 s en moyenne, p95 à 128 s**, quand chaque route voisine répond en 100 ms) :
+
+    - le tenant **primaire** passe par la passe générique (`_overview_primaire`) — ses
+      comptes sont « tout ce qui n'est sous aucun préfixe », ce qui ne se borne pas ;
+    - un tenant **tiers** part de SES comptes (`_overview_tiers`) : le préfixe du sub
+      sélectionne quelques dizaines d'utilisateurs, puis le journal d'appels se lit
+      **par sub** (`idx_tool_calls_sub`) sur la fenêtre. La passe générique, elle,
+      classait chaque utilisateur de la plateforme par sous-requête corrélée, puis
+      joignait 30 jours du journal ENTIER — deux fois (compteurs, puis par compte) —
+      pour ne garder qu'un tenant à la fin. Les chiffres rendus sont les mêmes :
+      `tests/test_tenants_overview_pg.py` compare la fiche à la ligne de la liste.
     """
+    if slug == tenancy.PRIMARY_SLUG:
+        return _overview_primaire(slug, days=days)
+    return _overview_tiers(slug, days=days)
+
+
+def _overview_primaire(slug: str, *, days: int = 30) -> dict | None:
+    """La passe générique (CTE `sub_tenant` sur toute la plateforme) — le seul chemin
+    qui sache compter « les subs nus »."""
     params = {"primary": tenancy.PRIMARY_SLUG, "days": int(days), "slug": slug}
     with _connect() as conn:
         row = conn.execute(_tenant_counts_sql("WHERE t.slug = %(slug)s"), params).fetchone()
@@ -359,4 +380,117 @@ def get_tenant_overview(slug: str, *, days: int = 30) -> dict | None:
                AND o.tenant_id <> st.tenant_id
              ORDER BY o.id LIMIT %(cap)s
             """, params).fetchall()]
+    return fiche
+
+
+_TENANT_ROW_SQL = """
+    SELECT id, slug, name, issuer, jwks_uri, hosts, oauth_client_id, dashboard_url,
+           link_paths, tool_prefix, brand, logto_mgmt, created_at
+      FROM tenants WHERE slug = %(slug)s
+"""
+
+# Le tenant du CRÉATEUR d'une org, pour l'écart : le préfixe déclaré le plus long qui
+# matche, sinon le primaire — même règle que `_SUB_TENANT_SQL`, appliquée à UN sub.
+_TENANT_DU_CREATEUR_SQL = """
+    COALESCE((SELECT t2.slug FROM tenants t2
+               WHERE t2.slug <> %(primary)s AND u.sub LIKE t2.slug || ':%%'
+               ORDER BY length(t2.slug) DESC LIMIT 1),
+             %(primary)s)
+"""
+
+
+def _overview_tiers(slug: str, *, days: int = 30) -> dict | None:
+    """La fiche d'un tenant tiers, bornée à SES comptes dès la première lecture.
+
+    Ordre des lectures : la ligne du tenant → ses utilisateurs (préfixe `<slug>:`,
+    quelques dizaines) → le journal d'appels **de ces subs seulement** sur la fenêtre
+    (une requête, groupée par sub : les compteurs et la liste par compte en sortent
+    ensemble, là où la passe générique lisait le journal deux fois) → ses orgs → l'écart.
+    Aucune de ces lectures ne touche les comptes ou les appels d'un autre tenant.
+
+    ⚠️ Un slug ne contient ni `%` ni `_` (`tenancy._SLUG_RE`) : le `LIKE` compare un
+    préfixe littéral. Et aucun slug n'en préfixe un autre suivi de `:` (le `:` est
+    interdit dans un slug), donc « commence par `<slug>:` » classe sans ambiguïté —
+    la règle du plus long préfixe de `_SUB_TENANT_SQL` n'a rien à départager ici.
+    """
+    params = {"primary": tenancy.PRIMARY_SLUG, "days": int(days), "slug": slug,
+              "pfx": f"{slug}:", "cap": _TENANT_LIST_CAP}
+    with _connect() as conn:
+        row = conn.execute(_TENANT_ROW_SQL, params).fetchone()
+        if row is None:
+            return None
+        fiche = dict(row)
+        params["tid"] = fiche["id"]
+
+        comptes = [dict(r) for r in conn.execute(
+            """
+            SELECT sub, email, name, role, created_at
+              FROM users WHERE sub LIKE %(pfx)s || '%%'
+             ORDER BY created_at DESC
+            """, params).fetchall()]
+        params["subs"] = [c["sub"] for c in comptes]
+        par_sub: dict = {}
+        if params["subs"]:
+            par_sub = {r["sub"]: r for r in conn.execute(
+                """
+                SELECT sub, COUNT(*) AS appels, MAX(created_at) AS last_seen_at
+                  FROM tool_calls
+                 WHERE sub = ANY(%(subs)s)
+                   AND kind = 'mcp'
+                   AND created_at >= NOW() - make_interval(days => %(days)s)
+                 GROUP BY sub
+                """, params).fetchall()}
+        for c in comptes:
+            a = par_sub.get(c["sub"])
+            c["appels"] = int(a["appels"]) if a else 0
+            c["last_seen_at"] = a["last_seen_at"] if a else None
+        # Les plus actifs d'abord, puis les plus récents : déjà triés par date, un
+        # tri STABLE par appels garde cet ordre entre égaux (même ORDER BY que la
+        # passe générique).
+        comptes.sort(key=lambda c: c["appels"], reverse=True)
+
+        oc = conn.execute(
+            """
+            SELECT COUNT(*) FILTER (WHERE archived_at IS NULL) AS orgs,
+                   COUNT(*) FILTER (WHERE archived_at IS NOT NULL) AS orgs_archivees
+              FROM orgs WHERE tenant_id = %(tid)s
+            """, params).fetchone()
+
+        orgs_recentes = [dict(r) for r in conn.execute(
+            """
+            SELECT o.id, o.name, o.created_at, o.archived_at, o.personal_of IS NOT NULL
+                   AS personal, o.front_base_url, o.front_brand,
+                   (SELECT COUNT(*) FROM org_members m WHERE m.org_id = o.id) AS membres
+              FROM orgs o WHERE o.tenant_id = %(tid)s
+             ORDER BY o.archived_at IS NOT NULL, o.created_at DESC LIMIT %(cap)s
+            """, params).fetchall()]
+
+        # L'écart : une org rattachée à CE tenant dont le créateur n'est pas qualifié
+        # sous son préfixe (un sub nu, ou celui d'un autre tenant). Même sonde que la
+        # passe générique (`created_by`, joint sur `users`), lue sans limite pour le
+        # COMPTE, bornée pour le détail.
+        ecart = [dict(r) for r in conn.execute(
+            f"""
+            SELECT o.id, o.name, o.created_by, {_TENANT_DU_CREATEUR_SQL} AS tenant_du_createur
+              FROM orgs o JOIN users u ON u.sub = o.created_by
+             WHERE o.tenant_id = %(tid)s AND o.archived_at IS NULL
+               AND u.sub NOT LIKE %(pfx)s || '%%'
+             ORDER BY o.id
+            """, params).fetchall()]
+
+    fiche.update({
+        "orgs": oc["orgs"], "orgs_archivees": oc["orgs_archivees"],
+        "comptes": len(comptes),
+        "dernier_compte_at": max((c["created_at"] for c in comptes if c["created_at"]),
+                                 default=None),
+        "appels": sum(c["appels"] for c in comptes),
+        "comptes_actifs": sum(1 for c in comptes if c["appels"]),
+        "last_seen_at": max((c["last_seen_at"] for c in comptes if c["last_seen_at"]),
+                            default=None),
+        "orgs_desalignees": len(ecart),
+    })
+    fiche = _shape_tenant(fiche)
+    fiche["orgs_recentes"] = orgs_recentes
+    fiche["comptes_recents"] = comptes[:_TENANT_LIST_CAP]
+    fiche["orgs_desalignees_detail"] = ecart[:_TENANT_LIST_CAP]
     return fiche
