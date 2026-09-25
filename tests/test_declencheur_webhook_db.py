@@ -771,3 +771,80 @@ def test_les_livraisons_AU_PORTEUR_n_ont_pas_d_identifiant_et_ne_se_genent_pas(l
         db.enregistrer(conn, t["id"], ORG, db.QUEUED)
         db.enregistrer(conn, t["id"], ORG, db.QUEUED)
     assert len(db.livraisons(t["id"], ORG)) == 2
+
+
+# ── le plafond journalier et l'adresse privée, en base (25/09/2026) ────────────
+
+def test_un_agent_NAIT_sans_plafond_ni_adresse_privee(live):
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="opt-defaut")
+    lu = db.get_trigger(t["id"], ORG)
+    assert lu["max_per_day"] is None and lu["hook_slug"] is None
+
+
+def test_le_plafond_s_ecrit_a_la_creation_et_se_RETIRE(live):
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="opt-plafond", max_per_day=5)
+    assert db.get_trigger(t["id"], ORG)["max_per_day"] == 5
+    db.update_trigger(t["id"], ORG, {"max_per_day": None})
+    assert db.get_trigger(t["id"], ORG)["max_per_day"] is None
+
+
+def test_la_fenetre_ne_compte_que_les_ACCEPTEES_des_24_dernieres_heures(live):
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="opt-fenetre")
+    with db._connect() as conn:
+        for outcome in (db.QUEUED, db.DELAYED, db.REFUSE_PAUSED, db.REFUSE_DAILY_CAP):
+            db.enregistrer(conn, t["id"], ORG, outcome)
+        # Une acceptée d'il y a 25 h : hors fenêtre.
+        conn.execute("INSERT INTO runner_hook_deliveries (trigger_id, org_id, outcome, "
+                     "received_at) VALUES (%s, %s, 'queued', NOW() - INTERVAL '25 hours')",
+                     (t["id"], ORG))
+    with db._connect() as conn:
+        n, sortie = db.acceptees_sur_24h(conn, t["id"])
+    assert n == 2
+    assert 86_000 < sortie <= 86_400, "la plus ancienne sort dans ~24 h"
+
+
+def test_une_fenetre_vide_rend_zero_et_zero(live):
+    from oto_mcp import db
+    t, _ = _webhook(db, procedure="opt-vide")
+    with db._connect() as conn:
+        assert db.acceptees_sur_24h(conn, t["id"]) == (0, 0)
+
+
+def test_bout_en_bout_le_plafond_REFUSE_la_livraison_de_trop(live):
+    from oto_mcp import db, runner_hook
+    t, porteur = _webhook(db, procedure="opt-bout-en-bout", max_per_day=2)
+    for _ in range(2):
+        assert runner_hook.declencher(t["id"], porteur, {}, "src")["job_id"]
+    with pytest.raises(runner_hook.HookRefus) as e:
+        runner_hook.declencher(t["id"], porteur, {}, "src")
+    assert (e.value.statut, e.value.code) == (429, "hook_daily_cap")
+    issues = [l["outcome"] for l in db.livraisons(t["id"], ORG)]
+    assert issues.count("queued") == 2 and issues.count("refused_daily_cap") == 1
+
+
+def test_l_adresse_privee_se_resout_et_ferme_l_id(live):
+    from oto_mcp import db, runner_hook
+    t, porteur = _webhook(db, procedure="opt-adresse")
+    adresse = runner_hook.nouvelle_adresse()
+    db.poser_adresse_de_hook(t["id"], ORG, adresse)
+    assert runner_hook.resoudre_adresse(adresse) == (t["id"], True)
+    with pytest.raises(runner_hook.HookRefus):
+        runner_hook.declencher(t["id"], porteur, {}, "src")
+    assert runner_hook.declencher(t["id"], porteur, {}, "src",
+                                  par_adresse_privee=True)["job_id"]
+    db.poser_adresse_de_hook(t["id"], ORG, None)
+    assert runner_hook.resoudre_adresse(adresse) == (None, True)
+    assert runner_hook.declencher(t["id"], porteur, {}, "src")["job_id"]
+
+
+def test_deux_agents_ne_partagent_JAMAIS_une_adresse(live):
+    import psycopg
+    from oto_mcp import db
+    a, _ = _webhook(db, procedure="opt-unique-a")
+    b, _ = _webhook(db, procedure="opt-unique-b")
+    db.poser_adresse_de_hook(a["id"], ORG, "h_meme")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        db.poser_adresse_de_hook(b["id"], ORG, "h_meme")

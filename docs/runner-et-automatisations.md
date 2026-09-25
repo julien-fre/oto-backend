@@ -1124,6 +1124,40 @@ donc son mode, `runner_triggers.hook_auth` :
   d'un `ALTER` du boot, que le DDL précède (#450). Il est posé dans `db/_init.py`,
   juste après.
 
+#### Deux protections réglées par l'utilisateur
+
+Un agent existant ne change pas de comportement ; un webhook NEUF naît avec une
+adresse privée (le plafond, lui, reste absent tant qu'on ne le pose pas). Toutes deux
+se règlent par `oto_trigger` (ce ne sont pas des secrets) et sur l'écran de l'agent.
+
+- **Le plafond journalier** (`max_per_day`, `0` = le retirer) : au plus N
+  livraisons **acceptées** sur **24 h glissantes** — pas un jour calendaire, qui
+  laisserait passer deux plafonds de part et d'autre de minuit. Au-delà : **429
+  `hook_daily_cap`** avec `Retry-After` (quand la plus ancienne sort de la
+  fenêtre), aucun travail, livraison journalisée `refused_daily_cap`. C'est la
+  **borne de dépense d'un credential fuité** : `max_per_hour` ne fait que RETARDER
+  et la file n'a pas de fond (13/09). Compté **après** la déduplication (une
+  retentative déjà acceptée ne compte pas deux fois) et **sous le verrou** du
+  déclencheur (deux livraisons au bord du plafond : une seule passe). Sans plafond
+  déclaré, rien n'est compté. Une source Standard Webhooks retente un 429 : elle
+  livre quand la fenêtre se libère.
+- **L'adresse privée** (`private_address`, `op=rotate_address` pour la remplacer) :
+  `/api/hooks/h_…`, 128 bits aléatoires, à la place de `/api/hooks/{id}` — un id
+  numérique se **parcourt**. ⚠️ **Un webhook NAÎT avec la sienne, toujours**
+  (25/09/2026) : une adresse qu'on ne devine pas n'attend pas une fuite pour
+  exister, et une source stocke une URL aléatoire aussi bien qu'une numérique —
+  rien ne justifie de choisir la seconde. `private_address=false` est donc
+  **refusé** (`numeric_address_retired`), à la création comme ensuite. Les agents
+  posés avant gardent leur adresse numérique (la changer dans leur dos casserait
+  leur source) ; leur propriétaire les passe en privée, **sans retour**. Quand il
+  n'en restera plus, l'adresse numérique pourra disparaître du code. Posée, l'id numérique **cesse d'ouvrir** pour cet agent
+  (même 404, jugé **après** la preuve : sans credential, rien ne dit qu'une adresse
+  privée existe). Ce n'est **pas un credential** — le porteur ou la signature
+  restent exigés derrière. `private_address=true` sur un agent qui en a déjà une ne
+  la change pas : la remplacer casse la source, c'est `rotate_address`, un geste qui
+  se dit. Index unique partiel sur `hook_slug`, posé dans `db/_init.py` après
+  l'`ALTER` (#450).
+
 #### Une rafale se LISSE, elle ne se perd pas
 
 Au-delà du débit déclaré (`max_per_hour`, 60/h par défaut), la livraison est

@@ -345,7 +345,16 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
     hook_auth TEXT NOT NULL DEFAULT 'bearer',
     -- Le secret de signature fourni par la source, CHIFFRÉ (`crypto.encrypt`, AAD
     -- liée à la ligne). Jamais servi par une lecture : seule son existence l'est.
-    hook_signing_secret_enc TEXT
+    hook_signing_secret_enc TEXT,
+    -- Le PLAFOND de livraisons ACCEPTÉES sur 24 h glissantes, déclaré par
+    -- l'utilisateur. NULL = aucun (le lissage `max_per_hour` retarde, il ne
+    -- refuse jamais) : au-delà du plafond, 429.
+    max_per_day INT,
+    -- L'adresse PRIVÉE (`h_` + 128 bits aléatoires), optionnelle. Posée, elle
+    -- REMPLACE l'adresse numérique `/api/hooks/{id}`, qui cesse d'ouvrir. Pas un
+    -- credential : la preuve reste exigée derrière. ⚠️ Son index unique n'est
+    -- pas ici (colonne née d'un ALTER du boot, #450) : `db/_init.py`.
+    hook_slug TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runner_triggers_due
     ON runner_triggers(next_due) WHERE enabled;

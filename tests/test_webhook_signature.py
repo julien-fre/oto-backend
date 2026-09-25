@@ -273,7 +273,8 @@ def test_la_route_verifie_les_OCTETS_recus(monkeypatch):
 
     vu = {}
 
-    def _declencher(tid, secret, corps, source, *, signature=None):
+    def _declencher(tid, secret, corps, source, *, signature=None,
+                    par_adresse_privee=False):
         vu.update(sig=signature, secret=secret, corps=corps)
         return {"ok": True, "job_id": 1}
 

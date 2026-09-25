@@ -408,6 +408,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
                  "hook_signing_secret_enc TEXT")
     conn.execute("ALTER TABLE runner_hook_deliveries ADD COLUMN IF NOT EXISTS "
                  "external_id TEXT")
+    # Le plafond journalier et l'adresse privée, tous deux OPTIONNELS (NULL = le
+    # comportement d'avant pour tout agent existant).
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS max_per_day INT")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS hook_slug TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runner_triggers_hook_slug "
+                 "ON runner_triggers(hook_slug) WHERE hook_slug IS NOT NULL")
     # La DÉDUPLICATION : au plus UNE livraison ACCEPTÉE par identifiant et par
     # déclencheur. Partiel : un refus n'a produit aucun travail, sa retentative
     # doit pouvoir passer. Posé ICI, après l'ALTER de sa colonne (#450).

@@ -17,7 +17,8 @@ from ._conn import _connect
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
          "max_tokens, max_run_seconds, model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
          "cron, tz, enabled, next_due, last_enqueued_at, created_at, hook_auth, "
-         "(hook_signing_secret_enc IS NOT NULL) AS signing_secret_set")
+         "(hook_signing_secret_enc IS NOT NULL) AS signing_secret_set, "
+         "max_per_day, hook_slug")
 
 #: ⚠️ `hook_secret_hash` n'est PAS dans `_COLS`, et c'est la garde : un haché servi
 #: à une lecture partirait dans la réponse de `op=list`, donc dans un transcript
@@ -40,7 +41,8 @@ def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
                    payload_mode: str = "ignore",
                    payload_fields: Optional[dict] = None,
                    max_per_hour: Optional[int] = None,
-                   fraicheur_s: Optional[int] = None) -> dict:
+                   fraicheur_s: Optional[int] = None,
+                   max_per_day: Optional[int] = None) -> dict:
     """Pose un déclencheur — programmé (`cron` + `next_due`) ou par webhook.
 
     ⚠️ `cron` et `next_due` sont devenus FACULTATIFS en signature, et c'est la
@@ -53,16 +55,17 @@ def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
             INSERT INTO runner_triggers
                    (org_id, sub, label, procedure, project_id, tools, input,
                     max_steps, max_tokens, max_run_seconds, model, kind, payload_mode,
-                    payload_fields, max_per_hour, fraicheur_s, cron, tz, next_due)
+                    payload_fields, max_per_hour, fraicheur_s, cron, tz, next_due,
+                    max_per_day)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                    %s::jsonb, %s, %s, %s, %s, %s)
+                    %s::jsonb, %s, %s, %s, %s, %s, %s)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
              json.dumps(list(tools), ensure_ascii=False), input, max_steps,
              max_tokens, max_run_seconds, model, kind, payload_mode,
              json.dumps(payload_fields, ensure_ascii=False) if payload_fields else None,
-             max_per_hour, fraicheur_s, cron, tz, next_due),
+             max_per_hour, fraicheur_s, cron, tz, next_due, max_per_day),
         ).fetchone()
     return dict(row)
 
@@ -140,7 +143,11 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
                  # de coup d'envoi en cours de route — ce serait un autre agent, et
                  # la bascule laisserait derrière elle soit un cron orphelin, soit
                  # un secret qui ouvre une porte que plus personne ne regarde.
-                 "payload_mode", "payload_fields", "max_per_hour", "fraicheur_s"}
+                 "payload_mode", "payload_fields", "max_per_hour", "fraicheur_s",
+                 # Le PLAFOND journalier (NULL = aucun). L'adresse privée
+                 # (`hook_slug`) n'y est PAS : elle se pose par son verbe,
+                 # `poser_adresse_de_hook`, jamais par une retouche générique.
+                 "max_per_day"}
     inconnu = set(champs) - autorises
     if inconnu:
         raise ValueError(f"colonnes hors contrat : {sorted(inconnu)}")
@@ -244,6 +251,32 @@ def trigger_signe(trigger_id: int) -> Optional[dict]:
             (trigger_id,),
         ).fetchone()
     return dict(row) if row else None
+
+
+def trigger_id_par_adresse(slug: str) -> Optional[int]:
+    """L'id du webhook dont l'adresse PRIVÉE est `slug`, ou None.
+
+    Une adresse privée est 128 bits aléatoires : elle ne se devine pas, donc la
+    trouver ne dit rien qu'un appelant ne savait déjà. Elle n'est PAS un
+    credential — la preuve (porteur ou signature) reste exigée derrière."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM runner_triggers WHERE hook_slug = %s AND kind = 'webhook'",
+            (slug,),
+        ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def poser_adresse_de_hook(trigger_id: int, org_id: int, slug: Optional[str]) -> bool:
+    """Pose (ou remplace) l'adresse privée d'un webhook ; `None` la retire, et
+    l'adresse numérique redevient la seule. Le choix de la valeur n'est pas ici
+    (`runner_hook.nouvelle_adresse`)."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE runner_triggers SET hook_slug = %s "
+            "WHERE id = %s AND org_id = %s AND kind = 'webhook'",
+            (slug, trigger_id, org_id))
+        return bool(cur.rowcount)
 
 
 def poser_auth_de_hook(trigger_id: int, org_id: int, hook_auth: str,

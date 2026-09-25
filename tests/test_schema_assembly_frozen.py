@@ -544,13 +544,16 @@ from oto_mcp.db import _schema, schema
 # 25/09/2026 — le webhook authentifié PAR SIGNATURE (Standard Webhooks). Trois colonnes
 # dans les `CREATE TABLE` pour une base neuve : `runner_triggers.hook_auth TEXT NOT NULL
 # DEFAULT 'bearer'`, `runner_triggers.hook_signing_secret_enc TEXT`,
-# `runner_hook_deliveries.external_id TEXT`. Base existante par la révision Alembic
-# `0022_signature_webhook` ou le démarrage (`_init.py`, ADD COLUMN IF NOT EXISTS).
-# ⚠️ L'index unique de déduplication n'est PAS dans ce DDL (sa colonne naît d'un ALTER
-# que le DDL précède, #450) : un commentaire le dit à sa place.
-# 179 669 → 180 731 (+1 062, commentaires compris).
-EMPREINTE = "4789ede335d55c9b5dc782109bd46d6ed70af4345c7543d4f9f88be06322095f"
-LONGUEUR = 180731
+# `runner_hook_deliveries.external_id TEXT`, et les deux protections
+# `runner_triggers.max_per_day INT` (plafond journalier, optionnel) et
+# `runner_triggers.hook_slug TEXT` (adresse privée), NULL = le comportement d'avant.
+# Base existante par la révision Alembic `0022_signature_webhook` ou le démarrage
+# (`_init.py`, ADD COLUMN IF NOT EXISTS). ⚠️ Les index uniques de déduplication et
+# d'adresse ne sont PAS dans ce DDL (leurs colonnes naissent d'un ALTER que le DDL
+# précède, #450) : un commentaire le dit à leur place.
+# 179 669 → 181 284 (+1 615, commentaires compris).
+EMPREINTE = "6e0a67e03144393eb03cf2d5fd61e3b59b4508bc24fa436ead6cefb1ffff6078"
+LONGUEUR = 181284
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

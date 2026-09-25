@@ -45,6 +45,10 @@ REFUSE_PAUSED, REFUSE_TOO_LARGE, REFUSE_RATE = (
 #: horloge dérivée chez la source. Journalisé parce que la source a prouvé qui
 #: elle est — contrairement à une signature fausse, qui ne s'écrit pas.
 REFUSE_STALE = "refused_stale"
+#: Le PLAFOND journalier déclaré sur l'agent (`max_per_day`) est atteint : la
+#: livraison est REFUSÉE (429), pas retardée. C'est la borne de dépense d'un
+#: credential fuité, là où le lissage ne fait que repousser.
+REFUSE_DAILY_CAP = "refused_daily_cap"
 
 #: Ce qu'on rend du corps reçu quand on RELIT une livraison — borné parce qu'une
 #: page de livraisons en sert jusqu'à 200, et qu'un corps entier × 200 n'est plus
@@ -267,6 +271,32 @@ def enregistrer(conn, trigger_id: int, org_id: int, outcome: str,
          (external_id or None)),
     ).fetchone()
     return int(row["id"])
+
+
+def acceptees_sur_24h(conn, trigger_id: int) -> tuple[int, int]:
+    """Combien de livraisons ACCEPTÉES sur les 24 dernières heures, et dans combien
+    de secondes la plus ancienne d'entre elles sort de la fenêtre (`0` si aucune).
+
+    Fenêtre GLISSANTE, pas un jour calendaire : un plafond remis à zéro à minuit
+    laisserait passer deux plafonds en une heure, de part et d'autre de minuit.
+    Seules les acceptées comptent — un refus n'a coûté aucun déroulé.
+
+    ⚠️ Prend la connexion de l'appelant, APRÈS `verrouiller_le_declencheur` : deux
+    livraisons simultanées au bord du plafond se sérialisent, et une seule passe.
+    Borné par l'index `(trigger_id, received_at DESC)`.
+    """
+    row = conn.execute(
+        """
+        SELECT COUNT(*)::int AS n,
+               COALESCE(CEIL(EXTRACT(EPOCH FROM (MIN(received_at)
+                        + INTERVAL '24 hours' - NOW()))), 0)::int AS sortie_s
+          FROM runner_hook_deliveries
+         WHERE trigger_id = %s AND outcome IN ('queued', 'delayed')
+           AND received_at > NOW() - INTERVAL '24 hours'
+        """,
+        (trigger_id,),
+    ).fetchone()
+    return int(row["n"] or 0), max(0, int(row["sortie_s"] or 0))
 
 
 def livraison_acceptee(conn, trigger_id: int, external_id: str) -> Optional[dict]:

@@ -45,6 +45,10 @@ class TriggerInput(BaseModel):
                 "rotate_secret",
                 # Ce que ce déclencheur a reçu — le journal que l'écran lit.
                 "deliveries",
+                # Une adresse privée NEUVE : l'ancienne cesse d'ouvrir. Verbe séparé
+                # pour la même raison que `rotate_secret` : il CASSE la source en
+                # place tant qu'elle n'a pas la nouvelle adresse.
+                "rotate_address",
                 # VIDER la file : périme ce qui attend et rend les créneaux.
                 # Geste EXPLICITE, disponible à tout moment — en marche comme en
                 # pause. C'est le seul moyen de se débarrasser d'un arriéré, et
@@ -109,6 +113,29 @@ class TriggerInput(BaseModel):
     #: Au-delà de ce délai, un travail lissé ne part plus. Absent ou `0` = JAMAIS
     #: (le défaut) : un événement reçu part, même tard.
     freshness_seconds: Optional[int] = None
+    #: Le PLAFOND de livraisons acceptées sur 24 h glissantes. Absent = on ne
+    #: touche à rien ; `0` = le retirer (aucun plafond, le défaut).
+    max_per_day: Optional[int] = Field(
+        default=None,
+        description=(
+            "Webhook only, optional. At most this many events ACCEPTED per rolling "
+            "24 hours; beyond it the sender gets 429 `hook_daily_cap` (with "
+            "Retry-After) and no run starts — the spending bound if the agent's "
+            "credential leaks. Unlike `max_per_hour`, which only DELAYS, this "
+            "REFUSES. `0` removes the limit (the default: none)."))
+    #: L'adresse PRIVÉE : `true` en donne une à l'agent (et l'adresse numérique
+    #: cesse d'ouvrir), `false` la retire. Absent = on ne touche à rien.
+    private_address: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Webhook only. Every NEW webhook agent gets a random address "
+            "(`/api/hooks/h_…`, 128 bits), served as `hook_url`. An agent created "
+            "before that still has a numeric `/api/hooks/{id}`: `true` gives it a "
+            "random address, and the numeric one stops working — for good. The "
+            "address is NOT a credential: the bearer or signature is still "
+            "required. `false` is REFUSED (`numeric_address_retired`): a numeric id "
+            "can be enumerated and a sender stores a random URL just as well. To "
+            "replace a leaked address, `op=rotate_address`."))
     #: `deliveries` : combien de livraisons rendre.
     limit: Optional[int] = None
     with_input: Optional[bool] = Field(
@@ -206,6 +233,10 @@ class Trigger(BaseModel):
     hook_auth: Optional[str] = None
     #: Le secret de signature est-il posé ? JAMAIS le secret, ni son chiffré.
     signing_secret_set: Optional[bool] = None
+    #: Le plafond journalier déclaré, `null` = aucun.
+    max_per_day: Optional[int] = None
+    #: L'agent a-t-il une adresse privée ? (Elle est dans `hook_url`.)
+    private_address: Optional[bool] = None
     #: Ce que ce déclencheur a reçu sur 24 h : reçues, refusées, la dernière.
     #: `0` est un vrai zéro, jamais une absence de mesure.
     deliveries_24h: Optional[int] = None
@@ -351,7 +382,7 @@ def _outils_de_la_procedure(ctx: ResolvedCtx, slug: str) -> list[str]:
 
 
 _REGLAGES_WEBHOOK = ("payload_mode", "payload_fields", "max_per_hour",
-                     "freshness_seconds")
+                     "freshness_seconds", "max_per_day", "private_address")
 
 
 def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None:
@@ -383,6 +414,13 @@ def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None
                 "une automatisation horaire n'a pas de corps reçu ni de source à "
                 "lisser.")
         return
+    if inp.private_address is False:
+        raise AuthzDenied(
+            400, "numeric_address_retired",
+            "l'adresse numérique ne se choisit plus : un id se parcourt, et une "
+            "source stocke une adresse aléatoire aussi bien. Un webhook neuf naît "
+            "avec la sienne, un ancien y passe sans retour ; pour en changer après "
+            "une fuite, `op=rotate_address`.")
     stocke = actuel or {}
     mode = inp.payload_mode or stocke.get("payload_mode") or runner_hook.IGNORE
     champs = (inp.payload_fields if inp.payload_fields is not None
@@ -399,13 +437,15 @@ def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None
             f"`payload_fields` n'est lu qu'en `payload_mode=fields` (effectif : "
             f"`{mode}`) — posé ici, il serait inerte.")
     for champ, valeur in (("max_per_hour", inp.max_per_hour),
-                          ("freshness_seconds", inp.freshness_seconds)):
+                          ("freshness_seconds", inp.freshness_seconds),
+                          ("max_per_day", inp.max_per_day)):
         # `freshness_seconds=0` est une VALEUR (« ne périme jamais »), pas une
         # absence — d'où le test sur le signe et non sur la véracité.
         if valeur is not None and valeur < (1 if champ == "max_per_hour" else 0):
             raise AuthzDenied(400, "invalid_bound",
-                              f"`{champ}`={valeur} : un débit se compte (≥ 1), et "
-                              "une fraîcheur est une durée (≥ 0, `0` = jamais).")
+                              f"`{champ}`={valeur} : un débit se compte (≥ 1), une "
+                              "fraîcheur est une durée (≥ 0, `0` = jamais), et un "
+                              "plafond journalier se compte (≥ 0, `0` = aucun).")
 
 
 def _avec_hook(org_id: int, t: dict) -> dict:
@@ -428,10 +468,13 @@ def _avec_hook(org_id: int, t: dict) -> dict:
     base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
     compte = db.comptage_livraisons(t["id"], org_id)
     file = db.file_du_declencheur(t["id"], org_id)
+    # L'adresse privée REMPLACE l'id dans l'URL servie : c'est la seule qui ouvre.
+    adresse = t.get("hook_slug") or t["id"]
     return {**t,
             "hook_auth": t.get("hook_auth") or runner_hook.BEARER,
             "signing_secret_set": bool(t.get("signing_secret_set")),
-            "hook_url": f"{base}/api/hooks/{t['id']}",
+            "private_address": bool(t.get("hook_slug")),
+            "hook_url": f"{base}/api/hooks/{adresse}",
             "deliveries_24h": compte["recues_24h"],
             "deliveries_refused_24h": compte["refusees_24h"],
             "last_delivery": str(compte["derniere"]) if compte["derniere"] else None,
@@ -618,7 +661,19 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             payload_mode=inp.payload_mode or runner_hook.IGNORE,
             payload_fields=inp.payload_fields,
             max_per_hour=inp.max_per_hour,
-            fraicheur_s=inp.freshness_seconds)
+            fraicheur_s=inp.freshness_seconds,
+            # `0` = aucun plafond : stocké NULL, comme un agent qui n'en a jamais eu.
+            max_per_day=inp.max_per_day or None)
+        # ⚠️ Un webhook NAÎT avec une adresse privée, TOUJOURS (décidé le
+        # 25/09/2026) : l'id numérique se parcourt, et une source stocke une URL
+        # aléatoire aussi bien qu'une numérique — rien ne justifie de la choisir.
+        # (`private_address=false` est refusé plus haut, dans la validation.) Les
+        # agents posés avant gardent la leur : la changer dans leur dos casserait
+        # la source en place ; leur propriétaire la passe en privée, sans retour.
+        if webhook:
+            adresse = runner_hook.nouvelle_adresse()
+            db.poser_adresse_de_hook(t["id"], ctx.org_id, adresse)
+            t = {**t, "hook_slug": adresse}
         if webhook:
             db.poser_secret_de_hook(t["id"], ctx.org_id, hache)
             # Le secret en CLAIR, une seule fois. Il n'est pas stocké — seul son
@@ -646,6 +701,20 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         return {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
+
+    if inp.op == "rotate_address":
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if not t or (t.get("kind") or "schedule") != "webhook":
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+        # Donne une adresse privée à un agent qui n'en avait pas, ou la REMPLACE :
+        # dans les deux cas l'adresse d'avant (numérique ou privée) cesse d'ouvrir.
+        db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id,
+                                 runner_hook.nouvelle_adresse())
+        logger.warning("adresse de webhook RENOUVELÉE pour le déclencheur %s (org %s) "
+                       "par %s — la source en place cessera d'être acceptée",
+                       inp.trigger_id, ctx.org_id, ctx.sub)
+        return {"trigger": _avec_hook(ctx.org_id,
+                                      db.get_trigger(inp.trigger_id, ctx.org_id))}
 
     if inp.op == "rotate_secret":
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
@@ -782,10 +851,13 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         for c, col in (("payload_mode", "payload_mode"),
                        ("payload_fields", "payload_fields"),
                        ("max_per_hour", "max_per_hour"),
-                       ("freshness_seconds", "fraicheur_s")):
+                       ("freshness_seconds", "fraicheur_s"),
+                       ("max_per_day", "max_per_day")):
             v = getattr(inp, c)
             if v is not None:
-                champs[col] = v
+                # `max_per_day=0` RETIRE le plafond : stocké NULL, pas 0 — un 0
+                # stocké se lirait « aucune livraison acceptée ».
+                champs[col] = (v or None) if c == "max_per_day" else v
     if inp.cron is not None or inp.tz is not None:
         if not _actuel():
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
@@ -898,6 +970,15 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         if _actuel():
             _juger(_actuel())
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+    # L'adresse privée s'écrit APRÈS la retouche acceptée (un refus qui suivrait
+    # la laisserait posée par un appel échoué), puis on relit. SENS UNIQUE : on
+    # passe en privée, on n'en revient pas (`false` est refusé à la validation).
+    # Poser `true` sur un agent qui en a déjà une ne la change PAS — la remplacer
+    # est `rotate_address`, un geste qui casse la source et qui doit se dire.
+    if inp.private_address and not t.get("hook_slug"):
+        db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id,
+                                 runner_hook.nouvelle_adresse())
+        t = db.get_trigger(inp.trigger_id, ctx.org_id) or t
     return {"trigger": _avec_hook(ctx.org_id, t)}
 
 
@@ -1069,6 +1150,9 @@ CAPABILITIES += [
                           "l'org doit faire tourner ses agents sur SA clé de modèle "
                           "et ne l'a pas déposée : `create` et `update enabled=true` "
                           "sont refusés"),
+            DeclaredError(400, "numeric_address_retired",
+                          "`private_address=false` — l'adresse numérique d'un webhook "
+                          "ne se choisit plus ; `rotate_address` pour en changer"),
             DeclaredError(404, "trigger_not_found",
                           "automatisation inconnue dans l'org du porteur"),
             DeclaredError(403, "org_admin_required",

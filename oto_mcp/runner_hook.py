@@ -99,6 +99,36 @@ IGNORE, FIELDS, INLINE = "ignore", "fields", "inline"
 MODES = (IGNORE, FIELDS, INLINE)
 
 
+#: Le préfixe d'une adresse PRIVÉE. Un id numérique n'en porte jamais : la route
+#: distingue les deux sans ambiguïté.
+ADRESSE_PREFIX = "h_"
+
+
+def nouvelle_adresse() -> str:
+    """Une adresse privée : `h_` + 128 bits aléatoires (22 caractères url-safe).
+
+    ⚠️ Ce n'est PAS un credential — la preuve (porteur ou signature) reste exigée.
+    C'est ce qui retire à un inconnu la liste des agents : un id numérique se
+    parcourt (`/api/hooks/1`, `/2`…), 128 bits ne se parcourent pas."""
+    return ADRESSE_PREFIX + secrets.token_urlsafe(16)
+
+
+def resoudre_adresse(segment: str) -> tuple[Optional[int], bool]:
+    """`(trigger_id, par_adresse_privee)` pour le segment d'URL reçu.
+
+    Un id numérique se rend tel quel (sa validité se juge plus loin, avec la
+    preuve) ; une adresse privée se résout en base. Rien d'autre n'est une
+    adresse : `(None, False)`, et la route rend le même 404 que partout."""
+    if segment.startswith(ADRESSE_PREFIX):
+        if len(segment) > 64:
+            return None, True
+        return db.trigger_id_par_adresse(segment), True
+    try:
+        return int(segment), False
+    except (TypeError, ValueError):
+        return None, False
+
+
 def nouveau_secret() -> tuple[str, str]:
     """Un secret et son haché. Le clair n'est rendu qu'ICI, une fois — il n'est
     jamais stocké, jamais relu, jamais servi par une lecture."""
@@ -380,9 +410,18 @@ class HookRefus(Exception):
         self.issue, self.retry_after = issue, retry_after
 
 
+def _adresse_admise(t: dict, par_adresse_privee: bool) -> bool:
+    """Un agent qui a une adresse PRIVÉE n'ouvre plus par son id numérique.
+
+    Jugé APRÈS la preuve : sans credential, l'appelant n'apprend donc pas qu'une
+    adresse privée existe — il reçoit le même 404 que pour tout le reste."""
+    return par_adresse_privee or not t.get("hook_slug")
+
+
 def _authentifier(trigger_id: int, secret: Optional[str],
                   signature: Optional[SignatureRecue],
-                  source: Optional[str]) -> dict:
+                  source: Optional[str],
+                  par_adresse_privee: bool = False) -> dict:
     """Le déclencheur que CETTE preuve ouvre — porteur ou signature — ou un refus.
 
     ⚠️ **Chaque agent a UN mode, et l'autre preuve y est refusée.** Un agent en
@@ -435,6 +474,8 @@ def _authentifier(trigger_id: int, secret: Optional[str],
                 f"{TOLERANCE_HORODATAGE_S} s away from our clock. A delivery "
                 "is only accepted within that window: it cannot be replayed "
                 "later.")
+        if not _adresse_admise(t, par_adresse_privee):
+            raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
         return t
     if not secret:
         raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
@@ -445,12 +486,15 @@ def _authentifier(trigger_id: int, secret: Optional[str],
         # propriétaire, lui, voit `refused_secret` sur son écran — mais seulement
         # si l'id existe, donc on ne peut pas non plus journaliser ici.
         raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+    if not _adresse_admise(t, par_adresse_privee):
+        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
     return t
 
 
 def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                source: Optional[str] = None, *,
-               signature: Optional[SignatureRecue] = None) -> dict:
+               signature: Optional[SignatureRecue] = None,
+               par_adresse_privee: bool = False) -> dict:
     """LE geste : vérifier, lisser, enfiler. Rend ce que la route sérialise.
 
     Synchrone À DESSEIN — la route l'appelle dans un fil séparé (`run_in_threadpool`).
@@ -463,7 +507,7 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
     un travail perdu entre l'acquittement et l'écriture ne serait jamais rejoué —
     l'envoyeur a reçu un succès, il ne retentera pas.
     """
-    t = _authentifier(trigger_id, secret, signature, source)
+    t = _authentifier(trigger_id, secret, signature, source, par_adresse_privee)
     # L'identifiant de livraison que la source déclare — seul le mode signature
     # en porte un, et il est SIGNÉ : un tiers ne peut pas le forger pour faire
     # passer une livraison pour le doublon d'une autre.
@@ -507,62 +551,80 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                 return {"ok": True, "job_id": deja.get("job_id"),
                         "trigger_id": trigger_id, "delayed_seconds": None,
                         "duplicate": True}
-            debit = int(t.get("max_per_hour") or DEBIT_PAR_HEURE_DEFAUT)
-            # Le LISSAGE. Au-delà du débit, le travail ne part pas tout de suite :
-            # il prend le prochain créneau libre, DERRIÈRE ceux qui attendent déjà.
-            # Rien n'est refusé, rien n'est perdu — la source ne voit qu'un délai.
-            retard_s = db.retard_de_lissage(conn, trigger_id, debit, _FENETRE_S)
+            # Le PLAFOND journalier, s'il est déclaré — après la déduplication (une
+            # retentative d'une livraison acceptée ne compte pas deux fois) et
+            # AVANT le lissage : au-delà, on REFUSE, on ne retarde plus. C'est la
+            # borne de dépense d'un credential fuité ; le lissage, lui, ne fait
+            # que repousser, et la file n'a pas de fond.
+            plafond = t.get("max_per_day")
+            if plafond:
+                acceptees, sortie_s = db.acceptees_sur_24h(conn, trigger_id)
+                if acceptees >= int(plafond):
+                    db.enregistrer(conn, trigger_id, t["org_id"],
+                                   db.REFUSE_DAILY_CAP, source=source, **marque)
+                    refus = HookRefus(
+                        429, "hook_daily_cap",
+                        f"This agent accepts at most {plafond} events per 24 hours "
+                        "(its owner set this limit) and has reached it. Retry "
+                        "later, or ask its owner to raise `max_per_day`.",
+                        issue="daily_cap", retry_after=max(60, sortie_s))
+            if refus is None:
+                debit = int(t.get("max_per_hour") or DEBIT_PAR_HEURE_DEFAUT)
+                # Le LISSAGE. Au-delà du débit, le travail ne part pas tout de suite :
+                # il prend le prochain créneau libre, DERRIÈRE ceux qui attendent déjà.
+                # Rien n'est refusé, rien n'est perdu — la source ne voit qu'un délai.
+                retard_s = db.retard_de_lissage(conn, trigger_id, debit, _FENETRE_S)
 
-            fraicheur = t.get("fraicheur_s")
-            fraicheur = FRAICHEUR_S_DEFAUT if fraicheur is None else int(fraicheur)
-            if retard_s and fraicheur and retard_s > fraicheur:
-                # ⚠️ Ce qui partirait APRÈS sa péremption ne part pas du tout.
-                # Enfiler un travail dont on sait déjà qu'il sera périmé, c'est
-                # promettre une exécution qui n'aura pas lieu — le défaut que les
-                # occurrences programmées ont payé (#814), sous une autre forme.
-                db.enregistrer(conn, trigger_id, t["org_id"], db.REFUSE_RATE,
-                               source=source, **marque)
-                refus = HookRefus(
-                    429, "hook_rate_limited",
-                    f"This agent receives more than its rate ({debit}/h) and the "
-                    f"queue already exceeds its freshness window ({fraicheur}s): "
-                    "this delivery would no longer be relevant by the time it ran. "
-                    "Raise `max_per_hour` on the agent, or slow the sender down.",
-                    issue="rate", retry_after=retard_s)
-            else:
-                charge = {
-                    "procedure": t["procedure"],
-                    "project_id": t.get("project_id"),
-                    "tools": list(t.get("tools") or ()),
-                    "label": t.get("label") or f"webhook — {t['procedure']}",
-                    "max_steps": t.get("max_steps"),
-                    **_limites_du_run.charge(t.get("max_tokens"),
-                                             t.get("max_run_seconds")),
-                    "trigger_id": trigger_id,
-                    # Ce qui distingue une exécution déclenchée d'une exécution
-                    # programmée, pour qui relit la file plus tard.
-                    "hook": True,
-                    "input": instruction_augmentee(
-                        t.get("input") or "", corps,
-                        t.get("payload_mode") or IGNORE, t.get("payload_fields"),
-                        trigger_id=trigger_id),
-                    **runner_models.charge(t.get("model")),
-                }
-                job = db.enqueue_job(
-                    t["org_id"], "start", sub=t.get("sub"),
-                    payload={k: v for k, v in charge.items() if v is not None},
-                    delai_s=retard_s or None,
-                    # La péremption voyage AVEC le travail : c'est la réservation
-                    # qui la fait respecter, pas un balayage de fond qu'il faudrait
-                    # faire vivre.
-                    perime_apres_s=(fraicheur or None),
-                    conn=conn)
-                db.enregistrer(conn, trigger_id, t["org_id"],
-                               db.DELAYED if retard_s else db.QUEUED,
-                               job_id=job["id"], source=source, **marque,
-                               # Le créneau RÉSERVÉ, lu sur le travail même : c'est
-                               # lui que la livraison suivante lira pour se placer.
-                               due_at=job.get("due_at"))
+                fraicheur = t.get("fraicheur_s")
+                fraicheur = FRAICHEUR_S_DEFAUT if fraicheur is None else int(fraicheur)
+                if retard_s and fraicheur and retard_s > fraicheur:
+                    # ⚠️ Ce qui partirait APRÈS sa péremption ne part pas du tout.
+                    # Enfiler un travail dont on sait déjà qu'il sera périmé, c'est
+                    # promettre une exécution qui n'aura pas lieu — le défaut que les
+                    # occurrences programmées ont payé (#814), sous une autre forme.
+                    db.enregistrer(conn, trigger_id, t["org_id"], db.REFUSE_RATE,
+                                   source=source, **marque)
+                    refus = HookRefus(
+                        429, "hook_rate_limited",
+                        f"This agent receives more than its rate ({debit}/h) and the "
+                        f"queue already exceeds its freshness window ({fraicheur}s): "
+                        "this delivery would no longer be relevant by the time it ran. "
+                        "Raise `max_per_hour` on the agent, or slow the sender down.",
+                        issue="rate", retry_after=retard_s)
+                else:
+                    charge = {
+                        "procedure": t["procedure"],
+                        "project_id": t.get("project_id"),
+                        "tools": list(t.get("tools") or ()),
+                        "label": t.get("label") or f"webhook — {t['procedure']}",
+                        "max_steps": t.get("max_steps"),
+                        **_limites_du_run.charge(t.get("max_tokens"),
+                                                 t.get("max_run_seconds")),
+                        "trigger_id": trigger_id,
+                        # Ce qui distingue une exécution déclenchée d'une exécution
+                        # programmée, pour qui relit la file plus tard.
+                        "hook": True,
+                        "input": instruction_augmentee(
+                            t.get("input") or "", corps,
+                            t.get("payload_mode") or IGNORE, t.get("payload_fields"),
+                            trigger_id=trigger_id),
+                        **runner_models.charge(t.get("model")),
+                    }
+                    job = db.enqueue_job(
+                        t["org_id"], "start", sub=t.get("sub"),
+                        payload={k: v for k, v in charge.items() if v is not None},
+                        delai_s=retard_s or None,
+                        # La péremption voyage AVEC le travail : c'est la réservation
+                        # qui la fait respecter, pas un balayage de fond qu'il faudrait
+                        # faire vivre.
+                        perime_apres_s=(fraicheur or None),
+                        conn=conn)
+                    db.enregistrer(conn, trigger_id, t["org_id"],
+                                   db.DELAYED if retard_s else db.QUEUED,
+                                   job_id=job["id"], source=source, **marque,
+                                   # Le créneau RÉSERVÉ, lu sur le travail même : c'est
+                                   # lui que la livraison suivante lira pour se placer.
+                                   due_at=job.get("due_at"))
 
     if refus is not None:
         raise refus

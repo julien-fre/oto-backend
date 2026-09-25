@@ -162,3 +162,49 @@ def test_6_revenir_au_porteur_rend_un_porteur_NEUF_qui_ouvre(client, agent):
     ancien = client.post(f"/api/hooks/{agent['id']}", json={"note_id": "not_5"},
                          headers={"Authorization": f"Bearer {agent['porteur']}"})
     assert ancien.status_code == 404, "l'otoh_ d'avant la signature reste MORT"
+
+
+def test_7_adresse_privee_et_plafond_POSES_par_l_outil_tiennent_sur_la_route(client, agent):
+    """Posés par la face REST de `oto_trigger` (celle de l'écran), jugés par la
+    route qu'une source appelle."""
+    h = {"Authorization": f"Bearer {agent['membre']}"}
+    r = client.post("/api/me/runner/triggers", headers=h,
+                    json={"op": "update", "trigger_id": agent["id"],
+                          "private_address": True, "max_per_day": 1})
+    assert r.status_code == 200, r.text
+    url = r.json()["trigger"]["hook_url"]
+    adresse = url.rsplit("/", 1)[-1]
+    assert adresse.startswith("h_") and r.json()["trigger"]["max_per_day"] == 1
+    rot = client.post("/api/me/runner/triggers", headers=h,
+                      json={"op": "rotate_secret", "trigger_id": agent["id"]})
+    jeton = rot.json()["hook_secret"]
+    auth = {"Authorization": f"Bearer {jeton}"}
+    # L'id numérique n'ouvre plus, même avec le bon porteur.
+    assert client.post(f"/api/hooks/{agent['id']}", json={}, headers=auth).status_code == 404
+    # L'adresse privée ouvre — mais le test 6 a déjà accepté une livraison dans les
+    # 24 h, et le plafond est 1 : la suivante est REFUSÉE.
+    r = client.post(f"/api/hooks/{adresse}", json={}, headers=auth)
+    assert r.status_code == 429 and r.json()["error"] == "hook_daily_cap"
+    assert int(r.headers["retry-after"]) >= 60
+    # Plafond retiré : la même livraison passe.
+    client.post("/api/me/runner/triggers", headers=h,
+                json={"op": "update", "trigger_id": agent["id"], "max_per_day": 0})
+    assert client.post(f"/api/hooks/{adresse}", json={}, headers=auth).status_code == 202
+
+
+def test_8_un_webhook_CREE_par_la_route_nait_avec_une_adresse_privee(client, agent):
+    """L'adresse aléatoire dès le premier jour — et l'id numérique fermé d'emblée."""
+    from oto_mcp import db
+    db.claim_next_job(None, "worker:banc-signature", depot="anthropic")
+    h = {"Authorization": f"Bearer {agent['membre']}"}
+    r = client.post("/api/me/runner/triggers", headers=h,
+                    json={"op": "create", "kind": "webhook", "procedure": "neuf-prive",
+                          "tools": ["a"], "model": "claude-sonnet-5"})
+    assert r.status_code == 200, r.text
+    t, jeton = r.json()["trigger"], r.json()["hook_secret"]
+    assert t["private_address"] is True
+    adresse = t["hook_url"].rsplit("/", 1)[-1]
+    assert adresse.startswith("h_")
+    auth = {"Authorization": f"Bearer {jeton}"}
+    assert client.post(f"/api/hooks/{t['id']}", json={}, headers=auth).status_code == 404
+    assert client.post(f"/api/hooks/{adresse}", json={}, headers=auth).status_code == 202
