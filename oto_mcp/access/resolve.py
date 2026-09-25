@@ -104,9 +104,15 @@ def _note_resolved_instance(rc: ResolvedCredential) -> ResolvedCredential:
         # ⚠️ Le `mode` et pas `is_platform` : le booléen écrase user/group/org/
         # tenant en un seul « non », alors que ce sont quatre origines qu'une
         # facture peut avoir à distinguer.
+        # `credential_row` = la ligne du coffre ELLE-MÊME (pas son ref) : c'est ce
+        # que le suivi de santé marque quand l'amont refuse faute de crédits, et
+        # efface au premier succès (`connectors.health.suivre_appel`). Ni journalisé
+        # (hors `_TRACED_ARGS`) ni facturé.
         session_org.note_call_trace(instance=ref, resolved_connector=rc.provider,
                                     resolved_account=rc.account,
-                                    key_mode=rc.mode)
+                                    key_mode=rc.mode,
+                                    credential_row=(rc.entity_type, rc.entity_id,
+                                                    rc.provider, rc.account or ""))
     except Exception:  # noqa: BLE001
         logger.debug("relevé d'instance échoué", exc_info=True)
     return rc

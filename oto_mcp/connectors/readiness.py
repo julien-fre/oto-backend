@@ -39,7 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from .. import links, status_hints
+from .. import credentials_store, links, status_hints
 
 # Jetons machine stables (l'ordre est celui de l'évaluation, cf. `diagnose`).
 PAID_OPTION_OFF = "paid_option_off"      # couche 3 — l'option n'est pas levée
@@ -147,6 +147,16 @@ def diagnose(sub: str, connector: str, *, org, group) -> Optional[Diagnosis]:
     # résultat, quel qu'en soit l'écrivain : ça n'a jamais eu à changer pour ça, et
     # c'est le point.
     rejet = access.credential_rejection_for(sub, connector, org=org, group=group)
+    if rejet and rejet.startswith(credentials_store.NO_QUOTA_REASON_PREFIX):
+        # Crédits épuisés : la clé est BONNE, c'est le compte qui est à sec. Dire
+        # « repose-la » enverrait reposer la même clé, qui échouerait pareil.
+        qui = ("" if mode == "user" else
+               f" C'est une clé de palier `{mode}` : c'est son titulaire qui recharge.")
+        return Diagnosis(CREDENTIAL_REJECTED, (
+            f"La clé `{porteur}` qui résout pour toi ici est À SEC chez le fournisseur : "
+            f"{rejet}. Recharge les crédits du compte chez `{porteur}`, ou pose une "
+            f"autre clé.{qui} Le constat se lève tout seul au premier appel réussi, ou "
+            f"en rejouant `oto_instance op=verify`."))
     if rejet:
         ou = (f"Repose-la{links.ou_poser_la_cle(sub, org=org, connecteur=porteur)}."
               if mode == "user" else

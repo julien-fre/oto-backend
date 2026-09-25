@@ -77,11 +77,31 @@ def _upstream_message(e) -> str:
     return f"TheirStack a refusé la requête (HTTP {status}): {e.body}"
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
-    """Sonde « tester la connexion » : le solde de crédits — l'appel authentifié
-    GRATUIT (une recherche, même `limit=1`, dépenserait des crédits)."""
+def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
+    """Sonde « tester la connexion » — couvre `auth+quota` : le solde de crédits,
+    l'appel authentifié GRATUIT (une recherche, même `limit=1`, dépenserait des
+    crédits). Le solde était lu puis JETÉ : un compte à sec gardait une sonde verte.
+
+    Réponse documentée (`GET /v0/billing/credit-balance`) : `api_credits`,
+    `used_api_credits`, `ui_credits`, `used_ui_credits`, `earliest_expiration`. La doc
+    ne dit pas si `api_credits` est le RESTANT ou l'ALLOCATION : on ne conclut donc
+    « à sec » que sur `api_credits <= 0`, vrai sous les deux lectures, et on rend les
+    deux chiffres tels quels plutôt qu'un restant calculé qui pourrait mentir.
+    """
     from oto.tools.theirstack.client import TheirStackClient
-    TheirStackClient(api_key=fields["key"]).credit_balance()
+
+    solde = TheirStackClient(api_key=fields["key"]).credit_balance()
+    api = solde.get("api_credits") if isinstance(solde, dict) else None
+    if not isinstance(api, int):
+        raise RuntimeError(
+            f"TheirStack a répondu sans solde de crédits API lisible : {str(solde)[:200]}")
+    if api <= 0:
+        raise connector_verify.QuotaEpuise(
+            "La clé TheirStack est bonne, mais le compte n'a plus de crédits API. "
+            "Recharge le compte chez TheirStack — reconnecter n'y changerait rien.")
+    return {"quota": {"api_credits": api,
+                      "used_api_credits": solde.get("used_api_credits"),
+                      "unite": "crédits API"}}
 
 
 def _clean_names(names: Optional[list[str]], what: str) -> list[str]:
@@ -175,7 +195,7 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.common.errors import UpstreamHTTPError
     from oto.tools.theirstack.client import TheirStackClient
 
-    connector_verify.register("theirstack", _verify)
+    connector_verify.register("theirstack", _verify, couvre=connector_verify.AUTH_QUOTA)
 
     def _client() -> tuple[TheirStackClient, bool]:
         key, is_platform = access.resolve_api_key("theirstack")

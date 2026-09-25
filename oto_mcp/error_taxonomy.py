@@ -360,6 +360,11 @@ class ErrorInfo:
     connector: Optional[str] = None
 
 
+#: La conduite rendue avec `quota_exhausted` (402) : rien à corriger dans l'appel.
+QUOTA_HINT = ("inutile de réessayer ni de corriger l'appel : le compte du fournisseur "
+              "est à sec — recharge ses crédits chez le fournisseur, ou pose une autre clé")
+
+
 # net::ERR_* (erreurs Chromium crues) — remplacent tout le message (aucune info utile).
 _NET_ERR = re.compile(r"net::ERR_[A-Z_]+")
 # Routes internes (« Cannot GET /api/v1/… », chemins d'API) — fuite de topologie serveur.
@@ -406,6 +411,20 @@ def classify(exc, parametres: Optional[list] = None) -> ErrorInfo:
     rejetés ; (3) statut HTTP amont (timeout/rate-limit/not-found/authz/4xx/5xx) ;
     (4) timeout non typé ; (5) reste = interne — **aucun écho du `str(exc)`** (anti-fuite).
     """
+    # (0) Crédits épuisés : un 402 amont, où qu'il soit dans la chaîne — y compris
+    # sous la `McpError` curée qu'un outil lève dans son `except` (theirstack, AI Ark
+    # le font). Sans ça, le curage l'emportait et l'agent recevait `invalid_input` :
+    # « corrige ton appel », sur un appel qui était juste et un compte à sec. Le message
+    # curé est gardé (il dit déjà quoi faire) ; le CODE dit la catégorie, et c'est lui
+    # que l'enveloppe lit pour marquer la clé servie (`connectors.health`).
+    if upstream_status_in_chain(exc) == 402:
+        curated = next((((getattr(e.error, "message", None) or "").strip())
+                        for e in _chain(exc) if isinstance(e, McpError)), "")
+        return ErrorInfo("quota_exhausted", False,
+                         curated or scrub(_first_upstream_message(exc))
+                         or "Crédits épuisés côté service amont.",
+                         QUOTA_HINT)
+
     # (1) McpError curée par un tool/capacité : message déjà agent-facing.
     for e in _chain(exc):
         if isinstance(e, McpError):

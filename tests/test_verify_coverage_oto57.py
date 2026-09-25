@@ -81,6 +81,8 @@ QUOTA_AUTORISE = {
     "lusha",
     # `tests/test_sonde_aiark.py::test_un_compte_a_SEC_est_un_refus_de_QUOTA_pas_d_AUTH`
     "aiark",
+    # `tests/test_credits_epuises_quota_exhausted.py::test_la_sonde_theirstack_a_sec_rend_no_quota`
+    "theirstack",
 }
 
 

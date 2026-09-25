@@ -258,8 +258,10 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
     # rangée sous `unipile`, jamais sous `linkedin_unipile` — écrire au nom NU
     # viserait une ligne qui n'existe pas et `update_meta` échouerait en silence
     # (0 ligne touchée, aucune exception). Même normalisation que `probe_for`.
+    # Le VERDICT persiste aussi (`no_quota`/`unauthorized`/`unknown`) : c'est lui qui
+    # fait dire à la carte « recharge » plutôt que « repose la clé » (`readiness`).
     connector_health.record_health(providers.credential_provider(inp.provider),
-                                   scope, ok, error)
+                                   scope, ok, error, None if ok else verdict)
     out = {"ok": ok, "provider": inp.provider,
            "elapsed_ms": int((time.monotonic() - started) * 1000),
            # Ce que ce verdict VAUT : servi avec lui, jamais à côté. Un client qui

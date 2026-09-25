@@ -36,7 +36,7 @@ def vault(monkeypatch):
 def test_record_health_marque_le_rejet(vault):
     health.record_health("linear", ("member", "2:sub-x", ""), False, "invalid_grant")
     assert vault[("member", "2:sub-x", "linear", "")] == {
-        "health_ko": True, "health_reason": "invalid_grant"}
+        "health_ko": True, "health_reason": "invalid_grant", "health_verdict": None}
 
 
 def test_record_health_demarque_sur_succes(vault):
@@ -46,7 +46,7 @@ def test_record_health_demarque_sur_succes(vault):
         "health_ko": True, "health_reason": "invalid_grant"}
     health.record_health("linear", ("member", "2:sub-x", ""), True, None)
     assert vault[("member", "2:sub-x", "linear", "")] == {
-        "health_ko": False, "health_reason": None}
+        "health_ko": False, "health_reason": None, "health_verdict": None}
 
 
 def test_record_health_scope_none_est_un_noop(vault):

@@ -6,8 +6,9 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData
 from starlette.concurrency import run_in_threadpool
 
-from .. import error_taxonomy
+from .. import error_taxonomy, session_org
 from ..auth.hooks import current_user_sub_from_token
+from ..connectors import health as connector_health
 
 
 def _reachable_suffix(connector: str) -> str:
@@ -58,7 +59,7 @@ class ErrorEnvelopeMiddleware(Middleware):
 
     async def on_call_tool(self, context, call_next):
         try:
-            return await call_next(context)
+            result = await call_next(context)
         except Exception as e:
             parametres: list = []
             if error_taxonomy._is_arg_validation_error(e):
@@ -83,6 +84,16 @@ class ErrorEnvelopeMiddleware(Middleware):
                 # noqa: SILENT — dette déclarée : le hint « une clé existe à portée » disparaît (#424, verdict C)
                 except Exception:  # noqa: BLE001
                     pass
+            # Crédits épuisés : la clé qui a servi CET appel passe au rouge sur sa
+            # fiche (« recharge »), sauf clé plateforme/tenant — garde de portée de
+            # `connectors.health`. Le relevé est encore posé ici : `CallContext`
+            # (plus externe) ne le défait qu'après nous.
+            if info.code == "quota_exhausted":
+                trace = session_org.current_call_trace()
+                fournisseur = (trace or {}).get("resolved_connector")
+                if fournisseur:
+                    hint = f"{hint} — chez `{fournisseur}`"
+                await connector_health.suivre_appel(trace, info.message)
             if hint:
                 data["hint"] = hint
             raise McpError(ErrorData(
@@ -90,3 +101,7 @@ class ErrorEnvelopeMiddleware(Middleware):
                 message=info.message,
                 data={"oto": data},
             )) from e
+        # Succès : une marque « crédits épuisés » de la clé servie est levée (une seule
+        # écriture conditionnelle par clé et par process — cf. `connectors.health`).
+        await connector_health.suivre_appel(session_org.current_call_trace(), None)
+        return result

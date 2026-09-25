@@ -643,7 +643,9 @@ def test_a_client_refusal_becomes_a_named_invalid_params(fake, cle, status):
         _outil("monid_wallet")()
     assert e.value.error.code == INVALID_PARAMS
     assert "req-banc" in e.value.error.message
-    assert classify(e.value).code == "invalid_input"
+    # 402 = portefeuille à sec : `quota_exhausted` (recharger, pas corriger l'appel).
+    attendu = "quota_exhausted" if status == 402 else "invalid_input"
+    assert classify(e.value).code == attendu
 
 
 @pytest.mark.parametrize("status, code", [(429, "rate_limited"), (500, "upstream_5xx"),

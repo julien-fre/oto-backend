@@ -810,6 +810,15 @@ def instance_suspended(entity_type: str, entity_id: str, connector: str, account
     return bool(row) and row["s"] == "true"
 
 
+#: Verdict de santé « la clé authentifie, le compte est à sec » (`meta.health_verdict`).
+#: Même nom que le verdict de la sonde (`connectors.verify.NO_QUOTA`).
+NO_QUOTA_VERDICT = "no_quota"
+#: Tête de la raison rendue par `credential_health` quand le verdict est `no_quota` :
+#: c'est ce qui fait dire à la carte connecteur « recharge » et non « repose la clé »
+#: (`connectors/readiness`), sans changer la forme (une chaîne) que ses lecteurs lisent.
+NO_QUOTA_REASON_PREFIX = "crédits épuisés"
+
+
 def credential_health(entity_type: str, entity_id: str, connector: str,
                       account: str = "") -> Optional[str]:
     """La raison du REJET enregistrée sur cette ligne de coffre, ou `None` si elle va
@@ -825,7 +834,8 @@ def credential_health(entity_type: str, entity_id: str, connector: str,
     fournisseur envoie chercher à l'aveugle."""
     with _connect() as c:
         row = c.execute(
-            "SELECT meta->>'health_ko' AS ko, meta->>'health_reason' AS why "
+            "SELECT meta->>'health_ko' AS ko, meta->>'health_reason' AS why, "
+            "meta->>'health_verdict' AS verdict "
             "FROM connector_credentials "
             "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=%s",
             (entity_type, entity_id, connector, account)).fetchone()
@@ -833,7 +843,27 @@ def credential_health(entity_type: str, entity_id: str, connector: str,
         return None
     # Un rejet sans motif reste un rejet : on le NOMME plutôt que de le taire, sinon
     # `health_ko` vrai + `health_reason` nul se lirait comme une clé saine.
-    return row["why"] or "rejetée au dernier test (motif non conservé)"
+    why = row["why"] or "rejetée au dernier test (motif non conservé)"
+    if row["verdict"] == NO_QUOTA_VERDICT:
+        return f"{NO_QUOTA_REASON_PREFIX} : {why}"
+    return why
+
+
+def clear_health_if_verdict(entity_type: str, entity_id: str, connector: str,
+                            account: str, *, verdict: str) -> bool:
+    """Lève la marque de santé de cette ligne SEULEMENT si son verdict est `verdict`
+    (UNE écriture conditionnelle, aucune si la ligne est saine ou porte un autre
+    rejet). True si une ligne a été démarquée. Même forme que le démarquage de la
+    sonde (`health_ko: false`, raison et verdict nuls)."""
+    with _connect() as c:
+        cur = c.execute(
+            "UPDATE connector_credentials SET meta = meta || %s::jsonb "
+            "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=%s "
+            "AND meta->>'health_ko' = 'true' AND meta->>'health_verdict' = %s",
+            (json.dumps({"health_ko": False, "health_reason": None,
+                         "health_verdict": None}),
+             entity_type, entity_id, connector, account, verdict))
+        return (cur.rowcount or 0) > 0
 
 
 def update_meta(entity_type: str, entity_id: str, connector: str, account: str,

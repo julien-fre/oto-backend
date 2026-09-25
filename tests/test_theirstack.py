@@ -271,6 +271,8 @@ def test_upstream_422_names_the_required_filters():
 
 def test_verify_probe_uses_the_free_credit_balance_call():
     with patch("oto.tools.theirstack.client.TheirStackClient") as cls:
+        cls.return_value.credit_balance.return_value = {"api_credits": 10,
+                                                        "used_api_credits": 2}
         from oto_mcp.tools import theirstack
         theirstack._verify({"key": "k"}, {})
     cls.assert_called_once_with(api_key="k")

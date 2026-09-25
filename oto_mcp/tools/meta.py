@@ -28,6 +28,7 @@ from .. import (access, call_axes, calllog, db, deprecations, error_taxonomy, gu
                 tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..connectors import activation_gate
+from ..connectors import health as connector_health
 from ..tool_visibility import (
     PROTECTED_TOOLS,
     is_default_hidden,
@@ -563,7 +564,12 @@ def register(mcp: FastMCP) -> None:
             # l'agent, alors que le même outil appelé normalement voit son message
             # scrubbé (oto-backend#566).
             ok, err = False, str(e)[:calllog.MAX_ERROR_CHARS]
-            message = error_taxonomy.classify(e).message
+            info = error_taxonomy.classify(e)
+            message = info.message
+            # Même suivi de santé que l'enveloppe (`ErrorEnvelopeMiddleware`), que ce
+            # chemin hors chaîne ne traverse pas : la clé servie à la CIBLE est marquée.
+            if info.code == "quota_exhausted":
+                await connector_health.suivre_appel(target_trace, message)
             # `tool` reprend le nom DEMANDÉ : l'agent le relit pour réessayer, et un
             # nom qu'il n'a jamais tapé le ferait douter de sa propre requête.
             return {"tool": demande, "ok": False, "error": message}
@@ -582,15 +588,22 @@ def register(mcp: FastMCP) -> None:
             # L'écho rendu à l'agent (`resolved_account`/`resolved_connector`, lus par
             # `CallContextMiddleware` dans le relevé ENVELOPPE) doit survivre ; seules
             # les clés qui facturent restent sur la ligne de la cible.
+            # `credential_row` reste aussi à la cible : remontée dans le relevé
+            # enveloppe, elle ferait EFFACER par l'enveloppe (qui voit `oto_call`
+            # réussir) la marque « crédits épuisés » que la cible vient de poser.
             if outer_trace is not None:
                 outer_trace.update({k: v for k, v in target_trace.items()
-                                    if k not in _BILLING_TRACE_KEYS})
+                                    if k not in _BILLING_TRACE_KEYS
+                                    and k != "credential_row"})
             for _reset, _tok in reversed(undo):
                 _reset(_tok)
             await _trace_target_call(sub, name, args, ok, err,
                                      int((time.monotonic() - started) * 1000),
                                      trace=target_trace, org_id=target_org,
                                      run_id=target_run)
+
+        # Succès de la cible : une marque « crédits épuisés » de SA clé est levée.
+        await connector_health.suivre_appel(target_trace, None)
 
         # Rédaction ré-appliquée (ADR 0036 §2) via la logique PARTAGÉE fail-closed —
         # sinon un connecteur à PII surfacé par oto_call fuiterait (le middleware a vu

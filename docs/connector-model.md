@@ -269,6 +269,35 @@ Le constat se **lève** en rejouant `op=verify` (un succès écrit `health_ko: f
 en reposant la clé (une repose réécrit `meta`). C'est dit dans le `next_step`, parce
 qu'un état qui ne sait pas s'effacer devient un faux positif permanent.
 
+#### Crédits épuisés, vus à l'APPEL (`quota_exhausted`, 25/09/2026)
+
+La sonde classait déjà un 402 en `no_quota`, mais personne ne la rejoue avant de
+travailler : un agent tombait sur « crédits épuisés » en plein travail (theirstack,
+AI Ark…), recevait `invalid_input` (« corrige ton appel »), et la carte restait verte —
+13 signaux avant ce lot. Désormais :
+
+- **la taxonomie** (`error_taxonomy.classify`, cran 0) classe tout **402** amont en
+  `quota_exhausted`, non rejouable, **même sous la `McpError` curée** qu'un outil lève
+  dans son `except` (son message est gardé ; le code dit la catégorie) ;
+- **l'enveloppe** (`ErrorEnvelopeMiddleware`, et `oto_call` qui court-circuite la
+  chaîne) marque alors la ligne du coffre **qui a servi l'appel** — le relevé porte
+  `credential_row`, posé par le résolveur unique — avec `meta.health_verdict =
+  "no_quota"` (`connectors.health.suivre_appel`). Garde de portée inchangée : une clé
+  **plateforme ou tenant n'est jamais marquée** (l'agent reçoit quand même
+  `quota_exhausted`) ;
+- **le premier appel réussi** sur cette clé lève la marque : une seule écriture
+  conditionnelle (`credentials_store.clear_health_if_verdict`) par clé et par process,
+  hors de la boucle — jamais une autre marque (`unauthorized` ne se lève qu'à la sonde
+  ou à la repose) ;
+- **la carte** (`readiness`) lit le verdict : « à sec, recharge chez le fournisseur »
+  plutôt que « repose la clé » (`credential_health` préfixe la raison par
+  `NO_QUOTA_REASON_PREFIX`) ; la sonde `op=verify` persiste aussi son verdict classé.
+
+Un 403 n'est **pas** lu comme un solde vide : c'est un rejet de clé, sauf chez un
+fournisseur qui le déclarerait (aucun à ce jour). Limite connue : AI Ark refuse par
+point d'accès, une clé peut donc être marquée « à sec » alors qu'un autre point d'accès
+répond encore.
+
 ⚠️ **`ready` n'inclut PAS l'état de sélection** (`not_selected` / `paused`), et c'est
 volontaire : un connecteur non sélectionné reste **appelable par `oto_call`** (dispatch
 universel, ADR 0036). La sélection gouverne la **visibilité** des outils, jamais
