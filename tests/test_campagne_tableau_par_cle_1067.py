@@ -74,6 +74,8 @@ def _tableau(owner: tuple, nom: str, lignes: int) -> int:
 
 def _fleets(m, **kw) -> dict:
     from oto_mcp.capabilities import runner_fleets as RF
+    if kw.get("op") == "create":
+        kw.setdefault("model", "claude-sonnet-5")
     return RF._fleets(ResolvedCtx(sub=m["moi"], org_id=m["org"]), RF.FleetInput(**kw))
 
 

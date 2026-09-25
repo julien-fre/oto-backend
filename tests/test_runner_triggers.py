@@ -36,6 +36,9 @@ def _ctx(sub="alexis", org_id=2):
 
 
 def _appel(ctx, **kw):
+    # Un agent hébergé déclare son modèle (24/09/2026) : sa règle a son banc.
+    if kw.get("op") == "create":
+        kw.setdefault("model", "claude-sonnet-5")
     return asyncio.run(RT._triggers(ctx, RT.TriggerInput(**kw)))
 
 
@@ -92,7 +95,8 @@ def test_create_valide_puis_pose_avec_le_fuseau_par_defaut(monkeypatch):
     # ce test-ci parle du fuseau, on lui donne l'org servie qu'il suppose.
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": True, "workers": 1,
-                                     "last_seen": "2026-09-02 07:00:00"})
+                                     "last_seen": "2026-09-02 07:00:00",
+                                     "families": ["anthropic"]})
     # ⚠️ Un objet ne porte qu'UN agent : la création lit d'abord ce qui
     # existe. Sans doublure, ce banc irait interroger la vraie base.
     monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])

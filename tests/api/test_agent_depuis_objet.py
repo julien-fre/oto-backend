@@ -80,9 +80,20 @@ def org(live):
     oid = org_store.create_org("Org des objets", created_by=membre)
     org_store.add_org_member(oid, membre, "org_admin")
     org_store.set_active_org(membre, oid)
-    # Un worker a sondé : sans ça le serveur refuse de PROMETTRE une exécution.
+    # Un worker a sondé : sans ça le serveur refuse de PROMETTRE une exécution. Il
+    # nomme son dépôt, pour servir la famille du modèle que chaque agent déclare
+    # désormais (24/09/2026) — ligne retirée à la sortie : la table est globale.
     db.claim_next_job(oid, "worker-du-banc")
-    return {"id": oid, "membre": membre}
+    # Seul un worker de PLATEFORME déclare une famille servie (`runner_arme`).
+    db.claim_next_job(None, "worker:banc-objet", depot="mistral")
+    yield {"id": oid, "membre": membre}
+    from oto_mcp.db._conn import _connect
+    with _connect() as c:
+        c.execute("DELETE FROM runner_platform_depots WHERE worker_sub = %s",
+                  ("worker:banc-objet",))
+        c.execute("DELETE FROM runner_platform_workers WHERE worker_sub = %s",
+                  ("worker:banc-objet",))
+        c.commit()
 
 
 @pytest.fixture(scope="module")
@@ -102,7 +113,7 @@ def test_les_outils_se_DEDUISENT_de_la_procedure(client, org, procedure):
     """⚠️ LE test du lot. Aucune liste d'outils n'est fournie : le serveur lit
     ceux que la procédure cite."""
     r = client.post(ROUTE, headers=_h(org["membre"]),
-                    json={"op": "create", "procedure": procedure, "cron": "0 7 * * *"})
+                    json={"op": "create", "model": "mistral-small-2603", "procedure": procedure, "cron": "0 7 * * *"})
     assert r.status_code == 200, r.text
     outils = r.json()["trigger"]["tools"]
     assert set(outils) == {"data_rows", "data_write", "oto_doc"}, (
@@ -124,7 +135,7 @@ def test_UN_SEUL_agent_par_objet(client, org, procedure):
     """Deux agents sur le même objet, c'est deux réponses à « est-ce que ça
     tourne ? », et l'écran devrait en choisir une."""
     r = client.post(ROUTE, headers=_h(org["membre"]),
-                    json={"op": "create", "procedure": procedure, "cron": "0 9 * * *"})
+                    json={"op": "create", "model": "mistral-small-2603", "procedure": procedure, "cron": "0 9 * * *"})
     assert r.status_code == 409, r.text
     corps = r.json()
     assert corps["error"] == "already_scheduled"
@@ -149,7 +160,7 @@ def test_une_procedure_SANS_outil_cite_est_refusee_avec_la_raison(client, org):
     db.set_guide_db("org", str(org["id"]), "note-sans-outil",
                     "Réfléchis et conclus.", title="Note")
     r = client.post(ROUTE, headers=_h(org["membre"]),
-                    json={"op": "create", "procedure": "note-sans-outil",
+                    json={"op": "create", "model": "mistral-small-2603", "procedure": "note-sans-outil",
                           "cron": "0 8 * * *"})
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
@@ -164,7 +175,7 @@ def test_une_liste_FOURNIE_gagne_sur_la_deduction(client, org):
     db.set_guide_db("org", str(org["id"]), "avec-outils",
                     "Utilise <tool:data_rows>.", title="Avec outils")
     r = client.post(ROUTE, headers=_h(org["membre"]),
-                    json={"op": "create", "procedure": "avec-outils",
+                    json={"op": "create", "model": "mistral-small-2603", "procedure": "avec-outils",
                           "cron": "0 10 * * *", "tools": ["oto_kb"]})
     assert r.status_code == 200, r.text
     assert r.json()["trigger"]["tools"] == ["oto_kb"]

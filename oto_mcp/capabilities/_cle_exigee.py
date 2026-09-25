@@ -110,11 +110,11 @@ def exiger_a_la_pose(org_id: int, famille: Optional[str] = None) -> None:
     `anthropic` a refusé la pose de flottes déclarées `mistral-large-2512`, dans
     une org qui n'avait — à raison — déposé aucune clé Anthropic.
 
-    `famille=None` (agent sans modèle, ou modèle hors catalogue) : **rien n'est
-    exigé**. Un travail sans famille est servi par un worker ORDINAIRE sur son
-    propre modèle — jamais par un worker « clés clients seules »
-    (`famille_seule`, capabilities/runner_jobs.py), qui ne prend jamais un
-    travail sans famille. Aucune clé d'org n'est donc jamais en jeu pour lui.
+    `famille=None` (modèle hors catalogue) : **rien n'est exigé ici**. Un agent
+    SANS modèle n'arrive plus jusqu'ici : il est refusé à la pose
+    (`_modele.exige_un_modele`, 24/09/2026) et arrêté à la réservation
+    (`runner_jobs._avec_cle`) — sans cela il tournait sur le modèle du worker,
+    donc sur notre clé, sans qu'aucune clé d'org ne soit en jeu.
 
     ⚠️ La garde à la RÉSERVATION (`refuser_pour_identite`, arrêt définitif) reste
     la vraie garantie et n'est PAS touchée par ce lot : elle juge le travail

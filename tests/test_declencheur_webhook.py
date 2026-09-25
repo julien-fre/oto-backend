@@ -34,6 +34,9 @@ def _ctx(sub="alexis", org_id=ORG):
 
 
 def _appel(**kw):
+    # Un agent hébergé déclare son modèle (24/09/2026) : sa règle a son banc.
+    if kw.get("op") == "create":
+        kw.setdefault("model", "claude-sonnet-5")
     return asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(**kw)))
 
 
@@ -537,7 +540,7 @@ def retouche(monkeypatch):
     """Un webhook en base, et ce qu'`update` écrit."""
     vu = {}
     stocke = {"id": 5, "org_id": ORG, "kind": "webhook", "enabled": False,
-              "cron": None, "tz": "UTC", "model": None,
+              "cron": None, "tz": "UTC", "model": "claude-sonnet-5",
               "payload_mode": "ignore", "payload_fields": None}
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(stocke))
     monkeypatch.setattr(RT.db, "update_trigger",

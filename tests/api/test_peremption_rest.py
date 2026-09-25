@@ -224,7 +224,25 @@ def test_supprimer_perime_avant_de_supprimer(client, org):
     assert compte["expired_count"] == 1
 
 
-def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
+#: Le modèle du déclencheur rallumé ci-dessous, et sa famille servie.
+MODELE_SERVI, MODELE_SERVI_FAMILLE = "mistral-small-2603", "mistral"
+
+
+@pytest.fixture
+def famille_servie(live):
+    """Déclare une famille servie par un worker de PLATEFORME propre au banc — ses
+    lignes de présence sont retirées à la sortie (la table est globale)."""
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    sub = "worker:banc-peremption"
+    yield lambda famille: db.claim_next_job(None, sub, depot=famille)
+    with _connect() as c:
+        c.execute("DELETE FROM runner_platform_depots WHERE worker_sub = %s", (sub,))
+        c.execute("DELETE FROM runner_platform_workers WHERE worker_sub = %s", (sub,))
+        c.commit()
+
+
+def test_rallumer_ne_produit_aucune_execution_immediate(client, org, famille_servie):
     """⚠️ La CONSÉQUENCE observable, pas le mécanisme : un déclencheur éteint deux
     semaines, rallumé, ne doit produire AUCUNE exécution immédiate.
 
@@ -240,7 +258,7 @@ def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
     t = db.create_trigger(
         org["id"], org["membre"], procedure="veille-du-soir", cron="0 18 * * *",
         tz="Europe/Paris", next_due=passe, tools=["data_write"],
-        label="éteinte depuis deux semaines")
+        label="éteinte depuis deux semaines", model=MODELE_SERVI)
     db.update_trigger(t["id"], org["id"], {"enabled": False})
 
     # ⚠️ Armer le runner ICI, explicitement. Ce test le tenait d'un effet de bord
@@ -249,6 +267,9 @@ def test_rallumer_ne_produit_aucune_execution_immediate(client, org):
     # son sujet ait changé. **Un banc qui dépend de l'état laissé par un autre ne
     # mesure plus ce qu'il annonce.**
     db.claim_next_job(org["id"], "worker-du-banc")
+    # Un agent hébergé déclare son modèle (24/09/2026) : sa famille doit être servie
+    # par un worker de PLATEFORME pour que le rallumage la promette.
+    famille_servie(MODELE_SERVI_FAMILLE)
 
     # Le rallumage passe par la ROUTE : c'est le geste réel de l'utilisateur.
     r = client.post(ROUTE, headers=_h(org["membre"]),

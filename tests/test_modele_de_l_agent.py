@@ -175,17 +175,19 @@ def test_un_agent_pose_AVEC_un_modele_l_ecrit(monkeypatch, pose):
     assert pose["model"] == "claude-opus-5"
 
 
-def test_un_agent_pose_SANS_modele_ecrit_NULL_et_non_le_defaut(monkeypatch, pose):
-    """⚠️ NULL veut dire « n'importe quel worker, sur le sien ». Écrire le défaut du
-    catalogue ferait refuser la création dans une org servie par une autre famille
-    — et changerait le modèle de tout agent posé comme avant.
-
-    La doublure ne porte AUCUNE famille, comme un état d'avant ce lot : un agent
-    sans modèle ne doit pas les lire."""
+def test_un_agent_pose_SANS_modele_est_REFUSE(monkeypatch, pose):
+    """⚠️ Jusqu'au 24/09/2026, NULL voulait dire « n'importe quel worker, sur le
+    sien » — c'est-à-dire sur NOTRE clé, sans qu'aucune clé d'org ne soit exigée.
+    Les agents hébergés s'ouvrent à toutes les orgs : chacune paie son modèle, donc
+    chacun en déclare un. Le refus se lit AVANT la présence du runner : il se
+    corrige dans l'appel, comme un modèle inconnu."""
     monkeypatch.setattr(RT.db, "runner_arme",
-                        lambda org: {"armed": True, "workers": 1, "last_seen": None})
-    _declencher(op="create", procedure="veille", cron="5 6 * * *", tools=["a"])
-    assert pose["model"] is None
+                        lambda org: pytest.fail("le modèle manque : rien d'autre à lire"))
+    with pytest.raises(AuthzDenied) as e:
+        _declencher(op="create", procedure="veille", cron="5 6 * * *", tools=["a"])
+    assert (e.value.status, e.value.code) == (400, "model_required")
+    assert "claude-sonnet-5" in e.value.message, "le refus nomme les modèles servis"
+    assert "model" not in pose, "un refus n'écrit rien"
 
 
 def test_un_modele_hors_catalogue_est_refuse_et_nomme(monkeypatch, pose):
@@ -280,12 +282,16 @@ def test_rallumer_en_CHANGEANT_de_modele_juge_le_nouveau(monkeypatch, retouche):
     assert retouche["champs"]["model"] == "claude-sonnet-5"
 
 
-def test_une_chaine_VIDE_rend_l_agent_au_modele_du_worker(monkeypatch, retouche):
-    """Le geste « modèle du worker » d'un écran : NULL écrit, rien à promettre."""
+def test_une_chaine_VIDE_ne_rend_plus_l_agent_au_modele_du_worker(monkeypatch, retouche):
+    """Le geste « modèle du worker » d'un écran n'existe plus (24/09/2026) : il
+    remettait l'agent sur notre clé. Une retouche change le modèle, elle ne le
+    retire pas."""
     monkeypatch.setattr(RT.db, "runner_arme",
-                        lambda org: pytest.fail("aucun modèle, aucune promesse"))
-    _declencher(op="update", trigger_id=3, model="")
-    assert retouche["champs"] == {"model": None}
+                        lambda org: pytest.fail("refusé avant toute lecture"))
+    with pytest.raises(AuthzDenied) as e:
+        _declencher(op="update", trigger_id=3, model="")
+    assert (e.value.status, e.value.code) == (400, "model_required")
+    assert "champs" not in retouche, "un refus n'écrit rien"
 
 
 def test_list_sert_le_catalogue_marque(monkeypatch):
@@ -416,9 +422,13 @@ def test_une_flotte_declare_un_modele_du_catalogue_et_le_fournisseur_s_en_deduit
     assert (flotte["model"], flotte["provider"]) == ("mistral-large-2512", "mistral")
 
 
-def test_une_flotte_sans_modele_n_en_ecrit_aucun(flotte):
-    _flotte()
-    assert (flotte["model"], flotte["provider"]) == (None, None)
+def test_une_flotte_sans_modele_est_REFUSEE(flotte):
+    """Un passage sans modèle tournait sur celui du worker, donc sur notre clé
+    (24/09/2026) : il déclare le sien, ou il ne se déclare pas."""
+    with pytest.raises(AuthzDenied) as e:
+        _flotte()
+    assert (e.value.status, e.value.code) == (400, "model_required")
+    assert not flotte, "un refus n'écrit rien"
 
 
 @pytest.mark.parametrize("champs", [
@@ -471,17 +481,14 @@ def test_armer_un_passage_au_modele_servi_arme(monkeypatch, armement):
     assert armement["armee"]
 
 
-def test_armer_un_passage_SANS_modele_ignore_les_familles_mais_lit_la_presence(
-        monkeypatch, armement):
-    """Les passages d'avant ce lot n'ont pas de modèle : la garde de FAMILLE ne
-    doit pas les toucher (`exige_servi` ne regarde `families` que si un modèle
-    est demandé). Mais depuis oto-runner#13 (17/09/2026), la présence d'un
-    runner, elle, reste vérifiée — un agent sans modèle est servi par
-    N'IMPORTE QUEL worker, encore faut-il qu'il y en ait un."""
+def test_armer_un_passage_SANS_modele_est_REFUSE(monkeypatch, armement):
+    """Un passage déclaré sans modèle avant le 24/09/2026 ne s'arme plus : il
+    tournerait sur le modèle du worker, donc sur notre clé. Le modèle étant figé à
+    la déclaration, la sortie est d'en déclarer un autre — le refus le dit."""
     armement["stockee"]["model"] = None
-    lu = {}
-    monkeypatch.setattr(RF.db, "runner_arme", lambda org: lu.setdefault(
-        "oui", {"armed": True, "workers": 1, "last_seen": None, "families": []}))
-    RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=1))
-    assert armement["armee"]
-    assert "oui" in lu, "la présence d'un runner doit être lue, même sans modèle"
+    monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
+        "armed": True, "workers": 1, "last_seen": None, "families": ["anthropic"]})
+    with pytest.raises(AuthzDenied) as e:
+        RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=1))
+    assert (e.value.status, e.value.code) == (400, "model_required")
+    assert not armement.get("armee"), "un refus n'arme rien"

@@ -123,17 +123,26 @@ def worker(live):
     sub = "worker:banc-jobs-flotte-" + uuid.uuid4().hex[:8]
     with _connect() as c:
         c.execute("INSERT INTO runner_platform_workers (worker_sub) VALUES (%s)", (sub,))
+        # Un agent hébergé déclare son modèle (24/09/2026) : ce worker sert la famille
+        # des passages de ce fichier (`MODELE_SERVI`).
+        c.execute("INSERT INTO runner_platform_depots (worker_sub, depot) "
+                  "VALUES (%s, 'mistral')", (sub,))
     try:
         yield sub
     finally:
         with _connect() as c:
+            c.execute("DELETE FROM runner_platform_depots WHERE worker_sub = %s", (sub,))
             c.execute("DELETE FROM runner_platform_workers WHERE worker_sub = %s", (sub,))
+
+
+#: Le modèle des passages de ce fichier : servi par le worker de module.
+MODELE_SERVI = "mistral-small-2603"
 
 
 def _declarer(client, maison, label: str) -> dict:
     r = client.post(FLEETS, headers=_h(maison["sub"]), json={
         "op": "create", "label": label, "procedure": "enrichissement",
-        "tools": ["oto_kb"], "max_rows": 10})
+        "tools": ["oto_kb"], "max_rows": 10, "model": MODELE_SERVI})
     assert r.status_code == 200, r.text
     return r.json()["fleet"]
 
@@ -320,7 +329,7 @@ def test_le_predicat_distingue_SA_flotte_des_autres(client, maison, flotte):
 
     autre = client.post(FLEETS, headers=_h(maison["sub"]), json={
         "op": "create", "label": "une-autre", "procedure": "p",
-        "tools": ["oto_kb"]}).json()["fleet"]
+        "tools": ["oto_kb"], "model": MODELE_SERVI}).json()["fleet"]
 
     with _connect() as c:
         c.execute("INSERT INTO runs (run_id, sub, org_id, label) "

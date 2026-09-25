@@ -55,7 +55,7 @@ def _socle(monkeypatch):
     monkeypatch.setattr(RT.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
         "armed": True, "workers": 1, "last_seen": "2026-09-23 08:00:00",
-        "families": []})
+        "families": ["anthropic"]})
 
 
 def _ctx(org_id=2):
@@ -67,6 +67,8 @@ def _flotte(**kw):
 
 
 def _declencheur(**kw):
+    if kw.get("op") == "create":
+        kw.setdefault("model", "claude-sonnet-5")
     return lambda: asyncio.run(RT._triggers(_ctx(kw.pop("org_id", 2)),
                                             RT.TriggerInput(**kw)))
 
@@ -76,7 +78,8 @@ def _pour_lancer(monkeypatch, fleet):
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     monkeypatch.setattr(RF._outils_manquants, "manquants", lambda *a, **k: [])
-    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: fleet)
+    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k:
+                        fleet and {"model": "claude-sonnet-5", **fleet})
     monkeypatch.setattr(RF.db, "armer", lambda *a, **k: None)
 
 
@@ -145,7 +148,7 @@ def test_not_launchable(monkeypatch):
 
 def test_not_takeable(monkeypatch):
     monkeypatch.setattr(ORD.db, "prendre", lambda *a, **k: None)
-    monkeypatch.setattr(ORD.db, "get_fleet", lambda *a, **k: {"id": 1,
+    monkeypatch.setattr(ORD.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", "id": 1,
                                                               "status": "draft"})
     msg = _refus(409, "not_takeable", _flotte(op="take", fleet_id=1, taken_by="o"))
     assert msg.startswith("cette automatisation est `draft`")
@@ -168,7 +171,7 @@ def test_missing_fields_et_field_not_settable():
 
 
 def test_no_runner_armed_dit_l_effet_pas_la_machine(monkeypatch):
-    sans = {"armed": False, "workers": 0, "last_seen": None, "families": []}
+    sans = {"armed": False, "workers": 0, "last_seen": None, "families": ["anthropic"]}
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: sans)
     _pour_lancer(monkeypatch, {"id": 1, "status": "draft", "procedure": "p",
                                "input": "x", "tools": [], "sub": "alexis"})

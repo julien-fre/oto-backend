@@ -549,6 +549,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # Un modèle inconnu se corrige dans l'appel, comme un cron : il se juge
         # avec lui, avant la présence du runner.
         famille = _modele.famille_declaree(inp.model)
+        # Le modèle est OBLIGATOIRE (24/09/2026) : il se corrige dans l'appel, comme
+        # un modèle inconnu, donc il se juge avec lui.
+        _modele.exige_un_modele(famille)
         # Après la validation du cadencement, avant l'écriture : un cron fautif
         # se corrige, une org sans runner appelle un autre geste — les deux
         # refus ne se remplacent pas, et celui qu'on lit d'abord est celui qu'on
@@ -699,7 +702,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     famille = None
     if inp.model is not None:
         famille = _modele.famille_declaree(inp.model)
-        champs["model"] = inp.model or None
+        # `model=""` RETIRAIT le modèle pour revenir à celui du worker : un agent
+        # hébergé déclare désormais le sien (24/09/2026), la retouche ne peut que
+        # le changer.
+        _modele.exige_un_modele(famille)
+        champs["model"] = inp.model
 
     # ⚠️ Le déclencheur se lit PARESSEUSEMENT, et seulement là où son GENRE ou son
     # état décident : l'ordre des refus est un contrat (« aucun runner » avant
@@ -764,6 +771,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # toutes les familles exigées à la fois.
         famille_pose = (famille if inp.model is not None
                         else runner_models.famille((actuel or {}).get("model")))
+        # Un agent posé sans modèle avant le 24/09/2026 ne se rallume pas sans en
+        # déclarer un : il tournerait sur le modèle du worker, donc sur notre clé.
+        _modele.exige_un_modele(famille_pose)
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille_pose)
         # Même garde qu'à la création, sur le propriétaire STOCKÉ : rallumer
         # l'agent d'un collègue posé sur un abonnement ferait payer son forfait
@@ -889,6 +899,10 @@ CAPABILITIES += [
             DeclaredError(400, "invalid_model",
                           "`model` hors du catalogue servi (`runner.models` sur "
                           "`list`/`get`)"),
+            DeclaredError(400, "model_required",
+                          "aucun `model` déclaré : `create`, `update enabled=true` et "
+                          "`update model=\"\"` sont refusés — un agent hébergé tourne "
+                          "sur la clé de modèle de son org"),
             DeclaredError(400, "model_not_served",
                           "`model` d'une famille que rien ne sert en ce moment : "
                           "`create`, `update enabled=true` et le changement de "
@@ -913,12 +927,12 @@ CAPABILITIES += [
             "queue — a trigger nothing executes would enqueue forever without an "
             "error; `list`/`get` carry `runner` (armed, workers, last_seen) so an "
             "existing trigger can be told apart from a live one. `model` "
-            "(optional) is the model the agent runs on, one of `runner.models` — "
-            "each flagged `served`; omitted, the worker that takes the job runs its "
-            "own. The model flagged `default` is the one to propose: the first "
-            "served model in catalogue order. No model is flagged when no live "
-            "worker declares a family (`runner.families` is `[]`) — then omit "
-            "`model`. A model no live worker serves is REFUSED (`model_not_served`) on "
+            "(REQUIRED) is the model the agent runs on, one of `runner.models` — "
+            "each flagged `served`. It runs on the organization's model key: an "
+            "agent without a model is REFUSED (`model_required`) on create and on "
+            "enable, and `model=\"\"` no longer removes it. The model flagged "
+            "`default` is the one to propose: the first served model in catalogue "
+            "order. A model no live worker serves is REFUSED (`model_not_served`) on "
             "create, on enable, and when changed on an enabled trigger: its job "
             "would wait for a worker of that family and expire. ⚠️ An occurrence "
             "nobody claimed BEFORE the next one is due is EXPIRED, not silently "

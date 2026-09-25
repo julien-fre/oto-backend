@@ -102,6 +102,10 @@ def org(live):
     return {"id": oid, "membre": membre, "ns": ns}
 
 
+#: Le modèle des passages de ce fichier : servi par le worker de module.
+MODELE_SERVI = "mistral-small-2603"
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _un_worker_de_plateforme_sonde(live, org):
     """oto-runner#13 (17/09/2026) : `launch` refuse désormais si aucun worker n'est
@@ -109,9 +113,8 @@ def _un_worker_de_plateforme_sonde(live, org):
     cette précondition (couverte par `tests/test_runner_fleets_sans_worker.py`), donc
     un worker de plateforme réellement présent est posé une fois pour tout le
     module. Un worker de plateforme sert TOUTES les orgs (`db.runner_arme`), donc
-    une seule ligne suffit ; aucune famille n'est déclarée ici — les bancs de ce
-    fichier n'arment que des flottes sans `model`, sauf le dernier qui pose sa
-    propre présence Anthropic explicitement.
+    une seule ligne suffit ; elle sert la famille `mistral` (`MODELE_SERVI`) — le
+    dernier banc pose sa propre présence Anthropic explicitement.
 
     Retiré à la sortie, comme tout worker de banc (patron de
     `test_modele_propose_accepte_rest.py`) : la table est globale, et une ligne
@@ -122,11 +125,17 @@ def _un_worker_de_plateforme_sonde(live, org):
         c.execute("INSERT INTO runner_platform_workers (worker_sub) "
                   "VALUES (%s) ON CONFLICT (worker_sub) "
                   "DO UPDATE SET last_seen_at = NOW()", (sub,))
+        # Un agent hébergé déclare son modèle (24/09/2026) : ce worker sert la famille
+        # `mistral`, celle des passages de ce fichier (`MODELE_SERVI`). Anthropic n'est
+        # PAS servie ici : le dernier banc en fait son sujet.
+        c.execute("INSERT INTO runner_platform_depots (worker_sub, depot) "
+                  "VALUES (%s, 'mistral') ON CONFLICT DO NOTHING", (sub,))
         c.commit()
     try:
         yield sub
     finally:
         with _connect() as c:
+            c.execute("DELETE FROM runner_platform_depots WHERE worker_sub = %s", (sub,))
             c.execute("DELETE FROM runner_platform_workers WHERE worker_sub = %s", (sub,))
             c.commit()
 
@@ -135,7 +144,7 @@ def _un_worker_de_plateforme_sonde(live, org):
 def flotte(client, org):
     """Une flotte déclarée PAR LA ROUTE — pas insérée en base à la main."""
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "passage d'essai", "procedure": "enrichissement",
+        "op": "create", "model": MODELE_SERVI, "label": "passage d'essai", "procedure": "enrichissement",
         "tools": ["oto_kb"], "namespace": "un-tableau", "row_filter": {"lot": "a"},
         # Un modèle du CATALOGUE : depuis le 12/09/2026 il part avec les travaux,
         # donc une chaîne libre est refusée à la déclaration.
@@ -223,7 +232,7 @@ def test_armer_n_ecrit_ni_ne_sert_plus_le_denominateur(client, org):
     from oto_mcp.db._conn import _connect
     h = _h(org["membre"])
     fid = client.post(ROUTE, headers=h, json={
-        "op": "create", "label": "sans-denominateur", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "sans-denominateur", "procedure": "p",
         "tools": ["oto_kb"], "namespace": "un-tableau"}).json()["fleet"]["id"]
     with _connect() as c:
         c.execute("UPDATE runner_fleets SET rows_at_launch = 12 WHERE id = %s", (fid,))
@@ -287,7 +296,7 @@ def test_une_cible_introuvable_ou_ambigue_est_refusee_sur_la_route(client, org):
     """#1067 : la cible se résout une fois, à la déclaration, dans la portée du
     déclarant — rien qui y réponde, ou deux tableaux au même rang, est refusé."""
     from oto_mcp import db, group_store
-    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    base = {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p", "tools": ["oto_kb"]}
     assert _refus(client, org, {**base, "namespace": "nulle-part"}
                   ) == (404, "datastore_not_found")
     for i in (1, 2):
@@ -299,13 +308,13 @@ def test_une_cible_introuvable_ou_ambigue_est_refusee_sur_la_route(client, org):
 
 
 def test_un_perimetre_sans_tableau_est_refuse_sur_la_route(client, org):
-    assert _refus(client, org, {"op": "create", "label": "x", "procedure": "p",
+    assert _refus(client, org, {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p",
                                 "tools": ["oto_kb"], "row_filter": {"lot": "a"}}
                   ) == (400, "target_incomplete")
 
 
 def test_create_sans_les_champs_requis_est_refuse_sur_la_route(client, org):
-    assert _refus(client, org, {"op": "create", "label": "x"}
+    assert _refus(client, org, {"op": "create", "model": MODELE_SERVI, "label": "x"}
                   ) == (400, "missing_fields")
 
 
@@ -340,7 +349,7 @@ def test_create_refuse_ce_qu_il_n_applique_pas(client, org):
     ⚠️ La garde était écrite dans la branche `update` SEULE. **Une garde écrite
     dans une branche ne garde que cette branche** : c'est le même défaut que celui
     qu'elle corrigeait, déplacé d'un verbe."""
-    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    base = {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p", "tools": ["oto_kb"]}
     assert _refus(client, org, {**base, "status": "running"}
                   ) == (400, "status_not_settable")
     assert _refus(client, org, {**base, "fleet_id": 1}
@@ -351,7 +360,7 @@ def test_une_borne_absurde_est_refusee_des_DEUX_cotes(client, org, flotte):
     """Une borne se compte, donc elle vaut au moins 1. `max_rows=-5`, `workers=0`
     passaient à la création ET à la retouche — une borne absurde acceptée est une
     panne différée, découverte au lancement plutôt qu'à la déclaration."""
-    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    base = {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p", "tools": ["oto_kb"]}
     for champ, valeur in (("max_rows", -5), ("workers", 0), ("max_tokens", -1),
                           ("max_tokens_per_row", 0), ("max_steps", -2),
                           ("max_consecutive_failures", 0)):
@@ -395,7 +404,7 @@ def test_declarer_sans_borne_par_ligne_est_PERMIS_sur_la_route(client, org):
     """L'absence de borne n'est plus un refus. Le passage n'a alors aucun plafond
     de jetons — assumé : l'arrêt reste la fenêtre de contexte du modèle."""
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "sans-borne", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "sans-borne", "procedure": "p",
         "tools": ["oto_kb"]})
     assert r.status_code == 200, r.text
     assert r.json()["fleet"]["max_tokens_per_row"] is None
@@ -405,7 +414,7 @@ def test_une_borne_HAUTE_est_PERMISE_sur_la_route(client, org):
     """1,5 M par ligne : la valeur qu'un plafond serveur aurait refusée, et avec
     elle 86 déclarations vivantes, dont une de production."""
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "borne-haute", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "borne-haute", "procedure": "p",
         "tools": ["oto_kb"], "max_tokens_per_row": 1_500_000})
     assert r.status_code == 200, r.text
     assert r.json()["fleet"]["max_tokens_per_row"] == 1_500_000
@@ -419,7 +428,7 @@ def test_la_borne_POSEE_est_SERVIE_a_l_armement(client, org):
     Il est rejoué ici parce qu'un champ calculé par le handler peut très bien ne
     jamais atteindre le client — c'est toute la raison d'être de ce fichier."""
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "pire-cas", "procedure": "p", "tools": ["oto_kb"],
+        "op": "create", "model": MODELE_SERVI, "label": "pire-cas", "procedure": "p", "tools": ["oto_kb"],
         "max_rows": 100, "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     r = client.post(ROUTE, headers=_h(org["membre"]),
                     json={"op": "launch", "fleet_id": fid})
@@ -433,7 +442,7 @@ def test_sans_borne_l_armement_dit_NULL_et_arme_quand_meme(client, org):
     cas vaut `null`. Un nombre fabriqué ferait croire à une protection qui
     n'existe pas."""
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "arme-sans-borne", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "arme-sans-borne", "procedure": "p",
         "tools": ["oto_kb"], "max_rows": 100}).json()["fleet"]["id"]
     r = client.post(ROUTE, headers=_h(org["membre"]),
                     json={"op": "launch", "fleet_id": fid})
@@ -453,7 +462,7 @@ def test_une_flotte_HISTORIQUE_sans_borne_reste_lisible_et_S_ARME(client, org):
     from oto_mcp.db import runner_fleets as dbf
 
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "historique", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "historique", "procedure": "p",
         "tools": ["oto_kb"], "max_rows": 10,
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     dbf.update_fleet(fid, org["id"], {"max_tokens_per_row": None})
@@ -489,7 +498,7 @@ def test_une_flotte_HISTORIQUE_sans_borne_reste_lisible_et_S_ARME(client, org):
 @pytest.fixture(scope="module")
 def flotte_a_piloter(client, org):
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "pilotage", "procedure": "p", "tools": ["oto_kb"],
+        "op": "create", "model": MODELE_SERVI, "label": "pilotage", "procedure": "p", "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000})
     assert r.status_code == 200, r.text
     return r.json()["fleet"]
@@ -561,7 +570,7 @@ def test_sans_runner_joignable_launch_est_refuse_et_dit_ce_qui_reste(
     from oto_mcp import db
     from oto_mcp.db._conn import _connect
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "sans-runner", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "sans-runner", "procedure": "p",
         "tools": ["oto_kb"]}).json()["fleet"]["id"]
     with _connect() as c:
         c.execute("UPDATE runner_platform_workers SET last_seen_at = NOW() - "
@@ -589,7 +598,7 @@ def test_on_n_arrete_pas_ce_qui_ne_tourne_pas(client, org):
     """Un refus qui NOMME l'état, plutôt qu'un 200 qui laisserait croire à un
     arrêt sur un passage jamais lancé."""
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "jamais-lancee", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "jamais-lancee", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000})
     fid = r.json()["fleet"]["id"]
@@ -615,7 +624,7 @@ def test_un_simple_membre_ne_LANCE_pas(client, org, simple_membre):
     ce qui reste ouvert — un refus qui n'enseigne rien pousse à chercher un
     contournement."""
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "plancher", "procedure": "p", "tools": ["oto_kb"],
+        "op": "create", "model": MODELE_SERVI, "label": "plancher", "procedure": "p", "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000})
     fid = r.json()["fleet"]["id"]
     rr = client.post(ROUTE, headers=_h(simple_membre),
@@ -633,7 +642,7 @@ def test_un_simple_membre_ARRÊTE(client, org, simple_membre):
     celle qui a le bon rôle. Attendre un admin pendant qu'une flotte dépense est
     le mauvais échange."""
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "arret-par-membre", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "arret-par-membre", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000})
     fid = r.json()["fleet"]["id"]
@@ -654,7 +663,7 @@ def test_un_simple_membre_ARRÊTE(client, org, simple_membre):
 @pytest.fixture(scope="module")
 def flotte_cycle(client, org):
     r = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "cycle", "procedure": "p", "tools": ["oto_kb"],
+        "op": "create", "model": MODELE_SERVI, "label": "cycle", "procedure": "p", "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000})
     return r.json()["fleet"]
 
@@ -693,7 +702,7 @@ def test_un_battement_sans_ordre_ne_dit_pas_qu_il_faut_s_arreter(client, org):
     """Le cas nominal doit être aussi net que le cas d'arrêt : un ordonnanceur qui
     lirait « arrête-toi » par défaut s'éteindrait en boucle."""
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "battement", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "battement", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     client.post(ROUTE, headers=_h(org["membre"]), json={"op": "launch", "fleet_id": fid})
@@ -723,7 +732,7 @@ def test_deux_ordonnanceurs_ne_prennent_pas_la_meme_flotte(client, org):
 def test_on_ne_prend_qu_une_campagne_armee_ou_en_cours(client, org):
     """`not_takeable` rejoué : une campagne `draft` n'est demandée par personne."""
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "jamais-armee", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "jamais-armee", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     assert _refus(client, org, {"op": "take", "fleet_id": fid,
@@ -735,7 +744,7 @@ def test_on_n_accuse_pas_un_arret_qui_n_a_pas_ete_demande(client, org):
     """Un accusé sans demande effacerait la distinction : `stopped` ne voudrait
     plus dire « l'ordonnanceur a obéi » mais « quelqu'un a écrit stopped »."""
     fid = client.post(ROUTE, headers=_h(org["membre"]), json={
-        "op": "create", "label": "sans-demande", "procedure": "p",
+        "op": "create", "model": MODELE_SERVI, "label": "sans-demande", "procedure": "p",
         "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     assert _refus(client, org, {"op": "ack_stop", "fleet_id": fid,
@@ -758,7 +767,7 @@ def _prendre(client, org, fid: int, preneur: str):
 def _campagne_armee(client, org, label: str) -> int:
     h = _h(org["membre"])
     fid = client.post(ROUTE, headers=h, json={
-        "op": "create", "label": label, "procedure": "p", "tools": ["oto_kb"],
+        "op": "create", "model": MODELE_SERVI, "label": label, "procedure": "p", "tools": ["oto_kb"],
         "max_tokens_per_row": 50_000}).json()["fleet"]["id"]
     assert client.post(ROUTE, headers=h,
                        json={"op": "launch", "fleet_id": fid}).status_code == 200
@@ -880,7 +889,7 @@ def test_sans_option_beta_la_route_refuse_403_et_dit_quoi_faire(client, org_sans
     lancer — et le refus nomme le geste qui débloque."""
     h = _h(org_sans_beta["membre"])
     for body in ({"op": "list"},
-                 {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]},
+                 {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p", "tools": ["oto_kb"]},
                  {"op": "launch", "fleet_id": 1},
                  {"op": "stop", "fleet_id": 1}):
         r = client.post(ROUTE, headers=h, json=body)
@@ -907,7 +916,7 @@ def test_api_me_orgs_dit_par_org_si_le_compte_est_beta(client, org, org_sans_bet
 # banc au-dessus ne doit en dépendre.
 
 def test_un_modele_hors_catalogue_est_refuse_a_la_declaration(client, org):
-    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    base = {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p", "tools": ["oto_kb"]}
     assert _refus(client, org, {**base, "model": "un-modele-libre"}
                   ) == (400, "invalid_model")
     assert _refus(client, org, {**base, "provider": "openai"}

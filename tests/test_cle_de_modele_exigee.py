@@ -83,7 +83,11 @@ def arret(monkeypatch):
 
 
 def _travail(**kw):
-    return {"id": 9, "org_id": ORG, "sub": "alexis", "delegated_token": "otd_x", **kw}
+    # Un travail porte la famille de son modèle déclaré : sans elle, il est arrêté
+    # avant toute question de clé (24/09/2026, banc `test_agent_heberge_modele_
+    # obligatoire.py`) — ce fichier-ci parle de la clé.
+    return {"id": 9, "org_id": ORG, "sub": "alexis", "delegated_token": "otd_x",
+            "payload": {"model_family": "anthropic"}, **kw}
 
 
 def _reserver(depot, *, worker=True):
@@ -252,9 +256,9 @@ def test_seule_la_famille_du_modele_declare_est_verifiee(monkeypatch):
 
 
 def test_sans_modele_declare_rien_n_est_exige(monkeypatch):
-    """Un agent sans modèle (ou d'un modèle hors catalogue) est servi par un
-    worker ORDINAIRE sur le sien — jamais par un worker « clés clients seules »,
-    qui ne prend aucun travail sans famille. Aucune clé d'org n'est en jeu."""
+    """Cette fonction ne juge que la famille qu'on lui donne. Un agent SANS modèle
+    ne l'atteint plus : il est refusé à la pose (`_modele.exige_un_modele`) et
+    arrêté à la réservation (24/09/2026)."""
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
     CE.exiger_a_la_pose(ORG, None)
@@ -280,11 +284,13 @@ def test_un_declencheur_MISTRAL_se_pose_meme_sans_cle_anthropic(monkeypatch):
 def test_eteint_poser_un_agent_sans_cle_passe(monkeypatch):
     _reglages(monkeypatch)
     monkeypatch.setattr(RT.db, "runner_arme",
-                        lambda org: {"armed": True, "workers": 1, "last_seen": None})
+                        lambda org: {"armed": True, "workers": 1, "last_seen": None,
+                                     "families": ["anthropic"]})
     monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
     monkeypatch.setattr(RT.db, "create_trigger", lambda *a, **k: {"id": 1})
     asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="create", procedure="veille",
-                                         cron="5 6 * * *", tools=["a"])))
+                                         cron="5 6 * * *", tools=["a"],
+                                         model="claude-sonnet-5")))
 
 
 # ── la console admin refuse ce que la réservation lirait de travers ──────────

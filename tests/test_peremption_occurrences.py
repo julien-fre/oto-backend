@@ -162,12 +162,14 @@ def test_la_description_servie_annonce_la_peremption():
 
 def _trigger_db(monkeypatch, **etat):
     """Le déclencheur tel qu'il est EN BASE avant la retouche."""
-    base = {"id": 6, "cron": "0 18 * * *", "tz": "Europe/Paris", "enabled": False}
+    base = {"id": 6, "cron": "0 18 * * *", "tz": "Europe/Paris", "enabled": False,
+            "model": "claude-sonnet-5"}
     base.update(etat)
     monkeypatch.setattr(RT.db, "get_trigger", lambda i, o: dict(base, id=i))
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": True, "workers": 1,
-                                     "last_seen": "2026-09-02 20:00:00"})
+                                     "last_seen": "2026-09-02 20:00:00",
+                                     "families": ["anthropic"]})
     vu = {}
     monkeypatch.setattr(RT.db, "update_trigger",
                         lambda i, o, champs, **k: vu.update(champs) or {"id": i, **champs})

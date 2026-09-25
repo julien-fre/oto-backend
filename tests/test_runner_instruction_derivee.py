@@ -60,7 +60,7 @@ def test_une_campagne_sans_instruction_en_recoit_une_qui_pointe_sa_file(monkeypa
     monkeypatch.setattr(RF._lignes_reservables, "cle_a_la_declaration",
                         lambda adresse, *, sub, org_id: 77)
     RF._fleets(_ctx(), RF.FleetInput(
-        op="create", label="essai", procedure="enrichissement", tools=["data_write"],
+        op="create", model="claude-sonnet-5", label="essai", procedure="enrichissement", tools=["data_write"],
         namespace="edition-vivier", row_filter={"statut": "a_enrichir"}))
     servie = vus["input"]
     assert "`enrichissement`" in servie          # l'objet qui fait autorité
@@ -81,11 +81,11 @@ def test_sans_cible_declaree_aucune_file_n_est_inventee():
 def test_un_declencheur_sans_instruction_pointe_sa_procedure(monkeypatch):
     vus = {}
     monkeypatch.setattr(RT.db, "create_trigger", lambda *a, **kw: vus.update(kw) or {"id": 7})
-    monkeypatch.setattr(RT.db, "runner_arme", lambda org: {"armed": True, "workers": 1})
+    monkeypatch.setattr(RT.db, "runner_arme", lambda org: {"armed": True, "workers": 1, "families": ["anthropic"]})
     monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda org, p: [])
     monkeypatch.setattr(RT, "_outils_de_la_procedure", lambda ctx, slug: ["oto_kb"])
     asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(
-        op="create", procedure="veille-hebdo", cron="0 8 * * 1")))
+        op="create", model="claude-sonnet-5", procedure="veille-hebdo", cron="0 8 * * 1")))
     assert "`veille-hebdo`" in vus["input"]
 
 
@@ -99,7 +99,7 @@ def test_une_instruction_fournie_passe_intacte(monkeypatch):
                         lambda adresse, *, sub, org_id: 77)
     ecrite = "Traite la file de droite à gauche et ne conclus rien."
     RF._fleets(_ctx(), RF.FleetInput(
-        op="create", label="essai", procedure="p", tools=["data_write"],
+        op="create", model="claude-sonnet-5", label="essai", procedure="p", tools=["data_write"],
         namespace="t", input=ecrite))
     assert vus["input"] == ecrite
 
@@ -127,11 +127,12 @@ def _launch_avec(monkeypatch, flotte):
         trace.append(("armer", kw))
         return dict(flotte, status="armed")
 
+    flotte = {"model": "claude-sonnet-5", **flotte}
     monkeypatch.setattr(RF.db, "get_fleet", lambda fid, org: flotte)
     monkeypatch.setattr(RF.db, "update_fleet", _update)
     monkeypatch.setattr(RF.db, "armer", _armer)
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
-        "armed": True, "workers": 1, "last_seen": None, "families": []})
+        "armed": True, "workers": 1, "last_seen": None, "families": ["anthropic"]})
     RF._fleets(_ctx(), RF.FleetInput(op="launch", fleet_id=flotte["id"]))
     return trace
 

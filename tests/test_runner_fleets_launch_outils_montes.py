@@ -85,7 +85,7 @@ def _compte_beta(monkeypatch):
 @pytest.fixture(autouse=True)
 def _un_worker_par_defaut(monkeypatch):
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
-        "armed": True, "workers": 1, "last_seen": "2026-09-17 08:00:00", "families": []})
+        "armed": True, "workers": 1, "last_seen": "2026-09-17 08:00:00", "families": ["anthropic"]})
 
 
 def _ctx(sub="alexis", org_id=226):
@@ -100,7 +100,7 @@ def _stub_admin_et_flotte(monkeypatch, tools, sub="pilote"):
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
-    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {
+    monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: {"model": "claude-sonnet-5", 
         "id": 1, "status": "draft", "procedure": "p", "input": "x",
         "sub": sub, "tools": tools})
 

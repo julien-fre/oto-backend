@@ -122,10 +122,10 @@ def test_le_modele_propose_est_accepte_et_rien_ne_se_propose_sans_famille(
     assert runner["armed"] is True and runner["families"] == [], runner
     assert _proposes(runner) == [], (
         "étape 1 : aucune famille servie, et un modèle est proposé quand même")
+    # Un agent hébergé déclare son modèle (24/09/2026) : sans famille servie, rien
+    # ne se pose — et le défaut ne s'écrit jamais à sa place.
     r = _declencheur(client, org, "propose-sans-modele")
-    assert r.status_code == 200, f"étape 1, création sans modèle : {r.text}"
-    sans_modele = r.json()["trigger"]
-    assert sans_modele["model"] is None, "étape 1 : le défaut ne s'écrit jamais"
+    assert _refus(r) == (400, "model_required"), f"étape 1, création sans modèle : {r.text}"
     r = _declencheur(client, org, "propose-mistral-trop-tot",
                      model="mistral-large-2512")
     assert _refus(r) == (400, "model_not_served"), f"étape 1 : {r.text}"
@@ -151,7 +151,7 @@ def test_le_modele_propose_est_accepte_et_rien_ne_se_propose_sans_famille(
     r = _appel(client, org, TRIGGERS, op="list")
     assert r.status_code == 200, r.text
     poses = {t["id"]: t["model"] for t in r.json()["triggers"]}
-    assert poses == {sans_modele["id"]: None, suivi["id"]: propose}, (
+    assert poses == {suivi["id"]: propose}, (
         f"étape 3 : les déclencheurs posés ont changé — {poses}")
 
     # ── 4. même parcours côté flottes : déclarer sur la proposition, armer ──

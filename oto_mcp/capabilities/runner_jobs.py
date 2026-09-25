@@ -513,6 +513,13 @@ def _avec_cle(job: dict, depot: Optional[str], appelant: str, *,
                            depot, appelant, job["org_id"], job.get("id"))
         return job
     famille = _abonnement.famille_du_travail(job)
+    if not famille:
+        # ⚠️ UN TRAVAIL SANS MODÈLE NE PART PLUS (24/09/2026). Servi à un worker de
+        # plateforme, il tournait sur le modèle de SON environnement — notre clé —
+        # et aucune garde d'argent ne mordait : `_cle_exigee` ne juge que la famille
+        # déclarée. La pose le refuse désormais (`_modele.exige_un_modele`) ; ceci
+        # arrête ce qui a été posé avant, ou enfilé à la main, raison écrite.
+        return _refuser_sans_cle(job, appelant, _SANS_MODELE)
     if _abonnement.est_abonnement(famille):
         # ⚠️ **Aucune clé n'est cherchée ici, et c'est le fond du sujet** (OTO-130) :
         # ce travail tournera dans le sandbox de SON DEMANDEUR, sur le programme
@@ -603,6 +610,12 @@ _SANS_DEPOT = (
     "la sienne. Travail non exécuté — il doit être servi par un worker qui nomme son "
     "dépôt (OTO_RUNNER_PROVIDER / OTO_RUNNER_OPENAI_BASE côté oto-runner).")
 
+
+_SANS_MODELE = (
+    "ce travail ne déclare aucun modèle : il tournerait sur le modèle du worker, pas "
+    "sur la clé de modèle de son organisation. Travail non exécuté. Déclare un modèle "
+    "sur l'agent (`model`), dépose la clé de ce fournisseur si l'organisation doit "
+    "tourner sur la sienne, puis rallume l'agent.")
 
 _SANS_CLE_DEPOSEE = (
     "ce travail demande un modèle `{depot}`, et les agents `{depot}` ne tournent que "

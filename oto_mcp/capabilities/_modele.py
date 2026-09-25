@@ -49,7 +49,9 @@ def famille_declaree(model: Optional[str],
                      provider: Optional[str] = None) -> Optional[str]:
     """La famille du modèle DÉCLARÉ, ou None si aucun ne l'est. Refuse l'inconnu.
 
-    `""` vaut absence : c'est la façon de revenir au modèle du worker.
+    `""` vaut absence. Une absence n'est plus un choix (24/09/2026) : un agent
+    hébergé DOIT déclarer son modèle, et c'est `exige_un_modele` qui le refuse
+    aux moments de pose.
 
     `provider` n'existe que sur les flottes, où il précède ce catalogue. Il ne
     choisit plus rien — la famille se DÉDUIT du modèle —, donc il ne peut que
@@ -78,6 +80,26 @@ def famille_declaree(model: Optional[str],
     return f
 
 
+def exige_un_modele(famille: Optional[str]) -> None:
+    """Refuse de poser un agent hébergé sans modèle déclaré. Lève `model_required`.
+
+    ⚠️ Décidé le 24/09/2026, avec l'ouverture des agents hébergés à toutes les
+    orgs : chaque org paie son modèle. Or la garde d'argent (`_cle_exigee`) ne
+    juge que la famille DÉCLARÉE — un agent sans modèle n'exigeait aucune clé et
+    tournait sur le modèle du worker, c'est-à-dire sur NOTRE clé, sans que rien
+    ne le dise. Appelée à chaque moment de pose (création, rallumage, `launch`) ;
+    la réservation tient la même règle (`runner_jobs._avec_cle`).
+    """
+    if famille:
+        return
+    connus = ", ".join(m.id for m in runner_models.MODELES)
+    raise AuthzDenied(
+        400, "model_required",
+        "un agent hébergé déclare son modèle : il tourne sur la clé de modèle de son "
+        "organisation, et sans modèle déclaré il n'y aurait aucune clé à exiger. "
+        f"Nomme `model` — modèles servis par la plateforme : {connus}.")
+
+
 def exige_servi(etat: dict, famille: Optional[str]) -> None:
     """Refuse de promettre un modèle qu'aucun worker vivant ne sert.
 
@@ -85,9 +107,9 @@ def exige_servi(etat: dict, famille: Optional[str]) -> None:
     ne sert reste `pending` — le claim le filtre — puis PÉRIME à l'occurrence
     suivante. L'agent a l'air programmé et ne tourne jamais.
 
-    ⚠️ **Ne regarde que si une famille est DEMANDÉE.** Un agent sans modèle est
-    servi par n'importe quel worker ; la présence d'un runner lui suffit, et la
-    garde qui la vérifie est ailleurs.
+    ⚠️ **Ne regarde que si une famille est DEMANDÉE.** Un agent sans modèle ne se
+    pose plus (`exige_un_modele`, 24/09/2026) : ce cas n'arrive ici que pour un
+    geste qui ne promet aucun modèle.
 
     ⚠️ **Les familles ne se lisent que chez les workers de PLATEFORME** : un worker
     au jeton d'org (l'ancien chemin) ne dépose pas sa famille, et une org servie
@@ -106,8 +128,7 @@ def exige_servi(etat: dict, famille: Optional[str]) -> None:
         400, "model_not_served",
         f"les modèles `{famille}` ne sont pas servis en ce moment ({vivantes}). "
         "L'exécution resterait en attente sans une erreur, puis périmerait. Choisis "
-        "un modèle servi (`runner.models` sur `op=list`), ou n'en nomme aucun : "
-        "le modèle par défaut s'applique alors.")
+        "un modèle servi (`runner.models` sur `op=list`).")
 
 
 def etat_servi(etat: dict, org_id: Optional[int] = None) -> dict:

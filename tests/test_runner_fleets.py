@@ -50,14 +50,21 @@ def _un_worker_par_defaut(monkeypatch):
     doublure, chaque `launch` irait chercher la vraie base."""
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
         "armed": True, "workers": 1, "last_seen": "2026-09-17 08:00:00",
-        "families": []})
+        "families": ["anthropic"]})
 
 
 def _ctx(sub="alexis", org_id=2):
     return ResolvedCtx(sub=sub, org_id=org_id)
 
 
+#: Un agent hébergé déclare son modèle (24/09/2026) — ce fichier ne parle pas de
+#: cette règle, elle a son propre banc (`test_agent_heberge_modele_obligatoire.py`).
+MODELE = "claude-sonnet-5"
+
+
 def _appel(ctx, **kw):
+    if kw.get("op") == "create":
+        kw.setdefault("model", MODELE)
     return RF._fleets(ctx, RF.FleetInput(**kw))
 
 
@@ -439,7 +446,7 @@ def test_l_armement_MONTRE_le_pire_cas(monkeypatch):
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     monkeypatch.setattr(db, "get_fleet", lambda *a, **k: {
-        "id": 1, "status": "draft", "procedure": "p", "input": "x"})
+        "id": 1, "status": "draft", "procedure": "p", "input": "x", "model": MODELE})
     monkeypatch.setattr(db, "armer", lambda *a, **k: {
         "id": 1, "max_rows": 100, "max_tokens_per_row": 1_500_000})
 
@@ -453,7 +460,7 @@ def test_sans_borne_le_pire_cas_est_NULL_et_non_un_nombre(monkeypatch):
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     monkeypatch.setattr(db, "get_fleet", lambda *a, **k: {
-        "id": 1, "status": "draft", "procedure": "p", "input": "x"})
+        "id": 1, "status": "draft", "procedure": "p", "input": "x", "model": MODELE})
     monkeypatch.setattr(db, "armer", lambda *a, **k: {
         "id": 1, "max_rows": 100, "max_tokens_per_row": None})
 

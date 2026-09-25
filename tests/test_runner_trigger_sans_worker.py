@@ -49,13 +49,16 @@ def _ctx(sub="alexis", org_id=2):
 
 
 def _appel(ctx, **kw):
+    if kw.get("op") == "create":
+        kw.setdefault("model", "claude-sonnet-5")
     return asyncio.run(RT._triggers(ctx, RT.TriggerInput(**kw)))
 
 
 def _arme(monkeypatch, armed=True, workers=1, last_seen="2026-09-02 07:00:00"):
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": armed, "workers": workers,
-                                     "last_seen": last_seen})
+                                     "last_seen": last_seen,
+                                     "families": ["anthropic"] if armed else []})
 
 
 # ── la garde suit le verbe ────────────────────────────────────────────────────

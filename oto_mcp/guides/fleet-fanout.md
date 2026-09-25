@@ -32,7 +32,7 @@ plusieurs conversations si le volume dépasse ce qu'une seule peut boucler.
 Avant `oto_fleet op=create`, cherche une procédure existante (`oto_procedure op=list`)
 qui couvre déjà ce traitement. N'en écris une ad hoc que si rien ne correspond — et dans
 ce cas, comme pour un run normal, écris-la comme si elle allait être relue. `create` exige `label` + `procedure` +
-`tools` ; il n'existe pas de raccourci en texte libre qui contournerait la procédure.
+`tools` + `model` ; il n'existe pas de raccourci en texte libre qui contournerait la procédure.
 
 ## Ne jamais armer sans un accord explicite, en clair
 

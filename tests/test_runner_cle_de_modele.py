@@ -45,6 +45,10 @@ def _servi(job, depot, appelant=_WORKER):
     établi en vérifiant un secret de machine déclaré en base. Le banc le
     modélise tel quel — `worker=` est un fait reçu, et `_MEMBRE` ne l'est
     jamais, quoi qu'il porte."""
+    # Un travail porte la famille de son modèle (24/09/2026) : sans elle il est
+    # arrêté avant toute question de clé. Ce banc parle de la REMISE de la clé.
+    if "payload" not in job:
+        job = {**job, "payload": {"model_family": depot or "anthropic"}}
     return RJ._avec_cle(job, depot, appelant, worker=(appelant == _WORKER))
 
 

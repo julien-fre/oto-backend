@@ -453,6 +453,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         # promettrait une attribution fausse. `provider` ne choisit plus rien, il
         # se déduit du modèle ; fourni, il doit le confirmer.
         famille = _modele.famille_declaree(inp.model, inp.provider)
+        # Le modèle est OBLIGATOIRE (24/09/2026) : sans lui, le passage tournerait
+        # sur le modèle du worker — notre clé — et aucune clé d'org ne serait exigée.
+        _modele.exige_un_modele(famille)
         # Un runner armé ne suffit pas quand l'org doit tourner sur SA clé : sans
         # elle, le travail serait arrêté à la réservation. La création est l'un
         # des trois moments de POSE (module `_cle_exigee`) : le dire ICI, avant
@@ -536,6 +539,12 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
                     "(`oto_connector op=select`) ou retire-les de `tools` "
                     "(`op=update`) avant de lancer.")
         famille = runner_models.famille((avant or {}).get("model"))
+        # Un passage déclaré sans modèle avant le 24/09/2026 ne s'arme plus : il
+        # tournerait sur le modèle du worker. Le modèle étant figé à la déclaration,
+        # la sortie est d'en déclarer un autre. (Passage inconnu : le 404 vient plus
+        # loin, ce refus ne doit pas le masquer.)
+        if avant:
+            _modele.exige_un_modele(famille)
         # ⚠️ Avant d'armer, et avant la réparation de l'instruction : un refus
         # n'écrit rien. Armé sans la clé exigée, le passage passerait `running` au
         # premier travail — arrêté aussitôt à la réservation — puis au suivant.
@@ -758,6 +767,10 @@ CAPABILITIES += [
                           "`launch` dans une org où rien n'exécute les automatisations "
                           "pour l'instant : l'armement réussirait sans que rien ne "
                           "s'exécute jamais"),
+            DeclaredError(400, "model_required",
+                          "`create` sans `model`, ou `launch` d'une automatisation "
+                          "déclarée sans modèle — un agent hébergé tourne sur la clé "
+                          "de modèle de son org"),
             DeclaredError(400, "model_not_served",
                           "`launch` d'une automatisation dont la famille de modèle "
                           "n'est servie par rien en ce moment"),
@@ -794,9 +807,10 @@ CAPABILITIES += [
             "Declared configuration of an agent PASS — what a fleet runs, on which "
             "table, within which perimeter, and up to which limit. op=create "
             "(`label` + procedure slug + `tools` allowlist ; optional target "
-            "`namespace` + `row_filter`, execution context `model` — one of the "
-            "catalogue served as `runner.models` by oto_trigger; `provider` is "
-            "deduced from it; omitted, the worker runs its own —, and "
+            "`namespace` + `row_filter`, execution context `model` — REQUIRED, one "
+            "of the catalogue served as `runner.models` by oto_trigger (refused "
+            "`model_required` when omitted: the pass runs on its organization's "
+            "model key); `provider` is deduced from it —, and "
             "limits `max_rows` / `max_tokens` / `max_consecutive_failures` / "
             "`max_tokens_per_row` — budgets are counted in TOKENS, never money) / "
             "list (optionally filtered by `status`; one CARD per fleet — `input_sha256` "
@@ -826,7 +840,8 @@ CAPABILITIES += [
             "`no_runner_armed` when no worker polls for this org at all (nothing "
             "would ever execute it — reading, updating and op=stop stay open), and "
             "with `model_not_served` when the fleet declares a model no live worker "
-            "serves: its jobs would wait forever. "
+            "serves: its jobs would wait forever — and `model_required` for a fleet "
+            "declared without a model (declare another one). "
             "op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "
             "consumed, heaviest single row, `empty_jobs` (finished with no row), "

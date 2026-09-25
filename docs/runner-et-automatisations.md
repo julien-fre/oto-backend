@@ -808,7 +808,7 @@ stockait un que rien ne lisait. Il se déclare maintenant sur l'agent, dans un
 catalogue (`oto_mcp/runner_models.py`), et voyage comme la température :
 
 ```
-agent            model ∈ catalogue            NULL = aucun (le worker tourne sur le sien)
+agent            model ∈ catalogue            OBLIGATOIRE depuis le 24/09/2026 (model_required)
   → travail      payload.model + payload.model_family      (tick, campagne, enqueue)
   → claim        provider=<dépôt>  ne réserve que SA famille + les travaux SANS famille
 ```
@@ -817,13 +817,25 @@ agent            model ∈ catalogue            NULL = aucun (le worker tourne s
 déjà au claim pour recevoir la clé de l'org (#874). Un seul mot, deux usages : ce
 qu'il sait consommer, c'est ce qu'il sait servir.
 
-⚠️ **Un travail sans famille est servi par N'IMPORTE QUEL worker.** C'est l'état de
-tout agent déclaré avant ce lot, et le comportement d'avant à l'octet. Une règle
-stricte aurait orphelin chaque déclencheur existant le jour du déploiement, sans
-une erreur. Pour la même raison, un agent posé sans modèle écrit NULL, jamais le
-défaut du catalogue — l'écrire ferait refuser la création dans une org servie par
-une autre famille. Un worker qui ne nomme aucun dépôt ne prend, lui, que les
-travaux sans famille.
+⚠️ **Le modèle est OBLIGATOIRE depuis le 24/09/2026** — avec l'ouverture des agents
+hébergés à toutes les orgs, chacune paie son modèle. Jusque-là, un travail sans
+famille était servi par n'importe quel worker, sur le modèle de son environnement :
+c'est-à-dire sur NOTRE clé, et la garde d'argent (section suivante) ne mordait pas,
+puisqu'elle ne juge que la famille déclarée. Deux verrous, comme la clé exigée :
+
+```
+à la POSE     create (flotte, déclencheur), update enabled=true, update model="",
+              launch d'un passage déclaré sans modèle   → 400 model_required, rien n'est écrit
+à la RÉSERVATION (worker de plateforme)                  → travail `failed` pour de bon,
+              raison écrite, rendu en `delegation_refusee`, jeton retiré
+```
+
+Un agent posé sans modèle avant cette date se lit, se range et s'éteint ; il ne se
+rallume qu'en déclarant un modèle (un déclencheur le fait dans le même
+`update enabled=true` ; une flotte, dont le modèle est figé, se redéclare). `model=""`
+ne « rend plus l'agent au modèle du worker » : ce geste est refusé. Le refus nomme les
+modèles du catalogue. Un worker qui ne nomme aucun dépôt ne prend que les travaux sans
+famille — il n'en reste que d'avant la règle, et la réservation les arrête.
 
 ⚠️ **On ne PROMET pas un modèle que personne ne sert** — même asymétrie que
 `no_runner_armed` : le claim filtre le travail, il attend, puis périme.
@@ -846,8 +858,8 @@ jeton d'org se verra refuser tout modèle explicite (aucune en production aujour
 ⚠️ **Le modèle proposé par défaut se DÉRIVE de ce qui est servi** (12/09/2026) :
 `default` marque le premier modèle servi dans l'ordre du catalogue — l'ordre de
 `MODELES` est la préférence. **Aucun** modèle n'est marqué quand aucune famille
-n'est servie : `families: []` rend l'absence visible, et le geste est alors
-d'omettre `model`. Pas de repli sur le premier du catalogue : la marque posée en dur
+n'est servie : `families: []` rend l'absence visible — et comme un modèle est
+obligatoire, rien ne se pose tant qu'aucune famille n'est servie. Pas de repli sur le premier du catalogue : la marque posée en dur
 sur `claude-sonnet-5` proposait un modèle que les workers de production (famille
 `mistral`) ne servent pas, et un agent qui la suivait prenait `model_not_served`.
 Le défaut ne s'écrit nulle part : un modèle choisi n'est jamais changé, et aucun
