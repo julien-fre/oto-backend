@@ -613,6 +613,27 @@ trouve pas (`datastore_ns.DDL_COLONNE_CONTEXTE_ORG`, sous garde de catalogue). L
 code ne la lit ni ne l'écrit (ses créations la laissent NULL). Le retour arrière retire
 la colonne ; le code qui l'écrit doit être retiré avant lui.
 
+`0018_contexte_org_rempli` (25/09/2026, oto#160 phase 2, après `0017_tableaux_contexte_org`)
+est une révision de **données** : un seul `UPDATE` remplit `context_org_id` des tableaux
+personnels restés NULL, là où une trace désigne UNE org — le journal d'abord
+(`tool_calls` : `data_create_datastore` du même compte au même nom à ±2 min, ou
+`POST /api/datastores` du même compte à ±10 s), sinon les projets qui lient le tableau.
+Rien n'est deviné (pas d'« org unique du membre ») : un indécidable garde NULL et reste
+visible dans toutes les orgs de son propriétaire. Une org désignée mais supprimée n'est
+pas posée. Idempotente (`WHERE owner_type = 'user' AND context_org_id IS NULL` : un
+tableau rempli, par le code ou un premier passage, n'est jamais réécrit), sous
+`lock_timeout` 5 s et `statement_timeout` 120 s. **Rien au démarrage** — une donnée se
+reconstitue une fois, elle ne se tient pas comme un schéma. **Ordre indifférent** avec
+le tag : l'ancien code ignore la colonne, le nouveau montre partout un tableau encore
+NULL. Le retour arrière **ne fait rien** : une valeur remplie ici ne se distingue pas
+d'une valeur posée à la création. Mesure préalable en production (24/09) : 36
+personnels, 13 décidés par le journal, 8 par un projet, 15 indécidables, aucun
+désaccord entre sources. Banc : `tests/datastore/test_contexte_org_remplissage_160.py`.
+
+⚠️ L'identifiant d'une révision tient en **32 caractères** : `alembic_version.version_num`
+est un `VARCHAR(32)`, que le démarrage d'une base neuve estampille à la tête du registre
+(§5.2) — un identifiant plus long y fait échouer chaque démarrage à neuf.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

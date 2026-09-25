@@ -2759,8 +2759,13 @@ refuse une voie qui l'omettrait.
 
 **Phase 1 seulement** : la donnée est posée, la liste ne change pas. `list_datastores`
 passe toujours par `ownership.active_org_principals`, qui ajoute `("user", sub)` sans
-condition. La phase 2 filtrera le personnel sur `context_org_id = org active` ; ce que
-deviennent les personnels d'avant (NULL) dépend de la mesure de leur reconstitution.
+condition. La phase 2 filtrera le personnel sur `context_org_id = org active`.
+
+**Les personnels d'avant la colonne** : la révision `0018_contexte_org_rempli` remplit
+ceux qu'une trace désigne sans ambiguïté — le journal des appels (la création, même
+compte, même nom à ±2 min en MCP, ±10 s en REST), sinon les projets qui lient le
+tableau. Jamais « l'org dont le propriétaire est l'unique membre ». Les autres gardent
+NULL (mesuré le 24/09 : 15 sur 36). Détail : `docs/migrations-versionnees.md` §5.1.
 
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 
