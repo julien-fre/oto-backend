@@ -399,6 +399,21 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # une base vierge le DDL les a déjà créées nullables.
     for col in ("cron", "next_due"):
         conn.execute(f"ALTER TABLE runner_triggers ALTER COLUMN {col} DROP NOT NULL")
+    # L'authentification PAR SIGNATURE (25/09/2026). Sur une base qui existe déjà,
+    # seules ces colonnes manquent. `bearer` par défaut : tout agent posé avant
+    # garde exactement sa porte.
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS hook_auth TEXT "
+                 "NOT NULL DEFAULT 'bearer'")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS "
+                 "hook_signing_secret_enc TEXT")
+    conn.execute("ALTER TABLE runner_hook_deliveries ADD COLUMN IF NOT EXISTS "
+                 "external_id TEXT")
+    # La DÉDUPLICATION : au plus UNE livraison ACCEPTÉE par identifiant et par
+    # déclencheur. Partiel : un refus n'a produit aucun travail, sa retentative
+    # doit pouvoir passer. Posé ICI, après l'ALTER de sa colonne (#450).
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_hook_deliveries_externe "
+                 "ON runner_hook_deliveries(trigger_id, external_id) "
+                 "WHERE external_id IS NOT NULL AND outcome IN ('queued', 'delayed')")
     # L'index du secret : la route le compare par HACHÉ, jamais en clair.
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_runner_triggers_hook_secret "
                  "ON runner_triggers(hook_secret_hash) "

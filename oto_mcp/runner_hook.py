@@ -32,11 +32,16 @@ Il est séparé de la route pour la même raison que `runner_tick` l'est du life
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import hmac
 import json
 import logging
 import secrets
-from typing import Any, Optional
+import time
+from dataclasses import dataclass
+from typing import Any, Literal, Optional
 
 from . import db, runner_models
 from .capabilities import _limites_du_run
@@ -120,6 +125,138 @@ def secret_du_porteur(entete: Optional[str]) -> Optional[str]:
         return None
     secret = morceaux[1].strip()
     return secret if secret.startswith(HOOK_SECRET_PREFIX) else None
+
+
+# ── L'authentification PAR SIGNATURE (Standard Webhooks) ───────────────────────
+#
+# Le porteur `otoh_…` suppose une source qui sait poser un en-tête. Beaucoup de
+# plateformes ne le savent pas : elles SIGNENT leurs livraisons avec un secret
+# qu'ELLES génèrent (Granola, Svix, Resend, Clerk… — la spécification
+# https://www.standardwebhooks.com). Un agent choisit son mode (`hook_auth`) ; le
+# mode signature ÉTEINT le porteur pour cet agent-là.
+
+BEARER, STANDARD_WEBHOOKS = "bearer", "standard_webhooks"
+HOOK_AUTHS = (BEARER, STANDARD_WEBHOOKS)
+
+#: Le préfixe du secret de signature que la SOURCE fournit. Exigé à la pose : un
+#: secret sans lui est presque toujours autre chose (le porteur `otoh_`, une clé
+#: d'API) collé au mauvais endroit.
+SIGNING_SECRET_PREFIX = "whsec_"
+
+#: L'écart toléré entre l'horodatage signé et notre horloge, dans les DEUX sens.
+#: Cinq minutes : la valeur de la spécification, et la borne d'un rejeu — une
+#: livraison capturée ne se rejoue plus passé ce délai, même intacte.
+TOLERANCE_HORODATAGE_S = 300
+
+#: L'identifiant de livraison, borné AU STOCKAGE : il est stocké et indexé.
+_ID_MAX = 256
+
+#: Une clé jetable, pour que le refus d'un id inconnu coûte le même calcul qu'une
+#: vraie vérification (voir `_authentifier`). Ne valide rien : personne ne la connaît.
+_SECRET_LEURRE = SIGNING_SECRET_PREFIX + base64.b64encode(secrets.token_bytes(24)).decode()
+
+
+@dataclass(frozen=True)
+class SignatureRecue:
+    """Ce qu'une source Standard Webhooks envoie pour prouver qui elle est.
+
+    ⚠️ `brut` est le corps TEL QU'IL A ÉTÉ REÇU, octet pour octet. La signature
+    porte sur ces octets-là : la vérifier sur un JSON re-sérialisé échouerait au
+    premier espace ou au premier ordre de clés différent — et « échouerait » veut
+    dire ici « refuserait une livraison légitime, sans que personne comprenne »."""
+    msg_id: str
+    horodatage: str
+    signatures: str
+    brut: bytes
+
+
+def signature_des_entetes(entetes, brut: bytes) -> Optional[SignatureRecue]:
+    """La signature d'une requête, ou None si elle n'en porte pas.
+
+    Les trois en-têtes, ou rien : une requête qui n'en porte que deux n'est pas
+    « presque signée », elle n'est pas signée."""
+    msg_id = entetes.get("webhook-id")
+    horodatage = entetes.get("webhook-timestamp")
+    signatures = entetes.get("webhook-signature")
+    if not (msg_id and horodatage and signatures):
+        return None
+    # ⚠️ PAS tronqué ici : l'identifiant fait partie de ce qui est SIGNÉ. Le
+    # couper avant la vérification ferait échouer la signature d'un id long ;
+    # il n'est borné qu'au STOCKAGE (`declencher`).
+    return SignatureRecue(msg_id.strip(), horodatage.strip(),
+                          signatures.strip(), brut)
+
+
+def cle_de_signature(secret: str) -> Optional[bytes]:
+    """La clé HMAC d'un secret `whsec_…` : le reste, décodé de base64. None si
+    le secret n'a pas cette forme — c'est ce que la pose refuse."""
+    if not secret or not secret.startswith(SIGNING_SECRET_PREFIX):
+        return None
+    try:
+        cle = base64.b64decode(secret[len(SIGNING_SECRET_PREFIX):], validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return cle or None
+
+
+def verifier_signature(secret: str, recue: SignatureRecue,
+                       maintenant: Optional[float] = None,
+                       tolerance_s: int = TOLERANCE_HORODATAGE_S
+                       ) -> Literal["ok", "invalid", "stale"]:
+    """`ok`, `invalid` ou `stale` — la signature Standard Webhooks d'une livraison.
+
+    Signé : `{webhook-id}.{webhook-timestamp}.{corps brut}`, HMAC-SHA256, clé =
+    le secret sans `whsec_`, décodé de base64 ; l'en-tête porte une ou plusieurs
+    signatures `v1,<base64>` séparées par des espaces (une rotation côté source en
+    envoie deux). Une seule qui correspond suffit.
+
+    ⚠️ Comparaison à TEMPS CONSTANT (`hmac.compare_digest`) : une comparaison qui
+    s'arrête au premier octet faux dit, par sa durée, combien d'octets étaient
+    justes.
+
+    ⚠️ `stale` n'est rendu que pour une signature VALIDE : c'est le seul cas où
+    l'appelant a prouvé qu'il détient le secret, donc le seul où lui dire
+    pourquoi on refuse n'apprend rien à un inconnu. Une signature fausse ET
+    périmée est `invalid`, comme toute signature fausse.
+    """
+    cle = cle_de_signature(secret)
+    if cle is None:
+        return "invalid"
+    try:
+        horodatage = int(recue.horodatage)
+    except ValueError:
+        return "invalid"
+    signe = f"{recue.msg_id}.{recue.horodatage}.".encode() + recue.brut
+    attendue = base64.b64encode(hmac.new(cle, signe, hashlib.sha256).digest())
+    valide = False
+    for morceau in recue.signatures.split():
+        version, _, sig = morceau.partition(",")
+        # Pas de court-circuit : on compare TOUTES les signatures présentes, pour
+        # que la durée ne dise pas laquelle correspondait.
+        if version == "v1" and hmac.compare_digest(sig.encode(), attendue):
+            valide = True
+    if not valide:
+        return "invalid"
+    maintenant = time.time() if maintenant is None else maintenant
+    if abs(maintenant - horodatage) > tolerance_s:
+        return "stale"
+    return "ok"
+
+
+def _aad_du_secret(trigger_id: int) -> str:
+    """Lie le chiffré à SA ligne : un secret copié vers un autre déclencheur ne se
+    déchiffre pas (même principe que les credentials, `crypto.py`)."""
+    return f"runner_triggers:{trigger_id}:hook_signing_secret"
+
+
+def chiffrer_secret_de_signature(trigger_id: int, secret: str) -> str:
+    from . import crypto
+    return crypto.encrypt(secret, _aad_du_secret(trigger_id))
+
+
+def _dechiffrer_secret_de_signature(trigger_id: int, enveloppe: str) -> str:
+    from . import crypto
+    return crypto.decrypt(enveloppe, _aad_du_secret(trigger_id))
 
 
 def _extraire(corps: Any, chemin: str) -> Optional[str]:
@@ -243,8 +380,77 @@ class HookRefus(Exception):
         self.issue, self.retry_after = issue, retry_after
 
 
+def _authentifier(trigger_id: int, secret: Optional[str],
+                  signature: Optional[SignatureRecue],
+                  source: Optional[str]) -> dict:
+    """Le déclencheur que CETTE preuve ouvre — porteur ou signature — ou un refus.
+
+    ⚠️ **Chaque agent a UN mode, et l'autre preuve y est refusée.** Un agent en
+    mode signature n'accepte plus le porteur : c'est le sens même de « désactiver
+    le porteur » — sinon un `otoh_` fuité continuerait d'ouvrir une porte que son
+    propriétaire croit fermée. La garde vit dans le SQL (`hook_auth` dans le
+    `WHERE`), pas dans une comparaison après coup.
+
+    ⚠️ Une signature présente est TOUJOURS jugée comme une signature, même si un
+    porteur l'accompagne : choisir la preuve la plus faible des deux quand on a
+    la plus forte sous la main n'aurait aucun sens.
+
+    Tous les échecs d'identité rendent LE MÊME 404 (`HOOK_INCONNU`) : id inconnu,
+    mauvais mode, secret faux, signature fausse. Un seul refus parle : `stale`,
+    rendu seulement quand la signature est VALIDE (cf. `verifier_signature`).
+    """
+    if signature is not None:
+        t = db.trigger_signe(trigger_id)
+        enveloppe = (t or {}).get("hook_signing_secret_enc")
+        if not t or not enveloppe:
+            # ⚠️ Le MÊME calcul qu'une vraie vérification, jeté : sans lui, un id
+            # inconnu répondrait plus vite qu'un agent en mode signature, et la
+            # durée dirait lesquels existent — l'oracle que le WHERE du porteur
+            # évite (`trigger_par_secret`).
+            verifier_signature(_SECRET_LEURRE, signature)
+            raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+        try:
+            cle = _dechiffrer_secret_de_signature(trigger_id, enveloppe)
+        except Exception:  # noqa: BLE001 — journalisé, et c'est une panne de NOTRE côté
+            # Clé maîtresse absente ou enveloppe abîmée : l'envoyeur n'y est pour
+            # rien, et c'est le seul cas où sa retentative est la bonne conduite.
+            logger.exception("webhook %s : secret de signature indéchiffrable",
+                             trigger_id)
+            raise
+        verdict = verifier_signature(cle, signature)
+        if verdict == "invalid":
+            # ⚠️ PAS journalisé, comme un mauvais porteur : un inconnu qui connaît
+            # l'id remplirait sinon le journal de livraisons d'autrui.
+            raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+        if verdict == "stale":
+            # La source DÉTIENT le secret (signature valide) : elle a droit au
+            # motif, et le propriétaire aussi — un rejeu ou une horloge dérivée
+            # se répare de son côté.
+            with db._connect() as conn:
+                db.enregistrer(conn, trigger_id, t["org_id"], db.REFUSE_STALE,
+                               source=source, external_id=signature.msg_id[:_ID_MAX])
+            raise HookRefus(
+                400, "hook_stale_timestamp",
+                f"The signed `webhook-timestamp` is more than "
+                f"{TOLERANCE_HORODATAGE_S} s away from our clock. A delivery "
+                "is only accepted within that window: it cannot be replayed "
+                "later.")
+        return t
+    if not secret:
+        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+    t = db.trigger_par_secret(trigger_id, hacher(secret))
+    if not t:
+        # ⚠️ MÊME refus qu'un id inconnu, et c'est délibéré : distinguer les deux
+        # ferait de cette route un oracle sur les déclencheurs qui existent. Le
+        # propriétaire, lui, voit `refused_secret` sur son écran — mais seulement
+        # si l'id existe, donc on ne peut pas non plus journaliser ici.
+        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+    return t
+
+
 def declencher(trigger_id: int, secret: Optional[str], corps: Any,
-               source: Optional[str] = None) -> dict:
+               source: Optional[str] = None, *,
+               signature: Optional[SignatureRecue] = None) -> dict:
     """LE geste : vérifier, lisser, enfiler. Rend ce que la route sérialise.
 
     Synchrone À DESSEIN — la route l'appelle dans un fil séparé (`run_in_threadpool`).
@@ -257,15 +463,14 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
     un travail perdu entre l'acquittement et l'écriture ne serait jamais rejoué —
     l'envoyeur a reçu un succès, il ne retentera pas.
     """
-    if not secret:
-        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
-    t = db.trigger_par_secret(trigger_id, hacher(secret))
-    if not t:
-        # ⚠️ MÊME refus qu'un id inconnu, et c'est délibéré : distinguer les deux
-        # ferait de cette route un oracle sur les déclencheurs qui existent. Le
-        # propriétaire, lui, voit `refused_secret` sur son écran — mais seulement
-        # si l'id existe, donc on ne peut pas non plus journaliser ici.
-        raise HookRefus(404, "hook_not_found", HOOK_INCONNU)
+    t = _authentifier(trigger_id, secret, signature, source)
+    # L'identifiant de livraison que la source déclare — seul le mode signature
+    # en porte un, et il est SIGNÉ : un tiers ne peut pas le forger pour faire
+    # passer une livraison pour le doublon d'une autre.
+    externe = signature.msg_id[:_ID_MAX] if signature is not None else None
+    # Posé seulement quand il existe : le chemin du porteur écrit exactement ce
+    # qu'il écrivait avant ce lot.
+    marque = {"external_id": externe} if externe else {}
 
     # ⚠️ UNE transaction, et le refus est levé APRÈS elle. Lever DANS le bloc
     # ferait rouler la transaction en arrière — la livraison refusée disparaîtrait
@@ -279,7 +484,7 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
     with db._connect() as conn:
         if not t["enabled"]:
             db.enregistrer(conn, trigger_id, t["org_id"], db.REFUSE_PAUSED,
-                           source=source)
+                           source=source, **marque)
             refus = HookRefus(
                 409, "trigger_paused",
                 "This agent is paused: it will not run until it is switched back "
@@ -290,6 +495,18 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
             # ce verrou, toutes les livraisons lisent le même compte et partent
             # ensemble — le lissage serait inerte exactement quand il sert.
             db.verrouiller_le_declencheur(conn, trigger_id)
+            # La DÉDUPLICATION, après le verrou : deux retentatives simultanées
+            # de la même livraison se sérialisent ici, et la seconde trouve la
+            # première. Une source Standard Webhooks retente pendant des jours
+            # (Granola : quatre) sur un délai d'attente ou un 5xx — y compris
+            # quand NOTRE écriture avait abouti et que seule la réponse s'est
+            # perdue. Sans cette lecture, chaque retentative serait un déroulé.
+            deja = (db.livraison_acceptee(conn, trigger_id, externe)
+                    if externe else None)
+            if deja:
+                return {"ok": True, "job_id": deja.get("job_id"),
+                        "trigger_id": trigger_id, "delayed_seconds": None,
+                        "duplicate": True}
             debit = int(t.get("max_per_hour") or DEBIT_PAR_HEURE_DEFAUT)
             # Le LISSAGE. Au-delà du débit, le travail ne part pas tout de suite :
             # il prend le prochain créneau libre, DERRIÈRE ceux qui attendent déjà.
@@ -304,7 +521,7 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                 # promettre une exécution qui n'aura pas lieu — le défaut que les
                 # occurrences programmées ont payé (#814), sous une autre forme.
                 db.enregistrer(conn, trigger_id, t["org_id"], db.REFUSE_RATE,
-                               source=source)
+                               source=source, **marque)
                 refus = HookRefus(
                     429, "hook_rate_limited",
                     f"This agent receives more than its rate ({debit}/h) and the "
@@ -342,7 +559,7 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                     conn=conn)
                 db.enregistrer(conn, trigger_id, t["org_id"],
                                db.DELAYED if retard_s else db.QUEUED,
-                               job_id=job["id"], source=source,
+                               job_id=job["id"], source=source, **marque,
                                # Le créneau RÉSERVÉ, lu sur le travail même : c'est
                                # lui que la livraison suivante lira pour se placer.
                                due_at=job.get("due_at"))

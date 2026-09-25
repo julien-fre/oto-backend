@@ -1064,6 +1064,66 @@ dans une réponse, donc dans un transcript d'agent.
 Le seul refus qui se distingue est la **pause** (409) : le propriétaire a le droit
 de savoir que son agent existe mais dort — c'est lui qui a donné le secret.
 
+#### L'autre porte : la SIGNATURE de la source (Standard Webhooks)
+
+Beaucoup de plateformes ne savent pas poser un en-tête `Authorization` : elles
+**signent** leurs livraisons avec un secret qu'**elles** génèrent (Granola, Svix,
+Resend, Clerk… — https://www.standardwebhooks.com). Chaque agent déclenché choisit
+donc son mode, `runner_triggers.hook_auth` :
+
+| `hook_auth` | la source prouve qui elle est par | le porteur `otoh_` |
+|---|---|---|
+| `bearer` (**défaut**) | `Authorization: Bearer otoh_…`, généré par nous | accepté |
+| `standard_webhooks` | `webhook-id`, `webhook-timestamp`, `webhook-signature: v1,<b64>` — HMAC-SHA256 de `{id}.{ts}.{corps brut}`, clé = le `whsec_…` sans préfixe, décodé de base64 | **refusé** |
+
+- **Le mode signature ÉTEINT le porteur** — c'est tout le sens de « désactiver le
+  porteur » : un `otoh_` fuité ne rouvre pas une porte que son propriétaire croit
+  fermée. La garde est **dans le WHERE** (`trigger_par_secret … AND hook_auth =
+  'bearer'`), comme le haché. Passer en signature **efface** le haché du porteur ;
+  revenir au porteur **efface** le secret de signature et **émet un porteur neuf**,
+  rendu une fois.
+- **Le secret de signature se colle, il ne se relit jamais.** Il est fourni par la
+  source, donc stocké **chiffré** (`hook_signing_secret_enc`, `crypto.encrypt`, AAD
+  liée à la ligne — un chiffré recopié vers un autre déclencheur ne se déchiffre
+  pas). `_COLS` n'en sert que l'existence (`signing_secret_set`). ⚠️ **Pas de face
+  MCP** : il se pose par `PUT /api/me/runner/triggers/{trigger_id}/hook-auth`
+  (capacité `runner.trigger.hook_auth`, `mcp=None`) — la règle du dépôt, un secret
+  brut ne passe jamais en argument d'outil. `oto_trigger` en sert l'état, et refuse
+  `rotate_secret` sur un agent en signature (`signature_mode`). Autorisation :
+  **membre de l'org**, comme `rotate_secret` — choisir la porte d'un agent n'engage
+  pas le forfait de son propriétaire, donc la garde de propriété des agents
+  d'abonnement ne s'y applique pas (choix délibéré).
+- **Vérifiée sur les OCTETS reçus**, avant le parse JSON : un JSON re-sérialisé
+  diffère au premier espace, et la signature serait refusée à tort. Plusieurs `v1,`
+  séparées par des espaces (rotation côté source) : une seule suffit. Comparaison
+  à temps constant. Prouvée contre le **vecteur de référence publié** de la
+  spécification (`tests/test_webhook_signature.py`), pas seulement contre notre
+  propre signeur.
+- **Aucun oracle, une exception.** Signature fausse, id inconnu, agent au porteur,
+  porteur sur un agent signé : le même 404 mot pour mot, **non journalisé** (un
+  inconnu qui connaît l'id remplirait sinon le journal d'autrui) — et **à coût
+  égal** : un id inconnu vérifie quand même, contre une clé leurre, pour que la
+  durée ne dise pas quels agents sont en mode signature. Seule une
+  signature **valide** dont l'horodatage sort de ±5 min se nomme — 400
+  `hook_stale_timestamp`, journalisée `refused_stale` : la source a prouvé qu'elle
+  détient le secret, c'est un rejeu ou une horloge dérivée, réparable de son côté.
+- **Déduplication — seulement quand la source signe.** Son `webhook-id` est signé,
+  gardé en `runner_hook_deliveries.external_id` ; une retentative d'un identifiant
+  déjà **accepté** rend `202 {duplicate: true}` sans second travail. La lecture se
+  fait **après** le verrou du déclencheur (deux retentatives simultanées se
+  sérialisent) ; l'index unique **partiel** `(trigger_id, external_id) WHERE
+  outcome IN ('queued','delayed')` est le filet dessous. Un **refus** ne compte pas :
+  la retentative d'une livraison refusée (pause) doit pouvoir passer. C'est la
+  déduplication qui compte ici, pas un confort : une source Standard Webhooks
+  retente des jours (Granola : quatre) sur un délai d'attente ou un 5xx, y compris
+  quand notre écriture avait abouti.
+- ⚠️ Une source qui signe traite un 4xx (hors 408/429) comme **définitif** : un
+  agent **en pause** (409) perd donc pour de bon les événements reçus pendant la
+  pause. Assumé dans ce lot.
+- ⚠️ L'index de déduplication n'est **pas** dans le DDL de base : sa colonne naît
+  d'un `ALTER` du boot, que le DDL précède (#450). Il est posé dans `db/_init.py`,
+  juste après.
+
 #### Une rafale se LISSE, elle ne se perd pas
 
 Au-delà du débit déclaré (`max_per_hour`, 60/h par défaut), la livraison est
@@ -1234,10 +1294,12 @@ base est partagée : une ligne posée depuis la preprod est immédiatement visib
 la prod. **La fenêtre se ferme d'elle-même dès que la prod porte ce lot** ; d'ici
 là, aucun déclencheur webhook sur la base partagée.
 
-**Ce qui n'est pas ici** : aucune **déduplication** (une source qui retente crée un
-second travail — assumé pour ce lot), aucun **plafond de dépense**, et aucune
-signature façon Stripe (`X-Signature` HMAC du corps) — le porteur suffit tant que
-la route est en TLS.
+**Ce qui n'est pas ici** : aucune **déduplication pour une source au porteur**
+(elle n'envoie pas d'identifiant : une retentative y crée un second travail —
+assumé), aucun **plafond de dépense**, et des signatures au **seul** format Standard
+Webhooks — ni Stripe (`Stripe-Signature: t=…,v1=<hex>`), ni GitHub
+(`X-Hub-Signature-256`). `hook_auth` est une énumération : les ajouter est un
+nouveau cas, pas une migration.
 
 ### Un worker sans clé propre : ouvrir une famille aux clés clients (13/09/2026)
 

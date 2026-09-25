@@ -16,12 +16,16 @@ from ._conn import _connect
 
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
          "max_tokens, max_run_seconds, model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
-         "cron, tz, enabled, next_due, last_enqueued_at, created_at")
+         "cron, tz, enabled, next_due, last_enqueued_at, created_at, hook_auth, "
+         "(hook_signing_secret_enc IS NOT NULL) AS signing_secret_set")
 
 #: ⚠️ `hook_secret_hash` n'est PAS dans `_COLS`, et c'est la garde : un haché servi
 #: à une lecture partirait dans la réponse de `op=list`, donc dans un transcript
 #: d'agent. La route le lit par une requête dédiée (`trigger_par_secret`), et le
 #: secret en clair n'existe qu'une fois, au retour de `poser_secret_de_hook`.
+#: ⚠️ Même garde pour `hook_signing_secret_enc` (le secret de signature fourni par
+#: la SOURCE, chiffré) : `_COLS` n'en sert que l'EXISTENCE (`signing_secret_set`),
+#: jamais le chiffré. Seule `trigger_signe` le lit, pour la route.
 
 
 def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
@@ -210,10 +214,68 @@ def trigger_par_secret(trigger_id: int, secret_hash: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             f"SELECT {_COLS} FROM runner_triggers "
-            f"WHERE id = %s AND kind = 'webhook' AND hook_secret_hash = %s",
+            f"WHERE id = %s AND kind = 'webhook' AND hook_secret_hash = %s "
+            # ⚠️ Un agent passé en mode SIGNATURE n'ouvre plus au porteur, même
+            # avec le bon : c'est ce que « désactiver le porteur » veut dire. La
+            # garde est dans le WHERE, comme le haché — même refus, même durée.
+            f"AND hook_auth = 'bearer'",
             (trigger_id, secret_hash),
         ).fetchone()
     return dict(row) if row else None
+
+
+def trigger_signe(trigger_id: int) -> Optional[dict]:
+    """Le déclencheur webhook en mode SIGNATURE d'un id, avec son secret CHIFFRÉ —
+    pour la route, et pour elle seule.
+
+    ⚠️ Trouvé par son SEUL id, et c'est la différence de nature avec le porteur :
+    une signature se vérifie AVEC le secret, donc il faut lire la ligne avant de
+    pouvoir juger. Rien ne sort d'ici vers l'appelant : la route rend le même 404
+    pour « inconnu », « pas en mode signature » et « signature fausse », et le
+    chiffré ne quitte jamais le process.
+
+    `enabled` n'est pas filtré, pour la même raison que `trigger_par_secret` : une
+    source qui a prouvé qui elle est a droit au 409 « en pause ».
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {_COLS}, hook_signing_secret_enc FROM runner_triggers "
+            f"WHERE id = %s AND kind = 'webhook' AND hook_auth = 'standard_webhooks'",
+            (trigger_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def poser_auth_de_hook(trigger_id: int, org_id: int, hook_auth: str,
+                       secret_enc: Optional[str] = None,
+                       effacer_le_secret: bool = False) -> bool:
+    """Pose le MODE d'authentification d'un webhook, et/ou son secret de signature.
+
+    `secret_enc` = le secret de signature DÉJÀ chiffré (`runner_hook.
+    chiffrer_secret_de_signature`) — le clair ne passe jamais par ici.
+    `effacer_le_secret` : le retour au porteur EFFACE le secret de signature. Le
+    garder dormant ferait un credential stocké que plus rien n'utilise, et qu'un
+    retour au mode signature réactiverait sans que personne ne l'ait recollé.
+    """
+    with _connect() as conn:
+        if effacer_le_secret:
+            cur = conn.execute(
+                "UPDATE runner_triggers SET hook_auth = %s, "
+                "hook_signing_secret_enc = NULL "
+                "WHERE id = %s AND org_id = %s AND kind = 'webhook'",
+                (hook_auth, trigger_id, org_id))
+        elif secret_enc is not None:
+            cur = conn.execute(
+                "UPDATE runner_triggers SET hook_auth = %s, "
+                "hook_signing_secret_enc = %s "
+                "WHERE id = %s AND org_id = %s AND kind = 'webhook'",
+                (hook_auth, secret_enc, trigger_id, org_id))
+        else:
+            cur = conn.execute(
+                "UPDATE runner_triggers SET hook_auth = %s "
+                "WHERE id = %s AND org_id = %s AND kind = 'webhook'",
+                (hook_auth, trigger_id, org_id))
+        return bool(cur.rowcount)
 
 
 def poser_secret_de_hook(trigger_id: int, org_id: int, secret_hash: str) -> bool:
