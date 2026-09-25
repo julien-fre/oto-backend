@@ -13,6 +13,7 @@ import oto_mcp.capabilities.orgs.reads  # noqa: F401 — org.list/get/admin.list
 import oto_mcp.capabilities.orgs.field_filters  # noqa: F401 — org.field_filters.{get,set} (ADR 0015)
 import oto_mcp.capabilities.orgs.email_settings  # noqa: F401 — org.email_settings.{get,set} (envoi per-org)
 import oto_mcp.capabilities.orgs.mfa  # noqa: F401 — org.mfa.{get,set} (MFA obligatoire par org, miroir Logto)
+import oto_mcp.capabilities.orgs.model_subscriptions  # noqa: F401 — org.model_subscriptions.{get,set} (plafond des abonnements)
 from . import scheduled_emails  # noqa: F401 — org.scheduled_email.{list,cancel} (envoi différé)
 import oto_mcp.capabilities.orgs.invites  # noqa: F401 — org.invite.{create,list,revoke,accept}
 # Invitation PLATEFORME (feature cascade, sommet) — onboarding admin, org cible optionnelle.
@@ -66,7 +67,7 @@ import oto_mcp.capabilities.connectors.verify  # noqa: F401 — connectors.verif
 from . import me_credentials  # noqa: F401 — me.credential.{get,set,clear}
 # Mes ABONNEMENTS de modèles (OTO-130) — REST-only. Aucun identifiant ne s'y
 # pose : la personne se connecte DANS son sandbox, et la session n'en sort pas.
-from . import me_abonnements  # noqa: F401 — me.model_subscriptions.{list,remove}
+from . import me_abonnements  # noqa: F401 — me.model_subscriptions.{list,remove,set_limit,…}
 # Connexion par SESSION NAVIGATEUR (ADR 0026) — l'autre voie de pose d'un credential,
 # par un login humain dans un navigateur hébergé. Ex-routes écrites à la main (#121).
 from . import browser_sessions  # noqa: F401 — me.browser_session.{start,finalize}

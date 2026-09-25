@@ -578,8 +578,9 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
 
 
 def porteur_et_famille(job_id: int) -> Optional[dict]:
-    """`{sub, model_family}` d'un travail — de quoi adresser le rapport de forfait à
-    la conclusion (OTO-130).
+    """`{sub, org_id, model_family}` d'un travail — de quoi adresser le rapport de
+    forfait à la conclusion (OTO-130), et lire le plafond que son ORG a réglé
+    (`_abonnement.seuil`).
 
     Une lecture À PART, et non deux colonnes de plus au `RETURNING` de
     `complete_job` : ce retour est un contrat (`{status, run_id}`) que six bancs
@@ -587,7 +588,7 @@ def porteur_et_famille(job_id: int) -> Optional[dict]:
     lecteurs pour une famille qui n'en concerne qu'un."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT sub, payload->>'model_family' AS model_family "
+            "SELECT sub, org_id, payload->>'model_family' AS model_family "
             "FROM runner_jobs WHERE id = %s", (job_id,)).fetchone()
     return dict(row) if row else None
 

@@ -29,7 +29,15 @@ PLAFOND = "paused_limit"        # forfait épuisé jusqu'à `limit_reset_at`
 DECONNECTE = "disconnected"     # la personne a coupé, ou n'a jamais connecté
 
 _CHAMPS = ("sub, famille, sandbox_id, statut, plan, method, limit_reset_at, "
-           "last_ok_at, created_at, updated_at")
+           "last_ok_at, created_at, updated_at, limite_pct")
+
+# Le plafond PERSO de consommation (% de l'usage total du compte). Même forme dans le
+# `CREATE TABLE` (`db/schema/runs.py`), dans la révision `0019` et au démarrage : une
+# base neuve, une base migrée et une base que le démarrage rattrape ont la même colonne.
+COLONNE_LIMITE = "limite_pct"
+DDL_COLONNE_LIMITE = (f"ALTER TABLE user_model_subscriptions ADD COLUMN IF NOT EXISTS "
+                      f"{COLONNE_LIMITE} SMALLINT "
+                      f"CHECK ({COLONNE_LIMITE} BETWEEN 1 AND 100)")
 
 
 def get_subscription(sub: str, famille: str) -> Optional[dict]:
@@ -113,6 +121,23 @@ def marquer_statut(sub: str, famille: str, statut: str, *,
              RETURNING {_CHAMPS}""",
             (statut, plan, method, statut, limit_reset_at, bool(ok), sub, famille,
              bool(observe)),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def poser_limite(sub: str, famille: str, limite_pct: Optional[int]) -> Optional[dict]:
+    """Pose (ou retire, `None`) le plafond PERSO d'une personne sur SA ligne. Ne crée
+    rien : sans abonnement, il n'y a rien à plafonner — rend `None`.
+
+    Ne touche ni au statut ni à l'échéance : le plafond s'applique au PROCHAIN
+    rapport de forfait (`_abonnement.noter_rapport`), jamais au run en cours."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"""UPDATE user_model_subscriptions
+                   SET limite_pct = %s, updated_at = NOW()
+                 WHERE sub = %s AND famille = %s
+             RETURNING {_CHAMPS}""",
+            (limite_pct, sub, famille),
         ).fetchone()
     return dict(row) if row else None
 

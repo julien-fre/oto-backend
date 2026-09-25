@@ -470,6 +470,8 @@ _SUB_COLUMNS = [
     ("connector_settings", "set_by"),
     # Qui a déclaré un admin de tenant (L-clés PR 2) — colonne d'auteur.
     ("tenant_admins", "granted_by"),
+    # Qui a réglé le plafond des abonnements d'une org — colonne d'AUTEUR, sans FK.
+    ("org_model_subscription_limits", "updated_by"),
     # Les relances reçues, et qui les a déclenchées. Le TITULAIRE (`sub`) est sous
     # index unique partiel : l'UPDATE nu ci-dessous ne suffit pas seul, il est
     # précédé du retrait de l'étape 2 quinquies (`_UNIQUE_INDEX_SUB_TABLES`).

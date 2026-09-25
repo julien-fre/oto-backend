@@ -2,7 +2,7 @@
 
 Quatre objets métier : `oto_org` (cycle de vie : create/update/archive +
 invitations), `oto_org_settings` (les réglages d'org par domaine : email / mfa /
-field_filters), `oto_group` (équipes : create/list/membres/guide d'équipe),
+field_filters / model_subscriptions), `oto_group` (équipes : create/list/membres/guide d'équipe),
 `oto_scheduled_emails` (file d'envoi différé). Handlers de domaine réutilisés
 tels quels, faces REST intactes.
 
@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from . import scheduled_emails
 from .groups import core as groups, guide as groups_guide, invites as groups_invites, members as groups_members
-from .orgs import core as orgs, email_settings as orgs_email_settings, field_filters as orgs_field_filters, invites as orgs_invites, mfa as orgs_mfa, update as orgs_update
+from .orgs import core as orgs, email_settings as orgs_email_settings, field_filters as orgs_field_filters, invites as orgs_invites, mfa as orgs_mfa, model_subscriptions as orgs_model_subscriptions, update as orgs_update
 from ._authz import (
     BY_OP,
     GROUP_ADMIN_OF,
@@ -78,10 +78,10 @@ def _org(ctx: ResolvedCtx, inp: OrgInput) -> dict:
         send_email=inp.send_email))
 
 
-# ── oto_org_settings : get / set / preview × domaine email|mfa|field_filters ─
+# ── oto_org_settings : get / set / preview × domaine email|mfa|field_filters|model_subscriptions ─
 class OrgSettingsInput(BaseModel):
     op: Literal["get", "set", "preview"]
-    domain: Literal["email", "mfa", "field_filters"]
+    domain: Literal["email", "mfa", "field_filters", "model_subscriptions"]
     org_id: int
     # email (set) :
     connector: Optional[str] = None          # scaleway | resend
@@ -98,10 +98,15 @@ class OrgSettingsInput(BaseModel):
     rules: Optional[list[dict]] = None       # set/preview (None efface au set)
     salt: Optional[str] = None               # set/preview
     payload: Any = None                      # preview : échantillon réel
+    # model_subscriptions :
+    family: Optional[str] = None             # get/set : claude_subscription
+    limit_pct: Optional[int] = None          # set : 1..100, null (EXPLICITE) = défaut
 
 
 def _org_settings(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
     es, mfa, ff = orgs_email_settings, orgs_mfa, orgs_field_filters
+    if inp.domain == "model_subscriptions":
+        return _plafond_abonnements(ctx, inp)
     if inp.domain == "email":
         if inp.op == "get":
             return es._get_email_settings(ctx, es.GetEmailSettingsInput(org_id=inp.org_id))
@@ -135,6 +140,23 @@ def _org_settings(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
     return ff._preview_field_filter(ctx, ff.PreviewFieldFilterInput(
         org_id=inp.org_id, service=service, payload=inp.payload,
         rules=inp.rules, salt=inp.salt))
+
+
+def _plafond_abonnements(ctx: ResolvedCtx, inp: OrgSettingsInput) -> dict:
+    ms = orgs_model_subscriptions
+    family = _need(inp.family, "missing_family",
+                   f"`family` (ex. claude_subscription) requis pour {inp.op}.")
+    if inp.op == "get":
+        return ms._get_plafond(ctx, ms.GetOrgPlafondInput(org_id=inp.org_id, family=family))
+    if inp.op == "set":
+        # `null` revient au défaut : c'est un GESTE, donc il se dit. Un `set` sans
+        # `limit_pct` du tout est une erreur, pas un retour silencieux au défaut.
+        if "limit_pct" not in inp.model_fields_set:
+            raise AuthzDenied(400, "missing_limit_pct",
+                              "`limit_pct` (1..100, ou null pour le défaut) requis pour set.")
+        return ms._set_plafond(ctx, ms.SetOrgPlafondInput(
+            org_id=inp.org_id, family=family, limit_pct=inp.limit_pct))
+    raise AuthzDenied(400, "unsupported_op", "preview n'existe que pour field_filters.")
 
 
 # ── oto_group : create / list / add_member / remove_member / set_instruction ─
@@ -238,8 +260,13 @@ CAPABILITIES += [
             "true|false — org-wide mandatory MFA) | field_filters (redaction policy ADR "
             "0015: get returns policies, include_schemas=true adds the observed field "
             "catalog; set takes `service` + `rules` (None clears) + optional `salt`; "
-            "op=preview dry-runs rules against a real `payload` sample). op=get is member, "
-            "set is org admin."),
+            "op=preview dry-runs rules against a real `payload` sample) | model_subscriptions "
+            "(the org's consumption cap on members' personal model subscriptions, `family` "
+            "e.g. claude_subscription: get returns `limit_pct` + `default`; set takes "
+            "`limit_pct` 1..100 = max % of each member's provider account TOTAL usage "
+            "(5-hour and 7-day windows) before the org's next jobs wait for the reset, or "
+            "null = back to the default 80; a member may only set a lower cap for "
+            "themselves). op=get is member, set is org admin."),
         mcp="oto_org_settings",
     ),
     Capability(

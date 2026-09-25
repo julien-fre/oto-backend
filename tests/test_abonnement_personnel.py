@@ -306,8 +306,87 @@ class TestRapport:
             lambda sub, famille, statut, **k: ecrits.append((sub, statut, k)))
         return ecrits
 
-    def _conclu(self, famille=_FAMILLE, sub=_PORTEUR):
-        return {"status": "done", "run_id": None, "sub": sub, "model_family": famille}
+    @pytest.fixture(autouse=True)
+    def _plafonds(self, monkeypatch):
+        """Les deux plafonds, sans base : `org` (None = rien réglé) et `perso`."""
+        reglages = {"org": None, "perso": None}
+        monkeypatch.setattr(
+            _abonnement.org_subscription_limits, "get_limite",
+            lambda org_id, famille: (None if reglages["org"] is None
+                                     else {"limite_pct": reglages["org"]}))
+        monkeypatch.setattr(
+            US, "get_subscription",
+            lambda sub, famille: {"statut": US.CONNECTE, "limite_pct": reglages["perso"]})
+        return reglages
+
+    def _conclu(self, famille=_FAMILLE, sub=_PORTEUR, org_id=7):
+        return {"status": "done", "run_id": None, "sub": sub, "org_id": org_id,
+                "model_family": famille}
+
+    # ── le plafond (25/09/2026) ──────────────────────────────────────────────
+    def test_le_defaut_est_80_quand_l_org_n_a_rien_regle(self, _plafonds):
+        assert _abonnement.DEFAUT_LIMITE_PCT == 80
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.80
+
+    def test_le_seuil_est_le_MIN_de_l_org_et_du_perso(self, _plafonds):
+        _plafonds.update(org=90, perso=70)
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.70
+        _plafonds.update(org=60, perso=70)
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.60
+
+    def test_un_perso_plus_HAUT_ne_relache_rien(self, _plafonds):
+        _plafonds.update(org=None, perso=100)
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.80
+        _plafonds.update(org=50, perso=95)
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.50
+
+    def test_le_perso_seul_resserre_le_defaut(self, _plafonds):
+        _plafonds.update(org=None, perso=30)
+        assert _abonnement.seuil(_PORTEUR, 7, _FAMILLE) == 0.30
+
+    def _rapport(self, cinq_h):
+        return {"abonnement": {"etat": "allowed",
+                               "fenetres": self._fenetres(cinq_h=cinq_h)}}
+
+    def test_081_MET_en_pause_avec_l_org_a_80(self, _ecrits, _plafonds):
+        _plafonds.update(org=80)
+        _abonnement.noter_rapport(self._conclu(), True, self._rapport(0.81))
+        (_, statut, k), = _ecrits
+        assert statut == US.PLAFOND
+        assert int(k["limit_reset_at"].timestamp()) == 1790029800
+
+    def test_081_ne_met_PAS_en_pause_avec_l_org_a_90_sans_perso(self, _ecrits, _plafonds):
+        _plafonds.update(org=90, perso=None)
+        _abonnement.noter_rapport(self._conclu(), True, self._rapport(0.81))
+        assert [st for _, st, _ in _ecrits] == [US.CONNECTE]
+
+    def test_081_MET_en_pause_avec_l_org_a_90_et_un_perso_a_75(self, _ecrits, _plafonds):
+        _plafonds.update(org=90, perso=75)
+        _abonnement.noter_rapport(self._conclu(), True, self._rapport(0.81))
+        assert [st for _, st, _ in _ecrits] == [US.PLAFOND]
+
+    def test_le_seuil_vaut_pour_la_fenetre_de_SEPT_jours_aussi(self, _ecrits, _plafonds):
+        _plafonds.update(org=80)
+        _abonnement.noter_rapport(self._conclu(), True, {"abonnement": {
+            "etat": "allowed", "fenetres": self._fenetres(cinq_h=0.1, sept_j=0.85)}})
+        (_, statut, k), = _ecrits
+        assert statut == US.PLAFOND
+        assert int(k["limit_reset_at"].timestamp()) == 1790053200
+
+    def test_c_est_l_org_DU_TRAVAIL_qui_est_lue(self, _ecrits, monkeypatch):
+        lues = []
+        monkeypatch.setattr(_abonnement.org_subscription_limits, "get_limite",
+                            lambda org_id, famille: lues.append(org_id) or None)
+        _abonnement.noter_rapport(self._conclu(org_id=31), True, self._rapport(0.5))
+        assert lues == [31]
+
+    def test_un_plafond_illisible_ne_fait_JAMAIS_echouer_la_conclusion(
+            self, _ecrits, monkeypatch):
+        def _hoquet(org_id, famille):
+            raise RuntimeError("connexion perdue")
+        monkeypatch.setattr(_abonnement.org_subscription_limits, "get_limite", _hoquet)
+        _abonnement.noter_rapport(self._conclu(), True, self._rapport(0.99))
+        assert _ecrits == []
 
     def test_une_echeance_aberrante_est_BORNEE(self, _ecrits):
         """Un `resetsAt` en millisecondes suspendrait la personne pour des siècles."""

@@ -1310,9 +1310,31 @@ qu'on oublie).
 **Le worker rapporte ce qu'il a vu du forfait** (`result.abonnement` à `complete`). Le
 fournisseur annonce l'usage à CHAQUE exécution, pas seulement au refus — deux fenêtres,
 cinq heures et sept jours. La personne est mise en attente dès qu'une fenêtre atteint
-`_abonnement.SEUIL_D_ATTENTE`, **avant** qu'un travail soit refusé ; deux fenêtres
-saturées attendent la plus lointaine. Un rapport mal formé s'ignore et se journalise : il
-ne fait jamais échouer une conclusion. Seul un worker de plateforme est écouté.
+son **plafond de consommation** (`_abonnement.seuil`, ci-dessous), **avant** qu'un
+travail soit refusé ; deux fenêtres saturées attendent la plus lointaine. Un rapport mal
+formé s'ignore et se journalise : il ne fait jamais échouer une conclusion. Seul un
+worker de plateforme est écouté.
+
+**Le plafond de consommation (25/09/2026).** Un forfait sert aussi la personne pour son
+propre usage : l'épuiser jusqu'au refus la laisserait sans rien. Le plafond est une part
+maximale, en %, de l'usage **TOTAL** du compte — les fenêtres cinq heures et sept jours
+que le fournisseur rapporte, usage perso compris —, la même pour les deux fenêtres.
+
+- **L'org le règle** : `oto_org_settings domain=model_subscriptions` (get = membre, set =
+  admin d'org ; `limit_pct` 1..100, `null` = retour au défaut), REST
+  `GET|PUT /api/orgs/{id}/model-subscriptions/{family}`, table
+  `org_model_subscription_limits`. Sans réglage, **80 %** (`_abonnement.DEFAUT_LIMITE_PCT`).
+- **La personne peut le resserrer pour elle-même** : `PATCH
+  /api/me/model-subscriptions/{family}` `{"limit_pct": int|null}` (sa ligne seulement,
+  `404 not_connected` sans abonnement), colonne `user_model_subscriptions.limite_pct`,
+  rendue par la liste.
+- **Seuil effectif = le plus strict des deux** (min). Un plafond perso plus haut que celui
+  de l'org ne relâche rien. La règle est écrite UNE fois, dans `_abonnement.seuil`, lue
+  avec l'org du travail (`runner_jobs.porteur_et_famille` rend `org_id`).
+- **Le run en cours finit toujours** : le plafond se juge sur le rapport de fin d'un
+  travail, qui met la personne en `paused_limit` jusqu'à l'échéance de la fenêtre
+  franchie ; ce sont les travaux SUIVANTS qui attendent la réinitialisation, jamais une
+  exécution coupée. Un réglage modifié vaut à partir du rapport suivant.
 
 **Ouvert à des personnes NOMMÉES (24/09/2026).** L'option `claude_subscription`
 (`oto_admin_set_option`, entité `user`) ouvre le chemin ; sans elle, `subscription_not_

@@ -634,6 +634,18 @@ désaccord entre sources. Banc : `tests/datastore/test_contexte_org_remplissage_
 est un `VARCHAR(32)`, que le démarrage d'une base neuve estampille à la tête du registre
 (§5.2) — un identifiant plus long y fait échouer chaque démarrage à neuf.
 
+`0019_plafond_abonnements` (25/09/2026, après `0018_contexte_org_rempli`) pose le
+plafond de consommation des abonnements personnels : la table NEUVE
+`org_model_subscription_limits` (fragment `db/schema/runs.py::MODEL_SUBSCRIPTION_LIMITS`,
+exécuté tel quel, clé étrangère vers `orgs` bornée par `lock_timeout`) et la colonne
+nullable `user_model_subscriptions.limite_pct SMALLINT CHECK (1..100)`, sans défaut — le
+`CHECK` parcourt une table d'une ligne par personne abonnée. **Ordre indifférent**,
+comme 0017 : le démarrage crée la table et pose la colonne s'il ne la trouve pas
+(`user_subscriptions.DDL_COLONNE_LIMITE`, sous garde de catalogue). L'ancien code ne lit
+ni l'une ni l'autre. Le code du lot LIT la colonne à chaque lecture d'abonnement : la
+jouer avant la fusion ferme la fenêtre où un démarrage raté sur `lock_timeout` la
+laisserait absente. Le retour arrière retire la colonne puis la table.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

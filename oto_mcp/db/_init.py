@@ -14,7 +14,7 @@ import time
 import psycopg
 
 from . import (_version_alembic, connector_instances, datastore_ns, journal_revisions,
-               revision)
+               revision, user_subscriptions)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -777,6 +777,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # étrangère prend un verrou sur `orgs`, qu'on ne demande pas pour rien.
     if _colonne_absente(conn, "user_datastores", datastore_ns.COLONNE_CONTEXTE_ORG):
         conn.execute(datastore_ns.DDL_COLONNE_CONTEXTE_ORG)
+    # Le plafond PERSO de consommation d'un abonnement — le même que pose la révision
+    # `0019` : ordre indifférent entre elles. Gardé par le catalogue : la réservation lit
+    # cette table à chaque prise, on ne demande pas son verrou exclusif pour rien.
+    if _colonne_absente(conn, "user_model_subscriptions", user_subscriptions.COLONNE_LIMITE):
+        conn.execute(user_subscriptions.DDL_COLONNE_LIMITE)
     # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
     # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
     # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.

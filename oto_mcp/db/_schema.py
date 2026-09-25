@@ -63,6 +63,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.entitlements.ORG_ENTITLEMENTS,  # droits déclarés par org (ADR 0070 §7)
     schema.usage.JOURNAL_ARCHIVES,   # mois du journal archivés au froid (#665)
     schema.billing.CONTRACTS,        # abonnements réglés hors plateforme (#806)
+    schema.runs.MODEL_SUBSCRIPTION_LIMITS,  # plafond de consommation des abonnements, par org
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

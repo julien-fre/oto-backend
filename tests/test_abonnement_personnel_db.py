@@ -161,8 +161,8 @@ def test_la_boucle_entiere_un_rapport_met_en_attente_et_la_file_SAUTE(live):
 
     db.complete_job(premier, "w-abonnement", ok=True)
     conclu = db.porteur_et_famille(premier)
-    assert conclu == {"sub": f, "model_family": _FAMILLE}, (
-        "de quoi adresser le rapport à la bonne personne")
+    assert conclu == {"sub": f, "org_id": 9405, "model_family": _FAMILLE}, (
+        "de quoi adresser le rapport à la bonne personne, et lire le plafond de SON org")
     with _connect() as conn:
         dans_une_heure = conn.execute(
             "SELECT EXTRACT(EPOCH FROM NOW() + interval '1 hour')::bigint AS t"
@@ -177,6 +177,44 @@ def test_la_boucle_entiere_un_rapport_met_en_attente_et_la_file_SAUTE(live):
         assert conn.execute("SELECT status FROM runner_jobs WHERE id = %s",
                             (second,)).fetchone()["status"] == "pending", (
             "en ATTENTE — ni échoué, ni tentative brûlée")
+
+
+@pytest.mark.parametrize("org_pct, perso_pct, en_pause", [
+    (80, None, True),     # 0.81 franchit le plafond de l'org
+    (90, None, False),    # l'org laisse de la marge, personne ne resserre
+    (90, 75, True),       # la personne resserre pour elle-même : le min s'applique
+    (70, 95, True),       # un perso plus haut ne relâche rien
+    (None, None, True),   # rien de réglé : le défaut, 80
+])
+def test_le_plafond_de_L_ORG_DU_TRAVAIL_se_lit_en_base(live, org_pct, perso_pct, en_pause):
+    """Conclusion → org du travail → plafonds (table d'org, colonne perso) → statut."""
+    from oto_mcp import db, org_store
+    from oto_mcp.capabilities import _abonnement
+    from oto_mcp.db import org_subscription_limits as OL
+    from oto_mcp.db import user_subscriptions as US
+    from oto_mcp.db._conn import _connect
+    p = _personne(f"abo-plafond-{org_pct}-{perso_pct}")
+    oid = org_store.create_org(f"Org plafond {org_pct}-{perso_pct}", created_by=p)
+    if org_pct is not None:
+        OL.poser_limite(oid, _FAMILLE, org_pct, p)
+    US.upsert_sandbox(p, _FAMILLE, f"sandbox-{p}")
+    US.marquer_statut(p, _FAMILLE, US.CONNECTE, ok=True)
+    US.poser_limite(p, _FAMILLE, perso_pct)
+    travail = _travail(oid, p)
+    assert _claim(oid)["id"] == travail
+    db.complete_job(travail, "w-abonnement", ok=True)
+    with _connect() as conn:
+        dans_une_heure = conn.execute(
+            "SELECT EXTRACT(EPOCH FROM NOW() + interval '1 hour')::bigint AS t"
+        ).fetchone()["t"]
+
+    _abonnement.noter_rapport_du_travail(travail, True, {"abonnement": {
+        "etat": "allowed",
+        "fenetres": {"five_hour": {"utilization": 0.81, "resetsAt": dans_une_heure},
+                     "seven_day": {"utilization": 0.30, "resetsAt": dans_une_heure + 9}}}})
+
+    statut = US.get_subscription(p, _FAMILLE)["statut"]
+    assert statut == (US.PLAFOND if en_pause else US.CONNECTE), (org_pct, perso_pct)
 
 
 def test_un_travail_EN_VOL_ne_reconnecte_PAS_qui_vient_de_se_deconnecter(live):

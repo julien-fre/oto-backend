@@ -60,6 +60,9 @@ from . import (
     runner_fleets_preneur,
     runner_workers,
     user_subscriptions,
+    # NON aplati : ses verbes (`get_limite`, `poser_limite`) homonymes de ceux de
+    # `user_subscriptions` — appelé `db.org_subscription_limits.<fn>`.
+    org_subscription_limits,
     journal_calls,
     # NON aplati ci-dessous (comme `access_shadow`) : ses noms de domaine
     # (`audience`, `journal`…) sont trop communs pour la surface plate `db.*`.

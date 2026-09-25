@@ -188,6 +188,32 @@ def test_org_settings_guards():
     assert e.value.code == "missing_payload"
 
 
+def test_org_settings_plafond_des_abonnements(monkeypatch):
+    """Le domaine `model_subscriptions` : get/set routés vers `orgs/model_subscriptions`,
+    `null` EXPLICITE revient au défaut, un `limit_pct` omis est refusé."""
+    from oto_mcp.capabilities.orgs import model_subscriptions as orgs_ms
+    monkeypatch.setattr(orgs_ms, "_get_plafond", _tag("ms_get"))
+    monkeypatch.setattr(orgs_ms, "_set_plafond", _tag("ms_set"))
+    S = oc.OrgSettingsInput
+    F = "claude_subscription"
+    out = oc._org_settings(CTX, S(op="get", domain="model_subscriptions", org_id=1, family=F))
+    assert out["called"] == "ms_get" and out["inp"].family == F
+    out = oc._org_settings(CTX, S(op="set", domain="model_subscriptions", org_id=1,
+                                  family=F, limit_pct=60))
+    assert out["called"] == "ms_set" and out["inp"].limit_pct == 60
+    out = oc._org_settings(CTX, S(op="set", domain="model_subscriptions", org_id=1,
+                                  family=F, limit_pct=None))
+    assert out["called"] == "ms_set" and out["inp"].limit_pct is None   # null ≠ manquant
+    for sans, code in ((S(op="set", domain="model_subscriptions", org_id=1, family=F),
+                        "missing_limit_pct"),
+                       (S(op="get", domain="model_subscriptions", org_id=1), "missing_family"),
+                       (S(op="preview", domain="model_subscriptions", org_id=1, family=F),
+                        "unsupported_op")):
+        with pytest.raises(AuthzDenied) as e:
+            oc._org_settings(CTX, sans)
+        assert e.value.code == code
+
+
 # ── oto_group ────────────────────────────────────────────────────────────────
 def test_group_routes(monkeypatch):
     monkeypatch.setattr(groups, "_create_group", _tag("create"))
@@ -246,6 +272,7 @@ def test_consoles_carry_the_mcp_surface():
         "org.create", "org.update", "org.archive", "org.invite.create", "org.invite.accept",
         "org.email_settings.get", "org.email_settings.set",
         "org.mfa.get", "org.mfa.set",
+        "org.model_subscriptions.get", "org.model_subscriptions.set",
         "org.field_filters.get", "org.field_filters.set", "org.field_filters.preview",
         "group.create", "group.list", "group.member.add", "group.member.remove",
         "group.instruction.set",

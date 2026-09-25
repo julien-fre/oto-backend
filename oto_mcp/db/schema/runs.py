@@ -511,6 +511,37 @@ CREATE TABLE IF NOT EXISTS user_model_subscriptions (
     last_ok_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Le plafond PERSO de consommation, en % de l'usage total du compte (fenêtres
+    -- cinq heures et sept jours). NULL = aucun : seul celui de l'org s'applique. Il
+    -- ne peut que RESSERRER celui de l'org (`_abonnement.seuil` prend le min). Sur une
+    -- base existante : révision `0019` ou le démarrage
+    -- (`user_subscriptions.DDL_COLONNE_LIMITE`, même forme).
+    limite_pct SMALLINT CHECK (limite_pct BETWEEN 1 AND 100),
     PRIMARY KEY (sub, famille)
+);
+"""
+
+# le plafond de consommation des abonnements, réglé par l'org
+MODEL_SUBSCRIPTION_LIMITS = """
+-- Le PLAFOND de consommation qu'une org pose sur les abonnements personnels de ses
+-- membres (famille `claude_subscription`) : la part maximale, en %, de l'usage TOTAL
+-- du compte du fournisseur (fenêtres cinq heures et sept jours, usage perso compris)
+-- au-delà de laquelle les travaux de l'org attendent la réinitialisation. Sans ligne,
+-- le défaut du code s'applique (`_abonnement.DEFAUT_LIMITE_PCT`). Une personne peut
+-- poser plus bas pour elle-même (`user_model_subscriptions.limite_pct`), jamais plus
+-- haut : le seuil effectif est le min des deux.
+--
+-- ⚠️ Constante À PART de `RUNS`, assemblée en queue (après `orgs`, qu'elle
+-- référence) : `RUNS` se joue seul sur une base vierge et ne porte aucune FK vers
+-- l'extérieur. La réservation ne lit pas cette table — la conclusion d'un travail
+-- (`_abonnement.noter_rapport`) seule la lit.
+CREATE TABLE IF NOT EXISTS org_model_subscription_limits (
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    famille TEXT NOT NULL,
+    limite_pct SMALLINT NOT NULL CHECK (limite_pct BETWEEN 1 AND 100),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Qui l'a réglé (un admin de l'org).
+    updated_by TEXT,
+    PRIMARY KEY (org_id, famille)
 );
 """

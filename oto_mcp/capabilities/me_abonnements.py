@@ -1,6 +1,7 @@
-"""Mes ABONNEMENTS de modèles — les lire, me connecter, me déconnecter, effacer mon sandbox.
+"""Mes ABONNEMENTS de modèles — les lire, me connecter, me déconnecter, effacer mon
+sandbox, plafonner ma consommation.
 
-L'écran « Fournisseurs de modèles » d'une personne (OTO-130). Cinq gestes, tous
+L'écran « Fournisseurs de modèles » d'une personne (OTO-130). Six gestes, tous
 au palier MEMBRE : un abonnement appartient à qui le paie, et personne d'autre —
 pas même un admin de son org — n'a à le lire ni à le couper.
 
@@ -83,6 +84,15 @@ class CodeInput(BaseModel):
     code: str = Field(description="The code the provider's page showed after sign-in.")
 
 
+class PlafondInput(BaseModel):
+    family: str = Field(description="The model family, e.g. `claude_subscription`.")
+    # Requis, nullable : l'omettre est une erreur de forme, `null` est un geste.
+    limit_pct: Optional[int] = Field(
+        ..., description=("Your own consumption cap, in % (1..100) of your provider "
+                          "account's TOTAL usage (5-hour and 7-day windows, your "
+                          "personal use included). `null` removes it."))
+
+
 class Abonnement(BaseModel):
     """Un abonnement tel qu'un écran le montre.
 
@@ -98,6 +108,10 @@ class Abonnement(BaseModel):
         None, description=("When the plan limit lifts, if the person is waiting on "
                            "one. Their jobs stay queued until then — none fail."))
     last_ok_at: Optional[str] = None
+    limit_pct: Optional[int] = Field(
+        None, description=("YOUR own consumption cap, in % of the account's total usage "
+                           "(`null` = none). It can only tighten your org's cap "
+                           "(default 80 %): the lower of the two applies."))
     waiting_jobs: int = Field(
         0, description=("How many of your jobs are queued on this subscription right "
                         "now. While you are signed out, need to reconnect, or wait on "
@@ -123,7 +137,8 @@ def _servi(ligne: dict) -> dict:
     return {"family": ligne["famille"], "statut": ligne["statut"],
             "plan": ligne.get("plan"),
             "limit_reset_at": _txt(ligne.get("limit_reset_at")),
-            "last_ok_at": _txt(ligne.get("last_ok_at"))}
+            "last_ok_at": _txt(ligne.get("last_ok_at")),
+            "limit_pct": ligne.get("limite_pct")}
 
 
 # ⚠️ `def`, pas `async def` (`docs/event-loop-perf.md`) : ces deux handlers ne font que
@@ -215,6 +230,19 @@ def _retirer(ctx: ResolvedCtx, inp: AbonnementInput) -> dict:
     return {"ok": True, "family": inp.family, "sandbox_destroyed": bool(sandbox)}
 
 
+def _plafonner(ctx: ResolvedCtx, inp: PlafondInput) -> dict:
+    """Mon plafond PERSO. Il ne s'écrit que sur MA ligne : sans abonnement, rien à
+    plafonner (404) ; et il ne relâche jamais celui de l'org (`_abonnement.seuil`)."""
+    _exiger_famille(inp.family)
+    _abonnement.exiger_limite_valide(inp.limit_pct)
+    ligne = db.user_subscriptions.poser_limite(ctx.sub, inp.family, inp.limit_pct)
+    if not ligne:
+        raise AuthzDenied(404, "not_connected",
+                          f"aucun abonnement `{inp.family}` pour toi.")
+    return {**_servi(ligne),
+            "waiting_jobs": db.travaux_en_attente_d_abonnement(ctx.sub, inp.family)}
+
+
 _DOC_LISTE = """List YOUR model subscriptions and their state.
 
 A subscription lets your own agents run on the plan you already pay for, inside a
@@ -235,6 +263,15 @@ _DOC_CODE = """Finish connecting a model subscription with the code the provider
 
 The code is single-use and only works inside your sandbox. On success the
 subscription is `connected` and your jobs on it can run."""
+
+_DOC_PLAFOND = """Set (or remove, `null`) YOUR own consumption cap on a model subscription.
+
+The cap is a share, in % (1..100), of your provider account's TOTAL usage — the
+5-hour and 7-day windows the provider reports, your personal use included. Once a
+window reaches it, your agents' next jobs WAIT for the window to reset; a job
+already running is never cut. Your organisation sets its own cap (80 % unless it
+chose otherwise): the LOWER of the two applies, so yours can only keep more room
+for yourself, never raise the org's."""
 
 _DOC_RETIRER = """Sign out of a model subscription, or destroy its sandbox.
 
@@ -265,6 +302,19 @@ CAPABILITIES += [
                           "la destruction du sandbox a échoué : rien n'est effacé"),
         ),
         rest=RestBinding("DELETE", _PATH_UN),
+    ),
+    Capability(
+        key="me.model_subscriptions.set_limit", handler=_plafonner, Input=PlafondInput,
+        authz=SUB_ONLY, Output=Abonnement, description=_DOC_PLAFOND,
+        mcp=None,
+        errors=(
+            DeclaredError(400, "unknown_family",
+                          "une famille qui n'est pas servie par abonnement"),
+            DeclaredError(400, "invalid_limit", "`limit_pct` hors de 1..100"),
+            DeclaredError(404, "not_connected",
+                          "aucun abonnement de cette famille pour cette personne"),
+        ),
+        rest=RestBinding("PATCH", _PATH_UN),
     ),
     Capability(
         key="me.model_subscriptions.connect", handler=_connecter, Input=ConnexionInput,

@@ -26,17 +26,21 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from .. import access, runner_models
+from ..db import org_subscription_limits
 from ..db import runner_jobs as db_runner_jobs
 from ..db import user_subscriptions
 from ._types import AuthzDenied
 
 logger = logging.getLogger(__name__)
 
-#: Au-delà de cette part d'une fenêtre du forfait, la personne est mise en attente
-#: AVANT qu'un travail ne soit refusé. Le fournisseur annonce l'usage à chaque
-#: exécution (`rate_limit_event`, mesuré le 21/09/2026) : attendre le refus, c'est
-#: brûler une tentative du travail pour apprendre ce qu'on savait déjà.
-SEUIL_D_ATTENTE = 0.95
+#: Le PLAFOND de consommation par défaut, en % de l'usage TOTAL du compte du
+#: fournisseur (fenêtres cinq heures et sept jours, usage perso compris) — celui d'une
+#: org qui n'a rien réglé. Au-delà, la personne est mise en attente AVANT qu'un
+#: travail ne soit refusé : le fournisseur annonce l'usage à chaque exécution
+#: (`rate_limit_event`, mesuré le 21/09/2026), et attendre le refus, c'est brûler une
+#: tentative pour apprendre ce qu'on savait déjà — et ne rien laisser à la personne
+#: pour son propre usage (décision du 25/09/2026). Le seuil effectif : `seuil`.
+DEFAUT_LIMITE_PCT = 80
 
 #: L'OPTION qui ouvre ce chemin à une personne (`oto_admin_set_option`, entité
 #: `user`). Ouvert nominativement, jamais par défaut : un abonnement personnel
@@ -194,6 +198,33 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
             "sans connexion resterait programmé sans jamais tourner.")
 
 
+def exiger_limite_valide(limite_pct: Optional[int]) -> None:
+    """Un plafond (org ou perso) est un pourcentage entier de 1 à 100, ou `None`
+    (org : revenir au défaut ; perso : aucun). 0 n'est pas un plafond : c'est ne plus
+    rien servir, et le geste pour ça est de se déconnecter."""
+    if limite_pct is not None and not 1 <= limite_pct <= 100:
+        raise AuthzDenied(
+            400, "invalid_limit",
+            f"`limit_pct` doit être un entier de 1 à 100 (reçu {limite_pct}), ou null.")
+
+
+def seuil(sub: str, org_id: Optional[int], famille: str) -> float:
+    """La part d'une fenêtre du forfait (0..1) au-delà de laquelle les travaux de
+    `sub` sur `famille`, lancés dans `org_id`, ATTENDENT la réinitialisation.
+
+    **LA règle du plafond** (décidée le 25/09/2026), et elle n'est écrite qu'ici : le
+    plafond de l'org (`DEFAUT_LIMITE_PCT` si elle n'a rien réglé), resserré par le
+    plafond PERSO de la personne s'il est plus bas. Un plafond perso plus haut ne
+    relâche rien : un abonnement sert l'org sous SES règles, la personne ne peut que
+    se garder plus de marge."""
+    reglee = org_subscription_limits.get_limite(org_id, famille) if org_id else None
+    pct = reglee["limite_pct"] if reglee else DEFAUT_LIMITE_PCT
+    perso = (user_subscriptions.get_subscription(sub, famille) or {}).get("limite_pct")
+    if perso is not None:
+        pct = min(pct, perso)
+    return pct / 100
+
+
 def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
     """Ce que le worker a VU du forfait en exécutant ce travail, porté sur la
     connexion de son demandeur. Appelé à la conclusion, pour un worker de
@@ -209,6 +240,9 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
     ⚠️ DEUX fenêtres, pas une : un forfait s'épuise sur cinq heures OU sur sept
     jours, et l'échéance à attendre est celle de la fenêtre saturée — la plus
     LOINTAINE s'il y en a deux, sinon la personne repartirait pour retomber.
+    « Saturée » = au-delà du plafond de consommation (`seuil`), le même pour les deux
+    fenêtres. Le travail qui rapporte est déjà FINI : un plafond ne coupe jamais un
+    run, il fait attendre les suivants.
 
     ⚠️ Jamais une levée : ce rapport est un à-côté de la conclusion. Un rapport mal
     formé se journalise et s'ignore — faire échouer `complete` pour lui laisserait
@@ -230,17 +264,19 @@ def noter_rapport(conclu: dict, ok: bool, resultat: Optional[dict]) -> None:
             user_subscriptions.marquer_statut(
                 porteur, famille, user_subscriptions.A_RECONNECTER, observe=True)
             return
+        fenetres = rapport.get("fenetres") or {}
+        plafond = seuil(porteur, conclu.get("org_id"), famille) if fenetres else None
         echeances = [
-            f["resetsAt"] for f in (rapport.get("fenetres") or {}).values()
+            f["resetsAt"] for f in fenetres.values()
             if isinstance(f, dict)
             and isinstance(f.get("resetsAt"), (int, float))
             and isinstance(f.get("utilization"), (int, float))
-            and f["utilization"] >= SEUIL_D_ATTENTE]
+            and f["utilization"] >= plafond]
         refuse = rapport.get("etat") not in (None, "allowed")
         if refuse and not echeances:
             # Refusé sans fenêtre saturée lisible : toutes les échéances connues
             # comptent, faute de savoir laquelle a mordu.
-            echeances = [f["resetsAt"] for f in (rapport.get("fenetres") or {}).values()
+            echeances = [f["resetsAt"] for f in fenetres.values()
                          if isinstance(f, dict)
                          and isinstance(f.get("resetsAt"), (int, float))]
         if echeances or refuse:

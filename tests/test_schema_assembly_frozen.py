@@ -517,8 +517,18 @@ from oto_mcp.db import _schema, schema
 # Alembic `0017_tableaux_contexte_org` ou le démarrage
 # (`datastore_ns.DDL_COLONNE_CONTEXTE_ORG`, même forme). 174 695 → 175 224 (+529,
 # commentaire compris).
-EMPREINTE = "aa573556b979c9541e4a691df1ad91d009f01f2edfe4f0fdc07b6f6b3c6bb5d1"
-LONGUEUR = 175224
+# 25/09/2026 — le PLAFOND de consommation des abonnements. (1) Constante NEUVE
+# `schema/runs.py::MODEL_SUBSCRIPTION_LIMITS`, en QUEUE d'`ASSEMBLAGE` (après `orgs`,
+# qu'elle référence ; à part de `RUNS`, qui se joue seul et ne porte aucune FK vers
+# l'extérieur) : la table `org_model_subscription_limits`, le plafond réglé par org.
+# `CREATE TABLE IF NOT EXISTS` d'une table neuve : rien ne se réécrit sur la base
+# PARTAGÉE, l'ancien code l'ignore. (2) `user_model_subscriptions.limite_pct SMALLINT
+# CHECK (1..100)`, NULLABLE, le plafond perso, dans le `CREATE TABLE` pour une base
+# neuve ; base existante par la révision Alembic `0019_plafond_abonnements` ou le
+# démarrage (`user_subscriptions.DDL_COLONNE_LIMITE`, même forme, sous garde de
+# catalogue). 175 224 → 176 890 (+1 666, commentaires compris).
+EMPREINTE = "3d9a2444fe1e6eeb1bae9d97ffc22d62c0f5ea6139005706a13333b8bcfcc4f7"
+LONGUEUR = 176890
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
