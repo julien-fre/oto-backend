@@ -1273,6 +1273,20 @@ box (sans `ANTHROPIC_API_KEY`), puis `runner.org_key_required=true` pour
 `anthropic` — qui fait refuser la pose d'un agent Claude sans clé, au moment où
 l'on peut encore la déposer, plutôt qu'à la réservation.
 
+### Un worker peut ne servir que certaines orgs : `org_ids` (25/09/2026)
+
+`op=claim` accepte `org_ids` (1 à 50 identifiants) : le worker ne réserve QUE les
+travaux de ces orgs. C'est le geste pour **essayer un moteur sur une organisation avant
+de le donner au parc** — un worker de plateforme n'a pas d'org, et sans ce filtre il
+prend le travail le plus ancien de toutes. Absent = toutes, comme avant. Il restreint,
+jamais n'élargit : un appelant scopé à son org ne voit que l'intersection. Seule la
+PRISE est filtrée : épaves et périmés de toutes les orgs se constatent toujours au
+sondage.
+
+⚠️ **Ordre de déploiement** : le backend d'abord. Un worker ne l'envoie que si
+`OTO_RUNNER_ORGS` est posé ; face à une route qui ne le déclare pas, chaque réservation
+répondrait `unknown_fields` (même leçon que `provider`, 04/09).
+
 ### Un agent peut tourner sur l'ABONNEMENT de son demandeur (21/09/2026)
 
 Troisième façon de payer un modèle, après la clé de la plateforme et la clé de l'org :

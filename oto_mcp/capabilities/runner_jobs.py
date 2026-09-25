@@ -63,6 +63,11 @@ class JobsInput(BaseModel):
     # raison écrite — jamais remis sans clé à un worker qui n'en a pas.
     # ⚠️ Exige `provider` : sans dépôt nommé, il n'y a aucune clé à attendre.
     org_key_only: bool = False
+    # claim — ne réserver QUE les travaux de ces orgs (25/09/2026) : essayer un moteur
+    # sur une organisation avant de le donner au parc. Absent = toutes, comme avant.
+    org_ids: Optional[list[int]] = Field(None, min_length=1, max_length=50, description=(
+        "claim: only take jobs of these organizations (trial a worker on a few orgs). "
+        "Unset = all."))
     # claim / extend —
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
@@ -1007,7 +1012,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # dépend d'une variable d'environnement bien écrite n'en est pas une.
         famille_seule = inp.org_key_only or _abonnement.est_abonnement(inp.provider)
         job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
-                                depot=inp.provider, famille_seule=famille_seule)
+                                depot=inp.provider, famille_seule=famille_seule,
+                                org_ids=inp.org_ids)
         if job is None:
             # ⚠️ La file vide n'est pas la fin de l'histoire : une CAMPAGNE en
             # cours est une règle qui produit des travaux, et c'est ici qu'on
@@ -1023,7 +1029,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             panne = _produire_pour_une_campagne(ctx.org_id, bail)
             job = db.claim_next_job(ctx.org_id, ctx.sub, lease_seconds=bail,
                                     depot=inp.provider,
-                                    famille_seule=famille_seule)
+                                    famille_seule=famille_seule,
+                                    org_ids=inp.org_ids)
             if job is None and panne:
                 # « Rien à faire » et « je n'ai pas pu regarder » ne se disent
                 # pas de la même façon. Les confondre a coûté des jours de
