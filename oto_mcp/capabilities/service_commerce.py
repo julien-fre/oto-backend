@@ -37,14 +37,17 @@ def _org_ou_404(org_id: int) -> None:
 
 
 def _iso(v) -> Optional[str]:
-    """Une date rendue au service porte TOUJOURS son fuseau (#1073). Une valeur sans
-    fuseau — une colonne de la base servie qui ne suit pas son type déclaré — sort en UTC
-    explicite : un consommateur ne compare jamais une date ambiguë."""
+    """Une date rendue au service porte TOUJOURS son fuseau (#1073).
+
+    Le store du cœur rend ses dates en TEXTE sans fuseau (« AAAA-MM-JJ HH:MM:SS »,
+    `db._conn._str_dict_row`, héritage de SQLite), en UTC puisque la session l'est
+    (`TimeZone=UTC`, `_connect_options`). Servies telles quelles, elles sont ambiguës :
+    un consommateur ne peut pas les comparer à une date réelle. On les rend en ISO 8601
+    avec leur décalage UTC explicite."""
     if v is None:
         return None
-    if not isinstance(v, datetime):
-        return str(v)
-    return (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).isoformat()
+    d = v if isinstance(v, datetime) else datetime.fromisoformat(str(v))
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).isoformat()
 
 
 # ── Les orgs ─────────────────────────────────────────────────────────────────

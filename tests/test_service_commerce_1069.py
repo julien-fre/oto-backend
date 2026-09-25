@@ -63,6 +63,8 @@ def test_une_date_sans_fuseau_sort_en_utc_explicite():
     """#1073 : une colonne de la base servie rendait `created_at` sans fuseau, et le
     commerce ne pouvait pas la comparer à une date réelle."""
     from oto_mcp.capabilities import service_commerce as sc
+    assert sc._iso("2026-06-10 23:18:58") == "2026-06-10T23:18:58+00:00", \
+        "la forme texte du store du cœur"
     assert sc._iso(datetime(2026, 9, 25, 11, 0)) == "2026-09-25T11:00:00+00:00"
     paris = timezone(timedelta(hours=2))
     assert sc._iso(datetime(2026, 9, 25, 13, 0, tzinfo=paris)) == "2026-09-25T13:00:00+02:00"
@@ -115,6 +117,7 @@ def test_les_membres_sortent_par_anciennete_avec_leur_derniere_activite(live):
     assert [m["sub"] for m in out["members"]] == [aine, cadet]
     assert out["members"][0]["last_activity_at"] is None
     assert out["members"][1]["last_activity_at"].startswith("2026-09-07")
+    assert out["members"][0]["joined_at"] == T0.isoformat(), "servie avec son fuseau"
     assert out["members"][0]["email"] == f"{aine}@exemple.test"
 
 
@@ -127,6 +130,7 @@ def test_la_liste_des_orgs_se_pagine_par_curseur_sans_les_archivees(live):
     a, b, archivee = _org(), _org(), _org(archivee=True)
     page = _appel("service.orgs.list", after_id=a - 1, limit=1)
     assert [o["id"] for o in page["orgs"]] == [a] and page["next_after_id"] == a
+    assert datetime.fromisoformat(page["orgs"][0]["created_at"]).tzinfo is not None
     suite = _appel("service.orgs.list", after_id=a, limit=1000)
     ids = [o["id"] for o in suite["orgs"]]
     assert b in ids and archivee not in ids and suite["next_after_id"] is None

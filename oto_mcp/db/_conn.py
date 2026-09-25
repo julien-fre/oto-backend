@@ -74,7 +74,10 @@ def _connect_options() -> str:
     """
     idle = os.environ.get("OTO_MCP_DB_IDLE_TX_TIMEOUT_MS", "60000")
     stmt = os.environ.get("OTO_MCP_DB_STATEMENT_TIMEOUT_MS", "0")
-    parts = [f"-c idle_in_transaction_session_timeout={idle}"]
+    # `TimeZone=UTC` : la fabrique de lignes (`_str_dict_row`) retire le fuseau des dates
+    # et les rend en texte ; ce texte n'est de l'UTC que si la SESSION l'est. Posé ici,
+    # c'est vrai par construction, pas par le réglage du serveur (#1073).
+    parts = [f"-c idle_in_transaction_session_timeout={idle}", "-c TimeZone=UTC"]
     if stmt and stmt != "0":
         parts.append(f"-c statement_timeout={stmt}")
     # L'interrupteur du journal des révisions (oto#273) : lu par le déclencheur, par
