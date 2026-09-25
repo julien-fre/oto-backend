@@ -196,6 +196,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "linear",
     "stripe",
     "posthog",
+    # Voisin de `posthog` par le métier (mesure d'audience) : les deux cartes se
+    # lisent ensemble.
+    "google_analytics",
     "snitcher",
     "waalaxy",
     "airtable",
