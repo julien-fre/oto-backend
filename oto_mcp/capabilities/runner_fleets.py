@@ -61,7 +61,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 from . import (_abonnement, _cle_exigee, _descriptions_outils, _instruction,
-               _lignes_de_campagne, _lignes_reservables, _modele,
+               _limites_du_run, _lignes_de_campagne, _lignes_reservables, _modele,
                _ordonnanceur_de_campagne, _outils_manquants)
 from .. import db, output_projection, runner_models, tool_alias
 
@@ -108,6 +108,8 @@ def _bornes_valides(inp: "FleetInput") -> None:
             400, "invalid_bound",
             "une borne se compte, donc elle vaut au moins 1 : "
             + ", ".join(f"`{c}`={v}" for c, v in sorted(fautives.items())))
+    # Une DURÉE, pas un compte : sa fourchette est celle de l'exécuteur, et `0` la retire.
+    _limites_du_run.valider(None, inp.max_run_seconds)
 
 
 class FleetInput(BaseModel):
@@ -139,6 +141,8 @@ class FleetInput(BaseModel):
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
+    max_run_seconds: Optional[int] = Field(None, description=(
+        "Per-row time limit, 60-3600 s. `0` = runner default."))
     descriptions_outils: Optional[dict] = Field(None, description=(
         "What the agent reads of each tool description: {defaut: chars served per "
         "description (≥ 1), entieres: [tools served uncut]}. Frozen at creation; "
@@ -178,6 +182,7 @@ class Fleet(BaseModel):
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
+    max_run_seconds: Optional[int] = None
     descriptions_outils: Optional[dict] = None
     status: Optional[str] = None
     stop_reason: Optional[str] = None
@@ -466,6 +471,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             max_rows=inp.max_rows, max_tokens=inp.max_tokens,
             max_consecutive_failures=inp.max_consecutive_failures,
             max_tokens_per_row=inp.max_tokens_per_row,
+            max_run_seconds=_limites_du_run.a_ecrire(inp.max_run_seconds),
             descriptions_outils=descriptions)}
 
     if inp.op == "list":
@@ -641,6 +647,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     # update — partiel, et jamais sur la cible ni sur l'état.
     champs: dict[str, Any] = {c: getattr(inp, c) for c in db.CHAMPS_MODIFIABLES
                               if getattr(inp, c) is not None}
+    if "max_run_seconds" in champs:
+        champs["max_run_seconds"] = _limites_du_run.a_ecrire(champs["max_run_seconds"])
     if inp.namespace is not None or inp.row_filter is not None:
         raise AuthzDenied(
             400, "target_is_frozen",

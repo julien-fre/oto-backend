@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from croniter import croniter
 
 from . import db, runner_models
-from .capabilities import _instruction
+from .capabilities import _instruction, _limites_du_run
 
 log = logging.getLogger(__name__)
 
@@ -100,6 +100,8 @@ def _tick() -> int:
             "input": t.get("input") or _instruction.derivee(t["procedure"]),
             "label": t.get("label") or f"planifié — {t['procedure']}",
             "max_steps": t.get("max_steps"),
+            # Les limites du run déclarées sur l'agent — seulement si déclarées.
+            **_limites_du_run.charge(t.get("max_tokens"), t.get("max_run_seconds")),
             "trigger_id": t["id"],
             # Le modèle DÉCLARÉ et sa famille — la famille route le travail vers un
             # worker qui la sert (`claim_next_job`). Sans modèle : rien ne part, et

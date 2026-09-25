@@ -39,6 +39,7 @@ import secrets
 from typing import Any, Optional
 
 from . import db, runner_models
+from .capabilities import _limites_du_run
 
 logger = logging.getLogger(__name__)
 
@@ -318,6 +319,8 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                     "tools": list(t.get("tools") or ()),
                     "label": t.get("label") or f"webhook — {t['procedure']}",
                     "max_steps": t.get("max_steps"),
+                    **_limites_du_run.charge(t.get("max_tokens"),
+                                             t.get("max_run_seconds")),
                     "trigger_id": trigger_id,
                     # Ce qui distingue une exécution déclenchée d'une exécution
                     # programmée, pour qui relit la file plus tard.

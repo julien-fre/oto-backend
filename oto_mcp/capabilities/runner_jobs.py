@@ -25,8 +25,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from . import (_abonnement, _cle_exigee, _lignes_reservables, _modele,
-               _ordre_de_service)
+from . import (_abonnement, _cle_exigee, _limites_du_run, _lignes_reservables,
+               _modele, _ordre_de_service)
 from .. import db, runner_consigne, runner_models, tool_alias
 from ._authz import WORKER_OR_ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -766,6 +766,7 @@ def _produire_pour_une_campagne(org_id: Optional[int], bail_s: int) -> Optional[
                      "fleet": f.get("label"),
                      "max_steps": f.get("max_steps"),
                      "max_tokens": f.get("max_tokens_per_row"),
+                     **_limites_du_run.charge(None, f.get("max_run_seconds")),
                      # Ce que l'agent lit des outils, si la campagne l'a déclaré (oto#241) ;
                      # sinon rien ne part et le worker garde son défaut.
                      **({"descriptions_outils": f["descriptions_outils"]}

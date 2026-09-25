@@ -22,7 +22,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import _abonnement, _cle_exigee, _instruction, _modele
+from . import _abonnement, _cle_exigee, _instruction, _limites_du_run, _modele
 from .. import (db, runner_hook, runner_models, runner_tick,
                 session_visibility, tool_alias, tool_registry)
 from ..tools import catalogue as tool_catalogue
@@ -61,6 +61,11 @@ class TriggerInput(BaseModel):
     input: Optional[str] = None
     label: Optional[str] = None
     max_steps: Optional[int] = None
+    #: Les limites d'UN run (`_limites_du_run`). Absent = on ne touche à rien, `0` = retirer.
+    max_tokens: Optional[int] = Field(None, description=(
+        "Per-run token cap. `0` removes it."))
+    max_run_seconds: Optional[int] = Field(None, description=(
+        "Per-run time limit, 60-3600 s. `0` = runner default."))
     # Le modèle de l'agent, pris dans le catalogue (`runner.models`). Absent = on
     # ne touche à rien ; `""` sur `update` = revenir au modèle du worker.
     model: Optional[str] = None
@@ -158,6 +163,8 @@ class Trigger(BaseModel):
     tools: Optional[list[str]] = None
     input: Optional[str] = None
     max_steps: Optional[int] = None
+    max_tokens: Optional[int] = None
+    max_run_seconds: Optional[int] = None
     #: Le modèle DÉCLARÉ. `null` = aucun : le worker qui prend le travail tourne
     #: sur le sien — c'est l'état de tout déclencheur posé avant le 12/09/2026.
     model: Optional[str] = None
@@ -487,6 +494,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
     inp = _noms_canoniques(ctx, inp)
+    if inp.op in ("create", "update"):
+        _limites_du_run.valider(inp.max_tokens, inp.max_run_seconds)
 
     if inp.op == "create":
         webhook = (inp.kind or "schedule") == "webhook"
@@ -583,6 +592,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             tools=outils, project_id=inp.project_id,
             input=inp.input or _instruction.derivee(inp.procedure),
             label=inp.label, max_steps=inp.max_steps,
+            max_tokens=_limites_du_run.a_ecrire(inp.max_tokens),
+            max_run_seconds=_limites_du_run.a_ecrire(inp.max_run_seconds),
             # ⚠️ Sans modèle, on n'écrit PAS le défaut du catalogue : NULL veut
             # dire « n'importe quel worker, sur le sien ». Écrire le défaut
             # refuserait la création dans une org servie par une autre famille.
@@ -679,6 +690,10 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         v = getattr(inp, c)
         if v is not None:
             champs[c] = v
+    for c in ("max_tokens", "max_run_seconds"):
+        v = getattr(inp, c)
+        if v is not None:
+            champs[c] = _limites_du_run.a_ecrire(v)   # `0` → NULL : la limite est retirée
     famille = None
     if inp.model is not None:
         famille = _modele.famille_declaree(inp.model)

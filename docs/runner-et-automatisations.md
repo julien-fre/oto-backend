@@ -876,6 +876,24 @@ mais tourne sur le modèle de son environnement. Et la SOURCE de la clé (l'org 
 plateforme), qui conditionne toute refacturation des jetons, n'est toujours tracée
 nulle part — un lot à part.
 
+### Les limites d'UN run se déclarent sur l'agent (25/09/2026)
+
+L'utilisateur borne chaque run de son agent — déclencheur ou flotte — par deux limites,
+sans défaut côté plateforme (`capabilities/_limites_du_run.py`) :
+
+- **`max_tokens`** — ce qu'un run peut consommer, en **jetons, jamais en monnaie** (la
+  règle du budget de `runner_fleets`) ; l'écran en montre l'équivalent au tarif du jour.
+  L'agent s'arrête à la fin du tour qui l'atteint (`stopped=max_tokens`). Sur une flotte,
+  c'est `max_tokens_per_row`, qui existait déjà et part sous le même nom de charge.
+- **`max_run_seconds`** — la durée murale d'un run, **60 à 3600 s**. Au-delà, l'exécuteur
+  l'arrête. La borne haute est celle de la ferme (un run à la fois par sandbox), pas un
+  choix de produit : l'étendre est une question de capacité.
+
+NULL = rien ne part avec le travail et l'exécuteur garde les siennes (900 s ; aucun
+plafond de jetons), exactement comme `max_steps`. `0` à la retouche **retire** la limite
+(écrit NULL). Charge du travail : `max_tokens`, `max_seconds` — présents seulement quand
+ils sont déclarés.
+
 ### L'effort et le plafond de complétion appartiennent au MODÈLE (14/09/2026)
 
 Le catalogue porte, par modèle, l'effort de réflexion (`effort`) et le plafond de

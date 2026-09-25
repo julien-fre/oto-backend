@@ -34,7 +34,7 @@ from ._conn import _connect
 # produit — son modèle `Output` DÉCRIT la réponse, il ne la filtre pas —, donc la retirer
 # d'ici est la seule façon de cesser de la servir sur tous les verbes à la fois.
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
-         "namespace, row_filter, provider, model, temperature, descriptions_outils, "
+         "max_run_seconds, namespace, row_filter, provider, model, temperature, descriptions_outils, "
          "workers, max_rows, "
          "max_tokens, max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
          "armed_at, started_at, stopping_at, heartbeat_at, taken_by, stopped_at, "
@@ -52,7 +52,8 @@ _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps
 # `status` non plus : il se change par les gestes d'état, jamais par une retouche
 # de configuration — un `update` qui l'accepterait rendrait 200 sans rien faire.
 CHAMPS_MODIFIABLES = ("label", "tools", "input", "max_steps", "workers", "max_rows",
-                      "max_tokens", "max_consecutive_failures", "max_tokens_per_row")
+                      "max_tokens", "max_consecutive_failures", "max_tokens_per_row",
+                      "max_run_seconds")
 
 
 def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
@@ -65,6 +66,7 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                  max_tokens: Optional[int] = None,
                  max_consecutive_failures: Optional[int] = None,
                  max_tokens_per_row: Optional[int] = None,
+                 max_run_seconds: Optional[int] = None,
                  descriptions_outils: Optional[dict] = None) -> dict:
     with _connect() as conn:
         row = conn.execute(
@@ -73,9 +75,9 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                    (org_id, sub, label, procedure, project_id, tools, input,
                     max_steps, namespace, row_filter, provider, model, temperature, workers,
                     max_rows, max_tokens, max_consecutive_failures,
-                    max_tokens_per_row, descriptions_outils)
+                    max_tokens_per_row, max_run_seconds, descriptions_outils)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
@@ -83,7 +85,7 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
              namespace,
              json.dumps(row_filter, ensure_ascii=False) if row_filter is not None else None,
              provider, model, temperature, workers, max_rows, max_tokens,
-             max_consecutive_failures, max_tokens_per_row,
+             max_consecutive_failures, max_tokens_per_row, max_run_seconds,
              json.dumps(descriptions_outils, ensure_ascii=False)
              if descriptions_outils is not None else None),
         ).fetchone()

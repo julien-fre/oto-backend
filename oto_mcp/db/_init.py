@@ -387,6 +387,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS payload_fields JSONB")
     conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS max_per_hour INT")
     conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS fraicheur_s INT")
+    # Les limites d'UN run (25/09/2026, `_limites_du_run`). Sans défaut : NULL = rien ne
+    # part avec le travail, l'exécuteur garde les siennes.
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS max_tokens INT")
+    conn.execute("ALTER TABLE runner_triggers ADD COLUMN IF NOT EXISTS max_run_seconds INT")
+    conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS max_run_seconds INT")
     # ⚠️ Le RELÂCHEMENT de deux NOT NULL, et il est à sens unique : l'ancien code
     # (la prod, pendant la fenêtre) écrit toujours les deux, et son tick filtre
     # `next_due <= NOW()` — qu'un NULL ne satisfait jamais. Une ligne webhook lui
