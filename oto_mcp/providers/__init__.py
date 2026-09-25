@@ -85,6 +85,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "finkare",
     "slack",
     "fullenrich",
+    # Voisin de `fullenrich` par le métier (enrichissement) ; porte aussi les
+    # webhooks de table Clay (écriture), cf. `providers/clay.py`.
+    "clay",
     "dropcontact",
     "folk",
     "aiark",
