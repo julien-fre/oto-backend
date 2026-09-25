@@ -246,8 +246,6 @@ class TestCablage:
         # ces bancs ne parlent ni de l'une ni des autres.
         # ⚠️ Par le NOM IMPORTÉ dans chaque module : `access` est une surface plate,
         # et doubler `access.quotas.has_option` ne change pas le nom déjà lié ici.
-        monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
-        monkeypatch.setattr(RT.access, "has_option", lambda *a, **k: True)
         monkeypatch.setattr(RT, "_outils_de_la_procedure", lambda ctx, p: ["oto_doc"])
 
     def test_un_declencheur_sur_un_abonnement_non_connecte_est_refuse(self, monkeypatch):

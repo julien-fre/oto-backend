@@ -1003,28 +1003,28 @@ objet ne porte qu'un agent ») visait deux réponses à la même question ; une 
 du matin et une réaction à un événement sont deux automatisations différentes de la
 même procédure. Deux du même genre restent refusées, pour la raison d'origine.
 
-#### Le lot atterrit FERMÉ (13/09/2026)
+#### Ouvert à toute org (24/09/2026)
 
-**Créer** un agent déclenché exige l'option `beta` sur le compte ou sur l'org
-(`oto_admin_set_option`, lue par `access.has_option`). Sans elle : 403
-`webhook_beta_only`, et un agent programmé reste disponible.
+Le lot avait atterri FERMÉ le 13/09 : créer un agent déclenché exigeait l'option
+`beta` (403 `webhook_beta_only`), et les flottes entières étaient une surface bêta
+(`oto_fleet` dans `BETA_TOOLS`, 403 `beta_required` sur la capacité). La raison
+tenait en une phrase : **ces déroulés tournaient sur NOTRE clé de modèle** tant que
+`runner.org_key_required` n'était pas posé, et la file d'un webhook n'a pas de
+plafond.
 
-Pourquoi une porte, alors que `oto_trigger` est visible de tous (tranché le 02/09)
-et que la capacité est ouverte à tout membre d'org : sans elle, le jour du
-déploiement, n'importe quel client peut brancher une source bavarde sur un agent
-hébergé. Or **la file d'un webhook n'a pas de plafond** (assumé, plus haut) et le
-**plafond de dépense est un autre chantier** — tant que `runner.org_key_required`
-n'est pas posé, ces déroulés tournent sur NOTRE clé de modèle. L'option `beta`
-plutôt qu'un réglage neuf : c'est ce que `tool_visibility` dit de faire, et elle se
-pose déjà par une surface admin existante.
+Depuis le 24/09/2026 les agents hébergés — flottes, déclencheurs programmés et
+webhooks — sont ouverts à toute org, sans option. Ce qui borne la dépense n'est plus
+une population choisie mais l'argent lui-même :
 
-⚠️ **Seule la création est gardée.** Retirer l'option ne casse pas un agent qui
-tourne : le geste d'arrêt d'un agent emballé est sa PAUSE, pas la fermeture de la
-population. Ouvrir la bêta à une org :
+- **un modèle OBLIGATOIRE** sur chaque agent (`model_required`, section « Le modèle
+  se déclare sur l'AGENT ») — un agent sans modèle tournait sur celui du worker ;
+- **la clé de modèle de l'org** (`runner.org_key_required`, section « Un agent tourne
+  sur la clé de SON org ») — allumée par fournisseur, avec des exemptions d'org
+  explicites pour ce que nous payons à dessein.
 
-```
-oto_admin_set_option  option=beta  org_id=N
-```
+`beta` garde ce qu'elle ouvre d'autre (`oto_node*`, `oto_resource_v2`,
+`oto_function`) ; `/api/me/orgs[].beta` le dit toujours, mais ne décide plus de
+l'affichage des Agents.
 
 #### La porte : un secret par déclencheur, jamais relu
 

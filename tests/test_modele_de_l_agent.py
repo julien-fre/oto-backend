@@ -405,7 +405,6 @@ def test_un_start_au_modele_inconnu_est_refuse(file):
 
 @pytest.fixture
 def flotte(monkeypatch):
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
     vu = {}
     monkeypatch.setattr(RF.db, "create_fleet",
                         lambda *a, **k: vu.update(k) or {"id": 1})
@@ -448,7 +447,6 @@ def test_une_flotte_refuse_un_contexte_qui_ne_route_pas(flotte, champs):
 @pytest.fixture
 def armement(monkeypatch):
     from oto_mcp import roles
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     vu = {"stockee": {"id": 1, "status": "draft", "procedure": "p", "input": "x",

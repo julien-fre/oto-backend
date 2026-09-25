@@ -29,14 +29,6 @@ from oto_mcp.db import runner_jobs as JOBS
 
 
 @pytest.fixture(autouse=True)
-def _compte_beta(monkeypatch):
-    """Les passages sont une surface BÊTA (#818) : sans l'option, la capacité
-    refuse avant d'atteindre le verbe. Ces tests parlent du dénominateur et de
-    l'origine d'un travail, pas de la porte — ils l'ouvrent."""
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
-
-
-@pytest.fixture(autouse=True)
 def _cle_de_modele_non_exigee(monkeypatch):
     """Ce fichier ne parle pas de la garde de clé de modèle — elle a son propre banc
     (`test_cle_de_modele_exigee.py`). Le réglage est lu ÉTEINT, comme sur toute

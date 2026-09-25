@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import _abonnement, _cle_exigee, _instruction, _modele
-from .. import (access, db, runner_hook, runner_models, runner_tick,
-                session_visibility, tool_alias, tool_registry, tool_visibility)
+from .. import (db, runner_hook, runner_models, runner_tick,
+                session_visibility, tool_alias, tool_registry)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
@@ -490,31 +490,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
 
     if inp.op == "create":
         webhook = (inp.kind or "schedule") == "webhook"
-        if webhook and not access.has_option(ctx.sub, tool_visibility.BETA_OPTION):
-            # ⚠️ **Le lot ATTERRIT FERMÉ** (13/09/2026), et c'est la condition de
-            # son déploiement. `oto_trigger` est visible de tous (tranché le
-            # 02/09) et la capacité est ouverte à tout membre d'org : sans cette
-            # porte, le jour du déploiement, n'importe quel client pourrait
-            # brancher une source bavarde sur un agent hébergé. Or **la file d'un
-            # webhook n'a pas de plafond** (assumé) et **le plafond de DÉPENSE est
-            # un autre chantier** : tant que `runner.org_key_required` n'est pas
-            # posé, ces déroulés tournent sur NOTRE clé de modèle.
-            #
-            # L'option `beta` plutôt qu'un réglage neuf : c'est ce que ce dépôt
-            # dit de faire (« une seconde surface bêta la rejoindra ici plutôt que
-            # d'inventer sa propre option », `tool_visibility`), elle se pose déjà
-            # par `oto_admin_set_option` sur un compte ou sur une org, et elle se
-            # lit par le seam unique `access.has_option`.
-            #
-            # ⚠️ Seule la CRÉATION est gardée. Retirer l'option ne doit pas casser
-            # un agent qui tourne : le geste d'arrêt d'un agent emballé est sa
-            # PAUSE, pas la fermeture de la population.
-            raise AuthzDenied(
-                403, "webhook_beta_only",
-                "les automatisations webhook sont en bêta fermée : cette "
-                "organisation n'y est pas encore. Une automatisation HORAIRE "
-                "(`cron`) reste disponible. Pour rejoindre la bêta, demande l'option "
-                "`beta` sur l'organisation.")
+        # Un webhook se pose dans toute org depuis le 24/09/2026 : la porte `beta`
+        # qui le fermait tenait parce que ses déroulés tournaient sur NOTRE clé.
+        # Désormais un agent déclare son modèle et tourne sur la clé de son org
+        # (`_modele.exige_un_modele`, `_cle_exigee`). La file d'un webhook reste sans
+        # plafond (assumé) : sa borne est `max_per_hour`.
         # ⚠️ Ce qu'on exige dépend du COUP D'ENVOI. Un déclencheur programmé exige
         # son cadencement ; un webhook n'en a pas — exiger `cron` de lui, ou
         # l'accepter en l'ignorant, seraient deux façons de mentir sur ce qu'il est.
@@ -863,7 +843,7 @@ async def _ajouter_tool_warnings(ctx: ResolvedCtx, rep: dict) -> dict:
 
 async def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # `async` seulement pour les avertissements d'outils ; le SQL — une dizaine de lectures et
-    # d'écritures, dont `access.has_option` et la résolution des noms — est ICI hors de la
+    # d'écritures, dont la résolution des noms — est ICI hors de la
     # boucle (le serveur est mono-loop : `docs/event-loop-perf.md`).
     rep = await run_in_threadpool(_triggers_sync, ctx, inp)
     return await _ajouter_tool_warnings(ctx, rep)
@@ -884,10 +864,6 @@ CAPABILITIES += [
             DeclaredError(400, "missing_fields",
                           "`create` sans `procedure`/`cron`/`tools`, ou une "
                           "opération sur une automatisation sans `trigger_id`"),
-            DeclaredError(403, "webhook_beta_only",
-                          "`create` d'une automatisation webhook, hors de la "
-                          "population bêta — un écran peut griser l'option et "
-                          "dire pourquoi, plutôt que laisser tenter le geste"),
             DeclaredError(400, "invalid_schedule",
                           "cron malformé, fuseau inconnu, ou deux occurrences "
                           "espacées de moins de 5 minutes"),

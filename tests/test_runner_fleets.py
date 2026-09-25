@@ -37,12 +37,6 @@ def _cle_de_modele_non_exigee(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _compte_beta(monkeypatch):
-    """Chaque test ci-dessous parle d'un compte BÊTA — la garde a son propre banc."""
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
-
-
-@pytest.fixture(autouse=True)
 def _un_worker_par_defaut(monkeypatch):
     """`launch` refuse d'armer un passage sans worker vivant (oto-runner#13,
     17/09/2026) — ce fichier ne parle pas de cette absence par défaut, elle a
@@ -355,48 +349,20 @@ def test_la_description_servie_dit_que_launch_ARME_et_ne_demarre_rien():
         "des deux mensonges")
 
 
-# ── bêta : une garde à l'appel, pas une ligne masquée dans un catalogue ───────
+# ── ouverte à toute org : plus de porte bêta (24/09/2026) ────────────────────
 
-def test_sans_option_beta_la_capacite_REFUSE_et_nomme_le_geste(monkeypatch):
-    """La visibilité MCP cache le nom ; REST et `oto_call` n'ont pas de liste à lire.
-    Le refus doit donc vivre DANS le handler — et dire quoi faire, pas seulement non."""
-    vus = []
-
-    def _has_option(sub, option, *, org=None):
-        vus.append((sub, option, org))
-        return False
-
-    monkeypatch.setattr(RF.access, "has_option", _has_option)
-    # ⚠️ La liste des ops se LIT sur la surface servie, elle ne se recopie pas.
-    # Écrite à la main, elle disait cinq verbes ; le tronc en a ajouté trois
-    # (`take`/`beat`/`ack_stop`, les gestes de l'ordonnanceur) que la garde
-    # couvre déjà — mais qu'aucun banc ne prouvait. Un verbe ajouté demain
-    # entre dans ce test sans que personne y pense.
-    ops = RF.FleetInput.model_fields["op"].annotation.__args__
-    assert len(ops) >= 10, "la surface a rétréci — vérifier ce qui a disparu"
-    for op in ops:
-        with pytest.raises(AuthzDenied) as e:
-            _appel(_ctx(), op=op, fleet_id=1)
-        assert e.value.status == 403 and e.value.code == "beta_required", op
-        assert "oto_admin_set_option" in e.value.message
-    # `org=` EXPLICITE et égal à l'org de l'appel : jamais current_org (anti-fuite).
-    assert vus and all(v == ("alexis", "beta", 2) for v in vus)
+def test_sans_option_beta_la_capacite_SERT(monkeypatch):
+    """Les agents hébergés s'ouvrent à toute org : ce qui borne la dépense est le
+    modèle obligatoire et la clé de modèle de l'org, plus l'option `beta` : un
+    compte sans elle est servi."""
+    from oto_mcp import access, db
+    monkeypatch.setattr(access, "has_option", lambda *a, **k: False)
+    monkeypatch.setattr(db, "list_fleets", lambda *a, **k: [])
+    assert "fleets" in _appel(_ctx(), op="list")
 
 
-def test_un_hoquet_du_seam_ferme_la_beta_au_lieu_de_l_ouvrir(monkeypatch):
-    def _boom(sub, option, *, org=None):
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(RF.access, "has_option", _boom)
-    with pytest.raises(AuthzDenied) as e:
-        _appel(_ctx(), op="list")
-    assert e.value.code == "beta_required"
-
-
-def test_l_org_manquante_prime_sur_la_beta(monkeypatch):
-    """`org_required` reste le premier refus : sans org il n'y a rien contre quoi
-    évaluer l'option — et `has_option(org=None)` répondrait sur current_org."""
-    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: (_ for _ in ()).throw(AssertionError("appelé")))
+def test_l_org_manquante_reste_le_premier_refus():
+    """`org_required` reste le premier refus : les automatisations sont org-scopées."""
     with pytest.raises(AuthzDenied) as e:
         _appel(ResolvedCtx(sub="alexis", org_id=None), op="list")
     assert e.value.code == "org_required"

@@ -54,7 +54,6 @@ def _par_le_middleware(nom: str, arguments: dict, handler):
 def _flotte_lancable(monkeypatch):
     """Tout ce qui PRÉCÈDE la garde anti-agent est satisfait : compte bêta, admin
     d'org. `_run_courant` n'est PAS doublé — c'est lui qu'on éprouve."""
-    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr("oto_mcp.roles.is_org_admin", lambda sub, org: True)
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
         "armed": True, "workers": 1, "last_seen": "2026-09-23 08:00:00",

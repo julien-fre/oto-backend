@@ -113,6 +113,12 @@ montré de vrais appelants dessus, dont un `op=list` qui serait passé de « fon
 > l'inverse d'un alias déprécié (`docs/alias-deprecies.md`), où l'ancien nom part à une
 > date écrite. Ici l'ancien contrat reste tant que quelqu'un s'en sert.
 
+**Une sortie de la bêta.** `oto_fleet` y était entré le 2026-09-01 (surface neuve,
+contrat provisoire) ; il en est SORTI le 2026-09-24, quand les agents hébergés se sont
+ouverts à toute org. Sa porte n'était pas un contrat provisoire mais un coût : ses
+déroulés pouvaient tourner sur notre clé de modèle. Ce qui la remplace — modèle
+obligatoire, clé de modèle de l'org — vit dans `docs/runner-et-automatisations.md`.
+
 ⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS.** Le bloc masque fail-closed : y
 poser le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
 l'option — la rupture de #756 en pire, parce que silencieuse. Cliquet :

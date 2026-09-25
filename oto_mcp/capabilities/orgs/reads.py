@@ -64,9 +64,10 @@ class MyOrgEntry(BaseModel):
     # Le compte est-il BÊTA dans cette org (option `beta`, seam `access.has_option` :
     # comp user OU comp org OU plan) ? Par ORG et non sur /api/me : le front consulte
     # l'org de l'URL, pas l'org maison. C'est ce qui décide si une surface bêta
-    # (Agents : `oto_fleet`, cf. `BETA_TOOLS`) se MONTRE — la visibilité MCP masque
-    # la liste d'outils, mais un front ne lit pas cette liste ; sans ce champ il ne
-    # peut que tout montrer ou rien.
+    # (`BETA_TOOLS` : le nouvel univers de contenu, `oto_resource_v2`, `oto_function`)
+    # se MONTRE — la visibilité MCP masque la liste d'outils, mais un front ne lit pas
+    # cette liste ; sans ce champ il ne peut que tout montrer ou rien. ⚠️ Il ne décide
+    # PLUS des Agents (flottes, déclencheurs) : ouverts à toute org depuis le 24/09/2026.
     beta: bool = False
 
 

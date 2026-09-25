@@ -94,9 +94,6 @@ def org(live):
     oid = org_store.create_org("Org des flottes", created_by=membre)
     org_store.add_org_member(oid, membre, "org_admin")
     org_store.set_active_org(membre, oid)
-    # Les flottes sont une surface BÊTA : sans l'option, la route refuse
-    # `beta_required` (rejoué plus bas, sur une org qui ne l'a pas).
-    db.set_option_comp("org", str(oid), "beta", granted_by="test")
     # La cible se résout À LA DÉCLARATION (#1067) : elle existe dans la portée.
     ns = db.create_datastore("org", str(oid), "un-tableau")
     return {"id": oid, "membre": membre, "ns": ns}
@@ -332,9 +329,6 @@ def test_une_flotte_d_une_autre_org_est_invisible(client, org, flotte):
     oid = org_store.create_org("Une autre org", created_by=autre)
     org_store.add_org_member(oid, autre, "org_admin")
     org_store.set_active_org(autre, oid)
-    # Bêta elle aussi : ce test parle d'ISOLATION, pas de la porte — sans
-    # l'option le 403 `beta_required` primerait et masquerait le 404 attendu.
-    db.set_option_comp("org", str(oid), "beta", granted_by="test")
     r = client.post(ROUTE, headers=_h(autre),
                     json={"op": "get", "fleet_id": flotte["id"]})
     assert (r.status_code, r.json().get("error")) == (404, "fleet_not_found")
@@ -870,7 +864,7 @@ def test_rearmer_libere_la_campagne_et_l_ancien_preneur_l_apprend(client, org):
                   ) == (409, "not_the_holder")
 
 
-# ── bêta : la route REFUSE, elle ne se contente pas de cacher ──────────────────
+# ── ouverte à toute org : plus de porte bêta (24/09/2026) ─────────────────────
 
 @pytest.fixture(scope="module")
 def org_sans_beta(live):
@@ -883,24 +877,25 @@ def org_sans_beta(live):
     return {"id": oid, "membre": membre}
 
 
-def test_sans_option_beta_la_route_refuse_403_et_dit_quoi_faire(client, org_sans_beta):
-    """`session_visibility` masque `oto_fleet` de la LISTE ; cette route n'a pas de
-    liste à lire. Un admin d'org sans l'option ne doit ni lister ni déclarer ni
-    lancer — et le refus nomme le geste qui débloque."""
+def test_sans_option_beta_la_route_SERT(client, org_sans_beta):
+    """Les agents hébergés s'ouvrent à toute org (24/09/2026) : un admin d'org sans
+    l'option `beta` liste et déclare. Ce qui borne la dépense est le modèle
+    obligatoire et la clé de modèle de l'org, plus une population choisie."""
     h = _h(org_sans_beta["membre"])
-    for body in ({"op": "list"},
-                 {"op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p", "tools": ["oto_kb"]},
-                 {"op": "launch", "fleet_id": 1},
-                 {"op": "stop", "fleet_id": 1}):
-        r = client.post(ROUTE, headers=h, json=body)
-        assert r.status_code == 403, (body, r.text)
-        assert r.json()["error"] == "beta_required", body
-        assert "oto_admin_set_option" in r.json()["detail"], body
+    r = client.post(ROUTE, headers=h, json={"op": "list"})
+    assert r.status_code == 200, r.text
+    r = client.post(ROUTE, headers=h, json={
+        "op": "create", "model": MODELE_SERVI, "label": "x", "procedure": "p",
+        "tools": ["oto_kb"]})
+    assert r.status_code == 200, r.text
 
 
 def test_api_me_orgs_dit_par_org_si_le_compte_est_beta(client, org, org_sans_beta):
     """Le front lit l'org de l'URL : le fait doit être PAR ORG, sur la liste — pas
-    global sur /api/me. Deux comptes, deux orgs, deux réponses."""
+    global sur /api/me. Deux comptes, deux orgs, deux réponses. (Le champ ne décide
+    plus des Agents, ouverts à toute org, mais des autres surfaces bêta.)"""
+    from oto_mcp import db
+    db.set_option_comp("org", str(org["id"]), "beta", granted_by="test")
     r = client.get("/api/me/orgs", headers=_h(org["membre"]))
     assert r.status_code == 200, r.text
     assert {o["id"]: o["beta"] for o in r.json()["orgs"]}[org["id"]] is True

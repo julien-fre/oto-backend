@@ -39,7 +39,6 @@ def _socle(monkeypatch):
     from oto_mcp.capabilities import runner_fleets as RF
     monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting",
                         lambda *a, **k: None)
-    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr(_lignes_reservables, "_CACHE", {})
     monkeypatch.setattr(_lignes_reservables, "_SIGNALE", {})
 

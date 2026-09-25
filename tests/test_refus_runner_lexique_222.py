@@ -51,8 +51,6 @@ def _refus(status: int, code: str, appel) -> str:
 def _socle(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.connector_settings.get_connector_setting",
                         lambda *a, **k: None)
-    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
-    monkeypatch.setattr(RT.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
         "armed": True, "workers": 1, "last_seen": "2026-09-23 08:00:00",
         "families": ["anthropic"]})

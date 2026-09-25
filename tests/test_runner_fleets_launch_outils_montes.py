@@ -78,11 +78,6 @@ def _cle_de_modele_non_exigee(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _compte_beta(monkeypatch):
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
-
-
-@pytest.fixture(autouse=True)
 def _un_worker_par_defaut(monkeypatch):
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {
         "armed": True, "workers": 1, "last_seen": "2026-09-17 08:00:00", "families": ["anthropic"]})

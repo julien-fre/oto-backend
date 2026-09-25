@@ -68,7 +68,6 @@ def test_lancer_un_passage_INCONNU_rend_toujours_404(monkeypatch):
     lu, il n'y a aucun modèle à juger."""
     from oto_mcp import roles
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, option, *, org=None: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     monkeypatch.setattr(RF.db, "get_fleet", lambda *a, **k: None)
     monkeypatch.setattr(RF.db, "runner_arme", lambda org: {

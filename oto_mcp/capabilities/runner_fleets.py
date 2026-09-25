@@ -63,8 +63,7 @@ from pydantic import BaseModel, Field
 from . import (_abonnement, _cle_exigee, _descriptions_outils, _instruction,
                _lignes_de_campagne, _lignes_reservables, _modele,
                _ordonnanceur_de_campagne, _outils_manquants)
-from .. import access, db, output_projection, runner_models, tool_alias
-from ..tool_visibility import BETA_OPTION
+from .. import db, output_projection, runner_models, tool_alias
 
 logger = logging.getLogger(__name__)
 from ._authz import ORG_MEMBER
@@ -399,25 +398,9 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     if not ctx.org_id:
         raise AuthzDenied(400, "org_required", "les automatisations sont org-scopées")
     inp = _noms_canoniques(ctx, inp)
-    # ⚠️ Bêta = une GARDE, pas une visibilité. `session_visibility` masque
-    # `oto_fleet` de la LISTE d'outils des comptes sans l'option ; mais la même
-    # capacité est servie en REST (`/api/me/runner/fleets`) et joignable par
-    # `oto_call` — deux chemins qui ne lisent aucune liste. Sans ce refus, un
-    # membre non bêta déclarait, lançait et arrêtait des passages depuis un front,
-    # alors que son agent ne voyait même pas le nom. Fail-CLOSED, comme la
-    # visibilité : une bêta qui s'ouvre sur un hoquet ne se voit pas.
-    try:
-        beta = access.has_option(ctx.sub, BETA_OPTION, org=ctx.org_id)
-    except Exception:
-        # Fermer sans le dire serait un silence ; on ferme ET on le trace.
-        logger.warning("beta gate fail-CLOSED for %s in org %s",
-                       ctx.sub, ctx.org_id, exc_info=True)
-        beta = False
-    if not beta:
-        raise AuthzDenied(
-            403, "beta_required",
-            "les automatisations de genre file sont en bêta : un admin pose l'option `beta` sur "
-            "ton compte ou ton org (`oto_admin_set_option`)")
+    # Ouvertes à toute org depuis le 24/09/2026 : plus de porte `beta`. Ce qui
+    # borne la dépense, c'est le modèle OBLIGATOIRE (`_modele.exige_un_modele`) et
+    # la clé de modèle de l'org (`_cle_exigee`), à la pose comme à la réservation.
 
     if inp.op == "create":
         # ⚠️ Le seam vaut pour TOUTE opération, pas pour le seul verbe qu'on avait

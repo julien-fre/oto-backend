@@ -114,13 +114,8 @@ BETA_TOOLS: frozenset[str] = frozenset({
     # donne une population choisie pendant que les appelants migrent, sans
     # date-couperet — cf. `oto_mcp/capabilities/resources_v2.py`.
     "oto_resource_v2",
-    # La FLOTTE (R4, 01/09/2026) : sa surface part de VIDE — aucune flotte n'est
-    # déclarée nulle part — et son contrat est PROVISOIRE : elle déclare et lit,
-    # elle ne sait ni lancer ni arrêter. La proposer à tous, ce serait offrir à
-    # chaque agent un verbe qui ne trouve rien. ⚠️ Nom NEUF, conformément à la
-    # règle ci-dessus : `oto_fleet` naît avec ce lot, il ne retire donc rien à
-    # personne — cf. `oto_mcp/capabilities/runner_fleets.py`.
-    "oto_fleet",
+    # `oto_fleet` en est SORTI le 24/09/2026 : les agents hébergés s'ouvrent à toute
+    # org, chacune payant son modèle (modèle obligatoire, clé de modèle de l'org).
     # La FONCTION (ADR 0073, 18/09/2026) : du code pur stocké et exécuté par Oto. Elle
     # part de VIDE et son contrat est PROVISOIRE — ce premier lot stocke et versionne,
     # il n'exécute pas encore. ⚠️ Nom NEUF : `oto_function` naît avec ce lot.

@@ -42,11 +42,6 @@ def _cle_de_modele_non_exigee(monkeypatch):
 
 
 
-@pytest.fixture(autouse=True)
-def _compte_beta(monkeypatch):
-    monkeypatch.setattr(RF.access, "has_option", lambda sub, o, *, org=None: True)
-
-
 def _ctx():
     return ResolvedCtx(sub="alexis", org_id=2)
 

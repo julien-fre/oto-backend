@@ -207,7 +207,6 @@ def test_armer_un_passage_sans_la_cle_exigee_est_refuse(monkeypatch):
     from oto_mcp import roles
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
-    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr(roles, "is_org_admin", lambda *a, **k: True)
     monkeypatch.setattr(RF, "_run_courant", lambda: None)
     monkeypatch.setattr(RF.db, "get_fleet", lambda fid, org: {"model": "claude-opus-5"})
@@ -222,7 +221,6 @@ def test_creer_un_passage_ANTHROPIC_sans_sa_cle_est_refuse(monkeypatch):
     documente — jusqu'ici sans la moindre garde. Nouveau chemin, nouveau banc."""
     _reglages(monkeypatch, _poses(platform__anthropic="true"))
     monkeypatch.setattr(CE, "cle_deposee", lambda org, f: False)
-    monkeypatch.setattr(RF.access, "has_option", lambda *a, **k: True)
     monkeypatch.setattr(RF.db, "create_fleet",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:

@@ -22,9 +22,10 @@ prêt, oto lui **fabrique** le prochain travail du fleet armé, un par un, jusqu
 budget de tours — donc le plafond d'une conversation ne s'applique plus à la file
 entière, seulement à chaque ligne.
 
-⚠️ **Tous les comptes n'y ont pas accès.** Si `oto_fleet` répond `beta_required`, ne
-réessaie pas : dis à l'utilisateur que les passages d'agents ne sont pas ouverts pour
-son org, et reviens au patron du guide `work-queue` — en découpant le travail en
+⚠️ **Un passage tourne sur la clé de modèle de son org.** `create` exige un `model` du
+catalogue (`model_required` sinon). Si `launch` répond `model_key_required`, l'org doit
+déposer sa clé pour ce fournisseur : ne réessaie pas, dis-le à l'utilisateur, et
+reviens au patron du guide `work-queue` en attendant — en découpant le travail en
 plusieurs conversations si le volume dépasse ce qu'une seule peut boucler.
 
 ## La procédure fait toujours autorité
