@@ -212,31 +212,31 @@ def test_web_read_saute_le_cran_serper_a_sec(monkeypatch, coffre):
 # --- le refus « aucune clé » ------------------------------------------------------
 
 def test_sans_cle_plateforme_le_refus_ne_propose_pas_de_pret(monkeypatch):
-    from oto_mcp.access import resolve
-    monkeypatch.setattr(resolve.links, "ou_poser_la_cle", lambda *a, **k: " (page X)")
-    monkeypatch.setattr(resolve.credentials_store, "list_platform_instances", lambda p: [])
-    texte = resolve._poser_ou_accorder("sub", 264, "serper")
+    from oto_mcp.access import indices
+    monkeypatch.setattr(indices.links, "ou_poser_la_cle", lambda *a, **k: " (page X)")
+    monkeypatch.setattr(indices.credentials_store, "list_platform_instances", lambda p: [])
+    texte = indices._poser_ou_accorder("sub", 264, "serper")
     assert "Pose ta propre clé (page X)" in texte
     assert "prêter" not in texte and "grant" not in texte
     assert "ne fournit pas de clé plateforme `serper`" in texte
 
 
 def test_avec_cle_plateforme_le_refus_propose_le_pret_par_oto(monkeypatch):
-    from oto_mcp.access import resolve
-    monkeypatch.setattr(resolve.links, "ou_poser_la_cle", lambda *a, **k: "")
-    monkeypatch.setattr(resolve.credentials_store, "list_platform_instances",
+    from oto_mcp.access import indices
+    monkeypatch.setattr(indices.links, "ou_poser_la_cle", lambda *a, **k: "")
+    monkeypatch.setattr(indices.credentials_store, "list_platform_instances",
                         lambda p: [{"label": "defaut"}])
-    texte = resolve._poser_ou_accorder("sub", 264, "serper")
+    texte = indices._poser_ou_accorder("sub", 264, "serper")
     assert "admins d'oto" in texte and "prêter" in texte
 
 
 def test_un_hoquet_de_base_rend_le_refus_sans_proposer_le_pret(monkeypatch):
     """Fail-soft comme les autres indices : le refus reste, sans seconde proposition."""
-    from oto_mcp.access import resolve
+    from oto_mcp.access import indices
 
     def _panne(p):
         raise RuntimeError("base indisponible")
 
-    monkeypatch.setattr(resolve.links, "ou_poser_la_cle", lambda *a, **k: "")
-    monkeypatch.setattr(resolve.credentials_store, "list_platform_instances", _panne)
-    assert resolve._poser_ou_accorder("sub", 264, "serper") == "Pose ta propre clé."
+    monkeypatch.setattr(indices.links, "ou_poser_la_cle", lambda *a, **k: "")
+    monkeypatch.setattr(indices.credentials_store, "list_platform_instances", _panne)
+    assert indices._poser_ou_accorder("sub", 264, "serper") == "Pose ta propre clé."

@@ -39,29 +39,6 @@ class CredentialUnavailable(McpError):
     """Aucune clé atteignable ; distinct d'un compte ambigu ou d'un refus d'accès."""
 
 
-def _poser_ou_accorder(sub: str, lien_org, porteur: str) -> str:
-    """Le geste proposé quand aucune clé `porteur` ne résout. Poser sa clé, toujours ;
-    le prêt d'une clé PLATEFORME seulement si oto en détient une pour ce connecteur.
-    Sans elle, « demande à un admin de te grant une clé plateforme » renvoyait vers
-    un geste impossible — signalé par un org_admin qui avait fait exactement ça
-    (#1156). Le prêt relève des admins d'oto, pas de ceux de l'org : on le dit.
-
-    Fail-soft comme les autres indices du refus (`indices._revoked_hint`) : un hoquet
-    DB ici rend le refus sans la seconde proposition, jamais une 500 à sa place."""
-    poser = f"Pose ta propre clé{links.ou_poser_la_cle(sub, org=lien_org, connecteur=porteur)}"
-    try:
-        pretable = bool(credentials_store.list_platform_instances(porteur))
-    # noqa: SILENT — indice best-effort : un hoquet DB laisse le refus sans proposer le prêt
-    except Exception:
-        logger.warning("clés plateforme `%s` illisibles pour le refus (fail-soft)", porteur,
-                       exc_info=True)
-        return f"{poser}."
-    if not pretable:
-        return f"{poser} — oto ne fournit pas de clé plateforme `{porteur}`."
-    return (f"{poser}, ou demande aux admins d'oto de prêter à ton org la clé "
-            f"plateforme `{porteur}`.")
-
-
 def resolve_credential(provider: str, want: str = "auto",
                        sub: Optional[str] = None, *,
                        account: Optional[str] = None,
@@ -368,7 +345,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             # sous le porteur — c'est là que les secrets partagés existent.
             message=(
                 f"Aucune clé `{porteur}` configurée pour toi. "
-                + _poser_ou_accorder(sub, lien_org, porteur)
+                + indices._poser_ou_accorder(sub, lien_org, porteur)
                 + indices._revoked_hint(sub, active_org, porteur)
                 + indices._reachable_hint(sub, active_org, porteur)
                 + heritage.indice_refus(sub, active_org, porteur)
