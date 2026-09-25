@@ -737,6 +737,12 @@ def register(mcp: FastMCP) -> None:
           writing a "final" state does NOT free the row (#317). Release is a gesture
           of the LOCK — data_release, or closing your run — never an inference from
           a business value.
+        - step labels: `lifecycle.labels: {"a_qualifier": "À qualifier", …}` — the
+          name a screen shows for each state instead of its code. Presentation
+          only: no write reads it, a row still carries the code. Each key must be a
+          state of `states` (an unknown one is REFUSED and named), each value a
+          non-empty string of at most 60 characters; a state without a label is
+          fine (the screen derives one from the code).
         - work-queue ceiling: `lifecycle.max_claims: <int >= 1>` +
           `lifecycle.abandon_state: "<terminal state>"` — a row claimed that many
           times WITHOUT a successful write leaves the queue in that state, with a

@@ -91,7 +91,8 @@ CLES: tuple[Cle, ...] = (
     Cle("required_layers", ("validateur", "front"),
         "les couches sans lesquelles une valeur non vide ne s'écrit pas "
         "(`[\"comment\"]`) — la provenance voyage avec la valeur", True),
-    Cle("lifecycle", ("validateur", "front"), "états et transitions permises"),
+    Cle("lifecycle", ("validateur", "front"),
+        "états et transitions permises — ses clés : `CLES_DU_CYCLE`"),
     # ⚠️ `enum` a été RETIRÉE d'ici : elle n'était lue par personne. C'est une VALEUR
     # de `type` (`"type": "enum"`), jamais une clé — et la table des fautes de frappe
     # la traite comme une erreur à corriger (`enum` → `options`). Cette liste est
@@ -173,6 +174,39 @@ LUES_PAR_LE_VALIDATEUR: frozenset[str] = frozenset(
 #: fait l'union avec le dérivé — une seule référence pour les deux avertissements.
 LUES_PAR_LE_FRONT: frozenset[str] = frozenset(
     c.nom for c in CLES if "front" in c.lecteurs)
+
+
+# ── L'INTÉRIEUR du bloc `lifecycle` (oto#140) ─────────────────────────────────
+#
+# Même parti que `CLES` un cran plus bas : ce qu'un cycle de vie peut porter, et
+# surtout QUI le lit. La liste n'existait pas — chaque clé du bloc n'était écrite que
+# dans le module qui la consomme. Elle naît avec `labels`, la première clé du bloc qui
+# n'est lue QUE par un front : sans la dire ici, rien ne distinguerait « présentation »
+# de « oubliée par le validateur », exactement la confusion qui a failli coûter
+# `label`, `help` et `hint` au niveau colonne.
+CLES_DU_CYCLE: tuple[Cle, ...] = (
+    Cle("states", ("validateur", "front"), "les états permis de la colonne"),
+    Cle("transitions", ("validateur", "front"),
+        "`{état: [états atteignables]}` — une transition non déclarée est refusée"),
+    Cle("terminal", ("validateur", "front"),
+        "les états finaux ; à défaut, dérivés (un état sans sortie en est un)"),
+    Cle("max_claims", ("validateur", "front"),
+        "plafond de réservations SANS écriture avant l'abandon (#433)"),
+    Cle("abandon_state", ("validateur", "front"),
+        "l'état terminal où le plafond verse une ligne (#433)"),
+    Cle("claimable", ("validateur", "front"),
+        "le périmètre que la file sert, grammaire de `filter` (#517)"),
+    # ⚠️ PRÉSENTATION, JAMAIS VALIDATION. Sa FORME est jugée à la pose (un objet, des
+    # clés qui sont des états déclarés, des chaînes non vides d'au plus
+    # `cycle_de_vie.LIBELLE_ETAT_MAX` caractères) ; aucune écriture de ligne ne la lit,
+    # et une ligne porte toujours le CODE de l'état, jamais son libellé.
+    Cle("labels", ("front",),
+        "`{état: \"libellé\"}` — le nom affiché de chaque étape ; présentation, "
+        "jamais validation : aucune écriture ne le lit"),
+)
+
+#: Ce qu'un bloc `lifecycle` a le droit de porter.
+CYCLE_RECONNUES: frozenset[str] = frozenset(c.nom for c in CLES_DU_CYCLE)
 
 
 def servie() -> list[dict]:

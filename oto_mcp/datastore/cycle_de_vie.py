@@ -1,7 +1,7 @@
 """Le CYCLE DE VIE d'une ligne : états, transitions, sorties (ADR 0046).
 
 Déclaré par `lifecycle: {states, transitions, terminal?, max_claims?, abandon_state?,
-claimable?}` sur le champ `role="status"`, et par lui seul. Ce module tient sa
+claimable?, labels?}` sur le champ `role="status"`, et par lui seul. Ce module tient sa
 lecture et sa grammaire :
 
 - l'accès au bloc et à ses crans (`lifecycle_of`, `terminal_states`,
@@ -31,6 +31,16 @@ from . import claimable
 
 from .couches import unwrap
 from .declaration import _fields, status_field
+
+#: Les clés du bloc `lifecycle` qu'une fusion de patch descend ÉTAT PAR ÉTAT : un
+#: patch qui nomme un état laisse les autres en place, `null` retire le sien.
+#: `transitions` (oto#64) et `labels` (oto#140) ont la même forme — un objet dont
+#: chaque clé est un état déclaré.
+PAR_ETAT = ("transitions", "labels")
+
+#: La borne d'un libellé d'étape (`lifecycle.labels`, oto#140). C'est le nom d'une
+#: étape dans un badge ou une puce, pas une description : au-delà, il ne tient plus.
+LIBELLE_ETAT_MAX = 60
 
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
     sf = status_field(schema)
@@ -137,6 +147,7 @@ def refus_de_transition(colonne: str, depuis: str, vers: str,
 
 def merge_transitions(current: dict, patch: dict) -> dict:
     """Fusion PAR ÉTAT des transitions — `null` retire l'état de la table (oto#64).
+    Sert aussi `labels` (oto#140) : même forme, même geste de retrait.
 
     ⚠️ La liste de destinations d'un état, elle, se REMPLACE : c'est l'ensemble des
     sorties de cet état, et une fusion de listes rendrait le retrait d'UNE destination
@@ -174,6 +185,11 @@ def merge_lifecycle(current: dict, patch: dict) -> dict:
     d'une destruction silencieuse — ce que ce changement retire à l'appelant, c'est le
     droit d'effacer sans le savoir.
 
+    ⚠️ **`labels` descend de la même façon (oto#140, 25/09/2026)** : poser le libellé
+    d'UNE étape par `lifecycle: {labels: {"perdu": "Perdu"}}` ne doit pas effacer ceux
+    des autres — le défaut d'oto#64 se serait reformé sur la première clé ajoutée au
+    bloc depuis. `labels: {"perdu": null}` retire ce libellé, `labels: null` tous.
+
     ⚠️ `claimable` NE descend pas : c'est un périmètre de réservation, un filtre entier
     dont le remplacement en bloc est le geste voulu. Une fusion par colonne y rendrait
     impossible de restreindre une file en une fois."""
@@ -181,7 +197,7 @@ def merge_lifecycle(current: dict, patch: dict) -> dict:
     for k, v in patch.items():
         if v is None:
             out.pop(k, None)
-        elif (k == "transitions" and isinstance(v, dict)
+        elif (k in PAR_ETAT and isinstance(v, dict)
                 and isinstance(out.get(k), dict)):
             out[k] = merge_transitions(out[k], v)
         else:

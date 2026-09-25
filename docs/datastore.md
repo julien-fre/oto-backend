@@ -530,6 +530,21 @@ fusion de listes rendrait le retrait d'une destination impossible sans une gramm
 plus. `claimable` ne descend pas non plus : c'est un filtre entier, dont le remplacement
 en bloc est le geste voulu.
 
+**Les libellés d'étape : `lifecycle.labels` (oto#140, 25/09/2026).** Un état est un
+code (`a_qualifier`) ; un écran le montrait dérivé du code, sans accents (« A
+qualifier »). `labels: {"a_qualifier": "À qualifier", "perdu": "Perdu"}` donne le nom
+affiché de chaque étape. **Présentation, jamais validation** : aucune écriture ne le
+lit, une ligne porte toujours le CODE, et le dashboard l'affiche à la place du libellé
+dérivé (`etatLisible`). Déclaré front seul dans `schema_keys.CLES_DU_CYCLE`. Sa FORME
+est jugée à la pose, sur **chaque** colonne qui porte un cycle de vie (pas seulement la
+file) : un objet ; des clés qui sont des états de `states` — **une clé inconnue est
+refusée et nommée**, car un libellé posé sur une faute de frappe serait servi et jamais
+affiché ; des chaînes non vides d'au plus 60 caractères (`LIBELLE_ETAT_MAX`). Un état
+sans libellé est permis. Il se patche comme `transitions`, **état par état** :
+`data_patch_schema(fields=[{key: statut, lifecycle: {labels: {"perdu": "Perdu"}}}])`
+nomme cette étape sans toucher aux autres libellés ni au reste du bloc, `labels:
+{"perdu": null}` retire ce libellé, `labels: null` tous.
+
 **Le refus de transition NOMME la porte** (`refus_de_transition`) : il ne disait que ce
 qui est fermé, et l'appelant en concluait qu'il n'y avait pas de sortie — un agent a
 préféré ne rien écrire du tout et rendre la main à un humain, sur un tableau qu'une

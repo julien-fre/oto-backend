@@ -45,7 +45,7 @@ from .declaration import (
     SCALAR_TYPES,
     status_field,
 )
-from .cycle_de_vie import lifecycle_of, terminal_states
+from .cycle_de_vie import LIBELLE_ETAT_MAX, lifecycle_of, terminal_states
 from .hors_schema import UNKNOWN_FIELDS_MODES
 from . import formule as _formule
 
@@ -193,6 +193,7 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
             strict=bool(schema.get("strict")), status_key=sf.get("key"),
             states={str(s) for s in (lc.get("states") or [])}
             if isinstance(lc.get("states"), list) else set()))
+    errors.extend(_erreurs_libelles_d_etat(schema))
     # ⚠️ Il y avait ici un refus « lifecycle exige role="status" ». Retiré le
     # 08/09/2026 avec l'étiquette : le bloc DÉSIGNE désormais sa colonne, il n'y a plus
     # de placement à vérifier. Et ce refus n'avait pas protégé — cinq schémas de
@@ -200,6 +201,55 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
     # et jamais lu, alors qu'il existait. Ce qui les arrête maintenant est plus haut :
     # deux blocs sont refusés, et un bloc seul EST l'état.
     return errors
+
+
+def _erreurs_libelles_d_etat(schema: dict) -> list[str]:
+    """`lifecycle.labels` (oto#140) : le nom affiché de chaque étape — PRÉSENTATION,
+    jamais validation. Aucune écriture de ligne ne le lit ; un front l'affiche à la
+    place du code (`a_qualifier` → « À qualifier »).
+
+    Jugé sur CHAQUE colonne qui porte un cycle de vie, pas seulement sur celle de
+    file (`status_field`) : un tableau peut porter des états humains à côté de sa
+    file, et c'est justement eux qu'un écran nomme.
+
+    ⚠️ **Une clé qui n'est pas un état déclaré est REFUSÉE, et nommée.** Un libellé
+    posé sur `a_qualifer` (faute de frappe) serait stocké, servi, et jamais affiché :
+    l'auteur croirait l'étape renommée, l'écran continuerait d'afficher le code. Un
+    état SANS libellé, lui, est permis — le front dérive alors le sien du code."""
+    errs: list[str] = []
+    for f in _fields(schema):
+        if not isinstance(f, dict) or not isinstance(f.get("lifecycle"), dict):
+            continue
+        lc = f["lifecycle"]
+        if "labels" not in lc:
+            continue
+        col = f.get("key")
+        libelles = lc["labels"]
+        if not isinstance(libelles, dict):
+            errs.append(
+                f"`{col}` : lifecycle.labels doit être un objet {{\"état\": \"libellé\"}} "
+                f"— reçu {type(libelles).__name__}. Chaque clé est un état de `states`, "
+                f"chaque valeur le nom affiché de cette étape.")
+            continue
+        etats = lc.get("states")
+        connus = [str(e) for e in etats] if isinstance(etats, list) else []
+        for etat, libelle in libelles.items():
+            if str(etat) not in connus:
+                errs.append(
+                    f"`{col}` : lifecycle.labels : état inconnu {etat!r} — un libellé "
+                    f"nomme un état déclaré dans `states` "
+                    f"({', '.join(connus) if connus else 'aucun'})")
+            if not isinstance(libelle, str) or not libelle.strip():
+                errs.append(
+                    f"`{col}` : lifecycle.labels[{etat!r}] doit être une chaîne non vide "
+                    f"— reçu {libelle!r}. Pour revenir au libellé dérivé du code, "
+                    f"retire la clé.")
+            elif len(libelle) > LIBELLE_ETAT_MAX:
+                errs.append(
+                    f"`{col}` : lifecycle.labels[{etat!r}] fait {len(libelle)} caractères, "
+                    f"au plus {LIBELLE_ETAT_MAX} — c'est le nom d'une étape, pas sa "
+                    f"description")
+    return errs
 
 
 def _erreurs_unknown_fields(schema: dict) -> list[str]:

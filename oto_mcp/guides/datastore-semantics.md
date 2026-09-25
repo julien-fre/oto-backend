@@ -294,6 +294,15 @@ s'applique pas. Avant, un `lifecycle` sur une colonne non étiquetée était sto
 servi… et jamais lu — cinq tableaux étaient dans ce cas, dont quatre en production, et
 leurs auteurs croyaient avoir armé une file de travail.
 
+**Le nom affiché d'une étape** se déclare dans le même bloc :
+`"labels": {"a_qualifier": "À qualifier", "perdu": "Perdu"}`. C'est de la
+présentation : une ligne s'écrit toujours avec le CODE (`"statut": "a_qualifier"`),
+jamais avec le libellé. Chaque clé doit être un état de `states` (une clé inconnue est
+refusée, et nommée), chaque valeur une chaîne non vide d'au plus 60 caractères ; un
+état sans libellé est permis. Pour nommer une étape sur un tableau existant :
+`data_patch_schema(fields=[{"key": "statut", "lifecycle": {"labels": {"perdu":
+"Perdu"}}}])` — les autres libellés et le reste du cycle de vie ne bougent pas.
+
 Deux colonnes qui porteraient un bloc sont **refusées à la pose** : sinon le premier
 trouvé gagnerait, et l'ordre de déclaration trancherait en silence.
 
