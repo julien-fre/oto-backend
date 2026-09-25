@@ -31,7 +31,7 @@ import pytest
 from oto_mcp import org_store, session_org
 from oto_mcp.capabilities.orgs import core as orgs, reads as orgs_reads, update as orgs_update
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
-from oto_mcp.db import _conn as _conn_mod, _init, _schema, users as db_users
+from oto_mcp.db import _conn as _conn_mod, _init, _schema, tenants as db_tenants, users as db_users
 
 # Identités synthétiques : le défaut se reproduit avec n'importe quel compte.
 SUB = "sub-test-1"
@@ -46,8 +46,9 @@ AUTRE = "sub-test-2"
 # ⚠️ `sub_aliases` : `upsert_user` la consulte quand il INSÈRE, pour refuser de
 # ressusciter un compte mis en pause (2026-09-03, `docs/comptes-en-pause.md`). Le banc
 # porte les tables que le code servi LIT — c'est la règle de ce fichier, et elle vient
-# d'en gagner une.
-_TABLES = ("tenants", "users", "orgs", "org_members", "org_groups",
+# d'en gagner une. `tenant_admins` : depuis le 2026-09-25 le plafond ne s'applique pas à
+# l'admin de son tenant, et `org_quota` le LIT à chaque création (`db.is_tenant_admin`).
+_TABLES = ("tenants", "tenant_admins", "users", "orgs", "org_members", "org_groups",
            "org_group_members", "option_comps", "org_subscriptions", "sub_aliases")
 
 
@@ -120,8 +121,8 @@ def conn(pg_module_dsn):
 
 @pytest.fixture()
 def store(conn, monkeypatch):
-    """`org_store` (et l'`upsert_user` qu'il appelle) branchés sur la connexion du
-    banc. Les deux modules importent `_connect` dans LEUR namespace : patcher le pool
+    """`org_store` (et l'`upsert_user` qu'il appelle, et les lectures de rôle du
+    plafond : `get_user`, `is_tenant_admin`) branchés sur la connexion du banc. Les deux modules importent `_connect` dans LEUR namespace : patcher le pool
     seul laisserait `db.users` parler à la vraie base."""
     @contextmanager
     def _connect_test():
@@ -129,6 +130,7 @@ def store(conn, monkeypatch):
 
     monkeypatch.setattr(org_store, "_connect", _connect_test)
     monkeypatch.setattr(db_users, "_connect", _connect_test)
+    monkeypatch.setattr(db_tenants, "_connect", _connect_test)
     # Comptes déjà inscrits : `upsert_user` ne doit PAS rejouer ici ses effets de
     # première inscription (réconciliation d'invitation, `ensure_personal_org`), qui
     # poseraient un espace personnel dans le dos du test — c'est ce test qui décide

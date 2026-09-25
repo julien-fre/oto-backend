@@ -330,7 +330,7 @@ _REGLAGES: tuple[Variable, ...] = (
              "Rafale anonyme autorisée en plus du débit régulier.",
              ("oto_mcp/subdomain_project.py:139",)),
     Variable("OTO_MCP_MAX_ORGS_PER_USER", Classe.REGLAGE, "10",
-             "Plafond d'orgs créées par un même compte.",
+             "Plafond d'orgs créées par un même compte (hors super_admin et admin de son tenant).",
              ("oto_mcp/capabilities/orgs/core.py:19",)),
     Variable("OTO_MCP_INVITE_TTL_DAYS", Classe.REGLAGE, "7",
              "Durée de vie (jours) d'une invitation d'org.",

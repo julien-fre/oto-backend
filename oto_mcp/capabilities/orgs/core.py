@@ -11,7 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from ... import config, org_store, session_org
+from ... import access, config, db, org_store, session_org, tenancy
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -73,6 +73,18 @@ class ClearOrgResult(BaseModel):
     how_to: Optional[str] = None
 
 
+def _uncapped(sub: str) -> bool:
+    """Hors plafond : le super_admin, et l'admin de SON tenant (même lecture que
+    `_authz.TENANT_ADMIN_OF` — slug dérivé du préfixe du sub, jamais déclaré). Ce sont
+    les comptes qui montent des espaces POUR d'autres (onboarding client, démos) : un
+    plafond pensé contre l'emballement d'un self-serve les bloquait au 11ᵉ client, et
+    l'archivage — le remède annoncé — n'a pas de sens pour un espace client vivant.
+    Le super_admin d'abord : c'est le cas courant, et il épargne la lecture tenant."""
+    if access.is_super_admin(sub):
+        return True
+    return db.is_tenant_admin(tenancy.current().tenant_of(sub), sub)
+
+
 def org_quota(sub: str) -> dict:
     """Où en est ce compte face au plafond de création — **source unique**, lue par le
     refus d'`org.create` ET par la liste `org.list` (`oto_list_orgs`).
@@ -91,8 +103,14 @@ def org_quota(sub: str) -> dict:
     « -3 places restantes » ne veut rien dire pour l'appelant.
 
     `created` compte ce qui OCCUPE une place — ni les archivées, ni l'espace personnel
-    (cf. `org_store.count_orgs_created_by`, qui porte la règle et son pourquoi)."""
+    (cf. `org_store.count_orgs_created_by`, qui porte la règle et son pourquoi).
+
+    Compte hors plafond (`_uncapped`) : `cap` et `remaining` valent `None` — « pas de
+    plafond », et non 0 ni un grand nombre inventé. Le refus ne teste que `== 0`, il
+    ne se déclenche donc jamais pour eux ; `created` reste rendu, il est toujours vrai."""
     created = org_store.count_orgs_created_by(sub)
+    if _uncapped(sub):
+        return {"created": created, "cap": None, "remaining": None}
     return {"created": created, "cap": _MAX_ORGS_PER_USER,
             "remaining": max(0, _MAX_ORGS_PER_USER - created)}
 

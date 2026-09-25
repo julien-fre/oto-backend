@@ -80,10 +80,12 @@ class OrgQuota(BaseModel):
     d'entrées d'`orgs` ci-dessus — l'espace perso y figure, il est bien à toi.
     ⚠️ Le plafond porte sur les espaces que TU as créés : rejoindre celui d'autrui
     n'en consomme aucun, et une org dont tu es membre sans l'avoir créée n'y entre pas.
-    `remaining == 0` ⟹ la prochaine création sera refusée (429 `org_quota`)."""
+    `remaining == 0` ⟹ la prochaine création sera refusée (429 `org_quota`).
+    `cap` et `remaining` à `null` ⟹ **aucun plafond** : super_admin, ou admin de ton
+    propre tenant."""
     created: int
-    cap: int
-    remaining: int
+    cap: Optional[int] = None
+    remaining: Optional[int] = None
 
 
 class MyOrgs(BaseModel):
