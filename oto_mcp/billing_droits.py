@@ -11,7 +11,8 @@ un geste oublié ou un appel qui a échoué se rattrape au passage suivant : au 
 la commande `oto-mcp maintenance droits` (timer quotidien), au tick du runner
 d'échéances. Même parade que le runner sur ses échéances.
 
-**Elle ne retire que ce que ses propres sources ont posé** (`SOURCES`). Une ligne
+**Elle ne retire que ce que ses propres sources ont posé** (`SOURCES`), et **jamais une
+ligne de portée personne** (`sub` posé), même sous l'une de ces sources. Une ligne
 posée sous une autre étiquette (un essai, un droit qu'un partenaire écrirait lui-même
 sous la sienne…) ne lui appartient pas : elle ne la réécrit pas et ne l'efface pas.
 
@@ -166,8 +167,11 @@ def reconcilier(org_id: int, *, dry_run: bool = False) -> dict:
     retiré. Poser rejoue une ligne déjà juste (upsert) : le compte dit ce que le
     commerce déclare, pas ce qui a changé."""
     voulus = droits_voulus(org_id)
+    # Portée org seulement (`sub` nul) : une ligne par personne, même sous l'une de nos
+    # sources, n'est jamais à nous (un service externe en pose sous `subscription`).
     en_place = {(r["right_key"], r["source"])
-                for r in db_entitlements.list_for_org(org_id) if r["source"] in SOURCES}
+                for r in db_entitlements.list_for_org(org_id)
+                if r["sub"] is None and r["source"] in SOURCES}
     a_retirer = sorted(en_place - set(voulus))
     if not dry_run:
         for (droit, source), (fin, auteur, valeur, debut) in sorted(voulus.items()):

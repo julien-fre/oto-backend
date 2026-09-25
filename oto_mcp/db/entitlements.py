@@ -61,7 +61,9 @@ def grant(org_id: int, right_key: str, source: str, *, value: int,
 
 def revoke(org_id: int, right_key: str, source: str, *, sub: Optional[str] = None) -> bool:
     """Retire la ligne de CETTE (org, personne, droit, source) — les autres sources et
-    l'autre portée restent. True si une ligne a été supprimée."""
+    l'autre portée restent. `sub` omis = la ligne d'org SEULE (`sub IS NULL`), jamais
+    une ligne par personne, même à droit et source identiques. True si une ligne a été
+    supprimée."""
     with _connect() as conn:
         n = conn.execute(
             "DELETE FROM org_entitlements WHERE org_id = %s AND sub IS NOT DISTINCT FROM %s "

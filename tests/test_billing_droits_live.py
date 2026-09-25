@@ -206,3 +206,63 @@ def test_le_travail_de_maintenance_est_au_timer_quotidien():
     from oto_mcp import maintenance
     assert maintenance._TRAVAUX["droits"] is maintenance.droits
     assert "droits" in maintenance._ALL
+
+
+# --- Les lignes de portée personne ne sont jamais à la réconciliation (#1080) ---------
+# Un service de facturation externe pose des droits PAR PERSONNE sous la même étiquette
+# `subscription` que le cœur. La réconciliation ne doit ni les effacer ni les réécrire,
+# même quand elle retire la ligne d'org de même droit et même source.
+
+def _ligne_personne(org: int, sub: str) -> dict:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT right_key, source, value, starts_at, expires_at, granted_by, granted_at "
+            "FROM org_entitlements WHERE org_id = %s AND sub = %s", (org, sub)).fetchall()
+    return {(r["right_key"], r["source"]): dict(r) for r in rows}
+
+
+def _poser_personne(org: int) -> tuple[str, dict]:
+    sub = f"u-{uuid.uuid4().hex[:8]}"
+    E.grant(org, "unipile", billing_droits.SOURCE_SUBSCRIPTION, value=1, sub=sub,
+            expires_at=DANS_UN_MOIS + timedelta(days=7), granted_by="service-externe")
+    return sub, _ligne_personne(org, sub)
+
+
+def test_la_fermeture_retire_la_ligne_d_org_pas_celle_de_la_personne(live):
+    org = _org()
+    _abonner(org)
+    billing_droits.reconcilier(org)
+    sub, avant = _poser_personne(org)
+    db_billing.set_subscription_status(org, "canceled")
+    out = billing_droits.reconcilier(org)
+    assert out == {"poses": 0, "retires": 2}
+    assert _lignes(org) == {("unipile", "subscription"): DANS_UN_MOIS + timedelta(days=7)}
+    assert _ligne_personne(org, sub) == avant, "la ligne par personne n'a pas bougé"
+
+
+def test_la_pose_d_org_ne_reecrit_pas_la_ligne_de_la_personne(live):
+    org = _org()
+    sub, avant = _poser_personne(org)
+    _abonner(org)
+    billing_droits.reconcilier(org)
+    billing_droits.reconcilier(org)
+    assert _ligne_personne(org, sub) == avant
+
+
+def test_une_ligne_par_personne_seule_n_est_jamais_a_retirer(live):
+    """Sans pendant d'org, elle n'entre pas dans le compte : la reprise se rejoue à 0."""
+    org = _org()
+    sub, avant = _poser_personne(org)
+    assert billing_droits.reconcilier(org, dry_run=True) == {"poses": 0, "retires": 0}
+    assert billing_droits.reconcilier(org) == {"poses": 0, "retires": 0}
+    assert _ligne_personne(org, sub) == avant
+
+
+def test_revoke_sans_sub_ne_retire_que_la_ligne_d_org(live):
+    org = _org()
+    E.grant(org, "unipile", billing_droits.SOURCE_SUBSCRIPTION, value=1)
+    sub, avant = _poser_personne(org)
+    assert E.revoke(org, "unipile", billing_droits.SOURCE_SUBSCRIPTION)
+    assert not E.revoke(org, "unipile", billing_droits.SOURCE_SUBSCRIPTION), (
+        "sans ligne d'org, rien à retirer : la ligne par personne n'est pas prise")
+    assert _ligne_personne(org, sub) == avant
