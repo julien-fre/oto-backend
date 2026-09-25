@@ -39,7 +39,7 @@ def _esc_attr(s: str) -> str:
 
 def _no_crlf(s: str | None) -> str | None:
     """Neutralise une injection d'en-tête email : retire CR/LF (et NUL) d'une valeur
-    destinée à un champ d'en-tête (sujet, to, from, reply_to). Des données
+    destinée à un champ d'en-tête (sujet, to, from, replyTo). Des données
     user-controlled (nom de projet, titre de page) transitent par le sujet ; un
     \\r\\n y injecterait un en-tête arbitraire côté service d'envoi."""
     if s is None:
@@ -70,7 +70,9 @@ def _send(to: str, subject: str, html: str, reply_to: str | None = None,
         payload = {"from": _no_crlf(depuis), "to": _no_crlf(to),
                    "subject": _no_crlf(subject), "html": html}
         if reply_to:
-            payload["reply_to"] = _no_crlf(reply_to)
+            # Le service lit `replyTo` (camelCase) et IGNORE en silence toute autre
+            # clé : `reply_to` y a fait perdre l'adresse de réponse sans erreur (oto#148).
+            payload["replyTo"] = _no_crlf(reply_to)
         r = httpx.post(
             url,
             headers={"Authorization": f"Bearer {bearer}"},

@@ -1,5 +1,5 @@
 """Anti-injection d'en-tête email : `_send` neutralise CR/LF sur les champs
-d'en-tête (sujet/to/from/reply_to) — un nom de projet user-controlled ne peut
+d'en-tête (sujet/to/from/replyTo) — un nom de projet user-controlled ne peut
 pas injecter un en-tête (Bcc, etc.). Revue sécu automatique, oto_mcp/email.py."""
 import sys
 import types
@@ -9,8 +9,8 @@ import pytest
 from oto_mcp import email as E
 
 
-def test_send_strips_crlf_from_headers(monkeypatch):
-    monkeypatch.setenv("OTO_MAILER_SEND_BEARER", "tok")
+def _fake_httpx(monkeypatch) -> dict:
+    """Remplace `httpx` : le corps JSON émis atterrit dans le dict rendu."""
     captured = {}
 
     class _Resp:
@@ -20,6 +20,12 @@ def test_send_strips_crlf_from_headers(monkeypatch):
     fake_httpx = types.SimpleNamespace(
         post=lambda url, headers=None, json=None, timeout=None: captured.update(json=json) or _Resp())
     monkeypatch.setitem(sys.modules, "httpx", fake_httpx)
+    return captured
+
+
+def test_send_strips_crlf_from_headers(monkeypatch):
+    monkeypatch.setenv("OTO_MAILER_SEND_BEARER", "tok")
+    captured = _fake_httpx(monkeypatch)
 
     ok = E._send(
         to="a@x.fr\r\nBcc: victim@evil.com",
@@ -29,11 +35,47 @@ def test_send_strips_crlf_from_headers(monkeypatch):
     )
     assert ok is True
     p = captured["json"]
-    for field in ("to", "subject", "from", "reply_to"):
-        assert "\r" not in (p.get(field) or "") and "\n" not in (p.get(field) or ""), field
+    for field in ("to", "subject", "from", "replyTo"):
+        assert "\r" not in p[field] and "\n" not in p[field], field
     assert p["subject"] == "proposition — Projet Bcc: victim@evil.com"  # CR retiré, LF→espace
+
+
+# Contrat du service d'envoi générique (`POST /api/send`) : il lit EXACTEMENT ces
+# clés et ignore en silence toute autre — un nom faux y est perdu sans erreur
+# (oto#148 : `reply_to` au lieu de `replyTo`). Changer cet ensemble exige de relire
+# la signature de corps de la route côté service, pas d'aligner le test.
+_CLES_SERVICE_SEND = {"from", "to", "subject", "html", "replyTo"}
+
+
+def _capture_send(monkeypatch, **kw):
+    monkeypatch.setenv("OTO_MAILER_SEND_BEARER", "tok")
+    captured = _fake_httpx(monkeypatch)
+    assert E._send(to="a@x.fr", subject="s", html="<p>x</p>", **kw) is True
+    return captured["json"]
+
+
+def test_send_reply_to_emis_sous_le_nom_du_service(monkeypatch):
+    p = _capture_send(monkeypatch, reply_to="r@x.fr")
+    assert p["replyTo"] == "r@x.fr"
+    assert set(p) == _CLES_SERVICE_SEND, sorted(set(p) - _CLES_SERVICE_SEND)
+
+
+def test_send_sans_reply_to_n_emet_aucune_cle_hors_contrat(monkeypatch):
+    p = _capture_send(monkeypatch)
+    assert "replyTo" not in p
+    assert set(p) <= _CLES_SERVICE_SEND, sorted(set(p) - _CLES_SERVICE_SEND)
 
 
 def test_send_no_bearer_is_noop(monkeypatch):
     monkeypatch.delenv("OTO_MAILER_SEND_BEARER", raising=False)
     assert E._send("a@x.fr", "s", "<p>x</p>") is False
+
+
+def test_resend_garde_son_propre_nom_reply_to(monkeypatch):
+    """Chaque transport a SON nom de champ : Resend lit `reply_to` (snake_case), le
+    service générique `replyTo`. Un renommage en bloc casserait l'un pour réparer
+    l'autre — ce banc tient l'autre bout (oto#148)."""
+    captured = _fake_httpx(monkeypatch)
+    assert E.send_via_resend("a@x.fr", "s", "<p>x</p>", api_key="k",
+                             from_email="f@x.fr", reply_to="r@x.fr") is True
+    assert captured["json"]["reply_to"] == "r@x.fr" and "replyTo" not in captured["json"]
