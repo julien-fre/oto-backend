@@ -243,9 +243,10 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Write rows into a Clay table through its inbound webhook.
 
-        One row = one flat JSON object whose keys become the table's columns (Clay
-        creates missing columns). Clay then runs the table's enrichments on each new
-        row, spending the table owner's Clay credits.
+        One row = one JSON object = one POST (a JSON array is NOT split: it makes a
+        single row). The whole object lands in the table's Webhook column; its keys
+        are mapped to columns once, in Clay. Clay then runs the table's enrichments
+        on each new row, spending the table owner's Clay credits.
 
         Pass exactly one of `row` / `rows`. A 401/403 (webhook token refused) or a
         network error stops the batch at once; any other per-row error is recorded

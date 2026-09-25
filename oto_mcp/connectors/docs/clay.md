@@ -9,7 +9,8 @@ une seule carte clay, plusieurs entrées nommées — chacune a un **type** :
 
 - `clay_list_tables` liste les tables enregistrées (nom, niveau, lignes déjà envoyées)
 - `clay_push_rows(table, row=…)` envoie une ligne ; `rows=[…]` jusqu'à 50 lignes par appel, avec un reçu `{total, succeeded, failed}`
-- une ligne = un objet json plat ; ses clés deviennent les colonnes de la table. clay lance ensuite les enrichissements de la table sur chaque nouvelle ligne (crédits clay du propriétaire)
+- une ligne = un objet json = un envoi (un tableau json ne fait qu'UNE ligne). l'objet entier arrive dans la colonne **webhook** de la table ; ses clés se relient aux colonnes une fois, dans clay. clay lance ensuite les enrichissements de la table sur chaque nouvelle ligne (crédits clay du propriétaire)
+- webhook protégé par un jeton : sans jeton ou avec un mauvais, clay répond 401 et le lot s'arrête au premier refus
 - `dry_run=True` valide et montre ce qui partirait, sans rien envoyer
 - si la table demandée n'existe pas, le refus liste les tables connues : demande à l'utilisateur d'ajouter la bonne sur la carte clay plutôt que d'en deviner une
 
