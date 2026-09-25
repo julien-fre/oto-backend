@@ -479,7 +479,8 @@ def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> No
 def claim_next_job(org_id: Optional[int], worker_sub: str,
                    lease_seconds: int = _LEASE_DEFAULT_S,
                    depot: Optional[str] = None,
-                   famille_seule: bool = False) -> Optional[dict]:
+                   famille_seule: bool = False,
+                   org_ids: Optional[list] = None) -> Optional[dict]:
     """Le prochain job, bail posé — ou None (file vide).
 
     ⚠️ `depot` = le dépôt de clé que le worker nomme, c'est-à-dire la FAMILLE de
@@ -512,7 +513,13 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
     `due_at`, donc FIFO GLOBAL. Une organisation qui enfile deux mille travaux
     fait attendre toutes les autres — le partage est équitable dans le TEMPS,
     pas entre clients. Un tourniquet par organisation est le geste suivant ; il
-    n'est pas fait."""
+    n'est pas fait.
+
+    `org_ids` (25/09/2026) : le worker ne réserve QUE les travaux de ces orgs — pour
+    essayer un moteur sur une organisation avant de le donner au parc. `None` = toutes,
+    comme avant. Il RESTREINT, il n'élargit jamais : un appelant scopé à son org
+    (`org_id`) ne voit que l'intersection. Seule la PRISE est filtrée ; les épaves et les
+    périmés de toutes les orgs se constatent toujours au sondage, comme avant."""
     if org_id is None:
         # Le SONDAGE vaut présence, HORS de la transaction de réservation
         # ci-dessous (oto-backend, lot perf 17/09/2026, mesuré par oto cd :
@@ -584,6 +591,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
         # reprise d'un fil), jamais un bail repris sur un run ouvert. La trace
         # (`_CHAMP_PLATEFORME`) s'écrit dans la MÊME écriture que le détachement.
         from .usage import _run_closure
+        orgs = [int(o) for o in org_ids] if org_ids else None
         abonnement = _abonnement_personnel(depot)
         if abonnement:
             # Point de sauvegarde, et non un rollback : la connexion peut être
@@ -597,6 +605,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
                 SELECT rj.id, rj.kind, rj.run_id{frag['colonnes_forfait']} FROM runner_jobs rj
                 {frag['jointure_pret']}
                  WHERE (%s::bigint IS NULL OR org_id = %s) AND due_at <= NOW()
+                   AND (%s::bigint[] IS NULL OR org_id = ANY(%s::bigint[]))
                    -- ⚠️ La forme `status IN (...) AND (status = 'pending' OR ...)`
                    -- n'est pas cosmétique : le `OR` nu d'avant (17/09/2026, cf.
                    -- oto-backend#deadlock) empêchait le planificateur de se limiter
@@ -643,7 +652,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
             RETURNING j.id, j.kind, j.run_id, j.payload, j.attempts, j.max_attempts,
                       j.lease_until, j.sub, j.org_id{frag['retour_preteur']}
             """,
-            (org_id, org_id, depot or "", bool(famille_seule),
+            (org_id, org_id, orgs, orgs, depot or "", bool(famille_seule),
              worker_sub, int(lease_seconds)),
         ).fetchone()
         row = dict(row) if row else None
