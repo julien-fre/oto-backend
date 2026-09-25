@@ -3,7 +3,8 @@ actionnable pour l'agent + droppé par la taxonomie Sentry), pas remontés en 50
  - **5xx** du scrape (« Scraping failed ») → message « URL non scrapable » ;
  - **400** générique (dans `_run`, tout tool serper) : URL non scrapable
    (`Content-Type application/json`), param de lieu manquant (`Missing fid/cid/placeId`)…
-Les 401/402/403/429 (clé/crédits/rate) restent propagés (vrais problèmes de config)."""
+Les 401/403/429 (clé/rate) restent propagés (vrais problèmes de config) ; un compte à
+sec est traduit à part (`test_serper_a_sec.py`)."""
 from __future__ import annotations
 
 import pytest
@@ -95,14 +96,26 @@ def test_scrape_404_becomes_managed_mcp_error(scrape):
 
 
 def test_scrape_4xx_propagates_unchanged(scrape):
-    # 402/403 (crédits épuisés, clé invalide) = vrai problème de config, pas un
-    # échec d'URL → on ne le masque PAS derrière « URL non scrapable ».
+    # 403 (clé invalide) = vrai problème de config, pas un échec d'URL → on ne le
+    # masque PAS derrière « URL non scrapable ».
     fn, calls = scrape
-    calls["exc"] = RuntimeError("Serper scrape 402: Not enough credits")
+    calls["exc"] = RuntimeError("Serper scrape 403: Unauthorized")
     with pytest.raises(RuntimeError) as ei:
         fn("https://example.com/page")
     assert not isinstance(ei.value, McpError)
-    assert "Not enough credits" in str(ei.value)
+    assert "Unauthorized" in str(ei.value)
+
+
+def test_scrape_402_n_est_pas_masque_en_url_non_scrapable(scrape):
+    # 402 (compte à sec) : ni « URL non scrapable », ni erreur interne — le refus
+    # `quota_exhausted` (cf. `test_serper_a_sec.py`).
+    from oto_mcp import error_taxonomy
+    fn, calls = scrape
+    calls["exc"] = RuntimeError("Serper scrape 402: Not enough credits")
+    with pytest.raises(McpError) as ei:
+        fn("https://example.com/page")
+    assert "Scrape impossible" not in ei.value.error.message
+    assert error_taxonomy.classify(ei.value).code == "quota_exhausted"
 
 
 def test_scrape_400_becomes_managed_mcp_error(scrape):

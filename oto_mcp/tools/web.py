@@ -46,7 +46,11 @@ from mcp.types import INVALID_REQUEST, ErrorData
 
 from . import cesures
 
-from .. import access, browserbase, egress, url_perimeter
+from .. import access, browserbase, egress, session_org, url_perimeter
+from ..connectors import health as connector_health
+
+#: Marqueur du cran ② sauté parce que le compte Serper servi est à sec.
+A_SEC = "a_sec"
 
 _TIMEOUT = (10, 30)              # borne CHAQUE socket — pas la lecture entière
 _DEADLINE_S = 45                 # budget GLOBAL du cran ① (cf. `_fetch_http`)
@@ -273,9 +277,10 @@ def _fetch_http(url: str, deadline_s: float = _DEADLINE_S) -> dict:
 
 def register(mcp: FastMCP) -> None:
 
-    def _serper_scrape(url: str) -> Optional[dict]:
-        """Cran ② — None si la clé serper n'est pas résolvable (cran sauté)."""
-        from .serper import client_for, credits_consumed
+    def _serper_scrape(url: str) -> "Optional[dict] | str":
+        """Cran ② — None si la clé serper n'est pas résolvable (cran sauté), `A_SEC`
+        si le compte de la clé servie est à sec (cran sauté, clé marquée)."""
+        from .serper import a_sec, client_for, credits_consumed, MSG_A_SEC
 
         try:
             key, is_platform = access.resolve_api_key("serper")
@@ -283,7 +288,20 @@ def register(mcp: FastMCP) -> None:
         except Exception:  # noqa: BLE001 — pas de clé = cran indisponible, pas une panne
             return None
         # Le client PARTAGÉ avec les outils `serper_*` : un seul limiteur par clé (oto#115).
-        res = client_for(key).scrape_page(url, include_markdown=True)
+        try:
+            res = client_for(key).scrape_page(url, include_markdown=True)
+        except RuntimeError as e:
+            if a_sec(e) is None:
+                raise
+            # Le cran est SAUTÉ (les autres peuvent encore lire la page), donc
+            # `web_read` ne lève pas et l'enveloppe ne marque rien : on marque ici la
+            # clé servie, par la même aide. Et on la retire du relevé, sinon un
+            # `web_read` réussi par un autre cran effacerait aussitôt la marque.
+            trace = session_org.current_call_trace()
+            ligne = (trace or {}).pop("credential_row", None)
+            if ligne is not None:
+                connector_health.marquer_quota_epuise(ligne, MSG_A_SEC)
+            return A_SEC
         if is_platform:
             # `web_read` est la SECONDE bouche serper du backend, et elle débitait 1 là
             # où un scrape en coûte 2 (la description ci-dessous l'annonce depuis
@@ -416,6 +434,10 @@ def register(mcp: FastMCP) -> None:
         if scrape is None:
             tentatives.append({"cran": "serper",
                                "verdict": "sauté — aucune clé serper résolvable"})
+        elif scrape == A_SEC:
+            tentatives.append({"cran": "serper",
+                               "verdict": "sauté — compte serper à sec (crédits épuisés : "
+                                          "recharge-le ou pose une autre clé)"})
         else:
             # Le compte vient de la RÉPONSE : Serper facture 2 crédits sur une
             # page ordinaire et jusqu'à 10 sur une page difficile. Le 1 en dur

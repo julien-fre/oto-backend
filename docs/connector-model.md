@@ -298,6 +298,18 @@ fournisseur qui le déclarerait (aucun à ce jour). Limite connue : AI Ark refus
 point d'accès, une clé peut donc être marquée « à sec » alors qu'un autre point d'accès
 répond encore.
 
+**Un fournisseur qui dit « à sec » autrement qu'en 402** se traduit DANS son module, vers
+une exception qui porte `status_code = 402` : la taxonomie et la sonde font le reste, sans
+chemin parallèle. C'est le cas de **Serper**, qui répond `400 « Not enough credits »`
+(`tools/serper.py`, `a_sec` / `SerperASec` ; tout autre 400 reste une entrée invalide).
+`web_read`, dont le cran serper n'est qu'un cran, le **saute** en le disant et marque la
+clé lui-même (`connectors.health.marquer_quota_epuise`), puis retire `credential_row` du
+relevé : un `web_read` réussi par un autre cran ne doit pas effacer la marque.
+
+Le refus « aucune clé » ne propose le **prêt d'une clé plateforme** que si oto en détient
+une pour ce connecteur (`access.resolve._poser_ou_accorder`) — et dit qu'il relève des
+admins d'oto, pas de ceux de l'org.
+
 ⚠️ **`ready` n'inclut PAS l'état de sélection** (`not_selected` / `paused`), et c'est
 volontaire : un connecteur non sélectionné reste **appelable par `oto_call`** (dispatch
 universel, ADR 0036). La sélection gouverne la **visibilité** des outils, jamais

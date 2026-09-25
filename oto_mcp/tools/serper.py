@@ -115,8 +115,35 @@ def client_for(key: str):
 #    morte) ou la page a bloqué le robot. Le 404 était le 1ᵉʳ contributeur de bruit
 #    Sentry du backend — 37 événements en 5 semaines pour « l'URL que l'agent a
 #    trouvée est morte », ce qui est une entrée invalide, pas une panne.
-# Les 401/402/403/429 (clé/crédits/rate) restent propagés : vrais problèmes de config.
+# Les 401/403/429 (clé/rate) restent propagés : vrais problèmes de config. Le compte À
+# SEC (400 « Not enough credits », ou 402) est traduit à part, voir `a_sec`.
 _SERPER_STATUS = re.compile(r"Serper \w+ (\d{3}):")
+
+# ⚠️ Serper dit « compte à sec » par un **400** « Not enough credits », pas par un 402
+# (mesuré sur les signaux #1045, #1046, #1066) : lu comme les autres 400, il rendait
+# `invalid_input` — « corrige ton appel », sur un appel juste et un compte vide — et la
+# carte du connecteur restait verte. CETTE signature seule est un solde vide ; tout
+# autre 400 reste une entrée invalide. Un 402 éventuel de Serper est lu pareil : son
+# client lève un `RuntimeError` NU, sans `.status_code`, que la taxonomie ne voyait pas.
+_A_SEC = re.compile(r"Serper \w+ (?:400:.*not enough credits|402:)", re.I | re.S)
+
+#: Le refus servi à l'agent quand le compte Serper est à sec.
+MSG_A_SEC = ("Serper : le compte de la clé servie est à sec (« Not enough credits »). "
+             "L'appel était correct : ne le corrige pas et ne le réessaie pas.")
+
+
+class SerperASec(RuntimeError):
+    """Compte Serper à sec. Porte `status_code = 402` EXPRÈS : la taxonomie
+    (`error_taxonomy`, cran 0 → `quota_exhausted` + marquage de la clé servie) et la
+    sonde (`connectors.verify.classer` → `no_quota`) le lisent alors comme tout 402 —
+    même refus, même marquage, aucun chemin parallèle à entretenir."""
+    status_code = 402
+
+
+def a_sec(erreur: BaseException) -> "SerperASec | None":
+    """`SerperASec` si `erreur` est le refus « Not enough credits » de Serper, sinon
+    None. PUBLIQUE : `web_read` (cran ②) est la seconde bouche serper du backend."""
+    return SerperASec(str(erreur)) if _A_SEC.search(str(erreur)) else None
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
@@ -134,7 +161,13 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     """
     from oto.tools.serper import SerperClient
     # Hors du cache `client_for` exprès : la clé sondée n'est qu'une CANDIDATE.
-    SerperClient(api_key=fields["key"]).search("oto", num=1)
+    try:
+        SerperClient(api_key=fields["key"]).search("oto", num=1)
+    except RuntimeError as e:
+        sec = a_sec(e)
+        if sec is not None:     # verdict `no_quota`, pas `unknown`
+            raise sec from e
+        raise
 
 
 def register(mcp: FastMCP) -> None:
@@ -188,6 +221,11 @@ def register(mcp: FastMCP) -> None:
         try:
             result = getattr(client, method)(**kwargs)
         except RuntimeError as e:
+            sec = a_sec(e)
+            if sec is not None:
+                # Le 402 porté par la CAUSE fait le travail : `quota_exhausted` et
+                # marquage de la clé servie (`error_taxonomy`, cran 0).
+                raise McpError(ErrorData(code=INVALID_REQUEST, message=MSG_A_SEC)) from sec
             m = _SERPER_STATUS.search(str(e))
             if m and int(m.group(1)) == 400:
                 raise McpError(ErrorData(code=INVALID_REQUEST, message=str(e))) from None
