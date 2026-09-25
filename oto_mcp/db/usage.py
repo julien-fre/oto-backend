@@ -1893,6 +1893,53 @@ def activation_funnel(active_window_days: int = 30) -> dict:
 _ADOPTION_LIST_CAP = 500
 
 
+def org_members_by_seniority(org_id: int) -> list[dict]:
+    """Les membres de l'org PAR ANCIENNETÉ (`joined_at`, puis `sub`), avec leur email et
+    leur dernier appel d'outil émis sous CETTE org (`None` s'il n'y en a jamais eu) —
+    la lecture du service commerce (`service.org.members`) : il désigne les membres
+    payants dans cet ordre et écrit ses relances à partir de la dernière activité.
+
+    Toute la population, sans plafond : une liste tronquée ferait retomber au gratuit
+    des membres qui paient."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """
+            SELECT m.sub, u.email, m.org_role, m.is_active, m.joined_at,
+                   a.last_activity_at
+            FROM org_members m
+            LEFT JOIN users u ON u.sub = m.sub
+            LEFT JOIN LATERAL (
+                SELECT MAX(c.created_at) AS last_activity_at
+                FROM tool_calls c
+                WHERE c.kind = 'mcp' AND c.sub = m.sub AND c.org_id = m.org_id
+            ) a ON TRUE
+            WHERE m.org_id = %s
+            ORDER BY m.joined_at, m.sub
+            """,
+            (int(org_id),),
+        ).fetchall()]
+
+
+def org_usage_by_person(org_id: int, since, until) -> list[dict]:
+    """Par personne, les appels d'outil RÉUSSIS émis sous l'org sur `[since, until)`, et
+    ceux passés sur une clé de plateforme (`key_mode = 'platform'`) — la lecture du
+    service commerce (`service.org.usage`). Un échec n'a rien consommé ; une personne
+    sans appel n'y figure pas."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """
+            SELECT c.sub, COUNT(*) AS calls,
+                   COUNT(*) FILTER (WHERE c.key_mode = 'platform') AS platform_calls
+            FROM tool_calls c
+            WHERE c.org_id = %s AND c.kind = 'mcp' AND c.ok AND c.sub IS NOT NULL
+              AND c.created_at >= %s AND c.created_at < %s
+            GROUP BY c.sub
+            ORDER BY calls DESC, c.sub
+            """,
+            (int(org_id), since, until),
+        ).fetchall()]
+
+
 def org_adoption(org_id: int, active_window_days: int = 30) -> dict:
     """Adoption d'une org, membre par membre (pendant org du funnel plateforme).
 

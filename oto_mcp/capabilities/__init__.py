@@ -129,6 +129,8 @@ from . import audit_log  # noqa: F401 — org.audit_log.export (GET /api/orgs/{i
 # Observabilité au niveau ORG (après monitoring + audit_log : elle rebranche leurs
 # handlers) — les lentilles plateforme bornées à SON org, pour l'org_admin.
 from . import org_monitoring  # noqa: F401 — org.monitoring.* (oto_org_monitoring, /api/orgs/{id}/monitoring/*)
+# L'API d'administration du COMMERCE, sous l'identité de service (#1069) — REST seule.
+from . import service_commerce  # noqa: F401 — service.{orgs,org.members,org.usage,org.entitlement*}
 # Gouvernance générique des ressources possédées (ADR 0030) — transfert/partage
 # d'un objet possédé (datastore pilote), owner ∪ escalade roles.py.
 from . import resources  # noqa: F401 — resources.govern (oto_resource)

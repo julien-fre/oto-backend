@@ -269,6 +269,7 @@ l'annuaire. Code : `oto_mcp/auth/service_identity.py`.
 
 Refus nommés : `service_forbidden`, `service_machine_required`, `service_role_missing`,
 `service_required`, `invalid_token`. Banc : `tests/test_service_identity_1068.py`.
+Les capacités ouvertes au rôle `commerce` : `docs/droits-declares.md` §L'API du commerce.
 
 ## Coexistence multi-domaine (pré-cutover, 2026-07-02)
 

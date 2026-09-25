@@ -56,6 +56,11 @@ PLATFORM_KEY_PREFIX = "platform_key:"
 # qui n'a pas sa propre surcharge. Ce n'est PAS une clé posable.
 PLATFORM_KEY_JOKER = PLATFORM_KEY_PREFIX + "*"
 
+# Les étiquettes `source` qu'un producteur peut poser — liste FERMÉE. Informatives
+# (affichage, reprise), jamais un paramètre de la règle d'application : `value_for` prend
+# le plus généreux, toutes sources confondues.
+SOURCES: tuple[str, ...] = ("subscription", "trial", "offered", "partner", "contract")
+
 FIXES: dict[str, Droit] = {d.cle: d for d in (
     Droit(UNIPILE, Genre.OUI_NON, "messagerie hébergée"),
     Droit(PLATFORM_UNMETERED, Genre.OUI_NON,

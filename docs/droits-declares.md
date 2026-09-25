@@ -88,6 +88,27 @@ retire une ligne. Listes : `list_for_org` (org et personnes, échues comprises �
 console doit voir un droit échu), `list_for_person`, `list_for_right` (« quelles orgs ou
 personnes ont X », vivantes par défaut).
 
+## L'API du commerce — `capabilities/service_commerce.py` (#1069)
+
+Un service de commerce pose et retire des droits **par l'API**, jamais en SQL, sous son
+identité de service (`docs/auth-logto.md` §Identité de service). REST seule, sous
+`/api/service/`, règle `COMMERCE_SERVICE` — aucun compte n'y passe, fût-il super admin :
+
+| Route | Rend |
+|---|---|
+| `GET /api/service/orgs` | orgs non archivées par id, curseur `after_id` |
+| `GET /api/service/orgs/{id}/members` | membres **par ancienneté** (`joined_at`), email, dernière activité sous l'org |
+| `GET /api/service/orgs/{id}/usage` | par personne sur `[since, until)` (défaut : le mois en cours) : appels réussis, dont sur clé de plateforme |
+| `GET /api/service/orgs/{id}/entitlements` | `list_for_org` |
+| `PUT /api/service/orgs/{id}/entitlements/{right_key}/{source}` | `grant`, `granted_by = service:<client_id>` ; rend la ligne |
+| `DELETE /api/service/orgs/{id}/entitlements/{right_key}/{source}` | `revoke` |
+
+`sub` (corps ou requête) vise une personne, qui doit être membre ; omis, le droit vaut
+pour l'org. `source` est prise dans la liste fermée `entitlements_catalogue.SOURCES`.
+⚠️ Tant que la réconciliation interne tourne (ci-dessous), elle retire les lignes de SES
+sources qu'elle n'a pas posées : le service ne doit écrire que sous une source qu'elle ne
+réconcilie pas (`trial`) jusqu'à la bascule.
+
 ## Les défauts de l'instance — `OTO_ENTITLEMENT_DEFAULTS`
 
 Le **gratuit**, c'est ce qu'a une personne sans aucun droit posé : les défauts déclarés
@@ -142,8 +163,6 @@ ordre : `docs/migrations-versionnees.md` §5.1, et l'en-tête de chaque révisio
 
 - faire lire `unipile_seats` et `platform_key:<connecteur>` par `value_for` (messagerie,
   quotas et cascade des clés de plateforme) ;
-- l'API d'administration qui laisse un service de commerce poser des droits, et son
-  identité de service ;
 - l'essai (source `trial`), les droits payants par personne, le retrait de `members_max`.
 
 ## Ce qu'on ne fait pas

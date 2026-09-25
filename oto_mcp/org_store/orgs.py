@@ -178,6 +178,18 @@ def list_all_orgs() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def list_orgs_page(after_id: int, limit: int) -> list[dict]:
+    """Les orgs non archivées d'id > `after_id`, par id croissant, au plus `limit` —
+    la liste paginée par curseur du service commerce (`service.orgs.list`)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at FROM orgs "
+            "WHERE archived_at IS NULL AND id > %s ORDER BY id LIMIT %s",
+            (int(after_id), int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 class OrgAvecAbonnementActif(Exception):
     """L'org porte un abonnement qui prélève : elle ne s'archive pas (#400).
 
