@@ -283,7 +283,7 @@ _REF = "\n".join([
 
 
 def test_reference_sans_section_sommaire_et_essentiel():
-    out = C._reference_view(_REF, None, 0)
+    out = C._slim_reference(_REF, None, 0)
     assert [s["title"] for s in out["sections"]][:3] == [
         "Clay search query reference", "Grammar", "Operators"]
     assert "## Grammar" in out["content"] and "## Operators" in out["content"]
@@ -291,22 +291,22 @@ def test_reference_sans_section_sommaire_et_essentiel():
 
 
 def test_reference_section_inclut_ses_sous_sections():
-    out = C._reference_view(_REF, "field docs", 0)
+    out = C._slim_reference(_REF, "field docs", 0)
     assert "### People fields" in out["content"] and "### Companies fields" in out["content"]
     assert "## Examples" not in out["content"]
     assert "next_offset" not in out
 
 
 def test_reference_paginee():
-    first = C._reference_view(_REF, "Examples", 0)
+    first = C._slim_reference(_REF, "Examples", 0)
     assert len(first["content"]) == C.REFERENCE_CHUNK and first["next_offset"] == C.REFERENCE_CHUNK
-    last = C._reference_view(_REF, "Examples", 60_000)
+    last = C._slim_reference(_REF, "Examples", 60_000)
     assert "next_offset" not in last
 
 
 def test_reference_section_inconnue_liste_les_titres():
     with pytest.raises(McpError) as e:
-        C._reference_view(_REF, "nope", 0)
+        C._slim_reference(_REF, "nope", 0)
     assert "Grammar" in str(e.value)
 
 
@@ -344,3 +344,36 @@ def test_le_pire_post_d_un_lot_tient_sous_le_plafond_rest(env):
     env["fn"]("clay_push_rows")(table="Leads", rows=[{"a": 1}, {"a": 2}])
     assert _FauxHook.instances[0].timeout == C.WEBHOOK_TIMEOUT
 
+
+
+# --- vue de page projetée (garde test_sorties_listes_projetees) -------------------
+
+_LONG = "x" * (C.LONG_TEXT + 1)
+
+
+def test_une_page_resserre_les_textes_longs_par_defaut():
+    page = {"data": [{"id": 1, "name": "Acme", "bio": _LONG}], "cursor": "c2"}
+    out = C._shape_page(page, None)
+    assert out["cursor"] == "c2", "l'enveloppe reste : sans curseur l'agent croit avoir tout vu"
+    assert out["data"] == [{"id": 1, "name": "Acme", "bio_length": len(_LONG)}]
+    assert out["projection"]["omitted"] == ["bio"]
+
+
+def test_fields_etoile_rend_la_page_brute():
+    page = {"data": [{"id": 1, "bio": _LONG}], "cursor": None}
+    assert C._shape_page(page, ["*"]) == page
+
+
+def test_fields_choisit_les_colonnes_et_garde_id():
+    page = {"data": [{"id": 1, "name": "Acme", "city": "Lyon"}]}
+    assert C._shape_page(page, ["name"])["data"] == [{"id": 1, "name": "Acme"}]
+
+
+def test_une_page_courte_passe_intacte():
+    page = {"data": [{"id": 1, "name": "Acme"}], "has_more": False}
+    assert C._shape_page(page, None) == page
+
+
+def test_une_page_d_une_autre_forme_passe_telle_quelle():
+    assert C._shape_page({"data": ["a", "b"]}, None) == {"data": ["a", "b"]}
+    assert C._shape_page(["a"], None) == ["a"]

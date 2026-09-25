@@ -56,14 +56,15 @@ def test_un_compte_ordinaire_au_plafond_est_refuse(banc):
 def test_le_super_admin_cree_au_dela_du_plafond(banc):
     banc["super"].add(SUB)
     assert _creer(SUB)["org_id"] == 42
-    assert orgs.org_quota(SUB) == {"created": PLAFOND, "cap": None, "remaining": None}
+    assert orgs.org_quota(SUB) == {"created": PLAFOND, "cap": orgs.PLAFOND_LEVE,
+                                   "remaining": orgs.PLAFOND_LEVE - PLAFOND}
 
 
 def test_l_admin_de_son_tenant_cree_au_dela_du_plafond(banc):
     sub = "pilote:abc"
     banc["tenant_admins"].add(("pilote", sub))
     assert _creer(sub)["org_id"] == 42
-    assert orgs.org_quota(sub)["cap"] is None
+    assert orgs.org_quota(sub)["cap"] == orgs.PLAFOND_LEVE
 
 
 def test_admin_d_un_AUTRE_tenant_reste_plafonne(banc):
@@ -76,7 +77,13 @@ def test_admin_d_un_AUTRE_tenant_reste_plafonne(banc):
     assert refus.value.code == "org_quota"
 
 
-def test_le_schema_de_liste_accepte_l_absence_de_plafond():
+def test_un_compte_hors_plafond_recoit_des_entiers():
+    """Contrat de `GET /api/me/orgs` : `cap`/`remaining` sont des ENTIERS REQUIS que des
+    fronts épinglent — jamais `null`, même hors plafond (décision du 25/09/2026)."""
     from oto_mcp.capabilities.orgs.reads import OrgQuota
-    q = OrgQuota(created=12, cap=None, remaining=None)
-    assert q.cap is None and q.remaining is None
+    champs = OrgQuota.model_json_schema()
+    assert {"cap", "remaining"} <= set(champs["required"])
+    assert champs["properties"]["cap"]["type"] == "integer"
+    assert champs["properties"]["remaining"]["type"] == "integer"
+    with pytest.raises(Exception):
+        OrgQuota(created=12, cap=None, remaining=None)

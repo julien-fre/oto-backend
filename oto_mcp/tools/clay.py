@@ -27,7 +27,7 @@ from typing import Any, Optional
 from fastmcp import FastMCP
 from mcp.types import INVALID_PARAMS, ErrorData
 
-from .. import access, egress
+from .. import access, egress, output_projection
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
@@ -55,6 +55,10 @@ WEBHOOK_TIMEOUT = (5, 10)
 BATCH_MARGIN_S = 5.0
 BATCH_BUDGET_S = REST_CALL_LIMIT_S - sum(WEBHOOK_TIMEOUT) - BATCH_MARGIN_S
 MAX_ROUTINE_ITEMS = 100
+#: Une valeur texte plus longue devient sa TAILLE dans la vue par défaut d'une page
+#: (`<champ>_length`) : on retire une colonne, on ne tronque jamais un texte
+#: (`output_projection.summarize`). `fields=["*"]` rend la page brute.
+LONG_TEXT = 280
 
 WEBHOOK_LIMIT = 50_000
 WEBHOOK_WARN_AT = 45_000
@@ -120,7 +124,30 @@ def _sections(text: str) -> list[dict]:
     return heads
 
 
-def _reference_view(text: str, section: Optional[str], offset: int) -> dict:
+def _shape_page(page: Any, fields: Optional[list[str]]) -> Any:
+    """Page Clay resserrée : dans `data`, une colonne de TEXTE LONG devient sa taille
+    (`<champ>_length`) ; `fields=[…]` ne garde que ces colonnes (+ `id`) ;
+    `fields=["*"]` rend la page brute. L'enveloppe (curseur, `has_more`, `status`,
+    quota…) reste intacte : sans elle l'agent croit avoir tout vu. Une page d'une autre
+    forme passe telle quelle — une API tierce change de forme sans prévenir."""
+    if not isinstance(page, dict):
+        return page
+    rows = page.get("data")
+    if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+        return page
+    longs = sorted({k for r in rows for k, v in r.items()
+                    if isinstance(v, str) and len(v) > LONG_TEXT})
+    data, notice = output_projection.summarize(
+        rows, body_fields=longs, fields=fields, always=("id",),
+        hint=f'Vue par défaut : textes longs réduits à leur taille. `fields=["{output_projection.RAW}"]` '
+             "rend la page brute, `fields=[…]` choisit les colonnes.")
+    out = {**page, "data": data}
+    if notice:
+        out["projection"] = notice
+    return out
+
+
+def _slim_reference(text: str, section: Optional[str], offset: int) -> dict:
     """La référence de requête Clay (un Markdown de ~180 Ko) servie par morceaux :
     sommaire + l'essentiel sans `section`, sinon la section demandée, paginée."""
     heads = _sections(text)
@@ -395,15 +422,22 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def clay_get_run(routine_run_id: str, cursor: Optional[str] = None,
-                     limit: int = 20) -> dict:
+                     limit: int = 20, fields: Optional[list[str]] = None) -> dict:
         """Progress and results of a routine run started with clay_run_routine.
 
         Returns {status, finished, total, data, cursor}. Call again until
         `status` is `complete` (wait a few seconds between calls). A complete run can
         still hold `failed` items. If `cursor` is present, pass it back to read the
-        next page (limit 1-100)."""
-        return _client().get_run_results(routine_run_id, cursor=cursor,
-                                             limit=max(1, min(limit, 100)))
+        next page (limit 1-100). By default a long text value in `data` comes back as
+        its size (`<field>_length`, listed under `projection`).
+
+        Args:
+            routine_run_id: the id returned by clay_run_routine.
+            cursor: from the previous page, for the next one.
+            limit: items per page, 1-100.
+            fields: keep only these item keys (plus `id`); ["*"] returns the raw page."""
+        return _shape_page(_client().get_run_results(
+            routine_run_id, cursor=cursor, limit=max(1, min(limit, 100))), fields)
 
     @mcp.tool()
     def clay_search_fields(source_type: str) -> dict:
@@ -425,7 +459,7 @@ def register(mcp: FastMCP) -> None:
         at most 30,000 characters per call; pass `next_offset` back as `offset` for
         the rest."""
         ref = _client().get_query_reference().get("reference") or ""
-        return _reference_view(ref, section, offset)
+        return _slim_reference(ref, section, offset)
 
     @mcp.tool()
     def clay_search(
@@ -433,6 +467,7 @@ def register(mcp: FastMCP) -> None:
         filters: Optional[dict] = None,
         query: Optional[str] = None,
         limit: int = 20,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Search Clay's people/companies database and return the first page.
 
@@ -443,7 +478,10 @@ def register(mcp: FastMCP) -> None:
 
         Returns {search_id, mode, data, has_more}. More pages: clay_search_next with
         the same search_id and mode. limit 1-500. Results count against the Clay
-        plan's search quota (returned as period_quota)."""
+        plan's search quota (returned as period_quota). By default a long text value
+        in `data` comes back as its size (`<field>_length`, listed under
+        `projection`); `fields=["*"]` returns the raw page, `fields=[…]` picks keys
+        (plus `id`)."""
         limit = max(1, min(limit, 500))
         c = _client()
         if query and (filters or source_type):
@@ -451,39 +489,47 @@ def register(mcp: FastMCP) -> None:
         if query:
             created = c.create_query_search(query)
             page = c.run_query_search(created["search_id"], limit=limit)
-            return {"search_id": created["search_id"], "mode": "query",
-                    "source_type": created.get("source_type"), **page}
+            return _shape_page({"search_id": created["search_id"], "mode": "query",
+                                "source_type": created.get("source_type"), **page},
+                               fields)
         if source_type not in SOURCE_TYPES or not isinstance(filters, dict):
             raise _bad("Mode filtres : `source_type` (people | companies) + `filters` "
                        "(cf. clay_search_fields). Mode requête : `query`.")
         created = c.create_filters_search(source_type, filters)
         page = c.run_filters_search(created["search_id"], limit=limit)
-        return {"search_id": created["search_id"], "mode": "filters", **page}
+        return _shape_page({"search_id": created["search_id"], "mode": "filters",
+                            **page}, fields)
 
     @mcp.tool()
-    def clay_search_next(search_id: str, mode: str, limit: int = 20) -> dict:
+    def clay_search_next(search_id: str, mode: str, limit: int = 20,
+                         fields: Optional[list[str]] = None) -> dict:
         """Next page of a search started with clay_search (pass back its
-        `search_id` and `mode`: filters | query). Each call advances the iterator."""
+        `search_id` and `mode`: filters | query). Each call advances the iterator.
+        Same page view as clay_search: long text values come back as their size by
+        default; `fields=["*"]` returns the raw page, `fields=[…]` picks keys (plus
+        `id`)."""
         limit = max(1, min(limit, 500))
         c = _client()
         if mode == "query":
-            return c.run_query_search(search_id, limit=limit)
+            return _shape_page(c.run_query_search(search_id, limit=limit), fields)
         if mode == "filters":
-            return c.run_filters_search(search_id, limit=limit)
+            return _shape_page(c.run_filters_search(search_id, limit=limit), fields)
         raise _bad("mode : filters | query (celui rendu par clay_search).")
 
     @mcp.tool()
     def clay_tables_query(query: dict, cursor: Optional[str] = None,
-                          limit: int = 50) -> dict:
+                          limit: int = 50, fields: Optional[list[str]] = None) -> dict:
         """Read rows from existing Clay tables with a structured query (read-only).
 
         Clay Enterprise only: the table must have ClayQL sync enabled. Pages come least-recently-updated
         first; a row updated mid-scan can come back, so deduplicate by id. Pass the
         returned `cursor` for the next page (limit 1-100). To WRITE rows, use
-        clay_push_rows."""
+        clay_push_rows. By default a long text value in `data` comes back as its size
+        (`<field>_length`, listed under `projection`); `fields=["*"]` returns the raw
+        page, `fields=[…]` picks keys (plus `id`)."""
         try:
-            return _client().query_tables(query, cursor=cursor,
-                                              limit=max(1, min(limit, 100)))
+            return _shape_page(_client().query_tables(
+                query, cursor=cursor, limit=max(1, min(limit, 100))), fields)
         except UpstreamHTTPError as e:
             detail = str(e.body)[:300]
             # Constaté en live : une table sans sync ClayQL répond 400, pas 403.

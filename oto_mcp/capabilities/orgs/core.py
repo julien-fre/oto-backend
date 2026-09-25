@@ -17,6 +17,11 @@ from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _MAX_ORGS_PER_USER = int(os.environ.get("OTO_MCP_MAX_ORGS_PER_USER", "10"))
+#: Plafond d'un compte HORS plafond (`_uncapped`) : une borne entière explicite plutôt
+#: que `null`, parce que `quota.cap`/`quota.remaining` sont des ENTIERS REQUIS du
+#: contrat de `GET /api/me/orgs` que des fronts épinglent (décision du 25/09/2026).
+#: Assez haute pour ne jamais mordre ; le refus ne teste que `remaining == 0`.
+PLAFOND_LEVE = 1_000_000
 
 
 class NoInput(BaseModel):
@@ -105,14 +110,13 @@ def org_quota(sub: str) -> dict:
     `created` compte ce qui OCCUPE une place — ni les archivées, ni l'espace personnel
     (cf. `org_store.count_orgs_created_by`, qui porte la règle et son pourquoi).
 
-    Compte hors plafond (`_uncapped`) : `cap` et `remaining` valent `None` — « pas de
-    plafond », et non 0 ni un grand nombre inventé. Le refus ne teste que `== 0`, il
-    ne se déclenche donc jamais pour eux ; `created` reste rendu, il est toujours vrai."""
+    Compte hors plafond (`_uncapped`) : `cap` vaut `PLAFOND_LEVE`, une borne entière
+    nommée, et `remaining` ce qu'il en reste — jamais `null` : ces deux champs sont des
+    entiers requis du contrat que des fronts épinglent. Le refus ne teste que `== 0` et
+    ne mord donc pas ; `created` reste rendu, il est toujours vrai."""
     created = org_store.count_orgs_created_by(sub)
-    if _uncapped(sub):
-        return {"created": created, "cap": None, "remaining": None}
-    return {"created": created, "cap": _MAX_ORGS_PER_USER,
-            "remaining": max(0, _MAX_ORGS_PER_USER - created)}
+    cap = PLAFOND_LEVE if _uncapped(sub) else _MAX_ORGS_PER_USER
+    return {"created": created, "cap": cap, "remaining": max(0, cap - created)}
 
 
 def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
