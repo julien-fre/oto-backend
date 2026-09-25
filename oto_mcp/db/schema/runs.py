@@ -114,6 +114,8 @@ CREATE TABLE IF NOT EXISTS runner_fleets (
     tools JSONB NOT NULL,
     input TEXT,
     max_steps INT,
+    -- 25/09/2026 : la durée murale d'un run (d'une ligne). NULL = celle de l'exécuteur.
+    max_run_seconds INT,
     -- LA CIBLE : sur quoi les agents écrivent, et sur quelles lignes
     namespace TEXT,
     row_filter JSONB,
@@ -313,6 +315,10 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
     tools JSONB NOT NULL,
     input TEXT,
     max_steps INT,
+    -- 25/09/2026 : les limites d'UN run déclarées par l'utilisateur
+    -- (`capabilities/_limites_du_run.py`). NULL = celles de l'exécuteur.
+    max_tokens INT,
+    max_run_seconds INT,
     -- 12/09/2026 : le modèle que l'agent DÉCLARE (catalogue `runner_models`).
     -- NULL = aucun : n'importe quel worker le sert, sur son propre modèle.
     model TEXT,

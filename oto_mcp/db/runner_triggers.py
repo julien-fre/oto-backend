@@ -15,7 +15,7 @@ from .. import runner_models
 from ._conn import _connect
 
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
-         "model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
+         "max_tokens, max_run_seconds, model, kind, payload_mode, payload_fields, max_per_hour, fraicheur_s, "
          "cron, tz, enabled, next_due, last_enqueued_at, created_at")
 
 #: ⚠️ `hook_secret_hash` n'est PAS dans `_COLS`, et c'est la garde : un haché servi
@@ -29,6 +29,8 @@ def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
                    project_id: Optional[int] = None,
                    input: Optional[str] = None, label: Optional[str] = None,
                    max_steps: Optional[int] = None,
+                   max_tokens: Optional[int] = None,
+                   max_run_seconds: Optional[int] = None,
                    model: Optional[str] = None,
                    kind: str = "schedule",
                    payload_mode: str = "ignore",
@@ -46,15 +48,15 @@ def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
             f"""
             INSERT INTO runner_triggers
                    (org_id, sub, label, procedure, project_id, tools, input,
-                    max_steps, model, kind, payload_mode, payload_fields,
-                    max_per_hour, fraicheur_s, cron, tz, next_due)
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::jsonb,
-                    %s, %s, %s, %s, %s)
+                    max_steps, max_tokens, max_run_seconds, model, kind, payload_mode,
+                    payload_fields, max_per_hour, fraicheur_s, cron, tz, next_due)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb, %s, %s, %s, %s, %s)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
              json.dumps(list(tools), ensure_ascii=False), input, max_steps,
-             model, kind, payload_mode,
+             max_tokens, max_run_seconds, model, kind, payload_mode,
              json.dumps(payload_fields, ensure_ascii=False) if payload_fields else None,
              max_per_hour, fraicheur_s, cron, tz, next_due),
         ).fetchone()
@@ -89,7 +91,7 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
     garde vit dans l'écriture pour qu'une retouche ordinaire ne relise rien : c'est
     l'appelant qui relit, et seulement quand rien n'a été écrit."""
     autorises = {"label", "procedure", "project_id", "tools", "input", "max_steps",
-                 "model", "cron", "tz", "enabled", "next_due",
+                 "max_tokens", "max_run_seconds", "model", "cron", "tz", "enabled", "next_due",
                  # Le webhook. ⚠️ `kind` n'y est PAS : un déclencheur ne change pas
                  # de coup d'envoi en cours de route — ce serait un autre agent, et
                  # la bascule laisserait derrière elle soit un cron orphelin, soit

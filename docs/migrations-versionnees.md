@@ -658,6 +658,15 @@ code ne les lit pas. Le code du lot les LIT à chaque réservation d'un travail
 d'abonnement : la jouer **avant la fusion**, comme 0019. Le retour arrière retire les
 deux tables.
 
+`0021_limites_du_run` (25/09/2026, après `0020_pool_abonnements`) ajoute trois colonnes
+nullables, sans défaut : `runner_triggers.max_tokens`, `runner_triggers.max_run_seconds`,
+`runner_fleets.max_run_seconds` — les limites d'un run déclarées sur l'agent
+(`capabilities/_limites_du_run.py`). Écritures de catalogue seulement. Le démarrage pose
+les mêmes colonnes s'il ne les trouve pas (même régime que 0006). Le code du lot les LIT
+à chaque lecture d'un déclencheur ou d'une flotte (`_COLS`), donc à chaque tick : la
+jouer **avant la fusion**. L'ancien code les ignore. Le retour arrière retire les
+colonnes et les limites déclarées.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

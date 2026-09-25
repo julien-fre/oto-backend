@@ -496,7 +496,8 @@ def _ligne(**surcharges) -> dict:
         "model": "mistral-large-2512", "temperature": 0.0, "descriptions_outils": None,
         "workers": 3, "max_rows": 100,
         "max_tokens": 1_000_000, "max_consecutive_failures": 5,
-        "max_tokens_per_row": 50_000, "status": "running", "stop_reason": None,
+        "max_tokens_per_row": 50_000, "max_run_seconds": 900,
+        "status": "running", "stop_reason": None,
         "armed_at": "2026-09-13 08:00:00", "started_at": "2026-09-13 08:00:05",
         "stopping_at": None, "heartbeat_at": None, "taken_by": None, "stopped_at": None,
         "created_at": "2026-09-12 17:00:00"}
