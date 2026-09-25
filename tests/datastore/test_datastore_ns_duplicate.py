@@ -57,6 +57,7 @@ def test_the_store_turns_it_into_its_own_refusal(monkeypatch):
 
     s = DatastorePg("u-1")
     monkeypatch.setattr(s, "_default_owner", lambda: ("user", "u-1"))
+    monkeypatch.setattr(s, "_org_de_l_appel", lambda: None)
     with pytest.raises(DatastoreExists):
         s.create_datastore("vivier")
 

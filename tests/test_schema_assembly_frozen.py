@@ -511,8 +511,14 @@ from oto_mcp.db import _schema, schema
 # fragment `schema/datastore::REVISIONS` ; base existante par la révision Alembic
 # `0016_journal_suppression` ou le démarrage (`journal_revisions.DDL_COLONNE_SUPPRESSION`,
 # même forme). 174 403 → 174 695 (+292, commentaire compris).
-EMPREINTE = "29beec2816b60ce8f5cc21de6bfeb06be2d9c12e568ef33b033c29838b7d933b"
-LONGUEUR = 174695
+# 24/09/2026 (oto#160) — `user_datastores` prend `context_org_id BIGINT REFERENCES
+# orgs(id) ON DELETE SET NULL` : l'org où un tableau personnel a été créé. Base neuve
+# par le fragment `schema/datastore::DATASTORE` ; base existante par la révision
+# Alembic `0017_tableaux_contexte_org` ou le démarrage
+# (`datastore_ns.DDL_COLONNE_CONTEXTE_ORG`, même forme). 174 695 → 175 224 (+529,
+# commentaire compris).
+EMPREINTE = "aa573556b979c9541e4a691df1ad91d009f01f2edfe4f0fdc07b6f6b3c6bb5d1"
+LONGUEUR = 175224
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

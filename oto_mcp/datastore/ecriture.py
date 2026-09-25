@@ -350,7 +350,8 @@ class EcritureMixin:
             ns_id = self._resolve(datastore, write=True)
         except DatastoreNotFound:
             _ot, _oid = self._default_owner()
-            db.create_datastore(_ot, _oid, datastore)
+            db.create_datastore(_ot, _oid, datastore,
+                                context_org_id=self._org_de_l_appel())
             self._active_scope_cache = None  # invalide le cache (le ns créé appartient à la PERSONNE (ADR 0068), pas à l'org active)
             ns_id = self._resolve(datastore, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}

@@ -51,12 +51,13 @@ def _wire(monkeypatch, *, src):
     created["schemas_set"] = []
     created["rows_inserted"] = []
 
-    def create_datastore(ot, oid, name):
+    def create_datastore(ot, oid, name, *, context_org_id):
         if any(p["key"] == (ot, oid, name) for p in provisioned):
             raise ValueError("exists")          # simule l'unicité (owner, name)
         counter["ns"] += 1
         provisioned.append({"id": counter["ns"], "key": (ot, oid, name),
-                            "owner": (ot, oid), "name": name})
+                            "owner": (ot, oid), "name": name,
+                            "context_org_id": context_org_id})
         return counter["ns"]
 
     monkeypatch.setattr(PJ, "get_datastore_by_id", lambda nid: ns_store.get(nid))

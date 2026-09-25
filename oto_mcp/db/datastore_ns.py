@@ -42,19 +42,35 @@ from .users import upsert_user
 
 logger = logging.getLogger(__name__)
 
+# L'org de contexte d'un tableau personnel (oto#160). Même forme dans le `CREATE TABLE`
+# (`db/schema/datastore.py::DATASTORE`), dans la révision `0017` et au démarrage : une
+# base neuve, une base migrée et une base que le démarrage rattrape ont la même colonne.
+COLONNE_CONTEXTE_ORG = "context_org_id"
+DDL_COLONNE_CONTEXTE_ORG = (f"ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS "
+                            f"{COLONNE_CONTEXTE_ORG} BIGINT "
+                            f"REFERENCES orgs(id) ON DELETE SET NULL")
 
-def create_datastore(owner_type: str, owner_id: str, namespace: str) -> int:
+
+def create_datastore(owner_type: str, owner_id: str, namespace: str, *,
+                     context_org_id: Optional[int] = None) -> int:
     """Crée un namespace possédé par `(owner_type, owner_id)` (ADR 0030). `owner_type`
     ∈ {user, org, group} ; `owner_id` = sub | org.id::text | group.id::text. Lève si
-    le même propriétaire a déjà ce nom."""
+    le même propriétaire a déjà ce nom.
+
+    `context_org_id` = l'org active de l'appel qui crée (oto#160), retenue pour un
+    tableau PERSONNEL seulement : un tableau d'org ou d'équipe tient son contexte de
+    son propriétaire, et une seconde source dirait un jour autre chose que lui. Toute
+    voie de création du code la passe — `tests/datastore/test_contexte_org_160.py`
+    le vérifie sur le source ; le défaut `None` ne sert qu'aux bancs."""
     if owner_type == "user":
         upsert_user(owner_id)
+    contexte = int(context_org_id) if owner_type == "user" and context_org_id else None
     with _connect() as conn:
         try:
             row = conn.execute(
-                "INSERT INTO user_datastores (owner_type, owner_id, namespace) "
-                "VALUES (%s, %s, %s) RETURNING id",
-                (owner_type, owner_id, namespace),
+                f"INSERT INTO user_datastores (owner_type, owner_id, namespace, "
+                f"{COLONNE_CONTEXTE_ORG}) VALUES (%s, %s, %s, %s) RETURNING id",
+                (owner_type, owner_id, namespace, contexte),
             ).fetchone()
         except psycopg.errors.UniqueViolation as e:
             raise ValueError(f"namespace `{namespace}` existe déjà") from e

@@ -603,6 +603,16 @@ retire aussi ce déclencheur, qui survivrait sinon à la table qu'il écrit. 001
 toujours le fragment courant, qui porte la colonne : sur une base qui rejoue le registre,
 0016 est alors sans effet.
 
+`0017_tableaux_contexte_org` (24/09/2026, oto#160, après `0016_journal_suppression`)
+ajoute `user_datastores.context_org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL` :
+l'org active de l'appel qui a créé un tableau personnel. Sans défaut, donc écriture de
+catalogue seule, et la clé étrangère se valide sur une colonne toute NULL ;
+l'`AccessExclusiveLock` sur `user_datastores` et le verrou sur `orgs` sont bornés par
+`lock_timeout`. **Ordre indifférent** : le démarrage pose la même colonne s'il ne la
+trouve pas (`datastore_ns.DDL_COLONNE_CONTEXTE_ORG`, sous garde de catalogue). L'ancien
+code ne la lit ni ne l'écrit (ses créations la laissent NULL). Le retour arrière retire
+la colonne ; le code qui l'écrit doit être retiré avant lui.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

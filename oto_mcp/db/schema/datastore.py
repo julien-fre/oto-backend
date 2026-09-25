@@ -32,7 +32,14 @@ CREATE TABLE IF NOT EXISTS user_datastores (
     -- {fields:[{key,label?,type?,role?}]} où role ∈ title|badge|metric|status|
     -- qualif|note pilote le rendu en fiches. Soft : pas de validation à l'écriture.
     schema JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- L'org ACTIVE de l'appel qui a créé un tableau PERSONNEL (oto#160) : sa
+    -- propriété est la personne, son contexte l'org où elle travaillait. NULL pour un
+    -- tableau d'org ou d'équipe (contexte dérivé du propriétaire) et pour un personnel
+    -- d'avant la colonne. Même sens que `projects.context_org_id`. Sur une base
+    -- existante, elle vient de la révision `0017` ou du démarrage
+    -- (`datastore_ns.DDL_COLONNE_CONTEXTE_ORG`, même forme).
+    context_org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL
 );
 
 -- Rows du datastore : un dict JSONB par row (types préservés nativement, fin de

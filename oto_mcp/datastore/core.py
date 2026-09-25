@@ -204,6 +204,16 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
 
     # --- résolution datastore -> ns_id ---------------------------------------
 
+    def _org_de_l_appel(self) -> Optional[int]:
+        """L'org active de l'appel (oto#160) — celle qu'un tableau PERSONNEL créé par ce
+        geste retient (`user_datastores.context_org_id`). Même source que
+        `_active_scope`, qui scope la liste et la résolution par nom : l'org où le
+        tableau naît est celle où l'appelant le verra."""
+        if self.acting_org is not None:
+            return int(self.acting_org)
+        from .. import access
+        return access.current_org(self.sub)
+
     def _active_scope(self) -> tuple[list[int], list[int]]:
         """Contexte de l'ORG ACTIVE (ADR 0023) : `([org active], [mes groupes dans cette
         org])`. La résolution par NOM scope là-dessus — comme `list_datastores` — de sorte

@@ -211,7 +211,8 @@ class RegistreMixin:
             owner_type, owner_id = self._default_owner()
         oid = owner_id if owner_id is not None else self.sub
         try:
-            ns_id = db.create_datastore(owner_type, oid, datastore)
+            ns_id = db.create_datastore(owner_type, oid, datastore,
+                                        context_org_id=self._org_de_l_appel())
         except ValueError as e:
             raise DatastoreExists(str(e))
         # `id` ET `ns_id` : le même nombre sous les deux noms (oto#176) — la

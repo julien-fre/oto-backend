@@ -313,7 +313,7 @@ def registre(monkeypatch):
     monkeypatch.setattr(D.ownership, "can_govern", lambda sub, t, rid: True)
     monkeypatch.setattr(ownership, "can_govern", lambda sub, t, rid: True)
     monkeypatch.setattr(D.db, "create_datastore",
-                        lambda ot, oid, nom: CATALOGUE_NS)
+                        lambda ot, oid, nom, *, context_org_id: CATALOGUE_NS)
     monkeypatch.setattr(D.db, "rename_datastore_by_id", lambda ns, nom: None)
     monkeypatch.setattr(D.db, "resolve_datastore_ns",
                         lambda *a, **k: {"id": CATALOGUE_NS, "datastore": NOM,

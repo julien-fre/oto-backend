@@ -31,7 +31,9 @@ def _ddl() -> str:
     for table in _TABLES:
         i = src.index(f"CREATE TABLE IF NOT EXISTS {table}")
         morceaux.append(src[i:src.index("\n);", i) + 3])
-    return "\n".join(morceaux)
+    # `user_datastores.context_org_id` référence `orgs` (oto#160) : une table réduite à
+    # sa clé suffit, la file ne la lit pas.
+    return "CREATE TABLE IF NOT EXISTS orgs (id BIGSERIAL PRIMARY KEY);\n" + "\n".join(morceaux)
 
 
 @pytest.fixture()

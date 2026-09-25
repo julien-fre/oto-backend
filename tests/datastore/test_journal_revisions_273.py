@@ -371,7 +371,9 @@ def test_la_revision_0016_pose_la_colonne_se_defait_et_le_boot_repose_tout(
 
     from oto_mcp.db import init_db
     cfg = _alembic()
-    command.stamp(cfg, "head")
+    # Estampillée à 0016 et pas à la tête : le retour à 0015 ne doit défaire que 0016,
+    # pas les révisions suivantes (0017 retire une colonne de `user_datastores`).
+    command.stamp(cfg, "0016_journal_suppression")
     command.downgrade(cfg, "0015_droits_valeur_obligatoire")
     assert _pose(pg_module_dsn) == {"table": True, "colonne": False, "fonctions": 1,
                                     "declencheurs": 2}

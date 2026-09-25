@@ -1447,13 +1447,15 @@ def set_project_file_public(file_id: int, public: bool,
 
 # --- Copie profonde d'un projet (« modèle », ADR 0032 §7 B5a) -----------------
 def _provision_tableau(owner_type: str, owner_id: str, src_ref: str, *,
-                       seed: bool) -> Optional[str]:
+                       seed: bool, context_org_id: Optional[int]) -> Optional[str]:
     """Matérialise un namespace datastore FRAIS pour l'instance de projet (ADR 0032 §6,
     amendement 2026-07-01) : nouveau namespace possédé par `(owner_type, owner_id)`, même
     **schéma** que la source (le vivier repart isolé), nom dérivé du nom source rendu unique.
     `seed=True` copie aussi les **rows** d'amorce (mode `seeded`) ; sinon vivier vide (`empty`).
     Retourne le `target_ref` du nouveau namespace (son id en str), ou `None` si la source est
-    introuvable / le ref malformé → l'appelant garde le pointeur d'origine (dégradation sûre)."""
+    introuvable / le ref malformé → l'appelant garde le pointeur d'origine (dégradation sûre).
+    `context_org_id` = celle de la copie : un vivier personnel naît dans l'org où la copie
+    est rangée (oto#160)."""
     try:
         src_ns_id = int(src_ref)
     except (TypeError, ValueError):
@@ -1466,7 +1468,8 @@ def _provision_tableau(owner_type: str, owner_id: str, src_ref: str, *,
     candidate = base
     for i in range(1, 100):   # dérive un nom unique chez le nouveau propriétaire
         try:
-            new_id = create_datastore(owner_type, owner_id, candidate)
+            new_id = create_datastore(owner_type, owner_id, candidate,
+                                      context_org_id=context_org_id)
             break
         except ValueError:
             candidate = f"{base}-{i}"
@@ -1558,15 +1561,16 @@ def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str
                 continue
             if mode in ("empty", "seeded"):
                 target_ref = _provision_tableau(
-                    owner_type, owner_id, target_ref, seed=(mode == "seeded")
-                ) or target_ref
+                    owner_type, owner_id, target_ref, seed=(mode == "seeded"),
+                    context_org_id=context_org_id) or target_ref
             elif not (src_ns.get("owner_type") == owner_type
                       and str(src_ns.get("owner_id")) == str(owner_id)):
                 # Pointeur par défaut (`shared`) vers un namespace d'un AUTRE propriétaire =
                 # fuite inter-org : la copie exposerait les données privées de la source
                 # (oto-backend#112). On matérialise un vivier VIERGE (même schéma, 0 row)
                 # possédé par la copie ; l'utilisateur y refait SON travail.
-                fresh = _provision_tableau(owner_type, owner_id, target_ref, seed=False)
+                fresh = _provision_tableau(owner_type, owner_id, target_ref, seed=False,
+                                           context_org_id=context_org_id)
                 if fresh is None:
                     warnings.append(f"tableau « {label} » : lien ignoré (re-provisionnement impossible).")
                     continue

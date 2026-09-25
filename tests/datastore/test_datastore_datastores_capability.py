@@ -57,6 +57,9 @@ class _Store(registre.RegistreMixin):
         return registre.RegistreMixin.create_datastore(
             self, datastore, owner_type=owner_type, owner_id=owner_id)
 
+    def _org_de_l_appel(self):
+        return 99
+
     def delete_datastore(self, datastore):
         return self._out("delete_datastore", datastore)
 
@@ -71,7 +74,7 @@ class _Store(registre.RegistreMixin):
 def store(monkeypatch):
     # Les deux seams que la vraie `create_datastore` touche — la base et l'URL.
     monkeypatch.setattr(registre.db, "create_datastore",
-                        lambda ot, oid, ns: 42)
+                        lambda ot, oid, ns, *, context_org_id: 42)
     monkeypatch.setattr(registre, "_ns_url",
                         lambda ns_id, sub, org=None: f"https://dashboard.oto.ninja/data/{ns_id}")
     s = _Store()

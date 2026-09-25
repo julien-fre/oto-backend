@@ -2745,6 +2745,23 @@ laissera une révision de suppression portant ses valeurs, qu'il faudra purger a
 
 **Banc** : `tests/datastore/test_retention_revisions_273.py` (base réelle).
 
+## Un tableau personnel retient l'org où il a été créé (oto#160, 24/09/2026)
+
+`user_datastores.context_org_id` : l'org active de l'appel qui crée un tableau
+PERSONNEL, même sens que `projects.context_org_id`. NULL pour un tableau d'org ou
+d'équipe (son contexte se dérive du propriétaire) et pour un personnel créé avant la
+colonne. Remplie par `db.create_datastore(…, context_org_id=…)`, que passent les trois
+voies de création du code : le store (`data_create_datastore` et `POST /api/datastores`,
+org lue par `_org_de_l_appel`, la même source que `_active_scope`), l'écriture à clé qui
+crée son tableau (`upsert_row`), et le vivier provisionné par la copie d'un projet (l'org
+où la copie est rangée). Une garde d'AST (`tests/datastore/test_contexte_org_160.py`)
+refuse une voie qui l'omettrait.
+
+**Phase 1 seulement** : la donnée est posée, la liste ne change pas. `list_datastores`
+passe toujours par `ownership.active_org_principals`, qui ajoute `("user", sub)` sans
+condition. La phase 2 filtrera le personnel sur `context_org_id = org active` ; ce que
+deviennent les personnels d'avant (NULL) dépend de la mesure de leur reconstitution.
+
 ## Toute colonne déclarée est servie, à `null` sans valeur (oto#182, 13/09/2026)
 
 **Le constat.** Dans une ligne JSONB stockée, une colonne jamais écrite n'existe pas : elle était

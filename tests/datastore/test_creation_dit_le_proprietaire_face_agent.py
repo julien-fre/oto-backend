@@ -33,8 +33,10 @@ from oto_mcp.datastore.core import DatastorePg
 def store(monkeypatch):
     """Un store réel, sans base : seule la FORME de la réponse est en jeu ici."""
     monkeypatch.setattr(registre.db, "create_datastore",
-                        lambda ot, oid, ns: 42)
+                        lambda ot, oid, ns, *, context_org_id: 42)
     monkeypatch.setattr(registre, "_ns_url", lambda ns_id, sub, org=None: f"https://d/data/{ns_id}")
+    # L'org de contexte (oto#160) a son propre banc (`test_contexte_org_160.py`).
+    monkeypatch.setattr(DatastorePg, "_org_de_l_appel", lambda self: None)
     return DatastorePg("u-1")
 
 
@@ -130,8 +132,10 @@ def test_le_TOOL_SERVI_tient_la_promesse_de_sa_propre_description(monkeypatch):
     from oto_mcp.tools import datastore as surface
 
     monkeypatch.setattr(registre.db, "create_datastore",
-                        lambda ot, oid, ns: 42)
+                        lambda ot, oid, ns, *, context_org_id: 42)
     monkeypatch.setattr(registre, "_ns_url", lambda ns_id, sub, org=None: f"https://d/data/{ns_id}")
+    # L'org de contexte (oto#160) a son propre banc (`test_contexte_org_160.py`).
+    monkeypatch.setattr(DatastorePg, "_org_de_l_appel", lambda self: None)
     monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: "u-1")
     monkeypatch.setattr(surface, "_store_for", lambda sub: DatastorePg("u-1"))
 
@@ -155,8 +159,10 @@ def test_le_TOOL_SERVI_avertit_quand_une_org_etait_demandee(monkeypatch, org_dem
     from oto_mcp.tools import datastore as surface
 
     monkeypatch.setattr(registre.db, "create_datastore",
-                        lambda ot, oid, ns: 42)
+                        lambda ot, oid, ns, *, context_org_id: 42)
     monkeypatch.setattr(registre, "_ns_url", lambda ns_id, sub, org=None: f"https://d/data/{ns_id}")
+    # L'org de contexte (oto#160) a son propre banc (`test_contexte_org_160.py`).
+    monkeypatch.setattr(DatastorePg, "_org_de_l_appel", lambda self: None)
     monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: "u-1")
     monkeypatch.setattr(surface, "_store_for", lambda sub: DatastorePg("u-1"))
 

@@ -13,7 +13,8 @@ import time
 
 import psycopg
 
-from . import _version_alembic, connector_instances, journal_revisions, revision
+from . import (_version_alembic, connector_instances, datastore_ns, journal_revisions,
+               revision)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -771,6 +772,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # après LIT `d.schema` : sur une base qui existe déjà, la colonne n'arrive
     # que par cet ALTER, et l'`UPDATE` mourait avant lui.
     conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
+    # L'org de contexte d'un tableau personnel (oto#160) — la même que pose la révision
+    # `0017` : ordre indifférent entre elles. Gardée par le catalogue : la clé
+    # étrangère prend un verrou sur `orgs`, qu'on ne demande pas pour rien.
+    if _colonne_absente(conn, "user_datastores", datastore_ns.COLONNE_CONTEXTE_ORG):
+        conn.execute(datastore_ns.DDL_COLONNE_CONTEXTE_ORG)
     # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
     # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
     # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.
