@@ -65,7 +65,10 @@ class OrgMemberAdminInput(BaseModel):
 
 def _org_member(ctx: ResolvedCtx, inp: OrgMemberAdminInput) -> dict:
     if inp.op == "list":
-        return {"org_id": inp.org_id, "members": orgs_reads._members(inp.org_id)}
+        # Autz PLATFORM_ADMIN du module (cf. son montage plus bas) : l'appelant est
+        # déjà un opérateur — même exposition que `org.admin.get`.
+        return {"org_id": inp.org_id,
+                "members": orgs_reads._members(inp.org_id, exposer_operateur=True)}
     target = _need(inp.target, "missing_target", "`target` (email ou sub) requis.")
     if inp.op == "connectors":
         # Projection admin des credentials d'un MEMBRE (scope member, ADR 0033) :

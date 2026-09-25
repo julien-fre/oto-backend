@@ -134,6 +134,21 @@ class MeView(BaseModel):
     # Écriture acceptée (super_admin + `X-Oto-View-As-Write: 1`, 24/09) : False, le
     # serveur accepte alors les écritures (oto#212).
     view_as_read_only: bool = False
+    # Vue BORNÉE d'un org_admin (oto#270) : l'org O quand CETTE requête est une vue
+    # bornée (posée par `ViewAsMiddleware` depuis `session_org.current_view_as_bound_org`),
+    # `null` sinon — y compris en vue d'OPÉRATEUR plateforme, qui ne borne rien
+    # (`view_as_read_only` peut y valoir `true` alors que ce champ reste `null` : les
+    # deux flags ne se déduisent PAS l'un de l'autre). TOUJOURS présent, jamais omis,
+    # pour que le front ne déduise rien d'un état qu'il tiendrait localement — c'est
+    # la SEULE source. Cf. `docs/org-context.md`.
+    view_as_bound_org: Optional[int] = None
+    # En vue bornée SEULEMENT : les préfixes REST refusés (`403 view_as_hors_org`)
+    # dans CETTE vue ; `null` hors vue bornée (opérateur compris). DÉRIVÉ de la liste
+    # blanche que le middleware applique réellement (`api.routes._LECTURES_VUE_BORNEE`
+    # via `refused_prefixes_vue_bornee`), jamais recopié : le front masque une section
+    # sans tenir sa propre copie de la règle. Portée et limite (lectures GET, cf.
+    # `refused_prefixes_vue_bornee`) : `docs/org-context.md`.
+    view_as_refused_prefixes: Optional[list[str]] = None
     # Espace privé mono-membre : le front adapte son vocabulaire (un « solo » ne lit
     # jamais « org » ni « équipe »).
     active_org_is_personal: bool = False
@@ -295,6 +310,13 @@ def _me(ctx: ResolvedCtx, inp: MeInput) -> dict:
     if borne is not None and home_group is not None and (
             group_store.get_group(home_group) or {}).get("org_id") != borne:
         home_group, home_group_name = None, None
+    # `view_as_refused_prefixes` : uniquement calculé (et non-null) en vue bornée —
+    # import paresseux, `api.routes` importe `capabilities` à son propre chargement
+    # (cf. son docstring de montage) et serait circulaire importé au niveau module ici.
+    refused_prefixes = None
+    if borne is not None:
+        from ..api.routes import refused_prefixes_vue_bornee
+        refused_prefixes = refused_prefixes_vue_bornee()
     return {
         "sub": sub,
         "email": user.get("email"),
@@ -315,6 +337,8 @@ def _me(ctx: ResolvedCtx, inp: MeInput) -> dict:
         # même middleware) lève la lecture seule.
         "view_as_read_only": (session_org.current_view_user() is not None
                               and not session_org.view_as_write_accepted()),
+        "view_as_bound_org": borne,
+        "view_as_refused_prefixes": refused_prefixes,
         "active_org_is_personal": active_org_is_personal,
         "active_org_require_mfa": active_org_require_mfa,
         "home_org": home_org,

@@ -46,7 +46,7 @@ def test_org_member_routes(monkeypatch):
     monkeypatch.setattr(orgs_members, "_remove_member", _tag("remove"))
     monkeypatch.setattr(orgs_members, "_set_member_role", _tag("set_role"))
     monkeypatch.setattr(orgs_members, "_resolve_target", lambda t: "sub_x")
-    monkeypatch.setattr(orgs_reads, "_members", lambda oid: ["m"])
+    monkeypatch.setattr(orgs_reads, "_members", lambda oid, *, exposer_operateur: ["m"])
     assert ac._org_member(CTX, ac.OrgMemberAdminInput(op="add", org_id=1, target="a@b.co"))["called"] == "add"
     assert ac._org_member(CTX, ac.OrgMemberAdminInput(op="remove", org_id=1, target="x"))["called"] == "remove"
     assert ac._org_member(CTX, ac.OrgMemberAdminInput(

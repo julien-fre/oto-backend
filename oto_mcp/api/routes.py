@@ -336,6 +336,54 @@ def _lecture_vue_bornee(methode: str, chemin: str, op: str | None, org: int) -> 
     return "cette route"
 
 
+def refused_prefixes_vue_bornee() -> list[str]:
+    """Préfixes REST refusés (`403 view_as_hors_org`) en vue bornée d'un org_admin —
+    servis par `GET /api/me` (`view_as_refused_prefixes`, oto#270 suite), pour que le
+    dashboard masque une section sans tenir sa propre copie de `_LECTURES_VUE_BORNEE`.
+
+    DÉRIVÉ, jamais recopié : rejoue `_lecture_vue_bornee` (la fonction que le
+    middleware applique réellement) sur les gabarits GET du registre de capacités
+    (`registry.CAPABILITIES`, qui couvre l'essentiel de la surface REST authentifiée —
+    ~200 des ~230 routes servies, `tests/api/test_vue_bornee_middleware.py
+    ::test_la_liste_ne_nomme_que_des_routes_servies`). Un changement de la liste
+    blanche, ou une capacité REST neuve, change ce que cette fonction rend sans qu'un
+    appelant n'ait à y penser.
+
+    `/api/orgs/{id}/…` et `/api/groups/{id}/…` sont ÉPINGLÉS sur O par le middleware
+    (jamais refusés en bloc, cf. `_lecture_vue_bornee`) : exclus d'office, comme lui.
+
+    ⚠️ **Portée : les lectures `GET`.** Une lecture POST « op-aware » (`{"op":
+    "list"}`…) hors de `_LECTURES_VUE_BORNEE` est elle aussi refusée par le
+    middleware, mais n'entre pas dans cette liste — ce sont 7 gabarits sur ~200,
+    l'exception documentée (`docs/org-context.md`) plutôt que la règle ; un front qui
+    en ajoute une la couvre au cas par cas, pas par préfixe générique.
+
+    Le PRÉFIXE rendu est le chemin tronqué AVANT son premier `{paramètre}`, SLASH
+    FINAL GARDÉ (le chemin entier s'il n'en porte pas) : un front le teste par
+    `startsWith`, sans connaître le gabarit exact ni le nom des placeholders. Le
+    slash final n'est PAS un détail — sans lui, `/api/connectors/{connector}/…`
+    (refusé) tronquerait sur `/api/connectors` et couvrirait par erreur la route
+    EXACTE `/api/connectors` (whitelistée) : `startsWith("/api/connectors/")` ne
+    matche pas `/api/connectors`, `startsWith("/api/connectors")` si."""
+    from ..capabilities import registry
+
+    prefixes: set[str] = set()
+    for cap in registry.CAPABILITIES:
+        for b in cap.rest_bindings():
+            if b.verb != "GET":
+                continue
+            chemin = b.path
+            if _ORG_DANS_LE_CHEMIN.match(chemin) or _EQUIPE_DANS_LE_CHEMIN.match(chemin):
+                continue  # épinglé sur O, jamais refusé
+            # `org=0` : inerte ici — la seule branche qui le lit (`/api/orgs|groups/…`)
+            # est déjà écartée juste au-dessus.
+            if _lecture_vue_bornee("GET", chemin, None, 0) is None:
+                continue
+            m = re.search(r"\{[^}]+\}", chemin)
+            prefixes.add(chemin[:m.start()] if m else chemin)
+    return sorted(prefixes)
+
+
 # La cible du « voir en tant que » que `ViewAsMiddleware` a APPLIQUÉE à la requête,
 # déposée dans le `scope` ASGI — le MÊME dict que celui de `RestCallLogger`, qui
 # l'enveloppe et la relit dans son `finally` (même mécanique que `CLE_PRINCIPAL`).

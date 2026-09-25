@@ -80,6 +80,7 @@ def test_les_cles_de_api_me_sont_exactement_celles_servies(monkeypatch, socle):
         "sub", "email", "name", "avatar_url", "locale", "role",
         "active_org", "active_org_name", "active_org_logo_url", "org_role",
         "active_org_readonly", "view_as_read_only",
+        "view_as_bound_org", "view_as_refused_prefixes",
         "active_org_is_personal", "active_org_require_mfa",
         "home_org", "home_org_name",
         "active_group", "active_group_name", "group_role",

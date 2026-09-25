@@ -120,6 +120,16 @@ class OrgMemberEntry(BaseModel):
     # Compte mis en pause (`users.suspended_at`). Faux pour tout le monde tant qu'un
     # administrateur n'a pas posé le geste.
     suspended: bool = False
+    # Opérateur PLATEFORME (`admin`/`super_admin`, `access.is_operator_role` — même
+    # prédicat que celui qui fait refuser une cible opératrice en vue bornée,
+    # `api.routes._juger_vue_bornee`, oto#270) : le front s'en sert pour ne PAS
+    # proposer « voir en tant que » sur ce membre, un geste que le backend refuserait
+    # de toute façon (403 `view_as_hors_org`, ses droits débordant toute org).
+    # ⚠️ **Servi au seul org_admin de CETTE org** (et à un opérateur plateforme, déjà
+    # au courant) — `None` pour un membre ordinaire : le statut « opérateur » d'un
+    # tiers n'est pas une donnée que la fiche org doit annoncer à tout le monde, et
+    # seul l'org_admin en a l'usage (le bouton « voir en tant que » qu'il pilote).
+    is_platform_operator: Optional[bool] = None
 
 
 class OrgSecretEntry(BaseModel):
@@ -196,7 +206,16 @@ class OrgDetail(BaseModel):
     billing: OrgBilling
 
 
-def _members(org_id: int) -> list[dict]:
+def _members(org_id: int, *, exposer_operateur: bool) -> list[dict]:
+    """`exposer_operateur` : servir `is_platform_operator` (org_admin ou opérateur
+    plateforme qui lit cette fiche) ou le taire (`None`, simple membre — cf. le
+    docstring d'`OrgMemberEntry`). ZÉRO requête ajoutée pour ce champ : le rôle
+    plateforme (`users.role`) est DÉJÀ dans `u`, lu ci-dessous pour email/name/avatar —
+    une seule requête, `org_store.list_org_members`, tient toute la liste ; le
+    `db.get_user` par membre est PRÉEXISTANT (pas ajouté par oto#270 suite), et c'est
+    la ligne qu'il rend qui sert aussi ce verdict, via le MÊME prédicat qu'utilise
+    `_juger_vue_bornee` pour refuser une cible opératrice (`access.is_operator_role`,
+    équivalent d'`access.is_platform_operator` sur un rôle déjà en main)."""
     out = []
     for m in org_store.list_org_members(org_id):
         u = db.get_user(m["sub"]) or {}
@@ -204,7 +223,10 @@ def _members(org_id: int) -> list[dict]:
                     "avatar_url": u.get("avatar_url"),
                     "role": m["org_role"], "active": m["is_active"],
                     # Gratuit : la ligne `users` est déjà lue juste au-dessus.
-                    "suspended": bool(u.get("suspended_at"))})
+                    "suspended": bool(u.get("suspended_at")),
+                    "is_platform_operator": (
+                        access.is_operator_role(m["sub"], u.get("role"))
+                        if exposer_operateur else None)})
     return out
 
 
@@ -263,6 +285,11 @@ def _org_detail(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
         from .._types import AuthzDenied
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     my_role = org_store.get_org_role(inp.org_id, ctx.sub)
+    # `is_platform_operator` par membre (ci-dessous) : servi à l'org_admin de CETTE
+    # org (le seul à agir dessus, « voir en tant que ») et à un opérateur plateforme
+    # (déjà au courant, `org.admin.get`) — pas à un simple membre. Une requête, pas
+    # une par membre (cf. `_members`).
+    exposer_operateur = my_role == "org_admin" or access.is_platform_operator(ctx.sub)
     # `logo_url` = EFFECTIF (upload > logo.dev du domaine) ; `logo_custom` dit
     # au front si un upload existe (gate du bouton « remove logo »).
     brief = {"id": org["id"], "name": org["name"],
@@ -279,7 +306,7 @@ def _org_detail(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
         brief["my_role"] = my_role
     return {
         "org": brief,
-        "members": _members(inp.org_id),
+        "members": _members(inp.org_id, exposer_operateur=exposer_operateur),
         "secrets": org_store.list_org_secrets(inp.org_id),
         # Options payantes offertes (comp admin) au niveau ORG (couche abonnement).
         "option_comps": db.list_option_comps("org", str(inp.org_id)),

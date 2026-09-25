@@ -64,6 +64,20 @@ def is_platform_operator(sub: str) -> bool:
     return get_user_role(sub) in (ADMIN, SUPER_ADMIN)
 
 
+def is_operator_role(sub: str, role: Optional[str]) -> bool:
+    """MÊME prédicat qu'`is_platform_operator`, sur un `role` DÉJÀ EN MAIN (colonne
+    `users.role`) — pour un appelant qui a déjà lu la ligne (ex. la liste des membres
+    d'une org, `capabilities/orgs/reads.py::_members`, oto#270 suite) et ne doit pas
+    refaire un `db.get_user` par membre pour ce seul verdict. Même override
+    `OTO_MCP_ADMIN_SUB`, même repli sur `role` (pas de validation contre `ROLES` :
+    un rôle hors énumération ne matche ni `ADMIN` ni `SUPER_ADMIN`, donc `False`,
+    comme `get_user_role` qui le ramènerait à `MEMBER`)."""
+    admin_sub = os.environ.get("OTO_MCP_ADMIN_SUB")
+    if admin_sub and sub == admin_sub:
+        return True
+    return role in (ADMIN, SUPER_ADMIN)
+
+
 def current_org(sub: str | None) -> Optional[int]:
     """Org sous laquelle Claude AGIT pour le `sub` courant — **seam unique** de
     résolution d'org (ADR 0023, amende 0015).

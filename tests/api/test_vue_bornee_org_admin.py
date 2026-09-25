@@ -19,6 +19,10 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 ADMIN, MEMBRE, SIMPLE, DEHORS = "vb-admin", "vb-membre", "vb-simple", "vb-dehors"
+# Opérateur plateforme (`role='admin'`), membre ORDINAIRE de O — sert deux volets
+# oto#270 suite : `is_platform_operator` sur la liste des membres, et la vue
+# d'OPÉRATEUR (non bornée, ≠ vue bornée de l'org_admin) sur `/api/me`.
+OPERATEUR = "vb-operateur"
 SECRET_O, SECRET_P = "hunter-SECRET-O-7f3a91", "hunter-SECRET-P-2c8d44"
 MARQUE_P = "zzP"   # tout ce qui vit hors de O porte cette marque
 _CLE_MAITRE = base64.b64encode(b"\x27" * 32).decode()
@@ -40,13 +44,15 @@ def monde(live):
     from oto_mcp import db, group_store, org_store
     mp = pytest.MonkeyPatch()
     mp.setenv("OTO_MCP_MASTER_KEY", _CLE_MAITRE)
-    for sub in (ADMIN, MEMBRE, SIMPLE, DEHORS):
+    for sub in (ADMIN, MEMBRE, SIMPLE, DEHORS, OPERATEUR):
         db.upsert_user(sub, email=f"{sub}@vue-bornee.invalid", name=sub)
+    db.set_user_role(OPERATEUR, "admin")
     o = org_store.create_org("Org O", created_by=ADMIN)
     p = org_store.create_org(f"{MARQUE_P} Org P", created_by=DEHORS)
     org_store.add_org_member(o, ADMIN, "org_admin")
     org_store.add_org_member(o, MEMBRE, "org_member")
     org_store.add_org_member(o, SIMPLE, "org_member")
+    org_store.add_org_member(o, OPERATEUR, "org_member")
     org_store.add_org_member(p, DEHORS, "org_admin")
     org_store.add_org_member(p, MEMBRE, "org_member")
     # La maison du membre est P : `/api/me` ne doit pas la nommer dans la vue.
@@ -113,6 +119,12 @@ def test_la_vue_montre_ce_que_le_membre_voit_dans_o(client, monde):
     assert me.status_code == 200, me.text
     assert me.json()["sub"] == MEMBRE
     assert me.json()["view_as_read_only"] is True
+    assert me.json()["view_as_bound_org"] == monde["o"]
+    # Dérivé de `_LECTURES_VUE_BORNEE` : un préfixe refusé connu y est, une lecture
+    # ouverte de la vue (celle-là même qu'on vient d'appeler) n'y est jamais couverte.
+    refus = me.json()["view_as_refused_prefixes"]
+    assert "/api/admin/users" in refus
+    assert not any("/api/me".startswith(p) for p in refus)
     assert me.json()["active_org"] == monde["o"]
     # La maison du membre est P : masquée, jamais nommée.
     assert me.json()["home_org"] is None and me.json()["home_org_name"] is None
@@ -236,6 +248,8 @@ def test_hors_vue_le_membre_lit_comme_avant(client, monde):
     h = _soi(MEMBRE, monde["o"])
     me = client.get("/api/me", headers=h).json()
     assert me["view_as_read_only"] is False and me["home_org"] == monde["p"]
+    assert me["view_as_bound_org"] is None
+    assert me["view_as_refused_prefixes"] is None
     # O, P et son espace personnel : toutes ses orgs.
     assert {monde["o"], monde["p"]} < {
         x["id"] for x in client.get("/api/me/orgs", headers=h).json()["orgs"]}
@@ -313,3 +327,53 @@ def test_le_seam_est_identique_hors_vue_et_borne_en_vue(monde):
     assert _dans_la_vue(monde, lambda: ow.active_org_principals(MEMBRE, o)) == \
         ow.active_org_principals(MEMBRE, o)
     assert {o, p} < set(ow.accessor_scope(MEMBRE).org_ids)
+
+
+# ── Vue d'OPÉRATEUR : non bornée, les trois champs le disent ─────────────────
+
+def test_la_vue_d_operateur_n_est_pas_bornee(client, monde):
+    """Un opérateur plateforme (`role=admin`) « voit en tant que » sans org de vue :
+    `view_as_read_only` vaut vrai (même mécanique que la vue bornée), mais
+    `view_as_bound_org`/`view_as_refused_prefixes` — propres à la vue BORNÉE de
+    l'org_admin (oto#270 suite) — restent `null` : les deux mécanismes ne se
+    confondent pas, même si tous deux passent par `ViewAsMiddleware`."""
+    h = {"Authorization": f"Bearer {OPERATEUR}", "X-Oto-View-As": MEMBRE}
+    me = client.get("/api/me", headers=h)
+    assert me.status_code == 200, me.text
+    body = me.json()
+    assert body["view_as_read_only"] is True
+    assert body["view_as_bound_org"] is None
+    assert body["view_as_refused_prefixes"] is None
+
+
+# ── `OrgMemberEntry.is_platform_operator` : org_admin seul, une requête ──────
+
+def test_is_platform_operator_vrai_pour_l_operateur_faux_pour_un_membre(client, monde):
+    r = client.get(f"/api/orgs/{monde['o']}", headers=_soi(ADMIN, monde["o"]))
+    assert r.status_code == 200, r.text
+    par_sub = {m["sub"]: m["is_platform_operator"] for m in r.json()["members"]}
+    assert par_sub[OPERATEUR] is True
+    assert par_sub[MEMBRE] is False
+    assert par_sub[SIMPLE] is False
+    assert par_sub[ADMIN] is False
+
+
+def test_is_platform_operator_masque_a_un_simple_membre(client, monde):
+    r = client.get(f"/api/orgs/{monde['o']}", headers=_soi(MEMBRE, monde["o"]))
+    assert r.status_code == 200, r.text
+    assert all(m["is_platform_operator"] is None for m in r.json()["members"])
+
+
+def test_is_platform_operator_une_seule_requete_pour_toute_la_liste(client, monde, monkeypatch):
+    """`access.is_platform_operator` (1 fetch par sub) n'est JAMAIS appelée pour ce
+    champ — le rôle est lu sur la ligne `users` déjà tirée par `_members` pour
+    email/name : zéro requête ajoutée, jamais une par membre."""
+    from oto_mcp import access
+
+    def _interdit(sub):
+        raise AssertionError(f"access.is_platform_operator appelée pour {sub} : "
+                             "le champ doit réutiliser la ligne déjà lue, pas refetcher.")
+    monkeypatch.setattr(access, "is_platform_operator", _interdit)
+    r = client.get(f"/api/orgs/{monde['o']}", headers=_soi(ADMIN, monde["o"]))
+    assert r.status_code == 200, r.text
+    assert {m["sub"] for m in r.json()["members"]} == {ADMIN, MEMBRE, SIMPLE, OPERATEUR}

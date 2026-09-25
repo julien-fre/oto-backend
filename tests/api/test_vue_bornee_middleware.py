@@ -266,3 +266,49 @@ def test_la_liste_ne_nomme_que_des_routes_servies():
             servies.add((b.verb, re.sub(r"\{([^}:]+):[^}]+\}", r"{\1}", b.path)))
     manquantes = [k for k in api_routes._LECTURES_VUE_BORNEE if k not in servies]
     assert not manquantes, manquantes
+
+
+# ── `refused_prefixes_vue_bornee` (oto#270 suite, `GET /api/me`) ─────────────
+
+def _lectures_get_candidates():
+    """Tout gabarit GET du registre de capacités, hors `/api/orgs|groups/{id}/…`
+    (épinglés sur O, jamais refusés — cf. `_lecture_vue_bornee`)."""
+    from oto_mcp.capabilities import registry
+    for cap in registry.CAPABILITIES:
+        for b in cap.rest_bindings():
+            if b.verb != "GET":
+                continue
+            if (api_routes._ORG_DANS_LE_CHEMIN.match(b.path)
+                    or api_routes._EQUIPE_DANS_LE_CHEMIN.match(b.path)):
+                continue
+            yield b.path
+
+
+def test_refused_prefixes_couvre_toute_lecture_refusee():
+    """La garde anti-dérive : une route REFUSÉE par le middleware (`_lecture_vue_bornee`)
+    doit toujours être couverte par un préfixe rendu — sinon `/api/me` mentirait au
+    front, qui montrerait un bouton menant à un 403 `view_as_hors_org`."""
+    prefixes = api_routes.refused_prefixes_vue_bornee()
+    for chemin in _lectures_get_candidates():
+        if api_routes._lecture_vue_bornee("GET", chemin, None, 0) is None:
+            continue  # ouverte, pas notre affaire ici
+        assert any(chemin.startswith(p) for p in prefixes), (
+            f"{chemin} est refusée par le middleware mais aucun préfixe ne la couvre")
+
+
+def test_refused_prefixes_ne_couvre_aucune_lecture_ouverte():
+    """Le sens inverse : un préfixe rendu ne doit jamais couvrir une route de la
+    liste blanche — sinon le front cacherait une section réellement accessible."""
+    prefixes = api_routes.refused_prefixes_vue_bornee()
+    for chemin in _lectures_get_candidates():
+        if api_routes._lecture_vue_bornee("GET", chemin, None, 0) is not None:
+            continue  # refusée, pas notre affaire ici
+        couvrante = [p for p in prefixes if chemin.startswith(p)]
+        assert not couvrante, (chemin, couvrante)
+
+
+def test_refused_prefixes_connait_l_admin_et_ignore_le_compte():
+    prefixes = api_routes.refused_prefixes_vue_bornee()
+    assert any(p.startswith("/api/admin") for p in prefixes)
+    assert "/api/me" not in prefixes
+    assert not any("/api/me".startswith(p) for p in prefixes)

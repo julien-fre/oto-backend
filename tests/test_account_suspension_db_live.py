@@ -261,6 +261,7 @@ def test_une_pause_ne_detruit_ni_ne_detache_rien(live):
     assert db.get_account_profile(sub)["profile"]["metier"] == "chef de projet"
     # …et le compte est bien lisible comme membre, marqué en pause plutôt que retiré.
     from oto_mcp.capabilities.orgs import reads
-    lignes = reads._members(perso["id"] if isinstance(perso, dict) else perso)
+    lignes = reads._members(perso["id"] if isinstance(perso, dict) else perso,
+                            exposer_operateur=False)
     moi = [m for m in lignes if m["sub"] == sub]
     assert moi and moi[0]["suspended"] is True
