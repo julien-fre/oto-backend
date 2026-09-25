@@ -122,6 +122,24 @@ def test_la_liste_des_orgs_se_pagine_par_curseur_sans_les_archivees(live):
     assert b in ids and archivee not in ids and suite["next_after_id"] is None
 
 
+def test_chaque_org_porte_son_tenant(live):
+    """#1072 : l'org d'un tenant tiers se reconnaît dans la liste — le commerce ne doit
+    rien lui adresser."""
+    from oto_mcp import tenancy
+    a_nous, chez_un_tiers = _org(), _org()
+    slug = f"t{uuid.uuid4().hex[:8]}"
+    with _connect() as conn:
+        tid = conn.execute(
+            "INSERT INTO tenants (slug, name, issuer, jwks_uri) VALUES (%s, %s, %s, %s) "
+            "RETURNING id",
+            (slug, slug, f"https://{slug}.exemple.test/oidc",
+             f"https://{slug}.exemple.test/oidc/jwks")).fetchone()["id"]
+        conn.execute("UPDATE orgs SET tenant_id = %s WHERE id = %s", (tid, chez_un_tiers))
+    page = _appel("service.orgs.list", after_id=a_nous - 1, limit=2)
+    assert {o["id"]: o["tenant"] for o in page["orgs"]} == {
+        a_nous: tenancy.PRIMARY_SLUG, chez_un_tiers: slug}
+
+
 def test_l_usage_compte_les_reussites_de_la_fenetre_et_les_cles_de_plateforme(live):
     org = _org()
     sub = _membre(org, T0)

@@ -56,11 +56,17 @@ class ServiceOrgRow(BaseModel):
     id: int
     name: str
     created_at: Optional[str] = None
+    # Le tenant EFFECTIF de l'org (`db.org_tenant_slug`, union des trois axes) : `oto`
+    # pour la nôtre, sinon le slug du tenant tiers qui l'héberge (#1072).
+    tenant: str
 
 
 class ServiceOrgs(BaseModel):
     """Les orgs non archivées d'id > `after_id`, par id croissant. `next_after_id` est
-    le curseur de la page suivante, `None` quand la liste est finie."""
+    le curseur de la page suivante, `None` quand la liste est finie.
+
+    ⚠️ Une org dont `tenant` n'est pas `oto` est la cliente d'un partenaire : rien de ce
+    qui s'adresse à son titulaire (essai, relance, échéance) ne doit la toucher."""
     orgs: list[ServiceOrgRow]
     next_after_id: Optional[int] = None
 
@@ -68,7 +74,8 @@ class ServiceOrgs(BaseModel):
 def _orgs(ctx: ResolvedCtx, inp: ServiceOrgsInput) -> dict:
     rows = org_store.list_orgs_page(inp.after_id, inp.limit + 1)
     page, suite = rows[:inp.limit], len(rows) > inp.limit
-    return {"orgs": [{"id": r["id"], "name": r["name"], "created_at": _iso(r["created_at"])}
+    return {"orgs": [{"id": r["id"], "name": r["name"], "created_at": _iso(r["created_at"]),
+                      "tenant": db.org_tenant_slug(r["id"])}
                      for r in page],
             "next_after_id": page[-1]["id"] if suite else None}
 
@@ -243,7 +250,8 @@ CAPABILITIES += [
     Capability(key="service.orgs.list", handler=_orgs, Input=ServiceOrgsInput,
                authz=COMMERCE_SERVICE, mcp=None, Output=ServiceOrgs,
                description="[service commerce] Non-archived orgs by increasing id, "
-                           "paginated by `after_id`.",
+                           "paginated by `after_id`, each with its effective `tenant` "
+                           "(`oto` = ours; anything else belongs to a partner).",
                rest=RestBinding("GET", "/api/service/orgs")),
     Capability(key="service.org.members", handler=_members, Input=ServiceOrgInput,
                authz=COMMERCE_SERVICE, mcp=None, Output=ServiceMembers,
