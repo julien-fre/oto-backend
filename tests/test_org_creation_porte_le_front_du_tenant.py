@@ -86,6 +86,7 @@ def creation_sans_db(monkeypatch):
         return 4242
 
     monkeypatch.setattr(org_store, "count_orgs_created_by", lambda sub: 0)
+    monkeypatch.setattr(orgs, "_uncapped", lambda sub: False)
     monkeypatch.setattr(org_store, "create_org", _create_org)
     monkeypatch.setattr(org_store, "add_org_member", lambda *a, **k: None)
     monkeypatch.setattr(org_store, "set_active_org", lambda *a, **k: None)
