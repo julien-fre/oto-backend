@@ -1,0 +1,14 @@
+[
+  {
+    "nom": "oto-frontend",
+    "depot": "otomata-tech/oto-frontend",
+    "chemin": "api/openapi-served.json",
+    "secret": "OTO_FRONTEND_CONTRACT_KEY"
+  },
+  {
+    "nom": "oto-dashboard",
+    "depot": "otomata-tech/oto-dashboard",
+    "chemin": "frontend/openapi/oto-openapi.json",
+    "secret": null
+  }
+]

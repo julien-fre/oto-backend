@@ -41,7 +41,12 @@ Deux niveaux, délibérément distincts — un contrôle qui crie pour tout n'es
   le cas fréquent, pas un cas tordu. Constaté sur oto-backend#738, où 9 composants ajoutés et
   10 316 octets de plus ne sortaient ni en rouge ni en avertissement.
 
-Usage : contrat-front.py <contrat-épinglé.json> <url-ou-fichier-du-spec-servi>
+Plusieurs consommateurs (#966) : le script juge UN contrat contre UN servi, et le workflow
+l'appelle une fois par consommateur déclaré (`.github/contrat-consommateurs.json`).
+`--consommateur` NOMME celui qu'on juge dans chaque verdict : sans lui, N rouges seraient
+indiscernables.
+
+Usage : contrat-front.py [--consommateur NOM] <contrat-épinglé.json> <url-ou-fichier-du-spec-servi>
 """
 import json
 import sys
@@ -266,12 +271,16 @@ def _schemas_de_corps(corps) -> dict:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    args = sys.argv[1:]
+    qui = "le front"
+    if args[:1] == ["--consommateur"] and len(args) >= 2:
+        qui, args = f"« {args[1]} »", args[2:]
+    if len(args) != 2:
         print(__doc__.strip().splitlines()[-1], file=sys.stderr)
         return 2
     try:
-        epingle = charger(sys.argv[1])
-        servi = charger(sys.argv[2])
+        epingle = charger(args[0])
+        servi = charger(args[1])
     except Exception as exc:                      # noqa: BLE001 — tout illisible = code 2
         print(f"CONFRONTATION IMPOSSIBLE : {exc}", file=sys.stderr)
         return 2
@@ -299,7 +308,7 @@ def main() -> int:
                 forme_changee.append(nom)
 
     total = sum(len(o) for o in epingle.get("paths", {}).values())
-    print(f"{total} opération(s) épinglée(s) par le front, confrontées au spec servi.")
+    print(f"{total} opération(s) épinglée(s) par {qui}, confrontées au spec servi.")
 
     if disparues or entree_changee:
         if disparues:
@@ -313,9 +322,9 @@ def main() -> int:
                 for r in raisons:
                     print(f"      · {r}")
         print(
-            "\nCes changements CASSENT les appels du front consommateur. Deux issues, et "
+            f"\nCes changements CASSENT les appels de {qui}. Deux issues, et "
             "c'est une décision, pas une réparation mécanique : garder la compatibilité "
-            "(chemin conservé, paramètre optionnel), ou prévenir le front AVANT la mise en "
+            f"(chemin conservé, paramètre optionnel), ou prévenir {qui} AVANT la mise en "
             "production pour qu'il s'adapte."
         )
         return 1
@@ -329,14 +338,14 @@ def main() -> int:
             print(f"  - {n}")
             for a in avis:
                 print(f"      · {a}")
-        print("  → prévenir le front : ses appels PASSENT toujours, leur réponse change.")
+        print(f"  → prévenir {qui} : ses appels PASSENT toujours, leur réponse change.")
 
     if forme_changee:
         print("\nÉcarts SANS effet sur ses appels (réponses enrichies ou descriptions retouchées) :")
         for n in forme_changee:
             print(f"  - {n}")
         print(
-            "\nRien à réparer ici. Mais le contrôle du front est exact : sa branche "
+            f"\nRien à réparer ici. Mais le contrôle de {qui} est exact : sa branche "
             "principale rougira à sa prochaine poussée tant qu'il n'a pas ré-extrait son "
             "contrat. Le prévenir évite de lui faire chercher une panne qui n'existe pas."
         )

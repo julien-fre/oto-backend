@@ -560,6 +560,35 @@ Déclaration unique : `oto_mcp/deprecations.REST` (montage `api/alias_routes.py`
 document `openapi._alias_deprecies`, garde `tests/api/test_alias_deprecies_rest.py`).
 **Table des alias en cours et de leur date : `docs/alias-deprecies.md`.**
 
+⚠️ **Quand retirer : pas de délai fixe** (Alexis, 25/09/2026). L'ancienne forme part
+quand **tous les consommateurs déclarés ont suivi** — ce que la garde de contrat constate
+(ci-dessous) : tant qu'un contrat épinglé lit encore l'ancienne forme, son retrait rougit
+`contrat-front-code` en nommant le consommateur, et la préproduction ne part pas.
+
+## Les consommateurs déclarés du contrat (#966)
+
+Qui appelle cette API hors de ce dépôt se DÉCLARE dans `.github/contrat-consommateurs.json`
+(nom, dépôt, chemin du contrat qu'il épingle, secret de lecture — `null` pour un dépôt
+public). Les deux jobs de contrat de `deploy-canari.yml` tournent en matrice sur cette
+liste, une jambe par consommateur, `fail-fast: false` : un rouge ne masque pas les
+suivants, et chaque verdict **nomme** le consommateur (`scripts/contrat-front.py
+--consommateur`).
+
+- **avant déploiement** (`contrat-front-code`, une garde : `deploy-preprod` attend toutes
+  ses jambes) — le document est dérivé sans serveur de `server.routes_rest`, la source du
+  montage, facturation activée comme en préproduction et en production ;
+- **après la préproduction** (`contrat-front`, un constat) — le document réellement servi.
+
+Seul le CONTENU d'un contrat peut rougir. Un secret déclaré mais absent rougit aussi
+(défaut chez nous, #823) ; un dépôt illisible ou un fichier déplacé chez le consommateur
+avertit sans rougir (`scripts/lire-contrat-consommateur.sh`).
+
+Déclarés au 25/09/2026 : le front de JB (extrait des opérations qu'il appelle) et le
+dashboard (**l'instantané complet** de l'API : tout retrait ou changement de forme d'une
+opération servie le fait rougir, qu'il l'appelle ou non, jusqu'à ce qu'il ait rafraîchi son
+instantané). Déclarer un consommateur = ajouter une entrée, plus sa clé de déploiement en
+lecture seule s'il est privé.
+
 ## Le contrat dit ce que le serveur rend — retours d'un front tiers (29/08/2026)
 
 Un front tiers, consommateur pur de cette API, a dérivé son comportement du contrat

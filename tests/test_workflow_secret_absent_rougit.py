@@ -32,11 +32,34 @@ def _branches_secret_absent(texte: str):
         yield m.group(2), "\n".join(lignes[i:fin + 1])
 
 
-def test_le_cliquet_voit_les_branches_du_contrat_front():
-    """Témoin : le balayage trouve bien les deux branches de `deploy-canari.yml` — un
-    cliquet qui ne verrait rien serait vert pour rien."""
+def test_le_contrat_d_un_consommateur_sans_son_secret_rougit(tmp_path):
+    """Depuis #966, la lecture du contrat d'un consommateur vit dans
+    `scripts/lire-contrat-consommateur.sh`, appelé par les deux jobs de contrat : le
+    cliquet ci-dessous ne la voit plus dans le YAML. On l'ÉPROUVE donc : un secret
+    déclaré mais vide doit sortir en échec NOMMÉ, jamais en vert — PR de fork comprise."""
+    import os
+    import subprocess
+    script = _WORKFLOWS.parents[1] / "scripts" / "lire-contrat-consommateur.sh"
+    for fork in ("", "true"):
+        sortie = tmp_path / f"out{fork}"
+        r = subprocess.run(
+            [str(script), "oto-frontend", "otomata-tech/oto-frontend",
+             "api/openapi-served.json", "OTO_FRONTEND_CONTRACT_KEY"],
+            env={**os.environ, "CLE_LECTURE": "", "EST_FORK": fork,
+                 "GITHUB_OUTPUT": str(sortie)},
+            capture_output=True, text=True)
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "Contrat de oto-frontend NON JUGÉ" in r.stdout
+        assert not sortie.exists() or "lu=oui" not in sortie.read_text()
+
+
+def test_les_jobs_de_contrat_passent_le_secret_de_chaque_consommateur():
+    """Le secret d'un consommateur est lu par son NOM déclaré : un nom mal recopié dans
+    le workflow retomberait sur une clé vide — que le script refuse (ci-dessus)."""
     texte = (_WORKFLOWS / "deploy-canari.yml").read_text()
-    assert [v for v, _ in _branches_secret_absent(texte)] == ["CLE_LECTURE", "CLE_LECTURE"]
+    assert texte.count(
+        "CLE_LECTURE: ${{ matrix.consommateur.secret && "
+        "secrets[matrix.consommateur.secret] || '' }}") == 2
 
 
 def test_un_secret_absent_ne_sort_jamais_vert():

@@ -256,73 +256,91 @@ jobs:
         run: sudo /opt/deploy/oto-backend-canari.sh ${{ github.sha }}
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Le front de JB (`otomata-tech/oto-frontend`, servi sur dashboard.oto.ninja) épingle
-  # un extrait verbatim de notre OpenAPI et le confronte au vivant à chaque passage.
-  # Conséquence mesurée le 31/08/2026 : quand nous touchons l'une des 59 opérations
-  # qu'il consomme, c'est SA branche principale qui rougit et SA livraison qui se
-  # bloque — deux fois dans la journée — alors que le changement vient de nous.
-  # Ce job retourne la charge : celui qui casse l'apprend le premier, ici, juste après
-  # la préproduction, et non le lendemain dans le travail de quelqu'un d'autre.
+  # LES CONSOMMATEURS DÉCLARÉS DE NOTRE API (#966).
   #
-  # Il ne rougit QUE si ses appels cassent (opération disparue, entrée modifiée). Les
-  # écarts sans effet sur ses appels sortent en avertissement : un contrôle qui crie
-  # pour tout cesse d'être lu. Et il ne rougit JAMAIS pour un geste qui vient de lui —
-  # contrat déplacé, dépôt inaccessible : avertissement, avec le chemin cherché nommé.
-  # Rougir chez nous pour son fichier renommé, ce serait ce lot à l'envers.
+  # Un front (celui de JB, le dashboard) ou un service (le commerce) épingle dans SON
+  # dépôt ce qu'il appelle et lit de notre OpenAPI. Les deux jobs de contrat ci-dessous
+  # confrontent CHAQUE contrat épinglé à ce que nous servons : celui qui casse l'apprend
+  # le premier, ici, et non le lendemain dans le travail de quelqu'un d'autre (mesuré le
+  # 31/08/2026 : deux blocages de livraison chez le front de JB dans la journée, pour
+  # des changements venus de nous).
+  #
+  # La liste vit dans `.github/contrat-consommateurs.json` : nom, dépôt, chemin du
+  # contrat, secret de lecture (`null` = dépôt public, lu sans clé). Jusqu'au 25/09 ce
+  # mécanisme était écrit au singulier — un dépôt, un chemin, un secret en dur : un
+  # second consommateur aurait été INVISIBLE, jamais lu ni jugé, et on se serait cru
+  # gardé. Déclarer un consommateur, c'est ajouter une entrée ; rien d'autre.
+  #
+  # Chaque consommateur est jugé dans sa propre jambe (`fail-fast: false`) : un rouge
+  # sur l'un n'empêche pas de juger les autres, et chaque verdict le NOMME.
+  #
+  # ⚠️ Un retrait d'ancienne forme n'a pas de délai fixe (Alexis, 25/09) : il part quand
+  # tous les consommateurs déclarés ont suivi — et c'est ce contrôle qui le constate.
+  consommateurs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      liste: ${{ steps.liste.outputs.liste }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: liste
+        run: |
+          set -euo pipefail
+          # La liste se lit dans le dépôt, donc une PR peut la modifier : chaque champ est
+          # vérifié contre une forme stricte AVANT de devenir une matrice.
+          if ! jq -e 'type == "array" and length > 0 and all(.[];
+                 (.nom | test("^[A-Za-z0-9._-]+$")) and
+                 (.depot | test("^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")) and
+                 (.chemin | test("^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")) and
+                 (.secret == null or (.secret | test("^[A-Z][A-Z0-9_]*$"))))' \
+               .github/contrat-consommateurs.json > /dev/null; then
+            echo "::error title=Liste des consommateurs refusée::.github/contrat-consommateurs.json ne respecte pas la forme attendue (nom, dépôt owner/repo, chemin relatif, secret en MAJUSCULES ou null) — aucun contrat n'est jugé."
+            exit 1
+          fi
+          echo "liste=$(jq -c . .github/contrat-consommateurs.json)" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # APRÈS la préproduction : ce qui est réellement SERVI. Un constat, pas une garde —
+  # un déploiement peut servir autre chose que ce que le code annonce.
+  #
+  # Il ne rougit QUE si les appels ou les lectures d'un consommateur cassent (opération
+  # disparue, entrée modifiée, champ lu retiré). Les écarts sans effet sortent en
+  # avertissement : un contrôle qui crie pour tout cesse d'être lu. Et il ne rougit
+  # JAMAIS pour un geste venu du consommateur — contrat déplacé, dépôt inaccessible :
+  # avertissement, avec le chemin cherché nommé (`scripts/lire-contrat-consommateur.sh`).
   contrat-front:
-    needs: [deploy-preprod]
+    name: Contrat servi — ${{ matrix.consommateur.nom }}
+    needs: [deploy-preprod, consommateurs]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, oto-platform]
-    # max observé 15 s ; il clone un dépôt distant en SSH, donc il peut pendre au réseau.
+    strategy:
+      fail-fast: false
+      # Un seul runner auto-hébergé, partagé avec les déploiements : une jambe à la fois.
+      max-parallel: 1
+      matrix:
+        consommateur: ${{ fromJSON(needs.consommateurs.outputs.liste) }}
+    # max observé 15 s ; il clone un dépôt distant, donc il peut pendre au réseau.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Lire le contrat épinglé par le front
+      - name: Lire le contrat épinglé
         id: contrat
         env:
-          CLE_LECTURE: ${{ secrets.OTO_FRONTEND_CONTRACT_KEY }}
-        run: |
-          set -euo pipefail
-          # Secret absent = un défaut CHEZ NOUS (sur la poussée du tronc, il doit exister) :
-          # rouge, jamais un vert muet (#823). Les deux avertissements ci-dessous, eux,
-          # nomment un geste venu du front — ils restent des avertissements.
-          if [ -z "${CLE_LECTURE:-}" ]; then
-            echo "::error title=Contrat du front NON JUGÉ::Le secret OTO_FRONTEND_CONTRACT_KEY est absent — le contrat épinglé par oto-frontend N'A PAS été confronté. Reposer le secret du dépôt, puis relancer."
-            exit 1
-          fi
-          TRAVAIL="$(mktemp -d)"
-          echo "travail=$TRAVAIL" >> "$GITHUB_OUTPUT"
-          umask 077
-          printf '%s\n' "$CLE_LECTURE" > "$TRAVAIL/cle"
-          # Empreinte ed25519 de github.com, épinglée : relevée et vérifiée le 31/08/2026
-          # (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU). Épinglée et non découverte
-          # au vol : un known_hosts rempli à l'exécution accepte le premier venu.
-          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
-          export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
-          # TROIS états, pas deux — et la distinction EST le sujet de ce job. Ne pas la
-          # perdre : ce lot existe parce qu'un geste de l'un rougissait la branche de
-          # l'autre. Rougir ICI parce que le fichier a bougé CHEZ LUI, ce serait le même
-          # défaut retourné. Donc : seul le CONTENU de son contrat peut nous faire rougir.
-          # Tout ce qui nous empêche de l'OBTENIR avertit — bruyamment, jamais un vert muet.
-          CONTRAT="$TRAVAIL/front/api/openapi-served.json"
-          # Clé de déploiement en LECTURE SEULE sur oto-frontend ; un seul fichier ramené.
-          if ! git clone --depth 1 --filter=blob:none --sparse --quiet \
-                 git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front" 2>"$TRAVAIL/err"; then
-            echo "::warning title=Contrat du front inaccessible::Le dépôt otomata-tech/oto-frontend n'a pas pu être lu (clé révoquée, dépôt renommé ou déplacé) — le contrat N'A PAS été confronté, AUCUN jugement n'a été rendu. Détail : $(tr '\n' ' ' < "$TRAVAIL/err" | head -c 300)"
-            echo "lu=non" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json || true
-          if [ ! -s "$CONTRAT" ]; then
-            echo "::warning title=Contrat du front introuvable::api/openapi-served.json est absent ou vide dans otomata-tech/oto-frontend — le fichier a probablement été renommé ou déplacé CHEZ LUI. Ce n'est pas un défaut de notre contrat : rien n'a été jugé. Corriger le chemin cherché dans ce job."
-            echo "lu=non" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "lu=oui" >> "$GITHUB_OUTPUT"
+          CLE_LECTURE: ${{ matrix.consommateur.secret && secrets[matrix.consommateur.secret] || '' }}
+          NOM: ${{ matrix.consommateur.nom }}
+          DEPOT: ${{ matrix.consommateur.depot }}
+          CHEMIN: ${{ matrix.consommateur.chemin }}
+          SECRET: ${{ matrix.consommateur.secret || '' }}
+        # Valeurs de la liste passées par l'environnement, jamais interpolées dans le
+        # script : une PR peut modifier la liste.
+        run: scripts/lire-contrat-consommateur.sh "$NOM" "$DEPOT" "$CHEMIN" "$SECRET"
 
       - name: Confronter au contrat servi par la préproduction
         if: steps.contrat.outputs.lu == 'oui'
+        env:
+          NOM: ${{ matrix.consommateur.nom }}
+          CONTRAT: ${{ steps.contrat.outputs.contrat }}
         run: |
           set -uo pipefail
           COULEUR="$(cat /etc/oto-mcp/active-canari)"
@@ -333,60 +351,56 @@ jobs:
           esac
           echo "préproduction : couleur $COULEUR, port $PORT"
           code=0
-          python3 scripts/contrat-front.py \
-            "${{ steps.contrat.outputs.travail }}/front/api/openapi-served.json" \
-            "http://127.0.0.1:$PORT/api/openapi.json" || code=$?
+          python3 scripts/contrat-front.py --consommateur "$NOM" \
+            "$CONTRAT" "http://127.0.0.1:$PORT/api/openapi.json" || code=$?
           if [ "$code" = "2" ]; then
-            echo "::error title=Confrontation impossible::L'un des deux documents est illisible — le contrat N'A PAS été jugé."
+            echo "::error title=Contrat de $NOM — confrontation impossible::L'un des deux documents est illisible — le contrat N'A PAS été jugé."
             exit 1
           fi
           if [ "$code" != "0" ]; then
-            echo "::error title=Le front consommateur va casser::Une opération qu'il épingle a disparu, changé d'entrée, ou ne rend plus ce qu'il lit. Garder la compatibilité, ou le prévenir AVANT la mise en production."
+            echo "::error title=$NOM va casser::Une opération qu'il épingle a disparu, changé d'entrée, ou ne rend plus ce qu'il lit. Garder la compatibilité, ou le prévenir AVANT la mise en production."
             exit 1
           fi
 
       - name: Effacer la clé de lecture
         if: always()
-        run: rm -rf "${{ steps.contrat.outputs.travail }}"
+        env:
+          TRAVAIL: ${{ steps.contrat.outputs.travail }}
+        run: rm -rf "$TRAVAIL"
 
   # ─────────────────────────────────────────────────────────────────────────────
   # LE MÊME CONTRÔLE, MAIS AVANT LE DÉPLOIEMENT — une GARDE, pas un constat.
   #
-  # `contrat-front` (ci-dessus) juge ce qui est SERVI par la préproduction : il ne peut
-  # donc parler qu'APRÈS le déploiement. Un garde-fou qui refuse après coup laisse la
-  # rupture atteindre la préproduction — et l'état que le partenaire peut interroger —
-  # avant de le dire. Ce job-ci juge le contrat que CE CODE produirait, sans rien
-  # déployer : `openapi.build()` dérive le document par simple import, sans serveur ni
-  # base (c'est déjà ce que fait tests/test_openapi.py).
+  # Ce job-ci juge le contrat que CE CODE servirait, sans rien déployer : le document
+  # est dérivé par simple import, sans serveur ni base, des routes que le serveur monte
+  # (`server.routes_rest`, la source unique du montage). `OTO_BILLING_ENABLED=1` : la
+  # préproduction et la production servent la facturation ; la dériver sans elle ferait
+  # juger un document que personne ne sert (mesuré le 25/09 : 43 routes « disparues »
+  # pour le dashboard, toutes servies).
   #
   # 21/09/2026 — il ne tournait QUE sur les PR, or le tronc reçoit ses commits par
   # poussée directe : il était `skipped` à chaque déploiement réel, et deux retraits de
-  # champs lus par le front (`code` des invitations, `args` des appels) sont partis en
-  # préproduction puis en production sans l'arrêter. Il tourne désormais aussi sur la
-  # poussée, et `deploy-preprod` l'attend ; la production, qui exige un run de
-  # préproduction vert sur son sha (`scripts/garde_preprod_verte.py`), est gardée par
-  # ricochet.
+  # champs lus par le front sont partis en préproduction puis en production sans
+  # l'arrêter. Il tourne aussi sur la poussée, et `deploy-preprod` attend TOUTES ses
+  # jambes ; la production, qui exige un run de préproduction vert sur son sha
+  # (`scripts/garde_preprod_verte.py`), est gardée par ricochet.
   #
-  # Les deux se complètent et ne font pas doublon : celui-ci dit « ce que tu t'apprêtes à
-  # fusionner casserait le partenaire », celui d'après dit « ce qui est réellement servi
-  # a divergé ». Le second reste nécessaire — un déploiement peut servir autre chose que
-  # ce que le code de la branche annonce.
-  #
-  # Mêmes règles de verdict, délibérément : seule une rupture d'appel bloque. Un ajout
-  # compatible sort en avertissement et n'empêche PAS de fusionner — sinon on ne pourrait
-  # plus livrer un champ de réponse supplémentaire.
+  # Mêmes règles de verdict : seule une rupture d'appel ou de lecture bloque. Un ajout
+  # compatible sort en avertissement et n'empêche PAS de fusionner.
   #
   # #823 — SANS LE SECRET, IL ROUGIT. GitHub ne transmet pas les secrets à une PR venue
-  # d'un fork : ce job y sortait VERT sans rien avoir jugé, sur exactement les
-  # contributions de nos partenaires. Un « je n'ai pas pu juger » est un résultat, et il
-  # doit se distinguer d'un « jugé conforme » : il sort donc en échec nommé (même règle
-  # que `cla.yml` sans son jeton). Ce rouge ne bloque pas la fusion (aucun contrôle requis
-  # sur `main`) et ne demande rien au contributeur : le même job rejuge le code, secret
-  # en main, à la poussée sur le tronc — et `deploy-preprod` l'y attend. Pas de `skipped`
-  # non plus : GitHub compte un contrôle requis sauté comme réussi.
+  # d'un fork : ce job y sortait VERT sans rien avoir jugé. Un « je n'ai pas pu juger »
+  # est un résultat, distinct d'un « jugé conforme » : échec nommé. Ce rouge ne bloque
+  # pas la fusion (aucun contrôle requis sur `main`) et ne demande rien au
+  # contributeur : le même job rejuge le code, secret en main, à la poussée sur le tronc.
   contrat-front-code:
-    name: Contrat du front consommateur (avant déploiement)
+    name: Contrat avant déploiement — ${{ matrix.consommateur.nom }}
+    needs: [consommateurs]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        consommateur: ${{ fromJSON(needs.consommateurs.outputs.liste) }}
     timeout-minutes: 10  # max observé 54 s
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -399,62 +413,49 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Dériver le contrat que CE code servirait
+        env:
+          OTO_BILLING_ENABLED: "1"
         run: |
           set -euo pipefail
           python - <<'PY' > /tmp/openapi-de-la-pr.json
           import json
-          from oto_mcp import openapi
-          print(json.dumps(openapi.build()))
+          from oto_mcp import openapi, server
+          print(json.dumps(openapi.build(server.routes_rest(object()))))
           PY
           echo "contrat dérivé : $(wc -c < /tmp/openapi-de-la-pr.json) octets"
 
-      - name: Lire le contrat épinglé par le front
+      - name: Lire le contrat épinglé
         id: contrat
         env:
-          CLE_LECTURE: ${{ secrets.OTO_FRONTEND_CONTRACT_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CLE_LECTURE:-}" ]; then
-            if [ "${{ github.event.pull_request.head.repo.fork }}" = "true" ]; then
-              echo "::error title=Contrat du front NON JUGÉ (PR de fork)::GitHub ne transmet pas le secret OTO_FRONTEND_CONTRACT_KEY à une PR venue d'un fork : le contrat épinglé par oto-frontend N'A PAS été confronté à ce code. Rien à corriger côté contributeur — le contrôle se rejoue, secret en main, à la poussée sur main, avant le déploiement de préproduction."
-            else
-              echo "::error title=Contrat du front NON JUGÉ::Le secret OTO_FRONTEND_CONTRACT_KEY est absent — le contrat épinglé par oto-frontend N'A PAS été confronté. Reposer le secret du dépôt, puis relancer."
-            fi
-            exit 1
-          fi
-          TRAVAIL="$(mktemp -d)"
-          echo "travail=$TRAVAIL" >> "$GITHUB_OUTPUT"
-          umask 077
-          printf '%s\n' "$CLE_LECTURE" > "$TRAVAIL/cle"
-          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
-          export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
-          if ! git clone --depth 1 --filter=blob:none --sparse --quiet \
-                 git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front" 2>"$TRAVAIL/err"; then
-            echo "::warning title=Contrat du front inaccessible::Dépôt illisible — aucun jugement rendu. $(tr '\n' ' ' < "$TRAVAIL/err" | head -c 200)"
-            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json || true
-          if [ ! -s "$TRAVAIL/front/api/openapi-served.json" ]; then
-            echo "::warning title=Contrat du front introuvable::api/openapi-served.json absent ou vide — renommé chez lui ? Aucun jugement rendu."
-            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          echo "lu=oui" >> "$GITHUB_OUTPUT"
+          CLE_LECTURE: ${{ matrix.consommateur.secret && secrets[matrix.consommateur.secret] || '' }}
+          EST_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          NOM: ${{ matrix.consommateur.nom }}
+          DEPOT: ${{ matrix.consommateur.depot }}
+          CHEMIN: ${{ matrix.consommateur.chemin }}
+          SECRET: ${{ matrix.consommateur.secret || '' }}
+        # Valeurs de la liste passées par l'environnement, jamais interpolées dans le
+        # script : une PR peut modifier la liste.
+        run: scripts/lire-contrat-consommateur.sh "$NOM" "$DEPOT" "$CHEMIN" "$SECRET"
 
       - name: Confronter
         if: steps.contrat.outputs.lu == 'oui'
+        env:
+          NOM: ${{ matrix.consommateur.nom }}
+          CONTRAT: ${{ steps.contrat.outputs.contrat }}
         run: |
           set -uo pipefail
           code=0
-          python3 scripts/contrat-front.py \
-            "${{ steps.contrat.outputs.travail }}/front/api/openapi-served.json" \
-            /tmp/openapi-de-la-pr.json || code=$?
+          python3 scripts/contrat-front.py --consommateur "$NOM" \
+            "$CONTRAT" /tmp/openapi-de-la-pr.json || code=$?
           if [ "$code" = "2" ]; then
-            echo "::error title=Confrontation impossible::Document illisible — le contrat N'A PAS été jugé."; exit 1
+            echo "::error title=Contrat de $NOM — confrontation impossible::Document illisible — le contrat N'A PAS été jugé."; exit 1
           fi
           if [ "$code" != "0" ]; then
-            echo "::error title=Ce code casserait le front consommateur::Une opération qu'il épingle disparaît, change d'entrée, ou ne rend plus ce qu'il lit. Garder la compatibilité, ou le prévenir AVANT de livrer."; exit 1
+            echo "::error title=Ce code casserait $NOM::Une opération qu'il épingle disparaît, change d'entrée, ou ne rend plus ce qu'il lit. Garder la compatibilité, ou le prévenir AVANT de livrer."; exit 1
           fi
 
       - name: Effacer la clé de lecture
         if: always()
-        run: rm -rf "${{ steps.contrat.outputs.travail }}"
+        env:
+          TRAVAIL: ${{ steps.contrat.outputs.travail }}
+        run: rm -rf "$TRAVAIL"

@@ -284,6 +284,21 @@ def reload_tenant_registry() -> dict:
             "issuers": len(by_issuer), "verifier_updated": verifier_updated}
 
 
+def routes_rest(verifier, mcp_instance=None) -> list:
+    """Les routes REST que CE processus sert, dans l'ordre de montage — la source unique
+    du montage (`main`) et du document que la CI dérive sans serveur pour juger le
+    contrat des consommateurs (#966). Deux listes qui divergeraient feraient juger un
+    document que personne ne sert.
+
+    En tête, le garde-fou on-demand TLS (ADR 0032) : Caddy appelle
+    `/api/mcp/tls-check?domain=` avant d'émettre un cert `<slug>.mcp.oto.cx` → 200
+    seulement pour un projet publié. NON authentifié (appel localhost Caddy), avant le
+    gate JWT. Puis l'API REST (`api/routes.py`)."""
+    from . import subdomain_project
+    return [*subdomain_project.make_routes(),
+            *api_routes.make_routes(verifier, mcp_instance=mcp_instance)]
+
+
 def _build_verifier() -> JWTVerifier:
     """JWT verifier partagé entre l'auth MCP et l'API REST — **registre d'émetteurs**
     (ADR 0052 §3).
@@ -1046,9 +1061,9 @@ def main():
         # préparation de la base est désormais gardée par process, cf.
         # `_prepare_database`.)
         app = mcp.http_app()
-        # API REST consommée par oto.ninja (page de gestion de compte).
-        # Insérée avant les routes FastMCP pour qu'elles matchent /api/* en priorité.
-        for route in reversed(api_routes.make_routes(verifier, mcp_instance=mcp)):
+        # API REST (`routes_rest`), insérée avant les routes FastMCP pour qu'elle matche
+        # /api/* en priorité.
+        for route in reversed(routes_rest(verifier, mcp_instance=mcp)):
             app.router.routes.insert(0, route)
 
         # Façade DCR (oauth_facade) : sert /.well-known/oauth-authorization-server
@@ -1061,13 +1076,6 @@ def main():
                     require_env("OTO_MCP_PUBLIC_URL"), claude_app_id)):
                 app.router.routes.insert(0, route)
             logger.info("DCR facade active (claude app %s)", claude_app_id)
-
-        # Garde-fou on-demand TLS (ADR 0032) : Caddy appelle `/api/mcp/tls-check?domain=`
-        # avant d'émettre un cert `<slug>.mcp.oto.cx` → 200 seulement pour un projet publié.
-        # NON authentifié (appel localhost Caddy), inséré avant le gate JWT.
-        from . import subdomain_project as _subproj
-        for route in reversed(_subproj.make_routes()):
-            app.router.routes.insert(0, route)
 
         # Découverte sensible au host (ADR 0052 L3) : sur un host réclamé par un
         # tenant tiers, le 401 doit pointer SON PRM, pas le nôtre. Pass-through total

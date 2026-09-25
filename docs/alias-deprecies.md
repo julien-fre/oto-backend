@@ -23,6 +23,12 @@ qui s'exécute. L'ancien mot servait pour deux choses à la fois, l'objet produi
 
 ⚠️ **Cette page couvre CE renommage-là (#519) — pas tous les renommages datés.**
 
+⚠️ **25/09/2026 — la règle de retrait change** (Alexis, #966) : plus de délai fixe (les
+« deux mois habituels » ci-dessous). Une ancienne forme se retire quand **tous les
+consommateurs déclarés** (`.github/contrat-consommateurs.json`) ont suivi, ce que la garde
+de contrat constate : tant que l'un la lit encore, la retirer rougit en le nommant
+(`docs/rest-api.md` §Les consommateurs déclarés du contrat).
+
 **17/09/2026 — retrait SANS préavis, exception à la règle ci-dessous** : la
 convention de retour OAuth unifiée (`?connector=<nom>&connect=connected|error|
 forbidden`, oto-backend#670) doublait deux suffixes hérités (`?zoho=connected`,
