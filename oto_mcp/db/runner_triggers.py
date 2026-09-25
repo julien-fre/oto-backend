@@ -81,6 +81,46 @@ def get_trigger(trigger_id: int, org_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def reprendre_trigger(trigger_id: int, org_id: int,
+                      nouveau_sub: str) -> Optional[tuple[dict, Optional[str], int]]:
+    """Un ADMIN d'org devient le propriétaire d'un déclencheur : `(déclencheur,
+    ancien propriétaire, travaux repris)`, ou None s'il est inconnu dans l'org.
+
+    ⚠️ Le propriétaire n'est pas une colonne de configuration (`update_trigger` le
+    refuse) : c'est l'IDENTITÉ au nom de laquelle l'agent agit, et l'abonnement qui
+    le paie. Il ne change que par ce geste.
+
+    ⚠️ Les travaux EN ATTENTE (`pending`, et `held` pour un webhook en pause)
+    passent au nouveau propriétaire DANS LA MÊME TRANSACTION : ils portent le `sub`
+    qui a servi à les enfiler, et c'est lui qui fixe le jeton du run (`_delegue`) et
+    l'abonnement qui paie (`porteur_du_forfait`). Laissés à l'ancien, ils agiraient
+    encore en son nom APRÈS la reprise — et une réservation glissée entre deux
+    écritures séparées en prendrait un. Repris, pas périmés : une livraison retenue
+    n'est jamais perdue (13/09/2026). Un travail déjà PRIS finit sous l'identité qui
+    l'a pris, comme partout ailleurs."""
+    with _connect() as conn:
+        avant = conn.execute(
+            "SELECT sub FROM runner_triggers WHERE id = %s AND org_id = %s FOR UPDATE",
+            (trigger_id, org_id),
+        ).fetchone()
+        if not avant:
+            return None
+        row = conn.execute(
+            f"UPDATE runner_triggers SET sub = %s WHERE id = %s AND org_id = %s "
+            f"RETURNING {_COLS}",
+            (nouveau_sub, trigger_id, org_id),
+        ).fetchone()
+        repris = conn.execute(
+            """
+            UPDATE runner_jobs SET sub = %s
+             WHERE org_id = %s AND status IN ('pending', 'held')
+               AND payload->>'trigger_id' = %s
+            """,
+            (nouveau_sub, org_id, str(trigger_id)),
+        ).rowcount or 0
+    return dict(row), avant["sub"], repris
+
+
 def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
                    hors_abonnement_d_autrui: Optional[str] = None) -> Optional[dict]:
     """Mise à jour partielle, org-scopée. `champs` ne contient QUE des colonnes

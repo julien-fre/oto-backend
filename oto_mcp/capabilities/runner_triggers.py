@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from . import _abonnement, _cle_exigee, _instruction, _limites_du_run, _modele
-from .. import (db, runner_hook, runner_models, runner_tick,
+from .. import (db, roles, runner_hook, runner_models, runner_tick,
                 session_visibility, tool_alias, tool_registry)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
@@ -50,7 +50,12 @@ class TriggerInput(BaseModel):
                 # pause. C'est le seul moyen de se débarrasser d'un arriéré, et
                 # c'est délibérément une décision de l'utilisateur : la pause,
                 # elle, ne perd plus rien (13/09/2026).
-                "clear_queue"]
+                "clear_queue",
+                # REPRENDRE un agent : un admin d'org en devient le propriétaire —
+                # l'identité au nom de laquelle il agit, et l'abonnement qui le
+                # paie. Verbe séparé d'`update` : le propriétaire n'est pas de la
+                # configuration, et seul un admin peut le changer (25/09/2026).
+                "take_over"]
     trigger_id: Optional[int] = None
     # create / update —
     procedure: Optional[str] = None
@@ -300,6 +305,10 @@ class TriggerOut(BaseModel):
     #: `rotate_secret`, et par RIEN D'AUTRE. Il n'est pas stocké : seul son haché
     #: l'est. Perdu, il se remplace ; il ne se relit jamais.
     hook_secret: Optional[str] = None
+    #: `take_over` seulement : qui possédait l'agent avant la reprise, et combien
+    #: de travaux en attente sont passés au nouveau propriétaire.
+    previous_owner: Optional[str] = None
+    jobs_moved: Optional[int] = None
 
 
 def _avec_pertes(org_id: int, t: dict) -> dict:
@@ -677,6 +686,37 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 "trigger": _avec_hook(ctx.org_id,
                                       db.get_trigger(inp.trigger_id, ctx.org_id))}
 
+    if inp.op == "take_over":
+        # ⚠️ ADMIN d'org seulement : c'est la porte de sortie de la règle « seul le
+        # propriétaire pose son agent sur son abonnement » (`peut_agir_pour`), et
+        # le seul moyen de reprendre l'agent d'un membre parti. Elle ne relâche pas
+        # la règle : l'admin DEVIENT le propriétaire, et tout ce qui suit la juge
+        # à nouveau sur lui.
+        if not roles.is_org_admin(ctx.sub, ctx.org_id):
+            raise AuthzDenied(403, "org_admin_required",
+                              "reprendre un agent est réservé aux admins de l'org")
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if not t:
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+        if t.get("sub") == ctx.sub:
+            return {"trigger": _avec_hook(ctx.org_id, t),
+                    "previous_owner": ctx.sub, "jobs_moved": 0}
+        # Un agent ALLUMÉ sur un abonnement partirait dès l'occurrence suivante sur
+        # celui du repreneur : même garde qu'une pose, jugée sur lui. Éteint, il
+        # se reprend librement — le rallumage rejuge le propriétaire stocké.
+        famille = runner_models.famille(t.get("model"))
+        if t.get("enabled") and _abonnement.est_abonnement(famille):
+            _abonnement.exiger_a_la_pose(ctx.sub, None, famille, org_id=ctx.org_id)
+        repris = db.reprendre_trigger(inp.trigger_id, ctx.org_id, ctx.sub)
+        if repris is None:
+            raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+        nouveau, ancien, deplaces = repris
+        logger.warning("déclencheur %s (org %s) REPRIS par %s (ancien propriétaire %s) "
+                       "— %d travaux en attente passés au nouveau", inp.trigger_id,
+                       ctx.org_id, ctx.sub, ancien, deplaces)
+        return {"trigger": _avec_hook(ctx.org_id, nouveau),
+                "previous_owner": ancien, "jobs_moved": deplaces}
+
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
@@ -906,6 +946,8 @@ CAPABILITIES += [
                           "sont refusés"),
             DeclaredError(404, "trigger_not_found",
                           "automatisation inconnue dans l'org du porteur"),
+            DeclaredError(403, "org_admin_required",
+                          "`take_over` par quelqu'un qui n'est pas admin de l'org"),
         ),
         rest=RestBinding(verb="POST", path="/api/me/runner/triggers"),
         description=(
@@ -913,7 +955,9 @@ CAPABILITIES += [
             "(procedure slug + `cron` + `tools` allowlist ; `tz` defaults to "
             "Europe/Paris and the cron evaluates IN that timezone — say WHICH 8am "
             "you mean) / list / get / update (editing cron or tz revalidates and "
-            "recomputes the next due) / delete. The tick only ENQUEUES a job at "
+            "recomputes the next due) / delete / take_over (org admin only: you "
+            "become the agent's owner — it then acts as YOU and, on a personal "
+            "model subscription, runs on yours; its queued jobs move with it). The tick only ENQUEUES a job at "
             "each due time; execution belongs to the worker. Floor between two "
             "occurrences: 5 minutes — a run is not a ping. `create` (and "
             "`update enabled=true`) is REFUSED when no worker polls this org's "

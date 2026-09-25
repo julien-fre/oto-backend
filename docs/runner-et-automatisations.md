@@ -1303,6 +1303,29 @@ agents (arbitré le 21/09/2026). Ce jour-là, la règle change dans CETTE foncti
 nulle part ailleurs. D'ici là, retoucher l'agent d'un autre est refusé, **sauf
 l'éteindre** : personne ne doit avoir besoin du propriétaire pour arrêter un agent.
 
+**Un admin REPREND un agent : `oto_trigger op=take_over` (25/09/2026).** La règle ci-dessus
+laissait un admin sans recours devant l'agent d'un membre parti, ou d'un autre compte de la
+même personne : il pouvait l'éteindre, pas le poser sur son propre abonnement ni sur le
+pool. La reprise ne RELÂCHE pas la règle, elle change le propriétaire — l'admin devient
+`runner_triggers.sub`, et tout ce qui suit se juge à nouveau sur lui.
+
+- **Admin d'org seulement** (`roles.is_org_admin`), sinon `403 org_admin_required`.
+  Reprendre son propre agent ne fait rien (`jobs_moved: 0`).
+- **Les travaux en attente suivent** (`pending`, et `held` pour un webhook en pause) :
+  leur `sub` passe au repreneur DANS LA MÊME TRANSACTION que le déclencheur
+  (`db.reprendre_trigger`). C'est ce `sub` qui fixe le jeton du run (`_delegue`) et
+  l'abonnement qui paie (`porteur_du_forfait`) : laissés à l'ancien, ils agiraient encore
+  en son nom après la reprise. Repris, jamais périmés — une livraison retenue ne se perd
+  pas. Un travail déjà pris finit sous l'identité qui l'a pris.
+- **Un agent ALLUMÉ sur un abonnement** passe la garde de pose jugée sur le repreneur
+  (`exiger_a_la_pose`) : il partirait dès l'occurrence suivante sur son forfait, ou sur le
+  pool. Éteint, il se reprend librement ; le rallumage rejuge le propriétaire stocké.
+- **Ce qui change avec le propriétaire** : l'identité de l'agent (ses clés perso, ses
+  connexions), et donc ses avertissements d'outils, recalculés au retour. Le **secret du
+  webhook ne change pas** : qui le détient déclenche désormais l'agent au nom du
+  repreneur. Le faire tourner casserait la source en place ; c'est `rotate_secret`, à part.
+- Rendu : `{trigger, previous_owner, jobs_moved}`. Hors périmètre : les flottes.
+
 **Un forfait est PERSONNEL.** Trois refus, tous avant l'écriture :
 `subscription_not_connected` (poser sans connexion = un agent programmé qui ne tourne
 jamais), `subscription_personal_only` sur l'agent d'un collègue, et le même sur une
