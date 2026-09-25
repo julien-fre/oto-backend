@@ -148,6 +148,18 @@ def test_search_person_by_group_translates_to_a_membership_filter(client):
     assert client.list_people.call_args.kwargs == {"groups": "grp_1"}
 
 
+@pytest.mark.exige_pin_oto_core
+def test_search_nested_relation_filter_refused_before_any_call(client):
+    """oto#146 : `{"groups": {"in": {"id": [...]}}}` partait en `…[in][id]=id`. Le
+    refus du client doit atteindre l'agent en INVALID_PARAMS qui écrit la forme
+    attendue — pas en « erreur interne » — et sans aucun appel Folk."""
+    with pytest.raises(McpError, match="pas un objet") as exc:
+        _tool("folk_record")(entity="person", op="search",
+                             filters={"groups": {"in": {"id": ["grp_1"]}}})
+    assert '{"groups": {"in": ["<id>"' in str(exc.value)
+    client.list_people.assert_not_called()
+
+
 def test_search_truncates_but_count_reports_the_real_total(client):
     """`count` est le total RÉEL : un `count` au-dessus du nombre de `results` est le
     seul signal que la liste a été coupée."""

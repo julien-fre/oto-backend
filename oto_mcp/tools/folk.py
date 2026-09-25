@@ -938,9 +938,9 @@ def register(mcp: FastMCP) -> None:
                 not_empty, gt (dates), in / not_in (relations).
                 **Relations (`groups`, `companies`) : la valeur est l'id NU** —
                 `{"groups": "grp_…"}` (= `group_id`), `{"groups": {"not_in":
-                "grp_…"}}`. Ne l'imbrique PAS en `{"in": {"id": […]}}` : l'outil
-                ajoute lui-même le `[id]` du paramètre Folk, et la forme imbriquée
-                part en non-sens (422 « received a plain string »). For `note` and
+                "grp_…"}}`, `{"groups": {"in": ["grp_…", "grp_…"]}}`. Ne l'imbrique
+                PAS en `{"in": {"id": […]}}` : l'outil ajoute lui-même le `[id]` du
+                paramètre Folk, et la forme imbriquée est REFUSÉE. For `note` and
                 `reminder`, Folk only has ONE filter: {"entity_id": "<id>"} (the
                 person/company/deal the note or reminder hangs off) — or pass
                 `entity_id` directly, same thing.
@@ -1136,6 +1136,16 @@ def register(mcp: FastMCP) -> None:
             if entity in _GROUP_ENTITIES and group_id:
                 # Appartenance à un groupe : le client traduit en filter[groups][in][id].
                 f["groups"] = group_id
+            if entity in ("person", "company", "deal"):
+                from oto.tools.folk.client import filter_params
+                try:
+                    # Validation AVANT tout appel réseau : le client refuse une
+                    # forme de filtre qu'il transformerait en non-sens (oto#146)
+                    # et sa ValueError écrit la forme attendue — rendue telle
+                    # quelle plutôt qu'en « erreur interne ».
+                    filter_params(f)
+                except ValueError as e:
+                    raise _bad(str(e))
             c = _client()
             if entity == "person":
                 found = c.list_people(**f)
