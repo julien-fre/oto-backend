@@ -93,3 +93,39 @@ def test_la_capacite_refuse_une_liste_vide():
         RJ.JobsInput(op="claim", org_ids=[])
     assert RJ.JobsInput(op="claim", org_ids=[9207]).org_ids == [9207]
     assert RJ.JobsInput(op="claim").org_ids is None
+
+
+def _familles_de(org):
+    from oto_mcp import db
+    return set(db.runner_arme(org)["families"])
+
+
+def _effacer_presences():
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("DELETE FROM runner_platform_depots")
+
+
+def test_un_worker_filtre_ne_sert_sa_famille_qu_aux_orgs_qu_il_nomme(live):
+    """Seul sur sa famille, un worker d'essai ne la fait pas lire « servie » partout :
+    une autre org poserait un agent que personne ne prendra (`no_runner_armed`)."""
+    from oto_mcp import db
+    from oto_mcp.runner_models import FAMILLES
+    famille = sorted(FAMILLES)[0]
+    _effacer_presences()
+    db.claim_next_job(None, "w-essai-seul", lease_seconds=60, depot=famille,
+                      org_ids=[9301])
+    assert famille in _familles_de(9301)
+    assert famille not in _familles_de(9302), (
+        "un worker filtré sur 9301 déclare sa famille servie pour 9302")
+    _effacer_presences()
+
+
+def test_un_worker_non_filtre_sert_sa_famille_a_toutes_les_orgs(live):
+    from oto_mcp import db
+    from oto_mcp.runner_models import FAMILLES
+    famille = sorted(FAMILLES)[0]
+    _effacer_presences()
+    db.claim_next_job(None, "w-parc-famille", lease_seconds=60, depot=famille)
+    assert famille in _familles_de(9303) and famille in _familles_de(9304)
+    _effacer_presences()

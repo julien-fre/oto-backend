@@ -427,8 +427,13 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
 #: `verify_worker_secret` (`runner_workers.py`) est une lecture pure.
 _PRESENCE_GRANULARITE_S = 30
 
+#: Séparateur de la PORTÉE d'une présence par famille (`anthropic@org:226`) : un
+#: worker filtré par `org_ids` ne sert sa famille qu'à ces orgs-là.
+_PORTEE_ORG = "@org:"
 
-def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> None:
+
+def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str],
+                                    org_ids: Optional[list] = None) -> None:
     """Marque la présence d'un worker de PLATEFORME — SA PROPRE connexion,
     courte, committée avant que `claim_next_job` n'ouvre sa transaction de
     réservation.
@@ -445,7 +450,14 @@ def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> No
     en `WHERE`), quand un `UPDATE` seul ne réagirait jamais à une ligne absente
     — le cas exact d'un worker qui sonde avant d'avoir jamais été vu.
     `runner_platform_depots`, elle, est keyée `(worker_sub, depot)` : c'est une
-    ligne PAR dépôt."""
+    ligne PAR dépôt.
+
+    ⚠️ **Un worker FILTRÉ (`org_ids`, 25/09/2026) note sa famille AVEC SA PORTÉE**
+    (`<famille>@org:<id>`, une ligne par org servie), jamais nue : noté nu, un worker
+    d'essai seul sur une famille la ferait lire « servie » par TOUTES les orgs, qui
+    poseraient des agents qu'il ne prendra jamais — exactement ce que
+    `no_runner_armed` existe pour empêcher. `runner_arme(org)` ne compte une famille
+    portée que pour les orgs qu'elle nomme. Sans DDL : `depot` est un TEXT."""
     with _connect() as conn:
         conn.execute(
             f"""
@@ -463,17 +475,20 @@ def _touch_platform_worker_presence(worker_sub: str, depot: Optional[str]) -> No
         # chaîne libre, et un dépôt que rien ne route n'a rien à promettre.
         from ..runner_models import FAMILLES
         if depot in FAMILLES:
-            conn.execute(
-                f"""
-                INSERT INTO runner_platform_depots (worker_sub, depot, last_seen_at)
-                     VALUES (%s, %s, NOW())
-                ON CONFLICT (worker_sub, depot) DO UPDATE
-                   SET last_seen_at = NOW()
-                 WHERE runner_platform_depots.last_seen_at
-                       < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
-                """,
-                (worker_sub, depot),
-            )
+            depots = ([f"{depot}{_PORTEE_ORG}{int(o)}" for o in org_ids]
+                      if org_ids else [depot])
+            for cle in depots:
+                conn.execute(
+                    f"""
+                    INSERT INTO runner_platform_depots (worker_sub, depot, last_seen_at)
+                         VALUES (%s, %s, NOW())
+                    ON CONFLICT (worker_sub, depot) DO UPDATE
+                       SET last_seen_at = NOW()
+                     WHERE runner_platform_depots.last_seen_at
+                           < NOW() - interval '{_PRESENCE_GRANULARITE_S} seconds'
+                    """,
+                    (worker_sub, cle),
+                )
 
 
 def claim_next_job(org_id: Optional[int], worker_sub: str,
@@ -529,7 +544,7 @@ def claim_next_job(org_id: Optional[int], worker_sub: str,
         # tenait le verrou de cette ligne pendant TOUTE la réservation : les
         # 12 workers passaient un par un. Sa propre connexion, courte,
         # committée avant que la réservation ne commence.
-        _touch_platform_worker_presence(worker_sub, depot)
+        _touch_platform_worker_presence(worker_sub, depot, org_ids)
     with _connect() as conn:
         if org_id is not None:
             conn.execute(
@@ -1142,15 +1157,21 @@ def runner_arme(org_id: int) -> dict:
     `families` (12/09/2026) = les familles de modèles qu'un worker de PLATEFORME
     vivant a déclarées au claim, dans la même fenêtre. ⚠️ Un worker au jeton
     d'org compte dans `workers` mais ne déclare aucune famille : il ne sert que
-    les agents sans modèle (cf. `capabilities/_modele.exige_servi`)."""
+    les agents sans modèle (cf. `capabilities/_modele.exige_servi`). Une famille
+    PORTÉE (`<famille>@org:<id>`, worker filtré par `org_ids`) ne compte que pour
+    l'org qu'elle nomme."""
     with _connect() as conn:
         familles = conn.execute(
             """
-            SELECT COALESCE(array_agg(DISTINCT depot ORDER BY depot), '{}') AS f
-              FROM runner_platform_depots
-             WHERE last_seen_at > NOW() - make_interval(secs => %s)
+            SELECT COALESCE(array_agg(famille ORDER BY famille), '{}') AS f
+              FROM (SELECT DISTINCT split_part(depot, %s, 1) AS famille
+                      FROM runner_platform_depots
+                     WHERE last_seen_at > NOW() - make_interval(secs => %s)
+                       AND (position(%s in depot) = 0
+                            OR depot = split_part(depot, %s, 1) || %s || %s)) t
             """,
-            (ARME_FENETRE_S,),
+            (_PORTEE_ORG, ARME_FENETRE_S, _PORTEE_ORG, _PORTEE_ORG, _PORTEE_ORG,
+             str(int(org_id))),
         ).fetchone()
         row = conn.execute(
             """
