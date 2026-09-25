@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from . import couches as dsl
 from .couches import unwrap
 from . import charge_a_renvoyer as car
 from .declaration import _fields
@@ -54,19 +55,28 @@ TYPES_ARMES = ("number", "bool", "date", "datetime", "email", "phone")
 #: Ce qu'il faut faire, par type — la DESTINATION du refus, pas seulement sa cause.
 _OU_METTRE_QUOI = {
     "email": ("écris l'adresse seule dans la valeur ; ce que tu en sais — la source, "
-              "le doute, l'échec d'une recherche — va dans `<colonne>.comment`. Si "
-              "aucune adresse n'a été trouvée, OMETS la colonne : une absence ne "
-              "s'écrit pas comme une valeur"),
+              "le doute — va dans `<colonne>.comment`"),
     "phone": ("écris le numéro seul, de préférence au format international (`+`, "
               "indicatif, puis le numéro — espaces et tirets acceptés) ; le poste, le "
-              "contexte ou la source vont dans `<colonne>.comment`. Si aucun numéro "
-              "n'a été trouvé, OMETS la colonne"),
+              "contexte ou la source vont dans `<colonne>.comment`"),
     "number": ("écris le nombre seul ; l'unité, l'exercice ou la tranche vont dans "
                "`<colonne>.comment`"),
     "date": "écris la date au format `AAAA-MM-JJ` ; la précision va dans `.comment`",
     "datetime": "écris l'horodatage au format `AAAA-MM-JJ` (ou ISO complet)",
     "bool": "écris `true` ou `false`, pas leur texte",
 }
+
+
+def _rien_trouve(cle: str) -> str:
+    """La clause commune à tout refus de type : « cherché, rien » a son mot (oto#140).
+
+    Cent douze des cent dix-huit violations mesurées étaient des PHRASES d'absence
+    (`"non trouvé"`) : c'est le cas que le refus doit aiguiller, quel que soit le type.
+    Il disait « omets la colonne » — or omettre veut dire « je n'y touche pas » : la
+    recherche vaine ne laissait aucune trace, et une valeur en place survivait à la
+    recherche qui l'avait démentie. `@empty` dit l'absence, sa raison va dans `comment`."""
+    return (f"si rien n'a été trouvé, écris `{dsl.VIDE_DELIBERE}` avec la raison dans "
+            f"`{cle}.comment` ; pour ne pas toucher à la case, omets la colonne")
 
 
 def _juge(valeur: Any, ftype: str) -> bool:
@@ -113,9 +123,8 @@ def types_trahis(schema: Optional[dict], merged: dict, *,
             continue
         if not _juge(valeur, ftype):
             continue
-        quoi = _OU_METTRE_QUOI.get(ftype, "")
-        refus = (f"`{cle}` est déclarée `{ftype}` et reçoit {valeur!r} — refusé"
-                 + (f". Pour écrire : {quoi}" if quoi else ""))
+        quoi = " ; ".join(q for q in (_OU_METTRE_QUOI.get(ftype, ""), _rien_trouve(cle)) if q)
+        refus = f"`{cle}` est déclarée `{ftype}` et reçoit {valeur!r} — refusé. Pour écrire : {quoi}"
         if written is None or cle in written:
             out.append(refus)
             car.noter(charge, car.champ(car.RACINE, cle), gabarit(f))

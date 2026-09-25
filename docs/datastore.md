@@ -891,7 +891,8 @@ retirés (espaces, points, tirets, barres, parenthèses, `(0)` après l'indicati
 tête lu comme `+` ; passe l'international E.164 (`+`, indicatif qui ne commence pas par 0,
 7 à 15 chiffres) ou un national de 6 à 15 chiffres. Armé par sa déclaration comme `email`
 (`types_declares.TYPES_ARMES`), avec la destination du refus (`.comment` pour le poste ou la
-source, omettre la colonne si rien n'a été trouvé). ⚠️ La valeur n'est **pas réécrite** en
+source ; `@empty` et la raison dans `.comment` si rien n'a été trouvé, et omettre la
+colonne seulement pour ne pas toucher à la case, oto#140). ⚠️ La valeur n'est **pas réécrite** en
 base : la réécrire changerait son identité face à la fusion, et un même numéro remis dans
 une autre mise en forme emporterait ses couches.
 
