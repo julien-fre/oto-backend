@@ -200,6 +200,18 @@ def test_routine_borne_1_100(env):
     assert out["routine_run_id"] == "r1"
 
 
+def test_tables_sans_sync_dit_pourquoi(env, monkeypatch):
+    from oto.tools.common import UpstreamHTTPError
+
+    def refus(self, query, cursor=None, limit=None):
+        raise UpstreamHTTPError(400, {"message": 'Tables do not have ClayQL sync enabled: "T" (t_x)'},
+                                service="clay")
+    monkeypatch.setattr(_FauxApi, "query_tables", refus)
+    with pytest.raises(McpError) as e:
+        env["fn"]("clay_tables_query")(query={"tables": [{"id": "t_x"}]})
+    assert "ClayQL sync" in str(e.value)
+
+
 def test_tables_403_dit_enterprise(env):
     with pytest.raises(McpError) as e:
         env["fn"]("clay_tables_query")(query={})

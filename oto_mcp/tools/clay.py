@@ -448,7 +448,7 @@ def register(mcp: FastMCP) -> None:
                           limit: int = 50) -> dict:
         """Read rows from existing Clay tables with a structured query (read-only).
 
-        Clay Enterprise only (API table sync). Pages come least-recently-updated
+        Clay Enterprise only: the table must have ClayQL sync enabled. Pages come least-recently-updated
         first; a row updated mid-scan can come back, so deduplicate by id. Pass the
         returned `cursor` for the next page (limit 1-100). To WRITE rows, use
         clay_push_rows."""
@@ -456,9 +456,11 @@ def register(mcp: FastMCP) -> None:
             return _client().query_tables(query, cursor=cursor,
                                               limit=max(1, min(limit, 100)))
         except UpstreamHTTPError as e:
-            if e.status_code == 403:
+            detail = str(e.body)[:300]
+            # Constaté en live : une table sans sync ClayQL répond 400, pas 403.
+            if e.status_code == 403 or "ClayQL sync" in detail:
                 raise _bad(
-                    "Clay refuse la lecture de tables pour cette clé (403) : "
-                    "`/tables/query` est réservé au plan Enterprise de Clay. "
-                    f"Détail : {str(e.body)[:200]}")
+                    "Clay refuse la lecture de cette table : la synchronisation API "
+                    "(« ClayQL sync », plan Enterprise) n'y est pas activée. L'écriture "
+                    f"par clay_push_rows reste possible. Détail : {detail}")
             raise
