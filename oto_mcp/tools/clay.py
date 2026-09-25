@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import time
 from typing import Any, Optional
 
@@ -87,6 +88,53 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     if not is_clay_webhook_url(url):
         raise ValueError("webhook : URL https://…clay.com/… attendue")
     egress.check_url(url, connector=CONNECTOR, field="webhook")
+
+
+REFERENCE_CHUNK = 30_000
+_HEADING = re.compile(r"^(#{1,4}) +(.+?)\s*$")
+
+
+def _sections(text: str) -> list[dict]:
+    """Découpe un Markdown en sections `{level, title, start, end}` — `end` = début
+    du prochain titre de niveau ≤, donc une section INCLUT ses sous-sections."""
+    lines = text.split("\n")
+    heads, pos = [], 0
+    for line in lines:
+        m = _HEADING.match(line)
+        if m:
+            heads.append({"level": len(m.group(1)), "title": m.group(2), "start": pos})
+        pos += len(line) + 1
+    for i, h in enumerate(heads):
+        h["end"] = next((k["start"] for k in heads[i + 1:] if k["level"] <= h["level"]),
+                        len(text))
+    return heads
+
+
+def _reference_view(text: str, section: Optional[str], offset: int) -> dict:
+    """La référence de requête Clay (un Markdown de ~180 Ko) servie par morceaux :
+    sommaire + l'essentiel sans `section`, sinon la section demandée, paginée."""
+    heads = _sections(text)
+    toc = [{"title": h["title"], "level": h["level"], "chars": h["end"] - h["start"]}
+           for h in heads]
+    if not section:
+        core = [h for h in heads if h["title"].lower() in ("grammar", "operators")]
+        return {"sections": toc,
+                "content": "\n\n".join(text[h["start"]:h["end"]] for h in core),
+                "hint": "Pass `section` (a title above) for the rest."}
+    want = section.strip().lower()
+    hit = (next((h for h in heads if h["title"].lower() == want), None)
+           or next((h for h in heads if want in h["title"].lower()), None))
+    if hit is None:
+        raise _bad(f"Section « {section} » introuvable. Sections : "
+                   + ", ".join(h["title"] for h in heads))
+    body = text[hit["start"]:hit["end"]]
+    offset = max(0, offset)
+    chunk = body[offset:offset + REFERENCE_CHUNK]
+    out: dict[str, Any] = {"section": hit["title"], "content": chunk,
+                           "chars": len(body), "offset": offset}
+    if offset + REFERENCE_CHUNK < len(body):
+        out["next_offset"] = offset + REFERENCE_CHUNK
+    return out
 
 
 def _entries(sub: str) -> dict[str, dict]:
@@ -338,9 +386,17 @@ def register(mcp: FastMCP) -> None:
         return _client().list_search_fields(source_type)
 
     @mcp.tool()
-    def clay_search_reference() -> dict:
-        """Grammar of Clay search queries, for clay_search in query mode."""
-        return _client().get_query_reference()
+    def clay_search_reference(section: Optional[str] = None, offset: int = 0) -> dict:
+        """Clay's search-query language, for clay_search in query mode — served by
+        section (the full reference is ~180 KB).
+
+        Without `section`: the table of contents plus the Grammar and Operators
+        sections. With `section`: that section and its subsections (title match,
+        case-insensitive — e.g. "People fields", "Location filtering", "Examples"),
+        at most 30,000 characters per call; pass `next_offset` back as `offset` for
+        the rest."""
+        ref = _client().get_query_reference().get("reference") or ""
+        return _reference_view(ref, section, offset)
 
     @mcp.tool()
     def clay_search(

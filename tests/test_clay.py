@@ -258,3 +258,40 @@ def test_budget_dhorloge_rend_un_recu_partiel(env, monkeypatch):
     assert [f["index"] for f in out["failed"]] == [1, 2, 3]
     assert "time budget" in out["failed"][0]["error"]
     assert env["metas"][-1][-1]["submissions"] == 1
+
+
+_REF = "\n".join([
+    "# Clay search query reference", "intro",
+    "## Grammar", "g" * 10,
+    "## Operators", "o" * 10,
+    "## Field docs", "### People fields", "p" * 10, "### Companies fields", "c" * 50,
+    "## Examples", "e" * 70_000,
+])
+
+
+def test_reference_sans_section_sommaire_et_essentiel():
+    out = C._reference_view(_REF, None, 0)
+    assert [s["title"] for s in out["sections"]][:3] == [
+        "Clay search query reference", "Grammar", "Operators"]
+    assert "## Grammar" in out["content"] and "## Operators" in out["content"]
+    assert "## Examples" not in out["content"]
+
+
+def test_reference_section_inclut_ses_sous_sections():
+    out = C._reference_view(_REF, "field docs", 0)
+    assert "### People fields" in out["content"] and "### Companies fields" in out["content"]
+    assert "## Examples" not in out["content"]
+    assert "next_offset" not in out
+
+
+def test_reference_paginee():
+    first = C._reference_view(_REF, "Examples", 0)
+    assert len(first["content"]) == C.REFERENCE_CHUNK and first["next_offset"] == C.REFERENCE_CHUNK
+    last = C._reference_view(_REF, "Examples", 60_000)
+    assert "next_offset" not in last
+
+
+def test_reference_section_inconnue_liste_les_titres():
+    with pytest.raises(McpError) as e:
+        C._reference_view(_REF, "nope", 0)
+    assert "Grammar" in str(e.value)
