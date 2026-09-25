@@ -7,7 +7,8 @@
 - `max_run_seconds` : la durée murale d'un run. Au-delà, l'exécuteur l'arrête.
 
 Aucune n'a de défaut ICI, comme `max_steps` : NULL = rien ne part avec le travail, et
-l'exécuteur applique le sien (900 s aujourd'hui ; pas de plafond de jetons). Poser un
+l'exécuteur garde exactement ce qu'il avait (la boucle ordinaire n'a aucune échéance
+murale ; le chemin one-shot garde ses 900 s ; pas de plafond de jetons). Poser un
 défaut dans le backend fabriquerait une borne que personne n'a déclarée.
 
 `0` est le geste pour RETIRER une limite posée (`update` ne distingue pas une absence

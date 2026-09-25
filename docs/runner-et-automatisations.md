@@ -889,8 +889,10 @@ sans défaut côté plateforme (`capabilities/_limites_du_run.py`) :
   l'arrête. La borne haute est celle de la ferme (un run à la fois par sandbox), pas un
   choix de produit : l'étendre est une question de capacité.
 
-NULL = rien ne part avec le travail et l'exécuteur garde les siennes (900 s ; aucun
-plafond de jetons), exactement comme `max_steps`. `0` à la retouche **retire** la limite
+NULL = rien ne part avec le travail et chaque moteur garde exactement ce qu'il avait
+(la boucle ordinaire n'a aucune échéance murale, le chemin one-shot ses 900 s ; aucun
+plafond de jetons), exactement comme `max_steps`. Atteinte, une limite conclut
+`stopped=max_seconds|max_tokens` : un arrêt à la borne, pas un échec. `0` à la retouche **retire** la limite
 (écrit NULL). Charge du travail : `max_tokens`, `max_seconds` — présents seulement quand
 ils sont déclarés.
 

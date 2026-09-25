@@ -296,7 +296,7 @@ class FleetState(BaseModel):
     empty_jobs: Optional[int] = Field(None, description=(
         "Finished jobs that called `data_claim_next` and got no row."))
     stopped_after_write: Optional[int] = Field(None, description=(
-        "Finished jobs stopped by `max_tokens`/`max_steps` after a successful write."))
+        "Finished jobs stopped by `max_tokens`/`max_steps`/`max_seconds` after a successful write."))
     reservation_unmeasured: Optional[int] = Field(None, description=(
         "Finished jobs whose run has no reservation count (no run, or opened before "
         "the measure) — never counted as empty."))

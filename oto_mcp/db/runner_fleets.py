@@ -576,7 +576,7 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
                                     WHERE r.run_id = runner_jobs.run_id
                                       AND r.lignes_reservees = 0))       AS empty_jobs,
                    COUNT(*) FILTER (WHERE status IN ('done', 'failed')
-                       AND result->>'stopped' IN ('max_tokens', 'max_steps')
+                       AND result->>'stopped' IN ('max_tokens', 'max_steps', 'max_seconds')
                        AND jsonb_typeof(result->'tool_counts'->'data_write') = 'number'
                        AND result->'tool_counts'->'data_write' > '0'::jsonb)
                                                                        AS stopped_after_write,
