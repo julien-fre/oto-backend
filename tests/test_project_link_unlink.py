@@ -79,6 +79,9 @@ def surface(monkeypatch):
                         lambda ot, oid, name: ({"id": NAMESPACES[name], "datastore": name}
                                                if (ot, oid) == ("org", "2")
                                                and name in NAMESPACES else None))
+    # Aucun ancien nom de tableau dans ce banc (`datastore_aliases`) : un nom inconnu
+    # reste inconnu, comme avant les alias.
+    monkeypatch.setattr(P.db, "get_datastore_by_alias", lambda ot, oid, name: None)
     monkeypatch.setattr(P.org_store, "get_instruction",
                         lambda ot, oid, slug: ({"id": GUIDES[slug], "slug": slug}
                                                if slug in GUIDES else None))

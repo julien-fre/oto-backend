@@ -201,7 +201,8 @@ def test_un_tableau_NOMME_comme_l_identifiant_d_un_autre_ne_le_capte_pas(monde):
 
 #: Les résolveurs par NOM d'un tableau. Tout appel hors de ces lieux déclarés est un
 #: pont neuf à justifier — une entrée ici est une décision, relue en revue.
-_RESOLVEURS_PAR_NOM = {"get_datastore", "resolve_datastore_ns", "resolve_datastore_ids_by_name"}
+_RESOLVEURS_PAR_NOM = {"get_datastore", "get_datastore_by_alias", "resolve_datastore_ns",
+                       "resolve_datastore_ids_by_name"}
 
 EXEMPTIONS = {
     ("oto_mcp/datastore/core.py", "_resolve"):

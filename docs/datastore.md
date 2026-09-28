@@ -3085,7 +3085,7 @@ recours**, quand aucun tableau VIVANT ne porte ce nom dans la portée :
 Les règles qui rendent un alias sûr, chacune couverte par
 `tests/datastore/test_alias_ancien_nom_live.py` :
 
-- ⚠️ **Même prédicat de visibilité que le nom vivant** (`_VISIBLE_PAR_L_ACTEUR`, écrit
+- ⚠️ **Même prédicat de visibilité que le nom vivant** (`_visible_par_l_acteur()`, écrit
   une fois) — un alias qui résoudrait là où le nom ne résout pas serait un IDOR. La
   portée d'un alias est celle de SON tableau, lue par jointure : il suit un transfert.
 - ⚠️ **Le nom vivant gagne toujours, et un nom REPRIS purge ses alias** (`_purger_alias`,

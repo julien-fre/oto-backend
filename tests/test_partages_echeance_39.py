@@ -89,7 +89,9 @@ def test_la_garde_voit_les_lectures_connues_et_aucune_exemption_morte():
     lectures relevées le 24/09, et chaque exemption doit encore désigner une lecture."""
     _, vues = _lectures_sans_predicat()
     attendues = {
-        ("oto_mcp/db/datastore_ns.py", "resolve_datastore_ns"),
+        # La lecture de `resolve_datastore_ns` vit, depuis les alias de tableau
+        # (28/09/2026), dans le prédicat partagé par les résolutions par nom.
+        ("oto_mcp/db/datastore_ns.py", "_visible_par_l_acteur"),
         ("oto_mcp/db/datastore_ns.py", "get_resource_grant"),
         ("oto_mcp/db/projects.py", "list_projects_granted_to"),
         ("oto_mcp/db/doc_grants.py", "list_docs_granted_to"),

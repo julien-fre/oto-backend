@@ -55,22 +55,26 @@ DDL_COLONNE_CONTEXTE_ORG = (f"ALTER TABLE user_datastores ADD COLUMN IF NOT EXIS
 # UNE fois, et lu par chaque résolution par nom : le nom vivant comme l'ancien nom
 # (`datastore_aliases`). Deux copies finiraient par diverger, et la divergence d'un
 # prédicat de visibilité s'appelle un IDOR : un alias qui résoudrait là où le nom vivant
-# ne résout pas donnerait un tableau que l'acteur ne voit pas.
+# ne résout pas donnerait un tableau que l'acteur ne voit pas. Une FONCTION et non une
+# constante de module : la garde `tests/test_partages_echeance_39.py` exige que chaque
+# lecture de `resource_grants` vive dans une fonction qui porte `PARTAGE_VIVANT`.
 #
 # ADR 0049 (cadrage 10/07) : team-owned = visible dans le contexte de l'org parente (le
 # caller passe mes équipes — ou toutes celles de l'org si admin).
-_VISIBLE_PAR_L_ACTEUR = (
-    "     (d.owner_type = 'user' AND d.owner_id = %(sub)s)"
-    "  OR (d.owner_type = 'org'  AND d.owner_id = ANY(%(org)s))"
-    "  OR (d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s))"
-    "  OR EXISTS ("
-    "       SELECT 1 FROM resource_grants g"
-    "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
-    f"          AND {PARTAGE_VIVANT_G}"
-    "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
-    "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
-    "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
-)
+def _visible_par_l_acteur() -> str:
+    """Le fragment SQL de visibilité ci-dessus (paramètres `sub`, `org`, `grp`)."""
+    return (
+        "     (d.owner_type = 'user' AND d.owner_id = %(sub)s)"
+        "  OR (d.owner_type = 'org'  AND d.owner_id = ANY(%(org)s))"
+        "  OR (d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s))"
+        "  OR EXISTS ("
+        "       SELECT 1 FROM resource_grants g"
+        "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
+        f"          AND {PARTAGE_VIVANT_G}"
+        "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
+        "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
+        "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
+    )
 
 
 def _purger_alias(conn, owner_type: str, owner_id: str, nom: str) -> None:
@@ -232,7 +236,7 @@ def resolve_datastore_ns(
             "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.schema, d.created_at "
             "FROM user_datastores d "
             "WHERE (d.namespace = %(ns)s OR d.id = %(nsid)s) AND ("
-            f"{_VISIBLE_PAR_L_ACTEUR}"
+            f"{_visible_par_l_acteur()}"
             ") "
             "ORDER BY CASE WHEN d.namespace = %(ns)s THEN 0 ELSE 1 END, "
             "         CASE WHEN d.owner_type='user' AND d.owner_id=%(sub)s THEN 0 "
@@ -256,7 +260,7 @@ def _resoudre_ancien_nom(
     tableau vivant ne porte ce nom dans la portée (le nom vivant gagne toujours, et un
     nom repris a purgé ses alias : `_purger_alias`).
 
-    Même prédicat de visibilité que le nom vivant (`_VISIBLE_PAR_L_ACTEUR`), même
+    Même prédicat de visibilité que le nom vivant (`_visible_par_l_acteur`), même
     ordre de propriétaire (perso > org > le reste). Deux tableaux visibles au MÊME rang
     qui ont tous deux porté ce nom — deux orgs qui partagent chacune un ancien
     « vivier » — ne se départagent PAS : `None`, comme un nom inconnu. Choisir le plus
@@ -274,7 +278,7 @@ def _resoudre_ancien_nom(
             "            WHEN d.owner_type = 'org' THEN 1 ELSE 2 END AS rang "
             "FROM datastore_aliases a JOIN user_datastores d ON d.id = a.ns_id "
             "WHERE a.alias = %(ns)s AND ("
-            f"{_VISIBLE_PAR_L_ACTEUR}"
+            f"{_visible_par_l_acteur()}"
             ") ORDER BY rang",
             {"ns": nom, "sub": sub, "org": org_txt, "grp": grp_txt},
         ).fetchall()
@@ -326,7 +330,7 @@ def resolve_datastore_ids_by_name(
             "            ELSE 3 END AS rang "
             "FROM user_datastores d "
             "WHERE d.namespace = ANY(%(names)s) AND ("
-            f"{_VISIBLE_PAR_L_ACTEUR}"
+            f"{_visible_par_l_acteur()}"
             ")",
             {"names": list(names), "sub": sub, "org": org_txt, "grp": grp_txt},
         ).fetchall()
@@ -366,7 +370,7 @@ def _anciens_noms_par_lot(
             "            ELSE 3 END AS rang "
             "FROM datastore_aliases a JOIN user_datastores d ON d.id = a.ns_id "
             "WHERE a.alias = ANY(%(names)s) AND ("
-            f"{_VISIBLE_PAR_L_ACTEUR}"
+            f"{_visible_par_l_acteur()}"
             ")",
             {"names": list(names), "sub": sub, "org": org_txt, "grp": grp_txt},
         ).fetchall()
