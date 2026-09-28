@@ -426,6 +426,13 @@ def _resolve_tableau_id(row: dict, ref: str) -> Optional[str]:
         ns = db.get_datastore(otype, oid, ref)
         if ns and ns.get("id") is not None:
             return str(ns["id"])
+    # Aucun tableau vivant sous ce nom : peut-être l'ANCIEN nom d'un tableau renommé,
+    # que citent encore une procédure ou un agent. Seulement après tous les noms
+    # vivants, pour qu'un nom repris par un autre tableau lui revienne.
+    for otype, oid in _tableau_owner_candidates(row):
+        ns = db.get_datastore_by_alias(otype, oid, ref)
+        if ns and ns.get("id") is not None:
+            return str(ns["id"])
     return None
 
 

@@ -715,6 +715,16 @@ trouve pas (`transcription.DDL_COLONNE_TRANSCRIPT`, sous garde de catalogue). L'
 code ne la lit ni ne l'écrit. Le retour arrière retire la colonne ; le code qui l'écrit
 doit être retiré avant lui.
 
+`0027_alias_de_tableau` (28/09/2026, après `0026_transcription_tours`) crée la table
+NEUVE `datastore_aliases` — les anciens noms d'un tableau renommé, lus en dernier recours
+par la résolution par nom (`docs/datastore.md` §Un tableau renommé répond à son ancien
+nom). Même régime que 0004 et 0011 : le démarrage la crée aussi (fragment
+`db/schema/datastore.py::ALIASES`, exécuté tel quel par la révision), idempotents l'un
+envers l'autre, **ordre indifférent** — l'ancien code ignore la table, un renommage qu'il
+fait ne laisse simplement pas d'alias. La clé étrangère vers `user_datastores` prend un
+verrou sur cette table à la création seulement, borné par `lock_timeout`. Le retour
+arrière retire la table : les anciens noms cessent de résoudre, rien d'autre ne change.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

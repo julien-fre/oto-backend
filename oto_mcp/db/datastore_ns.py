@@ -51,6 +51,48 @@ DDL_COLONNE_CONTEXTE_ORG = (f"ALTER TABLE user_datastores ADD COLUMN IF NOT EXIS
                             f"REFERENCES orgs(id) ON DELETE SET NULL")
 
 
+# Le prédicat de VISIBILITÉ d'un tableau `d` pour un acteur `(sub, org, grp)` — écrit
+# UNE fois, et lu par chaque résolution par nom : le nom vivant comme l'ancien nom
+# (`datastore_aliases`). Deux copies finiraient par diverger, et la divergence d'un
+# prédicat de visibilité s'appelle un IDOR : un alias qui résoudrait là où le nom vivant
+# ne résout pas donnerait un tableau que l'acteur ne voit pas.
+#
+# ADR 0049 (cadrage 10/07) : team-owned = visible dans le contexte de l'org parente (le
+# caller passe mes équipes — ou toutes celles de l'org si admin).
+_VISIBLE_PAR_L_ACTEUR = (
+    "     (d.owner_type = 'user' AND d.owner_id = %(sub)s)"
+    "  OR (d.owner_type = 'org'  AND d.owner_id = ANY(%(org)s))"
+    "  OR (d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s))"
+    "  OR EXISTS ("
+    "       SELECT 1 FROM resource_grants g"
+    "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
+    f"          AND {PARTAGE_VIVANT_G}"
+    "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
+    "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
+    "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
+)
+
+
+def _purger_alias(conn, owner_type: str, owner_id: str, nom: str) -> None:
+    """Un tableau PREND `nom` chez `(owner_type, owner_id)` : les alias de ce nom, chez
+    ce propriétaire, cessent d'exister.
+
+    C'est la règle qui rend les alias sûrs. Sans elle : A est renommé de « vivier » en
+    « vivier-2024 » (alias vivier → A) ; C est créé sous « vivier » et sert — le nom
+    vivant gagne, rien à dire ; puis C est supprimé, et « vivier » retombe EN SILENCE
+    sur A. Tout ce qui écrivait dans C écrit alors dans A. Un nom repris appartient à
+    son nouveau porteur, et à personne après lui.
+
+    Appelée par chaque chemin où un tableau prend un nom : création, renommage (y
+    compris le retour à un ancien nom, qui retire l'alias du tableau lui-même) et
+    transfert vers un autre propriétaire."""
+    conn.execute(
+        "DELETE FROM datastore_aliases a USING user_datastores d "
+        "WHERE a.ns_id = d.id AND d.owner_type = %s AND d.owner_id = %s AND a.alias = %s",
+        (owner_type, owner_id, nom),
+    )
+
+
 def create_datastore(owner_type: str, owner_id: str, namespace: str, *,
                      context_org_id: Optional[int] = None) -> int:
     """Crée un namespace possédé par `(owner_type, owner_id)` (ADR 0030). `owner_type`
@@ -74,6 +116,10 @@ def create_datastore(owner_type: str, owner_id: str, namespace: str, *,
             ).fetchone()
         except psycopg.errors.UniqueViolation as e:
             raise ValueError(f"namespace `{namespace}` existe déjà") from e
+        # Le nom est pris : il n'est plus l'ancien nom de personne (`_purger_alias`).
+        # Même connexion, même transaction que l'insertion : le pool ne rend la
+        # connexion qu'après validation des deux.
+        _purger_alias(conn, owner_type, owner_id, namespace)
         return int(row["id"])
 
 
@@ -186,18 +232,7 @@ def resolve_datastore_ns(
             "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.schema, d.created_at "
             "FROM user_datastores d "
             "WHERE (d.namespace = %(ns)s OR d.id = %(nsid)s) AND ("
-            "     (d.owner_type = 'user' AND d.owner_id = %(sub)s)"
-            "  OR (d.owner_type = 'org'  AND d.owner_id = ANY(%(org)s))"
-            # ADR 0049 (cadrage 10/07) : team-owned = visible dans le contexte de l'org
-            # parente (le caller passe mes équipes — ou toutes celles de l'org si admin).
-            "  OR (d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s))"
-            "  OR EXISTS ("
-            "       SELECT 1 FROM resource_grants g"
-            "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
-            f"          AND {PARTAGE_VIVANT_G}"
-            "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
-            "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
-            "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
+            f"{_VISIBLE_PAR_L_ACTEUR}"
             ") "
             "ORDER BY CASE WHEN d.namespace = %(ns)s THEN 0 ELSE 1 END, "
             "         CASE WHEN d.owner_type='user' AND d.owner_id=%(sub)s THEN 0 "
@@ -205,12 +240,54 @@ def resolve_datastore_ns(
             {"ns": namespace, "nsid": ns_id, "sub": sub, "org": org_txt, "grp": grp_txt},
         ).fetchall()
     if not rows:
-        return None
+        return None if ns_id is not None else _resoudre_ancien_nom(
+            namespace, sub=sub, org_txt=org_txt, grp_txt=grp_txt)
     premier = dict(rows[0])
     if ns_id is not None and int(premier["id"]) != ns_id \
             and any(int(r["id"]) == ns_id for r in rows):
         raise AdresseAmbigue(str(namespace), par_id=ns_id, par_nom=int(premier["id"]))
     return premier
+
+
+def _resoudre_ancien_nom(
+    nom: str, *, sub: str, org_txt: list[str], grp_txt: list[str],
+) -> Optional[dict]:
+    """Le tableau dont `nom` était le nom AVANT un renommage — lu seulement quand aucun
+    tableau vivant ne porte ce nom dans la portée (le nom vivant gagne toujours, et un
+    nom repris a purgé ses alias : `_purger_alias`).
+
+    Même prédicat de visibilité que le nom vivant (`_VISIBLE_PAR_L_ACTEUR`), même
+    ordre de propriétaire (perso > org > le reste). Deux tableaux visibles au MÊME rang
+    qui ont tous deux porté ce nom — deux orgs qui partagent chacune un ancien
+    « vivier » — ne se départagent PAS : `None`, comme un nom inconnu. Choisir le plus
+    récent ou le plus petit identifiant serait le défaut que #365 a fermé pour les noms
+    vivants, rouvert pour les anciens.
+
+    ⚠️ Un nom en CHIFFRES n'arrive jamais ici (l'appelant l'écarte) : des chiffres
+    adressent un tableau par son identifiant, et un tableau jadis nommé « 77 » ne doit
+    pas répondre à la place du tableau 77 devenu invisible."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.schema, "
+            "       d.created_at, "
+            "       CASE WHEN d.owner_type = 'user' AND d.owner_id = %(sub)s THEN 0 "
+            "            WHEN d.owner_type = 'org' THEN 1 ELSE 2 END AS rang "
+            "FROM datastore_aliases a JOIN user_datastores d ON d.id = a.ns_id "
+            "WHERE a.alias = %(ns)s AND ("
+            f"{_VISIBLE_PAR_L_ACTEUR}"
+            ") ORDER BY rang",
+            {"ns": nom, "sub": sub, "org": org_txt, "grp": grp_txt},
+        ).fetchall()
+    if not rows:
+        return None
+    meilleur = rows[0]["rang"]
+    au_meilleur_rang = {int(r["id"]) for r in rows if r["rang"] == meilleur}
+    if len(au_meilleur_rang) > 1:
+        logger.info("ancien nom de tableau ambigu %r : %s", nom, sorted(au_meilleur_rang))
+        return None
+    ligne = dict(rows[0])
+    ligne.pop("rang", None)
+    return ligne
 
 
 def resolve_datastore_ids_by_name(
@@ -249,16 +326,7 @@ def resolve_datastore_ids_by_name(
             "            ELSE 3 END AS rang "
             "FROM user_datastores d "
             "WHERE d.namespace = ANY(%(names)s) AND ("
-            "     (d.owner_type = 'user' AND d.owner_id = %(sub)s)"
-            "  OR (d.owner_type = 'org'  AND d.owner_id = ANY(%(org)s))"
-            "  OR (d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s))"
-            "  OR EXISTS ("
-            "       SELECT 1 FROM resource_grants g"
-            "        WHERE g.resource_type = 'datastore_namespace' AND g.resource_id = d.id::text"
-            f"          AND {PARTAGE_VIVANT_G}"
-            "          AND ( (g.principal_type = 'user'  AND g.principal_id = %(sub)s)"
-            "             OR (g.principal_type = 'org'   AND g.principal_id = ANY(%(org)s))"
-            "             OR (g.principal_type = 'group' AND g.principal_id = ANY(%(grp)s)) ))"
+            f"{_VISIBLE_PAR_L_ACTEUR}"
             ")",
             {"names": list(names), "sub": sub, "org": org_txt, "grp": grp_txt},
         ).fetchall()
@@ -270,7 +338,65 @@ def resolve_datastore_ids_by_name(
         elif r["rang"] == rang:
             ids.add(int(r["id"]))
     resolus = {nom: next(iter(ids)) for nom, (_, ids) in meilleurs.items() if len(ids) == 1}
-    return resolus, {nom for nom, (_, ids) in meilleurs.items() if len(ids) > 1}
+    ambigus = {nom for nom, (_, ids) in meilleurs.items() if len(ids) > 1}
+    # Les noms qu'aucun tableau vivant ne porte : peut-être l'ANCIEN nom d'un tableau
+    # renommé (`datastore_aliases`). Même prédicat, même rang, même règle d'ambiguïté —
+    # un lien de projet ou une campagne qui citent un ancien nom retrouvent leur
+    # tableau, et jamais l'un de deux au hasard.
+    restants = [n for n in names if n not in resolus and n not in ambigus]
+    if restants:
+        r_alias, a_alias = _anciens_noms_par_lot(
+            restants, sub=sub, org_txt=org_txt, grp_txt=grp_txt)
+        resolus.update(r_alias)
+        ambigus |= a_alias
+    return resolus, ambigus
+
+
+def _anciens_noms_par_lot(
+    names: list[str], *, sub: str, org_txt: list[str], grp_txt: list[str],
+) -> tuple[dict[str, int], set[str]]:
+    """`_resoudre_ancien_nom` pour une liste, en une requête, au rang de
+    `resolve_datastore_ids_by_name` (perso > équipe > org > partage)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT a.alias, d.id, "
+            "       CASE WHEN d.owner_type = 'user' AND d.owner_id = %(sub)s THEN 0 "
+            "            WHEN d.owner_type = 'group' AND d.owner_id = ANY(%(grp)s) THEN 1 "
+            "            WHEN d.owner_type = 'org' AND d.owner_id = ANY(%(org)s) THEN 2 "
+            "            ELSE 3 END AS rang "
+            "FROM datastore_aliases a JOIN user_datastores d ON d.id = a.ns_id "
+            "WHERE a.alias = ANY(%(names)s) AND ("
+            f"{_VISIBLE_PAR_L_ACTEUR}"
+            ")",
+            {"names": list(names), "sub": sub, "org": org_txt, "grp": grp_txt},
+        ).fetchall()
+    meilleurs: dict[str, tuple[int, set[int]]] = {}
+    for r in rows:
+        rang, ids = meilleurs.get(r["alias"], (4, set()))
+        if r["rang"] < rang:
+            meilleurs[r["alias"]] = (r["rang"], {int(r["id"])})
+        elif r["rang"] == rang:
+            ids.add(int(r["id"]))
+    return ({nom: next(iter(ids)) for nom, (_, ids) in meilleurs.items() if len(ids) == 1},
+            {nom for nom, (_, ids) in meilleurs.items() if len(ids) > 1})
+
+
+def get_datastore_by_alias(owner_type: str, owner_id: str, alias: str) -> Optional[dict]:
+    """Le tableau de `(owner_type, owner_id)` dont `alias` était le nom avant un
+    renommage — la contrepartie EXACTE de `get_datastore` pour un ancien nom.
+
+    Séparée de `get_datastore` à dessein : celle-ci répond aussi « ce nom est-il
+    libre ? » à la création, et un ancien nom EST libre — il se reprend (et se purge,
+    `_purger_alias`). `None` si aucun, ou si plusieurs tableaux de ce propriétaire ont
+    porté ce nom (possible seulement après un transfert) : on ne choisit pas."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT d.id, d.owner_type, d.owner_id, d.namespace AS datastore, d.created_at "
+            "FROM datastore_aliases a JOIN user_datastores d ON d.id = a.ns_id "
+            "WHERE a.alias = %s AND d.owner_type = %s AND d.owner_id = %s",
+            (alias, owner_type, owner_id),
+        ).fetchall()
+    return dict(rows[0]) if len(rows) == 1 else None
 
 
 def list_datastores_granted_to(
@@ -365,6 +491,15 @@ def rename_datastore_by_id(ns_id: int, new: str) -> bool:
             conn.execute(
                 "UPDATE user_datastores SET namespace = %s WHERE id = %s", (new, ns_id),
             )
+            # Le nouveau nom est pris (retour à un ancien nom compris : l'alias du
+            # tableau lui-même part avec) ; l'ancien devient un alias, pour tout ce qui
+            # le cite encore et qu'on ne peut pas réécrire (`datastore_aliases`).
+            _purger_alias(conn, cur["owner_type"], cur["owner_id"], new)
+            conn.execute(
+                "INSERT INTO datastore_aliases (alias, ns_id) VALUES (%s, %s) "
+                "ON CONFLICT (alias, ns_id) DO UPDATE SET renamed_at = now()",
+                (cur["datastore"], ns_id),
+            )
     return True
 
 
@@ -414,6 +549,9 @@ def reparent_datastore(ns_id: int, new_owner_type: str, new_owner_id: str) -> No
                 "UPDATE user_datastores SET owner_type = %s, owner_id = %s WHERE id = %s",
                 (new_owner_type, new_owner_id, ns_id),
             )
+            # Chez le destinataire, ce nom est désormais PRIS par ce tableau : un alias
+            # du même nom qu'y laissait un autre tableau ne doit plus lui répondre.
+            _purger_alias(conn, new_owner_type, new_owner_id, row["namespace"])
 
 
 def list_all_datastores() -> list[dict]:

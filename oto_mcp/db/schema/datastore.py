@@ -126,3 +126,30 @@ CREATE TABLE IF NOT EXISTS datastore_row_revisions (
     suppression BOOLEAN NOT NULL DEFAULT false
 );
 """
+
+# anciens noms d'un tableau renommé (alias de résolution)
+ALIASES = """
+-- ANCIENS NOMS d'un tableau renommé. Un renommage ne doit rien casser de ce qui
+-- désigne le tableau par son nom sans pouvoir être réécrit : corps de procédure, guide,
+-- prompt planifié, flux n8n, conversation. `rename_datastore_by_id` y dépose l'ancien
+-- nom ; la résolution par nom ne le lit qu'en DERNIER recours, quand aucun tableau
+-- vivant ne porte ce nom dans la portée (`db/datastore_ns.py`).
+--
+-- Pas de colonne de propriétaire : la portée d'un alias est celle de SON tableau, lue
+-- par jointure — il suit donc un transfert sans rien réécrire, et le prédicat de
+-- visibilité est le même que pour un nom vivant.
+--
+-- Pas d'unicité possible sur `alias` seul (la portée vient de la jointure) : c'est la
+-- PURGE qui la tient — un tableau qui PREND un nom (création, renommage, transfert)
+-- retire les alias de ce nom chez son propriétaire. Sans elle, supprimer le nouveau
+-- porteur d'un nom ramènerait ce nom, en silence, vers l'ancien.
+--
+-- PK `(alias, ns_id)` : la recherche se fait par `alias`, la PK la sert, aucun index
+-- de plus à poser au démarrage. FK en cascade : un tableau supprimé emporte ses alias.
+CREATE TABLE IF NOT EXISTS datastore_aliases (
+    alias TEXT NOT NULL,
+    ns_id BIGINT NOT NULL REFERENCES user_datastores(id) ON DELETE CASCADE,
+    renamed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (alias, ns_id)
+);
+"""

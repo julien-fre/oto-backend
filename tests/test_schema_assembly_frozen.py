@@ -580,8 +580,11 @@ from oto_mcp.db import _schema, schema
 # par la révision Alembic `0026_transcription_tours` ou le démarrage
 # (`transcription.DDL_COLONNE_TRANSCRIPT`, même forme). 184 032 → 184 298 (+266,
 # commentaire compris).
-EMPREINTE = "8853836ad805218056c2346f2dd10f0daa23988d28a9b2ef78c88ebb5b43d50c"
-LONGUEUR = 184298
+# 2026-09-28 : la table NEUVE `datastore_aliases` (fragment `ALIASES`, après `REVISIONS`
+# pour sa FK vers `user_datastores`) — les anciens noms d'un tableau renommé, lus en
+# dernier recours par la résolution par nom. Additif : aucune table existante ne bouge.
+EMPREINTE = "692fe8c40295f491b7200469dbe98a556e2e1826f56efa41828f52a58f2b0dbe"
+LONGUEUR = 185663
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

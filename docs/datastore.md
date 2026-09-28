@@ -3062,3 +3062,43 @@ le plus proche d'une clé inconnue — « Rejoue `data_write(…)` avec `rows=` 
 
 Bancs : `tests/datastore/test_charge_a_renvoyer_oto135.py`,
 `tests/test_parametre_le_plus_proche_135.py`.
+
+## Un tableau renommé répond à son ancien nom (28/09/2026)
+
+Renommer un tableau cassait tout ce qui le désignait par son NOM sans pouvoir être
+réécrit : corps de procédure (`datastore="vivier"`), guide, prompt planifié, flux
+externe, conversation. Le numéro (`ns_id`) est l'adresse stable, et les liens de projet
+comme les campagnes le stockent déjà ; mais la prose cite des noms, et on ne la réécrit
+pas d'office — une procédure est versionnée, peut-être copiée dans une autre org, et un
+remplacement textuel rate les mentions partielles.
+
+`rename_datastore_by_id` dépose donc l'ancien nom dans `datastore_aliases (alias, ns_id,
+renamed_at)`, dans la transaction du renommage. Trois résolutions le lisent **en dernier
+recours**, quand aucun tableau VIVANT ne porte ce nom dans la portée :
+
+| résolution | qui l'appelle | ancien nom |
+| --- | --- | --- |
+| `resolve_datastore_ns` | chaque `data_*`, la face REST, les campagnes héritées | rend le tableau renommé ; sa ligne porte le nom CANONIQUE |
+| `resolve_datastore_ids_by_name` | liens de projet par nom, campagnes d'avant #1067 | résolu ou `ambigus`, comme un nom vivant |
+| `_resolve_tableau_id` (`oto_project op=link`) | un agent qui lie par nom | via `get_datastore_by_alias`, exact par propriétaire |
+
+Les règles qui rendent un alias sûr, chacune couverte par
+`tests/datastore/test_alias_ancien_nom_live.py` :
+
+- ⚠️ **Même prédicat de visibilité que le nom vivant** (`_VISIBLE_PAR_L_ACTEUR`, écrit
+  une fois) — un alias qui résoudrait là où le nom ne résout pas serait un IDOR. La
+  portée d'un alias est celle de SON tableau, lue par jointure : il suit un transfert.
+- ⚠️ **Le nom vivant gagne toujours, et un nom REPRIS purge ses alias** (`_purger_alias`,
+  à la création, au renommage, au transfert, chez le propriétaire qui prend le nom).
+  Sans purge, supprimer le nouveau porteur ramenait le nom, en silence, vers l'ancien.
+  Revenir à un ancien nom retire l'alias du tableau lui-même.
+- ⚠️ **Deux anciens porteurs au même rang ne se départagent pas** — `None` (ou `ambigus`),
+  jamais le plus récent ni le plus petit numéro : c'est #365, pour les anciens noms.
+- ⚠️ **Des chiffres n'empruntent jamais un ancien nom** : ils adressent par numéro, et un
+  tableau jadis nommé « 77 » ne répond pas à la place du tableau 77.
+- `get_datastore` (« ce nom est-il libre ? » à la création) n'est PAS touchée : un ancien
+  nom est libre, il se reprend.
+
+La réponse ne dit pas qu'un ancien nom a servi : `datastore` y est déjà le nom canonique
+(`datastore/identite.py`), ce qui suffit à l'agent pour corriger ce qu'il cite.
+
