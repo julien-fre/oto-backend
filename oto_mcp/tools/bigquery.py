@@ -96,13 +96,15 @@ def _http_error(e, project: Optional[str] = None) -> McpError:
     return _bad(msg)
 
 
-async def _call(fn, *args, project: Optional[str] = None, **kwargs):
-    """Appel client hors boucle ; tout `HttpError` devient une erreur nommée."""
+async def _call(fn, *args, _project: Optional[str] = None, **kwargs):
+    """Appel client hors boucle ; tout `HttpError` devient une erreur nommée.
+
+    `_project` ne sert QU'AU message du refus (il n'est pas transmis à `fn`)."""
     from googleapiclient.errors import HttpError
     try:
         return await asyncio.to_thread(fn, *args, **kwargs)
     except HttpError as e:
-        raise _http_error(e, project)
+        raise _http_error(e, _project)
 
 
 def _client_for_user(account: Optional[str] = None):
@@ -238,10 +240,10 @@ def register(mcp: FastMCP) -> None:
         if not dataset:
             return {"level": "datasets", "project": project,
                     **await _call(client.list_datasets, project, 200, page_token,
-                                  project=project)}
+                                  _project=project)}
         return {"level": "tables", "project": project, "dataset": dataset,
                 **await _call(client.list_tables, project, dataset, 200, page_token,
-                              project=project)}
+                              _project=project)}
 
     @mcp.tool()
     async def bigquery_table(
@@ -273,7 +275,7 @@ def register(mcp: FastMCP) -> None:
         if not 0 <= preview_rows <= _MAX_PREVIEW_ROWS:
             raise _bad(f"preview_rows doit être entre 0 et {_MAX_PREVIEW_ROWS}.")
         client = await _client_for_user_async(account)
-        meta = await _call(client.get_table, p, d, t, project=p)
+        meta = await _call(client.get_table, p, d, t, _project=p)
         part = meta.get("timePartitioning") or meta.get("rangePartitioning")
         out: dict = {
             "table": f"{p}.{d}.{t}", "type": meta.get("type"),
@@ -290,10 +292,11 @@ def register(mcp: FastMCP) -> None:
             "view_sql": (meta.get("view") or {}).get("query"),
         }
         if preview_rows and meta.get("type") == "TABLE":
-            page = await _call(client.list_rows, p, d, t, preview_rows, project=p)
+            page = await _call(client.list_rows, p, d, t, preview_rows, _project=p)
             out["preview"] = _table_view(meta.get("schema"), page.get("rows"))["rows"]
         elif preview_rows:
-            out["preview_note"] = "aperçu impossible sur une vue — interroge-la par `bigquery_query`."
+            out["preview_note"] = (f"aperçu impossible sur une {(meta.get('type') or 'ressource').lower()} "
+                                   "(seule une table stockée se lit sans requête) — passe par `bigquery_query`.")
         return {k: v for k, v in out.items() if v is not None}
 
     @mcp.tool()
@@ -356,7 +359,7 @@ def register(mcp: FastMCP) -> None:
         billing = await _billing_project(client, project)
 
         plan = await _call(client.dry_run, sql, billing, location=location, params=params,
-                           project=billing)
+                           _project=billing)
         stype = plan.get("statement_type")
         if stype != _SELECT:
             raise _bad(f"Lecture seule : seules les requêtes SELECT sont acceptées (celle-ci "
@@ -377,7 +380,7 @@ def register(mcp: FastMCP) -> None:
         resp = await _call(client.query, sql, billing, location=location, params=params,
                            max_results=rows, timeout_ms=_QUERY_WAIT_MS,
                            maximum_bytes_billed=int(cap * _GB), labels=_LABELS,
-                           project=billing)
+                           _project=billing)
         return _result(resp, billing)
 
     @mcp.tool()
@@ -404,5 +407,5 @@ def register(mcp: FastMCP) -> None:
         client = await _client_for_user_async(account)
         resp = await _call(client.get_query_results, project, job_id, location=location,
                            page_token=page_token, max_results=rows,
-                           timeout_ms=_RESULTS_WAIT_MS, project=project)
+                           timeout_ms=_RESULTS_WAIT_MS, _project=project)
         return _result(resp, project)

@@ -22,6 +22,10 @@ from googleapiclient.errors import HttpError
 
 from oto_mcp.mcp_errors import McpError
 
+# Les tools importent `oto.tools.google.bigquery`, qui n'existe qu'au-delà du tag
+# pinné : non concluant (pas rouge) tant que le venv retarde sur le pin.
+pytestmark = pytest.mark.exige_pin_oto_core
+
 GB = 1024 ** 3
 SCHEMA = {"fields": [{"name": "month", "type": "DATE"}, {"name": "n", "type": "INTEGER"}]}
 
@@ -255,11 +259,13 @@ def test_table_schema_et_apercu_gratuit(client):
     client.query.assert_not_called()
 
 
-def test_pas_dapercu_sur_une_vue(client):
-    client.get_table.return_value = {"type": "VIEW", "schema": SCHEMA,
+@pytest.mark.parametrize("kind", ["VIEW", "EXTERNAL", "MATERIALIZED_VIEW"])
+def test_pas_dapercu_hors_table_stockee(client, kind):
+    client.get_table.return_value = {"type": kind, "schema": SCHEMA,
                                      "view": {"query": "SELECT 1"}}
     out = _tool("bigquery_table")(table="p.d.v", preview_rows=5)
-    assert "preview" not in out and "preview_note" in out and out["view_sql"] == "SELECT 1"
+    assert "preview" not in out and kind.lower() in out["preview_note"]
+    assert out["view_sql"] == "SELECT 1"
     client.list_rows.assert_not_called()
 
 
