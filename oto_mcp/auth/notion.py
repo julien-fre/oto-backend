@@ -147,9 +147,12 @@ def verify_state(state: Optional[str]) -> Optional[dict]:
 
 # --- démarrage ---------------------------------------------------------------------
 
-def _check_scope(sub: str, org_id: int, scope: str) -> Optional[int]:
+def _check_scope(sub: str, org_id: int, scope: str,
+                 group_id: Optional[int] = None) -> Optional[int]:
     """Le droit de ranger la connexion à ce palier ; rend l'équipe pour `group`.
-    Vérifié au démarrage ET au retour (le state vit 10 min)."""
+    Vérifié au démarrage ET au retour (le state vit 10 min). Au retour, `group_id`
+    est celui GELÉ dans le state : l'équipe active a pu changer dans un autre onglet,
+    on vérifie le droit sur celle où l'on va écrire."""
     from .. import access, detenteurs, roles  # lazy
     if scope == "org":
         if not roles.is_org_admin(sub, org_id):
@@ -159,7 +162,8 @@ def _check_scope(sub: str, org_id: int, scope: str) -> Optional[int]:
                                     detenteurs.admins_de_l_org(sub, org_id)))
         return None
     if scope == "group":
-        group_id = access.current_group(sub)
+        if group_id is None:
+            group_id = access.current_group(sub)
         if group_id is None:
             raise PermissionError(
                 "Aucune équipe active — sélectionne une équipe pour la connecter.")
@@ -299,7 +303,7 @@ def persist(sub: str, org_id: int, scope: str, group_id: Optional[int],
     jeton puis se connecte en un clic garde l'ancien (rien n'est détruit), mais ses
     appels passent par le nouveau — sinon deux comptes sans défaut rendraient chaque
     appel ambigu (`cascade._shared_auto_account`)."""
-    _check_scope(sub, org_id, scope)  # re-vérifié : le droit a pu tomber en 10 min
+    _check_scope(sub, org_id, scope, group_id)  # re-vérifié : le droit a pu tomber
     entity_type, entity_id = _entity(sub, org_id, scope, group_id)
     workspace_id = str(tokens.get("workspace_id") or "")
     account = _account_for(entity_type, entity_id, workspace_id,
@@ -352,11 +356,12 @@ def fresh_key(rc) -> str:
     now = datetime.now(timezone.utc)
     if meta.get("acquired_via") != "oauth" or not _due(meta, now):
         return rc.key
-    return _renew(rc.entity_type, rc.entity_id, rc.account, meta, now)
+    return _renew(rc.entity_type, rc.entity_id, rc.account, meta, now,
+                  (row or {}).get("set_by"))
 
 
 def _renew(entity_type: str, entity_id: str, account: str, meta: dict,
-           now: datetime) -> str:
+           now: datetime, set_by: Optional[str] = None) -> str:
     """Échange le refresh token et range la paire NEUVE — Notion rote le refresh
     token, celui qu'on vient d'envoyer ne vaut plus rien. `meta` re-passé complet :
     `set_credential` sans `meta` l'écrase par `{}`."""
@@ -373,6 +378,15 @@ def _renew(entity_type: str, entity_id: str, account: str, meta: dict,
             client_secret=app["client_secret"], client_auth=_CLIENT_AUTH)
     except oauth_flow.OAuthExchangeRefused as e:
         logger.info("notion : renouvellement refusé (%s)", entity_type)
+        # Un appel PARALLÈLE a pu renouveler juste avant nous (rotation : notre
+        # refresh token est alors périmé, la connexion, elle, est saine). On relit
+        # avant de conclure — la leçon RTR de salesforce.
+        relu = credentials_store.get_credential_with_meta(
+            entity_type, entity_id, CONNECTOR, account) or {}
+        relu_meta = relu.get("meta") or {}
+        if relu.get("secret") and relu_meta.get("refresh_token_enc") != meta.get(
+                "refresh_token_enc") and not _due(relu_meta, now):
+            return relu["secret"]
         if "invalid_grant" in str(e):
             # Grant mort : MARQUER, jamais purger (`docs/connector-vault.md`) — la
             # fiche dit « à reconnecter » au lieu de ressembler à un jeton jamais posé.
@@ -388,5 +402,6 @@ def _renew(entity_type: str, entity_id: str, account: str, meta: dict,
         neuf["refresh_token_enc"] = meta["refresh_token_enc"]
     neuf["refreshed_at"] = now.isoformat()
     credentials_store.set_credential(entity_type, entity_id, CONNECTOR,
-                                     tokens["access_token"], meta=neuf, account=account)
+                                     tokens["access_token"], set_by=set_by, meta=neuf,
+                                     account=account)
     return tokens["access_token"]
