@@ -693,7 +693,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 409, "already_scheduled",
                 f"`{inp.procedure}` a {quoi} (#{deja[0]['id']}). Modifie-la plutôt "
                 "que d'en créer une seconde — un objet ne porte qu'une "
-                "automatisation de chaque genre.")
+                "automatisation de chaque genre. Si tu ne la vois pas, elle n'est "
+                "pas partagée avec toi : demande l'accès à son propriétaire ou à un "
+                "admin de l'org.")
         secret = hache = None
         if webhook:
             secret, hache = runner_hook.nouveau_secret()
@@ -908,6 +910,13 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     def _actuel() -> Optional[dict]:
         if "t" not in lu:
             lu["t"] = db.get_trigger(inp.trigger_id, ctx.org_id)
+            # ⚠️ Le droit de MODIFIER (`_acces_agent`) se juge à la PREMIÈRE lecture :
+            # aucune validation qui suit ne doit décrire à un membre l'agent qu'il ne
+            # voit pas (son genre, son modèle) par la forme de son refus. Un agent
+            # inconnu reste rendu `None` — chaque site dit son propre 404.
+            if lu["t"] and not lu.get("juge"):
+                _acces_agent.exiger(ctx, lu["t"], _acces_agent.ECRIRE)
+                lu["juge"] = True
         return lu["t"]
 
     def _est_webhook() -> bool:
@@ -1035,11 +1044,12 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             famille if inp.model is not None
             else runner_models.famille(actuel.get("model")), champs)
 
-    # ⚠️ Le droit de MODIFIER (`_acces_agent`) se juge après toutes les validations
-    # — l'ordre des refus est un contrat — et juste avant d'écrire. Il relit le
-    # déclencheur : la retouche ordinaire ne peut plus s'en passer, puisque c'est
-    # lui qui dit à qui l'agent appartient et avec qui il est partagé.
-    _acces_agent.exiger(ctx, _actuel(), _acces_agent.ECRIRE)
+    # ⚠️ Aucune retouche ne s'écrit sans avoir LU le déclencheur : c'est lui qui dit
+    # à qui l'agent appartient et avec qui il est partagé (`_actuel` juge le droit de
+    # modifier à sa première lecture). La retouche ordinaire, qui ne lisait rien, le
+    # lit donc ici, juste avant d'écrire.
+    if not _actuel():
+        raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
     if inp.model is not None and _abonnement.est_abonnement(famille) and _actuel():
         _juger(_actuel())
     eteindre = set(champs) <= {"enabled"} and champs.get("enabled") is False
@@ -1047,6 +1057,7 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                           hors_abonnement_d_autrui=None if eteindre else ctx.sub)
     if not t:
         lu.pop("t", None)   # relu APRÈS l'écriture refusée : l'état qui l'a refusée
+        lu.pop("juge", None)
         if _actuel():
             _juger(_actuel())
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
@@ -1131,6 +1142,9 @@ def _exiger_la_porte(ctx: ResolvedCtx, agent: dict) -> None:
     avoir besoin du propriétaire pour refermer une porte qui fuit."""
     if agent.get("sub") == ctx.sub or roles.is_org_admin(ctx.sub, ctx.org_id):
         return
+    if _acces_agent.niveau(ctx.sub, ctx.org_id, agent) is None:
+        # Ne pas voir un agent, c'est ne pas savoir qu'il existe (`_acces_agent`).
+        raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
     raise AuthzDenied(
         403, "trigger_owner_or_admin_required",
         "changer la porte de ce webhook (porteur, adresse, mode ou secret de "

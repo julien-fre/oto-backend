@@ -7,10 +7,18 @@ posé reçoit un partage `editor` à son org entière (`principal_type='org'`) �
 « Partager » le montre (« Everyone in the org »), son propriétaire le retire s'il veut
 le fermer. Un agent créé ENSUITE naît privé.
 
-⚠️ Base PARTAGÉE prod/preprod : la révision part avec la preprod. Un agent créé par
-le code d'avant entre ce moment et le tag de prod naît sans ce partage, donc privé une
-fois le nouveau code en prod — comme tout agent neuf. La rejouer après le tag de prod
-(elle est idempotente) le rattrape si l'on préfère.
+⚠️⚠️ **À JOUER AVANT de déployer le code qui lit ces partages** — une révision n'est
+pas jouée au démarrage (`docs/migrations-versionnees.md`), c'est un geste
+d'exploitation (`oto-mcp migrer upgrade head`, par le lanceur). Déployé sans elle,
+le nouveau code rend PRIVÉ chaque agent existant : les membres qui les modifient
+aujourd'hui les perdent de vue, sans un mot. Jouée avant, elle ne change rien à
+l'ancien code (qui ignore ces lignes) — et la base est PARTAGÉE prod/preprod, donc
+une seule fois suffit pour les deux.
+
+Un agent créé par l'ancien code ENTRE la révision et le déploiement naît sans ce
+partage, donc privé une fois le nouveau code servi — comme tout agent neuf. Alembic
+ne rejoue pas une révision appliquée : pour le rattraper, relancer à la main l'INSERT
+d'`upgrade()` (idempotent) après le déploiement.
 
 Idempotente : `ON CONFLICT DO NOTHING` — un partage déjà posé (ou retiré puis reposé
 autrement) n'est pas réécrit. Volume : une ligne par agent (quelques dizaines).

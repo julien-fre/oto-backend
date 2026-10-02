@@ -166,7 +166,7 @@ def principal(ctx: ResolvedCtx, *, everyone: bool, sub: Optional[str],
                           "`share_with_email` (ou `everyone=true`).")
     if email:
         porteurs = [u for u in db.get_users_by_email(email.strip())
-                    if roles.is_org_member(u["sub"], ctx.org_id)]
+                    if not strict or roles.is_org_member(u["sub"], ctx.org_id)]
         if len(porteurs) != 1:
             raise AuthzDenied(
                 404 if not porteurs else 400,
@@ -181,3 +181,46 @@ def principal(ctx: ResolvedCtx, *, everyone: bool, sub: Optional[str],
         raise AuthzDenied(404, "share_not_org_member",
                           "un agent ne se partage qu'à un membre de son org.")
     return "user", str(sub)
+
+
+# --- Les travaux d'un agent qu'on ne peut pas modifier ---------------------------
+
+#: Ce qu'un travail laisse voir de sa charge à qui ne peut pas MODIFIER son agent :
+#: de quoi le reconnaître dans une liste (quel agent, quelle procédure, quel modèle),
+#: rien de ce qu'il exécute — ni la consigne, ni les outils, ni le corps reçu par un
+#: webhook (une donnée de tiers).
+_CHARGE_LISIBLE = ("trigger_id", "procedure", "label", "model", "model_family")
+
+
+def masquer_charges(ctx: ResolvedCtx, jobs: list[dict]) -> list[dict]:
+    """`runner.jobs` (`list`, `get`) sert la file de TOUTE l'org : un agent privé y
+    laissait lire sa consigne et ses corps de livraison. La charge d'un travail
+    enfilé par un agent que l'appelant ne peut pas modifier est réduite à
+    `_CHARGE_LISIBLE` — la ligne reste (le compte de la file ne ment pas), son
+    contenu non. Un travail sans agent (lancé à la main) n'est pas touché : il
+    porte l'identité de qui l'a lancé, et sa lecture a ses propres règles."""
+    ids = {int(p["trigger_id"]) for j in jobs
+           if isinstance(p := j.get("payload"), dict)
+           and str(p.get("trigger_id") or "").isdigit()}
+    if not ids:
+        return jobs
+    agents = [t for i in sorted(ids) if (t := db.get_trigger(i, ctx.org_id))]
+    n = niveaux(ctx.sub, ctx.org_id, agents)
+    # Un agent SUPPRIMÉ n'a plus de partages à lire : ses travaux restent lisibles à
+    # qui les portait (son propriétaire d'alors) et aux admins de l'org.
+    orphelins = ids - set(n)
+    admin = bool(orphelins) and roles.is_org_admin(ctx.sub, ctx.org_id)
+    out = []
+    for j in jobs:
+        p = j.get("payload")
+        tid = p.get("trigger_id") if isinstance(p, dict) else None
+        if str(tid or "").isdigit():
+            lisible = (n[int(tid)] in ECRIRE if int(tid) in n
+                       else admin or j.get("sub") == ctx.sub)
+            if not lisible:
+                # `payload_redacted` : la charge servie n'est PAS celle du travail —
+                # un écran ne doit pas proposer de la rejouer.
+                j = {**j, "payload": {**{k: p[k] for k in _CHARGE_LISIBLE if k in p},
+                                      "payload_redacted": True}}
+        out.append(j)
+    return out

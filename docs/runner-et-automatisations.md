@@ -1456,7 +1456,15 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
   renouveler).
 - **Les agents d'avant restent ouverts** : la révision `0032_agents_partages_a_l_org`
   pose un partage `editor` à l'org sur chaque agent existant ; son propriétaire le
-  retire depuis l'écran. Un agent créé ensuite naît privé.
+  retire depuis l'écran. Un agent créé ensuite naît privé. ⚠️ **La révision se joue
+  AVANT le déploiement du code** (`oto-mcp migrer upgrade head`) : sans elle, chaque
+  agent existant devient privé d'un coup.
+- **La file de l'org reste lisible, pas ce qu'un agent exécute** : `runner.jobs`
+  (`list`, `get`) sert toujours les travaux de toute l'org, mais la charge d'un travail
+  enfilé par un agent que l'appelant ne peut pas MODIFIER est réduite à de quoi le
+  reconnaître (`_acces_agent._CHARGE_LISIBLE` : agent, procédure, libellé, modèle) —
+  ni consigne, ni outils, ni corps de webhook. Le fil d'un run reste au propriétaire
+  et aux admins (`run_thread`), un éditeur ne le lit pas.
 
 ### Un agent peut tourner sur l'ABONNEMENT de son demandeur (21/09/2026)
 

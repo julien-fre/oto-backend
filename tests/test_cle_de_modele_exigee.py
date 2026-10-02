@@ -206,7 +206,7 @@ def test_rallumer_sans_la_cle_exigee_est_refuse(monkeypatch):
                         lambda org: {"armed": True, "workers": 1, "last_seen": None,
                                      "families": ["anthropic"]})
     monkeypatch.setattr(RT.db, "get_trigger",
-                        lambda tid, org: {"model": "claude-opus-5"})
+                        lambda tid, org: {"id": tid, "model": "claude-opus-5"})
     monkeypatch.setattr(RT.db, "update_trigger",
                         lambda *a, **k: pytest.fail("un refus n'écrit rien"))
     with pytest.raises(AuthzDenied) as e:

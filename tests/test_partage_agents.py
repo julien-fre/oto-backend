@@ -242,3 +242,63 @@ def test_un_beneficiaire_et_un_seul(org):
 def test_le_kind_runner_trigger_est_enregistre(org):
     assert ownership.owner_of(A.KIND, "7") == ("user", PROPRIETAIRE)
     assert ownership.owner_of(A.KIND, "8") is None
+
+
+# ── les travaux d'un agent qu'on ne peut pas modifier ────────────────────────
+
+def _travail():
+    return {"id": 1, "payload": {"trigger_id": 7, "procedure": "veille",
+                                 "label": "la veille", "model": "claude-sonnet-5",
+                                 "input": "consigne", "tools": ["a"],
+                                 "webhook_body": {"email": "x@y.test"}}}
+
+
+@pytest.mark.parametrize("sub", [LECTEUR, AUTRE])
+def test_la_file_ne_montre_pas_ce_qu_un_agent_execute_a_qui_ne_peut_le_modifier(org, sub):
+    j, = A.masquer_charges(ResolvedCtx(sub=sub, org_id=ORG), [_travail()])
+    assert j["payload"] == {"trigger_id": 7, "procedure": "veille",
+                            "label": "la veille", "model": "claude-sonnet-5",
+                            "payload_redacted": True}
+    assert j["id"] == 1, "la ligne reste : le compte de la file ne ment pas"
+
+
+@pytest.mark.parametrize("sub", [PROPRIETAIRE, EDITEUR, ADMIN])
+def test_la_file_montre_tout_a_qui_peut_modifier_l_agent(org, sub):
+    assert A.masquer_charges(ResolvedCtx(sub=sub, org_id=ORG), [_travail()]) == [_travail()]
+
+
+def test_un_travail_lance_a_la_main_n_est_pas_touche(org):
+    j = {"id": 2, "payload": {"procedure": "veille", "input": "à la main"}}
+    assert A.masquer_charges(ResolvedCtx(sub=AUTRE, org_id=ORG), [j]) == [j]
+
+
+def test_les_travaux_d_un_agent_SUPPRIME_restent_a_qui_les_portait_et_aux_admins(org):
+    j = {"id": 3, "sub": PROPRIETAIRE,
+         "payload": {"trigger_id": 99, "procedure": "veille", "input": "consigne"}}
+    for sub in (PROPRIETAIRE, ADMIN):
+        assert A.masquer_charges(ResolvedCtx(sub=sub, org_id=ORG), [j]) == [j]
+    masque, = A.masquer_charges(ResolvedCtx(sub=EDITEUR, org_id=ORG), [j])
+    assert "input" not in masque["payload"] and masque["payload"]["payload_redacted"]
+
+
+# ── ne pas voir un agent, c'est ne pas savoir qu'il existe ───────────────────
+
+def test_une_retouche_refusee_ne_decrit_pas_l_agent_qu_on_ne_voit_pas(org):
+    """Un `cron` sur un webhook répond `invalid_schedule` : ce refus-là dirait le
+    GENRE de l'agent. Il ne doit sortir qu'à qui peut le modifier."""
+    org["agent"]["kind"] = "webhook"
+    assert _refus(AUTRE, op="update", trigger_id=7, cron="0 9 * * *").code == "trigger_not_found"
+    assert _refus(LECTEUR, op="update", trigger_id=7, cron="0 9 * * *").code == "trigger_edit_forbidden"
+    assert _refus(EDITEUR, op="update", trigger_id=7, cron="0 9 * * *").code == "invalid_schedule"
+
+
+def test_la_porte_d_un_agent_invisible_repond_404(org):
+    org["agent"]["kind"] = "webhook"
+    assert _refus(AUTRE, op="rotate_secret", trigger_id=7).code == "trigger_not_found"
+    assert _refus(EDITEUR, op="rotate_secret", trigger_id=7).code == "trigger_owner_or_admin_required"
+
+
+def test_on_retire_par_son_adresse_le_partage_d_un_membre_parti(org):
+    org["partages"][("user", DEHORS)] = "editor"
+    _appel(PROPRIETAIRE, op="unshare", trigger_id=7, share_with_email="dehors@x.test")
+    assert ("user", DEHORS) not in org["partages"]
