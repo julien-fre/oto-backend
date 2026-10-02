@@ -43,7 +43,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-from . import db, runner_models
+from . import db, org_suspension, runner_models
 from .capabilities import _limites_du_run
 
 logger = logging.getLogger(__name__)
@@ -547,6 +547,13 @@ def declencher(trigger_id: int, secret: Optional[str], corps: Any,
                 "This agent is paused: it will not run until it is switched back "
                 "on. Nothing was lost on our side — the delivery is recorded and "
                 "visible on its page.")
+        elif org_suspension.etat(t["org_id"]):
+            db.enregistrer(conn, trigger_id, t["org_id"], db.REFUSE_SUSPENDED,
+                           source=source, **marque)
+            refus = HookRefus(
+                409, org_suspension.CODE,
+                "This agent's workspace is suspended: it will not run until the "
+                "workspace has a plan. The delivery is recorded and visible on its page.")
         else:
             # ⚠️ AVANT de compter. Une rafale est concurrente par définition : sans
             # ce verrou, toutes les livraisons lisent le même compte et partent

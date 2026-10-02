@@ -1343,6 +1343,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # privé mono-membre (NULL = org partagée). Unicité : 1 org perso par user.
     if _colonne_absente(conn, "orgs", "personal_of"):
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS personal_of TEXT")
+    # SUSPENSION d'une org (`org_suspension`) : l'org ne peut plus agir — outils,
+    # capacités, travaux de fond — et rien de ce qui lui appartient n'est touché.
+    # Même forme que `users.suspended_*`. NULL = active.
+    for _col in ("suspended_at TIMESTAMPTZ", "suspended_by TEXT", "suspended_reason TEXT"):
+        if _colonne_absente(conn, "orgs", _col.split()[0]):
+            conn.execute(f"ALTER TABLE orgs ADD COLUMN IF NOT EXISTS {_col}")
     if _index_absent(conn, "uq_orgs_personal_of"):
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_personal_of "
                      "ON orgs(personal_of) WHERE personal_of IS NOT NULL")

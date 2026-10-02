@@ -1,0 +1,99 @@
+"""Org suspendue : le prédicat, la phrase qui la refuse, et ce qui reste ouvert.
+
+**Le cran au-dessus de la pause de compte** (`account_suspension`). Une pause de
+compte arrête une PERSONNE, dans toutes ses orgs. Une suspension d'org arrête un
+ESPACE, pour tous ses membres — et seulement lui : un membre garde ses autres orgs.
+C'est le geste d'un tenant qui facture ses orgs (02/10/2026 : un essai fini sans
+abonnement arrête l'app, pas seulement les clés payées par le tenant).
+
+**Où il tombe.** Il n'y a pas UN point d'entrée par org, donc quatre gardes, toutes
+sur ce module :
+- les capacités, juste après la règle d'autz, dans les deux adaptateurs (MCP et
+  REST) — c'est là que l'org de l'appel est connue, champ d'entrée compris ;
+- les outils de connecteur, appel direct comme `oto_call`, dans
+  `activation_gate.require_active` — leur seam commun ;
+- les travaux de fond : un travail d'org suspendue n'est pas réservé
+  (`claim_next_job`), un webhook entrant est refusé, une échéance cron n'enfile rien.
+
+**Ce qui reste ouvert** (`OUVERTES`) : se voir, lister ses orgs, lire l'org, en
+changer. Sans ça, un membre dont l'org PAR DÉFAUT est suspendue ne pourrait même plus
+passer à une autre. Les opérations de plateforme (`admin.*`) aussi : c'est par elles
+qu'on lève la suspension.
+
+**Ce qui ne s'arrête pas** : rien n'est supprimé ni détaché. Les routes REST écrites à
+la main (export CSV d'un tableau, logo…) ne passent pas par ces gardes — un export de
+ses propres données reste possible, c'est voulu.
+
+⚠️ Comme pour la pause de compte, un hoquet de base REMONTE : le fail-safe d'une
+neutralisation est le refus, pas le laisser-passer.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from . import org_store
+
+logger = logging.getLogger(__name__)
+
+CODE = "org_suspended"
+
+#: Les capacités qu'une org suspendue sert encore. Les `me.*` résolvent l'org PAR
+#: DÉFAUT du compte : sans cette liste, un membre dont l'espace perso est suspendu
+#: perdrait aussi ses réglages de COMPTE alors qu'il travaille dans une org qui paie.
+#: N'y entrent que des gestes de compte, ou qui lisent / retirent — jamais ce qui
+#: consomme ou agit dans l'org (`me.tools.call`, `me.project_file.*`, les connexions).
+OUVERTES = frozenset({
+    # se repérer, changer d'org, en partir
+    "me.get", "me.context", "me.leave_org",
+    "org.list", "org.get", "org.use_org", "org.set_home", "org.clear",
+    # le compte lui-même
+    "me.legal.get", "me.legal.accept", "me.avatar.clear",
+    "me.token.list", "me.token.create", "me.token.delete",
+    # lire ou retirer un accès — jamais en ouvrir un
+    "me.credential.get", "me.credential.clear",
+    "me.connector_status", "me.connector_disconnect",
+    "me.unipile.status", "me.unipile.disconnect",
+    "me.federation.google.status", "me.federation.google.revoke",
+    "me.model_subscriptions.list", "me.model_subscriptions.remove",
+})
+
+
+def etat(org_id: Optional[int]) -> Optional[dict]:
+    """L'état de suspension, ou `None` si l'org est active (ou absente)."""
+    if not org_id:
+        return None
+    return org_store.get_org_suspension(int(org_id))
+
+
+def message(org_id: int) -> str:
+    return (f"L'espace #{org_id} est suspendu : il ne peut plus agir tant qu'il n'a pas "
+            "d'abonnement. Rien n'a été supprimé. Un administrateur de l'espace peut "
+            "choisir un plan depuis l'app ; d'ici là, agis dans un autre espace "
+            "(oto_list_orgs, puis `_org`).")
+
+
+def refus(org_id: Optional[int]) -> Optional[str]:
+    """Le message à servir si l'org est suspendue, `None` sinon. Journalise le refus."""
+    pause = etat(org_id)
+    if not pause:
+        return None
+    logger.warning("org suspendue refusée : org=%s depuis=%s motif=%s",
+                   org_id, pause.get("suspended_at"), pause.get("suspended_reason"))
+    return message(int(org_id))
+
+
+def ouverte(cap_key: str) -> bool:
+    """Une capacité qu'une org suspendue sert encore."""
+    return cap_key in OUVERTES or cap_key.startswith("admin.")
+
+
+def garde_capacite(cap_key: str, ctx) -> None:
+    """La garde des capacités, posée dans les DEUX adaptateurs juste après la règle
+    d'autz (l'org de l'appel n'est connue qu'à ce moment, champ d'entrée compris).
+    Un worker de plateforme n'a pas d'org : ses travaux sont gardés à la réservation."""
+    if ctx.platform_worker or ctx.org_id is None or ouverte(cap_key):
+        return
+    if (texte := refus(ctx.org_id)):
+        from .capabilities._types import AuthzDenied
+        raise AuthzDenied(403, CODE, texte)
