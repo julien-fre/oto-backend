@@ -210,8 +210,9 @@ def register(mcp: FastMCP) -> None:
 
         `period` + `start_date`/`end_date` (YYYY-MM-DD) bound the search —
         contacts/companies: created, updated, noAction, withActions,
-        withoutActions; opportunities: created, updated, started, stopped;
-        actions: started, created, updated.
+        withoutActions; opportunities: created, updatedPositioning, started,
+        updated, closingDate, noAction, withActions, withoutActions; actions:
+        started, created, updated.
 
         `filters` = the entity's list filters, values are ids from
         `boondmanager_dictionary` — contacts: states, companyStates, typesOf,
@@ -219,9 +220,11 @@ def register(mcp: FastMCP) -> None:
         returnMoreData; companies: states, expertiseAreas, origins, flags,
         influencers, returnMoreData; opportunities: opportunityStates,
         opportunityTypes, positioningStates, expertiseAreas, activityAreas,
-        tools, places, durations, origins, flags, onlyVisible, returnMoreData;
-        actions: actionTypes, origins, flags, onlyVisible. Example:
-        `{"states": [1, 2], "returnMoreData": ["lastAction"]}`.
+        tools, places, durations, origins, flags, returnMoreData; actions:
+        actionTypes, origins, flags. `returnMoreData` adds — contacts:
+        lastAction, previousAction, nextAction; companies: previousAction,
+        nextAction; opportunities: hrManager, previousAction, nextAction,
+        alerts. Example: `{"states": [1, 2], "returnMoreData": ["lastAction"]}`.
 
         ⚠️ Boond counts API calls per MONTH (500 per manager on its Core plan):
         prefer one precise search with a large `max_results` over many pages.
@@ -239,7 +242,17 @@ def register(mcp: FastMCP) -> None:
             start_date: YYYY-MM-DD (or 'YYYY-MM-DD HH:MM:SS').
             end_date: YYYY-MM-DD (or 'YYYY-MM-DD HH:MM:SS').
             filters: entity list filters, `{name: value | [values]}`.
-            sort: column to sort on (e.g. updateDate, lastName, title, startDate).
+            sort: column to sort on — contacts: company.name, town, lastName,
+                firstName, function, state, company.expertiseArea,
+                mainManager.lastName, updateDate; companies: name, information,
+                town, state, expertiseArea, mainManager.lastName, updateDate;
+                opportunities: creationDate, title, company.name, place,
+                numberOfActivePositionings, startDate, endDate, duration, state,
+                alertCount, closingDate, updateDate, answerDate,
+                totalWeightedTurnOverExcludingTax, mainManager.lastName;
+                actions: startDate, typeOf, mainManager.lastName,
+                dependsOn.lastName, dependsOn.name, dependsOn.title,
+                dependsOn.id…
             order: asc (default) | desc.
             page: page number, from 1.
             max_results: rows per page, 1-500 (1-100 for actions; default 30).
@@ -274,8 +287,10 @@ def register(mcp: FastMCP) -> None:
 
         Without `path`, returns only the dictionary's KEYS (it is large); then
         call again with a dotted `path` to read one branch, e.g.
-        `setting.state.contact`, `setting.typeOf.contact`, `setting.action`,
-        `setting.origin`. An unknown key is refused with the keys that exist
+        `setting.state.contact` (also company, opportunity),
+        `setting.typeOf.contact`, `setting.action.contact` (action types on
+        contacts; also opportunity), `setting.origin`, `setting.activityArea`,
+        `setting.tool`, `setting.expertiseArea`. An unknown key is refused with the keys that exist
         there. Each call is one API call.
 
         Args:
@@ -309,17 +324,28 @@ def register(mcp: FastMCP) -> None:
         id from `boondmanager_dictionary`) + relationship `dependsOn` (the record
         it is logged on).
 
-        Common attributes — contact: civility, email1, phone1, function,
-        department, town, country, state, origin; company: website, phone1,
-        address, postcode, town, country, state, expertiseArea; opportunity:
-        reference, state, typeOf, place, startDate, duration; action: title,
-        text, startDate ('YYYY-MM-DD HH:MM:SS').
+        Attributes are checked against Boond's creation schema before anything
+        is sent: an unknown name, a wrong type or a text over its length is
+        refused with the accepted list. Main ones — contact: civility, email1-3,
+        phone1-2, function, department, address, postcode, town, country, state,
+        typesOf (ids), origin `{"typeOf": id, "detail": text}`, socialNetworks
+        `[{"network": linkedin|x|facebook|viadeo, "url": …}]`; company:
+        website, phone1, address, postcode, town, country, state, staff,
+        expertiseArea, vatNumber, registrationNumber, apeCode; opportunity:
+        reference, state, typeOf (≥1), place, startDate (YYYY-MM-DD or
+        "immediate"), endDate, duration, estimatesExcludingTax, isVisible;
+        action: title, text, description, location, startDate/endDate as
+        `2026-10-02T09:30:00+0200` (offset without colon).
 
-        Relationships are `{name: {"type": …, "id": …}}`, e.g.
+        Relationships are `{name: {"type": …, "id": …}}` — contact: company,
+        mainManager, agency, pole, influencers (list); company: parentCompany,
+        mainManager, agency, pole, influencers (list); opportunity: company +
+        contact (both or neither), mainManager, agency, pole; action:
+        dependsOn (type contact, opportunity, project, resource, candidate,
+        order or invoice — not company), company, mainManager. E.g.
         `{"company": {"type": "company", "id": 12}}`,
-        `{"dependsOn": {"type": "contact", "id": 34}}`,
-        `{"mainManager": {"type": "resource", "id": 5}}` (default: the token's
-        user).
+        `{"dependsOn": {"type": "contact", "id": 34}}`. `mainManager`
+        (`{"type": "resource", …}`) defaults to the token's user.
 
         Args:
             entity: contacts | companies | opportunities | actions.

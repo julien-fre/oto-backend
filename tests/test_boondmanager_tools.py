@@ -82,12 +82,14 @@ def test_search_route_et_credential(client):
     assert kw["keywords"] == "CSOC3" and kw["max_results"] == 100
 
 
-_PAGE = {"meta": {"totals": {"rows": 1}},
+# Conforme au schéma officiel de la référence (`contacts/search.json`).
+_PAGE = {"meta": {"version": "9.1", "isLogged": True, "language": "fr",
+                  "totals": {"rows": 1}},
          "data": [{"id": "5", "type": "contact",
                    "attributes": {"lastName": "Lovelace"},
                    "relationships": {
                        "company": {"data": {"id": "12", "type": "company"}},
-                       "influencers": {"data": [{"id": "3", "type": "resource"}]}}}],
+                       "mainManager": {"data": {"id": "3", "type": "resource"}}}}],
          "included": [{"id": "12", "type": "company", "attributes": {"name": "X"}}]}
 
 
@@ -96,8 +98,8 @@ def test_search_vue_resserree_par_defaut(client):
     out = _tool("boondmanager_search")(entity="contacts")
     assert out["data"] == [{"id": "5", "type": "contact",
                             "attributes": {"lastName": "Lovelace"},
-                            "relationships": {"company": "12", "influencers": ["3"]}}]
-    assert out["meta"] == {"totals": {"rows": 1}} and "included" not in out
+                            "relationships": {"company": "12", "mainManager": "3"}}]
+    assert out["meta"] == _PAGE["meta"] and "included" not in out
     assert "included" in out["projection"]["omitted"]
 
 

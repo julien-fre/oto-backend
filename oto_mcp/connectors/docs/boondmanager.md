@@ -14,7 +14,7 @@ un admin Boond copie le **client token** et la **client key** depuis l'interface
 - « les opportunités ouvertes » → `boondmanager_dictionary(path="setting.state.opportunity")` pour l'id de l'état, puis `boondmanager_search(entity="opportunities", filters={"opportunityStates": [id]})`
 - « la fiche complète » → `boondmanager_get(entity="contacts", record_id=…)`
 - « ajoute ce contact » → chercher d'abord (Boond ne dédoublonne pas), trouver ou créer la société, puis `boondmanager_create(entity="contacts", attributes={…}, relationships={"company": {"type": "company", "id": …}})` — **dry-run par défaut**, `dry_run=false` pour créer
-- « note cet échange » → `boondmanager_create(entity="actions", attributes={"typeOf": <id>, "text": "…"}, relationships={"dependsOn": {"type": "contact", "id": …}})`, l'id du type venant de `boondmanager_dictionary(path="setting.action")`
+- « note cet échange » → `boondmanager_create(entity="actions", attributes={"typeOf": <id>, "text": "…"}, relationships={"dependsOn": {"type": "contact", "id": …}})`, l'id du type venant de `boondmanager_dictionary(path="setting.action.contact")` ; dates d'action au format `2026-10-02T09:30:00+0200`
 - le connecteur **ne modifie ni ne supprime jamais** rien dans Boond
 
 ## note — ce qui trompe
@@ -24,3 +24,5 @@ un admin Boond copie le **client token** et la **client key** depuis l'interface
 - un préfixe d'id que l'entité ne connaît pas ferait répondre 0 ligne à Boond sans erreur : le connecteur le refuse et dit lesquels sont acceptés
 - `max_results` au-delà de 500 (100 pour les actions) ferait retomber Boond à 30 sans le dire : le connecteur le refuse
 - des jetons invalides, ou un accès API non autorisé, reviennent de Boond en **422** (« unable to load agency key »), pas en 401 : le connecteur le traduit en refus d'accès
+- tout attribut ou relation que Boond ne connaît pas est refusé **avant** l'appel, avec la liste acceptée : les règles du connecteur sont celles des schémas de création de la référence Boond
+- une action se rattache à un contact, une opportunité, un projet… mais **pas à une société** (`dependsOn` n'accepte pas `company`)
