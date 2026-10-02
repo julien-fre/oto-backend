@@ -17,6 +17,7 @@ from fastmcp import Context, FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from .. import (access, call_axes, calllog, db, deprecations, error_taxonomy, guide_run,
                 outils_retires, redaction, run_org, session_org, tool_alias)
@@ -185,7 +186,8 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
     call_axes.reject_legacy_axis_names(args, getattr(tool, "parameters", None))
     undo: list = []
     try:
-        for axis in call_axes.axes_for_call(name):
+        # Hors boucle : la liste des axes lit la base (`docs/event-loop-perf.md`).
+        for axis in await run_in_threadpool(call_axes.axes_for_call, name):
             if axis.param in args:
                 undo.extend(await axis.pin_for(args.pop(axis.param), name))
         # L'org du RUN (#639), après les axes — même règle que le middleware :
@@ -256,7 +258,7 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
         # résolu ses credentials — la ligne partait sous la mauvaise org.
         target_org: object = _UNSET
         try:
-            target_org = access.current_org(sub)
+            target_org = await run_in_threadpool(access.current_org, sub)
         # noqa: SILENT — best-effort : `_trace_target_call` retombe sur sa propre lecture
         except Exception:
             pass
@@ -288,7 +290,7 @@ async def executer_cible(tool, sub: Optional[str], name: str, demande: str,
     service = namespace_of(name)
     payload = redaction.extract_payload(result)
     try:
-        red = redaction.redact_payload(service, payload)
+        red = await run_in_threadpool(redaction.redact_payload, service, payload)
     except redaction.RedactionWithheld:
         return IssueCible(ok=True, result=redaction.withheld_result(name), retenu=True)
     return IssueCible(ok=True, result=(result if red is redaction.PASSTHROUGH
