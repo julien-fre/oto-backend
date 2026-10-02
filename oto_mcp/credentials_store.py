@@ -453,7 +453,7 @@ def clear_editor_app(connector: str, data_center: str) -> bool:
 # point) : les accesseurs qui ont VRAIMENT besoin du token (get_credential_with_meta,
 # access_token_for) gardent `meta` entier ; les surfaces de statut servent le
 # `meta` public.
-_SECRET_META_KEYS = ("access_token", "refresh_token", "id_token")
+_SECRET_META_KEYS = ("access_token", "refresh_token", "id_token", "refresh_token_enc")
 
 
 def _public_meta(meta: Optional[dict]) -> dict:

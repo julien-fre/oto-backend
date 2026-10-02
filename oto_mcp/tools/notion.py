@@ -1,7 +1,8 @@
 """Notion — pages, databases, blocks (read + write).
 
-Wrappe `oto.tools.notion.lib.notion_client.NotionClient`. Token d'intégration
-résolu par appel via `access.resolve_api_key("notion")` — byo. **Cache disque
+Wrappe `oto.tools.notion.lib.notion_client.NotionClient`. Token résolu par appel
+(cascade byo) — jeton collé d'une intégration interne, ou jeton né du consentement
+« Connecter avec Notion » (`auth/notion`), rangés sous la même forme. **Cache disque
 désactivé** (`cache_enabled=False`) : le cache fichier n'est pas clefé par token
 → fuite cross-user sur un host multi-utilisateur.
 """
@@ -88,7 +89,14 @@ def register(mcp: FastMCP) -> None:
     connector_verify.register("notion", _verify)
 
     def _client() -> NotionClient:
-        key, _ = access.resolve_api_key("notion")
+        # Même résolution que `resolve_api_key` ; `fresh_key` ne fait que renouveler
+        # un jeton né d'un consentement dont l'échéance approche (`auth/notion`).
+        from ..auth import notion as notion_auth
+        rc = access.resolve_credential("notion", want="auto")
+        try:
+            key = notion_auth.fresh_key(rc)
+        except notion_auth.NotionOAuthError as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e))) from e
         return NotionClient(token=key, cache_enabled=False)
 
     @mcp.tool()

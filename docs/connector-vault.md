@@ -664,8 +664,8 @@ articles-only). Avec, il ne reste que le geste utile : consentir.
   zoho (`eu`, `com`…) aurait posé, lu ou retiré l'app zoho de la plateforme pour cette
   région. Un partenaire qui veut SON écran de consentement (sa marque, son projet Google
   Cloud, ses scopes vérifiés sous son nom) pose son client ici ou depuis son tableau de
-  bord (`tenant_apps`, liste FERMÉE : `google` seul, le seul flux qui lit l'app d'un
-  tenant) ; `google_oauth.app_for(sub)` le sert à tout compte qualifié sous ce slug, et
+  bord (`tenant_apps`, liste FERMÉE : `google` et `notion`, les flux qui lisent l'app
+  d'un tenant) ; `google_oauth.app_for(sub)` le sert à tout compte qualifié sous ce slug, et
   le rappel passe sur le premier host que le tenant TIENT (`tenancy.callback_host`) — un
   client OAuth n'accepte que les domaines de son propriétaire. Sans app posée : l'env
   (`GOOGLE_WORKSPACE_CLIENT_ID/_SECRET`) et notre rappel, l'état d'avant. Une erreur de
@@ -678,6 +678,18 @@ articles-only). Avec, il ne reste que le geste utile : consentir.
   purgé. Un client refusé par Google au refresh (`unauthorized_client`,
   `invalid_client`) est une `GoogleClientRejected` nommée — pas un grant mort, rien
   n'est marqué.
+- **Notion** (02/10/2026) : une intégration PUBLIQUE posée comme app d'éditeur, clé
+  `global` (pas de région), ou par tenant (`tenant:<slug>`, `tenant_apps` l'accepte —
+  son flux la lit, `auth/notion._app_key_for`, tenant puis instance). Le consentement
+  produit **la même forme** qu'un jeton collé (le Bearer est la clé) : outils et cascade
+  ne changent pas. Le compte prend le nom de l'espace Notion, une reconnexion du même
+  `workspace_id` remplace sa ligne, et le compte écrit devient le **défaut** du palier
+  (sinon un jeton collé + un consentement = deux comptes sans défaut ⟹ ambiguïté à
+  chaque appel). Le refresh token est rangé CHIFFRÉ dans `meta.refresh_token_enc` (AAD
+  liée à l'entité, pas au compte, qui se renomme) ; l'échéance seulement si Notion en
+  donne une, et `fresh_key` renouvelle à l'usage. Le flux est déclaré `standalone` :
+  le front l'offre d'emblée, le formulaire du jeton reste une autre voie — quand
+  zoho/salesforce (défaut `False`) enchaînent « enregistrer puis autoriser ».
 - ⚠️ **Le blob d'une app d'éditeur a sa forme PROPRE** (`_pack_editor_app`, JSON des
   deux champs), indépendante du schéma du connecteur. `pack_secret` en dépendait : sur
   `google` (`secret_kind="oauth"`, schéma vide) il ne gardait que la première valeur —

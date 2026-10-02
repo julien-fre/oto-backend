@@ -105,9 +105,9 @@ class TenantAppCleared(BaseModel):
 
 
 # Les connecteurs dont le flux de consentement LIT l'app d'un tenant
-# (`credentials_store.tenant_app_key`) — aujourd'hui `google_oauth.app_for`, seul.
+# (`credentials_store.tenant_app_key`) — `google_oauth.app_for` et `auth/notion`.
 # Un connecteur n'entre ici qu'avec son lecteur, jamais avant.
-TENANT_APP_CONNECTORS: tuple = ("google",)
+TENANT_APP_CONNECTORS: tuple = ("google", "notion")
 
 
 def _host(slug: str) -> Optional[str]:

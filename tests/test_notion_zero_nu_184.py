@@ -39,7 +39,9 @@ class _FauxClient:
 def search(monkeypatch):
     import oto.tools.notion.lib.notion_client as nc
     etat = {}
-    monkeypatch.setattr(access, "resolve_api_key", lambda p, **k: ("secret_x", False))
+    from oto_mcp.access.resolved_credential import ResolvedCredential
+    monkeypatch.setattr(access, "resolve_credential", lambda p, **k: ResolvedCredential(
+        provider=p, secret="secret_x", is_platform=False, mode="user"))
     monkeypatch.setattr(nc, "NotionClient", lambda **kw: etat["client"])
     monkeypatch.setattr(N.connector_verify, "register", lambda *a, **k: None)
     mcp = _MCP()

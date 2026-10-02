@@ -238,7 +238,7 @@ def avec_connect(url: str, etat: str) -> str:
 
 def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: str,
                   redirect: str, extra: Optional[dict] = None,
-                  timeout: int = 30) -> dict:
+                  timeout: int = 30, client_auth: str = "body") -> dict:
     """Code éphémère → tokens.
 
     ⚠️ Les credentials partent en **`data=`** (corps form-encodé, RFC 6749 §2.3.1),
@@ -246,11 +246,41 @@ def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: s
     message de toute exception `requests`, dans les logs et chez le fournisseur.
     Et pas de `raise_for_status()` — son message embarque l'URL. On construit
     l'erreur nous-mêmes.
+
+    `client_auth="basic_json"` : l'app s'authentifie en **HTTP Basic** et le corps
+    part en **JSON** — la forme qu'exige Notion, qui ne lit ni l'un ni l'autre dans
+    un corps form-encodé. Le défaut (`"body"`) reste la forme d'avant à l'octet près.
     """
     payload = {"grant_type": "authorization_code", "code": code,
-               "client_id": client_id, "client_secret": client_secret,
                "redirect_uri": redirect, **(extra or {})}
-    r = requests.post(token_url, data=payload, timeout=timeout)
+    return post_token(token_url, payload, client_id=client_id,
+                      client_secret=client_secret, timeout=timeout,
+                      client_auth=client_auth)
+
+
+def refresh_grant(token_url: str, *, refresh_token: str, client_id: str,
+                  client_secret: str, timeout: int = 30,
+                  client_auth: str = "body") -> dict:
+    """Refresh token → nouveaux jetons, même transport et mêmes erreurs rédigées
+    que `exchange_code`. Le fournisseur peut ROTER le refresh token : l'appelant
+    range celui de la réponse, jamais celui qu'il a envoyé."""
+    return post_token(token_url,
+                      {"grant_type": "refresh_token", "refresh_token": refresh_token},
+                      client_id=client_id, client_secret=client_secret,
+                      timeout=timeout, client_auth=client_auth)
+
+
+def post_token(token_url: str, payload: dict, *, client_id: str, client_secret: str,
+               timeout: int = 30, client_auth: str = "body") -> dict:
+    """POST au point de jeton, credentials de l'app selon `client_auth`."""
+    if client_auth == "basic_json":
+        r = requests.post(token_url, json=payload, auth=(client_id, client_secret),
+                          timeout=timeout)
+    elif client_auth == "body":
+        r = requests.post(token_url, timeout=timeout, data={
+            **payload, "client_id": client_id, "client_secret": client_secret})
+    else:
+        raise OAuthFlowError(f"client_auth inconnu : {client_auth!r}")
     host = (token_url or "").split("//")[-1].split("/")[0]
     try:
         body = r.json()

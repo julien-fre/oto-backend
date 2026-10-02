@@ -97,6 +97,12 @@ class Flow:
     # l'application », y compris à qui n'a plus rien à poser. `None` = le connecteur
     # ne déclare pas la question, le front ne promet alors rien.
     app_ready: Optional[Callable[[str], bool]] = None
+    # Le consentement donne-t-il À LUI SEUL un credential complet ? `False` (défaut,
+    # zoho/salesforce) : le flux COMPLÈTE des champs posés au formulaire — le front
+    # enchaîne « enregistrer » puis « autoriser ». `True` (notion) : le flux est une
+    # AUTRE voie que le formulaire — le front l'offre d'emblée, et un formulaire
+    # enregistré n'appelle aucune étape de plus.
+    standalone: bool = False
 
 
 _FLOWS: dict[str, Flow] = {}
@@ -105,7 +111,8 @@ _FLOWS: dict[str, Flow] = {}
 def declare(connector: str, *, start: Callable[..., FlowStart],
             params: tuple[FlowParam, ...] = (), label: str = "Connecter",
             callback_path: str = "",
-            app_ready: Optional[Callable[[str], bool]] = None) -> None:
+            app_ready: Optional[Callable[[str], bool]] = None,
+            standalone: bool = False) -> None:
     """Déclare le flux de connexion de ce connecteur. Appelé au niveau MODULE (comme
     `status_hints.register_state`) : c'est une déclaration pure, elle doit être lisible
     dès l'import, sans attendre le montage FastMCP."""
@@ -117,7 +124,8 @@ def declare(connector: str, *, start: Callable[..., FlowStart],
                 f"{connector}.{p.name} : paramètre requis sans options ni défaut.")
     _FLOWS[connector] = Flow(connector=connector, start=start,
                              params=tuple(params), label=label,
-                             callback_path=callback_path, app_ready=app_ready)
+                             callback_path=callback_path, app_ready=app_ready,
+                             standalone=standalone)
 
 
 def supports(connector: str) -> bool:
@@ -136,7 +144,8 @@ def describe(connector: str) -> Optional[dict]:
     f = _FLOWS.get(connector)
     if f is None:
         return None
-    return {"label": f.label, "params": [p.describe() for p in f.params]}
+    return {"label": f.label, "params": [p.describe() for p in f.params],
+            "standalone": f.standalone}
 
 
 async def start(connector: str, ctx, values: dict) -> FlowStart:

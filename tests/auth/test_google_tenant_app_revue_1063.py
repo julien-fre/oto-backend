@@ -124,7 +124,9 @@ def test_eligible_nomme_seulement_les_connecteurs_qui_lisent_l_app_du_tenant(
     from oto_mcp.connectors import flow as connector_flow
     assert connector_flow.supports("zoho"), "banc : le flux zoho doit être déclaré"
     monkeypatch.setattr(credentials_store, "list_editor_apps", lambda connector=None: [])
-    assert tap._list_apps(CTX, tap.TenantAppsInput(slug="tulina"))["eligible"] == ["google"]
+    # `notion` (2026-10-02) : son flux lit l'app du tenant (`auth/notion._app_key_for`).
+    assert tap._list_apps(CTX, tap.TenantAppsInput(slug="tulina"))["eligible"] == [
+        "google", "notion"]
 
 
 # ─── 2. un espace de noms à part ──────────────────────────────────────────────

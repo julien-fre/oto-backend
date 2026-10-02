@@ -153,6 +153,10 @@ class ConnectFlow(BaseModel):
     répondent à qui demande, ce qu'un catalogue anonyme ne peut pas faire."""
     label: str
     params: list[ConnectParam] = []
+    # Le consentement donne-t-il À LUI SEUL un credential complet ? `false` : il
+    # COMPLÈTE le formulaire (enregistrer, puis autoriser — zoho, salesforce). `true` :
+    # c'est une AUTRE voie que le formulaire, à offrir d'emblée (notion).
+    standalone: bool = False
     # L'URL de retour de consentement à enregistrer chez le fournisseur, DÉRIVÉE de
     # l'environnement (jamais écrite en dur : une URL de prose ment dès qu'on la lit
     # depuis la preprod, et le consentement échoue sur un `redirect_uri_mismatch`
