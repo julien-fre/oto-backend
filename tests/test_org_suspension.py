@@ -77,6 +77,25 @@ def test_ce_qui_agit_dans_lorg_nest_pas_ouvert():
 def test_les_operations_de_plateforme_restent_ouvertes():
     """C'est par elles qu'on lève la suspension."""
     assert org_suspension.ouverte("admin.org_suspension")
+    assert org_suspension.ouverte("platform.org.grant_key")
+
+
+@pytest.mark.parametrize("cle", ["platform.org.grant_key", "platform.org.unipile_limit_set",
+                                 "admin.tenant_org_grant", "admin.org_suspension"])
+def test_les_leviers_du_service_dusage_passent_meme_dans_une_org_suspendue(
+        monkeypatch, suspendue, sans_handler, cle):
+    """Le pire cas : l'appelant RÉSOUT sur l'org suspendue. Les leviers qui rendent
+    l'accès à l'abonnement ne doivent jamais être refusés par la suspension."""
+    stub_authz(monkeypatch, org_id=35, role="super_admin")
+    from oto_mcp.capabilities import _authz
+    monkeypatch.setattr(_authz.access, "is_platform_operator", lambda sub: True, raising=False)
+    params = {"platform.org.grant_key": ({"id": "35", "provider": "aiark"}, {}),
+              "platform.org.unipile_limit_set": ({"id": "35"}, {"limit": 1}),
+              "admin.tenant_org_grant": ({"slug": "t", "provider": "aiark",
+                                          "org_id": "35"}, {}),
+              "admin.org_suspension": ({"id": "35"}, {"op": "resume"})}[cle]
+    status, body = call(cle, path_params=params[0], body=params[1])
+    assert (status, body) == (200, {"ok": True}), (cle, status, body)
 
 
 def test_garde_capacite_ignore_un_worker_et_une_cap_sans_org(suspendue):

@@ -83,9 +83,17 @@ def refus(org_id: Optional[int]) -> Optional[str]:
     return message(int(org_id))
 
 
+#: Les surfaces d'OPÉRATEUR : c'est par elles que le service d'usage d'un tenant
+#: coupe et rend ses leviers (grants, plafond de messagerie, arêtes de tenant) et lève
+#: la suspension. Leurs règles (super admin, admin de tenant) résolvent l'org de
+#: l'APPELANT, pas la cible — mais une garde qui dépendrait de ce détail casserait
+#: le jour où une règle lirait l'org visée. On les exempte par nom.
+_OPERATEUR = ("admin.", "platform.")
+
+
 def ouverte(cap_key: str) -> bool:
     """Une capacité qu'une org suspendue sert encore."""
-    return cap_key in OUVERTES or cap_key.startswith("admin.")
+    return cap_key in OUVERTES or cap_key.startswith(_OPERATEUR)
 
 
 def garde_capacite(cap_key: str, ctx) -> None:
