@@ -71,7 +71,8 @@ class _FauxClient:
 
     def segmentation(self, event, start, end, **kw):
         self._note("segmentation", event, start, end, **kw)
-        return {"data": {"series": [[1, 2]], "xValues": ["2026-09-01", "2026-09-02"]}}
+        return {"data": {"series": [[1, 2]], "xValues": ["2026-09-01", "2026-09-02"]},
+                "novaCost": 1, "realtimeProcessLag": {"p50": 1.0}, "novaRuntime": 410}
 
     def funnel(self, events, start, end, **kw):
         self._note("funnel", events, start, end, **kw)
@@ -259,6 +260,7 @@ def test_segmentation_evenement_par_nom(banc):
     assert args == ({"event_type": "Sign Up"}, "20260901", "20260930")
     assert kw["interval"] == 7 and kw["group_by"] == "country"
     assert r["data"]["series"] == [[1, 2]]
+    assert r["cost"] == 1 and "realtimeProcessLag" not in r and "novaRuntime" not in r
 
 
 def test_funnel_etapes_et_fenetre_de_conversion(banc):
@@ -351,3 +353,10 @@ def test_cohort_members(banc):
     r = _appeler(banc, "amplitude_cohort", op="members", request_id="r1")
     assert r["status"] == "completed" and r["lines"][1] == "1,a"
     _refus(banc, "amplitude_cohort", op="members", request_id="r1", cohort_id="c1")
+
+
+def test_400_propriete_inconnue_renvoie_au_schema(banc):
+    banc.prepare = lambda c: setattr(c, "leve", _err(400, "Invalid user property country"))
+    e = _refus(banc, "amplitude_query", op="segmentation", start="2026-09-01",
+               end="2026-09-07", event="Sign Up", group_by="country")
+    assert "amplitude_schema" in e.error.message

@@ -67,7 +67,7 @@ def register(mcp: FastMCP) -> None:
         `[{"prop": "country", "op": "is", "values": ["France"]}]` (≤5).
         `group_by` = one property (`country`, `gp:plan`). Windows over 92
         days need `long_range=True` (cost budget: 108k/hour per project).
-        Returns Amplitude's `data` object (series, labels, x values).
+        Returns `{data, cost}`: Amplitude's series, labels and x values, and what the query spent.
 
         Args:
             op: segmentation | funnel | retention | active_users | sessions.
@@ -137,5 +137,11 @@ def register(mcp: FastMCP) -> None:
             kind = session_kind or "average"
             res = A._run(lambda: _client().sessions(kind, s, e))
 
-        data = res.get("data") if isinstance(res, dict) and "data" in res else res
-        return {"op": op, "start": s, "end": e, "data": data}
+        # The raw answer wraps `data` in ~2 KB of engine diagnostics; only
+        # `data` and the query's cost against the hourly budget are kept.
+        if not (isinstance(res, dict) and "data" in res):
+            return {"op": op, "start": s, "end": e, "data": res}
+        out = {"op": op, "start": s, "end": e, "data": res["data"]}
+        if res.get("novaCost") is not None:
+            out["cost"] = res["novaCost"]
+        return out

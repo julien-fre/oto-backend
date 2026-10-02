@@ -33,8 +33,11 @@ Five tools, verb in `op=` (ADR 0047), no argument silently ignored
 Client calls are written plainly (`_client().list_event_types()`) for the
 version probe (`test_tools_client_methods_exist`).
 
-Not live-tested: built against the public reference, with only the 403 shapes
-observed on a real API key without its secret.
+Live-tested on 2026-10-02 against a real US project with no events: auth,
+the 403 diagnosis, taxonomy, every query op, user search, cohort list and
+the chart endpoints (`/query` and `/csv` both answer 404 "Chart not found"
+for an unknown id). Not exercised on real data: series content, user
+activity, cohort download.
 """
 from __future__ import annotations
 
@@ -111,6 +114,10 @@ def upstream_message(e: Any, region: str = "us") -> str:
                     f"in {WHERE_TO_FIND}.")
         return (f"Amplitude refused this read ({status}: {detail}) — the key pair "
                 f"may lack access to this API on your plan.")
+    if status == 400 and "propert" in detail.lower():
+        return (f"Amplitude refused the query (400): {detail} — use the exact "
+                f"names from `amplitude_schema` (custom user properties are "
+                f"`gp:…`).")
     if status == 404:
         return f"Amplitude: not found (404){' — ' + detail if detail else ''}."
     return f"Amplitude refused the request (HTTP {status}): {detail}"
