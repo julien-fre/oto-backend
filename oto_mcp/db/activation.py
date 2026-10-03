@@ -91,12 +91,15 @@ WITH pref AS ({_TENANT_PREF_SQL}),
           WHERE tc.sub IN (SELECT sub FROM comptes) AND tc.kind IN ('mcp', 'protocol')
           GROUP BY tc.sub
      ),
-     journal AS ({_runs_from_journal(" AND s.sub IN (SELECT sub FROM comptes)")}),
+     -- colonnes renommées : le journal sert le nom historique de la procédure
+     journal (run_id, sub, org_id, label, procedure, version_procedure, started_at,
+              finished_at, outcome, last_seen_at)
+         AS ({_runs_from_journal(" AND s.sub IN (SELECT sub FROM comptes)")}),
      runs AS (
          SELECT sub, COUNT(*) AS n, COUNT(DISTINCT finished_at::date) AS jours,
                 MAX(finished_at) AS dernier
            FROM journal
-          WHERE doctrine IS NOT NULL AND outcome = 'done'
+          WHERE procedure IS NOT NULL AND outcome = 'done'
           GROUP BY sub
      ),
      personnes AS (

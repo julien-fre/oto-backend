@@ -14,6 +14,8 @@ import uuid
 
 import pytest
 
+from oto_mcp.db.usage import _ARG_PROCEDURE
+
 BASE = dict(tenant="acme", delay_hours=24, window_days=30, sequence_days=14,
             exclude_domains=["equipe.test"])
 
@@ -107,7 +109,7 @@ def _peupler() -> None:
             conn.execute(
                 "INSERT INTO tool_calls (sub, tool, kind, run_id, args, created_at) VALUES "
                 "(%s, 'run_start', 'mcp', %s, %s, NOW() - make_interval(hours => %s))",
-                (sub, run_id, json.dumps({"label": "p", "doctrine": "p"}), il_y_a_h + 1))
+                (sub, run_id, json.dumps({"label": "p", _ARG_PROCEDURE: "p"}), il_y_a_h + 1))
             conn.execute(
                 "INSERT INTO tool_calls (sub, tool, kind, args, created_at) VALUES "
                 "(%s, 'run_finish', 'mcp', %s, NOW() - make_interval(hours => %s))",
