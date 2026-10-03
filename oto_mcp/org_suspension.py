@@ -24,12 +24,22 @@ qu'on lève la suspension.
 la main (export CSV d'un tableau, logo…) ne passent pas par ces gardes — un export de
 ses propres données reste possible, c'est voulu.
 
-⚠️ Comme pour la pause de compte, un hoquet de base REMONTE : le fail-safe d'une
-neutralisation est le refus, pas le laisser-passer.
+**Aucune lecture de base par appel** : la liste des orgs suspendues est gardée en
+mémoire et relue toutes les `TTL_S` secondes (une requête par processus). Une org
+active — la quasi-totalité — se tranche par une recherche dans un ensemble. La base
+n'est lue que pour une org SUSPENDUE, pour le motif de son refus. Le prix : une
+suspension ou une levée atteint les AUTRES processus en `TTL_S` au plus ; celui qui
+a traité le geste d'admin la voit tout de suite (`invalider`).
+
+⚠️ Fail-closed comme la pause de compte : si la PREMIÈRE lecture échoue, l'appel
+échoue. Une relecture qui échoue ensuite garde la dernière liste connue (une
+suspension posée n'est pas oubliée) et retente sous `RETRY_S` secondes.
 """
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Optional
 
 from . import org_store
@@ -59,9 +69,48 @@ OUVERTES = frozenset({
 })
 
 
+TTL_S = 30.0
+RETRY_S = 5.0
+
+_verrou = threading.Lock()
+_cache: dict = {"ids": frozenset(), "lu_a": None}
+
+
+def _suspendues() -> frozenset:
+    """La liste en mémoire, relue au plus toutes les `TTL_S` secondes."""
+    lu_a = _cache["lu_a"]
+    if lu_a is not None and time.monotonic() - lu_a < TTL_S:
+        return _cache["ids"]
+    with _verrou:
+        lu_a = _cache["lu_a"]
+        if lu_a is not None and time.monotonic() - lu_a < TTL_S:
+            return _cache["ids"]
+        try:
+            ids = frozenset(org_store.suspended_org_ids())
+        except Exception as e:
+            if lu_a is None:
+                raise                   # jamais lue : refuser, pas laisser passer
+            logger.warning("liste des orgs suspendues illisible, dernière liste gardée "
+                           "(%d org(s)) : %s", len(_cache["ids"]), e)
+            _cache["lu_a"] = time.monotonic() - TTL_S + RETRY_S
+            return _cache["ids"]
+        _cache.update(ids=ids, lu_a=time.monotonic())
+        return ids
+
+
+def invalider() -> None:
+    """Relire la liste au prochain appel — après un geste d'admin dans CE processus."""
+    with _verrou:
+        # Jamais lue : la laisser à `None`. Y mettre une date ferait d'un premier
+        # échec de lecture une liste vide servie — un laisser-passer.
+        if _cache["lu_a"] is not None:
+            _cache["lu_a"] = time.monotonic() - TTL_S
+
+
 def etat(org_id: Optional[int]) -> Optional[dict]:
-    """L'état de suspension, ou `None` si l'org est active (ou absente)."""
-    if not org_id:
+    """L'état de suspension, ou `None` si l'org est active (ou absente). Une org active
+    se tranche en mémoire ; seule une org suspendue lit son détail en base."""
+    if not org_id or int(org_id) not in _suspendues():
         return None
     return org_store.get_org_suspension(int(org_id))
 

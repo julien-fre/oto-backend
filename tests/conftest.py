@@ -149,14 +149,19 @@ def _defauts_des_droits(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _org_active_sans_base(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sans base, toute org est ACTIVE. La garde de suspension d'org
-    (`org_suspension`) lit `orgs.suspended_at` à chaque capacité et à chaque outil de
-    connecteur ; un banc qui double l'autz sans base n'a rien à y lire. Un banc sur
-    base réelle (`DATABASE_URL` posé par sa fixture, de portée module, donc AVANT
-    celle-ci) lit la vraie colonne ; un banc qui teste la garde double lui-même
-    `get_org_suspension`."""
+    (`org_suspension`) lit la liste des orgs suspendues (en mémoire, relue
+    périodiquement) à chaque capacité et à chaque outil de connecteur ; un banc qui
+    double l'autz sans base n'a rien à y lire. Un banc sur base réelle
+    (`DATABASE_URL` posé par sa fixture, de portée module, donc AVANT celle-ci) lit la
+    vraie colonne ; un banc qui teste la garde double lui-même la liste.
+
+    La liste en mémoire repart VIDE et non lue à chaque banc : sans ça, un banc
+    hériterait de la suspension posée par le précédent."""
+    from oto_mcp import org_store, org_suspension
+    monkeypatch.setattr(org_suspension, "_cache", {"ids": frozenset(), "lu_a": None})
     if os.environ.get("DATABASE_URL"):
         return
-    from oto_mcp import org_store
+    monkeypatch.setattr(org_store, "suspended_org_ids", lambda: [])
     monkeypatch.setattr(org_store, "get_org_suspension", lambda org_id: None)
 
 

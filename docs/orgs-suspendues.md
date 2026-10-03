@@ -55,8 +55,17 @@ les appels sont refusés.
   `suspended_by`, `suspended_reason`), posées au boot, NULL = active.
 - **Re-suspendre ne réécrit rien** (auteur, date, motif d'origine), comme la pause de
   compte ; `resume` rend `changed=false` sur une org active.
-- **Fail-closed** : une lecture de l'état qui échoue fait échouer l'appel. Seul le
-  cron journalise et continue — la réservation garde de toute façon.
+- **Aucune lecture de base par appel.** La liste des orgs suspendues est gardée en
+  mémoire par processus et relue toutes les 30 s (`TTL_S`, une requête servie par
+  l'index partiel). Une org active se tranche en mémoire ; seule une org suspendue lit
+  son détail (le motif du refus). Une suspension ou une levée atteint les AUTRES
+  processus en 30 s au plus ; le processus qui a traité le geste d'admin la voit tout
+  de suite (`invalider`). La réservation des travaux, elle, garde dans sa propre
+  requête (`NOT EXISTS`) : aucun aller-retour de plus.
+- **Fail-closed** : si la PREMIÈRE lecture de la liste échoue, l'appel échoue. Une
+  relecture qui échoue ensuite garde la dernière liste connue (une suspension posée
+  n'est jamais oubliée sur un hoquet) et retente sous 5 s. Seul le cron journalise et
+  continue — la réservation garde de toute façon.
 - **Super admin seulement** : suspendre coupe tous les membres d'un espace, c'est un
   geste de facturation, pas d'administration de l'org.
 

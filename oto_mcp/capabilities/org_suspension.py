@@ -15,7 +15,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import org_store
+from .. import org_store, org_suspension
 from ._authz import SUPER_ADMIN
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -57,6 +57,7 @@ def _org_suspension(ctx: ResolvedCtx, inp: OrgSuspensionInput) -> dict:
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     if inp.op == "resume":
         change = org_store.resume_org(inp.org_id)
+        org_suspension.invalider()
         logger.warning("org réactivée org=%s par=%s (change=%s)", inp.org_id, ctx.sub, change)
         return _vue(inp.org_id, None, changed=change)
     motif = (inp.reason or "").strip()
@@ -69,6 +70,7 @@ def _org_suspension(ctx: ResolvedCtx, inp: OrgSuspensionInput) -> dict:
                           f"`reason` fait {len(motif)} caractères pour {_MOTIF_MAX} au plus.")
     deja = org_store.get_org_suspension(inp.org_id)
     etat = org_store.suspend_org(inp.org_id, by=ctx.sub, reason=motif)
+    org_suspension.invalider()
     logger.warning("org suspendue org=%s par=%s motif=%r", inp.org_id, ctx.sub, motif)
     return _vue(inp.org_id, etat, changed=deja is None)
 

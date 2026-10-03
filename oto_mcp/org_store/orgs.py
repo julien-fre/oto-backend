@@ -101,6 +101,15 @@ def get_org_suspension(org_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def suspended_org_ids() -> list[int]:
+    """Toutes les orgs suspendues — la liste que `org_suspension` garde en mémoire.
+    Petite par nature (index partiel `idx_orgs_suspended_by`)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM orgs WHERE suspended_at IS NOT NULL").fetchall()
+    return [int(r["id"]) for r in rows]
+
+
 def suspend_org(org_id: int, *, by: str, reason: str) -> Optional[dict]:
     """Suspend une org. Rend l'état posé, `None` si l'org n'existe pas. Ne réécrit
     pas une suspension en cours (même règle que `suspend_account`)."""

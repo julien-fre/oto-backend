@@ -853,7 +853,7 @@ def test_deux_agents_ne_partagent_JAMAIS_une_adresse(live):
 def test_une_org_SUSPENDUE_refuse_la_livraison_et_le_journal_le_dit(live):
     """`org_suspension` : rien n'est enfilé, l'appelant reçoit un refus nommé, et le
     propriétaire voit pourquoi sur la page de l'agent. Levée : ça repart."""
-    from oto_mcp import db, org_store, runner_hook
+    from oto_mcp import db, org_store, org_suspension, runner_hook
     susp = 8199
     with db._connect() as conn:
         conn.execute("INSERT INTO orgs (id, name) VALUES (%s, 'susp') "
@@ -868,5 +868,6 @@ def test_une_org_SUSPENDUE_refuse_la_livraison_et_le_journal_le_dit(live):
         assert (lue["outcome"], lue["job_id"]) == (db.REFUSE_SUSPENDED, None)
     finally:
         org_store.resume_org(susp)
+        org_suspension.invalider()     # ce que fait la capacité d'admin
     runner_hook.declencher(t["id"], secret, None)
     assert db.livraisons(t["id"], susp)[0]["outcome"] in (db.QUEUED, db.DELAYED)

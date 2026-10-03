@@ -26,6 +26,7 @@ SUSP = {"id": 35, "suspended_at": "2026-10-09T00:00:00+00:00",
 @pytest.fixture
 def suspendue(monkeypatch):
     """L'org 35 est suspendue, toutes les autres sont actives."""
+    monkeypatch.setattr(org_store, "suspended_org_ids", lambda: [35])
     monkeypatch.setattr(org_store, "get_org_suspension",
                         lambda org_id: SUSP if org_id == 35 else None)
 
@@ -105,9 +106,10 @@ def test_garde_capacite_ignore_un_worker_et_une_cap_sans_org(suspendue):
 
 
 def test_un_hoquet_de_base_ne_laisse_pas_passer(monkeypatch):
-    def boom(org_id):
+    """Jamais lue + lecture en échec ⟹ refus, pas laisser-passer."""
+    def boom():
         raise RuntimeError("db down")
-    monkeypatch.setattr(org_store, "get_org_suspension", boom)
+    monkeypatch.setattr(org_store, "suspended_org_ids", boom)
     from oto_mcp.capabilities._types import ResolvedCtx
     with pytest.raises(RuntimeError):
         org_suspension.garde_capacite("me.tools.list", ResolvedCtx(sub="u", org_id=35))
@@ -288,3 +290,72 @@ def test_la_lecture_est_une_operation_de_plateforme():
     assert c.authz is PLATFORM_ADMIN and org_suspension.ouverte(c.key)
     [b] = c.rest_bindings()
     assert (b.verb, b.path) == ("GET", "/api/admin/usage/first-calls")
+
+
+# ── la liste en mémoire : aucune lecture par appel ───────────────────────────
+
+def _compteur(monkeypatch, ids):
+    lus = {"n": 0}
+
+    def _lire():
+        lus["n"] += 1
+        return list(ids)
+    monkeypatch.setattr(org_store, "suspended_org_ids", _lire)
+    return lus
+
+
+def test_une_org_active_ne_lit_pas_la_base_a_chaque_appel(monkeypatch):
+    lus = _compteur(monkeypatch, [])
+    monkeypatch.setattr(org_store, "get_org_suspension",
+                        lambda o: pytest.fail("aucun détail lu pour une org active"))
+    for _ in range(100):
+        assert org_suspension.etat(36) is None
+    assert lus["n"] == 1
+
+
+def test_la_liste_est_relue_apres_le_ttl(monkeypatch):
+    lus = _compteur(monkeypatch, [])
+    horloge = {"t": 1000.0}
+    monkeypatch.setattr(org_suspension.time, "monotonic", lambda: horloge["t"])
+    org_suspension.etat(36)
+    horloge["t"] += org_suspension.TTL_S - 1
+    org_suspension.etat(36)
+    assert lus["n"] == 1
+    horloge["t"] += 2
+    org_suspension.etat(36)
+    assert lus["n"] == 2
+
+
+def test_le_geste_dadmin_est_vu_tout_de_suite_dans_ce_processus(monkeypatch):
+    ids = []
+    _compteur_ids = {"ids": ids}
+    monkeypatch.setattr(org_store, "suspended_org_ids", lambda: list(_compteur_ids["ids"]))
+    monkeypatch.setattr(org_store, "get_org_suspension", lambda o: SUSP)
+    assert org_suspension.etat(35) is None
+    _compteur_ids["ids"] = [35]
+    org_suspension.invalider()
+    assert org_suspension.etat(35) == SUSP
+
+
+def test_une_relecture_en_echec_garde_la_derniere_liste(monkeypatch):
+    """Une suspension posée n'est pas oubliée parce que la base hoquette."""
+    horloge = {"t": 1000.0}
+    monkeypatch.setattr(org_suspension.time, "monotonic", lambda: horloge["t"])
+    monkeypatch.setattr(org_store, "suspended_org_ids", lambda: [35])
+    monkeypatch.setattr(org_store, "get_org_suspension", lambda o: SUSP)
+    assert org_suspension.etat(35) == SUSP
+    def boom():
+        raise RuntimeError("db down")
+    monkeypatch.setattr(org_store, "suspended_org_ids", boom)
+    horloge["t"] += org_suspension.TTL_S + 1
+    assert org_suspension.etat(35) == SUSP
+
+
+def test_invalider_avant_toute_lecture_ne_vaut_pas_une_liste_vide(monkeypatch):
+    """Sinon un premier échec de lecture servirait une liste vide : laisser-passer."""
+    org_suspension.invalider()
+    def boom():
+        raise RuntimeError("db down")
+    monkeypatch.setattr(org_store, "suspended_org_ids", boom)
+    with pytest.raises(RuntimeError):
+        org_suspension.etat(35)
