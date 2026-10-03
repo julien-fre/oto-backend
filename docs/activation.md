@@ -54,6 +54,7 @@ Une **personne** (une boîte mail, comme la relance) :
 | `exclude_domains` | non | les domaines de l'équipe du tenant |
 | `delay_hours`, `window_days`, `max_per_run` | non | 24, 30, 50 |
 | `mailer_url` | non | le relais du tenant ; son jeton dans `OTO_ACTIVATION_MAILER_BEARER` |
+| `link_base` | non | l'hôte du lien de refus (celui du tenant) ; sinon `OTO_MCP_PUBLIC_URL` |
 | `steps`, `agent_label` | non | les étapes et le nom de l'agent, si le tenant en sert d'autres |
 
 ⚠️ **Le relais.** `from` doit être sur un domaine que le relais a vérifié chez son
@@ -62,6 +63,10 @@ et son allowlist `MAILER_FROM_DOMAINS` ; ajouter un domaine à cette liste sans 
 vérifié chez le fournisseur échange un refus franc contre un envoi en indésirables. Un
 relais déclaré sans jeton n'envoie rien : le jeton de l'instance ne part jamais vers un
 autre relais.
+
+⚠️ **La marque.** Le nom du produit et le dessin viennent de `tenants.brand`. Le
+travail tourne hors du serveur : il pose lui-même le registre des tenants, et sans
+marque déclarée complète il n'envoie rien (le gabarit neutre signerait du slug).
 
 ## Les trois verrous
 
