@@ -1354,6 +1354,12 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS suspended_by TEXT")
     if _colonne_absente(conn, "orgs", "suspended_reason"):
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS suspended_reason TEXT")
+    # Repointée par `migrate_sub` (signature d'auteur) : sans index, la fusion de
+    # comptes balaierait `orgs` (#439). Partiel : seules les orgs suspendues portent
+    # une valeur.
+    if _index_absent(conn, "idx_orgs_suspended_by"):
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_orgs_suspended_by ON orgs(suspended_by) "
+                     "WHERE suspended_by IS NOT NULL")
     if _index_absent(conn, "uq_orgs_personal_of"):
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_personal_of "
                      "ON orgs(personal_of) WHERE personal_of IS NOT NULL")
