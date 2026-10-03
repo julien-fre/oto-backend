@@ -117,14 +117,16 @@ active.
 - `set_active_org(sub, …)` **efface** le groupe actif (il pointait l'ancienne org).
 - Retirer un membre d'une org le retire de tous ses groupes.
 
-`oto_use_group(group_id)` (MCP) / `PUT /api/me/active-group` (REST) basculent.
+`oto_use_group(group_id)` (MCP) / `PUT /api/me/active-group` (REST) basculent ;
+`oto_clear_group` / `DELETE /api/me/active-group` reviennent au niveau org.
 
-**Un membre d'équipe n'est jamais « sans équipe »** : quand rien ne désigne d'équipe,
-`access.current_group` rend son équipe DANS l'org résolue (consultation `X-Oto-Org`,
-jeton `_org=`, org du run ou maison) — `group_store.default_group_in_org` : l'active si
-elle ⊂ org, sinon la première rejointe. Lecture seule, rien n'est écrit. Seul
-`X-Oto-Group: 0` garde le niveau org ; `oto_clear_group` / `DELETE /api/me/active-group`
-effacent le défaut persisté et rendent l'équipe effective qui s'applique quand même.
+**Tenant opt-in — un membre d'équipe n'est jamais « sans équipe »**
+(`OTO_EQUIPE_PAR_DEFAUT_TENANTS`, slugs séparés par des virgules ; absente = aucun) :
+pour une org de ces tenants, là où `access.current_group` rendrait le niveau org faute
+d'équipe désignée (consultation `X-Oto-Org`, jeton `_org=`, org du run, maison), il rend
+l'équipe du sub DANS cette org — `group_store.default_group_in_org` : l'active si elle ⊂
+org, sinon la première rejointe. Lecture seule. `X-Oto-Group: 0` garde le niveau org ;
+`oto_clear_group` efface le défaut persisté et rend l'équipe effective.
 
 ## Schéma (db.py `_SCHEMA`)
 

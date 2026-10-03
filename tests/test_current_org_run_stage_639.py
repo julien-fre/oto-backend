@@ -52,8 +52,8 @@ def test_le_jeton_org_explicite_prime_sur_l_org_du_run():
 def test_le_groupe_maison_d_une_autre_org_n_est_pas_rendu_sous_l_org_du_run(monkeypatch):
     """Invariant groupe ⊂ org : sous l'org du run, le home_group d'une AUTRE org
     n'est pas rendu (niveau org) — même règle que sous un jeton `_org=`."""
-    monkeypatch.setattr(group_store, "default_group_in_org",
-                        lambda sub, org: 7 if org == 2 else None)
+    monkeypatch.setattr(group_store, "get_active_group", lambda sub: 7)
+    monkeypatch.setattr(group_store, "get_group", lambda gid: {"id": 7, "org_id": 2})
     undo = _pose(session_org.set_call_run_org, 226)
     try:
         assert access.current_group("u") is None

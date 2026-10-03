@@ -74,14 +74,14 @@ def test_hard_lock_session_override_ignored(monkeypatch):
 
 
 def test_current_group_locked_to_org(monkeypatch):
-    # L'équipe du sub DANS l'org épinglée — jamais une équipe d'une autre org.
-    monkeypatch.setattr(group_store, "default_group_in_org",
-                        lambda sub, org: 2 if (sub, org) == ("rep", 42) else None)
+    monkeypatch.setattr(group_store, "get_active_group", lambda sub: 2)
+    monkeypatch.setattr(group_store, "get_group",
+                        lambda gid: {"id": 2, "org_id": 42} if gid == 2 else None)
     tok = session_org.set_subdomain_cv(42)
     try:
         assert access.current_group("rep") == 2          # groupe ⊂ org épinglée
-        # aucune équipe dans l'org épinglée → None (pas de fuite cross-org)
-        monkeypatch.setattr(group_store, "default_group_in_org", lambda sub, org: None)
+        # groupe maison dans une AUTRE org → None (pas de fuite cross-org)
+        monkeypatch.setattr(group_store, "get_group", lambda gid: {"id": 2, "org_id": 7})
         assert access.current_group("rep") is None
         # non-membre → None
         assert access.current_group("other") is None

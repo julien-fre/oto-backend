@@ -146,15 +146,37 @@ def current_org(sub: str | None) -> Optional[int]:
 _UNSET: object = object()
 
 
+# Tenants dont les membres d'équipe ne sont jamais « sans équipe » (règle OPT-IN,
+# déclarée par l'instance) : quand rien ne désigne d'équipe, `current_group` rend
+# l'équipe du sub dans l'org résolue au lieu du niveau org. Hors liste : inchangé.
+ENV_EQUIPE_PAR_DEFAUT = "OTO_EQUIPE_PAR_DEFAUT_TENANTS"
+
+
+def _tenants_equipe_par_defaut() -> frozenset[str]:
+    brut = os.environ.get(ENV_EQUIPE_PAR_DEFAUT, "")
+    return frozenset(t.strip() for t in brut.split(",") if t.strip())
+
+
+def _equipe_par_defaut(sub: str, org: Optional[int]) -> Optional[int]:
+    """L'équipe du sub dans `org` si l'org relève d'un tenant opt-in, sinon None
+    (niveau org, le comportement de toujours)."""
+    if not org:
+        return None
+    tenants = _tenants_equipe_par_defaut()
+    if not tenants or db.org_tenant_slug(org) not in tenants:
+        return None
+    return group_store.default_group_in_org(sub, org)
+
+
 def current_group(sub: str | None) -> Optional[int]:
     """Équipe (groupe) EFFECTIVE — mirror de `current_org` pour l'axe groupe
     (ADR 0038). Résout `jeton d'appel ?? consultation ?? maison` en TENANT
-    l'invariant « groupe ⊂ org ».
+    l'invariant « groupe ⊂ org » : un jeton/consultation d'ORG **sans** groupe
+    explicite ⇒ niveau org (None), jamais le home_group d'une autre org.
 
-    Un membre d'équipe n'est jamais « sans équipe » : quand rien ne désigne
-    d'équipe, on rend SON équipe dans l'org résolue (`default_group_in_org` :
-    l'active si elle ⊂ org, sinon la plus ancienne). Seul `X-Oto-Group: 0`
-    (consultation explicite au niveau org) rend None."""
+    Tenant opt-in (`OTO_EQUIPE_PAR_DEFAUT_TENANTS`) : là où on rendrait le niveau
+    org faute d'équipe désignée, on rend l'équipe du sub DANS l'org résolue
+    (`_equipe_par_defaut`). `X-Oto-Group: 0` garde toujours le niveau org."""
     if sub is None:
         return None
     # Sous lock d'org par sous-domaine : le groupe n'est rendu QUE s'il ⊂ l'org
@@ -164,7 +186,10 @@ def current_group(sub: str | None) -> Optional[int]:
         from .. import roles
         if not roles.is_org_member(sub, cand):
             return None
-        return group_store.default_group_in_org(sub, cand)
+        ag = group_store.get_active_group(sub)
+        if ag is not None and (group_store.get_group(ag) or {}).get("org_id") == cand:
+            return ag
+        return _equipe_par_defaut(sub, cand)
     # Jeton d'appel `_group=` : déjà gardé à la pose (can_read_group + org co-posée
     # par l'axe, invariant par construction) → rendu tel quel. Le BRACELET de session
     # (`oto_use_group`) n'est plus lu (ADR 0038 B3, même raison que current_org).
@@ -174,22 +199,24 @@ def current_group(sub: str | None) -> Optional[int]:
     vg = session_org.current_view_group()
     if vg is not None:
         return None if vg == 0 else vg
-    # Consultation d'org (`X-Oto-Org`, que le front pose sur toute page /org/:id)
-    # ou jeton d'org (`_org=`/`_project=`) — ou org du RUN (#639) — SANS groupe :
-    # l'équipe du sub DANS cette org (invariant groupe ⊂ org — jamais le
-    # home_group d'une AUTRE org).
-    org = session_org.current_view_org()
-    if org is None:
-        org = session_org.current_call_org()
-    if org is None:
-        org = session_org.current_call_run_org()
-    if org is None:
-        org = org_store.get_active_org(sub)  # maison
-        if org is None:
-            return group_store.get_active_group(sub)
-    if org == 0:
-        return None  # perso
-    return group_store.default_group_in_org(sub, org)
+    view_org = session_org.current_view_org()
+    if view_org is not None:
+        return _equipe_par_defaut(sub, view_org)  # consultation d'org sans groupe
+    ag = group_store.get_active_group(sub)  # maison
+    call_org = session_org.current_call_org()
+    if call_org is None:
+        call_org = session_org.current_call_run_org()
+    if ag is None:
+        return _equipe_par_defaut(sub, call_org if call_org is not None
+                                  else org_store.get_active_org(sub))
+    # Jeton d'org (`_org=`/`_project=`) — ou org du RUN (#639) — SANS groupe : le
+    # home_group n'est rendu que s'il appartient à l'org épinglée (invariant groupe ⊂
+    # org — jamais le home_group d'une AUTRE org sous une org de jeton ou de run).
+    if call_org is not None:
+        g = group_store.get_group(ag)
+        if not g or g.get("org_id") != call_org:
+            return _equipe_par_defaut(sub, call_org)
+    return ag
 
 
 def current_project() -> Optional[int]:

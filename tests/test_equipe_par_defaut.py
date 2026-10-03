@@ -13,7 +13,12 @@ import uuid
 
 import pytest
 
-from oto_mcp import access, db, group_store, org_store, session_org
+from oto_mcp import access, db, group_store, org_store, session_org, tenancy
+
+
+@pytest.fixture
+def opt_in(monkeypatch):
+    monkeypatch.setenv(access.scope.ENV_EQUIPE_PAR_DEFAUT, f"autre, {tenancy.primary_slug()}")
 
 
 @pytest.fixture
@@ -42,18 +47,18 @@ def _pose(fn, val):
     return lambda: getattr(session_org, fn.__name__.replace("set_", "reset_"))(tok)
 
 
-def test_sans_equipe_active_on_rend_la_premiere_rejointe(monde):
+def test_sans_equipe_active_on_rend_la_premiere_rejointe(monde, opt_in):
     assert org_store.get_active_org(monde["sub"]) == monde["org"]
     assert group_store.get_active_group(monde["sub"]) is None
     assert access.current_group(monde["sub"]) == monde["g1"]
 
 
-def test_l_equipe_active_prime(monde):
+def test_l_equipe_active_prime(monde, opt_in):
     group_store.set_active_group(monde["sub"], monde["g2"])
     assert access.current_group(monde["sub"]) == monde["g2"]
 
 
-def test_consultation_d_org_rend_l_equipe_de_cette_org(monde):
+def test_consultation_d_org_rend_l_equipe_de_cette_org(monde, opt_in):
     """Le front pose `X-Oto-Org` sur toute page /org/:id."""
     for org, attendu in ((monde["org"], monde["g1"]), (monde["org_b"], monde["gb"])):
         undo = _pose(session_org.set_view_org, org)
@@ -63,7 +68,7 @@ def test_consultation_d_org_rend_l_equipe_de_cette_org(monde):
             undo()
 
 
-def test_jeton_org_rend_l_equipe_de_cette_org_jamais_une_autre(monde):
+def test_jeton_org_rend_l_equipe_de_cette_org_jamais_une_autre(monde, opt_in):
     group_store.set_active_group(monde["sub"], monde["g2"])  # maison ⊂ org
     undo = _pose(session_org.set_call_org, monde["org_b"])
     try:
@@ -72,7 +77,7 @@ def test_jeton_org_rend_l_equipe_de_cette_org_jamais_une_autre(monde):
         undo()
 
 
-def test_niveau_org_explicite_reste_possible(monde):
+def test_niveau_org_explicite_reste_possible(monde, opt_in):
     undo = _pose(session_org.set_view_group, 0)
     try:
         assert access.current_group(monde["sub"]) is None
@@ -80,5 +85,17 @@ def test_niveau_org_explicite_reste_possible(monde):
         undo()
 
 
-def test_hors_de_toute_equipe_reste_none(monde):
+def test_hors_de_toute_equipe_reste_none(monde, opt_in):
     assert access.current_group(monde["autre"]) is None
+
+
+def test_hors_tenant_opt_in_rien_ne_change(monde, monkeypatch):
+    monkeypatch.delenv(access.scope.ENV_EQUIPE_PAR_DEFAUT, raising=False)
+    assert access.current_group(monde["sub"]) is None
+    undo = _pose(session_org.set_view_org, monde["org"])
+    try:
+        assert access.current_group(monde["sub"]) is None
+    finally:
+        undo()
+    monkeypatch.setenv(access.scope.ENV_EQUIPE_PAR_DEFAUT, "un-autre-tenant")
+    assert access.current_group(monde["sub"]) is None

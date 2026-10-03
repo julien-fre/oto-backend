@@ -319,15 +319,15 @@ def test_equipe_relecture_en_echec_annule_aussi_la_creation(sans_acl, monkeypatc
 
 
 def test_equipe_la_cle_n_est_lue_que_dans_l_equipe_active(sans_acl):
-    """Point 1 : un membre de l'équipe résout la clé d'équipe — même sans
-    `--rendre-active`, un membre d'équipe n'est jamais « sans équipe »
-    (`access.current_group`) ; un non-membre ne la résout jamais."""
+    """Point 1 : un membre de l'équipe résout la clé d'équipe quand l'équipe est
+    son équipe ACTIVE ; sans elle (équipe neuve, pas `--rendre-active`), il ne la
+    résout pas ; un non-membre ne la résout jamais."""
     from oto_mcp.access import scope
     _poser(cs.ORG, ORG, MULTI, "")
     _reserver(MULTI, CIBLE)
     assert _vers_equipe(MULTI, apply=True)[0] == 0
     gid = _equipe()["id"]
-    assert scope.current_group(CIBLE) == gid           # équipe neuve : rendue quand même
+    assert scope.current_group(CIBLE) is None          # équipe neuve : active de personne
     _exec("DELETE FROM org_group_members WHERE group_id = %s", (gid,))
     _exec("DELETE FROM org_groups WHERE id = %s", (gid,))
     _poser(cs.ORG, ORG, MULTI, "")
