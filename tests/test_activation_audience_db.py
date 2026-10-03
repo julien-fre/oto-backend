@@ -155,8 +155,10 @@ def test_connect_ne_retient_que_les_jamais_branches(live):
 
 def test_first_process_ne_retient_que_les_branches_silencieux_sans_run(live):
     """Actif depuis moins de 48 h, branché depuis moins de 48 h, inscrit depuis plus de
-    14 jours, servi il y a 10 h : tous dehors. Un run `failed` n'est pas un résultat."""
-    assert _subs("first-process") == {"acme:p1-du", "acme:r-echoue"}
+    14 jours, servi il y a 10 h : tous dehors. Un run `failed` n'est pas un résultat.
+    Branchée sans jamais rien demander (`initialize` seul, il y a 72 h) : c'est
+    exactement la personne à qui écrire « lancez un premier processus »."""
+    assert _subs("first-process") == {"acme:p1-du", "acme:r-echoue", "acme:branche"}
 
 
 def test_recurring_ne_retient_que_les_runs_uniques_sans_programme(live):
