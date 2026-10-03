@@ -39,11 +39,13 @@ def faux(env, monkeypatch):
     from oto_mcp.db import activation as db_act
     from oto_mcp.db import outreach as db_outreach
 
-    etat = {"audience": [{"sub": "acme:1", "email": "un@client.test"},
-                         {"sub": "acme:2", "email": "deux@client.test"}],
+    etat = {"audience": {"connect": [{"sub": "acme:1", "email": "un@client.test"},
+                                     {"sub": "acme:2", "email": "deux@client.test"}]},
             "essais": set(), "traces": [], "annules": [], "envois": [], "relais_ok": True}
-    monkeypatch.setattr(db_act, "taille", lambda **kw: len(etat["audience"]))
-    monkeypatch.setattr(db_act, "audience", lambda **kw: etat["audience"][:kw["cap"]])
+    monkeypatch.setattr(db_act, "taille",
+                        lambda **kw: len(etat["audience"].get(kw["etape"], [])))
+    monkeypatch.setattr(db_act, "audience",
+                        lambda **kw: etat["audience"].get(kw["etape"], [])[:kw["cap"]])
     monkeypatch.setattr(db_outreach, "locales_essayees", lambda **kw: etat["essais"])
 
     def trace(**kw):
@@ -94,7 +96,7 @@ def test_drapeau_ferme_rien_ne_part_ni_ne_s_ecrit(faux):
     faux["essais"] = {"en"}
     out = activation.balayer()
     assert out["a_blanc"] is True
-    assert out["tenants"][0]["dus"] == 2
+    assert [l["dus"] for l in out["tenants"]] == [2, 0, 0]
     assert faux["envois"] == [] and faux["traces"] == []
 
 
@@ -113,6 +115,7 @@ def test_avec_essai_chaque_personne_recoit_une_fois(faux, monkeypatch):
     assert [e["to"] for e in faux["envois"]] == ["un@client.test", "deux@client.test"]
     assert [t["sub"] for t in faux["traces"]] == ["acme:1", "acme:2"]
     assert {t["campaign"] for t in faux["traces"]} == {"activation-connect:acme"}
+    assert [l["etape"] for l in out["tenants"]] == ["connect", "first-process", "recurring"]
     assert {t.get("kind", "send") for t in faux["traces"]} == {"send"}
     assert {t["locale"] for t in faux["traces"]} == {"en"}
 
@@ -217,3 +220,42 @@ def test_le_lien_de_refus_est_sur_l_hote_du_tenant(monkeypatch):
     assert lien.startswith("https://mcp.acme.test/o/u/") and lien.endswith("?lang=en")
     jeton = lien.split("/o/u/", 1)[1].split("?", 1)[0]
     assert outreach_optout.verify(jeton) == "acme:1"
+
+
+def test_chaque_etape_a_son_texte_et_son_empreinte(env):
+    r = activation.reglages()[0]
+    contenus = {e: activation.contenu(r, "Acme", e) for e in activation.ETAPES}
+    assert contenus["first-process"]["subject"] == "Your first Acme process"
+    assert "read the onboarding guide and set up my first process" in \
+        contenus["first-process"]["body"]
+    assert "schedule the process I ran last to run every week" in \
+        contenus["recurring"]["body"]
+    assert len({activation.empreinte(c, r) for c in contenus.values()}) == 3
+    for c in contenus.values():
+        assert "{" not in c["body"]
+
+
+def test_l_essai_d_une_etape_n_ouvre_pas_les_autres(faux, monkeypatch):
+    """L'envoi d'une étape exige l'essai de SA campagne : la première reçue ne vaut
+    pas pour les suivantes."""
+    monkeypatch.setenv("OTO_ACTIVATION_ENVOI", "1")
+    from oto_mcp.db import outreach as db_outreach
+    faux["audience"]["first-process"] = [{"sub": "acme:3", "email": "trois@client.test"}]
+    monkeypatch.setattr(db_outreach, "locales_essayees",
+                        lambda **kw: {"en"} if kw["campaign"].startswith(
+                            "activation-connect") else set())
+    out = activation.balayer()
+    par_etape = {l["etape"]: l for l in out["tenants"]}
+    assert par_etape["connect"]["envoyes"] == 2
+    assert par_etape["first-process"]["envoyes"] == 0
+    assert "bloque" in par_etape["first-process"]
+
+
+def test_le_plafond_vaut_pour_le_passage_entier(faux, monkeypatch):
+    reglage = {"acme": {**REGLAGE["acme"], "max_per_run": 2}}
+    monkeypatch.setenv("OTO_ACTIVATION", json.dumps(reglage))
+    monkeypatch.setenv("OTO_ACTIVATION_ENVOI", "1")
+    faux["essais"] = {"en"}
+    faux["audience"]["first-process"] = [{"sub": "acme:3", "email": "trois@client.test"}]
+    out = activation.balayer()
+    assert sum(l["envoyes"] for l in out["tenants"]) == 2

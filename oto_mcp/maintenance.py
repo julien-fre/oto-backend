@@ -486,9 +486,10 @@ def unipile_fin_de_droit(*, dry_run: bool = False) -> dict:
     return fdd.balayer(dry_run=dry_run)
 
 
-def activation_connect(*, dry_run: bool = False) -> dict:
-    """L'email d'activation des tenants qui l'ont déclaré (`OTO_ACTIVATION`) : à qui ne
-    s'est jamais branché, une fois, les étapes exactes pour brancher le connecteur.
+def activation(*, dry_run: bool = False) -> dict:
+    """Les emails d'activation des tenants qui les ont déclarés (`OTO_ACTIVATION`) :
+    brancher le connecteur, lancer un premier processus, le programmer — chacun une
+    fois, à l'étape que le journal lit pour la personne.
 
     Dans `_ALL` ET fermé par `OTO_ACTIVATION_ENVOI` : même dispositif que
     `alertes-credential` — le passage quotidien dit qui le recevrait, l'envoi attend la
@@ -534,7 +535,7 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "unipile-fin-de-droit": unipile_fin_de_droit,
     "oauth-relay-callbacks": oauth_relay_callbacks,
     "apollo-phones": apollo_phones,
-    "activation-connect": activation_connect,
+    "activation": activation,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
 # c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.
@@ -549,12 +550,12 @@ _ACTES = ("journal-tokens", "residu-projete", "oauth-relay-callbacks")
 # ⚠️ `unipile-fin-de-droit` aussi : tiré chaque jour, fermé par
 # `OTO_UNIPILE_FIN_DE_DROIT` — c'est ce tir quotidien qui compte le délai, pas un
 # événement de fin de droit.
-# ⚠️ `activation-connect` aussi : fermé par `OTO_ACTIVATION_ENVOI`, et sans réglage
+# ⚠️ `activation` aussi : fermé par `OTO_ACTIVATION_ENVOI`, et sans réglage
 # (`OTO_ACTIVATION` vide) il ne lit rien.
 # Elle lit `org_entitlements`, qu'oto-commerce tient seul (#1097) : aucun travail d'ici
 # ne le réaligne avant elle.
 _ALL = ("retention", "revisions", "blocks", "key-indexes", "alertes-credential",
-        "instagram-tokens", "unipile-fin-de-droit", "apollo-phones", "activation-connect")
+        "instagram-tokens", "unipile-fin-de-droit", "apollo-phones", "activation")
 
 
 def run(noms: list[str], *, dry_run: bool = False, strict: bool = False) -> int:

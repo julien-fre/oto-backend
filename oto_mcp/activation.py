@@ -1,17 +1,22 @@
-"""L'email d'ACTIVATION d'un tenant : « une étape reste — brancher le connecteur ».
+"""Les emails d'ACTIVATION d'un tenant : la personne avance d'une étape à la fois.
 
 Un tenant qui sert la plateforme sous sa marque peut DÉCLARER qu'il écrit à ses propres
-comptes qui ne se sont jamais branchés (`OTO_ACTIVATION`, un objet par slug de tenant).
-Un email par personne et pour toujours, en anglais, à partir de `delay_hours` après
-l'inscription, pour les inscrits des `window_days` derniers jours — ce qui couvre du
-même geste les nouveaux et ceux qui attendent déjà.
+comptes pour les faire avancer (`OTO_ACTIVATION`, un objet par slug de tenant). Trois
+emails, en anglais, chacun envoyé UNE fois, quand la personne est à l'étape qu'il
+fait franchir (`db/activation.py` lit l'étape dans le journal) :
 
-Le message ne dit pas « faites-le » : il donne les ÉTAPES exactes (celles que l'écran
-d'accueil du tenant affiche), le lien du connecteur, et l'adresse de la page d'accueil
-pour les autres agents. Il ne cite rien de ce que la personne a fait d'autre — une
-activation n'est pas un compte rendu.
+- `connect` — jamais branchée : les étapes exactes pour ajouter le connecteur à
+  l'agent (celles que l'écran d'accueil affiche), le lien du connecteur ;
+- `first-process` — branchée, sans premier processus terminé et silencieuse depuis
+  48 h : la phrase à dire à l'agent pour qu'il en propose et en lance un ;
+- `recurring` — un processus a tourné une fois : la phrase pour le programmer.
 
-Un travail de maintenance, pas un événement : `oto-mcp maintenance activation-connect`,
+`connect` couvre les inscrits des `window_days` derniers jours (le rattrapage) ; les
+deux suivants, les `sequence_days` premiers jours. 48 h au moins entre deux emails.
+Aucun ne cite ce que la personne a fait : le jalon choisit le message, le message ne
+raconte pas le jalon.
+
+Un travail de maintenance, pas un événement : `oto-mcp maintenance activation`,
 tiré par le timer quotidien (PROD seulement — la base est partagée). Chaque passage
 relit l'état ; l'audience est dans `db/activation.py`.
 
@@ -49,8 +54,8 @@ from typing import Optional
 
 log = logging.getLogger("oto_mcp.activation")
 
-CAMPAGNE = "activation-connect"
 LOCALE = "en"
+ETAPES = ("connect", "first-process", "recurring")
 
 
 def _ouvert() -> bool:
@@ -70,15 +75,15 @@ class Reglage:
     exclude_domains: tuple = ()
     delay_hours: int = 24
     window_days: int = 30
+    sequence_days: int = 14
     max_per_run: int = 50
     mailer_url: Optional[str] = None
     link_base: Optional[str] = None  # l'hôte du lien de refus (celui du tenant)
     agent_label: str = "Claude"
     steps: tuple = field(default_factory=tuple)
 
-    @property
-    def campagne(self) -> str:
-        return f"{CAMPAGNE}:{self.tenant}"
+    def campagne(self, etape: str) -> str:
+        return f"activation-{etape}:{self.tenant}"
 
 
 class ReglageInvalide(ValueError):
@@ -117,6 +122,7 @@ def reglages() -> list[Reglage]:
             exclude_domains=tuple(str(d).lower() for d in (r.get("exclude_domains") or ())),
             delay_hours=int(r.get("delay_hours", 24)),
             window_days=int(r.get("window_days", 30)),
+            sequence_days=int(r.get("sequence_days", 14)),
             max_per_run=int(r.get("max_per_run", 50)),
             mailer_url=(str(r["mailer_url"]) if r.get("mailer_url") else None),
             link_base=(str(r["link_base"]).rstrip("/") if r.get("link_base") else None),
@@ -139,10 +145,16 @@ def _etapes_par_defaut() -> tuple:
 
 # ── Le contenu ───────────────────────────────────────────────────────────────
 
-def contenu(r: Reglage, nom_produit: str) -> dict:
-    """Sujet, corps et bouton — en anglais, à la marque du tenant. Sans donnée de la
-    personne : le même texte pour tous, ce qui permet d'en prendre l'empreinte et de
-    l'essayer une fois pour toutes."""
+def contenu(r: Reglage, nom_produit: str, etape: str = "connect") -> dict:
+    """Sujet, corps et bouton de l'étape — en anglais, à la marque du tenant. Sans
+    donnée de la personne : le même texte pour tous, ce qui permet d'en prendre
+    l'empreinte et de l'essayer une fois pour toutes."""
+    if etape == "first-process":
+        return _contenu_premier_processus(r, nom_produit)
+    if etape == "recurring":
+        return _contenu_recurrent(r, nom_produit)
+    if etape != "connect":
+        raise ValueError(f"étape inconnue : {etape!r}")
     etapes = "\n".join(
         f"{i}. " + e.format(name=nom_produit, mcp_url=r.mcp_url)
         for i, e in enumerate(r.steps, 1))
@@ -163,6 +175,39 @@ def contenu(r: Reglage, nom_produit: str) -> dict:
             "body": corps,
             "cta_label": "Open my onboarding page",
             "cta_url": r.app_url}
+
+
+def _contenu_premier_processus(r: Reglage, nom: str) -> dict:
+    a = r.agent_label
+    corps = "\n\n".join([
+        "Hi,",
+        f"{nom} is connected. The next step is your first process: a task "
+        f"{nom} runs for you the same way every time, like a weekly list of accounts "
+        "to follow up, or a morning brief built from your inbox.",
+        f"In {a} (or whichever AI tool you connected), ask:",
+        f"\"Use {nom}: read the onboarding guide and set up my first process.\"",
+        "It will suggest processes that fit your company and the tools you've "
+        "connected, then run the one you pick with you.",
+        f"If anything blocks you, reply to this email.\n\nThe {nom} team",
+    ])
+    return {"subject": f"Your first {nom} process",
+            "body": corps, "cta_label": f"Open {nom}", "cta_url": r.app_url}
+
+
+def _contenu_recurrent(r: Reglage, nom: str) -> dict:
+    a = r.agent_label
+    corps = "\n\n".join([
+        "Hi,",
+        f"Your first {nom} process has run. A process is most useful when it runs "
+        "without you having to ask.",
+        f"In {a} (or whichever AI tool you connected), ask:",
+        f"\"Use {nom}: schedule the process I ran last to run every week.\"",
+        "It will set it up with you: the day, the time, and where the result should "
+        "land (your inbox, Slack, or a table).",
+        f"If anything blocks you, reply to this email.\n\nThe {nom} team",
+    ])
+    return {"subject": f"Make your {nom} process run on its own",
+            "body": corps, "cta_label": f"Open {nom}", "cta_url": r.app_url}
 
 
 def empreinte(c: dict, r: Reglage) -> str:
@@ -220,7 +265,9 @@ def _nom_produit(r: Reglage) -> Optional[str]:
 # ── Le passage ───────────────────────────────────────────────────────────────
 
 def balayer(*, dry_run: bool = False) -> dict:
-    """Envoie les emails dus, tenant par tenant. À blanc si `dry_run` OU drapeau fermé."""
+    """Envoie les emails dus, tenant par tenant, étape par étape. À blanc si
+    `dry_run` OU drapeau fermé. Les étapes sont disjointes (un jalon exclut l'autre) :
+    une personne ne reçoit jamais deux emails dans le même passage."""
     from .db import activation as db_act
     from .db import outreach as db_outreach
 
@@ -233,92 +280,109 @@ def balayer(*, dry_run: bool = False) -> dict:
                 "marque du tenant non déclarée ou incomplète (tenants.brand) : "
                 "rien n'est envoyé au gabarit neutre")})
             continue
-        c = contenu(r, nom)
-        fp = empreinte(c, r)
-        crit = dict(tenant=r.tenant, campaign=r.campagne, delay_hours=r.delay_hours,
-                    window_days=r.window_days, exclude_domains=list(r.exclude_domains))
-        total = db_act.taille(**crit)
-        lot = db_act.audience(**crit, cap=r.max_per_run)
-        essaye = LOCALE in db_outreach.locales_essayees(campaign=r.campagne, fingerprint=fp)
-        ligne = {"tenant": r.tenant, "dus": total, "lot": len(lot), "empreinte": fp[:12],
-                 "essai_recu": essaye, "envoyes": 0, "refuses": 0}
-        rapport["tenants"].append(ligne)
-        if a_blanc:
-            continue
-        if not essaye:
-            ligne["bloque"] = ("aucun essai reçu pour ce contenu : "
-                               "`python -m oto_mcp.activation essai` d'abord")
-            log.warning("activation %s : envoi refusé, aucun essai pour l'empreinte %s",
-                        r.tenant, fp[:12])
-            continue
-        for p in lot:
-            if not db_outreach.enregistre_envoi(
-                    campaign=r.campagne, sub=p["sub"], to_email=p["email"],
-                    locale=LOCALE, fingerprint=fp, sent_by="activation"):
+        budget = r.max_per_run
+        for etape in ETAPES:
+            c = contenu(r, nom, etape)
+            fp = empreinte(c, r)
+            camp = r.campagne(etape)
+            crit = _criteres(r, etape)
+            total = db_act.taille(**crit)
+            lot = db_act.audience(**crit, cap=max(1, budget)) if budget > 0 else []
+            essaye = LOCALE in db_outreach.locales_essayees(campaign=camp, fingerprint=fp)
+            ligne = {"tenant": r.tenant, "etape": etape, "dus": total, "lot": len(lot),
+                     "empreinte": fp[:12], "essai_recu": essaye, "envoyes": 0,
+                     "refuses": 0}
+            rapport["tenants"].append(ligne)
+            if a_blanc:
                 continue
-            ok = _envoyer(r, p["email"], c, _lien_refus(r, p["sub"]))
-            if ok:
-                ligne["envoyes"] += 1
-            else:
-                db_outreach.annule_envoi(campaign=r.campagne, sub=p["sub"])
-                ligne["refuses"] += 1
-                log.warning("activation %s : envoi refusé par le relais — la personne "
-                            "reste due au passage suivant", r.tenant)
+            if not essaye:
+                ligne["bloque"] = ("aucun essai reçu pour ce contenu : "
+                                   f"`python -m oto_mcp.activation essai --etape {etape}`")
+                log.warning("activation %s/%s : envoi refusé, aucun essai pour "
+                            "l'empreinte %s", r.tenant, etape, fp[:12])
+                continue
+            for p in lot:
+                if not db_outreach.enregistre_envoi(
+                        campaign=camp, sub=p["sub"], to_email=p["email"],
+                        locale=LOCALE, fingerprint=fp, sent_by="activation"):
+                    continue
+                budget -= 1
+                ok = _envoyer(r, p["email"], c, _lien_refus(r, p["sub"]))
+                if ok:
+                    ligne["envoyes"] += 1
+                else:
+                    db_outreach.annule_envoi(campaign=camp, sub=p["sub"])
+                    ligne["refuses"] += 1
+                    log.warning("activation %s/%s : envoi refusé par le relais — la "
+                                "personne reste due au passage suivant", r.tenant, etape)
     return rapport
 
 
-def essai(tenant: str, operateur_sub: str) -> dict:
-    """Envoie le message tel quel à l'OPÉRATEUR (sa boîte, ses copies comprises) et
-    enregistre l'essai pour cette empreinte. C'est ce qui ouvre l'envoi réel."""
+def _criteres(r: Reglage, etape: str) -> dict:
+    return dict(etape=etape, tenant=r.tenant, delay_hours=r.delay_hours,
+                window_days=r.window_days, sequence_days=r.sequence_days,
+                exclude_domains=list(r.exclude_domains))
+
+
+def essai(tenant: str, operateur_sub: str, etape: Optional[str] = None) -> dict:
+    """Envoie le message de l'étape (toutes si `etape` est omise) tel quel à
+    l'OPÉRATEUR (sa boîte, copies comprises) et enregistre l'essai pour chaque
+    empreinte. C'est ce qui ouvre l'envoi réel de l'étape."""
     from . import db
     from .db import outreach as db_outreach
 
     r = next((x for x in reglages() if x.tenant == tenant), None)
     if r is None:
         raise ReglageInvalide(f"aucun réglage d'activation pour le tenant {tenant!r}")
+    if etape is not None and etape not in ETAPES:
+        raise ReglageInvalide(f"étape inconnue : {etape!r} ({', '.join(ETAPES)})")
     op = db.get_user(operateur_sub) or {}
     if op.get("role") not in ("admin", "super_admin") or not op.get("email"):
         raise PermissionError("l'essai part vers un opérateur de plateforme, avec email")
     nom = _nom_produit(r)
     if not nom:
         raise ReglageInvalide(f"marque du tenant {tenant!r} non déclarée (tenants.brand)")
-    c = contenu(r, nom)
-    fp = empreinte(c, r)
-    ok = _envoyer(r, op["email"], c, _lien_refus(r, operateur_sub))
-    if ok:
-        db_outreach.enregistre_envoi(
-            campaign=r.campagne, sub=operateur_sub, to_email=op["email"], locale=LOCALE,
-            fingerprint=fp, kind="test", sent_by=operateur_sub)
-    return {"tenant": tenant, "to": op["email"], "envoye": ok, "empreinte": fp[:12]}
+    out = []
+    for e in ([etape] if etape else ETAPES):
+        c = contenu(r, nom, e)
+        fp = empreinte(c, r)
+        ok = _envoyer(r, op["email"], c, _lien_refus(r, operateur_sub))
+        if ok:
+            db_outreach.enregistre_envoi(
+                campaign=r.campagne(e), sub=operateur_sub, to_email=op["email"],
+                locale=LOCALE, fingerprint=fp, kind="test", sent_by=operateur_sub)
+        out.append({"etape": e, "envoye": ok, "empreinte": fp[:12]})
+    return {"tenant": tenant, "to": op["email"], "essais": out}
 
 
 def main(argv: Optional[list] = None) -> int:
     p = argparse.ArgumentParser(prog="python -m oto_mcp.activation",
-                                description="Email d'activation d'un tenant.")
+                                description="Emails d'activation d'un tenant.")
     sous = p.add_subparsers(dest="cmd", required=True)
-    e = sous.add_parser("essai", help="s'envoyer le message, ce qui ouvre l'envoi réel")
+    e = sous.add_parser("essai", help="s'envoyer les messages, ce qui ouvre l'envoi réel")
     e.add_argument("--tenant", required=True)
     e.add_argument("--operateur", required=True, help="le sub de l'opérateur destinataire")
-    sous.add_parser("apercu", help="le contenu et l'audience, sans rien envoyer")
+    e.add_argument("--etape", choices=ETAPES, help="une seule étape (défaut : toutes)")
+    sous.add_parser("apercu", help="les contenus et les destinataires, sans rien envoyer")
     args = p.parse_args(argv)
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
     if args.cmd == "essai":
-        print(json.dumps(essai(args.tenant, args.operateur), ensure_ascii=False, indent=2))
-    else:
-        from .db import activation as db_act
-        out = balayer(dry_run=True)
-        for r in reglages():
-            nom = _nom_produit(r)
-            if not nom:
-                continue
-            out.setdefault("contenus", {})[r.tenant] = contenu(r, nom)
-            out.setdefault("destinataires", {})[r.tenant] = [
+        print(json.dumps(essai(args.tenant, args.operateur, args.etape),
+                         ensure_ascii=False, indent=2))
+        return 0
+    from .db import activation as db_act
+    out = balayer(dry_run=True)
+    for r in reglages():
+        nom = _nom_produit(r)
+        if not nom:
+            continue
+        for etape in ETAPES:
+            out.setdefault("contenus", {}).setdefault(r.tenant, {})[etape] = \
+                contenu(r, nom, etape)
+            out.setdefault("destinataires", {}).setdefault(r.tenant, {})[etape] = [
                 {"email": p["email"], "inscrit": str(p["created_at"])[:10]}
-                for p in db_act.audience(
-                    tenant=r.tenant, campaign=r.campagne, delay_hours=r.delay_hours,
-                    window_days=r.window_days, exclude_domains=list(r.exclude_domains),
-                    cap=500)]
-        print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+                for p in db_act.audience(**_criteres(r, etape), cap=500)]
+    print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
     return 0
 
 
