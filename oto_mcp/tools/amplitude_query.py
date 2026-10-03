@@ -24,6 +24,17 @@ def _client() -> AmplitudeClient:
     return A._client()
 
 
+def _slim_result(res: Any) -> dict:
+    """The raw answer wraps `data` in ~2 KB of engine diagnostics; only `data` and
+    the query's cost against the hourly budget are kept."""
+    if not (isinstance(res, dict) and "data" in res):
+        return {"data": res}
+    out = {"data": res["data"]}
+    if res.get("novaCost") is not None:
+        out["cost"] = res["novaCost"]
+    return out
+
+
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
@@ -137,11 +148,4 @@ def register(mcp: FastMCP) -> None:
             kind = session_kind or "average"
             res = A._run(lambda: _client().sessions(kind, s, e))
 
-        # The raw answer wraps `data` in ~2 KB of engine diagnostics; only
-        # `data` and the query's cost against the hourly budget are kept.
-        if not (isinstance(res, dict) and "data" in res):
-            return {"op": op, "start": s, "end": e, "data": res}
-        out = {"op": op, "start": s, "end": e, "data": res["data"]}
-        if res.get("novaCost") is not None:
-            out["cost"] = res["novaCost"]
-        return out
+        return {"op": op, "start": s, "end": e, **_slim_result(res)}
