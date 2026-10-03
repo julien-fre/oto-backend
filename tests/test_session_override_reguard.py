@@ -13,7 +13,7 @@ row-shape/fail-open (CLAUDE.md).
 """
 import pytest
 
-from oto_mcp import access, group_store, session_org
+from oto_mcp import access, group_store, org_store, session_org
 
 
 @pytest.fixture(autouse=True)
@@ -38,16 +38,17 @@ def test_call_group_token_honored():
 def test_group_bracelet_ignored(monkeypatch):
     # Bracelet résiduel vers 5 (store inerte, ADR 0038 B3) → IGNORÉ, repli maison.
     monkeypatch.setattr(session_org, "current_group_override", lambda: (True, 5))
-    monkeypatch.setattr(group_store, "get_active_group", lambda sub: 99)
-    monkeypatch.setattr(group_store, "get_group", lambda gid: {"id": gid, "org_id": 1})
+    monkeypatch.setattr(org_store, "get_active_org", lambda sub: 1)
+    monkeypatch.setattr(group_store, "default_group_in_org",
+                        lambda sub, org: 99 if org == 1 else None)
     assert access.current_group("u") == 99
 
 
 def test_home_group_hidden_under_foreign_org_token(monkeypatch):
-    # Jeton `org=7` posé, équipe maison 99 appartient à l'org 1 ≠ 7 → niveau org
-    # (invariant groupe ⊂ org : jamais le home_group d'une AUTRE org sous un jeton).
-    monkeypatch.setattr(group_store, "get_active_group", lambda sub: 99)
-    monkeypatch.setattr(group_store, "get_group", lambda gid: {"id": gid, "org_id": 1})
+    # Jeton `org=7` posé, équipe maison 99 appartient à l'org 1 ≠ 7 → l'équipe du
+    # sub DANS l'org 7 (aucune ici → niveau org) ; jamais le home_group d'une AUTRE org.
+    monkeypatch.setattr(group_store, "default_group_in_org",
+                        lambda sub, org: 99 if org == 1 else None)
     tok = session_org.set_call_org(7)
     try:
         assert access.current_group("u") is None
@@ -57,8 +58,8 @@ def test_home_group_hidden_under_foreign_org_token(monkeypatch):
 
 def test_home_group_kept_under_matching_org_token(monkeypatch):
     # Jeton `org=1`, équipe maison 99 DANS l'org 1 → rendue (cohérence tenue).
-    monkeypatch.setattr(group_store, "get_active_group", lambda sub: 99)
-    monkeypatch.setattr(group_store, "get_group", lambda gid: {"id": gid, "org_id": 1})
+    monkeypatch.setattr(group_store, "default_group_in_org",
+                        lambda sub, org: 99 if org == 1 else None)
     tok = session_org.set_call_org(1)
     try:
         assert access.current_group("u") == 99
@@ -67,7 +68,9 @@ def test_home_group_kept_under_matching_org_token(monkeypatch):
 
 
 def test_home_group_without_any_token(monkeypatch):
-    monkeypatch.setattr(group_store, "get_active_group", lambda sub: 99)
+    monkeypatch.setattr(org_store, "get_active_org", lambda sub: 1)
+    monkeypatch.setattr(group_store, "default_group_in_org",
+                        lambda sub, org: 99 if org == 1 else None)
     assert access.current_group("u") == 99
 
 

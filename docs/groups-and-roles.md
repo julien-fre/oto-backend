@@ -117,8 +117,14 @@ active.
 - `set_active_org(sub, …)` **efface** le groupe actif (il pointait l'ancienne org).
 - Retirer un membre d'une org le retire de tous ses groupes.
 
-`oto_use_group(group_id)` (MCP) / `PUT /api/me/active-group` (REST) basculent ;
-`oto_clear_group` / `DELETE /api/me/active-group` reviennent au niveau org.
+`oto_use_group(group_id)` (MCP) / `PUT /api/me/active-group` (REST) basculent.
+
+**Un membre d'équipe n'est jamais « sans équipe »** : quand rien ne désigne d'équipe,
+`access.current_group` rend son équipe DANS l'org résolue (consultation `X-Oto-Org`,
+jeton `_org=`, org du run ou maison) — `group_store.default_group_in_org` : l'active si
+elle ⊂ org, sinon la première rejointe. Lecture seule, rien n'est écrit. Seul
+`X-Oto-Group: 0` garde le niveau org ; `oto_clear_group` / `DELETE /api/me/active-group`
+effacent le défaut persisté et rendent l'équipe effective qui s'applique quand même.
 
 ## Schéma (db.py `_SCHEMA`)
 
