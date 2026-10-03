@@ -167,15 +167,17 @@ def principal(ctx: ResolvedCtx, *, everyone: bool, sub: Optional[str],
     if email:
         porteurs = [u for u in db.get_users_by_email(email.strip())
                     if not strict or roles.is_org_member(u["sub"], ctx.org_id)]
-        if len(porteurs) != 1:
-            raise AuthzDenied(
-                404 if not porteurs else 400,
-                "share_not_org_member" if not porteurs else "ambiguous_email",
-                f"`{email}` " + ("n'est pas membre de cette org : un agent ne se partage "
-                                 "qu'à l'intérieur de son org. Invite d'abord la "
-                                 "personne dans l'org." if not porteurs else
-                                 "désigne plusieurs comptes de l'org : passe "
-                                 "`share_with_sub`."))
+        # Deux refus littéraux, pas un ternaire : le cliquet des refus déclarés ne
+        # lit que `AuthzDenied(<status>, "<code>")` écrit en toutes lettres.
+        if not porteurs:
+            raise AuthzDenied(404, "share_not_org_member",
+                              f"`{email}` n'est pas membre de cette org : un agent ne "
+                              "se partage qu'à l'intérieur de son org. Invite d'abord "
+                              "la personne dans l'org.")
+        if len(porteurs) > 1:
+            raise AuthzDenied(400, "ambiguous_email",
+                              f"`{email}` désigne plusieurs comptes de l'org : passe "
+                              "`share_with_sub`.")
         return "user", porteurs[0]["sub"]
     if strict and not roles.is_org_member(sub, ctx.org_id):
         raise AuthzDenied(404, "share_not_org_member",
