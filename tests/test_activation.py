@@ -29,7 +29,7 @@ def env(monkeypatch):
     monkeypatch.setenv("OTO_ACTIVATION", json.dumps(REGLAGE))
     monkeypatch.delenv("OTO_ACTIVATION_ENVOI", raising=False)
     monkeypatch.setattr(activation, "_nom_produit", lambda r: "Acme")
-    monkeypatch.setattr(activation, "_lien_refus", lambda sub: f"https://x.test/o/u/{sub}")
+    monkeypatch.setattr(activation, "_lien_refus", lambda r, sub: f"https://x.test/o/u/{sub}")
     return monkeypatch
 
 
@@ -195,3 +195,25 @@ def test_le_rendu_porte_la_marque_du_tenant_pas_la_notre(env, monkeypatch):
     assert "you have a acme account" in html or "you have a Acme account" in html
     assert "https://x.test/o/u/tok?lang=en" in html
     assert "https://mcp.acme.test/mcp" in html
+
+
+def test_sans_marque_declaree_rien_ne_part(faux, monkeypatch):
+    """Le gabarit neutre signerait du slug (« your acme account ») : on refuse."""
+    monkeypatch.setenv("OTO_ACTIVATION_ENVOI", "1")
+    monkeypatch.setattr(activation, "_nom_produit", lambda r: None)
+    faux["essais"] = {"en"}
+    out = activation.balayer()
+    assert "bloque" in out["tenants"][0]
+    assert faux["envois"] == [] and faux["traces"] == []
+
+
+def test_le_lien_de_refus_est_sur_l_hote_du_tenant(monkeypatch):
+    from oto_mcp import outreach_optout
+    monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "s" * 32)
+    monkeypatch.setenv("OTO_ACTIVATION", json.dumps(
+        {"acme": {**REGLAGE["acme"], "link_base": "https://mcp.acme.test/"}}))
+    r = activation.reglages()[0]
+    lien = activation._lien_refus(r, "acme:1")
+    assert lien.startswith("https://mcp.acme.test/o/u/") and lien.endswith("?lang=en")
+    jeton = lien.split("/o/u/", 1)[1].split("?", 1)[0]
+    assert outreach_optout.verify(jeton) == "acme:1"

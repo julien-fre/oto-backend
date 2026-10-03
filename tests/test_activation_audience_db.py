@@ -141,3 +141,25 @@ def test_la_taille_dit_l_audience_entiere(live):
     from oto_mcp.db import activation
     assert activation.taille(**CRIT) == 2
     assert len(activation.audience(**CRIT, cap=1)) == 1
+
+
+def test_un_travail_hors_serveur_lit_la_marque_declaree(live, monkeypatch):
+    """Le registre des tenants n'est posé qu'au boot du serveur : le travail de
+    maintenance doit le poser lui-même, ou il signerait du slug."""
+    import json as _json
+    from oto_mcp import activation, tenancy
+    from oto_mcp.db._conn import _connect
+    marque = {"nom": "Acme", "site": "acme.test", "fond": "#ffffff", "surface": "#ffffff",
+              "encre": "#111111", "discret": "#666666", "filet": "#dddddd",
+              "bouton_fond": "#111111", "bouton_encre": "#ffffff"}
+    with _connect() as conn:
+        conn.execute("UPDATE tenants SET brand = %s WHERE slug = 'acme'",
+                     (_json.dumps(marque),))
+    monkeypatch.setattr(tenancy, "_INSTALLED", tenancy.IssuerRegistry())
+    # Le process de maintenance lit le même fichier d'environnement que le serveur.
+    monkeypatch.setenv("LOGTO_ENDPOINT", "https://auth.exemple.test")
+    monkeypatch.setenv("OTO_ACTIVATION", _json.dumps({"acme": {
+        "sender": "Acme <hello@acme.test>", "reply_to": "hello@acme.test",
+        "app_url": "https://app.acme.test", "mcp_url": "https://mcp.acme.test/mcp"}}))
+    r = activation.reglages()[0]
+    assert activation._nom_produit(r) == "Acme"

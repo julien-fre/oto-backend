@@ -72,6 +72,7 @@ class Reglage:
     window_days: int = 30
     max_per_run: int = 50
     mailer_url: Optional[str] = None
+    link_base: Optional[str] = None  # l'hôte du lien de refus (celui du tenant)
     agent_label: str = "Claude"
     steps: tuple = field(default_factory=tuple)
 
@@ -118,6 +119,7 @@ def reglages() -> list[Reglage]:
             window_days=int(r.get("window_days", 30)),
             max_per_run=int(r.get("max_per_run", 50)),
             mailer_url=(str(r["mailer_url"]) if r.get("mailer_url") else None),
+            link_base=(str(r["link_base"]).rstrip("/") if r.get("link_base") else None),
             agent_label=str(r.get("agent_label") or "Claude"),
             steps=steps or _etapes_par_defaut(),
         ))
@@ -187,15 +189,32 @@ def _envoyer(r: Reglage, to: str, c: dict, unsubscribe_url: Optional[str]) -> bo
         cc=list(r.cc) or None, mailer_url=r.mailer_url, bearer=_bearer(r))
 
 
-def _lien_refus(sub: str) -> str:
-    """Le lien de désinscription de la relance, page en ANGLAIS : le mail l'est."""
+def _lien_refus(r: Reglage, sub: str) -> str:
+    """Le lien de désinscription de la relance, page en ANGLAIS : le mail l'est.
+
+    Sur l'hôte du TENANT quand il le déclare (`link_base`) : un lien vers notre domaine
+    dans un mail parti du sien est une fuite de marque, et un signal d'indésirable. La
+    route `/o/u/` est servie sur tous les hôtes de l'instance."""
     from . import outreach_optout
+    if r.link_base:
+        return f"{r.link_base}/o/u/{outreach_optout.sign(sub)}?lang={LOCALE}"
     return outreach_optout.lien(sub) + f"?lang={LOCALE}"
 
 
-def _nom_produit(r: Reglage) -> str:
-    from . import email_brand
-    return email_brand.marque(r.tenant).nom
+def _nom_produit(r: Reglage) -> Optional[str]:
+    """Le nom que le tenant DÉCLARE (`tenants.brand.nom`), ou None.
+
+    Le registre des tenants n'est posé qu'au boot du serveur : un travail de maintenance
+    tourne dans son propre process et le pose lui-même, sans quoi chaque tenant y
+    passerait pour inconnu et le mail partirait au gabarit neutre, signé du slug. Sans
+    marque déclarée, on n'envoie PAS : « your acme account » n'est pas un mail."""
+    from . import db, email_brand, server, tenancy
+    if tenancy.current().entry_for_slug(r.tenant) is None:
+        db.list_tenant_issuers()   # une base illisible doit échouer ici, pas plus loin
+        registre, _ = server._registry_and_issuers()
+        tenancy.install(registre)
+    m = email_brand._declaree(r.tenant)
+    return m.nom if m is not None else None
 
 
 # ── Le passage ───────────────────────────────────────────────────────────────
@@ -208,7 +227,13 @@ def balayer(*, dry_run: bool = False) -> dict:
     a_blanc = dry_run or not _ouvert()
     rapport: dict = {"a_blanc": a_blanc, "tenants": []}
     for r in reglages():
-        c = contenu(r, _nom_produit(r))
+        nom = _nom_produit(r)
+        if not nom:
+            rapport["tenants"].append({"tenant": r.tenant, "bloque": (
+                "marque du tenant non déclarée ou incomplète (tenants.brand) : "
+                "rien n'est envoyé au gabarit neutre")})
+            continue
+        c = contenu(r, nom)
         fp = empreinte(c, r)
         crit = dict(tenant=r.tenant, campaign=r.campagne, delay_hours=r.delay_hours,
                     window_days=r.window_days, exclude_domains=list(r.exclude_domains))
@@ -231,7 +256,7 @@ def balayer(*, dry_run: bool = False) -> dict:
                     campaign=r.campagne, sub=p["sub"], to_email=p["email"],
                     locale=LOCALE, fingerprint=fp, sent_by="activation"):
                 continue
-            ok = _envoyer(r, p["email"], c, _lien_refus(p["sub"]))
+            ok = _envoyer(r, p["email"], c, _lien_refus(r, p["sub"]))
             if ok:
                 ligne["envoyes"] += 1
             else:
@@ -254,9 +279,12 @@ def essai(tenant: str, operateur_sub: str) -> dict:
     op = db.get_user(operateur_sub) or {}
     if op.get("role") not in ("admin", "super_admin") or not op.get("email"):
         raise PermissionError("l'essai part vers un opérateur de plateforme, avec email")
-    c = contenu(r, _nom_produit(r))
+    nom = _nom_produit(r)
+    if not nom:
+        raise ReglageInvalide(f"marque du tenant {tenant!r} non déclarée (tenants.brand)")
+    c = contenu(r, nom)
     fp = empreinte(c, r)
-    ok = _envoyer(r, op["email"], c, _lien_refus(operateur_sub))
+    ok = _envoyer(r, op["email"], c, _lien_refus(r, operateur_sub))
     if ok:
         db_outreach.enregistre_envoi(
             campaign=r.campagne, sub=operateur_sub, to_email=op["email"], locale=LOCALE,
@@ -277,9 +305,19 @@ def main(argv: Optional[list] = None) -> int:
     if args.cmd == "essai":
         print(json.dumps(essai(args.tenant, args.operateur), ensure_ascii=False, indent=2))
     else:
+        from .db import activation as db_act
         out = balayer(dry_run=True)
         for r in reglages():
-            out.setdefault("contenus", {})[r.tenant] = contenu(r, _nom_produit(r))
+            nom = _nom_produit(r)
+            if not nom:
+                continue
+            out.setdefault("contenus", {})[r.tenant] = contenu(r, nom)
+            out.setdefault("destinataires", {})[r.tenant] = [
+                {"email": p["email"], "inscrit": str(p["created_at"])[:10]}
+                for p in db_act.audience(
+                    tenant=r.tenant, campaign=r.campagne, delay_hours=r.delay_hours,
+                    window_days=r.window_days, exclude_domains=list(r.exclude_domains),
+                    cap=500)]
         print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
     return 0
 
