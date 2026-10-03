@@ -143,6 +143,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_process_shares_actif
     ON process_shares(instruction_id) WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_process_shares_instruction
     ON process_shares(instruction_id);
+CREATE INDEX IF NOT EXISTS idx_process_shares_created_by
+    ON process_shares(created_by);
 
 CREATE TABLE IF NOT EXISTS process_share_readers (
     share_id BIGINT NOT NULL REFERENCES process_shares(id) ON DELETE CASCADE,
