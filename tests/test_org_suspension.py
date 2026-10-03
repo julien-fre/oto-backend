@@ -262,3 +262,29 @@ def test_le_cron_nenfile_rien_pour_une_org_suspendue(monkeypatch, suspendue):
     monkeypatch.setattr(runner_tick.db, "enqueue_job",
                         lambda *a, **k: pytest.fail("rien ne doit être enfilé"))
     assert runner_tick._tick() == 0
+
+
+# ── le premier appel d'une org (horloge de l'essai d'un tenant) ──────────────
+
+def test_le_premier_appel_de_chaque_org_sur_base_reelle(live):
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+    org, muette = _org("appelante"), _org("muette")
+    for quand in ("2026-09-01 10:00:00+00", "2026-08-15 09:00:00+00", "2026-09-20 08:00:00+00"):
+        db.insert_tool_call({"tool": "oto_whoami", "org_id": org, "sub": "u", "ok": True,
+                             "kind": "rest"})
+        with _connect() as conn:
+            conn.execute("UPDATE tool_calls SET created_at = %s WHERE id = "
+                         "(SELECT MAX(id) FROM tool_calls WHERE org_id = %s)", (quand, org))
+    got = db.premiers_appels([org, muette])
+    assert str(got[org]).startswith("2026-08-15") and got[muette] is None
+    assert db.premiers_appels([]) == {}
+
+
+def test_la_lecture_est_une_operation_de_plateforme():
+    from _datastore_rest import cap
+    from oto_mcp.capabilities._authz import PLATFORM_ADMIN
+    c = cap("platform.usage.first_calls")
+    assert c.authz is PLATFORM_ADMIN and org_suspension.ouverte(c.key)
+    [b] = c.rest_bindings()
+    assert (b.verb, b.path) == ("GET", "/api/admin/usage/first-calls")

@@ -59,3 +59,11 @@ les appels sont refusés.
   cron journalise et continue — la réservation garde de toute façon.
 - **Super admin seulement** : suspendre coupe tous les membres d'un espace, c'est un
   geste de facturation, pas d'administration de l'org.
+
+## 5. Le premier appel d'une org
+
+`platform.usage.first_calls` (`GET /api/admin/usage/first-calls?org_ids=…`, admin
+plateforme) rend le premier appel journalisé (`tool_calls`, MCP et REST) de chaque
+org — l'horloge d'essai d'un tenant qui suspend à la fin de l'essai. Une sonde
+d'index par org (`idx_tool_calls_org`). ⚠️ Le journal expire (~90 jours) : la date
+glisse vers l'avant passé ce délai, l'appelant la fige de son côté.

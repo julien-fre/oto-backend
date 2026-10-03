@@ -1346,9 +1346,14 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # SUSPENSION d'une org (`org_suspension`) : l'org ne peut plus agir — outils,
     # capacités, travaux de fond — et rien de ce qui lui appartient n'est touché.
     # Même forme que `users.suspended_*`. NULL = active.
-    for _col in ("suspended_at TIMESTAMPTZ", "suspended_by TEXT", "suspended_reason TEXT"):
-        if _colonne_absente(conn, "orgs", _col.split()[0]):
-            conn.execute(f"ALTER TABLE orgs ADD COLUMN IF NOT EXISTS {_col}")
+    # ⚠️ Littéraux, jamais un f-string : des bancs rejouent ces DDL en lisant les
+    # constantes de ce fichier (`test_org_quota_archivage.py`).
+    if _colonne_absente(conn, "orgs", "suspended_at"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ")
+    if _colonne_absente(conn, "orgs", "suspended_by"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS suspended_by TEXT")
+    if _colonne_absente(conn, "orgs", "suspended_reason"):
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS suspended_reason TEXT")
     if _index_absent(conn, "uq_orgs_personal_of"):
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_orgs_personal_of "
                      "ON orgs(personal_of) WHERE personal_of IS NOT NULL")

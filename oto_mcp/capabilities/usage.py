@@ -456,3 +456,24 @@ CAPABILITIES += [
                            "these emails/subs, to roll out in stages.",
                rest=RestBinding("POST", "/api/admin/usage/notify-reporters")),
 ]
+
+
+class FirstCallsInput(BaseModel):
+    org_ids: list[int]
+
+
+def _first_calls(ctx: ResolvedCtx, inp: FirstCallsInput) -> dict:
+    if len(inp.org_ids) > 1000:
+        raise AuthzDenied(400, "too_many_orgs", "1000 orgs au plus par lecture.")
+    return {"first_calls": {str(k): v for k, v in db.premiers_appels(inp.org_ids).items()}}
+
+
+CAPABILITIES += [
+    # Le premier appel de chaque org : l'horloge de l'essai d'un tenant qui facture
+    # ses orgs (son service d'usage la fige de son côté, le journal expire à ~90 j).
+    Capability(key="platform.usage.first_calls", handler=_first_calls, Input=FirstCallsInput,
+               authz=PLATFORM_ADMIN,
+               description="[platform admin] First journaled call (MCP or REST) of each "
+                           "org in `org_ids` — null for an org that never called.",
+               rest=RestBinding("GET", "/api/admin/usage/first-calls")),
+]
