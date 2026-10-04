@@ -5,6 +5,9 @@
 2. Supprimer un agent retire ses partages.
 3. La révision 0032 ouvre chaque agent EXISTANT à son org, sans écraser un partage
    déjà posé, et se défait.
+4. Le forfait d'un propriétaire ne se prête qu'à la PERSONNE qu'il a nommée
+   éditrice (`forfaits_pretes`), et la garde d'écriture de `update_trigger` le lit
+   elle aussi.
 """
 from __future__ import annotations
 
@@ -80,3 +83,39 @@ def test_la_revision_0032_ouvre_les_agents_existants_a_leur_org(live, pg_module_
             "le retour arrière ne retire que ce que la révision a posé")
     finally:
         command.stamp(cfg, "head")
+
+
+def test_le_forfait_ne_se_prete_que_par_son_proprietaire_a_une_personne(live, pg_module_dsn):
+    from oto_mcp import db
+    t = db.create_trigger(ORG, "proprio", procedure="veille", tz="UTC", tools=["a"],
+                          cron="0 8 * * *", model="sub:sonnet")
+    autre = _agent(db)   # un agent sur une clé d'org : rien à prêter
+    rid, tid = str(t["id"]), t["id"]
+    db.grant_resource("runner_trigger", rid, "user", "nomme", role="editor",
+                      granted_by="proprio")
+    db.grant_resource("runner_trigger", rid, "user", "par-admin", role="editor",
+                      granted_by="un-admin")
+    db.grant_resource("runner_trigger", rid, "user", "lecteur", role="viewer",
+                      granted_by="proprio")
+    db.grant_resource("runner_trigger", rid, "org", str(ORG), role="editor",
+                      granted_by="proprio")
+    assert db.forfaits_pretes([tid, autre["id"]], "nomme") == {tid}
+    for sub in ("par-admin", "lecteur", "quelqu-un-de-l-org"):
+        assert db.forfaits_pretes([tid], sub) == set(), sub
+
+    # La garde d'écriture lit le même prêt — et seulement lui.
+    for sub in ("par-admin", "lecteur", "quelqu-un-de-l-org"):
+        assert db.update_trigger(tid, ORG, {"input": "x"},
+                                 hors_abonnement_d_autrui=sub) is None, sub
+    assert db.update_trigger(tid, ORG, {"input": "par le nommé"},
+                             hors_abonnement_d_autrui="nomme")["input"] == "par le nommé"
+    assert db.update_trigger(tid, ORG, {"input": "par lui"},
+                             hors_abonnement_d_autrui="proprio")["input"] == "par lui"
+
+    # Échu, le partage ne prête plus rien.
+    with psycopg.connect(pg_module_dsn, autocommit=True) as conn:
+        conn.execute("UPDATE resource_grants SET expires_at = NOW() - interval '1 day' "
+                     "WHERE resource_id = %s AND principal_id = 'nomme'", (rid,))
+    assert db.forfaits_pretes([tid], "nomme") == set()
+    assert db.update_trigger(tid, ORG, {"input": "y"},
+                             hors_abonnement_d_autrui="nomme") is None

@@ -21,15 +21,25 @@ partager hors de l'org et à une adresse sans compte.
 
 ⚠️ **Le partage ne change pas l'identité d'exécution** : l'agent tourne toujours
 sous son propriétaire, quel que soit celui qui l'a modifié. Partager en écriture,
-c'est confier son identité — le front le dit au moment de partager. Un agent posé
-sur un ABONNEMENT personnel reste modifiable par son seul propriétaire
-(`_abonnement.peut_agir_pour`) : prêter son forfait est une autre décision.
+c'est confier son identité — le front le dit au moment de partager.
+
+⚠️ **Un agent posé sur l'ABONNEMENT personnel de son propriétaire** ne se modifie que
+par lui (`_abonnement.peut_agir_pour`), et par les personnes qu'IL a nommées
+éditrices de cet agent (`forfaits_pretes`) : ce qu'elles y changent s'exécute sur
+son forfait, et c'est à lui seul de le prêter. Ne prêtent donc PAS le forfait :
+- un partage à l'org entière ou à une équipe — la révision 0032 en pose un sur chaque
+  agent existant, et il rouvrirait tous les forfaits à toute l'org ;
+- un partage posé par un admin (`granted_by` ≠ propriétaire) — un admin gouverne
+  l'agent, il ne dispose pas du forfait d'autrui ; et après une reprise, les
+  partages de l'ancien propriétaire ne prêtent pas celui du nouveau.
+Le prêt vaut pour la famille où l'agent tourne DÉJÀ : poser un agent sur un
+abonnement reste au propriétaire.
 """
 from __future__ import annotations
 
 from typing import Literal, Optional
 
-from .. import db, ownership, roles
+from .. import db, ownership, roles, runner_models
 from ._types import AuthzDenied, ResolvedCtx
 
 KIND = "runner_trigger"
@@ -96,10 +106,45 @@ def niveau(sub: str, org_id: int, agent: dict) -> Optional[str]:
     return niveaux(sub, org_id, [agent])[int(agent["id"])]
 
 
-def avec_acces(t: dict, acces: Optional[str]) -> dict:
+def sur_le_forfait_d_autrui(sub: str, agent: dict) -> bool:
+    """L'agent tourne-t-il sur l'abonnement PERSONNEL d'un autre que `sub` ? Même
+    lecture que la garde d'écriture (`db.update_trigger`) : le modèle STOCKÉ."""
+    proprietaire = agent.get("sub")
+    return (agent.get("model") in runner_models.MODELES_PERSONNELS
+            and bool(proprietaire) and proprietaire != sub)
+
+
+def forfaits_pretes(sub: str, agents: list[dict]) -> set[int]:
+    """Parmi `agents`, ceux qui tournent sur le forfait d'un autre ET dont ce
+    propriétaire a nommé `sub` éditeur. Une requête pour toute la liste, aucune
+    quand rien ne tourne sur le forfait d'autrui (le cas courant)."""
+    a_lire = [int(t["id"]) for t in agents if sur_le_forfait_d_autrui(sub, t)]
+    return db.forfaits_pretes(a_lire, sub) if a_lire else set()
+
+
+def prete(sub: str, agent: dict) -> bool:
+    return int(agent["id"]) in forfaits_pretes(sub, [agent])
+
+
+def forfait_ferme(sub: str, agent: dict, pretes: Optional[set[int]] = None) -> bool:
+    """`sub` ne peut rien changer à cet agent, sauf l'éteindre : il tourne sur le
+    forfait d'un autre, qui ne le lui a pas prêté. `pretes` = `forfaits_pretes`
+    d'une liste déjà lue ; absent, il se lit pour ce seul agent."""
+    if not sur_le_forfait_d_autrui(sub, agent):
+        return False
+    if pretes is None:
+        pretes = forfaits_pretes(sub, [agent])
+    return int(agent["id"]) not in pretes
+
+
+def avec_acces(t: dict, acces: Optional[str], *, ferme: bool = False) -> dict:
     """Le déclencheur servi, augmenté de ce que l'APPELANT peut en faire — le front
-    grise ses boutons sur ces champs plutôt que de re-déduire la règle."""
-    return {**t, "my_access": acces, "can_edit": acces in ECRIRE,
+    grise ses boutons sur ces champs plutôt que de re-déduire la règle.
+
+    `ferme` (`forfait_ferme`) : `can_edit` dit alors non, même à un éditeur ou à un
+    admin — la retouche serait refusée (`subscription_personal_only`). L'éteindre
+    reste ouvert à tout niveau qui écrit, et `my_access` le dit."""
+    return {**t, "my_access": acces, "can_edit": acces in ECRIRE and not ferme,
             "can_share": acces in GOUVERNER}
 
 

@@ -1446,9 +1446,26 @@ pas (absent de `list`, 404 sur `get`, même 404 qu'un agent inconnu).
   qui tourne toujours sous son propriétaire : partager en écriture, c'est confier son
   identité — l'écran de partage le dit. Le changer serait une autre décision (un agent
   qui tourne sous celui qui l'a allumé en dernier).
-- ⚠️ **Un agent d'abonnement reste modifiable par son seul propriétaire**, partage ou
-  non : `_abonnement.peut_agir_pour` n'a pas bougé — prêter son forfait est une autre
-  décision que confier un agent.
+- ⚠️ **Un agent d'abonnement se modifie par son propriétaire, et par les personnes
+  qu'IL a nommées éditrices** (04/10/2026). Ce qu'elles y changent s'exécute sur son
+  forfait : c'est à lui de le prêter, agent par agent, en les nommant. Ne prêtent PAS
+  le forfait — l'agent reste alors modifiable seulement pour l'éteindre, et `can_edit`
+  le dit (`false`) :
+  - un partage à l'org entière ou à une équipe : la révision 0032 en pose un sur chaque
+    agent existant, il rouvrirait tous les forfaits à toute l'org ;
+  - un partage posé par un admin (`granted_by` ≠ propriétaire) : un admin gouverne
+    l'agent, il ne dispose pas du forfait d'autrui. Reposé par un admin, un partage
+    perd le prêt (l'upsert réécrit `granted_by`) ; après une reprise, les partages de
+    l'ancien propriétaire ne prêtent pas le forfait du nouveau ;
+  - un admin lui-même, qui reste sous `peut_agir_pour`.
+
+  Le prêt (`_acces_agent.forfaits_pretes`, prédicat `db._forfait_prete`) vaut pour la
+  famille où l'agent tourne DÉJÀ : l'éditeur nommé change sa consigne, ses outils, son
+  modèle dans le forfait, le rallume, ou le sort du forfait ; POSER un agent sur un
+  abonnement reste au propriétaire. Quand il rallume (ou change le modèle d'un agent
+  allumé), la garde de pose se juge sur le PROPRIÉTAIRE — c'est sa connexion qui
+  servira. La garde d'écriture (`update_trigger`, `hors_abonnement_d_autrui`) lit le
+  même prêt : retiré entre la lecture et l'écriture, il n'ouvre plus rien.
 - **Lancer à la main** (`runner.jobs op=enqueue`) n'est pas gardé par le partage : le
   travail porte l'identité de QUI l'enfile (`ctx.sub`), jamais celle du propriétaire.
 - **Retirer un partage ne renouvelle pas le secret du webhook** : un éditeur ne l'a
@@ -1489,21 +1506,29 @@ ces identifiants. D'où trois conséquences lisibles dans le code :
 **Des ids PRÉFIXÉS.** La famille se DÉDUIT du modèle : `claude-sonnet-5` reste la voie
 « clé de l'org », `sub:sonnet` est la voie « abonnement ». Le worker retire le préfixe.
 
-**La couture du partage : `_abonnement.peut_agir_pour`.** Aujourd'hui le
-propriétaire seul. Une connexion d'abonnement s'administrera comme les autres
+**La couture du partage : `_abonnement.peut_agir_pour`.** Au niveau de la PERSONNE : le
+propriétaire seul. Une connexion d'abonnement s'administrera peut-être comme les autres
 connecteurs — partagée avec des personnes nommées, qui pourront alors modifier ses
-agents (arbitré le 21/09/2026). Ce jour-là, la règle change dans CETTE fonction et
-nulle part ailleurs. D'ici là, retoucher l'agent d'un autre est refusé, **sauf
-l'éteindre** : personne ne doit avoir besoin du propriétaire pour arrêter un agent.
+agents (arbitré le 21/09/2026) ; ce jour-là, la règle change dans CETTE fonction. Au
+niveau d'un AGENT, le propriétaire prête déjà son forfait en nommant un éditeur
+(04/10/2026, voir « Un agent est à son propriétaire »). Hors de ces deux cas, retoucher
+l'agent d'un autre est refusé, **sauf l'éteindre** : personne ne doit avoir besoin du
+propriétaire pour arrêter un agent.
 
-**Un admin REPREND un agent : `oto_trigger op=take_over` (25/09/2026).** La règle ci-dessus
-laissait un admin sans recours devant l'agent d'un membre parti, ou d'un autre compte de la
-même personne : il pouvait l'éteindre, pas le poser sur son propre abonnement ni sur le
+**Un admin REPREND l'agent d'un membre PARTI : `oto_trigger op=take_over` (25/09/2026,
+restreint le 04/10/2026).** La règle ci-dessus laissait un admin sans recours devant l'agent
+d'un membre parti : il pouvait l'éteindre, pas le poser sur son propre abonnement ni sur le
 pool. La reprise ne RELÂCHE pas la règle, elle change le propriétaire — l'admin devient
 `runner_triggers.sub`, et tout ce qui suit se juge à nouveau sur lui.
 
 - **Admin d'org seulement** (`roles.is_org_admin`), sinon `403 org_admin_required`.
   Reprendre son propre agent ne fait rien (`jobs_moved: 0`).
+- ⚠️ **Seulement si le propriétaire n'est plus membre de l'org** (`roles.is_org_member`),
+  sinon `403 owner_still_member`. **La propriété se donne, elle ne se prend pas** :
+  reprendre l'agent d'un membre présent lui retirait son travail, et le faisait tourner
+  sous une autre identité, sans qu'il ait rien demandé. Pour modifier l'agent d'un
+  collègue, il le partage en éditeur — forfait compris s'il le nomme. Un autre compte de
+  la même personne passe par le même chemin : l'ancien compte le partage au nouveau.
 - **Les travaux en attente suivent** (`pending`, et `held` pour un webhook en pause) :
   leur `sub` passe au repreneur DANS LA MÊME TRANSACTION que le déclencheur
   (`db.reprendre_trigger`). C'est ce `sub` qui fixe le jeton du run (`_delegue`) et

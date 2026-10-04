@@ -2,11 +2,15 @@
 
 La règle « seul le propriétaire pose son agent sur son abonnement »
 (`_abonnement.peut_agir_pour`) laissait un admin sans recours devant l'agent d'un
-membre parti, ou d'un autre compte de la même personne. La reprise ne relâche pas la
-règle : l'admin DEVIENT le propriétaire. Ce que ces bancs tiennent :
+membre parti. La reprise ne relâche pas la règle : l'admin DEVIENT le propriétaire.
+Depuis le 04/10/2026, elle ne vaut QUE pour l'agent d'un membre parti : la propriété
+se donne, elle ne se prend pas — l'agent d'un membre présent se partage. Ce que ces
+bancs tiennent :
 
 1. seul un admin d'org reprend (`403 org_admin_required`) ;
 2. reprendre son propre agent ne fait rien ;
+2b. l'agent d'un membre toujours dans l'org ne se reprend pas
+    (`403 owner_still_member`), et rien n'est écrit ;
 3. un agent ALLUMÉ sur un abonnement passe la garde de pose, jugée sur le REPRENEUR —
    refusée, rien n'est écrit ;
 4. éteint, ou sur une clé d'org, il se reprend sans garde d'abonnement ;
@@ -36,10 +40,14 @@ def _agent(**extra):
 @pytest.fixture
 def monde(monkeypatch):
     """L'org, ses admins, le déclencheur stocké, et la TRACE de ce qui s'écrit."""
-    etat = {"admins": {_ADMIN}, "agent": _agent(), "reprises": [], "gardes": []}
+    # `_ANCIEN` a QUITTÉ l'org : c'est le cas pour lequel la reprise existe.
+    etat = {"admins": {_ADMIN}, "membres": {_ADMIN, "tulina:membre"},
+            "agent": _agent(), "reprises": [], "gardes": []}
 
     monkeypatch.setattr(RT.roles, "is_org_admin",
                         lambda sub, org_id: org_id == _ORG and sub in etat["admins"])
+    monkeypatch.setattr(RT.roles, "is_org_member",
+                        lambda sub, org_id: org_id == _ORG and sub in etat["membres"])
     monkeypatch.setattr(RT.db, "get_trigger",
                         lambda tid, oid: dict(etat["agent"])
                         if etat["agent"] and tid == etat["agent"]["id"] and oid == _ORG
@@ -86,6 +94,25 @@ def test_l_admin_DEVIENT_le_proprietaire_et_le_retour_le_dit(monde):
     assert rep["trigger"]["sub"] == _ADMIN
     assert rep["previous_owner"] == _ANCIEN
     assert rep["jobs_moved"] == 3
+
+
+def test_l_agent_d_un_membre_PRESENT_ne_se_reprend_pas(monde):
+    """Il se partage (`op=share`) : le prendre retirait son travail à quelqu'un qui
+    n'a rien demandé, et le faisait tourner sous une autre identité."""
+    monde["membres"].add(_ANCIEN)
+    with pytest.raises(AuthzDenied) as e:
+        _reprendre()
+    assert (e.value.status, e.value.code) == (403, "owner_still_member")
+    assert monde["reprises"] == [] and monde["gardes"] == []
+
+
+def test_un_simple_membre_ne_reprend_pas_meme_l_agent_d_un_parti(monde):
+    """L'ordre des refus : `org_admin_required` d'abord — un non-admin n'apprend
+    pas si le propriétaire est encore là."""
+    monde["membres"].add(_ANCIEN)
+    with pytest.raises(AuthzDenied) as e:
+        _reprendre(sub="tulina:membre")
+    assert e.value.code == "org_admin_required"
 
 
 def test_reprendre_SON_agent_ne_fait_rien(monde):

@@ -518,6 +518,20 @@ class TestRetoucheParUnAutre:
             "un-collegue", {"sub": "le-proprietaire", "model": "claude-sonnet-5"},
             "anthropic", {"input": "x"})
 
+    def test_le_PRET_du_proprietaire_ouvre_cet_agent(self):
+        """Nommé éditeur par le propriétaire (`_acces_agent.forfaits_pretes`)."""
+        _abonnement.exiger_le_droit_de_modifier(
+            "un-collegue", self._AGENT, _FAMILLE, {"input": "x"}, prete=True)
+
+    def test_le_pret_ne_vaut_que_pour_la_famille_ou_l_agent_tourne(self, monkeypatch):
+        """Poser l'agent sur une AUTRE famille d'abonnement reste au propriétaire."""
+        monkeypatch.setattr(_abonnement, "est_abonnement", lambda f: True)
+        with pytest.raises(Exception) as e:
+            _abonnement.exiger_le_droit_de_modifier(
+                "un-collegue", self._AGENT, "un_autre_abonnement",
+                {"model": "autre:modele"}, prete=True)
+        assert e.value.code == "subscription_personal_only"
+
     def test_la_couture_du_partage_est_UNIQUE(self, monkeypatch):
         """Le jour où une connexion se partage, UNE fonction change — et les trois
         chemins de pose comme la retouche suivent. Ce banc tient qu'ils la lisent."""
