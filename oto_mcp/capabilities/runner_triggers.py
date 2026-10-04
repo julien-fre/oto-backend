@@ -681,7 +681,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             max_per_hour=inp.max_per_hour,
             fraicheur_s=inp.freshness_seconds,
             # `0` = aucun plafond : stocké NULL, comme un agent qui n'en a jamais eu.
-            max_per_day=inp.max_per_day or None)
+            max_per_day=inp.max_per_day or None,
+            # ⚠️ `enabled=false` à la création était IGNORÉ (feedback 1297) : l'agent
+            # naissait allumé, et la seule façon de le poser éteint était un
+            # `update` juste après — donc une fenêtre où il pouvait tourner.
+            enabled=inp.enabled is not False)
         # ⚠️ Un webhook NAÎT avec une adresse privée, TOUJOURS (décidé le
         # 25/09/2026) : l'id numérique se parcourt, et une source stocke une URL
         # aléatoire aussi bien qu'une numérique — rien ne justifie de la choisir.
