@@ -321,9 +321,12 @@ class InstructionVersions(BaseModel):
 class InstructionUsage(BaseModel):
     """Usage d'une procédure, dérivé du journal d'appels (ADR 0014).
 
-    ⚠️ **`count` et `series` ne mesurent pas la même fenêtre** : `series` couvre les 30
-    derniers jours, `count` et `callers` n'ont **aucun filtre de date** — ils comptent
-    tout ce qui reste en base. `count` ≠ `sum(series)`, et l'écart n'est pas un bug.
+    **Une seule fenêtre : les 30 derniers jours.** `count`, `callers` et `series`
+    portent sur la même période, donc `count == sum(series)` (idem `runs_count` et
+    `runs_series`). Avant, `count` et `callers` n'avaient aucune borne de date : ils
+    comptaient tout ce que la rétention du journal gardait encore, ce qui ne disait
+    pas sur quelle période — et coûtait un parcours du journal entier des membres à
+    chaque affichage.
 
     ⚠️ **`callers` peut être plus court que ce que `count` totalise** : les appelants
     sans compte `users` connu sont exclus de la liste mais comptés dans le total.
@@ -352,6 +355,28 @@ class InstructionUsage(BaseModel):
     runs_count: int = 0
     # Même fenêtre et même densification que `series` : 30 jours, zéros compris.
     runs_series: list[int] = []
+
+
+class InstructionUsageRow(BaseModel):
+    """L'usage d'UNE procédure dans la lecture groupée — les mêmes compteurs
+    qu'`InstructionUsage` (même journal, même fenêtre de 30 jours, mêmes bornes),
+    sans les séries : ce qu'une LISTE affiche par ligne."""
+    slug: str
+    # Chargements (`oto_procedure`) sur la fenêtre, et le dernier.
+    count: int = 0
+    last_at: Optional[str] = None
+    # Déroulés (`run_start`) sur la fenêtre, et le dernier — jamais additionnés aux
+    # chargements, voir `InstructionUsage`.
+    runs_count: int = 0
+    last_run_at: Optional[str] = None
+
+
+class InstructionsUsage(BaseModel):
+    """L'usage de toutes les procédures de l'org en UN appel : la liste et la page
+    d'une procédure n'ont plus à appeler `…/{slug}/usage` une fois par ligne. Une
+    procédure absente n'a été ni chargée ni déroulée sur la fenêtre."""
+    days: int
+    usage: list[InstructionUsageRow]
 
 
 class InstructionWritten(BaseModel):
@@ -1560,6 +1585,20 @@ def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
             "runs_count": r["count"], "runs_series": _dense(r["daily"])}
 
 
+
+def _instructions_usage(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
+    """Usage de toutes les procédures de l'org (lecture groupée d'`_instruction_usage`)."""
+    subs = [m["sub"] for m in org_store.list_org_members(ctx.org_id)]
+    by_slug = db.instructions_usage_by_slug(subs, days=30)
+    return {"days": 30, "usage": [
+        {"slug": slug,
+         "count": u["count"],
+         "last_at": str(u["last_at"]) if u["last_at"] else None,
+         "runs_count": u["runs_count"],
+         "last_run_at": str(u["last_run_at"]) if u["last_run_at"] else None}
+        for slug, u in sorted(by_slug.items())
+    ]}
+
 CAPABILITIES += [
     # ── Lectures membre (org active) ────────────────────────────────────────
     Capability(
@@ -1596,6 +1635,13 @@ CAPABILITIES += [
         key="org.instruction.usage", handler=_instruction_usage, Input=SlugInput,
         authz=ORG_MEMBER, Output=InstructionUsage,
         rest=RestBinding("GET", "/api/me/instructions/{slug}/usage"),
+    ),
+    Capability(
+        key="org.instruction.usage_all", handler=_instructions_usage, Input=EmptyInput,
+        authz=ORG_MEMBER, Output=InstructionsUsage,
+        # Hors de `/api/me/instructions/…` : `…/instructions/usage` serait lu comme
+        # la procédure de slug `usage`.
+        rest=RestBinding("GET", "/api/me/instructions-usage"),
     ),
     # ── Écritures membre (org active, org_admin) ────────────────────────────
     Capability(

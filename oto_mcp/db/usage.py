@@ -1348,24 +1348,59 @@ def list_billable_calls_for_org(
             "unknown_run_ids": inconnus}
 
 
+# Les deux verbes que l'usage d'une procédure lit, et la clé d'`args` qui y nomme la
+# procédure. Fermée : le verbe ET la clé sont écrits en LITTÉRAUX dans le SQL — c'est
+# ce qui permet au planificateur de prendre les index partiels ci-dessous (un
+# `tool = %s` paramétré ne prouve pas `tool = 'oto_procedure'` sur un plan générique).
+_VERBES_USAGE = {"oto_procedure": "slug", "run_start": _ARG_PROCEDURE}
+
+# Index partiels d'expression, même forme qu'`idx_tool_calls_run_finish_ref` : ils ne
+# portent que les lignes d'UN verbe, clé = la procédure nommée, puis la date. Sans eux,
+# lire l'usage d'une procédure parcourait tous les appels de ce verbe, toutes orgs
+# confondues, ou le journal entier des membres.
+INDEX_USAGE_CHARGEMENTS = "idx_tool_calls_procedure_ref"
+INDEX_USAGE_DEROULES = "idx_tool_calls_run_start_ref"
+_CORPS_INDEX_USAGE = {
+    INDEX_USAGE_CHARGEMENTS: "ON tool_calls ((args->>'slug'), created_at DESC) "
+                             "WHERE tool = 'oto_procedure'",
+    INDEX_USAGE_DEROULES: f"ON tool_calls ((args->>'{_ARG_PROCEDURE}'), created_at DESC) "
+                          "WHERE tool = 'run_start'",
+}
+# Base NEUVE (démarrage) : un CREATE INDEX ordinaire, la table est vide. Base peuplée :
+# la révision 0032 les pose CONCURRENTLY avant le déploiement.
+DDL_INDEX_USAGE = {nom: f"CREATE INDEX IF NOT EXISTS {nom} {corps}"
+                   for nom, corps in _CORPS_INDEX_USAGE.items()}
+DDL_INDEX_USAGE_CONCURRENT = {nom: f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {nom} {corps}"
+                              for nom, corps in _CORPS_INDEX_USAGE.items()}
+
+
 def instruction_usage(
     subs: list[str], tool: str, slug: Optional[str], days: int = 30,
     *, slug_key: str = "slug",
 ) -> dict:
     """Usage d'un guide dérivé de `tool_calls` (ADR 0014, « guide = process
-    = log d'usage ») : combien de fois elle a été chargée par l'agent, par qui,
-    et la distribution journalière sur `days` jours.
+    = log d'usage ») : combien de fois il a été chargé par l'agent sur les `days`
+    derniers jours, par qui, et la distribution journalière.
 
     `tool` = le tool de lecture de guide (oto_procedure ; slug=None pour la base, sinon filtré par
     `args->>'slug'` pour une skill). Scopé aux `subs` (membres de
     l'org). Lecture pure ; renvoie {count, callers, daily{date:str -> n}}.
 
+    **Une seule fenêtre.** `count`, `callers` et `daily` couvrent les MÊMES `days`
+    jours : `count == sum(daily)`. Avant, `count` et `callers` n'avaient aucune borne
+    de date — ils parcouraient tout ce que la rétention du journal garde encore, pour
+    chaque membre, à chaque affichage, et rendaient un total qui ne disait pas sur
+    quelle période il portait.
+
+    **Une seule requête, sur l'index.** Le verbe en littéral, la procédure et la borne
+    de date ouvrent l'index partiel du verbe (`INDEX_USAGE_*`) : la lecture ne
+    parcourt que les lignes de CETTE procédure sur la fenêtre.
+
     `slug_key` = la CLÉ de `args` qui porte la procédure. C'est ce qui rend cette
     fonction réutilisable pour compter autre chose que des chargements : un
     **déroulé** est le fait `run_start`, et il nomme sa procédure sous une AUTRE clé
     que `slug` — `_ARG_PROCEDURE`, celle-là même que `_runs_from_journal` lit pour
-    reconstruire les runs depuis la MÊME table. Une seule requête, deux lectures,
-    plutôt qu'un second chemin qui dériverait du premier.
+    reconstruire les runs depuis la MÊME table.
 
     Liste FERMÉE de littéraux de ce module : la clé est interpolée dans le SQL,
     jamais fournie par un appelant."""
@@ -1373,36 +1408,75 @@ def instruction_usage(
         return {"count": 0, "callers": [], "daily": {}}
     if slug_key not in _ARGS_PROCEDURE_OK:
         raise ValueError(f"slug_key non supporté: {slug_key!r}")
+    if _VERBES_USAGE.get(tool) != slug_key:
+        raise ValueError(f"verbe d'usage non supporté: {tool!r} / {slug_key!r}")
     days = max(1, min(int(days), 365))
     slug_clause = f" AND l.args->>'{slug_key}' = %s" if slug is not None else ""
-    base_params: list[Any] = [subs, tool]
+    params: list[Any] = [days, subs]
     if slug is not None:
-        base_params.append(slug)
+        params.append(slug)
     with _connect() as conn:
-        callers = conn.execute(
+        rows = conn.execute(
             f"""
-            SELECT u.email, COUNT(*) AS n
+            SELECT (l.created_at AT TIME ZONE 'UTC')::date AS d, u.email, COUNT(*) AS n
             FROM tool_calls l LEFT JOIN users u ON u.sub = l.sub
-            WHERE l.sub = ANY(%s) AND l.tool = %s{slug_clause} AND l.ok
-            GROUP BY u.email ORDER BY n DESC
-            """,
-            tuple(base_params),
-        ).fetchall()
-        daily = conn.execute(
-            f"""
-            SELECT (l.created_at AT TIME ZONE 'UTC')::date AS d, COUNT(*) AS n
-            FROM tool_calls l
-            WHERE l.sub = ANY(%s) AND l.tool = %s{slug_clause} AND l.ok
+            WHERE l.tool = '{tool}'
               AND l.created_at >= NOW() - make_interval(days => %s)
-            GROUP BY d
+              AND l.sub = ANY(%s){slug_clause} AND l.ok
+            GROUP BY d, u.email
             """,
-            tuple(base_params + [days]),
+            tuple(params),
         ).fetchall()
+    daily: dict[str, int] = {}
+    per_caller: dict[str, int] = {}
+    for r in rows:
+        n = int(r["n"])
+        daily[str(r["d"])] = daily.get(str(r["d"]), 0) + n
+        if r["email"]:
+            per_caller[r["email"]] = per_caller.get(r["email"], 0) + n
     return {
-        "count": sum(int(r["n"]) for r in callers),
-        "callers": [r["email"] for r in callers if r["email"]],
-        "daily": {str(r["d"]): int(r["n"]) for r in daily},
+        "count": sum(daily.values()),
+        "callers": sorted(per_caller, key=lambda e: -per_caller[e]),
+        "daily": daily,
     }
+
+
+def instructions_usage_by_slug(subs: list[str], days: int = 30) -> dict[str, dict]:
+    """L'usage de TOUTES les procédures d'une org en deux requêtes — une par verbe —
+    plutôt qu'un appel par procédure : chargements (`oto_procedure`, clé `slug`) et
+    déroulés (`run_start`, clé `_ARG_PROCEDURE`) sur les `days` derniers jours, avec
+    le dernier de chacun. Même journal, mêmes index partiels et même périmètre (membres
+    actuels, appels réussis) qu'`instruction_usage`, dont c'est la lecture groupée.
+
+    Renvoie {slug: {count, last_at, runs_count, last_run_at}} ; une procédure ni
+    chargée ni déroulée sur la fenêtre est absente (le lecteur la lit comme zéro)."""
+    if not subs:
+        return {}
+    days = max(1, min(int(days), 365))
+    out: dict[str, dict] = {}
+    with _connect() as conn:
+        for tool, n_field, at_field in (
+            ("oto_procedure", "count", "last_at"),
+            ("run_start", "runs_count", "last_run_at"),
+        ):
+            key = _VERBES_USAGE[tool]
+            rows = conn.execute(
+                f"""
+                SELECT l.args->>'{key}' AS slug, COUNT(*) AS n, MAX(l.created_at) AS last
+                FROM tool_calls l
+                WHERE l.tool = '{tool}'
+                  AND l.created_at >= NOW() - make_interval(days => %s)
+                  AND l.sub = ANY(%s) AND l.ok AND l.args->>'{key}' IS NOT NULL
+                GROUP BY 1
+                """,
+                (days, subs),
+            ).fetchall()
+            for r in rows:
+                entry = out.setdefault(r["slug"], {"count": 0, "last_at": None,
+                                                   "runs_count": 0, "last_run_at": None})
+                entry[n_field] = int(r["n"])
+                entry[at_field] = r["last"]
+    return out
 
 
 def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,

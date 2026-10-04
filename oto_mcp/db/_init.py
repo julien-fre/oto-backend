@@ -14,7 +14,7 @@ import time
 import psycopg
 
 from . import (_prerequis, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
-               revision, rowlock, transcription, user_subscriptions)
+               revision, rowlock, transcription, usage, user_subscriptions)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
 from ._schema import _SCHEMA
@@ -1091,6 +1091,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_run_finish_ref "
                  "ON tool_calls ((args->>'run_id'), created_at DESC) "
                  "WHERE tool = 'run_finish'")
+    # L'usage d'une procédure (chargements, déroulés) : un index partiel par verbe,
+    # même forme que celui de `run_finish` ci-dessus. Sur une base peuplée, la
+    # révision 0032 les pose CONCURRENTLY avant le déploiement et ces ordres ne font
+    # rien ; ils servent la base NEUVE, estampillée à la tête sans jouer la révision.
+    for nom, ddl in usage.DDL_INDEX_USAGE.items():
+        if _index_absent(conn, nom):
+            conn.execute(ddl)
     # Org de l'appel (#67, scope d'audit exact) — extension OTO-LOCALE.
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS org_id BIGINT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_org ON tool_calls(org_id, created_at DESC) WHERE org_id IS NOT NULL")
