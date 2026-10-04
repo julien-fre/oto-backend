@@ -227,8 +227,12 @@ vaille désinscription.
 La route `/o/u/{token}` est **anonyme et server-rendered**, sur le BACKEND
 (`OTO_MCP_PUBLIC_URL`) : exiger une session la demanderait à celui-là même qui ne veut
 plus rien avoir à faire avec nous, et un front indisponible ne doit pas bloquer un
-refus. C'est un **GET qui écrit**, assumé : les clients mail ne postent pas, l'écriture
-est idempotente et strictement soustractive.
+refus. **Le GET n'écrit pas** : il pose la question, et seul le POST de son formulaire
+désinscrit. Le lien voyage hors des mains du destinataire (copies d'un email
+d'activation, scanners de liens des messageries d'entreprise), et un GET qui écrivait
+désinscrivait à sa place. Le POST désinscrit quel que soit son corps : c'est aussi la
+forme du désabonnement en un clic des clients mail (RFC 8058, `List-Unsubscribe=
+One-Click`). L'écriture reste idempotente et strictement soustractive.
 
 Sans `OTO_MCP_OAUTH_STATE_SECRET`, `lien()` **lève** — plutôt qu'un lien mort dans le
 pied de page de dizaines de mails.

@@ -77,12 +77,25 @@ def test_le_lien_pointe_le_BACKEND_pas_le_dashboard(monkeypatch):
 
 # ── la route publique ────────────────────────────────────────────────────────
 
+def _req(methode: str, chemin: str, token: str, *, corps: bytes = b"",
+         type_: bytes = b""):
+    entetes = [(b"content-type", type_)] if type_ else []
+
+    async def recevoir():
+        return {"type": "http.request", "body": corps, "more_body": False}
+    return Request({"type": "http", "method": methode, "path": f"{chemin}/{token}",
+                    "headers": entetes, "query_string": b"",
+                    "path_params": {"token": token}}, recevoir)
+
+
 def _get(token: str):
     from oto_mcp.api import public
-    req = Request({"type": "http", "method": "GET", "path": f"/o/u/{token}",
-                   "headers": [], "query_string": b"",
-                   "path_params": {"token": token}})
-    return asyncio.run(public.outreach_unsubscribe(req))
+    return asyncio.run(public.outreach_unsubscribe(_req("GET", "/o/u", token)))
+
+
+def _post(token: str, **kw):
+    from oto_mcp.api import public
+    return asyncio.run(public.outreach_unsubscribe(_req("POST", "/o/u", token, **kw)))
 
 
 @pytest.fixture
@@ -98,37 +111,73 @@ def base(monkeypatch):
     return ecrits
 
 
-def test_un_lien_valide_desinscrit_et_confirme(base):
+def test_un_GET_n_ecrit_RIEN_et_pose_la_question(base):
+    """Le lien voyage hors des mains du destinataire : dans les copies (`cc`) d'un
+    email d'activation, et sous les yeux des scanners de liens des messageries. Le
+    suivre ne doit désinscrire personne — il affiche la question et son bouton."""
     rep = _get(O.sign(SUB))
+    assert rep.status_code == 200
+    assert base == [], "un GET (scanner, destinataire en copie) ne désinscrit personne"
+    corps = rep.body.decode()
+    assert "Stop receiving these emails?" in corps, "la page suit la langue du compte"
+    assert '<form method="post" action=""' in corps
+    assert "Done" not in corps, "la page ne dit jamais « c'est noté » avant le POST"
+
+
+def test_un_POST_desinscrit_et_confirme(base):
+    rep = _post(O.sign(SUB))
     assert rep.status_code == 200
     assert base == [(SUB, "link")]
     assert b"Done" in rep.body, "la page suit la langue déclarée du compte"
 
 
-def test_recharger_la_page_n_est_pas_une_erreur(base):
-    """Idempotent : un préchargeur de webmail, un double-clic, un retour arrière."""
+def test_le_desabonnement_en_un_clic_RFC_8058_desinscrit(base):
+    """Le client mail POSTe `List-Unsubscribe=One-Click` sur le lien, sans page."""
+    rep = _post(O.sign(SUB), corps=b"List-Unsubscribe=One-Click",
+                type_=b"application/x-www-form-urlencoded")
+    assert rep.status_code == 200 and base == [(SUB, "link")]
+
+
+def test_le_formulaire_de_la_page_POSTe_la_forme_RFC_8058(base):
+    """Le bouton de la page soumet le même corps qu'un client mail : un seul chemin."""
+    corps = _get(O.sign(SUB)).body.decode()
+    assert 'name="List-Unsubscribe" value="One-Click"' in corps
+
+
+def test_reposter_n_est_pas_une_erreur(base):
+    """Idempotent : un double-clic, un retour arrière, un client mail qui rejoue."""
     jeton = O.sign(SUB)
-    assert _get(jeton).status_code == 200 and _get(jeton).status_code == 200
+    assert _post(jeton).status_code == 200 and _post(jeton).status_code == 200
     assert base == [(SUB, "link"), (SUB, "link")]
 
 
-def test_un_lien_trafique_n_ecrit_RIEN(base):
-    rep = _get(O.sign(SUB)[:-4] + "aaaa")
+@pytest.mark.parametrize("appel", [_get, _post])
+def test_un_lien_trafique_n_ecrit_RIEN(base, appel):
+    rep = appel(O.sign(SUB)[:-4] + "aaaa")
     assert rep.status_code == 400
     assert base == [], "un jeton qu'on ne sait pas lire ne désinscrit personne"
     assert "Lien invalide" in rep.body.decode()
 
 
-def test_la_page_ne_fuite_pas_le_compte(base):
-    """La confirmation ne nomme personne : un lien qui circule ne doit pas révéler
-    l'adresse ou l'identifiant de celui à qui il a été envoyé."""
-    rep = _get(O.sign(SUB))
+@pytest.mark.parametrize("appel", [_get, _post])
+def test_la_page_ne_fuite_pas_le_compte(base, appel):
+    """Ni la question ni la confirmation ne nomment personne : un lien qui circule ne
+    doit pas révéler l'adresse ou l'identifiant de celui à qui il a été envoyé."""
+    rep = appel(O.sign(SUB))
     assert SUB.encode() not in rep.body
 
 
-def test_la_page_est_autoportee_sans_JS(base):
-    corps = _get(O.sign(SUB)).body.decode()
+@pytest.mark.parametrize("appel", [_get, _post])
+def test_la_page_est_autoportee_sans_JS(base, appel):
+    corps = appel(O.sign(SUB)).body.decode()
     assert "<script" not in corps and "fetch(" not in corps
+
+
+@pytest.mark.parametrize("appel", [_get, _post])
+def test_le_jeton_du_chemin_ne_part_ni_en_cache_ni_en_referer(base, appel):
+    rep = appel(O.sign(SUB))
+    assert rep.headers["cache-control"] == "no-store"
+    assert rep.headers["referrer-policy"] == "no-referrer"
 
 
 def test_un_compte_inconnu_est_quand_meme_desinscrit(monkeypatch, base):
@@ -136,7 +185,7 @@ def test_un_compte_inconnu_est_quand_meme_desinscrit(monkeypatch, base):
     page repasse en français faute de préférence lisible."""
     from oto_mcp import db
     monkeypatch.setattr(db, "get_user", lambda sub: None)
-    rep = _get(O.sign(SUB))
+    rep = _post(O.sign(SUB))
     assert rep.status_code == 200 and base == [(SUB, "link")]
     assert "C'est noté" in rep.body.decode()
 
@@ -148,7 +197,7 @@ def test_la_route_est_MONTEE_et_sans_auth():
     montees = {(r.path, tuple(sorted(r.methods or ())))
                for r in api_routes.make_routes(object())
                if getattr(r, "path", "").startswith("/o/u/")}
-    assert montees == {("/o/u/{token}", ("GET", "HEAD"))}
+    assert montees == {("/o/u/{token}", ("GET", "HEAD", "POST"))}
     route = next(r for r in api_routes.make_routes(object())
                  if getattr(r, "path", "") == "/o/u/{token}")
     assert route.endpoint is public.outreach_unsubscribe, (
@@ -207,10 +256,12 @@ def test_page_confirmation_digest_ne_parle_pas_de_relance():
 
 def _get_digest(token: str):
     from oto_mcp.api import public
-    req = Request({"type": "http", "method": "GET", "path": f"/o/d/{token}",
-                   "headers": [], "query_string": b"",
-                   "path_params": {"token": token}})
-    return asyncio.run(public.digest_unsubscribe(req))
+    return asyncio.run(public.digest_unsubscribe(_req("GET", "/o/d", token)))
+
+
+def _post_digest(token: str):
+    from oto_mcp.api import public
+    return asyncio.run(public.digest_unsubscribe(_req("POST", "/o/d", token)))
 
 
 @pytest.fixture
@@ -227,16 +278,23 @@ def base_digest(monkeypatch):
     return ecrits
 
 
-def test_un_lien_digest_valide_desinscrit_et_confirme(base_digest):
+def test_un_GET_digest_n_ecrit_rien(base_digest):
     rep = _get_digest(O.lien_digest(SUB).rsplit("/", 1)[1])
+    assert rep.status_code == 200 and base_digest == []
+    assert "Stop receiving this summary?" in rep.body.decode()
+
+
+def test_un_POST_digest_desinscrit_et_confirme(base_digest):
+    rep = _post_digest(O.lien_digest(SUB).rsplit("/", 1)[1])
     assert rep.status_code == 200
     assert base_digest == [(SUB, "link")]
     assert b"Done" in rep.body
 
 
-def test_un_lien_digest_trafique_n_ecrit_rien(base_digest):
+@pytest.mark.parametrize("appel", [_get_digest, _post_digest])
+def test_un_lien_digest_trafique_n_ecrit_rien(base_digest, appel):
     jeton = O.lien_digest(SUB).rsplit("/", 1)[1]
-    rep = _get_digest(jeton[:-4] + "aaaa")
+    rep = appel(jeton[:-4] + "aaaa")
     assert rep.status_code == 400
     assert base_digest == []
     assert "Lien invalide" in rep.body.decode()
@@ -247,7 +305,7 @@ def test_la_route_digest_est_MONTEE_et_sans_auth():
     montees = {(r.path, tuple(sorted(r.methods or ())))
                for r in api_routes.make_routes(object())
                if getattr(r, "path", "").startswith("/o/d/")}
-    assert montees == {("/o/d/{token}", ("GET", "HEAD"))}
+    assert montees == {("/o/d/{token}", ("GET", "HEAD", "POST"))}
     route = next(r for r in api_routes.make_routes(object())
                  if getattr(r, "path", "") == "/o/d/{token}")
     assert route.endpoint is public.digest_unsubscribe
@@ -263,7 +321,7 @@ def test_le_lien_du_digest_ne_desinscrit_pas_des_relances(base, base_digest):
     présenté à `/o/u/...` (lien copié, faute de frappe), rien ne doit se désinscrire
     côté relances."""
     jeton_digest = O.lien_digest(SUB).rsplit("/", 1)[1]
-    rep = _get(jeton_digest)  # _get() cible /o/u/<token> -> outreach_unsubscribe
+    rep = _post(jeton_digest)  # _post() cible /o/u/<token> -> outreach_unsubscribe
     assert rep.status_code == 400
     assert base == [], "un jeton de digest ne désinscrit jamais des relances"
 
@@ -272,6 +330,44 @@ def test_le_lien_de_relance_ne_desinscrit_pas_du_digest(base, base_digest):
     """Et réciproquement : le lien d'une relance, présenté à la route du digest,
     n'écrit rien dans `signal_digest_optouts`."""
     jeton_relance = O.sign(SUB)
-    rep = _get_digest(jeton_relance)
+    rep = _post_digest(jeton_relance)
     assert rep.status_code == 400
     assert base_digest == [], "un jeton de relance ne désinscrit jamais du digest"
+
+
+# ── Le RÉSUMÉ DES LECTEURS (`/o/r/`) : même régime que les deux autres liens ────
+
+@pytest.fixture
+def base_lecteurs(monkeypatch):
+    from oto_mcp.api import public as _public  # noqa: F401 — force l'import du module
+    from oto_mcp.db import partages_procedure as db_partages
+    from oto_mcp import db
+    ecrits: list = []
+    monkeypatch.setattr(db_partages, "refuser_resume",
+                        lambda sub, source="link": ecrits.append((sub, source)))
+    monkeypatch.setattr(db, "get_user", lambda sub: {"locale": "en"})
+    return ecrits
+
+
+def _lecteurs(methode: str, token: str):
+    from oto_mcp.api import public
+    return asyncio.run(public.readers_digest_unsubscribe(_req(methode, "/o/r", token)))
+
+
+def test_un_GET_lecteurs_n_ecrit_rien_et_un_POST_desinscrit(base_lecteurs):
+    jeton = O.lien_lecteurs(SUB).rsplit("/", 1)[1]
+    assert _lecteurs("GET", jeton).status_code == 200 and base_lecteurs == []
+    rep = _lecteurs("POST", jeton)
+    assert rep.status_code == 200 and base_lecteurs == [(SUB, "link")]
+    assert b"Done" in rep.body
+
+
+def test_la_route_lecteurs_est_MONTEE_en_GET_et_POST():
+    from oto_mcp.api import public, routes as api_routes
+    montees = {(r.path, tuple(sorted(r.methods or ())))
+               for r in api_routes.make_routes(object())
+               if getattr(r, "path", "").startswith("/o/r/")}
+    assert montees == {("/o/r/{token}", ("GET", "HEAD", "POST"))}
+    route = next(r for r in api_routes.make_routes(object())
+                 if getattr(r, "path", "") == "/o/r/{token}")
+    assert route.endpoint is public.readers_digest_unsubscribe

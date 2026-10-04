@@ -46,12 +46,40 @@ aucune table neuve. ⚠️ Le refus est donc COMMUN aux deux canaux.
 """
 from __future__ import annotations
 
+import psycopg
+
 from ._conn import _connect
 from .tenants import _SUB_TENANT_SQL, _TENANT_PREF_SQL
 from .usage import _runs_from_journal
 from .. import tenancy
 
 ETAPES = ("connect", "first-process", "recurring")
+
+# La borne d'une lecture d'audience. Elle agrège `tool_calls` sur tous les comptes du
+# tenant, sans fenêtre de temps possible : `branchee_le` est le PREMIER appel d'une
+# personne, et le borner dans le temps ferait passer pour « jamais branchée » quelqu'un
+# qui l'est depuis longtemps — l'email `connect` partirait à tort. C'est donc la DURÉE
+# qu'on borne : une lecture longue de `tool_calls` a déjà fait échouer l'`ALTER` de
+# démarrage (incident du 23/09). Au-delà, le travail `activation` échoue (le passage
+# de maintenance le journalise et continue : `maintenance.run` est fail-open) — aucun
+# email ne part sur une audience qu'on n'a pas fini de lire.
+TIMEOUT_AUDIENCE_MS = 15_000
+
+
+class AudienceTropLente(RuntimeError):
+    """La lecture d'audience a dépassé `TIMEOUT_AUDIENCE_MS` : rien n'est envoyé."""
+
+
+def _lire(sql: str, params: dict, *, etape: str, tenant: str) -> list[dict]:
+    """Une lecture d'audience BORNÉE (`SET LOCAL`, la transaction de la connexion)."""
+    with _connect() as conn:
+        conn.execute(f"SET LOCAL statement_timeout = {int(TIMEOUT_AUDIENCE_MS)}")
+        try:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+        except psycopg.errors.QueryCanceled as e:
+            raise AudienceTropLente(
+                f"audience d'activation {tenant}/{etape} : lecture interrompue après "
+                f"{TIMEOUT_AUDIENCE_MS} ms — rien n'est envoyé à ce passage") from e
 
 # Les prédicats d'une étape, sur la personne `p`. Littéraux de ce module, jamais une
 # entrée d'appelant.
@@ -181,8 +209,7 @@ def audience(*, etape: str, tenant: str, delay_hours: int = 24, window_days: int
                      window_days=window_days, sequence_days=sequence_days,
                      exclude_domains=exclude_domains)
     params["cap"] = max(1, int(cap))
-    with _connect() as conn:
-        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    return _lire(sql, params, etape=etape, tenant=tenant)
 
 
 def taille(*, etape: str, tenant: str, delay_hours: int = 24, window_days: int = 30,
@@ -193,5 +220,4 @@ def taille(*, etape: str, tenant: str, delay_hours: int = 24, window_days: int =
     params = _params(etape=etape, tenant=tenant, delay_hours=delay_hours,
                      window_days=window_days, sequence_days=sequence_days,
                      exclude_domains=exclude_domains)
-    with _connect() as conn:
-        return int(conn.execute(sql, params).fetchone()["n"])
+    return int(_lire(sql, params, etape=etape, tenant=tenant)[0]["n"])

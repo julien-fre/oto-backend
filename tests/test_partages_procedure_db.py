@@ -82,7 +82,7 @@ def _client():
     from oto_mcp.api import public
     return TestClient(Starlette(routes=[
         Route("/api/public/process-shares/{token}", public.process_share_preview),
-        Route("/o/r/{token}", public.readers_digest_unsubscribe)]))
+        Route("/o/r/{token}", public.readers_digest_unsubscribe, methods=["GET", "POST"])]))
 
 
 # ── Propriétaire ───────────────────────────────────────────────────────────────
@@ -396,7 +396,14 @@ def test_le_lien_de_desinscription_coupe_le_resume(monde, mails, monkeypatch):
     lien = outreach_optout.lien_lecteurs(m["owner"])
     jeton = lien.rsplit("/", 1)[1]
     assert outreach_optout.verify_digest(jeton) is None, "jamais le jeton d'un autre canal"
+    # Suivre le lien ne coupe rien (un scanner de liens le suit) : il pose la question.
     assert _client().get(f"/o/r/{jeton}").status_code == 200
+    digest_lecteurs.balayer()
+    assert [e for e in mails if e["to"] == f"{m['owner']}@northwind.example"] != []
+    # Le POST de sa page, lui, coupe le résumé.
+    mails.clear()
+    _lire(m, m["lecteurs"][1], _publier(m)["token"])
+    assert _client().post(f"/o/r/{jeton}").status_code == 200
     digest_lecteurs.balayer()
     assert [e for e in mails if e["to"] == f"{m['owner']}@northwind.example"] == []
 

@@ -80,8 +80,10 @@ async def test_desinscription_ne_gele_pas_la_boucle(monkeypatch):
     from oto_mcp.api import public
     from oto_mcp.db import outreach as db_outreach
     monkeypatch.setattr(outreach_optout, "verify", lambda token: "sub-x")
-    monkeypatch.setattr(db_outreach, "desinscrire", _lente())
-    monkeypatch.setattr(public.db, "get_user", lambda sub: {"locale": "fr"})
+    monkeypatch.setattr(db_outreach, "desinscrire", lambda sub, source="link": None)
+    # Le GET ne désinscrit plus (il pose la question) : la lecture qu'il fait est
+    # celle de la langue du compte — c'est elle qui doit rester hors de la boucle.
+    monkeypatch.setattr(public.db, "get_user", _lente({"locale": "fr"}))
     rep, ticks = await _battements_pendant(
         public.outreach_unsubscribe(_requete(path_params={"token": "t"})))
     assert rep.status_code == 200, "la lecture n'a pas été jouée : la garde serait inerte"

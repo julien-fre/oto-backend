@@ -63,7 +63,7 @@ ni suspendue, ni désinscrite ;
 |---|---|---|
 | `sender` | oui | « Nom <adresse> » — domaine vérifié chez le relais utilisé |
 | `reply_to` | oui | la boîte qui reçoit les réponses |
-| `cc` | non | copies VISIBLES de chaque envoi |
+| `cc` | non | adresses qui reçoivent une COPIE de chaque envoi, chacune dans un message à part, sans lien de désinscription |
 | `app_url` | oui | la page d'accueil du tenant (bouton, autres agents) |
 | `mcp_url` | oui | le lien du connecteur, tel que l'écran d'accueil le montre |
 | `help_url` | non | un article d'aide, cité s'il est donné |
@@ -110,10 +110,18 @@ réciproquement — c'est la même table. Le digest de signaux garde la sienne (
 Si l'activation doit devenir un canal distinct, c'est une table à ajouter. Le lien de
 refus porte `?lang=en` : la page de confirmation parle la langue du mail.
 
-⚠️ **Les copies portent le lien de refus du destinataire.** Un clic sur
-« unsubscribe » dans une copie désinscrit la personne, pas celui qui lit la copie :
-c'est un levier pour l'équipe du tenant, et un risque si un analyseur de liens suit
-les URL de ces boîtes (le lien est un GET qui écrit, cf. `outreach_unsubscribe`).
+⚠️ **Une copie ne porte jamais le lien de refus du destinataire.** Le message du
+destinataire part sans copie visible ; chaque adresse de `cc` reçoit le même message
+dans un envoi À PART, rendu sans lien de désinscription — sinon l'équipe du tenant
+aurait en main le lien nominatif du destinataire. Le lien lui-même n'écrit rien quand
+on le suit : il ouvre une page qui POSE la question, et seul son bouton (un POST)
+désinscrit (`api/public.py::_desinscription`) — un analyseur de liens ne désinscrit
+personne.
+
+La lecture d'audience est bornée à `TIMEOUT_AUDIENCE_MS` (15 s, `db/activation.py`) :
+au-delà, le travail échoue en le disant (`AudienceTropLente`) et rien ne part. Le slug
+du tenant primaire est refusé dans `OTO_ACTIVATION` : il rattacherait nos propres
+comptes.
 
 ## Ce qui n'est pas encore là
 

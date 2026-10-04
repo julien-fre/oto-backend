@@ -105,6 +105,7 @@ def reglages() -> list[Reglage]:
         raise ReglageInvalide(f"OTO_ACTIVATION n'est pas du JSON : {e}") from e
     if not isinstance(data, dict):
         raise ReglageInvalide("OTO_ACTIVATION doit être un objet {slug: réglage}.")
+    from . import tenancy
     out = []
     for slug, r in data.items():
         if not isinstance(r, dict):
@@ -113,6 +114,13 @@ def reglages() -> list[Reglage]:
             raise ReglageInvalide(
                 f"OTO_ACTIVATION[{slug!r}] : `sender` est retiré — l'expéditeur est celui "
                 "de la marque du tenant (`tenants.brand.expediteur`).")
+        if str(slug) == tenancy.primary_slug():
+            # Le slug primaire rattache TOUS nos comptes nus (`_SUB_TENANT_SQL`) : le
+            # déclarer ferait écrire à nos propres comptes un email de tenant. Ce n'est
+            # jamais un réglage, c'est une erreur — on refuse le réglage entier.
+            raise ReglageInvalide(
+                f"OTO_ACTIVATION[{slug!r}] : le tenant primaire de l'instance ne "
+                "s'active pas — l'activation est l'email d'un tenant TIERS à ses comptes.")
         manquants = [k for k in _REQUIS if not str(r.get(k) or "").strip()]
         if manquants:
             raise ReglageInvalide(
@@ -231,13 +239,33 @@ def _bearer(r: Reglage) -> Optional[str]:
 
 def _envoyer(r: Reglage, expediteur: str, to: str, c: dict,
              unsubscribe_url: Optional[str]) -> bool:
+    """Le message au destinataire, puis UNE copie distincte par adresse de `cc`.
+
+    ⚠️ **Jamais de `cc` sur le message du destinataire.** Son pied porte SON lien de
+    désinscription, nominatif : une copie visible le donnerait à l'équipe du tenant, qui
+    désinscrirait le destinataire à sa place. Chaque copie part donc seule, rendue SANS
+    lien — elle informe l'équipe, elle n'est pas un envoi à ce compte. Rend le sort du
+    message au destinataire ; une copie refusée se journalise, elle ne remet pas la
+    personne en file (elle a reçu son email)."""
     from . import email as mailer
-    html = mailer.render_composed_email(
-        c["body"], cta_text=c["cta_label"], cta_url=c["cta_url"], brand=r.tenant,
-        locale=LOCALE, unsubscribe_url=unsubscribe_url)
-    return mailer._send(
-        to, c["subject"], html, reply_to=r.reply_to, from_email=expediteur,
-        cc=list(r.cc) or None, mailer_url=r.mailer_url, bearer=_bearer(r))
+
+    def rendu(lien: Optional[str]) -> str:
+        return mailer.render_composed_email(
+            c["body"], cta_text=c["cta_label"], cta_url=c["cta_url"], brand=r.tenant,
+            locale=LOCALE, unsubscribe_url=lien)
+
+    envoye = mailer._send(
+        to, c["subject"], rendu(unsubscribe_url), reply_to=r.reply_to,
+        from_email=expediteur, mailer_url=r.mailer_url, bearer=_bearer(r))
+    if envoye and r.cc:
+        copie = rendu(None)
+        for adresse in r.cc:
+            if not mailer._send(adresse, c["subject"], copie, reply_to=r.reply_to,
+                                from_email=expediteur, mailer_url=r.mailer_url,
+                                bearer=_bearer(r)):
+                log.warning("activation %s : copie refusée par le relais pour une "
+                            "adresse de `cc`", r.tenant)
+    return envoye
 
 
 def _lien_refus(r: Reglage, sub: str) -> str:

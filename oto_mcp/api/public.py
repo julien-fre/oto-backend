@@ -21,10 +21,10 @@ nettoyage du dépôt. Les guides se lisent authentifié (`/api/me/guide-library`
 - `GET /api/invitations/{token}`            → aperçu d'invitation (le jeton EST le secret)
 - `GET /api/public/docs/{token}`           → doc partagé (JSON)
 - `GET /p/d/{token}`                       → le même, server-rendered (lisible par un agent sans JS)
-- `GET /o/u/{token}`                       → désinscription d'une relance (le jeton EST le secret)
-- `GET /o/d/{token}`                       → désinscription du DIGEST de signaux (oto#150), même régime, table distincte
+- `GET|POST /o/u/{token}`                  → désinscription d'une relance (le jeton EST le secret ; GET demande, POST désinscrit)
+- `GET|POST /o/d/{token}`                  → désinscription du DIGEST de signaux (oto#150), même régime, table distincte
 - `GET /api/public/process-shares/{token}` → VITRINE d'une procédure partagée par lien (jamais le corps)
-- `GET /o/r/{token}`                       → désinscription du résumé des LECTEURS d'une procédure partagée
+- `GET|POST /o/r/{token}`                  → désinscription du résumé des LECTEURS d'une procédure partagée, même régime
 
 `/api/connectors` est la seule MIXTE : anonyme pour la vitrine, authentifiée pour
 le dashboard qui y scope son catalogue sur l'org active — d'où son `verifier`.
@@ -274,46 +274,66 @@ def public_doc_view(request: Request) -> Response:
     return HTMLResponse(html_page, headers=_entetes_page_a_jeton)
 
 
+# Le lien porte son secret dans le CHEMIN : ni cache partagé, ni Referer vers une
+# ressource tierce, quelle que soit la page servie (question, confirmation, refus).
+_ENTETES_DESINSCRIPTION = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+
+
+def _desinscription(request: Request, *, sub: str | None, ecrire, kind: str) -> Response:
+    """Le régime commun des deux liens de désinscription (`/o/u/`, `/o/d/`).
+
+    **GET : une question, jamais une écriture.** Le lien voyage hors des mains du
+    destinataire — dans les copies (`cc`) d'un email d'activation, que reçoit l'équipe
+    du tenant, et sous les yeux des scanners de liens des messageries d'entreprise.
+    Un GET qui écrivait désinscrivait le destinataire à sa place. La page pose donc la
+    question, et c'est son formulaire qui POSTe.
+
+    **POST : la désinscription**, quel que soit le corps — le formulaire de la page,
+    ou le désabonnement en un clic d'un client mail (RFC 8058, `List-Unsubscribe=
+    One-Click`). Le jeton signé du chemin EST l'autorisation. Idempotent et strictement
+    soustractif : un second POST n'est pas une erreur.
+
+    Un jeton illisible n'écrit rien, quelle que soit la méthode (400, « lien invalide »).
+    La langue suit `?lang=` (un mail servi dans une langue FIXÉE, l'activation, le dit
+    dans son lien), sinon la préférence DÉCLARÉE du compte ; compte inconnu ⇒ FR, et le
+    refus se pose quand même — il ne dépend pas de l'existence d'une fiche.
+    """
+    from .. import outreach_optout
+    if not sub:
+        return HTMLResponse(outreach_optout.page_refus(), status_code=400,
+                            headers=_ENTETES_DESINSCRIPTION)
+    lang = request.query_params.get("lang")
+    locale = lang if lang in ("fr", "en") else (db.get_user(sub) or {}).get("locale")
+    if request.method != "POST":
+        return HTMLResponse(outreach_optout.page_demande(locale, kind=kind),
+                            headers=_ENTETES_DESINSCRIPTION)
+    ecrire(sub)
+    return HTMLResponse(outreach_optout.page_confirmation(locale, kind=kind),
+                        headers=_ENTETES_DESINSCRIPTION)
+
+
 @en_thread
 def outreach_unsubscribe(request: Request) -> Response:
-    """Désinscription des relances — route `/o/u/<token>`, **sans auth**.
+    """Désinscription des relances — route `/o/u/<token>`, **sans auth** (GET : la
+    question ; POST : le refus, cf. `_desinscription`).
 
     Le jeton signé EST l'autorisation : demander une session ici ferait dépendre un
     refus de la capacité à se reconnecter, alors que c'est précisément la personne qui
     ne veut plus rien avoir à faire avec nous. Server-rendered, sans JS : un lien de
     désinscription doit marcher dans un webmail d'entreprise comme dans un lecteur
-    texte.
-
-    **GET qui écrit**, en connaissance de cause : les clients mail ne savent poster
-    que depuis un formulaire, et l'écriture est idempotente et strictement
-    soustractive (elle ne fait que RETIRER un destinataire). Un préchargeur qui
-    suivrait le lien désinscrirait quelqu'un — assumé : la conséquence d'un faux
-    positif est de ne plus recevoir de la publicité, celle du sens inverse est
-    d'écrire à qui n'en veut plus.
+    texte. Le refus va dans `outreach_optouts`, COMMUN aux relances et à l'activation.
     """
     from .. import outreach_optout
     from ..db import outreach as db_outreach
-    sub = outreach_optout.verify(request.path_params.get("token", ""))
-    if not sub:
-        return HTMLResponse(outreach_optout.page_refus(), status_code=400)
-    db_outreach.desinscrire(sub, source="link")
-    # La langue de la page de confirmation suit la préférence DÉCLARÉE du compte,
-    # comme le mail qui a porté le lien. Compte inconnu (supprimé entre-temps) ⇒ FR :
-    # le refus est enregistré quand même, il ne dépend pas de l'existence d'une fiche.
-    # Un mail servi dans une langue FIXÉE (l'activation, en anglais) le dit dans son
-    # lien (`?lang=en`) : la page parle alors la langue du mail qu'on vient de lire.
-    lang = request.query_params.get("lang")
-    locale = lang if lang in ("fr", "en") else (db.get_user(sub) or {}).get("locale")
-    return HTMLResponse(outreach_optout.page_confirmation(locale),
-                        headers={"Cache-Control": "no-store"})
+    return _desinscription(
+        request, sub=outreach_optout.verify(request.path_params.get("token", "")),
+        ecrire=lambda sub: db_outreach.desinscrire(sub, source="link"), kind="relance")
 
 
 @en_thread
 def digest_unsubscribe(request: Request) -> Response:
     """Désinscription du DIGEST de signaux (oto#150) — route `/o/d/<token>`,
-    **sans auth**. Sœur d'`outreach_unsubscribe`, même régime (GET qui écrit,
-    server-rendered, idempotent, strictement soustractif) — voir son docstring pour
-    ce qui le justifie.
+    **sans auth**. Sœur d'`outreach_unsubscribe`, même régime (`_desinscription`).
 
     ⚠️ **Table distincte, jamais `db_outreach.desinscrire`** : ce jeton porte un
     `typ` propre (`outreach_optout.verify_digest`, jamais `verify`), et l'écriture
@@ -324,15 +344,10 @@ def digest_unsubscribe(request: Request) -> Response:
     """
     from .. import outreach_optout
     from ..db import usage as db_usage
-    sub = outreach_optout.verify_digest(request.path_params.get("token", ""))
-    if not sub:
-        return HTMLResponse(outreach_optout.page_refus(), status_code=400)
-    db_usage.opt_out_signal_digest(sub, source="link")
-    # Même raisonnement que `outreach_unsubscribe` : la langue suit la préférence
-    # DÉCLARÉE du compte, et le refus se pose même si le compte est introuvable.
-    locale = (db.get_user(sub) or {}).get("locale")
-    return HTMLResponse(outreach_optout.page_confirmation(locale, kind="digest"),
-                        headers={"Cache-Control": "no-store"})
+    return _desinscription(
+        request, sub=outreach_optout.verify_digest(request.path_params.get("token", "")),
+        ecrire=lambda sub: db_usage.opt_out_signal_digest(sub, source="link"),
+        kind="digest")
 
 
 # Le seau anti-martelage de la vitrine d'un partage de procédure. Il réutilise celui des
@@ -376,15 +391,12 @@ def process_share_preview(request: Request) -> JSONResponse:
 @en_thread
 def readers_digest_unsubscribe(request: Request) -> Response:
     """Désinscription du RÉSUMÉ DES LECTEURS d'une procédure partagée — route
-    `/o/r/<token>`, **sans auth**. Même régime que `digest_unsubscribe` (GET qui écrit,
-    server-rendered, idempotent, strictement soustractif) ; jeton (`typ`) et table
+    `/o/r/<token>`, **sans auth**. Même régime que `digest_unsubscribe` (`_desinscription` :
+    GET demande, POST désinscrit) ; jeton (`typ`) et table
     distincts : il ne désinscrit ni des relances ni du digest de signaux."""
     from .. import outreach_optout
     from ..db import partages_procedure as db_partages
-    sub = outreach_optout.verify_lecteurs(request.path_params.get("token", ""))
-    if not sub:
-        return HTMLResponse(outreach_optout.page_refus(), status_code=400)
-    db_partages.refuser_resume(sub, source="link")
-    locale = (db.get_user(sub) or {}).get("locale")
-    return HTMLResponse(outreach_optout.page_confirmation(locale, kind="lecteurs"),
-                        headers={"Cache-Control": "no-store"})
+    return _desinscription(
+        request, sub=outreach_optout.verify_lecteurs(request.path_params.get("token", "")),
+        ecrire=lambda sub: db_partages.refuser_resume(sub, source="link"),
+        kind="lecteurs")

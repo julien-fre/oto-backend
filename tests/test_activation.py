@@ -153,23 +153,63 @@ def test_le_plafond_borne_un_passage(faux, monkeypatch):
     assert out["tenants"][0] == {**out["tenants"][0], "dus": 2, "lot": 1, "envoyes": 1}
 
 
-def test_le_relais_recoit_expediteur_reponse_et_copies(env, monkeypatch):
+def _envois(monkeypatch, *, refuse=()):
     from oto_mcp import email as mailer
-    vu = {}
+    vus: list = []
 
     def send(to, subject, html, **kw):
-        vu.update(to=to, subject=subject, html=html, **kw)
-        return True
+        vus.append(dict(to=to, subject=subject, html=html, **kw))
+        return to not in refuse
     monkeypatch.setattr(mailer, "_send", send)
     monkeypatch.setattr(mailer, "render_composed_email",
                         lambda body, **kw: f"<p>{body}</p><a>{kw['unsubscribe_url']}</a>")
+    return vus
+
+
+_LIEN = "https://x.test/o/u/s?lang=en"
+
+
+def test_le_relais_recoit_expediteur_et_reponse(env, monkeypatch):
+    vus = _envois(monkeypatch)
     r = activation.reglages()[0]
     assert activation._envoyer(r, EXPEDITEUR, "un@client.test", activation.contenu(r, "Acme"),
-                               "https://x.test/o/u/s?lang=en")
-    assert vu["from_email"] == "Acme <hello@acme.test>"
-    assert vu["reply_to"] == "hello@acme.test"
-    assert vu["cc"] == ["un@acme.test", "deux@acme.test"]
-    assert "?lang=en" in vu["html"]
+                               _LIEN)
+    principal = vus[0]
+    assert principal["to"] == "un@client.test"
+    assert principal["from_email"] == "Acme <hello@acme.test>"
+    assert principal["reply_to"] == "hello@acme.test"
+    assert "?lang=en" in principal["html"]
+
+
+def test_aucune_copie_ne_porte_le_lien_nominatif_du_destinataire(env, monkeypatch):
+    """Le pied du message porte le lien de désinscription NOMINATIF du destinataire :
+    une copie visible (`cc`) le donnerait à l'équipe du tenant, qui le désinscrirait à
+    sa place. Le message du destinataire part donc SANS `cc`, et chaque copie part
+    seule, sans lien."""
+    vus = _envois(monkeypatch)
+    r = activation.reglages()[0]
+    activation._envoyer(r, EXPEDITEUR, "un@client.test", activation.contenu(r, "Acme"), _LIEN)
+    assert not any(v.get("cc") for v in vus), "jamais de copie visible sur un envoi"
+    porteurs = [v["to"] for v in vus if _LIEN in v["html"]]
+    assert porteurs == ["un@client.test"], "le lien nominatif ne va qu'à son destinataire"
+    assert [v["to"] for v in vus[1:]] == ["un@acme.test", "deux@acme.test"]
+
+
+def test_une_copie_refusee_ne_remet_pas_le_destinataire(env, monkeypatch):
+    """Le destinataire a reçu son email : un refus sur une copie se journalise, il ne
+    le remet pas en file (sinon il recevrait le même email deux fois)."""
+    _envois(monkeypatch, refuse={"deux@acme.test"})
+    r = activation.reglages()[0]
+    assert activation._envoyer(r, EXPEDITEUR, "un@client.test",
+                               activation.contenu(r, "Acme"), _LIEN) is True
+
+
+def test_sans_envoi_au_destinataire_aucune_copie_ne_part(env, monkeypatch):
+    vus = _envois(monkeypatch, refuse={"un@client.test"})
+    r = activation.reglages()[0]
+    assert activation._envoyer(r, EXPEDITEUR, "un@client.test",
+                               activation.contenu(r, "Acme"), _LIEN) is False
+    assert [v["to"] for v in vus] == ["un@client.test"]
 
 
 def test_un_relais_declare_sans_jeton_n_envoie_pas(monkeypatch):
@@ -290,3 +330,69 @@ def test_le_plafond_vaut_pour_le_passage_entier(faux, monkeypatch):
     faux["audience"]["first-process"] = [{"sub": "acme:3", "email": "trois@client.test"}]
     out = activation.balayer()
     assert sum(l["envoyes"] for l in out["tenants"]) == 2
+
+
+def test_le_tenant_primaire_ne_s_active_pas(monkeypatch):
+    """Le slug primaire rattache TOUS nos comptes nus : le déclarer ferait écrire à nos
+    propres comptes un email de tenant. Le réglage entier est refusé, jamais à moitié."""
+    from oto_mcp import tenancy
+    reglage = {**REGLAGE, tenancy.primary_slug(): REGLAGE["acme"]}
+    monkeypatch.setenv("OTO_ACTIVATION", json.dumps(reglage))
+    with pytest.raises(activation.ReglageInvalide, match="tenant primaire"):
+        activation.reglages()
+
+
+class _ConnexionEspion:
+    """Ce que la lecture d'audience envoie à PostgreSQL, sans base."""
+
+    def __init__(self, annule=False):
+        self.ordres: list[str] = []
+        self.annule = annule
+
+    def execute(self, sql, params=None):
+        self.ordres.append(sql)
+        if self.annule and not sql.startswith("SET LOCAL"):
+            import psycopg
+            raise psycopg.errors.QueryCanceled("canceling statement due to statement timeout")
+        return self
+
+    def fetchall(self):
+        return [{"n": 0}]
+
+    def fetchone(self):
+        return {"n": 0}
+
+
+def _brancher(monkeypatch, cnx):
+    from contextlib import contextmanager
+
+    from oto_mcp.db import activation as db_act
+
+    @contextmanager
+    def connect():
+        yield cnx
+    monkeypatch.setattr(db_act, "_connect", connect)
+    return db_act
+
+
+_CRIT = dict(etape="connect", tenant="acme", exclude_domains=[])
+
+
+@pytest.mark.parametrize("lecture", ["audience", "taille"])
+def test_la_lecture_d_audience_porte_son_statement_timeout(monkeypatch, lecture):
+    """Elle agrège `tool_calls` sur tout le tenant : bornée en DURÉE, posée AVANT la
+    requête, dans la même transaction (`SET LOCAL`)."""
+    cnx = _ConnexionEspion()
+    db_act = _brancher(monkeypatch, cnx)
+    kw = dict(_CRIT, cap=5) if lecture == "audience" else dict(_CRIT)
+    getattr(db_act, lecture)(**kw)
+    assert cnx.ordres[0] == f"SET LOCAL statement_timeout = {db_act.TIMEOUT_AUDIENCE_MS}"
+    assert "tool_calls" in cnx.ordres[1]
+
+
+def test_une_audience_trop_lente_fait_echouer_le_travail_en_le_disant(monkeypatch):
+    """Le dépassement n'est pas une audience vide : le travail échoue, nommé, et rien
+    ne part (le passage de maintenance le journalise et continue)."""
+    db_act = _brancher(monkeypatch, _ConnexionEspion(annule=True))
+    with pytest.raises(db_act.AudienceTropLente, match="acme/connect"):
+        db_act.taille(**_CRIT)

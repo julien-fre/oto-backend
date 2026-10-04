@@ -846,18 +846,19 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # « pages SPA non lisibles »). Servie sous dashboard.oto.ninja via Caddy.
         Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
         # Désinscription des relances (oto_admin_outreach) — jeton signé dans
-        # l'URL, aucune session : c'est le lien du pied de page des mails.
-        Route("/o/u/{token}", public.outreach_unsubscribe, methods=["GET"]),
+        # l'URL, aucune session : c'est le lien du pied de page des mails. GET = la
+        # question (n'écrit rien), POST = le refus (formulaire, ou RFC 8058 one-click).
+        Route("/o/u/{token}", public.outreach_unsubscribe, methods=["GET", "POST"]),
         # Désinscription du DIGEST de signaux (oto#150) — même régime, route et
         # jeton (`typ`) distincts : jamais interchangeable avec la ligne au-dessus.
-        Route("/o/d/{token}", public.digest_unsubscribe, methods=["GET"]),
+        Route("/o/d/{token}", public.digest_unsubscribe, methods=["GET", "POST"]),
         # Vitrine d'une procédure partagée par lien (/p/<token> côté front) : sans auth,
         # le jeton est le secret ; jamais le corps (capabilities/partages_procedure.py).
         Route("/api/public/process-shares/{token}", public.process_share_preview, methods=["GET"]),
         Route("/api/public/process-shares/{token}", options_handler, methods=["OPTIONS"]),
         # Désinscription du résumé des LECTEURS — même régime que la ligne au-dessus,
         # route, jeton (`typ`) et table distincts.
-        Route("/o/r/{token}", public.readers_digest_unsubscribe, methods=["GET"]),
+        Route("/o/r/{token}", public.readers_digest_unsubscribe, methods=["GET", "POST"]),
         Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs/instructions.py),

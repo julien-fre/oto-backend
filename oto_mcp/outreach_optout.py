@@ -156,9 +156,24 @@ def lien_lecteurs(sub: str, base: str | None = None) -> str:
     return f"{racine}/o/r/{_sign(sub, _TYP_LECTEURS)}"
 
 
-# La page rendue au destinataire. Server-rendered, sans JS, sans marque tierce : elle
-# confirme, elle ne propose rien d'autre. Idempotente — la recharger n'est pas une
-# erreur, et le dire évite qu'on la reclique en pensant que ça n'a pas marché.
+# Les pages rendues au destinataire. Server-rendered, sans JS, sans marque tierce.
+#
+# **Le lien n'écrit plus : il DEMANDE.** Un GET sur `/o/u/<token>` (comme `/o/d/` et `/o/r/`)
+# rend une question et un bouton ; seul le POST du formulaire désinscrit. Le lien
+# voyage en effet hors des mains du destinataire — dans les copies (`cc`) d'un email
+# d'activation, que reçoit l'équipe du tenant, et sous les yeux des scanners de liens
+# des messageries d'entreprise, qui suivent tout ce qu'un mail contient. Un GET qui
+# écrivait désinscrivait donc le destinataire à sa place, et le refus est COMMUN à
+# l'activation et aux relances (`outreach_optouts`).
+#
+# Le POST est aussi la forme du désabonnement en un clic des clients mail (RFC 8058 :
+# `POST <lien>` avec `List-Unsubscribe=One-Click`) : il désinscrit quel que soit son
+# corps — le jeton signé du chemin EST l'autorisation. Le relais d'envoi ne pose pas
+# encore l'en-tête `List-Unsubscribe` (`docs/relance-comptes.md`) ; le jour où il le
+# fera, l'en-tête pointera cette même adresse sans autre changement.
+#
+# La confirmation reste idempotente — la recharger n'est pas une erreur, et le dire
+# évite qu'on la reclique en pensant que ça n'a pas marché.
 _PAGE = """<!DOCTYPE html>
 <html lang="{lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -168,7 +183,7 @@ _PAGE = """<!DOCTYPE html>
 <div style="max-width:520px;margin:12vh auto;padding:28px 32px;background:#fff;\
 border:1px solid #e7e5e4;border-radius:12px">
 <p style="margin:0 0 12px;font-size:15px;font-weight:600">{titre}</p>
-<p style="margin:0;font-size:15px;line-height:1.6">{corps}</p>
+<p style="margin:0;font-size:15px;line-height:1.6">{corps}</p>{suite}
 </div></body></html>"""
 
 _TEXTES = {
@@ -203,6 +218,51 @@ _TEXTES = {
                "Readers tab."),
     },
 }
+# La question posée par le GET, et le libellé du bouton qui y répond.
+_DEMANDES = {
+    "relance": {
+        "fr": ("Ne plus recevoir ces emails ?",
+               "Confirmez pour ne plus recevoir nos messages de relance. Les emails "
+               "liés à votre compte (invitations, partages) continueront d'arriver.",
+               "Me désinscrire"),
+        "en": ("Stop receiving these emails?",
+               "Confirm to stop receiving our follow-up messages. Emails tied to your "
+               "account (invitations, shares) will still come through.",
+               "Unsubscribe me"),
+    },
+    "digest": {
+        "fr": ("Ne plus recevoir ce résumé ?",
+               "Confirmez pour ne plus recevoir le résumé des retours à vos signaux. "
+               "Les emails liés à votre compte (invitations, partages) continueront "
+               "d'arriver.",
+               "Me désinscrire"),
+        "en": ("Stop receiving this summary?",
+               "Confirm to stop receiving the summary of replies to your reported "
+               "signals. Emails tied to your account (invitations, shares) will still "
+               "come through.",
+               "Unsubscribe me"),
+    },
+    "lecteurs": {
+        "fr": ("Ne plus recevoir ce résumé ?",
+               "Confirmez pour ne plus recevoir le résumé des personnes qui lisent vos "
+               "procédures partagées. La liste restera visible dans l'onglet Readers "
+               "de chaque procédure.",
+               "Me désinscrire"),
+        "en": ("Stop receiving this summary?",
+               "Confirm to stop receiving the summary of who reads your shared "
+               "processes. The list stays visible in each process's Readers tab.",
+               "Unsubscribe me"),
+    },
+}
+# Le formulaire POSTe sur l'adresse de la page elle-même (`action` vide garde le
+# chemin ET la requête, donc `?lang=`), sans JavaScript : un webmail d'entreprise et
+# un lecteur texte savent tous deux soumettre un formulaire.
+_FORMULAIRE = ('<form method="post" action="" style="margin:20px 0 0">'
+               '<input type="hidden" name="List-Unsubscribe" value="One-Click">'
+               '<button type="submit" style="font-size:15px;padding:10px 18px;'
+               'border:0;border-radius:8px;background:#1c1917;color:#fff;'
+               'cursor:pointer">{bouton}</button></form>')
+
 _REFUS = ("Lien invalide",
           "Ce lien de désinscription n'est pas valide. Répondez simplement à "
           "l'email que vous avez reçu, on s'en occupe.")
@@ -213,9 +273,20 @@ def page_confirmation(locale: Optional[str] = None, *, kind: str = "relance") ->
     ou `digest` (oto#150) : les deux canaux ne s'arrêtent pas ensemble, la page ne
     doit donc jamais dire l'inverse de ce que le lien vient de faire."""
     titre, corps = _TEXTES[kind]["en" if locale == "en" else "fr"]
-    return _PAGE.format(lang="en" if locale == "en" else "fr", titre=titre, corps=corps)
+    return _PAGE.format(lang="en" if locale == "en" else "fr", titre=titre, corps=corps,
+                        suite="")
+
+
+def page_demande(locale: Optional[str] = None, *, kind: str = "relance") -> str:
+    """La page du GET : la question et le bouton, SANS rien écrire. Le texte de
+    `page_confirmation` ne s'affiche qu'après le POST — il ne doit jamais dire « c'est
+    noté » d'un refus qui n'a pas été enregistré."""
+    lang = "en" if locale == "en" else "fr"
+    titre, corps, bouton = _DEMANDES[kind][lang]
+    return _PAGE.format(lang=lang, titre=titre, corps=corps,
+                        suite=_FORMULAIRE.format(bouton=bouton))
 
 
 def page_refus() -> str:
     titre, corps = _REFUS
-    return _PAGE.format(lang="fr", titre=titre, corps=corps)
+    return _PAGE.format(lang="fr", titre=titre, corps=corps, suite="")
