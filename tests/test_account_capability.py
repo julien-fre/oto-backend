@@ -255,6 +255,25 @@ def test_la_fenetre_des_agregats_garde_son_repli(monkeypatch, socle, query, atte
     assert socle[0] == {"since_days": attendu, "org_id": 35, "sub": "u-1"}
 
 
+def test_la_fenetre_d_un_an_reste_servie(monkeypatch, socle):
+    """#1145 : un front tiers en circulation demande `days=365` (« ce compte a-t-il
+    déjà appelé un outil ? »). La fenêtre n'est pas bornée plus court qu'avant : le
+    coût est tenu par la passe unique et la borne de durée, pas par un refus."""
+    stub_authz(monkeypatch)
+    code, out = call("me.activity_summary", query=b"days=365")
+    assert code == 200, out
+    assert socle[0]["since_days"] == 365
+
+
+def test_sans_org_active_les_agregats_refusent_au_lieu_de_tout_lire(monkeypatch, socle):
+    """Sans org, la lecture n'était bornée que par le compte : tout son historique."""
+    stub_authz(monkeypatch)
+    monkeypatch.setattr(ma.access, "current_org", lambda sub: None)
+    code, out = call("me.activity_summary")
+    assert code == 400 and out["error"] == "no_active_org", out
+    assert socle == []
+
+
 def test_les_agregats_declarent_toutes_leurs_ventilations(monkeypatch, socle):
     stub_authz(monkeypatch)
     _, out = call("me.activity_summary")

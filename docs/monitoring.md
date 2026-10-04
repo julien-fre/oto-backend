@@ -332,6 +332,10 @@ d'un run **encore vivant** (ouvert il y a 40 jours, appelé hier) n'est jamais t
 celle d'un run **récent** non plus, même si sa journalisation a échoué (best-effort).
 Conséquence sur les lectures dérivées de `runs` (`project_runs`, `project_run_stats`,
 pastille de procédure) : elles ne remontent pas au-delà de la fenêtre de rétention.
+Elles ne portent en outre que sur les `PROJET_RUNS_RECENTS` (500) derniers runs du
+projet (#1145) : le plus gros projet en porte environ 86 000, et chaque ouverture les
+reconstruisait tous depuis le journal (plus d'un million de lignes lues). Une procédure
+déroulée seulement avant ces 500-là se lit inerte dans l'audit, et sa pastille est vide.
 ⚠️ Ce filet ne joue PAS pour l'archive : elle exempte `run_start`/`run_finish`, donc un
 run archivé garde ses faits et son étiquette — c'est la section suivante.
 
@@ -412,7 +416,7 @@ mécanisme, jamais par une projection dupliquée :
 
 | étage | qui | ce qu'il voit | surface |
 |---|---|---|---|
-| membre | tout user | SON activité dans l'org active | `GET /api/me/{activity-summary,calls}` |
+| membre | tout user | SON activité dans l'org active | `GET /api/me/{activity-summary,calls}` (agrégats : une org active, sinon `400 no_active_org` — #1145) |
 | **org** | **org_admin** | **tout ce qui a été émis SOUS son org** | **`oto_org_monitoring(op=…)` + `GET /api/orgs/{id}/monitoring/*`** |
 | plateforme | platform_admin | tout | `oto_admin_monitoring(op=…)` + `/api/admin/monitoring/*` |
 

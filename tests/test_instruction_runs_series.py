@@ -44,7 +44,7 @@ def test_la_cle_args_est_un_litteral_ferme():
     from oto_mcp.db import usage
 
     with pytest.raises(ValueError):
-        usage.instruction_usage(["sub-1"], "run_start", "x", slug_key="slug'; DROP--")
+        usage.instruction_usage(7, "x", lectures={"run_start": "slug'; DROP--"})
 
 
 def test_le_modele_publie_les_deux_series_densifiees():
@@ -63,3 +63,56 @@ def test_le_modele_publie_les_deux_series_densifiees():
     assert len(plein.runs_series) == 30
     # Deux mesures distinctes : `count` ne se déduit pas de `runs_count`.
     assert plein.count != plein.runs_count
+
+
+# ── La lecture, contre un vrai PostgreSQL (#1145) ─────────────────────────────
+
+
+def _poser(sub, org_id, tool, args, *, jours=0, ok=True):
+    import json
+
+    from oto_mcp.db._conn import _connect
+
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO tool_calls (created_at, kind, sub, tool, args, ok, org_id) "
+            "VALUES (now() - make_interval(days => %s), 'mcp', %s, %s, %s::jsonb, %s, %s)",
+            (jours, sub, tool, json.dumps(args), ok, org_id))
+
+
+def test_une_passe_sous_l_org_bornee_a_la_fenetre(live):
+    """Chargements et déroulés en UNE lecture : sous l'org du guide, réussis, dans la
+    fenêtre — `count == sum(daily)`. Ni l'autre org, ni l'échec, ni le trop vieux,
+    ni une autre procédure ne comptent."""
+    import uuid
+
+    from oto_mcp import db, org_store
+
+    sub = "sub-iu-" + uuid.uuid4().hex[:6]
+    org = org_store.create_org("Usage guide", created_by=sub)
+    autre = org_store.create_org("Ailleurs", created_by=sub)
+    db.upsert_user(sub, email=f"{sub}@exemple.test")
+    lectures = {instr._GUIDE_GET_TOOL: "slug", instr._RUN_START_TOOL: usage_arg()}
+
+    _poser(sub, org, "oto_procedure", {"slug": "relance"})
+    _poser(sub, org, "oto_procedure", {"slug": "relance"}, jours=3)
+    _poser(sub, org, "run_start", {"doctrine": "relance"}, jours=1)
+    _poser(sub, autre, "oto_procedure", {"slug": "relance"})          # autre org
+    _poser(sub, org, "oto_procedure", {"slug": "relance"}, ok=False)  # échec
+    _poser(sub, org, "oto_procedure", {"slug": "relance"}, jours=45)  # hors fenêtre
+    _poser(sub, org, "oto_procedure", {"slug": "autre"})              # autre procédure
+    _poser(sub, org, "run_start", {"slug": "relance"})                # mauvaise clé
+
+    lu = db.instruction_usage(org, "relance", lectures=lectures, days=30)
+    chargements, deroules = lu["oto_procedure"], lu["run_start"]
+    assert chargements["count"] == 2 == sum(chargements["daily"].values())
+    assert chargements["callers"] == [f"{sub}@exemple.test"]
+    assert deroules["count"] == 1 and len(deroules["daily"]) == 1
+
+    base = db.instruction_usage(org, None, lectures=lectures, days=30)
+    assert base["oto_procedure"]["count"] == 3     # toutes les procédures de l'org
+
+
+def usage_arg() -> str:
+    from oto_mcp.db import usage
+    return usage._ARG_PROCEDURE

@@ -313,3 +313,26 @@ async def test_la_cloture_est_stampee_sous_son_run(monkeypatch):
 
     out = await fn(_SessionCtx(), run_id="r1", outcome="done")
     assert out["ok"] and session_org.current_call_run() == "r1"
+
+
+def test_les_lectures_d_un_projet_ne_reconstruisent_que_ses_runs_recents(conn, monkeypatch):
+    """#1145 : le plus gros projet porte ~86 000 runs, et chaque ouverture les
+    reconstruisait tous depuis le journal. Les trois lectures se bornent aux
+    `PROJET_RUNS_RECENTS` derniers runs du projet (par `runs.started_at`)."""
+    monkeypatch.setattr(usage, "PROJET_RUNS_RECENTS", 2)
+    for i, (run, doctrine, outil) in enumerate(
+            [("vieux", "ancienne", "outil_ancien"), ("moyen", "prospection", "outil_a"),
+             ("neuf", "relance", "outil_b")]):
+        conn.execute(
+            "INSERT INTO runs (run_id, sub, org_id, project_id, label, started_at) "
+            "VALUES (%s, 'u1', 35, 9, 'x', now() - make_interval(hours => %s))",
+            (run, 10 - i))
+        _journal_open(conn, run, label=run, doctrine=doctrine, org_id=35, ago=600 - i)
+        _fact(conn, run, outil, {}, org_id=35, ago=590 - i)
+
+    assert [r["run_id"] for r in usage.project_runs(9)] == ["neuf", "moyen"]
+    assert usage.project_runs(9, guide="ancienne") == []
+    stats = usage.project_run_stats(9)
+    assert stats["runs"] == 2 and sorted(stats["doctrines"]) == ["prospection", "relance"]
+    outils = usage.project_run_tools(9)
+    assert "outil_ancien" not in outils and {"outil_a", "outil_b"} <= set(outils)

@@ -37,7 +37,7 @@ from pydantic import BaseModel, field_validator
 
 from .. import access, billing, db, group_store, org_store, session_org
 from ._authz import SUB_ONLY
-from ._types import Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .connectors.provider_status import ProviderStatus
 from .registry import CAPABILITIES
 
@@ -370,9 +370,22 @@ def _my_calls(ctx: ResolvedCtx, inp: MyCallsInput) -> dict:
     return {"calls": calls}
 
 
+# ⚠️ `days` n'est PAS borné plus court qu'avant (#1145) : un front tiers en circulation
+# demande `days=365` pour savoir si le compte a déjà appelé un outil. La rétention du
+# journal (90 j) rend ces 365 jours aussi chers que 90 ; le coût est tenu par la passe
+# unique de `tool_call_stats` et la borne de durée des lectures d'agrégat.
+_REFUS_SANS_ORG = DeclaredError(400, "no_active_org",
+                                "aucune org active : rien ne borne la lecture à un espace")
+
+
 def _activity_summary(ctx: ResolvedCtx, inp: ActivitySummaryInput) -> dict:
-    return db.tool_call_stats(since_days=inp.days,
-                              org_id=access.current_org(ctx.sub), sub=ctx.sub)
+    org_id = access.current_org(ctx.sub)
+    if org_id is None:
+        # Sans org, la lecture n'était bornée que par le compte — tout son historique,
+        # par l'index `(sub)` — et ce n'est plus « mon activité dans l'org active ».
+        raise AuthzDenied(400, "no_active_org",
+                          "Aucune org active : préciser l'org (`X-Oto-Org`).")
+    return db.tool_call_stats(since_days=inp.days, org_id=org_id, sub=ctx.sub)
 
 
 _DOC_ME = (
@@ -411,6 +424,7 @@ CAPABILITIES += [
         key="me.activity_summary", handler=_activity_summary,
         Input=ActivitySummaryInput, authz=SUB_ONLY,
         Output=ActivitySummaryView, description=_DOC_SUMMARY,
+        errors=(_REFUS_SANS_ORG,),
         mcp=None,
         rest=RestBinding("GET", "/api/me/activity-summary"),
     ),

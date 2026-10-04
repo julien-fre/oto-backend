@@ -25,7 +25,7 @@ partout ailleurs dans ce module. La face REST `/api/groups/{id}/instructions*`
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -321,9 +321,10 @@ class InstructionVersions(BaseModel):
 class InstructionUsage(BaseModel):
     """Usage d'une procédure, dérivé du journal d'appels (ADR 0014).
 
-    ⚠️ **`count` et `series` ne mesurent pas la même fenêtre** : `series` couvre les 30
-    derniers jours, `count` et `callers` n'ont **aucun filtre de date** — ils comptent
-    tout ce qui reste en base. `count` ≠ `sum(series)`, et l'écart n'est pas un bug.
+    **Une seule fenêtre** : les 30 derniers jours UTC, aujourd'hui compris, pour
+    `count`, `callers` et `series` — `count == sum(series)` (depuis oto-backend#1145 ;
+    `count` et `callers` portaient avant sur tout ce qui restait en base, sans borne,
+    et cette lecture a pris jusqu'à trois minutes en production).
 
     ⚠️ **`callers` peut être plus court que ce que `count` totalise** : les appelants
     sans compte `users` connu sont exclus de la liste mais comptés dans le total.
@@ -332,9 +333,9 @@ class InstructionUsage(BaseModel):
     compte devient celui de TOUS les chargements de procédure de l'org, quelle qu'elle
     soit. Ce n'est pas l'usage d'un document, c'est le volume d'une surface.
 
-    Autres bornes : seuls les appels RÉUSSIS comptent, et le périmètre est celui des
-    membres ACTUELS de l'org — le départ d'un membre efface rétroactivement ses
-    chargements."""
+    Autres bornes : seuls les appels RÉUSSIS comptent, et seuls ceux émis SOUS cette
+    org (`tool_calls.org_id`) — un membre qui charge une procédure du même nom dans
+    une autre org ne compte pas ici."""
     slug: str
     count: int
     # Emails des appelants, du plus actif au moins actif.
@@ -1537,20 +1538,24 @@ def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     `tool_calls`, scopés aux membres de l'org. Voir `InstructionUsage` sur pourquoi
     les deux séries ne se confondent ni ne s'additionnent."""
     slug = org_store.normalize_slug(inp.slug)
-    subs = [m["sub"] for m in org_store.list_org_members(ctx.org_id)]
     slug_filter = None if slug == _BASE else slug
-    u = db.instruction_usage(subs, _GUIDE_GET_TOOL, slug_filter, days=30)
-    # Les DÉROULÉS, du même journal, sous la clé que le lecteur de runs y lit.
+    # Chargements ET déroulés en UNE lecture du journal (#1145), chacun sous la clé
+    # d'args qui nomme sa procédure — celle des déroulés est celle que le lecteur de
+    # runs y lit.
     #
     # C'est le seul chemin par lequel un MEMBRE voit les runs de sa procédure. Les
     # surfaces existantes passent par `/api/orgs/{id}/monitoring/*`, qui est
     # ORG_ADMIN_OF de bout en bout et sans filtre par procédure (le front en récupère
     # 100 max et trie côté client) : un membre n'y a droit à rien. Cette capacité-ci
-    # est ORG_MEMBER et déjà scopée aux subs de l'org — la série arrive donc sans
-    # plafond, sans tri client, et pour tout le monde.
-    r = db.instruction_usage(subs, _RUN_START_TOOL, slug_filter, days=30,
-                             slug_key=db.usage._ARG_PROCEDURE)
-    today = date.today()
+    # est ORG_MEMBER et scopée à l'org — la série arrive donc sans plafond, sans tri
+    # client, et pour tout le monde.
+    lu = db.instruction_usage(
+        ctx.org_id, slug_filter, days=30,
+        lectures={_GUIDE_GET_TOOL: "slug", _RUN_START_TOOL: db.usage._ARG_PROCEDURE})
+    u, r = lu[_GUIDE_GET_TOOL], lu[_RUN_START_TOOL]
+    # Le jour UTC, comme la fenêtre de la lecture : sinon la série et le compte
+    # glisseraient d'un jour l'un par rapport à l'autre autour de minuit.
+    today = datetime.now(timezone.utc).date()
 
     def _dense(daily: dict) -> list[int]:
         return [daily.get(str(today - timedelta(days=29 - i)), 0) for i in range(30)]

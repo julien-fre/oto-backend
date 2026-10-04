@@ -394,28 +394,17 @@ def my_runs(sub: str, limit: int = 20, *, open_only: bool = False) -> list[dict]
     return list(rows)
 
 
-def project_run_tools(project_id: int, limit: int = 200) -> list[str]:
-    """Outils réellement APPELÉS par les runs d'un projet — la part « usage observé »
-    de l'inventaire dérivé (ADR 0035 B4 : surface d'un projet = refs des procédures
-    liées ∪ slots×bindings ∪ runs). Distincts, plus fréquents d'abord ; brut (spine/
-    méta inclus — le consommateur cure).
-
-    Seul usage LÉGITIME de la table `runs` en jointure : on ne lui demande que
-    `project_id` (son unique champ crédible), la matière vient du journal."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT tc.tool, count(*) AS n FROM tool_calls tc "
-            "JOIN runs r ON r.run_id = tc.run_id "
-            "WHERE r.project_id = %s AND tc.kind = 'mcp' "
-            "GROUP BY tc.tool ORDER BY n DESC, tc.tool LIMIT %s",
-            (project_id, limit),
-        ).fetchall()
-    return [r["tool"] for r in rows]
-
+#: Les lectures dérivées des runs d'UN projet ne portent que sur ses
+#: `PROJET_RUNS_RECENTS` derniers runs (oto-backend#1145). Mesuré en production : un
+#: projet porte environ 86 000 runs, et reconstruire chacun depuis le journal lisait
+#: plus d'un million de lignes (`idx_tool_calls_run`) à chaque ouverture du projet.
+#: Le coût suit désormais cette borne, plus l'historique du projet.
+PROJET_RUNS_RECENTS = 500
 
 _PROJECT_SCOPE = (
-    " AND s.run_id IN (SELECT run_id FROM runs WHERE project_id = %s)")
-"""Prédicat d'ouverture qui borne `_runs_from_journal` à UN projet.
+    " AND s.run_id IN (SELECT run_id FROM runs WHERE project_id = %s"
+    " ORDER BY started_at DESC LIMIT %s)")
+"""Prédicat d'ouverture qui borne `_runs_from_journal` aux runs RÉCENTS d'UN projet.
 
 ⚠️ Le `WHERE x.project_id` du SELECT extérieur ne suffit pas : il filtre le RÉSULTAT
 d'un CTE qui a déjà reconstruit **tous** les runs de la plateforme — un LATERAL
@@ -423,10 +412,36 @@ d'un CTE qui a déjà reconstruit **tous** les runs de la plateforme — un LATE
 Le coût suivait donc le journal entier, pas le projet : incident du 2026-08-27, où
 chaque `oto_project` tenait la boucle 185 s (les appels DB de ce module sont
 synchrones, cf. `docs/event-loop-perf.md`) et gelait la plateforme entière —
-tenants tiers compris. Poussé dans le CTE, le semi-join part d'`idx_runs_project` et
-seuls les runs du projet sont reconstruits.
+tenants tiers compris. Poussé dans le CTE, le semi-join part d'`idx_runs_project`.
 
-Littéral de ce module, comme tout `extra` (le `%s` est lié, jamais interpolé)."""
+⚠️ Et borné aux `PROJET_RUNS_RECENTS` derniers (#1145) : poussé seul, il
+reconstruisait encore TOUS les runs du projet — 86 000 pour le plus gros.
+
+Littéral de ce module, comme tout `extra` (les `%s` sont liés, jamais interpolés)."""
+
+
+def project_run_tools(project_id: int, limit: int = 200) -> list[str]:
+    """Outils réellement APPELÉS par les runs RÉCENTS d'un projet — la part « usage
+    observé » de l'inventaire dérivé (ADR 0035 B4 : surface d'un projet = refs des
+    procédures liées ∪ slots×bindings ∪ runs). Distincts, plus fréquents d'abord ; brut
+    (spine/méta inclus — le consommateur cure).
+
+    Les `PROJET_RUNS_RECENTS` derniers runs seulement (#1145) : tous les appels de tous
+    les runs, c'était 1,36 M lignes lues pour le plus gros projet. Un outil que seuls
+    des runs plus anciens ont appelé ne figure plus dans la suggestion.
+
+    Seul usage LÉGITIME de la table `runs` en jointure : on ne lui demande que
+    `project_id` (son unique champ crédible), la matière vient du journal."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT tc.tool, count(*) AS n FROM tool_calls tc "
+            "JOIN (SELECT run_id FROM runs WHERE project_id = %s "
+            "      ORDER BY started_at DESC LIMIT %s) r ON r.run_id = tc.run_id "
+            "WHERE tc.kind = 'mcp' "
+            "GROUP BY tc.tool ORDER BY n DESC, tc.tool LIMIT %s",
+            (project_id, PROJET_RUNS_RECENTS, limit),
+        ).fetchall()
+    return [r["tool"] for r in rows]
 
 
 def project_runs(project_id: int, guide: Optional[str] = None,
@@ -437,9 +452,11 @@ def project_runs(project_id: int, guide: Optional[str] = None,
 
     L'axe PROJET vient de l'index (`runs.project_id`), tout le reste du journal — le
     filtre `doctrine` inclus : filtrer sur la colonne de la table ferait apparaître dans
-    la pastille d'une procédure un run que le journal rattache à une autre."""
+    la pastille d'une procédure un run que le journal rattache à une autre. Parmi les
+    `PROJET_RUNS_RECENTS` derniers runs du projet (#1145) : une procédure qu'aucun
+    d'eux n'a déroulée rend une liste vide."""
     guide_clause = " AND j.doctrine = %s" if guide is not None else ""
-    params: list = ([project_id, project_id]
+    params: list = ([project_id, PROJET_RUNS_RECENTS, project_id]
                     + ([guide] if guide is not None else []) + [limit])
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
@@ -459,20 +476,22 @@ def project_run_stats(project_id: int) -> dict:
     """Nombre de runs d'un projet + slugs de guides déroulés (distincts) — sert
     l'inertie de l'audit de liens (ADR 0035 B5 : procédure liée jamais déroulée).
 
-    JOIN (pas LEFT JOIN) sur les faits : un index sans déroulé journalisé ne compte pas
-    — la question posée est « cette procédure a-t-elle SERVI », et un run sans le
-    moindre fait ne le prouve pas."""
+    Compte les ouvertures JOURNALISÉES (`run_start`) des `PROJET_RUNS_RECENTS` derniers
+    runs du projet (#1145) — un index sans déroulé journalisé ne compte pas, la question
+    posée étant « cette procédure a-t-elle SERVI » ; `runs` vaut donc au plus cette
+    borne, et une procédure déroulée seulement avant elle se lit inerte. Ni la clôture
+    ni le dernier signe de vie ne servent ici : la lecture ne reconstruit pas le run
+    (`_runs_from_journal`), elle lit son ouverture — deux LATERAL de moins par run."""
     with _connect() as conn:
         row = conn.execute(
             f"""
-            WITH j AS ({_runs_from_journal(_PROJECT_SCOPE)})
             SELECT count(*) AS n,
-                   array_agg(DISTINCT j.doctrine)
-                       FILTER (WHERE j.doctrine IS NOT NULL) AS doctrines
-              FROM runs x JOIN j ON j.run_id = x.run_id
-             WHERE x.project_id = %s
+                   array_agg(DISTINCT s.args->>'{_ARG_PROCEDURE}')
+                       FILTER (WHERE s.args->>'{_ARG_PROCEDURE}' IS NOT NULL) AS doctrines
+              FROM tool_calls s
+             WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{_PROJECT_SCOPE}
             """,
-            (project_id, project_id),
+            (project_id, PROJET_RUNS_RECENTS),
         ).fetchone()
     return {"runs": int(row["n"] or 0), "doctrines": list(row["doctrines"] or [])}
 
@@ -1437,60 +1456,70 @@ def billable_usage_by_tool_for_org(
 
 
 def instruction_usage(
-    subs: list[str], tool: str, slug: Optional[str], days: int = 30,
-    *, slug_key: str = "slug",
-) -> dict:
-    """Usage d'un guide dérivé de `tool_calls` (ADR 0014, « guide = process
-    = log d'usage ») : combien de fois elle a été chargée par l'agent, par qui,
-    et la distribution journalière sur `days` jours.
+    org_id: int, slug: Optional[str], *, lectures: dict[str, str], days: int = 30,
+) -> dict[str, dict]:
+    """Usage d'un guide dérivé de `tool_calls` (ADR 0014, « guide = process = log
+    d'usage »), pour PLUSIEURS verbes en UNE passe : par verbe, combien de fois, par
+    qui, et la distribution journalière sur les `days` derniers jours UTC (aujourd'hui
+    compris). Lecture pure ; rend `{tool: {count, callers, daily{date:str -> n}}}`.
 
-    `tool` = le tool de lecture de guide (oto_procedure ; slug=None pour la base, sinon filtré par
-    `args->>'slug'` pour une skill). Scopé aux `subs` (membres de
-    l'org). Lecture pure ; renvoie {count, callers, daily{date:str -> n}}.
+    `lectures` = `{tool: clé d'args qui porte la procédure}`. Un CHARGEMENT
+    (`oto_procedure`) la nomme sous `slug` ; un DÉROULÉ (`run_start`) sous
+    `_ARG_PROCEDURE`, celle-là même que `_runs_from_journal` lit pour reconstruire les
+    runs depuis la MÊME table. `slug=None` (guide de base) ne filtre pas la procédure.
+    Clés en liste FERMÉE de littéraux de ce module : elles sont interpolées dans le
+    SQL, jamais fournies par un appelant.
 
-    `slug_key` = la CLÉ de `args` qui porte la procédure. C'est ce qui rend cette
-    fonction réutilisable pour compter autre chose que des chargements : un
-    **déroulé** est le fait `run_start`, et il nomme sa procédure sous une AUTRE clé
-    que `slug` — `_ARG_PROCEDURE`, celle-là même que `_runs_from_journal` lit pour
-    reconstruire les runs depuis la MÊME table. Une seule requête, deux lectures,
-    plutôt qu'un second chemin qui dériverait du premier.
-
-    Liste FERMÉE de littéraux de ce module : la clé est interpolée dans le SQL,
-    jamais fournie par un appelant."""
-    if not subs:
-        return {"count": 0, "callers": [], "daily": {}}
-    if slug_key not in _ARGS_PROCEDURE_OK:
-        raise ValueError(f"slug_key non supporté: {slug_key!r}")
+    **Bornée et sous l'org** (oto-backend#1145, mesuré en production : 172 à 192 s par
+    lecture). L'ancienne forme comptait sans borne de temps les appels des membres
+    ACTUELS, toutes orgs confondues (`sub = ANY(membres)`), en quatre requêtes : un
+    `BitmapAnd` de l'index par outil (124 k lignes) et de l'index par compte (1,4 M),
+    puis l'extraction JSON de chaque ligne. Ici : les appels émis SOUS `org_id` — l'org
+    dont le guide est lu —, réussis, dans la fenêtre, servis par
+    `idx_tool_calls_org_tool_ok`. `count` porte donc sur la même fenêtre que `daily` :
+    `count == sum(daily)`."""
+    for cle in lectures.values():
+        if cle not in _ARGS_PROCEDURE_OK:
+            raise ValueError(f"clé de procédure non supportée: {cle!r}")
     days = max(1, min(int(days), 365))
-    slug_clause = f" AND l.args->>'{slug_key}' = %s" if slug is not None else ""
-    base_params: list[Any] = [subs, tool]
+    outils = list(lectures)
+    params: list[Any] = [int(org_id), outils, days - 1]
+    filtre_slug = ""
     if slug is not None:
-        base_params.append(slug)
+        par_outil = []
+        for outil, cle in lectures.items():
+            par_outil.append(f"(l.tool = %s AND l.args->>'{cle}' = %s)")
+            params += [outil, slug]
+        filtre_slug = " AND (" + " OR ".join(par_outil) + ")"
     with _connect() as conn:
-        callers = conn.execute(
+        rows = conn.execute(
             f"""
-            SELECT u.email, COUNT(*) AS n
-            FROM tool_calls l LEFT JOIN users u ON u.sub = l.sub
-            WHERE l.sub = ANY(%s) AND l.tool = %s{slug_clause} AND l.ok
-            GROUP BY u.email ORDER BY n DESC
+            SELECT l.tool, (l.created_at AT TIME ZONE 'UTC')::date AS d, u.email,
+                   COUNT(*) AS n
+              FROM tool_calls l LEFT JOIN users u ON u.sub = l.sub
+             WHERE l.org_id = %s AND l.tool = ANY(%s) AND l.ok
+               AND l.created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC')
+                                    - make_interval(days => %s)) AT TIME ZONE 'UTC'
+                   {filtre_slug}
+             GROUP BY l.tool, d, u.email
             """,
-            tuple(base_params),
+            tuple(params),
         ).fetchall()
-        daily = conn.execute(
-            f"""
-            SELECT (l.created_at AT TIME ZONE 'UTC')::date AS d, COUNT(*) AS n
-            FROM tool_calls l
-            WHERE l.sub = ANY(%s) AND l.tool = %s{slug_clause} AND l.ok
-              AND l.created_at >= NOW() - make_interval(days => %s)
-            GROUP BY d
-            """,
-            tuple(base_params + [days]),
-        ).fetchall()
-    return {
-        "count": sum(int(r["n"]) for r in callers),
-        "callers": [r["email"] for r in callers if r["email"]],
-        "daily": {str(r["d"]): int(r["n"]) for r in daily},
-    }
+    rendu: dict[str, dict] = {}
+    for outil in outils:
+        lignes = [r for r in rows if r["tool"] == outil]
+        par_appelant: dict[str, int] = {}
+        daily: dict[str, int] = {}
+        for r in lignes:
+            daily[str(r["d"])] = daily.get(str(r["d"]), 0) + int(r["n"])
+            if r["email"]:
+                par_appelant[r["email"]] = par_appelant.get(r["email"], 0) + int(r["n"])
+        rendu[outil] = {
+            "count": sum(daily.values()),
+            "callers": sorted(par_appelant, key=lambda e: (-par_appelant[e], e)),
+            "daily": daily,
+        }
+    return rendu
 
 
 def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
@@ -1521,81 +1550,73 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
             clauses.append(f"{prefix}sub = %s"); params.append(sub)
         return " AND ".join(clauses), params
 
-    w, wp = _where()
-    wl, wlp = _where("l.")
+    w, wp = _where("l.")
+    # UNE passe sur le journal (oto-backend#1145) : la fenêtre est lue une fois, dans
+    # un CTE MATÉRIALISÉ réduit aux colonnes des agrégats, et les cinq ventilations se
+    # calculent sur lui. Avant, cinq requêtes relisaient chacune la même fenêtre dans
+    # le tas — `args` compris, la colonne la plus lourde — et une fenêtre de 365 jours
+    # a tenu une connexion jusqu'à 134 s en production.
     with _connect() as conn:
-        totals = conn.execute(
+        agregats = conn.execute(
             f"""
-            SELECT COUNT(*) AS total,
-                   COUNT(*) FILTER (WHERE NOT ok) AS errors,
-                   COUNT(DISTINCT sub) AS users,
-                   COALESCE(SUM(result_size), 0) AS served_chars,
-                   COUNT(result_size) AS sized_calls,
-                   COUNT(*) FILTER (WHERE args->'{journal_calls.ARGS_CLIENT_KEY}'->>'name'
-                                    IS NOT NULL) AS emitter_named
-            FROM tool_calls WHERE {w}
+            WITH f AS MATERIALIZED (
+                SELECT l.tool, l.ok, l.sub, l.duration_ms, l.result_size,
+                       l.args->'{journal_calls.ARGS_CLIENT_KEY}'->>'name' AS client_name,
+                       l.created_at::date AS jour
+                  FROM tool_calls l WHERE {w}
+            )
+            SELECT
+              (SELECT json_build_object(
+                          'total', COUNT(*),
+                          'errors', COUNT(*) FILTER (WHERE NOT ok),
+                          'users', COUNT(DISTINCT sub),
+                          'served_chars', COALESCE(SUM(result_size), 0),
+                          'sized_calls', COUNT(result_size),
+                          'emitter_named', COUNT(client_name))
+                 FROM f) AS totals,
+              (SELECT COALESCE(json_agg(t ORDER BY t.calls DESC), '[]'::json) FROM (
+                  SELECT tool AS tool_name,
+                         COUNT(*) AS calls,
+                         COUNT(*) FILTER (WHERE NOT ok) AS errors,
+                         ROUND(AVG(duration_ms))::int AS avg_ms,
+                         ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::int AS p95_ms,
+                         -- #340 : ce que l'outil coûte à la FENÊTRE de l'agent, en
+                         -- caractères de texte servis — la durée ne l'a jamais dit.
+                         -- `total_chars` est le chiffre qui CLASSE : un outil appelé 500
+                         -- fois à 2 000 caractères pèse plus qu'un appelé deux fois à
+                         -- 200 000.
+                         COALESCE(SUM(result_size), 0) AS total_chars,
+                         ROUND(AVG(result_size))::int AS avg_chars,
+                         ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY result_size))::int AS p95_chars,
+                         -- ⚠️ L'étiquette, sans laquelle les trois précédents se lisent
+                         -- faux : ils ne portent QUE sur les appels mesurés — ni les
+                         -- échecs, ni les lignes antérieures à la colonne. Sur un outil
+                         -- où `sized` est loin sous `calls`, la moyenne est exacte et ne
+                         -- dit rien de la période.
+                         COUNT(result_size) AS sized
+                    FROM f GROUP BY tool ORDER BY calls DESC LIMIT 100) t) AS by_tool,
+              (SELECT COALESCE(json_agg(t ORDER BY t.calls DESC), '[]'::json) FROM (
+                  SELECT f.sub, u.email, u.name,
+                         COUNT(*) AS calls,
+                         COUNT(*) FILTER (WHERE NOT f.ok) AS errors
+                    FROM f LEFT JOIN users u ON u.sub = f.sub
+                   GROUP BY f.sub, u.email, u.name ORDER BY calls DESC LIMIT 100) t) AS by_user,
+              -- oto#187 — les ÉMETTEURS déclarés de la fenêtre (logiciel client), du
+              -- plus actif au moins actif ; `NULL` = ligne sans émetteur (antérieure).
+              (SELECT COALESCE(json_agg(t ORDER BY t.calls DESC), '[]'::json) FROM (
+                  SELECT client_name, COUNT(*) AS calls
+                    FROM f GROUP BY 1 ORDER BY calls DESC LIMIT 50) t) AS by_emitter,
+              (SELECT COALESCE(json_agg(t ORDER BY t.day), '[]'::json) FROM (
+                  SELECT to_char(jour, 'YYYY-MM-DD') AS day,
+                         COUNT(*) AS calls,
+                         COUNT(*) FILTER (WHERE NOT ok) AS errors
+                    FROM f GROUP BY jour) t) AS by_day
             """,
             tuple(wp),
-        ).fetchone() or {}
-        by_tool = conn.execute(
-            f"""
-            SELECT tool AS tool_name,
-                   COUNT(*) AS calls,
-                   COUNT(*) FILTER (WHERE NOT ok) AS errors,
-                   ROUND(AVG(duration_ms))::int AS avg_ms,
-                   ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::int AS p95_ms,
-                   -- #340 : ce que l'outil coûte à la FENÊTRE de l'agent, en
-                   -- caractères de texte servis — la durée ne l'a jamais dit.
-                   -- `total_chars` est le chiffre qui CLASSE : un outil appelé 500
-                   -- fois à 2 000 caractères pèse plus qu'un appelé deux fois à
-                   -- 200 000.
-                   COALESCE(SUM(result_size), 0) AS total_chars,
-                   ROUND(AVG(result_size))::int AS avg_chars,
-                   ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY result_size))::int AS p95_chars,
-                   -- ⚠️ L'étiquette, sans laquelle les trois précédents se lisent
-                   -- faux : ils ne portent QUE sur les appels mesurés — ni les
-                   -- échecs, ni les lignes antérieures à la colonne. Sur un outil
-                   -- où `sized` est loin sous `calls`, la moyenne est exacte et ne
-                   -- dit rien de la période.
-                   COUNT(result_size) AS sized
-            FROM tool_calls WHERE {w}
-            GROUP BY tool ORDER BY calls DESC LIMIT 100
-            """,
-            tuple(wp),
-        ).fetchall()
-        by_user = conn.execute(
-            f"""
-            SELECT l.sub, u.email, u.name,
-                   COUNT(*) AS calls,
-                   COUNT(*) FILTER (WHERE NOT l.ok) AS errors
-            FROM tool_calls l
-            LEFT JOIN users u ON u.sub = l.sub
-            WHERE {wl}
-            GROUP BY l.sub, u.email, u.name ORDER BY calls DESC LIMIT 100
-            """,
-            tuple(wlp),
-        ).fetchall()
-        # oto#187 — les ÉMETTEURS déclarés de la fenêtre (logiciel client), du plus
-        # actif au moins actif ; `NULL` = ligne sans émetteur (antérieure au lot).
-        by_emitter = conn.execute(
-            f"""
-            SELECT args->'{journal_calls.ARGS_CLIENT_KEY}'->>'name' AS client_name,
-                   COUNT(*) AS calls
-            FROM tool_calls WHERE {w}
-            GROUP BY 1 ORDER BY calls DESC LIMIT 50
-            """,
-            tuple(wp),
-        ).fetchall()
-        by_day = conn.execute(
-            f"""
-            SELECT to_char(created_at::date, 'YYYY-MM-DD') AS day,
-                   COUNT(*) AS calls,
-                   COUNT(*) FILTER (WHERE NOT ok) AS errors
-            FROM tool_calls WHERE {w}
-            GROUP BY created_at::date ORDER BY created_at::date
-            """,
-            tuple(wp),
-        ).fetchall()
+        ).fetchone()
+    totals = agregats["totals"]
+    by_tool, by_user = agregats["by_tool"], agregats["by_user"]
+    by_emitter, by_day = agregats["by_emitter"], agregats["by_day"]
     return {
         "since_days": since_days,
         "total_calls": int((totals or {}).get("total") or 0),
