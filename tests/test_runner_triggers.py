@@ -108,6 +108,22 @@ def test_create_valide_puis_pose_avec_le_fuseau_par_defaut(monkeypatch):
     assert vu["next_due"] is not None and out["trigger"]["id"] == 1
 
 
+@pytest.mark.parametrize("enabled, attendu", [(False, False), (True, True), (None, True)])
+def test_create_respecte_enabled(monkeypatch, enabled, attendu):
+    """Feedback 1297 : `create enabled=false` naissait allumé."""
+    vu = {}
+    monkeypatch.setattr(RT.db, "runner_arme",
+                        lambda org: {"armed": True, "workers": 1,
+                                     "last_seen": "2026-09-02 07:00:00",
+                                     "families": ["anthropic"]})
+    monkeypatch.setattr(RT.db, "triggers_for_procedure", lambda o, p: [])
+    monkeypatch.setattr(RT.db, "create_trigger",
+                        lambda org, sub, **kw: vu.update(kw) or {"id": 1, **kw})
+    _appel(_ctx(), op="create", procedure="veille-linkedin", cron="5 6 * * *",
+           tools=["data_write"], enabled=enabled)
+    assert vu["enabled"] is attendu
+
+
 def test_un_cadencement_invalide_rend_la_cause(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         _appel(_ctx(), op="create", procedure="x", cron="* * * * *", tools=["a"])

@@ -42,7 +42,8 @@ def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
                    payload_fields: Optional[dict] = None,
                    max_per_hour: Optional[int] = None,
                    fraicheur_s: Optional[int] = None,
-                   max_per_day: Optional[int] = None) -> dict:
+                   max_per_day: Optional[int] = None,
+                   enabled: bool = True) -> dict:
     """Pose un déclencheur — programmé (`cron` + `next_due`) ou par webhook.
 
     ⚠️ `cron` et `next_due` sont devenus FACULTATIFS en signature, et c'est la
@@ -56,16 +57,16 @@ def create_trigger(org_id: int, sub: str, *, procedure: str, tz: str,
                    (org_id, sub, label, procedure, project_id, tools, input,
                     max_steps, max_tokens, max_run_seconds, model, kind, payload_mode,
                     payload_fields, max_per_hour, fraicheur_s, cron, tz, next_due,
-                    max_per_day)
+                    max_per_day, enabled)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s,
-                    %s::jsonb, %s, %s, %s, %s, %s, %s)
+                    %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
             RETURNING {_COLS}
             """,
             (org_id, sub, label, procedure, project_id,
              json.dumps(list(tools), ensure_ascii=False), input, max_steps,
              max_tokens, max_run_seconds, model, kind, payload_mode,
              json.dumps(payload_fields, ensure_ascii=False) if payload_fields else None,
-             max_per_hour, fraicheur_s, cron, tz, next_due, max_per_day),
+             max_per_hour, fraicheur_s, cron, tz, next_due, max_per_day, enabled),
         ).fetchone()
     return dict(row)
 
