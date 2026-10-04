@@ -37,6 +37,7 @@ from pydantic import BaseModel, field_validator
 
 from .. import access, billing, db, group_store, org_store, session_org
 from ._authz import SUB_ONLY
+from ._lecture_bornee import bornee
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .connectors.provider_status import ProviderStatus
 from .registry import CAPABILITIES
@@ -421,7 +422,7 @@ CAPABILITIES += [
         rest=RestBinding("GET", "/api/me/calls"),
     ),
     Capability(
-        key="me.activity_summary", handler=_activity_summary,
+        key="me.activity_summary", handler=bornee(_activity_summary),
         Input=ActivitySummaryInput, authz=SUB_ONLY,
         Output=ActivitySummaryView, description=_DOC_SUMMARY,
         errors=(_REFUS_SANS_ORG,),

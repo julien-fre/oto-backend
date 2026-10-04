@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from .. import db, deprecations
 from . import audit_log, monitoring
 from ._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
+from ._lecture_bornee import bornee
 from ._types import (cap_limit, AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
@@ -999,7 +1000,7 @@ def _view_as_writes(ctx: ResolvedCtx, inp: OrgViewAsWritesInput) -> dict:
 _ADMIN_OF = ORG_ADMIN_OF("org_id")
 
 CAPABILITIES += [
-    Capability(key="org.monitoring.summary", handler=_summary, Input=OrgSummaryInput,
+    Capability(key="org.monitoring.summary", handler=bornee(_summary), Input=OrgSummaryInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgMonitoringSummary,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/summary", _ID)),
     Capability(key="org.monitoring.calls", handler=_calls, Input=OrgCallsInput,
@@ -1010,13 +1011,13 @@ CAPABILITIES += [
     # est une page que tout membre doit pouvoir lire, l'activité nominative de
     # ses collègues non. `mcp=None` : c'est un tuyau de facturation, pas un outil
     # d'agent.
-    Capability(key="org.usage.calls", handler=_billable_calls,
+    Capability(key="org.usage.calls", handler=bornee(_billable_calls),
                Input=OrgBillableCallsInput, authz=_MEMBER_OF, mcp=None,
                Output=OrgBillableCalls, errors=(_REFUS_FENETRE, _REFUS_LIMITE),
                rest=RestBinding("GET", "/api/orgs/{id}/usage/calls", _ID)),
     # Le même relevé, sommé par outil en une lecture (#1145) : remplace une requête
     # `usage/calls` par outil. Même lentille membre, `mcp=None` pour la même raison.
-    Capability(key="org.usage.tools", handler=_billable_tools,
+    Capability(key="org.usage.tools", handler=bornee(_billable_tools),
                Input=OrgBillableToolsInput, authz=_MEMBER_OF, mcp=None,
                Output=OrgBillableTools, errors=(_REFUS_FENETRE,),
                rest=RestBinding("GET", "/api/orgs/{id}/usage/tools", _ID)),
@@ -1063,7 +1064,7 @@ CAPABILITIES += [
                authz=_ADMIN_OF, mcp=None, Output=OrgToolQuality,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/tool-quality", _ID)),
     Capability(
-        key="org.monitoring.console", handler=_console, Input=OrgMonitoringInput,
+        key="org.monitoring.console", handler=bornee(_console), Input=OrgMonitoringInput,
         authz=_ADMIN_OF,
         description=(
             "Observability of YOUR org (org admin) — `org_id` required. op=summary "

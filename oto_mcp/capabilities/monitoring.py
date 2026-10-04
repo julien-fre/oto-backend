@@ -23,6 +23,7 @@ from . import usage
 from ._authz import PLATFORM_ADMIN
 from ._types import cap_limit, AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+from ._lecture_bornee import bornee
 
 
 def _resolve_sub(target: Optional[str]) -> Optional[str]:
@@ -382,7 +383,7 @@ def _monitoring(ctx: ResolvedCtx, inp: MonitoringInput) -> dict:
 
 
 CAPABILITIES += [
-    Capability(key="monitoring.summary", handler=_summary, Input=SummaryInput,
+    Capability(key="monitoring.summary", handler=bornee(_summary), Input=SummaryInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/summary")),
     Capability(key="monitoring.rest", handler=_rest_stats, Input=RestInput,
@@ -410,7 +411,7 @@ CAPABILITIES += [
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/calls/{call_id}")),
     Capability(
-        key="admin.monitoring", handler=_monitoring, Input=MonitoringInput,
+        key="admin.monitoring", handler=bornee(_monitoring), Input=MonitoringInput,
         authz=PLATFORM_ADMIN,
         description=(
             "Platform observability console (platform admin). ⚠️ TWO journals, never "

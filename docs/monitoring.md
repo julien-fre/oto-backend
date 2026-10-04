@@ -538,6 +538,26 @@ compte est un parcours d'index sur l'org et l'outil, et le replier dans la page
 (`count(*) OVER ()`) forcerait à extraire les arguments JSON de TOUTES les lignes de la
 fenêtre au lieu des seules lignes de la page.
 
+## Les lectures d'agrégat sont bornées à 10 s (#1145, 04/10)
+
+Le pool applicatif ne pose aucun `statement_timeout` (les migrations de démarrage en
+ont besoin). Les lectures d'agrégat sur `tool_calls` en reçoivent un, à LEUR niveau :
+`db.lecture_bornee.lecture_d_agregat(objet)` remplace `_connect()`, ouvre une
+transaction et y pose `SET LOCAL statement_timeout` = `DUREE_MAX_MS` (10 s) — `LOCAL`,
+donc rendu à la fin de la transaction, jamais laissé sur une connexion du pool. Un
+dépassement lève `LectureTropLongue`, que l'enveloppe `capabilities._lecture_bornee.bornee`
+rend en **`503 aggregate_timeout`**, message compris (« resserrer la fenêtre ou le
+périmètre »), sur les deux faces — jamais un résultat partiel, jamais un 500 anonyme.
+
+Lectures bornées : `list_billable_calls_for_org`, `billable_usage_by_tool_for_org`,
+`instruction_usage`, `tool_call_stats`. Capacités enveloppées : `org.usage.{calls,tools}`,
+`org.instruction.usage`, `me.activity_summary`, et, parce qu'elles lisent
+`tool_call_stats`, `org.monitoring.{summary,console}`, `monitoring.summary`,
+`admin.monitoring` (`tests/test_lecture_bornee.py` tient la liste).
+
+Ce que la borne ne fait pas : limiter le nombre de lectures simultanées par route ni
+le débit par jeton — c'est le budget des routes lourdes, posé à part.
+
 ## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
 
 Le journal n'avait **aucune** rétention : 47 % de la base, et une croissance passée de

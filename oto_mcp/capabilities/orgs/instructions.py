@@ -35,6 +35,7 @@ from ... import (access, db, deprecations, group_store, guide_store, org_store,
                 procedure_diagram, procedure_empreinte, procedure_retrait, roles,
                 slots as slots_mod, tool_alias, tool_registry)
 from .._auteurs import nommer_l_auteur, nommer_les_auteurs
+from .._lecture_bornee import bornee
 from .._authz import (ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER,
                       ORG_MEMBER_OF, SUB_ONLY, capacite_autorise,
                       refus_de_famille)
@@ -1598,7 +1599,7 @@ CAPABILITIES += [
         rest=RestBinding("GET", "/api/me/instructions/{slug}/versions"),
     ),
     Capability(
-        key="org.instruction.usage", handler=_instruction_usage, Input=SlugInput,
+        key="org.instruction.usage", handler=bornee(_instruction_usage), Input=SlugInput,
         authz=ORG_MEMBER, Output=InstructionUsage,
         rest=RestBinding("GET", "/api/me/instructions/{slug}/usage"),
     ),

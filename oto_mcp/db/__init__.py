@@ -80,6 +80,8 @@ from . import (
     # NON aplati : `publier`/`retirer`/`lecteurs` sont trop communs pour la surface plate.
     # Les appelants écrivent `from ..db import partages_procedure as db_partages`.
     partages_procedure,
+    # NON aplati : la borne des lectures d'agrégat (#1145) — `db.lecture_bornee.<nom>`.
+    lecture_bornee,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au

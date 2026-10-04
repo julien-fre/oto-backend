@@ -21,7 +21,16 @@ logger = logging.getLogger(__name__)
 from .. import deprecations
 from . import journal_calls
 from ._conn import _connect
+from .lecture_bornee import lecture_d_agregat
 
+
+
+def _agregat(objet: str, **kw):
+    """La connexion d'une lecture d'agrégat de ce module, bornée
+    (`lecture_bornee.lecture_d_agregat`, #1145). Un seul point d'entrée : un banc qui
+    lit le SQL de ces lectures sur une connexion simulée remplace CE nom, et la borne
+    elle-même se juge dans `tests/test_lecture_bornee.py`."""
+    return lecture_d_agregat(objet, **kw)
 
 def increment_usage(sub: str, tool: str, amount: int = 1) -> int:
     """Incrémente le compteur (sub, tool, today) de `amount`. Retourne la nouvelle valeur.
@@ -1352,8 +1361,8 @@ def list_billable_calls_for_org(
         raise ValueError("list_billable_calls_for_org : `tool` ou `run_ids` requis")
     if not 1 <= int(limit) <= RELEVE_LIMITE_MAX:
         raise ValueError(f"list_billable_calls_for_org : `limit` hors de 1..{RELEVE_LIMITE_MAX}")
-    with _connect() as conn:
-        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+    with _agregat("relevé des appels d'une org",
+                  isolation="REPEATABLE READ") as conn:
         since, until = _fenetre_du_releve(conn, since, until)
         clauses, params = _audit_window_clauses(org_id, since, until)
         clauses.append("l.ok = TRUE")
@@ -1430,7 +1439,7 @@ def billable_usage_by_tool_for_org(
 
     Rend `{since_effectif, until_effectif, tools: [{tool, key_mode, calls, quantity,
     jobs}]}`, trié par outil puis mode de clé."""
-    with _connect() as conn:
+    with _agregat("relevé par outil d'une org") as conn:
         since, until = _fenetre_du_releve(conn, since, until)
         clauses, params = _audit_window_clauses(org_id, since, until)
         clauses.append("l.ok = TRUE")
@@ -1491,7 +1500,7 @@ def instruction_usage(
             par_outil.append(f"(l.tool = %s AND l.args->>'{cle}' = %s)")
             params += [outil, slug]
         filtre_slug = " AND (" + " OR ".join(par_outil) + ")"
-    with _connect() as conn:
+    with _agregat("usage d'une procédure") as conn:
         rows = conn.execute(
             f"""
             SELECT l.tool, (l.created_at AT TIME ZONE 'UTC')::date AS d, u.email,
@@ -1556,7 +1565,7 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
     # calculent sur lui. Avant, cinq requêtes relisaient chacune la même fenêtre dans
     # le tas — `args` compris, la colonne la plus lourde — et une fenêtre de 365 jours
     # a tenu une connexion jusqu'à 134 s en production.
-    with _connect() as conn:
+    with _agregat("agrégats d'appels") as conn:
         agregats = conn.execute(
             f"""
             WITH f AS MATERIALIZED (
