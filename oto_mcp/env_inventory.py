@@ -498,6 +498,11 @@ _REGLAGES: tuple[Variable, ...] = (
              "`OTO_ACTIVATION`). Absent alors qu'un relais est déclaré : l'envoi est "
              "refusé, jamais reporté sur le relais de l'instance.",
              ("oto_mcp/activation.py:223",)),
+    Variable("OTO_DIGEST_LECTEURS", Classe.REGLAGE, "",
+             "Ouvre le travail `digest-lecteurs` : un mail par jour au propriétaire "
+             "d'une procédure partagée par lien qui a de nouveaux lecteurs visibles. "
+             "Absente (ou autre que 1/true/on) : le travail compte ce qu'il enverrait, "
+             "n'envoie ni ne marque rien.", ("oto_mcp/digest_lecteurs.py:34",)),
     Variable("OTO_UNIPILE_FIN_DE_DROIT_DELAI_JOURS", Classe.REGLAGE, "7",
              "Jours entre le premier constat de la perte du droit `unipile` et la "
              "suppression du compte chez unipile. Entier ≥ 1, sinon le travail lève.",

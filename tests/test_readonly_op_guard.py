@@ -102,6 +102,7 @@ ECRITURES = {
                         "take_over", "rotate_address", "share", "unshare"},
     "runs.thread": {"append"},
     "usage.notify_reporters": {"send"},
+    "org.instruction.share.write": {"publish", "set", "unpublish"},
 }
 
 # Capacités dont l'`op` est un texte LIBRE (pas un `Literal`) : leurs ops ne se lisent
