@@ -1523,12 +1523,14 @@ pool. La reprise ne RELÂCHE pas la règle, elle change le propriétaire — l'a
 
 - **Admin d'org seulement** (`roles.is_org_admin`), sinon `403 org_admin_required`.
   Reprendre son propre agent ne fait rien (`jobs_moved: 0`).
-- ⚠️ **Seulement si le propriétaire n'est plus membre de l'org** (`roles.is_org_member`),
-  sinon `403 owner_still_member`. **La propriété se donne, elle ne se prend pas** :
+- ⚠️ **Seulement si le propriétaire n'est plus membre de l'org** — membre RÉEL, lu dans
+  `org_members` (`org_store.get_org_role`), pas le rôle effectif, qui fait d'un super
+  admin un admin de toute org et rendait son agent irreprenable une fois parti —, sinon
+  `403 owner_still_member`. **La propriété se donne, elle ne se prend pas** :
   reprendre l'agent d'un membre présent lui retirait son travail, et le faisait tourner
   sous une autre identité, sans qu'il ait rien demandé. Pour modifier l'agent d'un
-  collègue, il le partage en éditeur — forfait compris s'il le nomme. Un autre compte de
-  la même personne passe par le même chemin : l'ancien compte le partage au nouveau.
+  collègue, il le partage en éditeur — forfait compris s'il le nomme — ou le lui DONNE
+  (`op=give`, ci-dessous).
 - **Les travaux en attente suivent** (`pending`, et `held` pour un webhook en pause) :
   leur `sub` passe au repreneur DANS LA MÊME TRANSACTION que le déclencheur
   (`db.reprendre_trigger`). C'est ce `sub` qui fixe le jeton du run (`_delegue`) et
@@ -1543,6 +1545,28 @@ pool. La reprise ne RELÂCHE pas la règle, elle change le propriétaire — l'a
   webhook ne change pas** : qui le détient déclenche désormais l'agent au nom du
   repreneur. Le faire tourner casserait la source en place ; c'est `rotate_secret`, à part.
 - Rendu : `{trigger, previous_owner, jobs_moved}`. Hors périmètre : les flottes.
+
+**Le propriétaire DONNE son agent : `oto_trigger op=give` (04/10/2026).** Le pendant de la
+reprise pour un propriétaire présent — y compris vers un autre compte de la même
+personne. Même transfert (`_transferer`, `db.reprendre_trigger`) : le destinataire devient
+`runner_triggers.sub`, les travaux en attente le suivent, rendu `{trigger,
+previous_owner, jobs_moved}`.
+
+- **Le propriétaire seul**, sinon `403 trigger_owner_required` — un éditeur modifie
+  l'agent, un admin le gouverne, ni l'un ni l'autre ne dispose de sa propriété (l'admin
+  a `take_over` pour l'agent d'un membre parti). Qui ne voit pas l'agent reçoit `404
+  trigger_not_found`.
+- **Vers UNE personne, membre RÉEL de l'org** (`share_with_sub` ou `share_with_email`,
+  lus dans `org_members`) : `400 give_target_required` sans destinataire, avec les deux
+  formes ou vers `everyone` ; `404 give_not_org_member` hors de l'org — un super admin
+  qui n'en est pas membre compris. Se donner son agent ne fait rien.
+- **Les partages restent en place**, et ceux de l'ancien propriétaire ne prêtent pas le
+  forfait du nouveau (`_forfait_prete` exige `granted_by` = propriétaire courant).
+  L'ancien propriétaire ne garde aucun accès que ses partages ne lui donnent pas.
+- **Un agent ALLUMÉ sur un abonnement** : comme la reprise, la garde de pose se juge sur
+  le DESTINATAIRE. Refusée, rien n'est écrit — l'agent reste au donneur, sur son
+  forfait ; il l'éteint, le donne, et le destinataire le rallume sur le sien (ou sur le
+  pool). Éteint, il se donne librement. Il ne sort jamais du forfait en silence.
 
 **Un forfait est PERSONNEL.** Trois refus, tous avant l'écriture :
 `subscription_not_connected` (poser sans connexion = un agent programmé qui ne tourne

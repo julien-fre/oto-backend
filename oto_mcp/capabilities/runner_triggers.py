@@ -71,6 +71,10 @@ class TriggerInput(BaseModel):
                 # configuration, et seul un admin peut le changer (25/09/2026) —
                 # seulement quand le propriétaire a quitté l'org (04/10/2026).
                 "take_over",
+                # DONNER un agent : son propriétaire le transfère à un autre membre
+                # de l'org. La propriété se donne, elle ne se prend pas : c'est le
+                # pendant de `take_over` pour un propriétaire présent (04/10/2026).
+                "give",
                 # PARTAGER un agent avec des membres de son org (`_acces_agent`) :
                 # le lister, l'accorder, le retirer. Réservé au propriétaire et aux
                 # admins ; `shares` se lit par quiconque voit l'agent.
@@ -153,13 +157,15 @@ class TriggerInput(BaseModel):
             "replace a leaked address, `op=rotate_address`. Like `rotate_secret` "
             "and `rotate_address`, this changes the agent's door: only its owner "
             "or an org admin may (`trigger_owner_or_admin_required`)."))
-    # share / unshare — UN bénéficiaire, membre de l'org de l'agent.
+    # share / unshare / give — UN bénéficiaire, membre de l'org de l'agent.
     share_with_sub: Optional[str] = Field(default=None, description=(
-        "op=share/unshare: the org member to share with, by account id."))
+        "op=share/unshare: the org member to share with, by account id. "
+        "op=give: the org member who becomes the agent's owner."))
     share_with_email: Optional[str] = Field(default=None, description=(
         "op=share/unshare: the org member to share with, by email. Must be a "
         "member of THIS org (`share_not_org_member` otherwise): an agent is never "
-        "shared outside its org."))
+        "shared outside its org. op=give: the org member who becomes the owner "
+        "(`give_not_org_member` otherwise)."))
     everyone: Optional[bool] = Field(default=None, description=(
         "op=share/unshare: true = every member of the org, instead of one person."))
     role: Optional[Literal["viewer", "editor"]] = Field(default=None, description=(
@@ -884,21 +890,24 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                 "son propriétaire est toujours membre de l'org : un agent ne se reprend "
                 "qu'à un membre parti. Pour le modifier, demande-lui de te le partager "
                 "en éditeur (`op=share`).")
-        # Un agent ALLUMÉ sur un abonnement partirait dès l'occurrence suivante sur
-        # celui du repreneur : même garde qu'une pose, jugée sur lui. Éteint, il
-        # se reprend librement — le rallumage rejuge le propriétaire stocké.
-        famille = runner_models.famille(t.get("model"))
-        if t.get("enabled") and _abonnement.est_abonnement(famille):
-            _abonnement.exiger_a_la_pose(ctx.sub, None, famille, org_id=ctx.org_id)
-        repris = db.reprendre_trigger(inp.trigger_id, ctx.org_id, ctx.sub)
-        if repris is None:
+        return _transferer(ctx, t, ctx.sub, "REPRIS")
+
+    if inp.op == "give":
+        # ⚠️ Le PROPRIÉTAIRE seul, et vers un membre RÉEL de l'org : un admin
+        # gouverne l'agent, il ne dispose pas de sa propriété — il a `take_over`
+        # pour l'agent d'un membre parti.
+        t = db.get_trigger(inp.trigger_id, ctx.org_id)
+        if not t or _acces_agent.niveau(ctx.sub, ctx.org_id, t) is None:
+            # Ne pas voir un agent, c'est ne pas savoir qu'il existe.
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
-        nouveau, ancien, deplaces = repris
-        logger.warning("déclencheur %s (org %s) REPRIS par %s (ancien propriétaire %s) "
-                       "— %d travaux en attente passés au nouveau", inp.trigger_id,
-                       ctx.org_id, ctx.sub, ancien, deplaces)
-        return {"trigger": _avec_hook(ctx.org_id, nouveau),
-                "previous_owner": ancien, "jobs_moved": deplaces}
+        if t.get("sub") != ctx.sub:
+            raise AuthzDenied(403, "trigger_owner_required",
+                              "seul le propriétaire de l'agent peut le donner.")
+        destinataire = _destinataire_du_don(ctx, inp)
+        if destinataire == ctx.sub:
+            return {"trigger": _avec_hook(ctx.org_id, t),
+                    "previous_owner": ctx.sub, "jobs_moved": 0}
+        return _transferer(ctx, t, destinataire, "DONNÉ")
 
     if inp.op in ("shares", "share", "unshare"):
         return _partager(ctx, inp)
@@ -1125,6 +1134,54 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                                  runner_hook.nouvelle_adresse())
         t = db.get_trigger(inp.trigger_id, ctx.org_id) or t
     return {"trigger": _avec_hook(ctx.org_id, t)}
+
+
+def _destinataire_du_don(ctx: ResolvedCtx, inp: TriggerInput) -> str:
+    """Le `sub` à qui `give` transfère l'agent : UNE personne, membre RÉEL de l'org
+    (`org_members`), comme `take_over` — le rôle effectif ferait d'un super admin hors
+    de l'org un destinataire valable."""
+    if inp.everyone or bool(inp.share_with_sub) == bool(inp.share_with_email):
+        raise AuthzDenied(400, "give_target_required",
+                          "un agent se donne à UNE personne : `share_with_sub` ou "
+                          "`share_with_email`, pas les deux, pas `everyone`.")
+    if inp.share_with_email:
+        membres = [u["sub"] for u in db.get_users_by_email(inp.share_with_email.strip())
+                   if org_store.get_org_role(ctx.org_id, u["sub"]) is not None]
+        if len(membres) > 1:
+            raise AuthzDenied(400, "ambiguous_email",
+                              f"`{inp.share_with_email}` désigne plusieurs comptes de "
+                              "l'org : passe `share_with_sub`.")
+    else:
+        membres = [inp.share_with_sub] if org_store.get_org_role(
+            ctx.org_id, inp.share_with_sub) is not None else []
+    if not membres:
+        raise AuthzDenied(404, "give_not_org_member",
+                          "un agent ne se donne qu'à un membre de son org. Invite "
+                          "d'abord la personne dans l'org.")
+    return membres[0]
+
+
+def _transferer(ctx: ResolvedCtx, t: dict, nouveau_sub: str, geste: str) -> dict:
+    """`take_over` et `give` : `nouveau_sub` devient le propriétaire de l'agent.
+
+    Un agent ALLUMÉ sur un abonnement partirait dès l'occurrence suivante sur celui
+    du nouveau propriétaire : même garde qu'une pose, jugée sur LUI — refusée, rien
+    n'est écrit, et l'agent reste à son propriétaire ; éteint, il se transfère
+    librement, le rallumage rejugeant le propriétaire stocké. Les partages restent
+    en place, mais ceux de l'ancien propriétaire ne prêtent pas le forfait du
+    nouveau (`_forfait_prete` exige `granted_by` = propriétaire courant)."""
+    famille = runner_models.famille(t.get("model"))
+    if t.get("enabled") and _abonnement.est_abonnement(famille):
+        _abonnement.exiger_a_la_pose(nouveau_sub, None, famille, org_id=ctx.org_id)
+    transfere = db.reprendre_trigger(t["id"], ctx.org_id, nouveau_sub)
+    if transfere is None:
+        raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
+    nouveau, ancien, deplaces = transfere
+    logger.warning("déclencheur %s (org %s) %s à %s par %s (ancien propriétaire %s) "
+                   "— %d travaux en attente passés au nouveau", t["id"], ctx.org_id,
+                   geste, nouveau_sub, ctx.sub, ancien, deplaces)
+    return {"trigger": _avec_hook(ctx.org_id, nouveau),
+            "previous_owner": ancien, "jobs_moved": deplaces}
 
 
 def _partager(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
@@ -1367,6 +1424,12 @@ CAPABILITIES += [
             DeclaredError(403, "owner_still_member",
                           "`take_over` de l'agent d'un membre toujours dans l'org : il "
                           "se partage (`op=share`), il ne se prend pas"),
+            DeclaredError(403, "trigger_owner_required",
+                          "`give` par quelqu'un qui n'est pas le propriétaire de l'agent"),
+            DeclaredError(404, "give_not_org_member",
+                          "`give` vers quelqu'un qui n'est pas membre de l'org de l'agent"),
+            DeclaredError(400, "give_target_required",
+                          "`give` sans destinataire, avec les deux formes, ou vers `everyone`"),
             DeclaredError(403, "trigger_owner_or_admin_required",
                           "`rotate_secret`, `rotate_address` ou `private_address=true` "
                           "sur le webhook d'un autre, sans être admin de l'org"),
@@ -1405,7 +1468,11 @@ CAPABILITIES += [
             "only when the agent's owner is no longer a member of the org — "
             "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "
-            "model subscription, runs on yours; its queued jobs move with it). "
+            "model subscription, runs on yours; its queued jobs move with it) / give "
+            "(owner only: `share_with_email` or `share_with_sub` of a member of THIS "
+            "org becomes the owner — the agent then acts as THEM, and its queued jobs "
+            "move with it; an agent switched ON on your personal subscription is "
+            "refused unless they can run it — disable it first, they re-enable it). "
             "ACCESS: an agent belongs to its owner and runs AS them. list/get only "
             "return agents you own, that are shared with you, or all of them for an "
             "org admin; each carries `my_access` (owner/admin/editor/viewer), "

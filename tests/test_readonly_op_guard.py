@@ -99,7 +99,7 @@ ECRITURES = {
     "runner.fleets": {"create", "update", "launch", "stop", "take", "beat", "ack_stop"},
     "runner.jobs": {"enqueue", "claim", "bind_run", "extend", "complete"},
     "runner.triggers": {"create", "update", "delete", "clear_queue", "rotate_secret",
-                        "take_over", "rotate_address", "share", "unshare"},
+                        "take_over", "give", "rotate_address", "share", "unshare"},
     "runs.thread": {"append"},
     "usage.notify_reporters": {"send"},
     "org.instruction.share.write": {"publish", "set", "unpublish"},
