@@ -343,3 +343,105 @@ def test_l_ecriture_du_store_se_lit_comme_une_lecture(live):
     ligne = st.update_row(ns, rid, {"raison_sociale": "Dupont SA"},
                           versions=(dsver.CURRENT, dsver.ORIGINE))
     assert ligne["raison_sociale.origine"] == "DUPONT"
+
+
+# ── à plat, l'origine d'un sous-champ de LISTE se demande aussi (oto#273) ─────
+#
+# ⚠️ La fuite que la forme imbriquée avait déjà fermée (a3b32bd2) restait ouverte à
+# plat : `_row_to_dict` retirait `champ.origine` au premier niveau, mais les items
+# d'une colonne-liste passaient par `served_value` → `_served_item` → `flat_layers`,
+# qui les servait sans regarder `versions`. `contacts[0]["email.origine"]` sortait
+# donc sous une réponse qui déclarait `versions_servies: ["current"]`.
+
+_LISTE = {
+    "siren": "1",
+    "contacts": [
+        {"nom": "Dupont",
+         "email": {"valeur": "d@x.fr", "comment": "hunter",
+                   "origine": {"valeur": "dupont@x.fr", "comment": "fichier 05/08"}},
+         # Un cran plus bas : une liste DANS un item, qui porte elle aussi une origine.
+         "postes": [{"titre": {"valeur": "DRH", "origine": "RH"}}]},
+        {"nom": {"valeur": "Martin", "origine": "MARTIN"}},
+    ],
+}
+
+
+def _origines_a_plat(v) -> list:
+    """Toute clé servie à plat qui porte la couche `origine`, à toute profondeur."""
+    if isinstance(v, dict):
+        return ([k for k in v if isinstance(k, str)
+                 and f".{dsv2.ORIGIN_LAYER}" in k]
+                + [x for val in v.values() for x in _origines_a_plat(val)])
+    if isinstance(v, list):
+        return [x for item in v for x in _origines_a_plat(item)]
+    return []
+
+
+def _lu_a_plat(versions: tuple = dsver.DEFAUT) -> dict:
+    from oto_mcp.datastore.core import DatastorePg
+    return DatastorePg._row_to_dict(
+        {"row_id": "r1", "created_at": "t", "updated_at": "t", "data": _LISTE},
+        versions=versions)
+
+
+def test_a_PLAT_l_origine_d_un_item_de_liste_ne_sort_pas_au_defaut():
+    """⚠️ Le défaut : `l[0]["e.origine"]` servi sans qu'on l'ait demandé."""
+    ligne = _lu_a_plat()
+    assert not _origines_a_plat(ligne), _origines_a_plat(ligne)
+    contact = ligne["contacts"][0]
+    # Le reste de l'item ne bouge pas : la valeur au nom nu, `comment` à côté.
+    assert contact["email"] == "d@x.fr" and contact["email.comment"] == "hunter"
+    assert contact["postes"] == [{"titre": "DRH"}]
+    # Une case qui ne portait que son origine redevient nue — comme au premier niveau.
+    assert ligne["contacts"][1] == {"nom": "Martin"}
+
+
+def test_a_PLAT_l_origine_d_un_item_demandee_revient_a_toute_profondeur():
+    contact = _lu_a_plat((dsver.CURRENT, dsver.ORIGINE))["contacts"][0]
+    assert contact["email.origine"] == "dupont@x.fr"
+    assert contact["email.origine.comment"] == "fichier 05/08"
+    assert contact["postes"][0]["titre.origine"] == "RH"
+
+
+def _table_liste(sub: str) -> tuple:
+    from oto_mcp import db
+    from oto_mcp.datastore.core import make_store
+    ns = "t-" + uuid.uuid4().hex[:6]
+    db.create_datastore("user", sub, ns)
+    row = make_store(sub).append_row(ns, dict(_LISTE), origine_override=True)
+    return ns, row["_id"]
+
+
+def test_a_PLAT_tous_les_chemins_du_store_taisent_l_origine_d_un_item(live):
+    """Le correctif vit au point unique qui aplatit (`flat_layers`) : chaque lecture
+    du store, et la ligne que rend une écriture, le prennent de là."""
+    ns, rid = _table_liste("sub-test")
+    st = _store()
+    assert not _origines_a_plat(st.list_rows(ns))
+    page = st.cursor_rows(ns)
+    assert page["versions_servies"] == ["current"] and not _origines_a_plat(page["rows"])
+    assert not _origines_a_plat(st.page_rows(ns)["rows"])
+    assert not _origines_a_plat(st.get_row(ns, rid))
+    assert not _origines_a_plat(st.update_row(ns, rid, {"siren": "1"}))
+    avec = st.get_row(ns, rid, versions=(dsver.CURRENT, dsver.ORIGINE))
+    assert avec["contacts"][0]["email.origine"] == "dupont@x.fr"
+
+
+def test_a_PLAT_le_REST_tait_l_origine_d_un_item_sauf_demandee(live, monkeypatch):
+    from _datastore_rest import call, stub_authz
+    stub_authz(monkeypatch)
+    ns, rid = _table_liste("u-1")
+    status, ligne = call("me.datastore.get_row",
+                         path_params={"datastore": ns, "row_id": rid})
+    assert status == 200, ligne
+    assert not _origines_a_plat(ligne), ligne
+    status, ligne = call("me.datastore.get_row",
+                         path_params={"datastore": ns, "row_id": rid},
+                         query=b"versions=current,origine")
+    assert status == 200, ligne
+    assert ligne["contacts"][0]["postes"][0]["titre.origine"] == "RH"
+    status, ligne = call("me.datastore.update_row",
+                         path_params={"datastore": ns, "row_id": rid},
+                         body={"siren": "1"})
+    assert status == 200, ligne
+    assert not _origines_a_plat(ligne), ligne

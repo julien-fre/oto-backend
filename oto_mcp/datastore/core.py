@@ -424,7 +424,10 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
             for k, v in data.items():
                 if k in _META_COLS or k in cachees or not _pertinente(k):
                     continue
-                couches_servies.update(dsv2.flat_layers(k, v))
+                # `origine=True` : on relève les couches que la cellule PORTE, pour
+                # qu'une relique vide ne les masque pas — servies ou non, ce relevé
+                # ne sert rien lui-même (comportement d'avant oto#273, inchangé).
+                couches_servies.update(dsv2.flat_layers(k, v, origine=True))
 
         sentinelle = empties == dsl.SENTINEL
         sert_origine = dsver.sert_l_origine(versions)
@@ -442,20 +445,18 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                 continue
             # `served_value` descend dans une colonne-tableau : chaque attribut d'item
             # est une feuille, rendue comme telle (oto#22 §1).
-            servie = dsv2.served_value(v, sentinelle=sentinelle)
+            #
+            # `versions` (oto#273) se décide DANS `flat_layers`, le point unique qui
+            # fabrique ces noms, et pas ici après coup : le filtre qui vivait ici ne
+            # voyait que le premier niveau, et `item["email.origine"]` fuyait un cran
+            # plus bas, sous `versions_servies: ["current"]`.
+            servie = dsv2.served_value(v, origine=sert_origine, sentinelle=sentinelle)
             if (not projette or k in fields) and not (
                     k in couches_servies and dsv2.est_vide(servie)):
                 out[k] = servie
             # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée
             # (import de socle sur un champ pas encore renseigné).
-            plat = dsv2.flat_layers(k, v)
-            if not sert_origine:
-                # Retiré ICI, à la projection, et pas en amont : `flat_layers` est le
-                # point unique qui fabrique ces noms, et un filtre posé ailleurs
-                # devrait connaître leur forme — donc la redire, donc diverger.
-                prefixe = f"{k}.{dsv2.ORIGIN_LAYER}"
-                plat = {n: val for n, val in plat.items()
-                        if n != prefixe and not n.startswith(prefixe + ".")}
+            plat = dsv2.flat_layers(k, v, origine=sert_origine)
             if projette:
                 # Une couche ne survit que NOMMÉE elle-même — demander `email` ne
                 # fait pas apparaître `email.origine` (même règle que l'ancien

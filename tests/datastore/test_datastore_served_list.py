@@ -99,7 +99,8 @@ def test_unwrap_still_returns_the_raw_value():
     valide au motif d'un `email.origine` qu'on aurait fabriqué soi-même."""
     item = {"email": {"valeur": "a@b.c", "origine": "x"}}
     assert dsv2.unwrap({"contacts": [item]}) == {"contacts": [item]}
-    assert dsv2.served_value([item]) == [{"email": "a@b.c", "email.origine": "x"}]
+    assert dsv2.served_value([item], origine=True) == [{"email": "a@b.c", "email.origine": "x"}]
+    assert dsv2.served_value([item], origine=False) == [{"email": "a@b.c"}]
 
 
 def test_the_flattening_has_a_single_implementation():
@@ -107,6 +108,7 @@ def test_the_flattening_has_a_single_implementation():
     exposeraient deux formes de la même chose, et c'est le consommateur qui paierait
     la différence."""
     couches = {"valeur": "v", "origine": "o", "comment": "", "link": None}
-    assert dsv2.flat_layers("x", couches) == {"x.origine": "o"}
+    assert dsv2.flat_layers("x", couches, origine=True) == {"x.origine": "o"}
+    assert dsv2.flat_layers("x", couches, origine=False) == {}
     assert _lu({"x": couches})["x.origine"] == "o"
     assert _lu({"l": [{"x": couches}]})["l"][0]["x.origine"] == "o"

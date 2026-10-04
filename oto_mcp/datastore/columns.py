@@ -644,7 +644,11 @@ def _couches_imbriquees(valeur: Any, chemin: str, out: dict) -> None:
     `out[("contacts[0].nom", "comment")] = "registre"`. On passe l'adresse COMPLÈTE
     à `flat_layers` et on la recoupe : c'est elle qui décide ce qu'est une couche
     renseignée, et une seconde copie de ce jugement divergerait un jour — le module
-    en a déjà payé le prix ailleurs."""
+    en a déjà payé le prix ailleurs.
+
+    `origine=True` : on relève ce que la liste PORTE, origine comprise, que la lecture
+    l'ait servie ou non (oto#273) — une origine d'item qu'une relecture au défaut
+    n'a pas rendue tombe quand même au remplacement en bloc, et doit se voir."""
     if not isinstance(valeur, list):
         return
     for i, item in enumerate(valeur):
@@ -652,7 +656,7 @@ def _couches_imbriquees(valeur: Any, chemin: str, out: dict) -> None:
             continue
         for k, v in item.items():
             adresse = f"{chemin}[{i}].{k}"
-            for plat, val in dsv2.flat_layers(adresse, v).items():
+            for plat, val in dsv2.flat_layers(adresse, v, origine=True).items():
                 champ, _, couche = plat.rpartition(".")
                 out[(champ, couche)] = val
             _couches_imbriquees(dsv2.unwrap(v), adresse, out)

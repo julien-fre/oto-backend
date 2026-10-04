@@ -74,7 +74,8 @@ la forme dans laquelle on écrit ; une cellule sans couche reste le même scalai
 colonne-liste applique la règle dans ses items. Toute autre valeur est refusée en
 nommant le paramètre. En `nested`, `fields` nomme des colonnes (`adresse.comment`
 n'existe qu'en `flat`). `versions` s'applique aux deux formes : la couche `origine` n'y
-est servie que demandée (`versions=["current","origine"]`), à toute profondeur.
+est servie que demandée (`versions=["current","origine"]`), à toute profondeur — items
+de listes compris (`item["email.origine"]` à plat, `item["email"]["origine"]` imbriqué).
 **Le défaut basculera vers `nested`, avec préavis daté** :
 nomme `layers` dès maintenant si tu dépends d'une forme.
 
@@ -253,8 +254,9 @@ touchée.
 
 ⚠️ **Le nom NU porte toujours la version courante**, quelle que soit ta demande.
 `versions` décide seulement de ce qui s'AJOUTE à côté (`champ.origine` et ses
-sous-champs). Faire porter deux sens à `champ` selon un paramètre serait un piège, pas
-une commodité.
+sous-champs) — à toute profondeur : sans `origine`, l'item d'une colonne-liste ne porte
+pas non plus `contacts[0]["email.origine"]`. Faire porter deux sens à `champ` selon un
+paramètre serait un piège, pas une commodité.
 
 **La réponse déclare ce qu'elle a servi**, dans `versions_servies`. C'est ce qui rend
 discernables « je ne l'ai pas demandée » et « cette case n'en a pas » — sans quoi tu

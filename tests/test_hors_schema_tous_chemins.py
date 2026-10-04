@@ -267,8 +267,8 @@ def test_la_LECTURE_aplatit_ce_que_la_base_garde_imbrique():
     from oto_mcp.datastore import schema as dsv2
     stocke = {"valeur": "https://x.fr", "comment": "site — pied de page"}
 
-    assert dsv2.served_value(stocke) == "https://x.fr", "le nom nu rend la VALEUR"
-    assert dsv2.flat_layers("site_web", stocke) == {
+    assert dsv2.served_value(stocke, origine=False) == "https://x.fr", "le nom nu rend la VALEUR"
+    assert dsv2.flat_layers("site_web", stocke, origine=False) == {
         "site_web.comment": "site — pied de page"}, "la couche est servie À CÔTÉ"
 
 

@@ -321,12 +321,19 @@ def origine_vide(column: Any) -> bool:
     return bool(v) and _is_empty(v.get(VALUE_LAYER))
 
 
-def flat_layers(key: str, value: Any) -> dict:
+def flat_layers(key: str, value: Any, *, origine: bool) -> dict:
     """Les couches RENSEIGNÉES d'une colonne, aplaties en `clé.couche`.
 
     Point unique : le premier niveau d'une ligne et les attributs d'un item de liste
     l'appellent tous les deux. Deux implémentations exposeraient deux formes de la
-    même chose — et c'est le consommateur qui paierait la différence."""
+    même chose — et c'est le consommateur qui paierait la différence.
+
+    `origine` (oto#273) : la couche `origine` et ses sous-champs ne sont fabriqués que
+    DEMANDÉS (`versions=["current","origine"]`, `versions.sert_l_origine`). Le choix
+    vit ICI, au point qui fabrique les noms, et nulle part en aval : un filtre posé
+    après coup au premier niveau a laissé fuir `item["email.origine"]` un cran plus
+    bas, sous une réponse qui déclarait `versions_servies: ["current"]`. Obligatoire
+    et sans défaut, comme `layers.nested_value` : un lecteur neuf dit ce qu'il sert."""
     if not isinstance(value, dict) or not any(k in LAYER_KEYS for k in value):
         return {}
     plat = {f"{key}.{layer}": value[layer] for layer in LAYER_KEYS
@@ -343,13 +350,10 @@ def flat_layers(key: str, value: Any) -> dict:
     # Donc : `champ.origine` reste la valeur, scalaire ; ses sous-champs s'AJOUTENT à
     # côté (`champ.origine.comment`). Aucun consommateur ne bouge aujourd'hui.
     #
-    # ⚠️ **Ce n'est pas l'état final, et c'est délibéré.** Le contrat prévoit qu'à
-    # terme la lecture serve la version COURANTE seule, et que la version d'origine se
-    # DEMANDE (`versions=["origine"]`) — ce qui fait disparaître `champ.origine` du
-    # défaut. Faire les deux d'un coup obligerait les écrans à changer deux fois : une
-    # fois pour lire un objet, une fois pour ne plus le recevoir. On les fait changer
-    # une seule fois, à la bascule, avec préavis daté.
-    version = version_origine(value)
+    # Depuis la bascule du 02/10/2026, la lecture sert la version COURANTE seule et
+    # l'origine se DEMANDE : sans `origine`, ni `champ.origine` ni ses sous-champs ne
+    # sont fabriqués — au premier niveau comme dans un item de liste.
+    version = version_origine(value) if origine else None
     if version:
         val = version.get(VALUE_LAYER)
         if val not in (None, ""):
@@ -386,7 +390,7 @@ def layer_address(name: Any):
     return base, couche
 
 
-def served_value(value: Any, *, sentinelle: bool = False) -> Any:
+def served_value(value: Any, *, origine: bool, sentinelle: bool = False) -> Any:
     """Ce qu'un LECTEUR reçoit pour cette colonne (oto#22 §1-2).
 
     `unwrap` rend la valeur d'UNE colonne ; celle-ci descend d'un cran quand cette
@@ -406,23 +410,26 @@ def served_value(value: Any, *, sentinelle: bool = False) -> Any:
 
     `sentinelle` (`empties=sentinel`, oto#204) : une case au vide ASSUMÉ est servie
     `"@empty"` — à ce niveau comme dans les fiches d'une liste — au lieu du `""` qui la
-    confond avec un vide ordinaire. Sans lui, rien ne change."""
+    confond avec un vide ordinaire. Sans lui, rien ne change.
+
+    `origine` (oto#273) : descend avec la valeur jusqu'à `flat_layers`, à toute
+    profondeur — `item["email.origine"]` ne sort que demandée, comme `email.origine`."""
     if sentinelle and vide_assume(value):
         return VIDE_DELIBERE
     v = unwrap(value)
     if isinstance(v, list):
-        return [_served_item(item, sentinelle=sentinelle) for item in v]
+        return [_served_item(item, origine=origine, sentinelle=sentinelle) for item in v]
     return v
 
 
-def _served_item(item: Any, *, sentinelle: bool = False) -> Any:
+def _served_item(item: Any, *, origine: bool, sentinelle: bool = False) -> Any:
     """Un item de liste est une FICHE : chacun de ses attributs est une feuille."""
     if not isinstance(item, dict):
         return item
     out: dict = {}
     for k, v in item.items():
-        out[k] = served_value(v, sentinelle=sentinelle)
-        out.update(flat_layers(k, v))
+        out[k] = served_value(v, origine=origine, sentinelle=sentinelle)
+        out.update(flat_layers(k, v, origine=origine))
     return out
 
 

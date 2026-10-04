@@ -1537,7 +1537,8 @@ def register(mcp: FastMCP) -> None:
         Layers come back FLAT by default (`champ.origine` beside the bare name);
         `layers="nested"` returns the shape you write — guide `datastore-semantics`.
         The bare name ALWAYS carries the current version; `versions` only decides
-        what is added beside it. The reply states what it served in
+        what is added beside it — at any depth: without `origine`, a list item
+        carries no `item["email.origine"]` either. The reply states what it served in
         `versions_servies`, so "I did not ask for it" never looks like "this cell
         has none".
         The REST face `GET …/rows` pages by `offset` with a `total`, no cursor.
