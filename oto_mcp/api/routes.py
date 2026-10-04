@@ -149,6 +149,7 @@ _READ_OPS = frozenset({
     "list", "get", "search", "revisions", "inventory", "list_templates", "preview",
     "state", "activity", "runs", "lint", "handoff", "backlinks", "shared_with_me",
     "deliveries", "versions", "read", "audience", "journal", "optouts",
+    "shares",   # avec qui un agent est partagé (`runner.triggers`)
 })
 
 
@@ -254,7 +255,8 @@ _LECTURES_VUE_BORNEE: dict[tuple[str, str], frozenset | None] = {
     # Runner et fils de runs de O.
     ("POST", "/api/me/runner/fleets"): frozenset({"list", "get", "state"}),
     ("POST", "/api/me/runner/jobs"): frozenset({"list", "get"}),
-    ("POST", "/api/me/runner/triggers"): frozenset({"list", "get", "deliveries"}),
+    ("POST", "/api/me/runner/triggers"): frozenset({"list", "get", "deliveries",
+                                                    "shares"}),
     ("POST", "/api/me/runs/thread"): frozenset({"read"}),
     # Tableaux.
     ("GET", "/api/datastores"): None,
