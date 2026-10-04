@@ -1114,6 +1114,13 @@ def main():
         from . import subdomain_org
         app.add_middleware(subdomain_org.SubdomainOrgMiddleware)
 
+        # Routes LOURDES (#1141, infra#9) : débit par jeton et concurrence par route,
+        # pour les seules routes déclarées (`api.routes_lourdes.ROUTES_LOURDES`). Juste
+        # sous le journal REST : un refus part avant ViewAs, Subdomain et
+        # l'authentification, et le journal le voit quand même.
+        from .api.routes_lourdes import GardeRoutesLourdes
+        app.add_middleware(GardeRoutesLourdes)
+
         # Monitoring REST (ADR 0017, kind='rest') : journalise chaque /api/* dans le
         # flux unifié. Ajouté EN DERNIER → outermost : chronomètre toute la requête
         # (y compris ViewAs/Subdomain). Pass-through total hors /api/* (n'altère pas /mcp).

@@ -1002,6 +1002,27 @@ déploiement : **`docs/version-servie.md`**.
 > portée ne peut la borner : **ce qu'un jeton porté atteint doit se lire dans le chemin.**
 > C'est la règle à garder en tête avant d'ouvrir une nouvelle surface aux intégrations.
 
+## Routes lourdes — débit par jeton, concurrence par route (#1141, infra#9)
+
+Le 04/10/2026, un seul client a appelé une route d'agrégat plusieurs centaines de fois
+par minute ; le pool de connexions s'est vidé pour tout le serveur, et des routes qui
+n'avaient rien demandé ont répondu 500. `api/routes_lourdes.py` borne les routes
+**déclarées** dans `ROUTES_LOURDES` — le seul endroit où une route devient lourde, avec
+sa raison écrite. Deux bornes, sans attente, avant l'authentification et le handler :
+
+1. **débit par jeton** (`par_minute`, fenêtre glissante de 60 s, clé = empreinte du
+   jeton, jamais le jeton) → `429 rate_limited`, `Retry-After` = le temps que le plus
+   ancien appel sorte de la fenêtre ;
+2. **concurrence par route** (`concurrence`, par processus) → `503 route_busy`,
+   `Retry-After: 2` ; un appel refusé ici ne consomme pas de débit.
+
+Corps `{error, detail, details: {retryable, retry_after_seconds, …}}` et en-têtes CORS
+de l'origine. Middleware ASGI `GardeRoutesLourdes`, monté juste sous `RestCallLogger` : le
+refus est journalisé, et cette ligne de journal est tout ce qu'il coûte à la base. ⚠️ Compteurs **par processus** : une protection du pool, pas un
+quota. ⚠️ La liste naît **vide** : `POST /api/me/runner/jobs` a été la victime du pool vide,
+pas sa cause, et ses appelants sondent à cadence régulière. Preuves :
+`tests/api/test_routes_lourdes_1141.py`.
+
 ## CORS — les origines se DÉCLARENT, il n'y a plus de liste dans le code
 
 ⚠️ **CORS : aucune liste dans le code** (#968, décision du 28/09/2026). `_allowed_origins()`

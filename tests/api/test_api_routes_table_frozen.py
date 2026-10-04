@@ -91,6 +91,7 @@ _ASGI = [
     "TenantChallengeMiddleware",      # 401 host-aware (ADR 0052 L3)
     "api_routes.ViewAsMiddleware",    # org/équipe/user de consultation (ADR 0023)
     "subdomain_org.SubdomainOrgMiddleware",  # org épinglée par le Host
+    "GardeRoutesLourdes",             # débit par jeton, concurrence par route (#1141)
     "api_routes.RestCallLogger",      # journal kind='rest' (ADR 0017) — le plus EXTERNE
 ]
 

@@ -26,6 +26,7 @@ oto_mcp/
 │                     #   `_rest_adapter`) reste à la racine du package.
 ├── api/              # la face REST `/api/*` : `routes` (la TABLE — son ordre est un
 │                     #   contrat), `base` (auth, CORS, `_json`, préflight, `bind`),
+│                     #   `routes_lourdes` (débit et concurrence des routes déclarées),
 │                     #   puis un module de handlers par domaine. ⚠️ Une route neuve
 │                     #   naît CAPACITÉ, pas ici : la dette REST vaut ZÉRO.
 ├── auth/             # QUI parle au serveur, et comment un credential s'ACQUIERT.
