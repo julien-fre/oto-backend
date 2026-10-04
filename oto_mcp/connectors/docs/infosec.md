@@ -1,11 +1,23 @@
-## usage — empreinte numérique d'un domaine
+## usage — vérifier un domaine
 
-recon **passif** / osint d'un domaine (rien d'intrusif, sources publiques) — open data, sans clé.
-un seul outil, `infosec_domain(domain, aspect=…)` — l'aspect choisit la lecture :
+lecture **passive** d'un domaine (rien d'intrusif, sources publiques) — open data, sans clé.
+un seul outil, `infosec_domain(op=…, domain=…)` — l'op choisit la lecture :
+- `deliverability` — bilan de délivrabilité e-mail de SON domaine : note /100, recommandations classées
+  (spf/dmarc/dkim + listes noires). c'est le point d'entrée de « nos e-mails tombent-ils en spam ? »
+- `blocklist` — le domaine et ses ip d'envoi (`ip`, sinon les `ip4:` du spf) sur les listes noires gratuites
+  dont les conditions permettent un usage commercial automatisé (spamcop, psbl, nordspam, s5h) ;
+  spamhaus, surbl, uribl, barracuda, mailspike et uceprotect → rendus `not_checked`, jamais « propres »
+- `email_security` — spf (nombre de requêtes vs limite de 10), dmarc complet, dkim (+ `dkim_selector`),
+  mta-sts, tls-rpt, bimi, mx
 - `whois` / `dns` — immatriculation rdap et enregistrements dns (avec indices de stack mail/saas)
-- `email_security` — posture spf/dmarc/dkim, signal de maturité it d'un prospect
 - `subdomains` — sous-domaines connus via les logs certificate transparency (crt.sh)
 - `tls` / `headers` — certificat tls et en-têtes http de sécurité
+
+⚠️ ce qui n'a pas pu être lu (erreur dns, échéance de 25 s) est nommé dans `coverage` et n'est pas noté :
+une erreur sur `_dmarc` n'est pas « pas de dmarc ». le parcours spf s'arrête au-delà de 10 requêtes (rfc 7208).
+
+⚠️ un domaine qui envoie via google, microsoft ou un outil d'emailing n'a pas d'ip à lui : les listes
+d'ip n'en disent rien, ce sont les listes de domaines qui comptent (la réponse le dit dans `notes`).
 
 ## note — ce que ça sert à qualifier, au-delà de la sécurité
 
