@@ -111,7 +111,6 @@ greenhouse_job
 greenhouse_users
 hubspot_list
 hubspot_object
-infosec_domain
 instagram_chat
 instagram_meta_get_recent_media
 juris_decision
@@ -148,6 +147,7 @@ origami_sequences
 origami_tables
 origami_workspaces
 osm_pois
+oto_domain_check
 pennylane_transactions
 pennylaneged_companies
 phantombuster_list_containers

@@ -287,7 +287,11 @@ def public_namespace(namespace: str, prefix: str) -> str:
     répondre « namespace: oto » à un compte dont tous les outils s'appellent
     `acme_…`, soit le nom interne réintroduit par la porte de derrière.
     """
-    return prefix if (prefix and namespace == PRIMARY_PREFIX) else namespace
+    if prefix and namespace == PRIMARY_PREFIX:
+        return prefix
+    # Un namespace de connecteur sous le préfixe de la plateforme (`oto_domain`) se
+    # traduit comme les noms de ses outils — sinon `oto_tool_schema` le rendrait brut.
+    return public(namespace, prefix)
 
 
 def rewrite_prose(text: str, prefix: str) -> str:

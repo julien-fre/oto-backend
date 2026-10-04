@@ -45,6 +45,10 @@ _KNOWN: dict[str, bool] = {
     # (`feedback`, lui, est DÉJÀ une capacité — `capabilities/usage.py`.)
     "run_start": True,
     "run_finish": True,
+    # PAS un verbe de plateforme : l'outil du connecteur `infosec` (namespace
+    # `oto_domain` déclaré par lui, gate d'activation compris), nommé `oto_` pour qu'un
+    # tenant à préfixe le serve sous sa marque. Lecture DNS/RDAP publique, sans face REST.
+    "oto_domain_check": True,
     # DETTE — le datastore expose data_* en MCP et /api/datastore/* en REST (deux
     # implémentations du même métier, antérieures à la couche capacité).
     "data_rows": False,

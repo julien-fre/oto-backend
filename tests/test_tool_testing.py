@@ -12,7 +12,7 @@ def test_testable_covers_fod_readonly():
     for name in ("fr_get", "fr_search", "fr_siret", "fr_stock_search",
                  "foncier_geocode", "foncier_site", "urba_zonage",
                  "sante_finess", "frenchtech_membres", "culture_spectacle_search",
-                 "infosec_domain"):
+                 "oto_domain_check"):
         assert is_testable(name), name
 
 

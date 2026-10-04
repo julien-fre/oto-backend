@@ -563,3 +563,19 @@ async def test_un_handshake_qui_echoue_sert_lannonce_canonique(
     rendu = await ToolAliasMiddleware().on_initialize(
         ctx, lambda _c: _renvoie(_handshake()))
     assert rendu.serverInfo.name == "oto"
+
+
+@pytest.mark.asyncio
+async def test_loutil_de_verification_de_domaine_porte_le_nom_du_produit(
+        tenant_avec_prefixe, monkeypatch):
+    """`oto_domain_check` est un outil de CONNECTEUR (`infosec`, namespace `oto_domain`)
+    nommé sous le préfixe plateforme pour être servi sous la marque du tenant."""
+    servis = {t.name: t for t in await _liste_servie(monkeypatch, _SUB_TENANT)}
+    assert "acme_domain_check" in servis and "oto_domain_check" not in servis
+    # ce que le serveur reçoit reste le nom canonique
+    assert await _nom_recu_par_le_serveur(
+        monkeypatch, _SUB_TENANT, "acme_domain_check") == "oto_domain_check"
+    assert tool_alias.public_namespace("oto_domain", "acme") == "acme_domain"
+    # l'alias déprécié reste servi et pointe vers le nom QUE CE COMPTE voit
+    avis = servis["infosec_domain"].description or ""
+    assert "acme_domain_check" in avis and "oto_domain_check" not in avis, avis[:160]

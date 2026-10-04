@@ -107,6 +107,11 @@ TOOLS: dict = {
     # qu'une procédure d'org le référence (mesuré, pas supposé).
     "oto_salesforce_connect": "salesforce_connect",
     "oto_zoho_connect": "zoho_connect",
+    # L'outil du connecteur `infosec` a gagné la délivrabilité e-mail (listes noires,
+    # bilan noté) et un nom de vérification de domaine servi sous la marque du tenant
+    # (`oto_domain_check`, namespace `oto_domain` déclaré par `infosec`). L'ancien nom
+    # reste appelable : des procédures d'org le citent.
+    "infosec_domain": "oto_domain_check",
 }
 
 

@@ -37,7 +37,7 @@ TESTABLES_ASYNC_VERIFIES = {
     # `infosec_domain` : tout en client asynchrone (httpx.AsyncClient) ; son seul
     # appel bloquant est le handshake TLS, déjà enveloppé dans `asyncio.to_thread`.
     # Vérifié le 2026-09-04.
-    "infosec_domain",
+    "oto_domain_check",
 }
 
 
@@ -75,7 +75,7 @@ def test_aucun_outil_testable_asynchrone_non_verifie():
 def test_le_temoin_MORD_sur_un_entrant_inconnu():
     """Un témoin qui ne tombe jamais ne surveille rien. On lui donne un entrant
     que personne n'a vérifié."""
-    vus = {"infosec_domain", "_faux_entrant_async"}
+    vus = {"oto_domain_check", "_faux_entrant_async"}
     nouveaux = vus - TESTABLES_ASYNC_VERIFIES
     assert nouveaux == {"_faux_entrant_async"}
 
