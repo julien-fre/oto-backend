@@ -17,7 +17,14 @@ Le middleware de contexte (`CallContextMiddleware`, appel direct) et `oto_call`
 ne le laisse pas passer. Sans sub (stdio local), rien n'est gardé : la surface
 multi-utilisateur seule est visée.
 Les outils plateforme (`oto_*`, `data_*`, `run_*`…) n'ont pas de connecteur au
-registre : jamais gardés, sans lecture de base.
+registre : l'activation ne les garde jamais.
+
+**L'org SUSPENDUE** (`org_suspension`) passe par ici aussi, et AVANT l'activation :
+c'est le même seam (l'org sous laquelle l'appel résout, `_org` et run compris), pour
+les deux chemins. Refus nommé `org_suspended`. Elle garde AUSSI les outils de
+plateforme écrits à la main (`org_suspension.outil_garde`) : sans ça, `data_write` ou
+`run_start` continuaient dans une org suspendue, directement comme par `oto_call`.
+Les capacités, elles, sont gardées dans leur adaptateur.
 """
 from __future__ import annotations
 
@@ -26,12 +33,29 @@ from typing import Optional
 from mcp.types import INVALID_PARAMS, ErrorData
 from starlette.concurrency import run_in_threadpool
 
-from .. import access, call_axes, providers
+from .. import access, call_axes, org_suspension, providers
 from ..mcp_errors import McpError
 from ..tool_visibility import namespace_of
 from . import activation
 
 CODE = "connector_disabled"
+
+
+def _refus_suspendue(org: Optional[int], **cible) -> Optional[ErrorData]:
+    """L'erreur à rendre si l'org sous laquelle l'appel résout est suspendue."""
+    if (texte := org_suspension.refus(org)):
+        return ErrorData(code=INVALID_PARAMS, message=f"Refus `{org_suspension.CODE}` : {texte}",
+                         data={"code": org_suspension.CODE, "retryable": False,
+                               "org_id": org, **cible})
+    return None
+
+
+def _refus_outil_plateforme(tool_name: str) -> Optional[ErrorData]:
+    """Sync (threadpool) : la suspension seule, pour un outil sans connecteur."""
+    sub = call_axes.current_user_sub_from_token()
+    if not sub:
+        return None
+    return _refus_suspendue(access.current_org(sub), tool=tool_name)
 
 
 def _refus(connector: str) -> Optional[ErrorData]:
@@ -42,6 +66,8 @@ def _refus(connector: str) -> Optional[ErrorData]:
     if not sub:
         return None
     org = access.current_org(sub)
+    if (suspendue := _refus_suspendue(org, connector=connector)) is not None:
+        return suspendue
     group = access.current_group(sub)
     cran = activation.cran_qui_coupe(connector, org, group)
     if cran is None:
@@ -77,6 +103,10 @@ async def require_active(tool_name: str) -> None:
     coupé pour l'appel courant. À appeler APRÈS la pose du contexte d'appel."""
     con = providers.connector_for_namespace(namespace_of(tool_name))
     if con is None:
+        if org_suspension.outil_garde(tool_name):
+            refus = await run_in_threadpool(_refus_outil_plateforme, tool_name)
+            if refus is not None:
+                raise McpError(refus)
         return
     refus = await run_in_threadpool(_refus, con.name)
     if refus is not None:

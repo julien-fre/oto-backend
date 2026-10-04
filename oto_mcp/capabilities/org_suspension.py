@@ -1,0 +1,119 @@
+"""`admin.org_suspension` — suspendre une ORG, sans rien détruire (`org_suspension`).
+
+Le pendant, au palier de l'org, de `admin.account` : l'org ne peut plus agir —
+capacités, outils, travaux de fond — et rien de ce qui lui appartient n'est touché.
+
+**Qui suspend et qui lève** (décision du 04/10/2026) : le geste est de FACTURATION
+(un essai fini sans abonnement), donc il appartient au commerce, qui écrit des droits
+(ADR 0070 §7) — par l'identité de service `commerce` (`service.org.suspension`, REST
+seule, sous `/api/service/`), la même qui pose déjà les droits déclarés. Un super
+admin garde la main (`admin.org_suspension`). Les deux suspendent ET lèvent, par le
+même handler. Personne d'autre : ni un admin de l'org (elle se rouvrirait seule), ni
+un admin de tenant, ni un compte de service d'usage — et aucun compte n'a besoin
+d'être super admin pour que le commerce coupe une org.
+"""
+from __future__ import annotations
+
+import logging
+from typing import Literal, Optional
+
+from pydantic import BaseModel
+
+from .. import org_store, org_suspension
+from ._authz import COMMERCE_SERVICE, SUPER_ADMIN
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
+from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
+
+_MOTIF_MAX = 500
+
+
+class OrgSuspensionInput(BaseModel):
+    op: Literal["suspend", "resume"]
+    org_id: int
+    # Exigé pour `suspend` — même règle que la pause de compte.
+    reason: Optional[str] = None
+
+
+class OrgSuspensionOut(BaseModel):
+    org_id: int
+    suspended: bool
+    changed: bool
+    suspended_at: Optional[str] = None
+    suspended_by: Optional[str] = None
+    suspended_reason: Optional[str] = None
+
+
+def _vue(org_id: int, etat: Optional[dict], *, changed: bool) -> dict:
+    return {
+        "org_id": org_id,
+        "suspended": bool(etat),
+        "changed": changed,
+        "suspended_at": (etat or {}).get("suspended_at"),
+        "suspended_by": (etat or {}).get("suspended_by"),
+        "suspended_reason": (etat or {}).get("suspended_reason"),
+    }
+
+
+def _org_suspension(ctx: ResolvedCtx, inp: OrgSuspensionInput) -> dict:
+    if not org_store.get_org(inp.org_id):
+        raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
+    if inp.op == "resume":
+        change = org_store.resume_org(inp.org_id)
+        org_suspension.invalider()
+        logger.warning("org réactivée org=%s par=%s (change=%s)", inp.org_id, ctx.sub, change)
+        return _vue(inp.org_id, None, changed=change)
+    motif = (inp.reason or "").strip()
+    if not motif:
+        raise AuthzDenied(400, "missing_reason",
+                          "`reason` requis : une suspension sans motif écrit devient une "
+                          "suspension que personne ne saura expliquer ni lever.")
+    if len(motif) > _MOTIF_MAX:
+        raise AuthzDenied(400, "reason_too_long",
+                          f"`reason` fait {len(motif)} caractères pour {_MOTIF_MAX} au plus.")
+    deja = org_store.get_org_suspension(inp.org_id)
+    etat = org_store.suspend_org(inp.org_id, by=ctx.sub, reason=motif)
+    org_suspension.invalider()
+    logger.warning("org suspendue org=%s par=%s motif=%r", inp.org_id, ctx.sub, motif)
+    return _vue(inp.org_id, etat, changed=deja is None)
+
+
+_ERREURS = (
+    DeclaredError(404, "unknown_org", "aucune org ne porte cet id"),
+    DeclaredError(400, "missing_reason", "op=suspend sans `reason`"),
+    DeclaredError(400, "reason_too_long", f"`reason` dépasse {_MOTIF_MAX} caractères"),
+)
+
+CAPABILITIES += [
+    Capability(
+        key="admin.org_suspension", handler=_org_suspension, Input=OrgSuspensionInput,
+        Output=OrgSuspensionOut, authz=SUPER_ADMIN,
+        errors=_ERREURS,
+        description=(
+            "[super admin] Suspend an org without deleting anything. op=suspend "
+            "(`reason` required) → from the next call on, the org can no longer act: "
+            "its capabilities and connector tools are refused with `org_suspended` "
+            "(listing/reading orgs and switching org stay open), its agents' jobs are "
+            "not claimed, its webhooks are refused and its schedules enqueue nothing. "
+            "Members keep their other orgs. op=resume → lifts it. Idempotent both ways."),
+        # POST seul, comme `admin.account` : les paramètres de requête fusionnent dans
+        # l'`Input`, donc un GET pourrait muter.
+        rest=RestBinding("POST", "/api/admin/orgs/{id}/suspension", {"id": "org_id"}),
+    ),
+    # Le même geste pour le COMMERCE : c'est lui qui facture, donc lui qui suspend à
+    # la fin d'un essai et lève à l'abonnement. REST seule, comme toute la face de
+    # service (`service_commerce`) — un tuyau de service, pas un outil d'agent.
+    Capability(
+        key="service.org.suspension", handler=_org_suspension, Input=OrgSuspensionInput,
+        Output=OrgSuspensionOut, authz=COMMERCE_SERVICE, mcp=None,
+        errors=_ERREURS,
+        description=(
+            "[service commerce] Suspend or resume an org (trial ended without a plan, "
+            "plan taken): op=suspend (`reason` required) stops the org from acting — "
+            "capabilities, tools, its agents' jobs, webhooks and schedules — without "
+            "deleting anything; op=resume lifts it. Idempotent both ways. Same effect "
+            "as the super admin's `admin.org_suspension`."),
+        rest=RestBinding("POST", "/api/service/orgs/{id}/suspension", {"id": "org_id"}),
+    ),
+]

@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from croniter import croniter
 
-from . import db, runner_models
+from . import db, org_suspension, runner_models
 from .capabilities import _abonnement, _instruction, _limites_du_run
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,16 @@ def next_due(expr: str, tz: str,
     return croniter(expr, base).get_next(datetime.datetime)
 
 
+def _occurrence_sautee(t: dict) -> None:
+    """Trace d'une échéance consommée sans rien enfiler parce que l'org est
+    suspendue : un journal, et une livraison `refused_suspended` (sans créneau)
+    visible sur la page de l'agent, comme pour un webhook refusé."""
+    log.warning("déclencheur %s : org %s suspendue, échéance %s sautée",
+                t["id"], t["org_id"], t.get("next_due"))
+    with db._connect() as conn:
+        db.enregistrer(conn, t["id"], t["org_id"], db.REFUSE_SUSPENDED, source="schedule")
+
+
 def _tick() -> int:
     """UN tour d'horloge. Rend le nombre de jobs enfilés (télémétrie du log)."""
     enfiles = 0
@@ -76,6 +86,18 @@ def _tick() -> int:
         # a déjà consommé cette échéance, on passe sans enfiler.
         if not db.consume_due(t["id"], t["next_due"], prochaine):
             continue
+        # Org SUSPENDUE : l'échéance est consommée (elle ne s'accumule pas), rien
+        # n'est enfilé. Un travail enfilé ne serait de toute façon jamais réservé
+        # (`claim_next_job`), et sa péremption au tour suivant se raconterait
+        # « aucun agent ne dessert cette organisation » — faux. L'occurrence sautée
+        # laisse la MÊME trace qu'un webhook refusé (`refused_suspended`, sur la page
+        # de l'agent) : sans elle, un agent planifié se tairait sans dire pourquoi.
+        try:
+            if org_suspension.etat(t["org_id"]):
+                _occurrence_sautee(t)
+                continue
+        except Exception as e:  # noqa: BLE001 — la réservation garde de toute façon
+            log.warning("déclencheur %s : état de suspension illisible (%s)", t["id"], e)
         payload = {
             "procedure": t["procedure"],
             "project_id": t["project_id"],
