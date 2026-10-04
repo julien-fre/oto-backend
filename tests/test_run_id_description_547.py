@@ -210,9 +210,13 @@ def test_pas_d_indice_quand_l_appel_porte_deja_un_run(table, monkeypatch):
 
 def test_les_deux_traductions_du_refus_passent_par_le_meme_seam():
     """Un indice posé sur UNE surface et pas l'autre se remarque en production, pas en
-    revue : les deux `except RowLocked` doivent servir le même texte."""
+    revue : chaque site qui traite un `RowLocked` doit servir le même texte. Un site, c'est
+    un `except RowLocked` ou un tri `isinstance(e, RowLocked)` (la suppression par lot
+    trie ses refus ligne à ligne) ; compter seulement les `except` laissait le second
+    hors du compte, et la garde rougissait sur un code juste."""
     import inspect
 
     from oto_mcp.tools import datastore as surface
     src = inspect.getsource(surface)
-    assert src.count("except RowLocked") == src.count("_row_locked_message(e)") >= 2
+    sites = src.count("except RowLocked") + src.count("isinstance(e, RowLocked)")
+    assert sites == src.count("_row_locked_message(e)") >= 2
