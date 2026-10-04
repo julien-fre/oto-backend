@@ -57,11 +57,13 @@ ni suspendue, ni désinscrite ;
 
 ## Le réglage
 
-`OTO_ACTIVATION`, un objet JSON par slug de tenant :
+`OTO_ACTIVATION`, un objet JSON par slug de tenant. L'expéditeur n'y est pas : c'est
+celui de la marque du tenant (`tenants.brand.expediteur`, « Nom <adresse> » sur un domaine
+vérifié chez le relais utilisé) ; un `sender` ici lève, une marque sans expéditeur
+n'envoie rien.
 
 | clé | requis | rôle |
 |---|---|---|
-| `sender` | oui | « Nom <adresse> » — domaine vérifié chez le relais utilisé |
 | `reply_to` | oui | la boîte qui reçoit les réponses |
 | `cc` | non | adresses qui reçoivent une COPIE de chaque envoi, chacune dans un message à part, sans lien de désinscription |
 | `app_url` | oui | la page d'accueil du tenant (bouton, autres agents) |
