@@ -1115,3 +1115,30 @@ retiré. Pour s'en débarrasser un jour : retirer l'intégration Starlette et ne
 `SentryAsgiMiddleware` (perte : capture des `HTTPException` 5xx gérées, infos de requête).
 Le rendu JSON de `api/base._json` reste dans la boucle : le sortir au thread ne rend pas la
 main à la boucle (`json.dumps` en C garde le GIL ; ~10 ms par Mo mesurés).
+
+
+## Le pool rend ce qu'il n'utilise plus ; le hors-pool a un plafond (#1141, 04/10/2026)
+
+La base managée partagée a basculé six fois dans la matinée du 04/10 faute de mémoire :
+chaque connexion PostgreSQL, même inactive, en tient. Deux bornes manquaient côté
+processus.
+
+- **`max_idle`** (`OTO_MCP_DB_POOL_MAX_IDLE`, 60 s) : une connexion inactive au-delà de
+  `min_size` est rendue. Le défaut de psycopg_pool (600 s) gardait ouvert ce qu'un pic
+  avait ouvert, tant qu'une tâche de fond la réveillait. `0` rend la borne de psycopg_pool.
+- **Plafond des connexions hors pool** (`OTO_MCP_DB_HORS_POOL_MAX`, 2 par processus) :
+  `_connect_autocommit` prend une place avant d'ouvrir. Le chemin servi (`bornee=True`)
+  attend au plus `OTO_MCP_DB_POOL_TIMEOUT` puis lève `HorsPoolSature`, que le datastore
+  traduit en ses refus d'index déjà nommés (`KeyIndexUnavailable`,
+  `KeyIndexStillEnforced`) — le schéma est écrit, la maintenance reprend le geste. Le
+  travail de fond (`bornee=False`) attend son tour.
+
+⚠️ **Une connexion tenue pendant un appel réseau** : le seul cas du code est la
+réservation d'échéance (`db/billing_reservation.py`, verrou consultatif de session), et
+elle n'a plus d'appelant servi (le prélèvement `billing_runner._charge_one` est sans
+appelant, la boucle refuse chaque échéance). Elle passe désormais par le plafond hors
+pool ; sa réécriture n'a pas d'objet tant que ce chemin reste mort.
+
+La protection côté REST d'une route qui tient le pool trop souvent est la garde des
+routes lourdes (`docs/rest-api.md` §Routes lourdes). Preuves :
+`tests/db/test_pool_hors_pool_1141.py`.

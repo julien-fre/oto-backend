@@ -32,7 +32,7 @@ from .paths import (  # noqa: F401
     split_layer,
     split_list_path,
 )
-from ._conn import _connect, _connect_autocommit
+from ._conn import HorsPoolSature, _connect, _connect_autocommit
 from .estampille import ecriture_de_lignes
 # Construction des requêtes : extraite dans `query` (#325), ré-exportée ici pour que
 # la surface plate `db.<fn>` et tous les appelants restent inchangés.
@@ -539,65 +539,73 @@ def datastore_ensure_key_index(ns_id: int, key: str, *, bornee: bool = True) -> 
     # longtemps qu'elle dure — d'où la borne posée sur la connexion, et le rattrapage
     # ci-dessous quand elle coupe.
     tmp = _sql.Identifier(name + "_v2")
-    with _connect_autocommit(bornee=bornee) as conn:
-        try:
-            conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
-            conn.execute(_sql.SQL(
-                "CREATE UNIQUE INDEX CONCURRENTLY {t} ON datastore_rows (({e})) "
-                "WHERE ns_id = {ns} AND {e} IS NOT NULL"
-            ).format(t=tmp, e=expr, ns=_sql.Literal(int(ns_id))))
-            conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(
-                n=_sql.Identifier(name)))
-            conn.execute(_sql.SQL("ALTER INDEX {t} RENAME TO {n}").format(
-                t=tmp, n=_sql.Identifier(name)))
-        except Exception as e:
-            # ⚠️ **On rattrape TOUTE interruption, pas une liste de causes.** Un
-            # `CREATE INDEX CONCURRENTLY` coupé laisse son index INVALIDE derrière lui
-            # — et un unique invalide peut continuer d'imposer sa contrainte aux
-            # écritures suivantes. On le retire tout de suite : le laisser ferait
-            # refuser des écritures au nom d'un index que personne ne sait nommer.
-            #
-            # ⚠️ **Ce bloc ne listait que deux causes, et il en manquait une vivante.**
-            # Constaté en production le 07/09/2026 à 23:40 UTC : un `DeadlockDetected`
-            # sur cette route. Il n'est PAS une sous-classe de `LockNotAvailable` ni de
-            # `QueryCanceled` — ce sont trois sœurs sous `OperationalError` — donc il
-            # traversait : l'appelant recevait une erreur interne, **et surtout le
-            # nettoyage ne tournait pas**. L'index invalide restait.
-            #
-            # La leçon est dans la FORME, pas dans la cause manquante : l'invariant
-            # est « toute interruption laisse un index à retirer », et une liste
-            # d'exceptions ne peut pas exprimer un invariant — elle ne peut
-            # qu'énumérer ce qu'on a rencontré jusqu'ici. Le nettoyage est donc
-            # inconditionnel ; seul le MESSAGE distingue les causes.
-            #
-            # Best-effort ET COURT : ce DROP réclame un verrou exclusif, donc il se
-            # heurte au même mur que ce qu'on vient de subir — le tenter au budget
-            # plein doublerait le temps d'échec pour rien.
+    try:
+        with _connect_autocommit(bornee=bornee) as conn:
             try:
-                conn.execute("SET lock_timeout = '250ms'")
                 conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
-            # noqa: SILENT — nettoyage d'appoint ; la 1re ligne du prochain appel refait le geste
-            except Exception:
-                logger.warning("ds_bkey ns=%s : index temporaire non nettoyé",
-                               ns_id, exc_info=True)
+                conn.execute(_sql.SQL(
+                    "CREATE UNIQUE INDEX CONCURRENTLY {t} ON datastore_rows (({e})) "
+                    "WHERE ns_id = {ns} AND {e} IS NOT NULL"
+                ).format(t=tmp, e=expr, ns=_sql.Literal(int(ns_id))))
+                conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(
+                    n=_sql.Identifier(name)))
+                conn.execute(_sql.SQL("ALTER INDEX {t} RENAME TO {n}").format(
+                    t=tmp, n=_sql.Identifier(name)))
+            except Exception as e:
+                # ⚠️ **On rattrape TOUTE interruption, pas une liste de causes.** Un
+                # `CREATE INDEX CONCURRENTLY` coupé laisse son index INVALIDE derrière lui
+                # — et un unique invalide peut continuer d'imposer sa contrainte aux
+                # écritures suivantes. On le retire tout de suite : le laisser ferait
+                # refuser des écritures au nom d'un index que personne ne sait nommer.
+                #
+                # ⚠️ **Ce bloc ne listait que deux causes, et il en manquait une vivante.**
+                # Constaté en production le 07/09/2026 à 23:40 UTC : un `DeadlockDetected`
+                # sur cette route. Il n'est PAS une sous-classe de `LockNotAvailable` ni de
+                # `QueryCanceled` — ce sont trois sœurs sous `OperationalError` — donc il
+                # traversait : l'appelant recevait une erreur interne, **et surtout le
+                # nettoyage ne tournait pas**. L'index invalide restait.
+                #
+                # La leçon est dans la FORME, pas dans la cause manquante : l'invariant
+                # est « toute interruption laisse un index à retirer », et une liste
+                # d'exceptions ne peut pas exprimer un invariant — elle ne peut
+                # qu'énumérer ce qu'on a rencontré jusqu'ici. Le nettoyage est donc
+                # inconditionnel ; seul le MESSAGE distingue les causes.
+                #
+                # Best-effort ET COURT : ce DROP réclame un verrou exclusif, donc il se
+                # heurte au même mur que ce qu'on vient de subir — le tenter au budget
+                # plein doublerait le temps d'échec pour rien.
+                try:
+                    conn.execute("SET lock_timeout = '250ms'")
+                    conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
+                # noqa: SILENT — nettoyage d'appoint ; la 1re ligne du prochain appel refait le geste
+                except Exception:
+                    logger.warning("ds_bkey ns=%s : index temporaire non nettoyé",
+                                   ns_id, exc_info=True)
 
-            if not isinstance(e, _POSE_INTERROMPUE):
-                # Pas une contention : une vraie panne. Le nettoyage a eu lieu, et
-                # l'erreur remonte telle quelle — la traduire en « réessaie plus tard »
-                # ferait attendre un tir suivant qui échouera pareil.
-                raise
+                if not isinstance(e, _POSE_INTERROMPUE):
+                    # Pas une contention : une vraie panne. Le nettoyage a eu lieu, et
+                    # l'erreur remonte telle quelle — la traduire en « réessaie plus tard »
+                    # ferait attendre un tir suivant qui échouera pareil.
+                    raise
 
-            # La cause tient en un mot, et il change ce que l'appelant doit en penser :
-            # une transaction qui retenait le geste se résorbe seule, un interblocage
-            # dit que deux poses se sont croisées.
-            pourquoi = ("deux poses de schéma se sont croisées"
-                        if isinstance(e, psycopg.errors.DeadlockDetected)
-                        else "une transaction ouverte le retenait")
-            raise KeyIndexUnavailable(
-                f"index d'unicité de `{key}` : la base ne l'a pas laissé se poser dans "
-                f"sa borne — {pourquoi}. Le schéma EST écrit et "
-                "la clé reste rapprochée à l'écriture ; c'est la garantie anti-course "
-                "qui manque, et la maintenance la repose au tir suivant.") from e
+                # La cause tient en un mot, et il change ce que l'appelant doit en penser :
+                # une transaction qui retenait le geste se résorbe seule, un interblocage
+                # dit que deux poses se sont croisées.
+                pourquoi = ("deux poses de schéma se sont croisées"
+                            if isinstance(e, psycopg.errors.DeadlockDetected)
+                            else "une transaction ouverte le retenait")
+                raise KeyIndexUnavailable(
+                    f"index d'unicité de `{key}` : la base ne l'a pas laissé se poser dans "
+                    f"sa borne — {pourquoi}. Le schéma EST écrit et "
+                    "la clé reste rapprochée à l'écriture ; c'est la garantie anti-course "
+                    "qui manque, et la maintenance la repose au tir suivant.") from e
+    except HorsPoolSature as e:
+        # Plus de place hors pool (#1141) : même issue qu'une borne qui coupe —
+        # le schéma est écrit, la maintenance reprend le geste.
+        raise KeyIndexUnavailable(
+            f"index d'unicité de `{key}` : aucune connexion de DDL n'était libre "
+            "pour le poser. Le schéma EST écrit et la clé reste rapprochée à "
+            "l'écriture ; la maintenance repose l'index au tir suivant.") from e
 
 
 #: Les interruptions qui disent « la base n'a pas pu poser l'index MAINTENANT »,
@@ -628,25 +636,33 @@ def datastore_drop_key_index(ns_id: int, *, bornee: bool = True) -> None:
     FOND, qui a le droit d'attendre son tour."""
     from psycopg import sql as _sql
     name = _bkey_index_name(ns_id)
-    with _connect_autocommit(bornee=bornee) as conn:
-        try:
-            conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(
-                n=_sql.Identifier(name)))
-            conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(
-                t=_sql.Identifier(name + "_v2")))
-        except _POSE_INTERROMPUE as e:
-            # Même forme que la pose : on ne traduit QUE la contention. Une vraie panne
-            # remonte telle quelle — annoncer « réessaie » ferait attendre un tir
-            # suivant qui échouera pareil.
-            pourquoi = ("pris dans un interblocage"
-                        if isinstance(e, psycopg.errors.DeadlockDetected)
-                        else "retenu par une transaction ouverte")
-            raise KeyIndexStillEnforced(
-                f"l'ancienne contrainte d'unicité du tableau est TOUJOURS en place "
-                f"(son retrait a été {pourquoi}) : une écriture que le nouveau schéma "
-                f"autorise peut encore être refusée au nom de la clé retirée. Repose "
-                f"le même schéma pour réessayer le retrait — la maintenance, elle, ne "
-                f"balaie que les index MANQUANTS.") from e
+    try:
+        with _connect_autocommit(bornee=bornee) as conn:
+            try:
+                conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(
+                    n=_sql.Identifier(name)))
+                conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(
+                    t=_sql.Identifier(name + "_v2")))
+            except _POSE_INTERROMPUE as e:
+                # Même forme que la pose : on ne traduit QUE la contention. Une vraie panne
+                # remonte telle quelle — annoncer « réessaie » ferait attendre un tir
+                # suivant qui échouera pareil.
+                pourquoi = ("pris dans un interblocage"
+                            if isinstance(e, psycopg.errors.DeadlockDetected)
+                            else "retenu par une transaction ouverte")
+                raise KeyIndexStillEnforced(
+                    f"l'ancienne contrainte d'unicité du tableau est TOUJOURS en place "
+                    f"(son retrait a été {pourquoi}) : une écriture que le nouveau schéma "
+                    f"autorise peut encore être refusée au nom de la clé retirée. Repose "
+                    f"le même schéma pour réessayer le retrait — la maintenance, elle, ne "
+                    f"balaie que les index MANQUANTS.") from e
+    except HorsPoolSature as e:
+        # Plus de place hors pool (#1141) : même issue qu'une borne qui coupe — et
+        # la maintenance ne reprend pas un retrait, c'est l'appelant qui repose.
+        raise KeyIndexStillEnforced(
+            "l'ancienne contrainte d'unicité du tableau est TOUJOURS en place : "
+            "aucune connexion de DDL n'était libre pour la retirer. Repose le même "
+            "schéma pour réessayer le retrait.") from e
 
 
 def datastore_has_key_index(ns_id: int) -> bool:

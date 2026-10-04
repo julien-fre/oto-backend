@@ -7,6 +7,7 @@ de row. Importé par tous les modules de domaine du package `db`.
 from __future__ import annotations
 
 import os
+import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime
@@ -141,8 +142,24 @@ def _get_pool() -> ConnectionPool:
             # serveur ENTIER qui gèle. 5s ⇒ PoolTimeout → 500 propre, pas un down.
             # Vécu 2026-07-02 (2 gels, py-spy : getconn wait sous _authenticate).
             timeout=float(os.environ.get("OTO_MCP_DB_POOL_TIMEOUT", "5") or "5"),
+            # Rendre ce qui ne sert plus (#1141, incident du 04/10/2026) : chaque
+            # connexion, même inactive, garde de la mémoire côté serveur. Sans borne
+            # (défaut psycopg_pool : 600 s), une connexion ouverte pendant un pic
+            # restait tenue tant qu'une tâche de fond la réveillait — 27 → 54
+            # connexions en une semaine, la base managée a basculé six fois par
+            # manque de mémoire. 60 s : au-delà d'un pic, le pool redescend vers
+            # `min_size`. `0` = la borne de psycopg_pool.
+            max_idle=_max_idle(),
         )
     return _pool
+
+
+def _max_idle() -> float:
+    """Durée (s) après laquelle une connexion inactive au-delà de `min_size` est
+    rendue — `OTO_MCP_DB_POOL_MAX_IDLE`, 60 par défaut."""
+    brut = os.environ.get("OTO_MCP_DB_POOL_MAX_IDLE", "60") or "60"
+    valeur = float(brut)
+    return valeur if valeur > 0 else 600.0
 
 
 class _EmpruntParesseux:
@@ -271,6 +288,51 @@ def _connect_autocommit(*, bornee: bool = True) -> Iterator[psycopg.Connection]:
     dans le pool ; ici, la fermeture de la connexion le rend."""
     _hors_boucle.verifier()
     options = _ddl_options() if bornee else _connect_options()
-    with psycopg.connect(_database_url(), options=options,
-                         row_factory=_str_dict_row, autocommit=True) as conn:
-        yield conn
+    with _place_hors_pool(attendre=not bornee):
+        with psycopg.connect(_database_url(), options=options,
+                             row_factory=_str_dict_row, autocommit=True) as conn:
+            yield conn
+
+
+class HorsPoolSature(RuntimeError):
+    """Toutes les places de connexion HORS pool sont prises : le DDL à chaud demandé
+    n'est pas lancé. Réessayable — c'est une file, pas une panne."""
+
+
+# Plafond des connexions HORS pool (#1141) : chacune est une connexion PostgreSQL de
+# plus, que le pool ne compte pas. Sans plafond, leur nombre n'était borné que par les
+# 40 threads AnyIO — `CREATE INDEX CONCURRENTLY` à chaque `patch_schema` d'un tableau,
+# une connexion par appel. 2 par processus : le DDL à chaud est rare, et deux à la fois
+# suffisent à ne pas faire attendre un utilisateur derrière un autre.
+_HORS_POOL_MAX = "OTO_MCP_DB_HORS_POOL_MAX"
+_places_hors_pool: Optional[threading.BoundedSemaphore] = None
+_places_verrou = threading.Lock()
+
+
+def _places() -> threading.BoundedSemaphore:
+    global _places_hors_pool
+    with _places_verrou:
+        if _places_hors_pool is None:
+            n = int(os.environ.get(_HORS_POOL_MAX, "2") or "2")
+            _places_hors_pool = threading.BoundedSemaphore(max(1, n))
+        return _places_hors_pool
+
+
+@contextmanager
+def _place_hors_pool(*, attendre: bool) -> Iterator[None]:
+    """Prend une place de connexion hors pool, la rend en sortie.
+
+    `attendre=False` (DDL à chaud, servi à un utilisateur) : on attend au plus le
+    délai d'attente du pool, puis `HorsPoolSature` — jamais une attente sans fin dans
+    un chemin servi. `attendre=True` (travail de fond, migration) : on attend son tour."""
+    places = _places()
+    delai = None if attendre else float(
+        os.environ.get("OTO_MCP_DB_POOL_TIMEOUT", "5") or "5")
+    if not places.acquire(timeout=delai):
+        raise HorsPoolSature(
+            "toutes les connexions hors pool sont occupées (DDL à chaud en cours) : "
+            "réessaie dans quelques secondes")
+    try:
+        yield
+    finally:
+        places.release()

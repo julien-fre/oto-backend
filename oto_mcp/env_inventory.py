@@ -375,6 +375,14 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_MCP_DB_POOL_TIMEOUT", Classe.REGLAGE, "5",
              "Attente max (s) d'une connexion du pool avant `PoolTimeout`.",
              ("oto_mcp/db/_conn.py:134",)),
+    Variable("OTO_MCP_DB_POOL_MAX_IDLE", Classe.REGLAGE, "60",
+             "Durée (s) après laquelle une connexion inactive au-delà de `min_size` est "
+             "rendue à la base (#1141).",
+             ("oto_mcp/db/_conn.py:160",)),
+    Variable("OTO_MCP_DB_HORS_POOL_MAX", Classe.REGLAGE, "2",
+             "Plafond des connexions HORS pool (DDL à chaud, verrou de session) par "
+             "processus (#1141).",
+             ("oto_mcp/db/_conn.py:316",)),
     Variable("FOD_DVF_TIMEOUT_S", Classe.REGLAGE, "20",
              "Timeout (s) des requêtes DVF (FOD).", ("oto_mcp/fod/foncier.py:29",)),
     Variable("OTO_MCP_INIT_DB_ATTEMPTS", Classe.REGLAGE, "3",
