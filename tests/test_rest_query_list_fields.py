@@ -60,6 +60,9 @@ EXEMPLES: dict[tuple[str, str], str] = {
     ("org.usage.calls", "run_id"): "3f2b9c0e8a7d4e6b9c1f2a3b4c5d6e7f,9a8b7c6d5e4f40312a1b0c9d8e7f6a5b",
     # Les orgs dont un tenant lit le premier appel (horloge d'essai) — des ids d'org.
     ("platform.usage.first_calls", "org_ids"): "12,34",
+    # Le relevé agrégé de PLUSIEURS outils en une lecture (#1145) — ce que le
+    # consommateur demandait outil par outil.
+    ("org.usage.tools", "tool"): "linkedin_aiark_search,fullenrich_result",
 }
 
 # Le reste d'un appel MINIMAL, quand aucun champ n'est requis SEUL mais qu'un parmi

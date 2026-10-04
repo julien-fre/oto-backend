@@ -1244,6 +1244,46 @@ def _found_from_row(row: dict) -> Optional[dict]:
     return found
 
 
+#: La fenêtre la plus large qu'un relevé de consommation lit (oto-backend#1145). Elle
+#: couvre la rétention du journal (`OTO_JOURNAL_RETENTION_DAYS`, 90 j par défaut) : une
+#: fenêtre sans borne basse ne perd donc rien en la recevant par défaut, et une fenêtre
+#: plus large que ce que le journal garde ne lit que plus longtemps, pour le même résultat.
+RELEVE_FENETRE_MAX_JOURS = 92
+#: La page la plus longue d'un relevé, curseur pour la suite.
+RELEVE_LIMITE_MAX = 5000
+
+
+class FenetreDeReleveRefusee(ValueError):
+    """Une fenêtre de relevé plus large que `RELEVE_FENETRE_MAX_JOURS` : refus NOMMÉ,
+    jamais une fenêtre rognée en silence — le total rendu ne serait plus celui demandé."""
+
+
+def _fenetre_du_releve(conn, since: Optional[str], until: Optional[str]) -> tuple[str, str]:
+    """La fenêtre CLOSE d'un relevé : `(since_effectif, until_effectif)`.
+
+    Borne haute absente = l'instant d'ouverture de la transaction, GELÉ (même règle que
+    l'export d'audit). Borne basse absente = la borne haute moins
+    `RELEVE_FENETRE_MAX_JOURS`. La largeur est mesurée par PostgreSQL, qui lit les
+    horodatages tels que la requête les lira : aucun second analyseur à tenir d'accord.
+    Une borne fournie revient telle quelle — c'est elle que le curseur reporte."""
+    row = conn.execute(
+        f"""
+        SELECT to_char(b.u AT TIME ZONE 'UTC', {_ISO_US}) AS u_iso,
+               to_char(b.s AT TIME ZONE 'UTC', {_ISO_US}) AS s_iso,
+               b.u - b.s > make_interval(days => %s) AS trop_large
+          FROM (SELECT a.u, COALESCE(%s::timestamptz,
+                                     a.u - make_interval(days => %s)) AS s
+                  FROM (SELECT COALESCE(%s::timestamptz, now()) AS u) a) b
+        """,
+        (RELEVE_FENETRE_MAX_JOURS, since, RELEVE_FENETRE_MAX_JOURS, until),
+    ).fetchone()
+    if row["trop_large"]:
+        raise FenetreDeReleveRefusee(
+            f"fenêtre de plus de {RELEVE_FENETRE_MAX_JOURS} jours : resserrer `since`/`until` "
+            "et lire en plusieurs fenêtres.")
+    return (since or row["s_iso"], until or row["u_iso"])
+
+
 def list_billable_calls_for_org(
     org_id: int, tool: Optional[str] = None, *, run_ids: Optional[list[str]] = None,
     since: Optional[str] = None,
@@ -1259,7 +1299,10 @@ def list_billable_calls_for_org(
       partagée par le compte et la page ;
     - une transaction REPEATABLE READ, donc un seul snapshot pour les deux ;
     - une borne haute TOUJOURS posée (gelée au premier appel, reportée par le
-      curseur) — la fenêtre est CLOSE, la concaténation des pages vaut son total.
+      curseur) — la fenêtre est CLOSE, la concaténation des pages vaut son total ;
+    - une fenêtre d'au plus `RELEVE_FENETRE_MAX_JOURS`, borne basse comprise quand
+      l'appelant n'en donne pas (`_fenetre_du_releve`, oto-backend#1145) — au-delà,
+      `FenetreDeReleveRefusee` ; une page d'au plus `RELEVE_LIMITE_MAX` lignes.
 
     ⚠️ C'est ce `total` qui rend un relevé VÉRIFIABLE : le consommateur compare
     ce qu'il a lu à ce que la fenêtre contenait. `list_tool_calls` plafonne à
@@ -1288,13 +1331,11 @@ def list_billable_calls_for_org(
     le reste."""
     if not tool and not run_ids:
         raise ValueError("list_billable_calls_for_org : `tool` ou `run_ids` requis")
-    limit = max(1, min(int(limit), 5000))
+    if not 1 <= int(limit) <= RELEVE_LIMITE_MAX:
+        raise ValueError(f"list_billable_calls_for_org : `limit` hors de 1..{RELEVE_LIMITE_MAX}")
     with _connect() as conn:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        if not until:
-            until = conn.execute(
-                f"SELECT to_char(now() AT TIME ZONE 'UTC', {_ISO_US}) AS t"
-            ).fetchone()["t"]
+        since, until = _fenetre_du_releve(conn, since, until)
         clauses, params = _audit_window_clauses(org_id, since, until)
         clauses.append("l.ok = TRUE")
         if tool:
@@ -1343,9 +1384,56 @@ def list_billable_calls_for_org(
     rows = [dict(r) for r in rows[:limit]]
     for r in rows:
         r["found"] = _found_from_row(r)
-    return {"until_effectif": until, "total": total, "calls": rows,
+    return {"since_effectif": since, "until_effectif": until, "total": total, "calls": rows,
             "next": (rows[-1]["created_at"], rows[-1]["id"]) if encore and rows else None,
             "unknown_run_ids": inconnus}
+
+
+def billable_usage_by_tool_for_org(
+    org_id: int, *, tools: Optional[list[str]] = None,
+    since: Optional[str] = None, until: Optional[str] = None,
+) -> dict:
+    """Le relevé AGRÉGÉ d'une org sur une fenêtre close, en UNE passe (oto-backend#1145) :
+    par outil et par mode de clé, le nombre d'appels facturables, la quantité, et le
+    nombre de jobs distincts. Remplace N lectures `list_billable_calls_for_org`, une par
+    outil, qu'un consommateur rejouait à chaque rafraîchissement.
+
+    Mêmes appels que la lentille par appel — `kind='mcp'`, sous `org_id`, `ok`, dans la
+    fenêtre — donc la somme des `calls` d'un outil égale le `total` de sa lentille sur
+    la même fenêtre. `tools` restreint aux outils nommés (servi par
+    `idx_tool_calls_org_tool_ok`) ; absent, tous les outils de l'org.
+
+    - `quantity` : la somme des quantités, une ligne sans compte valant 1 (cf. le
+      commentaire DDL de `tool_calls.quantity` : NULL se lit 1, jamais 0) ;
+    - `key_mode` : `None` = non attribuable, à NE PAS facturer ;
+    - `jobs` : les jobs fournisseur DISTINCTS relevés (`BILLABLE_JOB_ARGS`) — un job
+      relevé plusieurs fois compte une fois ici ; 0 pour un outil sans job.
+
+    Rend `{since_effectif, until_effectif, tools: [{tool, key_mode, calls, quantity,
+    jobs}]}`, trié par outil puis mode de clé."""
+    with _connect() as conn:
+        since, until = _fenetre_du_releve(conn, since, until)
+        clauses, params = _audit_window_clauses(org_id, since, until)
+        clauses.append("l.ok = TRUE")
+        if tools:
+            clauses.append("l.tool = ANY(%s)")
+            params.append(list(tools))
+        rows = conn.execute(
+            f"""
+            SELECT l.tool, l.key_mode, count(*) AS calls,
+                   sum(COALESCE(l.quantity, 1)) AS quantity,
+                   count(DISTINCT {_BILLABLE_JOB_ID_SQL}) AS jobs
+              FROM tool_calls l
+             WHERE {' AND '.join(clauses)}
+             GROUP BY l.tool, l.key_mode
+             ORDER BY l.tool, l.key_mode NULLS LAST
+            """,
+            tuple(params),
+        ).fetchall()
+    return {"since_effectif": since, "until_effectif": until,
+            "tools": [{"tool": r["tool"], "key_mode": r["key_mode"],
+                       "calls": int(r["calls"]), "quantity": int(r["quantity"]),
+                       "jobs": int(r["jobs"])} for r in rows]}
 
 
 def instruction_usage(

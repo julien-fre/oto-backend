@@ -31,7 +31,8 @@ from pydantic import BaseModel, Field, field_validator
 from .. import db, deprecations
 from . import audit_log, monitoring
 from ._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
-from ._types import cap_limit, AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import (cap_limit, AuthzDenied, Capability, DeclaredError, ResolvedCtx,
+                     RestBinding)
 from .registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -720,6 +721,9 @@ class OrgBillableCalls(BaseModel):
     en silence et sans curseur, et une page tronquée y a l'air complète."""
     calls: list[BillableCallRow]
     total: int
+    # La borne basse APPLIQUÉE : celle demandée, ou `until_effectif` moins la fenêtre
+    # maximale quand la requête n'en donne pas (#1145).
+    since_effectif: Optional[str] = None
     until_effectif: str
     next_at: Optional[str] = None
     next_id: Optional[int] = None
@@ -759,19 +763,37 @@ class OrgBillableCallsInput(BaseModel):
     @field_validator("run_id", mode="after")
     @classmethod
     def _runs_en_liste(cls, v):
-        # Chaque élément se redécoupe sur la virgule, liste comprise : les deux formes
-        # se MÉLANGENT dans une vraie URL (`?run_id=a,b&run_id=c`), et un élément `"a,b"`
-        # laissé entier ne désignerait aucun run — `total: 0` en silence.
-        # NORMALISE seulement : les refus (ni outil ni run, trop de runs) se lèvent dans
-        # le handler. Levés ici, ils deviendraient une `ValidationError`, que
-        # l'adaptateur REST rend en `400 invalid_input` NU — sans la phrase qui dit quoi
-        # corriger.
-        if v is None:
-            return None
-        brut = v if isinstance(v, list) else [v]
-        runs = list(dict.fromkeys(
-            m for x in brut for m in (p.strip() for p in str(x).split(",")) if m))
-        return runs or None
+        return _liste_de_query(v)
+
+
+def _liste_de_query(v) -> Optional[list[str]]:
+    """Une liste de query string, dédoublonnée dans l'ordre : `?x=a&x=b`, `?x=a,b`, ou
+    les deux mêlés. Chaque élément se redécoupe sur la virgule, liste comprise : les
+    deux formes se MÉLANGENT dans une vraie URL (`?run_id=a,b&run_id=c`), et un élément
+    `"a,b"` laissé entier ne désignerait rien — `total: 0` en silence.
+    NORMALISE seulement : les refus (liste trop longue…) se lèvent dans le handler.
+    Levés ici, ils deviendraient une `ValidationError`, que l'adaptateur REST rend en
+    `400 invalid_input` NU — sans la phrase qui dit quoi corriger."""
+    if v is None:
+        return None
+    brut = v if isinstance(v, list) else [v]
+    elements = list(dict.fromkeys(
+        m for x in brut for m in (p.strip() for p in str(x).split(",")) if m))
+    return elements or None
+
+
+# Les refus de la FENÊTRE et de la PAGE d'un relevé (#1145), communs aux deux
+# lentilles : une fenêtre rognée ou une page tronquée en silence rendraient un total
+# qui n'est pas celui demandé.
+_REFUS_FENETRE = DeclaredError(
+    400, "window_too_large",
+    f"fenêtre `since`..`until` de plus de {db.RELEVE_FENETRE_MAX_JOURS} jours")
+_REFUS_LIMITE = DeclaredError(
+    400, "limit_too_large", f"`limit` hors de 1..{db.RELEVE_LIMITE_MAX}")
+
+
+def _refus_de_fenetre(e: "db.FenetreDeReleveRefusee") -> AuthzDenied:
+    return AuthzDenied(400, "window_too_large", str(e))
 
 
 def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
@@ -787,11 +809,19 @@ def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
         raise AuthzDenied(400, "invalid_input",
                           f"au plus {MAX_BILLABLE_RUNS} runs par lecture "
                           f"({len(inp.run_id)} demandés).")
+    limit = 1000 if inp.limit is None else inp.limit
+    if not 1 <= limit <= db.RELEVE_LIMITE_MAX:
+        raise AuthzDenied(400, "limit_too_large",
+                          f"`limit` doit valoir de 1 à {db.RELEVE_LIMITE_MAX} ({limit} "
+                          "demandé) : lire la suite par le curseur `next_at`/`next_id`.")
     before = ((inp.before_at, inp.before_id)
               if inp.before_at and inp.before_id is not None else None)
-    page = db.list_billable_calls_for_org(
-        inp.org_id, inp.tool, run_ids=inp.run_id, since=inp.since, until=inp.until,
-        limit=inp.limit or 1000, before=before)
+    try:
+        page = db.list_billable_calls_for_org(
+            inp.org_id, inp.tool, run_ids=inp.run_id, since=inp.since, until=inp.until,
+            limit=limit, before=before)
+    except db.FenetreDeReleveRefusee as e:
+        raise _refus_de_fenetre(e) from e
     nxt = page["next"]
     return {
         # Projection EXPLICITE, pas un `**row` : la lentille reste étroite même
@@ -802,11 +832,72 @@ def _billable_calls(ctx: ResolvedCtx, inp: OrgBillableCallsInput) -> dict:
                    "run_id": r.get("run_id")}
                   for r in page["calls"]],
         "total": page["total"],
+        "since_effectif": page["since_effectif"],
         "until_effectif": page["until_effectif"],
         "next_at": nxt[0] if nxt else None,
         "next_id": nxt[1] if nxt else None,
         "unknown_run_ids": page["unknown_run_ids"],
     }
+
+
+# ── relevé AGRÉGÉ par outil, lentille MEMBRE (#1145) ────────────────────────
+#
+# Ce que `org.usage.calls` rend appel par appel, sommé par outil et par mode de clé,
+# en UNE lecture : le consommateur qui relisait chaque outil à chaque rafraîchissement
+# (une requête par outil, toutes dans la même seconde) lit ici la fenêtre entière. Même
+# étroitesse, mêmes contrôles d'accès, mêmes appels comptés : la somme des `calls` d'un
+# outil égale le `total` de sa lentille sur la même fenêtre. Le détail d'un appel (job,
+# trouvé, run) reste à `org.usage.calls`.
+
+#: Le plus d'outils nommés en une lecture — même ordre de grandeur que les runs.
+MAX_BILLABLE_TOOLS = 100
+
+
+class BillableToolRow(BaseModel):
+    """Un outil × un mode de clé, sur la fenêtre."""
+    tool: str
+    # `user|group|org|tenant|platform` ; `None` = non attribuable, à NE PAS facturer.
+    key_mode: Optional[str] = None
+    # Appels réussis.
+    calls: int
+    # Somme des quantités, un appel sans compte valant 1 — jamais 0.
+    quantity: int
+    # Jobs fournisseur DISTINCTS relevés (un job relevé deux fois compte une fois) ;
+    # 0 pour un outil sans job.
+    jobs: int
+
+
+class OrgBillableTools(BaseModel):
+    """Le relevé d'une fenêtre CLOSE `[since_effectif, until_effectif]`, par outil puis
+    par mode de clé. Une fenêtre sans `since` reçoit la fenêtre maximale."""
+    since_effectif: str
+    until_effectif: str
+    tools: list[BillableToolRow]
+
+
+class OrgBillableToolsInput(BaseModel):
+    org_id: int
+    # Les outils à relever (`?tool=a&tool=b`, ou `a,b`) ; absent = tous ceux de l'org.
+    tool: Optional[list[str] | str] = None
+    since: Optional[str] = None
+    until: Optional[str] = None
+
+    @field_validator("tool", mode="after")
+    @classmethod
+    def _outils_en_liste(cls, v):
+        return _liste_de_query(v)
+
+
+def _billable_tools(ctx: ResolvedCtx, inp: OrgBillableToolsInput) -> dict:
+    if inp.tool and len(inp.tool) > MAX_BILLABLE_TOOLS:
+        raise AuthzDenied(400, "invalid_input",
+                          f"au plus {MAX_BILLABLE_TOOLS} outils par lecture "
+                          f"({len(inp.tool)} demandés).")
+    try:
+        return db.billable_usage_by_tool_for_org(
+            inp.org_id, tools=inp.tool, since=inp.since, until=inp.until)
+    except db.FenetreDeReleveRefusee as e:
+        raise _refus_de_fenetre(e) from e
 
 
 # ── connexions de messagerie d'une org, lentille MEMBRE ─────────────────────
@@ -921,8 +1012,14 @@ CAPABILITIES += [
     # d'agent.
     Capability(key="org.usage.calls", handler=_billable_calls,
                Input=OrgBillableCallsInput, authz=_MEMBER_OF, mcp=None,
-               Output=OrgBillableCalls,
+               Output=OrgBillableCalls, errors=(_REFUS_FENETRE, _REFUS_LIMITE),
                rest=RestBinding("GET", "/api/orgs/{id}/usage/calls", _ID)),
+    # Le même relevé, sommé par outil en une lecture (#1145) : remplace une requête
+    # `usage/calls` par outil. Même lentille membre, `mcp=None` pour la même raison.
+    Capability(key="org.usage.tools", handler=_billable_tools,
+               Input=OrgBillableToolsInput, authz=_MEMBER_OF, mcp=None,
+               Output=OrgBillableTools, errors=(_REFUS_FENETRE,),
+               rest=RestBinding("GET", "/api/orgs/{id}/usage/tools", _ID)),
     # Même lentille membre, pour les connexions de messagerie d'une org (voir le bloc
     # au-dessus de `OrgConnectionRow`). `mcp=None` : un tuyau de relevé, pas un outil
     # d'agent.

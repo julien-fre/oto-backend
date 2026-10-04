@@ -37,7 +37,8 @@ def _fake(monkeypatch, *, calls, total, suivant=None, until="2026-09-01T10:00:00
 
     def faux(org_id, tool, **kw):
         vu.update(org_id=org_id, tool=tool, **kw)
-        return {"until_effectif": until, "total": total,
+        return {"since_effectif": "2026-06-01T10:00:00.000000Z",
+                "until_effectif": until, "total": total,
                 "calls": [dict(c) for c in calls], "next": suivant,
                 "unknown_run_ids": list(inconnus)}
 
@@ -224,6 +225,50 @@ def test_le_run_est_transmis_et_rendu_sur_chaque_appel(monkeypatch):
     assert out["calls"][0]["run_id"] == "r-1"
 
 
+def test_une_page_trop_longue_est_refusee_nommee(monkeypatch):
+    """Au-delà de la page maximale : refus nommé, plus une troncature silencieuse."""
+    vu = _fake(monkeypatch, total=0, calls=[])
+    d = _refus(om.OrgBillableCallsInput(org_id=7, tool="t",
+                                        limit=om.db.RELEVE_LIMITE_MAX + 1))
+    assert (d.status, d.code) == (400, "limit_too_large")
+    assert not vu, "le store n'est pas lu"
+    assert _refus(om.OrgBillableCallsInput(org_id=7, tool="t", limit=0)).code == "limit_too_large"
+
+
+def test_une_fenetre_trop_large_sort_nommee(monkeypatch):
+    def trop_large(*_a, **_kw):
+        raise om.db.FenetreDeReleveRefusee("fenêtre de plus de 92 jours")
+
+    monkeypatch.setattr(om.db, "list_billable_calls_for_org", trop_large)
+    monkeypatch.setattr(om.db, "billable_usage_by_tool_for_org", trop_large)
+    d = _refus(om.OrgBillableCallsInput(org_id=7, tool="t"))
+    assert (d.status, d.code) == (400, "window_too_large") and "92 jours" in d.message
+    with pytest.raises(AuthzDenied) as e:
+        om._billable_tools(CTX, om.OrgBillableToolsInput(org_id=7))
+    assert (e.value.status, e.value.code) == (400, "window_too_large")
+
+
+def test_le_releve_agrege_transmet_les_outils_et_la_fenetre(monkeypatch):
+    vu: dict = {}
+
+    def faux(org_id, **kw):
+        vu.update(org_id=org_id, **kw)
+        return {"since_effectif": "s", "until_effectif": "u",
+                "tools": [{"tool": "t", "key_mode": "org", "calls": 2, "quantity": 5,
+                           "jobs": 0}]}
+
+    monkeypatch.setattr(om.db, "billable_usage_by_tool_for_org", faux)
+    out = om._billable_tools(CTX, om.OrgBillableToolsInput(
+        org_id=7, tool=["a,b", "a"], since="2026-09-01T00:00:00Z"))
+    assert vu == {"org_id": 7, "tools": ["a", "b"], "since": "2026-09-01T00:00:00Z",
+                  "until": None}
+    assert om.OrgBillableTools(**out).tools[0].quantity == 5
+    trop = [f"t{i}" for i in range(om.MAX_BILLABLE_TOOLS + 1)]
+    with pytest.raises(AuthzDenied) as e:
+        om._billable_tools(CTX, om.OrgBillableToolsInput(org_id=7, tool=trop))
+    assert e.value.status == 400 and f"au plus {om.MAX_BILLABLE_TOOLS} outils" in e.value.message
+
+
 # ── Le store, contre un vrai PostgreSQL ────────────────────────────────────────
 
 
@@ -340,13 +385,85 @@ def test_le_curseur_parcourt_toute_la_fenetre_sans_trou_ni_doublon(journal):
     assert len(vus) == len(set(vus)) == total == 7, vus
 
 
-def test_la_borne_haute_est_gelee_quand_elle_est_omise(journal):
+def test_la_borne_haute_est_gelee_quand_elle_est_omise(live):
+    """Relatif à MAINTENANT : une fenêtre ouverte sur des dates fixes deviendrait, avec
+    le temps, plus large que la fenêtre maximale — et le banc rougirait d'un refus."""
+    from datetime import datetime, timedelta, timezone
+
+    from oto_mcp import db, org_store
+
+    sub = "sub-gel-" + uuid.uuid4().hex[:6]
+    org = org_store.create_org("Borne gelée", created_by=sub)
+    maintenant = datetime.now(timezone.utc)
+    for jours in (2, 1):
+        _poser(sub, org, quand=(maintenant - timedelta(days=jours)).isoformat())
+    _poser(sub, org, quand=(maintenant - timedelta(days=20)).isoformat())   # avant `since`
+    p = db.list_billable_calls_for_org(org, "linkedin_aiark_search",
+                                       since=(maintenant - timedelta(days=10)).isoformat(),
+                                       limit=3)
+    assert p["until_effectif"].endswith("Z")
+    assert p["total"] == 2
+
+
+def test_sans_borne_basse_la_fenetre_maximale_s_applique(live):
+    """`since` omis : la fenêtre reçoit la largeur maximale, rendue dans
+    `since_effectif` — ce qui est plus vieux n'est pas lu."""
+    from datetime import datetime, timedelta, timezone
+
+    from oto_mcp import db, org_store
+
+    sub = "sub-max-" + uuid.uuid4().hex[:6]
+    org = org_store.create_org("Fenêtre maximale", created_by=sub)
+    maintenant = datetime.now(timezone.utc)
+    _poser(sub, org, quand=(maintenant - timedelta(days=1)).isoformat())
+    _poser(sub, org, quand=(maintenant - timedelta(
+        days=db.RELEVE_FENETRE_MAX_JOURS + 5)).isoformat())                # hors fenêtre
+    p = db.list_billable_calls_for_org(org, "linkedin_aiark_search")
+    assert p["total"] == 1
+    debut = datetime.fromisoformat(p["since_effectif"].replace("Z", "+00:00"))
+    fin = datetime.fromisoformat(p["until_effectif"].replace("Z", "+00:00"))
+    assert fin - debut == timedelta(days=db.RELEVE_FENETRE_MAX_JOURS)
+
+    agrege = db.billable_usage_by_tool_for_org(org)
+    assert [(r["tool"], r["calls"]) for r in agrege["tools"]] == [("linkedin_aiark_search", 1)]
+
+
+def test_une_fenetre_trop_large_est_refusee_par_les_deux_lectures(journal):
     from oto_mcp import db
 
-    p = db.list_billable_calls_for_org(journal["org"], "linkedin_aiark_search",
-                                       since=journal["since"], limit=3)
-    assert p["until_effectif"].endswith("Z")
-    assert p["total"] == 8     # les 7 + celui du 25/08, avant l'instant gelé
+    large = {"since": "2026-01-01T00:00:00+00:00", "until": journal["until"]}
+    with pytest.raises(db.FenetreDeReleveRefusee):
+        db.list_billable_calls_for_org(journal["org"], "linkedin_aiark_search", **large)
+    with pytest.raises(db.FenetreDeReleveRefusee):
+        db.billable_usage_by_tool_for_org(journal["org"], **large)
+    with pytest.raises(ValueError):
+        db.list_billable_calls_for_org(journal["org"], "linkedin_aiark_search",
+                                       since=journal["since"], until=journal["until"],
+                                       limit=db.RELEVE_LIMITE_MAX + 1)
+
+
+def test_le_releve_agrege_somme_ce_que_la_lentille_detaille(journal):
+    """UNE lecture pour tous les outils : par outil et mode de clé, les appels réussis
+    de l'org dans la fenêtre — exactement ceux que `usage/calls` détaille."""
+    from oto_mcp import db
+
+    fenetre = {"since": journal["since"], "until": journal["until"]}
+    r = db.billable_usage_by_tool_for_org(journal["org"], **fenetre)
+    assert (r["since_effectif"], r["until_effectif"]) == (journal["since"], journal["until"])
+    assert r["tools"] == [
+        {"tool": "fullenrich_enrich_linkedin", "key_mode": None, "calls": 1, "quantity": 1,
+         "jobs": 0},
+        {"tool": "linkedin_aiark_search", "key_mode": "org", "calls": 3, "quantity": 3,
+         "jobs": 0},
+        {"tool": "linkedin_aiark_search", "key_mode": "platform", "calls": 4,
+         "quantity": 46, "jobs": 0},
+    ]
+    detail = db.list_billable_calls_for_org(journal["org"], "linkedin_aiark_search", **fenetre)
+    assert detail["total"] == sum(x["calls"] for x in r["tools"]
+                                  if x["tool"] == "linkedin_aiark_search")
+    seul = db.billable_usage_by_tool_for_org(journal["org"], tools=["fullenrich_enrich_linkedin"],
+                                             **fenetre)
+    assert [x["tool"] for x in seul["tools"]] == ["fullenrich_enrich_linkedin"]
 
 
 def test_le_store_rend_ce_qu_UN_run_a_consomme_tous_outils_confondus(live):

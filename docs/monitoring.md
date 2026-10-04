@@ -506,6 +506,34 @@ qui **existe**, pas ce qui a eu lieu. En deçà de la rétention (ci-dessous) et
 appels antérieurs à la colonne `org_id`, un `total: 0` ne veut pas dire « rien n'a eu
 lieu ». C'est la borne basse historique de l'instrument.
 
+## Le relevé de consommation : appel par appel, ou par outil en une lecture (#1145, 04/10)
+
+Deux lentilles MEMBRE, même étroitesse (ni `sub`, ni email, ni erreur), mêmes appels
+comptés (`kind='mcp'`, sous l'org, réussis, dans la fenêtre) :
+
+| route | ce qu'elle rend |
+|---|---|
+| `GET /api/orgs/{id}/usage/calls?tool=…` ou `?run_id=…` | les appels, page par page, avec `total` de la fenêtre et curseur — le détail (job, trouvé, run) |
+| `GET /api/orgs/{id}/usage/tools[?tool=a&tool=b]` | par outil × mode de clé : `calls`, `quantity` (NULL compté 1), `jobs` distincts — **une** lecture pour tous les outils |
+
+La somme des `calls` d'un outil égale le `total` de `usage/calls` sur la même fenêtre.
+Le consommateur qui relisait chaque outil à chaque rafraîchissement (une requête par
+outil, toutes dans la même seconde) lit `usage/tools`, puis `usage/calls` pour le
+seul outil dont il veut le détail.
+
+**Bornes, servies et nommées** : une fenêtre d'au plus `RELEVE_FENETRE_MAX_JOURS`
+(92 j, la rétention du journal plus une marge) — sans `since`, la fenêtre maximale
+s'applique et `since_effectif` la rend ; au-delà, `400 window_too_large`, jamais une
+fenêtre rognée. Une page d'au plus `RELEVE_LIMITE_MAX` (5 000) lignes — au-delà,
+`400 limit_too_large`, là où la valeur était écrêtée en silence. Les deux lectures
+passent par `idx_tool_calls_org_tool_ok (org_id, tool, created_at DESC) WHERE ok`
+(révision 0032).
+
+`usage/calls` garde ses deux lectures (le `total` puis la page) : avec l'index, le
+compte est un parcours d'index sur l'org et l'outil, et le replier dans la page
+(`count(*) OVER ()`) forcerait à extraire les arguments JSON de TOUTES les lignes de la
+fenêtre au lieu des seules lignes de la page.
+
 ## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
 
 Le journal n'avait **aucune** rétention : 47 % de la base, et une croissance passée de
