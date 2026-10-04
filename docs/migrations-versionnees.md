@@ -785,6 +785,44 @@ sentinelles de démarrage. Verrou exclusif bref (quelques milliers de lignes), s
 script et son banc partent avec elle. Le retour arrière retire les `CHECK` et repose
 `DEFAULT 0`.
 
+`0032_tool_calls_org_outil_ok` (04/10/2026, oto-backend#1145, après
+`0031_selection_org_reelle`) pose `idx_tool_calls_org_tool_ok ON tool_calls (org_id,
+tool, created_at DESC) WHERE ok`, **CONCURRENTLY IF NOT EXISTS** dans un
+`autocommit_block` : les relevés d'org par outil lisaient tous les appels de l'org sur
+la fenêtre avant de jeter les autres outils. Le démarrage d'une base neuve pose le même
+index, NON concurrent. **Ni la révision ni le démarrage ne le construisent sur une
+grosse table** (verdict commun, `oto_mcp/db/index_releve.py`) : au-delà de
+`CONSTRUCTION_MAX_LIGNES` (100 000, estimées par `pg_class.reltuples`), la révision
+lève `ConstructionManuelleRequise` et le démarrage le dit en erreur sans construire —
+mesuré en production, 172 s pour environ 12 M lignes, au-delà des 120 s de la fenêtre
+de démarrage. Une base servie le reçoit donc par le geste manuel, que la révision
+constate ensuite :
+
+```sql
+SET statement_timeout = 0;          -- la construction lit deux fois toute la table
+SET lock_timeout = '5min';
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_tool_calls_org_tool_ok
+    ON tool_calls (org_id, tool, created_at DESC) WHERE ok;
+SELECT indisvalid FROM pg_index
+ WHERE indexrelid = 'idx_tool_calls_org_tool_ok'::regclass;   -- doit valoir t
+-- si f : DROP INDEX CONCURRENTLY IF EXISTS idx_tool_calls_org_tool_ok; puis rejouer le CREATE
+```
+
+⚠️ **`lock_timeout` de quelques minutes, pas de quelques secondes** : la phase
+concurrente attend la fin de chaque transaction plus ancienne qu'elle par une attente
+de verrou sur son `virtualxid`, et `lock_timeout` coupe aussi ces attentes. À 2 s, la
+construction a échoué en production derrière une transaction `idle in transaction`
+(`LockNotAvailable`), laissant l'index **invalide** au catalogue. Pendant cette attente,
+seul un `ShareUpdateExclusiveLock` est demandé sur `tool_calls` : ni les lectures ni
+les écritures ne sont bloquées.
+
+⚠️ **Un index invalide ne se répare pas tout seul** : `IF NOT EXISTS` le prend pour
+fait, et il ne sert aucune lecture. D'où la vérification d'`indisvalid` après chaque
+construction, et le `DROP INDEX CONCURRENTLY` avant de reconstruire. Ni la révision ni
+le démarrage ne le font à votre place : la révision lève `IndexInvalide` en donnant ces
+gestes, le démarrage le dit en erreur et continue. Retour arrière : `DROP INDEX
+CONCURRENTLY`.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

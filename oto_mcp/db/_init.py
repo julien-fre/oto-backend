@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import (_prerequis, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
+from . import (_prerequis, index_releve, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
                revision, rowlock, transcription, user_subscriptions)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
@@ -1094,6 +1094,17 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Org de l'appel (#67, scope d'audit exact) — extension OTO-LOCALE.
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS org_id BIGINT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_org ON tool_calls(org_id, created_at DESC) WHERE org_id IS NOT NULL")
+    # Relevés d'org par outil (oto-backend#1145) : la forme d'une base NEUVE. Une base
+    # servie le reçoit à la main ou de la révision 0032, CONCURRENTLY. Le verdict
+    # (`index_releve.a_construire`) ne laisse construire ici, non concurrent, que sur
+    # une `tool_calls` PETITE : sur une grosse, la construction bloquerait les écritures
+    # du journal au-delà de la fenêtre de démarrage. Index invalide ou table trop
+    # grosse : le démarrage continue et le DIT, le geste est manuel (§5.1).
+    try:
+        if index_releve.a_construire(index_releve.scalaire_de(conn)):
+            conn.execute(index_releve.DDL_DEMARRAGE)
+    except (index_releve.IndexInvalide, index_releve.ConstructionManuelleRequise) as e:
+        logger.error("démarrage : %s", e)
     # Application OAuth cliente porteuse du grant (`azp` du JWT — claude.ai,
     # Claude Code, ChatGPT…) : axe de télémétrie par surface, extension OTO-LOCALE.
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS client_id TEXT")
