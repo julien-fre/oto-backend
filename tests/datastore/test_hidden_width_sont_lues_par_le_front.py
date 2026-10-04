@@ -70,3 +70,19 @@ def test_ce_qui_reste_denonce_ne_contient_PAS_les_prescrites():
     errs = dsv2.validate_schema_def(S)
     assert len(errs) == 1 and "`zorglub`" in errs[0], errs
     assert "hidden" not in errs[0].split(" — ")[0] and "width" not in errs[0].split(" — ")[0]
+
+
+#: Le cas inverse (oto#34) : déclarées « front » sans qu'aucun front ne les lise.
+#: Le dashboard ne les rend pas — `schema-keys-check.mjs` les comptait en dette
+#: « servie-non-lue » depuis la remesure du 01/10/2026.
+LUES_PAR_LE_SEUL_VALIDATEUR = ("agent_access", "formula", "required_layers")
+
+
+def test_les_reglages_de_colonne_ne_promettent_PAS_de_lecteur_front():
+    """Une clé « front » que personne ne lit est la faute de `hidden`/`width` à
+    l'envers : la plateforme promet un lecteur qui n'existe pas."""
+    servie = {e["key"]: e for e in sk.servie()["keys"]}
+    for cle in LUES_PAR_LE_SEUL_VALIDATEUR:
+        assert cle in sk.LUES_PAR_LE_VALIDATEUR, f"`{cle}` contraint le serveur"
+        assert cle not in sk.LUES_PAR_LE_FRONT, f"`{cle}` n'est lue par aucun front"
+        assert "front" not in servie[cle]["readers"], servie[cle]

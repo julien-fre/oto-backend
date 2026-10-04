@@ -84,7 +84,10 @@ CLES: tuple[Cle, ...] = (
     # — crans de garde, lus par le validateur —
     Cle("readonly", ("validateur", "front"),
         "colonne du fichier source : une écriture ne la change pas", True),
-    Cle("agent_access", ("validateur", "front"),
+    # oto#34 : `agent_access`, `required_layers` et `formula` ne sont PAS lues par le
+    # front — le dashboard ne les rend pas (`schema-keys-check.mjs`, remesure du
+    # 01/10/2026). Les y déclarer promettait un lecteur qui n'existe pas.
+    Cle("agent_access", ("validateur",),
         "à qui la colonne est servie : \"write\" (défaut), \"read\" (un agent la voit, "
         "n'écrit pas sa valeur), \"none\" (un agent ne la voit pas du tout)", True),
     Cle("max_length", ("validateur", "front"), "borne de longueur, publiée dans le contrat"),
@@ -94,7 +97,7 @@ CLES: tuple[Cle, ...] = (
     # lecteur : posée, servie, et sans effet — l'auteur croyait la provenance
     # exigée. C'est le cas fondateur de ce fichier, à un cran de plus : ici la
     # clé était bien orthographiée, et personne ne la lisait.
-    Cle("required_layers", ("validateur", "front"),
+    Cle("required_layers", ("validateur",),
         "les couches sans lesquelles une valeur non vide ne s'écrit pas "
         "(`[\"comment\"]`) — la provenance voyage avec la valeur", True),
     Cle("lifecycle", ("validateur", "front"),
@@ -112,7 +115,7 @@ CLES: tuple[Cle, ...] = (
     # oto-backend#1008 : le texte OpenFormula d'une colonne `type: "formula"` —
     # calculée par ligne, readonly implicite (cf. `readonly_fields`), recalculée à
     # l'écriture d'une colonne dont elle dépend et au backfill quand elle est posée.
-    Cle("formula", ("validateur", "front"),
+    Cle("formula", ("validateur",),
         "le texte OpenFormula d'une colonne calculée (`type: \"formula\"`)", True),
     Cle("max_items", ("validateur", "front"), "nombre maximum d'éléments d'une liste"),
     # — présentation, lues par le FRONT SEUL : invisibles au validateur, et c'est
