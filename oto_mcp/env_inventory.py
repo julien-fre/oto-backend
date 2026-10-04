@@ -305,6 +305,11 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("OTO_SLOW_CALLBACK_SENTRY", Classe.REGLAGE, "10.0",
              "Seuil (s) au-delà duquel un callback lent part vers Sentry.",
              ("oto_mcp/loop_watch.py:36",)),
+    Variable("OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS", Classe.REGLAGE, "200",
+             "Plafond quotidien de destinataires (`to` + `cc`) d'`email_send` par org sur "
+             "le transport commun (le relais de l'instance) ; une org qui envoie avec sa "
+             "clé n'en a aucun. Une valeur illisible lève au premier envoi.",
+             ("oto_mcp/tools/email.py:78",)),
     Variable("OTO_JOURNAL_RETENTION_DAYS", Classe.REGLAGE, "90",
              "Rétention (jours) du journal d'appels avant purge en maintenance.",
              ("oto_mcp/maintenance.py:57",)),

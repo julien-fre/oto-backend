@@ -115,6 +115,10 @@ def outil(monkeypatch):
     from fastmcp import FastMCP
     from oto_mcp.tools import email as T
     monkeypatch.setattr(T, "_resolve_route", lambda from_email: ("u1", dict(_ROUTE_MARQUE)))
+    # Le transport commun lit le plafond du jour (journal des appels) : doublé, ce banc
+    # porte sur l'image, pas sur la base.
+    monkeypatch.setattr(T.access, "current_org", lambda sub: None)
+    monkeypatch.setattr(T.db, "destinataires_communs_du_jour", lambda **kw: 0)
     m = FastMCP("t")
     T.register(m)
     return asyncio.run(m.get_tool("email_send"))

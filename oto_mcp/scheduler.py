@@ -98,6 +98,7 @@ def _send_one(row: dict) -> None:
     transport = row["transport"]
     from_hdr = email.format_from(row.get("from_email"), row.get("from_name")) or email._mail_from()
     reply_to = row.get("reply_to")
+    cc = row.get("cc") or None
     try:
         if transport == "resend":
             key = credentials_store.get_credential("org", str(row["org_id"]), "resend")
@@ -105,7 +106,8 @@ def _send_one(row: dict) -> None:
                 db.mark_scheduled_failed(row["id"], "clé Resend absente pour l'org")
                 return
             ok = email.send_via_resend(row["to_email"], row["subject"], row["body_html"],
-                                       api_key=key, from_email=from_hdr, reply_to=reply_to)
+                                       api_key=key, from_email=from_hdr, reply_to=reply_to,
+                                       cc=cc)
         elif transport == "scaleway":
             raw = credentials_store.get_credential("org", str(row["org_id"]), "scaleway")
             f = credentials_store.unpack_secret("scaleway", raw) if raw else {}
@@ -116,10 +118,11 @@ def _send_one(row: dict) -> None:
                 row["to_email"], row["subject"], row["body_html"],
                 secret_key=f["secret_key"], project_id=f["project_id"],
                 region=f.get("region") or "fr-par",
-                from_email=row.get("from_email"), from_name=row.get("from_name"), reply_to=reply_to)
+                from_email=row.get("from_email"), from_name=row.get("from_name"), reply_to=reply_to,
+                cc=cc)
         else:
             ok = email._send(row["to_email"], row["subject"], row["body_html"],
-                             reply_to=reply_to, from_email=from_hdr)
+                             reply_to=reply_to, from_email=from_hdr, cc=cc)
     # noqa: SILENT — l'échec est PERSISTÉ sur la ligne (mark_scheduled_failed)
     except Exception as e:  # déchiffrement, réseau… → échec de cette tentative
         db.mark_scheduled_failed(row["id"], f"{type(e).__name__}: {e}")

@@ -831,6 +831,13 @@ nullables du jeton de délégation : `job_id`, `verrou_org`, `verrou_org_id`
 vérification de jeton. L'ancien code ne les lit pas ; un jeton émis avant elle n'est
 pas verrouillé jusqu'à la fin de son bail. Le retour arrière retire les trois colonnes.
 
+`0037_emails_cc` (04/10/2026, oto-backend#1133, après `0036_partages_de_procedure`)
+garde les copies d'un email différé : `scheduled_emails.cc TEXT[]`, nullable sans défaut
+(écriture de catalogue, `lock_timeout` 5 s ; NULL = aucune copie, les lignes existantes
+gardent leur envoi). **Avant la fusion** : le code du lot l'écrit à la mise en file et la
+lit au tirage. Le retour arrière retire la colonne (les copies des envois encore en file
+sont perdues).
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

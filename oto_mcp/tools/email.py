@@ -24,6 +24,8 @@ par défaut (`PROTECTED_TOOLS`/`DEFAULT_HIDDEN_TOOLS` côté visibilité).
 from __future__ import annotations
 
 import logging
+import os
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -31,7 +33,7 @@ from fastmcp import Context, FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
-from .. import access, config, db, email as mailer, org_store, providers, roles, scheduler
+from .. import access, config, db, email as mailer, org_store, providers, roles, scheduler, session_org
 from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,72 @@ def _cle_d_org_absente(sub: str, org_id, connecteur: str, libelle: str) -> str:
             "programmer."
             + detenteurs.phrase("Administrateurs de cette org",
                                 detenteurs.admins_de_l_org(sub, org_id)))
+
+
+_CC_MAX = 10
+
+# Une adresse en copie : `local@domaine.tld`, ASCII, rien d'autre. Un nom affiché, une
+# virgule ou un saut de ligne dans `cc` deviendraient des destinataires de plus ou un
+# en-tête injecté chez le relais ; une adresse que ce motif refuse se signale, elle ne
+# se corrige pas.
+_ADRESSE_RE = re.compile(
+    r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*"
+    r"@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}")
+
+# Plafond quotidien de DESTINATAIRES (`to` + `cc`) par org sur le transport COMMUN — le
+# relais de l'instance, sous SA clé et SON domaine (`OTO_MAILER_URL`). Décision d'Alexis
+# du 04/10/2026 : la copie est permise, mais un envoi sur la clé commune engage la
+# réputation de TOUS les envois de l'instance (activation, relances, résumés) ; une
+# org qui envoie avec SA clé (Resend, Scaleway TEM) n'a aucun plafond de plateforme.
+# 200 : vingt envois à dix copies, ou deux cents envois simples, par jour — au-dessus
+# d'une séquence d'onboarding pilotée à la main, en dessous d'un publipostage. Réglable
+# par instance (`OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS`), lu à chaque envoi.
+_PLAFOND_COMMUN_DEFAUT = 200
+
+
+def _plafond_commun() -> int:
+    """Le plafond du jour sur le transport commun. Une valeur illisible LÈVE : un
+    plafond deviné serait un plafond que personne n'a posé."""
+    raw = os.environ.get("OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS")
+    if raw is None:
+        return _PLAFOND_COMMUN_DEFAUT
+    try:
+        valeur = int(raw)
+    except ValueError:
+        raise RuntimeError(f"OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS illisible : {raw!r} "
+                           "(attendu un entier >= 0).")
+    if valeur < 0:
+        raise RuntimeError(f"OTO_EMAIL_PLATFORM_DAILY_RECIPIENTS négatif : {valeur}.")
+    return valeur
+
+
+def _garder_plafond_commun(sub: str, destinataires: int) -> None:
+    """Refuse un envoi sur le transport commun qui dépasserait le plafond du jour de
+    l'org de l'appel. Compté dans le journal des appels (`tool_calls.quantity` des
+    `email_send` passés sous `key_mode='platform'`, cf. `_metrer_commun`), remis à
+    zéro à minuit UTC : aucune table de plus. Le journal s'écrit à la fin de l'appel —
+    deux envois simultanés peuvent se croiser, le plafond est une borne de réputation,
+    pas un compte facturé."""
+    plafond = _plafond_commun()
+    org = access.current_org(sub)
+    deja = db.destinataires_communs_du_jour(org_id=org, sub=sub)
+    if deja + destinataires <= plafond:
+        return
+    raise McpError(ErrorData(
+        code=INVALID_PARAMS,
+        message=(f"Plafond quotidien du transport commun atteint : {deja}/{plafond} "
+                 f"destinataire(s) aujourd'hui pour cette org, cet envoi en compte "
+                 f"{destinataires} (`to` + `cc`). Réessaie après minuit UTC, réduis les "
+                 "copies, ou envoie depuis une adresse d'un connecteur email de l'org "
+                 "(sa propre clé Resend ou Scaleway TEM : aucun plafond de plateforme)."),
+        data={"code": "platform_email_daily_cap", "retryable": True,
+              "limit": plafond, "used": deja, "units": destinataires}))
+
+
+def _metrer_commun(destinataires: int) -> None:
+    """Consigne au journal de l'appel ce qu'un envoi sur le transport commun a
+    consommé : c'est ce que `_garder_plafond_commun` relit."""
+    session_org.note_call_trace(quantity=destinataires, key_mode="platform")
 
 
 def _err(msg: str, code: int = INVALID_PARAMS) -> McpError:
@@ -129,6 +197,7 @@ def register(mcp: FastMCP) -> None:
         to: str,
         subject: str,
         body: str,
+        cc: Optional[list[str]] = None,
         from_email: Optional[str] = None,
         cta_text: Optional[str] = None,
         cta_url: Optional[str] = None,
@@ -168,11 +237,14 @@ def register(mcp: FastMCP) -> None:
         Image de tête : `image_url` (https) + `image_alt` REQUIS ; l'URL publique
         vient de `oto_upload_url(target="image")` (un upload, réutilisable).
 
-        Renvoie {sent, to, subject, from, transport, footer} en envoi immédiat ;
+        Renvoie {sent, to, cc, subject, from, transport, footer} en envoi immédiat ;
         {scheduled, id, scheduled_at, ...} si différé ; +`html` si dry_run.
 
         Args:
             to: adresse email du destinataire.
+            cc: adresses en copie visible (liste, max 10), `nom@domaine.tld` sans nom
+                affiché. Pas de copie cachée. Sous l'adresse de la plateforme, `to` +
+                `cc` comptent dans un plafond quotidien de destinataires par org.
             subject: objet (voix funnel oto : minuscules, vouvoiement).
             body: corps en texte brut. Les lignes vides séparent les paragraphes ;
                 les sauts de ligne simples sont conservés. Le HTML est échappé
@@ -205,6 +277,18 @@ def register(mcp: FastMCP) -> None:
             raise _err("`body` est requis.")
         if cta_text and not cta_url:
             raise _err("`cta_url` est requis avec `cta_text`.")
+        # Borné AVANT tout traitement : une liste de mille entrées identiques ne doit
+        # pas coûter mille validations pour finir dédoublonnée sous la borne.
+        if len(cc or []) > _CC_MAX:
+            raise _err(f"`cc` : {_CC_MAX} adresses au plus.")
+        copies: list[str] = []
+        for a in cc or []:
+            a = (a or "").strip()
+            if len(a) > 254 or not _ADRESSE_RE.fullmatch(a):
+                raise _err(f"`cc` : adresse invalide {a!r} (attendu `nom@domaine.tld`, "
+                           "une adresse par élément, sans nom affiché).")
+            if a.lower() != to.lower() and a.lower() not in {c.lower() for c in copies}:
+                copies.append(a)
         # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on les
         # déclenche AVANT de résoudre la route, pour que le refus d'un paramètre
         # précède celui d'une autorisation — comme les vérifications juste au-dessus.
@@ -240,7 +324,7 @@ def register(mcp: FastMCP) -> None:
         rt = reply_to or route["reply_to"]
 
         if dry_run:
-            return {"sent": False, "dry_run": True, "to": to, "subject": subject,
+            return {"sent": False, "dry_run": True, "to": to, "cc": copies, "subject": subject,
                     "from": from_hdr, "transport": transport, "footer": pied, "html": html}
 
         # Quiet hours du CONNECTEUR de l'expéditeur (résolues dans la route). Repli
@@ -253,6 +337,10 @@ def register(mcp: FastMCP) -> None:
             raise _err(f"`send_at` invalide : {send_at!r} (attendu ISO 8601, ex. "
                        "2026-06-24T08:00).")
 
+        destinataires = 1 + len(copies)
+        if transport == "mailer":
+            _garder_plafond_commun(sub, destinataires)
+
         if when is not None:
             # Envoi différé → mise en file (HTML rendu + autz déjà figés).
             for nom, libelle in (("resend", "Resend"), ("scaleway", "Scaleway TEM")):
@@ -261,18 +349,20 @@ def register(mcp: FastMCP) -> None:
             sched_id = db.enqueue_scheduled_email(
                 org_id=org_id, created_by=sub, to_email=to, subject=subject, body_html=html,
                 from_email=route["from_email"], from_name=route["from_name"],
-                reply_to=rt, transport=transport, scheduled_at=when)
+                reply_to=rt, transport=transport, scheduled_at=when, cc=copies)
+            if transport == "mailer":
+                _metrer_commun(destinataires)   # compté le jour où il est programmé
             logger.info("email_send différé #%d → %s à %s (transport=%s)",
                         sched_id, to, when.isoformat(), transport)
             return {"sent": False, "scheduled": True, "id": sched_id,
-                    "scheduled_at": when.isoformat(), "to": to, "subject": subject,
+                    "scheduled_at": when.isoformat(), "to": to, "cc": copies, "subject": subject,
                     "from": from_hdr, "transport": transport, "footer": pied}
 
         # Envoi immédiat.
         if transport == "resend":
             api_key, _key_is_platform = access.resolve_api_key("resend")  # cascade user > org ; lève si absente
             ok = mailer.send_via_resend(to, subject, html, api_key=api_key,
-                                        from_email=from_hdr, reply_to=rt)
+                                        from_email=from_hdr, reply_to=rt, cc=copies)
         elif transport == "scaleway":
             f = access.resolve_credential_fields("scaleway")  # cascade → clé de l'org
             if not f.get("secret_key") or not f.get("project_id"):
@@ -281,12 +371,13 @@ def register(mcp: FastMCP) -> None:
             ok = mailer.send_via_scaleway_tem(
                 to, subject, html, secret_key=f["secret_key"], project_id=f["project_id"],
                 region=f.get("region") or "fr-par",
-                from_email=route["from_email"], from_name=route["from_name"], reply_to=rt)
+                from_email=route["from_email"], from_name=route["from_name"], reply_to=rt,
+                cc=copies)
         else:
             ok = mailer.send_composed_email(
                 to, subject, body, cta_text=cta_text, cta_url=cta_url, reply_to=rt,
                 from_email=route["from_email"], from_name=route["from_name"],
-                image_url=image_url, image_alt=image_alt, brand=marque_expediteur)
+                image_url=image_url, image_alt=image_alt, brand=marque_expediteur, cc=copies)
 
         if not ok:
             hint = ("clé Resend invalide/absente" if transport == "resend"
@@ -295,6 +386,9 @@ def register(mcp: FastMCP) -> None:
                     else "mailer indisponible, ou domaine du `from` hors allowlist "
                          "`MAILER_FROM_DOMAINS` (demande l'ajout à un super_admin)")
             raise _err(f"Envoi échoué ({hint}). Rien n'a été envoyé.", code=INTERNAL_ERROR)
-        logger.info("email_send → %s (from=%r, transport=%s)", to, from_hdr, transport)
-        return {"sent": True, "dry_run": False, "to": to, "subject": subject,
+        if transport == "mailer":
+            _metrer_commun(destinataires)
+        logger.info("email_send → %s (cc=%d, from=%r, transport=%s)", to, len(copies),
+                    from_hdr, transport)
+        return {"sent": True, "dry_run": False, "to": to, "cc": copies, "subject": subject,
                 "from": from_hdr, "transport": transport, "footer": pied}
