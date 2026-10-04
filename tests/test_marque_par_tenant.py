@@ -100,3 +100,48 @@ def test_un_slug_inconnu_du_registre_reste_neutre(pose):
     assert m.fond == email_brand._NEUTRE.fond
     assert m.nom == "jamais-vu"
     assert m.site == "", "on n'invente pas le site d'un produit qu'on ne connaît pas"
+
+
+# --- l'expéditeur et la langue déclarés (04/10/2026) -------------------------
+# Les codes de connexion partaient déjà sous `Tulina <noreply@tulina.ai>` (hook
+# Logto du mailer) ; les invitations, elles, sous `OTO_MAIL_FROM` pour tout le monde.
+
+def test_expediteur_et_langue_declares_sont_servis(pose):
+    pose(acme={**PALETTE, "expediteur": "Acme <noreply@acme.test>", "langue": "en"})
+    m = email_brand.marque("acme")
+    assert (m.expediteur, m.langue) == ("Acme <noreply@acme.test>", "en")
+
+
+@pytest.mark.parametrize("val", [
+    "Acme <noreply@acme.test>\r\nBcc: x@evil.test", "pas une adresse",
+    "Acme <noreply@acme.test", "<a@b.test> <c@d.test>", 42])
+def test_un_expediteur_invalide_est_ignore_pas_la_palette(pose, val):
+    pose(acme={**PALETTE, "expediteur": val, "langue": "de"})
+    m = email_brand.marque("acme")
+    assert (m.expediteur, m.langue) == ("", "")
+    assert m.fond == "#101014"
+
+
+def test_l_invitation_part_sous_l_expediteur_et_la_langue_du_tenant(pose, monkeypatch):
+    from oto_mcp import email as E
+    from oto_mcp import email_templates
+    pose(acme={**PALETTE, "expediteur": "Acme <noreply@acme.test>", "langue": "en"})
+    envois = []
+    monkeypatch.setattr(E, "_send", lambda to, subject, html, **k:
+                        envois.append((subject, k.get("from_email"))) or True)
+    assert email_templates.send_invite_email("x@y.test", "Org", "https://u", brand="acme")
+    assert envois == [("invitation to join Org on Acme", "Acme <noreply@acme.test>")]
+    # La préférence du DESTINATAIRE prime sur la langue du tenant.
+    email_templates.send_invite_email("x@y.test", "Org", "https://u", brand="acme", locale="fr")
+    assert envois[-1][0].startswith("invitation à rejoindre")
+
+
+def test_sans_declaration_rien_ne_change(pose, monkeypatch):
+    from oto_mcp import email as E
+    from oto_mcp import email_templates
+    pose(acme=PALETTE)
+    envois = []
+    monkeypatch.setattr(E, "_send", lambda to, subject, html, **k:
+                        envois.append((subject, k.get("from_email"))) or True)
+    email_templates.send_invite_email("x@y.test", "Org", "https://u", brand="acme")
+    assert envois == [("invitation à rejoindre Org sur Acme", None)]
