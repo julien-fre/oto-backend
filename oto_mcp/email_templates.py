@@ -371,7 +371,7 @@ def send_process_readers_digest_email(to: str, *, processes: list, brand: str = 
     desinscription = (
         (unsubscribe_url, "stop these summaries" if en else "ne plus recevoir ces résumés")
         if unsubscribe_url else None)
-    return _email._send(to, subject, _charte.page(
+    return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=intro, mention=pied, locale=locale,
         desinscription=desinscription))
 

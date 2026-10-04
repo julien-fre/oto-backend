@@ -405,7 +405,7 @@ def test_le_gabarit_rend_les_deux_langues(monkeypatch):
     from oto_mcp import email, email_templates
     envois = []
     monkeypatch.setattr(email, "_send",
-                        lambda to, subject, html: envois.append((subject, html)) or True)
+                        lambda to, subject, html, **kw: envois.append((subject, html)) or True)
     procs = [{"title": "Lost deal revival", "url": "https://front.example.test/x",
               "readers": [{"name": "Marie", "company": "acme.example", "copied": True}]}]
     assert email_templates.send_process_readers_digest_email(
