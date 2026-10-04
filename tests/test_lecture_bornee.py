@@ -20,6 +20,9 @@ BORNEES = {
     "org.usage.calls", "org.usage.tools", "org.instruction.usage", "me.activity_summary",
     "org.monitoring.summary", "org.monitoring.console", "monitoring.summary",
     "admin.monitoring",
+    # La supervision plateforme et la fiche des tenants (#1145, lot E).
+    "monitoring.rest", "monitoring.connectors", "monitoring.funnel",
+    "org.monitoring.connectors", "admin.tenants", "admin.tenant", "admin.tenant_console",
 }
 
 

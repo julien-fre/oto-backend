@@ -205,3 +205,23 @@ def test_lecart_dun_tenant_tiers_nomme_le_tenant_du_createur(base):
         ("Greffée", "oto")]
     # Et la liste (passe générique) compte le même écart.
     assert _par_slug(db.list_tenants_overview(days=30))["acme"]["orgs_desalignees"] == 1
+
+
+# ── la fiche du primaire : le même chemin « comptes d'abord » (#1145) ──────────
+
+def test_la_fiche_du_primaire_dit_la_meme_chose_que_la_liste(base):
+    """La fiche du primaire passait par la passe générique (journal lu deux fois, une
+    sous-requête corrélée par utilisateur) : ~150 s en production le 04/10/2026. Elle
+    part désormais de ses comptes (les subs nus) et lit la fenêtre une fois — les
+    compteurs doivent rester ceux de la liste, et un appel d'un compte tiers n'y entre
+    pas."""
+    from oto_mcp import db
+    base.execute("INSERT INTO tool_calls (sub, tool, kind) SELECT 'globex:eve', 'fr_search', 'mcp' "
+                 "FROM generate_series(1, 5)")
+    ligne = _par_slug(db.list_tenants_overview(days=30))["oto"]
+    fiche = db.get_tenant_overview("oto", days=30)
+    for k in ("orgs", "orgs_archivees", "comptes", "comptes_actifs", "appels",
+              "orgs_desalignees", "dernier_compte_at", "last_seen_at"):
+        assert fiche[k] == ligne[k], k
+    assert fiche["primary"] is True
+    assert not any(c["sub"].startswith(("acme:", "globex:")) for c in fiche["comptes_recents"])

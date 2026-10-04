@@ -38,6 +38,8 @@ class _Conn:
 def _run(monkeypatch, **kw):
     vues: list = []
     monkeypatch.setattr(usage, "_connect", lambda: _Conn(vues))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     return usage.rest_call_stats(**kw), vues
 
 
@@ -111,6 +113,8 @@ def test_last_call_at_vient_du_max_de_la_requete_de_totaux(monkeypatch):
             return False
 
     monkeypatch.setattr(usage, "_connect", lambda: _ConnAvecDate())
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     out = usage.rest_call_stats(since_days=7)
     assert out["last_call_at"] == "2026-09-01T10:00:00"
 
@@ -132,6 +136,8 @@ def _run_statuts(monkeypatch, lignes):
             return _CurStatuts(sql)
 
     monkeypatch.setattr(usage, "_connect", lambda: _ConnStatuts(vues))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     return usage.rest_call_stats(since_days=7, route="POST /api/auth/token"), vues
 
 
@@ -210,6 +216,8 @@ def test_list_rest_calls_sert_view_as_sub_sans_le_deviner(monkeypatch):
              "duration_ms": 12, "ok": True, "error": None, "org_id": None,
              "view_as_sub": None}]
     monkeypatch.setattr(usage, "_connect", lambda: _ConnLigne(vues, rows))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     out = usage.list_rest_calls(org_id=1, route="GET /api/orgs")
     assert len(vues) == 1                      # une seule requête, pas deux
     sql, params = vues[0]
@@ -223,6 +231,8 @@ def test_list_rest_calls_sert_view_as_sub_sans_le_deviner(monkeypatch):
 def test_list_rest_calls_plafonne_limit_et_days(monkeypatch):
     vues: list = []
     monkeypatch.setattr(usage, "_connect", lambda: _ConnLigne(vues, []))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     usage.list_rest_calls(limit=99999, days=9999)
     sql, params = vues[0]
     assert params[-1] == 200                   # limit plafonné, même borne que la console

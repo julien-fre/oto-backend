@@ -1731,7 +1731,7 @@ def rest_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
         return " AND ".join(clauses), params
 
     w, wp = _where()
-    with _connect() as conn:
+    with _agregat("agrégats des appels REST") as conn:
         totals = conn.execute(
             f"""
             SELECT COUNT(*) AS total,
@@ -1886,7 +1886,7 @@ def connector_failure_stats(since_days: int = 7, *, org_id: Optional[int] = None
     since_days = max(1, min(int(since_days), 365))
     org_clause = " AND l.org_id = %s" if org_id is not None else ""
     params: list[Any] = [since_days] + ([int(org_id)] if org_id is not None else [])
-    with _connect() as conn:
+    with _agregat("échecs de connecteurs") as conn:
         by_provider = conn.execute(
             f"""
             SELECT l.tool AS provider,
@@ -1968,7 +1968,7 @@ def activation_funnel(active_window_days: int = 30) -> dict:
     appel d'outil n'a jamais rien déclenché (idle, ou handshake OAuth jamais réussi) —
     invisible au monitoring d'outils, détecté ici. `active_window_days` borne « actif »."""
     active_window_days = max(1, min(int(active_window_days), 365))
-    with _connect() as conn:
+    with _agregat("entonnoir d'activation") as conn:
         total = int((conn.execute("SELECT COUNT(*) AS n FROM users").fetchone() or {}).get("n") or 0)
         # Comptes ayant déclenché ≥1 outil MCP dans la fenêtre = vraiment actifs.
         active = int((conn.execute(

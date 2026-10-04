@@ -33,6 +33,7 @@ from ..auth import facade
 from . import tenant_admins, tenant_grants, tenant_keys
 from ._authz import ADMIN_BY_OP, PLATFORM_ADMIN, SUPER_ADMIN, TENANT_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
+from ._lecture_bornee import bornee
 from .registry import CAPABILITIES
 
 # Fenêtre par défaut des compteurs d'activité : 30 j, comme les lentilles d'ADOPTION
@@ -349,11 +350,11 @@ def _console_grants(ctx: ResolvedCtx, inp: TenantConsoleInput, slug: str) -> dic
 
 
 CAPABILITIES += [
-    Capability(key="admin.tenants", handler=_tenants, Input=TenantsInput,
+    Capability(key="admin.tenants", handler=bornee(_tenants), Input=TenantsInput,
                Output=TenantList, authz=PLATFORM_ADMIN,
                description="Suivi des tenants : une ligne par tenant déclaré.",
                rest=RestBinding("GET", "/api/admin/tenants")),
-    Capability(key="admin.tenant", handler=_tenant, Input=TenantInput,
+    Capability(key="admin.tenant", handler=bornee(_tenant), Input=TenantInput,
                Output=TenantDetail,
                # PR 2 : l'admin de tenant voit SES orgs (la fiche de son tenant).
                authz=TENANT_ADMIN_OF("slug", platform=PLATFORM_ADMIN),
@@ -365,7 +366,7 @@ CAPABILITIES += [
                            "redémarrer — fin du verdict pending_restart pour CE process.",
                rest=RestBinding("POST", "/api/admin/tenants/reload")),
     Capability(
-        key="admin.tenant_console", handler=_console, Input=TenantConsoleInput,
+        key="admin.tenant_console", handler=bornee(_console), Input=TenantConsoleInput,
         Output=TenantConsoleOut,
         # Lectures = PLATFORM_ADMIN (comme les autres lentilles) ; `reload` touche ce
         # que le process AUTHENTIFIE (les émetteurs acceptés) = SUPER_ADMIN, déclaré

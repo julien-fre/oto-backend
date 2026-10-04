@@ -107,17 +107,37 @@ def test_unknown_call_is_a_404_not_a_500(monkeypatch):
     assert out["_status"] == 404 and out["_code"] == "unknown_call"
 
 
-@pytest.mark.parametrize("path,fn,key", [
-    ("/api/admin/monitoring/summary", "tool_call_stats", "since_days"),
-    ("/api/admin/monitoring/rest", "rest_call_stats", "since_days"),
-    ("/api/admin/monitoring/connectors", "connector_failure_stats", "since_days"),
+@pytest.mark.parametrize("path,fn,key,days", [
+    # Sans périmètre, le résumé couvre toute la plateforme : 7 jours au plus (#1145).
+    ("/api/admin/monitoring/summary", "tool_call_stats", "since_days", 7),
+    ("/api/admin/monitoring/rest", "rest_call_stats", "since_days", 30),
+    ("/api/admin/monitoring/connectors", "connector_failure_stats", "since_days", 30),
 ])
-def test_windowed_lenses_pass_days(monkeypatch, path, fn, key):
+def test_windowed_lenses_pass_days(monkeypatch, path, fn, key, days):
     seen = {}
     monkeypatch.setattr(db, fn, lambda **kw: seen.update(kw) or {})
     idx = _mount(monkeypatch)
-    asyncio.run(idx[(path, "GET")](FakeReq(query={"days": "30"})))
-    assert seen[key] == 30
+    asyncio.run(idx[(path, "GET")](FakeReq(query={"days": str(days)})))
+    assert seen[key] == days
+
+
+def test_le_resume_plateforme_sans_perimetre_est_borne(monkeypatch):
+    """#1145 : sans `org_id` ni `sub`, le résumé lit le journal de toute la plateforme
+    (452 s pour un jour, le 04/10/2026, sous contention). Au-delà de la borne, refus
+    NOMMÉ qui dit quoi passer ; avec un périmètre, la fenêtre s'élargit."""
+    seen = {}
+    monkeypatch.setattr(db, "tool_call_stats", lambda **kw: seen.update(kw) or {})
+    idx = _mount(monkeypatch)
+    out = asyncio.run(idx[("/api/admin/monitoring/summary", "GET")](
+        FakeReq(query={"days": "30"})))
+    assert out["_status"] == 400 and out["_code"] == "days_too_large"
+    assert not seen
+    asyncio.run(idx[("/api/admin/monitoring/summary", "GET")](
+        FakeReq(query={"days": "30", "org_id": "7"})))
+    assert seen["since_days"] == 30 and seen["org_id"] == 7
+    out = asyncio.run(idx[("/api/admin/monitoring/summary", "GET")](
+        FakeReq(query={"days": "91", "org_id": "7"})))
+    assert out["_status"] == 400 and out["_code"] == "days_too_large"
 
 
 def test_funnel_defaults_to_30_days(monkeypatch):

@@ -277,6 +277,8 @@ def test_row_activity_covers_rest_and_mcp(monkeypatch):
          "outcome": None},
     ]
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, rows))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
     out = usage.datastore_row_activity("row-1", "DEXXON GROUPE",
                                        owner_type="org", owner_id="35")
@@ -337,6 +339,8 @@ def test_datastore_activity_matches_id_and_name(monkeypatch):
          "outcome": None},
     ]
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, rows))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
     out = usage.datastore_activity(160, "leads-clients",
                                              owner_type="org", owner_id="35", limit=50)
@@ -355,6 +359,8 @@ def test_row_activity_key_axis_is_bounded_to_the_owner(monkeypatch):
     déjà prouvé) reste nu."""
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
     usage.datastore_row_activity("row-1", "DEXXON", owner_type="org", owner_id="35")
     assert "l.args::text ILIKE %s AND l.org_id = %s" in sink["sql"]
@@ -371,6 +377,8 @@ def test_datastore_activity_name_axis_is_bounded_to_the_owner(monkeypatch):
     L'axe nom doit donc toujours porter une borne de tenant, jamais être matché nu."""
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
     usage.datastore_activity(160, "leads", owner_type="org", owner_id="35")
     assert "l.org_id = %s" in sink["sql"]
@@ -390,6 +398,8 @@ def test_datastore_activity_name_axis_is_bounded_to_the_owner(monkeypatch):
 def test_datastore_activity_limit_is_server_bounded(monkeypatch):
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     usage.datastore_activity(160, "leads-clients", limit=9999)
     assert sink["params"][-1] == 200
     usage.datastore_activity(160, "leads-clients", limit=0)
@@ -443,6 +453,8 @@ def test_semantic_rest_lines_stay_out_of_the_route_lens(monkeypatch):
     mutation du cockpit double-compte et `by_route` liste des pseudo-routes."""
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     usage.rest_call_stats(7)
     assert "position(' /' in tool) > 0" in sink["sql"]
 
@@ -568,6 +580,8 @@ def test_datastore_lens_correlates_on_the_id_without_a_tenant_bound(monkeypatch)
     il se matche NU. Seul le repli par nom — l'historique d'avant — est borné au tenant."""
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
 
     usage.datastore_activity(160, "leads-clients",
                                        owner_type="org", owner_id="2", limit=50)

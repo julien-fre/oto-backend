@@ -21,7 +21,7 @@ from pydantic import BaseModel, field_validator
 from .. import db
 from . import usage
 from ._authz import PLATFORM_ADMIN
-from ._types import cap_limit, AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import cap_limit, AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 from ._lecture_bornee import bornee
 
@@ -148,7 +148,32 @@ class RestCallsInput(BaseModel):
         return cap_limit(v, 200)
 
 
+#: Les fenêtres d'un résumé d'appels (#1145). SANS périmètre (ni `org_id` ni `sub`),
+#: la lecture parcourt le journal de TOUTE la plateforme : un agent l'a demandée le
+#: 04/10/2026 sur un jour et elle a tenu une connexion 452 s, sur 60 jours plus de
+#: deux minutes. Bornée plutôt que refusée — la console plateforme du tableau de
+#: bord en est le consommateur légitime, sur 7 jours par défaut. Avec un périmètre,
+#: la rétention du journal suffit comme borne.
+RESUME_JOURS_MAX_SANS_PERIMETRE = 7
+RESUME_JOURS_MAX = 90
+
+_REFUS_RESUME = DeclaredError(
+    400, "days_too_large",
+    f"`days` au-delà de {RESUME_JOURS_MAX_SANS_PERIMETRE} sans `org_id` ni `sub`, "
+    f"ou au-delà de {RESUME_JOURS_MAX}")
+
+
 def _summary(ctx: ResolvedCtx, inp: SummaryInput) -> dict:
+    if inp.org_id is None and not inp.sub and inp.days > RESUME_JOURS_MAX_SANS_PERIMETRE:
+        raise AuthzDenied(
+            400, "days_too_large",
+            f"Sans `org_id` ni `sub`, le résumé couvre toute la plateforme : "
+            f"`days` vaut au plus {RESUME_JOURS_MAX_SANS_PERIMETRE} ({inp.days} demandé). "
+            f"Passer `org_id` ou `sub` pour une fenêtre jusqu'à {RESUME_JOURS_MAX} jours.")
+    if inp.days > RESUME_JOURS_MAX:
+        raise AuthzDenied(400, "days_too_large",
+                          f"`days` vaut au plus {RESUME_JOURS_MAX} ({inp.days} demandé) : "
+                          "la rétention du journal ne va pas au-delà.")
     return db.tool_call_stats(since_days=inp.days, org_id=inp.org_id,
                               sub=_resolve_sub(inp.sub))
 
@@ -384,16 +409,16 @@ def _monitoring(ctx: ResolvedCtx, inp: MonitoringInput) -> dict:
 
 CAPABILITIES += [
     Capability(key="monitoring.summary", handler=bornee(_summary), Input=SummaryInput,
-               authz=PLATFORM_ADMIN,
+               authz=PLATFORM_ADMIN, errors=(_REFUS_RESUME,),
                rest=RestBinding("GET", "/api/admin/monitoring/summary")),
-    Capability(key="monitoring.rest", handler=_rest_stats, Input=RestInput,
+    Capability(key="monitoring.rest", handler=bornee(_rest_stats), Input=RestInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/rest")),
     Capability(key="monitoring.rest_calls", handler=_rest_calls,
                Input=RestCallsInput, Output=RestCallsOutput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/rest-calls")),
-    Capability(key="monitoring.connectors", handler=_connector_stats,
+    Capability(key="monitoring.connectors", handler=bornee(_connector_stats),
                Input=ConnectorsInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/connectors")),
@@ -401,7 +426,7 @@ CAPABILITIES += [
                Input=TransportInput, Output=TransportRefusals,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/transport")),
-    Capability(key="monitoring.funnel", handler=_funnel, Input=FunnelInput,
+    Capability(key="monitoring.funnel", handler=bornee(_funnel), Input=FunnelInput,
                authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/monitoring/funnel")),
     Capability(key="monitoring.calls", handler=_calls, Input=CallsInput,

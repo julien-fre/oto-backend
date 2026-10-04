@@ -550,10 +550,26 @@ rend en **`503 aggregate_timeout`**, message compris (« resserrer la fenêtre o
 périmètre »), sur les deux faces — jamais un résultat partiel, jamais un 500 anonyme.
 
 Lectures bornées : `list_billable_calls_for_org`, `billable_usage_by_tool_for_org`,
-`instruction_usage`, `tool_call_stats`. Capacités enveloppées : `org.usage.{calls,tools}`,
-`org.instruction.usage`, `me.activity_summary`, et, parce qu'elles lisent
-`tool_call_stats`, `org.monitoring.{summary,console}`, `monitoring.summary`,
-`admin.monitoring` (`tests/test_lecture_bornee.py` tient la liste).
+`instruction_usage`, `tool_call_stats`, `rest_call_stats`, `connector_failure_stats`,
+`activation_funnel`, `list_tenants_overview`, `get_tenant_overview`. Capacités
+enveloppées : `org.usage.{calls,tools}`, `org.instruction.usage`, `me.activity_summary`,
+`org.monitoring.{summary,console,connectors}`, `monitoring.{summary,rest,connectors,funnel}`,
+`admin.monitoring`, `admin.{tenants,tenant,tenant_console}` (`tests/test_lecture_bornee.py`
+tient la liste).
+
+**Le résumé plateforme SANS périmètre est borné à 7 jours** (`monitoring.summary`, et
+`oto_admin_monitoring op=summary` sans `org_id` ni `sub`) : il lit le journal de toute
+la plateforme — 452 s pour un jour sous contention le 04/10, un parcours séquentiel
+d'environ 1,35 M lignes pour 60 jours. Au-delà, `400 days_too_large`, qui dit de passer
+`org_id` ou `sub` (fenêtre jusqu'à 90 jours). Les fenêtres longues de la vue plateforme
+demanderaient un pré-agrégat journalier, non construit.
+
+**La fiche d'un tenant part de SES comptes**, primaire compris
+(`tenants._overview_par_comptes`) : ses subs d'abord, puis le journal en UNE passe
+groupée par sub — là où la passe générique classait chaque utilisateur par
+sous-requête corrélée et lisait la fenêtre deux fois. Pour le primaire, dont les comptes
+sont presque tous ceux de la plateforme, cette passe reste une lecture de toute la
+fenêtre : bornée à 10 s, elle peut sortir en `503 aggregate_timeout`.
 
 Ce que la borne ne fait pas : limiter le nombre de lectures simultanées par route ni
 le débit par jeton — c'est le budget des routes lourdes, posé à part.

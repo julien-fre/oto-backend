@@ -1045,7 +1045,7 @@ CAPABILITIES += [
                            "(operator), as whom (target), which route, when, outcome. "
                            "Never arguments nor secrets. Org admin only.",
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/view-as", _ID)),
-    Capability(key="org.monitoring.connectors", handler=_connectors, Input=OrgWindowInput,
+    Capability(key="org.monitoring.connectors", handler=bornee(_connectors), Input=OrgWindowInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgConnectorHealth,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/connectors", _ID)),
     Capability(key="org.monitoring.adoption", handler=_adoption, Input=OrgDaysInput,

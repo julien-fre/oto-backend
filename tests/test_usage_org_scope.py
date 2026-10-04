@@ -40,6 +40,8 @@ class _FakeConn:
 def _wire(monkeypatch):
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     return sink
 
 
@@ -129,6 +131,8 @@ def test_org_adoption_counts_cover_the_whole_population(monkeypatch):
     rows = [{"sub": f"u{i}", "calls": i % 2, "connector_failures": 1 if i == 0 else 0}
             for i in range(5)]
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConnRows(rows))
+    # La borne de durée se juge ailleurs (test_lecture_bornee) : ici, le SQL.
+    monkeypatch.setattr(usage, "_agregat", lambda objet, **kw: usage._connect())
     out = usage.org_adoption(35)
     assert out["total_members"] == 5
     assert out["active"] == 2 and out["never_active"] == 3
