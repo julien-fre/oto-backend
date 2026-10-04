@@ -49,6 +49,14 @@ from . import email as _email
 from . import email_brand as _charte
 
 
+def _envoyer(m: _charte.Marque, to: str, subject: str, html: str) -> bool:
+    """L'envoi d'un gabarit, sous l'expéditeur DÉCLARÉ de sa marque (`tenants.brand.
+    expediteur`, vide ⟹ `OTO_MAIL_FROM`) — un seul endroit, pour qu'aucun gabarit
+    n'oublie l'expéditeur du tenant. `html` part en POSITION, comme `_send` le
+    déclare : un banc qui remplace `_send` par `lambda *a, **kw` le lit en `a[2]`."""
+    return _email._send(to, subject, html, from_email=m.expediteur or None)
+
+
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
                       inviter: str | None = None, *, brand: str = "oto",
                       locale: str | None = None) -> bool:
@@ -57,11 +65,12 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
     `target_name` = ce qu'on rejoint (nom d'org OU d'équipe) ; None = invitation
     plateforme (onboarding pur → « rejoindre {brand} »). `brand` = le produit sous
     lequel l'org vit (`orgs.front_brand`, défaut oto) — il porte désormais le TEXTE
-    **et** le dessin (`email_brand.marque`) ; seul l'expéditeur reste le nôtre, un
-    domaine d'envoi tiers supposerait sa vérification chez Scaleway TEM. `locale` =
-    préférence du DESTINATAIRE (`users.locale`) ; voix funnel dans les deux langues :
+    **et** le dessin (`email_brand.marque`) **et** l'expéditeur, s'il en déclare un
+    (`_envoyer`). `locale` = préférence du DESTINATAIRE (`users.locale`), à défaut la
+    langue déclarée de la marque ; voix funnel dans les deux langues :
     vouvoiement/« you » + minuscules."""
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     if locale == "en":
         lead = f"{_email._esc(inviter)} invites you" if inviter else "you're invited"
         where = (f"<strong>{_email._esc(target_name)}</strong> on {_email._esc(m.nom)}"
@@ -84,7 +93,7 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
                   else f"votre compte {m.nom} est à un clic")
         contenu = (f'<p style="{_charte.PARA}">{lead} à rejoindre {where}.</p>'
                    + _email._bouton(invite_url, "rejoindre", brand))
-    return _email._send(to, subject, _charte.page(
+    return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
@@ -99,6 +108,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
     ce gabarit ne traduit pas un mot qu'on lui donne. Voix funnel dans les deux
     langues : vouvoiement/« you » + minuscules."""
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     if locale == "en":
         droit = "read access" if permission == "read" else "write access"
         titre = f"{type_label} “{name}”" if name else f"a {type_label}"
@@ -120,7 +130,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
         contenu = (f'<p style="{_charte.PARA}">{who} avec vous {_email._esc(titre)} '
                    f'({droit}) sur {_email._esc(m.nom)}.</p>'
                    + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
-    return _email._send(to, subject, _charte.page(
+    return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
@@ -134,6 +144,7 @@ def send_resource_transferred_email(to: str, *, type_label: str, name: str | Non
     `locale`, cf. `send_resource_shared_email`. Voix funnel dans les deux
     langues : vouvoiement/« you » + minuscules."""
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     if locale == "en":
         titre = f"{type_label} “{name}”" if name else f"a {type_label}"
         who = f"{_email._esc(sharer)} transferred" if sharer else "someone transferred"
@@ -154,7 +165,7 @@ def send_resource_transferred_email(to: str, *, type_label: str, name: str | Non
                    f'<strong>{_email._esc(titre)}</strong> sur {_email._esc(m.nom)} — '
                    f'vous en êtes désormais propriétaire.</p>'
                    + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
-    return _email._send(to, subject, _charte.page(
+    return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
@@ -203,6 +214,7 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
     if not items:
         return False
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     en = locale == "en"
     n = len(items)
     if en:
@@ -298,7 +310,7 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
     desinscription = (
         (unsubscribe_url, "stop these summaries" if en else "ne plus recevoir ces résumés")
         if unsubscribe_url else None)
-    return _email._send(to, subject, _charte.page(
+    return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu, mention=pied, locale=locale,
         desinscription=desinscription))
 
@@ -319,6 +331,7 @@ def send_unipile_fin_de_droit_email(to: str, *, org_name: str | None, canaux: li
     les deux façons de la reporter. `canaux` = les noms de réseau (« LINKEDIN »…),
     `supprime_le` = la date de suppression (datetime)."""
     m = _charte.marque(brand)
+    locale = locale or m.langue or None
     reseaux = ", ".join(sorted({str(c).capitalize() for c in canaux if c})) or "—"
     org = org_name or ("your organisation" if locale == "en" else "votre organisation")
     if locale == "en":
@@ -345,6 +358,6 @@ def send_unipile_fin_de_droit_email(to: str, *, org_name: str | None, canaux: li
             f'<p style="{_charte.PARA}">Pour les garder, abonnez votre organisation, ou '
             f'branchez votre propre clé Unipile.</p>'
             + _email._bouton(app_url, f"ouvrir {m.nom}", brand))
-    return _email._send(to, subject, _charte.page(
+    return _envoyer(m, to, subject, _charte.page(
         m, contenu, preheader=apercu,
         mention=_charte.mention_transactionnelle(m, locale), locale=locale))

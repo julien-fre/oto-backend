@@ -52,6 +52,27 @@ def _no_crlf(s: str | None) -> str | None:
     return s.replace("\r", "").replace("\n", " ").replace("\x00", "")
 
 
+def _relais_refuse(url: str, depuis: str, detail: str) -> None:
+    """Un 403 du relais n'est pas un aléa : l'expéditeur (celui d'un tenant,
+    `tenants.brand.expediteur`, ou celui de l'instance) a un domaine hors de son
+    allowlist `MAILER_FROM_DOMAINS`, et AUCUN envoi sous lui ne partira tant qu'on ne
+    l'y ajoute pas. Journalisé en ERREUR et signalé au suivi d'erreurs (même canal et
+    même forme que `tenancy._refus`), jamais rangé avec un timeout. Fail-open sur le
+    suivi seulement : l'appelant reçoit False comme avant."""
+    message = ("relais %s : expéditeur %r refusé (403) — domaine hors "
+               "MAILER_FROM_DOMAINS du relais, aucun envoi sous lui ne part (%s)")
+    args = (url, depuis, detail)
+    log.error(message, *args)
+    try:
+        import sentry_sdk
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("oto.mailer", "expediteur_refuse")
+            sentry_sdk.capture_message(message % args, level="error")
+    # noqa: SILENT — le suivi d'erreurs indisponible n'empêche pas de rendre le refus
+    except Exception:
+        pass
+
+
 def _send(to: str, subject: str, html: str, reply_to: str | None = None,
           from_email: str | None = None, cc: list[str] | None = None,
           mailer_url: str | None = None, bearer: str | None = None) -> bool:
@@ -96,6 +117,9 @@ def _send(to: str, subject: str, html: str, reply_to: str | None = None,
         )
         if r.status_code == 200:
             return True
+        if r.status_code == 403:
+            _relais_refuse(url, depuis, r.text[:200])
+            return False
         log.warning("mailer %s → %s %s", url, r.status_code, r.text[:200])
         return False
     except Exception as e:  # réseau, import, etc. → best-effort

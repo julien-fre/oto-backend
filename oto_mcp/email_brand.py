@@ -87,6 +87,13 @@ class Marque:
     filet: str       # bordure de carte et séparateur
     bouton_fond: str
     bouton_encre: str
+    # Déclarés par le tenant (`tenants.brand`), vides sinon. `expediteur` = l'en-tête
+    # From (`Nom <adresse@domaine>`) — vide ⟹ `OTO_MAIL_FROM`, celui de l'instance.
+    # ⚠️ Son domaine doit figurer dans `MAILER_FROM_DOMAINS` du mailer, sinon 403 :
+    # rien ne part, et `email._send` le journalise en erreur et le signale. `langue` = la langue d'un destinataire sans
+    # `users.locale` (un invité sans compte) — vide ⟹ français, comme avant.
+    expediteur: str = ""
+    langue: str = ""
 
 
 # La charte du tenant PRIMAIRE — nos teintes, à l'octet. Les palettes de partenaires
@@ -139,6 +146,22 @@ _NEUTRE = Marque(
 _CHAMPS_COULEUR = ("fond", "surface", "encre", "discret", "filet",
                    "bouton_fond", "bouton_encre")
 _COULEUR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+# `adresse@domaine.tld` ou `Nom <adresse@domaine.tld>` — rien d'autre : la valeur
+# finit dans un en-tête, un CR/LF ou un `<` de trop y écrirait autre chose, et une
+# `,` ou un `;` dans le nom affiché en ferait une LISTE d'adresses.
+_EXPEDITEUR_RE = re.compile(
+    r"^(?:[^<>\r\n\x00@,;]{1,64} )?<?[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}>?$")
+_LANGUES = ("fr", "en")
+
+
+def _expediteur(slug: str, val) -> str:
+    v = val.strip() if isinstance(val, str) else ""
+    if not v:
+        return ""
+    if not _EXPEDITEUR_RE.match(v) or v.count("<") != v.count(">"):
+        logger.warning("marque du tenant %r : expéditeur %r invalide — ignoré", slug, v)
+        return ""
+    return v
 
 
 def _declaree(slug: str) -> Optional[Marque]:
@@ -172,7 +195,10 @@ def _declaree(slug: str) -> Optional[Marque]:
             return None
         teintes[champ] = val.strip()
     nom = str(declaree.get("nom") or slug)
-    return Marque(slug=slug, nom=nom, site=str(declaree.get("site") or ""), **teintes)
+    langue = declaree.get("langue")
+    return Marque(slug=slug, nom=nom, site=str(declaree.get("site") or ""),
+                  expediteur=_expediteur(slug, declaree.get("expediteur")),
+                  langue=langue if langue in _LANGUES else "", **teintes)
 
 
 def marque(slug: Optional[str]) -> Marque:
