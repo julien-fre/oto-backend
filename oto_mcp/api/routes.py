@@ -486,6 +486,16 @@ class ViewAsMiddleware:
                 read_only = True
             else:
                 return await _json_error(request, 403, "forbidden")(scope, receive, send)
+        # Jeton de DÉLÉGATION (`verrou_org.py`) : une consultation d'une autre org que
+        # celle du travail est REFUSÉE, nommément — jamais ignorée en silence au profit
+        # de l'org du travail (que `access.current_org` rendrait d'abord).
+        if view_org is not None:
+            from .. import verrou_org
+            if verrou_org.hors(sub, view_org or None, route="x-oto-org"):
+                return await _json_error(
+                    request, 403, verrou_org.CODE,
+                    str(verrou_org.HorsVerrou(view_org or None, verrou_org.courant())))(
+                        scope, receive, send)
         # Garde LECTURE SEULE : le dashboard LIT en POST op-aware (`{op:'list'|'get'}`),
         # donc on ne peut pas gater par méthode. Sur une requête non-GET, on lit l'`op`
         # du corps : seules les OPS DE LECTURE passent ; toute mutation (op d'écriture,

@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 from ... import access, config, db, org_store, session_org, tenancy
 from .._authz import SUB_ONLY
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _MAX_ORGS_PER_USER = int(os.environ.get("OTO_MCP_MAX_ORGS_PER_USER", "10"))
@@ -182,12 +182,26 @@ def _use_org(ctx: ResolvedCtx, inp: UseOrgInput) -> dict:
     }
 
 
+#: Refus d'un geste sur l'org MAISON sous un jeton de délégation (`verrou_org.py`).
+_MAISON_HORS_TRAVAIL = ("A hosted agent's token acts for its job's organization; it "
+                        "cannot change its owner's home organization.")
+
+
+def _refuser_maison_sous_verrou(ctx: ResolvedCtx, route: str) -> None:
+    """Le jeton d'un agent hébergé porte l'org de son travail, pas le défaut de la
+    personne : changer l'org maison sous ce jeton est refusé, nommément."""
+    from ... import verrou_org
+    if verrou_org.interdit(ctx.sub, route=route):
+        raise AuthzDenied(403, "org_out_of_job", _MAISON_HORS_TRAVAIL)
+
+
 def _set_home_org(ctx: ResolvedCtx, inp: UseOrgInput) -> dict:
     """Pose l'**org maison** persistante — le défaut de TOUT appel sans jeton.
     **UI-ONLY (décision 2026-07-06)** : muter le défaut depuis l'agent polluait
     toutes les autres conversations (vécu : « workaround fiable » spontané des
     agents après le retrait du bracelet) → le binding MCP est retiré, seule
     l'action « définir par défaut » du dashboard y accède (`PUT /api/me/active-org`)."""
+    _refuser_maison_sous_verrou(ctx, "org.set_home")
     try:
         org_id = org_store.resolve_org_for_user(ctx.sub, inp.org)
     except ValueError as e:
@@ -208,6 +222,7 @@ def _clear_org(ctx: ResolvedCtx, inp: NoInput) -> dict:
                 "how_to": ("Aucun état de session à effacer (ADR 0038) : sans `_org=`, "
                            "chaque appel résout ton org maison (elle ne se change que "
                            "dans le dashboard).")}
+    _refuser_maison_sous_verrou(ctx, "org.clear")
     pid = org_store.ensure_personal_org(ctx.sub)     # REST : maison = org perso
     org_store.set_active_org(ctx.sub, pid)
     return {"active_org": pid}
@@ -254,6 +269,9 @@ CAPABILITIES += [
             "no MCP binding, the agent must not mutate the default (ADR 0038)."
         ),
         rest=RestBinding("PUT", "/api/me/active-org"),  # « définir par défaut » dashboard
+        errors=(DeclaredError(403, "org_out_of_job",
+                              "sous le jeton d'un agent hébergé : il porte l'org de son "
+                              "travail et ne change pas l'org maison de la personne"),),
         refresh_visibility=True,  # l'org effective (maison) change → recompute la toolbox
     ),
     Capability(
@@ -268,5 +286,8 @@ CAPABILITIES += [
         ),
         mcp="oto_clear_org",
         rest=RestBinding("DELETE", "/api/me/active-org"),  # REST : maison = org perso
+        errors=(DeclaredError(403, "org_out_of_job",
+                              "sous le jeton d'un agent hébergé (face REST) : il ne "
+                              "change pas l'org maison de la personne"),),
     ),
 ]

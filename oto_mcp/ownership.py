@@ -47,16 +47,30 @@ class AccessorScope:
         return self.principal_pairs()
 
 
-def vue_bornee() -> Optional[int]:
-    """L'org O d'une vue « en tant que » posée par un org_admin (oto#270), sinon None.
+def vue_bornee(sub: Optional[str] = None) -> Optional[int]:
+    """L'org O d'une vue bornée, sinon None. Deux sources, une seule règle :
 
-    Posée par `ViewAsMiddleware` après ses gardes, jamais ailleurs. Toute fonction de
-    ce seam qui la lit garde, quand elle vaut None, son chemin d'avant À L'IDENTIQUE."""
-    return session_org.current_view_as_bound_org()
+    - une vue « en tant que » posée par un org_admin (oto#270), par `ViewAsMiddleware`
+      après ses gardes ;
+    - le jeton de DÉLÉGATION de `sub` (`verrou_org.py`) : son travail appartient à une
+      org, et le contenu possédé par la personne n'y est visible que comme dans une vue
+      bornée à cette org — un projet perso rangé dans une AUTRE org n'est ni lisible ni
+      modifiable sous ce jeton. Le porteur seul : un tiers n'est jamais concerné, et un
+      appel sans `sub` ne lit que la vue « en tant que ».
+
+    Toute fonction de ce seam qui la lit garde, quand elle vaut None, son chemin d'avant
+    À L'IDENTIQUE. Un travail SANS org (`org_id` None) ne borne rien ici : ses rôles
+    d'org et son org d'appel sont déjà refusés par le verrou lui-même."""
+    vue = session_org.current_view_as_bound_org()
+    if vue is not None or sub is None:
+        return vue
+    from . import verrou_org
+    v = verrou_org.borne(sub, route="vue_bornee", ecart=True)
+    return v.org_id if v is not None else None
 
 
 def accessor_scope(sub: str) -> AccessorScope:
-    borne = vue_bornee()
+    borne = vue_bornee(sub)
     if borne is None:
         org_ids = [int(o["org_id"]) for o in org_store.list_orgs_for_user(sub)]
         group_ids = [int(g["group_id"]) for g in group_store.list_groups_for_user(sub)]
@@ -66,6 +80,15 @@ def accessor_scope(sub: str) -> AccessorScope:
         org_ids = [borne] if roles.is_org_member(sub, borne) else []
         group_ids = [int(g["group_id"])
                      for g in group_store.list_groups_for_user(sub, borne)]
+    # Jeton de délégation : les partages reçus ne comptent que dans l'org du travail
+    # (`verrou_org.py`) — ni les autres orgs du porteur, ni leurs équipes.
+    from . import verrou_org
+    v = verrou_org.courant()
+    ecart = v is not None and any(o != v.org_id for o in org_ids)
+    if (verrou := verrou_org.borne(sub, route="accessor_scope", ecart=ecart)) is not None:
+        org_ids = [o for o in org_ids if o == verrou.org_id]
+        group_ids = [g for g in group_ids
+                     if (group_store.get_group(g) or {}).get("org_id") == verrou.org_id]
     return AccessorScope(sub=sub, org_ids=org_ids, group_ids=group_ids)
 
 
@@ -177,7 +200,7 @@ def mes_objets_ici(sub: Optional[str], org_id: Optional[int]
     En vue bornée (oto#270), seul le contexte O compte."""
     if not sub or org_id is None:
         return None
-    tout = vue_bornee() is None and org_perso_de(sub, org_id)
+    tout = vue_bornee(sub) is None and org_perso_de(sub, org_id)
     return (sub, int(org_id), tout)
 
 
@@ -251,7 +274,7 @@ def visible_in_org(sub: str, org_id: Optional[int],
       personnelle) les fait suivre la personne partout, O compris ;
     - un partage PERSONNEL reçu (`principal = user`) ne compte pas : il n'appartient à
       aucune org, c'est l'espace du membre, pas celui de O."""
-    borne = vue_bornee()
+    borne = vue_bornee(sub)
     if borne is not None and (org_id is None or int(org_id) != borne):
         return False
     o = owner_of(resource_type, resource_id)
@@ -295,7 +318,7 @@ def borner_a_la_vue(sub: str, resource_type: str, items: list,
     """Hors vue bornée : `items` tel quel (même objet). En vue bornée à O : ceux que
     `visible_in_org` rend visibles dans O — la règle appliquée à une LISTE, pour les
     listes qui ne passent pas par elle (partages reçus, tableaux accordés…)."""
-    borne = vue_bornee()
+    borne = vue_bornee(sub)
     if borne is None:
         return items
     return [it for it in items
@@ -306,7 +329,7 @@ def partages_dans_la_vue(sub: str, grants: list[dict]) -> list[dict]:
     """Les partages (`resource_grants`) reçus par `sub`, bornés à la vue : hors vue,
     tels quels ; en vue bornée, seuls ceux dont la ressource est visible dans O. Un type
     de ressource hors du registre ne se prouve pas dans O : il ne passe pas."""
-    borne = vue_bornee()
+    borne = vue_bornee(sub)
     if borne is None:
         return grants
     return [g for g in grants
@@ -336,7 +359,7 @@ def owner_in_scope(sub: str, org_id: Optional[int],
     if owner is None:
         return False
     # Vue bornée (oto#270) : pas d'autre contexte que O.
-    borne = vue_bornee()
+    borne = vue_bornee(sub)
     if borne is not None and (org_id is None or int(org_id) != borne):
         return False
     otype, oid = str(owner[0]), str(owner[1])
@@ -432,7 +455,7 @@ def can_access(sub: str, resource_type: str, resource_id: str, want: str = "read
 
     En vue bornée à O (oto#270) : d'abord visible DANS O (`visible_in_org`), puis la
     règle ordinaire — l'intersection, jamais plus large que l'une ou l'autre."""
-    borne = vue_bornee()
+    borne = vue_bornee(sub)
     if borne is not None and not visible_in_org(sub, borne, resource_type, resource_id):
         return False
     owner = owner_of(resource_type, resource_id)

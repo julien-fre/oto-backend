@@ -106,3 +106,39 @@ sans base (`tests/test_current_org_run_stage_639.py`), hors boucle
 ## Invariant groupe ⊂ org
 
 **Invariant groupe⊂org dérivé** : un override/consultation d'org **sans** groupe explicite ⇒ niveau org (jamais le `home_group` d'une autre org) ; toute bascule d'org de session retire l'override de groupe. `/api/me` expose `active_org`/`active_group` (effectifs) **et** `home_org`/`home_group` (défauts) distinctement. `oto_whoami` montre l'org effective + `scope: home|session`.
+
+## Jeton de délégation : l'org de son travail, et elle seule
+
+Un travail du runner agit au nom de son porteur avec un jeton `kind="delegation"`
+(`capabilities/runner_jobs._delegue`). Ce jeton porte désormais son travail et l'org de
+ce travail (`user_api_tokens.job_id`, `verrou_org`, `verrou_org_id`, révision 0032), et
+toute résolution du porteur se borne à cette org (`oto_mcp/verrou_org.py`) :
+
+- `roles.effective_org_role` — donc `is_org_member`, `is_org_admin` et
+  `ownership.can_access` — ne rend aucun rôle hors de l'org du travail, escalade
+  plateforme comprise ; le rôle d'équipe direct est gardé de même ;
+- `session_org.set_call_org` / `set_call_run_org`, où aboutit tout jeton d'appel qui pose
+  une org (`_org`, `_project`, `_group`, `_instance`, l'org d'un run), refusent une autre
+  org avec le code `org_out_of_job` — jamais une résolution silencieuse ailleurs ;
+- `access.current_org` rend l'org du travail avant tout le reste, jamais la maison du
+  porteur ; `ownership.accessor_scope` ne compte que les partages reçus dans cette org ;
+- `access.current_group` ne rend jamais une équipe d'une autre org (sa clé d'équipe
+  resterait atteignable par la cascade) : niveau org à la place ;
+- `ownership.vue_bornee(sub)` rend l'org du travail pour le porteur : le contenu qu'il
+  possède s'y lit comme dans une vue bornée à cette org (oto#270) — un projet perso
+  rangé dans une autre org n'est ni lisible ni modifiable sous ce jeton ;
+- un travail sans org n'a accès à aucune org (portée personnelle seule).
+
+Les gestes qui viseraient une autre org sont REFUSÉS (`org_out_of_job`), jamais ignorés :
+`X-Oto-Org` d'une autre org (`ViewAsMiddleware`), et changer l'org maison de la personne
+(`PUT`/`DELETE /api/me/active-org`) — le jeton porte une org de travail, pas le défaut
+de l'humain. Les rôles plateforme du porteur (super_admin, opérateur) restent les siens :
+un agent hébergé est un client MCP, ses droits sont ceux que porte son jeton.
+
+Le verrou ne vise que le porteur : une lecture sur un tiers garde son chemin. Il est posé
+pour la requête par le bord — l'authentification REST et `middleware/verrou_org.py` côté
+MCP — depuis la ligne du jeton. `OTO_VERROU_ORG_DELEGATION` : `enforce` (défaut),
+`report` (journalise et laisse passer), `off`. Un jeton émis avant la révision n'est pas
+verrouillé jusqu'à la fin de son bail (quelques minutes). Hors périmètre : la portée
+personnelle du porteur (ses ressources et comptes personnels) et les outils hors de la
+liste d'outils du déclencheur.

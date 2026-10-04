@@ -104,6 +104,12 @@ def current_org(sub: str | None) -> Optional[int]:
         # PROPRIÉTAIRE du projet est le contexte de résolution (credentials/redaction).
         from .. import subdomain_project
         return subdomain_project.current_anon_org()
+    # Jeton de DÉLÉGATION (`verrou_org.py`) : l'org de son travail, avant tout le
+    # reste — ni un jeton d'appel, ni l'org d'un run, ni la maison du porteur. Pour le
+    # porteur seul : l'org d'un TIERS se résout par son chemin ordinaire.
+    from .. import verrou_org
+    if (verrou := verrou_org.borne(sub, route="current_org", ecart=True)) is not None:
+        return verrou.org_id
     # Endpoint scopé par sous-domaine (« 1 oto par org ») : épingle l'org de la
     # connexion AVANT tout. Garde d'appartenance ici (sub connu) → un non-membre
     # est ignoré (repli maison, zéro fuite). Précédence ⇒ hard-lock : `oto_use_org`
@@ -150,7 +156,27 @@ def current_group(sub: str | None) -> Optional[int]:
     """Équipe (groupe) EFFECTIVE — mirror de `current_org` pour l'axe groupe
     (ADR 0038). Résout `jeton d'appel ?? consultation ?? maison` en TENANT
     l'invariant « groupe ⊂ org » : un jeton/consultation d'ORG **sans** groupe
-    explicite ⇒ niveau org (None), jamais le home_group d'une autre org."""
+    explicite ⇒ niveau org (None), jamais le home_group d'une autre org.
+
+    Jeton de DÉLÉGATION (`verrou_org.py`) : une équipe hors de l'org du travail n'est
+    jamais rendue (niveau org), quelle que soit sa source — maison ou consultation.
+    Sans ça, la cascade de clés (`resolve._group_fetch`) prenait la clé d'équipe d'une
+    autre org du porteur."""
+    g = _current_group(sub)
+    if g is None or sub is None:
+        return g
+    from .. import verrou_org
+    v = verrou_org.courant()
+    if v is None or str(sub) != v.sub:
+        return g
+    org_g = (group_store.get_group(g) or {}).get("org_id")
+    hors = org_g is None or v.org_id is None or int(org_g) != int(v.org_id)
+    if hors and verrou_org.borne(sub, route="current_group", ecart=True) is not None:
+        return None
+    return g
+
+
+def _current_group(sub: str | None) -> Optional[int]:
     if sub is None:
         return None
     # Sous lock d'org par sous-domaine : le groupe n'est rendu QUE s'il ⊂ l'org

@@ -823,6 +823,14 @@ le démarrage ne le font à votre place : la révision lève `IndexInvalide` en 
 gestes, le démarrage le dit en erreur et continue. Retour arrière : `DROP INDEX
 CONCURRENTLY`.
 
+`0033_verrou_org_delegation` (02/10/2026, oto-backend#1118, après
+`0032_tool_calls_org_outil_ok` de #1145) ajoute à `user_api_tokens` les trois colonnes
+nullables du jeton de délégation : `job_id`, `verrou_org`, `verrou_org_id`
+(`oto_mcp/verrou_org.py`). `ADD COLUMN IF NOT EXISTS` sans défaut ni réécriture, sous
+`lock_timeout`. **Avant la fusion** : le code du lot lit ces colonnes à chaque
+vérification de jeton. L'ancien code ne les lit pas ; un jeton émis avant elle n'est
+pas verrouillé jusqu'à la fin de son bail. Le retour arrière retire les trois colonnes.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose
