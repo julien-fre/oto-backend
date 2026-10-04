@@ -188,6 +188,11 @@ _ARG_PROCEDURE = "doctrine"
 # Ce qu'`instruction_usage` accepte comme clé de filtre. Fermée, et lue nulle part
 # ailleurs : la valeur atterrit dans du SQL interpolé.
 _ARGS_PROCEDURE_OK = ("slug", _ARG_PROCEDURE)
+# Les verbes que l'usage d'une procédure lit, chacun avec LA clé d'`args` qui y nomme
+# la procédure (oto-backend#1146) : un chargement (`oto_procedure`) la nomme `slug`, un
+# déroulé (`run_start`) `_ARG_PROCEDURE`. Liste FERMÉE de couples : la clé est
+# interpolée dans le SQL, et un verbe lu sous la clé d'un autre rendrait zéro en silence.
+_VERBES_USAGE = {"oto_procedure": "slug", "run_start": _ARG_PROCEDURE}
 
 
 def _runs_from_journal(extra: str = "") -> str:
@@ -1464,6 +1469,22 @@ def billable_usage_by_tool_for_org(
                        "jobs": int(r["jobs"])} for r in rows]}
 
 
+#: Le premier instant de la fenêtre des lectures d'usage d'une procédure : minuit UTC
+#: il y a `%s` jours (le paramètre lié vaut `days - 1`), donc `days` jours UTC
+#: aujourd'hui compris — la même fenêtre que la série densifiée côté capacité.
+_DEBUT_FENETRE_UTC = ("(date_trunc('day', now() AT TIME ZONE 'UTC')"
+                      " - make_interval(days => %s)) AT TIME ZONE 'UTC'")
+
+
+def _verifier_lectures(lectures: dict[str, str]) -> None:
+    """Refus d'un verbe hors de `_VERBES_USAGE`, ou lu sous une autre clé que la sienne."""
+    if not lectures:
+        raise ValueError("lectures d'usage : aucun verbe demandé")
+    for outil, cle in lectures.items():
+        if _VERBES_USAGE.get(outil) != cle:
+            raise ValueError(f"verbe d'usage non supporté: {outil!r} / {cle!r}")
+
+
 def instruction_usage(
     org_id: int, slug: Optional[str], *, lectures: dict[str, str], days: int = 30,
 ) -> dict[str, dict]:
@@ -1487,9 +1508,7 @@ def instruction_usage(
     dont le guide est lu —, réussis, dans la fenêtre, servis par
     `idx_tool_calls_org_tool_ok`. `count` porte donc sur la même fenêtre que `daily` :
     `count == sum(daily)`."""
-    for cle in lectures.values():
-        if cle not in _ARGS_PROCEDURE_OK:
-            raise ValueError(f"clé de procédure non supportée: {cle!r}")
+    _verifier_lectures(lectures)
     days = max(1, min(int(days), 365))
     outils = list(lectures)
     params: list[Any] = [int(org_id), outils, days - 1]
@@ -1507,8 +1526,7 @@ def instruction_usage(
                    COUNT(*) AS n
               FROM tool_calls l LEFT JOIN users u ON u.sub = l.sub
              WHERE l.org_id = %s AND l.tool = ANY(%s) AND l.ok
-               AND l.created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC')
-                                    - make_interval(days => %s)) AT TIME ZONE 'UTC'
+               AND l.created_at >= {_DEBUT_FENETRE_UTC}
                    {filtre_slug}
              GROUP BY l.tool, d, u.email
             """,
@@ -1528,6 +1546,44 @@ def instruction_usage(
             "callers": sorted(par_appelant, key=lambda e: (-par_appelant[e], e)),
             "daily": daily,
         }
+    return rendu
+
+
+def instructions_usage_by_slug(
+    org_id: int, *, lectures: dict[str, str], days: int = 30,
+) -> dict[str, dict[str, dict]]:
+    """L'usage de TOUTES les procédures d'une org en UNE requête (oto-backend#1146) :
+    par verbe et par procédure nommée, le nombre d'appels et le dernier, sur les `days`
+    derniers jours UTC. Ce qu'une LISTE affiche par ligne, là où elle appelait
+    `instruction_usage` une fois par procédure.
+
+    Même périmètre qu'`instruction_usage`, dont c'est la lecture groupée : sous
+    `org_id`, appels réussis, même fenêtre, servie par `idx_tool_calls_org_tool_ok` ;
+    chaque verbe lu sous SA clé d'`args` (`_VERBES_USAGE`). Un appel qui ne nomme pas
+    de procédure (une liste, un guide de base) n'est rattaché à aucune.
+
+    Rend `{tool: {slug: {"count", "last_at"}}}` ; une procédure absente n'a été ni
+    chargée ni déroulée sur la fenêtre."""
+    _verifier_lectures(lectures)
+    days = max(1, min(int(days), 365))
+    nommee = ("CASE l.tool " + " ".join(
+        f"WHEN '{outil}' THEN l.args->>'{cle}'" for outil, cle in lectures.items())
+        + " END")
+    with _agregat("usage des procédures d'une org") as conn:
+        rows = conn.execute(
+            f"""
+            SELECT l.tool, {nommee} AS slug, COUNT(*) AS n, MAX(l.created_at) AS dernier
+              FROM tool_calls l
+             WHERE l.org_id = %s AND l.tool = ANY(%s) AND l.ok
+               AND l.created_at >= {_DEBUT_FENETRE_UTC}
+               AND {nommee} IS NOT NULL
+             GROUP BY l.tool, 2
+            """,
+            (int(org_id), list(lectures), days - 1),
+        ).fetchall()
+    rendu: dict[str, dict[str, dict]] = {outil: {} for outil in lectures}
+    for r in rows:
+        rendu[r["tool"]][r["slug"]] = {"count": int(r["n"]), "last_at": r["dernier"]}
     return rendu
 
 

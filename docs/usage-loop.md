@@ -45,6 +45,15 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
     lentilles voisines : un run s'ouvre dans l'org active et l'agent en change en route,
     donc borner à l'org courante cacherait exactement le run qu'on ne retrouve plus. La
     propriété, elle, borne dur (la règle même de `finish_run`).
+- **Usage d'une procédure** (membre) : `GET /api/me/instructions/{slug}/usage` (une
+  procédure, séries 30 j) et `GET /api/me/instructions-usage` (toutes les procédures de
+  l'org en un appel, pour les listes — hors de `/api/me/instructions/…`, où `usage` se
+  lirait comme un slug). Les deux lisent le journal sous deux verbes — chargements
+  `oto_procedure` (clé `slug`), déroulés `run_start` (clé `doctrine`) — émis SOUS l'org,
+  réussis, sur **une seule fenêtre de 30 jours UTC** (`count == sum(series)`), en UNE
+  requête servie par `idx_tool_calls_org_tool_ok`, sous la borne de 10 s des lectures
+  d'agrégat. ⚠️ Le couple verbe → clé est une liste FERMÉE (`usage._VERBES_USAGE`) : la
+  clé est interpolée dans le SQL, et un verbe lu sous la clé d'un autre rendrait zéro.
 - **Signaux volontaires** : capacité MCP+REST unique (`capabilities/usage.py`) `feedback`
   — axe explicite `signal` ∈ `tool_feedback | gap` → table **durable** `usage_signals`
   (hors prune 30j). `gap` = cas d'usage non couvert (l'agent capte la demande non satisfaite).

@@ -108,6 +108,12 @@ ROUTES_LOURDES: tuple[RouteLourde, ...] = (
                   "l'ouverture de la fiche d'une procédure, par le tableau de bord et "
                   "par le front d'un tenant — une page n'en demande qu'une.")),
     RouteLourde(
+        "GET", "/api/me/instructions-usage", par_minute=60, concurrence=4,
+        pourquoi=("Usage de TOUTES les procédures de l'org : un agrégat de 30 jours du "
+                  "journal sous l'org, groupé par procédure (#1146). Il remplace un "
+                  "appel à …/{slug}/usage par ligne de liste ; une liste l'appelle une "
+                  "fois à l'affichage.")),
+    RouteLourde(
         "GET", "/api/me/activity-summary", par_minute=60, concurrence=6,
         pourquoi=("Agrégats de MON activité (cinq ventilations d'une fenêtre du "
                   "journal) ; 70 s au p95 avant #1145, 134 s avec days=365. Le front "

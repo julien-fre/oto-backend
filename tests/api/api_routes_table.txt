@@ -336,6 +336,8 @@ GET,HEAD /api/me/instructions/{slug}/versions -> _handler
 OPTIONS /api/me/instructions/{slug}/versions -> options_handler
 GET,HEAD /api/me/instructions/{slug}/usage -> _handler
 OPTIONS /api/me/instructions/{slug}/usage -> options_handler
+GET,HEAD /api/me/instructions-usage -> _handler
+OPTIONS /api/me/instructions-usage -> options_handler
 PUT /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
 POST /api/me/instructions -> _handler

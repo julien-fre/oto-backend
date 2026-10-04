@@ -1030,6 +1030,7 @@ pas sa cause, et ses appelants sondent à cadence régulière. Preuves :
 | `GET /api/orgs/{id}/usage/calls` | 900 | 8 | relevé de facturation d'un tenant : ~17 outils × pages toutes les 120 s, 4 en parallèle, jusqu'à 600/min observés — le débit est AU-DESSUS, la concurrence garde le pool |
 | `GET /api/orgs/{id}/usage/tools` | 120 | 4 | une lecture agrégée pour tous les outils |
 | `GET /api/me/instructions/{slug}/usage` | 60 | 4 | agrégat 30 j, une lecture par fiche de procédure |
+| `GET /api/me/instructions-usage` | 60 | 4 | agrégat 30 j de toutes les procédures de l'org, une lecture par liste |
 | `GET /api/me/activity-summary` | 60 | 6 | lue à chaque chargement de page par le front d'un tenant |
 | `POST /api/me/projects` | 240 | 8 | ouvrir un projet déclenche plusieurs ops ; écritures comprises |
 | `GET /api/admin/monitoring/{summary,rest,connectors,funnel}` | 30 | 2 | supervision plateforme, admin seul |

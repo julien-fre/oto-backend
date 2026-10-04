@@ -356,6 +356,28 @@ class InstructionUsage(BaseModel):
     runs_series: list[int] = []
 
 
+class InstructionUsageRow(BaseModel):
+    """L'usage d'UNE procédure dans la lecture groupée — les mêmes compteurs
+    qu'`InstructionUsage` (même journal, même fenêtre de 30 jours, mêmes bornes),
+    sans les séries : ce qu'une LISTE affiche par ligne."""
+    slug: str
+    # Chargements (`oto_procedure`) sur la fenêtre, et le dernier.
+    count: int = 0
+    last_at: Optional[str] = None
+    # Déroulés (`run_start`) sur la fenêtre, et le dernier — jamais additionnés aux
+    # chargements, voir `InstructionUsage`.
+    runs_count: int = 0
+    last_run_at: Optional[str] = None
+
+
+class InstructionsUsage(BaseModel):
+    """L'usage de toutes les procédures de l'org en UN appel : une liste n'a plus à
+    appeler `…/{slug}/usage` une fois par ligne. Une procédure absente n'a été ni
+    chargée ni déroulée sur la fenêtre."""
+    days: int
+    usage: list[InstructionUsageRow]
+
+
 class InstructionWritten(BaseModel):
     """Écriture d'une procédure. Chaque écriture **incrémente la version** et archive
     un instantané ; il n'y a pas de mise à jour en place.
@@ -1533,6 +1555,12 @@ def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
             **procedure_diagram.diagram_check(old["body_md"])}
 
 
+#: Les deux verbes de l'usage d'une procédure, chacun sous la clé d'`args` qui y nomme
+#: la procédure — celle des déroulés est celle que le lecteur de runs y lit.
+_LECTURES_USAGE = {_GUIDE_GET_TOOL: "slug", _RUN_START_TOOL: db.usage._ARG_PROCEDURE}
+_USAGE_JOURS = 30
+
+
 def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     """Usage d'un guide (ADR 0014) : chargements par l'agent (nb, appelants, série 30j)
     ET déroulés (`run_start`, nb + série 30j) — deux verbes du MÊME journal
@@ -1550,9 +1578,8 @@ def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     # 100 max et trie côté client) : un membre n'y a droit à rien. Cette capacité-ci
     # est ORG_MEMBER et scopée à l'org — la série arrive donc sans plafond, sans tri
     # client, et pour tout le monde.
-    lu = db.instruction_usage(
-        ctx.org_id, slug_filter, days=30,
-        lectures={_GUIDE_GET_TOOL: "slug", _RUN_START_TOOL: db.usage._ARG_PROCEDURE})
+    lu = db.instruction_usage(ctx.org_id, slug_filter, days=_USAGE_JOURS,
+                              lectures=_LECTURES_USAGE)
     u, r = lu[_GUIDE_GET_TOOL], lu[_RUN_START_TOOL]
     # Le jour UTC, comme la fenêtre de la lecture : sinon la série et le compte
     # glisseraient d'un jour l'un par rapport à l'autre autour de minuit.
@@ -1564,6 +1591,22 @@ def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     return {"slug": slug, "count": u["count"], "callers": u["callers"],
             "series": _dense(u["daily"]),
             "runs_count": r["count"], "runs_series": _dense(r["daily"])}
+
+
+def _instructions_usage(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
+    """Usage de toutes les procédures de l'org (lecture groupée d'`_instruction_usage`,
+    oto-backend#1146) : une requête, sous l'org, sur la même fenêtre."""
+    lu = db.instructions_usage_by_slug(ctx.org_id, lectures=_LECTURES_USAGE,
+                                       days=_USAGE_JOURS)
+    chargements, deroules = lu[_GUIDE_GET_TOOL], lu[_RUN_START_TOOL]
+    return {"days": _USAGE_JOURS, "usage": [
+        {"slug": slug,
+         "count": chargements.get(slug, {}).get("count", 0),
+         "last_at": chargements.get(slug, {}).get("last_at"),
+         "runs_count": deroules.get(slug, {}).get("count", 0),
+         "last_run_at": deroules.get(slug, {}).get("last_at")}
+        for slug in sorted(set(chargements) | set(deroules))
+    ]}
 
 
 CAPABILITIES += [
@@ -1602,6 +1645,13 @@ CAPABILITIES += [
         key="org.instruction.usage", handler=bornee(_instruction_usage), Input=SlugInput,
         authz=ORG_MEMBER, Output=InstructionUsage,
         rest=RestBinding("GET", "/api/me/instructions/{slug}/usage"),
+    ),
+    Capability(
+        key="org.instruction.usage_all", handler=bornee(_instructions_usage),
+        Input=EmptyInput, authz=ORG_MEMBER, Output=InstructionsUsage,
+        # Hors de `/api/me/instructions/…` : `…/instructions/usage` serait lu comme
+        # la procédure de slug `usage`.
+        rest=RestBinding("GET", "/api/me/instructions-usage"),
     ),
     # ── Écritures membre (org active, org_admin) ────────────────────────────
     Capability(
