@@ -49,6 +49,9 @@ def _cle_d_org_absente(sub: str, org_id, connecteur: str, libelle: str) -> str:
                                 detenteurs.admins_de_l_org(sub, org_id)))
 
 
+_CC_MAX = 10
+
+
 def _err(msg: str, code: int = INVALID_PARAMS) -> McpError:
     return McpError(ErrorData(code=code, message=msg))
 
@@ -129,6 +132,7 @@ def register(mcp: FastMCP) -> None:
         to: str,
         subject: str,
         body: str,
+        cc: Optional[list[str]] = None,
         from_email: Optional[str] = None,
         cta_text: Optional[str] = None,
         cta_url: Optional[str] = None,
@@ -168,11 +172,12 @@ def register(mcp: FastMCP) -> None:
         Image de tête : `image_url` (https) + `image_alt` REQUIS ; l'URL publique
         vient de `oto_upload_url(target="image")` (un upload, réutilisable).
 
-        Renvoie {sent, to, subject, from, transport, footer} en envoi immédiat ;
+        Renvoie {sent, to, cc, subject, from, transport, footer} en envoi immédiat ;
         {scheduled, id, scheduled_at, ...} si différé ; +`html` si dry_run.
 
         Args:
             to: adresse email du destinataire.
+            cc: adresses en copie visible (liste, max 10). Pas de copie cachée.
             subject: objet (voix funnel oto : minuscules, vouvoiement).
             body: corps en texte brut. Les lignes vides séparent les paragraphes ;
                 les sauts de ligne simples sont conservés. Le HTML est échappé
@@ -205,6 +210,15 @@ def register(mcp: FastMCP) -> None:
             raise _err("`body` est requis.")
         if cta_text and not cta_url:
             raise _err("`cta_url` est requis avec `cta_text`.")
+        copies: list[str] = []
+        for a in cc or []:
+            a = (a or "").strip()
+            if not a or "@" not in a or any(c in a for c in "\r\n,;<>"):
+                raise _err(f"`cc` : adresse invalide {a!r}.")
+            if a.lower() != to.lower() and a.lower() not in {c.lower() for c in copies}:
+                copies.append(a)
+        if len(copies) > _CC_MAX:
+            raise _err(f"`cc` : {_CC_MAX} adresses au plus.")
         # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on les
         # déclenche AVANT de résoudre la route, pour que le refus d'un paramètre
         # précède celui d'une autorisation — comme les vérifications juste au-dessus.
@@ -240,7 +254,7 @@ def register(mcp: FastMCP) -> None:
         rt = reply_to or route["reply_to"]
 
         if dry_run:
-            return {"sent": False, "dry_run": True, "to": to, "subject": subject,
+            return {"sent": False, "dry_run": True, "to": to, "cc": copies, "subject": subject,
                     "from": from_hdr, "transport": transport, "footer": pied, "html": html}
 
         # Quiet hours du CONNECTEUR de l'expéditeur (résolues dans la route). Repli
@@ -261,18 +275,18 @@ def register(mcp: FastMCP) -> None:
             sched_id = db.enqueue_scheduled_email(
                 org_id=org_id, created_by=sub, to_email=to, subject=subject, body_html=html,
                 from_email=route["from_email"], from_name=route["from_name"],
-                reply_to=rt, transport=transport, scheduled_at=when)
+                reply_to=rt, transport=transport, scheduled_at=when, cc=copies)
             logger.info("email_send différé #%d → %s à %s (transport=%s)",
                         sched_id, to, when.isoformat(), transport)
             return {"sent": False, "scheduled": True, "id": sched_id,
-                    "scheduled_at": when.isoformat(), "to": to, "subject": subject,
+                    "scheduled_at": when.isoformat(), "to": to, "cc": copies, "subject": subject,
                     "from": from_hdr, "transport": transport, "footer": pied}
 
         # Envoi immédiat.
         if transport == "resend":
             api_key, _key_is_platform = access.resolve_api_key("resend")  # cascade user > org ; lève si absente
             ok = mailer.send_via_resend(to, subject, html, api_key=api_key,
-                                        from_email=from_hdr, reply_to=rt)
+                                        from_email=from_hdr, reply_to=rt, cc=copies)
         elif transport == "scaleway":
             f = access.resolve_credential_fields("scaleway")  # cascade → clé de l'org
             if not f.get("secret_key") or not f.get("project_id"):
@@ -281,12 +295,13 @@ def register(mcp: FastMCP) -> None:
             ok = mailer.send_via_scaleway_tem(
                 to, subject, html, secret_key=f["secret_key"], project_id=f["project_id"],
                 region=f.get("region") or "fr-par",
-                from_email=route["from_email"], from_name=route["from_name"], reply_to=rt)
+                from_email=route["from_email"], from_name=route["from_name"], reply_to=rt,
+                cc=copies)
         else:
             ok = mailer.send_composed_email(
                 to, subject, body, cta_text=cta_text, cta_url=cta_url, reply_to=rt,
                 from_email=route["from_email"], from_name=route["from_name"],
-                image_url=image_url, image_alt=image_alt, brand=marque_expediteur)
+                image_url=image_url, image_alt=image_alt, brand=marque_expediteur, cc=copies)
 
         if not ok:
             hint = ("clé Resend invalide/absente" if transport == "resend"
@@ -295,6 +310,7 @@ def register(mcp: FastMCP) -> None:
                     else "mailer indisponible, ou domaine du `from` hors allowlist "
                          "`MAILER_FROM_DOMAINS` (demande l'ajout à un super_admin)")
             raise _err(f"Envoi échoué ({hint}). Rien n'a été envoyé.", code=INTERNAL_ERROR)
-        logger.info("email_send → %s (from=%r, transport=%s)", to, from_hdr, transport)
-        return {"sent": True, "dry_run": False, "to": to, "subject": subject,
+        logger.info("email_send → %s (cc=%d, from=%r, transport=%s)", to, len(copies),
+                    from_hdr, transport)
+        return {"sent": True, "dry_run": False, "to": to, "cc": copies, "subject": subject,
                 "from": from_hdr, "transport": transport, "footer": pied}

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS scheduled_emails (
     org_id BIGINT REFERENCES orgs(id) ON DELETE CASCADE,
     created_by TEXT,
     to_email TEXT NOT NULL,
+    cc TEXT[],                                -- copies visibles (NULL = aucune)
     subject TEXT NOT NULL,
     body_html TEXT NOT NULL,
     from_email TEXT,

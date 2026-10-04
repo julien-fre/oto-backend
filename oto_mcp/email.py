@@ -53,7 +53,7 @@ def _no_crlf(s: str | None) -> str | None:
 
 
 def _send(to: str, subject: str, html: str, reply_to: str | None = None,
-          from_email: str | None = None) -> bool:
+          from_email: str | None = None, cc: list[str] | None = None) -> bool:
     """Envoi via mailer.oto.zone (Scaleway TEM). `from_email` = adresse expéditrice
     (défaut marque `_mail_from()`) — le service refuse (403) un domaine hors allowlist
     `MAILER_FROM_DOMAINS`. Best-effort (False si pas de bearer ou échec) — mais
@@ -78,6 +78,8 @@ def _send(to: str, subject: str, html: str, reply_to: str | None = None,
             # Le service lit `replyTo` (camelCase) et IGNORE en silence toute autre
             # clé : `reply_to` y a fait perdre l'adresse de réponse sans erreur (oto#148).
             payload["replyTo"] = _no_crlf(reply_to)
+        if cc:
+            payload["cc"] = [_no_crlf(a) for a in cc]
         r = httpx.post(
             url,
             headers={"Authorization": f"Bearer {bearer}"},
@@ -94,7 +96,8 @@ def _send(to: str, subject: str, html: str, reply_to: str | None = None,
 
 
 def send_via_resend(to: str, subject: str, html: str, *, api_key: str,
-                    from_email: str, reply_to: str | None = None) -> bool:
+                    from_email: str, reply_to: str | None = None,
+                    cc: list[str] | None = None) -> bool:
     """Envoi direct via l'API Resend, avec la clé BYOK de l'org. `from_email` =
     adresse sur un domaine vérifié côté Resend par l'org. Best-effort (False si
     échec), même contrat que `_send`. PAS d'usage du client oto-core (interdiction
@@ -106,6 +109,8 @@ def send_via_resend(to: str, subject: str, html: str, *, api_key: str,
         payload = {"from": from_email, "to": [to], "subject": subject, "html": html}
         if reply_to:
             payload["reply_to"] = reply_to
+        if cc:
+            payload["cc"] = list(cc)
         r = httpx.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {api_key}"},
@@ -123,7 +128,8 @@ def send_via_resend(to: str, subject: str, html: str, *, api_key: str,
 
 def send_via_scaleway_tem(to: str, subject: str, html: str, *, secret_key: str,
                           project_id: str, from_email: str, from_name: str | None = None,
-                          region: str = "fr-par", reply_to: str | None = None) -> bool:
+                          region: str = "fr-par", reply_to: str | None = None,
+                          cc: list[str] | None = None) -> bool:
     """Envoi direct via l'API Scaleway TEM, avec la clé BYO de l'org (secret_key +
     project_id). `from_email` = adresse sur un domaine VÉRIFIÉ dans le compte Scaleway
     de l'org — l'API TEM refuse les domaines non vérifiés (propriété du domaine garantie
@@ -144,6 +150,8 @@ def send_via_scaleway_tem(to: str, subject: str, html: str, *, secret_key: str,
             "html": html,
             "project_id": project_id,
         }
+        if cc:
+            payload["cc"] = [{"email": a} for a in cc]
         if reply_to:
             payload["additional_headers"] = [{"key": "Reply-To", "value": reply_to}]
         r = httpx.post(
@@ -356,6 +364,7 @@ def send_composed_email(
     brand: str = "oto",
     locale: str | None = None,
     unsubscribe_url: str | None = None,
+    cc: list[str] | None = None,
 ) -> bool:
     """Envoie un email à contenu libre (fourni par l'agent), rendu à la charte de
     `brand`, via le mailer Otomata (Scaleway TEM).
@@ -370,4 +379,5 @@ def send_composed_email(
     # `require_env` seulement si `reply_to` est absent (court-circuit `or`) — sans
     # elle, le repli irait vers NOTRE boîte personnelle (#968).
     rt = reply_to or _contact_to()
-    return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name))
+    return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name),
+                 cc=cc)

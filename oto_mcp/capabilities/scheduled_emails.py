@@ -27,6 +27,7 @@ class ScheduledEmail(BaseModel):
     reste légère) — seul l'objet permet de le reconnaître."""
     id: int
     to_email: str
+    cc: Optional[list[str]] = None
     subject: Optional[str] = None
     from_email: Optional[str] = None
     from_name: Optional[str] = None

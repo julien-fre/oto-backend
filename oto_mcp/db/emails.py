@@ -28,18 +28,19 @@ def enqueue_scheduled_email(*, org_id: Optional[int], created_by: Optional[str],
                             to_email: str, subject: str, body_html: str,
                             from_email: Optional[str], from_name: Optional[str],
                             reply_to: Optional[str], transport: str,
-                            scheduled_at: datetime) -> int:
+                            scheduled_at: datetime,
+                            cc: Optional[list[str]] = None) -> int:
     """Met un email en file pour envoi différé (HTML déjà rendu, autz déjà vérifiée).
     `scheduled_at` doit être un datetime aware (UTC). Retourne l'id."""
     with _connect() as conn:
         row = conn.execute(
             """INSERT INTO scheduled_emails
                  (org_id, created_by, to_email, subject, body_html, from_email,
-                  from_name, reply_to, transport, scheduled_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                  from_name, reply_to, transport, scheduled_at, cc)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
             (org_id, created_by, to_email, subject, body_html, from_email,
-             from_name, reply_to, transport, scheduled_at),
+             from_name, reply_to, transport, scheduled_at, cc or None),
         ).fetchone()
         return int(row["id"])
 
@@ -58,7 +59,7 @@ def claim_due_scheduled_emails(limit: int = 50) -> list[dict]:
                    FOR UPDATE SKIP LOCKED
                    LIMIT %s)
                RETURNING id, org_id, to_email, subject, body_html, from_email,
-                         from_name, reply_to, transport, attempts""",
+                         from_name, reply_to, transport, attempts, cc""",
             (max(1, int(limit)),),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -95,7 +96,7 @@ def list_scheduled_emails(org_id: int, status: str = "pending", limit: int = 100
     params.append(max(1, int(limit)))
     with _connect() as conn:
         rows = conn.execute(
-            f"""SELECT id, to_email, subject, from_email, from_name, transport, status,
+            f"""SELECT id, to_email, cc, subject, from_email, from_name, transport, status,
                        scheduled_at, attempts, sent_at, error, created_at, created_by
                 FROM scheduled_emails WHERE {where}
                 ORDER BY scheduled_at ASC LIMIT %s""",

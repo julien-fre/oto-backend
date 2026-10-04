@@ -44,7 +44,7 @@ def test_send_strips_crlf_from_headers(monkeypatch):
 # clés et ignore en silence toute autre — un nom faux y est perdu sans erreur
 # (oto#148 : `reply_to` au lieu de `replyTo`). Changer cet ensemble exige de relire
 # la signature de corps de la route côté service, pas d'aligner le test.
-_CLES_SERVICE_SEND = {"from", "to", "subject", "html", "replyTo"}
+_CLES_SERVICE_SEND = {"from", "to", "cc", "subject", "html", "replyTo"}
 
 
 def _capture_send(monkeypatch, **kw):
@@ -57,7 +57,7 @@ def _capture_send(monkeypatch, **kw):
 def test_send_reply_to_emis_sous_le_nom_du_service(monkeypatch):
     p = _capture_send(monkeypatch, reply_to="r@x.fr")
     assert p["replyTo"] == "r@x.fr"
-    assert set(p) == _CLES_SERVICE_SEND, sorted(set(p) - _CLES_SERVICE_SEND)
+    assert set(p) <= _CLES_SERVICE_SEND, sorted(set(p) - _CLES_SERVICE_SEND)
 
 
 def test_send_sans_reply_to_n_emet_aucune_cle_hors_contrat(monkeypatch):
