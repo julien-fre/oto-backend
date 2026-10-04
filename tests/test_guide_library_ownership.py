@@ -27,6 +27,8 @@ plateforme ne doit jamais reprendre.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from oto_mcp import org_store
@@ -83,6 +85,9 @@ class _Library:
                 "slug": slug, "title": title, "description": description,
                 "body_md": body_md, "author_display": author_display,
                 "visibility": visibility, "version": version,
+                # Relus SOUS le verrou par la publication suivante : ses slots se
+                # jugent contre ceux-ci (oto#34).
+                "slots": json.loads(slots),
                 # Le `DO UPDATE SET` ne touche PAS l'appartenance : une ligne
                 # existante garde son auteur, quoi que demande l'appelant.
                 "author_kind": prev["author_kind"] if prev else author_kind,

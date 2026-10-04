@@ -51,6 +51,13 @@ class LibrarySlugTaken(Exception):
     non-disclosant du gate d'org, ADR 0023)."""
 
 
+class LibrarySlotsInvalid(ValueError):
+    """Un slot publié porte un schéma cible que la plateforme refuse (oto#34). Levée
+    APRÈS le contrôle d'appartenance, sous le verrou : jugés contre les slots d'une
+    entrée d'autrui, le refus et la tolérance feraient un oracle sur le contenu d'une
+    entrée `unlisted`."""
+
+
 def publish_guide(*, slug: str, title: str = "", description: str = "",
                      body_md: str, author_kind: str, author_org_id: Optional[int] = None,
                      author_display: str = "", category: str = "",
@@ -70,7 +77,13 @@ def publish_guide(*, slug: str, title: str = "", description: str = "",
     L'appartenance est lue SOUS le verrou advisory, donc sans course. Une entrée
     orpheline (`author_kind='org'`, `author_org_id` NULL après suppression de
     l'org — ON DELETE SET NULL) n'est réclamable par personne : seul un admin
-    plateforme peut la dépublier."""
+    plateforme peut la dépublier.
+
+    Les `slots` sont VALIDÉS ici (`slots.validate_slots`, oto#34), sous le verrou :
+    le schéma cible d'un slot se juge comme une pose de schéma, contre les slots de
+    l'entrée RE-publiée — seule une clé que ce geste ajoute ou change est refusée
+    (`LibrarySlotsInvalid`). Une entrée neuve n'a rien de stocké : tout y est neuf.
+    La forme NORMALISÉE est celle qui est écrite."""
     slug = instructions.normalize_slug(slug)
     if not slug:
         raise ValueError("slug requis")
@@ -89,11 +102,19 @@ def publish_guide(*, slug: str, title: str = "", description: str = "",
         with conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"dl:{slug}",))
             cur = conn.execute(
-                "SELECT version, author_kind, author_org_id FROM guide_library "
+                "SELECT version, author_kind, author_org_id, slots FROM guide_library "
                 "WHERE slug = %s", (slug,)
             ).fetchone()
             if cur and (cur["author_kind"], cur["author_org_id"]) != (author_kind, author_org_id):
                 raise LibrarySlugTaken(slug)
+            # Paresseux : `slots` tire le registre des connecteurs, qu'une feuille
+            # d'org_store n'importe pas au chargement.
+            from .. import slots as slots_mod
+            try:
+                slots = slots_mod.validate_slots(slots or [],
+                                                 cur["slots"] if cur else None)
+            except ValueError as e:
+                raise LibrarySlotsInvalid(str(e)) from None
             new_version = (cur["version"] + 1) if cur else 1
             row = conn.execute(
                 f"""

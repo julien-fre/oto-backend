@@ -133,6 +133,19 @@ def test_un_super_admin_sans_org_active_doit_en_choisir_une(banc):
     assert banc.lu == [] and banc.ecrit == []
 
 
+def test_des_slots_refuses_par_la_publication_rendent_un_400_qui_dit_pourquoi(
+        banc, monkeypatch):
+    """oto#34 : la publication valide le schéma cible des slots (`publish_guide`) ; le
+    refus remonte en `invalid_slots`, avec la phrase du validateur — jamais en 500."""
+    def _refuse(**k):
+        raise org_store.LibrarySlotsInvalid("`slots[0].schema` invalide : `help` …")
+    monkeypatch.setattr(org_store, "publish_guide", _refuse)
+    with pytest.raises(AuthzDenied) as e:
+        _publier_rest("compte-super")
+    assert (e.value.status, e.value.code) == (400, "invalid_slots")
+    assert "slots[0].schema" in e.value.message
+
+
 def test_un_super_admin_publie_au_nom_d_otomata(banc):
     out = _publier_rest("compte-super")
     assert out["published"] is True and out["slug"] == "veille-concurrence"

@@ -266,3 +266,131 @@ def test_une_procedure_qui_a_bouge_est_sautee(live, monkeypatch):
     assert bilan["procedures_bougees"] == [p["id"]] and "SAUTÉE" in texte
     assert org_store.get_instruction("user", PROPRIO, p["slug"])["body_md"] == \
         "2. Autre corps.", "rien d'écrasé"
+
+
+# ── les schémas cibles des slots des entrées de bibliothèque (oto#34) ────────
+
+def _entree(slug: str, slots=None) -> dict:
+    """Une entrée publiée AVANT que la publication ne valide ses slots : elle entre par
+    la table, comme le parc qu'on range — `publish_guide` la refuserait aujourd'hui."""
+    import json
+
+    from oto_mcp import org_store
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO guide_library (slug, title, description, body_md, slots, "
+            "author_kind, author_display, category, tags, visibility, source_org_id, "
+            "source_slug, version, published_by) VALUES (%s, 'Qualif', 'd', "
+            "'1. Qualifier le vivier.', %s, 'otomata', 'Otomata', 'vente', "
+            "ARRAY['b2b'], 'unlisted', 12, 'qualif', 3, 'u-publieur')",
+            (slug, json.dumps(slots or SLOTS_ANCIENS)))
+    return org_store.get_library_entry(slug=slug, include_unlisted=True)
+
+
+def _passage_biblio(ids, appliquer):
+    lignes: list[str] = []
+    bilan = M.executer(appliquer=appliquer, entrees=ids, sortie=lignes.append)
+    return bilan, "\n".join(lignes)
+
+
+def test_a_blanc_une_entree_est_listee_slot_par_slot_et_rien_n_est_ecrit(live):
+    from oto_mcp import org_store
+    e = _entree("biblio-blanc-" + uuid.uuid4().hex[:4])
+    bilan, texte = _passage_biblio([e["id"]], appliquer=False)
+    assert bilan["entrees_a_durcir"] == 1 and bilan["entrees_ecrites"] == 0
+    assert bilan["a_schema"] == 0 and bilan["procedures_a_slots"] == 0, (
+        "un filtre ne parcourt que sa famille")
+    assert f"entrée de bibliothèque {e['id']}" in texte and "slot `vivier`" in texte
+    assert "repliées dans description : fields.siren (help)" in texte
+    assert "1 entrée(s) de bibliothèque à durcir sur 1 à slot schématisé" in texte
+    assert org_store.get_library_entry(entry_id=e["id"], include_unlisted=True) == e
+
+
+def test_appliquer_REPUBLIE_l_entree_et_reconduit_tout_le_reste(live):
+    from oto_mcp import org_store
+    e = _entree("biblio-ecrit-" + uuid.uuid4().hex[:4])
+    bilan, texte = _passage_biblio([e["id"]], appliquer=True)
+    assert bilan["entrees_ecrites"] == 1, texte
+    apres = org_store.get_library_entry(entry_id=e["id"], include_unlisted=True)
+    assert apres["version"] == 4 and apres["published_by"] == M.AUTEUR
+    for cle in ("slug", "title", "description", "body_md", "author_kind",
+                "author_org_id", "author_display", "category", "tags", "visibility",
+                "source_org_id", "source_slug", "forked_from"):
+        assert apres[cle] == e[cle], cle
+    vivier = next(s for s in apres["slots"] if s["name"] == "vivier")
+    assert vivier["schema"]["fields"][0] == {
+        "key": "siren", "type": "text", "description": "9 chiffres",
+        "meta": {"editable": False}}
+    assert vivier["schema"]["fields"][1]["options"] == ["a", "b"]
+    assert next(s for s in apres["slots"] if s["name"] == "crm") == SLOTS_ANCIENS[1]
+    second, _ = _passage_biblio([e["id"]], appliquer=False)
+    assert second["entrees_a_durcir"] == 0
+
+
+def test_une_entree_republiee_depuis_l_inventaire_est_sautee(live, monkeypatch):
+    from oto_mcp import org_store
+    from oto_mcp.db._conn import _connect
+    e = _entree("biblio-bouge-" + uuid.uuid4().hex[:4])
+    vrai = M.inventaire_bibliotheque
+
+    def _perime(entrees=None):
+        lus = vrai(entrees)
+        with _connect() as conn:   # une re-publication passe entre-temps
+            conn.execute("UPDATE guide_library SET version = version + 1, "
+                         "body_md = '2. Autre corps.' WHERE id = %s", (e["id"],))
+        return lus
+    monkeypatch.setattr(M, "inventaire_bibliotheque", _perime)
+    bilan, texte = _passage_biblio([e["id"]], appliquer=True)
+    assert bilan["entrees_bougees"] == [e["id"]] and "SAUTÉE" in texte
+    assert org_store.get_library_entry(entry_id=e["id"], include_unlisted=True)[
+        "body_md"] == "2. Autre corps.", "rien d'écrasé"
+
+
+# ── la publication en bibliothèque VALIDE les slots (oto#34) ─────────────────
+
+def _publier(slug: str, slots: list, **autres) -> dict:
+    from oto_mcp import org_store
+    return org_store.publish_guide(
+        slug=slug, title="Qualif", body_md="1. Qualifier le vivier.",
+        author_kind="otomata", author_display="Otomata", visibility="unlisted",
+        slots=copy.deepcopy(slots), **autres)
+
+
+def test_une_PREMIERE_publication_refuse_un_schema_de_slot_hors_vocabulaire(live):
+    """Une entrée neuve n'a rien de stocké : tout ce qu'elle porte est posé par ce
+    geste — une clé inconnue y est refusée, comme à la pose d'un schéma."""
+    from oto_mcp import org_store
+    slug = "biblio-neuve-" + uuid.uuid4().hex[:4]
+    with pytest.raises(org_store.LibrarySlotsInvalid) as e:
+        _publier(slug, SLOTS_ANCIENS)
+    assert "slots[0].schema" in str(e.value) and "help" in str(e.value)
+    assert org_store.get_library_entry(slug=slug, include_unlisted=True) is None
+
+
+def test_une_REPUBLICATION_tolere_ce_qui_etait_stocke_et_refuse_ce_qu_elle_ajoute(live):
+    """La règle de la pose : seul ce que le geste ajoute ou change est refusé. Une entrée
+    pas encore rangée doit rester re-publiable telle quelle — sinon le seul moyen de la
+    corriger serait de passer par la table."""
+    from oto_mcp import org_store
+    e = _entree("biblio-tolere-" + uuid.uuid4().hex[:4])
+    row = _publier(e["slug"], SLOTS_ANCIENS)
+    assert row["version"] == 4 and row["slots"] == e["slots"]
+    ajout = copy.deepcopy(SLOTS_ANCIENS)
+    ajout[0]["schema"]["fields"][0]["zorglub"] = 1
+    with pytest.raises(org_store.LibrarySlotsInvalid) as err:
+        _publier(e["slug"], ajout)
+    assert "zorglub" in str(err.value)
+    assert org_store.get_library_entry(slug=e["slug"], include_unlisted=True)[
+        "version"] == 4, "rien d'écrit"
+
+
+def test_le_refus_de_slots_ne_parle_qu_APRES_l_appartenance(live):
+    """Un slug d'autrui se refuse en `slug_taken`, jamais en jugeant ses slots : la
+    tolérance (ou non) d'une clé dirait ce que porte une entrée `unlisted`."""
+    from oto_mcp import org_store
+    e = _entree("biblio-autrui-" + uuid.uuid4().hex[:4])
+    with pytest.raises(org_store.LibrarySlugTaken):
+        org_store.publish_guide(
+            slug=e["slug"], body_md="x", author_kind="org", author_org_id=1,
+            slots=copy.deepcopy(SLOTS_ANCIENS))

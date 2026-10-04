@@ -14,11 +14,14 @@ tableau ce qu'il ferait, et n'écrit rien.
 
     # 1. à blanc : lire le rapport
     ./.venv/bin/python -m scripts.durcir_schemas [--tableau <ns_id> …] [--procedure <id> …]
+                                                 [--entree <id> …]
     # 2. écrire
     ./.venv/bin/python -m scripts.durcir_schemas --appliquer [--tableau …] [--procedure …]
-    # 3. vérifier : un second passage à blanc doit annoncer 0 tableau et 0 procédure
+                                                 [--entree …]
+    # 3. vérifier : un second passage à blanc doit annoncer 0 tableau, 0 procédure et
+    #    0 entrée de bibliothèque
 
-Deux familles de schémas, rangées par les mêmes règles :
+Trois familles de schémas, rangées par les mêmes règles :
 
 - les **tableaux** (`user_datastores.schema`) ;
 - les **schémas cibles des slots de procédure** (`org_instructions.slots[*].schema`,
@@ -26,8 +29,15 @@ Deux familles de schémas, rangées par les mêmes règles :
   schéma est PROVISIONNÉ tel quel sur le tableau lié (`slots.provision_tableau_schema`),
   le laisser en l'état réintroduirait l'ancien vocabulaire dans un tableau neuf.
   Les procédures RETIRÉES (archivées) ne sont pas réécrites : aucune écriture ne les
-  accepte, elles sont listées. Sans filtre, les deux familles passent ; `--tableau`
-  et `--procedure` limitent chacune la sienne, et l'autre n'est alors pas parcourue.
+  accepte, elles sont listées ;
+- les **schémas cibles des slots des entrées de bibliothèque** (`guide_library.slots`,
+  oto#34) — un fork copie ces slots TELS QUELS dans la procédure qu'il crée
+  (`org_store.fork_into_org`) : les laisser en l'état réintroduirait l'ancien
+  vocabulaire dans chaque procédure forkée, donc dans chaque tableau qu'elle
+  provisionne.
+
+Sans filtre, les trois familles passent ; `--tableau`, `--procedure` et `--entree`
+limitent chacune la sienne, et les autres ne sont alors pas parcourues.
 
 ## Ce qu'il fait, niveau par niveau
 
@@ -68,6 +78,19 @@ Les slots rangés sont d'abord repassés par `slots.validate_slots` (la validati
 la surface — ils n'ont plus de clé inconnue, rien n'y est toléré), et l'écriture porte
 `expected_version` : une procédure modifiée depuis l'inventaire est sautée, jamais
 écrasée.
+
+Une entrée de bibliothèque s'écrit par `org_store.publish_guide` — le chemin de
+`library.publish` : une RE-publication par son auteur, qui incrémente `version`. Tout
+le reste de l'entrée est reconduit tel quel (corps, titre, description, auteur,
+visibilité, catégorie, étiquettes, provenance) ; `published_by` devient
+`migration:durcir_schemas`, et l'écriture est journalisée dans `tool_calls`
+(`library_publish`, `sub` nul, `args.migration_systeme`) avec la version et le
+publieur d'avant. ⚠️ La bibliothèque n'a PAS de table d'historique : la version
+d'avant ne survit que dans la procédure source (`source_org_id`/`source_slug`) et
+dans ce journal. Les slots rangés sont validés par la publication elle-même
+(`slots.validate_slots`, contre les slots en place), et l'entrée est relue juste
+avant d'écrire : une entrée re-publiée depuis l'inventaire
+est sautée, jamais écrasée.
 
 Idempotent : un second passage ne trouve plus rien à ranger.
 """
@@ -321,6 +344,59 @@ def ecrire_procedure(p: dict, slots: list) -> tuple[str, Optional[str]]:
     return "ecrit", None
 
 
+# ── les slots des entrées de bibliothèque ────────────────────────────────────
+
+def inventaire_bibliotheque(entrees: Optional[list[int]] = None) -> list[dict]:
+    """Les entrées de bibliothèque dont un slot déclare un schéma cible — lues par la
+    VUE `guide_library`, comme tout le code de la bibliothèque."""
+    with _connect_autocommit() as conn:
+        conn.execute(f"SET statement_timeout = '{STATEMENT_TIMEOUT}'")
+        sql = ("SELECT id, slug, title, description, body_md, slots, author_kind, "
+               "author_org_id, author_display, category, tags, visibility, "
+               "source_org_id, source_slug, forked_from, version, published_by "
+               "FROM guide_library "
+               "WHERE jsonb_typeof(slots) = 'array' AND EXISTS ("
+               "  SELECT 1 FROM jsonb_array_elements(slots) s "
+               "   WHERE jsonb_typeof(s) = 'object' AND s ? 'schema')")
+        if entrees:
+            rows = conn.execute(sql + " AND id = ANY(%s) ORDER BY id",
+                                (list(entrees),)).fetchall()
+        else:
+            rows = conn.execute(sql + " ORDER BY id").fetchall()
+    return [dict(r) for r in rows]
+
+
+def _journaliser_entree(e: dict, plans: dict, ok: bool, erreur: Optional[str]) -> None:
+    calllog.log_rest_call(
+        "library_publish", sub=None, ok=ok, error=erreur,
+        org_id=e["author_org_id"],
+        args={"entree": e["id"], "slug": e["slug"], "migration_systeme": MIGRATION,
+              "version_avant": e["version"], "publie_par_avant": e["published_by"],
+              "slots": {nom: _lignes(plan) for nom, plan in plans.items()}})
+
+
+def ecrire_entree(e: dict, slots: list, plans: dict) -> tuple[str, Optional[str]]:
+    """`("ecrit", None)`, `("bouge", None)` ou `("refuse", raison)`."""
+    en_place = org_store.get_library_entry(entry_id=e["id"], include_unlisted=True)
+    if not en_place or (en_place["version"], en_place["slots"]) != (e["version"],
+                                                                     e["slots"]):
+        return "bouge", None
+    try:
+        # `publish_guide` valide les slots lui-même (oto#34), sous son verrou.
+        org_store.publish_guide(
+            slug=e["slug"], title=e["title"], description=e["description"],
+            body_md=e["body_md"], author_kind=e["author_kind"],
+            author_org_id=e["author_org_id"], author_display=e["author_display"],
+            category=e["category"], tags=e["tags"], visibility=e["visibility"],
+            source_org_id=e["source_org_id"], source_slug=e["source_slug"],
+            forked_from=e["forked_from"], published_by=AUTEUR, slots=slots)
+    except (org_store.LibrarySlugTaken, ValueError) as err:
+        _journaliser_entree(e, plans, False, str(err))
+        return "refuse", str(err)
+    _journaliser_entree(e, plans, True, None)
+    return "ecrit", None
+
+
 # ── le rapport ───────────────────────────────────────────────────────────────
 
 def _lignes(plan: Plan) -> list[str]:
@@ -349,18 +425,22 @@ def _compter(bilan: dict, plan: Plan) -> None:
 
 
 def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
-             procedures: Optional[list[int]] = None, sortie=print) -> dict:
-    """Le passage complet. Rend le bilan (aussi imprimé). Sans filtre, les deux
+             procedures: Optional[list[int]] = None,
+             entrees: Optional[list[int]] = None, sortie=print) -> dict:
+    """Le passage complet. Rend le bilan (aussi imprimé). Sans filtre, les trois
     familles ; un filtre ne parcourt que la sienne."""
-    filtre = bool(tableaux or procedures)
+    filtre = bool(tableaux or procedures or entrees)
     parc = inventaire(tableaux) if (tableaux or not filtre) else []
     procs = inventaire_procedures(procedures) if (procedures or not filtre) else []
+    biblio = inventaire_bibliotheque(entrees) if (entrees or not filtre) else []
     bilan = {"a_schema": len(parc), "a_durcir": 0, "ecrits": 0, "bouges": [],
              "refuses": [], "inmigrables": [], "deplacees": Counter(),
              "repliees": Counter(), "supprimees": Counter(), "enum": Counter(),
              "procedures_a_slots": len(procs), "procedures_a_durcir": 0,
              "procedures_ecrites": 0, "procedures_bougees": [],
-             "procedures_refusees": [], "procedures_retirees": []}
+             "procedures_refusees": [], "procedures_retirees": [],
+             "entrees_a_slots": len(biblio), "entrees_a_durcir": 0,
+             "entrees_ecrites": 0, "entrees_bougees": [], "entrees_refusees": []}
     for t in parc:
         try:
             plan = durcir(t["schema"])
@@ -425,6 +505,38 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
             bilan["procedures_refusees"].append((p["id"], detail))
             sortie(f"  → REFUSÉE : {detail}")
 
+    for e in biblio:
+        nom = (f"entrée de bibliothèque {e['id']} « {e['slug']} » ({e['author_kind']}"
+               f"{' ' + str(e['author_org_id']) if e['author_org_id'] else ''}, "
+               f"v{e['version']})")
+        try:
+            slots, plans = durcir_slots(e["slots"])
+        except Inmigrable as err:
+            bilan["inmigrables"].append((f"entrée {e['id']}", str(err)))
+            sortie(f"{nom} — À ARBITRER, non écrite : {err}")
+            continue
+        if not plans:
+            continue
+        bilan["entrees_a_durcir"] += 1
+        sortie(nom)
+        for slot, plan in plans.items():
+            _compter(bilan, plan)
+            sortie(f"  slot `{slot}`")
+            for ligne in _lignes(plan):
+                sortie("  " + ligne)
+        if not appliquer:
+            continue
+        etat, detail = ecrire_entree(e, slots, plans)
+        if etat == "ecrit":
+            bilan["entrees_ecrites"] += 1
+            sortie(f"  → re-publiée en v{e['version'] + 1}")
+        elif etat == "bouge":
+            bilan["entrees_bougees"].append(e["id"])
+            sortie("  → SAUTÉE : l'entrée a changé depuis l'inventaire, relancer")
+        else:
+            bilan["entrees_refusees"].append((e["id"], detail))
+            sortie(f"  → REFUSÉE : {detail}")
+
     def _compte(c: Counter) -> str:
         return ", ".join(f"{k}×{n}" for k, n in c.most_common()) or "aucune"
 
@@ -432,7 +544,9 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
     sortie(f"— {'ÉCRIT' if appliquer else 'À BLANC'} : {bilan['a_durcir']} tableau(x) "
            f"à durcir sur {bilan['a_schema']} à schéma ; "
            f"{bilan['procedures_a_durcir']} procédure(s) à durcir sur "
-           f"{bilan['procedures_a_slots']} à slot schématisé")
+           f"{bilan['procedures_a_slots']} à slot schématisé ; "
+           f"{bilan['entrees_a_durcir']} entrée(s) de bibliothèque à durcir sur "
+           f"{bilan['entrees_a_slots']} à slot schématisé")
     sortie(f"  clés rangées dans meta : {_compte(bilan['deplacees'])}")
     sortie(f"  clés repliées dans description : {_compte(bilan['repliees'])}")
     sortie(f"  clés supprimées : {_compte(bilan['supprimees'])}")
@@ -446,6 +560,9 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
                f"(bougées) : {len(bilan['procedures_bougees'])} ; refusées : "
                f"{len(bilan['procedures_refusees'])} ; retirées (non écrites) : "
                f"{len(bilan['procedures_retirees'])}")
+        sortie(f"  entrées de bibliothèque écrites : {bilan['entrees_ecrites']} ; "
+               f"sautées (bougées) : {len(bilan['entrees_bougees'])} ; refusées : "
+               f"{len(bilan['entrees_refusees'])}")
     return bilan
 
 
@@ -457,11 +574,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                    help="limiter à ce tableau (répétable)")
     p.add_argument("--procedure", type=int, action="append",
                    help="limiter à cette procédure, par son id (répétable)")
+    p.add_argument("--entree", type=int, action="append",
+                   help="limiter à cette entrée de bibliothèque, par son id (répétable)")
     a = p.parse_args(argv)
     bilan = executer(appliquer=a.appliquer, tableaux=a.tableau,
-                     procedures=a.procedure)
+                     procedures=a.procedure, entrees=a.entree)
     return 1 if (bilan["refuses"] or bilan["bouges"] or bilan["procedures_refusees"]
-                 or bilan["procedures_bougees"]) else 0
+                 or bilan["procedures_bougees"] or bilan["entrees_refusees"]
+                 or bilan["entrees_bougees"]) else 0
 
 
 if __name__ == "__main__":

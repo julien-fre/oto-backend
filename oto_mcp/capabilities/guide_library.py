@@ -325,6 +325,10 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
             visibility=inp.visibility, source_org_id=org_id, source_slug=inp.slug,
             published_by=ctx.sub, slots=src.get("slots") or [],
         )
+    except org_store.LibrarySlotsInvalid as e:
+        # Le schéma cible d'un slot se juge à la publication comme à l'écriture d'une
+        # procédure (oto#34) : seul ce que ce geste ajoute ou change est refusé.
+        raise AuthzDenied(400, "invalid_slots", f"Publication refusée — {e}")
     except org_store.LibrarySlugTaken:
         # NON-DISCLOSANT, à dessein : ne jamais dire À QUI est l'entrée, ni même
         # qu'elle existe sous cette forme — le slug d'une entrée `unlisted` est un
