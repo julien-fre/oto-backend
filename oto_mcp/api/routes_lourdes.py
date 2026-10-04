@@ -73,12 +73,93 @@ class RouteLourde:
 #: s'y inscrit avec sa raison : ce qu'elle coûte, et ce qu'un client qui la martèle
 #: priverait aux autres.
 #:
-#: Vide à la naissance du mécanisme, et délibérément : `POST /api/me/runner/jobs` n'y
-#: entre PAS. Le 04/10 elle a été la VICTIME du pool vide (52 des réponses 500), pas sa
-#: cause, et ses appelants sont les workers d'agents hébergés, dont le sondage est
-#: régulier par construction : la brider ralentirait la file sans rien protéger. La
-#: route d'agrégat qui a vidé le pool s'y inscrit avec le lot qui la reprend.
-ROUTES_LOURDES: tuple[RouteLourde, ...] = ()
+#: `POST /api/me/runner/jobs` n'y entre PAS. Le 04/10 elle a été la VICTIME du pool
+#: vide (52 des réponses 500), pas sa cause, et ses appelants sont les workers d'agents
+#: hébergés, dont le sondage est régulier par construction : la brider ralentirait la
+#: file sans rien protéger.
+#:
+#: Les bornes ci-dessous (#1145) sont réglées sur les consommateurs RÉELS recensés le
+#: 04/10/2026, pas sur un idéal : un débit qui coupe un appelant légitime casse le
+#: produit. Le débit vise le client qui martèle ; la concurrence protège le pool, et
+#: elle est par processus. Chaque lecture d'agrégat est en plus bornée à 10 s
+#: (`db.lecture_bornee`) : la concurrence × 10 s est le pire temps de pool qu'une route
+#: peut prendre.
+ROUTES_LOURDES: tuple[RouteLourde, ...] = (
+    RouteLourde(
+        "GET", "/api/orgs/{id}/usage/calls", par_minute=900, concurrence=8,
+        pourquoi=("Relevé de consommation appel par appel, le plus appelé de /api "
+                  "(~294 000 appels en deux jours). Un service de facturation de tenant "
+                  "le lit OUTIL PAR OUTIL (~17) à chaque relevé, 4 en parallèle, page par "
+                  "page, toutes les 120 s, sous le jeton de l'utilisateur ; observé "
+                  "jusqu'à 600 appels/min d'un même client. Le débit est posé AU-DESSUS "
+                  "pour ne pas couper ce relevé légitime : c'est la concurrence (8) qui "
+                  "garde le pool. Le remède de fond est usage/tools, une lecture pour "
+                  "tous les outils.")),
+    RouteLourde(
+        "GET", "/api/orgs/{id}/usage/tools", par_minute=120, concurrence=4,
+        pourquoi=("Relevé agrégé par outil d'une org sur une fenêtre close : UNE "
+                  "requête d'agrégat sur tool_calls pour toute la fenêtre (jusqu'à "
+                  "92 jours). Elle remplace les ~17 lectures par outil d'un relevé ; "
+                  "deux par minute et par relevé suffisent largement.")),
+    RouteLourde(
+        "GET", "/api/me/instructions/{slug}/usage", par_minute=60, concurrence=4,
+        pourquoi=("Usage d'une procédure : agrégat de 30 jours du journal sous l'org. "
+                  "Mesurée à 27-30 s de médiane et 175 s au p95 avant #1145 ; lue à "
+                  "l'ouverture de la fiche d'une procédure, par le tableau de bord et "
+                  "par le front d'un tenant — une page n'en demande qu'une.")),
+    RouteLourde(
+        "GET", "/api/me/activity-summary", par_minute=60, concurrence=6,
+        pourquoi=("Agrégats de MON activité (cinq ventilations d'une fenêtre du "
+                  "journal) ; 70 s au p95 avant #1145, 134 s avec days=365. Le front "
+                  "d'un tenant l'appelle à CHAQUE chargement de page, days=365, pour "
+                  "savoir si le compte a déjà appelé un outil : le débit (60/min par "
+                  "jeton) laisse une navigation rapide passer ; la concurrence est plus "
+                  "large que les autres lentilles parce que tous les comptes la lisent.")),
+    RouteLourde(
+        "POST", "/api/me/projects", par_minute=240, concurrence=8,
+        pourquoi=("Console projets (op=list/get/runs/inventory/… ET les écritures) : "
+                  "13 s au p95 avant #1145, lectures de runs d'un projet reconstruites "
+                  "depuis le journal. Ouvrir un projet en déclenche plusieurs à la fois "
+                  "(get, runs, inventory, activity) : le débit est large pour ne pas "
+                  "couper une édition, la concurrence garde le pool.")),
+    RouteLourde(
+        "GET", "/api/admin/monitoring/summary", par_minute=30, concurrence=2,
+        pourquoi=("Résumé d'appels de la supervision plateforme : sans périmètre, il "
+                  "lit le journal de toute la plateforme (452 s pour un jour sous "
+                  "contention le 04/10). Admin plateforme seul ; la console le demande "
+                  "une fois par changement de fenêtre.")),
+    RouteLourde(
+        "GET", "/api/admin/monitoring/rest", par_minute=30, concurrence=2,
+        pourquoi=("Agrégats des appels REST de toute la plateforme (trois lectures "
+                  "d'une fenêtre du journal). Admin plateforme seul, une fois par "
+                  "changement de fenêtre.")),
+    RouteLourde(
+        "GET", "/api/admin/monitoring/connectors", par_minute=30, concurrence=2,
+        pourquoi=("Échecs de connecteurs de toute la plateforme sur une fenêtre du "
+                  "journal. Admin plateforme seul, une fois par changement de fenêtre.")),
+    RouteLourde(
+        "GET", "/api/admin/monitoring/funnel", par_minute=30, concurrence=2,
+        pourquoi=("Entonnoir d'activation : comptages sur tous les comptes et la "
+                  "fenêtre du journal. Admin plateforme seul, une fois par changement "
+                  "de fenêtre.")),
+    RouteLourde(
+        "GET", "/api/orgs/{id}/monitoring/summary", par_minute=30, concurrence=4,
+        pourquoi=("Résumé d'appels d'une org (agrégat d'une fenêtre jusqu'à 90 jours "
+                  "du journal sous l'org). Admin d'org ; la supervision d'org le "
+                  "demande une fois par changement de fenêtre. Concurrence 4 : plusieurs "
+                  "orgs peuvent superviser en même temps.")),
+    RouteLourde(
+        "GET", "/api/admin/tenants", par_minute=30, concurrence=2,
+        pourquoi=("Vue des tenants : compteurs d'appels de tous les comptes sur 30 "
+                  "jours, une lecture de toute la fenêtre du journal. Admin plateforme "
+                  "seul.")),
+    RouteLourde(
+        "GET", "/api/admin/tenants/{slug}", par_minute=30, concurrence=2,
+        pourquoi=("Fiche d'un tenant : ~150 s pour le primaire le 04/10 (journal de "
+                  "toute la fenêtre lu deux fois). Pour le primaire, la lecture reste "
+                  "celle de toute la plateforme. Admin plateforme ou admin du tenant, "
+                  "une fiche à la fois.")),
+)
 
 
 def _empreinte(scope: dict) -> str:

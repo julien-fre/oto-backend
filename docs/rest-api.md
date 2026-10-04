@@ -1019,9 +1019,26 @@ sa raison écrite. Deux bornes, sans attente, avant l'authentification et le han
 Corps `{error, detail, details: {retryable, retry_after_seconds, …}}` et en-têtes CORS
 de l'origine. Middleware ASGI `GardeRoutesLourdes`, monté juste sous `RestCallLogger` : le
 refus est journalisé, et cette ligne de journal est tout ce qu'il coûte à la base. ⚠️ Compteurs **par processus** : une protection du pool, pas un
-quota. ⚠️ La liste naît **vide** : `POST /api/me/runner/jobs` a été la victime du pool vide,
+quota. ⚠️ `POST /api/me/runner/jobs` n'y est pas : elle a été la victime du pool vide,
 pas sa cause, et ses appelants sondent à cadence régulière. Preuves :
 `tests/api/test_routes_lourdes_1141.py`.
+
+**Les routes déclarées (#1145)**, réglées sur les consommateurs réels recensés le 04/10 :
+
+| route | par minute / jeton | concurrence | pourquoi, en bref |
+|---|---|---|---|
+| `GET /api/orgs/{id}/usage/calls` | 900 | 8 | relevé de facturation d'un tenant : ~17 outils × pages toutes les 120 s, 4 en parallèle, jusqu'à 600/min observés — le débit est AU-DESSUS, la concurrence garde le pool |
+| `GET /api/orgs/{id}/usage/tools` | 120 | 4 | une lecture agrégée pour tous les outils |
+| `GET /api/me/instructions/{slug}/usage` | 60 | 4 | agrégat 30 j, une lecture par fiche de procédure |
+| `GET /api/me/activity-summary` | 60 | 6 | lue à chaque chargement de page par le front d'un tenant |
+| `POST /api/me/projects` | 240 | 8 | ouvrir un projet déclenche plusieurs ops ; écritures comprises |
+| `GET /api/admin/monitoring/{summary,rest,connectors,funnel}` | 30 | 2 | supervision plateforme, admin seul |
+| `GET /api/orgs/{id}/monitoring/summary` | 30 | 4 | supervision d'org |
+| `GET /api/admin/tenants`, `GET /api/admin/tenants/{slug}` | 30 | 2 | lectures de toute la fenêtre du journal |
+
+Non déclarées faute de diagnostic : `GET /api/me/connectors`, `POST /api/me/runner/triggers`.
+Chaque gabarit est confronté à la table figée des routes
+(`tests/api/test_routes_lourdes_declarees_1145.py`).
 
 ## CORS — les origines se DÉCLARENT, il n'y a plus de liste dans le code
 
