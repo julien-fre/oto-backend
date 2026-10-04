@@ -69,6 +69,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, apollo_receiver, output_projection, session_org
+from .lecture import LECTURE
 from ..datastore.identite import AdresseJson as Adresse
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,7 @@ def register(mcp: FastMCP) -> None:
                     code=INVALID_PARAMS, message=f"{msg} — {precision}"))
             raise
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def apollo_search_organizations(
         name: Optional[str] = None,
         domain: Optional[str] = None,
@@ -237,7 +238,7 @@ def register(mcp: FastMCP) -> None:
                 "écris pas vides.")
         return out
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def apollo_enrich_organization(domain: str) -> dict:
         """Enrich a company from its domain (firmographics, size, industry…).
 
@@ -249,7 +250,7 @@ def register(mcp: FastMCP) -> None:
         client, _ = _client()
         return client.enrich_organization(domain)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def apollo_bulk_enrich_organizations(domains: list[str]) -> dict:
         """Enrich UP TO 10 companies in a single call — same fields as
         apollo_enrich_organization (headcount, per-department split, growth, revenue).
@@ -261,7 +262,7 @@ def register(mcp: FastMCP) -> None:
         client, _ = _client()
         return client.bulk_enrich_organizations(domains)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def apollo_search_people(
         domains: Optional[list[str]] = None,
         org_ids: Optional[list[str]] = None,
@@ -877,7 +878,7 @@ def register(mcp: FastMCP) -> None:
                 "cannot be looked up without it. Nothing to poll.")
         return _avec_avis(out, webhook_url)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def apollo_job_postings(org_id: str) -> dict:
         """List active job postings for an Apollo organization id (hiring signal)."""
         client, _ = _client()

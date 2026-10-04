@@ -18,6 +18,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INVALID_REQUEST
 
 from .. import access, output_projection, session_org, url_perimeter
+from .lecture import LECTURE
 from ..connectors import verify as connector_verify
 from . import cesures, images_base64, mail_obfuscation
 
@@ -289,7 +290,7 @@ def register(mcp: FastMCP) -> None:
     }
     _KIND_LIST = ", ".join(sorted(_KINDS) + ["autocomplete"])
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def serper_search(
         query: str,
         kind: Literal["web", "news", "images", "videos", "places", "shopping",
@@ -375,7 +376,7 @@ def register(mcp: FastMCP) -> None:
         return _project(result, items, full, fields) if kind in ("web", "news") else result
 
 
-    @mcp.tool(meta={"census_via": "serper_maps_census"})
+    @mcp.tool(meta={"census_via": "serper_maps_census"}, annotations=LECTURE)
     def serper_maps_sample(
         query: Optional[str] = None,
         ll: Optional[str] = None,
@@ -411,7 +412,7 @@ def register(mcp: FastMCP) -> None:
             num=num, page=page, country=country, language=language,
         )
 
-    @mcp.tool(meta={"technique": "local-census"})
+    @mcp.tool(meta={"technique": "local-census"}, annotations=LECTURE)
     def serper_maps_census(
         query: str,
         center: Optional[str] = None,
@@ -461,7 +462,7 @@ def register(mcp: FastMCP) -> None:
             country=country, language=language,
         )
 
-    @mcp.tool(meta={"technique": "reviews-census"})
+    @mcp.tool(meta={"technique": "reviews-census"}, annotations=LECTURE)
     def serper_reviews(
         op: Literal["all", "page"] = "all",
         cid: Optional[str] = None,
@@ -524,7 +525,7 @@ def register(mcp: FastMCP) -> None:
             )
         raise _bad(f"`op` invalide : {op!r} (attendu : all | page).")
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def serper_lens(
         url: str,
         country: Optional[str] = "fr",
@@ -543,7 +544,7 @@ def register(mcp: FastMCP) -> None:
         return url_perimeter.filter_results(
             _run("search_lens", url=url, country=country, language=language), per)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def serper_scrape(
         url: str,
         format: Literal["markdown", "text", "both", "html"] = "markdown",

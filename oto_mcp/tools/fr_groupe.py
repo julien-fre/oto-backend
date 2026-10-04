@@ -44,6 +44,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
+from .lecture import LECTURE
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
@@ -365,7 +366,7 @@ def register(mcp: FastMCP) -> None:
                  "plus haut. ") if tronques else "") + _CAVEAT,
         }
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_groupe(
         siren: str,
         op: Literal["ascendant", "descendant"] = "ascendant",

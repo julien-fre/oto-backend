@@ -15,6 +15,7 @@ from ..mcp_errors import McpError
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access, output_projection
+from .lecture import LECTURE
 # Hors de `tools/` : ce module ne sert AUCUN outil, il porte la lecture du
 # registre des personnes. `tools/<m>.py` est réservé aux modules montés depuis
 # le registre de connecteurs (garde-fou `test_capabilities_drift`).
@@ -113,7 +114,7 @@ def register(mcp: FastMCP) -> None:
 
     # --- Identité (API Recherche Entreprises, open data) ---
 
-    @mcp.tool(meta={"exhaustive_via": "fr_stock_search"})
+    @mcp.tool(meta={"exhaustive_via": "fr_stock_search"}, annotations=LECTURE)
     def fr_search(
         query: Optional[str] = None,
         naf: Optional[str] = None,
@@ -384,7 +385,7 @@ def register(mcp: FastMCP) -> None:
             out["partial_errors"] = partial_errors
         return out
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_get(siren: str | None = None, sirens: list | None = None) -> dict:
         """Full company profile by SIREN: identity (siège, directors, NAF,
         employees) + 7 top financial ratios from the latest INPI/BCE filing
@@ -455,7 +456,7 @@ def register(mcp: FastMCP) -> None:
     # commentaire du lot : choix prudent, le quota amont n'étant pas publié.
     _FR_DIRECTORS_CADENCE_S = float(os.environ.get("FR_DIRECTORS_CADENCE_S", "0.2"))
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_directors(siren: str | None = None, sirens: list | None = None) -> dict:
         """Directors declared at the French registry (RNE), for one company or a
         LIST — `sirens=[…]` (max 100) returns `{entreprises, count, obtenues,
@@ -568,7 +569,7 @@ def register(mcp: FastMCP) -> None:
     def _sirene_key() -> tuple[str, bool]:
         return access.resolve_api_key("sirene")  # (clé, is_platform)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_siret(siret: str) -> dict:
         """Fetch a French establishment by SIRET (14 digits) from INSEE SIRENE.
 
@@ -581,7 +582,7 @@ def register(mcp: FastMCP) -> None:
             access.record_platform_usage("sirene")
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_avis_sirene(siret: str) -> dict:
         """Official INSEE « Avis de situation au répertoire SIRENE » PDF of an
         establishment — the signed 1-page administrative document, for a dossier.
@@ -614,7 +615,7 @@ def register(mcp: FastMCP) -> None:
                 f"({resp.headers.get('Content-Type', '?')}).")))
         return {"siret": digits, "url": url, "format": "pdf"}
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_headquarters(siren: str) -> Optional[dict]:
         """Fetch the headquarters (siège) of a company from INSEE SIRENE.
 
@@ -629,7 +630,7 @@ def register(mcp: FastMCP) -> None:
 
     # --- Finances (INPI/BCE, open data) ---
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_bilans(siren: str) -> dict:
         """List available INPI/BCE annual filings for a SIREN.
 
@@ -642,7 +643,7 @@ def register(mcp: FastMCP) -> None:
         items = inpi.list_exercises(siren)
         return {"siren": siren, "items": items, "total": len(items)}
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_bilan(siren: str, date_cloture: str) -> dict:
         """Fetch one INPI/BCE annual filing with full financial ratios.
 
@@ -662,7 +663,7 @@ def register(mcp: FastMCP) -> None:
 
     # --- Événements légaux (BODACC, open data) ---
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_events(
         siren: str,
         famille: Optional[FamilleBodacc] = None,
@@ -680,7 +681,7 @@ def register(mcp: FastMCP) -> None:
         """
         return bodacc.search_by_siren(siren, famille=_famille_bodacc(famille), limit=limit)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_events_batch(
         sirens: list[str],
         famille: Optional[FamilleBodacc] = "collective",
@@ -724,7 +725,7 @@ def register(mcp: FastMCP) -> None:
 
     # --- Appels d'offres (BOAMP, open data) ---
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_tenders_search(
         op: Literal["notices", "awarded"] = "notices",
         query: Optional[str] = None,
@@ -802,7 +803,7 @@ def register(mcp: FastMCP) -> None:
         )
         return output_projection.project(res, items_path="results", fields=fields)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_tenders_get(idweb: str) -> dict:
         """Fetch a single BOAMP tender by its ID.
 
@@ -816,7 +817,7 @@ def register(mcp: FastMCP) -> None:
 
     # --- Aides publiques aux entreprises (data.aides-entreprises.fr, open data) ---
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_aides_search(
         insee: Optional[str] = None,
         code_postal: Optional[str] = None,
@@ -860,7 +861,7 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:  # commune/CP inconnu du référentiel territoires
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_aides_get(id_aid: str, raw: bool = False) -> dict:
         """Fiche COMPLÈTE d'une aide (source de vérité après re-rank de
         `fr_aides_search` — objet/conditions/montant intégraux, financeurs,
@@ -885,7 +886,7 @@ def register(mcp: FastMCP) -> None:
     # vs AVENANT = renégociation). Le texte intégral n'est pas toujours publié
     # (conforme_version_integrale), mais le « qui a négocié quoi et quand » l'est.
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_accords_search(
         query: Optional[str] = None,
         themes: Optional[list[str]] = None,
@@ -997,7 +998,7 @@ def register(mcp: FastMCP) -> None:
             exclude_categories=exclude_categories, scan_cap=scan_cap,
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_accords_get(id_or_numero: str, include_text: bool = False) -> dict:
         """Fetch a single company agreement by its DILA id (ACCOTEXT…) or numero (T…).
 
@@ -1034,7 +1035,7 @@ def register(mcp: FastMCP) -> None:
                 "permalien": text.get("permalien"),
                 "lien_construit": text.get("lien_construit")}
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_accords_themes() -> list[dict]:
         """List the agreement theme codes present in the database (code → label →
         count). Discovery helper so you can pick `themes` for fr_accords_search.
@@ -1044,7 +1045,7 @@ def register(mcp: FastMCP) -> None:
         the warning on fr_accords_search)."""
         return fod_fr.acco_themes()
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_accords_text(acco_id: str, offset: int = 0) -> dict:
         """Full text of a company agreement (accord d'entreprise) by its DILA
         id — fetched on demand from Légifrance (the local ACCO index only has
@@ -1073,7 +1074,7 @@ def register(mcp: FastMCP) -> None:
 
     # --- Index égalité F-H (Egapro, open data) -------------------------------
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def fr_egapro_declaration(siren: str, year: Optional[int] = None) -> dict:
         """Gender-equality index (Egapro) declaration of a company, by SIREN.
 

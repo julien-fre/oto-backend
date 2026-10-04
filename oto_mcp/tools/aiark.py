@@ -21,6 +21,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, output_projection, session_org
+from .lecture import LECTURE
 from ..connectors import verify as connector_verify
 
 # ── Vue de tri d'une page de recherche ───────────────────────────────────────────
@@ -334,7 +335,7 @@ def register(mcp: FastMCP) -> None:
             access.record_platform_usage("aiark")
         return result
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def linkedin_aiark_credits() -> dict:
         """Remaining AI Ark credits for the resolved account (`{"total": <int>}`).
 
@@ -349,7 +350,7 @@ def register(mcp: FastMCP) -> None:
                 "exposé. Pose ta propre clé AI Ark pour suivre un solde.")))
         return _run(lambda c: c.credits())
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def linkedin_aiark_search(
         op: Literal["people", "companies"] = "people",
         account: Optional[dict] = None,
@@ -474,7 +475,7 @@ def register(mcp: FastMCP) -> None:
             session_org.note_call_trace(quantity=len(content))
         return _shape(result, op, full, fields)
 
-    @mcp.tool()
+    @mcp.tool(annotations=LECTURE)
     def linkedin_aiark_person(
         op: Literal["export", "reverse", "mobile"] = "export",
         id: Optional[str] = None,

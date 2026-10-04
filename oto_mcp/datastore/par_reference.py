@@ -222,32 +222,45 @@ def ecrire(lot: Lot, row_id: str, patch: dict) -> Optional[str]:
     return ecrire_ligne(lot.store, lot.adresse, row_id, patch)
 
 
+def code_du_refus(e: Exception) -> Optional[str]:
+    """Le CODE d'un refus d'écriture sur une ligne, ou None si l'exception n'en est pas
+    un (elle doit alors monter). Le code seulement, jamais le texte : il peut citer une
+    valeur de la ligne. Seul classement des refus d'écriture par ligne — `recipes/
+    ecriture` le lit aussi."""
+    if isinstance(e, RowLocked):
+        return "row_locked"
+    if isinstance(e, RevisionConflict):
+        return "row_changed"
+    if isinstance(e, RowNotFound):
+        return "row_not_found"
+    if isinstance(e, DatastoreReadOnly):
+        return "datastore_read_only"
+    if isinstance(e, (RowValidationError, ValueError)):
+        return "writeback_refused"
+    return None
+
+
 def ecrire_ligne(store: Any, adresse: str, row_id: str, patch: dict, *,
                  expected_revision: Any = None) -> Optional[str]:
-    """Écrit `patch` sur la ligne. Rend None, ou le CODE du refus.
+    """Écrit `patch` sur la ligne. Rend None, ou le CODE du refus (`code_du_refus`).
 
-    Le code seulement, jamais le texte du refus : il peut citer une valeur de la
-    ligne, et ce reçu n'en porte aucune. Avec `expected_revision`, une ligne changée
-    depuis la lecture n'est pas écrasée (`row_changed`)."""
+    Avec `expected_revision`, une ligne changée depuis la lecture n'est pas écrasée
+    (`row_changed`)."""
     try:
         if expected_revision is None:
             store.update_row(adresse, row_id, patch)
         else:
             store.update_row(adresse, row_id, patch, expected_revision=expected_revision)
         return None
-    except RowLocked:
-        return "row_locked"
-    except RevisionConflict:
-        return "row_changed"
-    except RowNotFound:
-        return "row_not_found"
-    except DatastoreReadOnly:
-        return "datastore_read_only"
-    except (RowValidationError, ValueError) as e:
-        # Journalisé sans le message (il peut citer une valeur de la ligne).
-        logger.warning("écriture en retour refusée sur une ligne de %s : %s",
-                       adresse, type(e).__name__)
-        return "writeback_refused"
+    except Exception as e:  # noqa: BLE001 — classé ici ; un inconnu remonte tel quel
+        code = code_du_refus(e)
+        if code is None:
+            raise
+        if code == "writeback_refused":
+            # Journalisé sans le message (il peut citer une valeur de la ligne).
+            logger.warning("écriture en retour refusée sur une ligne de %s : %s",
+                           adresse, type(e).__name__)
+        return code
 
 
 @dataclass
