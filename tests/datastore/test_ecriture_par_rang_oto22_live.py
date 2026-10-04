@@ -23,7 +23,7 @@ from starlette.testclient import TestClient
 from oto_mcp.datastore.errors import RowValidationError
 
 SUB = "usr_rang_oto22"
-SCHEMA = {"key": "siren", "strict": True, "fields": [
+SCHEMA = {"key": "siren", "unknown_columns": "report", "fields": [
     {"key": "siren", "type": "text"},
     {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
         {"key": "nom", "type": "text", "required": True},

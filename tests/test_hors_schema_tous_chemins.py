@@ -27,7 +27,7 @@ import pytest
 # métier, et une colonne-liste (les contacts, où le défaut du 29/08 s'était logé).
 SCHEMA = {
     "key": "siren",
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "raison_sociale", "type": "text"},

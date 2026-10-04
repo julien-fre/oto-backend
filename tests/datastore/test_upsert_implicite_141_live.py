@@ -32,7 +32,7 @@ PASSEE = "2026-01-01"
 SUB = "usr_upsert141"
 SCHEMA = {"key": "siren", "fields": [{"key": "siren", "type": "text"},
                                      {"key": "nom", "type": "text"}]}
-FERME = {**SCHEMA, "key_required": True}
+FERME = {**SCHEMA, "new_rows": "reject"}
 LIBRE = {"fields": [{"key": "siren", "type": "text"}, {"key": "nom", "type": "text"}]}
 
 
@@ -201,11 +201,11 @@ def _table(schema=SCHEMA, lignes=()):
     ns_id = db.create_datastore("user", SUB, ns)
     store = make_store(SUB)
     if schema is not None:
-        store.set_schema(ns, {**schema, "key_required": False})
+        store.set_schema(ns, {**schema, "new_rows": "create"})
     ids = {}
     for ligne in lignes:
         ids[ligne["siren"]] = store.append_row(ns, ligne)["_id"]
-    if schema is not None and schema.get("key_required"):
+    if schema is not None and schema.get("new_rows") == "reject":
         store.set_schema(ns, schema)
     return ns, ns_id, ids
 

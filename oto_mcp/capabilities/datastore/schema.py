@@ -41,6 +41,7 @@ from ... import db
 from ...datastore import formule as dsformule
 from ...datastore import identite
 from ...datastore import lecture_du_schema
+from ...datastore import reglages
 from ...datastore import schema as dsv2
 from ...datastore.core import (DatastoreForbidden, DatastoreNotFound, DatastoreReadOnly,
                                make_store)
@@ -92,6 +93,14 @@ class SchemaOut(BaseModel):
     # #389 : les clés de validation que cette version applique — la seule parade au
     # décalage entre le code écrit et la version servie.
     enforced: list = []
+    # oto#127 : les DEUX réglages de tête tels que la plateforme les APPLIQUE, défaut
+    # compris — `{unknown_columns, new_rows}`. Toujours présents : un réglage absent du
+    # schéma n'est pas « inconnu », il est à son défaut, et c'est cela qu'on lit ici.
+    reglages: dict = Field(default_factory=dict, description=(
+        "The two head settings AS APPLIED, defaults included: `unknown_columns` "
+        "(`create` | `report` | `reject` — what happens to a column the schema does "
+        "not declare) and `new_rows` (`create` | `reject` — whether a write that "
+        "designates no existing row may create one)."))
     # #416 : ce que le schéma SERVI contient et qu'aucun niveau n'admet (stocké avant
     # la fermeture du vocabulaire, 01/10/2026). Absent (None) dans le cas normal — un
     # champ toujours présent finirait ignoré comme un ornement.
@@ -148,7 +157,8 @@ def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
     out = {**identite.de_releve(store.dernier_tableau, datastore),
            "schema": (lecture_du_schema.compacte(schema) if inp.forme == "compacte"
                       else schema),
-           "enforced": dsv2.enforced_keys(), "tel_que": inp.tel_que}
+           "enforced": dsv2.enforced_keys(), "tel_que": inp.tel_que,
+           "reglages": reglages.effectifs(schema)}
     if inp.forme == "compacte":
         out["forme"] = "compacte"
     if masquees:
@@ -283,7 +293,12 @@ CAPABILITIES += [
                          path="/api/datastores/{datastore}/schema"),
         description=(
             "Pose (ou retire, avec `schema: null`) le schéma typé d'un tableau. "
-            "Le schéma est posé ENTIER — relire avant d'amender. Une clé qu'aucun "
+            "Le schéma est posé ENTIER — relire avant d'amender. Deux réglages de "
+            "tête : `unknown_columns` (`create` par défaut | `report` | `reject` — le "
+            "sort d'une colonne non déclarée) et `new_rows` (`create` par défaut | "
+            "`reject` — le droit d'une ligne nouvelle de naître, exige `key`) ; "
+            "`strict`, `unknown_fields` et `key_required` sont refusés depuis le "
+            "02/10/2026, avec leur équivalent exact. Une clé qu'aucun "
             "niveau n'admet (tête, colonne, sous-champ, `of`, `lifecycle` — listes sur "
             "`GET /api/datastore/schema/keys`) est REFUSÉE (400), en nommant le chemin, "
             "la clé et la plus proche ; une clé inconnue DÉJÀ stockée et inchangée "
@@ -308,8 +323,15 @@ CAPABILITIES += [
         rest=RestBinding(verb="GET", path="/api/datastores/{datastore}/schema"),
         description=(
             "Read a datastore's declared TYPED schema (the one `data_set_schema` posts). "
-            "Returns `{datastore, ns_id, schema, enforced}` — `schema` is null when none "
-            "is declared, which is a normal state, not an error. "
+            "Returns `{datastore, ns_id, schema, enforced, reglages}` — `schema` is null "
+            "when none is declared, which is a normal state, not an error. "
+            "`reglages` gives the two head settings AS APPLIED, defaults included: "
+            "`unknown_columns` (`create` | `report` | `reject` — what happens to a "
+            "column the schema does not declare; anything but `create` also makes the "
+            "declared format a contract) and `new_rows` (`create` | `reject` — whether "
+            "a write that designates no existing row may create one). They replaced "
+            "`strict`, `unknown_fields` and `key_required` on 2026-10-02; a stored "
+            "leftover of those is no longer applied and is named in `warning`. "
             "`ns_id` is the table's NUMBER (e.g. 174) and `datastore` its canonical name, "
             "whatever form you addressed it by: pass the NUMBER as `datastore` from here "
             f"on — a name still resolves until {deprecations.date_retrait_nom_de_tableau()}, "

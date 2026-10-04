@@ -170,6 +170,13 @@ def _arg_error_message(exc, parametres: Optional[list] = None) -> str:
         return "Arguments invalides — vérifie les paramètres de l'outil."
     outil = outil_de_signature(err)
     from . import deprecations  # tardif : la taxonomie est importée partout
+    # oto#127 : les anciens réglages de tête de `data_patch_schema` se refusent
+    # ENSEMBLE — l'équivalent se calcule sur la combinaison reçue.
+    if outil == "data_patch_schema":
+        from .datastore import reglages
+        refus = reglages.refus_parametres({c: valeurs.get(c) for c in inconnus}, outil)
+        if refus:
+            return "Arguments invalides — " + refus
     for cle in inconnus:
         refus = deprecations.refus_parametre_renomme(cle, valeurs.get(cle), outil)
         if refus:  # le nom neuf n'est alors pas « requis absent » : il est mal nommé

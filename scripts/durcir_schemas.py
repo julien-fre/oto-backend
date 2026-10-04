@@ -105,6 +105,7 @@ from typing import Any, Optional
 
 from oto_mcp import calllog, db, org_store
 from oto_mcp import slots as slots_mod
+from oto_mcp.datastore import reglages
 from oto_mcp.datastore import schema_keys as sk
 from oto_mcp.datastore.core import DatastoreNotFound, DatastorePg
 from oto_mcp.datastore.errors import SchemaDefinitionError
@@ -217,7 +218,10 @@ def _durcir_noeud(noeud: dict, niveau: str, chemin: str, plan: Plan) -> dict:
         if "lifecycle" in admises and isinstance(noeud.get("lifecycle"), dict):
             noeud["lifecycle"] = _durcir_noeud(noeud["lifecycle"], "cycle",
                                                f"{chemin}.lifecycle", plan)
-    reste = [k for k in noeud if k not in admises]
+    # oto#127 : les anciens réglages de tête ne sont pas des clés à ranger dans
+    # `meta` — ils ont un équivalent, que `renommer_reglages_tete` pose.
+    reste = [k for k in noeud if k not in admises
+             and not (niveau == "tete" and k in reglages.ANCIENS)]
     if reste:
         _vers_meta(noeud, reste, chemin)
         plan.deplacees.append((chemin, reste))

@@ -38,7 +38,7 @@ def _schema(ftype, *, strict, options=("a", "b"), autres=()):
     f = {"key": "x", "options": list(options)}
     if ftype:
         f["type"] = ftype
-    return {**({"strict": True} if strict else {}), "fields": [f, *autres]}
+    return {**({"unknown_columns": "report"} if strict else {}), "fields": [f, *autres]}
 
 
 @pytest.mark.parametrize("ftype", list(HORS))
@@ -68,7 +68,7 @@ def test_une_valeur_mal_formee_n_est_jamais_jugee_sur_la_liste():
     consigne de `types_trahis`) : la liste ne doit rien y AJOUTER — surtout pas une
     entrée `hors`, qui ferait croire à l'écriture qu'elle peut écarter la valeur et
     écrire le reste, alors que la valeur n'a même pas la forme déclarée."""
-    sans_liste = V.validate_row({"strict": True, "fields": [{"key": "x", "type": "number"}]},
+    sans_liste = V.validate_row({"unknown_columns": "report", "fields": [{"key": "x", "type": "number"}]},
                                 {"x": "abc"})
     hors: list = []
     avec_liste = V.validate_row(_schema("number", strict=True, options=("1", "2")),
@@ -109,7 +109,7 @@ def test_une_valeur_en_couches_est_deballee_avant_d_etre_jugee():
 
 def test_les_elements_d_une_colonne_liste_suivent_la_meme_regle():
     hors: list = []
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "tags", "type": "list", "of": {"type": "text", "options": ["a", "b"]}}]}
     errs = V.validate_row(schema, {"tags": ["a", "zzz"]}, hors=hors)
     assert len(errs) == 1 and "tags[1]" in errs[0], errs

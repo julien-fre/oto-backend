@@ -45,6 +45,7 @@ from __future__ import annotations
 
 from typing import Any, Iterator, Optional
 
+from . import reglages
 from . import schema_keys as sk
 from .phrases_de_refus import cle_la_plus_proche
 
@@ -140,8 +141,15 @@ def refus(schema: Any, ancien: Any = None) -> list[str]:
     out: list[str] = []
     for niveau, chemin, noeud in parcours(schema):
         avant = suivre(ancien, chemin)
-        for cle in inconnues(niveau, noeud):
-            if not _deja_stockee(avant, cle, noeud[cle]):
+        poses = [c for c in inconnues(niveau, noeud)
+                 if not _deja_stockee(avant, c, noeud[c])]
+        # oto#127 : les trois anciens réglages de tête se refusent ENSEMBLE — leur
+        # équivalent se calcule sur la combinaison, jamais clé par clé.
+        anciens = [c for c in poses if niveau == "tete" and c in reglages.ANCIENS]
+        if anciens:
+            out.append(reglages.refus_anciens(noeud, anciens))
+        for cle in poses:
+            if cle not in anciens:
                 out.append(phrase(niveau, chemin, cle, noeud[cle]))
         if sk.META in noeud and not _deja_stockee(avant, sk.META, noeud[sk.META]):
             out.extend(erreurs_meta(chemin, noeud[sk.META]))
@@ -215,6 +223,7 @@ def residus_warning(schema: Any) -> Optional[str]:
                 font_foi.add(sk.FAUTES_CONNUES[cle])
     if not trouvees:
         return None
+    anciens = [k for k in reglages.ANCIENS if isinstance(schema, dict) and k in schema]
     msg = (f"ce schéma porte des clés qu'aucun niveau n'admet, posées avant la "
            f"fermeture du vocabulaire (01/10/2026) : {', '.join(trouvees[:8])}"
            + (", …" if len(trouvees) > 8 else "")
@@ -224,4 +233,6 @@ def residus_warning(schema: Any) -> Optional[str]:
     if font_foi:
         msg += (" Ce qui fait foi : " + ", ".join(f"`{k}`" for k in sorted(font_foi))
                 + " — la clé inconnue d'à côté est un résidu, quoi qu'elle dise.")
+    if anciens:
+        msg += f" Pour {', '.join(f'`{k}`' for k in anciens)} : {reglages.residu(schema)}."
     return msg

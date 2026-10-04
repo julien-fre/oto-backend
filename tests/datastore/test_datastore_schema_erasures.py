@@ -26,7 +26,7 @@ from oto_mcp.datastore import schema as S
 
 _AVANT = {
     "key": "siren",
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text", "description": "l'identifiant légal"},
         {"key": "segment", "type": "text", "max_length": 250,
@@ -68,7 +68,7 @@ def test_une_cle_de_TETE_perdue_est_nommee():
     UNIQUE partiel : la re-poster absente lève la contrainte sans un mot."""
     apres = {"fields": _AVANT["fields"]}
     perdu = [e for e in _efface(apres) if e["champ"] is None]
-    assert perdu and perdu[0]["declarations"] == {"key": "siren", "strict": True}
+    assert perdu and perdu[0]["declarations"] == {"key": "siren", "unknown_columns": "report"}
 
 
 def test_reposer_le_MEME_schema_n_efface_rien():

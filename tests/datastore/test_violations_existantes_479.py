@@ -19,17 +19,17 @@ from oto_mcp.datastore import violations_existantes as dsve
 
 @pytest.mark.parametrize("schema,ligne,attendu", [
     # type d'un sous-champ de liste (`_conformite_scalaire`) — armé par `strict`
-    ({"strict": True, "fields": [{"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
+    ({"unknown_columns": "report", "fields": [{"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
         {"key": "email", "type": "email"}]}}]},
      {"contacts": [{"email": "ok@x.fr"}, {"email": "pas un mail"}]}, "contacts[].email"),
     # attribut non déclaré dans un composite d'un tableau `strict`
-    ({"strict": True, "fields": [{"key": "contacts", "type": "list", "of": {
+    ({"unknown_columns": "report", "fields": [{"key": "contacts", "type": "list", "of": {
         "type": "object", "fields": [{"key": "email", "type": "text"}]}}]},
      {"contacts": [{"email": "a", "perso": "b"}]}, "contacts[].perso"),
     # type déclaré hors `validation_active` (`types_trahis`, l'autre forme)
     ({"fields": [{"key": "n", "type": "number"}]}, {"n": "abc"}, "n"),
     # options, sur un tableau dont la validation est active
-    ({"strict": True, "fields": [{"key": "statut", "type": "enum",
+    ({"unknown_columns": "report", "fields": [{"key": "statut", "type": "enum",
                                   "options": ["a", "b"]}]},
      {"statut": "zz"}, "statut"),
     # borne, et une clé qui porte une espace
@@ -100,7 +100,7 @@ def test_interdire_un_sous_champ_que_N_lignes_portent_rend_N(live):
         [{"ref": f"r{i}", "contacts": [{"email": f"c{i}@x.fr", "perso": "oui"}]}
          for i in range(3)]
         + [{"ref": "propre", "contacts": [{"email": "p@x.fr"}]}])
-    out = st.set_schema(ns, {"strict": True, "key": "ref", "fields": [
+    out = st.set_schema(ns, {"unknown_columns": "report", "key": "ref", "fields": [
         {"key": "ref", "type": "text"},
         {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
             {"key": "email", "type": "email"}]}}]})

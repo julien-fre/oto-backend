@@ -10,7 +10,7 @@ Arbitré le 30/09/2026, précisé le 01/10 : tout dépend de ce que l'appel DIT 
 
 - **Désigner** — par `id=`, ou par `key=` passé EXPLICITEMENT à l'appel (lot, ligne seule
   qui nomme la clé déclarée, clé scellée au mint d'un upload), ou sur un tableau FERMÉ
-  (`key_required`, où une écriture sans `id` ne peut que viser) : une valeur de clé déjà
+  (`new_rows: "reject"`, où une écriture sans `id` ne peut que viser) : une valeur de clé déjà
   présente MODIFIE sa ligne, sans `upsert` et sans un mot ; une valeur absente crée la
   ligne (sauf tableau fermé, dont le refus de création s'applique).
 - **Ajouter** — ni `id` ni `key=`, sur un tableau qui déclare une clé : une valeur déjà
@@ -95,7 +95,7 @@ _FUSIONS_EN = ("A batch reports every merge in `fusions` — `{rang, dans_rang, 
                "row, `null` for a row already in the table — and `ids` stays aligned row "
                "for row.")
 
-_FERME_EN = ("On a CLOSED table (`key_required`) every write without `id` designates "
+_FERME_EN = ("On a CLOSED table (`new_rows: \"reject\"`) every write without `id` designates "
              "by the key.")
 
 
@@ -158,7 +158,7 @@ def designe(schema: Optional[dict], cle_passee: bool) -> bool:
     """L'appel DÉSIGNE-t-il par la clé ? `key=` passé explicitement, ou un tableau FERMÉ
     — qui ne crée jamais, donc où une écriture sans `id` ne peut que viser (son refus de
     création le conseille, `outils._refus_de_creation`)."""
-    return bool(cle_passee) or dsv2.key_required_of(schema)
+    return bool(cle_passee) or dsv2.creation_refusee(schema)
 
 
 def valeur_de_cle(data: Any, key: Optional[str]) -> Any:

@@ -31,6 +31,7 @@ import pytest
 
 from oto_mcp.datastore import core as dsm
 from oto_mcp.datastore import schema as dsv2
+from oto_mcp.datastore import reglages
 from oto_mcp.datastore.core import DatastorePg
 from oto_mcp.datastore.errors import RowValidationError
 
@@ -39,9 +40,8 @@ FIELDS = [{"key": "siren", "type": "text"},
           {"key": "adresse", "type": "text"},
           {"key": "contacts", "type": "list",
            "of": {"fields": [{"key": "nom", "type": "text"}]}}]
-REJECT = {"strict": True, "key": "siren", "unknown_fields": "reject",
-          "fields": FIELDS}
-REPORT = {"strict": True, "key": "siren", "fields": FIELDS}
+REJECT = {"key": "siren", "unknown_columns": "reject", "fields": FIELDS}
+REPORT = {"unknown_columns": "report", "key": "siren", "fields": FIELDS}
 
 
 # ── la décision, en fonction pure ────────────────────────────────────────────
@@ -49,13 +49,13 @@ REPORT = {"strict": True, "key": "siren", "fields": FIELDS}
 def test_le_defaut_est_le_rapporteur():
     """Un schéma qui ne dit rien garde le comportement de #294 — le cran est
     opt-in, et un tableau se remplit souvent avant d'avoir son format."""
-    assert dsv2.unknown_fields_mode(REPORT) == "report"
-    assert dsv2.unknown_fields_mode(None) == "report"
-    assert dsv2.unknown_fields_mode({}) == "report"
+    assert reglages.colonnes_inconnues(REPORT) == "report"
+    assert reglages.colonnes_inconnues(None) == "create"
+    assert reglages.colonnes_inconnues({}) == "create"
 
 
 def test_le_mode_declare_se_lit():
-    assert dsv2.unknown_fields_mode(REJECT) == "reject"
+    assert reglages.colonnes_inconnues(REJECT) == "reject"
 
 
 def test_le_rapporteur_ne_refuse_rien():
@@ -102,31 +102,23 @@ def test_une_couche_d_une_colonne_declaree_n_est_pas_une_colonne():
 
 # ── la déclaration : un cran qui ne peut pas s'appliquer se refuse ───────────
 
-def test_reject_sur_un_tableau_non_strict_est_refuse_a_la_pose():
-    """Sans `strict`, `off_schema_keys` ne relève rien : le cran serait INERTE.
-    Accepté-inerte = la forme que #347 a fermée."""
-    errs = dsv2.validate_schema_def(
-        {"unknown_fields": "reject", "fields": FIELDS})
-    assert any("strict" in e for e in errs), errs
-
-
 def test_reject_sans_aucun_champ_declare_est_refuse_a_la_pose():
     """Sans référentiel, tout serait hors schéma — le tableau deviendrait
     inécrivable d'un coup."""
     errs = dsv2.validate_schema_def(
-        {"strict": True, "unknown_fields": "reject", "fields": []})
+        {"unknown_columns": "reject", "fields": []})
     assert any("aucun champ" in e or "référentiel" in e for e in errs), errs
 
 
 def test_une_valeur_hors_du_couple_ferme_est_refusee():
     errs = dsv2.validate_schema_def(
-        {"strict": True, "unknown_fields": "refuse", "fields": FIELDS})
-    assert any("report" in e and "reject" in e for e in errs), errs
+        {"unknown_columns": "refuse", "fields": FIELDS})
+    assert any("create" in e and "report" in e and "reject" in e for e in errs), errs
 
 
 def test_report_explicite_est_accepte():
     assert dsv2.validate_schema_def(
-        {"strict": True, "unknown_fields": "report", "fields": FIELDS}) == []
+        {"unknown_columns": "report", "fields": FIELDS}) == []
 
 
 def test_reject_bien_pose_est_accepte():
@@ -138,7 +130,7 @@ def test_le_cran_s_annonce_dans_enforced():
     le cran disparaît, l'annonce tombe avec lui."""
     dsv2.reset_enforced_keys()
     try:
-        assert "unknown_fields" in dsv2.enforced_keys()
+        assert "unknown_columns" in dsv2.enforced_keys()
     finally:
         dsv2.reset_enforced_keys()
 
@@ -288,8 +280,8 @@ def test_le_cran_se_pose_sans_reecrire_le_schema(monkeypatch):
     monkeypatch.setattr(store, "set_schema",
                         lambda ns, sch, **k: vu.update(schema=sch) or
                         {"datastore": ns, "schema": sch, "enforced": []})
-    store.patch_schema("viviers", unknown_fields="reject")
-    assert vu["schema"]["unknown_fields"] == "reject"
+    store.patch_schema("viviers", unknown_columns="reject")
+    assert vu["schema"]["unknown_columns"] == "reject"
     assert vu["schema"]["fields"] == FIELDS      # rien d'autre n'a bougé
 
 
@@ -303,8 +295,8 @@ def test_une_valeur_illisible_n_est_PAS_repliee_sur_le_defaut(monkeypatch):
     monkeypatch.setattr(store, "_schema_of", lambda ns_id: dict(REPORT))
     monkeypatch.setattr(store, "set_schema",
                         lambda ns, sch, **k: vu.update(schema=sch) or {})
-    store.patch_schema("viviers", unknown_fields="refuse")
-    assert vu["schema"]["unknown_fields"] == "refuse"
+    store.patch_schema("viviers", unknown_columns="refuse")
+    assert vu["schema"]["unknown_columns"] == "refuse"
 
 
 def test_patcher_seulement_le_cran_n_est_pas_un_appel_vide(monkeypatch):
@@ -314,4 +306,4 @@ def test_patcher_seulement_le_cran_n_est_pas_un_appel_vide(monkeypatch):
     monkeypatch.setattr(store, "_resolve", lambda ns, write=False: 7)
     monkeypatch.setattr(store, "_schema_of", lambda ns_id: dict(REPORT))
     monkeypatch.setattr(store, "set_schema", lambda ns, sch, **k: {})
-    store.patch_schema("viviers", unknown_fields="reject")   # ne lève pas
+    store.patch_schema("viviers", unknown_columns="reject")   # ne lève pas

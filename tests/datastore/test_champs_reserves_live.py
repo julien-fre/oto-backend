@@ -136,7 +136,7 @@ def test_terrain_4_le_comment_survit_a_la_valeur_identique(terrain):
 
 def test_patch_schema_refuse_readonly_sur_la_cle(table):
     st, ns, ns_id, rid = table
-    with pytest.raises(ValueError, match="key_required"):
+    with pytest.raises(ValueError, match="new_rows"):
         st.patch_schema(ns, fields=[{"key": "siren", "readonly": True}])
     assert "readonly" not in str(st.get_schema(ns)["fields"][0])
 

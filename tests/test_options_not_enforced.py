@@ -34,11 +34,11 @@ def test_a_value_outside_the_options_is_reported_when_nothing_enforces_it():
     # La CONSÉQUENCE avant le remède : sans elle on lit « valeur inhabituelle » là où
     # il faut lire « ce champ n'est pas la liste fermée que le schéma laisse croire ».
     assert "ÉCRITE quand même" in msg
-    assert "strict: true" in msg
+    assert 'unknown_columns: "report"' in msg
 
 
 @pytest.mark.parametrize("declencheur", [
-    {"strict": True},
+    {"unknown_columns": "report"},
     {"fields": [ENUM, {"key": "x", "type": "text", "required": True}]},
     {"fields": [ENUM, {"key": "x", "type": "text", "max_length": 10}]},
 ])
@@ -123,7 +123,7 @@ def test_posing_options_without_strict_is_warned_at_the_right_moment():
     assert champs == ["priorite", "s"]
 
     msg = dsv2.options_not_enforced_warning(champs)
-    assert "NON appliquées" in msg and "strict: true" in msg
+    assert "NON appliquées" in msg and 'unknown_columns: "report"' in msg
 
 
 def test_nothing_to_warn_gives_no_message():
@@ -221,7 +221,7 @@ def test_the_strict_table_still_refuses(live):
     st = _store()
     ns = "t-" + uuid.uuid4().hex[:6]
     db.create_datastore("user", "sub-test", ns)
-    st.set_schema(ns, {"fields": [ENUM], "strict": True})
+    st.set_schema(ns, {"fields": [ENUM], "unknown_columns": "report"})
 
     with pytest.raises(RowValidationError):
         st.append_row(ns, {"priorite": "Moyenne"})
@@ -253,7 +253,7 @@ def test_a_clean_schema_says_nothing(live):
     ns = "t-" + uuid.uuid4().hex[:6]
     db.create_datastore("user", "sub-test", ns)
 
-    out = st.set_schema(ns, {"fields": [ENUM], "strict": True})
+    out = st.set_schema(ns, {"fields": [ENUM], "unknown_columns": "report"})
 
     w = out.get("warning") or ""
     assert "NON appliquées" not in w and "premier niveau" not in w

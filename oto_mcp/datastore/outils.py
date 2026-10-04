@@ -159,7 +159,7 @@ def _current_run() -> Optional[str]:
 def _refus_de_creation(datastore: str, key: str, value: Any = None, *,
                        schema: Optional[dict], ligne: dict,
                        cle_du_lot: Optional[str] = None) -> BusinessKeyRequired:
-    """Le refus d'une CRÉATION sur un tableau fermé (`key_required`, #516).
+    """Le refus d'une CRÉATION sur un tableau fermé (`new_rows: "reject"`, #516, oto#127).
 
     Deux formes, parce que les deux gestes qui l'atteignent sont différents — et que
     dire « clé requise » à qui vient d'en fournir une le ferait chercher longtemps :
@@ -196,15 +196,15 @@ def _refus_de_creation(datastore: str, key: str, value: Any = None, *,
     paramètre « forcer » sur l'écriture (#516 — un bouton force devient un réflexe,
     et le cran redevient une étiquette)."""
     ferme = ("ce tableau n'accepte que les écritures qui visent une ligne EXISTANTE "
-             "(`key_required`) — rien n'a été créé.")
+             "(`new_rows: \"reject\"`) — rien n'a été créé.")
     sortie = ("Vise-la par son identifiant : data_write(id=…, row={…}) — son `_id` "
               "est rendu par data_rows et data_claim_next.")
     naissance = (
         f"Si cette ligne doit VRAIMENT naître, c'est une décision de SCHÉMA et pas "
         f"d'écriture — le cran a été posé sur ce tableau : "
-        f"data_patch_schema(datastore='{datastore}', key_required=false), ton "
+        f"data_patch_schema(datastore='{datastore}', new_rows=\"create\"), ton "
         f"écriture, puis data_patch_schema(datastore='{datastore}', "
-        f"key_required=true) pour refermer.")
+        f"new_rows=\"reject\") pour refermer.")
     portee = value is not None and str(value) != ""
     details: dict = {"key": key, "cle_portee": portee}
     if portee:

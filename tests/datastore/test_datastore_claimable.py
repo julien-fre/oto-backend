@@ -37,7 +37,7 @@ def _schema(claimable=None, *, strict: bool = False, **lifecycle) -> dict:
     lc.update(lifecycle)
     if claimable is not None:
         lc["claimable"] = claimable
-    return {"strict": strict, "fields": [
+    return {"unknown_columns": "report" if strict else "create", "fields": [
         {"key": "societe", "type": "text"},
         {"key": "lot_test", "type": "text"},
         {"key": "statut", "type": "enum", "role": "status",
@@ -281,7 +281,7 @@ def test_un_operateur_inconnu_est_refuse_en_nommant_les_operateurs():
 
 def test_sous_strict_une_colonne_non_declaree_est_refusee():
     erreurs = _erreurs({"lot": "jalon-100"}, strict=True)
-    assert any("`lot`" in e and "strict" in e for e in erreurs)
+    assert any("`lot`" in e and "unknown_columns" in e for e in erreurs)
     assert _erreurs({"lot": "jalon-100"}) == []          # souple : colonne libre
 
 

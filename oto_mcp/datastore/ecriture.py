@@ -80,7 +80,7 @@ class EcritureMixin:
         row en porter la valeur — sinon refus, jamais un paramètre ignoré (cf.
         `jetons.refus_de_key_sans_lot`).
 
-        ⚠️ Sur un tableau qui déclare `key_required` (#516), l'append n'existe plus :
+        ⚠️ Sur un tableau qui déclare `new_rows: "reject"` (#516), l'append n'existe plus :
         une écriture qui ne désigne aucune ligne existante est REFUSÉE
         (`BusinessKeyRequired`) au lieu d'en créer une.
 
@@ -195,7 +195,7 @@ class EcritureMixin:
         # refusé s'il ne matche rien), ni par une valeur de clé que le tableau porte.
         # Refuser AVANT `_check_row` : la validation de schéma parlerait des champs
         # d'une ligne qui ne doit pas naître.
-        if dsv2.key_required_of(schema):
+        if dsv2.creation_refusee(schema):
             raise _refus_de_creation(ns.get("datastore") or datastore, key, kv,
                                      schema=schema, ligne=user_data)
         # #390 (3ᵉ demande) : une ligne CRÉÉE sans la clé métier déclarée est non

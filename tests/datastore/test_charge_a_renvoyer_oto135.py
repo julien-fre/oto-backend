@@ -118,7 +118,7 @@ def test_type_sur_un_tableau_souple():
 # ── sous-champ inconnu ───────────────────────────────────────────────────────
 
 def test_attribut_inconnu_la_cle_declaree_la_plus_proche():
-    errs, d = _refus({**_SCHEMA, "strict": True}, {"siren": "123456789", "contacts": [
+    errs, d = _refus({**_SCHEMA, "unknown_columns": "report"}, {"siren": "123456789", "contacts": [
         {"role": "RH", "nom": "Alice", "emial": "alice@x.fr"}]})
     assert "le plus proche : `email`" in errs[0], errs
     assert d["a_renvoyer"] == {"contacts": [{"role": "RH", "email": "<e-mail>"}]}

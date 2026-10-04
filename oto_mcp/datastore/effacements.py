@@ -214,7 +214,7 @@ def declarations_effacees(ancien: Optional[dict], nouveau: Optional[dict],
                           annonces: Optional[list] = None) -> list[dict]:
     """Ce que poser `nouveau` retire de `ancien` — `[{champ, retire, declarations}]`.
 
-    `champ = None` désigne la TÊTE du schéma (`key`, `strict`) : ce qu'on perd en
+    `champ = None` désigne la TÊTE du schéma (`key`, `unknown_columns`) : ce qu'on perd en
     premier est `schema.key`, la clé métier, qui porte un index UNIQUE partiel — la
     re-poster absente lève la contrainte sans que rien ne le signale.
 

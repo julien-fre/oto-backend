@@ -257,10 +257,9 @@ class SchemaOpsMixin:
     def patch_schema(self, datastore: str, *, fields: Optional[list] = None,
                      remove: Optional[list] = None,
                      remove_attrs: Optional[dict] = None,
-                     strict: Optional[bool] = None,
                      key: Optional[str] = None,
-                     key_required: Optional[bool] = None,
-                     unknown_fields: Optional[str] = None) -> dict:
+                     unknown_columns: Optional[str] = None,
+                     new_rows: Optional[str] = None) -> dict:
         """Modifie le schéma PAR CLÉ, sans réécrire la liste entière (#388).
 
         `data_set_schema` REMPLACE : c'est le bon geste pour poser un format, et un
@@ -275,34 +274,31 @@ class SchemaOpsMixin:
         `fields` = fusion par clé (complète l'existant, ajoute l'inconnu) ; `remove`
         = le retrait EXPLICITE d'une COLONNE ; `remove_attrs` = `{colonne: [attribut,
         …]}`, le retrait d'un ATTRIBUT sur une colonne qui reste ;
-        `strict`/`key`/`key_required`/`unknown_fields` = les clés de tête, inchangées
-        si omises. `unknown_fields` (#614/#678) se pose ICI en priorité : un tableau
-        se ferme quand il a FINI d'être exploré, donc quand son schéma est long — et
-        le poser par `set` obligerait à réécrire quatre-vingts champs pour une clé de
-        tête, exactement le geste que ce patch existe pour éviter. Le
-        schéma résultant repasse par `set_schema`, donc par ses gardes (doublons de
-        clé métier, index UNIQUE, `key_required` sans `key`) et ses avertissements
+        `key`/`unknown_columns`/`new_rows` = les clés de tête, inchangées si omises
+        (oto#127 : les deux réglages remplacent `strict`, `unknown_fields` et
+        `key_required`). Ils se posent ICI en priorité : un tableau se ferme quand il a
+        FINI d'être exploré, donc quand son schéma est long — et le poser par `set`
+        obligerait à réécrire quatre-vingts champs pour une clé de tête, exactement le
+        geste que ce patch existe pour éviter. Le schéma résultant repasse par
+        `set_schema`, donc par ses gardes (doublons de clé métier, index UNIQUE,
+        `new_rows: "reject"` sans `key`, valeurs des réglages) et ses avertissements
         (file de travail, bornes, colonnes orphelines) — on ne double pas cette
         logique.
 
-        `key_required=False` ÉCRIT `false` plutôt que de retirer la clé (#516) :
-        `key_required_of` lit la valeur, donc `false` désarme autant qu'une absence —
-        et le relevé d'effacement compte les DISPARITIONS de tête sans exception :
-        retirer la clé ferait crier un geste explicite sur lui-même, l'avertissement
-        qu'on apprend à ignorer. Même parti que `strict`."""
+        Un réglage revenu à son défaut s'ÉCRIT (`"create"`) plutôt que de retirer la
+        clé (#516) : le relevé d'effacement compte les DISPARITIONS de tête sans
+        exception, et retirer la clé ferait crier un geste explicite sur lui-même."""
         ns_id = self._resolve(datastore, write=True)
         current = self._schema_of(ns_id) or {}
         if not isinstance(current, dict):
             raise SchemaDefinitionError("le schéma courant n'est pas un objet — repose-le avec "
                              "data_set_schema avant de le patcher")
         if (fields is None and remove is None and remove_attrs is None
-                and strict is None and key is None
-                and key_required is None and unknown_fields is None):
+                and key is None and unknown_columns is None and new_rows is None):
             raise SchemaDefinitionError(
                 "rien à patcher : passe `fields` (fusion par clé), `remove` (retrait "
                 "d'une colonne), `remove_attrs` (retrait d'un attribut sur une "
-                "colonne qui reste), `strict`, `key`, `key_required` ou "
-                "`unknown_fields`")
+                "colonne qui reste), `key`, `unknown_columns` ou `new_rows`")
         merged = [f for f in (current.get("fields") or []) if isinstance(f, dict)]
         merged, added, updated = dsv2.merge_fields(merged, fields or [])
         merged, inconnus_attrs = dsv2.remove_field_attrs(merged, remove_attrs or {})
@@ -321,18 +317,15 @@ class SchemaOpsMixin:
                 + ". Rien n'a été touché — vérifie l'orthographe (data_get_schema). "
                 "Pour effacer la COLONNE des données, c'est data_drop_column.")
         out_schema = {**current, "fields": merged}
-        if strict is not None:
-            out_schema["strict"] = bool(strict)
         if key is not None:
             out_schema["key"] = key
-        if key_required is not None:
-            out_schema["key_required"] = bool(key_required)
-        if unknown_fields is not None:
-            # Écrit TEL QUEL, jamais normalisé : une valeur hors du couple fermé doit
-            # se faire refuser par `validate_schema_def` en nommant les deux modes.
-            # La replier sur le défaut ici rendrait un succès à qui croit avoir fermé
-            # son tableau — le défaut exact que ce cran corrige.
-            out_schema["unknown_fields"] = unknown_fields
+        # Écrits TELS QUELS, jamais normalisés : une valeur hors des crans doit se
+        # faire refuser par `validate_schema_def` en les nommant. La replier sur le
+        # défaut ici rendrait un succès à qui croit avoir fermé son tableau.
+        if unknown_columns is not None:
+            out_schema[reglages.UNKNOWN_COLUMNS] = unknown_columns
+        if new_rows is not None:
+            out_schema[reglages.NEW_ROWS] = new_rows
         # Le patch NOMME ce qu'il retire (`removed`) : le relevé d'effacement n'a
         # donc rien à en redire. Il reste tendu pour tout le reste — c'est le seul
         # moyen de voir une fusion qui laisserait échapper quelque chose.
@@ -356,8 +349,8 @@ class SchemaOpsMixin:
         nouveau : trois agents successifs ont écrit dedans en la prenant pour la
         bonne cible. Le silence à la pose du schéma est ce qui laisse le piège armé.
 
-        Strict seulement : sur un schéma souple, un champ libre est un droit du
-        contrat (0016) — la table qu'on explore avant de la typer en est pleine, et
+        Seulement quand le format fait contrat (`unknown_columns` autre que `create`) :
+        sur un schéma souple, un champ libre est un droit du contrat (0016) — la table qu'on explore avant de la typer en est pleine, et
         signaler y serait du bruit sur un usage normal."""
         if not isinstance(schema, dict) or not reglages.format_contraignant(schema):
             return None

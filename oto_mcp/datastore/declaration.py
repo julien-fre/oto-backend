@@ -11,7 +11,7 @@ couche que tout le reste interroge pour savoir de quoi il parle :
   `top_level_options`, `top_level_patterns`, `order_spec`) ;
 - les champs désignés par leur STRUCTURE (`status_field` = qui porte le `lifecycle`,
   `title_field` = qui porte `display: "title"`) ;
-- les crans qui décident d'un régime (`validation_active`, `key_required_of`,
+- les crans qui décident d'un régime (`validation_active`, `creation_refusee`,
   `readonly_fields`, `system_origin_fields`) ;
 - le vocabulaire des types (`SCALAR_TYPES`, `COMPOSITE_TYPES`).
 
@@ -369,7 +369,8 @@ def _exige(field: dict, *, sous_record: bool) -> bool:
 
 
 def validation_active(schema: Optional[dict]) -> bool:
-    """La validation d'écriture est OPT-IN : `schema.strict` truthy, OU au moins une
+    """La validation d'écriture est OPT-IN : un format qui fait contrat
+    (`unknown_columns` autre que `create`, `reglages.format_contraignant`), OU au moins une
     EXIGENCE déclarée, à n'importe quelle profondeur. Sans ça, écriture soft (0016).
 
     Une exigence, c'est `required`, `required_when`, `max_length`, `pattern` ou
@@ -406,7 +407,7 @@ def validation_active(schema: Optional[dict]) -> bool:
                for f in _walk_fields(haut) if not any(f is h for h in haut))
 
 
-def key_required_of(schema: Optional[dict]) -> bool:
+def creation_refusee(schema: Optional[dict]) -> bool:
     """Ce tableau n'accepte-t-il QUE des écritures visant une ligne existante ?
 
     Le réglage de tête `new_rows: "reject"` (#516, renommé oto#127), lu par

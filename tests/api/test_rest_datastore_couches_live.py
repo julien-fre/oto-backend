@@ -76,7 +76,7 @@ def client(live):
 
 
 SCHEMA_FLOTTE = {
-    "strict": True, "key": "siren",
+    "unknown_columns": "report", "key": "siren",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "suivi", "type": "enum", "options": ["nouveau", "a_traiter", "traite"],

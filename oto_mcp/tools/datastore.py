@@ -708,7 +708,8 @@ def register(mcp: FastMCP) -> None:
         datetime|bool|json|object|list|url|email|phone|enum",
         "display"?: "title", "role"?: "status|metric|note|qualif",
         "description"?: str, "meta"?: {…}}],
-        "key"?: str, "strict"?: bool, "description"?: str, "meta"?: {…}}.
+        "key"?: str, "unknown_columns"?: "create|report|reject",
+        "new_rows"?: "create|reject", "description"?: str, "meta"?: {…}}.
         ⚠️ **The vocabulary is CLOSED: a key its level does not admit is REFUSED** —
         at the head, on a field, on a sub-field, in `of`, in `lifecycle`. The refusal
         names the path, the key and the closest known one (`read_only` → `readonly`),
@@ -737,10 +738,22 @@ def register(mcp: FastMCP) -> None:
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
         (e.g. "email", "siren"). <<cle_metier>>
         Default is SOFT (rendering/dedup only, no write validation).
-        Add `"key_required": true` to CLOSE the table: a write that designates NO
-        existing row (no `id`, and no key value the table already carries) is then
-        REFUSED instead of creating one. Off by default — a table often fills up
-        before it has its key. Pass schema=null to switch back to free-table mode.
+        TWO head settings, one per question (they REPLACED `strict`, `unknown_fields`
+        and `key_required` on 2026-10-02 — those are refused, with their exact
+        equivalent):
+        - `"unknown_columns"` — what happens to a column the schema does NOT
+          declare: `"create"` (default) creates it silently; `"report"` creates it
+          and names it back in `hors_schema`, and makes the declared format a
+          CONTRACT (top-level `options` enforced, declared sub-records closed);
+          `"reject"` does the same and REFUSES the write, storing nothing (needs at
+          least one declared field).
+        - `"new_rows"` — whether a NEW row may be born: `"create"` (default) or
+          `"reject"`, which CLOSES the table: a write that designates NO existing
+          row (no `id`, and no key value the table already carries) is REFUSED
+          instead of creating one. Needs `key`. A table often fills up before it
+          has its key, hence the default.
+        `data_get_schema` serves both AS APPLIED (`reglages`). Pass schema=null to
+        switch back to free-table mode.
 
         PRESENTATION — the schema also DRIVES THE UI (there is no visual editor:
         this tool IS the way to configure how a table looks):
@@ -795,20 +808,19 @@ def register(mcp: FastMCP) -> None:
           (`"col": {"comment": …}`), without re-sending the value.
           Applies to sub-fields of objects and of list items too; never to
           `readonly` nor the lifecycle column; never to a column this
-          write does not name. It arms ITSELF — no `strict` needed. ⚠️ It does NOT
+          write does not name. It arms ITSELF — no head setting needed. ⚠️ It does NOT
           make a comment TRUE: it forces you to NAME a source, which makes a lie
           checkable — the truth is still established on the documents.
-          Validation is active when `strict: true` or any field has required/
-          required_when/max_length. A non-conforming write FAILS naming the culprit
+          Validation is active when `unknown_columns` is `"report"`/`"reject"` or
+          any field has required/required_when/max_length. A non-conforming write FAILS naming the culprit
           (max_length reports the actual length AND the bound; pattern reports the
           value it saw AND the motif).
-          ⚠️ `strict` does NOT close the top level: a key no field declares still
-          CREATES a free column and the value persists — it is only REPORTED, in
-          `hors_schema`. That is how you explore a table before typing it, and it is
-          why `strict` refuses an undeclared attribute INSIDE a declared sub-record
-          but not a column beside it. Head key `"unknown_fields": "reject"` closes
-          the top level too (default `"report"` = the above): the write is REFUSED
-          and nothing is stored.
+          ⚠️ `unknown_columns: "report"` does NOT close the top level: a key no
+          field declares still CREATES a free column and the value persists — it is
+          only REPORTED, in `hors_schema`. That is how you explore a table before
+          typing it, and it is why `"report"` refuses an undeclared attribute INSIDE
+          a declared sub-record but not a column beside it. `"reject"` closes the
+          top level too: the write is REFUSED and nothing is stored.
           Fields the caller does NOT write — one question ("whose column is this?"),
           and each refusal names the field, the reason and where the thing goes:
           `field.readonly: true` refuses a write that CHANGES the value in place
@@ -857,9 +869,9 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: target datastore (must exist; you must have write access).
-            schema: the schema object, or null to clear it. Head key
-                `unknown_fields: "report"|"reject"` decides an undeclared column's
-                fate; a field may carry `readonly: true` (value locked, layers
+            schema: the schema object, or null to clear it. Head keys
+                `unknown_columns: "create"|"report"|"reject"` (an undeclared
+                column's fate) and `new_rows: "create"|"reject"`; a field may carry `readonly: true` (value locked, layers
                 open). ⚠️ `origine` was REMOVED on 2026-09-08 and is refused — the
                 origin is set by the call that brings the data
                 (`donnees_d_origine=true`), not by a schema format.
@@ -1058,15 +1070,15 @@ def register(mcp: FastMCP) -> None:
         with a business `key`: the row is designated, or merged; a keyless append
         re-sent creates a DUPLICATE.
 
-        ⚠️ A table can be CLOSED by its schema (`key_required: true`, next to its
+        ⚠️ A table can be CLOSED by its schema (`new_rows: "reject"`, next to its
         business `key`) — `data_get_schema` says whether it is. On such a table there
         is NO append at all: a write designating no existing row (no `id`, and no key
         value the table already carries) is REFUSED, single row and batch alike, and
         nothing is created — including a key value that is simply NEW. That is a
         deliberate setting of that table, not a platform rule. To make a row EXIST
         there, it is a schema move and not a write:
-        `data_patch_schema(datastore=…, key_required=false)`, your write, then
-        `data_patch_schema(datastore=…, key_required=true)` to close it back.
+        `data_patch_schema(datastore=…, new_rows="create")`, your write, then
+        `data_patch_schema(datastore=…, new_rows="reject")` to close it back.
 
         `origine_override=true` belongs to an IMPORT, not to a write of your own:
         it declares that this call knowingly sets the `origine` layer — refused

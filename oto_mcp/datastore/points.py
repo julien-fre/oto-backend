@@ -152,7 +152,7 @@ def _refus_de_couche_orpheline(chemin: str, cle: str, base: str,
         f"de liste n'a ni schéma ni identité — il n'y a rien d'autre à consulter pour "
         f"savoir si `{base}` est un attribut. Cette clé serait donc stockée "
         f"LITTÉRALEMENT sous ce nom : invisible au filtre et au tri `{cle}`, qui "
-        f"lisent la couche `{couche}` de `{base}`, et invisible au mode strict. Rien "
+        f"lisent la couche `{couche}` de `{base}`, et invisible au relevé hors schéma. Rien "
         f"n'a été écrit. Écris `{base}` dans le MÊME élément, à côté — ou nomme la "
         f'couche en forme imbriquée, {{"{base}": {{"{couche}": …}}}}, si tu veux '
         f"l'annoter seule."])

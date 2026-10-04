@@ -39,9 +39,9 @@ _FIELDS = [
      "of": {"fields": [{"key": "nom", "type": "text", "label": "Nom"},
                        {"key": "email", "type": "email", "label": "E-mail"}]}},
 ]
-OUVERT = {"strict": True, "key": "siren", "fields": _FIELDS}
-FERME = {**OUVERT, "key_required": True}
-SANS_CLE = {"strict": True, "fields": _FIELDS}
+OUVERT = {"unknown_columns": "report", "key": "siren", "fields": _FIELDS}
+FERME = {**OUVERT, "new_rows": "reject"}
+SANS_CLE = {"unknown_columns": "report", "fields": _FIELDS}
 
 
 def _banc(monkeypatch, current: dict):
@@ -75,11 +75,11 @@ def test_la_pose_par_patch_preserve_chaque_declaration(monkeypatch):
     """LA propriété du lot : poser le cran ne touche à rien d'autre — pas une note,
     pas une borne, pas une option, pas un sous-champ."""
     st, posed = _banc(monkeypatch, OUVERT)
-    out = st.patch_schema("v", key_required=True)
+    out = st.patch_schema("v", new_rows="reject")
     assert posed["schema"]["fields"] == _FIELDS            # égalité PROFONDE
-    assert posed["schema"]["strict"] is True and posed["schema"]["key"] == "siren"
-    assert posed["schema"]["key_required"] is True
-    assert dsv2.key_required_of(posed["schema"]) is True    # ce que l'écriture LIRA
+    assert posed["schema"]["unknown_columns"] == "report" and posed["schema"]["key"] == "siren"
+    assert posed["schema"]["new_rows"] == "reject"
+    assert dsv2.creation_refusee(posed["schema"]) is True    # ce que l'écriture LIRA
     assert out["schema"] == posed["schema"]
     # rien n'a disparu : le relevé d'effacement n'a rien à dire
     assert "declarations_effacees" not in out
@@ -90,16 +90,16 @@ def test_la_pose_annonce_le_cran_dans_enforced(monkeypatch):
     """`enforced` (#389) dit ce que CETTE version fait respecter : un client qui vient
     de fermer un tableau doit lire que le serveur qui lui répond sait le fermer."""
     st, _ = _banc(monkeypatch, OUVERT)
-    out = st.patch_schema("v", key_required=True)
-    assert "key_required" in out["enforced"]
+    out = st.patch_schema("v", new_rows="reject")
+    assert "new_rows" in out["enforced"]
 
 
 def test_poser_le_cran_sans_cle_est_refuse_au_patch(monkeypatch):
     """Le patch repasse par `set_schema`, donc par `validate_schema_def` : le refus
     existant s'applique, avec son message — et rien n'est posé."""
     st, posed = _banc(monkeypatch, SANS_CLE)
-    with pytest.raises(ValueError, match="key_required exige une clé métier"):
-        st.patch_schema("v", key_required=True)
+    with pytest.raises(ValueError, match="new_rows: \"reject\" exige une clé métier"):
+        st.patch_schema("v", new_rows="reject")
     assert posed == {}
 
 
@@ -107,11 +107,11 @@ def test_poser_la_cle_et_le_cran_dans_le_meme_appel_passe(monkeypatch):
     """Un tableau sans clé se ferme en UN geste : `key` et `key_required` ensemble —
     le refus juge le schéma résultant, pas le schéma courant."""
     st, posed = _banc(monkeypatch, SANS_CLE)
-    out = st.patch_schema("v", key="siren", key_required=True)
-    assert posed["schema"]["key"] == "siren" and posed["schema"]["key_required"] is True
-    assert dsv2.key_required_of(posed["schema"]) is True
+    out = st.patch_schema("v", key="siren", new_rows="reject")
+    assert posed["schema"]["key"] == "siren" and posed["schema"]["new_rows"] == "reject"
+    assert dsv2.creation_refusee(posed["schema"]) is True
     assert posed["schema"]["fields"] == _FIELDS
-    assert "key_required" in out["enforced"]
+    assert "new_rows" in out["enforced"]
 
 
 # ── le retrait ───────────────────────────────────────────────────────────────
@@ -120,11 +120,11 @@ def test_le_retrait_par_patch_desarme_sans_crier(monkeypatch):
     """`key_required=false` rouvre le tableau. Il ÉCRIT `false` plutôt que de retirer
     la clé : le relevé d'effacement compte les disparitions de tête sans exception,
     et un geste explicite ne doit pas crier sur lui-même (l'avertissement qu'on
-    apprend à ignorer). Ce que l'écriture lit — `key_required_of` — est désarmé."""
+    apprend à ignorer). Ce que l'écriture lit — `creation_refusee` — est désarmé."""
     st, posed = _banc(monkeypatch, FERME)
-    out = st.patch_schema("v", key_required=False)
-    assert dsv2.key_required_of(posed["schema"]) is False
-    assert posed["schema"]["key_required"] is False
+    out = st.patch_schema("v", new_rows="create")
+    assert dsv2.creation_refusee(posed["schema"]) is False
+    assert posed["schema"]["new_rows"] == "create"
     assert posed["schema"]["fields"] == _FIELDS
     assert posed["schema"]["key"] == "siren"                 # la clé métier reste
     assert "declarations_effacees" not in out
@@ -135,18 +135,18 @@ def test_omis_le_cran_ne_bouge_pas(monkeypatch):
     régimes."""
     st, posed = _banc(monkeypatch, FERME)
     st.patch_schema("v", fields=[{"key": "statut", "label": "État"}])
-    assert posed["schema"]["key_required"] is True
+    assert posed["schema"]["new_rows"] == "reject"
     st, posed = _banc(monkeypatch, OUVERT)
-    st.patch_schema("v", strict=False)
-    assert "key_required" not in posed["schema"]
+    st.patch_schema("v", unknown_columns="create")
+    assert "new_rows" not in posed["schema"]
 
 
 def test_le_cran_seul_est_un_patch_non_vide(monkeypatch):
     """La garde « rien à patcher » connaît la clé neuve : `key_required` seul est
     un geste complet, pas un appel vide."""
     st, posed = _banc(monkeypatch, OUVERT)
-    st.patch_schema("v", key_required=True)
-    assert posed["schema"]["key_required"] is True
+    st.patch_schema("v", new_rows="reject")
+    assert posed["schema"]["new_rows"] == "reject"
 
 
 # ── la face REST (même `PatchSchemaInput`, verbe PATCH) ──────────────────────
@@ -157,9 +157,9 @@ class _Store:
 
     def patch_schema(self, datastore, **kw):
         self.calls.append((datastore, kw))
-        return {"datastore": datastore, "schema": {"key": "siren", "key_required": True,
+        return {"datastore": datastore, "schema": {"key": "siren", "new_rows": "reject",
                                                    "fields": []},
-                "added": [], "updated": [], "removed": [], "enforced": ["key_required"]}
+                "added": [], "updated": [], "removed": [], "enforced": ["new_rows"]}
 
 
 def test_la_face_REST_passe_key_required_au_store(monkeypatch):
@@ -170,10 +170,10 @@ def test_la_face_REST_passe_key_required_au_store(monkeypatch):
     monkeypatch.setattr(dcc, "make_store", lambda sub: store)
     status, corps = call("me.datastore.patch_schema",
                          path_params={"datastore": "vivier"},
-                         body={"key_required": True})
+                         body={"new_rows": "reject"})
     assert status == 200, corps
-    assert store.calls == [("vivier", {"fields": None, "remove": None, "remove_attrs": None, "strict": None,
-                                       "key": None, "key_required": True,
-                                       "unknown_fields": None})]
-    assert corps["schema"]["key_required"] is True
-    assert "key_required" in corps["enforced"]
+    assert store.calls == [("vivier", {"fields": None, "remove": None, "remove_attrs": None,
+                                       "key": None, "unknown_columns": None,
+                                       "new_rows": "reject"})]
+    assert corps["schema"]["new_rows"] == "reject"
+    assert "new_rows" in corps["enforced"]

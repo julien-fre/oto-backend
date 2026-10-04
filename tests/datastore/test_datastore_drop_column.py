@@ -20,7 +20,7 @@ from oto_mcp.datastore.core import DatastorePg
 from oto_mcp.datastore.errors import ColumnAbsent
 
 
-STRICT = {"strict": True, "fields": [{"key": "siren", "type": "text"},
+STRICT = {"unknown_columns": "report", "fields": [{"key": "siren", "type": "text"},
                                      {"key": "analyse1", "type": "text"}]}
 
 

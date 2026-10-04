@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 
 class RowValidationError(ValueError):
-    """Écriture refusée par le schéma strict / le cycle de vie (ADR 0046 B/C).
+    """Écriture refusée par le format déclaré / le cycle de vie (ADR 0046 B/C).
     Le message liste les champs fautifs — actionnable, jamais un refus muet.
 
     `row` = la DÉSIGNATION de la ligne fautive, quand le geste en visait plusieurs
@@ -73,7 +73,7 @@ class SchemaDefinitionError(ValueError):
 
 class BusinessKeyRequired(ValueError):
     """Écriture refusée sur un tableau qui n'accepte que des écritures VISANT une
-    ligne existante (`schema.key_required`, #516).
+    ligne existante (`new_rows: "reject"`, #516, oto#127).
 
     Le cran est OPT-IN, posé par le propriétaire du tableau. Ce qu'il ferme : une
     écriture qui ne désigne aucune ligne — ni par son identifiant, ni par une valeur

@@ -36,7 +36,7 @@ _FIELDS = [{"key": "siren", "type": "text"},
 # Le tableau de l'incident : clé métier déclarée, régime de création OUVERT (le défaut).
 _OUVERT = {"key": "siren", "fields": _FIELDS}
 # Le même, fermé : toute écriture vise une ligne existante.
-_FERME = {"key": "siren", "key_required": True, "fields": _FIELDS}
+_FERME = {"key": "siren", "new_rows": "reject", "fields": _FIELDS}
 
 
 def _fake_merge_locked(rows):
@@ -170,7 +170,7 @@ def test_un_tableau_SANS_cle_declaree_ignore_le_cran(banc):
     l'écriture (cf. `test_la_pose_refuse_le_cran_sans_cle`). Un schéma déjà en base
     qui le porterait ne doit pas faire exploser les écritures."""
     st, etat = banc
-    etat["schema"] = {"key_required": True, "fields": _FIELDS}
+    etat["schema"] = {"new_rows": "reject", "fields": _FIELDS}
     st.append_row("viviers", {"raison_sociale": "ACME"})
     assert len(etat["creees"]) == 1
 
@@ -212,7 +212,7 @@ def test_la_pose_refuse_le_cran_sans_cle():
     """Même parti que `max_claims` sans `abandon_state` : une garde qui ne peut pas
     s'appliquer se refuse là où le tableau se déclare, devant celui qui peut corriger
     — pas à la première écriture d'une campagne déjà lancée."""
-    errs = dsv2.validate_schema_def({"key_required": True, "fields": _FIELDS})
+    errs = dsv2.validate_schema_def({"new_rows": "reject", "fields": _FIELDS})
     assert errs and any("key" in e for e in errs)
 
 
@@ -225,7 +225,7 @@ def test_cette_version_ANNONCE_le_cran():
     vérifier, contre le serveur qui lui répond, que le cran qu'il pose mordra."""
     dsv2.reset_enforced_keys()
     try:
-        assert "key_required" in dsv2.enforced_keys()
+        assert "new_rows" in dsv2.enforced_keys()
     finally:
         dsv2.reset_enforced_keys()
 
@@ -284,7 +284,7 @@ def test_527_cas_4_ferme_un_siren_inexistant_est_refuse_et_rien_n_est_ecrit(banc
     msg = str(exc.value)
     assert "552081317" in msg and "349763571" in msg, "l'ancienne ET la nouvelle valeur"
     assert "siren" in msg
-    assert "key_required" in msg, "la sortie passe par le schéma, pas par un « forcer »"
+    assert "new_rows" in msg, "la sortie passe par le schéma, pas par un « forcer »"
     assert etat["lignes"]["r-existante"]["siren"] == "552081317", "rien n'est écrit"
 
 
@@ -329,7 +329,7 @@ def test_527_la_cle_annotee_est_jugee_sur_sa_valeur(banc):
 # reparsant la phrase. Le refus porte désormais `details` — la clé, si l'écriture la
 # portait, la valeur refusée — et la charge à renvoyer (`a_renvoyer`, oto#135).
 
-_FERME_MOTIF = {"key": "siren", "key_required": True,
+_FERME_MOTIF = {"key": "siren", "new_rows": "reject",
                 "fields": [{"key": "siren", "type": "text", "max_length": 9,
                             "pattern": r"^\d{9}$"},
                            {"key": "code", "type": "text"},

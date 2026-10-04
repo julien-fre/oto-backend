@@ -438,7 +438,7 @@ def test_inventory_derives_union(monkeypatch):
 
 # ── schéma CIBLE d'un slot tableau (ADR 0035 × 0046) ─────────────────────────
 
-_TARGET = {"strict": True, "key": "fact_id",
+_TARGET = {"unknown_columns": "report", "key": "fact_id",
            "fields": [{"key": "fact_id", "type": "text", "required": True},
                       {"key": "status", "role": "status",
                        "lifecycle": {"states": ["nouveau", "qualified"],

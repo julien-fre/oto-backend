@@ -1,15 +1,15 @@
 """Une clé que la déclaration ne nomme pas — signalée en haut, REFUSÉE en dessous.
 
-`strict` porte deux contrats sous un seul mot, et l'asymétrie est voulue (#294, #544,
-#614/#678) :
+Le réglage `unknown_columns` (oto#127, ex-`strict` + `unknown_fields`) porte deux
+contrats, et l'asymétrie est voulue (#294, #544, #614/#678) :
 
 - **au premier niveau**, une clé inconnue crée une vraie colonne — c'est un droit du
-  contrat 0016, celui qui permet d'explorer un tableau avant de le typer. Elle est
-  seulement SIGNALÉE (`off_schema_keys`, `off_schema_warning`), sauf si le tableau a
-  fini d'être exploré et pose `unknown_fields: "reject"` (`unknown_fields_mode`,
-  `off_schema_refusal`) ;
-- **sous un composite DÉCLARÉ** (`object.fields`, `list.of.fields`), le référentiel
-  est fermé : l'attribut que la déclaration ne nomme pas est refusé en nommant
+  contrat 0016, celui qui permet d'explorer un tableau avant de le typer. Sous
+  `"report"` elle est SIGNALÉE (`off_schema_keys`, `off_schema_warning`) ; sous
+  `"reject"`, le tableau a fini d'être exploré et elle est refusée
+  (`off_schema_refusal`) ;
+- **sous un composite DÉCLARÉ** (`object.fields`, `list.of.fields`), dès que
+  `unknown_columns` n'est pas `"create"`, le référentiel est fermé : l'attribut que la déclaration ne nomme pas est refusé en nommant
   l'élément fautif (`_unknown_subkeys`, `_off_schema`, `_unknown_subkey_refusal`).
 
 Y vit aussi `couche_mal_ecrite` : `champ.comentaire` n'est pas une clé inconnue de
@@ -45,9 +45,9 @@ def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     signale : un agent écrit, reçoit un accusé de réception, passe à la ligne.
     D'où ce relevé, rendu à l'appelant qui peut le vérifier.
 
-    Vide hors mode `strict` : un champ libre y est un droit explicite du contrat
-    (c'est ce qui permet d'explorer un tableau avant de le typer), pas une anomalie.
-    Vide aussi si le schéma strict ne déclare AUCUN field — sans référentiel, tout
+    Vide sous `unknown_columns: "create"` (le défaut) : un champ libre y est un droit
+    explicite du contrat (c'est ce qui permet d'explorer un tableau avant de le
+    typer), pas une anomalie. Vide aussi si le schéma ne déclare AUCUN field — sans référentiel, tout
     serait « hors schéma », ce qui n'informe personne.
 
     ⚠️ **Ce relevé lit la row ÉCRITE, jamais la row SERVIE — et un contrôle bâti sur
@@ -81,7 +81,7 @@ def _unknown_subkeys(fields: list, data: dict) -> list[str]:
     - **sans référentiel, rien n'est hors référentiel** : un composite qui ne déclare
       AUCUN field ne ferme rien (tout y serait « inconnu », ce qui n'informe
       personne) — c'est exactement le contrat d'une liste libre, et la même règle
-      qu'au premier niveau (`off_schema_keys` sur un strict sans field) ;
+      qu'au premier niveau (`off_schema_keys` sur un tableau sans field) ;
     - **une COUCHE n'est pas un attribut** : la forme servie d'un item aplatit ses
       couches (`email.origine`, oto#22 §2), donc un aller-retour lecture → écriture
       les repose telles quelles. Les refuser casserait le geste le plus ordinaire.
@@ -116,7 +116,8 @@ def _unknown_subkey_refusal(path: str, fields: list) -> str:
     # destination, et le refus la dit au lieu de faire relire la liste.
     proche = cle_la_plus_proche(path.rpartition(".")[2], noms)
     dispo += f" (le plus proche : `{proche}`)" if proche else ""
-    return (f"{path}: attribut non déclaré — le tableau est en format `strict` et ce "
+    return (f"{path}: attribut non déclaré — le format de ce tableau fait contrat "
+            f"(`unknown_columns` n'y est pas `\"create\"`) et ce "
             f"sous-record ferme ses attributs : {dispo}. Rien n'a été écrit. "
             "Contrairement à une colonne de premier niveau, un attribut inconnu ne "
             "crée PAS de colonne libre : il serait stocké là où ni le schéma ni "
@@ -132,7 +133,7 @@ def _off_schema(fields: list, data: dict, prefix: str) -> set:
     unique `clé[].sous_clé` — un lot de 300 contacts ne rend pas 300 lignes.
 
     ⚠️ Depuis #544, les chemins IMBRIQUÉS ne sortent plus d'ici sur un tableau
-    `strict` : le refus arrive avant le relevé (`_check_row` lève, puis relève).
+    qui fait contrat de son format : le refus arrive avant le relevé (`_check_row` lève, puis relève).
     La descente reste le contrat de cette fonction — elle décrit ce qui est hors du
     format, indépendamment de qui refuse — et elle couvre encore le cas où la
     déclaration n'a pas de référentiel."""
@@ -166,8 +167,8 @@ def off_schema_warning(keys: list) -> Optional[str]:
     if not keys:
         return None
     noms = ", ".join(f"`{k}`" for k in keys)
-    return (f"écrit HORS SCHÉMA : {noms} — le tableau déclare un format strict, ces "
-            "colonnes en sortent : elles sont stockées et lisibles, mais l'interface "
+    return (f"écrit HORS SCHÉMA : {noms} — le tableau signale ses colonnes non "
+            "déclarées (`unknown_columns: \"report\"`), ces colonnes sortent de son format : elles sont stockées et lisibles, mais l'interface "
             "et tout ce qui s'appuie sur le schéma les ignorent. Si c'est une faute de "
             "nom (champ renommé depuis), relis le format avec `data_get_schema` et "
             "réécris sous le bon nom ; si le champ est voulu, déclare-le au schéma.")
@@ -192,42 +193,19 @@ def types_geles_warning(gelees: list) -> Optional[str]:
             "écris-y une valeur conforme — le refus détaillé te dira laquelle.")
 
 
-# ── le TROISIÈME état de `strict` au premier niveau (#614/#678) ──────────────
+# ── le TROISIÈME cran au premier niveau : `unknown_columns: "reject"` (#614/#678) ─
 #
-# `strict` porte deux contrats sous un seul mot : rapporteur au premier niveau
-# (`hors_schema`, arbitrage #294), refus dans un sous-record déclaré (#544). Le
-# nom promettait le second et livrait le premier ; on a cessé de surveiller ce
-# qu'on croyait gardé, et douze clés inventées sont entrées en vingt-deux
-# occurrences, dont trois dans des fiches clientes.
-#
-# **L'asymétrie ne se ferme pas, elle se PARAMÈTRE.** Au premier niveau, un nom
-# inconnu crée une vraie colonne qu'on peut déclarer après coup : c'est ce qui
-# permet d'explorer un tableau avant de le typer, et c'est un droit du contrat
-# 0016. Le défaut reste donc `report`. Ce qu'on ajoute est un troisième état,
-# opt-in table par table, pour le tableau qui a FINI d'être exploré.
-#
-# ⚠️ Clé distincte plutôt que `strict: "refuse"` : `strict` est lu comme un
-# booléen à cinq endroits (`validation_active`, `off_schema_keys`, `validate_row`,
-# `claimable.erreurs`, `_orphan_columns_warning`) — en changer le type ferait
-# mentir chaque lecture existante, en silence, et sur le chemin chaud.
-UNKNOWN_FIELDS_MODES = ("report", "reject")
-
+# `strict` portait deux contrats sous un seul mot : rapporteur au premier niveau
+# (`hors_schema`, arbitrage #294), refus dans un sous-record déclaré (#544). Le nom
+# promettait le second et livrait le premier ; douze clés inventées sont entrées en
+# vingt-deux occurrences. Le refus du premier niveau était arrivé sous une clé
+# distincte (`unknown_fields`) ; depuis oto#127 c'est le troisième cran du même
+# réglage. Le défaut reste la création : explorer un tableau avant de le typer est un
+# droit du contrat 0016, et le refus est opt-in, table par table.
 # Ce que le refus cite du référentiel avant d'abréger. Un tableau à soixante
 # colonnes rendrait un mur que personne ne lit — et le budget d'un retour d'outil
 # est le budget de tout le monde (`docs/conventions.md`).
 _REFERENTIEL_CITE = 15
-
-
-def unknown_fields_mode(schema: Optional[dict]) -> str:
-    """`report` (le défaut, comportement de #294) ou `reject` (#614/#678).
-
-    Une valeur illisible rend `report` : elle est refusée à la POSE
-    (`validate_schema_def`), donc elle ne peut venir que d'une écriture hors
-    surface — et dans le doute on ne DURCIT pas un tableau sur une déclaration
-    qu'on ne comprend pas. C'est le sens sûr : l'autre fermerait un tableau
-    vivant sur une faute de frappe."""
-    return ("reject" if reglages.colonnes_inconnues(schema) == reglages.REJECT
-            else "report")
 
 
 def couche_mal_ecrite(cle: str, declarees) -> Optional[tuple]:
@@ -320,7 +298,7 @@ def off_schema_refusal(schema: Optional[dict],
     un souligné au lieu d'un point. Là, la destination n'est pas rapprochée, elle
     est lue dans la clé elle-même ; se taire enverrait l'appelant déclarer une
     colonne qui ne devrait pas exister. Cf. `couche_mal_ecrite`."""
-    if unknown_fields_mode(schema) != "reject":
+    if reglages.colonnes_inconnues(schema) != reglages.REJECT:
         return [], {}
     keys = off_schema_keys(schema, data)
     if not keys:
@@ -352,7 +330,7 @@ def off_schema_refusal(schema: Optional[dict],
                  f"écrit la même chose, et c'est la forme que "
                  f"`layers=\"nested\"` te rend à la lecture."], details)
     return ([f"{noms} : aucune colonne déclarée ne porte ce nom, et ce tableau "
-             f"refuse les colonnes non déclarées (`unknown_fields: \"reject\"`) — "
+             f"refuse les colonnes non déclarées (`unknown_columns: \"reject\"`) — "
              f"rien n'a été écrit. Colonnes du tableau : {cite}. Écris sous un nom "
              f"déclaré, ou déclare la colonne (`data_patch_schema`) puis réécris. "
              f"⚠️ Ne réessaie pas sous une variante du même nom : elle sera "

@@ -165,6 +165,13 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         # Les noms sont RENDUS au client : un refus qui ne dit pas quel champ pose
         # problème oblige à deviner, et c'est exactement ce qu'on cherche à supprimer.
         inconnus = sorted(set(data) - set(cap.Input.model_fields))
+        # Un nom RETIRÉ a un remplaçant, et le refus le donne avec la valeur à
+        # rejouer (oto#127) : l'`Input` qui en a déclare `refus_champs_retires`.
+        retires = getattr(cap.Input, "refus_champs_retires", None)
+        refus_retire = retires({k: data[k] for k in inconnus}) if (
+            inconnus and retires) else None
+        if refus_retire:
+            return json_error(request, 400, "unknown_fields", refus_retire)
         if inconnus:
             logger.warning("capacité %s : champ(s) inconnu(s) refusé(s) : %s",
                            cap.key, ", ".join(inconnus))

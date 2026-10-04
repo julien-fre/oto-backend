@@ -243,7 +243,7 @@ class ControlesMixin:
                    lot: bool = False, creation: bool = False,
                    ecrits_par_rang: Optional[dict] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
-        déclare ni strict/required/max_length ni lifecycle (défaut 0016 soft).
+        déclare ni `unknown_columns` contraignant, ni exigence, ni lifecycle (défaut 0016 soft).
 
         `written` = les clés que le geste réécrit (None sur un insert/remplacement,
         où tout est écrit) : borne `max_length` restreinte à celles-là, cf.
@@ -258,7 +258,7 @@ class ControlesMixin:
         C'est aussi LE seam d'écriture — tous les chemins (append, batch, merge de
         clé métier, upsert, patch) y passent — donc l'endroit unique où relever les
         champs HORS SCHÉMA du geste (#294), sur les seules clés posées. Un schéma
-        `strict` active la validation, donc l'appel a bien lieu."""
+        `unknown_columns: "report"` active la validation, donc l'appel a bien lieu."""
         # #545 : le refus STRUCTURÉ se remplit PENDANT la validation — c'est le seul
         # endroit qui voit à la fois la colonne fautive et la colonne attendue. Le
         # récupérer après coup imposerait de reparser le message, ce que la face REST
@@ -339,8 +339,8 @@ class ControlesMixin:
                 "comme une donnée — l'écriture viserait à côté (ligne fantôme). "
                 f"{conduite} Si `id` est une vraie colonne de TES données, "
                 "déclare-la au schéma (data_set_schema) puis réécris.")
-        # #614/#678 : le TROISIÈME état de `strict` au premier niveau — refuser la
-        # colonne non déclarée, opt-in table par table (`unknown_fields: "reject"`).
+        # #614/#678 : le TROISIÈME cran au premier niveau — refuser la colonne non
+        # déclarée, opt-in table par table (`unknown_columns: "reject"`, oto#127).
         #
         # Posé ICI, contre `posed`, et les deux points comptent autant que le refus :
         #   • ici, parce que c'est le seam qui calcule DÉJÀ le relevé, deux lignes

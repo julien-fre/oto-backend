@@ -126,7 +126,7 @@ def test_sans_effet_nomme_ce_qui_est_declare_et_que_rien_n_applique():
 
 
 def test_contre_epreuve_un_tableau_strict_n_a_pas_d_options_inertes():
-    schema = {"strict": True,
+    schema = {"unknown_columns": "report",
               "fields": [{"key": "choix", "type": "text", "options": ["a", "b"]},
                          {"key": "suivi", "type": "text", "agent_access": "none"}]}
     assert lds.gardes(schema) == {"masquees_a_l_agent": ["suivi"]}

@@ -12,7 +12,7 @@ from oto_mcp.datastore import schema as dsv2
 
 
 def _schema(**kw) -> dict:
-    base = {"strict": True, "fields": [
+    base = {"unknown_columns": "report", "fields": [
         {"key": "siren", "type": "text"},
         {"key": "contacts", "type": "list", "max_items": 2, "label": "Interlocuteurs",
          "of": {"type": "object", "fields": [
@@ -45,7 +45,7 @@ def test_going_over_the_bound_says_by_how_much():
 def test_no_bound_declared_means_no_bound():
     """`max_items` est OPT-IN comme le reste de la validation : un tableau qui ne
     l'a pas déclaré ne se met pas à refuser des lignes qu'il acceptait hier."""
-    sans = {"strict": True, "fields": [
+    sans = {"unknown_columns": "report", "fields": [
         {"key": "contacts", "type": "list", "of": {"type": "object", "fields": []}}]}
     assert dsv2.validate_row(sans, {"contacts": [{} for _ in range(50)]}) == []
 
@@ -54,7 +54,7 @@ def test_a_bound_of_zero_or_a_boolean_is_ignored():
     """`True` est un `int` en Python : une borne booléenne bornerait à 1 élément,
     silencieusement. C'est le piège qui a déjà coûté un filtre booléen jeté."""
     for bidon in (0, True, False, "2", None):
-        s = {"strict": True, "fields": [
+        s = {"unknown_columns": "report", "fields": [
             {"key": "c", "type": "list", "max_items": bidon,
              "of": {"type": "object", "fields": []}}]}
         assert dsv2.validate_row(s, {"c": [{}, {}, {}]}) == [], f"borne {bidon!r}"

@@ -17,7 +17,7 @@ from oto_mcp.datastore import validation as V
 
 
 def _schema(**extra):
-    return {"strict": True,
+    return {"unknown_columns": "report",
             "fields": [{"key": "priorite", "type": "number"},
                        {"key": "ca", "type": "number"}],
             **extra}

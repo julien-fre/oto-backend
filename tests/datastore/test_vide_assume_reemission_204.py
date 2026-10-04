@@ -40,7 +40,7 @@ from oto_mcp.datastore.validation import validate_row
 
 RACINE = Path(__file__).resolve().parents[2]
 MARQUEE = {"valeur": "", dsc.VIDE_ASSUME: True}
-SCHEMA = {"strict": True, "fields": [
+SCHEMA = {"unknown_columns": "report", "fields": [
     {"key": "raison", "type": "text"},
     {"key": "fonction", "type": "text", "required": True},
     {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [

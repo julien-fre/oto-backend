@@ -116,7 +116,7 @@ def test_la_pose_refuse_readonly_sur_la_cle_metier():
     `key_required` (une autre valeur est une autre ligne), pas par `readonly`."""
     errs = dsv2.validate_schema_def(
         {"key": "siren", "fields": [{"key": "siren", "readonly": True}]})
-    assert errs and any("clé métier" in e and "key_required" in e for e in errs), errs
+    assert errs and any("clé métier" in e and "new_rows" in e for e in errs), errs
 
 
 def test_sur_un_schema_legacy_la_cle_identique_est_de_l_ADRESSAGE(banc):

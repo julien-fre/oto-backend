@@ -55,9 +55,9 @@ def test_la_forme_d_un_lot(row, attendu):
 SUB = "sub-test"
 LOT = [{"siren": "1", "nom": "A"}, {"siren": "2", "nom": "B"}]
 LIGNE = {"siren": "3", "nom": "C"}
-STRICT = {"strict": True, "fields": [{"key": "siren", "type": "text"},
+STRICT = {"unknown_columns": "report", "fields": [{"key": "siren", "type": "text"},
                                      {"key": "nom", "type": "text"}]}
-REJECT = {**STRICT, "unknown_fields": "reject"}
+REJECT = {**STRICT, "unknown_columns": "reject"}
 SOUS_TABLE = {"fields": [{"key": "contacts", "type": "list",
                          "of": {"type": "object",
                                 "fields": [{"key": "nom", "type": "text"}]}}]}

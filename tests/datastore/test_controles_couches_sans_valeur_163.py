@@ -82,7 +82,7 @@ def _compte(ns_id: int, filtre: dict) -> int:
 
 def test_la_pose_d_un_enum_ne_signale_que_la_vraie_valeur_hors_options(tableau):
     st, ns, ns_id, _ = tableau
-    out = st.set_schema(ns, {"strict": True, "fields": [
+    out = st.set_schema(ns, {"unknown_columns": "report", "fields": [
         {"key": "etat", "type": "enum", "options": OPTIONS},
         {"key": "n", "type": "number"}]})
     avertissement = out.get("warning") or ""
@@ -94,7 +94,7 @@ def test_la_pose_d_un_enum_ne_signale_que_la_vraie_valeur_hors_options(tableau):
 
 def test_le_patch_d_un_enum_ne_signale_que_la_vraie_valeur_hors_options(tableau):
     st, ns, _, _ = tableau
-    st.set_schema(ns, {"strict": True, "fields": [
+    st.set_schema(ns, {"unknown_columns": "report", "fields": [
         {"key": "etat", "type": "text"}, {"key": "n", "type": "number"}]})
     out = st.patch_schema(ns, fields=[{"key": "etat", "type": "enum", "options": OPTIONS}])
     avertissement = out.get("warning") or ""

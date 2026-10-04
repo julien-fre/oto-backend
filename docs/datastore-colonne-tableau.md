@@ -111,7 +111,7 @@ lecteur de chaque attribut, est servie sur `GET /api/datastore/schema/keys`.
 > sur des écrans clients est PRÉEXISTANTE — c'est une relecture ÉDITORIALE côté mission,
 > pas un gate de plateforme.
 
-**Sur un tableau `strict`, `of.fields` FERME la fiche (#544, 29/08/2026).** C'est le
+**Sur un tableau dont le format fait contrat (`unknown_columns` à `"report"` ou `"reject"`, ex-`strict`), `of.fields` FERME la fiche (#544, 29/08/2026).** C'est le
 principe de la FEUILLE appliqué au référentiel : ce qui vaut au premier niveau vaut un
 cran plus bas — à ceci près que le sens s'y **inverse**, et il faut le dire. En tête de
 ligne, une clé inconnue crée une **colonne** libre, que l'interface affiche : elle est
@@ -123,7 +123,7 @@ le schéma ni l'interface ne le lisent (l'export CSV rend la colonne-liste en un
 
 Trois conséquences pour qui déclare une colonne-tableau :
 
-- **déclarer `of.fields`, c'est fermer la fiche** sur un tableau `strict` — un attribut
+- **déclarer `of.fields`, c'est fermer la fiche** sur un tableau `unknown_columns` autre que `"create"` — un attribut
   de plus se déclare (`data_patch_schema` descend dans `of`) avant d'être écrit ;
 - **ne pas déclarer de champs sous `of` laisse la liste LIBRE**, à tout étage : sans
   référentiel, rien n'est hors référentiel. C'est le choix à faire tant que la forme

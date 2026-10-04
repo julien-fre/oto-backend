@@ -36,8 +36,8 @@ from oto_mcp.datastore.errors import RowValidationError
 
 # Un tableau qui porte les TROIS crans à la fois.
 SCHEMA = {
-    "strict": True, "key": "siren", "key_required": True,
-    "unknown_fields": "reject",
+    "unknown_columns": "report", "key": "siren", "new_rows": "reject",
+    "unknown_columns": "reject",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "adresse", "type": "text", "readonly": True},          # #606
@@ -69,8 +69,8 @@ def test_les_deux_etages_sont_disjoints():
 
 @pytest.mark.parametrize("schema,attendu", [
     ({"key": "k", "fields": [{"key": "k", "readonly": True}]}, "clé métier"),
-    ({"unknown_fields": "reject", "fields": [{"key": "k"}]}, "strict"),
-    ({"strict": True, "unknown_fields": "reject", "fields": []}, "référentiel"),
+    ({"new_rows": "reject", "fields": [{"key": "k"}]}, "clé métier"),
+    ({"unknown_columns": "reject", "fields": []}, "référentiel"),
 ])
 def test_un_cran_qui_ne_pourrait_pas_s_appliquer_est_refuse(schema, attendu):
     """Un cran inerte est PIRE que son absence : on cesse de surveiller ce qu'on

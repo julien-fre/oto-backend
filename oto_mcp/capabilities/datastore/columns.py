@@ -38,6 +38,7 @@ ownership) — un tableau hors périmètre répond 404, comme partout dans le da
 from __future__ import annotations
 
 from ...datastore.identite import Adresse
+from ...datastore import reglages
 from ...datastore import upsert_implicite as upi
 from ...datastore.schema_keys import META_MAX_OCTETS as _META_MAX
 
@@ -124,17 +125,31 @@ class PatchSchemaInput(EntreeDatastore):
         "drops every declaration you did not resend. An unknown column or attribute "
         "is refused, never silently ignored. `key` cannot be taken off: it is the "
         "column's identity, not one of its properties."))
-    strict: Optional[bool] = None
     key: Optional[str] = None
-    # #516 : le cran « écrire, jamais créer » se pose et se retire ICI — le poser
-    # par `set` obligerait à réécrire un schéma de 80 champs pour une clé de tête,
-    # exactement le geste que ce patch existe pour éviter.
-    key_required: Optional[bool] = Field(default=None, description=(
-        "`true` CLOSES the table — a write designating no existing row is refused; "
-        "`false` reopens it. Omitted leaves it untouched."))
-    # #614/#678 : `"report"` (défaut) / `"reject"`. Ici pour la même raison que
-    # `key_required` — un tableau se ferme quand son schéma est déjà long.
-    unknown_fields: Optional[str] = None
+    # oto#127 : les DEUX réglages de tête, un par axe (`datastore/reglages.py`). Ils
+    # se posent ICI — un tableau se ferme quand son schéma est déjà long, et le poser
+    # par `set` obligerait à réécrire quatre-vingts champs pour une clé de tête.
+    # `str` et pas `Literal` : une valeur hors des crans est refusée par la pose, qui
+    # les nomme, au lieu d'un `invalid_input` muet.
+    unknown_columns: Optional[str] = Field(default=None, description=(
+        "What happens to a column the schema does NOT declare: `\"create\"` (the "
+        "default) creates it silently; `\"report\"` creates it and names it back in "
+        "`hors_schema` — and makes the declared format a CONTRACT: top-level "
+        "`options` are enforced and declared sub-records refuse an undeclared "
+        "attribute; `\"reject\"` does the same and refuses the write, storing "
+        "nothing (needs at least one declared field). Omitted leaves it untouched."))
+    new_rows: Optional[str] = Field(default=None, description=(
+        "Whether a NEW row may be born: `\"create\"` (the default) or `\"reject\"` "
+        "— CLOSES the table: a write designating no existing row (no `id`, no key "
+        "value the table already carries) is refused; needs `key`. Omitted leaves it "
+        "untouched."))
+
+    @classmethod
+    def refus_champs_retires(cls, data: dict) -> Optional[str]:
+        """Les trois anciens paramètres (oto#127), refusés avec l'équivalent exact —
+        lu par l'adaptateur REST ; la face MCP sert le même texte depuis
+        `error_taxonomy`."""
+        return reglages.refus_parametres(data)
 
 
 class PatchSchemaResult(BaseModel):
@@ -180,8 +195,7 @@ def _patch_schema(ctx: ResolvedCtx, inp: PatchSchemaInput) -> dict:
         return make_store(ctx.sub).patch_schema(
             datastore, fields=inp.fields, remove=inp.remove,
             remove_attrs=inp.remove_attrs,
-            strict=inp.strict, key=inp.key, key_required=inp.key_required,
-            unknown_fields=inp.unknown_fields)
+            key=inp.key, unknown_columns=inp.unknown_columns, new_rows=inp.new_rows)
     except DatastoreNotFound:
         raise AuthzDenied(404, "datastore_not_found")
     except DatastoreReadOnly:
@@ -243,15 +257,19 @@ CAPABILITIES += [
             "attributes off columns that STAY — merging only completes, so this is the "
             "only way to drop one declaration without reposting the whole schema; an "
             "unknown column or attribute is refused, and `key` cannot be dropped. "
-            "`strict`/`key`/`key_required`/`unknown_fields` "
+            "`key`/`unknown_columns`/`new_rows` "
             "change the head keys, untouched when omitted — `key` names the BUSINESS "
-            "KEY: " + upi.description_cle_schema() + " `key_required: true` "
+            "KEY: " + upi.description_cle_schema() + " `new_rows: \"reject\"` "
             "CLOSES the table (a write designating no existing row is refused), "
-            "`false` reopens it. `unknown_fields` decides what happens to a column "
-            "the schema does NOT declare: `\"report\"` (the default) CREATES it and "
-            "names it back in `hors_schema` — `strict` alone never refused it — while "
-            "`\"reject\"` refuses the write and stores nothing; set it on a table that "
-            "has FINISHED being explored. Per field, `readonly: true` locks the value "
+            "`\"create\"` reopens it. `unknown_columns` decides what happens to a "
+            "column the schema does NOT declare: `\"create\"` (the default) creates "
+            "it silently, `\"report\"` creates it and names it back in `hors_schema` "
+            "— and makes the declared format a contract (top-level `options` "
+            "enforced, declared sub-records closed) — while `\"reject\"` refuses the "
+            "write and stores nothing; set it on a table that has FINISHED being "
+            "explored. `strict`, `unknown_fields` and `key_required` were REPLACED by "
+            "these two on 2026-10-02: they are refused with their exact equivalent. "
+            "Per field, `readonly: true` locks the value "
             "in place (layers such as `.comment` stay open) — the table's OWNER, or "
             "whoever GOVERNS it, can still replace such a value with "
             "`data_write(readonly_override=true)`, for that one call and journaled, "

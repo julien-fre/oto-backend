@@ -43,7 +43,7 @@ def _table():
     ns = "t-" + uuid.uuid4().hex[:6]
     ns_id = db.create_datastore("user", "sub-test", ns)
     st = _store()
-    st.set_schema(ns, {"key": "siren", "strict": True, "unknown_fields": "reject",
+    st.set_schema(ns, {"key": "siren", "unknown_columns": "reject",
                        "fields": [
                            {"key": "siren", "type": "text"},
                            {"key": "autre", "type": "text"},

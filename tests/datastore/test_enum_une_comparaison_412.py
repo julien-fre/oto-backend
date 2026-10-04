@@ -20,7 +20,7 @@ from oto_mcp.datastore.options_declarees import parmi
 from oto_mcp.datastore.validation import validate_row
 
 SCHEMA = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "priorite", "type": "enum", "options": ["1", "2", "3", "4", "5"]},
         {"key": "motif", "type": "text", "required_when": {"priorite": "5"}},
@@ -70,7 +70,7 @@ def test_parmi_compare_la_forme_que_compare_la_base(valeur, declarees, attendu):
 def test_une_condition_booleenne_se_juge_comme_une_option_booleenne():
     """`str(True)` valait `"True"` et la base rend `true` : une condition écrite `"true"`
     ne s'armait jamais sur une case booléenne. Même forme des deux côtés désormais."""
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "joignable", "type": "bool"},
         {"key": "motif", "type": "text", "required_when": {"joignable": "false"}},
     ]}

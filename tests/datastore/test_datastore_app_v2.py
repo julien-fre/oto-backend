@@ -81,7 +81,7 @@ def _install_prefab_stub(monkeypatch):
 
 
 LEAD_SCHEMA = {
-    "strict": True,
+    "unknown_columns": "report",
     "key": "fact_id",
     "fields": [
         {"key": "fact_id", "type": "text", "required": True, "role": "title"},

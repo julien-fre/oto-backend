@@ -3,8 +3,8 @@
 Trois faits qu'un schéma laisse croire et que le moteur ne tient pas — dits au moment
 où ils comptent, à la pose comme à l'écriture, jamais six semaines plus tard :
 
-- **`options` de COLONNE hors régime strict ne contraint rien.** `validation_active`
-  s'arme sur `strict` et sur les exigences (`required`, `required_when`,
+- **`options` de COLONNE sous `unknown_columns: "create"` ne contraint rien.**
+  `validation_active` s'arme sur `unknown_columns` (autre que `create`) et sur les exigences (`required`, `required_when`,
   `max_length`, `max_items`) à toute profondeur, mais `options` ne l'arme que DANS un
   sous-record (oto#137) : un tableau qui déclare une liste de choix sur une colonne
   et rien d'autre accepte tout. `options_not_enforced` le dit à la pose,
@@ -52,7 +52,7 @@ from .cycle_de_vie import (abandon_state_of, claimable_of, lifecycle_of,
 
 # ── Options déclarées mais non appliquées (#319) ─────────────────────────────
 #
-# `validation_active` s'arme sur `strict` et sur les exigences à toute profondeur, mais
+# `validation_active` s'arme sur `unknown_columns` (autre que `create`) et sur les exigences à toute profondeur, mais
 # **`options` de premier niveau n'y est pas** (dans un sous-record, elle arme : oto#137).
 # Un tableau qui déclare
 # `options: ["oui","non","inconnu"]` et rien d'autre accepte « Peut-être » sans un mot.
@@ -144,10 +144,11 @@ def unenforced_options_warning(hors: dict) -> Optional[str]:
         return None
     detail = ", ".join(f"`{k}` = {v!r}" for k, v in sorted(hors.items()))
     return (f"valeur hors des options déclarées : {detail} — elle est ÉCRITE quand "
-            "même. Ce tableau n'étant pas en format strict, les `options` de son "
+            "même. Ce tableau laissant libres ses colonnes non déclarées "
+            "(`unknown_columns: \"create\"`, le défaut), les `options` de son "
             "schéma décrivent des choix proposés, elles ne les imposent pas. Pour "
-            "qu'elles contraignent vraiment, pose `strict: true` sur le tableau "
-            "(`data_set_schema`) — les écritures hors liste seront alors refusées.")
+            "qu'elles contraignent vraiment, pose `unknown_columns: \"report\"` sur le tableau "
+            "(`data_patch_schema`) — les écritures hors liste seront alors refusées.")
 
 
 def options_not_enforced(schema: Optional[dict]) -> list[str]:
@@ -166,8 +167,9 @@ def options_not_enforced_warning(champs: list[str]) -> Optional[str]:
         return None
     noms = ", ".join(f"`{c}`" for c in champs)
     return (f"options déclarées mais NON appliquées : {noms} — ce tableau n'est pas "
-            "en format strict, donc ces listes sont indicatives : une valeur hors "
-            "liste sera acceptée. Ajoute `strict: true` au schéma pour qu'elles "
+            "réglé pour faire contrat de son format (`unknown_columns: \"create\"`), "
+            "donc ces listes sont indicatives : une valeur hors "
+            "liste sera acceptée. Pose `unknown_columns: \"report\"` (ou `\"reject\"`) pour qu'elles "
             "contraignent.")
 
 

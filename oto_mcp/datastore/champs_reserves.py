@@ -346,9 +346,9 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       d'une ligne en place ET elle CHANGE → refus. Identique → no-op silencieux, les
       couches restent (substrat, `_merge_column`) ; `{"valeur": <identique>,
       "comment": …}` écrit le comment, c'est le geste utile. Une création n'écrase
-      rien (un tableau qui ne doit pas grossir se ferme par `key_required`). La
+      rien (un tableau qui ne doit pas grossir se ferme par `new_rows: "reject"`). La
       colonne-clé ne se pose pas en `readonly` (refusé à la déclaration : elle se
-      protège par `key_required`) ; un schéma legacy qui la porterait n'est pas
+      protège par `new_rows: "reject"`) ; un schéma legacy qui la porterait n'est pas
       fermé, puisque l'identique passe. **Un `forcage` TENU lève ce refus-là, pour
       cet appel seulement** (#658, `forcage.py`) — l'autre cran, lui, ne se force
       pas : il ferme ce que la PLATEFORME pose, pas ce que le client a remis ;

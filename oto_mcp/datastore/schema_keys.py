@@ -218,7 +218,7 @@ CLES_DU_CYCLE: tuple[Cle, ...] = (
 # ── La TÊTE du schéma (#97) ──────────────────────────────────────────────────
 #
 # ⚠️ **Le contrôle des clés inconnues ne parcourait que les COLONNES.** Un réglage de
-# tête mal orthographié — `stricte` pour `strict` — passait donc en silence complet, et
+# tête mal orthographié — `stricte` pour `strict`, alors réglage de tête — passait donc en silence complet, et
 # la conséquence est la plus large du datastore : `validation_active` rend `False`, donc
 # **toutes les gardes du tableau tombent d'un coup** pendant que son propriétaire les
 # croit armées. Ce n'est pas une protection qui s'affaiblit, ce sont toutes.
@@ -232,16 +232,9 @@ CLES_DU_CYCLE: tuple[Cle, ...] = (
 CLES_DE_TETE: tuple[Cle, ...] = (
     Cle("fields", ("validateur", "front"), "les colonnes du tableau"),
     Cle("key", ("validateur", "front"), "la colonne qui sert de clé métier"),
-    Cle("strict", ("validateur",),
-        "arme la validation : sans lui, `options`, `type` et les bornes ne "
-        "contraignent rien"),
-    Cle("key_required", ("validateur",),
-        "une écriture qui ne désigne aucune ligne existante est refusée"),
-    Cle("unknown_fields", ("validateur",),
-        "le sort d'une colonne non déclarée — `\"report\"` (défaut) ou `\"reject\"`"),
-    # oto#127 : les deux réglages qui remplacent les trois ci-dessus, un par axe
-    # (`reglages.py`). Les trois anciens restent admis jusqu'au passage de
-    # `scripts/renommer_reglages_tete.py`, qui les traduit.
+    # oto#127 (02/10/2026) : DEUX réglages, un par axe (`reglages.py`). Ils remplacent
+    # `strict`, `unknown_fields` et `key_required`, désormais refusés à la pose et au
+    # patch avec leur équivalent exact (`reglages.refus_anciens`).
     Cle("unknown_columns", ("validateur",),
         "le sort d'une colonne non déclarée — `\"create\"` (défaut : créée en "
         "silence), `\"report\"` (créée et nommée dans `hors_schema`) ou "

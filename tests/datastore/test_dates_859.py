@@ -131,7 +131,7 @@ def test_un_sous_champ_illisible_est_garde_et_dit_seulement_sans_validation():
     souple, notices = dates.normaliser_ligne(SCHEMA, {"o": {"s": "bientôt"}})
     assert souple == {"o": {"s": "bientôt"}}
     assert any("`o.s`" in n and "illisible" in n for n in notices)
-    strict = {**SCHEMA, "strict": True}
+    strict = {**SCHEMA, "unknown_columns": "report"}
     _, notices = dates.normaliser_ligne(strict, {"o": {"s": "bientôt"}})
     assert notices == set(), "sous validation, c'est le refus qui parle"
 

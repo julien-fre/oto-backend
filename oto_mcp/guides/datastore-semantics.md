@@ -364,14 +364,34 @@ réservation). Une colonne avec ses `options`, ou l'ancienne étiquette, ressemb
 état sans en être un — la réponse te le dit plutôt que de te laisser conclure de son
 silence.
 
+## 4 sexies bis. Deux réglages de tête, un par question
+
+Un schéma porte deux réglages de tête (oto#127, 02/10/2026) :
+
+| réglage | question | crans |
+|---|---|---|
+| `unknown_columns` | que devient une colonne que le schéma ne déclare pas ? | `"create"` (défaut : créée, en silence) · `"report"` (créée et nommée dans `hors_schema`) · `"reject"` (refusée, rien n'est écrit — exige au moins une colonne déclarée) |
+| `new_rows` | une ligne nouvelle a-t-elle le droit de naître ? | `"create"` (défaut) · `"reject"` (une écriture qui ne désigne aucune ligne existante est refusée — exige `key`) |
+
+Hors `"create"`, `unknown_columns` dit aussi que le format FAIT CONTRAT : les
+`options` d'une colonne de premier niveau sont appliquées, un sous-record déclaré
+refuse un attribut qu'il ne déclare pas, la colonne d'un périmètre de réservation doit
+être déclarée. `data_get_schema` sert les deux tels qu'ils s'appliquent (`reglages`).
+
+Ils remplacent `strict`, `unknown_fields` et `key_required`, refusés à la pose comme au
+patch avec leur équivalent exact : `strict: true` → `unknown_columns: "report"` ;
+`strict: true` + `unknown_fields: "reject"` → `unknown_columns: "reject"` ;
+`strict: false` → `"create"` ; `key_required: true` → `new_rows: "reject"`. Un ancien
+réglage encore stocké n'est plus lu ; la lecture le dit, avec son équivalent.
+
 ## 4 septies. Une exigence déclarée s'applique, à toute profondeur
 
-La validation d'un tableau s'arme dès que son schéma déclare une exigence : `strict`,
-ou `required`, `required_when`, `max_length`, `max_items` sur une colonne, un
+La validation d'un tableau s'arme dès que son schéma déclare une exigence :
+`unknown_columns` à `"report"` ou `"reject"`, ou `required`, `required_when`, `max_length`, `max_items` sur une colonne, un
 sous-champ d'objet ou l'attribut d'un élément de liste — et `options` dans un
 sous-champ. « Chaque contact porte un nom » se déclare sur `of.fields`, et il est
-tenu. Seules les `options` d'une colonne de premier niveau restent indicatives hors
-`strict` ; la réponse le dit.
+tenu. Seules les `options` d'une colonne de premier niveau restent indicatives sous
+`unknown_columns: "create"` (le défaut) ; la réponse le dit.
 
 Deux formes qui ne s'appliqueraient pas sont **refusées à la pose**, avec la bonne :
 `max_items` se pose sur la liste (`{"type": "list", "max_items": 3, "of": {…}}`),
@@ -421,8 +441,8 @@ identique passe (no-op) ; `comment`, `link` et `origine` (sauf si le système la
 restent écrivables.
 
 Ce que le cran ne ferme **pas** : la **création** d'une ligne — rien n'est écrasé ; un
-tableau qui ne doit pas grossir se ferme par `key_required`. La colonne-clé ne peut pas
-être `readonly` : c'est `key_required` qui la protège.
+tableau qui ne doit pas grossir se ferme par `new_rows: "reject"`. La colonne-clé ne
+peut pas être `readonly` : c'est `new_rows: "reject"` qui la protège.
 
 Pour remplacer quand même : `readonly_override=true` **sur l'appel** (argument de
 `data_write` ; paramètre de query sur `POST`/`PATCH …/rows`). Réservé au propriétaire
@@ -461,21 +481,22 @@ lot qui a posé la ligne visée, `null` pour une ligne déjà en base, `cle`
 désigner la même ligne, et `fusions` dit lesquelles. L'accusé d'un upload signé, lu par
 un porteur de lien, rend `fusions` sans `id`.
 
-Sur un tableau **fermé** (`key_required`, ci-dessous), toute écriture sans `id` est une
+Sur un tableau **fermé** (`new_rows: "reject"`, ci-dessous), toute écriture sans `id` est une
 désignation par la clé : il ne crée jamais, la valeur de clé y est la façon de viser
 sa ligne.
 
 Une ligne créée sans valeur de clé est créée quand même et la réponse le signale
 (`notices`) : aucune écriture ultérieure ne la retrouvera par sa clé.
 
-`key_required: true` ferme le tableau : une écriture qui ne désigne aucune ligne
+`new_rows: "reject"` ferme le tableau (il exige `key`) : une écriture qui ne désigne aucune ligne
 existante — ni `id`, ni valeur de clé déjà portée ; une clé simplement **nouvelle**
 compte comme inconnue — est **refusée** (`business_key_required`) au lieu de créer.
 Le refus dit si l'écriture PORTAIT la clé (« porte `siren` = … » : la valeur est
 inconnue) ou non (« ne porte pas `siren` ») ; REST : `details.cle_portee`, `details.valeur`,
 `details.a_renvoyer`. Un lot dédoublonné par `key=` sur une autre colonne est jugé sur
 la clé DÉCLARÉE.
-Ouvrir, écrire, refermer : `data_patch_schema(key_required=false)` puis `…=true`.
+Ouvrir, écrire, refermer : `data_patch_schema(new_rows="create")`, l'écriture, puis
+`data_patch_schema(new_rows="reject")`.
 
 Un **lot** (`data_write(rows=[…])`, `oto_upload_url`) n'est pas atomique : il s'arrête à
 la première ligne refusée, les précédentes restent écrites, le refus nomme la ligne et

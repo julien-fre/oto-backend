@@ -21,7 +21,7 @@ from oto_mcp.datastore.core import _merge_column
 
 # --- la validation juge la valeur ----------------------------------------------
 
-_STRICT = {"strict": True, "fields": [
+_STRICT = {"unknown_columns": "report", "fields": [
     {"key": "email", "type": "email"},
     {"key": "effectif", "type": "number"},
     {"key": "statut", "type": "enum", "options": ["a", "b"]},
@@ -203,7 +203,7 @@ def test_the_business_key_may_now_carry_layers():
     à côté d'un `{"siren": "X"}` existant lève bien une violation d'unicité. Sans
     cette vérification, lever le gate aurait rouvert le doublon silencieux qu'il
     servait à empêcher."""
-    keyed = {"strict": True, "key": "siren", "fields": [{"key": "siren", "type": "text"}]}
+    keyed = {"unknown_columns": "report", "key": "siren", "fields": [{"key": "siren", "type": "text"}]}
     assert dsv2.validate_row(
         keyed, {"siren": {"valeur": "552081317", "comment": "registre"}}) == []
 

@@ -46,7 +46,7 @@ import pytest
 # est donc LIBRE, et un champ libre se préserve comme les autres.
 SCHEMA = {
     "key": "siren",
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "raison_sociale", "type": "text"},

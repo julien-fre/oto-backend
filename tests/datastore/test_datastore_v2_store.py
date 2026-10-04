@@ -11,7 +11,7 @@ from oto_mcp.datastore.core import DatastorePg, RowValidationError
 
 
 SCHEMA = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "fact_id", "type": "text", "required": True},
         {"key": "status", "role": "status",

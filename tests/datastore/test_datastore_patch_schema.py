@@ -25,7 +25,7 @@ from _datastore_rest import call, stub_authz
 
 
 CURRENT = {
-    "strict": True,
+    "unknown_columns": "report",
     "key": "siren",
     "fields": [
         {"key": "siren", "type": "text", "label": "SIREN",
@@ -138,10 +138,11 @@ def test_patch_keeps_every_other_field_intact(store):
 def test_patch_leaves_head_keys_alone_unless_asked(store):
     st, posed = store
     st.patch_schema("v", fields=[{"key": "siren", "label": "Siren"}])
-    assert posed["schema"]["strict"] is True and posed["schema"]["key"] == "siren"
-    assert "key_required" not in posed["schema"]      # absent avant, absent après
-    st.patch_schema("v", strict=False)
-    assert posed["schema"]["strict"] is False
+    assert posed["schema"]["unknown_columns"] == "report"
+    assert posed["schema"]["key"] == "siren"
+    assert "new_rows" not in posed["schema"]      # absent avant, absent après
+    st.patch_schema("v", unknown_columns="create")
+    assert posed["schema"]["unknown_columns"] == "create"
 
 
 def test_remove_is_explicit_and_a_typo_touches_nothing(store):
@@ -157,7 +158,7 @@ def test_remove_is_explicit_and_a_typo_touches_nothing(store):
 
 def test_an_empty_patch_is_refused(store):
     st, posed = store
-    with pytest.raises(ValueError, match="rien à patcher.*key_required"):
+    with pytest.raises(ValueError, match="rien à patcher.*new_rows"):
         st.patch_schema("v")
     assert posed == {}
 
@@ -183,10 +184,9 @@ class _RestStore:
         self.calls: list = []
 
     def patch_schema(self, datastore, *, fields=None, remove=None, remove_attrs=None,
-                     strict=None, key=None,
-                     key_required=None, unknown_fields=None):
-        self.calls.append((datastore, fields, remove, strict, key, key_required,
-                           unknown_fields))
+                     key=None, unknown_columns=None, new_rows=None):
+        self.calls.append((datastore, fields, remove, key, unknown_columns,
+                           new_rows))
         merged, added, updated = dsv2.merge_fields(
             [f for f in self.current.get("fields") or [] if isinstance(f, dict)],
             fields or [])

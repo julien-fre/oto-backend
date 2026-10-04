@@ -67,7 +67,7 @@ def test_get_schema_resolves_the_slot_and_answers_with_the_real_name(monkeypatch
 
         def get_schema(self, datastore):
             assert datastore == "edition-echantillon-500"
-            return {"strict": True, "fields": []}
+            return {"unknown_columns": "report", "fields": []}
 
         def schema_servi_et_masquees(self, ns):
             # La lecture SERVIE de la capacité (oto#94) : rien de masqué ici.
@@ -79,4 +79,4 @@ def test_get_schema_resolves_the_slot_and_answers_with_the_real_name(monkeypatch
     assert out["datastore"] == "edition-echantillon-500"
     # et son NUMÉRO avec — la forme d'adresse qui remplace le nom
     assert out["ns_id"] == 500
-    assert out["schema"]["strict"] is True
+    assert out["schema"]["unknown_columns"] == "report"

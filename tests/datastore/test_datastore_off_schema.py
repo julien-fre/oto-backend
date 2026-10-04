@@ -18,7 +18,7 @@ from oto_mcp.datastore.core import DatastorePg, RowValidationError
 
 
 STRICT = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "analyse1", "type": "text"},
@@ -58,7 +58,7 @@ def test_soft_schema_reports_nothing():
 
 def test_strict_without_fields_reports_nothing():
     """Sans référentiel, TOUT serait hors schéma — ça n'informe personne."""
-    assert dsv2.off_schema_keys({"strict": True}, {"a": 1, "b": 2}) == []
+    assert dsv2.off_schema_keys({"unknown_columns": "report"}, {"a": 1, "b": 2}) == []
 
 
 def test_declared_keys_are_never_reported():
@@ -174,7 +174,7 @@ def test_refused_row_reports_nothing(store, monkeypatch):
     st, calls = store
     monkeypatch.setattr(dsm.db, "get_datastore_by_id",
                         lambda ns_id: {"id": ns_id, "schema": {
-                            "strict": True,
+                            "unknown_columns": "report",
                             "fields": [{"key": "siren", "type": "text",
                                         "required": True}]}})
     with pytest.raises(RowValidationError):

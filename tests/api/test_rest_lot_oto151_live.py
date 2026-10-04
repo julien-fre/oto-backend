@@ -193,7 +193,7 @@ def test_un_mot_refuse_refuse_le_lot_entier_rien_n_est_ecrit(client, monkeypatch
 
 
 def test_une_ligne_refusee_est_nommee_et_le_refus_dit_ou_reprendre(client):
-    ns, ns_id = _table({**SCHEMA, "strict": True})
+    ns, ns_id = _table({**SCHEMA, "unknown_columns": "report"})
     r = _lot(client, ns, {"rows": [{"siren": "1", "effectif": 3},
                                    {"siren": "2", "effectif": "beaucoup"}]})
     assert r.status_code == 400, r.text
@@ -229,7 +229,7 @@ def test_les_deux_faces_rendent_la_meme_enveloppe_et_les_memes_notices(client, d
 
 # ── §3 : `business_key_required` distingue la clé absente de la clé inconnue ──
 
-FERME = {**SCHEMA, "key_required": True}
+FERME = {**SCHEMA, "new_rows": "reject"}
 
 
 def _refus_mcp(data_write, **kw) -> str:

@@ -26,7 +26,7 @@ from oto_mcp.datastore.core import DatastorePg
 # Le cas mesuré : une colonne fermée sur `__non_conserve__` parce que le client
 # exige que le profil professionnel d'une personne physique ne soit pas gardé.
 SCHEMA_CONTACTS = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "nom", "type": "text", "required": True},
         {"key": "contacts", "type": "list", "of": {"fields": [
@@ -82,7 +82,7 @@ def test_une_ligne_AMPUTEE_qui_devient_invalide_refuse_tout():
     """Retirer une valeur peut en défaire une autre. Sans second tour de
     validation, on écrirait une ligne incomplète sur la foi d'un contrôle qui
     n'a pas vu sa forme finale."""
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "qualification", "type": "enum", "options": ["ok"], "required": True},
         {"key": "note", "type": "text"},
     ]}
@@ -109,7 +109,7 @@ def test_un_PATCH_ne_se_fait_pas_amputer_ce_qu_il_n_ecrit_pas():
     est **signalé** avec le refus qu'on aurait rendu. Ni gel, ni effacement, ni
     silence — c'est le partage posé sur les sept contrôles de cette famille.
     """
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "statut", "type": "enum", "options": ["a", "b"]},
         {"key": "note", "type": "text"},
     ]}
@@ -183,7 +183,7 @@ def test_ecarter_la_SEULE_valeur_du_geste_ne_fabrique_pas_une_ligne_vide():
     aucune fiche : elle en crée une vide, sous un `ok`. Le motif de ce lot est de
     préserver un travail DÉJÀ FAIT — là où il n'y en a pas, refuser reste juste.
     """
-    schema = {"strict": True,
+    schema = {"unknown_columns": "report",
               "fields": [{"key": "priorite", "type": "enum",
                           "options": ["haute", "basse"]}]}
     store = DatastorePg("sub-test")

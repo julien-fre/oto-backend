@@ -43,6 +43,11 @@ colonnes : ils s'arment dès que `unknown_columns` n'est pas `"create"`
 La seule exigence retirée est celle qui n'avait plus de sens : « `unknown_fields:
 "reject"` exige `strict` » — c'est désormais un seul réglage.
 
+Les anciens noms sont REFUSÉS à la pose et au patch, avec l'équivalent exact
+(`refus_anciens`, `refus_parametres`) ; stockés, ils sont tolérés tant qu'on n'y
+touche pas, ne sont plus lus, et se disent à la lecture (`residu`). La traduction
+de l'existant est `scripts/renommer_reglages_tete.py`, passé avant la bascule.
+
 Module PUR, sans import du paquet : `declaration` le lit, il ne lit rien.
 """
 from __future__ import annotations
@@ -110,21 +115,18 @@ def traduire(tete: Any) -> dict:
 
 
 def _lu(schema: Any, axe: str) -> str:
-    """La valeur APPLIQUÉE sur un axe. Une valeur illisible rend le défaut : elle est
-    refusée à la pose (`erreurs`), donc elle ne peut venir que d'une écriture hors
-    surface — et dans le doute on ne durcit pas un tableau vivant sur une faute de
-    frappe (même parti que l'ancien `unknown_fields_mode`).
+    """La valeur APPLIQUÉE sur un axe — lue sur le nouveau réglage SEUL. Une valeur
+    illisible rend le défaut : elle est refusée à la pose (`erreurs`), donc elle ne
+    peut venir que d'une écriture hors surface — et dans le doute on ne durcit pas un
+    tableau vivant sur une faute de frappe (même parti que l'ancien
+    `unknown_fields_mode`).
 
-    ⚠️ TRANSITOIRE (le temps de `scripts/renommer_reglages_tete.py`) : un schéma qui
-    ne porte pas encore le nouveau réglage est lu par la traduction de l'ancien, pour
-    qu'aucun tableau ne change de comportement entre ce déploiement et le passage du
-    script. Le commit suivant retire cette lecture."""
+    ⚠️ Un ancien réglage encore STOCKÉ n'est plus lu : `scripts/renommer_reglages_tete.py`
+    les a traduits avant ce commit, et ce qui resterait est dit en `warning`
+    (`cles_inconnues.residus_warning`), avec son équivalent."""
     if not isinstance(schema, dict):
         return DEFAUT
-    if axe in schema:
-        v = schema[axe]
-    else:
-        v = traduire(schema).get(axe, DEFAUT)
+    v = schema.get(axe, DEFAUT)
     return v if v in MODES[axe] else DEFAUT
 
 
@@ -167,14 +169,6 @@ def erreurs(schema: dict) -> list[str]:
     for axe in (UNKNOWN_COLUMNS, NEW_ROWS):
         if axe in schema and schema[axe] not in MODES[axe]:
             errs.append(f"{axe}: valeurs possibles {_crans(axe)} ; reçu {schema[axe]!r}")
-    anciens = sorted(k for k in ANCIENS if k in schema)
-    for axe in (UNKNOWN_COLUMNS, NEW_ROWS):
-        meles = [k for k in anciens if ANCIENS[k] == axe]
-        if axe in schema and meles:
-            errs.append(
-                f"{axe} et {', '.join(f'`{k}`' for k in meles)} décident du même axe — "
-                f"{', '.join(f'`{k}`' for k in meles)} est remplacé par `{axe}` : "
-                f"retire-le")
     if schema.get(UNKNOWN_COLUMNS) == REJECT and not _colonnes_declarees(schema):
         errs.append(
             "unknown_columns: \"reject\" exige au moins une colonne déclarée — sans "
@@ -188,8 +182,77 @@ def erreurs(schema: dict) -> list[str]:
     return errs
 
 
-def phrase_equivalent(tete: Optional[dict]) -> str:
-    """`unknown_columns: "report"` et `new_rows: "reject"` — l'équivalent exact, écrit
-    comme il se pose."""
-    t = traduire(tete or {})
-    return " et ".join(f"`{axe}: \"{v}\"`" for axe, v in t.items())
+#: Le jour de la bascule, dit dans chaque refus d'un ancien nom.
+REMPLACES_LE = "02/10/2026"
+
+
+def _inertes(tete: dict) -> list[str]:
+    """Les crans que l'ancien code laissait sans effet dans cette combinaison."""
+    out = []
+    if tete.get("unknown_fields") == REJECT and not tete.get("strict"):
+        out.append("`unknown_fields: \"reject\"` sans `strict` ne refusait rien")
+    if tete.get("key_required") and not _cle_metier(tete):
+        out.append("`key_required` sans `key` ne fermait rien")
+    return out
+
+
+def refus_anciens(tete: dict, poses: list) -> str:
+    """Le refus des anciens réglages posés en TÊTE d'un schéma, avec l'équivalent EXACT
+    calculé sur la combinaison reçue (`traduire`) — le comportement que le tableau
+    aurait eu, pas une devinette."""
+    noms = ", ".join(f"`{k}`" for k in poses)
+    equivalent = " et ".join(f"`\"{axe}\": \"{v}\"`"
+                             for axe, v in traduire(tete).items())
+    inertes = _inertes(tete)
+    return (f"tête : {noms} {'a' if len(poses) == 1 else 'ont'} été "
+            f"remplacé{'' if len(poses) == 1 else 's'} le {REMPLACES_LE} par deux "
+            f"réglages, un par axe — `unknown_columns` (le sort d'une colonne non "
+            f"déclarée : {_crans(UNKNOWN_COLUMNS)}) et `new_rows` (le droit d'une "
+            f"ligne nouvelle de naître : {_crans(NEW_ROWS)}). Rien n'a été posé. "
+            f"L'équivalent exact de ce que tu as envoyé : {equivalent}"
+            + (f" ({' ; '.join(inertes)} : l'équivalent est donc ce qu'il faisait)"
+               if inertes else "")
+            + ". Remplace-les par cela.")
+
+
+def residu(tete: dict) -> str:
+    """Ce qu'un ancien réglage encore STOCKÉ voulait dire — pour l'avertissement de
+    lecture : il n'est plus appliqué, son équivalent n'est pas posé."""
+    equivalent = ", ".join(f"`{axe}: \"{v}\"`" for axe, v in traduire(tete).items())
+    return (f"les anciens réglages de tête ne sont plus lus depuis le {REMPLACES_LE} ; "
+            f"leur équivalent est {equivalent} — pose-le (`data_patch_schema`) et "
+            f"retire-les (`data_set_schema`), sinon le tableau se comporte selon "
+            f"`unknown_columns` et `new_rows`, à leur défaut s'ils sont absents")
+
+
+#: Les anciens PARAMÈTRES de `data_patch_schema`.
+PARAMETRES_PATCH = tuple(ANCIENS)
+
+
+def refus_parametres(valeurs: dict, outil: str = "data_patch_schema") -> Optional[str]:
+    """Le refus des anciens paramètres de `data_patch_schema`, ou `None` s'il n'y en a
+    pas. Un patch ne pose que ce qu'il nomme, donc l'équivalent se calcule sur le
+    GESTE : `unknown_fields` seul n'a jamais été posé que sur un tableau `strict` (sans
+    lui, `reject` était refusé et `report` n'avait pas d'effet) — c'est son cran qui
+    passe tel quel ; `strict=true` seul gardait le relevé (`report`), `strict=false`
+    rendait la colonne libre (`create`)."""
+    recus = [k for k in PARAMETRES_PATCH if k in valeurs]
+    if not recus:
+        return None
+    rejeu: dict = {}
+    if "strict" in valeurs or "unknown_fields" in valeurs:
+        uf = valeurs.get("unknown_fields")
+        if "strict" in valeurs and not valeurs["strict"]:
+            rejeu[UNKNOWN_COLUMNS] = CREATE
+        else:
+            rejeu[UNKNOWN_COLUMNS] = uf if uf in (REPORT, REJECT) else REPORT
+    if "key_required" in valeurs:
+        rejeu[NEW_ROWS] = REJECT if valeurs["key_required"] else CREATE
+    noms = ", ".join(f"`{k}`" for k in recus)
+    appel = ", ".join(f"{axe}=\"{v}\"" for axe, v in rejeu.items())
+    return (f"{noms} {'a' if len(recus) == 1 else 'ont'} été remplacé"
+            f"{'' if len(recus) == 1 else 's'} le {REMPLACES_LE} par `unknown_columns` "
+            f"(le sort d'une colonne non déclarée : {_crans(UNKNOWN_COLUMNS)}) et "
+            f"`new_rows` (le droit d'une ligne nouvelle de naître : "
+            f"{_crans(NEW_ROWS)}) — rien n'a été écrit. Rejoue `{outil}` avec "
+            f"{appel} : c'est l'équivalent exact de ce que tu as envoyé.")

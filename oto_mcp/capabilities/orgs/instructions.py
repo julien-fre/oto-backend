@@ -621,7 +621,7 @@ class InstrSetInput(BaseModel):
     # ADR 0035 : entités requises déclarées [{name, type: tableau|connecteur|doc,
     # description?, connector?, schema?}] — référencées <slot:name> dans la prose.
     # `schema` (slots tableau, ADR 0046) = schéma CIBLE du tableau attendu (fields/
-    # strict/lifecycle/key) : au binding du slot dans un projet, un namespace vierge
+    # unknown_columns/new_rows/lifecycle/key) : au binding du slot dans un projet, un namespace vierge
     # est PROVISIONNÉ avec, un schéma différent lève un warning. None = conserver.
     #
     # ⚠️ `Optional[list]` NU, et c'est délibéré (#658) : la SORTIE est typée

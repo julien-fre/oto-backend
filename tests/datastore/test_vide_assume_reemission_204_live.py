@@ -17,7 +17,7 @@ from starlette.testclient import TestClient
 SUB = "usr_reemission_204"
 MARQUEUR = "oto.vide_assume"
 MARQUEE = {"valeur": "", MARQUEUR: True}
-SCHEMA = {"strict": True, "fields": [
+SCHEMA = {"unknown_columns": "report", "fields": [
     {"key": "raison", "type": "text"},
     {"key": "fonction", "type": "text", "required": True},
     {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
@@ -197,7 +197,7 @@ def test_MCP_refuse_une_forme_inconnue_en_la_nommant(outils, tableau, acteur, ou
 # Les lignes naissent ici par le GESTE (`POST` avec `@empty`), plus par une pose à la main :
 # c'est l'émission que ce lot livre, et ce banc la tient sur chaque chemin.
 
-SCHEMA_CLE = {"strict": True, "fields": [
+SCHEMA_CLE = {"unknown_columns": "report", "fields": [
     {"key": "raison", "type": "text"},
     {"key": "fonction", "type": "text", "required": True},
     {"key": "contacts", "type": "list", "of": {"type": "object", "key": "role", "fields": [

@@ -6,7 +6,8 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
 - **types imbriqués** : `type: "object"` (+ `fields: [...]`) et `type: "list"`
   (+ `of: <field-def>` — scalaire ou sous-record) décrivent une *fiche* (occupant,
   `contacts[]`, `signaux[]`) que le blob JSONB porte déjà ;
-- **référentiel fermé sous `strict`** : dans un composite DÉCLARÉ (`object.fields`,
+- **référentiel fermé quand le format fait contrat** (`unknown_columns` autre que
+  `"create"`, oto#127) : dans un composite DÉCLARÉ (`object.fields`,
   `list.of.fields`), un attribut que la déclaration ne nomme pas est REFUSÉ, en
   nommant l'élément (`contacts[1].email_pattern`). Le premier niveau, lui, reste
   ouvert : une clé inconnue y crée une colonne libre (contrat 0016) et n'est que
@@ -15,7 +16,7 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
   `field.required_when: {<champ>: <valeur>}` (le guard-rail : livrables requis
   quand `status = "qualified"`) et `field.max_length` (borne de longueur — un
   intitulé de poste n'est pas un paragraphe de raisonnement) — active si
-  `schema.strict` OU si un field déclare required/required_when/max_length ;
+  `unknown_columns` n'est pas `"create"` OU si un field déclare une exigence ;
 - **cycle de vie** : `lifecycle: {states, transitions, terminal?}` sur le field
   `role="status"` — état inconnu ou transition non déclarée = refus ;
 - **états terminaux** : `terminal` explicite, sinon dérivés (état sans transition
@@ -94,7 +95,7 @@ from .declaration import (
     pattern_of, top_level_bounds, top_level_keys, cles_declarees, top_level_options, order_spec,
     champ_declare,
     status_field, DISPLAY_TITLE, title_field, validation_active,
-    key_required_of, readonly_fields, system_origin_fields, top_level_patterns,
+    creation_refusee, readonly_fields, system_origin_fields, top_level_patterns,
 )
 from .cycle_de_vie import (
     lifecycle_of, terminal_states, is_terminal_status, max_claims_of, abandon_state_of,
@@ -103,8 +104,8 @@ from .cycle_de_vie import (
 )
 from .hors_schema import (
     off_schema_keys, _unknown_subkeys, _unknown_subkey_refusal, _off_schema,
-    off_schema_warning, types_geles_warning, UNKNOWN_FIELDS_MODES, _REFERENTIEL_CITE,
-    unknown_fields_mode, couche_mal_ecrite, enveloppe_probable, off_schema_refusal,
+    off_schema_warning, types_geles_warning, _REFERENTIEL_CITE,
+    couche_mal_ecrite, enveloppe_probable, off_schema_refusal,
 )
 from .champs_reserves import (
     PARAMETRE_ORIGINE, ORIGINE_REFUS_LE, ENV_ORIGINE_REFUS_LE, _MOIS_FR, date_refus,
@@ -113,7 +114,7 @@ from .champs_reserves import (
     reserved_refusals, _origine_attendue,
 )
 from .definition import (
-    validate_schema_def, _erreurs_unknown_fields, _COLUMN_ONLY_KEYS,
+    validate_schema_def, _COLUMN_ONLY_KEYS,
     _validate_reserved_def, _validate_fields_def,
 )
 from .couches_exigees import (

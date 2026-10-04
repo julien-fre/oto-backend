@@ -31,7 +31,7 @@ import uuid
 import pytest
 
 
-SCHEMA = {"key": "siren", "strict": True,
+SCHEMA = {"key": "siren", "unknown_columns": "report",
           "fields": [{"key": "siren", "type": "text"},
                      {"key": "contact2_nom", "type": "text"}]}
 

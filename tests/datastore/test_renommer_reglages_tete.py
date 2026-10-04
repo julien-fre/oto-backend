@@ -56,17 +56,18 @@ def test_un_cran_inerte_se_traduit_par_ce_qu_il_faisait():
     {"strict": True}, {"strict": True, "unknown_fields": "reject"},
     {"key_required": True}, {"unknown_fields": "reject"}, {"strict": False},
 ])
-def test_la_traduction_ne_change_AUCUN_comportement(anciens):
-    """Les décisions que la plateforme prend sur le schéma traduit sont celles qu'elle
-    prenait sur l'ancien — lu, ici, par la lecture transitoire."""
+def test_le_schema_traduit_s_applique_comme_le_dit_la_table(anciens):
+    """Ce que la plateforme applique sur le schéma traduit est la traduction ; et sur
+    l'ancien, plus rien — un ancien réglage stocké n'est plus lu (oto#127)."""
     avant = {"key": "siren", **anciens, "fields": copy.deepcopy(CHAMPS)}
     apres = M.renommer(avant).schema
+    defauts = {"unknown_columns": "create", "new_rows": "create"}
+    assert R.effectifs(apres) == {**defauts, **R.traduire(avant)}
+    assert R.effectifs(avant) == defauts
     ligne = {"siren": "1", "statut": "z", "inventee": 1}
-    for decide in (S.validation_active, S.key_required_of):
-        assert decide(avant) == decide(apres), decide.__name__
-    assert S.off_schema_keys(avant, ligne) == S.off_schema_keys(apres, ligne)
-    assert S.off_schema_refusal(avant, ligne) == S.off_schema_refusal(apres, ligne)
-    assert S.validate_row(avant, ligne) == S.validate_row(apres, ligne)
+    contrat = R.traduire(avant).get("unknown_columns", "create") != "create"
+    assert S.validation_active(apres) is contrat
+    assert bool(S.off_schema_keys(apres, ligne)) is contrat
 
 
 def test_les_nouveaux_prennent_la_place_des_anciens_et_c_est_idempotent():

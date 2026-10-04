@@ -30,7 +30,7 @@ import pytest
 from oto_mcp.datastore import layers as dsl
 from oto_mcp.datastore.schema import couche_mal_ecrite, off_schema_refusal
 
-SCHEMA = {"key": "ref", "strict": True, "unknown_fields": "reject",
+SCHEMA = {"key": "ref", "unknown_columns": "reject",
           "fields": [{"key": "ref", "type": "text"},
                      {"key": "effectif", "type": "text"}]}
 DECLAREES = {"ref", "effectif"}

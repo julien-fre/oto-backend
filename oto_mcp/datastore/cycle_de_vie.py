@@ -170,7 +170,7 @@ def merge_lifecycle(current: dict, patch: dict) -> dict:
     `terminal`, `max_claims` et `abandon_state` — et en oublier un les faisait
     disparaître sans un mot, la promesse inverse de `data_patch_schema`. La fusion
     descend d'un cran ; `null` est le geste de retrait (même parti que
-    `key_required=false` : un patch qui ne peut qu'ajouter rend le retrait
+    `new_rows="create"` : un patch qui ne peut qu'ajouter rend le retrait
     impossible).
 
     ⚠️ **Et elle descend d'un cran de PLUS dans `transitions` (oto#64, 05/09/2026)** —

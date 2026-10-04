@@ -26,7 +26,7 @@ from oto_mcp.datastore.errors import RowValidationError
 from oto_mcp.datastore.validation import validate_row
 
 MARQUEE = {"valeur": "", dsl.VIDE_ASSUME: True}
-SCHEMA = {"strict": True, "fields": [
+SCHEMA = {"unknown_columns": "report", "fields": [
     {"key": "raison", "type": "text"},
     {"key": "fonction", "type": "text", "required": True},
     {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [

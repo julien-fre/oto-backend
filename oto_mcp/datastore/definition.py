@@ -48,7 +48,6 @@ from .declaration import (
     status_field,
 )
 from .cycle_de_vie import LIBELLE_ETAT_MAX, lifecycle_of, terminal_states
-from .hors_schema import UNKNOWN_FIELDS_MODES
 from . import formule as _formule
 
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
@@ -108,22 +107,15 @@ def validate_schema_def(schema: Optional[dict],
                 f"key=\"{cle}\" désigne un champ de type \"{porteur.get('type')}\" — "
                 "une clé métier identifie la ligne, elle doit être une valeur simple "
                 "(une liste ne se réduit pas à une valeur, l'unicité serait fausse)")
-    # `key_required` DURCIT la clé métier : sans elle, il n'y a plus aucun moyen de
-    # désigner une ligne autrement que par son identifiant, et le tableau deviendrait
-    # inécrivable pour tout agent qui ne relit pas d'abord. Refusé à la POSE, là où le
-    # tableau se déclare — pas à la première écriture d'une campagne déjà lancée (même
-    # parti que `max_claims` sans `abandon_state`).
-    if schema.get("key_required") and not cle:
-        errors.append(
-            "key_required exige une clé métier : déclare `key` (la colonne qui "
-            "identifie une ligne), sinon aucune écriture ne pourrait viser une ligne "
-            "existante et le tableau serait inécrivable")
+    # `new_rows: "reject"` DURCIT la clé métier, et l'exige : sans elle, aucune
+    # écriture ne peut désigner une ligne autrement que par son identifiant
+    # (`reglages.erreurs`, appelé plus bas avec l'autre réglage de tête).
     # #606 (29/08/2026) : la clé figure dans CHAQUE écriture pour désigner la ligne.
     # `readonly` dessus — identique refusé — fermerait toutes les écritures du tableau,
     # et celui qui « complète » la pose dans six mois ne le saurait pas.
     if cle and cle in readonly_fields(schema):
         errors.append(
-            f"`{cle}` est la clé métier : elle se protège par `key_required`, pas par "
+            f"`{cle}` est la clé métier : elle se protège par `new_rows: \"reject\"`, pas par "
             f"`readonly` — une autre valeur est une autre ligne, et la clé figure dans "
             f"chaque écriture pour désigner la sienne")
     # oto#83, troisième fois la même raison : la clé désigne la ligne, et elle figure
@@ -138,7 +130,6 @@ def validate_schema_def(schema: Optional[dict],
             f"agent la lit pour désigner la ligne qu'il écrit, et sans elle il "
             f"écrirait à côté. Ferme les colonnes de SUIVI, pas celle qui identifie ; "
             f"un tableau entier se ferme en ne le partageant pas")
-    errors.extend(_erreurs_unknown_fields(schema))
     errors.extend(reglages.erreurs(schema))
     lc = lifecycle_of(schema)
     if lc is not None:
@@ -200,7 +191,7 @@ def validate_schema_def(schema: Optional[dict],
         sf = status_field(schema) or {}
         errors.extend(claimable.erreurs(
             lc, declared={f.get("key") for f in _fields(schema)},
-            strict=reglages.format_contraignant(schema), status_key=sf.get("key"),
+            contraignant=reglages.format_contraignant(schema), status_key=sf.get("key"),
             states={str(s) for s in (lc.get("states") or [])}
             if isinstance(lc.get("states"), list) else set()))
     errors.extend(_erreurs_libelles_d_etat(schema))
@@ -260,45 +251,6 @@ def _erreurs_libelles_d_etat(schema: dict) -> list[str]:
                     f"au plus {LIBELLE_ETAT_MAX} — c'est le nom d'une étape, pas sa "
                     f"description")
     return errs
-
-
-def _erreurs_unknown_fields(schema: dict) -> list[str]:
-    """`unknown_fields` : la valeur, et les deux façons dont le cran serait INERTE.
-
-    Un cran inerte n'est pas neutre — il est pire que son absence, parce qu'on
-    cesse de surveiller ce qu'on croit gardé. C'est le défaut même que #614
-    rapporte sur `strict` (« une option qui promet plus qu'elle ne fait »), et il
-    serait grotesque de le refaire en le corrigeant. D'où deux refus à la POSE,
-    devant celui qui peut encore choisir :
-
-    - **sans `strict`** : `off_schema_keys` ne relève RIEN hors mode strict (un
-      champ libre y est un droit explicite du contrat) — le cran ne pourrait
-      jamais parler ;
-    - **sans aucun champ déclaré** : sans référentiel, TOUT serait hors schéma.
-      Le cran parlerait alors sur chaque écriture, et le tableau deviendrait
-      inécrivable d'un coup. Les deux extrêmes du même trou."""
-    mode = schema.get("unknown_fields")
-    if mode is None:
-        return []
-    if mode not in UNKNOWN_FIELDS_MODES:
-        return [f"unknown_fields: valeurs possibles \"report\" (défaut — la colonne "
-                f"non déclarée est créée et SIGNALÉE dans `hors_schema`) et "
-                f"\"reject\" (elle est refusée, rien n'est écrit) ; reçu {mode!r}"]
-    if mode != "reject":
-        return []
-    errs = []
-    if not schema.get("strict"):
-        errs.append(
-            "unknown_fields: \"reject\" exige `strict: true` — hors mode strict, une "
-            "colonne libre est un droit du contrat et rien ne la relève : le cran ne "
-            "refuserait jamais rien, tout en annonçant le contraire")
-    if not _fields(schema):
-        errs.append(
-            "unknown_fields: \"reject\" exige au moins une colonne déclarée — sans "
-            "référentiel, TOUTE colonne est hors schéma et le tableau devient "
-            "inécrivable dès la pose. Déclare le format d'abord, ferme-le ensuite")
-    return errs
-
 
 # Ce qu'une COLONNE seule peut déclarer — donc ce qu'une cible de couche ne peut pas.
 # Chacune désigne la colonne en tant que telle : nommer la ligne (`display`), porter

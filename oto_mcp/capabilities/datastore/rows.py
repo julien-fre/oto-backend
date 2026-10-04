@@ -657,7 +657,7 @@ def _get_row(ctx: ResolvedCtx, inp: GetRowInput) -> dict:
 def _write_refusal(e: Exception) -> AuthzDenied:
     """Un refus d'écriture est ACTIONNABLE, jamais un 500 opaque.
 
-    `RowValidationError` (schéma strict, transition de cycle de vie non déclarée) et
+    `RowValidationError` (format déclaré, transition de cycle de vie non déclarée) et
     `ValueError` (`_id` posé dans le corps #390, clé métier déjà portée) portent le
     message qui dit quoi corriger — le front l'affiche tel quel. Sans cette
     traduction, la face MCP répondait proprement pendant que REST rendait « Internal
@@ -1032,7 +1032,7 @@ CAPABILITIES += [
         errors=_REFUS_D_ADRESSE + _REFUS_D_ECRITURE + (
             _JETON_MAL_PLACE, _PRECONDITION_REFUSEE, _LIGNE_ABSENTE,
             DeclaredError(400, "row_invalid",
-                          "la ligne fusionnée est refusée par le schéma strict ou par "
+                          "la ligne fusionnée est refusée par le format déclaré ou par "
                           "le cycle de vie (transition non déclarée) : le message nomme "
                           "les champs fautifs, `details.expected_column` la colonne "
                           "quand il y en a une, `details.a_renvoyer` le fragment de "

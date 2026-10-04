@@ -11,7 +11,7 @@ from oto_mcp.datastore import schema as dsv2
 
 
 LEAD_SCHEMA = {
-    "strict": True,
+    "unknown_columns": "report",
     "key": "fact_id",
     "fields": [
         {"key": "fact_id", "type": "text", "required": True, "role": "title"},
@@ -101,7 +101,7 @@ def test_validation_inactive_by_default():
 
 
 def test_validation_active_via_strict_or_required():
-    assert dsv2.validation_active({"strict": True, "fields": []})
+    assert dsv2.validation_active({"unknown_columns": "report", "fields": []})
     assert dsv2.validation_active(
         {"fields": [{"key": "a", "required": True}]})
     assert dsv2.validation_active(

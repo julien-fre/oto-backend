@@ -24,7 +24,7 @@ from __future__ import annotations
 from oto_mcp.datastore import schema as dsv2
 
 SCHEMA = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "linkedin_url", "type": "url"},
         {"key": "notes", "type": "text"},
@@ -93,7 +93,7 @@ def test_la_borne_de_liste_suit_la_meme_regle():
     valeur qu'on POSE. La laisser sur le mergé aurait gardé le défaut que le type
     venait de quitter, sur son voisin immédiat — deux contrôles de la même famille
     se comportant différemment, ce que personne n'aurait pu deviner."""
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "contacts", "type": "list", "of": {"type": "text"}, "max_items": 2},
         {"key": "notes", "type": "text"},
     ]}
@@ -118,7 +118,7 @@ def test_le_requis_continue_de_se_juger_sur_la_ligne_ENTIERE():
     LA LIGNE reste sur le mergé. Un requis manquant est un défaut de la ligne, quel
     que soit le geste qui l'y laisse — sans quoi on pourrait laisser une ligne
     incomplète en écrivant toujours à côté."""
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "siren", "type": "text", "required": True},
         {"key": "notes", "type": "text"},
     ]}

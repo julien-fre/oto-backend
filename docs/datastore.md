@@ -739,6 +739,45 @@ lisible le jour où il parlera.
 sur le tableau — est écartée** : elle imposerait une lecture des baux à CHAQUE insertion,
 sur le chemin chaud, pour couvrir un cas que les deux gardes d'adresse ferment déjà.
 
+**Deux réglages de tête, un par axe (oto#127, 02/10/2026).** Trois réglages
+gouvernaient un tableau — `strict`, `unknown_fields`, `key_required` — et aucun ne se
+comprenait seul : 18 tableaux écrivaient `strict: false`, 10 `key_required: false`.
+C'étaient deux axes, dont l'un avait gagné trois crans par accrétion. Ils sont
+remplacés par deux réglages (`datastore/reglages.py`, seule lecture des deux axes) :
+
+| réglage | question | crans |
+|---|---|---|
+| `unknown_columns` | le sort d'une colonne que le schéma ne déclare pas | `"create"` (défaut, en silence) · `"report"` (créée et relevée dans `hors_schema`) · `"reject"` (refusée ; exige une colonne déclarée) |
+| `new_rows` | le droit d'une ligne nouvelle de naître | `"create"` (défaut) · `"reject"` (une écriture qui ne désigne aucune ligne existante est refusée ; exige `key`) |
+
+Les valeurs sont des verbes, les mêmes sur les deux axes : ce que la plateforme FAIT de
+la chose inconnue. `columns` plutôt que `fields` : l'axe juge le premier niveau, et
+`unknown_fields` est aussi le code du 400 qui refuse un paramètre d'appel inconnu.
+
+**Ce que `strict` faisait d'autre suit l'axe des colonnes** (relevé sur le code du
+02/10, après J4 et le durcissement du 01/10 — aucun effet n'était devenu sans objet) :
+hors `"create"`, le format FAIT CONTRAT (`reglages.format_contraignant`) — la
+validation entière s'arme (`validation_active` : les `options` de premier niveau, la
+structure des types non armés, les couches inconnues d'une valeur ne sont jugées que
+là), les sous-records déclarés se ferment (#544), la colonne du périmètre de
+réservation doit être déclarée, les colonnes orphelines sont signalées à la pose. La
+seule règle retirée est « `unknown_fields: "reject"` exige `strict` » : c'est un seul
+réglage.
+
+**Traduction exacte** (`reglages.traduire`, appliquée une fois au parc par
+`scripts/renommer_reglages_tete.py` — tableaux, slots de procédure, entrées de
+bibliothèque — par les voies d'écriture normales) : `strict` absent ou faux →
+`create` (un `unknown_fields` y était inerte) ; `strict: true` → `report` ;
+`strict: true` + `unknown_fields: "reject"` → `reject` (`report` sans colonne
+déclarée, où le cran était inerte) ; `key_required: true` avec `key` → `new_rows:
+"reject"`, sinon `create`. Les anciens noms sont **refusés** à la pose et au patch
+(MCP et REST, schéma comme paramètres de `data_patch_schema`), et le refus donne
+l'équivalent exact calculé sur la combinaison reçue. Stockés, ils sont tolérés tant
+qu'on n'y touche pas, **ne sont plus lus**, et la lecture les nomme avec leur
+équivalent. `data_get_schema` sert les deux réglages tels qu'ils s'appliquent
+(`reglages`), défauts compris ; `enforced` annonce `unknown_columns` et `new_rows`.
+Les paragraphes qui suivent racontent ces crans sous leurs noms d'alors.
+
 **`key_required` : un tableau où l'on ne crée pas, on VISE (#516, 29/08/2026).** Le
 `notices` ci-dessus signale ; il ne refuse pas. **Un signal dans une réponse qu'un agent
 ne consomme pas n'existe pas** — un refus nommé, lui, est lu par construction. D'où un
@@ -779,8 +818,8 @@ signalée par le `notices` de #390. Le cran est une déclaration du propriétair
 tableau, jamais une politique de plateforme — un tableau se remplit souvent avant
 d'avoir sa clé. Corollaire assumé : **un tableau fermé ne se peuple plus par écriture**,
 `oto_upload_url` compris (il passe par le même `_write_rows_to_ns`) ; pour l'ouvrir,
-`data_patch_schema(key_required=false)` — et pour le fermer, `data_patch_schema(
-key_required=true)`, sans réécrire le schéma (29/08/2026 : jusque-là seul `set` posait
+`data_patch_schema(new_rows="create")` — et pour le fermer, `data_patch_schema(
+new_rows="reject")` (ex-`key_required`, oto#127), sans réécrire le schéma (29/08/2026 : jusque-là seul `set` posait
 ou retirait le cran, ce qui obligeait à réécrire un schéma de 80 champs pour une clé de
 tête). Il n'y a pas de paramètre d'échappement sur
 `data_write` : un bouton « forcer » devient un réflexe et le cran redevient une
@@ -814,7 +853,7 @@ ne la rapproche plus du fichier client. Deux crans, comme #516 : un tableau **ou
 laisse faire (corriger un SIREN mal saisi à l'import est légitime) mais le DIT — `notices`
 porte « clé métier `siren` modifiée sur la ligne « … » : ancienne → nouvelle » ; un tableau
 **fermé** (`key_required`) le **refuse**, en nommant l'ancienne et la nouvelle valeur, et la
-sortie passe par le schéma (`data_patch_schema(key_required=false)` le temps du geste),
+sortie passe par le schéma (`data_patch_schema(new_rows="create")` le temps du geste),
 jamais par un paramètre « forcer » sur l'écriture. Ne sont PAS des réécritures : poser la
 clé d'une ligne qui n'en avait pas, redire la même valeur, ou l'enrichir d'une provenance.
 Garde : `cle_metier.cle_reecrite`, branchée dans `update_row` (donc aussi `append_row` avec
@@ -1532,16 +1571,16 @@ destruction accidentelle contre l'impossibilité de nettoyer, et une clé inconn
 REFUSÉE (un `remove` avalé sur une faute de frappe ferait croire au nettoyage) ;
 `remove_attrs` = `{colonne: [attribut, …]}`, le **retrait d'un ATTRIBUT sur une colonne
 qui reste** (`dsv2.remove_field_attrs`, 07/09/2026) ;
-`strict`/`key`/`key_required` = les clés de tête, inchangées si omises (`key_required`
-y entre le 29/08/2026, #516 : il ne se posait que par `set`) ; les crans de CHAMP
+`key`/`unknown_columns`/`new_rows` = les clés de tête, inchangées si omises (le cran
+de création y entre le 29/08/2026 sous le nom `key_required`, #516 ; renommés oto#127) ; les crans de CHAMP
 `readonly` / `origine: "system"` (#586/#606) se posent et se lèvent par `fields`, `null`
 levant sans réécrire ni toucher les lignes. Le résultat repasse par
 `store.set_schema`, donc par ses gardes (doublons de clé métier, index UNIQUE,
-`key_required` sans `key` — poser `key` et `key_required` dans le même patch passe) et
-ses avertissements — la logique n'est pas doublée. ⚠️ `key_required=false` ÉCRIT `false`
-au lieu de retirer la clé : `key_required_of` lit la valeur, et le relevé d'effacement
-ci-dessous compte les disparitions de tête sans exception — retirer la clé ferait crier
-un geste explicite sur lui-même. ⚠️ `remove` sort le champ du
+`new_rows: "reject"` sans `key` — poser `key` et `new_rows` dans le même patch passe)
+et ses avertissements — la logique n'est pas doublée. ⚠️ Un réglage remis à son défaut
+ÉCRIT `"create"` au lieu de retirer la clé : le relevé d'effacement ci-dessous compte
+les disparitions de tête sans exception — retirer la clé ferait crier un geste
+explicite sur lui-même. ⚠️ `remove` sort le champ du
 **SCHÉMA** ; effacer la **COLONNE** des données reste `data_drop_column`.
 
 ⚠️ **Et la POSE dit désormais ce qu'elle efface (28/08, remède A du même signal).** Le
@@ -1618,7 +1657,8 @@ a aucune par construction.
   déclaré (tout serait hors schéma — le tableau serait inécrivable d'un coup). Les deux
   extrêmes du même trou, et refuser d'être inerte est la moitié du lot : reproduire en
   le corrigeant le défaut qu'on corrige serait le comble.
-- Il se pose par `data_patch_schema(unknown_fields="reject")` — un tableau se ferme
+- Il se pose par `data_patch_schema(unknown_columns="reject")` (ex-`unknown_fields`,
+  oto#127) — un tableau se ferme
   quand il a FINI d'être exploré, donc quand son schéma est long, et le poser par `set`
   obligerait à réécrire quatre-vingts champs pour une clé de tête. `enforced` l'annonce.
 
@@ -3194,7 +3234,8 @@ et ni `options` ni `max_items` nulle part. Un schéma dont la seule exigence viv
 élément de liste était accepté, validation éteinte : zéro erreur sur un contact sans son
 `nom` déclaré requis.
 
-**L'armement** (`declaration.validation_active`, `_exige`) : `strict`, ou `required`,
+**L'armement** (`declaration.validation_active`, `_exige`) : `unknown_columns` autre
+que `"create"` (ex-`strict`, oto#127), ou `required`,
 `required_when`, `max_length`, `pattern` (depuis oto#103), `max_items` à toute profondeur
 (`_walk_fields`), ou
 `options` dans un sous-record. ⚠️ `options` de premier niveau n'arme toujours pas : c'est le

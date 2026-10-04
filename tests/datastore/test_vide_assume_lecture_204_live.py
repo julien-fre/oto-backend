@@ -20,7 +20,7 @@ from starlette.testclient import TestClient
 SUB = "usr_vide_assume"
 MARQUEUR = "oto.vide_assume"
 MARQUEE = {"valeur": "", MARQUEUR: True}
-SCHEMA = {"strict": True, "fields": [
+SCHEMA = {"unknown_columns": "report", "fields": [
     {"key": "raison", "type": "text"},
     {"key": "fonction", "type": "text", "required": True},
     {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [

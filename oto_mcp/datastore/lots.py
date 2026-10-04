@@ -191,7 +191,7 @@ class LotsMixin:
                 # juge sur la clé DÉCLARÉE, celle qui porte l'index UNIQUE, même
                 # quand le lot dédouble sur une AUTRE (`key=` explicite) : sinon un
                 # tableau fermé refuserait une ligne qu'il porte déjà.
-                if existing_id is None and dsv2.key_required_of(schema):
+                if existing_id is None and dsv2.creation_refusee(schema):
                     dk = self._declared_key_of(schema)
                     dkv = dsv2.unwrap(user_data.get(dk))
                     if dk != key and dkv is not None and str(dkv) != "":

@@ -252,7 +252,7 @@ _CLAUSE_VIDE_ASSUME = (
 
 def _row_errors(fields: list, data: dict, path: str,
                 written: Optional[set] = None, *,
-                strict: bool = False, closed: bool = False,
+                contraignant: bool = False, closed: bool = False,
                 vus: Optional[set] = None,
                 details: Optional[dict] = None,
                 hors: Optional[list] = None,
@@ -281,12 +281,13 @@ def _row_errors(fields: list, data: dict, path: str,
     ambigu. `cle_d_identite` = le `of.key` de la liste dont ce record est un élément —
     `@empty` n'y est pas une alternative.
 
-    `strict` = le tableau déclare `strict: true`. Il n'interdit rien ICI (une clé
+    `contraignant` = le format du tableau fait contrat (`unknown_columns` autre que
+    `create`, ex-`strict`, oto#127 — `reglages.format_contraignant`). Il n'interdit rien ICI (une clé
     inconnue au premier niveau crée une colonne libre, droit du contrat 0016 : elle
     est SIGNALÉE par `hors_schema`, jamais refusée — arbitrage #294) ; il FERME les
     composites déclarés d'un cran plus bas (#544). `closed` porte cette fermeture.
 
-    Pourquoi l'asymétrie, alors que « strict s'applique récursivement » : au premier
+    Pourquoi l'asymétrie, alors que « le contrat s'applique récursivement » : au premier
     niveau, un nom inconnu crée une vraie colonne, que l'interface affiche et qu'on
     peut déclarer après coup — c'est ce qui permet d'explorer un tableau avant de le
     typer. Dans un composite déclaré, il n'existe pas de « sous-colonne libre » :
@@ -426,7 +427,7 @@ def _row_errors(fields: list, data: dict, path: str,
                           if pose and en_place is not None else None)
             errs_type = _type_error(value, f.get("type"), fpath,
                                     f.get("fields"), f.get("of"), f.get("options"),
-                                    closed=closed or (strict and pose),
+                                    closed=closed or (contraignant and pose),
                                     hors=hors, ecrits=ecrits, gelees=gelees,
                                     charge=fcharge, chemin=fchemin, decl=f)
             # #545 : la colonne qui vient de refuser est-elle un AIGUILLAGE dont une
@@ -538,9 +539,9 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
-    `lifecycle` est déclaré, même hors mode strict. Liste vide = OK.
+    `lifecycle` est déclaré, même sous `unknown_columns: "create"`. Liste vide = OK.
 
-    Sur un tableau `strict`, un composite DÉCLARÉ est en plus un référentiel FERMÉ
+    Quand le format fait contrat (`unknown_columns` autre que `create`), un composite DÉCLARÉ est en plus un référentiel FERMÉ
     (#544) : un attribut absent de `of.fields` / `fields` est refusé. La fermeture
     ne descend que dans les composites que le geste RÉÉCRIT — même restriction que
     `max_length`, et même raison.
@@ -595,7 +596,7 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
         errors.extend(_row_errors(_fields(schema), merged, "", written,
-                                  strict=reglages.format_contraignant(schema),
+                                  contraignant=reglages.format_contraignant(schema),
                                   details=details, hors=hors, gelees=gelees,
                                   en_place=en_place, charge=charge,
                                   ecrits_par_rang=ecrits_par_rang))

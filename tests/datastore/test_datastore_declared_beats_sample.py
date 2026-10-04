@@ -21,7 +21,7 @@ from oto_mcp.datastore import schema as dsv2
 
 
 _SCHEMA = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "raison_sociale", "type": "text"},
         {"key": "notes_verification", "type": "text", "role": "note"},
@@ -182,7 +182,7 @@ def test_the_enum_warning_says_what_the_code_does(monkeypatch):
                         lambda ns_id, options, **k: [
                             {"field": "etat", "rows": 1, "distinct": 1,
                              "values": [{"value": "peut-être", "rows": 1}]}])
-    schema = {"strict": True, "fields": [
+    schema = {"unknown_columns": "report", "fields": [
         {"key": "etat", "type": "enum", "options": ["oui", "non"]}]}
     assert ds.DatastorePg._offending_enum_warning(1, schema) == (
         "liste de valeurs déclarée sur des données qui en sortent déjà :\n"
@@ -221,7 +221,7 @@ def test_a_strict_schema_without_enum_is_not_scanned(monkeypatch):
     requête."""
     ds = _no_db(monkeypatch)
     assert ds.DatastorePg._offending_enum_warning(
-        1, {"strict": True, "fields": [{"key": "x", "type": "text"}]}) is None
+        1, {"unknown_columns": "report", "fields": [{"key": "x", "type": "text"}]}) is None
 
 
 def test_a_required_field_activates_the_scan(monkeypatch):

@@ -149,7 +149,7 @@ class EcritureParIdMixin:
             reecrite = cle_reecrite(schema, data, pose)
             if reecrite:
                 cle, ancienne, nouvelle = reecrite
-                if dsv2.key_required_of(schema):
+                if dsv2.creation_refusee(schema):
                     raise ValueError(
                         f"`{cle}` est la clé métier de ce tableau, et ce patch la "
                         f"réécrit sur la ligne « {row_id} » ({ancienne!r} → "
@@ -157,8 +157,8 @@ class EcritureParIdMixin:
                         f"de son fichier d'origine si {nouvelle!r} est une faute de "
                         f"frappe. Rien n'est écrit. Si c'est bien la valeur voulue "
                         f"(correction volontaire), lève le cran le temps du geste : "
-                        f"data_patch_schema(key_required=false), écris, puis "
-                        f"key_required=true ; sinon retire `{cle}` du patch.")
+                        f"data_patch_schema(new_rows=\"create\"), écris, puis "
+                        f"new_rows=\"reject\" ; sinon retire `{cle}` du patch.")
                 self.off_notices.add(
                     f"clé métier `{cle}` modifiée sur la ligne « {row_id} » : "
                     f"{ancienne!r} → {nouvelle!r}. Si c'est une faute de frappe, la "

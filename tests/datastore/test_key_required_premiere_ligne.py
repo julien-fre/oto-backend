@@ -34,7 +34,7 @@ from oto_mcp.datastore.errors import BusinessKeyRequired
 # Le tableau du signal : une clé métier `gmail_message_id`, et le cran posé.
 FERME = {
     "key": "gmail_message_id",
-    "key_required": True,
+    "new_rows": "reject",
     "fields": [{"key": "gmail_message_id", "type": "text"},
                {"key": "subject", "type": "text"},
                {"key": "decision", "type": "text"}],
@@ -57,7 +57,7 @@ def ferme(live):
     db.create_datastore("user", "sub-test", ns)
     st = _store()
     pose = st.set_schema(ns, FERME)
-    assert "key_required" in pose["enforced"]      # le cran est bien appliqué ICI
+    assert "new_rows" in pose["enforced"]      # le cran est bien appliqué ICI
     return st, ns
 
 
@@ -67,7 +67,7 @@ def _sortie_de_creation(message: str) -> bool:
     Pas « contient un mot » : les deux moitiés du geste doivent y être — l'outil de
     schéma, et le cran qu'il faut lever. L'une sans l'autre renvoie l'agent chercher
     dans une description qu'il n'a pas sous les yeux."""
-    return "data_patch_schema" in message and "key_required=false" in message
+    return "data_patch_schema" in message and 'new_rows="create"' in message
 
 
 # --- Les trois gestes du signal #668, sur un tableau fermé ---------------------
@@ -123,10 +123,10 @@ def test_le_geste_nomme_par_le_refus_debloque_vraiment(ferme):
     st, ns = ferme
     with pytest.raises(BusinessKeyRequired):
         st.append_row(ns, dict(INEDIT))
-    st.patch_schema(ns, key_required=False)
+    st.patch_schema(ns, new_rows="create")
     ligne = st.append_row(ns, dict(INEDIT))
     assert ligne["gmail_message_id"] == INEDIT["gmail_message_id"]
-    st.patch_schema(ns, key_required=True)
+    st.patch_schema(ns, new_rows="reject")
     # Refermé : la ligne SUIVANTE est de nouveau refusée, et celle qui vient de
     # naître se réécrit — le cran retrouve exactement son office.
     with pytest.raises(BusinessKeyRequired):
@@ -155,4 +155,4 @@ def test_la_description_de_data_write_annonce_le_cran():
     m = FastMCP("x")
     D.register(m)
     outil = [t for t in asyncio.run(m._list_tools()) if t.name == "data_write"][0]
-    assert "key_required" in outil.description, outil.description
+    assert "new_rows" in outil.description, outil.description

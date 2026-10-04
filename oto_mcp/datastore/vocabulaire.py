@@ -31,7 +31,7 @@ from typing import Optional
 
 from . import claimable
 
-from .declaration import key_required_of
+from .declaration import creation_refusee
 from .hors_schema import off_schema_refusal
 from .champs_reserves import reserved_refusals
 from .validation import validate_row
@@ -61,8 +61,9 @@ from .validation import validate_row
 # cran : dérivé du COMPORTEMENT, donc insensible à la façon dont le code est écrit.
 
 # `(clé, schéma qui doit REFUSER, ligne fautive, témoin qui doit PASSER ou None)`.
-# Le témoin ne sert qu'aux clés dont l'effet est d'ARMER autre chose : `strict`
-# n'interdit rien par lui-même, il rend la conformité de type opposable. Sans le
+# Le témoin ne sert qu'aux clés dont l'effet est d'ARMER autre chose :
+# `unknown_columns` (ex-`strict`, oto#127) n'interdit rien par lui-même au cran
+# `report`, il rend la conformité de type opposable. Sans le
 # témoin, on l'annoncerait dès que le type est vérifié, ce qui serait vrai par
 # accident.
 _ENFORCEMENT_PROBES = (
@@ -77,7 +78,7 @@ _ENFORCEMENT_PROBES = (
      {"fields": [{"key": "x", "max_length": 8, "pattern": "^ok$"}]},
      {"x": "non"}, None),
     ("max_items",
-     {"strict": True,
+     {"unknown_columns": "report",
       "fields": [{"key": "x", "type": "list", "of": {"type": "text"},
                   "max_items": 1}]},
      {"x": ["a", "b"]}, None),
@@ -87,21 +88,22 @@ _ENFORCEMENT_PROBES = (
     # lisait `enforced` se croyait protégé. Elle éprouve désormais le cas général —
     # celui qui était cassé —, et l'annonce retombera si le trou se rouvre.
     ("options",
-     {"strict": True,
+     {"unknown_columns": "report",
       "fields": [{"key": "x", "type": "text", "options": ["a"]}]},
      {"x": "b"}, None),
     ("type",
-     {"strict": True, "fields": [{"key": "x", "type": "number"}]},
+     {"unknown_columns": "report", "fields": [{"key": "x", "type": "number"}]},
      {"x": "abc"}, None),
     # ⚠️ Sonde CHANGÉE le 08/09/2026, et le motif importe. Elle opposait un schéma
     # strict à un schéma libre sur une valeur de mauvais TYPE — ce qui supposait que le
     # type ne soit pas vérifié sans `strict`. Depuis que le type déclaré s'arme
     # lui-même, les deux refusent, et la sonde concluait que `strict` n'était pas
     # appliqué. Elle mesurait une différence qui n'existe plus.
-    # Le témoin repose désormais sur les `options`, qui restent inertes sans `strict`
+    # Le témoin repose désormais sur les `options`, qui restent inertes sous `unknown_columns: "create"`
     # (mesuré le 08/09 : 181 tableaux du parc en portent sans les faire respecter).
-    ("strict",
-     {"strict": True, "fields": [{"key": "x", "type": "enum", "options": ["a"]}]},
+    ("unknown_columns",
+     {"unknown_columns": "report",
+      "fields": [{"key": "x", "type": "enum", "options": ["a"]}]},
      {"x": "b"},
      ({"fields": [{"key": "x", "type": "enum", "options": ["a"]}]}, {"x": "b"})),
     ("lifecycle",
@@ -142,16 +144,16 @@ def enforced_keys() -> list[str]:
             if temoin and validate_row(temoin[0], temoin[1]):
                 continue                      # elle refuse même sans la clé : pas elle
             vues.append(cle)
-        # `key_required` (#516) ne se prouve pas sur une ROW : il se juge contre le
+        # `new_rows` (ex-`key_required`, #516) ne se prouve pas sur une ROW : il se juge contre le
         # CONTENU du tableau (cette clé désigne-t-elle une ligne ?), que `validate_row`
         # ne voit pas. Sa sonde interroge donc la fonction qui DÉCIDE — dérivée du
         # code comme les autres, jamais une ligne de liste : le jour où le cran
         # disparaît, l'annonce tombe avec lui.
-        if key_required_of({"key": "x", "key_required": True}):
-            vues.append("key_required")
+        if creation_refusee({"key": "x", "new_rows": "reject"}):
+            vues.append("new_rows")
         # #586/#606 : les champs que l'appelant n'écrit pas se jugent sur le GESTE
         # (payload + ligne en place), pas sur une row seule — même sonde que
-        # `key_required` : on interroge la fonction qui décide.
+        # `new_rows` : on interroge la fonction qui décide.
         if reserved_refusals({"fields": [{"key": "x", "readonly": True}]},
                              {"x": "b"}, {"x": "a"})[0]:
             vues.append("readonly")
@@ -164,10 +166,13 @@ def enforced_keys() -> list[str]:
         # #614/#678 : le refus de la colonne non déclarée au premier niveau. Il ne se
         # prouve pas sur `validate_row` (le relevé vit hors d'elle, dans `_check_row`,
         # pour rester la source unique du « hors du référentiel ») — sa sonde
-        # interroge donc la fonction qui décide, comme `key_required`.
-        if off_schema_refusal({"strict": True, "unknown_fields": "reject",
-                               "fields": [{"key": "x"}]}, {"inventée": "v"})[0]:
-            vues.append("unknown_fields")
+        # interroge donc la fonction qui décide, comme `new_rows`.
+        # Le cran `reject` d'`unknown_columns` : sans lui, la clé n'est pas annoncée
+        # même si le cran `report` arme la validation (sonde ci-dessus).
+        if "unknown_columns" in vues and not off_schema_refusal(
+                {"unknown_columns": "reject", "fields": [{"key": "x"}]},
+                {"inventée": "v"})[0]:
+            vues.remove("unknown_columns")
         # #517 : le périmètre de réservation se juge au PICK, pas sur une row — la
         # sonde interroge la fonction qui produit les clauses que le pick ajoute.
         if claimable.clauses(claimable.perimetre_of({"claimable": {"x": "1"}})):

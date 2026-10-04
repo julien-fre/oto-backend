@@ -30,7 +30,7 @@ from oto_mcp.datastore.points import ranger_les_couches
 # colonnes de PREMIER NIVEAU — l'intérieur d'un élément ne lui est jamais soumis.
 SCHEMA = {
     "key": "siren",
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [

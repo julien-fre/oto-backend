@@ -52,8 +52,8 @@ _VALEURS = {"readonly": True, "role": "status", "required": True,
             "formula": "1", "meta": {"m": 1}, "type": "text",
             "states": ["a", "b"], "transitions": {"a": ["b"]}, "terminal": ["b"],
             "max_claims": 2, "abandon_state": "b", "claimable": {"x": "1"},
-            "labels": {"a": "A"}, "strict": True, "key_required": True,
-            "unknown_fields": "report"}
+            "labels": {"a": "A"}, "unknown_columns": "report", "new_rows": "reject",
+            "unknown_columns": "report"}
 
 _TYPES = ({"type": "text"}, {"type": "number"}, {"type": "list", "of": {"type": "text"}},
           {"type": "object", "fields": [{"key": "z"}]},

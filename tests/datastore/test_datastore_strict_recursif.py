@@ -30,7 +30,7 @@ from oto_mcp.datastore.core import DatastorePg, RowValidationError
 
 
 STRICT = {
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "occupant", "type": "object",
@@ -79,7 +79,7 @@ def test_un_sous_champ_dobjet_declare_est_refuse_de_meme():
 def test_la_fermeture_se_propage_vers_le_bas():
     """Un objet DANS un élément de liste reste fermé — sinon il suffirait
     d'enfouir la clé d'un cran de plus pour retrouver le silence de l'incident."""
-    profond = {"strict": True, "fields": [
+    profond = {"unknown_columns": "report", "fields": [
         {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
             {"key": "nom", "type": "text"},
             {"key": "adresse", "type": "object",
@@ -116,7 +116,7 @@ def test_une_couche_dattribut_nest_pas_un_attribut_inconnu():
 
 
 def test_une_liste_dont_le_of_ne_declare_aucun_champ_reste_libre():
-    libre = {"strict": True, "fields": [
+    libre = {"unknown_columns": "report", "fields": [
         {"key": "notes", "type": "list", "of": {"type": "json"}},
         {"key": "fiches", "type": "list", "of": {"type": "object"}},
     ]}

@@ -29,7 +29,7 @@ import pytest
 # script de reprise portait ligne à ligne).
 SCHEMA = {
     "key": "siren",
-    "strict": True,
+    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "raison_sociale", "type": "text"},

@@ -85,7 +85,7 @@ def _sans_effet(schema: Optional[dict]) -> list[dict]:
     out = [{"chemin": c, "cle": "agent_access", "raison": r}
            for c, r in aga.sans_effet(schema)]
     out += [{"chemin": c, "cle": "options",
-             "raison": "tableau non strict : la liste est indicative, une valeur hors "
+             "raison": "`unknown_columns: \"create\"` : la liste est indicative, une valeur hors "
                        "liste s'écrit"} for c in options_not_enforced(schema)]
     out += [{"chemin": c, "cle": "lifecycle",
              "raison": "seule la colonne de file voit ses transitions validées"}
