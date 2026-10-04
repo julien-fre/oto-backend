@@ -27,7 +27,8 @@ _LAYERS = Field(default=dsl.DEFAUT, description=(
     "`{valeur, comment, link}`) et, par défaut, on relit À PLAT : ce paramètre lève cette "
     "asymétrie. `flat` (défaut) sert `champ` = la valeur et `champ.origine`/`.comment`/"
     "`.link` à plat à côté ; `nested` sert `champ` = `{valeur, origine, comment, link}` "
-    "(la valeur toujours, les couches renseignées seulement), la forme dans laquelle on "
+    "(la valeur toujours, les couches renseignées seulement — `origine` seulement si "
+    "`versions` la demande, comme à plat), la forme dans laquelle on "
     "écrit ; une cellule sans couche est le même scalaire dans les deux. Toute autre "
     "valeur est refusée. Le défaut basculera vers `nested`, avec préavis daté : un "
     "client qui dépend d'une forme la nomme dès maintenant."))

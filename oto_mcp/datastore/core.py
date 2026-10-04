@@ -427,14 +427,18 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                 couches_servies.update(dsv2.flat_layers(k, v))
 
         sentinelle = empties == dsl.SENTINEL
+        sert_origine = dsver.sert_l_origine(versions)
         for k, v in data.items():
             if k in _META_COLS or k in cachees or not _pertinente(k):
                 continue
             # `layers="nested"` (oto#53) : la cellule revient comme elle s'écrit,
-            # `{valeur, origine, comment, link}` — rien n'est aplati à côté.
+            # `{valeur, origine, comment, link}` — rien n'est aplati à côté. `versions`
+            # s'y applique comme à plat (oto#273) : `origine` n'y est que demandée, sans
+            # quoi `versions_servies` annoncerait `["current"]` sur une origine servie.
             if layers == dsl.NESTED:
                 if not projette or k in fields:
-                    out[k] = dsl.nested_value(v, sentinelle=sentinelle)
+                    out[k] = dsl.nested_value(v, origine=sert_origine,
+                                              sentinelle=sentinelle)
                 continue
             # `served_value` descend dans une colonne-tableau : chaque attribut d'item
             # est une feuille, rendue comme telle (oto#22 §1).
@@ -445,7 +449,7 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
             # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée
             # (import de socle sur un champ pas encore renseigné).
             plat = dsv2.flat_layers(k, v)
-            if not dsver.sert_l_origine(versions):
+            if not sert_origine:
                 # Retiré ICI, à la projection, et pas en amont : `flat_layers` est le
                 # point unique qui fabrique ces noms, et un filtre posé ailleurs
                 # devrait connaître leur forme — donc la redire, donc diverger.

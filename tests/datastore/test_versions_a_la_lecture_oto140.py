@@ -129,6 +129,73 @@ def test_les_deux_versions_arrivent_dans_le_MEME_appel(live):
         "l'écart doit être lisible sur la MÊME ligne, sans jointure ni second appel")
 
 
+# ── la forme imbriquée honore `versions` comme la forme plate (oto#273) ───────
+
+def _contient_origine(v) -> bool:
+    if isinstance(v, dict):
+        return dsv2.ORIGIN_LAYER in v or any(_contient_origine(x) for x in v.values())
+    if isinstance(v, list):
+        return any(_contient_origine(x) for x in v)
+    return False
+
+
+def test_en_NESTED_sans_origine_demandee_la_couche_DISPARAIT(live):
+    """⚠️ Le défaut d'oto#273 : en `layers=nested`, l'origine était servie quoi qu'on
+    demande, sous une réponse qui déclarait `versions_servies: ["current"]` — la
+    déclaration mentait exactement là où elle existe pour ne pas mentir."""
+    st, ns = _table()
+    page = st.cursor_rows(ns, layers="nested")
+    ligne = page["rows"][0]
+
+    assert page["versions_servies"] == ["current"]
+    assert ligne["raison_sociale"] == {"valeur": "Dupont SAS", "comment": "INSEE"}
+    assert not _contient_origine(ligne), ligne
+    assert not _contient_origine(st.get_row(ns, ligne["_id"], layers="nested"))
+
+
+def test_en_NESTED_l_origine_demandee_revient_dans_la_cellule(live):
+    st, ns = _table()
+    page = st.cursor_rows(ns, layers="nested", versions=(dsver.CURRENT, dsver.ORIGINE))
+    ligne = page["rows"][0]
+
+    assert page["versions_servies"] == ["current", "origine"]
+    assert ligne["raison_sociale"]["valeur"] == "Dupont SAS"
+    assert ligne["raison_sociale"]["origine"] == {
+        "valeur": "DUPONT", "comment": "fichier cliente 05/08"}
+
+
+def test_en_NESTED_une_case_qui_ne_portait_que_son_origine_redevient_nue(live):
+    """Une cellule dont la seule couche est l'origine n'a plus de couche servie : elle
+    revient comme une cellule sans couche, sa valeur nue — comme à plat."""
+    from oto_mcp.datastore import layers as dsl
+    cellule = {"valeur": "Dupont SAS", "origine": {"valeur": "DUPONT"}}
+    assert dsl.nested_value(cellule, origine=False) == "Dupont SAS"
+    assert dsl.nested_value(cellule, origine=True) == cellule
+    liste = [{"email": {"valeur": "a@b.c", "origine": "x@b.c", "comment": "vu"}}]
+    assert dsl.nested_value(liste, origine=False) == [
+        {"email": {"valeur": "a@b.c", "comment": "vu"}}]
+
+
+def test_le_GET_REST_nested_n_a_l_origine_que_demandee(live, monkeypatch):
+    """Le chemin du tiroir de fiche du tableau de bord (`?empties=sentinel&layers=nested`) :
+    il doit demander `versions=…origine` pour l'afficher, et la recevoir alors."""
+    from _datastore_rest import call, stub_authz
+    stub_authz(monkeypatch)
+    ns, rid = _table_de("u-1")
+    status, ligne = call("me.datastore.get_row",
+                         path_params={"datastore": ns, "row_id": rid},
+                         query=b"empties=sentinel&layers=nested")
+    assert status == 200, ligne
+    assert ligne["raison_sociale"] == "DUPONT"
+    assert not _contient_origine(ligne), ligne
+    status, ligne = call("me.datastore.get_row",
+                         path_params={"datastore": ns, "row_id": rid},
+                         query=b"empties=sentinel&layers=nested"
+                               b"&versions=current&versions=origine")
+    assert status == 200, ligne
+    assert ligne["raison_sociale"] == {"valeur": "DUPONT", "origine": {"valeur": "DUPONT"}}
+
+
 # ── ce que la réponse DÉCLARE ─────────────────────────────────────────────────
 
 def test_la_reponse_declare_ce_qu_elle_sert(live):

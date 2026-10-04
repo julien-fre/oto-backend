@@ -92,7 +92,7 @@ def check(value: Any) -> str:
         f"(`champ` = {{\"valeur\", \"origine\", \"comment\", \"link\"}}, la forme écrite).")
 
 
-def nested_value(value: Any, *, sentinelle: bool = False) -> Any:
+def nested_value(value: Any, *, origine: bool, sentinelle: bool = False) -> Any:
     """Ce qu'un lecteur `nested` reçoit pour une colonne.
 
     - cellule à couches → `{"valeur": …, + chaque couche RENSEIGNÉE}` : `valeur` est
@@ -107,26 +107,34 @@ def nested_value(value: Any, *, sentinelle: bool = False) -> Any:
 
     `sentinelle` (`empties=sentinel`, oto#204) : une case au vide ASSUMÉ revient
     ENVELOPPÉE, `{"valeur": "@empty", …couches}` — même quand elle ne porte aucune autre
-    couche. C'est la forme d'écriture de ce geste, et c'est ce que `nested` promet."""
+    couche. C'est la forme d'écriture de ce geste, et c'est ce que `nested` promet.
+
+    `origine` (oto#273) : la couche `origine` n'est servie que DEMANDÉE
+    (`versions=["current","origine"]`, `versions.sert_l_origine`) — à toute profondeur,
+    comme la forme plate la retire. Sans elle, une cellule qui ne portait que sa
+    provenance d'origine redevient une cellule sans couche : sa valeur nue."""
+    couches = dsv2.LAYER_KEYS if origine else tuple(
+        c for c in dsv2.LAYER_KEYS if c != dsv2.ORIGIN_LAYER)
     if sentinelle and dsc.vide_assume(value):
         out = {dsv2.VALUE_LAYER: dsc.VIDE_DELIBERE}
-        for layer in dsv2.LAYER_KEYS:
+        for layer in couches:
             if value.get(layer) not in (None, ""):
                 out[layer] = value[layer]
         return out
-    if isinstance(value, dict) and any(k in dsv2.LAYER_KEYS for k in value):
-        out: dict = {dsv2.VALUE_LAYER: _plain(dsv2.unwrap(value), sentinelle)}
-        for layer in dsv2.LAYER_KEYS:
+    if isinstance(value, dict) and any(k in couches for k in value):
+        out: dict = {dsv2.VALUE_LAYER: _plain(dsv2.unwrap(value), origine, sentinelle)}
+        for layer in couches:
             if value.get(layer) not in (None, ""):
                 out[layer] = value[layer]
         return out
-    return _plain(dsv2.unwrap(value), sentinelle)
+    return _plain(dsv2.unwrap(value), origine, sentinelle)
 
 
-def _plain(v: Any, sentinelle: bool = False) -> Any:
+def _plain(v: Any, origine: bool, sentinelle: bool = False) -> Any:
     """La valeur déballée, descendue dans une liste de fiches : un item non-dict
     traverse tel quel (une liste de scalaires reste une liste de scalaires)."""
     if isinstance(v, list):
-        return [({k: nested_value(x, sentinelle=sentinelle) for k, x in item.items()}
+        return [({k: nested_value(x, origine=origine, sentinelle=sentinelle)
+                  for k, x in item.items()}
                  if isinstance(item, dict) else item) for item in v]
     return v

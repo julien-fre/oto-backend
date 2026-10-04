@@ -73,7 +73,9 @@ lève l'asymétrie : `flat` (défaut) = ce qui précède ; `nested` = `adresse` 
 la forme dans laquelle on écrit ; une cellule sans couche reste le même scalaire, une
 colonne-liste applique la règle dans ses items. Toute autre valeur est refusée en
 nommant le paramètre. En `nested`, `fields` nomme des colonnes (`adresse.comment`
-n'existe qu'en `flat`). **Le défaut basculera vers `nested`, avec préavis daté** :
+n'existe qu'en `flat`). `versions` s'applique aux deux formes : la couche `origine` n'y
+est servie que demandée (`versions=["current","origine"]`), à toute profondeur.
+**Le défaut basculera vers `nested`, avec préavis daté** :
 nomme `layers` dès maintenant si tu dépends d'une forme.
 
 Dans les deux formes l'aller-retour tient : une clé plate `adresse.comment` réémise à l'écriture est

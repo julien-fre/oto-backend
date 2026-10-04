@@ -146,7 +146,8 @@ def test_REST_meme_ligne_en_flat_et_en_nested_meme_contenu(client, table):
     ns, rid = table
     url = f"/api/datastores/{ns}/rows/{rid}"
     flat = client.get(url, headers=_h(), params={"layers": "flat", "versions": "current,origine"}).json()
-    nested = client.get(url, headers=_h(), params={"layers": "nested"}).json()
+    nested = client.get(url, headers=_h(), params={"layers": "nested",
+                                                   "versions": "current,origine"}).json()
     # La forme imbriquée est la forme ÉCRITE : ce qu'on a posé revient tel quel.
     assert nested["suivi"] == {"valeur": "a_traiter", "comment": "à rappeler"}
     assert nested["socle"] == {"valeur": None, "origine": "import"}
@@ -154,6 +155,13 @@ def test_REST_meme_ligne_en_flat_et_en_nested_meme_contenu(client, table):
     # Et le plat est resté ce qu'il était.
     assert flat["suivi"] == "a_traiter" and flat["suivi.comment"] == "à rappeler"
     assert flat["socle"] is None and flat["socle.origine"] == "import"
+    _meme_contenu(flat, nested)
+    # oto#273 : sans `versions`, les DEUX formes taisent l'origine — la même réponse,
+    # qui déclare `["current"]` et le tient dans les deux formes.
+    flat = client.get(url, headers=_h(), params={"layers": "flat"}).json()
+    nested = client.get(url, headers=_h(), params={"layers": "nested"}).json()
+    assert flat["socle"] is None and "socle.origine" not in flat
+    assert nested["socle"] is None
     _meme_contenu(flat, nested)
 
 
@@ -172,7 +180,8 @@ def test_REST_la_liste_sert_la_meme_forme_que_la_fiche(client, table):
     ns, rid = table
     url = f"/api/datastores/{ns}/rows"
     flat = client.get(url, headers=_h(), params={"layers": "flat", "versions": "current,origine"}).json()["rows"]
-    nested = client.get(url, headers=_h(), params={"layers": "nested"}).json()["rows"]
+    nested = client.get(url, headers=_h(), params={"layers": "nested",
+                                                   "versions": "current,origine"}).json()["rows"]
     assert [r["_id"] for r in flat] == [r["_id"] for r in nested] == [rid]
     _meme_contenu(flat[0], nested[0])
     assert nested[0]["suivi"] == {"valeur": "a_traiter", "comment": "à rappeler"}
@@ -235,13 +244,17 @@ def acteur(monkeypatch):
 def test_MCP_meme_ligne_en_flat_et_en_nested_meme_contenu(data_rows, table, acteur):
     ns, rid = table
     flat = data_rows(datastore=ns, id=rid, layers="flat", versions=["current", "origine"])
-    nested = data_rows(datastore=ns, id=rid, layers="nested")
+    nested = data_rows(datastore=ns, id=rid, layers="nested", versions=["current", "origine"])
     assert nested["suivi"] == {"valeur": "a_traiter", "comment": "à rappeler"}
     assert nested["ville"] == "Lyon"
     _meme_contenu(flat, nested)
     # En liste aussi, et une projection garde la cellule imbriquée ENTIÈRE.
-    page = data_rows(datastore=ns, layers="nested")
+    page = data_rows(datastore=ns, layers="nested", versions=["current", "origine"])
     _meme_contenu(data_rows(datastore=ns, versions=["current", "origine"])["rows"][0], page["rows"][0])
+    # oto#273 : au défaut, la page imbriquée tait l'origine ET le déclare.
+    defaut = data_rows(datastore=ns, layers="nested")
+    assert defaut["versions_servies"] == ["current"] and defaut["rows"][0]["socle"] is None
+    _meme_contenu(data_rows(datastore=ns)["rows"][0], defaut["rows"][0])
     projete = data_rows(datastore=ns, layers="nested", fields=["suivi"])["rows"][0]
     assert projete == {"_id": rid, "suivi": {"valeur": "a_traiter", "comment": "à rappeler"}}
 
