@@ -125,26 +125,34 @@ def peut_agir_pour(sub: str, proprietaire: Optional[str], famille: str) -> bool:
     """`sub` a-t-il le droit de faire tourner QUELQUE CHOSE sur l'abonnement de
     `proprietaire` ? **LA couture du partage** (arbitré le 21/09/2026).
 
-    Aujourd'hui : le propriétaire seul. Demain, une connexion d'abonnement
-    s'administrera comme les autres connecteurs — partagée avec des personnes
-    nommées, qui pourront alors modifier ses agents. Ce jour-là, la règle change
-    ICI et nulle part ailleurs : les trois chemins de pose et la retouche d'un
-    agent relisent tous cette fonction."""
+    Le propriétaire seul, au niveau de la PERSONNE. Le prêt existe aussi, au niveau
+    d'un AGENT : son propriétaire en nomme un éditeur, qui le modifie alors sur son
+    forfait (`_acces_agent.forfaits_pretes`, 04/10/2026). Il ne passe pas par ici —
+    il ne vaut que pour cet agent-là — mais par `prete` sur la retouche, et par la
+    garde d'écriture (`db.update_trigger`). Demain, une connexion d'abonnement
+    s'administrera peut-être comme les autres connecteurs, partagée à des personnes
+    nommées : ce jour-là, la règle de la PERSONNE change ICI, et les trois chemins de
+    pose comme la retouche d'un agent suivent."""
     return not proprietaire or proprietaire == sub
 
 
 def exiger_le_droit_de_modifier(sub: str, agent: dict, famille: Optional[str],
-                                champs: dict) -> None:
-    """Retoucher l'agent d'un AUTRE posé sur un abonnement : refusé, sauf l'éteindre.
+                                champs: dict, *, prete: bool = False) -> None:
+    """Retoucher l'agent d'un AUTRE posé sur un abonnement : refusé, sauf l'éteindre
+    — ou si son propriétaire a nommé `sub` éditeur de cet agent (`prete`).
 
     Changer sa procédure, sa consigne ou ses outils, c'est faire exécuter SES
     instructions sur le forfait d'un autre — la même faute que changer son modèle,
-    par une autre porte. ÉTEINDRE reste ouvert à qui administre l'org : personne
-    ne doit avoir besoin du propriétaire pour arrêter un agent qui dérape (la
-    suppression, elle, ne passe pas par ici)."""
+    par une autre porte. Le propriétaire qui nomme un éditeur y consent pour cet
+    agent ; le prêt vaut pour la famille où l'agent tourne DÉJÀ — le poser sur une
+    autre famille d'abonnement reste à lui seul. ÉTEINDRE reste ouvert à qui
+    administre l'org : personne ne doit avoir besoin du propriétaire pour arrêter
+    un agent qui dérape (la suppression, elle, ne passe pas par ici)."""
     if not est_abonnement(famille):
         return
     if peut_agir_pour(sub, agent.get("sub"), famille):
+        return
+    if prete and famille == runner_models.famille(agent.get("model")):
         return
     if set(champs) <= {"enabled"} and champs.get("enabled") is False:
         return
@@ -152,7 +160,7 @@ def exiger_le_droit_de_modifier(sub: str, agent: dict, famille: Optional[str],
         400, "subscription_personal_only",
         f"cet agent tourne sur l'abonnement `{famille}` de quelqu'un d'autre : ce que "
         "tu y changerais s'exécuterait sur SON forfait. Tu peux l'éteindre ; pour le "
-        "modifier, il faut que sa connexion soit partagée avec toi.")
+        "modifier, il faut que son propriétaire te nomme éditeur de cet agent.")
 
 
 def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Optional[str]]:

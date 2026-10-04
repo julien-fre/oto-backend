@@ -122,6 +122,35 @@ def partages_d_agents(ids: list[int],
     return {int(r["resource_id"]): r["permission"] for r in rows}
 
 
+def _forfait_prete(alias_trigger: str) -> str:
+    """Le prédicat « le PROPRIÉTAIRE de cet agent a nommé l'éditeur `%s` » — un
+    partage `write` À UNE PERSONNE (ni l'org entière, ni une équipe), vivant, et
+    posé par celui sous qui l'agent tourne (`granted_by = sub`). Une seule écriture,
+    lue par `forfaits_pretes` et par la garde de `update_trigger`."""
+    from ._partage_vivant import PARTAGE_VIVANT_G
+    return ("EXISTS (SELECT 1 FROM resource_grants g "
+            "WHERE g.resource_type = 'runner_trigger' "
+            f"  AND g.resource_id = {alias_trigger}.id::text "
+            "  AND g.principal_type = 'user' AND g.principal_id = %s "
+            f"  AND g.permission = 'write' AND g.granted_by = {alias_trigger}.sub "
+            f"  AND {PARTAGE_VIVANT_G})")
+
+
+def forfaits_pretes(ids: list[int], sub: str) -> set[int]:
+    """Parmi les agents `ids`, ceux dont le propriétaire a nommé `sub` éditeur — ce
+    qui lui PRÊTE son abonnement personnel pour cet agent (`_acces_agent`). UNE
+    requête pour toute une liste."""
+    if not ids or not sub:
+        return set()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT t.id FROM runner_triggers t WHERE t.id = ANY(%s) AND "
+            + _forfait_prete("t"),
+            ([int(i) for i in ids], sub),
+        ).fetchall()
+    return {int(r["id"]) for r in rows}
+
+
 def retirer_partages_d_agent(trigger_id: int) -> int:
     """Retire tous les partages d'un agent SUPPRIMÉ : une ligne de `resource_grants`
     ne survit pas à sa ressource (pas de clé étrangère pour le faire à sa place)."""
@@ -178,9 +207,11 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
     déjà validées par la capacité (jamais de SQL construit sur l'entrée brute).
 
     `hors_abonnement_d_autrui=<sub>` : n'écrit PAS un déclencheur posé sur l'abonnement
-    d'une autre personne que `<sub>` (rend None, comme un déclencheur inconnu). La
+    d'une autre personne que `<sub>` (rend None, comme un déclencheur inconnu) — sauf
+    si cette personne a nommé `<sub>` éditeur de l'agent (`_forfait_prete`). La
     garde vit dans l'écriture pour qu'une retouche ordinaire ne relise rien : c'est
-    l'appelant qui relit, et seulement quand rien n'a été écrit."""
+    l'appelant qui relit, et seulement quand rien n'a été écrit. Le prêt s'y juge
+    aussi : retiré entre la lecture et l'écriture, il n'ouvre plus rien."""
     autorises = {"label", "procedure", "project_id", "tools", "input", "max_steps",
                  "max_tokens", "max_run_seconds", "model", "cron", "tz", "enabled", "next_due",
                  # Le webhook. ⚠️ `kind` n'y est PAS : un déclencheur ne change pas
@@ -215,11 +246,13 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any], *,
             f"UPDATE runner_triggers SET {', '.join(sets)} "
             f"WHERE id = %s AND org_id = %s"
             + ("" if hors_abonnement_d_autrui is None else
-               " AND (model IS NULL OR NOT (model = ANY(%s)) OR sub = %s)")
+               " AND (model IS NULL OR NOT (model = ANY(%s)) OR sub = %s OR "
+               + _forfait_prete("runner_triggers") + ")")
             + f" RETURNING {_COLS}",
             (*vals, trigger_id, org_id,
              *(() if hors_abonnement_d_autrui is None else
-               (list(runner_models.MODELES_PERSONNELS), hors_abonnement_d_autrui))),
+               (list(runner_models.MODELES_PERSONNELS), hors_abonnement_d_autrui,
+                hors_abonnement_d_autrui))),
         ).fetchone()
     # ⚠️ ÉTEINDRE, c'est aussi cesser de tiquer — donc cesser de périmer. Un
     # déclencheur désactivé laissait ses occurrences en attente pour toujours,

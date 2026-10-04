@@ -33,7 +33,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import (_abonnement, _acces_agent, _cle_exigee, _instruction, _limites_du_run,
                _modele)
-from .. import (db, ownership, roles, runner_hook, runner_models, runner_tick,
+from .. import (db, org_store, ownership, roles, runner_hook, runner_models, runner_tick,
                 session_visibility, tool_alias, tool_registry)
 from ..tools import catalogue as tool_catalogue
 from ._authz import ORG_MEMBER
@@ -68,7 +68,8 @@ class TriggerInput(BaseModel):
                 # REPRENDRE un agent : un admin d'org en devient le propriétaire —
                 # l'identité au nom de laquelle il agit, et l'abonnement qui le
                 # paie. Verbe séparé d'`update` : le propriétaire n'est pas de la
-                # configuration, et seul un admin peut le changer (25/09/2026).
+                # configuration, et seul un admin peut le changer (25/09/2026) —
+                # seulement quand le propriétaire a quitté l'org (04/10/2026).
                 "take_over",
                 # PARTAGER un agent avec des membres de son org (`_acces_agent`) :
                 # le lister, l'accorder, le retirer. Réservé au propriétaire et aux
@@ -758,10 +759,13 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         # ⚠️ Un agent ne se LISTE qu'à qui le voit : son propriétaire, un admin de
         # l'org, et ceux avec qui il est partagé (`_acces_agent`).
         niveaux = _acces_agent.niveaux(ctx.sub, ctx.org_id, lus)
+        vus = [t for t in lus if niveaux[int(t["id"])]]
+        pretes = _acces_agent.forfaits_pretes(ctx.sub, vus)
         return {"triggers": [_acces_agent.avec_acces(
                                  _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
-                                 niveaux[int(t["id"])])
-                             for t in lus if niveaux[int(t["id"])]],
+                                 niveaux[int(t["id"])],
+                                 ferme=_acces_agent.forfait_ferme(ctx.sub, t, pretes))
+                             for t in vus],
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.trigger_id is None:
@@ -771,7 +775,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         n = _acces_agent.exiger(ctx, t, _acces_agent.ECRIRE + ("viewer",))
         return {"trigger": _acces_agent.avec_acces(
-                    _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)), n),
+                    _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)), n,
+                    ferme=_acces_agent.forfait_ferme(ctx.sub, t)),
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.op == "rotate_address":
@@ -850,11 +855,11 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
                                       db.get_trigger(inp.trigger_id, ctx.org_id))}
 
     if inp.op == "take_over":
-        # ⚠️ ADMIN d'org seulement : c'est la porte de sortie de la règle « seul le
-        # propriétaire pose son agent sur son abonnement » (`peut_agir_pour`), et
-        # le seul moyen de reprendre l'agent d'un membre parti. Elle ne relâche pas
-        # la règle : l'admin DEVIENT le propriétaire, et tout ce qui suit la juge
-        # à nouveau sur lui.
+        # ⚠️ ADMIN d'org seulement, et seulement l'agent d'un membre PARTI : c'est
+        # le seul moyen de rouvrir un agent dont le propriétaire n'est plus là pour
+        # le partager. Elle ne relâche pas la règle « seul le propriétaire pose son
+        # agent sur son abonnement » (`peut_agir_pour`) : l'admin DEVIENT le
+        # propriétaire, et tout ce qui suit la juge à nouveau sur lui.
         if not roles.is_org_admin(ctx.sub, ctx.org_id):
             raise AuthzDenied(403, "org_admin_required",
                               "reprendre un agent est réservé aux admins de l'org")
@@ -864,6 +869,21 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         if t.get("sub") == ctx.sub:
             return {"trigger": _avec_hook(ctx.org_id, t),
                     "previous_owner": ctx.sub, "jobs_moved": 0}
+        # ⚠️ La propriété se DONNE, elle ne se PREND pas (04/10/2026). Reprendre
+        # l'agent d'un membre présent lui retirait son travail — et le faisait
+        # tourner sous une autre identité — sans qu'il ait rien demandé. Pour
+        # modifier l'agent d'un collègue, il le partage en éditeur (`op=share`),
+        # forfait compris s'il le nomme. Ce qui reste est le cas pour lequel la
+        # reprise existe : un propriétaire qui n'est plus membre de l'org.
+        # ⚠️ L'appartenance RÉELLE (`org_members`), pas le rôle effectif : celui-ci
+        # escalade un super admin en admin de toute org, et l'agent d'un super admin
+        # parti ne se reprendrait jamais.
+        if t.get("sub") and org_store.get_org_role(ctx.org_id, t["sub"]) is not None:
+            raise AuthzDenied(
+                403, "owner_still_member",
+                "son propriétaire est toujours membre de l'org : un agent ne se reprend "
+                "qu'à un membre parti. Pour le modifier, demande-lui de te le partager "
+                "en éditeur (`op=share`).")
         # Un agent ALLUMÉ sur un abonnement partirait dès l'occurrence suivante sur
         # celui du repreneur : même garde qu'une pose, jugée sur lui. Éteint, il
         # se reprend librement — le rallumage rejuge le propriétaire stocké.
@@ -934,6 +954,21 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     def _est_webhook() -> bool:
         return ((_actuel() or {}).get("kind") or "schedule") == "webhook"
 
+    def _pose_pour(famille_visee: Optional[str]) -> str:
+        """Au nom de qui juger la POSE de `famille_visee` sur cet agent : l'appelant
+        — sauf l'éditeur à qui le propriétaire a prêté son forfait
+        (`_acces_agent.forfaits_pretes`), sur la famille où l'agent tourne DÉJÀ. Il
+        pose alors pour le propriétaire : c'est sa connexion qui servira, et c'est
+        elle que la garde doit juger. Lu au plus une fois, et seulement sur l'agent
+        d'un autre posé sur un abonnement."""
+        actuel = _actuel() or {}
+        if (famille_visee != runner_models.famille(actuel.get("model"))
+                or not _acces_agent.sur_le_forfait_d_autrui(ctx.sub, actuel)):
+            return ctx.sub
+        if "prete" not in lu:
+            lu["prete"] = _acces_agent.prete(ctx.sub, actuel)
+        return actuel["sub"] if lu["prete"] else ctx.sub
+
     if any(getattr(inp, c) is not None for c in _REGLAGES_WEBHOOK):
         if not _actuel():
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
@@ -996,8 +1031,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         _cle_exigee.exiger_a_la_pose(ctx.org_id, famille_pose)
         # Même garde qu'à la création, sur le propriétaire STOCKÉ : rallumer
         # l'agent d'un collègue posé sur un abonnement ferait payer son forfait
-        # pour le travail d'un autre.
-        _abonnement.exiger_a_la_pose(ctx.sub, (actuel or {}).get("sub"), famille_pose,
+        # pour le travail d'un autre — sauf s'il l'a prêté (`_pose_pour`).
+        _abonnement.exiger_a_la_pose(_pose_pour(famille_pose),
+                                     (actuel or {}).get("sub"), famille_pose,
                                      org_id=ctx.org_id)
         # ⚠️ **RALLUMER REPREND LE RYTHME, ça ne rembobine pas** (arbitré le
         # 02/09, #826). Une échéance figée pendant l'extinction est restée dans
@@ -1038,8 +1074,8 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             # la création ni par le rallumage. Sans cette garde, un collègue
             # pointait l'agent vivant de quelqu'un d'autre sur le forfait de
             # celui-ci, dès l'occurrence suivante.
-            _abonnement.exiger_a_la_pose(ctx.sub, actuel.get("sub"), famille,
-                                         org_id=ctx.org_id)
+            _abonnement.exiger_a_la_pose(_pose_pour(famille), actuel.get("sub"),
+                                         famille, org_id=ctx.org_id)
     # ⚠️ EN DERNIER, juste avant d'écrire : l'ordre des refus est un contrat, et
     # cette garde ne doit en déplacer aucun. Elle juge la famille EFFECTIVE —
     # celle qu'on pose, sinon celle qui est stockée.
@@ -1050,11 +1086,16 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     # modèle STOCKÉ se juge dans l'écriture (`hors_abonnement_d_autrui`) ; on ne
     # relit que pour POSER un modèle d'abonnement, ou pour dire pourquoi rien n'a
     # été écrit.
-    def _juger(actuel: dict) -> None:
+    def _juger(actuel: dict, *, stockee: bool = False) -> None:
+        # `stockee` : juger la famille où l'agent tourne, pas celle qu'on pose —
+        # après une écriture refusée, c'est elle qui l'a refusée. Sans ça, sortir
+        # du forfait d'autrui sans prêt (vers une clé d'org, que rien ne garde)
+        # tombait sur le 404 d'un agent inconnu.
+        visee = (famille if inp.model is not None and not stockee
+                 else runner_models.famille(actuel.get("model")))
         _abonnement.exiger_le_droit_de_modifier(
-            ctx.sub, actuel,
-            famille if inp.model is not None
-            else runner_models.famille(actuel.get("model")), champs)
+            ctx.sub, actuel, visee, champs,
+            prete=_pose_pour(visee) != ctx.sub)
 
     # ⚠️ Aucune retouche ne s'écrit sans avoir LU le déclencheur : c'est lui qui dit
     # à qui l'agent appartient et avec qui il est partagé (`_actuel` juge le droit de
@@ -1070,8 +1111,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
     if not t:
         lu.pop("t", None)   # relu APRÈS l'écriture refusée : l'état qui l'a refusée
         lu.pop("juge", None)
+        lu.pop("prete", None)
         if _actuel():
-            _juger(_actuel())
+            _juger(_actuel(), stockee=True)
         raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
     # L'adresse privée s'écrit APRÈS la retouche acceptée (un refus qui suivrait
     # la laisserait posée par un appel échoué), puis on relit. SENS UNIQUE : on
@@ -1260,7 +1302,8 @@ def _avec_mon_acces(ctx: ResolvedCtx, rep: dict) -> dict:
     t = rep.get("trigger")
     if t and "my_access" not in t:
         rep["trigger"] = _acces_agent.avec_acces(
-            t, _acces_agent.niveau(ctx.sub, ctx.org_id, t))
+            t, _acces_agent.niveau(ctx.sub, ctx.org_id, t),
+            ferme=_acces_agent.forfait_ferme(ctx.sub, t))
     return rep
 
 
@@ -1321,6 +1364,9 @@ CAPABILITIES += [
                           "automatisation inconnue dans l'org du porteur"),
             DeclaredError(403, "org_admin_required",
                           "`take_over` par quelqu'un qui n'est pas admin de l'org"),
+            DeclaredError(403, "owner_still_member",
+                          "`take_over` de l'agent d'un membre toujours dans l'org : il "
+                          "se partage (`op=share`), il ne se prend pas"),
             DeclaredError(403, "trigger_owner_or_admin_required",
                           "`rotate_secret`, `rotate_address` ou `private_address=true` "
                           "sur le webhook d'un autre, sans être admin de l'org"),
@@ -1355,7 +1401,9 @@ CAPABILITIES += [
             "(procedure slug + `cron` + `tools` allowlist ; `tz` defaults to "
             "Europe/Paris and the cron evaluates IN that timezone — say WHICH 8am "
             "you mean) / list / get / update (editing cron or tz revalidates and "
-            "recomputes the next due) / delete / take_over (org admin only: you "
+            "recomputes the next due) / delete / take_over (org admin only, and "
+            "only when the agent's owner is no longer a member of the org — "
+            "`owner_still_member` otherwise: an agent is shared, never taken. You "
             "become the agent's owner — it then acts as YOU and, on a personal "
             "model subscription, runs on yours; its queued jobs move with it). "
             "ACCESS: an agent belongs to its owner and runs AS them. list/get only "
@@ -1364,7 +1412,10 @@ CAPABILITIES += [
             "`can_edit`, `can_share`. op=share (owner or org admin; `share_with_email` "
             "or `share_with_sub` of a member of THIS org, or `everyone=true`; `role` "
             "editor|viewer) / unshare / shares. An editor may update, enable, disable "
-            "and clear the queue — the agent still runs as its owner. Delete, share "
+            "and clear the queue — the agent still runs as its owner. On an agent "
+            "that runs on its owner's personal subscription, only the owner and the "
+            "people the OWNER shared it with by name as editor may change it "
+            "(`can_edit` says so); everyone else may only disable it. Delete, share "
             "and the webhook door stay with the owner and org admins. "
             "The tick only ENQUEUES a job at "
             "each due time; execution belongs to the worker. Floor between two "
