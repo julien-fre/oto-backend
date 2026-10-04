@@ -6,6 +6,8 @@ lecture et sa grammaire :
 
 - l'accès au bloc et à ses crans (`lifecycle_of`, `terminal_states`,
   `is_terminal_status`, `max_claims_of`, `abandon_state_of`, `claimable_of`) ;
+- la FORME de `transitions` (`fautes_de_transitions`, `table_des_transitions`) — un
+  objet dont chaque valeur est une LISTE d'états, jugée à la pose comme à la lecture ;
 - le REFUS d'une transition non déclarée (`refus_de_transition`) — l'unique texte ;
 - la FUSION d'un patch de cycle de vie (`merge_transitions`, `merge_lifecycle`), qui
   ajoute sans écraser ;
@@ -25,6 +27,7 @@ Ce qu'il ne tient pas :
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
 
 from . import claimable
@@ -41,6 +44,60 @@ PAR_ETAT = ("transitions", "labels")
 #: La borne d'un libellé d'étape (`lifecycle.labels`, oto#140). C'est le nom d'une
 #: étape dans un badge ou une puce, pas une description : au-delà, il ne tient plus.
 LIBELLE_ETAT_MAX = 60
+
+def fautes_de_transitions(transitions: Any) -> list[str]:
+    """Les fautes de FORME d'une table `transitions` — vide = bien formée, absente
+    comprise. L'unique jugement, servi à la pose (`definition.py`) comme à la lecture
+    (`table_des_transitions`).
+
+    ⚠️ **Une destination seule s'écrit en LISTE** (oto#63). `{"a": "b"}` était accepté
+    à la pose — la boucle de contrôle l'enrobait d'une liste pour le juger — puis
+    stocké tel quel. Chaque lecteur le relisait à sa façon : le validateur d'écriture
+    le parcourait lettre par lettre (`a → b` passait, `a → fait` était refusé faute
+    de `f`, `a`, `i`, `t`), le dashboard appelait `.map` sur une chaîne et l'écran
+    levait au rendu. Une forme que chaque consommateur doit deviner n'en est pas une :
+    elle se refuse à l'entrée, et le message donne la forme exacte."""
+    if transitions is None:
+        return []
+    if not isinstance(transitions, dict):
+        return [f"lifecycle.transitions doit être un objet "
+                f"{{\"état\": [\"états atteignables\"]}} — reçu "
+                f"{type(transitions).__name__}. Chaque clé est un état de départ, "
+                f"chaque valeur la liste de ceux qu'il peut atteindre."]
+    fautes = []
+    for etat, cibles in transitions.items():
+        if isinstance(cibles, list):
+            continue
+        seule = cibles if isinstance(cibles, (str, int)) and not isinstance(cibles, bool) \
+            else "état atteignable"
+        attendu = json.dumps({str(etat): [seule]}, ensure_ascii=False)
+        fautes.append(
+            f"lifecycle.transitions[{str(etat)!r}] doit être une LISTE d'états — reçu "
+            f"{type(cibles).__name__} {json.dumps(cibles, ensure_ascii=False)}. "
+            f"Forme attendue : {attendu}, même pour une seule destination.")
+    return fautes
+
+
+def table_des_transitions(colonne: str, lc: dict) -> Optional[dict]:
+    """La table `{état: [états atteignables]}` d'un bloc, ou None = aucune table
+    déclarée (toute transition permise). LÈVE `ValueError` sur un bloc STOCKÉ hors
+    forme : la pose le refuse depuis oto#63, il ne peut venir que d'avant —
+    `scripts/transitions_en_liste.py` le convertit. Le deviner ici serait la
+    tolérance qu'on vient de retirer à la pose ; le message dit le geste qui répare.
+
+    Même parti que `max_claims_of` : une valeur présente mais illisible LÈVE."""
+    transitions = lc.get("transitions")
+    fautes = fautes_de_transitions(transitions)
+    if fautes:
+        raise ValueError(
+            f"{colonne}: cycle de vie stocké hors forme — {' ; '.join(fautes)} "
+            f"Corrige-le par `data_patch_schema(datastore=…, fields=[{{\"key\": "
+            f"\"{colonne}\", \"lifecycle\": {{\"transitions\": …}}}}])` avec la forme "
+            f"attendue : la fusion ne touche que les états nommés.")
+    if transitions is None:
+        return None
+    return {str(k): [str(t) for t in v] for k, v in transitions.items()}
+
 
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
     sf = status_field(schema)

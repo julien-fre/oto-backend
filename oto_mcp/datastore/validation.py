@@ -31,7 +31,7 @@ from .declaration import (_fields, borne_du_motif, cle_d_element, max_length_of,
 from . import dates, reglages, telephone
 from .etats_declares import etats_trahis
 from .types_declares import types_trahis
-from .cycle_de_vie import lifecycle_of, refus_de_transition
+from .cycle_de_vie import lifecycle_of, refus_de_transition, table_des_transitions
 from .hors_schema import _unknown_subkey_refusal, _unknown_subkeys
 from .couches_exigees import couches_manquantes, gabarit_de_couche
 from .phrases_de_refus import (
@@ -653,10 +653,18 @@ def validate_row(schema: Optional[dict], merged: dict, *,
             # L'état PRÉCÉDENT se déballe aussi : dès la deuxième écriture la ligne
             # porte des couches, donc le cas normal est un objet, pas un mot.
             elif prev_status is not None and str(unwrap(prev_status)) != str(new):
-                transitions = lc.get("transitions")
-                if isinstance(transitions, dict):
-                    allowed = {str(t)
-                               for t in transitions.get(str(unwrap(prev_status))) or []}
+                # oto#63 : la table se lit par `table_des_transitions`, qui LÈVE sur
+                # un bloc stocké hors forme. Elle était parcourue telle quelle : une
+                # destination écrite en chaîne s'itérait lettre par lettre, et
+                # `a → fait` était refusé faute de `f`, `a`, `i`, `t` dans les sorties.
+                # Le refus nomme maintenant la forme fautive et le geste qui la répare.
+                try:
+                    table = table_des_transitions(str(key), lc)
+                except ValueError as e:
+                    errors.append(str(e))
+                    table = None
+                if table is not None:
+                    allowed = set(table.get(str(unwrap(prev_status))) or [])
                     if str(new) not in allowed:
                         errors.append(refus_de_transition(
                             str(key), str(unwrap(prev_status)), str(new),

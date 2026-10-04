@@ -340,6 +340,13 @@ geste qui remplace `@clear` pour la démarquer.
 **Rien d'autre à déclarer.** La colonne d'état est celle qui porte le bloc — pas
 d'étiquette `role: "status"`, pas de clé de schéma à faire correspondre.
 
+**Les transitions s'écrivent toujours en LISTE**, même pour une seule destination :
+`"transitions": {"a_qualifier": ["a_contacter", "perdu"], "a_contacter": ["gagne"]}`.
+`{"a_contacter": "gagne"}` (une chaîne) est **refusé à la pose et au patch**, et le
+refus donne la forme exacte (oto#63) : chaque écran et chaque validateur lit une liste,
+aucun ne devine. Un bloc stocké sous l'ancienne forme fait refuser le changement d'état
+de la ligne, avec le patch qui le répare.
+
 ⚠️ **Ce que ça supprime** : il est désormais IMPOSSIBLE de poser un cycle de vie qui ne
 s'applique pas. Avant, un `lifecycle` sur une colonne non étiquetée était stocké,
 servi… et jamais lu — cinq tableaux étaient dans ce cas, dont quatre en production, et

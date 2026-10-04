@@ -195,7 +195,8 @@ LUES_PAR_LE_FRONT: frozenset[str] = frozenset(
 CLES_DU_CYCLE: tuple[Cle, ...] = (
     Cle("states", ("validateur", "front"), "les états permis de la colonne"),
     Cle("transitions", ("validateur", "front"),
-        "`{état: [états atteignables]}` — une transition non déclarée est refusée"),
+        "`{état: [états atteignables]}` — une LISTE, même pour une seule destination ; "
+        "une transition non déclarée est refusée"),
     Cle("terminal", ("validateur", "front"),
         "les états finaux ; à défaut, dérivés (un état sans sortie en est un)"),
     Cle("max_claims", ("validateur", "front"),

@@ -608,6 +608,22 @@ fusion de listes rendrait le retrait d'une destination impossible sans une gramm
 plus. `claimable` ne descend pas non plus : c'est un filtre entier, dont le remplacement
 en bloc est le geste voulu.
 
+⚠️ **La forme de `transitions` est un objet de LISTES (oto#63, 04/10/2026).**
+`{"a": "b"}` passait la pose — la boucle de contrôle enrobait la chaîne d'une liste pour
+la juger — et se stockait tel quel. Chaque lecteur le relisait à sa façon : le
+validateur d'écriture le parcourait **lettre par lettre** (`a → fait` refusé, « autorisées :
+['a', 'f', 'i', 't'] », et le patch proposé par le refus aurait lui-même été refusé), le
+dashboard appelait `.map` dessus et la vue entière cessait de se rendre. Désormais :
+`cycle_de_vie.fautes_de_transitions` est l'unique jugement — appelé à la pose et au patch
+sur **chaque** colonne qui porte un `lifecycle` (un bloc secondaire est servi et lu par un
+écran), le refus donnant la forme exacte (`{"a": ["b"]}`) ; `table_des_transitions` est
+l'unique lecture, et **lève** sur un bloc stocké hors forme (même parti que
+`max_claims_of`) : le changement d'état est refusé en nommant la faute et le patch qui
+répare, jamais deviné. L'existant se convertit par `scripts/transitions_en_liste.py`
+(tableaux, slots de procédure, entrées de bibliothèque ; à blanc par défaut,
+`--appliquer` pour écrire, journalisé `migration_systeme`), lancé **avant** le tag qui
+porte le refus : le code d'avant lit déjà les listes.
+
 **Les libellés d'étape : `lifecycle.labels` (oto#140, 25/09/2026).** Un état est un
 code (`a_qualifier`) ; un écran le montrait dérivé du code, sans accents (« A
 qualifier »). `labels: {"a_qualifier": "À qualifier", "perdu": "Perdu"}` donne le nom

@@ -47,7 +47,8 @@ from .declaration import (
     SCALAR_TYPES,
     status_field,
 )
-from .cycle_de_vie import LIBELLE_ETAT_MAX, lifecycle_of, terminal_states
+from .cycle_de_vie import (LIBELLE_ETAT_MAX, fautes_de_transitions, lifecycle_of,
+                           terminal_states)
 from . import formule as _formule
 
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
@@ -138,28 +139,20 @@ def validate_schema_def(schema: Optional[dict],
             errors.append("lifecycle.states doit être une liste non vide")
         else:
             known = {str(s) for s in states}
-        # ⚠️ La FORME de `transitions` se juge AVANT de la parcourir. Elle ne le
-        # faisait pas : une chaîne, une liste ou un nombre y produisait un
-        # `AttributeError: 'str' object has no attribute 'items'` — une erreur
-        # TECHNIQUE, qui n'est pas une `ValueError`, donc que la face REST ne traduit
-        # pas : l'appelant recevait un 500 au corps vide sur un schéma qu'il venait
-        # d'écrire, et pouvait croire la pose réussie. Même famille que `RowLocked`
-        # (#317) : un refus juste qui ne sort pas comme un refus.
+        # La FORME de `transitions` (un objet, chaque valeur une LISTE) se juge sur
+        # CHAQUE colonne qui porte un bloc, plus bas (`_erreurs_forme_des_transitions`).
+        # Ici, seuls les états nommés, et seulement dans une table bien formée : une
+        # valeur qui n'est pas une liste n'est plus enrobée pour être jugée (oto#63) —
+        # c'est cette tolérance qui laissait `{"a": "b"}` passer la pose.
         transitions = lc.get("transitions")
-        if transitions is not None and not isinstance(transitions, dict):
-            errors.append(
-                f"lifecycle.transitions doit être un objet "
-                f"{{\"état\": [\"états atteignables\"]}} — reçu "
-                f"{type(transitions).__name__}. Chaque clé est un état de départ, "
-                f"chaque valeur la liste de ceux qu'il peut atteindre.")
-            transitions = None
         if isinstance(states, list) and states:
-            for frm, tos in (transitions or {}).items():
-                if str(frm) not in known:
-                    errors.append(f"lifecycle.transitions: état source inconnu {frm!r}")
-                for to in tos if isinstance(tos, list) else [tos]:
-                    if str(to) not in known:
-                        errors.append(f"lifecycle.transitions: état cible inconnu {to!r}")
+            if isinstance(transitions, dict):
+                for frm, tos in transitions.items():
+                    if str(frm) not in known:
+                        errors.append(f"lifecycle.transitions: état source inconnu {frm!r}")
+                    for to in tos if isinstance(tos, list) else []:
+                        if str(to) not in known:
+                            errors.append(f"lifecycle.transitions: état cible inconnu {to!r}")
             for t in lc.get("terminal") or []:
                 if str(t) not in known:
                     errors.append(f"lifecycle.terminal: état inconnu {t!r}")
@@ -194,6 +187,7 @@ def validate_schema_def(schema: Optional[dict],
             contraignant=reglages.format_contraignant(schema), status_key=sf.get("key"),
             states={str(s) for s in (lc.get("states") or [])}
             if isinstance(lc.get("states"), list) else set()))
+    errors.extend(_erreurs_forme_des_transitions(schema))
     errors.extend(_erreurs_libelles_d_etat(schema))
     # ⚠️ Il y avait ici un refus « lifecycle exige role="status" ». Retiré le
     # 08/09/2026 avec l'étiquette : le bloc DÉSIGNE désormais sa colonne, il n'y a plus
@@ -202,6 +196,25 @@ def validate_schema_def(schema: Optional[dict],
     # et jamais lu, alors qu'il existait. Ce qui les arrête maintenant est plus haut :
     # deux blocs sont refusés, et un bloc seul EST l'état.
     return errors
+
+
+def _erreurs_forme_des_transitions(schema: dict) -> list[str]:
+    """La FORME de `lifecycle.transitions` (oto#63), sur CHAQUE colonne qui porte un
+    cycle de vie — pas seulement la file : un bloc secondaire est stocké et servi, et
+    l'écran qui le lit appelle `.map` sur chaque valeur. Une chaîne à la place d'une
+    liste ne se normalise pas en silence, elle se refuse, et le refus donne la forme.
+
+    ⚠️ Avant, une forme non prévue produisait un `AttributeError` — pas une
+    `ValueError`, donc pas un refus que la face REST traduit : un 500 au corps vide
+    sur un schéma qu'on venait d'écrire. D'où un refus nommé, jamais un parcours."""
+    errs: list[str] = []
+    for f in _fields(schema):
+        if not isinstance(f.get("lifecycle"), dict):
+            continue
+        col = f.get("key")
+        errs.extend(f"`{col}` : {faute}"
+                    for faute in fautes_de_transitions(f["lifecycle"].get("transitions")))
+    return errs
 
 
 def _erreurs_libelles_d_etat(schema: dict) -> list[str]:

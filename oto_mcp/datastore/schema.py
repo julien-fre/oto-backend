@@ -100,6 +100,7 @@ from .declaration import (
 from .cycle_de_vie import (
     lifecycle_of, terminal_states, is_terminal_status, max_claims_of, abandon_state_of,
     claimable_of, refus_de_transition, merge_transitions, merge_lifecycle,
+    fautes_de_transitions, table_des_transitions,
     queue_release_warning,
 )
 from .hors_schema import (
