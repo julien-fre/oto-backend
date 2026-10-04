@@ -101,7 +101,7 @@ def test_un_service_ne_demande_que_ses_scopes_et_lidentite():
     drive = G.scopes_for("drive", _app("env"))
     assert drive == list(G.IDENTITY_SCOPES) + ["https://www.googleapis.com/auth/drive"]
     assert "gmail" not in " ".join(drive)
-    assert set(G.scopes_for("chat", _app("tenant:tulina"))) == set(G.IDENTITY_SCOPES) | set(
+    assert set(G.scopes_for("chat", _app("tenant:exemple"))) == set(G.IDENTITY_SCOPES) | set(
         G.SERVICE_SCOPES["chat"])
 
 
@@ -109,7 +109,7 @@ def test_le_compte_demande_tout_sous_notre_app_et_lidentite_seule_sous_celle_dun
     """Un partenaire ne demande jamais un scope que son projet Google ne déclare pas :
     ses services les ajoutent un à un."""
     assert set(G.scopes_for("google", _app("env"))) == set(G.IDENTITY_SCOPES) | set(G.SCOPES)
-    assert G.scopes_for("google", _app("tenant:tulina")) == list(G.IDENTITY_SCOPES)
+    assert G.scopes_for("google", _app("tenant:exemple")) == list(G.IDENTITY_SCOPES)
 
 
 def test_un_service_post_split_ne_rejoint_pas_le_consentement_du_compte():
@@ -119,7 +119,7 @@ def test_un_service_post_split_ne_rejoint_pas_le_consentement_du_compte():
     jetterait et la carte ne passerait jamais au vert."""
     bq = "https://www.googleapis.com/auth/bigquery"
     assert bq not in G.scopes_for("google", _app("env"))
-    assert G.scopes_for("bigquery", _app("tenant:tulina")) == list(G.IDENTITY_SCOPES) + [bq]
+    assert G.scopes_for("bigquery", _app("tenant:exemple")) == list(G.IDENTITY_SCOPES) + [bq]
     assert bq in G.KNOWN_SCOPES
     assert G.services_granted(f"{bq} {EMAIL}") == ["bigquery"]
 
@@ -148,9 +148,12 @@ def test_lurl_de_consentement_dun_service_porte_ses_scopes_et_sa_carte(monkeypat
 
 # ─── 3. le state ──────────────────────────────────────────────────────────────
 
-def test_le_state_porte_la_carte_et_un_state_davant_revient_au_compte():
-    etat = G.make_state("sub-1", 42, "tulina", "sheets")
-    assert G.verify_state(etat)[:4] == ("sub-1", 42, "tulina", "sheets")
+def test_le_state_porte_la_carte_et_un_state_davant_revient_au_compte(monkeypatch):
+    from oto_mcp.auth import flow as oauth_flow
+    # Un front de retour fictif : le test ne dépend d'aucun tenant réel.
+    monkeypatch.setitem(oauth_flow.RETURN_APPS, "exemple", ("https://app.exemple.test", "/"))
+    etat = G.make_state("sub-1", 42, "exemple", "sheets")
+    assert G.verify_state(etat)[:4] == ("sub-1", 42, "exemple", "sheets")
     assert G.verify_state(G.make_state("sub-1", 42))[3] == "google"
     # Un state forgé sur un connecteur inconnu ne passe pas, même bien signé.
     import base64, hashlib, hmac, json, time
@@ -170,9 +173,9 @@ async def test_le_flux_dun_service_demande_ses_scopes_et_revient_sur_sa_carte(mo
 
     class _Ctx:
         sub = "user-1"
-    out = await connector_flow.start("calendar", _Ctx(), {"app": "tulina"})
+    out = await connector_flow.start("calendar", _Ctx(), {"app": "exemple"})
     assert out.auth_url == "https://x"
-    assert vus == [("user-1", "tulina", "calendar")]
+    assert vus == [("user-1", "exemple", "calendar")]
 
 
 # ─── 4. le coffre ─────────────────────────────────────────────────────────────
@@ -185,10 +188,10 @@ def _row(scopes):
 def test_un_compte_sans_le_scope_du_service_est_refuse_en_nommant_la_carte(monkeypatch):
     monkeypatch.setattr(G.db, "get_google_oauth",
                         lambda sub, org, account=None: _row("https://www.googleapis.com/auth/gmail.modify"))
-    monkeypatch.setattr(G, "config_dashboard", lambda sub: "https://app.tulina.ai")
+    monkeypatch.setattr(G, "config_dashboard", lambda sub: "https://app.exemple.test")
     with pytest.raises(RuntimeError) as e:
         G.credentials_for("nu-sub", account="a@b.com", service="drive")
-    assert "Google Drive" in str(e.value) and "app.tulina.ai" in str(e.value)
+    assert "Google Drive" in str(e.value) and "app.exemple.test" in str(e.value)
     assert "a@b.com" in str(e.value)
 
 
