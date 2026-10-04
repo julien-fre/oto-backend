@@ -6,14 +6,17 @@ L'audience elle-même est exercée sur le SQL réel dans `test_activation_audien
 from __future__ import annotations
 
 import json
+import types
 
 import pytest
 
 from oto_mcp import activation
 
+EXPEDITEUR = "Acme <hello@acme.test>"
+MARQUE = types.SimpleNamespace(nom="Acme", expediteur=EXPEDITEUR)
+
 REGLAGE = {
     "acme": {
-        "sender": "Acme <hello@acme.test>",
         "reply_to": "hello@acme.test",
         "cc": ["un@acme.test", "deux@acme.test"],
         "app_url": "https://app.acme.test/",
@@ -28,7 +31,7 @@ REGLAGE = {
 def env(monkeypatch):
     monkeypatch.setenv("OTO_ACTIVATION", json.dumps(REGLAGE))
     monkeypatch.delenv("OTO_ACTIVATION_ENVOI", raising=False)
-    monkeypatch.setattr(activation, "_nom_produit", lambda r: "Acme")
+    monkeypatch.setattr(activation, "_marque", lambda r: MARQUE)
     monkeypatch.setattr(activation, "_lien_refus", lambda r, sub: f"https://x.test/o/u/{sub}")
     return monkeypatch
 
@@ -55,8 +58,8 @@ def faux(env, monkeypatch):
     monkeypatch.setattr(db_outreach, "annule_envoi",
                         lambda **kw: etat["annules"].append(kw["sub"]))
 
-    def envoyer(r, to, c, lien):
-        etat["envois"].append({"to": to, "lien": lien})
+    def envoyer(r, expediteur, to, c, lien):
+        etat["envois"].append({"to": to, "lien": lien, "from": expediteur})
         return etat["relais_ok"]
     monkeypatch.setattr(activation, "_envoyer", envoyer)
     return etat
@@ -69,8 +72,17 @@ def test_sans_reglage_rien_n_est_lu(monkeypatch):
 
 
 def test_un_reglage_incomplet_est_refuse(monkeypatch):
-    monkeypatch.setenv("OTO_ACTIVATION", json.dumps({"acme": {"sender": "a@b.test"}}))
+    monkeypatch.setenv("OTO_ACTIVATION", json.dumps({"acme": {"cc": ["a@b.test"]}}))
     with pytest.raises(activation.ReglageInvalide, match="reply_to"):
+        activation.reglages()
+
+
+def test_un_expediteur_dans_le_reglage_leve(monkeypatch):
+    """L'expéditeur se déclare à UN endroit, la marque du tenant : un `sender` resté
+    dans `OTO_ACTIVATION` est une configuration d'avant, pas une valeur à ignorer."""
+    monkeypatch.setenv("OTO_ACTIVATION", json.dumps(
+        {"acme": {**REGLAGE["acme"], "sender": "Autre <x@autre.test>"}}))
+    with pytest.raises(activation.ReglageInvalide, match="tenants.brand.expediteur"):
         activation.reglages()
 
 
@@ -89,7 +101,9 @@ def test_l_empreinte_porte_l_expediteur_et_les_copies(env):
     r = activation.reglages()[0]
     c = activation.contenu(r, "Acme")
     autre = activation.Reglage(**{**r.__dict__, "cc": ("trois@acme.test",)})
-    assert activation.empreinte(c, r) != activation.empreinte(c, autre)
+    assert activation.empreinte(c, r, EXPEDITEUR) != activation.empreinte(c, autre, EXPEDITEUR)
+    assert activation.empreinte(c, r, EXPEDITEUR) != \
+        activation.empreinte(c, r, "Acme <autre@acme.test>")
 
 
 def test_drapeau_ferme_rien_ne_part_ni_ne_s_ecrit(faux):
@@ -113,6 +127,7 @@ def test_avec_essai_chaque_personne_recoit_une_fois(faux, monkeypatch):
     out = activation.balayer()
     assert out["tenants"][0]["envoyes"] == 2
     assert [e["to"] for e in faux["envois"]] == ["un@client.test", "deux@client.test"]
+    assert {e["from"] for e in faux["envois"]} == {EXPEDITEUR}
     assert [t["sub"] for t in faux["traces"]] == ["acme:1", "acme:2"]
     assert {t["campaign"] for t in faux["traces"]} == {"activation-connect:acme"}
     assert [l["etape"] for l in out["tenants"]] == ["connect", "first-process", "recurring"]
@@ -149,7 +164,7 @@ def test_le_relais_recoit_expediteur_reponse_et_copies(env, monkeypatch):
     monkeypatch.setattr(mailer, "render_composed_email",
                         lambda body, **kw: f"<p>{body}</p><a>{kw['unsubscribe_url']}</a>")
     r = activation.reglages()[0]
-    assert activation._envoyer(r, "un@client.test", activation.contenu(r, "Acme"),
+    assert activation._envoyer(r, EXPEDITEUR, "un@client.test", activation.contenu(r, "Acme"),
                                "https://x.test/o/u/s?lang=en")
     assert vu["from_email"] == "Acme <hello@acme.test>"
     assert vu["reply_to"] == "hello@acme.test"
@@ -203,11 +218,27 @@ def test_le_rendu_porte_la_marque_du_tenant_pas_la_notre(env, monkeypatch):
 def test_sans_marque_declaree_rien_ne_part(faux, monkeypatch):
     """Le gabarit neutre signerait du slug (« your acme account ») : on refuse."""
     monkeypatch.setenv("OTO_ACTIVATION_ENVOI", "1")
-    monkeypatch.setattr(activation, "_nom_produit", lambda r: None)
+    monkeypatch.setattr(activation, "_marque", lambda r: None)
     faux["essais"] = {"en"}
     out = activation.balayer()
     assert "bloque" in out["tenants"][0]
     assert faux["envois"] == [] and faux["traces"] == []
+
+
+def test_sans_expediteur_declare_rien_ne_part_sous_le_notre(faux, monkeypatch):
+    """Une marque sans expéditeur : le mail du tenant partirait sous `OTO_MAIL_FROM`,
+    l'adresse de l'instance — on refuse, dans le passage comme dans l'essai."""
+    monkeypatch.setenv("OTO_ACTIVATION_ENVOI", "1")
+    monkeypatch.setattr(activation, "_marque",
+                        lambda r: types.SimpleNamespace(nom="Acme", expediteur=""))
+    faux["essais"] = {"en"}
+    out = activation.balayer()
+    assert "tenants.brand.expediteur" in out["tenants"][0]["bloque"]
+    assert faux["envois"] == [] and faux["traces"] == []
+    from oto_mcp import db
+    monkeypatch.setattr(db, "get_user", lambda sub: {"role": "super_admin", "email": "op@x.test"})
+    with pytest.raises(activation.ReglageInvalide, match="tenants.brand.expediteur"):
+        activation.essai("acme", "op")
 
 
 def test_le_lien_de_refus_est_sur_l_hote_du_tenant(monkeypatch):
@@ -230,7 +261,7 @@ def test_chaque_etape_a_son_texte_et_son_empreinte(env):
         contenus["first-process"]["body"]
     assert "schedule the process I ran last to run every week" in \
         contenus["recurring"]["body"]
-    assert len({activation.empreinte(c, r) for c in contenus.values()}) == 3
+    assert len({activation.empreinte(c, r, EXPEDITEUR) for c in contenus.values()}) == 3
     for c in contenus.values():
         assert "{" not in c["body"]
 

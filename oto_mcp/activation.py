@@ -35,9 +35,11 @@ relit l'état ; l'audience est dans `db/activation.py`.
    (index unique `(campagne, sub)`), et retirée si le relais refuse — un échec de
    transport ne condamne pas la personne, il la remet au passage suivant.
 
-**Le relais et l'expéditeur sont ceux du TENANT.** `from` doit être sur un domaine que
-le relais déclaré a vérifié ; sinon le relais refuse (403) et l'envoi est compté
-`refuses`, la personne restant due. `mailer_url` désigne l'instance du mailer du tenant,
+**Le relais et l'expéditeur sont ceux du TENANT.** L'expéditeur est celui de sa marque,
+`tenants.brand.expediteur` — le même que ses invitations et ses autres emails, déclaré à
+un seul endroit ; sans lui, rien ne part. Il doit être sur un domaine que le relais
+déclaré a vérifié ; sinon le relais refuse (403, signalé par `email._send`) et l'envoi
+est compté `refuses`, la personne restant due. `mailer_url` désigne l'instance du mailer du tenant,
 et son jeton est lu dans `OTO_ACTIVATION_MAILER_BEARER` ; sans `mailer_url`, c'est le
 relais de l'instance (`OTO_MAILER_URL`).
 """
@@ -66,7 +68,6 @@ def _ouvert() -> bool:
 class Reglage:
     """Ce qu'un tenant déclare pour son email d'activation."""
     tenant: str
-    sender: str                    # « Nom <adresse> », sur un domaine vérifié du relais
     reply_to: str
     cc: tuple = ()
     app_url: str = ""              # la page d'accueil (« onboarding ») du tenant
@@ -90,7 +91,7 @@ class ReglageInvalide(ValueError):
     """`OTO_ACTIVATION` illisible ou incomplet : on refuse plutôt que d'envoyer à moitié."""
 
 
-_REQUIS = ("sender", "reply_to", "app_url", "mcp_url")
+_REQUIS = ("reply_to", "app_url", "mcp_url")
 
 
 def reglages() -> list[Reglage]:
@@ -108,6 +109,10 @@ def reglages() -> list[Reglage]:
     for slug, r in data.items():
         if not isinstance(r, dict):
             raise ReglageInvalide(f"OTO_ACTIVATION[{slug!r}] doit être un objet.")
+        if "sender" in r:
+            raise ReglageInvalide(
+                f"OTO_ACTIVATION[{slug!r}] : `sender` est retiré — l'expéditeur est celui "
+                "de la marque du tenant (`tenants.brand.expediteur`).")
         manquants = [k for k in _REQUIS if not str(r.get(k) or "").strip()]
         if manquants:
             raise ReglageInvalide(
@@ -115,7 +120,7 @@ def reglages() -> list[Reglage]:
                 + ", ".join(manquants))
         steps = tuple(str(s) for s in (r.get("steps") or ()))
         out.append(Reglage(
-            tenant=str(slug), sender=str(r["sender"]), reply_to=str(r["reply_to"]),
+            tenant=str(slug), reply_to=str(r["reply_to"]),
             cc=tuple(str(a) for a in (r.get("cc") or ())),
             app_url=str(r["app_url"]).rstrip("/"), mcp_url=str(r["mcp_url"]),
             help_url=(str(r["help_url"]) if r.get("help_url") else None),
@@ -210,10 +215,10 @@ def _contenu_recurrent(r: Reglage, nom: str) -> dict:
             "body": corps, "cta_label": f"Open {nom}", "cta_url": r.app_url}
 
 
-def empreinte(c: dict, r: Reglage) -> str:
+def empreinte(c: dict, r: Reglage, expediteur: str) -> str:
     """sha256 de ce que le destinataire reçoit ET de qui l'envoie : changer le texte,
-    l'expéditeur ou les copies invalide l'essai."""
-    porte = {**c, "sender": r.sender, "reply_to": r.reply_to, "cc": list(r.cc)}
+    l'expéditeur de la marque ou les copies invalide l'essai."""
+    porte = {**c, "sender": expediteur, "reply_to": r.reply_to, "cc": list(r.cc)}
     return hashlib.sha256(
         json.dumps(porte, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -224,13 +229,14 @@ def _bearer(r: Reglage) -> Optional[str]:
     return None
 
 
-def _envoyer(r: Reglage, to: str, c: dict, unsubscribe_url: Optional[str]) -> bool:
+def _envoyer(r: Reglage, expediteur: str, to: str, c: dict,
+             unsubscribe_url: Optional[str]) -> bool:
     from . import email as mailer
     html = mailer.render_composed_email(
         c["body"], cta_text=c["cta_label"], cta_url=c["cta_url"], brand=r.tenant,
         locale=LOCALE, unsubscribe_url=unsubscribe_url)
     return mailer._send(
-        to, c["subject"], html, reply_to=r.reply_to, from_email=r.sender,
+        to, c["subject"], html, reply_to=r.reply_to, from_email=expediteur,
         cc=list(r.cc) or None, mailer_url=r.mailer_url, bearer=_bearer(r))
 
 
@@ -246,8 +252,9 @@ def _lien_refus(r: Reglage, sub: str) -> str:
     return outreach_optout.lien(sub) + f"?lang={LOCALE}"
 
 
-def _nom_produit(r: Reglage) -> Optional[str]:
-    """Le nom que le tenant DÉCLARE (`tenants.brand.nom`), ou None.
+def _marque(r: Reglage):
+    """La marque que le tenant DÉCLARE (`tenants.brand` : son nom, son expéditeur), ou
+    None.
 
     Le registre des tenants n'est posé qu'au boot du serveur : un travail de maintenance
     tourne dans son propre process et le pose lui-même, sans quoi chaque tenant y
@@ -258,8 +265,19 @@ def _nom_produit(r: Reglage) -> Optional[str]:
         db.list_tenant_issuers()   # une base illisible doit échouer ici, pas plus loin
         registre, _ = server._registry_and_issuers()
         tenancy.install(registre)
-    m = email_brand._declaree(r.tenant)
-    return m.nom if m is not None else None
+    return email_brand._declaree(r.tenant)
+
+
+def _bloque(m) -> Optional[str]:
+    """Pourquoi rien ne part sous cette marque, ou None. Sans expéditeur déclaré, on
+    n'envoie pas sous celui de l'instance : le mail du tenant partirait sous notre nom."""
+    if m is None:
+        return ("marque du tenant non déclarée ou incomplète (tenants.brand) : "
+                "rien n'est envoyé au gabarit neutre")
+    if not m.expediteur:
+        return ("expéditeur du tenant non déclaré (tenants.brand.expediteur) : rien "
+                "n'est envoyé sous l'adresse de l'instance")
+    return None
 
 
 # ── Le passage ───────────────────────────────────────────────────────────────
@@ -274,16 +292,16 @@ def balayer(*, dry_run: bool = False) -> dict:
     a_blanc = dry_run or not _ouvert()
     rapport: dict = {"a_blanc": a_blanc, "tenants": []}
     for r in reglages():
-        nom = _nom_produit(r)
-        if not nom:
-            rapport["tenants"].append({"tenant": r.tenant, "bloque": (
-                "marque du tenant non déclarée ou incomplète (tenants.brand) : "
-                "rien n'est envoyé au gabarit neutre")})
+        m = _marque(r)
+        bloque = _bloque(m)
+        if bloque:
+            rapport["tenants"].append({"tenant": r.tenant, "bloque": bloque})
             continue
+        nom, expediteur = m.nom, m.expediteur
         budget = r.max_per_run
         for etape in ETAPES:
             c = contenu(r, nom, etape)
-            fp = empreinte(c, r)
+            fp = empreinte(c, r, expediteur)
             camp = r.campagne(etape)
             crit = _criteres(r, etape)
             total = db_act.taille(**crit)
@@ -307,7 +325,7 @@ def balayer(*, dry_run: bool = False) -> dict:
                         locale=LOCALE, fingerprint=fp, sent_by="activation"):
                     continue
                 budget -= 1
-                ok = _envoyer(r, p["email"], c, _lien_refus(r, p["sub"]))
+                ok = _envoyer(r, expediteur, p["email"], c, _lien_refus(r, p["sub"]))
                 if ok:
                     ligne["envoyes"] += 1
                 else:
@@ -339,14 +357,15 @@ def essai(tenant: str, operateur_sub: str, etape: Optional[str] = None) -> dict:
     op = db.get_user(operateur_sub) or {}
     if op.get("role") not in ("admin", "super_admin") or not op.get("email"):
         raise PermissionError("l'essai part vers un opérateur de plateforme, avec email")
-    nom = _nom_produit(r)
-    if not nom:
-        raise ReglageInvalide(f"marque du tenant {tenant!r} non déclarée (tenants.brand)")
+    m = _marque(r)
+    bloque = _bloque(m)
+    if bloque:
+        raise ReglageInvalide(f"tenant {tenant!r} : {bloque}")
     out = []
     for e in ([etape] if etape else ETAPES):
-        c = contenu(r, nom, e)
-        fp = empreinte(c, r)
-        ok = _envoyer(r, op["email"], c, _lien_refus(r, operateur_sub))
+        c = contenu(r, m.nom, e)
+        fp = empreinte(c, r, m.expediteur)
+        ok = _envoyer(r, m.expediteur, op["email"], c, _lien_refus(r, operateur_sub))
         if ok:
             db_outreach.enregistre_envoi(
                 campaign=r.campagne(e), sub=operateur_sub, to_email=op["email"],
@@ -373,9 +392,10 @@ def main(argv: Optional[list] = None) -> int:
     from .db import activation as db_act
     out = balayer(dry_run=True)
     for r in reglages():
-        nom = _nom_produit(r)
-        if not nom:
+        m = _marque(r)
+        if _bloque(m):
             continue
+        nom = m.nom
         for etape in ETAPES:
             out.setdefault("contenus", {}).setdefault(r.tenant, {})[etape] = \
                 contenu(r, nom, etape)

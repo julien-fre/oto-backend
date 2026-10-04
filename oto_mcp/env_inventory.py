@@ -488,10 +488,11 @@ _REGLAGES: tuple[Variable, ...] = (
              "ligne qu'il n'a pas posée ferait supprimer le compte d'un client qui "
              "paie.", ("oto_mcp/unipile_fin_de_droit.py:64",)),
     Variable("OTO_ACTIVATION", Classe.REGLAGE, "",
-             "L'email d'activation par tenant, en JSON : `{slug: {sender, reply_to, cc, "
+             "L'email d'activation par tenant, en JSON : `{slug: {reply_to, cc, "
              "app_url, mcp_url, help_url?, exclude_domains, delay_hours, window_days, "
-             "max_per_run, mailer_url?}}`. Absente : le travail `activation` "
-             "ne lit rien. Le détail est dans `activation.py`.",
+             "max_per_run, mailer_url?}}` ; l'expéditeur est celui de la marque du "
+             "tenant (`tenants.brand.expediteur`), un `sender` ici lève. Absente : le "
+             "travail `activation` ne lit rien. Le détail est dans `activation.py`.",
              ("oto_mcp/activation.py:98",)),
     Variable("OTO_ACTIVATION_ENVOI", Classe.REGLAGE, "",
              "Ouvre l'envoi réel du travail `activation`. Absente : le passage "
