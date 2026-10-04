@@ -31,6 +31,7 @@ from typing import Optional
 from . import acces_agent as aga
 from . import claimable
 from . import cles_inconnues
+from . import reglages
 from . import schema_keys
 
 from .couches import LAYER_KEYS, split_layer
@@ -138,6 +139,7 @@ def validate_schema_def(schema: Optional[dict],
             f"écrirait à côté. Ferme les colonnes de SUIVI, pas celle qui identifie ; "
             f"un tableau entier se ferme en ne le partageant pas")
     errors.extend(_erreurs_unknown_fields(schema))
+    errors.extend(reglages.erreurs(schema))
     lc = lifecycle_of(schema)
     if lc is not None:
         states = lc.get("states")
@@ -198,7 +200,7 @@ def validate_schema_def(schema: Optional[dict],
         sf = status_field(schema) or {}
         errors.extend(claimable.erreurs(
             lc, declared={f.get("key") for f in _fields(schema)},
-            strict=bool(schema.get("strict")), status_key=sf.get("key"),
+            strict=reglages.format_contraignant(schema), status_key=sf.get("key"),
             states={str(s) for s in (lc.get("states") or [])}
             if isinstance(lc.get("states"), list) else set()))
     errors.extend(_erreurs_libelles_d_etat(schema))

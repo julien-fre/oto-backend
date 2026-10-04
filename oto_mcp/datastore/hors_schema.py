@@ -30,6 +30,7 @@ from typing import Optional
 from .couches import LAYER_KEYS, split_layer
 from .declaration import _fields
 from .phrases_de_refus import cle_la_plus_proche
+from . import reglages
 
 def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     """Clés de la row ÉCRITE qu'aucun field du schéma ne déclare (chemins pointés
@@ -59,7 +60,7 @@ def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     qui n'existaient pas, et une enquête pour « silence » du rapporteur qui, lui,
     n'avait rien manqué.* Comparer aux `fields` ne vaut que sur la forme posée ; sur
     la forme servie, il faut d'abord écarter `<colonne déclarée>.<couche>`."""
-    if not isinstance(schema, dict) or not schema.get("strict"):
+    if not isinstance(schema, dict) or not reglages.format_contraignant(schema):
         return []
     fields = _fields(schema)
     if not fields or not isinstance(data, dict):
@@ -225,10 +226,8 @@ def unknown_fields_mode(schema: Optional[dict]) -> str:
     surface — et dans le doute on ne DURCIT pas un tableau sur une déclaration
     qu'on ne comprend pas. C'est le sens sûr : l'autre fermerait un tableau
     vivant sur une faute de frappe."""
-    if not isinstance(schema, dict):
-        return "report"
-    mode = schema.get("unknown_fields")
-    return mode if mode in UNKNOWN_FIELDS_MODES else "report"
+    return ("reject" if reglages.colonnes_inconnues(schema) == reglages.REJECT
+            else "report")
 
 
 def couche_mal_ecrite(cle: str, declarees) -> Optional[tuple]:

@@ -28,7 +28,7 @@ from .options_declarees import hors_des_options, montrable, parmi, valeur_compar
 from .motifs import _pattern_re
 from .declaration import (_fields, borne_du_motif, cle_d_element, max_length_of,
                           pattern_of, status_field, validation_active)
-from . import dates, telephone
+from . import dates, reglages, telephone
 from .etats_declares import etats_trahis
 from .types_declares import types_trahis
 from .cycle_de_vie import lifecycle_of, refus_de_transition
@@ -595,7 +595,7 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
         errors.extend(_row_errors(_fields(schema), merged, "", written,
-                                  strict=bool(schema.get("strict")),
+                                  strict=reglages.format_contraignant(schema),
                                   details=details, hors=hors, gelees=gelees,
                                   en_place=en_place, charge=charge,
                                   ecrits_par_rang=ecrits_par_rang))

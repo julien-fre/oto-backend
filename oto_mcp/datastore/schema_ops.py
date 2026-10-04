@@ -25,6 +25,7 @@ from typing import Optional
 
 from . import acces_agent as aga
 from . import cles_inconnues
+from . import reglages
 from . import formule as dsformule
 from . import schema as dsv2
 from . import violations_existantes as dsve
@@ -358,7 +359,7 @@ class SchemaOpsMixin:
         Strict seulement : sur un schéma souple, un champ libre est un droit du
         contrat (0016) — la table qu'on explore avant de la typer en est pleine, et
         signaler y serait du bruit sur un usage normal."""
-        if not isinstance(schema, dict) or not schema.get("strict"):
+        if not isinstance(schema, dict) or not reglages.format_contraignant(schema):
             return None
         declared = {f.get("key") for f in dsv2._fields(schema)}
         orphans = [k for k in db.datastore_row_keys(ns_id) if k not in declared]

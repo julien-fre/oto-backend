@@ -33,6 +33,7 @@ from collections.abc import Iterator
 from typing import Optional
 
 from .couches import split_layer, SYSTEM_ORIGIN
+from . import reglages
 from .motifs import PATTERN_MAX_SUBJECT, pattern_refusal
 
 # validation reste volontairement permissive — le schéma guide le rendu, il ne
@@ -396,7 +397,7 @@ def validation_active(schema: Optional[dict]) -> bool:
     champs comme une autre, et arme la validation comme elle."""
     if not isinstance(schema, dict):
         return False
-    if schema.get("strict"):
+    if reglages.format_contraignant(schema):
         return True
     haut = _fields(schema)
     if any(_exige(f, sous_record=False) for f in haut):
@@ -408,23 +409,14 @@ def validation_active(schema: Optional[dict]) -> bool:
 def key_required_of(schema: Optional[dict]) -> bool:
     """Ce tableau n'accepte-t-il QUE des écritures visant une ligne existante ?
 
-    `schema.key_required` (#516) — opt-in, à côté de la clé métier qu'il durcit. Sur
-    un tableau qui le porte, une écriture qui ne désigne aucune ligne (ni par son
-    identifiant, ni par une valeur de `key` que le tableau porte déjà) est REFUSÉE au
-    lieu d'en créer une. Le défaut reste la création, signalée par un `notices`
-    (#390) : un tableau se remplit souvent avant d'avoir sa clé, et le cran est une
-    déclaration de son propriétaire, jamais une politique de plateforme.
+    Le réglage de tête `new_rows: "reject"` (#516, renommé oto#127), lu par
+    `reglages.lignes_nouvelles` — la seule lecture de l'axe. Sur un tableau qui le
+    porte, une écriture qui ne désigne aucune ligne (ni par son identifiant, ni par une
+    valeur de `key` que le tableau porte déjà) est REFUSÉE au lieu d'en créer une. Le
+    défaut reste la création, signalée par un `notices` (#390).
 
-    ⚠️ **Sans `key` déclarée, il ne s'arme pas.** La combinaison se refuse à la POSE
-    (`validate_schema_def`) — mais un schéma déjà en base qui la porterait rendrait
-    le tableau inécrivable, et un vieux schéma ne doit pas faire exploser une
-    écriture (même parti pris que `max_length_of`/`pattern_of`)."""
-    if not isinstance(schema, dict):
-        return False
-    cle = schema.get("key")
-    if not (isinstance(cle, str) and cle):
-        return False
-    return bool(schema.get("key_required"))
+    ⚠️ **Sans `key` déclarée, il ne s'arme pas** (cf. `reglages.lignes_nouvelles`)."""
+    return reglages.lignes_nouvelles(schema) == reglages.REJECT
 
 
 # ── les champs que l'appelant n'écrit pas (#586, #606) ───────────────────────

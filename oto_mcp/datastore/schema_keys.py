@@ -239,6 +239,17 @@ CLES_DE_TETE: tuple[Cle, ...] = (
         "une écriture qui ne désigne aucune ligne existante est refusée"),
     Cle("unknown_fields", ("validateur",),
         "le sort d'une colonne non déclarée — `\"report\"` (défaut) ou `\"reject\"`"),
+    # oto#127 : les deux réglages qui remplacent les trois ci-dessus, un par axe
+    # (`reglages.py`). Les trois anciens restent admis jusqu'au passage de
+    # `scripts/renommer_reglages_tete.py`, qui les traduit.
+    Cle("unknown_columns", ("validateur",),
+        "le sort d'une colonne non déclarée — `\"create\"` (défaut : créée en "
+        "silence), `\"report\"` (créée et nommée dans `hors_schema`) ou "
+        "`\"reject\"` (refusée) ; hors `create`, le format fait contrat"),
+    Cle("new_rows", ("validateur",),
+        "le droit d'une ligne nouvelle de naître — `\"create\"` (défaut) ou "
+        "`\"reject\"` (une écriture qui ne désigne aucune ligne existante est "
+        "refusée ; exige `key`)"),
     # ⚠️ Lue par personne CÔTÉ SERVEUR, et gardée quand même : 15 tableaux la portent,
     # le schéma est servi tel quel, donc un écran peut l'afficher. « oto ne l'interprète
     # pas » n'est pas « personne ne la lit » — la leçon des six attributs portés comme
