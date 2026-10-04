@@ -11,12 +11,14 @@ La grammaire que ce module porte, du plus petit au plus grand :
     email                  la valeur d'une colonne (plate OU à couches)
     email.origine          une couche de cette colonne
     contacts[0].email      l'attribut d'une fiche de rang précis
+    tags[0]                l'élément de rang précis d'une liste de VALEURS (oto#102)
     contacts[].email       le même attribut à travers TOUS les items
+    tags[]                 TOUS les éléments d'une liste de valeurs (oto#102)
 
-Les trois premiers désignent UNE valeur : ils se filtrent, se trient et s'agrègent. Le
-quatrième en désigne N — il se filtre par existence et s'agrège par occurrence (un
-élément, une occurrence : `list_items_sql`), mais ne se trie pas, et `field_read_sql`
-le refuse en le nommant.
+Les quatre premiers désignent UNE valeur : ils se filtrent, se trient et s'agrègent.
+Les deux derniers en désignent N — ils se filtrent par existence et s'agrègent par
+occurrence (un élément, une occurrence : `list_items_sql`), mais ne se trient pas, et
+`field_read_sql` les refuse en les nommant.
 """
 from __future__ import annotations
 
@@ -194,26 +196,37 @@ ROW_VALUES_TEXT_SQL = (
 
 
 _LIST_PATH_RE = re.compile(r"^(?P<col>[^\[\]]+)\[(?P<rang>\d*)\]\.(?P<reste>.+)$")
+# L'élément NU (`tags[]`, `tags[0]`, oto#102) : le nom de colonne y suit la règle de
+# l'écriture par rang (`rangs._ADRESSE` — ni espace, ni point), sans quoi une colonne
+# nommée `Note [1]` deviendrait un chemin.
+_LIST_ELEMENT_RE = re.compile(r"^(?P<col>[^\s\[\].]+)\[(?P<rang>\d*)\]$")
 
 
 def split_list_path(field: str):
     """`contacts[].email` → `("contacts", None, "email")` ; `contacts[0].email.origine`
-    → `("contacts", 0, "email.origine")` ; autre chose → None.
+    → `("contacts", 0, "email.origine")` ; `tags[]` → `("tags", None, None)`, l'élément
+    LUI-MÊME d'une liste de valeurs (oto#102) ; autre chose → None.
 
     Deux formes, deux usages : le rang VIDE interroge la liste entière (« il existe un
     contact dont… »), un rang NOMMÉ vise une fiche précise — c'est ce dont la
     projection d'une migration a besoin pour résoudre un ancien nom plat."""
-    m = _LIST_PATH_RE.match(str(field))
+    m = _LIST_PATH_RE.match(str(field)) or _LIST_ELEMENT_RE.match(str(field))
     if not m:
         return None
     rang = m.group("rang")
-    return m.group("col"), (int(rang) if rang else None), m.group("reste")
+    return m.group("col"), (int(rang) if rang else None), m.groupdict().get("reste")
 
 
 def leaf_read_sql(base_sql: str, base_params: list, field: str) -> tuple:
     """La lecture d'une FEUILLE sous une base quelconque — `data` au premier niveau,
     l'item courant sous une liste. Une seule expression, deux contextes : c'est le
-    principe de la feuille rendu littéral, plutôt que deux SQL à garder d'accord."""
+    principe de la feuille rendu littéral, plutôt que deux SQL à garder d'accord.
+
+    `field=None` lit la base ELLE-MÊME — l'élément d'une liste de valeurs (`tags[]`,
+    oto#102) —, par la même règle qu'une case."""
+    if field is None:
+        return (_regle_texte(f"({base_sql})", f"({base_sql} #>> '{{}}')"),
+                list(base_params) * _LECTURES)
     base, layer = split_layer(field)
     if layer:
         return f"{base_sql}->%s->>%s", base_params + [base, layer]
@@ -260,7 +273,7 @@ def field_read_sql(field: str) -> tuple:
                 f"commun avec d'autres colonnes. Il se FILTRE (par existence) et "
                 f"s'AGRÈGE seul (`group_by: \"{field}\"` compte une occurrence par "
                 f"item). Pour une valeur par ligne, viser un rang précis — "
-                f"`{colonne}[0].{reste}`.")
+                f"`{colonne}[0]{'.' + reste if reste else ''}`.")
         # Le rang vient d'un `\d+` converti en entier : l'inscrire dans le SQL n'est
         # pas une interpolation de saisie.
         return leaf_read_sql(f"data->%s->{int(rang)}", [colonne], reste)

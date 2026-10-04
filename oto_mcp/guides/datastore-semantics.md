@@ -94,6 +94,8 @@ l'adresse que tu lis — la même que dans `filters` et `group_by`.
 | effacer un attribut | `{"contacts[1].email": null}` |
 | ajouter un élément en fin de liste | `{"contacts[+]": {"nom": "Cy", "email": "c@x.fr"}}` — une fiche complète |
 | supprimer un élément | `{"contacts[0]": null}` |
+| ajouter SANS relire, un ou plusieurs éléments | `{"tags[+]": ["relance", "chaud"]}` — dans l'ordre, doublons gardés |
+| retirer SANS relire, par valeur | `{"tags[-]": "chaud"}` ou une liste — toutes les occurrences |
 
 L'attribut suit la règle d'une colonne (§3) : `comment`/`link` tombent avec une valeur
 qui change, l'origine reste, les autres attributs et les autres éléments ne bougent pas.
@@ -101,6 +103,13 @@ Le rang part de 0 et **désigne la liste telle que tu l'as lue** : dans un même
 `{"contacts[0]": null, "contacts[2].email": …}` vise le troisième élément lu ; l'ajout
 se fait en dernier. Supprimer le dernier élément efface la colonne. Seul l'élément que
 tu écris est jugé par le schéma.
+
+L'ajout (`[+]`) et le retrait par valeur (`[-]`) ne demandent aucune lecture : ils se
+résolvent sous le verrou de la ligne, donc deux ajouts simultanés sur la même ligne
+arrivent TOUS LES DEUX — c'est le geste d'un journal tenu à plusieurs. Ordre dans un
+appel : les rangs, puis les retraits, puis les ajouts. Le retrait ne vise qu'une liste
+de VALEURS (une fiche se retire à son rang) ; une valeur absente est refusée, rien
+n'est écrit. Pour compter : `group_by: "tags[]"` (un groupe par valeur).
 
 Refusé, avec la forme qui marche : un rang qui n'existe pas (« `contacts` a 2 éléments ;
 rang 5 inexistant ; pour ajouter : `contacts[+]` »), `{"contacts[0]": {…}}` (écris ses

@@ -957,6 +957,11 @@ def register(mcp: FastMCP) -> None:
         …}`; `contacts[1].email.comment` alone annotates it, `null` erases it).
         `{"contacts[+]": {…a whole record…}}` appends, `{"contacts[0]": null}` removes.
         Ranks start at 0 and point at the list AS YOU READ IT; the append comes last.
+        To add or remove WITHOUT reading the row first: `{"tags[+]": ["x", "y"]}`
+        appends one element or a list of them, in order, duplicates kept;
+        `{"tags[-]": ["x"]}` removes every occurrence of each value (plain values
+        only — a record is removed at its rank; an absent value is refused). Both are
+        applied under the row lock: two concurrent appends both land.
         Refused, with the form that works: a rank that does not exist (append with
         `contacts[+]`), `contacts[0]: {…}` (write its fields), `contacts[].x`, and the
         whole column together with one of its ranks.
@@ -1776,6 +1781,9 @@ def register(mcp: FastMCP) -> None:
         with `field: "contacts[].<numeric attribute>"` aggregate over all items (read
         on the current item when grouping by the same list). A list path cannot be
         pooled with other columns, nor sorted; `contacts[0].x` targets one rank.
+        A list of plain VALUES (e.g. `tags`) is read element by element with
+        `tags[]`: `group_by: "tags[]"` counts each tag (`count`) and the rows carrying
+        it (`count_rows`); `filters` on `tags[]` keep the rows holding the value.
 
         ⚠️ Pooling is NOT a two-dimensional group-by, and `group_by: "a,b"` is not one
         either — it is REFUSED (oto#50). A comma-separated string used to be read as a

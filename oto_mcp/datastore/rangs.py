@@ -15,7 +15,10 @@ servie rend pour ses couches (`item["email.comment"]`). Une forme imbriquée
     contacts[0].email            l'attribut `email` de l'élément de rang 0
     contacts[0].email.comment    une couche de cet attribut
     contacts[+]                  un élément AJOUTÉ en fin de liste, fiche complète
+                                 — ou une LISTE d'éléments, ajoutés dans l'ordre
     contacts[0]: null            l'élément de rang 0 SUPPRIMÉ
+    tags[-]                      une valeur RETIRÉE, ou une liste de valeurs
+                                 (liste de valeurs seulement, oto#102)
 
 Un attribut s'écrit comme une colonne : valeur nue, `{"valeur": …, "comment": …}`,
 `null` (efface l'attribut), `@empty`. Il se FUSIONNE dans l'élément en place par la
@@ -24,9 +27,28 @@ avec une valeur qui change, les autres attributs ne bougent pas.
 
 ⚠️ **Tous les rangs d'un geste désignent la liste TELLE QU'ELLE EST EN PLACE**, avant
 le geste : `{"contacts[0]": null, "contacts[2].email": …}` vise le troisième élément
-lu, pas celui qui le deviendrait après la suppression. L'ajout se fait en dernier.
+lu, pas celui qui le deviendrait après la suppression. Puis les retraits par valeur,
+puis l'ajout, en dernier.
 Le geste se résout SOUS LE VERROU de la ligne, contre la liste exacte — deux rangs
 écrits par deux appels concurrents ne s'écrasent pas.
+
+## L'ajout et le retrait sans relecture (oto#102)
+
+Le rang suppose une lecture ; l'ajout et le retrait par valeur n'en demandent aucune,
+et c'est ce qui les rend sûrs en concurrence : deux appels qui ajoutent chacun une
+entrée à la même ligne en même temps se sérialisent sous le verrou, et la liste finit
+avec les DEUX — sans `expected_revision`, sans réservation.
+
+- `col[+]` porte un élément, ou une liste d'éléments ajoutés dans l'ordre. Les
+  DOUBLONS sont gardés : une liste est ordonnée, pas un ensemble — un journal peut
+  porter deux entrées identiques. Sous `of.key`, une identité doublée reste refusée.
+  ⚠️ Une colonne dont les éléments sont eux-mêmes des listes ajoute un élément en
+  l'enveloppant : `[[…]]`.
+- `col[-]` retire une valeur, ou chaque valeur d'une liste, TOUTES ses occurrences.
+  Liste de VALEURS seulement : une fiche n'a pas d'égalité servie (couches, attributs
+  absents) et se retire à son rang. Une valeur ABSENTE se refuse, comme un rang hors
+  bornes : le plus souvent une faute de frappe, ou un autre geste passé avant — rien
+  n'est écrit, et le refus dit ce qui manque.
 
 ## Ce qui est refusé, et vers quoi on oriente
 
@@ -34,6 +56,7 @@ Le geste se résout SOUS LE VERROU de la ligne, contre la liste exacte — deux 
 - `contacts[0]: {…}` : la forme imbriquée — on écrit les attributs à leur adresse ;
 - `contacts[].email` : TOUS les éléments, une adresse de lecture, pas d'écriture ;
 - `contacts[+].email` : un élément s'ajoute ENTIER ;
+- `contacts[-]` sur une liste de fiches, ou une fiche à retirer : le rang ;
 - `contacts[role=DAF].email` : la désignation par identité (`of.key`) n'est pas
   servie — ni à l'écriture ni à la lecture ; une valeur d'identité qui porterait un
   point ou un crochet casserait la grammaire sans règle de citation ;
@@ -46,6 +69,7 @@ des vides, leur validation et leur journal comme n'importe quelle colonne.
 """
 from __future__ import annotations
 
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -70,9 +94,10 @@ from .points import _ranger_une_fiche
 #: crochets, et peut-être un attribut. Ce qui ressemble sans être de cette forme —
 #: `Prix [EUR]`, `note[a]` — reste un nom de colonne ordinaire, comme avant.
 _ADRESSE = re.compile(r"^(?P<col>[^\s\[\].]+)\[(?P<rang>[^\]]*)\](?:\.(?P<reste>.+))?$")
-_RANG = re.compile(r"^(?:\d+|\+|)$|=")
+_RANG = re.compile(r"^(?:\d+|[+-]|)$|=")
 
 AJOUT = "+"
+RETRAIT = "-"
 
 
 def _refus(message: str) -> RowValidationError:
@@ -85,8 +110,8 @@ class _Colonne:
     nom: str
     modifs: dict = field(default_factory=dict)       # rang → fiche partielle
     suppressions: set = field(default_factory=set)   # rangs supprimés
-    ajout: Any = None
-    a_un_ajout: bool = False
+    ajouts: list = field(default_factory=list)       # éléments ajoutés, dans l'ordre
+    retraits: list = field(default_factory=list)     # valeurs retirées (oto#102)
 
 
 @dataclass
@@ -119,23 +144,28 @@ class EcrituresParRang:
             champ = champ_declare(schema, col.nom)
             cle_item = cle_d_element(champ)
             of = champ.get("of") if isinstance(champ, dict) else None
-            elements = [(f"{col.nom}[{r}]", r) for r in sorted(col.modifs)]
-            if col.a_un_ajout:
-                elements.append((f"{col.nom}[{AJOUT}]", AJOUT))
-            for adresse, r in elements:
-                element = col.ajout if r == AJOUT else col.modifs[r]
-                if isinstance(element, dict):
-                    element = _ranger_une_fiche(element, adresse)
-                refuser_cles_internes({adresse: element})
-                mots_dans_l_element(element, adresse, errors, cle_item=cle_item)
-                _scan_mixed(element, adresse, errors)
-                element = _dates(schema, of, adresse, element, normaliser)
-                if r == AJOUT:
-                    col.ajout = element
-                else:
-                    col.modifs[r] = element
+            for r in sorted(col.modifs):
+                col.modifs[r] = self._garder(f"{col.nom}[{r}]", col.modifs[r], schema,
+                                             of, cle_item, errors, normaliser)
+            for liste, signe in ((col.ajouts, AJOUT), (col.retraits, RETRAIT)):
+                for i, element in enumerate(liste):
+                    adresse = (f"{col.nom}[{signe}]" if len(liste) == 1
+                               else f"{col.nom}[{signe}][{i}]")
+                    liste[i] = self._garder(adresse, element, schema, of, cle_item,
+                                            errors, normaliser)
         if errors:
             raise RowValidationError(errors)
+
+    @staticmethod
+    def _garder(adresse: str, element: Any, schema: Optional[dict], of: Any,
+                cle_item: Optional[str], errors: list,
+                normaliser: Callable[[Optional[dict], dict], dict]) -> Any:
+        if isinstance(element, dict):
+            element = _ranger_une_fiche(element, adresse)
+        refuser_cles_internes({adresse: element})
+        mots_dans_l_element(element, adresse, errors, cle_item=cle_item)
+        _scan_mixed(element, adresse, errors)
+        return _dates(schema, of, adresse, element, normaliser)
 
     # ── la résolution : contre la ligne EN PLACE ──────────────────────────────────
 
@@ -154,18 +184,19 @@ class EcrituresParRang:
             vises = sorted(set(col.modifs) | col.suppressions)
             if vises and vises[-1] >= len(avant):
                 raise _refus_hors_bornes(col.nom, vises[-1], len(avant), creation)
-            apres = list(avant)
-            for r, partielle in col.modifs.items():
-                apres[r] = _fusionner_l_element(col.nom, r, avant[r], partielle)
+            # `(élément, écrit par le geste ?)` : les rangs écrits se relisent à la
+            # fin, après les suppressions, les retraits et les ajouts qui les décalent.
+            suivis = [(_fusionner_l_element(col.nom, r, x, col.modifs[r]), True)
+                      if r in col.modifs else (x, False) for r, x in enumerate(avant)]
             for r in sorted(col.suppressions, reverse=True):
-                del apres[r]
-            ecrits = {r - sum(1 for s in col.suppressions if s < r) for r in col.modifs}
-            if col.a_un_ajout:
-                apres.append(_nouvel_element(col.nom, col.ajout))
-                ecrits.add(len(apres) - 1)
+                del suivis[r]
+            if col.retraits:
+                suivis = _retirer(col.nom, suivis, col.retraits, creation)
+            suivis += [(_nouvel_element(col.nom, x), True) for x in col.ajouts]
+            apres = [x for x, _ in suivis]
             if cle_item:
                 _refuser_identite_doublee(col.nom, cle_item, avant, apres)
-            self.ecrits[col.nom] = ecrits
+            self.ecrits[col.nom] = {i for i, (_, ecrit) in enumerate(suivis) if ecrit}
             out[col.nom] = apres or None
         return out
 
@@ -191,8 +222,9 @@ def sortir_les_rangs(schema: Optional[dict], user_data: Optional[dict]
         _refuser_la_forme(cle, nom, rang, attribut, valeur, schema)
         rangs.brut[cle] = valeur
         col = rangs.colonnes.setdefault(nom, _Colonne(nom))
-        if rang == AJOUT:
-            col.ajout, col.a_un_ajout = valeur, True
+        if rang in (AJOUT, RETRAIT):
+            elements = list(valeur) if isinstance(valeur, list) else [valeur]
+            (col.ajouts if rang == AJOUT else col.retraits).extend(elements)
             continue
         r = int(rang)
         if attribut is None:
@@ -268,11 +300,13 @@ def _refuser_la_forme(cle: str, nom: str, rang: str, attribut: Optional[str],
                 f"`{cle}` : un élément s'ajoute ENTIER, en une fiche — "
                 f'`"{nom}[+]": {{"{attribut.split(".")[0]}": …, …}}`. Pour modifier un '
                 f"élément existant : `{nom}[<rang>].{attribut}`.")
-        if valeur is None or isinstance(valeur, list):
-            raise _refus(
-                f"`{cle}` ajoute UN élément : il porte une fiche (`{{…}}`) ou, dans une "
-                f"liste de valeurs, une valeur — reçu {_forme(valeur)}. Un geste ajoute "
-                f"un élément ; pour en ajouter plusieurs, écris `{nom}` entière.")
+        _refuser_le_vide(cle, nom, valeur,
+                         "ajoute un élément — une fiche (`{…}`) ou, dans une liste de "
+                         "valeurs, une valeur — ou une LISTE d'éléments, ajoutés dans "
+                         "l'ordre")
+        return
+    if rang == RETRAIT:
+        _refuser_le_retrait(cle, nom, attribut, valeur, champ)
         return
     if attribut is None:
         if valeur is not None:
@@ -288,6 +322,61 @@ def _refuser_la_forme(cle: str, nom: str, rang: str, attribut: Optional[str],
             f"`{cle}` descend sous l'attribut `{tete}` : un attribut d'élément s'écrit "
             f"entier — `{nom}[{int(rang)}].{tete}` —, ou par l'une de ses couches "
             f"({', '.join('`' + c + '`' for c in dsv2.LAYER_KEYS)}).")
+
+
+def _refuser_le_retrait(cle: str, nom: str, attribut: Optional[str], valeur: Any,
+                        champ: Optional[dict]) -> None:
+    """`tags[-]` retire des VALEURS : sur une liste de fiches, le rang reste le geste."""
+    of = champ.get("of") if isinstance(champ, dict) else None
+    fiches = isinstance(of, dict) and (of.get("type") == "object"
+                                       or isinstance(of.get("fields"), list))
+    valeurs = valeur if isinstance(valeur, list) else [valeur]
+    if attribut is not None or fiches or any(isinstance(x, dict) for x in valeurs):
+        raise _refus(
+            f"`{cle}` : le retrait par valeur ne vise qu'une liste de VALEURS — une "
+            f"fiche n'a pas d'égalité servie (couches, attributs absents). Retire-la à "
+            f"son rang, lu dans data_rows : `\"{nom}[<rang>]\": null`.")
+    _refuser_le_vide(cle, nom, valeur, "retire une valeur, ou chaque valeur d'une liste")
+
+
+def _refuser_le_vide(cle: str, nom: str, valeur: Any, geste: str) -> None:
+    """`null`, `[]` ou un `null` dans la liste : rien à ajouter ni à retirer."""
+    if valeur is None:
+        recu = "`null`"
+    elif valeur == []:
+        recu = "une liste vide"
+    elif isinstance(valeur, list) and any(x is None for x in valeur):
+        recu = "un `null` dans la liste"
+    else:
+        return
+    raise _refus(
+        f"`{cle}` {geste} ; reçu {recu}, qui ne désigne aucun élément. Pour effacer la "
+        f"colonne : `\"{nom}\": null`.")
+
+
+def _meme_valeur(a: Any, b: Any) -> bool:
+    """L'égalité JSON : `true` n'est pas `1`, ni `"1"` ; `1` et `1.0` le sont."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    return a == b
+
+
+def _retirer(nom: str, suivis: list, retraits: list, creation: bool) -> list:
+    """Chaque valeur de `retraits` sort de la liste, TOUTES ses occurrences. Une valeur
+    absente se refuse : rien n'est écrit, et le refus la nomme."""
+    absentes = [v for v in retraits if not any(_meme_valeur(x, v) for x, _ in suivis)]
+    if absentes:
+        if creation:
+            etat = f"cette écriture CRÉE la ligne : `{nom}` n'y a encore aucun élément"
+        else:
+            etat = (f"`{nom}` ne porte pas "
+                    + ", ".join(f"`{json.dumps(v, ensure_ascii=False)}`" for v in absentes)
+                    + f" ({len(suivis)} élément{'s' if len(suivis) > 1 else ''} en place)")
+        raise _refus(
+            f"{etat} — rien à retirer. Relis la ligne : une valeur mal orthographiée, ou "
+            f"déjà retirée par un autre geste.")
+    return [(x, e) for x, e in suivis
+            if not any(_meme_valeur(x, v) for v in retraits)]
 
 
 def _refus_hors_bornes(nom: str, rang: int, taille: int, creation: bool

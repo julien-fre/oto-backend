@@ -3307,6 +3307,39 @@ la bascule d'oto#140 J2, `[]` est un vide ÉCARTÉ, et supprimer le dernier cont
 `tests/datastore/test_ecriture_par_rang_oto22_live.py` (store, REST, MCP ; patch, clé,
 lot, création).
 
+## Ajouter et retirer dans une liste sans la relire, compter ses éléments (oto#102, 04/10/2026)
+
+**Le défaut.** Une colonne-liste ne s'écrivait qu'en entier, ou un élément à la fois par
+`contacts[+]` : pour ajouter plusieurs entrées ou retirer une valeur, l'agent relisait,
+recalculait et réécrivait, et deux écritures concurrentes perdaient un ajout sauf
+précondition de révision — la garde était chez le consommateur, et facultative. Et une
+liste de VALEURS ne se comptait pas par élément (`tags[]` n'était pas un chemin).
+
+**Le contrat retenu : la grammaire du rang, deux signes de plus** (`datastore/rangs.py`).
+`tags[+]` porte un élément ou une LISTE d'éléments (ajoutés dans l'ordre, doublons
+gardés) ; `tags[-]` retire une valeur ou une liste de valeurs (toutes les occurrences ;
+liste de valeurs seulement ; une valeur absente se refuse). Pas d'objet d'opération
+(`{"@append": …}`) dans la valeur : `[+]` était déjà le verbe d'ajout servi sur toutes
+les faces, en ouvrir un second aurait fait deux voies pour un geste. La résolution se
+fait dans `EcrituresParRang.appliquer`, sous le `FOR UPDATE` de la ligne, contre la
+liste en place : rangs, puis retraits, puis ajouts. Rien de neuf dans les chemins
+d'écriture — patch par `id`, fusion par clé, lot, création, REST, MCP, dépôt NDJSON
+héritent du geste parce qu'ils appellent déjà `sortir_les_rangs`/`appliquer` ; le
+remplacement (`upsert_row`) le refuse comme tout rang. Les éléments ajoutés passent la
+validation (`ecrits` les nomme à leur rang dans la liste résultante, retraits compris) ;
+le journal porte l'avant et l'après de la colonne entière (déclencheur, inchangé).
+
+⚠️ `tags[-]` était jusqu'ici un nom de colonne littéral (le motif de rang ne
+reconnaissait pas `-`). Requête de vérification en production, lecture seule :
+`SET statement_timeout = '15s'; SELECT count(*) FROM datastore_rows, jsonb_object_keys(data) k WHERE k LIKE '%[-]';`
+
+**Compter** (`db/paths.py`) : `split_list_path` reconnaît l'élément NU, `tags[]` et
+`tags[0]` (`_LIST_ELEMENT_RE`, nom de colonne sans espace ni point, comme l'écriture) ;
+`leaf_read_sql(…, None)` lit l'élément lui-même par la règle d'une case. Filtre,
+`group_by` et métriques en héritent sans autre changement (`db/query.py` inchangé).
+
+Bancs : `tests/datastore/test_ajout_retrait_liste_oto102_live.py`.
+
 ## Les lignes en place face au schéma posé — `existing_violations` (#479, 30/09/2026)
 
 Poser un schéma ne revalide pas l'existant. Les avertissements de la pose disaient en

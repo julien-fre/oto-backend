@@ -130,10 +130,13 @@ def test_ordinary_columns_are_unchanged(pg):
 
 
 def test_a_column_name_containing_brackets_is_not_a_path(pg):
-    """La forme est reconnue par sa SYNTAXE complète (`col[n].reste`), pas par la
-    présence d'un crochet : une colonne bizarrement nommée reste un nom."""
+    """La forme est reconnue par sa SYNTAXE complète (`col[n].reste`, ou l'élément nu
+    `col[n]` d'une liste de valeurs, oto#102), pas par la présence d'un crochet : une
+    colonne bizarrement nommée reste un nom."""
     from oto_mcp.db import datastore as dsdb
-    assert dsdb.split_list_path("contacts[]") is None
+    assert dsdb.split_list_path("contacts[]") == ("contacts", None, None)
+    assert dsdb.split_list_path("Note [1]") is None
+    assert dsdb.split_list_path("note[a]") is None
     assert dsdb.split_list_path("contacts.nom") is None
     assert dsdb.split_list_path("[0].nom") is None
 

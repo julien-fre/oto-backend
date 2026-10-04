@@ -177,6 +177,12 @@ metrics: [{"op": "count"}, {"op": "count_rows"},
 - **Refusés en le nommant** : le tri, la mise en commun d'un `contacts[].x` avec
   d'autres colonnes (`group_by` en liste), et une métrique sur une AUTRE liste que
   celle que `group_by` déroule (le grain serait ambigu).
+- **Une liste de VALEURS se lit par l'élément nu** (oto#102, 04/10/2026) : `tags[]`
+  est l'élément lui-même — `group_by: "tags[]"` (un groupe par valeur, `count` les
+  occurrences, `count_rows` les lignes), `filters` par existence, `count` en métrique
+  — et `tags[0]` l'élément de rang précis, une valeur par ligne. Même grammaire que
+  l'écriture par rang : le nom de colonne n'y porte ni espace ni point, `Note [1]`
+  reste une colonne.
 
 SQL : `jsonb_array_elements` sous garde de type (`list_items_sql`, `db/paths.py`) —
 dans un `EXISTS` pour le filtre, dans un `LATERAL` pour le `group_by`, au même endroit
@@ -194,6 +200,8 @@ data_write(id=…, row={"contacts[1].email": "d@x.fr",            // l'attribut
                       "contacts[1].email.comment": "site officiel"}) // une couche
 data_write(id=…, row={"contacts[+]": {"nom": "Cy", "email": "c@x.fr"}}) // ajout
 data_write(id=…, row={"contacts[0]": null})                        // suppression
+data_write(id=…, row={"tags[+]": ["relance", "chaud"]})             // ajout de plusieurs
+data_write(id=…, row={"tags[-]": "chaud"})                          // retrait par valeur
 ```
 
 - **Un attribut s'écrit comme une colonne**, et se FUSIONNE dans l'élément en place par
@@ -203,7 +211,18 @@ data_write(id=…, row={"contacts[0]": null})                        // suppress
   éléments ne bougent pas — couches comprises, et les couches de la COLONNE aussi.
 - **Une couche seule** (`contacts[1].email.comment`) annote l'attribut en place.
 - **`contacts[+]`** ajoute UNE fiche complète en fin de liste ; ses couches pointées
-  (`"email.comment"`) se rangent comme dans une liste posée entière.
+  (`"email.comment"`) se rangent comme dans une liste posée entière. **Une LISTE
+  d'éléments** s'ajoute dans l'ordre (oto#102) ; les doublons sont gardés — une liste
+  est ordonnée, pas un ensemble —, une identité `of.key` doublée reste refusée. Une
+  colonne dont les éléments sont eux-mêmes des listes enveloppe l'élément : `[[…]]`.
+- **`tags[-]`** retire une valeur, ou chaque valeur d'une liste, toutes ses occurrences
+  (oto#102). Liste de VALEURS seulement : une fiche n'a pas d'égalité servie et se
+  retire à son rang. L'égalité est celle du JSON (`true` n'est pas `1`, `1` vaut
+  `1.0`), après la normalisation des dates. Une valeur absente se refuse comme un rang
+  hors bornes : rien n'est écrit.
+- **L'ajout et le retrait ne demandent aucune lecture** : résolus sous le verrou, deux
+  ajouts simultanés sur la même ligne arrivent tous les deux, sans `expected_revision`
+  ni réservation. Ordre dans un geste : rangs, retraits, ajouts.
 - **`contacts[n]: null`** supprime l'élément. Supprimer le dernier efface la colonne,
   comme un `null` (la valeur partie revient dans `valeurs_effacees`).
 - **Tous les rangs d'un geste désignent la liste EN PLACE**, avant le geste ; l'ajout se
@@ -225,6 +244,9 @@ data_write(id=…, row={"contacts[0]": null})                        // suppress
 | `contacts[0]: {…}` | la forme imbriquée n'est pas servie : `contacts[0].<attribut>` |
 | `contacts[].email` | adresse de lecture (TOUS les éléments), pas d'écriture |
 | `contacts[+].email` | un élément s'ajoute entier : `"contacts[+]": {…}` |
+| `contacts[+]: null`, `[]`, un `null` dans la liste | rien à ajouter ; pour effacer : `"contacts": null` |
+| `contacts[-]` (liste de fiches) | une fiche se retire à son rang : `"contacts[<rang>]": null` |
+| `tags[-]: "zz"` absent | « `tags` ne porte pas `"zz"` … rien à retirer » |
 | `contacts[0].adresse.ville` | un attribut d'élément s'écrit entier, ou par une couche |
 | `contacts` et `contacts[0].x` ensemble | deux écritures d'une même colonne |
 | `contacts[0]: null` et `contacts[0].x` | supprimé et modifié à la fois |
