@@ -21,9 +21,15 @@ question qui autorise la bascule d'autorité.
 """
 from __future__ import annotations
 
+import pathlib
+import sys
 import uuid
 
 import pytest
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 
 @pytest.fixture()

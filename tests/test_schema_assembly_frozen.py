@@ -32,10 +32,16 @@ jamais en recopiant un côté du conflit.
 """
 from __future__ import annotations
 
+import pathlib
 import re
+import sys
 
 from oto_mcp.db import _schema, schema
-from scripts import schema_gele
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from scripts import schema_gele  # noqa: E402
 
 
 def test_le_ddl_servi_est_le_ddl_fige():

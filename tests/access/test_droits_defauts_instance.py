@@ -14,12 +14,18 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import pathlib
+import sys
 
 import pytest
 
 from oto_mcp import entitlements_catalogue as C
 from oto_mcp import server
 from oto_mcp.access import entitlements as A
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 COMPLETE = {"unipile": 0, "platform_unmetered": 0, "unipile_seats": 5,
             "members_max": "unlimited", "platform_key:*": 0}

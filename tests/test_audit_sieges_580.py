@@ -1,7 +1,13 @@
 """Le constat de `scripts/audit_sieges_580.py` : pur, sans base ni fournisseur."""
+import pathlib
+import sys
 from datetime import timedelta
 
-from scripts.audit_sieges_580 import classer
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from scripts.audit_sieges_580 import classer  # noqa: E402
+
 
 LIE = "2026-09-20 10:00:00+00"
 

@@ -20,11 +20,18 @@ Sauté proprement sans PostgreSQL joignable (fixture `pg_dsn`).
 """
 from __future__ import annotations
 
+import pathlib
+import sys
+
 import psycopg
 import pytest
 from psycopg.rows import dict_row
 
 from oto_mcp import tenancy
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 _ACME_ISS = "https://auth.acme.test/oidc"
 _GLOBEX_ISS = "https://auth.globex.test/oidc"

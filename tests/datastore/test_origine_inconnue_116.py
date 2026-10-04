@@ -17,11 +17,16 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import sys
 import uuid
 
 import pytest
 
-from scripts import purger_origine_inconnue as reprise
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+from scripts import purger_origine_inconnue as reprise  # noqa: E402
+
 
 M = reprise.MARQUEUR
 RACINE = pathlib.Path(__file__).resolve().parents[2]

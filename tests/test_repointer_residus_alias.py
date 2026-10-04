@@ -2,11 +2,18 @@
 est ÉCARTÉ et nommé — jamais un repointage deviné."""
 from __future__ import annotations
 
+import pathlib
+import sys
+
 import pytest
 
 from oto_mcp import db
 from oto_mcp.db.sub_aliases import AliasNonResolvable
-from scripts import repointer_residus_alias as script
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from scripts import repointer_residus_alias as script  # noqa: E402
 
 
 class _Res:

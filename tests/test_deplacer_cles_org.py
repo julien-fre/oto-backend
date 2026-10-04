@@ -14,10 +14,16 @@ from __future__ import annotations
 
 import logging
 import os
+import pathlib
+import sys
 
 import pytest
 
 from oto_mcp import credentials_store as cs, crypto, instance_refs
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 ORG = 7301
 AUTRE_ORG = 7302

@@ -17,12 +17,19 @@ vrai PostgreSQL ailleurs.
 """
 from __future__ import annotations
 
+import pathlib
+import sys
+
 import pytest
 
 from oto_mcp import access, credentials_store, grants_chain, group_store, org_store
 from oto_mcp.access import chain_resolution, chain_shadow
 from oto_mcp.db import access_shadow as db_shadow
 from oto_mcp.db import grants as db_grants
+
+# La racine du dépôt n'est pas dans `sys.path` en CI (pas de `__init__.py`) : `scripts`
+# ne s'importait que parce qu'un banc collecté avant l'y avait mise (oto#116).
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 # Sans base : le palier plateforme lit les droits de la personne (#1090).
 pytestmark = pytest.mark.usefixtures("sans_droit_declare")
