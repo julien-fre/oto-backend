@@ -1,7 +1,7 @@
 ## prerequisite — clé api stripe
 
 crée une **clé restreinte** dans Stripe (Dashboard → Developers → API keys → « Create restricted key » — voir la [doc des clés](https://docs.stripe.com/keys)), puis colle-la dans oto.
-- des permissions en **lecture** suffisent pour interroger clients/abonnements/factures/paiements/solde — **rien de tout ça ne déplace d'argent**. écrire dans le catalogue (produits, prix, coupons, codes promo, lignes de facture, liens de paiement) demande en plus les scopes d'**écriture** correspondants sur la clé restreinte (ex. Products/Prices/Coupons/Promotion codes write) — sans eux, Stripe refuse ces écritures avec un 403
+- des permissions en **lecture** suffisent pour interroger clients/abonnements/factures/paiements/solde — **rien de tout ça ne déplace d'argent**. écrire dans le catalogue (produits, prix, coupons, codes promo, lignes de facture, liens de paiement : **Payment Links: Write**) demande en plus les scopes d'**écriture** correspondants sur la clé restreinte (ex. Products/Prices/Coupons/Promotion codes write) — sans eux, Stripe refuse ces écritures avec un 403
 - une clé restreinte (`rk_…`) est préférable à une clé secrète (`sk_…`) : elle limite ce que la clé peut atteindre même si elle fuite, et Stripe la recommande explicitement pour les agents IA
 - ⚠️ une clé **publiable** (`pk_…`) est refusée : c'est le jeton du navigateur, il ne peut lire ni client ni facture
 - le **mode** se lit dans la clé : `rk_test_…` / `sk_test_…` = mode test, `rk_live_…` / `sk_live_…` = mode réel. Les deux mondes sont séparés — un client de test n'existe pas en réel, et inversement
@@ -24,6 +24,7 @@ deux champs facultatifs à côté de la clé :
 - « sa carte est-elle expirée ? » → `stripe_customer(op="payment_methods", customer_id="cus_…")`
 - « a-t-on des litiges en cours ? » → `stripe_payment(op="list_disputes")` — attention à `evidence_details.due_by`, l'argent est déjà retiré du solde pendant ce temps
 - « fais-moi un lien de paiement pour cette offre » → `stripe_catalog(op="list_prices")` puis `stripe_checkout(op="create_link", price_id="price_…")`
+- « lien d'abonnement pour l'org 444, un seul paiement » → `stripe_checkout(op="create_link", price_id="price_…", org_id=444, org_name="Lucid-Lab", max_uses=1)` — `org_id` est posé sur le lien ET sur la subscription créée au paiement (Stripe ne recopie pas la metadata du lien) ; requis pour un prix récurrent
 - « ajoute 200 € sur sa prochaine facture » → `stripe_invoice(op="add_item", customer_id="cus_…", amount=20000, currency="eur")`
 - « crée un code -20% pour le lancement » → `stripe_catalog(op="create_coupon", percent_off=20, duration="once", name="LAUNCH20")` (rend un `coupon_id`) puis `stripe_catalog(op="create_promotion_code", coupon_id="cp_…", code="LAUNCH20")` — le coupon est la RÈGLE de remise, la promotion code est le TEXTE que le client tape
 - « désactive ce code promo » → `stripe_catalog(op="update_promotion_code", promotion_code_id="promo_…", active=false)` — les redemptions déjà faites ne sont pas touchées, seuls les usages futurs sont bloqués

@@ -897,6 +897,10 @@ def register(mcp: FastMCP) -> None:
         status: Optional[Literal["open", "complete", "expired"]] = None,
         active: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        org_id: Optional[int] = None,
+        org_name: Optional[str] = None,
+        subscription_metadata: Optional[Dict[str, Any]] = None,
+        max_uses: Optional[int] = None,
         limit: Optional[int] = None,
         starting_after: Optional[str] = None,
     ) -> object:
@@ -923,7 +927,18 @@ def register(mcp: FastMCP) -> None:
                 switches a link off without deleting it.
             customer_id/status: "list_sessions" filters — `status="open"` are
                 abandoned checkouts.
-            metadata, limit, starting_after: as elsewhere.
+            metadata: on the link itself. Stripe does NOT copy it onto the
+                subscription / payment created at checkout — use the fields below.
+            org_id/org_name: "create_link" — binds the link to a Tulina org. Sets
+                `org_id` (+ `org_name`) on the link AND on what it creates
+                (subscription for a recurring price, payment intent otherwise),
+                which is where the Tulina front reads it. REQUIRED for a
+                recurring price, else the paid subscription is orphaned.
+            subscription_metadata: "create_link" — extra metadata for the
+                subscription / payment created at checkout.
+            max_uses: "create_link" — the link stops working after N completed
+                checkouts (1 = single payment, stays tied to one customer).
+            limit, starting_after: as elsewhere.
 
         """
         client = _client()
@@ -957,7 +972,31 @@ def register(mcp: FastMCP) -> None:
                 raise _bad("op='create_link' requiert `price_id` — liste-les avec "
                            "stripe_catalog(op='list_prices').")
             items: List[Dict[str, Any]] = [{"price": price_id, "quantity": quantity or 1}]
-            return _run(lambda: client.create_payment_link(items, metadata=metadata))
+            if org_id is not None and (isinstance(org_id, bool) or org_id <= 0):
+                raise _bad("`org_id` doit être un entier positif (id de l'org Tulina)")
+            if max_uses is not None and max_uses < 1:
+                raise _bad("`max_uses` doit être ≥ 1")
+            price = _run(lambda: client.get_price(price_id))
+            recurring = isinstance(price, dict) and price.get("type") == "recurring"
+            if recurring and org_id is None:
+                raise _bad("op='create_link' sur un prix récurrent requiert `org_id` : "
+                           "sans lui, la subscription payée n'est rattachée à aucune org.")
+            org_meta: Dict[str, Any] = {}
+            if org_id is not None:
+                org_meta["org_id"] = str(org_id)
+            if org_name:
+                org_meta["org_name"] = org_name
+            link_meta = {**(metadata or {}), **org_meta}
+            created_meta = {**(subscription_metadata or {}), **org_meta}
+            body: Dict[str, Any] = {}
+            if link_meta:
+                body["metadata"] = link_meta
+            if created_meta:
+                body["subscription_data" if recurring else "payment_intent_data"] = {
+                    "metadata": created_meta}
+            if max_uses is not None:
+                body["restrictions"] = {"completed_sessions": {"limit": max_uses}}
+            return _run(lambda: client.create_payment_link(items, **body))
         if op == "update_link":
             if not payment_link_id:
                 raise _bad("op='update_link' requiert `payment_link_id`")

@@ -535,6 +535,43 @@ def test_checkout_create_link_requires_a_price():
         patcher.stop()
 
 
+def _link_body(**kw):
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        cls.return_value.get_price.return_value = {"type": kw.pop("ptype")}
+        _tool(m, "stripe_checkout")(op="create_link", price_id="price_1", **kw)
+        return cls.return_value.create_payment_link.call_args[1]
+    finally:
+        patcher.stop()
+
+
+def test_create_link_recurring_puts_org_on_subscription_and_limits_uses():
+    body = _link_body(ptype="recurring", org_id=444, org_name="Lucid-Lab", max_uses=1)
+    assert body["metadata"] == {"org_id": "444", "org_name": "Lucid-Lab"}
+    assert body["subscription_data"] == {"metadata": {"org_id": "444", "org_name": "Lucid-Lab"}}
+    assert body["restrictions"] == {"completed_sessions": {"limit": 1}}
+    assert "payment_intent_data" not in body
+
+
+def test_create_link_one_time_uses_payment_intent_data():
+    body = _link_body(ptype="one_time", org_id=7)
+    assert body["payment_intent_data"] == {"metadata": {"org_id": "7"}}
+    assert "subscription_data" not in body
+
+
+def test_create_link_recurring_requires_org_id():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        cls.return_value.get_price.return_value = {"type": "recurring"}
+        with pytest.raises(McpError, match="requiert `org_id`"):
+            _tool(m, "stripe_checkout")(op="create_link", price_id="price_1")
+        cls.return_value.create_payment_link.assert_not_called()
+        with pytest.raises(McpError, match="entier positif"):
+            _tool(m, "stripe_checkout")(op="create_link", price_id="price_1", org_id=0)
+    finally:
+        patcher.stop()
+
+
 # --- messages d'erreur : actionnables, pas génériques --------------------------
 
 def test_missing_tax_code_error_tells_the_agent_how_to_fix_it():
