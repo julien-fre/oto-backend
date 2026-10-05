@@ -1,14 +1,14 @@
 [
   {
     "nom": "oto-dashboard",
-    "depot": "otomata-tech/oto-dashboard",
-    "chemin": "frontend/openapi/oto-openapi.json",
-    "secret": null
+    "depot": "otomata-tech/oto-app",
+    "chemin": "dashboard/frontend/openapi/oto-openapi.json",
+    "secret": "OTO_COMMERCE_CONTRACT_KEY"
   },
   {
     "nom": "oto-commerce",
-    "depot": "otomata-tech/oto-commerce",
-    "chemin": "api/openapi-service.json",
+    "depot": "otomata-tech/oto-app",
+    "chemin": "commerce/api/openapi-service.json",
     "secret": "OTO_COMMERCE_CONTRACT_KEY"
   }
 ]
