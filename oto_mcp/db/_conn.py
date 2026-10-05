@@ -227,8 +227,10 @@ def reuse_connection() -> Iterator[None]:
     TOUTE la transaction en échec, `InFailedSqlTransaction` sur la première lecture
     suivante). `status_for` est une PROJECTION (aucune écriture sur son chemin,
     vérifié : `journal_resolution` — la seule comparaison ADR 0053 posée sur ce
-    chemin — ne fait qu'un `logger.warning`, jamais une écriture) — c'est le seul
-    appelant prévu, et le seul pour lequel ces deux propriétés sont sûres.
+    chemin — ne fait qu'un `logger.warning`, jamais une écriture). Deux appelants, et
+    deux seuls pour lesquels ces deux propriétés sont vérifiées : `status_for`, et
+    `connectors.me` (#1148), qui l'englobe — un banc relève chaque requête de son chemin
+    et rougit sur une écriture (`tests/test_connecteurs_me_une_connexion_1148.py`).
 
     Ré-entrant : un `reuse_connection()` imbriqué dans un autre ne fait rien (la
     connexion déjà empruntée par le bloc englobant sert aux deux)."""

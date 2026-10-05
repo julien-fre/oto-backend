@@ -1142,3 +1142,20 @@ pool ; sa réécriture n'a pas d'objet tant que ce chemin reste mort.
 La protection côté REST d'une route qui tient le pool trop souvent est la garde des
 routes lourdes (`docs/rest-api.md` §Routes lourdes). Preuves :
 `tests/db/test_pool_hors_pool_1141.py`.
+
+## Une lecture par ligne, un emprunt par lecture (#1148, 05/10/2026)
+
+Deux routes de page restaient lentes après #1145 — `GET /api/me/connectors` (médiane
+3,0 s, p95 15,7 s) et `POST /api/me/runner/triggers` (3,6 s, 11,9 s), les 03-04/10. Ni
+réseau sortant ni verrou sur leur chemin : des centaines de lectures unitaires, chacune
+sur son propre emprunt au pool (`BEGIN`, requête, `COMMIT` : trois allers-retours), et
+chaque emprunt attend son tour quand le pool est disputé — le nombre d'emprunts
+multiplie la contention, d'où la queue.
+
+- **`connectors.me`** (~160 lectures : sélection, coffre, cascade, options, apps
+  OAuth) passe sous `db.reuse_connection()` comme `access.status_for` : UN emprunt par
+  appel (176 → 1, mesuré en local). Condition de l'enveloppe, gardée par un banc : le
+  chemin ne fait que lire. L'option payante se juge une fois par (option, porteur du
+  credential) au lieu d'une par canal.
+
+Preuves : `tests/test_connecteurs_me_une_connexion_1148.py`.

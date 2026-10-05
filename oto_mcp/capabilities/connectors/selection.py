@@ -26,7 +26,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from ... import access, org_store, providers, session_org, tool_registry
+from ... import access, db, org_store, providers, session_org, tool_registry
 from ...connectors import activation as connector_activation
 from ...connectors import cardinality as connector_cardinality
 from ...connectors import credential_presence
@@ -470,6 +470,18 @@ def _with_readiness(ctx: ResolvedCtx, row: dict) -> dict:
 
 
 def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
+    """`GET /api/me/connectors` : UNE connexion du pool pour toute la lecture
+    (oto-backend#1148). Le chemin fait ~160 lectures unitaires (sélection, coffre,
+    cascade, options, apps OAuth) ; chacune empruntait sa connexion et payait son
+    `BEGIN`/`COMMIT` — 3 allers-retours par lecture, et autant d'attentes au pool sous
+    charge : médiane 3,0 s, p95 15,7 s en production les 03-04/10/2026. Même enveloppe
+    que `access.status_for`, et même condition : le chemin ne fait QUE lire (un banc
+    relève chaque requête, `tests/test_connecteurs_me_une_connexion_1148.py`)."""
+    with db.reuse_connection():
+        return _me_projection(ctx, inp)
+
+
+def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     org_id = ctx.org_id or 0
     detail = connector_selection.list_selection_detail(ctx.sub, org_id)
     selection = {name: d["state"] for name, d in detail.items()}
@@ -508,6 +520,17 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     # l'enveloppe, sinon des lignes sans `credential` se reliraient « rien n'est
     # connecté », la conclusion même qu'on répare.
     presence, credentials = credential_presence.lire(ctx.sub, org=ctx.org_id)
+    # L'option couche 3 se juge par (option, porteur du credential) : les canaux d'un
+    # compte hébergé partagent l'option ET la clé de leur porteur, donc le même verdict.
+    # Une marche de cascade par couple, pas une par ligne (#1148).
+    options_ouvertes: dict[tuple, bool] = {}
+
+    def _option_ok(nom: str) -> bool:
+        cle = (access.paid_option_for(nom), providers.credential_provider(nom))
+        if cle not in options_ouvertes:
+            options_ouvertes[cle] = access.option_open(ctx.sub, nom, org=ctx.org_id)
+        return options_ouvertes[cle]
+
     connectors = []
     for c in catalog:
         state = selection.get(c["name"], "not_selected")
@@ -550,7 +573,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             "guide_ref_count": len(refset),
             "doctrine_ref_count": len(refset),   # ALIAS déprécié (retrait 29/10/2026)
             "paid_option": opt,
-            "option_ok": access.option_open(ctx.sub, c["name"], org=ctx.org_id),
+            "option_ok": _option_ok(c["name"]),
         }
         # Présent SEULEMENT si une instance est à portée → la ligne se distingue au
         # lieu d'ajouter un champ vide sur 40 lignes. Volontairement distinct de
