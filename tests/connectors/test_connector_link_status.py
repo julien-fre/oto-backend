@@ -34,6 +34,7 @@ from oto_mcp.connectors import link as connector_link
 from oto_mcp.auth import google as google_oauth  # noqa: F401,E402
 from oto_mcp.auth import instagram_meta as instagram_meta_oauth  # noqa: F401,E402
 from oto_mcp.auth import meta_ads as meta_ads_oauth  # noqa: F401,E402
+from oto_mcp.auth import microsoft as microsoft_oauth  # noqa: F401,E402
 
 
 def _federated() -> set[str]:
@@ -60,7 +61,8 @@ def test_le_perimetre_est_celui_quon_croit():
     # l'ont autorisé, pas tous ceux du porteur.
     # `meta_ads` (2026-10-02) : même patron qu'`instagram_meta` ; `bigquery`
     # (2026-10-02) : septième service Google, il lit SON lien.
-    assert _federated() == {"google", "instagram_meta", "meta_ads",
+    # `sharepoint` (2026-10-05) : connexion Microsoft par personne, même patron.
+    assert _federated() == {"google", "instagram_meta", "meta_ads", "sharepoint",
                             "gmail", "drive", "sheets", "calendar", "tasks", "chat",
                             "bigquery"}
 

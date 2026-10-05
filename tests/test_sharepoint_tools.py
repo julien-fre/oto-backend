@@ -1,16 +1,17 @@
-"""Tools `sharepoint_*` et gardes du connecteur.
+"""Tools `sharepoint_*` du connecteur.
 
 Ce que ce fichier verrouille :
 - la SURFACE (2 tools) et le routage vers la bonne méthode de `GraphClient` ;
-- le credential : les trois champs de l'app Entra, seuls passés au client ; un
-  champ vide → refusé avant de construire le client, dans l'outil ET la sonde ;
-- la sonde : un jeton obtenu suffit, un refus d'Entra → `NonAutorise` nommé ;
-- le drive désigné par `drive_id` OU `user` (OneDrive), jamais les deux ;
+- le jeton : celui de la personne appelante (`auth/microsoft.access_token_for`),
+  seul passé au client ; pas de compte connecté → refus qui dit le geste, avant de
+  construire le client ;
+- le drive : le OneDrive de la personne par défaut, une bibliothèque par
+  `drive_id`, le OneDrive d'un collaborateur par `user`, jamais les deux ;
 - la lecture : Word/PowerPoint convertis en PDF, le reste tel quel, rendu par
   `file_content.render_for_agent` ; un dossier ou un fichier trop gros refusé ;
 - le dépôt : texte ou base64 (un seul), `conflict` transmis, type deviné ;
 - la vue resserrée par défaut, l'objet Graph brut avec `full=True` ;
-- un 403 de Graph → refus nommé « permission », un 429 laissé réessayable.
+- un 403 de Graph → refus nommé « droits », un 429 laissé réessayable.
 """
 import asyncio
 import base64
@@ -19,28 +20,23 @@ from unittest.mock import MagicMock
 import pytest
 from oto_mcp.mcp_errors import McpError
 
-_CREDS = {"directory_id": " annuaire-guid ", "client_id": "client-guid",
-          "client_secret": "s3cr3t"}
-_ATTENDU = ("annuaire-guid", "client-guid", "s3cr3t")
-
 
 @pytest.fixture
 def construits(monkeypatch):
-    """Les arguments de chaque construction de `GraphClient`, et le faux client."""
+    """Les arguments de chaque construction de `GraphClient`, et le faux client.
+    La personne appelante a un compte connecté (jeton « AT-sub-1 »)."""
     inst, calls = MagicMock(), []
 
     def fabrique(*args, **kw):
-        assert not kw, "le client se construit en positionnel : annuaire, client, secret"
+        assert not kw, "le client se construit avec le seul jeton"
         calls.append(args)
         return inst
 
     monkeypatch.setattr("oto.tools.microsoft.GraphClient", fabrique)
+    monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
+    monkeypatch.setattr("oto_mcp.auth.microsoft.access_token_for",
+                        lambda sub: f"AT-{sub}")
     return inst, calls
-
-
-def _creds(monkeypatch, creds=_CREDS):
-    monkeypatch.setattr("oto_mcp.access.resolve_credential_fields",
-                        lambda provider: dict(creds))
 
 
 def _mcp():
@@ -65,7 +61,6 @@ def _render_capture(monkeypatch):
         return {"encoding": "text", "content": "…"}
 
     monkeypatch.setattr("oto_mcp.file_content.render_for_agent", render)
-    monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
     return vus
 
 
@@ -75,74 +70,47 @@ def _upstream(status, body=None):
                              service="microsoft")
 
 
-# --- surface & credential -------------------------------------------------------
+# --- surface & jeton ------------------------------------------------------------
 
 def test_surface(construits):
     names = {t.name for t in asyncio.run(_mcp().list_tools())}
     assert names == {"sharepoint_site", "sharepoint_file"}
 
 
-def test_credential_passe_nettoye(construits, monkeypatch):
+def test_le_client_porte_le_jeton_de_l_appelant(construits):
     inst, calls = construits
-    _creds(monkeypatch)
     inst.search_sites.return_value = []
     _tool("sharepoint_site")(query="rh")
-    assert calls == [_ATTENDU]
+    assert calls == [("AT-sub-1",)]
 
 
-@pytest.mark.parametrize("champ", ["directory_id", "client_id", "client_secret"])
-def test_credential_incomplet_refuse(construits, monkeypatch, champ):
-    _creds(monkeypatch, {**_CREDS, champ: " "})
-    with pytest.raises(McpError, match=champ):
+def test_pas_de_compte_connecte_refus_qui_dit_le_geste(construits, monkeypatch):
+    def refus(sub):
+        raise RuntimeError("No Microsoft account connected. Sign in from your "
+                           "connectors page")
+
+    monkeypatch.setattr("oto_mcp.auth.microsoft.access_token_for", refus)
+    with pytest.raises(McpError, match="Sign in"):
         _tool("sharepoint_site")(query="rh")
     assert construits[1] == []
 
 
-def test_refus_entra_traduit(construits, monkeypatch):
-    from oto.tools.microsoft import MicrosoftAuthError
+def test_autorisation_morte_refus_qui_dit_le_geste(construits, monkeypatch):
+    from oto_mcp.auth.microsoft import MicrosoftReauthRequired
 
-    inst, _ = construits
-    _creds(monkeypatch)
-    inst.search_sites.side_effect = MicrosoftAuthError("x", code="AADSTS7000222")
-    with pytest.raises(McpError, match="secret expiré"):
-        _tool("sharepoint_site")(query="rh")
+    def morte(sub):
+        raise MicrosoftReauthRequired("Microsoft no longer accepts this sign-in. "
+                                      "Reconnect")
 
-
-# --- sonde ----------------------------------------------------------------------
-
-def test_sonde_un_jeton_suffit(construits):
-    from oto_mcp.tools import sharepoint as X
-
-    inst, calls = construits
-    X._verify(dict(_CREDS))
-    inst.token.assert_called_once_with()
-    assert calls == [_ATTENDU]
-
-
-def test_sonde_refus_entra_non_autorise(construits):
-    from oto.tools.microsoft import MicrosoftAuthError
-    from oto_mcp.connectors import verify as connector_verify
-    from oto_mcp.tools import sharepoint as X
-
-    construits[0].token.side_effect = MicrosoftAuthError("x", code="AADSTS700016")
-    with pytest.raises(connector_verify.NonAutorise, match="client_id"):
-        X._verify(dict(_CREDS))
-
-
-def test_sonde_champ_vide_non_autorise(construits):
-    from oto_mcp.connectors import verify as connector_verify
-    from oto_mcp.tools import sharepoint as X
-
-    with pytest.raises(connector_verify.NonAutorise, match="client_secret"):
-        X._verify({**_CREDS, "client_secret": ""})
-    assert construits[1] == []
+    monkeypatch.setattr("oto_mcp.auth.microsoft.access_token_for", morte)
+    with pytest.raises(McpError, match="Reconnect"):
+        _tool("sharepoint_file")()
 
 
 # --- sites ----------------------------------------------------------------------
 
 def test_site_par_url(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_site_by_path.return_value = {"id": "s1", "displayName": "Marketing",
                                           "extra": "x"}
     out = _tool("sharepoint_site")(op="get",
@@ -153,7 +121,6 @@ def test_site_par_url(construits, monkeypatch):
 
 def test_site_racine_par_url(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_site.return_value = {"id": "root"}
     _tool("sharepoint_site")(op="get", url="https://contoso.sharepoint.com")
     inst.get_site.assert_called_once_with("contoso.sharepoint.com")
@@ -161,7 +128,6 @@ def test_site_racine_par_url(construits, monkeypatch):
 
 def test_drives_d_un_site(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.list_site_drives.return_value = [{"id": "d1", "name": "Documents",
                                            "driveType": "documentLibrary"}]
     out = _tool("sharepoint_site")(op="drives", site_id="s1")
@@ -169,23 +135,29 @@ def test_drives_d_un_site(construits, monkeypatch):
 
 
 def test_site_get_exige_un_seul_designateur(construits, monkeypatch):
-    _creds(monkeypatch)
     with pytest.raises(McpError, match="un seul"):
         _tool("sharepoint_site")(op="get", site_id="s1", url="https://a.sharepoint.com")
 
 
 # --- drive ----------------------------------------------------------------------
 
-@pytest.mark.parametrize("kw", [{}, {"drive_id": "d1", "user": "a@b.fr"}])
-def test_drive_un_seul_designateur(construits, monkeypatch, kw):
-    _creds(monkeypatch)
-    with pytest.raises(McpError, match="un seul des deux"):
-        _tool("sharepoint_file")(**kw)
+def test_drive_id_et_user_s_excluent(construits, monkeypatch):
+    with pytest.raises(McpError, match="pas les deux"):
+        _tool("sharepoint_file")(drive_id="d1", user="a@b.fr")
+
+
+def test_mon_onedrive_par_defaut(construits, monkeypatch):
+    inst, _ = construits
+    inst.get_my_drive.return_value = {"id": "moi"}
+    inst.list_children.return_value = []
+    out = _tool("sharepoint_file")()
+    inst.list_children.assert_called_once_with("moi", item_id=None, path=None, limit=200)
+    inst.get_user_drive.assert_not_called()
+    assert out["drive_id"] == "moi"
 
 
 def test_onedrive_par_user(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_user_drive.return_value = {"id": "od1"}
     inst.list_children.return_value = [{
         "id": "i1", "name": "Contrats", "folder": {"childCount": 3},
@@ -200,7 +172,6 @@ def test_onedrive_par_user(construits, monkeypatch):
 
 def test_chemin_du_dossier_parent(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_item.return_value = {"id": "i1", "name": "nda.pdf", "file": {"mimeType": "x"},
                                   "parentReference": {"path": "/drives/d1/root:/Contrats/2026"}}
     assert _tool("sharepoint_file")(op="get", drive_id="d1",
@@ -211,7 +182,6 @@ def test_chemin_du_dossier_parent(construits, monkeypatch):
 
 def test_word_lu_en_pdf(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_item.return_value = {"id": "i1", "name": "NDA v2.docx", "size": 10,
                                   "file": {"mimeType": "application/vnd.openxml"}}
     inst.download.return_value = b"%PDF"
@@ -226,7 +196,6 @@ def test_word_lu_en_pdf(construits, monkeypatch):
 
 def test_tableur_lu_tel_quel_avec_sa_feuille(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     inst.get_item.return_value = {"id": "i1", "name": "budget.xlsx", "size": 10,
                                   "file": {"mimeType": mime}}
@@ -240,7 +209,6 @@ def test_tableur_lu_tel_quel_avec_sa_feuille(construits, monkeypatch):
 
 def test_as_pdf_false_garde_l_original(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_item.return_value = {"id": "i1", "name": "a.docx", "size": 1, "file": {}}
     inst.download.return_value = b"PK"
     _render_capture(monkeypatch)
@@ -250,7 +218,6 @@ def test_as_pdf_false_garde_l_original(construits, monkeypatch):
 
 def test_dossier_et_gros_fichier_refuses(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.get_item.return_value = {"id": "i1", "name": "Contrats", "folder": {}}
     with pytest.raises(McpError, match="dossier"):
         _tool("sharepoint_file")(op="download", drive_id="d1", item_id="i1")
@@ -262,7 +229,6 @@ def test_dossier_et_gros_fichier_refuses(construits, monkeypatch):
 
 
 def test_options_de_lecture_hors_download_refusees(construits, monkeypatch):
-    _creds(monkeypatch)
     with pytest.raises(McpError, match="op='download'"):
         _tool("sharepoint_file")(drive_id="d1", as_pdf=True)
 
@@ -271,7 +237,6 @@ def test_options_de_lecture_hors_download_refusees(construits, monkeypatch):
 
 def test_depot_texte(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.upload.return_value = {"id": "n1", "name": "cr.md", "file": {}}
     out = _tool("sharepoint_file")(op="upload", drive_id="d1", path="CR", name="cr.md",
                                    content_text="# CR é")
@@ -284,7 +249,6 @@ def test_depot_texte(construits, monkeypatch):
 
 def test_depot_base64_et_conflit(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.upload.return_value = {"id": "n1"}
     _tool("sharepoint_file")(op="upload", drive_id="d1", name="nda.pdf", conflict="rename",
                              content_base64=base64.b64encode(b"%PDF").decode())
@@ -296,7 +260,6 @@ def test_depot_base64_et_conflit(construits, monkeypatch):
 @pytest.mark.parametrize("kw", [{}, {"content_text": "a", "content_base64": "YQ=="},
                                 {"content_base64": "pas du base64!"}])
 def test_depot_contenu_invalide(construits, monkeypatch, kw):
-    _creds(monkeypatch)
     with pytest.raises(McpError):
         _tool("sharepoint_file")(op="upload", drive_id="d1", name="a.txt", **kw)
     construits[0].upload.assert_not_called()
@@ -306,9 +269,8 @@ def test_depot_contenu_invalide(construits, monkeypatch, kw):
 
 def test_403_refus_nomme_permission(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     inst.list_children.side_effect = _upstream(403)
-    with pytest.raises(McpError, match="permission d'application"):
+    with pytest.raises(McpError, match="pas les droits"):
         _tool("sharepoint_file")(drive_id="d1")
 
 
@@ -316,7 +278,6 @@ def test_429_reste_reessayable(construits, monkeypatch):
     from oto.tools.common.errors import UpstreamHTTPError
 
     inst, _ = construits
-    _creds(monkeypatch)
     inst.list_children.side_effect = _upstream(429)
     with pytest.raises(UpstreamHTTPError):
         _tool("sharepoint_file")(drive_id="d1")
@@ -326,7 +287,6 @@ def test_429_reste_reessayable(construits, monkeypatch):
 
 def test_vue_resserree_par_defaut_brut_avec_full(construits, monkeypatch):
     inst, _ = construits
-    _creds(monkeypatch)
     brut = {"id": "i1", "name": "a.pdf", "file": {"mimeType": "application/pdf"},
             "@microsoft.graph.downloadUrl": "https://x", "createdBy": {"user": {}}}
     inst.list_children.return_value = [brut]

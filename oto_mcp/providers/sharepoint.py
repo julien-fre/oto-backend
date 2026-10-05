@@ -5,35 +5,24 @@ décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
 """
 from __future__ import annotations
 
-from ._model import CredentialField, _c
+from ._model import _c
 
 # sharepoint : fichiers Microsoft 365 (sites SharePoint, bibliothèques de
-# documents, OneDrive) via Microsoft Graph. Le champ `directory_id` est l'annuaire
-# Entra du client (son « tenant » Microsoft), sans rapport avec le tenant d'oto. byo_org seul : le credential est une
-# app Entra enregistrée par l'org dans SON tenant (client credentials, permissions
-# d'APPLICATION consenties par son admin) — il vaut pour l'org entière, pas pour
-# une personne. Aucune app Entra chez nous, aucun OAuth à mener. Multi-champs
-# (ADR 0011), résolu via `access.resolve_credential_fields`. L'hôte Graph est fixe :
-# pas de garde d'egress à poser.
+# documents, OneDrive) via Microsoft Graph, AU NOM DE LA PERSONNE : chacune se
+# connecte avec son compte Microsoft 365 (OAuth, permissions déléguées) et l'agent
+# voit exactement ce qu'elle voit. L'application est celle d'oto, multilocataire,
+# dont les coordonnées sont posées au palier plateforme (`auth/microsoft.py`) ; le
+# client n'enregistre aucune application. L'hôte Graph est fixe : pas de garde
+# d'egress à poser.
 CONNECTOR = _c(
-    "sharepoint", ["sharepoint"], auth_modes={"byo_org"}, secret_kind="fields",
+    "sharepoint", ["sharepoint"],
+    auth_modes={"byo_user"},
+    # Le consentement naît du compte Microsoft de la personne, pas de son org.
+    personal_session=True, secret_kind="oauth",
     label="SharePoint & OneDrive",
-    help="fichiers Microsoft 365 : sites, bibliothèques, OneDrive — chercher, lire, déposer",
+    help="tes fichiers Microsoft 365 : sites, bibliothèques, OneDrive — chercher, lire, "
+         "déposer, avec tes droits",
     href="https://learn.microsoft.com/graph/api/resources/sharepoint",
-    credential_fields=(
-        CredentialField(
-            "directory_id", "ID d'annuaire (tenant)", secret=False,
-            help="Entra ID → Vue d'ensemble → ID de locataire (un GUID), ou le "
-                 "domaine `votre-societe.onmicrosoft.com`."),
-        CredentialField(
-            "client_id", "ID d'application (client)", secret=False,
-            help="Entra ID → Inscriptions d'applications → ton app → ID "
-                 "d'application (client)."),
-        CredentialField(
-            "client_secret", "Secret client (valeur)", secret=True,
-            help="L'app → Certificats et secrets → Nouveau secret client : colle sa "
-                 "VALEUR (montrée une seule fois), pas son ID. Il expire : note la date."),
-    ),
 )
 
 CATEGORY = "Knowledge"
@@ -41,9 +30,8 @@ PUBLISHER = "Microsoft"
 LOGO_DOMAIN = "microsoft.com"
 
 DESCRIPTION = (
-    "Les fichiers Microsoft 365 de ton organisation : chercher un site SharePoint, "
-    "parcourir ses bibliothèques de documents ou le OneDrive d'un collaborateur, "
-    "lire un document (Word, PDF, Excel…) et en déposer un. Par une app Entra que "
-    "ton admin Microsoft enregistre et autorise : ses permissions bornent ce qui "
-    "est visible."
+    "Tes fichiers Microsoft 365 : ton OneDrive, les sites SharePoint et les "
+    "bibliothèques de documents auxquels tu as accès. Chercher, lire un document "
+    "(Word, PDF, Excel…) et en déposer un. Tu te connectes avec ton compte "
+    "Microsoft : l'agent voit ce que tu vois, ni plus ni moins."
 )

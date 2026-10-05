@@ -56,6 +56,8 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
         "instagram_meta",
         # `meta_ads` (2026-10-02) : Facebook Login for Business, même patron.
         "meta_ads",
+        # `sharepoint` (2026-10-05) : connexion Microsoft de la personne, même patron.
+        "sharepoint",
         # Le compte `unipile` GARDE son flux multi-canal (code de production) ; le
         # split du 2026-08-28 ajoute un flux par canal, sans paramètre — le canal
         # est dérivé du connecteur au lieu d'être choisi dans une liste.

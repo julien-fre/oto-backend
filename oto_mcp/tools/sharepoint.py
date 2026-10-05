@@ -1,23 +1,21 @@
-"""SharePoint & OneDrive — les fichiers Microsoft 365 d'une org, via Microsoft Graph.
+"""SharePoint & OneDrive — les fichiers Microsoft 365 d'une personne, via Microsoft Graph.
 
-Credential = une app Entra enregistrée par l'org dans son annuaire (`directory_id`,
-`client_id`, `client_secret`), résolue par appel via
-`access.resolve_credential_fields("sharepoint")` (ADR 0011). Le jeton porte les
-permissions d'APPLICATION que l'admin du tenant a consenties : ce qu'elles ne
-couvrent pas, aucun outil ne le voit — un 403 dit « non autorisé », jamais
+Credential = la connexion Microsoft de la PERSONNE (OAuth, permissions déléguées),
+acquise et renouvelée par `auth/microsoft.py` : l'agent voit exactement ce
+qu'elle voit dans Microsoft 365. Un 403 dit « pas d'accès pour toi », jamais
 « n'existe pas ».
 
 **Surface** (un tool par objet, le verbe en `op`) :
 - `sharepoint_site` (search/get/drives) — trouver un site, lire ses bibliothèques
   de documents (une bibliothèque = un drive) ;
 - `sharepoint_file` (list/get/search/download/upload/create_folder) — les éléments
-  d'un drive, désigné par `drive_id` ou par le OneDrive d'un collaborateur
-  (`user`) ; un élément par `item_id` ou par `path`. La lecture passe par
+  d'un drive : le OneDrive de la personne par défaut, une bibliothèque par
+  `drive_id`, ou le OneDrive d'un collaborateur (`user`) ; un élément par `item_id` ou par `path`. La lecture passe par
   `file_content.render_for_agent` (texte inline, CSV d'un tableur, URL signée
   sinon) ; un document Word ou PowerPoint est converti en PDF par Graph pour que
   son texte se lise.
 
-⚠️ `upload` et `create_folder` ÉCRIVENT dans le SharePoint de l'org ; par défaut
+⚠️ `upload` et `create_folder` ÉCRIVENT dans SharePoint ou OneDrive ; par défaut
 un nom déjà pris est refusé (`conflict="fail"`), jamais écrasé en silence. Aucune
 suppression, aucun déplacement, aucun partage : hors de cette surface.
 """
@@ -33,11 +31,8 @@ from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
-from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
-_NAME = "sharepoint"
-_CHAMPS = ("directory_id", "client_id", "client_secret")
 # Lus en PDF par défaut : Graph les convertit, et c'est le texte du PDF que l'agent
 # lit (le binaire Office brut ne se lit pas). Un tableur reste brut : il se rend
 # en CSV. `as_pdf` force l'un ou l'autre.
@@ -45,78 +40,29 @@ _CONVERTIS = {"doc", "docx", "dot", "dotx", "odt", "rtf", "ppt", "pptx", "pps",
               "ppsx", "odp"}
 _DOWNLOAD_MAX = 50 * 1024 * 1024
 _UPLOAD_MAX = 25 * 1024 * 1024
-# Codes AADSTS qui disent quel champ de la carte est faux.
-_AADSTS = {
-    "AADSTS90002": "annuaire introuvable — vérifie `directory_id`",
-    "AADSTS900023": "`directory_id` mal formé — un GUID ou un domaine onmicrosoft.com",
-    "AADSTS700016": "application introuvable dans ce tenant — vérifie `client_id` "
-                    "(et qu'il appartient bien à cet annuaire)",
-    "AADSTS7000215": "secret invalide — colle la VALEUR du secret client, pas son ID",
-    "AADSTS7000222": "secret expiré — crée un nouveau secret client et remplace-le",
-}
 
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
 
-def _champs(fields: dict) -> dict:
-    """Les trois champs de la carte, NON VIDES. Un champ vide passé au client y
-    lèverait `MissingCredential` au nom de la lib : on le refuse ici, au nom du
-    connecteur."""
-    vides = [n for n in _CHAMPS if not (fields.get(n) or "").strip()]
-    if vides:
-        raise ValueError(f"credential SharePoint incomplet : {', '.join(vides)} vide(s)")
-    return {n: fields[n].strip() for n in _CHAMPS}
-
-
-def _graph(champs: dict):
-    """Le client Graph de ces champs (l'annuaire en premier argument)."""
-    from oto.tools.microsoft import GraphClient
-
-    return GraphClient(champs["directory_id"], champs["client_id"], champs["client_secret"])
-
-
-def _auth_message(e) -> str:
-    raison = _AADSTS.get(e.code or "")
-    return (f"Microsoft refuse l'app Entra de la carte SharePoint : {raison}." if raison
-            else f"Microsoft refuse l'app Entra de la carte SharePoint : {e}")
-
-
 def _upstream_message(e) -> str:
     status = e.status_code
     body = e.body if isinstance(e.body, dict) else {}
     detail = str((body.get("error") or {}).get("message") or e.body or "")[:400]
-    if status in (401, 403):
-        return (f"Microsoft Graph refuse l'accès (HTTP {status}) : l'app Entra n'a pas "
-                "la permission d'application qu'il faut (Sites.Read.All ou "
-                "Files.Read.All en lecture, *.ReadWrite.All pour écrire), le "
-                "consentement administrateur n'a pas été donné, ou — avec "
-                f"Sites.Selected — ce site ne lui a pas été accordé. {detail}").strip()
+    if status == 401:
+        return (f"Microsoft Graph refuse le jeton (HTTP 401) : reconnecte-toi depuis "
+                f"tes connecteurs, « SharePoint & OneDrive ». {detail}").strip()
+    if status == 403:
+        return (f"Microsoft Graph refuse l'accès (HTTP 403) : ce compte Microsoft n'a "
+                f"pas les droits sur cet élément, ou son organisation bloque oto. "
+                f"{detail}").strip()
     if status == 404:
         return f"Microsoft Graph : introuvable (HTTP 404). {detail}".strip()
     if status == 409:
         return (f"Microsoft Graph : un élément porte déjà ce nom (HTTP 409) — "
                 f"`conflict=\"rename\"` ou `\"replace\"` pour passer outre. {detail}").strip()
     return f"Microsoft Graph a refusé la requête (HTTP {status}) : {detail}"
-
-
-def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » : obtenir un jeton applicatif. Couvre `auth`
-    SEUL — les permissions consenties varient (Sites.Selected n'ouvre aucun site
-    par défaut) : sonder un site ferait passer une app saine pour une app morte."""
-    from oto.tools.microsoft import MicrosoftAuthError
-
-    try:
-        champs = _champs(fields)
-    except ValueError as e:
-        raise connector_verify.NonAutorise(str(e))
-    try:
-        _graph(champs).token()
-    except MicrosoftAuthError as e:
-        if e.status_code in (400, 401, 403):
-            raise connector_verify.NonAutorise(_auth_message(e))
-        raise RuntimeError(f"Entra HTTP {e.status_code}: {e}")
 
 
 def _brut(objet: dict) -> dict:
@@ -187,22 +133,22 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.microsoft import GraphClient, MicrosoftAuthError
 
     from .. import file_content
-
-    connector_verify.register(_NAME, _verify)
+    from ..auth import microsoft as ms_auth
 
     def _client() -> GraphClient:
+        """Le client Graph de CET appelant, avec son jeton du moment (renouvelé
+        par `auth/microsoft.py` s'il expire)."""
         try:
-            return _graph(_champs(access.resolve_credential_fields(_NAME)))
-        except ValueError as e:
+            jeton = ms_auth.access_token_for(access.current_user_sub_or_raise())
+        except (RuntimeError, MicrosoftAuthError) as e:
             raise _bad(str(e))
+        return GraphClient(jeton)
 
     def _run(fn):
-        """Refus d'Entra ou 4xx de Graph → refus nommé. 429 et 5xx restent ce
-        qu'ils sont : la taxonomie d'erreurs les classe réessayables."""
+        """4xx de Graph → refus nommé. 429 et 5xx restent ce qu'ils sont : la
+        taxonomie d'erreurs les classe réessayables."""
         try:
             return fn()
-        except MicrosoftAuthError as e:
-            raise _bad(_auth_message(e))
         except UpstreamHTTPError as e:
             if 400 <= e.status_code < 500 and e.status_code != 429:
                 raise _bad(_upstream_message(e))
@@ -211,11 +157,17 @@ def register(mcp: FastMCP) -> None:
             raise _bad(str(e))
 
     def _drive_id(client: GraphClient, drive_id: Optional[str], user: Optional[str]) -> str:
-        if bool(drive_id) == bool(user):
+        """Le drive visé : une bibliothèque (`drive_id`), le OneDrive d'un
+        collaborateur (`user`), sinon le OneDrive de la personne connectée."""
+        if drive_id and user:
             raise _bad("désigne le drive par `drive_id` (une bibliothèque, depuis "
-                       "sharepoint_site op='drives') OU par `user` (le OneDrive de ce "
-                       "collaborateur, par son adresse) — un seul des deux.")
-        return drive_id or _run(lambda: client.get_user_drive(user))["id"]
+                       "sharepoint_site op='drives') OU par `user` (le OneDrive d'un "
+                       "collaborateur, par son adresse) — pas les deux.")
+        if drive_id:
+            return drive_id
+        if user:
+            return _run(lambda: client.get_user_drive(user))["id"]
+        return _run(client.get_my_drive)["id"]
 
     @mcp.tool()
     def sharepoint_site(
@@ -230,8 +182,7 @@ def register(mcp: FastMCP) -> None:
 
         `op`:
         - **"search"** (default): sites whose name or description match `query`.
-          Only the sites the organization's Entra app can see (with the
-          `Sites.Selected` permission, only those granted to it).
+          Only the sites you can open in Microsoft 365.
         - **"get"**: one site, by `site_id` or by its `url` as read in the
           browser (e.g. https://contoso.sharepoint.com/sites/Marketing).
         - **"drives"**: the site's document libraries (`site_id`). A library is a
@@ -292,8 +243,9 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """A file or folder in a SharePoint document library or a OneDrive.
 
-        The drive is `drive_id` (a library, from `sharepoint_site` op="drives")
-        OR `user` (that person's OneDrive, by email) — exactly one. Inside it, an
+        The drive is YOUR OneDrive by default; `drive_id` targets a library
+        (from `sharepoint_site` op="drives"), `user` a colleague's OneDrive (by
+        email, if they shared it with you) — at most one of the two. Inside it, an
         item is `item_id` OR `path` relative to the drive root
         ("Contrats/2026/nda.docx"); neither = the drive root.
 
@@ -323,8 +275,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             op: list (default) | get | search | download | upload | create_folder.
-            drive_id: the library's drive id — or `user`.
-            user: email of a person whose OneDrive to use — or `drive_id`.
+            drive_id: a library's drive id. Omit (with `user`) for your OneDrive.
+            user: email of a colleague whose OneDrive to use, instead.
             item_id: the item (folder for list/upload/create_folder) by id.
             path: the item by path from the drive root, instead of `item_id`.
             query: op="search" — words to look for.

@@ -130,7 +130,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "meta_ads",
     "cognism",
     "lighton",
-    # --- sharepoint : app Entra de l'org (byo_org, client credentials), fichiers M365
+    # --- sharepoint : connexion Microsoft de la personne (OAuth délégué), fichiers M365
     "sharepoint",
     "promptwatch",
     # --- sessions per-user (hors resolve_api_key, stockage dédié) ------------

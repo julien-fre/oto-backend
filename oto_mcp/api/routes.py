@@ -60,6 +60,7 @@ from . import (accords as api_routes_accords,
                hooks as api_routes_hooks,
                instagram_meta as api_routes_instagram_meta,
                meta_ads as api_routes_meta_ads,
+               microsoft as api_routes_microsoft,
                receveurs as api_routes_receveurs,
                salesforce as api_routes_salesforce,
                sirene as api_routes_sirene,
@@ -781,6 +782,15 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler=options_handler,
     )
 
+    # Retour de connexion Microsoft (SharePoint & OneDrive) — même forme.
+    microsoft_routes = api_routes_microsoft.make_routes(
+        verifier=verifier,
+        authenticate=_authenticate,
+        json_response=_json,
+        json_error=_json_error,
+        options_handler=options_handler,
+    )
+
     # Couche capacité (ADR 0009) : routes REST dérivées du registre (no-op tant
     # qu'il est vide — canari). Même séquence autz→validation→handler que MCP.
     capability_routes = _cap_rest_adapter.make_routes(
@@ -881,6 +891,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *salesforce_oauth_routes,
         *instagram_meta_routes,
         *meta_ads_routes,
+        *microsoft_routes,
         *capability_routes,
         *billing_webhook_routes,
         *hook_routes,
