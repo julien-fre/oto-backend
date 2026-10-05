@@ -52,7 +52,8 @@ class Boucle:
     `tiers` n'a pas de défaut, exprès : c'est la question que l'auteur d'une boucle doit
     trancher, et un défaut la trancherait à sa place. `tiers=True` : la boucle produit,
     à partir de travail en base, un effet chez quelqu'un d'extérieur à la plateforme
-    (un débit, un message reçu)."""
+    (un débit, un message reçu), ou écrit pour un client ce qui porte l'environnement
+    qui l'a produit (un lien vers son tableau de bord) — seule la prod le fait."""
 
     nom: str
     tiers: bool
@@ -154,9 +155,12 @@ BOUCLES: tuple[Boucle, ...] = (
     Boucle(nom="formula_backfill", tiers=False,
            armee=_interrupteur("OTO_FORMULA_BACKFILL_ENABLED"),
            fonction=_formule_backfill),
-    # Transcription (ADR 0074, #674) : appelle Mistral, un FOURNISSEUR — aucun effet
-    # chez un client. En double, elle coûte des jetons, elle ne touche personne.
-    Boucle(nom="transcription_worker", tiers=False,
+    # Transcription (ADR 0074, #674) : appelle Mistral, un FOURNISSEUR. `tiers=True`
+    # (oto#1363) : la page de résultat fige l'URL de SON environnement
+    # (`config.dashboard_url()`) — en double prod/préprod, le gagnant de la course
+    # sur `claim_next_transcription_job` pouvait figer un lien manage.oto.ninja pour
+    # un client de prod.
+    Boucle(nom="transcription_worker", tiers=True,
            armee=_interrupteur("OTO_TRANSCRIPTION_WORKER_ENABLED"), fonction=_transcription),
     # Horloge des déclencheurs du runner (R3) : ENFILE un job, n'exécute rien, c'est
     # oto-runner qui agit. Deux ticks sur la même base, un seul gagne chaque échéance

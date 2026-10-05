@@ -147,7 +147,7 @@ def est_la_production() -> bool:
             "impossible de dire si ce process est la production : OTO_ENV est absente. "
             f"Pose-la ({PROD!r} ou {PREPROD!r}) sur cette instance, ou éteins les boucles "
             "qui agissent sur un tiers (OTO_SCHEDULER_ENABLED=0, "
-            "OTO_BILLING_RUNNER_ENABLED=0).")
+            "OTO_BILLING_RUNNER_ENABLED=0, OTO_TRANSCRIPTION_WORKER_ENABLED=0).")
     sentry = os.environ.get("OTO_SENTRY_ENV", "").strip().lower()
     if sentry and (sentry == "production") != (origine == PROD):
         raise EnvironnementAmbigu(
