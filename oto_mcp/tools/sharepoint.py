@@ -3,7 +3,9 @@
 Credential = la connexion Microsoft de la PERSONNE (OAuth, permissions déléguées),
 acquise et renouvelée par `auth/microsoft.py` : l'agent voit exactement ce
 qu'elle voit dans Microsoft 365. Un 403 dit « pas d'accès pour toi », jamais
-« n'existe pas ».
+« n'existe pas ». Plusieurs comptes liés : l'appel choisit le sien par l'axe
+générique `_account=` (aucun paramètre propre aux outils), résolu par
+`access.resolve_credential` comme pour tout connecteur multi-compte.
 
 **Surface** (un tool par objet, le verbe en `op`) :
 - `sharepoint_site` (search/get/drives) — trouver un site, lire ses bibliothèques

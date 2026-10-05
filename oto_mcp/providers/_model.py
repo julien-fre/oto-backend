@@ -282,7 +282,8 @@ class Connector:
         from ..connectors.docs_reader import DOC_SECTIONS, multi_account_section
         sections = tuple(DOC_SECTIONS.get(self.name, ()))
         if self.auth_multi_account:
-            sections += (multi_account_section(self.name, self.account_noun or "compte"),)
+            sections += (multi_account_section(self.name, self.account_noun or "compte",
+                                               par_connexion=self.secret_kind == "oauth"),)
         return sections
 
     @property

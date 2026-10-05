@@ -10,7 +10,8 @@ from ._model import _c
 # sharepoint : fichiers Microsoft 365 (sites SharePoint, bibliothèques de
 # documents, OneDrive) via Microsoft Graph, AU NOM DE LA PERSONNE : chacune se
 # connecte avec son compte Microsoft 365 (OAuth, permissions déléguées) et l'agent
-# voit exactement ce qu'elle voit. L'application est celle d'oto, multilocataire,
+# voit exactement ce qu'elle voit — plusieurs comptes possibles, choisis par
+# `_account=` à l'appel. L'application est celle d'oto, multilocataire,
 # dont les coordonnées sont posées au palier plateforme (`auth/microsoft.py`) ; le
 # client n'enregistre aucune application. L'hôte Graph est fixe : pas de garde
 # d'egress à poser.
@@ -19,6 +20,10 @@ CONNECTOR = _c(
     auth_modes={"byo_user"},
     # Le consentement naît du compte Microsoft de la personne, pas de son org.
     personal_session=True, secret_kind="oauth",
+    # OAuth ⟹ la dérivation dirait mono ; or une personne lie plusieurs comptes
+    # Microsoft (son annuaire, celui d'un client) et le coffre porte une ligne par
+    # compte (`auth/microsoft.persist_grant`). Même raison de fournisseur que google.
+    cardinality="multi",
     label="SharePoint & OneDrive",
     help="tes fichiers Microsoft 365 : sites, bibliothèques, OneDrive — chercher, lire, "
          "déposer, avec tes droits",

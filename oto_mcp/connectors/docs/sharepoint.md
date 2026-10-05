@@ -4,11 +4,13 @@ sur la fiche « SharePoint & OneDrive », clique **Se connecter avec Microsoft**
 - l'agent agit **avec tes droits** : il voit ton OneDrive, les sites SharePoint et les fichiers partagés avec toi, ni plus ni moins. Chaque personne de l'org connecte son propre compte
 - comptes professionnels ou scolaires seulement : un compte Microsoft personnel (outlook.com, hotmail) n'a pas SharePoint
 - ⚠️ **beaucoup d'organisations exigent qu'un administrateur Microsoft 365 autorise oto une première fois.** Si Microsoft affiche « approbation de l'administrateur requise », c'est ce cas : ton admin se connecte une fois de la même façon et coche « consentir au nom de votre organisation », puis chacun peut se connecter
-- la connexion tient dans la durée ; elle tombe si le mot de passe change, si l'organisation la révoque ou après une longue inactivité : la fiche dit alors « à reconnecter »
+- la connexion tient dans la durée ; elle tombe si le mot de passe change, si l'organisation la révoque ou après une longue inactivité : la fiche dit alors quel compte est « à reconnecter », les autres continuent de servir
+- **plusieurs comptes Microsoft** (le tien, celui que te donne un client) : connecte-les l'un après l'autre, Microsoft te laisse choisir le compte à chaque fois. Chacun s'ajoute aux autres, nommé par son adresse ; se reconnecter avec le même compte remplace seulement le sien. Pour en retirer un, retire sa ligne sur la fiche : les autres restent
 
 ## usage — trouver, lire, déposer un document
 
 - « mes fichiers » → `sharepoint_file()` : la racine de ton OneDrive ; `path="Dossier/Sous-dossier"` pour descendre
+- « dans le Microsoft 365 du client » → le même appel avec `_account="moi@fabrikam.com"` (l'adresse du compte lié) ; sans `_account`, c'est le compte par défaut. Chaque réponse rappelle en `_account` le compte qui a servi
 - « le site Marketing » → `sharepoint_site(query="Marketing")`, ou par son adresse : `sharepoint_site(op="get", url="https://contoso.sharepoint.com/sites/Marketing")`
 - « ses bibliothèques de documents » → `sharepoint_site(op="drives", site_id="…")` ; chaque `id` rendu est un `drive_id`
 - « le contenu de ce dossier » → `sharepoint_file(drive_id="…", path="Contrats/2026")`

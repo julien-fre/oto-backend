@@ -62,7 +62,8 @@ def test_chaque_section_servie_vient_de_son_seul_markdown():
         servies = c.doc_sections
         if c.auth_multi_account:
             assert servies and servies[-1] == connector_docs.multi_account_section(
-                nom, c.account_noun or "compte"), (
+                nom, c.account_noun or "compte",
+                par_connexion=c.secret_kind == "oauth"), (
                 f"{nom} : multi-compte sans sa section générée en dernière position")
             servies = servies[:-1]
         if not servies:

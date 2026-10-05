@@ -166,25 +166,46 @@ class _Vue(dict):
 DOC_SECTIONS = _Vue()
 
 
-def multi_account_section(connector: str, noun: str) -> DocSection:
+def multi_account_section(connector: str, noun: str,
+                          par_connexion: bool = False) -> DocSection:
     """La section « plusieurs <noun>s » d'un connecteur multi-compte — ÉCRITE UNE
     FOIS pour tous : la mécanique (compte nommé, défaut, `_account`, refus en cas
     d'ambiguïté) est celle de la plateforme, pas celle d'un fournisseur. Une fiche
-    n'écrit que ce qui lui est propre (pourquoi il faut une clé par <noun>)."""
+    n'écrit que ce qui lui est propre (pourquoi il faut une clé par <noun>).
+
+    `par_connexion` : le compte naît d'une CONNEXION (OAuth — google, sharepoint),
+    pas d'une clé posée. Il est alors nommé par son adresse, le premier lié est le
+    défaut, et rien ne se pose à l'équipe ou à l'org depuis ce geste : la règle
+    « le premier sans nom, puis « principal » » des clés posées y serait fausse."""
+    if par_connexion:
+        nommage = (
+            f"ce connecteur accepte plusieurs {noun}s : se connecter avec un autre "
+            f"{noun} l'**ajoute** à côté des autres, nommé par son adresse ; se "
+            f"reconnecter avec le même remplace le sien.",
+            f"- le premier {noun} lié est le défaut",
+        )
+        lister = f"`oto_identity(op='list', connector='{connector}')`"
+        renommer, pose = "", "lié"
+    else:
+        nommage = (
+            f"ce connecteur accepte plusieurs {noun}s : chaque credential posé devient un "
+            f"**compte nommé** (un nom par {noun}), à ton niveau, à celui de ton équipe ou "
+            f"de ton org.",
+            "- le premier n'a pas besoin de nom ; à partir du deuxième, chacun porte le sien "
+            "(le premier prend alors le nom « principal », renommable)",
+        )
+        lister = (f"`oto_identity(op='list', connector='{connector}')` (`scope='org'` ou "
+                  f"`scope='group'` pour ceux de l'org ou de l'équipe)")
+        renommer, pose = " ; renommer : `op='rename'` avec `new_name`", "posé"
     return DocSection("setup", f"plusieurs {noun}s", "\n".join((
-        f"ce connecteur accepte plusieurs {noun}s : chaque credential posé devient un "
-        f"**compte nommé** (un nom par {noun}), à ton niveau, à celui de ton équipe ou "
-        f"de ton org.",
-        "- le premier n'a pas besoin de nom ; à partir du deuxième, chacun porte le sien "
-        "(le premier prend alors le nom « principal », renommable)",
-        f"- sans précision, l'agent prend le seul {noun} posé, sinon celui marqué par "
+        *nommage,
+        f"- sans précision, l'agent prend le seul {noun} {pose}, sinon celui marqué par "
         f"défaut ; sinon l'appel est **refusé** en nommant les {noun}s disponibles — "
         f"jamais un choix au hasard",
         f"- viser un {noun} pour un appel : `_account=\"<nom>\"` sur l'outil ; les lister : "
-        f"`oto_identity(op='list', connector='{connector}')` (`scope='org'` ou "
-        f"`scope='group'` pour ceux de l'org ou de l'équipe)",
+        f"{lister}",
         f"- fixer le défaut : `oto_identity(op='set', connector='{connector}', "
-        f"identity_id='<nom>')` ; renommer : `op='rename'` avec `new_name`",
+        f"identity_id='<nom>')`{renommer}",
         f"- ⚠️ aucun outil ne parcourt les {noun}s tout seul : un total sur plusieurs "
         f"{noun}s s'obtient en appelant chacun (`_account`) et en additionnant",
     )))

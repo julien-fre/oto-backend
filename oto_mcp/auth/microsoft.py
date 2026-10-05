@@ -10,11 +10,23 @@ forme que `meta_ads` :
 3. le refresh token part au coffre, palier MEMBRE : la personne agit avec SES
    droits Microsoft 365, ni plus ni moins.
 
+**Plusieurs comptes** (oto-backend#23). Une personne peut lier plusieurs comptes
+Microsoft (son annuaire, celui d'un client…) : une ligne de coffre PAR COMPTE,
+`account` = son adresse en minuscules, le compte Microsoft (`id` de `/me`) en meta.
+Se connecter avec un autre compte en AJOUTE un ; avec le même, remplace le sien
+(qu'il ait été renommé ou non). Le premier compte lié est le compte par défaut,
+comme chez Google. Le reste est la mécanique GÉNÉRIQUE des connecteurs
+multi-compte (`cardinality="multi"`) : choix par `_account=`, défaut par
+`oto_identity(op='set')`, refus qui nomme les comptes sinon (`access.resolve`),
+liste par `oto_identity(op='list')`, retrait d'un compte par
+`DELETE /api/settings/api-keys/sharepoint?account=…`.
+
 **Renouvellement.** Un jeton d'accès vit une heure ; `access_token_for` le
 redemande avec le refresh token, et ⚠️ Entra fait TOURNER ce dernier : le nouveau
-remplace l'ancien au coffre à chaque renouvellement. Le jeton d'accès lui-même ne
-va jamais en base : il vit dans un cache du process, keyé par le hash du refresh
-token (une reconnexion l'invalide d'elle-même).
+remplace l'ancien au coffre à chaque renouvellement, sur la ligne de CE compte. Le
+jeton d'accès lui-même ne va jamais en base : il vit dans un cache du process, keyé
+par le hash de la ligne et de son refresh token (une reconnexion l'invalide
+d'elle-même). Une autorisation morte marque la ligne de CE compte, pas les autres.
 
 ⚠️ Les coordonnées de l'application Microsoft d'oto (multilocataire, enregistrée
 dans l'annuaire de l'exploitant) vivent en base, scope PLATEFORME de
@@ -173,56 +185,107 @@ def _scope(org_id: int, sub: str) -> tuple[str, str]:
     return credentials_store.MEMBER, credentials_store.member_id(org_id, sub)
 
 
-def _cle(entity_id: str, refresh_token: str) -> str:
-    """Clé du cache : la ligne ET son refresh token, hachés (jamais un secret en
-    clair comme clé). Une reconnexion change le refresh token, donc la clé."""
-    return hashlib.sha256(f"{entity_id}|{refresh_token}".encode()).hexdigest()
+def _cle(ligne: tuple, refresh_token: str) -> str:
+    """Clé du cache : la ligne (entité ET compte) et son refresh token, hachés
+    (jamais un secret en clair comme clé). Une reconnexion change le refresh token,
+    donc la clé."""
+    return hashlib.sha256("|".join((*ligne, refresh_token)).encode()).hexdigest()
 
 
-def _garder(entity_id: str, grant) -> None:
+def _garder(ligne: tuple, grant) -> None:
     with _VERROU:
-        _JETONS[_cle(entity_id, grant.refresh_token)] = (
+        _JETONS[_cle(ligne, grant.refresh_token)] = (
             grant.access_token, time.time() + int(grant.expires_in))
 
 
+def _comptes(org_id: int, sub: str) -> list[dict]:
+    """Les comptes Microsoft liés par la personne dans cette org (sans secret)."""
+    entity_type, entity_id = _scope(org_id, sub)
+    return credentials_store.list_accounts(entity_type, entity_id, CONNECTOR)
+
+
 def persist_grant(sub: str, org_id: int, grant) -> dict:
-    """Le refresh token est le secret (`secret_kind="oauth"`) ; l'identité du
-    compte Microsoft va dans `meta`. Lit `/me` avec le jeton tout juste obtenu :
-    la fiche dit QUEL compte est connecté."""
+    """Range le compte qui vient de se connecter, À CÔTÉ des autres : le refresh
+    token est le secret (`secret_kind="oauth"`), l'identité lue sur `/me` va dans
+    `meta`.
+
+    Le compte se reconnaît à son `id` Microsoft, pas à son nom de ligne : une
+    reconnexion du même compte remplace SA ligne, même renommée
+    (`oto_identity(op='rename')`) ; un autre compte en crée une, nommée par son
+    adresse en minuscules. Le premier compte lié est le défaut (règle Google) ; une
+    reconnexion garde le statut de défaut de la ligne et efface sa marque de santé."""
     me = _coeur().GraphClient(grant.access_token).get_me() or {}
-    meta = {"email": me.get("mail") or me.get("userPrincipalName"),
+    microsoft_id = me.get("id")
+    adresse = (me.get("mail") or me.get("userPrincipalName") or "").strip()
+    if not microsoft_id or not adresse:
+        raise RuntimeError(
+            "Microsoft n'a pas dit quel compte vient de se connecter (`/me` sans `id` "
+            "ou sans adresse) : rien n'a été enregistré.")
+    entity_type, entity_id = _scope(org_id, sub)
+    comptes = _comptes(org_id, sub)
+    deja = next((c for c in comptes
+                 if (c.get("meta") or {}).get("microsoft_id") == microsoft_id), None)
+    if deja is not None:
+        account = deja["account"]
+    else:
+        account = adresse.lower()
+        if any(c["account"] == account for c in comptes):
+            # Un autre compte Microsoft a été renommé de cette adresse : l'écraser
+            # perdrait sa connexion.
+            raise RuntimeError(
+                f"Un autre compte Microsoft lié porte déjà le nom `{account}` : "
+                "renomme-le (oto_identity op='rename') puis reconnecte celui-ci. "
+                "Rien n'a été enregistré.")
+    ancien = (deja or {}).get("meta") or {}
+    meta = {**{k: v for k, v in ancien.items() if not k.startswith("health_")},
+            "email": adresse,
             "name": me.get("displayName"),
+            "microsoft_id": microsoft_id,
             "scopes": grant.scope,
-            "connected_at": _iso(datetime.now(timezone.utc))}
-    entity_type, entity_id = _scope(org_id, sub)
+            "connected_at": _iso(datetime.now(timezone.utc)),
+            "is_default": bool(ancien.get("is_default")) if deja else not comptes}
     credentials_store.set_credential(entity_type, entity_id, CONNECTOR,
-                                     grant.refresh_token, set_by=sub, meta=meta)
-    _garder(entity_id, grant)
-    logger.info("sharepoint : compte Microsoft connecté (org=%s)", org_id)
-    return {"email": meta["email"], "name": meta["name"]}
+                                     grant.refresh_token, set_by=sub, meta=meta,
+                                     account=account)
+    _garder((entity_type, entity_id, account), grant)
+    logger.info("sharepoint : compte Microsoft %s (org=%s)",
+                "reconnecté" if deja else "ajouté", org_id)
+    return {"account": account, "email": adresse, "name": meta["name"]}
 
 
-def _row(org_id: int, sub: str) -> Optional[dict]:
-    entity_type, entity_id = _scope(org_id, sub)
-    return credentials_store.get_credential_with_meta(entity_type, entity_id, CONNECTOR)
+def _ranger_rotation(ligne: tuple, lu: str, nouveau: str) -> None:
+    """Le refresh token a tourné : le nouveau remplace l'ancien sur la ligne de CE
+    compte, son `meta` repassé tel quel (l'upsert l'écraserait sinon). Écriture
+    conditionnelle : un appel concurrent qui a déjà tourné a la valeur la plus
+    récente, on ne la remplace pas par la nôtre."""
+    entity_type, entity_id, account = ligne
+    row = credentials_store.get_credential_with_meta(entity_type, entity_id, CONNECTOR,
+                                                     account=account)
+    if not row or row.get("secret") != lu:
+        return
+    credentials_store.set_credential(entity_type, entity_id, CONNECTOR, nouveau,
+                                     set_by=row.get("set_by"), meta=row.get("meta") or {},
+                                     account=account)
 
 
 def access_token_for(sub: str) -> str:
-    """Un jeton d'accès valable pour la personne, renouvelé s'il expire dans moins
-    d'une minute. Lève `RuntimeError` (aucun compte connecté, application non
-    configurée) ou `MicrosoftReauthRequired` (autorisation morte : la ligne de
-    coffre est marquée, la fiche dit « à reconnecter »)."""
-    org_id = _ctx_org(sub)
-    row = _row(org_id, sub)
-    if not row or not row.get("secret"):
-        from .. import config
-        raise RuntimeError(
-            "No Microsoft account connected. Sign in from your connectors page "
-            f"({config.dashboard_url_for(sub)}/, connector « SharePoint & OneDrive »).")
-    entity_type, entity_id = _scope(org_id, sub)
-    refresh_token = row["secret"]
+    """Un jeton d'accès valable pour la personne, sur le compte que l'appel désigne,
+    renouvelé s'il expire dans moins d'une minute.
+
+    Le compte est choisi par la résolution COMMUNE des connecteurs multi-compte
+    (`access.resolve_credential`) : `_account=` de l'appel, sinon le compte épinglé
+    par le projet, sinon le seul compte lié, sinon le compte par défaut, sinon un
+    refus qui nomme les comptes. Lève une `McpError` (aucun compte, compte inconnu,
+    ambiguïté), `RuntimeError` (application non configurée) ou
+    `MicrosoftReauthRequired` (autorisation morte : la ligne de CE compte est
+    marquée, la fiche dit « à reconnecter »)."""
+    from .. import access  # lazy : évite tout cycle d'import au boot
+
+    rc = access.resolve_credential(CONNECTOR, want="byo", sub=sub)
+    ligne = (rc.entity_type, rc.entity_id, rc.account)
+    refresh_token = rc.key
     with _VERROU:
-        cached = _JETONS.get(_cle(entity_id, refresh_token))
+        cached = _JETONS.get(_cle(ligne, refresh_token))
     if cached and cached[1] > time.time() + 60:
         return cached[0]
 
@@ -232,39 +295,44 @@ def access_token_for(sub: str) -> str:
         grant = coeur.auth.refresh(coordonnees["client_id"], coordonnees["client_secret"],
                                    refresh_token)
     except coeur.MicrosoftGrantExpired as e:
-        message = ("Microsoft no longer accepts this sign-in (expired, revoked, or the "
-                   "password changed). Reconnect from your connectors page, connector "
-                   "« SharePoint & OneDrive ».")
-        connector_health.mark_rejected(entity_type, entity_id, CONNECTOR, "", message)
+        message = (f"Microsoft no longer accepts the sign-in of `{rc.account}` (expired, "
+                   "revoked, or the password changed). Reconnect this account from your "
+                   "connectors page, connector « SharePoint & OneDrive ».")
+        connector_health.mark_rejected(rc.entity_type, rc.entity_id, CONNECTOR,
+                                       rc.account, message)
         raise MicrosoftReauthRequired(message) from e
-    # Le refresh token a tourné : le nouveau remplace l'ancien au coffre. La ligne
-    # garde son identité ; un renouvellement réussi efface une marque de santé.
-    meta = {k: v for k, v in (row.get("meta") or {}).items()
-            if not k.startswith("health_")}
     if grant.refresh_token != refresh_token:
-        credentials_store.set_credential(entity_type, entity_id, CONNECTOR,
-                                         grant.refresh_token, set_by=row.get("set_by"),
-                                         meta=meta)
-    _garder(entity_id, grant)
+        _ranger_rotation(ligne, refresh_token, grant.refresh_token)
+    # Un renouvellement réussi efface la marque « à reconnecter » de CE compte.
+    connector_health.record_health(CONNECTOR, ligne, True, None)
+    _garder(ligne, grant)
     return grant.access_token
 
 
 # --- ce que la fiche affiche -------------------------------------------------
 
-def _link_state(sub: str) -> connector_link.LinkState:
+def _comptes_du_contexte(sub: str) -> tuple[list[dict], list[dict]]:
+    """`(comptes, morts)` de la personne dans son org de contexte — `morts` = ceux
+    dont l'autorisation est tombée (`health_ko`), à reconnecter un par un."""
     from .. import access  # lazy
 
     org = access.current_org(sub)
-    if org is None:
+    comptes = _comptes(org, sub) if org is not None else []
+    return comptes, [c for c in comptes if (c.get("meta") or {}).get("health_ko")]
+
+
+def _link_state(sub: str) -> connector_link.LinkState:
+    """Lié dès un compte ; « à reconnecter » si l'un d'eux l'est, en le nommant."""
+    comptes, morts = _comptes_du_contexte(sub)
+    if not comptes:
         return connector_link.LinkState(linked=False)
-    row = _row(org, sub)
-    if not row:
-        return connector_link.LinkState(linked=False)
-    meta = row.get("meta") or {}
     return connector_link.LinkState(
-        linked=True, accounts=1, set_at=str(row.get("set_at") or "") or None,
-        health_ko=True if meta.get("health_ko") else None,
-        health_reason=meta.get("health_reason") or None)
+        linked=True, accounts=len(comptes),
+        set_at=max((str(c.get("set_at") or "") for c in comptes), default="") or None,
+        health_ko=True if morts else None,
+        health_reason="; ".join(
+            f"{c['account']}: {(c.get('meta') or {}).get('health_reason') or 'rejected'}"
+            for c in morts) or None)
 
 
 connector_link.register(CONNECTOR, _link_state)
@@ -272,15 +340,16 @@ connector_link.register(CONNECTOR, _link_state)
 
 def _etape_manquante(sub: str, org, group, entry: dict) -> Optional[str]:
     """Ce qu'il reste à faire — et à QUI. Sans coordonnées d'application, ce n'est
-    pas à la personne de cliquer « Se connecter » en boucle."""
+    pas à la personne de cliquer « Se connecter » en boucle. Un compte mort parmi
+    plusieurs se nomme : les autres continuent de servir."""
     del org, group, entry
     if coordonnees_manquantes():
         return "Microsoft app to be configured by the operator"
-    etat = _link_state(sub)
-    if not etat.linked:
+    comptes, morts = _comptes_du_contexte(sub)
+    if not comptes:
         return "Sign in with Microsoft"
-    if etat.health_ko:
-        return "Sign-in expired — reconnect"
+    if morts:
+        return f"Sign-in expired for {', '.join(c['account'] for c in morts)} — reconnect"
     return None
 
 
