@@ -262,10 +262,25 @@ def route_and_secrets(path: str) -> tuple[str, Optional[dict[str, str]]]:
 # Le journal d'ACCÈS d'uvicorn : la même propriété, sur le troisième canal
 # --------------------------------------------------------------------------- #
 
+def routes_a_requete_secrete() -> tuple[str, ...]:
+    """Les routes qui REÇOIVENT un secret dans leur query — protocole d'un tiers,
+    pas un choix : le retour d'autorisation WordPress porte `password=`. Leur query
+    entière tombe, au journal d'accès (ici) comme dans Sentry (`sentry_setup`)."""
+    from .auth.wordpress import CALLBACK_PATH
+    return (CALLBACK_PATH,)
+
+
+def requete_secrete(chemin: str) -> bool:
+    """`chemin` (sans query) est-il une route dont la query porte un secret ? La
+    variante à `/` final est la même route."""
+    return (chemin.rstrip("/") or "/") in routes_a_requete_secrete()
+
+
 def chemin_pour_journal_acces(cible: str) -> str:
     """La cible d'une requête (`chemin?requête`) telle que le journal d'accès l'écrit :
-    chaque segment lié à un paramètre de route secret devient son masque, tout le
-    reste est recopié tel quel.
+    chaque segment lié à un paramètre de route secret devient son masque, la query
+    d'une route qui reçoit un secret en query devient `[redacted]`, tout le reste est
+    recopié tel quel.
 
     Pas la réduction de `route_and_secrets` : le journal d'accès sert à lire UNE
     requête (quel tableau, quel numéro), pas à agréger — les identifiants y restent
@@ -273,10 +288,12 @@ def chemin_pour_journal_acces(cible: str) -> str:
     une ligne d'accès et une ligne d'appel se recoupent (« ce jeton a été rejoué »)
     sans que l'une ou l'autre dise lequel."""
     chemin, sep, requete = cible.partition("?")
+    if sep and requete_secrete(chemin):
+        requete = "[redacted]"
     segments = chemin.split("/")
     secrets_a = _secret_indices(segments)
     if not secrets_a:
-        return cible
+        return chemin + sep + requete
     for i in secrets_a:
         if i < len(segments) and segments[i]:
             segments[i] = mask(segments[i])

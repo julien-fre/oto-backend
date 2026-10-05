@@ -134,14 +134,6 @@ def verify_state(state: str) -> Optional[tuple[str, int, str, str, Optional[int]
     return sub, org, scope, verifier, group, return_app
 
 
-def _fields_entity(org_id: int, sub: str, scope: str, group_id: Optional[int] = None) -> tuple[str, str]:
-    if scope == "org":
-        return "org", str(org_id)
-    if scope == "group":
-        return "group", str(group_id)
-    return credentials_store.MEMBER, credentials_store.member_id(org_id, sub)
-
-
 def _read_fields(entity_type: str, entity_id: str) -> Optional[dict]:
     """The customer's already-saved partial credential (client_id/client_secret/
     login_url, and — after a first Connect — refresh_token too), or None if
@@ -160,7 +152,7 @@ def read_saved_fields(sub: str, org_id: int, scope: str,
     sinon l'application la plus proche en remontant. Les deux DOIVENT s'accorder — le
     code a été émis pour un `client_id` précis, l'échanger avec un autre échoue.
     C'est pour ça que ce point d'entrée n'interroge plus l'entité exacte."""
-    entity_type, entity_id = _fields_entity(org_id, sub, scope, group_id)
+    entity_type, entity_id = credentials_store.entity_for_scope(scope, org_id, sub, group_id)
     champs = _read_fields(entity_type, entity_id)
     if champs and all(champs.get(k) for k in _APP):
         return champs
@@ -315,7 +307,7 @@ def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
             "Scopes de la Connected App (Setup → App Manager → ton app → "
             "Edit Policies)."
         )
-    entity_type, entity_id = _fields_entity(org_id, sub, scope, group_id)
+    entity_type, entity_id = credentials_store.entity_for_scope(scope, org_id, sub, group_id)
     # `existing` = la ligne de CE scope si elle existe (on préserve ce qu'elle porte).
     # Sinon l'application vient de la cascade : c'est le cas d'un membre qui consent
     # avec l'application de son org — il n'a aucune ligne à lui avant ce moment.
