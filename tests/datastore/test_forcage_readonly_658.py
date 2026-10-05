@@ -183,7 +183,6 @@ def banc(acteurs, monkeypatch):
     def store(sub):
         st = dsm.DatastorePg(sub)
         monkeypatch.setattr(st, "_resolve", lambda ns, write=False: NS_ID)
-        monkeypatch.setattr(st, "_assert_writable", lambda ns_id, rid: None)
         return st
     return store, etat
 

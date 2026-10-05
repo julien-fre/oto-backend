@@ -233,8 +233,7 @@ data_write(id=…, row={"tags[-]": "chaud"})                          // retrait
   `a_renvoyer` ne porte que l'élément fautif.
 - **Même fusion, même journal, toutes les faces** : `data_write` (unitaire, `id`, lot),
   REST (`POST`/`PATCH` d'une ligne, lot). La révision porte l'avant et l'après de la
-  colonne entière. Le REMPLACEMENT d'une ligne (`upsert_row`) refuse un rang : il n'a
-  pas d'élément en place à viser.
+  colonne entière.
 
 **Refus nommés, chacun avec la forme qui aboutit** :
 

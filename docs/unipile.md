@@ -515,6 +515,18 @@ durable car il lit un flag cohérent. **Ne jamais recoder une règle d'accès c�
 un flag backend. Qui peut utiliser = à qui la clé se résout (ADR 0053 D1 : la clé posée au bon
 niveau ; la restriction par ACL, ADR 0025, a disparu le 24/09/2026).
 
+**Le feed est servi EN DIRECT, sans miroir (oto#156, 2026-10-05).** `op="feed"` lit une page
+Voyager par appel (`client.get_feed`, sous `_scrape` comme toute lecture LinkedIn), la trie
+par `posted_at` en mémoire et rend `{items, cursor, count}` ; la suite se demande par le
+`cursor` rendu. Rien n'est écrit : le miroir `linkedin-feed` du datastore (sync à TTL
+600 s, `unipile_accounts.feed_synced_at`) se resynchronisait par `upsert_row`, qui
+REMPLAÇAIT la ligne entière — toute annotation posée entre deux syncs tombait sans trace.
+Décision d'Alexis du 05/10 : plus de miroir ni d'annotation (`signal`, `signal_type`,
+`is_target`, `traite_le` abandonnées), `upsert_row` retiré avec lui. Le TTL ne protégeait
+aucun quota : il bornait la fraîcheur d'un sync de 5 pages ; en direct, un appel = une
+requête, comme `op="get"`. Les tableaux `linkedin-feed` existants restent des tableaux
+ordinaires, plus jamais synchronisés.
+
 **Le feed est servi en VUE DE TRI (#384, 2026-08-11).** `linkedin_unipile_post(op="feed",
 limit=40)` rendait **65-67 Ko**, au-delà du plafond d'un résultat MCP : sur la procédure
 `veille-linkedin`, le harnais a déversé la sortie dans un fichier et l'agent a repassé au
@@ -525,13 +537,11 @@ d'identifiant répété trois fois (`_id` == `urn` == la queue de `post_url`) et
 comptabilité de miroir. Le défaut coupe donc le texte à **600 caractères** (coupe MARQUÉE
 `text_truncated`) et ne rend que les colonnes qui servent à trier → **1 019 car./post**
 (65 899 → 40 765 sur la même page ; le plafond passe de ~30 à ~49 posts).
-- **Rien ne sort du catalogue** : le miroir garde toutes ses colonnes (`data_rows`),
-  `fields=["*"]` les rend à l'octet près, `text_max_chars=None` rend le texte entier, et
-  la réponse porte un bloc `projection` qui NOMME les colonnes écartées + le chemin vers
+- **Rien ne sort du catalogue** : `fields=["*"]` rend tous les champs à l'octet près,
+  `text_max_chars=None` rend le texte entier, et la réponse porte un bloc `projection` qui NOMME les colonnes écartées + le chemin vers
   le brut. Un défaut qui résume doit dire ce qu'il a rogné, sinon il cache.
-- `fields` a **exactement la sémantique de `data_rows`** (projection + `_id`/`urn`
-  toujours gardés pour adresser la ligne, colonne inconnue signalée sans bloquer) — une
-  seule chose à apprendre. `fields=[]` est refusé (l'avaler rendrait plus que le défaut).
+- `fields` projette (l'`urn` toujours gardé pour adresser le post, champ inconnu signalé
+  sans bloquer). `fields=[]` est refusé (l'avaler rendrait plus que le défaut).
 - Même extrait par défaut sur `linkedin_unipile_profile(op="posts"/"comments")`, **même
   seam** (`_slim`) : #281 y avait ajouté `fields`/`text_max_chars` sans corriger le
   DÉFAUT, et le même incident s'est rejoué sur le feed. ADR 0047 §Amendement du 11/08 :

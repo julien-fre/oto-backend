@@ -78,9 +78,10 @@ def test_le_LOT_refuse_la_cle_pointee(table):
     assert "contact2_nom.comment" not in _colonnes(ns_id), "rangée, pas littérale"
 
 
-def test_les_QUATRE_chemins_repondent_pareil(table):
-    """La règle est la cohérence, pas le cas : trois chemins qui refusent et un qui
-    accepte, c'est une garde qu'on croit tenue."""
+def test_les_TROIS_chemins_repondent_pareil(table):
+    """La règle est la cohérence, pas le cas : deux chemins qui refusent et un qui
+    accepte, c'est une garde qu'on croit tenue. (Le quatrième, le remplacement
+    `upsert_row`, est retiré depuis oto#156.)"""
     from oto_mcp.datastore.core import RowValidationError
     st, ns, ns_id = table
     row = st.append_row(ns, {"siren": "1"})
@@ -88,8 +89,6 @@ def test_les_QUATRE_chemins_repondent_pareil(table):
     gestes = (
         ("append_row", lambda: st.append_row(ns, {"siren": "2", "a.comment": "x"})),
         ("update_row", lambda: st.update_row(ns, row["_id"], {"a.comment": "x"})),
-        ("upsert_row", lambda: st.upsert_row(ns, row["_id"],
-                                             {"siren": "1", "a.comment": "x"})),
         ("write_rows", lambda: st.write_rows(ns, [{"siren": "3", "a.comment": "x"}])),
     )
     for nom, geste in gestes:
@@ -136,8 +135,7 @@ def test_tout_chemin_qui_ECRIT_en_base_refuse_les_cles_pointees():
     # `datastore_merge_row_locked` : depuis le 12/09/2026 le patch par `id` écrit par la
     # fusion sous verrou (`ecriture_par_id`), comme la fusion par clé — il n'a plus de
     # porte à lui (`datastore_update_row` est retiré).
-    PORTES = {"datastore_insert_row", "datastore_upsert_row",
-              "datastore_merge_row_locked"}
+    PORTES = {"datastore_insert_row", "datastore_merge_row_locked"}
     # ⚠️ Les modules qui EXÉCUTENT, jamais la porte d'entrée. Depuis la coupe du
     # 07/09/2026 le store est un noyau qui COMPOSE des greffons : les chemins
     # d'écriture vivent dans `ecriture` et `lots`, et sonder `core` seul ne voyait

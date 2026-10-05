@@ -113,8 +113,7 @@ def elements_reecrits(apres: Any, en_place: Any, cle: Optional[str]) -> Optional
     identité en place. Un élément renvoyé tel quel — le geste normal : relire la
     liste, corriger UN contact, tout renvoyer — sort identique, il n'est pas écrit.
 
-    `None` (tous écrits) sans `of.key`, sans état antérieur connu (création,
-    remplacement), ou quand la liste en place porte une identité en double : la
+    `None` (tous écrits) sans `of.key`, sans état antérieur connu (création), ou quand la liste en place porte une identité en double : la
     fusion l'a alors remplacée en bloc, tout ce qui est là vient du geste."""
     if not cle or not isinstance(apres, list) or not isinstance(en_place, list):
         return None
@@ -547,7 +546,7 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     `max_length`, et même raison.
 
     `written` = les clés que ce geste réécrit (None = la row entière, cas d'un
-    insert ou d'un remplacement). **Quatre** contrôles s'y restreignent, et eux
+    insert). **Quatre** contrôles s'y restreignent, et eux
     seuls : la borne `max_length`, le motif `pattern`, la fermeture d'un composite
     et le **TYPE** — ce sont des propriétés de la valeur qu'on POSE, pas de l'état
     final. Sans ça, une valeur trop longue (ou hors format, ou hors type) déjà en
@@ -575,7 +574,7 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     `en_place` = la ligne EN PLACE, sur les chemins qui fusionnent (patch, clé métier) :
     dans une liste fusionnée par élément (`of.key`), un élément que le geste n'écrit
     pas n'est pas jugé contre lui — ce qui y cloche part dans `gelees` (oto#137).
-    Absente (création, remplacement), tout ce qui est posé vient du geste.
+    Absente (création), tout ce qui est posé vient du geste.
 
     ⚠️ **`details` porte aussi la CHARGE À RENVOYER** (oto#135) : `a_renvoyer`, un
     fragment de `row` qui ne contient que les champs à corriger, marqués d'un gabarit,

@@ -14,8 +14,8 @@ depuis #197, perdait 0 %.
 **Ce qu'il fait désormais.** Tout son travail sur la ligne tourne dans `apply_fn` de
 `db.datastore_merge_row_locked`, sous `FOR UPDATE`, dans cet ordre : le BAIL, puis la
 RÉVISION attendue, puis la fusion et l'UPDATE. Le motif qui avait tenu ce chemin hors du
-verrou — « remplacer n'est pas fusionner » — vaut pour le remplacement (`upsert_row`),
-pas pour un patch, qui EST une fusion.
+verrou — « remplacer n'est pas fusionner » — valait pour le remplacement (`upsert_row`,
+retiré par oto#156), pas pour un patch, qui EST une fusion.
 
 ⚠️ Ce module LIT des attributs de colonne et de tableau (`key`, `schema`…) : il est
 listé dans `vocabulaire._read_keys`.

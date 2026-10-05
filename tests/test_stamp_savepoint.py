@@ -97,16 +97,6 @@ def test_lupdate_persiste_et_lecho_dit_vrai(recalcul_vecteur_en_echec):
         "l'update annoncé a été roulé en arrière par l'échec du stamp (#333)"
 
 
-def test_lupsert_persiste_malgre_lechec_du_stamp(recalcul_vecteur_en_echec):
-    from oto_mcp.db.datastore import datastore_get_row, datastore_upsert_row
-
-    ns_id = recalcul_vecteur_en_echec
-    _, inserted = datastore_upsert_row(ns_id, "r3", {"v": 1})
-    assert inserted is True
-    relu = datastore_get_row(ns_id, "r3")
-    assert relu is not None and relu["data"] == {"v": 1}
-
-
 def test_invalidation_impossible_refuse_lecriture(base_vecteur):
     import psycopg
     from oto_mcp.db._conn import _connect

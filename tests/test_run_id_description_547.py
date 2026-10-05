@@ -138,7 +138,7 @@ def _refus(ns: str, row_id: str = "r0"):
     """Le refus RÉEL, levé par le store sur le chemin d'écriture."""
     from oto_mcp.datastore.core import RowLocked, make_store
     with pytest.raises(RowLocked) as e:
-        make_store("sub-agent").upsert_row(ns, row_id, {"statut": "écrasé"})
+        make_store("sub-agent").update_row(ns, row_id, {"statut": "écrasé"})
     return e.value
 
 

@@ -288,12 +288,6 @@ def test_une_ligne_creee_accepte_l_ajout_et_refuse_un_rang(table):
     assert db.datastore_find_row_id_by_key(ns_id, "siren", "356000000") is None
 
 
-def test_un_remplacement_refuse_le_rang_en_le_disant(table):
-    st, ns, _ns_id, rid = table
-    e = _refus(lambda: st.upsert_row(ns, rid, {"contacts[0].nom": "x"}))
-    assert "REMPLACE" in " ".join(e.errors)
-
-
 # ══ les faces : REST et MCP ════════════════════════════════════════════════════
 
 def test_la_face_REST_ecrit_par_rang_et_refuse_hors_bornes(client, table):

@@ -7,9 +7,10 @@ toutes les faces avec l'org active de l'appel — même sens que `projects.conte
 NULL pour un tableau d'org ou d'équipe, dont le contexte se dérive du propriétaire.
 
 Un banc par face : l'outil MCP `data_create_datastore`, la route `POST /api/datastores`,
-la création implicite de l'écriture à clé (`upsert_row`), le vivier provisionné par la
-copie d'un projet. Plus la révision `0017` (pose, retrait, rattrapage par le boot) et une
-garde sur le source : toute voie de création du code nomme `context_org_id`.
+le vivier provisionné par la copie d'un projet (la création implicite de l'écriture à clé,
+`upsert_row`, est retirée depuis oto#156). Plus la révision `0017` (pose, retrait,
+rattrapage par le boot) et une garde sur le source : toute voie de création du code
+nomme `context_org_id`.
 """
 from __future__ import annotations
 
@@ -88,15 +89,6 @@ def test_face_rest_post_api_datastores(orgs):
                     headers={"Authorization": f"Bearer {SUB}"})
     assert r.status_code == 201, r.text
     assert _contexte(r.json()["id"]) == orgs[0], "sans org nommée, l'org active est la maison"
-
-
-def test_face_ecriture_a_cle_qui_cree_le_tableau(orgs, org_de_l_appel):
-    from oto_mcp import db
-    from oto_mcp.datastore.core import make_store
-    nom = _nom()
-    make_store(SUB).upsert_row(nom, "k1", {"a": 1})
-    ns = db.get_datastore("user", SUB, nom)
-    assert _contexte(ns["id"]) == org_de_l_appel
 
 
 def test_face_vivier_provisionne_par_la_copie_d_un_projet(orgs):
@@ -184,5 +176,5 @@ def test_toute_voie_de_creation_du_code_nomme_le_contexte():
             vues.append(ou)
             if not any(k.arg == "context_org_id" for k in noeud.keywords):
                 oublis.append(ou)
-    assert len(vues) >= 3, vues          # store, écriture à clé, copie de projet
+    assert len(vues) >= 2, vues          # store, copie de projet
     assert oublis == [], oublis

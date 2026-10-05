@@ -20,15 +20,13 @@ l'isolation de session du browser local (issue #5) — au prix d'un SaaS payant.
 from __future__ import annotations
 
 import logging
-import os
 import time
 import unicodedata
-from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from ..mcp_errors import McpError
-from mcp.types import ErrorData, INVALID_PARAMS
+from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
 from .. import access, db, providers, session_org, status_hints
 from ..connectors import flow as connector_flow
@@ -36,18 +34,18 @@ from ..connectors import verify as connector_verify
 
 logger = logging.getLogger(__name__)
 
-# Miroir autogéré du feed (home LinkedIn) dans le datastore spine (ADR 0016).
-_FEED_NS = "linkedin-feed"          # namespace datastore per-user
-_FEED_SYNC_CAP_PAGES = 5            # garde-fou anti-martelage LinkedIn par sync
-_FEED_PAGE_COUNT = 40              # items par page Voyager pendant le sync
+# Le feed (home LinkedIn) est servi EN DIRECT (oto#156) : une page Voyager par appel,
+# triée par date en mémoire, sans rien recopier dans le datastore. Le miroir
+# `linkedin-feed` d'avant se resynchronisait en REMPLAÇANT ses lignes — toute annotation
+# posée entre deux syncs tombait sans trace. Décision du 05/10 : plus de miroir, plus
+# d'annotation ; la pagination est celle de LinkedIn (`cursor`).
 _FEED_SORT_ORDER = "MEMBER_SETTING"  # honore le tri choisi sur la home LinkedIn
 
-# Vue de TRI du feed — le défaut d'`op="feed"` (signal #384). Mesuré sur 40 posts réels
-# du miroir : la ligne brute coûte ~1 650 caractères (66 Ko la page de 40, au-delà du
-# plafond d'un résultat MCP — le harnais bascule en fichier et l'agent doit re-trier au jq
-# avant de commencer son travail). Le texte pèse 60 % à lui seul, le reste est de la
-# redondance (`urn` == `_id` == la queue de `post_url`) et de la comptabilité de miroir.
-# Rien ne SORT du catalogue : le miroir garde toutes ses colonnes (`data_rows`), et
+# Vue de TRI du feed — le défaut d'`op="feed"` (signal #384). Mesuré sur 40 posts réels :
+# le post brut coûte ~1 650 caractères (66 Ko la page de 40, au-delà du plafond d'un
+# résultat MCP — le harnais bascule en fichier et l'agent doit re-trier au jq avant de
+# commencer son travail). Le texte pèse 60 % à lui seul, le reste est de la redondance
+# (`urn` == la queue de `post_url`) et des colonnes qui ne servent pas au tri.
 # `fields=["*"]` / `text_max_chars=None` rendent le brut. Ce qui change est la LECTURE
 # par défaut — ADR 0047 §Amendement du 11/08 : le chemin paresseux doit être le juste.
 _FEED_DEFAULT_FIELDS = (
@@ -61,13 +59,8 @@ _FEED_DEFAULT_FIELDS = (
     "original_text", "original_content_type",       # …et le propos EST dans l'original
     "feed_reason",                                  # pourquoi c'est dans ton feed
 )
-# Écartées du défaut : `_created_at`/`_updated_at` (dates du MIROIR, pas du post),
-# `posted_relative` (dérivable de `posted_at`, et figée à l'heure du sync donc trompeuse
-# relue plus tard), `surfaced_by`/`comment_authors` (vides sur 40/40 des lignes mesurées).
-# `_id` AUSSI : le sync écrit `upsert_row(_FEED_NS, urn, item)`, donc l'`urn` EST l'id de
-# la ligne — les deux colonnes portent la même chaîne, par construction et pas par hasard
-# (vérifié 40/40). Rendre les deux coûtait 2,7 % de la page pour zéro information. Qui
-# veut relire la ligne passe l'`urn` en `id` à `data_rows`, c'est le même identifiant.
+# Écartées du défaut : `posted_relative` (dérivable de `posted_at`),
+# `surfaced_by`/`comment_authors` (vides sur 40/40 des posts mesurés).
 _FEED_ADDRESSING = ("urn",)         # jamais projeté hors du résultat : sans lui on ne
                                     # peut plus ouvrir le post ni le dédupliquer
 
@@ -297,8 +290,8 @@ def _slim(payload, fields: Optional[list[str]] = None,
 
     Ne touche QUE les items : l'enveloppe (`cursor`, `total_count`) est préservée, sinon
     la pagination casserait. `fields` garde toujours de quoi ADRESSER l'item ensuite
-    (`keep_always` — `id`/`social_id` pour un item Unipile brut, `_id`/`urn` pour une
-    ligne du miroir de feed) : projeter jusqu'à rendre le résultat inutilisable serait
+    (`keep_always` — `id`/`social_id` pour un item Unipile brut, `urn` pour un post
+    du feed) : projeter jusqu'à rendre le résultat inutilisable serait
     pire que de tout renvoyer."""
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         return payload
@@ -367,9 +360,9 @@ def _shape_feed(payload: dict, fields: Optional[list[str]],
 
     Trois régimes, et le résultat DIT toujours lequel s'applique :
     - `fields` omis → la vue de tri `_FEED_DEFAULT_FIELDS` ;
-    - `fields=["*"]` → toutes les colonnes du miroir (chemin vers le brut) ;
-    - `fields=[…]` → exactement ces colonnes — **même sémantique que `data_rows`**
-      (les colonnes d'adressage restent, une colonne inconnue est signalée sans bloquer).
+    - `fields=["*"]` → tous les champs du post (chemin vers le brut) ;
+    - `fields=[…]` → exactement ces champs (l'`urn` reste toujours, un champ inconnu
+      est signalé sans bloquer).
 
     Le bloc `projection` n'est posé que si quelque chose a été rogné : il nomme ce qui
     manque et comment l'obtenir, pour qu'un défaut qui résume ne devienne jamais un
@@ -383,7 +376,7 @@ def _shape_feed(payload: dict, fields: Optional[list[str]],
         # SILENCIEUSEMENT plus que le défaut, l'inverse de l'intention).
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
             "`fields` est une liste vide : omets-le pour la vue de tri, passe les "
-            "colonnes voulues, ou `['*']` pour toutes les colonnes du miroir.")))
+            "champs voulus, ou `['*']` pour tous les champs du post.")))
     if text_max_chars is not None and text_max_chars <= 0:
         # Même piège : 0 est faux en Python, donc « aucune limite » — soit l'inverse
         # de ce que demande qui écrit `text_max_chars=0`.
@@ -406,68 +399,42 @@ def _shape_feed(payload: dict, fields: Optional[list[str]],
         out["projection"] = {
             "omitted_fields": omitted,
             "text_max_chars": text_max_chars,
-            "hint": "vue de tri. Toutes les colonnes : fields=['*'] — texte intégral : "
-                    "text_max_chars=None — un post entier : op='get' (post_id=<urn>) ou "
-                    "data_rows('linkedin-feed', id=<urn>).",
+            "hint": "vue de tri. Tous les champs : fields=['*'] — texte intégral : "
+                    "text_max_chars=None — un post entier : op='get' (post_id=<urn>).",
         }
     if fields and keep is not None:
         unknown = [f for f in fields if f not in present]
         if unknown and items:
             out["warning"] = (
-                "colonne(s) de `fields` inconnue(s) dans le miroir du feed : "
+                "champ(s) de `fields` inconnu(s) dans les posts du feed : "
                 f"{', '.join(unknown)} — vérifie l'orthographe (absentes du résultat)")
     return out
 
 
-def _feed_ttl_seconds() -> int:
-    try:
-        return int(os.environ.get("OTO_UNIPILE_FEED_TTL_SECONDS", "600"))
-    except ValueError:
-        return 600
+def _feed(client, limit: Optional[int], cursor: Optional[str],
+          fields: Optional[list[str]], text_max_chars: Optional[int]) -> dict:
+    """Une page du feed, lue EN DIRECT chez Unipile (oto#156) — rien n'est écrit.
 
-
-def _feed_is_stale(sub: str, provider: str = "LINKEDIN") -> bool:
-    """True si le cache du feed mérite un refresh (jamais sync, ou plus vieux que
-    le TTL). Tolérant au format d'horodatage (string row-factory)."""
-    ts = db.get_unipile_feed_synced_at(sub, access.current_org(sub), provider)
-    if not ts:
-        return True
-    try:
-        dt = datetime.fromisoformat(str(ts))
-    except ValueError:
-        return True
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - dt).total_seconds() >= _feed_ttl_seconds()
-
-
-def _sync_feed(client, store, sub: str, provider: str = "LINKEDIN") -> int:
-    """Pagine le feed live et upsert chaque post dans le datastore (dédup par
-    `urn`). S'arrête dès qu'une page entière n'apporte AUCUN urn nouveau (condition
-    robuste à l'ordre de tri) ou au cap de pages. Renvoie le nombre de posts neufs.
-    Marque le sync à la fin. Best-effort : un item sans urn est ignoré."""
-    new_count = 0
-    cursor = None
-    for _ in range(_FEED_SYNC_CAP_PAGES):
-        page = client.get_feed(count=_FEED_PAGE_COUNT, cursor=cursor,
-                               sort_order=_FEED_SORT_ORDER)
-        items = page.get("items") or []
-        if not items:
-            break
-        page_new = 0
-        for item in items:
-            urn = item.get("urn")
-            if not urn:
-                continue
-            _row, inserted = store.upsert_row(_FEED_NS, urn, item)
-            if inserted:
-                page_new += 1
-        new_count += page_new
-        cursor = page.get("cursor")
-        if page_new == 0 or not cursor:
-            break  # rattrapé (page déjà connue) ou fin de flux
-    db.touch_unipile_feed_synced(sub, access.current_org(sub), provider)
-    return new_count
+    Un appel = une requête Voyager, sous la même discipline de rate-limit que toute
+    lecture LinkedIn (`_scrape`). La page est triée par date de publication en
+    mémoire ; la suite se demande avec le `cursor` rendu, jamais par un numéro de page
+    (LinkedIn pagine par jeton). Une enveloppe illisible LÈVE : la rendre comme une
+    page vide ferait lire « rien de neuf » là où l'amont a changé de forme."""
+    count = 20 if limit is None else limit
+    if count < 1:
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+            f"op='feed' : `limit` doit être ≥ 1 (reçu {count}).")))
+    page = _scrape(_actor_key(), lambda: client.get_feed(
+        count=count, cursor=cursor, sort_order=_FEED_SORT_ORDER))
+    if "_raw" in page:
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message=(
+            "Le feed LinkedIn a rendu une structure inattendue (pas d'`elements`) : "
+            "rien n'est lisible sur cette page. Réessaie plus tard ; si ça persiste, "
+            "signale-le (`feedback`).")))
+    items = sorted(page.get("items") or [],
+                   key=lambda it: it.get("posted_at") or "", reverse=True)
+    return _shape_feed({"items": items, "cursor": page.get("cursor"),
+                        "count": len(items)}, fields, text_max_chars)
 
 
 # Canaux Unipile : clé front → provider DB. Source unique de la liste de canaux
@@ -1562,8 +1529,7 @@ def register(mcp: FastMCP) -> None:
         kind: Literal["comments", "reactions"] = "comments",
         value: str = "LIKE",
         limit: Optional[int] = None,
-        page: int = 0,
-        refresh: bool = False,
+        cursor: Optional[str] = None,
         offset: int = 0,
         comment_id: Optional[str] = None,
         fields: Optional[list[str]] = None,
@@ -1572,26 +1538,18 @@ def register(mcp: FastMCP) -> None:
         """Publications LinkedIn : ton fil d'accueil, un post, l'engagement, publier.
 
         `op` :
-        - **"feed"** (défaut) : miroir autogéré de ta home LinkedIn. Tu n'as RIEN à
-          gérer (ni curseur, ni sync) : l'outil persiste les posts de ta page
-          d'accueil dans ta base (datastore `linkedin-feed`, dédupliqués par leur
-          identifiant), rafraîchit tout seul quand le cache est périmé, et te sert le
-          miroir le plus récent en tête. Les encarts sponsorisés/promo sont exclus.
-          Sous le capot : à `page=0`, refresh si le cache a dépassé son TTL — on pagine
-          le feed live et on n'ajoute que les posts neufs (arrêt dès qu'une page est
-          déjà connue). Les pages suivantes (`page>0`) lisent le miroir stocké sans
-          retaper LinkedIn. Le tri suit ton réglage de home LinkedIn ; quoi qu'il
-          arrive le miroir est re-trié par date de publication. Le miroir complet
-          reste requêtable via `data_rows('linkedin-feed')` (filtrage par date côté
-          nous, impossible sur le feed Voyager brut). Renvoie
-          `{items, total, page, limit, synced}`.
+        - **"feed"** (défaut) : ta home LinkedIn, lue EN DIRECT — une page par appel,
+          triée par date de publication (le plus récent en tête), sans rien stocker.
+          Les encarts sponsorisés/promo sont exclus. Le choix des posts suit ton
+          réglage de home LinkedIn. Page suivante : repasse le `cursor` rendu
+          (`None` = fin du flux). Renvoie `{items, cursor, count}`.
           **Servi en VUE DE TRI** : chaque post rend de quoi le classer (auteur +
           headline, date, traction, lien, `urn`) et son texte coupé à 600 caractères
           (`text_truncated: true` marque la coupe) — une page de 40 posts bruts dépasse
           la taille d'un résultat d'outil, et le tri d'un feed se joue sur l'entête.
-          Rien n'est perdu : `fields=["*"]` rend toutes les colonnes du miroir,
+          Rien n'est perdu : `fields=["*"]` rend tous les champs du post,
           `text_max_chars=None` le texte intégral, et un post entier se lit par
-          `op="get"` ou `data_rows('linkedin-feed', id=<urn>)`.
+          `op="get"` (`post_id=<urn>`).
         - **"get"** : un post — `post_id` = social_id (`urn:li:…`) d'un résultat
           `linkedin_unipile_profile(op="posts")`.
         - **"engagement"** : qui a réagi/commenté — `kind`='comments' ou 'reactions'.
@@ -1612,44 +1570,22 @@ def register(mcp: FastMCP) -> None:
             text: op="create"/"comment" — le contenu.
             kind: op="engagement" — 'comments' (défaut) ou 'reactions'.
             value: op="react" — le type de réaction.
-            limit: op="feed" — posts renvoyés pour cette page (défaut 20) ;
+            limit: op="feed" — posts demandés pour cette page (défaut 20) ;
                 op="engagement" — personnes à rendre au plus (défaut 100, max 500).
-            page: op="feed" — page du miroir (0 = la plus récente ; >0 ne rafraîchit pas).
-            refresh: op="feed" — force un rafraîchissement live.
+            cursor: op="feed" — la page suivante : le `cursor` d'un appel précédent
+                (omis = la première page).
             offset: op="engagement" — où reprendre (le `next_offset` d'un appel
                 précédent ; 0 = début).
             comment_id: op="engagement" — un commentaire du post : ses réponses
                 (kind='comments') ou ses réactions (kind='reactions').
-            fields: op="feed" — projection de colonnes, même sémantique que `data_rows`
-                (les colonnes demandées, plus `_id`/`urn` toujours gardés pour adresser
-                le post). Omis = la vue de tri ; `["*"]` = toutes les colonnes du miroir.
+            fields: op="feed" — projection : les champs demandés, plus l'`urn`
+                toujours gardé pour adresser le post. Omis = la vue de tri ;
+                `["*"]` = tous les champs du post.
             text_max_chars: op="feed" — longueur du texte de chaque post (défaut 600 ;
                 `None` = texte intégral).
         """
         if op == "feed":
-            from ..datastore.core import make_store, DatastoreNotFound
-
-            sub = access.current_user_sub_or_raise()
-            client = unipile_client()
-            store = make_store(sub)
-
-            synced = False
-            if page <= 0 and (refresh or _feed_is_stale(sub)):
-                _sync_feed(client, store, sub)
-                synced = True
-
-            try:
-                rows = store.list_rows(_FEED_NS, limit=10_000)
-            except DatastoreNotFound:
-                rows = []
-            rows.sort(key=lambda r: r.get("posted_at") or "", reverse=True)
-
-            per_page = limit if limit is not None else 20
-            start = max(0, page) * per_page
-            window = rows[start:start + per_page]
-            return _shape_feed({"items": window, "total": len(rows), "page": page,
-                                "limit": per_page, "synced": synced},
-                               fields, text_max_chars)
+            return _feed(unipile_client(), limit, cursor, fields, text_max_chars)
 
         client = unipile_client()
 

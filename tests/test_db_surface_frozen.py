@@ -62,7 +62,7 @@ _SURFACE = """
     datastore_offending_enum_values datastore_overlong_fields
     datastore_release_by_run datastore_release_claim datastore_row_activity
     datastore_row_keys datastore_rows_by_ids
-    datastore_upsert_row date datetime dead_unipile_account_ids_for
+    date datetime dead_unipile_account_ids_for
     delete_datastore_by_id delete_doc
     delete_google_oauth delete_guide_db delete_project_file
     delete_subscription derive_description dict_row doc_backlinks doc_rev
@@ -78,7 +78,7 @@ _SURFACE = """
     get_org_unipile_limit get_platform_instruction get_project_by_id
     get_project_by_mcp_slug get_project_file get_resource_grant
     get_row_embedding_sha get_run get_tool_call get_unipile_account
-    get_unipile_account_id get_unipile_feed_synced_at get_usage_today get_user
+    get_unipile_account_id get_usage_today get_user
     get_user_by_email get_users_by_email google grant_resource granted_accounts_for grants
     group_key
     guides has_member_api_key has_option_comp hashlib increment_usage
@@ -136,7 +136,7 @@ _SURFACE = """
     set_subscription_status set_unipile_account set_user_locale set_user_role
     split_layer split_list_path stamp_rank_vector subscription_plan_for_org
     sweep_grace_expired sweep_period_end_cancellations tenants time timezone
-    tokens tool_call_stats touch_unipile_feed_synced unipile
+    tokens tool_call_stats unipile
     unipile_account_owners update_account_profile update_billing_payment
     update_doc update_google_access_token update_project
     update_project_link_ref upload_tokens upsert_aux_embedding

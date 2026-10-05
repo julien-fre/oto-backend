@@ -127,8 +127,7 @@ def test_writing_on_a_row_held_by_another_is_refused(table):
     session_org.reset_call_run(t) if hasattr(session_org, "reset_call_run") else None
 
     with pytest.raises(RowLocked) as e:
-        _store().append_row(ns, {"_id": row["_id"], "societe": "Écrit par un autre"}) \
-            if False else _store().upsert_row(ns, row["_id"], {"societe": "Par un autre"})
+        _store().update_row(ns, row["_id"], {"societe": "Par un autre"})
 
     # L'erreur donne la SORTIE, pas seulement le constat — et, depuis #515, ne nomme
     # jamais le titulaire (l'échéance suffit) : elle mène par le `_run_id` manquant.
@@ -146,7 +145,7 @@ def test_the_holder_writes_freely_through_its_run(table):
     t = session_org.set_call_run("run-x")
     try:
         row = _store().claim_next(ns, worker="w1")
-        _store().upsert_row(ns, row["_id"], {"societe": "Par son titulaire"})
+        _store().update_row(ns, row["_id"], {"societe": "Par son titulaire"})
     finally:
         session_org.reset_call_run(t) if hasattr(session_org, "reset_call_run") else None
 
@@ -178,7 +177,7 @@ def test_the_holder_writes_freely_from_ANOTHER_session(table):
     # session 2 : un autre store, un autre contexte — le même jeton
     t2 = session_org.set_call_run("run-y")
     try:
-        _store().upsert_row(ns, row["_id"], {"societe": "Reprise"})
+        _store().update_row(ns, row["_id"], {"societe": "Reprise"})
     finally:
         session_org.reset_call_run(t2)
 
@@ -200,7 +199,7 @@ def test_a_DIFFERENT_run_is_refused(table):
     t2 = session_org.set_call_run("run-z")
     try:
         with pytest.raises(RowLocked):
-            _store().upsert_row(ns, row["_id"], {"societe": "Un autre"})
+            _store().update_row(ns, row["_id"], {"societe": "Un autre"})
     finally:
         session_org.reset_call_run(t2)
 
@@ -218,7 +217,7 @@ def test_an_expired_lease_protects_nothing(table):
         conn.execute("UPDATE datastore_rows SET claimed_until = NOW() - interval '1 day' "
                      "WHERE ns_id = %s AND row_id = %s", (ns_id, row["_id"]))
 
-    _store().upsert_row(ns, row["_id"], {"societe": "Le zombie ne bloque rien"})
+    _store().update_row(ns, row["_id"], {"societe": "Le zombie ne bloque rien"})
 
     assert db.datastore_get_row(
         ns_id, row["_id"])["data"]["societe"] == "Le zombie ne bloque rien"
@@ -229,7 +228,7 @@ def test_a_free_row_is_written_as_before(table):
     qui est réservé."""
     from oto_mcp import db
     ns, ns_id = table
-    _store().upsert_row(ns, "r2", {"societe": "Libre"})
+    _store().update_row(ns, "r2", {"societe": "Libre"})
     assert db.datastore_get_row(ns_id, "r2")["data"]["societe"] == "Libre"
 
 
@@ -246,18 +245,18 @@ def test_releasing_then_writing_is_the_documented_way_out(table):
     session_org.reset_call_run(t) if hasattr(session_org, "reset_call_run") else None
 
     with pytest.raises(RowLocked):
-        _store().upsert_row(ns, row["_id"], {"societe": "Non"})
+        _store().update_row(ns, row["_id"], {"societe": "Non"})
 
     _store().force_release(ns, row["_id"])      # le geste d'un humain qui a le droit
-    _store().upsert_row(ns, row["_id"], {"societe": "Oui"})
+    _store().update_row(ns, row["_id"], {"societe": "Oui"})
 
     assert db.datastore_get_row(ns_id, row["_id"])["data"]["societe"] == "Oui"
 
 
 def test_every_write_path_is_covered_not_just_the_merge(table):
     """⚠️ **Le trou que les tests ont trouvé.** Le seam de FUSION n'est pas le seul
-    chemin d'écriture : le remplacement, la mise à jour et la suppression n'y passent
-    pas. Une protection posée sur le seul merge aurait été un verrou troué — et le
+    chemin d'écriture : la mise à jour par `id` et la suppression ont leur propre
+    porte. Une protection posée sur le seul merge aurait été un verrou troué — et le
     trou aurait été invisible, puisque le cas le plus courant, lui, était protégé."""
     from oto_mcp import session_org
     from oto_mcp.datastore.core import RowLocked
@@ -268,22 +267,12 @@ def test_every_write_path_is_covered_not_just_the_merge(table):
     session_org.reset_call_run(t)
     rid = row["_id"]
 
-    # remplacement intégral
+    # mise à jour par `id`
     with pytest.raises(RowLocked):
-        _store().upsert_row(ns, rid, {"societe": "non"})
+        _store().update_row(ns, rid, {"societe": "non"})
     # suppression — plus destructrice qu'une écriture, donc gardée aussi
     with pytest.raises(RowLocked):
         _store().delete_row(ns, rid)
-
-
-def test_a_brand_new_row_is_never_blocked(table):
-    """Une ligne qui n'existe pas encore ne peut pas être réservée : la garde ne doit
-    pas coûter un refus (ni même une lecture inutile) sur le chemin de création."""
-    ns, ns_id = table
-    from oto_mcp import db
-    st = _store()
-    st.upsert_row(ns, "toute-neuve", {"societe": "Créée"})
-    assert db.datastore_get_row(ns_id, "toute-neuve")["data"]["societe"] == "Créée"
 
 
 # ── étape B : la libération sur état final est retirée ───────────────────────
@@ -311,7 +300,7 @@ def test_writing_a_final_state_no_longer_frees_the_row(table):
     jeton = session_org.set_call_run("run-verdict")
     try:
         row = _store().claim_next(ns, worker="w1")
-        _store().upsert_row(ns, row["_id"], {"statut": "fait"})   # le titulaire écrit
+        _store().update_row(ns, row["_id"], {"statut": "fait"})   # le titulaire écrit
     finally:
         session_org.reset_call_run(jeton)
 
@@ -329,7 +318,7 @@ def test_the_change_is_announced_where_it_happens(table):
     jeton = session_org.set_call_run("run-annonce")
     try:
         row = _store().claim_next(ns, worker="w1")
-        st.upsert_row(ns, row["_id"], {"statut": "fait"})
+        st.update_row(ns, row["_id"], {"statut": "fait"})
     finally:
         session_org.reset_call_run(jeton)
     notices = st.off_schema_report().get("notices") or []
@@ -348,7 +337,7 @@ def test_a_table_without_a_lifecycle_hears_nothing(table):
     """Les 38 tableaux sans cycle de vie ne sont pas concernés : pas de message."""
     ns, ns_id = table
     st = _store()
-    st.upsert_row(ns, "r1", {"societe": "Rien à dire"})
+    st.update_row(ns, "r1", {"societe": "Rien à dire"})
     assert not (st.off_schema_report().get("notices") or [])
 
 
@@ -358,7 +347,7 @@ def test_a_free_row_hears_nothing_either(table):
     ns, ns_id = table
     _schema_lifecycle(ns_id)
     st = _store()
-    st.upsert_row(ns, "r2", {"statut": "fait"})
+    st.update_row(ns, "r2", {"statut": "fait"})
     assert not (st.off_schema_report().get("notices") or [])
 
 
@@ -368,6 +357,8 @@ def test_a_free_row_hears_nothing_either(table):
 # de bail, sur deux chemins différents : `_assert_writable` pour le remplacement, la
 # mise à jour et la suppression ; `_lease_guard` pour la FUSION — l'écriture par clé
 # métier, c'est-à-dire le geste le plus fréquent d'une campagne (une fiche par SIREN).
+# (Depuis, tout passe par `_lease_guard` : la mise à jour le 12/09/2026, et le
+# remplacement `upsert_row` — dernier client d'`_assert_writable` — est retiré, oto#156.)
 #
 # Sonde : en désarmant la branche « le titulaire écrit, reconnu par son run » de
 # `_lease_guard`, **1 238 bancs restent verts**. Personne n'écrivait sur une ligne

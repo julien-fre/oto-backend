@@ -49,7 +49,6 @@ def store(monkeypatch):
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)
     monkeypatch.setattr(s, "_ns_of", lambda ns_id: {"schema": None, "datastore": "t"})
     monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)
-    monkeypatch.setattr(s, "_assert_writable", lambda *a, **k: None)
     monkeypatch.setattr(s, "_trace", lambda *a, **k: None)
     for name in ("datastore_get_row", "datastore_merge_row_locked"):
         monkeypatch.setattr(ds.db, name, getattr(db, name))

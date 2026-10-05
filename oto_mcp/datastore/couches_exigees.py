@@ -170,8 +170,8 @@ def _couches_exigees_errors(fields: list, data: dict, path: str,
     `pose` (premier niveau SEULEMENT, comme `written`) = ce que CE geste a nommé par
     colonne, AVANT fusion (oto#75, complément du 11/09/2026). `data` est le résultat
     FUSIONNÉ : sans `pose`, une écriture qui ne nomme que l'origine héritait
-    l'exigence de la valeur déjà en place. `None` sur la création et le remplacement,
-    où `data` EST ce que le geste pose."""
+    l'exigence de la valeur déjà en place. `None` sur la création, où `data` EST ce
+    que le geste pose."""
     errors: list[str] = []
     for f in fields:
         if not isinstance(f, dict):

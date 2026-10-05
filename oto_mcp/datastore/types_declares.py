@@ -107,7 +107,7 @@ def types_trahis(schema: Optional[dict], merged: dict, *,
     oto-backend#923) : une valeur déjà en base, hors type AVANT ce geste, ne doit
     pas geler un patch qui ne la touche pas — elle serait sinon refusée pour un
     défaut qu'elle n'a pas causé, avec un message qui prétend à tort qu'elle
-    l'a envoyée. `written=None` (insert/remplacement, toute la row est écrite)
+    l'a envoyée. `written=None` (insert, toute la row est écrite)
     garde l'ancien comportement : tout est jugé.
 
     `charge` = la charge à renvoyer (oto#135) : la colonne refusée y reçoit son

@@ -72,7 +72,7 @@ def test_a_lease_read_as_a_string_still_protects(table):
     # Un AUTRE worker du même compte — la flotte de sous-agents, le cas réel. Il ne
     # déclare ni run ni worker : il n'est donc pas le titulaire.
     with pytest.raises(RowLocked):
-        _store().upsert_row(ns, "r0", {"statut": "écrasé"})
+        _store().update_row(ns, "r0", {"statut": "écrasé"})
 
 
 def test_an_unreadable_lease_refuses_rather_than_opens(table):
@@ -142,7 +142,7 @@ def test_the_holder_writes_without_declaring_anything(table):
     token = session_org.set_call_run("run-agent")
     try:
         row = _store().claim_next(ns, worker="agent-1")
-        _store().upsert_row(ns, row["_id"], {"statut": "traité"})
+        _store().update_row(ns, row["_id"], {"statut": "traité"})
     finally:
         session_org.reset_call_run(token)
 
@@ -177,7 +177,7 @@ def test_the_refusal_carries_the_way_out(table):
 
     _store().claim_next(ns, worker="agent-1")
     with pytest.raises(RowLocked) as e:
-        _store().upsert_row(ns, "r0", {"statut": "x"})
+        _store().update_row(ns, "r0", {"statut": "x"})
 
     msg = str(e.value)
     assert "_run_id" in msg                    # la faute la plus fréquente, d'abord

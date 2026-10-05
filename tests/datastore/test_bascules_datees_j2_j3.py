@@ -237,8 +237,6 @@ def test_j3_apres_live_refuse_partout_et_n_ecrit_rien(live, j3_passe):
     with pytest.raises(RowValidationError, match=r"`@keep` \(`site_web`\)"):
         st.append_row(ns, {"siren": "5", "raison": "R",
                            "site_web": {"valeur": "x.fr", "comment": dsl.GARDE}})
-    with pytest.raises(RowValidationError, match=r"`@keep` \(`tags`\)"):
-        st.upsert_row(ns, rid, {"siren": "5", "nom": "E", "tags": [dsl.GARDE]})
     assert _data(ns_id, rid) == avant
 
     # Le LOT est refusé entier : la première ligne, saine, n'est pas écrite non plus.

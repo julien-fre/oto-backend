@@ -1,9 +1,10 @@
 """La FILE DE TRAVAIL (ADR 0046 D) : réserver une ligne, la rendre, et la protéger.
 
 Extrait de `core.py` (déplacement pur, 07/09/2026) — un mixin que `DatastorePg`
-compose, sur le modèle de `SchemaOpsMixin`. Les deux gardes d'écriture vivent ici
-avec le bail qu'elles font respecter : `_lease_guard` sous le verrou de ligne,
-`_assert_writable` pour les chemins qui n'en ouvrent pas.
+compose, sur le modèle de `SchemaOpsMixin`. La garde d'écriture vit ici avec le bail
+qu'elle fait respecter : `_lease_guard`, appelée sous le verrou de ligne — tout chemin
+d'écriture d'une ligne existante en ouvre un depuis le retrait du remplacement
+(`upsert_row`, oto#156).
 
 ⚠️ Ce module LIT des attributs de bail et de tableau (`claimed_by`, `claimed_until`,
 `claimed_run`, `schema`…) : il est listé dans `vocabulaire._read_keys`.
@@ -47,32 +48,6 @@ def perimetre_de_reservation(schema: Optional[dict], ns_id: int,
 
 class FileDeTravailMixin:
     """La file de travail du store. Composé par `DatastorePg`."""
-
-    def _assert_writable(self, ns_id: int, row_id: str) -> None:
-        """La même protection, pour les chemins qui n'ont PAS de verrou de ligne.
-
-        Le remplacement et la suppression n'ouvrent pas de transaction `FOR UPDATE`
-        (contrairement à la fusion) : la garde y est donc posée AVANT l'écriture, sur
-        une lecture séparée. La MISE À JOUR par `id` n'est plus de ce nombre depuis le
-        12/09/2026 : elle passe par le verrou de ligne et `_lease_guard`.
-
-        ⚠️ **La fenêtre est assumée et bornée** : un claim qui s'intercalerait entre
-        ce contrôle et l'écriture passerait. Elle est de l'ordre de la milliseconde,
-        et infiniment plus étroite que ce qu'elle remplace — l'absence totale de
-        protection sur ces chemins. La refermer demanderait de router ces deux
-        gestes par le verrou de ligne, ce qui change leur sémantique (remplacer n'est
-        pas fusionner) : c'est un lot, pas une rustine. Ce motif valait pour le
-        remplacement, pas pour le patch, qui est une fusion : lui y est passé.
-
-        Aucun contrôle sur une ligne NEUVE : elle ne peut pas être réservée."""
-        lease = db.datastore_active_lease(ns_id, row_id)
-        if not lease:
-            return
-        run = _current_run()
-        if run and lease.get("claimed_run") == run:
-            return
-        raise RowLocked(row_id, lease.get("claimed_by"), lease.get("claimed_until"),
-                        lease.get("claimed_run"))
 
     @staticmethod
     def _lease_guard(row_id: str):

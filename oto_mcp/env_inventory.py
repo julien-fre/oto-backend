@@ -358,8 +358,6 @@ _REGLAGES: tuple[Variable, ...] = (
     Variable("FR_DIRECTORS_CADENCE_S", Classe.REGLAGE, "0.2",
              "Cadence (s) entre appels dans le scan dirigeants FR.",
              ("oto_mcp/tools/fr.py:432",)),
-    Variable("OTO_UNIPILE_FEED_TTL_SECONDS", Classe.REGLAGE, "600",
-             "TTL (s) du cache de feed Unipile.", ("oto_mcp/tools/unipile.py:362",)),
     Variable("OTO_ANON_RATE_PER_MIN", Classe.REGLAGE, "120",
              "Débit anonyme (req/min) par endpoint de projet publié.",
              ("oto_mcp/subdomain_project.py:132",)),

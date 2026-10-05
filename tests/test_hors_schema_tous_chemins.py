@@ -95,12 +95,6 @@ def test_le_lot_releve_la_colonne_creee(table):
     assert HORS in _releve(st)
 
 
-def test_upsert_par_id_releve_la_colonne_creee(table):
-    st, ns, ns_id, rid = table
-    st.upsert_row(ns, rid, {"siren": "552032534", HORS: "x"})
-    assert HORS in _releve(st)
-
-
 # ── La matrice : colonne DÉJÀ hors schéma, réécrite ──────────────────────────
 
 def test_la_colonne_DEJA_hors_schema_se_releve_a_chaque_ecriture(table):

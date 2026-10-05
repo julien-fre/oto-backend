@@ -73,7 +73,7 @@ _ECRIT_DATA = re.compile(
 #: échec, pas en silence : elle doit passer par le point de passage, et se nommer.
 _ECRIVAINS = {
     "oto_mcp/db/datastore.py": {
-        "datastore_insert_row", "datastore_upsert_row",
+        "datastore_insert_row",
         "datastore_drop_column", "datastore_merge_key_duplicates",
         "datastore_merge_row_locked", "datastore_delete_row"},
     "oto_mcp/db/rowabandon.py": {"abandonner_les_lignes_a_bout"},
@@ -137,7 +137,8 @@ def test_le_travail_de_fond_se_nomme(compte):
     _, ns_id = _table()
     with geste.interne("maintenance") as g:
         db.datastore_insert_row(ns_id, "r1", {"a": 1})
-        db.datastore_upsert_row(ns_id, "r1", {"a": 2})
+        db.datastore_merge_row_locked(ns_id, "r1", lambda _d: {"a": 2},
+                                      "2026-10-05T00:00:00+00:00")
     revs = _revisions(ns_id)
     assert [(r["source"], r["acteur"], r["geste_id"]) for r in revs] == \
         [("system", "service:maintenance", g.geste_id)] * 2

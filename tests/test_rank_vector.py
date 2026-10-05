@@ -242,7 +242,10 @@ def test_writing_a_row_stamps_its_vector_without_the_backfill(live):
     assert _vecteur("datastore_rows", "ns_id = %s AND row_id = %s", (ns, "r1")) is not None
 
     avant = _vecteur("datastore_rows", "ns_id = %s AND row_id = %s", (ns, "r1"))
-    db.datastore_upsert_row(ns, "r1", {"societe": "Charcuterie Martin"})
+    # Le patch par `id` réécrit par la fusion sous verrou — le chemin qui recalcule
+    # le vecteur (`rafraichir_rang`, comme `update_row`).
+    db.datastore_merge_row_locked(ns, "r1", lambda _d: {"societe": "Charcuterie Martin"},
+                                  "2026-10-05T00:00:00+00:00", rafraichir_rang=True)
     apres = _vecteur("datastore_rows", "ns_id = %s AND row_id = %s", (ns, "r1"))
 
     assert apres != avant and "sylvestr" not in str(apres).lower()

@@ -260,7 +260,7 @@ def test_creation_POST_sans_cle_pose_le_marqueur_jamais_le_litteral(client, base
     _aucune_fuite(cree)
 
 
-def test_lot_et_upsert_resolvent_les_mots_a_la_creation(base):
+def test_le_lot_resout_les_mots_a_la_creation(base):
     from oto_mcp.datastore.core import make_store
     ns, ns_id = _table()
     st = make_store(SUB)
@@ -268,12 +268,6 @@ def test_lot_et_upsert_resolvent_les_mots_a_la_creation(base):
                               "contacts": [{"nom": "A", "fonction": "@empty"}]}])["ids"][0]
     assert _stockee(ns_id, rid)["fonction"] == MARQUEE
     assert _stockee(ns_id, rid)["contacts"] == [{"nom": "A", "fonction": MARQUEE}]
-    st.upsert_row(ns, "upsert-204", {"raison": "UP", "fonction": "@empty",
-                                     "contacts": [{"nom": "B", "fonction": "@empty",
-                                                   "note": "@clear"}]})
-    assert _stockee(ns_id, "upsert-204") == {
-        "raison": "UP", "fonction": MARQUEE,
-        "contacts": [{"nom": "B", "fonction": MARQUEE, "note": ""}]}
 
 
 def test_aller_retour_lecture_sentinel_puis_reecriture_base_identique(client, base):

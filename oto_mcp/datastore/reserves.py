@@ -23,8 +23,8 @@ champ, la raison, où va la chose.
 
 La DÉCISION vit dans `schema.py` (`reserved_refusals`, à côté des autres
 déclarations, et sondée par `enforced_keys`) ; ce module en fait le geste : refuser en
-levant, et poser. Il est appelé aux cinq chemins d'écriture du store — création (ligne
-seule, lot, upload signé), fusion sous verrou, patch par identifiant, remplacement.
+levant, et poser. Il est appelé aux quatre chemins d'écriture du store — création (ligne
+seule, lot, upload signé), fusion sous verrou, patch par identifiant.
 
 ⚠️ **Les DEUX PREMIERS crans bornent TOUT LE MONDE PAR DÉFAUT, faces humaine et REST
 comprises.** Le store ne sait pas distinguer un agent d'un humain (il connaît un sub et

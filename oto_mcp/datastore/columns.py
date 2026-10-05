@@ -298,7 +298,7 @@ def mots_resolus_a_la_creation(schema: Optional[dict], user_data: Optional[dict]
     (oto#204, et le trou de #183).
 
     ⚠️ **Pourquoi ici.** Une création ne passe pas par la fusion — `append_row` sans clé
-    métier, la ligne neuve d'un lot, `upsert_row` — et c'est la fusion seule qui résolvait
+    métier, la ligne neuve d'un lot — et c'est la fusion seule qui résolvait
     les mots : `"@empty"` partait en base comme texte, et satisfaisait `required` comme
     n'importe quelle chaîne. On résout ici par la MÊME fonction (`_merge_column` contre
     rien), donc sans seconde règle.

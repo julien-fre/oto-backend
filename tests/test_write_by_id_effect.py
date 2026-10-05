@@ -6,7 +6,7 @@ troisième comportement — accepter, rendre un succès, ne rien faire — est c
 coûte, parce que le refus est bruyant et que la divergence est muette.
 
 Ce banc pose donc la règle sur les chemins d'écriture de LIGNES, un par un : ajout,
-fusion sur clé métier, lot, remplacement par identifiant, patch par identifiant,
+fusion sur clé métier, lot, patch par identifiant,
 suppression, bail. Pour chacun, une seule question — **la base a-t-elle bougé ?** —
 posée à la base, jamais au retour de l'appel, et jamais à un store stubé : un banc
 qui reconstitue le magasin mesure la représentation qu'on s'en fait.
@@ -203,19 +203,6 @@ def test_le_lot_ecrit_ses_deux_regimes(table):
     assert (recap["updated"], recap["inserted"]) == (1, 1)
     assert _cardinal(ns_id) == 2
     assert _donnees(ns_id, rid).get("contacts") == CONTACTS
-
-
-def test_le_remplacement_par_id_a_un_effet(table):
-    """`upsert_row` pose une ligne à une clé EXPLICITE — insertion puis
-    remplacement, les deux vérifiés en base."""
-    st, ns, ns_id, _rid = table
-
-    _row, insere = st.upsert_row(ns, "urn:fixe", {"raison_sociale": "PREMIERE"})
-    assert insere and _donnees(ns_id, "urn:fixe").get("raison_sociale") == "PREMIERE"
-
-    _row, insere = st.upsert_row(ns, "urn:fixe", {"raison_sociale": "SECONDE"})
-    assert not insere
-    assert _donnees(ns_id, "urn:fixe").get("raison_sociale") == "SECONDE"
 
 
 def test_la_suppression_a_un_effet_et_refuse_ce_quelle_ne_trouve_pas(table):

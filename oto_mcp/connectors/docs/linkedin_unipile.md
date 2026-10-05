@@ -22,4 +22,4 @@ un produit premium (`recruiter` ou `sales_navigator`, **exclusifs** — un seul 
 
 ## note — le feed est servi en vue de tri
 
-`linkedin_unipile_post(op="feed")` rend un extrait par défaut (texte coupé à 600 caractères, colonnes de tri seulement) : une page entière dépassait le plafond d'un résultat MCP. `fields=["*"]` et `text_max_chars=None` rendent le brut ; la réponse dit toujours ce qu'elle a rogné.
+`linkedin_unipile_post(op="feed")` lit ta home en direct, une page par appel (la suivante par le `cursor` rendu), sans rien stocker. il rend un extrait par défaut (texte coupé à 600 caractères, colonnes de tri seulement) : une page entière dépassait le plafond d'un résultat MCP. `fields=["*"]` et `text_max_chars=None` rendent le brut ; la réponse dit toujours ce qu'elle a rogné.

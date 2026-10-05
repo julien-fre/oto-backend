@@ -238,6 +238,5 @@ def test_unipile_db_guards_org_none():
     from oto_mcp.db import unipile as db_unipile
     assert db_unipile.get_unipile_account_id("u1", None) is None
     assert db_unipile.get_unipile_account("u1", None) is None
-    assert db_unipile.get_unipile_feed_synced_at("u1", None) is None
     with pytest.raises(ValueError):
         db_unipile.set_unipile_account("u1", "ACC", org_id=None)

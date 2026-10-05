@@ -63,7 +63,7 @@ def test_au_dela_de_la_retention_une_revision_part_en_deca_elle_reste(compte):
     from oto_mcp import db
     ns_id = _table()
     db.datastore_insert_row(ns_id, "r1", {"a": 1})
-    db.datastore_upsert_row(ns_id, "r1", {"a": 2})
+    db.datastore_merge_row_locked(ns_id, "r1", lambda _d: {"a": 2}, "2026-10-05T00:00:00+00:00")
     db.datastore_insert_row(ns_id, "r2", {"a": 1})
     _vieillir(ns_id, 91, "r1")
     _vieillir(ns_id, 89, "r2")
@@ -95,7 +95,8 @@ def test_l_import_d_une_ligne_vivante_reste_quel_que_soit_son_age(compte):
     from oto_mcp import db
     ns_id = _table()
     _importee(ns_id, "vivante")
-    db.datastore_upsert_row(ns_id, "vivante", {"a": 2})
+    db.datastore_merge_row_locked(ns_id, "vivante", lambda _d: {"a": 2},
+                                  "2026-10-05T00:00:00+00:00")
     _vieillir(ns_id, 400)
     _purger()
     assert _restantes(ns_id) == [("vivante", 0, "import", False)], \

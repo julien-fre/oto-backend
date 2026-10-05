@@ -347,8 +347,8 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         jamais.
 
         **Masquage agent (oto#83)** : les colonnes `agent_access: "none"` sont retirées
-        ICI, au seul endroit par lequel passe TOUTE ligne servie par le store — treize
-        sites d'appel, dix méthodes (`append_row`, `upsert_row`, `get_row`, `list_rows`,
+        ICI, au seul endroit par lequel passe TOUTE ligne servie par le store — douze
+        sites d'appel, neuf méthodes (`append_row`, `get_row`, `list_rows`,
         `cursor_rows`, `page_rows`, `update_row`, `claim_next`, `claim_row`, `queue`).
         Retirées **avant** la projection, pas après : leurs couches (`champ.origine`) et
         leurs alias plats (`contact1_nom`) ne sont donc jamais fabriqués, plutôt que

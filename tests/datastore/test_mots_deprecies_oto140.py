@@ -73,13 +73,12 @@ def test_le_texte_servi_ne_prescrit_plus_les_mots_deprecies_dans_les_refus():
     assert "(vide sans rien affirmer)" not in src
 
 
-def test_l_avertissement_est_pose_sur_les_quatre_chemins_d_ecriture():
+def test_l_avertissement_est_pose_sur_les_trois_chemins_d_ecriture():
     from oto_mcp.datastore import ecriture, ecriture_par_id, lots
 
     for mod in (ecriture_par_id, lots):
         assert "mdp.controler(" in inspect.getsource(mod), mod.__name__
-    for fn in (ecriture.EcritureMixin.append_row, ecriture.EcritureMixin.upsert_row):
-        assert "mdp.controler(" in inspect.getsource(fn), fn.__name__
+    assert "mdp.controler(" in inspect.getsource(ecriture.EcritureMixin.append_row)
 
 
 # ── sur une base réelle : l'écriture a lieu ET l'avertissement est servi ────

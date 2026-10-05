@@ -5,8 +5,8 @@ dans une colonne d'instants, heure et fuseau dans une colonne de jours, nombres 
 le tri comme les filtres comparaient du texte. Quatre moitiés, quatre bancs :
 
 1. **la lecture** (`dates.lire`), pure : chaque forme d'entrée et ce qui est stocké ;
-2. **l'écriture** contre une vraie base, par les quatre portes (création, lot, patch
-   par `id`, remplacement) : la forme stockée, la notice « supposé UTC », les couches
+2. **l'écriture** contre une vraie base, par les trois portes (création, lot, patch
+   par `id` ; le remplacement `upsert_row` est retiré, oto#156) : la forme stockée, la notice « supposé UTC », les couches
    qui survivent, le refus de l'illisible, le sous-champ illisible gardé et dit ;
 3. **les filtres** : `eq`/`lte`/`gte`/`gt`/`lt`/`ne`/`in` comparent des instants, et
    la borne d'une date imprécise couvre sa période ;
@@ -155,7 +155,7 @@ def test_la_validation_juge_par_la_meme_lecture():
     assert refus and "2026-09-04T10:00:00Z" in refus[0], "le refus donne la forme"
 
 
-# ── 2. l'écriture, par les quatre portes ──────────────────────────────────────
+# ── 2. l'écriture, par les trois portes ───────────────────────────────────────
 
 SUB = "sub-dates-859"
 
@@ -198,15 +198,13 @@ def test_une_date_imprecise_reste_a_sa_precision(live):
     assert (row["d"], row["j"]) == ("2026-09", "2026")
 
 
-def test_le_lot_le_patch_et_le_remplacement_normalisent_aussi(live):
+def test_le_lot_et_le_patch_normalisent_aussi(live):
     st, ns = _monte()
     recap = st.write_rows(ns, [{"d": 1788516000000}, {"d": "2026-09-04T12:00+02:00"}])
     lues = [st.get_row(ns, i)["d"] for i in recap["ids"]]
     assert lues == ["2026-09-04T10:00:00Z", "2026-09-04T10:00:00Z"]
     patchee = st.update_row(ns, recap["ids"][0], {"j": "04/09/2026"})
     assert patchee["j"] == "2026-09-04"
-    remplacee, _ = st.upsert_row(ns, "cle-fixe", {"d": "2026-09-04T10:00:00.999Z"})
-    assert remplacee["d"] == "2026-09-04T10:00:00Z"
 
 
 def test_reecrire_la_meme_date_sous_une_autre_forme_garde_le_commentaire(live):

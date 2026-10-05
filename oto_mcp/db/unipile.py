@@ -92,34 +92,6 @@ def dead_unipile_account_ids_for(sub: str, provider: str = "LINKEDIN") -> set:
     return {r["account_id"] for r in rows}
 
 
-def get_unipile_feed_synced_at(sub: str, org_id: Optional[int],
-                               provider: str = "LINKEDIN") -> Optional[str]:
-    """Horodatage (string ISO via row factory) du dernier sync du feed, ou None
-    si jamais synchronisé / compte absent."""
-    if org_id is None:
-        return None
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT feed_synced_at FROM unipile_accounts "
-            "WHERE sub = %s AND org_id = %s AND provider = %s",
-            (sub, org_id, provider),
-        ).fetchone()
-    return row["feed_synced_at"] if row else None
-
-
-def touch_unipile_feed_synced(sub: str, org_id: Optional[int],
-                              provider: str = "LINKEDIN") -> None:
-    """Marque le feed comme synchronisé maintenant (pose `feed_synced_at = NOW()`)."""
-    if org_id is None:
-        return
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE unipile_accounts SET feed_synced_at = NOW() "
-            "WHERE sub = %s AND org_id = %s AND provider = %s",
-            (sub, org_id, provider),
-        )
-
-
 def get_unipile_account(sub: str, org_id: Optional[int],
                         provider: str = "LINKEDIN") -> Optional[dict]:
     """Statut de connexion Unipile d'un canal dans CETTE org, ou None."""

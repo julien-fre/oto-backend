@@ -137,9 +137,9 @@ class LotsMixin:
                 if rangs is not None:
                     rangs.preparer(schema, self._normaliser_les_dates)
                 # ⚠️ #329 volet 2, appliqué au QUATRIÈME chemin — il y manquait.
-                # `append_row`, `upsert_row` et la fusion refusent une clé littérale
-                # pointée ; le LOT, non. Or c'est LUI qui porte les imports : la garde
-                # était posée sur les trois chemins où l'on écrit une ligne, et absente
+                # `append_row` et la fusion refusent une clé littérale pointée ; le
+                # LOT, non. Or c'est LUI qui porte les imports : la garde était posée
+                # sur les chemins où l'on écrit une ligne, et absente
                 # de celui où l'on en écrit huit mille.
                 #
                 # Ce que ça a produit, mesuré le 31/08 sur un fichier de production :

@@ -148,16 +148,6 @@ def test_le_depot_de_fichier_refuse_le_nom_vide(table, nom):
     _sans_nom_vide(ns_id)
 
 
-# ── store : le remplacement par id aussi ────────────────────────────────────
-
-def test_le_remplacement_par_id_refuse_le_nom_vide(table):
-    from oto_mcp.datastore.core import RowValidationError, make_store
-    ns, ns_id, rid = table
-    with pytest.raises(RowValidationError):
-        make_store(SUB).upsert_row(ns, rid, {"siren": "552032534", "": "x"})
-    _sans_nom_vide(ns_id)
-
-
 def test_un_nom_ordinaire_passe_toujours(client, table):
     """Le témoin négatif : on ferme le nom vide, pas l'écriture."""
     ns, ns_id, rid = table

@@ -1,4 +1,4 @@
-"""Le feed LinkedIn tient dans un résultat d'outil — signal d'usage #384.
+"""Le feed LinkedIn tient dans un résultat d'outil (#384) — et il est servi EN DIRECT (oto#156).
 
 `linkedin_unipile_post(op="feed", limit=40)` rendait **67 383 caractères**, au-delà du
 plafond d'un résultat MCP : observé en conditions réelles sur la procédure
@@ -12,15 +12,22 @@ optionnel de plus (ADR 0047 §Amendement du 11/08 : *le chemin paresseux doit ê
 chemin juste*). Le signal jumeau #281 avait ajouté `fields`/`text_max_chars` à
 `op="posts"` sans toucher au défaut : le payload est resté lourd, et le même incident
 s'est rejoué ici. D'où, en regard de chaque allègement, le test que **rien n'est caché**
-(chemin brut intact, colonnes écartées nommées dans la réponse).
+(chemin brut intact, champs écartés nommés dans la réponse).
 
-Les tailles ci-dessous sont calibrées sur 40 lignes RÉELLES du miroir (texte : médiane
-730, moyenne 971, max 2 712 caractères ; ligne brute ~1 650 caractères).
+**oto#156 (05/10/2026)** : le feed n'est plus recopié dans le datastore. Le miroir
+`linkedin-feed` se resynchronisait en REMPLAÇANT ses lignes (`upsert_row`) ; une page
+est désormais lue chez Unipile à chaque appel, triée en mémoire, paginée par le `cursor`
+de LinkedIn. Le dernier banc de ce fichier prouve, sur une vraie base, que `op="feed"`
+n'écrit plus rien.
+
+Les tailles ci-dessous sont calibrées sur 40 posts RÉELS (texte : médiane 730, moyenne
+971, max 2 712 caractères ; post brut ~1 650 caractères).
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import random
 from unittest.mock import MagicMock
 
 import pytest
@@ -35,33 +42,34 @@ _TEXT_LENGTHS = [
 ]
 
 
-def _row(i: int) -> dict:
-    """Une ligne du miroir `linkedin-feed`, colonnes et formes réelles."""
+def _post(i: int) -> dict:
+    """Un post tel que `client.get_feed` le rend (oto-core `parse_feed`)."""
     urn = f"urn:li:activity:74929182333737{90000 + i}"
     return {
-        "_id": urn,
-        "_created_at": "2026-08-11 12:28:37",
-        "_updated_at": "2026-08-11 12:28:39",
         "urn": urn,
+        "author_name": f"Auteur Numéro {i}",
+        "author_headline": "Fondateur & CEO | On parle IA appliquée, agents et ops",
         "text": "x" * _TEXT_LENGTHS[i],
-        "post_url": f"https://www.linkedin.com/feed/update/{urn}",
-        "is_repost": False,
-        # décroissant avec `i` : le feed re-trie par date, l'ordre de la fixture est
+        # décroissant avec `i` : le feed trie par date, l'ordre de la fixture est
         # donc celui du résultat (item[0] = le plus récent = le plus long ici).
         "posted_at": f"2026-08-11T12:{39 - i:02d}:58.525000+00:00",
-        "author_name": f"Auteur Numéro {i}",
-        "feed_reason": "Suggéré pour toi" if i % 3 else None,
-        "surfaced_by": None,
-        "comments_count": i,
-        "author_headline": "Fondateur & CEO | On parle IA appliquée, agents et ops",
-        "comment_authors": [],
         "posted_relative": "6m •   ",
         "reactions_count": i * 3,
+        "comments_count": i,
+        "feed_reason": "Suggéré pour toi" if i % 3 else None,
+        "surfaced_by": None,
+        "comment_authors": [],
+        "content_type": "text",
+        "content_title": None,
+        "post_url": f"https://www.linkedin.com/feed/update/{urn}",
+        "is_repost": False,
         "original_author_name": None,
+        "original_text": None,
+        "original_content_type": None,
     }
 
 
-ROWS = [_row(i) for i in range(40)]
+ROWS = [_post(i) for i in range(40)]
 
 
 def _tool():
@@ -74,17 +82,34 @@ def _tool():
 
 
 @pytest.fixture
-def feed(monkeypatch):
-    """Le miroir, servi depuis le datastore — aucun appel LinkedIn (feed frais)."""
+def client(monkeypatch):
+    """Le client Unipile : une page de 40 posts rendue DANS LE DÉSORDRE, comme la home
+    LinkedIn (tri « pertinence ») — le tri par date est le travail de l'outil."""
     from oto_mcp.tools import unipile as U
 
-    store = MagicMock()
-    store.list_rows.return_value = list(ROWS)
-    monkeypatch.setattr("oto_mcp.datastore.core.make_store", lambda sub: store)
-    monkeypatch.setattr(U, "unipile_client", lambda *a, **k: MagicMock())
+    desordre = list(ROWS)
+    random.Random(156).shuffle(desordre)
+    c = MagicMock()
+    c.get_feed.return_value = {"items": desordre, "cursor": "40|jeton-suivant",
+                               "count": len(desordre)}
+    monkeypatch.setattr(U, "unipile_client", lambda *a, **k: c)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
-    monkeypatch.setattr(U, "_feed_is_stale", lambda sub, provider="LINKEDIN": False)
+    # Le cooldown 429 est un état de MODULE : un autre banc du même worker a pu l'armer
+    # pour ce sub. Chaque banc part d'un compte qui n'est pas en attente.
+    monkeypatch.setattr(U, "_RATE_LIMIT_UNTIL", {})
+    return c
+
+
+@pytest.fixture
+def feed(client):
     return _tool()
+
+
+# Le seuil DISCRIMINE la demi-mesure : sur cette fixture (les champs d'un post d'Unipile,
+# sans la comptabilité de l'ancien miroir), la vue de tri rend 0,71 de la page brute et
+# **tronquer le texte seul** 0,76 — un défaut qui ne ferait que couper le texte échoue
+# donc ici. (Sur les 40 lignes réelles de l'ancien miroir : 65 899 → 40 765 caractères.)
+SEUIL = 0.73
 
 
 def _chars(payload) -> int:
@@ -92,8 +117,7 @@ def _chars(payload) -> int:
 
 
 def _raw_page_chars() -> int:
-    return _chars({"items": ROWS, "total": len(ROWS), "page": 0,
-                   "limit": 40, "synced": False})
+    return _chars({"items": ROWS, "cursor": "40|jeton-suivant", "count": len(ROWS)})
 
 
 # --- le défaut, c'est-à-dire le sujet du signal --------------------------------
@@ -105,21 +129,15 @@ def test_le_defaut_tient_dans_un_resultat_doutil(feed):
     compte est le coût PAR POST (la page grandit linéairement avec `limit`). Un défaut
     qui rendrait le brut — même flanqué de `fields` et `text_max_chars` optionnels —
     échoue ici, et c'est voulu : c'est exactement ce qui a été livré pour #281.
-
-    Le seuil discrimine aussi la demi-mesure : sur cette fixture, **tronquer le texte
-    seul** rend 0,76 de la page brute (le texte ne pèse que 60 %, le reste est de la
-    redondance d'identifiants et de la comptabilité de miroir) et échoue donc ici ;
-    troncature + vue de tri rend 0,66. Sur les 40 lignes réelles : 65 899 → 40 765
-    caractères, soit 1 647 → 1 019 par post.
     """
     raw = _raw_page_chars()
-    assert raw > 55_000, (
+    assert raw > 50_000, (
         "fixture non représentative : la page brute doit être énorme (la vraie, "
-        "mesurée sur 40 lignes du miroir d'un compte réel, pèse 65 899 caractères)")
+        "mesurée sur 40 posts d'un compte réel, pèse ~66 000 caractères)")
 
     out = feed(op="feed", limit=40)
 
-    assert _chars(out) < 0.70 * raw, (
+    assert _chars(out) < SEUIL * raw, (
         f"la page par défaut pèse {_chars(out)} caractères pour {raw} en brut — "
         "un défaut qui ne coupe pas laisse l'agent faire le tri au shell (#384)")
     assert len(out["items"]) == 40, "alléger la page ne doit pas rendre moins de posts"
@@ -146,56 +164,54 @@ def test_le_defaut_garde_de_quoi_trier_et_agir(feed):
         assert col in it, f"`{col}` sert au tri du feed : il ne peut pas sauter"
 
 
-def test_le_defaut_ecarte_la_comptabilite_du_miroir(feed):
-    """Les dates du MIROIR et le temps relatif figé au sync ne décrivent pas le post."""
+def test_le_defaut_ecarte_ce_qui_ne_sert_pas_au_tri(feed):
+    """Le temps relatif se dérive de `posted_at` ; les deux listes sont vides en pratique."""
     it = feed(op="feed", limit=40)["items"][0]
-    for col in ("_created_at", "_updated_at", "posted_relative"):
+    for col in ("posted_relative", "surfaced_by", "comment_authors"):
         assert col not in it
 
 
 def test_ce_qui_est_ecarte_est_nomme_dans_la_reponse(feed):
-    """Un défaut qui résume doit DIRE ce qu'il a rogné, sinon il cache."""
+    """Un défaut qui résume doit DIRE ce qu'il a rogné, sinon il cache — et le chemin
+    qu'il indique existe : plus de `data_rows('linkedin-feed', …)` (oto#156)."""
     out = feed(op="feed", limit=40)
     proj = out["projection"]
     assert set(proj["omitted_fields"]) == {
-        "_id",  # même chaîne que `urn` par construction — cf. _FEED_ADDRESSING
-        "_created_at", "_updated_at", "posted_relative", "surfaced_by",
-        "comment_authors"}
+        "posted_relative", "surfaced_by", "comment_authors"}
     assert proj["text_max_chars"] == 600
     assert "fields=['*']" in proj["hint"] and "text_max_chars=None" in proj["hint"]
+    assert "op='get'" in proj["hint"]
+    assert "data_rows" not in proj["hint"] and "linkedin-feed" not in proj["hint"]
 
 
-# --- le chemin vers le brut : on ne retire rien du catalogue -------------------
+# --- le chemin vers le brut : on ne retire rien -------------------------------
 
 def test_le_brut_reste_atteignable_a_loctet_pres(feed):
-    """`fields=["*"]` + `text_max_chars=None` = les lignes du miroir, INTACTES."""
+    """`fields=["*"]` + `text_max_chars=None` = les posts d'Unipile, INTACTS (triés)."""
     out = feed(op="feed", limit=40, fields=["*"], text_max_chars=None)
     assert out["items"] == ROWS
     assert "projection" not in out, (
         "rien n'a été rogné : pas d'avertissement à poser")
 
 
-def test_toutes_les_colonnes_avec_le_texte_en_extrait(feed):
+def test_tous_les_champs_avec_le_texte_en_extrait(feed):
     out = feed(op="feed", limit=40, fields=["*"])
-    assert set(out["items"][0]) >= set(ROWS[0]), "aucune colonne perdue"
+    assert set(out["items"][0]) >= set(ROWS[0]), "aucun champ perdu"
     assert out["items"][0]["text_truncated"] is True
 
 
-# --- `fields` : la sémantique de `data_rows`, apprise une seule fois -----------
+# --- `fields` : une projection qui garde toujours l'adresse du post -----------
 
-def test_fields_projette_comme_data_rows(feed):
+def test_fields_projette_et_garde_l_urn(feed):
     out = feed(op="feed", limit=40, fields=["author_name"], text_max_chars=None)
     it = out["items"][0]
     assert set(it) == {"author_name", "urn"}, (
-        "comme `data_rows`, la projection garde toujours de quoi ADRESSER la ligne — "
-        "l'`urn` SEUL, puisqu'il EST l'id de la ligne (le sync écrit "
-        "`upsert_row(_FEED_NS, urn, item)`) : rendre `_id` en plus serait la même "
-        "chaîne deux fois")
+        "la projection garde toujours de quoi ADRESSER le post (`urn`, que `op='get'` "
+        "prend en `post_id`)")
 
 
 def test_une_colonne_inconnue_est_signalee_sans_bloquer(feed):
-    """Même piège silencieux que la projection de `data_rows` : une faute de frappe
-    rend une colonne vide sans rien dire."""
+    """Une faute de frappe rendrait un champ vide sans rien dire."""
     out = feed(op="feed", limit=40, fields=["auteur_name"])
     assert "auteur_name" in out["warning"]
     assert len(out["items"]) == 40, "on signale, on ne bloque pas"
@@ -217,10 +233,88 @@ def test_text_max_chars_zero_est_refuse(feed):
         feed(op="feed", limit=40, text_max_chars=0)
 
 
-def test_lenveloppe_de_pagination_survit(feed):
-    out = feed(op="feed", limit=10, page=1)
-    assert out["total"] == 40 and out["page"] == 1 and out["limit"] == 10
-    assert len(out["items"]) == 10
+# --- en direct : tri, pagination, amont ---------------------------------------
+
+def test_la_page_est_triee_par_date_la_plus_recente_en_tete(feed, client):
+    out = feed(op="feed", limit=40, fields=["posted_at"])
+    dates = [it["posted_at"] for it in out["items"]]
+    assert dates == sorted(dates, reverse=True)
+    assert client.get_feed.return_value["items"] != ROWS, "la fixture arrive en désordre"
+
+
+def test_la_pagination_est_celle_de_linkedin(feed, client):
+    """Le `cursor` rendu est celui de LinkedIn, et celui qu'on passe lui est remis tel
+    quel — pas de numéro de page reconstruit côté serveur."""
+    out = feed(op="feed", limit=10, cursor="30|jeton")
+    client.get_feed.assert_called_once_with(count=10, cursor="30|jeton",
+                                            sort_order="MEMBER_SETTING")
+    assert out["cursor"] == "40|jeton-suivant" and out["count"] == 40
+    assert set(out) >= {"items", "cursor", "count"}
+    assert not {"total", "page", "synced"} & set(out), "plus rien d'un miroir"
+
+
+def test_limit_par_defaut_et_limit_nul_refuse(feed, client):
+    from oto_mcp.mcp_errors import McpError
+    feed(op="feed")
+    assert client.get_feed.call_args.kwargs["count"] == 20
+    with pytest.raises(McpError, match="limit"):
+        feed(op="feed", limit=0)
+
+
+def test_une_enveloppe_illisible_leve_au_lieu_de_rendre_une_page_vide(feed, client):
+    """`parse_feed` rend `{items: [], _raw: …}` quand Voyager change de forme : servir
+    une page vide se lirait « rien de neuf dans ton feed »."""
+    from oto_mcp.mcp_errors import McpError
+    client.get_feed.return_value = {"items": [], "cursor": None, "count": 0,
+                                    "_raw": {"data": {}}}
+    with pytest.raises(McpError, match="structure inattendue"):
+        feed(op="feed")
+
+
+def test_un_429_passe_par_la_discipline_de_rate_limit(feed, client, monkeypatch):
+    """Comme toute lecture LinkedIn : le 429 arme le cooldown et devient le refus nommé
+    `unipile_rate_limited`, avec le délai demandé par Unipile."""
+    from oto.tools.unipile.client import UnipileRateLimited
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import unipile as U
+
+    client.get_feed.side_effect = UnipileRateLimited("We only allow 10 requests")
+    with pytest.raises(McpError) as e:
+        feed(op="feed")
+    assert e.value.error.data["code"] == "unipile_rate_limited"
+    assert "sub-1" in U._RATE_LIMIT_UNTIL, "le cooldown est armé pour ce compte"
+
+
+# --- oto#156 : le feed n'écrit RIEN dans le datastore -------------------------
+
+def test_op_feed_n_ecrit_rien_dans_le_datastore(live, client, monkeypatch):
+    """⚠️ Le banc de la décision du 05/10. Sur une vraie base : aucun tableau créé,
+    aucune ligne écrite, aucun store ouvert — deux pages lues, rien en base."""
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+
+    db.upsert_user("sub-1", email="sub-1@feed.invalid", name="sub-1")
+
+    def _interdit(*a, **k):
+        raise AssertionError("op='feed' ne doit ouvrir aucun store du datastore")
+
+    monkeypatch.setattr("oto_mcp.datastore.core.make_store", _interdit)
+
+    def _compte():
+        with _connect() as conn:
+            return (conn.execute("SELECT count(*) AS n FROM user_datastores").fetchone()["n"],
+                    conn.execute("SELECT count(*) AS n FROM datastore_rows").fetchone()["n"])
+
+    avant = _compte()
+    feed = _tool()
+    premiere = feed(op="feed", limit=40)
+    feed(op="feed", limit=40, cursor=premiere["cursor"])
+    assert len(premiere["items"]) == 40
+    assert _compte() == avant, "le feed est servi en direct : rien n'est recopié"
+    with _connect() as conn:
+        assert conn.execute(
+            "SELECT count(*) AS n FROM user_datastores WHERE namespace = 'linkedin-feed'"
+        ).fetchone()["n"] == 0
 
 
 # --- l'autre bout du même seam (`_slim`) --------------------------------------
@@ -258,8 +352,8 @@ def test_les_posts_dun_membre_ont_le_meme_defaut(monkeypatch):
 def _shape(lignes, fields=None, text_max_chars=600):
     from oto_mcp.tools import unipile as U
     return U._shape_feed(
-        {"items": [dict(r) for r in lignes], "total": len(lignes), "page": 0,
-         "limit": len(lignes)}, fields, text_max_chars)
+        {"items": [dict(r) for r in lignes], "cursor": None, "count": len(lignes)},
+        fields, text_max_chars)
 
 
 def test_le_texte_de_loriginal_est_borne_comme_le_texte():

@@ -131,9 +131,10 @@ def test_aller_retour_dans_une_colonne_TABLEAU(table):
         "l'attribut est rangé dans sa couche, pas stocké en littéral pointé")
 
 
-def test_les_QUATRE_PORTES_referment_l_aller_retour(table):
+def test_les_TROIS_PORTES_referment_l_aller_retour(table):
     """La règle est la cohérence, pas le cas. #685 s'est produit parce que trois
-    portes refusaient et une acceptait ; le remède ne vaut que s'il est aux quatre."""
+    portes refusaient et une acceptait ; le remède ne vaut que s'il est à toutes
+    (trois depuis le retrait du remplacement `upsert_row`, oto#156)."""
     st, ns, ns_id = table
     st.append_row(ns, {"siren": "1", "site_web": {"valeur": "a.fr", "comment": "c"}})
     lu = st.list_rows(ns, versions=AVEC_ORIGINE)[0]
@@ -142,7 +143,6 @@ def test_les_QUATRE_PORTES_referment_l_aller_retour(table):
     st.append_row(ns, _tel_quel(lu))                              # append (promu update)
     st.update_row(ns, lu["_id"], {"site_web": lu["site_web"],
                                   "site_web.comment": lu["site_web.comment"]})
-    st.upsert_row(ns, lu["_id"], nu)
     st.write_rows(ns, [nu])
 
     assert st.list_rows(ns, versions=AVEC_ORIGINE)[0]["site_web.comment"] == "c"
@@ -204,7 +204,7 @@ def test_une_annotation_sur_une_colonne_INCONNUE_est_refusee(table):
     assert not any("." in c for c in _colonnes(ns_id))
 
 
-def test_le_refus_vaut_AUX_QUATRE_PORTES(table):
+def test_le_refus_vaut_AUX_TROIS_PORTES(table):
     """Le rétrécissement du refus (#685 → ici) ne doit pas rouvrir le trou de #685 :
     ce qui reste sans adresse est refusé partout, pas seulement là où on regarde."""
     from oto_mcp.datastore.core import RowValidationError
@@ -213,7 +213,6 @@ def test_le_refus_vaut_AUX_QUATRE_PORTES(table):
     gestes = (
         lambda: st.append_row(ns, {"siren": "2", "inconnu.comment": "x"}),
         lambda: st.update_row(ns, row["_id"], {"inconnu.comment": "x"}),
-        lambda: st.upsert_row(ns, row["_id"], {"siren": "1", "inconnu.comment": "x"}),
         lambda: st.write_rows(ns, [{"siren": "3", "inconnu.comment": "x"}]),
     )
     for geste in gestes:

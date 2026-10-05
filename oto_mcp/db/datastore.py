@@ -112,33 +112,6 @@ def datastore_insert_row(ns_id: int, row_id: str, data: dict,
         return dict(row)
 
 
-def datastore_upsert_row(ns_id: int, row_id: str, data: dict) -> tuple[dict, bool]:
-    """Insère OU met à jour une row par sa clé `(ns_id, row_id)`. Idempotent :
-    re-poser le même `row_id` remplace `data` au lieu de dupliquer (sert la
-    dédup par clé stable, ex. urn LinkedIn). Renvoie `(row, inserted)` où
-    `inserted` est True si la row n'existait pas (ON CONFLICT non déclenché)."""
-    with ecriture_de_lignes() as conn:
-        row = conn.execute(
-            "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at, embed_dirty) "
-            "VALUES (%s, %s, %s::jsonb, NOW(), NOW(), "
-            "        (SELECT semantic_search FROM user_datastores WHERE id = %s)) "
-            # data change ⟹ re-dirty ⟺ namespace opt-in sémantique (#67 V2.2).
-            "ON CONFLICT (ns_id, row_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), "
-            "  embed_dirty = (SELECT semantic_search FROM user_datastores WHERE id = datastore_rows.ns_id), "
-            # Écrire, c'est repartir de zéro (#433) : le compteur de reprises ne mesure
-            # que les réservations SANS écriture, et le motif d'abandon tombe avec lui —
-            # une ligne réparée à la main revient dans la file.
-            "  claims = 0, abandon_reason = NULL "
-            "RETURNING row_id, created_at, updated_at, data, rev, (xmax = 0) AS inserted",
-            (ns_id, row_id, json.dumps(data), ns_id),
-        ).fetchone()
-        from .search import stamp_rank_vector
-        stamp_rank_vector(conn, "datastore_rows", "ns_id = %s AND row_id = %s", (ns_id, row_id))
-
-        inserted = bool(row.pop("inserted"))
-        return dict(row), inserted
-
-
 def datastore_find_row_id_by_key(ns_id: int, key_field: str, key_value) -> Optional[str]:
     """Trouve le `row_id` d'une row par une CLÉ MÉTIER, pour la dédup d'un batch
     write. Renvoie le plus ancien match (ordre stable) ou None.
@@ -1258,8 +1231,8 @@ def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: st
         merged = apply_fn(current)
         row = conn.execute(
             "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz, "
-            # cf. `datastore_upsert_row` : toute écriture de la ligne remet le
-            # compteur de reprises à zéro et la rouvre à la file (#433).
+            # Toute écriture de la ligne remet le compteur de reprises à zéro et
+            # la rouvre à la file (#433) : une ligne réparée à la main y revient.
             "       claims = 0, abandon_reason = NULL "
             "WHERE ns_id = %s AND row_id = %s "
             "RETURNING row_id, created_at, updated_at, data, rev",

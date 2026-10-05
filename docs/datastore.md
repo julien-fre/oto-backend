@@ -2677,7 +2677,8 @@ partis ensemble sur deux colonnes DIFFÉRENTES en perdaient un dans **100 %** de
 `datastore/ecriture_par_id.py` et passe par `db.datastore_merge_row_locked` : tout son
 travail sur la ligne tourne sous `FOR UPDATE`, le bail est vérifié sous ce même verrou
 (`_lease_guard`), la fusion et l'UPDATE suivent. Le motif qui l'avait tenu hors du
-verrou — « remplacer n'est pas fusionner » — vaut pour `upsert_row`, pas pour un patch.
+verrou — « remplacer n'est pas fusionner » — valait pour `upsert_row` (retiré par oto#156),
+pas pour un patch.
 Le jugement du forçage (`_forcage_readonly`, le palier) reste AVANT le verrou : il lirait
 une seconde connexion en tenant la ligne. `rafraichir_rang` garde le recalcul du vecteur
 que faisait l'ancien UPDATE ; la fusion par clé ne l'a jamais fait, divergence conservée.
@@ -2856,7 +2857,7 @@ quel run**. Aucune lecture en M2 : ni route, ni outil, ni texte servi.
 connexion, une transaction explicite (même sur une connexion en autocommit), puis
 `set_config('oto.*', …, true)` — l'équivalent de `SET LOCAL`, la valeur meurt avec la
 transaction et ne suit pas la connexion dans le pool. Écrivains aujourd'hui :
-`datastore_insert_row`, `datastore_upsert_row`, `datastore_merge_row_locked`,
+`datastore_insert_row`, `datastore_merge_row_locked`,
 `datastore_capturer_origine`, `datastore_drop_column`, `datastore_merge_key_duplicates`,
 `datastore_delete_row` (`db/datastore.py`) et `abandonner_les_lignes_a_bout`
 (`db/rowabandon.py`). `tests/datastore/test_estampille_273.py` parcourt l'AST du paquet :
@@ -3072,11 +3073,11 @@ laissera une révision de suppression portant ses valeurs, qu'il faudra purger a
 `user_datastores.context_org_id` : l'org active de l'appel qui crée un tableau
 PERSONNEL, même sens que `projects.context_org_id`. NULL pour un tableau d'org ou
 d'équipe (son contexte se dérive du propriétaire) et pour un personnel créé avant la
-colonne. Remplie par `db.create_datastore(…, context_org_id=…)`, que passent les trois
+colonne. Remplie par `db.create_datastore(…, context_org_id=…)`, que passent les deux
 voies de création du code : le store (`data_create_datastore` et `POST /api/datastores`,
-org lue par `_org_de_l_appel`, la même source que `_active_scope`), l'écriture à clé qui
-crée son tableau (`upsert_row`), et le vivier provisionné par la copie d'un projet (l'org
-où la copie est rangée). Une garde d'AST (`tests/datastore/test_contexte_org_160.py`)
+org lue par `_org_de_l_appel`, la même source que `_active_scope`) et le vivier provisionné
+par la copie d'un projet (l'org où la copie est rangée). L'écriture à clé qui créait son
+tableau à la volée (`upsert_row`) est retirée depuis oto#156. Une garde d'AST (`tests/datastore/test_contexte_org_160.py`)
 refuse une voie qui l'omettrait.
 
 > ⚠️ **Remplacé le 28/09/2026 (ADR 0030 §9, `docs/ownership.md` « Dans une org, on ne
@@ -3234,7 +3235,7 @@ une valeur en place il est écarté (#608). Formes acceptées : `"champ": "@clea
 
 **Une table, un résolveur** : `columns._MOTS`, lue par la fusion (`_merge_column`, `_merge_items`,
 `_sentinelles_dans_les_items`) et par la création (`columns.mots_resolus_a_la_creation`, appelée
-par `append_row` sans clé métier, la ligne neuve d'un lot et `upsert_row`, avant la capture
+par `append_row` sans clé métier et la ligne neuve d'un lot, avant la capture
 d'origine et la validation). Un mot de plus = une entrée ici et son nom dans
 `couches.SENTINELLES` (`test_la_table_couvre_tout_le_vocabulaire`).
 
@@ -3429,7 +3430,7 @@ toute colonne — d'où « même fusion, même journal » sans copie du chemin. 
 
 Une liste vidée par le geste efface la colonne (`None`) plutôt que de poser `[]` : jusqu'à
 la bascule d'oto#140 J2, `[]` est un vide ÉCARTÉ, et supprimer le dernier contact aurait
-été refusé « sans effet ». Le remplacement (`upsert_row`) refuse un rang. Le banc :
+été refusé « sans effet ». Le banc :
 `tests/datastore/test_ecriture_par_rang_oto22_live.py` (store, REST, MCP ; patch, clé,
 lot, création).
 
@@ -3450,8 +3451,7 @@ les faces, en ouvrir un second aurait fait deux voies pour un geste. La résolut
 fait dans `EcrituresParRang.appliquer`, sous le `FOR UPDATE` de la ligne, contre la
 liste en place : rangs, puis retraits, puis ajouts. Rien de neuf dans les chemins
 d'écriture — patch par `id`, fusion par clé, lot, création, REST, MCP, dépôt NDJSON
-héritent du geste parce qu'ils appellent déjà `sortir_les_rangs`/`appliquer` ; le
-remplacement (`upsert_row`) le refuse comme tout rang. Les éléments ajoutés passent la
+héritent du geste parce qu'ils appellent déjà `sortir_les_rangs`/`appliquer`. Les éléments ajoutés passent la
 validation (`ecrits` les nomme à leur rang dans la liste résultante, retraits compris) ;
 le journal porte l'avant et l'après de la colonne entière (déclencheur, inchangé).
 

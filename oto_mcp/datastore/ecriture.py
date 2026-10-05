@@ -35,7 +35,7 @@ from .columns import (
 )
 from .cle_metier import ligne_de_la_course_perdue, refuser_cle_metier_vide
 from .controles import _relever_origine_module
-from .errors import DatastoreNotFound, RowNotFound, RowValidationError
+from .errors import RowNotFound, RowValidationError
 from . import mots_deprecies as mdp
 from . import jetons
 from . import upsert_implicite as upi
@@ -405,72 +405,6 @@ class EcritureMixin:
         self._relever_forcage(forcage, row_id)
         self._terminal_write_notice(schema, ns_id, row_id, merged)
         return row
-
-    def upsert_row(self, datastore: str, row_id: str, data: dict, *,
-                   origine_override: bool = False) -> tuple[dict, bool]:
-        """Écrit une row à une clé `row_id` EXPLICITE (≠ append_row qui génère un
-        id), en remplaçant si elle existe. Crée le datastore au besoin. Sert le
-        stockage dédupliqué par clé stable (ex. urn LinkedIn). Renvoie
-        `(row, inserted)` — `inserted` False = la row existait déjà."""
-        self._reject_misplaced_id(data, row_id)
-        try:
-            ns_id = self._resolve(datastore, write=True)
-        except DatastoreNotFound:
-            _ot, _oid = self._default_owner()
-            db.create_datastore(_ot, _oid, datastore,
-                                context_org_id=self._org_de_l_appel())
-            self._active_scope_cache = None  # invalide le cache (le ns créé appartient à la PERSONNE (ADR 0068), pas à l'org active)
-            ns_id = self._resolve(datastore, write=True)
-        user_data = {k: v for k, v in data.items() if k not in _META_COLS}
-        schema = self._schema_of(ns_id)
-        # oto#22 : un REMPLACEMENT n'a pas d'élément en place à viser — un rang s'y
-        # refuse en le disant, plutôt que de tomber dans le refus des noms pointés.
-        _sans_rang, rangs = rg.sortir_les_rangs(schema, user_data)
-        if rangs is not None:
-            raise RowValidationError([
-                f"{', '.join('`' + c + '`' for c in rangs.brut)} : ce chemin REMPLACE "
-                f"la ligne entière, il n'y a pas d'élément en place à viser par rang. "
-                f"Rien n'a été écrit. Écris chaque colonne-liste entière."])
-        # ⚠️ Pas de `colonnes_en_place` ici, et c'est délibéré : l'upsert REMPLACE la
-        # ligne. Ranger une annotation sur une colonne qui n'est que dans l'ancienne
-        # ligne poserait une couche sur une valeur qui tombe dans le même geste.
-        user_data = ranger_les_couches(schema, user_data)
-        # oto#140 : le remplacement aussi — avertis, puis REFUSÉS à leur date (J3).
-        mdp.controler(self.off_notices, user_data)
-        _refuse_dotted_names(user_data)
-        refuser_cles_internes(user_data)
-        refuser_les_mots_mal_places(schema, user_data)
-        _refuse_mixed_layers(schema, user_data)
-        # #859 : le remplacement aussi — il ne passe par `_check_row` que sous validation.
-        user_data = self._normaliser_les_dates(schema, user_data)
-        refuser_cle_metier_vide(schema, user_data)
-        valide = dsv2.validation_active(schema) or dsv2.lifecycle_of(schema)
-        reserves = bool(dsv2.readonly_fields(schema)
-                        or dsv2.system_origin_fields(schema))
-        prev = db.datastore_get_row(ns_id, row_id) if (valide or reserves) else None
-        prev_data = dict((prev or {}).get("data") or {}) if prev else None
-        if reserves:
-            # #586/#606 sur un REMPLACEMENT : une colonne readonly absente du corps
-            # serait perdue par le remplacement — c'est une modification, jugée
-            # comme telle (le payload est complété des colonnes qui tomberaient).
-            complet = {**{k: None for k in (prev_data or {}) if k not in user_data},
-                       **user_data}
-            refuser_champs_reserves(schema, complet, avant=prev_data,
-                                    agent=aga.appel_d_agent())
-            _relever_origine_module(self, ns_id, complet, prev_data, schema=schema,
-                                    declare=origine_override)
-        # oto#204 : le REMPLACEMENT ne fusionne pas — les mots réservés se résolvent ici,
-        # contre rien, avant la validation et l'écriture (cf. `append_row`).
-        user_data = mots_resolus_a_la_creation(schema, user_data)
-        if valide:
-            sk = (dsv2.status_field(schema) or {}).get("key")
-            prev_status = (prev_data or {}).get(sk) if sk else None
-            self._check_row(schema, user_data, prev_status=prev_status)
-        self._assert_writable(ns_id, row_id)
-        row, inserted = db.datastore_upsert_row(ns_id, row_id, user_data)
-        if not inserted:
-            self._terminal_write_notice(schema, ns_id, row_id, user_data)
-        return self._row_to_dict(row, schema), inserted
 
     def declared_key(self, datastore: str) -> Optional[str]:
         """Clé métier déclarée au schéma (`schema.key`) — sert la dédup au batch

@@ -93,13 +93,14 @@ def test_couche_modifiee_porte_la_valeur_entiere(live):
         "societe": {"avant": avant, "apres": apres}}
 
 
-def test_upsert_et_retrait_de_colonne_par_le_code_du_datastore(live):
-    """Pas seulement une requête à la main : l'upsert (`ON CONFLICT DO UPDATE`, qui
-    passe par le déclencheur d'UPDATE) et le retrait de colonne (une révision par
+def test_fusion_et_retrait_de_colonne_par_le_code_du_datastore(live):
+    """Pas seulement une requête à la main : la fusion sous verrou (le patch par `id`,
+    qui passe par le déclencheur d'UPDATE) et le retrait de colonne (une révision par
     ligne qui la portait, valeur retirée comprise)."""
     from oto_mcp import db
     ns_id = _table({"statut": "a_faire", "note": "x"})
-    db.datastore_upsert_row(ns_id, "r1", {"statut": "fait", "note": "x"})
+    db.datastore_merge_row_locked(ns_id, "r1", lambda d: {**d, "statut": "fait"},
+                                  "2026-10-05T00:00:00+00:00")
     assert _revisions(ns_id)[-1]["diff"] == {
         "statut": {"avant": "a_faire", "apres": "fait"}}
     db.datastore_drop_column(ns_id, "note")

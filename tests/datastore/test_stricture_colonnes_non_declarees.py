@@ -181,10 +181,6 @@ def banc(monkeypatch):
     monkeypatch.setattr(dsm.db, "datastore_get_row", get_row)
     monkeypatch.setattr(dsm.db, "datastore_insert_row", insert)
     monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
-    monkeypatch.setattr(dsm.db, "datastore_upsert_row",
-                        lambda ns_id, rid, data: ({"row_id": rid, "created_at": "t",
-                                                   "updated_at": "t",
-                                                   "data": dict(data)}, False))
     fusion = _fake_merge_locked(etat["lignes"])
 
     def fusion_relevee(ns_id, rid, apply_fn, updated_at, **k):
@@ -222,12 +218,6 @@ def test_fusion_sur_cle_metier_refusee(banc):
     with pytest.raises(RowValidationError):
         store.append_row("viviers", {"siren": "552081317", "_liberation": "x"})
     assert "_liberation" not in etat["lignes"]["r1"]
-
-
-def test_remplacement_refuse(banc):
-    store, _ = banc
-    with pytest.raises(RowValidationError):
-        store.upsert_row("viviers", "r1", {"siren": "552081317", "_liberation": "x"})
 
 
 def test_lot_refuse(banc):

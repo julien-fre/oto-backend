@@ -229,8 +229,8 @@ class ControlesMixin:
         Sur le payload, AVANT la fusion, et c'est délibéré : la fusion juge « même
         valeur » au caractère près (`_merge_column`) — une même date réécrite sous une
         autre forme y ferait tomber ses couches `comment`/`link`, et un champ
-        `readonly` la prendrait pour une modification. Appelée par les quatre portes
-        (création et fusion d'`append_row`, lot, patch par `id`, remplacement) ;
+        `readonly` la prendrait pour une modification. Appelée par les trois portes
+        (création et fusion d'`append_row`, lot, patch par `id`) ;
         idempotente, deux passages ne disent rien de plus qu'un."""
         data, notices = dsdates.normaliser_ligne(schema, data)
         self.off_notices.update(notices)
@@ -245,8 +245,8 @@ class ControlesMixin:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
         déclare ni `unknown_columns` contraignant, ni exigence, ni lifecycle (défaut 0016 soft).
 
-        `written` = les clés que le geste réécrit (None sur un insert/remplacement,
-        où tout est écrit) : borne `max_length` restreinte à celles-là, cf.
+        `written` = les clés que le geste réécrit (None sur un insert, où tout
+        est écrit) : borne `max_length` restreinte à celles-là, cf.
         `dsv2.validate_row`. `en_place` = la ligne en place sur les chemins qui
         fusionnent : un élément de liste `of.key` que le geste n'écrit pas n'est pas
         jugé contre lui (oto#137). `ecrits_par_rang` = `{colonne: rangs}` des éléments

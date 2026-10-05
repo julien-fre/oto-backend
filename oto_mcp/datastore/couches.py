@@ -127,11 +127,11 @@ CLES_INTERNES = (VIDE_ASSUME,)
 # Une surface d'écriture qui ne passerait pas par la fusion les stockerait tels quels —
 # et `@keep` finirait servi à une cliente comme sa propre donnée.
 #
-# Vérifié le 08/09/2026 : les deux chemins qu'un agent peut emprunter (le patch par `id`
-# et le lot) fusionnent tous deux. Le seul chemin de REMPLACEMENT (`upsert_row`) n'est
-# atteint que par le flux LinkedIn, avec des données machine — aucune surface d'agent n'y
-# mène. Le trou est donc théorique aujourd'hui, et il cesserait de l'être au premier
-# chemin d'écriture qui contournerait la fusion.
+# Les deux chemins qu'un agent peut emprunter (le patch par `id` et le lot) fusionnent
+# tous deux, et la création résout les mots contre rien (`mots_resolus_a_la_creation`).
+# Le seul chemin qui REMPLAÇAIT une ligne sans fusionner (`upsert_row`, servi au seul
+# miroir du flux LinkedIn) est retiré depuis oto#156 : le trou cesserait d'être fermé au
+# premier chemin d'écriture qui contournerait la fusion.
 #
 # **La règle pour qui en ajoute un : résoudre, ou refuser en nommant le geste qui
 # marche. Jamais stocker.**
