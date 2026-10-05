@@ -12,6 +12,11 @@ contrats, et l'asymétrie est voulue (#294, #544, #614/#678) :
   `unknown_columns` n'est pas `"create"`, le référentiel est fermé : l'attribut que la déclaration ne nomme pas est refusé en nommant
   l'élément fautif (`_unknown_subkeys`, `_off_schema`, `_unknown_subkey_refusal`).
 
+⚠️ **oto#124** : ce droit du premier niveau prend fin le 21/10/2026 — une colonne non
+déclarée y est alors refusée sur tous les tableaux, quel que soit le réglage
+(`colonnes_non_declarees`, qui réutilise `couche_mal_ecrite`). D'ici là, le relevé et le
+cran `reject` ci-dessous restent tels quels.
+
 Y vit aussi `couche_mal_ecrite` : `champ.comentaire` n'est pas une clé inconnue de
 plus, c'est une couche mal orthographiée — le dire change le geste de correction. Et
 `types_geles_warning`, qui parle d'une ligne DÉJÀ hors format sans rien refuser :

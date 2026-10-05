@@ -16,6 +16,7 @@ from psycopg.errors import UniqueViolation
 
 from .. import db, geste
 from . import acces_agent as aga
+from . import colonnes_non_declarees as cnd
 from . import schema as dsv2
 from .columns import (
     _META_COLS,
@@ -98,6 +99,10 @@ class LotsMixin:
         # lot ENTIER avant la première ligne : l'avertissement en une phrase et non
         # cinq cents, et le refus daté (J3) sans moitié de lot déjà écrite.
         mdp.controler(self.off_notices, *(r for r in rows if isinstance(r, dict)))
+        # oto#124 : une colonne non déclarée, à partir de sa date — le lot ENTIER est
+        # jugé ici, avant sa première ligne. Avant la date, rien : chaque ligne relève
+        # ses colonnes au passage (`_check_row`), dites en une phrase.
+        cnd.juger_le_lot(schema, rows)
         # oto#141 : AJOUTER sur une clé existante ne fusionne plus en silence ; la
         # DÉSIGNER (`key=` nommé, tableau fermé) la modifie. `upsert` sans clé ne
         # fusionnerait rien ; sans `upsert`, à partir de la date, le lot est jugé ENTIER
@@ -298,7 +303,9 @@ class LotsMixin:
                 # dans un lot reste un refus de schéma. Seule sa désignation change —
                 # `details` suit, sinon le refus structuré (#545) se perdrait
                 # exactement là où le lot rend la reprise la plus coûteuse.
-                raise RowValidationError(
+                # `type(e)` : une sous-classe (`ColonneNonDeclaree`, oto#124) garde
+                # elle aussi sa classe, donc son code.
+                raise type(e)(
                     e.errors, details=e.details,
                     row=self._designation_de_lot(rang, total, key, data,
                                                  inserted + updated)) from None

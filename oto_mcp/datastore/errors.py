@@ -45,6 +45,17 @@ class RowValidationError(ValueError):
         super().__init__(tete + " : " + " ; ".join(errors))
 
 
+class ColonneNonDeclaree(RowValidationError):
+    """Écriture refusée : elle pose une colonne que le schéma ne déclare pas (oto#124),
+    à partir de la date de `colonnes_non_declarees`.
+
+    Sous-classe de `RowValidationError` — c'est un refus de schéma, et toute surface
+    qui sait en rendre un rend celui-ci —, mais avec son CODE (`unknown_column`) : un
+    client qui le reçoit sait quel geste proposer (déclarer la colonne), sans reparser
+    une phrase. `details.colonnes` les nomme ; `details.expected_column` quand la clé
+    refusée est une couche mal écrite (`effectif_comment` → `effectif.comment`)."""
+
+
 class SchemaDefinitionError(ValueError):
     """Le SCHÉMA lui-même est refusé — sa déclaration, jamais les données.
 

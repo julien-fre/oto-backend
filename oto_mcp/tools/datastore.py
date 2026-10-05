@@ -22,6 +22,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, db, ownership
 from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
 from ..datastore import upsert_implicite
+from ..datastore import colonnes_non_declarees
 from ..datastore import charge_a_renvoyer
 from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
@@ -53,6 +54,7 @@ _MARQUE_VIDE_REMPLACE = "<<vide_remplace>>"
 _MARQUE_UPSERT_IMPLICITE = "<<upsert_implicite>>"
 _MARQUE_UPSERT = "<<upsert>>"
 _MARQUE_CLE_METIER = "<<cle_metier>>"
+_MARQUE_COLONNES = "<<colonnes_non_declarees>>"
 
 
 def _inserer(fn, phrases: dict):
@@ -78,13 +80,17 @@ def _avec_la_phrase_des_couches(fn):
         _MARQUE_MOTS_DEPRECIES: mots_deprecies.DESCRIPTION_ECRITURE,
         _MARQUE_VIDE_REMPLACE: vide_remplace.DESCRIPTION_ECRITURE,
         _MARQUE_UPSERT_IMPLICITE: upsert_implicite.DESCRIPTION_ECRITURE,
-        _MARQUE_UPSERT: upsert_implicite.description_parametre()})
+        _MARQUE_UPSERT: upsert_implicite.description_parametre(),
+        _MARQUE_COLONNES: colonnes_non_declarees.DESCRIPTION_ECRITURE})
 
 
 def _avec_la_regle_de_cle(fn):
-    """Ce que la clé métier déclarée fait à l'écriture (oto#141), DÉRIVÉ de la date —
-    la même phrase que `data_patch_schema` et la face REST."""
-    return _inserer(fn, {_MARQUE_CLE_METIER: upsert_implicite.description_cle_schema()})
+    """Ce que la clé métier déclarée fait à l'écriture (oto#141), et la règle des
+    colonnes non déclarées (oto#124), DÉRIVÉES de leur date — les mêmes phrases que
+    `data_patch_schema` et la face REST."""
+    return _inserer(fn, {
+        _MARQUE_CLE_METIER: upsert_implicite.description_cle_schema(),
+        _MARQUE_COLONNES: colonnes_non_declarees.description_schema()})
 
 
 def _store_for(sub: str):
@@ -738,15 +744,16 @@ def register(mcp: FastMCP) -> None:
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
         (e.g. "email", "siren"). <<cle_metier>>
         Default is SOFT (rendering/dedup only, no write validation).
+        <<colonnes_non_declarees>>
         TWO head settings, one per question (they REPLACED `strict`, `unknown_fields`
         and `key_required` on 2026-10-02 — those are refused, with their exact
         equivalent):
         - `"unknown_columns"` — what happens to a column the schema does NOT
-          declare: `"create"` (default) creates it silently; `"report"` creates it
-          and names it back in `hors_schema`, and makes the declared format a
-          CONTRACT (top-level `options` enforced, declared sub-records closed);
-          `"reject"` does the same and REFUSES the write, storing nothing (needs at
-          least one declared field).
+          declare: `"create"` (default) creates it (with a dated warning, see
+          above); `"report"` creates it and names it back in `hors_schema`, and
+          makes the declared format a CONTRACT (top-level `options` enforced,
+          declared sub-records closed); `"reject"` does the same and REFUSES the
+          write, storing nothing (needs at least one declared field).
         - `"new_rows"` — whether a NEW row may be born: `"create"` (default) or
           `"reject"`, which CLOSES the table: a write that designates NO existing
           row (no `id`, and no key value the table already carries) is REFUSED
@@ -961,6 +968,8 @@ def register(mcp: FastMCP) -> None:
         <<vide_remplace>>
 
         <<upsert_implicite>>
+
+        <<colonnes_non_declarees>>
 
         ⚠️ **`@empty` must be the ENTIRE sub-field, alone.** Mixed into a sentence it
         is just text and gets stored as such — `"@empty ; nothing on the imprint"`

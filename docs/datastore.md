@@ -825,7 +825,7 @@ remplacés par deux réglages (`datastore/reglages.py`, seule lecture des deux a
 
 | réglage | question | crans |
 |---|---|---|
-| `unknown_columns` | le sort d'une colonne que le schéma ne déclare pas | `"create"` (défaut, en silence) · `"report"` (créée et relevée dans `hors_schema`) · `"reject"` (refusée ; exige une colonne déclarée) |
+| `unknown_columns` | le sort d'une colonne que le schéma ne déclare pas — jusqu'au 21/10/2026 seulement (oto#124, ci-dessous en fin de document : ensuite refusée partout) | `"create"` (défaut, avec un préavis daté) · `"report"` (créée et relevée dans `hors_schema`) · `"reject"` (refusée ; exige une colonne déclarée) |
 | `new_rows` | le droit d'une ligne nouvelle de naître | `"create"` (défaut) · `"reject"` (une écriture qui ne désigne aucune ligne existante est refusée ; exige `key`) |
 
 Les valeurs sont des verbes, les mêmes sur les deux axes : ce que la plateforme FAIT de
@@ -3593,3 +3593,53 @@ rien n'est retiré (toujours sur REST, qui ne masque pas).
 Reste hors de ce lot : un marqueur de champ ABANDONNÉ (oto#35 §4) — aucune clé du
 vocabulaire ne le porte, la forme compacte ne peut donc pas encore les écarter ; et
 l'état actif/inerte de CHAQUE contrainte de validation (oto#34).
+
+## Une colonne se déclare avant de s'écrire — une règle, plus de modes (oto#124, 05/10/2026)
+
+Une écriture qui nommait une colonne inconnue la créait à la volée : le schéma
+s'étendait au fil des écritures, sans geste dédié (« ça fait n'importe quoi dans les
+flottes d'agents », 07/09). Décidé le 05/10 : **une colonne que le schéma ne déclare pas
+est REFUSÉE, sur TOUS les tableaux**, quel que soit `unknown_columns`, tableau sans
+schéma compris. Pour écrire dans une colonne nouvelle, on la déclare d'abord
+(`data_patch_schema(fields=[{"key": …}])`, REST `PATCH …/schema`).
+
+- **Préavis daté** (`datastore/colonnes_non_declarees.py`, patron d'`upsert_implicite`,
+  `mots_deprecies`, `vide_remplace`) : `COLONNE_NON_DECLAREE_REFUSEE_LE` = 2026-10-21,
+  le même jour que la bascule d'`upsert` ; réglage `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE`
+  (illisible ⇒ lève) ; texte servi DÉRIVÉ de la date (`data_write`, `data_set_schema`,
+  `data_patch_schema` et son paramètre `unknown_columns`, routes REST d'écriture, guide
+  `datastore-semantics` §4 sexies bis). Avant la date, la colonne est créée et la réponse
+  porte UNE phrase dans `notices` par geste (union sur un lot) : les colonnes, la date,
+  le geste — pour tous les réglages, `create` compris.
+- **À partir de la date, dans le code** : `ColonneNonDeclaree` (sous-classe de
+  `RowValidationError`) — REST et réception d'upload `400 unknown_column`
+  (`details.colonnes`, `details.expected_column` quand la clé est une couche mal
+  écrite, `nom_comment` → `nom.comment`), MCP `INVALID_PARAMS` avec le même texte. Un lot
+  (MCP, REST, upload signé) et un import en tranches sont jugés ENTIERS avant leur
+  première ligne (`juger_le_lot`) : rien n'est écrit.
+- **Un seul seam** : `_check_row`, que traversent la création unitaire, la fusion par
+  clé, le patch par `id` et la ligne de lot — la même où vivent le relevé `hors_schema` et
+  le cran `reject`. Le prédicat (`non_declarees`) juge ce que le geste POSE : une ligne
+  qui porte une colonne ancienne non déclarée reste écrivable sur ses colonnes déclarées,
+  et `null` sur l'ancienne l'efface (un effacement ne crée rien).
+- **Découplé du format qui fait contrat.** `unknown_columns: "report"|"reject"` arme
+  encore la validation complète (`options` de premier niveau, structure des types,
+  couches inconnues, fermeture des sous-records, gardes de pose de `claimable` —
+  `reglages.format_contraignant`). Ce lot ne l'allume nulle part et ne l'éteint nulle
+  part : le sort de ce réglage est un arbitrage à part.
+- **Le gel** (`scripts/figer_colonnes.py`, à blanc par défaut, `--appliquer`) : avant la
+  bascule, chaque tableau — à schéma ou sans — reçoit la déclaration des colonnes que
+  ses lignes portent ; type déduit des valeurs (`datastore/types_inferes.py` :
+  homogénéité stricte, sinon pas de `type`, qui ne contraint rien ; ni `options` ni
+  `required`). Par `set_schema` via le store système de `durcir_schemas`, journalisé,
+  schéma relu avant d'écrire (bougé ⇒ sauté), une requête bornée par tableau,
+  idempotent — **à relancer la veille de la bascule**, pour geler aussi les colonnes
+  créées pendant le préavis.
+- **Ceux qui déclaraient déjà, et ceux qui déclarent désormais** : `oto_import` déclare
+  les en-têtes CSV neufs, et maintenant les clés NDJSON neuves (typées par la même
+  règle) ; une recette déclare ses colonnes aussi sur un tableau libre. L'upload signé
+  (`oto_upload_url`) ne déclare rien : une colonne neuve y est refusée à la date.
+- **Un tableau créé après le gel** naît sans colonne : sa première écriture est refusée
+  tant qu'on ne lui a pas déclaré ses colonnes — le refus le dit (« ce tableau ne déclare
+  encore aucune colonne ») et donne le geste.
+

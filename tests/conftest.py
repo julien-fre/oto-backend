@@ -200,18 +200,20 @@ def _tenant_primaire_declare() -> Iterator[None]:
 # aucun banc n'affirme sur leur valeur littérale (les envois réels sont mockés/
 # court-circuités par l'absence d'`OTO_MAILER_SEND_BEARER` en test) : les anciens
 # défauts servent de valeur gréée, sans risque de masquer une régression.
-# ── Les bascules DATÉES de l'écriture (oto#140 J2 et J3, oto#141) ──────────────────
+# ── Les bascules DATÉES de l'écriture (oto#140 J2 et J3, oto#141, oto#124) ─────────
 #
 # Elles tombent à leur date, dans le code, sans déploiement : sans ce gréement, la suite
 # changerait de verdict le 6, le 8 puis le 21 octobre 2026, sans qu'une ligne ait bougé. Le jour
 # qui les juge est fixé à la VEILLE de leur date par défaut — le comportement d'avant,
 # que la plupart des bancs décrivent. Un banc qui veut l'APRÈS déplace la date par son
 # réglage (`OTO_VIDE_REMPLACE_LE`, `OTO_MOTS_DEPRECIES_REFUSES_LE`,
-# `OTO_UPSERT_IMPLICITE_REFUSE_LE`), jamais l'horloge.
+# `OTO_UPSERT_IMPLICITE_REFUSE_LE`, `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE`), jamais
+# l'horloge.
 @pytest.fixture(autouse=True)
 def _bascules_datees_a_la_veille(monkeypatch: pytest.MonkeyPatch) -> None:
     from datetime import timedelta
 
+    from oto_mcp.datastore import colonnes_non_declarees as cnd
     from oto_mcp.datastore import mots_deprecies as mdp
     from oto_mcp.datastore import upsert_implicite as upi
     from oto_mcp.datastore import vide_remplace as vr
@@ -222,6 +224,8 @@ def _bascules_datees_a_la_veille(monkeypatch: pytest.MonkeyPatch) -> None:
                         lambda: mdp.MOTS_DEPRECIES_REFUSES_LE - veille)
     monkeypatch.setattr(upi, "_aujourdhui",
                         lambda: upi.UPSERT_IMPLICITE_REFUSE_LE - veille)
+    monkeypatch.setattr(cnd, "_aujourdhui",
+                        lambda: cnd.COLONNE_NON_DECLAREE_REFUSEE_LE - veille)
 
 
 @pytest.fixture(autouse=True)

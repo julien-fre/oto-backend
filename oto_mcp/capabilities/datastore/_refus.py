@@ -61,6 +61,15 @@ _CLE_DEJA_PORTEE = DeclaredError(
     "(`id`) ou les rangs (`doublons`, `existantes`) ; désigner par `id`/`key` pour "
     "modifier, ou passer `upsert=true` pour fusionner")
 
+#: oto#124 — une colonne que le schéma ne déclare pas, refusée à partir de sa date.
+_COLONNE_NON_DECLAREE = DeclaredError(
+    400, "unknown_column",
+    "à partir de la date annoncée par la description : l'écriture pose une colonne que "
+    "le schéma ne déclare pas, sur n'importe quel tableau. Rien n'est écrit (un lot est "
+    "jugé ENTIER avant sa première ligne). `details.colonnes` les nomme ; le geste est "
+    "de déclarer la colonne (`PATCH …/schema`, `{\"fields\": [{\"key\": …}]}`) puis "
+    "de réécrire")
+
 _LIGNE_ABSENTE = DeclaredError(
     404, "row_not_found", "aucune ligne de cet `_id` dans ce tableau")
 

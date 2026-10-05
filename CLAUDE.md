@@ -122,7 +122,10 @@ base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis p
   le parquet sert lookups et bulk · ⚠️ `categorie_entreprise` est celle du **groupe** (`docs/sirene-stock.md`).
 - **Datastore** (ADR 0016) : PG/JSONB natif, tools `data_*` + REST `/api/datastore/*` (100 % dérivée), découpé par
   coutures (`db/datastore_ns` = le tableau, `db/datastore` = les lignes, `datastore/core` compose) · ⚠️ **une pose de
-  schéma remplace**, éditer = `data_patch_schema` · ⚠️ **écrire la couche `origine` se DÉCLARE**
+  schéma remplace**, éditer = `data_patch_schema` · ⚠️ **une colonne se DÉCLARE avant de s'écrire** (oto#124) : à
+  partir du **21 octobre 2026** une colonne non déclarée est refusée sur tous les tableaux (`unknown_column`,
+  `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE`), l'existant gelé par `scripts/figer_colonnes.py` · ⚠️ **écrire la couche
+  `origine` se DÉCLARE**
   (`origine_override=true`, les deux faces + au mint d'un upload signé) : à partir du **1er octobre 2026** la poser
   sans le dire est refusé — ce n'est pas un droit à obtenir, la date vit dans le code et `OTO_ORIGINE_REFUS_LE` la
   déplace · ⚠️ **une colonne peut EXIGER sa provenance** (`required_layers: ["comment"]`, oto#75) : la valeur non

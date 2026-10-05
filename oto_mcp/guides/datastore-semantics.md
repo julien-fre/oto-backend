@@ -388,13 +388,35 @@ réservation). Une colonne avec ses `options`, ou l'ancienne étiquette, ressemb
 état sans en être un — la réponse te le dit plutôt que de te laisser conclure de son
 silence.
 
-## 4 sexies bis. Deux réglages de tête, un par question
+## 4 sexies bis. Une colonne se DÉCLARE avant de s'écrire
+
+**À partir du 21 octobre 2026, une écriture dans une colonne que le schéma ne déclare
+pas est REFUSÉE** (`unknown_column`), sur TOUS les tableaux — tableaux sans schéma
+compris, et quel que soit `unknown_columns` (oto#124). Rien n'est écrit ; un lot ou un
+import est refusé ENTIER, avant sa première ligne. Pour écrire dans une colonne
+nouvelle, déclare-la d'abord, puis écris :
+
+```
+data_patch_schema(datastore=…, fields=[{"key": "score", "type": "number"}])
+```
+
+(REST : `PATCH /api/datastores/{datastore}/schema`, même corps.) `fields` fusionne par
+clé : la colonne est ajoutée, les autres ne bougent pas. Les colonnes qu'un tableau
+porte déjà le 21 octobre sont déclarées pour lui avant cette date — rien de ce qui
+existe ne devient inécrivable. Un patch qui touche une colonne déclarée d'une ligne
+portant une colonne ancienne non déclarée passe ; écrire `null` dans celle-ci l'efface.
+
+**D'ici là**, la colonne est encore créée, et la réponse le dit dans `notices` : les
+colonnes, la date, le geste. `oto_import` déclare lui-même les colonnes neuves d'un
+fichier (en-têtes CSV, clés NDJSON).
+
+## 4 sexies ter. Deux réglages de tête, un par question
 
 Un schéma porte deux réglages de tête (oto#127, 02/10/2026) :
 
 | réglage | question | crans |
 |---|---|---|
-| `unknown_columns` | que devient une colonne que le schéma ne déclare pas ? | `"create"` (défaut : créée, en silence) · `"report"` (créée et nommée dans `hors_schema`) · `"reject"` (refusée, rien n'est écrit — exige au moins une colonne déclarée) |
+| `unknown_columns` | que devient une colonne que le schéma ne déclare pas, jusqu'au 21/10/2026 (§4 sexies bis : ensuite refusée partout) ? | `"create"` (défaut : créée, avec le préavis) · `"report"` (créée et nommée dans `hors_schema`) · `"reject"` (refusée, rien n'est écrit — exige au moins une colonne déclarée) |
 | `new_rows` | une ligne nouvelle a-t-elle le droit de naître ? | `"create"` (défaut) · `"reject"` (une écriture qui ne désigne aucune ligne existante est refusée — exige `key`) |
 
 Hors `"create"`, `unknown_columns` dit aussi que le format FAIT CONTRAT : les

@@ -51,6 +51,7 @@ from .reserves import (
 from .errors import (  # noqa: F401
     BusinessKeyExists,
     BusinessKeyRequired,
+    ColonneNonDeclaree,
     InvalidCursor,
     DatastoreAmbigu,
     DatastoreExists,
@@ -160,6 +161,9 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         # rempli par `_check_row`, lu par les surfaces via `off_schema_report()`. Le
         # store est instancié par requête, donc la portée est celle du geste.
         self.off_schema: set = set()
+        # oto#124 : les colonnes NON DÉCLARÉES que ce geste a créées avant la date du
+        # refus — union sur un lot, dites en UNE phrase datée (`off_schema_report`).
+        self.off_non_declarees: set = set()
         self.off_options: dict = {}
         # Colonnes dont la valeur EN BASE ne passe plus le type déclaré, rencontrées
         # en écrivant AILLEURS sur la même ligne. `{champ: refus}` — le refus qu'on

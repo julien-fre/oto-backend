@@ -298,6 +298,13 @@ _REGLAGES: tuple[Variable, ...] = (
              "existe déjà est refusée sans `upsert=true` (oto#141). Une valeur illisible "
              "LÈVE plutôt que de retomber sur le défaut.",
              ("oto_mcp/datastore/upsert_implicite.py:59",)),
+    Variable("OTO_COLONNE_NON_DECLAREE_REFUSEE_LE", Classe.REGLAGE, None,
+             "Déplace la date par défaut "
+             "(`datastore/colonnes_non_declarees.py:COLONNE_NON_DECLAREE_REFUSEE_LE`, "
+             "2026-10-21) à partir de laquelle une écriture qui pose une colonne que le "
+             "schéma ne déclare pas est refusée, sur tous les tableaux (oto#124). Une "
+             "valeur illisible LÈVE plutôt que de retomber sur le défaut.",
+             ("oto_mcp/datastore/colonnes_non_declarees.py:71",)),
     # -- timeouts / cadences / tailles / rétention -----------------------------
     Variable("OTO_SLOW_CALLBACK_WARN", Classe.REGLAGE, "1.0",
              "Seuil (s) d'avertissement d'un callback lent (event loop).",

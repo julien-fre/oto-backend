@@ -12,6 +12,7 @@ Deux étages : la fonction pure (`datastore_schema`) et le relevé du store (le 
 """
 import pytest
 
+from oto_mcp.datastore import colonnes_non_declarees as cnd
 from oto_mcp.datastore import core as dsm
 from oto_mcp.datastore import schema as dsv2
 from oto_mcp.datastore.core import DatastorePg, RowValidationError
@@ -132,6 +133,8 @@ def test_append_accepts_the_value_and_reports_the_field(store):
     assert st.off_schema_report() == {
         "hors_schema": ["actualite_sociale"],
         "hors_schema_hint": dsv2.off_schema_warning(["actualite_sociale"]),
+        # oto#124 : le préavis daté, pour TOUS les réglages — `report` compris.
+        "notices": [cnd.avertissement(["actualite_sociale"])],
     }
 
 

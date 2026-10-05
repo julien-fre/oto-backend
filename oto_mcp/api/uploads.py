@@ -301,6 +301,10 @@ _REFUS_DE_LA_RECEPTION = (
                   "frappé sans `key`, le fichier AJOUTE — en portent une que le "
                   "tableau a déjà. `detail` les nomme, rien n'est écrit ; frapper un "
                   "jeton avec `key` (désigner) ou `upsert=true` (fusionner)"),
+    DeclaredError(400, "unknown_column",
+                  "`datastore` (oto#124, à partir de sa date) : le fichier pose une "
+                  "colonne que le schéma du tableau ne déclare pas. `detail` la nomme, "
+                  "rien n'est écrit ; la déclarer (`PATCH …/schema`) puis renvoyer"),
     DeclaredError(413, "image_too_large", "`image` : au-delà de 2 Mo"),
     DeclaredError(400, "unsupported_type",
                   "`image` : ni png, ni jpeg, ni gif, ni webp (jugé sur les octets)"),

@@ -73,7 +73,9 @@ def ouvrir(datastore: Any, colonne_cle: str, *, ecrire: bool) -> Tableau:
     colonnes = {f["key"] for f in (schema.get("fields") or []) if f.get("key")}
     if not declaree and ecrire:
         colonnes |= _declarer_la_cle(store, adresse, datastore, colonne_cle, colonnes)
-    return Tableau(store, adresse, colonne_cle, colonnes, declare=bool(colonnes))
+    # oto#124 : un tableau LIBRE déclare aussi ses colonnes — une colonne non déclarée
+    # est refusée à l'écriture sur tous les tableaux, sans schéma compris.
+    return Tableau(store, adresse, colonne_cle, colonnes, declare=ecrire)
 
 
 def _declarer_la_cle(store: Any, adresse: str, datastore: str, colonne_cle: str,
@@ -101,8 +103,9 @@ def _declarer_la_cle(store: Any, adresse: str, datastore: str, colonne_cle: str,
 
 
 def colonnes_a_creer(t: Tableau, colonnes: list[str]) -> list[str]:
-    """Les colonnes que la recette écrit et que le schéma DÉCLARÉ ne connaît pas. Un
-    tableau sans schéma (libre) n'en déclare aucune : rien à créer."""
+    """Les colonnes que la recette écrit et que le schéma DÉCLARÉ ne connaît pas —
+    tableau libre compris (oto#124 : une colonne non déclarée est refusée partout).
+    Rien hors écriture (l'épreuve n'écrit pas)."""
     if not t.declare:
         return []
     return [c for c in dict.fromkeys(colonnes) if c not in t.colonnes]

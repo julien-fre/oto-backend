@@ -32,6 +32,7 @@ from ... import access
 from ...auth import token_scopes
 from ...datastore.identite import Adresse
 from ...datastore import journal as datastore_journal
+from ...datastore import colonnes_non_declarees as cnd
 from ...datastore import couches, identite, jetons
 from ...datastore import forcage as fcg
 from ...datastore import layers as dsl
@@ -39,6 +40,7 @@ from ...datastore import schema as dsv2
 from ...datastore import upsert_implicite as upi
 from ...datastore.core import (
     BusinessKeyExists,
+    ColonneNonDeclaree,
     BusinessKeyRequired,
     DatastoreNotFound,
     DatastoreReadOnly,
@@ -55,7 +57,8 @@ from .lot import refuser_un_lot
 from ..registry import CAPABILITIES
 from ._forme import (_EMPTIES, _LAYERS, _REFUS_DE_FORME, _VERSIONS, _layers,
                      _relais_empties, _versions)
-from ._refus import (_CLE_DEJA_PORTEE, _JETON_MAL_PLACE, _LIGNE_ABSENTE,
+from ._refus import (_CLE_DEJA_PORTEE, _COLONNE_NON_DECLAREE, _JETON_MAL_PLACE,
+                     _LIGNE_ABSENTE,
                      _PRECONDITION_REFUSEE, _REFUS_D_ADRESSE, _REFUS_D_ECRITURE,
                      _WORKER_REQUIS)
 
@@ -698,6 +701,10 @@ def _write_refusal(e: Exception) -> AuthzDenied:
         # oto#141 : 409 comme `row_locked` — la requête est bien formée, c'est l'ÉTAT du
         # tableau (une ligne porte déjà cette clé) qui s'y oppose.
         return AuthzDenied(409, "business_key_exists", str(e), e.details)
+    if isinstance(e, ColonneNonDeclaree):
+        # oto#124 : un refus de schéma qui a son CODE — le geste (déclarer la colonne)
+        # n'est pas celui d'un `row_invalid`. AVANT lui, dont il dérive.
+        return AuthzDenied(400, "unknown_column", str(e), e.details)
     if isinstance(e, RowValidationError):
         return AuthzDenied(400, "row_invalid", str(e), e.details)
     return AuthzDenied(400, "invalid_row_input", str(e))
@@ -960,7 +967,7 @@ CAPABILITIES += [
                           "la ligne est refusée par le schéma, le cycle de vie ou le "
                           "nom d'une colonne (vide, pointé) : le message nomme les "
                           "champs fautifs"),
-            _CLE_DEJA_PORTEE,
+            _CLE_DEJA_PORTEE, _COLONNE_NON_DECLAREE,
         ),
         description=("Ajoute UNE ligne à un tableau — le corps EST la ligne : un objet, "
                      "une clé par colonne. Pas de lot ici : un corps dont l'unique clé "
@@ -973,6 +980,7 @@ CAPABILITIES += [
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
                      + " " + couches.DESCRIPTION_ECRITURE
+                     + " " + cnd.DESCRIPTION_ECRITURE
                      + " " + upi.description_cle_schema()
                      + " `readonly`, clé métier, ce qu'une écriture détruit : guide "
                      "`datastore-semantics`." + _ECRITURE_DETRUIT),
@@ -997,7 +1005,7 @@ CAPABILITIES += [
                           "existante : le message nomme la ligne ; "
                           "`details.cle_portee` dit si elle portait la clé, "
                           "`details.a_renvoyer` le fragment à renvoyer"),
-            _CLE_DEJA_PORTEE,
+            _CLE_DEJA_PORTEE, _COLONNE_NON_DECLAREE,
         ),
         description=("Écrit un LOT de lignes en un appel — le même geste que "
                      "`data_write(rows=[…])` côté agent : même moteur, mêmes refus, "
@@ -1014,7 +1022,8 @@ CAPABILITIES += [
                      "dit à quelle ligne reprendre. Pour un volume au-delà de "
                      "quelques milliers de lignes, l'upload signé NDJSON/CSV. "
                      + dsv2.description_donnees_d_origine()
-                     + " " + couches.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
+                     + " " + couches.DESCRIPTION_ECRITURE
+                     + " " + cnd.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
     ),
     Capability(
         key="me.datastore.get_row",
@@ -1043,6 +1052,7 @@ CAPABILITIES += [
                           "les champs fautifs, `details.expected_column` la colonne "
                           "quand il y en a une, `details.a_renvoyer` le fragment de "
                           "ligne à renvoyer (gabarits `<…>` à remplacer)"),
+            _COLONNE_NON_DECLAREE,
         ),
         description=("Modifie une ligne (patch partiel ; le corps EST le patch). "
                      "`?expected_revision=` (query, jamais le corps) = la `_revision` "
@@ -1052,7 +1062,8 @@ CAPABILITIES += [
                      "`readonly_override=true` remplace les colonnes verrouillées "
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
-                     + " " + couches.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
+                     + " " + couches.DESCRIPTION_ECRITURE
+                     + " " + cnd.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
     ),
     Capability(
         key="me.datastore.delete_row",

@@ -14,6 +14,11 @@ ignore ce qu'il est. Ce n'étaient pas trois réglages, c'étaient DEUX axes :
   `"reject"` (une écriture qui ne désigne aucune ligne existante est refusée). Il
   remplace `key_required`, qui ne jugeait aucun format de colonne.
 
+⚠️ **oto#124 (05/10/2026) : à partir du 21/10/2026, le SORT d'une colonne inconnue ne
+dépend plus de `unknown_columns`** — elle est refusée sur tous les tableaux
+(`colonnes_non_declarees`, préavis daté d'ici là, pour tous les crans). Le réglage garde,
+jusqu'à arbitrage, son second effet : `format_contraignant`, ci-dessous.
+
 Les VALEURS sont des verbes, les mêmes sur les deux axes : ce que la plateforme FAIT
 de la chose inconnue (créer, signaler, refuser) — `report` et `reject` sont ceux que
 `unknown_fields` employait déjà. Les NOMS disent la chose jugée, au pluriel comme

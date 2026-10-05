@@ -338,7 +338,10 @@ def test_a_table_without_a_lifecycle_hears_nothing(table):
     ns, ns_id = table
     st = _store()
     st.update_row(ns, "r1", {"societe": "Rien à dire"})
-    assert not (st.off_schema_report().get("notices") or [])
+    # Seul le préavis des colonnes non déclarées (oto#124) peut parler ici — `societe`
+    # n'est déclarée nulle part ; aucun message de cycle de vie.
+    assert not [n for n in st.off_schema_report().get("notices") or []
+                if "non déclarée" not in n]
 
 
 def test_a_free_row_hears_nothing_either(table):

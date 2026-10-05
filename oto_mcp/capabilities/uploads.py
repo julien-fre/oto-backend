@@ -24,6 +24,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import config, file_source, upload_tokens
+from ..datastore import colonnes_non_declarees as cnd
 from ..datastore import schema as dsv2
 from ..datastore import upsert_implicite as upi
 from ._authz import SUB_ONLY
@@ -279,8 +280,10 @@ class ImportInput(BaseModel):
         "Column that DESIGNATES a row: a re-run then updates instead of appending, no "
         "`upsert` needed. Omitted, the file matches on the declared key but ADDS. Default: the table's declared key."))
     declare_columns: bool = Field(default=True, description=(
-        "Declare headers that match no column as text columns (label = header). "
-        "Existing columns are never changed."))
+        "Declare headers that match no column as text columns (label = header); for "
+        "NDJSON, keys no column declares, typed from their values. Existing columns are "
+        "never changed. Off, a column the schema does not declare is refused from "
+        + cnd.date_du_refus().isoformat() + " on."))
     resume_from: Optional[int] = Field(default=None, description=(
         "From a previous receipt, when the file did not fit one call. Needs "
         "`source_sha256`."))
@@ -413,9 +416,11 @@ def _import(ctx: ResolvedCtx, inp: ImportInput) -> dict:
         from ..datastore import core as ds  # lazy : évite tout cycle d'import au boot
         store = ds.make_store(sub)
         ns_id = int(target["ns_id"])
+        # oto#124 : le NDJSON déclare aussi ses clés neuves (typées d'après leurs
+        # valeurs) — une colonne non déclarée est refusée à l'écriture.
         parsed = upload_tokens.parse_import(
-            rf.data, fmt, store._schema_of(ns_id) if fmt == "csv" else None,
-            separator=sep, declare_columns=inp.declare_columns and fmt == "csv")
+            rf.data, fmt, store._schema_of(ns_id),
+            separator=sep, declare_columns=inp.declare_columns)
         created = parsed["new_columns"]
         if created:
             store.patch_schema(target["namespace"], fields=created)
@@ -471,6 +476,10 @@ CAPABILITIES += [
                           "the file ADDS (no `key`) rows whose key the table already holds: `details` names them "
                           "(`doublons`, `existantes`) — nothing written when judged "
                           "before the first slice, else `resume_from`"),
+            DeclaredError(400, "unknown_column",
+                          "(oto#124, from its date) the file carries a column the "
+                          "table's schema does not declare and `declare_columns` did "
+                          "not declare it: `details.colonnes` names it, nothing written"),
         ),
         description=(
             "Load a file the server can reach into a table or a project — the content "

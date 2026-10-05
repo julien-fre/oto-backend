@@ -38,6 +38,7 @@ ownership) — un tableau hors périmètre répond 404, comme partout dans le da
 from __future__ import annotations
 
 from ...datastore.identite import Adresse
+from ...datastore import colonnes_non_declarees as cnd
 from ...datastore import reglages
 from ...datastore import upsert_implicite as upi
 from ...datastore.schema_keys import META_MAX_OCTETS as _META_MAX
@@ -132,8 +133,10 @@ class PatchSchemaInput(EntreeDatastore):
     # `str` et pas `Literal` : une valeur hors des crans est refusée par la pose, qui
     # les nomme, au lieu d'un `invalid_input` muet.
     unknown_columns: Optional[str] = Field(default=None, description=(
-        "What happens to a column the schema does NOT declare: `\"create\"` (the "
-        "default) creates it silently; `\"report\"` creates it and names it back in "
+        "What happens to a column the schema does NOT declare, until "
+        + cnd.date_du_refus().isoformat() + " — from that date on it is REFUSED on "
+        "every table whatever this says: `\"create\"` (the default) creates it, "
+        "with a dated warning; `\"report\"` creates it and names it back in "
         "`hors_schema` — and makes the declared format a CONTRACT: top-level "
         "`options` are enforced and declared sub-records refuse an undeclared "
         "attribute; `\"reject\"` does the same and refuses the write, storing "
@@ -261,13 +264,10 @@ CAPABILITIES += [
             "change the head keys, untouched when omitted — `key` names the BUSINESS "
             "KEY: " + upi.description_cle_schema() + " `new_rows: \"reject\"` "
             "CLOSES the table (a write designating no existing row is refused), "
-            "`\"create\"` reopens it. `unknown_columns` decides what happens to a "
-            "column the schema does NOT declare: `\"create\"` (the default) creates "
-            "it silently, `\"report\"` creates it and names it back in `hors_schema` "
-            "— and makes the declared format a contract (top-level `options` "
-            "enforced, declared sub-records closed) — while `\"reject\"` refuses the "
-            "write and stores nothing; set it on a table that has FINISHED being "
-            "explored. `strict`, `unknown_fields` and `key_required` were REPLACED by "
+            "`\"create\"` reopens it. " + cnd.description_schema() + " To ADD a "
+            "column, list it in `fields` (`{\"key\": …, \"type\": …}`): it is "
+            "appended, the others are untouched. "
+            "`strict`, `unknown_fields` and `key_required` were REPLACED by "
             "these two on 2026-10-02: they are refused with their exact equivalent. "
             "Per field, `readonly: true` locks a value once SET (layers such as "
             "`.comment` stay open); a cell with NO value — key absent, `null` or `\"\"` — can "

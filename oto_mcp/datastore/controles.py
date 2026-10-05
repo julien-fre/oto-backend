@@ -17,6 +17,7 @@ import copy
 from typing import Optional
 
 from .. import db, geste, ownership, session_org
+from . import colonnes_non_declarees as cnd
 from . import dates as dsdates
 from . import ecartes as dsec
 from . import schema as dsv2
@@ -384,6 +385,12 @@ class ControlesMixin:
                 f"{cite}. Si ces clés sont VRAIMENT tes données, déclare-les au schéma "
                 f"(`data_set_schema`) — sinon elles naîtraient en colonnes que "
                 f"personne n'a voulues.")
+        # oto#124 : UNE règle, tous réglages confondus — une colonne que le schéma ne
+        # déclare pas est REFUSÉE à partir de la date, et avant elle créée avec un
+        # préavis daté. Même seam, même `posed` que le relevé et le cran `reject`
+        # ci-dessous : le geste est jugé, jamais le passé qu'il hérite. Avant le cran
+        # `reject` : à partir de la date, c'est ce refus-ci, et son code, qui parle.
+        cnd.controler(schema, posed, self.off_non_declarees)
         hs_errors, hs_details = dsv2.off_schema_refusal(schema, posed)
         if hs_errors:
             raise RowValidationError(hs_errors, details=hs_details)
@@ -481,8 +488,14 @@ class ControlesMixin:
             out["non_rapprochable"] = sorted(self.off_non_rapprochables)
             out["non_rapprochable_hint"] = " ".join(
                 v for _, v in sorted(self.off_non_rapprochables.items()))
-        if self.off_notices:
-            out["notices"] = sorted(self.off_notices)
+        # oto#124 : les colonnes non déclarées que le geste a créées — UNE phrase datée
+        # pour le geste entier, union sur un lot, dans `notices` comme les autres
+        # bascules datées.
+        notices = set(self.off_notices)
+        if self.off_non_declarees:
+            notices.add(cnd.avertissement(sorted(self.off_non_declarees)))
+        if notices:
+            out["notices"] = sorted(notices)
         # Ce que le geste a VIDÉ (#407/#408/#409). Clé DISTINCTE des précédentes : ce
         # n'est ni une colonne inconnue ni une valeur hors d'une liste, c'est une
         # valeur qui N'EST PLUS — la seule des quatre qui ait détruit quelque chose.

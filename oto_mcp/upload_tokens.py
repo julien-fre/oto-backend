@@ -181,14 +181,18 @@ def parse_import(data: bytes, fmt: str, schema: Optional[dict] = None, *,
 
     CSV is read tolerantly (`csv_tolerant`): separator, encoding and headers matched to
     column keys or labels. With `declare_columns`, headers matching no column get a slug
-    key and are listed in `new_columns` for the caller to declare."""
+    key and are listed in `new_columns` for the caller to declare. NDJSON carries keys:
+    with `declare_columns`, its keys that no column declares are listed in
+    `new_columns`, typed from their values (`types_inferes`, oto#124)."""
     from . import csv_tolerant as ct
     if fmt != "csv":
         try:
             text = data.decode("utf-8-sig")
         except UnicodeDecodeError:
             raise UploadError(400, "not_utf8", "Le contenu doit être de l'UTF-8.")
-        return {"rows": _ndjson_rows(text), "traduits": {}, "info": {}, "new_columns": [],
+        rows = _ndjson_rows(text)
+        return {"rows": rows, "traduits": {}, "info": {},
+                "new_columns": _cles_a_declarer(schema, rows) if declare_columns else [],
                 "header_map": {}}
     try:
         decoded = ct.decode(data)
@@ -235,6 +239,20 @@ def parse_import(data: bytes, fmt: str, schema: Optional[dict] = None, *,
         info["dropped_empty_headers"] = empty  # 1-based column positions
     return {"rows": rows, "traduits": traduits, "info": info, "new_columns": new_columns,
             "header_map": target}
+
+
+def _cles_a_declarer(schema: Optional[dict], rows: list) -> list:
+    """The NDJSON keys no column declares, typed from the values they carry — the same
+    rule as the column freeze (`types_inferes`). A dotted or technical key is not a
+    column: the store files or refuses it."""
+    from .datastore import colonnes_non_declarees as cnd
+    from .datastore import types_inferes as ti
+    valeurs: dict = {}
+    for r in rows:
+        if isinstance(r, dict):
+            for k, v in r.items():
+                valeurs.setdefault(k, []).append(v)
+    return ti.colonnes_a_declarer(valeurs, cnd.declarees(schema))
 
 
 def _declared_targets(schema: Optional[dict], headers: list, mapped) -> tuple[dict, list]:
@@ -300,6 +318,7 @@ def import_rows(sub: str, target: dict, rows: list, *, deadline: float,
     (`time.monotonic()`). A refusal names the absolute row and what is already written.
     Assumes authz checked (`check_target_access`) and columns already declared."""
     from . import db  # lazy : évite tout cycle d'import au boot
+    from .datastore import colonnes_non_declarees as cnd
     from .datastore import core as ds
     from .datastore import mots_deprecies as mdp
     from .datastore import upsert_implicite as upi
@@ -307,6 +326,13 @@ def import_rows(sub: str, target: dict, rows: list, *, deadline: float,
     ns_id = int(target["ns_id"])
     # Deprecated-word refusals are judged on the whole file before the first slice.
     mdp.controler(set(), *(r for r in rows[resume_from:] if isinstance(r, dict)))
+    # oto#124: so are undeclared columns, from their date — nothing written.
+    try:
+        cnd.juger_le_lot(store._schema_of(ns_id), rows[resume_from:])
+    except ds.ColonneNonDeclaree as e:
+        raise UploadError(400, "unknown_column", str(e), details={
+            **(e.details or {}), "row": resume_from + 1, "written": 0,
+            "resume_from": resume_from})
     # oto#141: so is the business key (from its date, without `upsert`): duplicates
     # inside the file — and, when the file ADDS (no `key` named at the call), keys
     # already in the table — refuse the WHOLE file before the first slice. One record
@@ -350,6 +376,14 @@ def import_rows(sub: str, target: dict, rows: list, *, deadline: float,
             rang = getattr(store, "_lot_rang", 0) or 1
             done = i + rang - 1
             raise UploadError(409, "business_key_exists", str(e), details={
+                **(e.details or {}), "row": done + 1,
+                "written": inserted + updated + rang - 1, "resume_from": done + 1})
+        except ds.ColonneNonDeclaree as e:
+            # oto#124: a column that appeared after the whole-file judgement (a race
+            # on the schema). Named like `bad_row`, with its own code.
+            rang = getattr(store, "_lot_rang", 0) or 1
+            done = i + rang - 1
+            raise UploadError(400, "unknown_column", str(e), details={
                 **(e.details or {}), "row": done + 1,
                 "written": inserted + updated + rang - 1, "resume_from": done + 1})
         except ValueError as e:
@@ -508,6 +542,9 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
             # 409 et non `bad_row` : la requête est bien formée, c'est l'ÉTAT du tableau
             # qui s'y oppose — le refus nomme les lignes et les deux gestes.
             raise UploadError(409, "business_key_exists", str(e), details=e.details)
+        except ds.ColonneNonDeclaree as e:
+            # oto#124 : son code, comme la face REST — le geste est de déclarer.
+            raise UploadError(400, "unknown_column", str(e), details=e.details)
         except ValueError as e:
             raise UploadError(400, "bad_row", str(e))
         # Le chemin de bulk load est celui où le silence coûte le plus cher (#294) :
