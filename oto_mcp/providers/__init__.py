@@ -216,6 +216,8 @@ _DECLARATIONS: tuple[str, ...] = (
     # --- connecteur http générique (secret DANS le coffre oto) ----------------
     "http",
     "webflow",
+    # Voisin de `webflow` par le métier (CMS) : les deux cartes se lisent ensemble.
+    "wordpress",
     "ahrefs",
     "granola",
     "grain",

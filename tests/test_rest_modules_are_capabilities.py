@@ -48,6 +48,9 @@ _KNOWN: dict[str, str] = {
     "/api/salesforce/oauth/callback": NATURE,
     "/api/instagram_meta/oauth/callback": NATURE,
     "/api/meta_ads/oauth/callback": NATURE,
+    # Écran d'autorisation WordPress (mot de passe d'application) : même geste de
+    # navigateur, sans code à échanger.
+    "/api/wordpress/connect/callback": NATURE,
     # --- Webhooks : un tiers appelle, non authentifié côté Logto.
     # (`/api/unipile/webhook` a quitté cette liste le 2026-08-29, #581 : dormant depuis
     #  la v2 du fournisseur — plus aucun appelant légitime, donc plus de route.)

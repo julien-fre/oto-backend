@@ -82,7 +82,27 @@ def _before_send(event, hint):
     exc_info = (hint or {}).get("exc_info")
     if exc_info and (_is_expected_error(exc_info[1]) or _is_client_disconnect(exc_info[1])):
         return None
+    _redact_sensitive_query(event)
     return event
+
+
+def _before_send_transaction(event, hint):
+    _redact_sensitive_query(event)
+    return event
+
+
+def _redact_sensitive_query(event) -> None:
+    """Retire la query string des routes qui REÇOIVENT un secret en query — le
+    retour d'autorisation WordPress porte `password=` (protocole du site, pas un
+    choix). `send_default_pii=False` ne couvre pas la query d'une requête."""
+    from .auth.wordpress import CALLBACK_PATH
+    req = (event or {}).get("request") if isinstance(event, dict) else None
+    if not isinstance(req, dict):
+        return
+    url = str(req.get("url") or "")
+    if CALLBACK_PATH in url:
+        req["url"] = url.split("?", 1)[0]
+        req["query_string"] = "[redacted]"
 
 
 def init_sentry() -> bool:
@@ -116,6 +136,8 @@ def init_sentry() -> bool:
         # Ne pas reporter les erreurs gérées (4xx amont + refus d'entrée/config
         # user McpError) : pas des bugs backend.
         before_send=_before_send,
+        # Une transaction (si le traçage est activé) porte aussi l'URL de la requête.
+        before_send_transaction=_before_send_transaction,
         # oto-backend#869 — le SDK AUTO-ACTIVE `MCPIntegration` dès `mcp>=1.15.0`
         # (nous sommes en mcp 1.27.2) : elle capture la MÊME `McpError` que
         # `SentryToolErrorMiddleware` ci-dessous, SANS le tag `mcp.tool` ni
