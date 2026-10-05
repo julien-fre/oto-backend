@@ -252,6 +252,36 @@ def test_export_borne(construits, egress_vu, monkeypatch):
     assert inst.list_calls.call_count == 2
 
 
+def test_export_ne_rend_aucune_cellule_texte_en_formule():
+    """Un champ venu d'un tiers (nom affiché d'un appelant) qui commence par
+    `= + - @`, une tabulation ou un retour chariot est préfixé d'une apostrophe ;
+    un numéro `+33…` l'est aussi (texte, `+` gardé) ; une durée reste un nombre."""
+    import csv
+    import io
+
+    from oto_mcp.tools import threecx as X
+
+    lignes = [
+        {"SourceDisplayName": '=HYPERLINK("http://exemple.invalid";"x")',
+         "SourceCallerId": "+33612345678", "DestinationDisplayName": "-2+3",
+         "Reason": "@SUM(A1)", "DestinationCallerId": "\t=1", "Status": "\r=1",
+         "Direction": "Inbound", "SourceDn": "1001", "CallCost": 0.5,
+         "TalkingDuration": "PT1M16.46S", "RingingDuration": "-PT1S"},
+    ]
+    entete, ligne = list(csv.reader(io.StringIO(
+        X._csv(lignes).decode("utf-8-sig")), delimiter=";"))
+    cell = dict(zip(entete, ligne))
+    assert cell["SourceDisplayName"] == '\'=HYPERLINK("http://exemple.invalid";"x")'
+    assert cell["SourceCallerId"] == "'+33612345678"
+    assert cell["DestinationDisplayName"] == "'-2+3"
+    assert cell["Reason"] == "'@SUM(A1)"
+    assert cell["DestinationCallerId"] == "'\t=1" and cell["Status"] == "'\r=1"
+    assert cell["Direction"] == "Inbound" and cell["SourceDn"] == "1001"
+    assert cell["CallCost"] == "0.5" and cell["TalkingDuration"] == "76.5"
+    # Une durée illisible reste du texte, donc neutralisée comme tout texte.
+    assert cell["RingingDuration"] == "'-PT1S"
+
+
 def test_duree_illisible_rendue_telle_quelle():
     from oto_mcp.tools import threecx as X
 
