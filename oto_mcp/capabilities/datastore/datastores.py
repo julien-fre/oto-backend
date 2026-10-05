@@ -25,6 +25,7 @@ avalé en silence, il est maintenant nommé. Cf. `datastore/rows.py`.
 """
 from __future__ import annotations
 
+import warnings
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,7 +36,9 @@ from ...datastore.outils import adresse_servie
 
 from ... import db, roles
 from ...auth import token_scopes
+from ...datastore import colonnes_non_declarees
 from ...datastore.core import DatastoreExists, DatastoreForbidden, DatastoreNotFound, make_store
+from ...datastore.errors import SchemaDefinitionError
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .common import EntreeDatastore, HORODATAGE, govern_ns, ns_not_found
@@ -55,20 +58,34 @@ class ListDatastoresInput(BaseModel):
     """Aucun paramètre : le périmètre est l'org active, jamais un argument."""
 
 
-class CreateDatastoreInput(EntreeDatastore):
-    # Défaut vide plutôt que champ requis : un nom manquant mérite le refus NOMMÉ
-    # (`missing_datastore`) que cette route rend depuis toujours, pas l'`invalid_input`
-    # générique de pydantic — le dashboard l'affiche tel quel.
-    datastore: Adresse = ""
-    # Classeur (ADR 0030) : `{type: 'org'|'group'|'user', id}`. Absent = PERSONNEL
-    # (`type='user'`, l'appelant) — c'est ce que `_create_datastore` fait et ce que
-    # `tests/datastore/test_datastore_datastores_capability.py` fige (`("create_datastore",
-    # "vivier", "user", "u-1")`). Corrigé le 01/09/2026 (oto-backend#662) :
-    # cette ligne annonçait « org active » depuis toujours, l'inverse du code servi,
-    # et un tiers qui dérive son intégration du contrat crée alors chez lui un
-    # tableau qu'il croit poser dans l'org. L'appartenance est vérifiée ici, jamais
-    # présumée du corps.
-    owner: Optional[dict] = None
+# ⚠️ `schema` masque une méthode héritée de `BaseModel` : même parade que
+# `SetSchemaInput` (`capabilities/datastore/schema.py`) — le champ d'entrée garde son nom
+# de fil, et l'avertissement de pydantic est éteint sur cette seule définition.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+
+    class CreateDatastoreInput(EntreeDatastore):
+        # Défaut vide plutôt que champ requis : un nom manquant mérite le refus NOMMÉ
+        # (`missing_datastore`) que cette route rend depuis toujours, pas l'`invalid_input`
+        # générique de pydantic — le dashboard l'affiche tel quel.
+        datastore: Adresse = ""
+        # Classeur (ADR 0030) : `{type: 'org'|'group'|'user', id}`. Absent = PERSONNEL
+        # (`type='user'`, l'appelant) — c'est ce que `_create_datastore` fait et ce que
+        # `tests/datastore/test_datastore_datastores_capability.py` fige (`("create_datastore",
+        # "vivier", "user", "u-1")`). Corrigé le 01/09/2026 (oto-backend#662) :
+        # cette ligne annonçait « org active » depuis toujours, l'inverse du code servi,
+        # et un tiers qui dérive son intégration du contrat crée alors chez lui un
+        # tableau qu'il croit poser dans l'org. L'appartenance est vérifiée ici, jamais
+        # présumée du corps.
+        owner: Optional[dict] = None
+        # oto#124 : le schéma avec lequel le tableau NAÎT — le même objet que le corps de
+        # `PUT /api/datastores/{datastore}/schema`, posé par le même chemin. Absent ou
+        # `null` = tableau libre, comme avant.
+        schema: Optional[dict] = Field(default=None, description=(
+            "Le schéma avec lequel le tableau NAÎT — le même objet que le corps de "
+            "`PUT /api/datastores/{datastore}/schema` (même vocabulaire fermé, même "
+            "validation). Refusé ⇒ 400 `invalid_schema` et le tableau n'est PAS créé. "
+            "Absent ou `null` : tableau libre."))
 
 
 class DatastoreRefInput(EntreeDatastore):
@@ -142,6 +159,8 @@ class DatastoreList(BaseModel):
 
 
 class CreatedDatastore(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     datastore: Adresse
     id: int
     # Le même nombre que `id`, sous le nom que le reste du datastore emploie (oto#176).
@@ -165,6 +184,13 @@ class CreatedDatastore(BaseModel):
     # même. Un avertissement, jamais un refus : le défaut privé est voulu
     # (ADR 0068), c'est son silence qui coûtait une heure.
     avertissement: Optional[str] = None
+    # oto#124 — présents quand le tableau NAÎT avec un schéma (`schema` au corps), sous
+    # les clés de `PUT …/schema` : ce qui a été posé, ce que la version applique, et
+    # ce que la pose a à dire à son auteur.
+    declared_schema: Optional[dict] = Field(default=None, alias="schema",
+                                            serialization_alias="schema")
+    enforced: Optional[list] = None
+    warning: Optional[str] = None
 
 
 class DeletedDatastore(BaseModel):
@@ -248,9 +274,17 @@ def _create_datastore(ctx: ResolvedCtx, inp: CreateDatastoreInput) -> dict:
         # faces de diverger (elles l'ont fait du 05 au 08/09 : cette réponse-ci les
         # portait, celle du tool MCP non, et sa description promettait le contraire).
         return make_store(ctx.sub).create_datastore(
-            datastore, owner_type=owner_type, owner_id=owner_id)
+            datastore, owner_type=owner_type, owner_id=owner_id, schema=inp.schema)
     except DatastoreExists:
         raise AuthzDenied(409, "datastore_exists")
+    except SchemaDefinitionError as e:
+        # Le schéma de naissance refusé : le tableau n'a pas été créé (le store l'a
+        # retiré). Le message parle du schéma POSÉ, il se rend — même règle que
+        # `PUT …/schema` (`capabilities/datastore/schema.py::_set_schema`).
+        raise AuthzDenied(400, "invalid_schema", str(e))
+    except ValueError:
+        # Les autres refus de pose restent muets, comme sur `PUT …/schema`.
+        raise AuthzDenied(400, "invalid_schema")
 
 
 def _delete_datastore(ctx: ResolvedCtx, inp: DatastoreRefInput) -> dict:
@@ -363,7 +397,8 @@ CAPABILITIES += [
                      "ou au collègue qui ne le trouve pas, que ça se voit. La réponse "
                      "rend le propriétaire et vous avertit dans ce cas précis. Un "
                      "tableau personnel est LISTÉ, pour toi seul, dans l'org où il a été "
-                     "créé et dans ton org perso ; son numéro l'ouvre partout."),
+                     "créé et dans ton org perso ; son numéro l'ouvre partout. "
+                     + colonnes_non_declarees.description_creation()),
     ),
     Capability(
         key="me.datastore.delete_datastore",

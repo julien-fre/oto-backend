@@ -111,7 +111,18 @@ class SchemaOpsMixin:
         (le `remove` d'un patch) : ils sortent du relevé d'effacement, sans quoi le
         geste explicite crierait sur lui-même — et un avertissement qui crie à tort
         est celui qu'on apprend à ignorer."""
-        ns_id = self._resolve(datastore, write=True)
+        return self._poser_schema(self._resolve(datastore, write=True), datastore, schema,
+                                  retraits_annonces=retraits_annonces, geste=geste)
+
+    def _poser_schema(self, ns_id: int, datastore: str, schema: Optional[dict], *,
+                      retraits_annonces: Optional[list] = None,
+                      geste: str = "schema") -> dict:
+        """Le corps de `set_schema`, sur un tableau DÉJÀ résolu — validation, écriture,
+        index et relevés. Deux appelants : `set_schema` (qui résout l'adresse, droit
+        d'écriture compris) et la création d'un tableau qui naît avec son schéma
+        (`create_datastore(schema=…)`, oto#124) : son créateur vient de l'insérer, il
+        n'y a rien à résoudre, et le résoudre par son nom sous l'org active pourrait
+        désigner un homonyme. Un seul chemin de pose, jamais recopié."""
         if schema is not None and not isinstance(schema, dict):
             raise SchemaDefinitionError("schema doit être un objet {fields:[...]} ou null")
         # L'ancien schéma se lit AVANT la validation : le refus des clés inconnues

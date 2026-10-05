@@ -798,6 +798,14 @@ les deux cas. Banc : `tests/test_listes_seule_l_org.py`.
 Corps : `{"datastore": "<kebab-case>"}`, plus **`owner`** optionnel —
 `{"type": "org"|"group", "id": N}`. L'appartenance est vérifiée (403 sinon).
 
+**`schema`** optionnel (oto#124) : le tableau NAÎT avec ce schéma — le même objet que le
+corps de `PUT /api/datastores/{datastore}/schema`, posé par le même chemin. À partir du
+21/10/2026 une colonne non déclarée est refusée à l'écriture : un tableau créé nu refuse
+sa première ligne. C'est donc le geste normal pour créer un tableau qu'on va remplir.
+Refusé ⇒ `400 invalid_schema` (le message nomme la faute) et **le tableau n'est pas
+créé**. La réponse ajoute alors `schema`, `enforced` et `warning` (mêmes clés que la pose).
+Garde : `tests/datastore/test_creation_avec_schema_124_live.py`.
+
 ⚠️ **Sans `owner`, le tableau est PERSONNEL** : visible de son créateur seul, ni des
 autres membres de l'org ni de ses administrateurs. C'est le défaut voulu, jamais
 implicite (ADR 0068).

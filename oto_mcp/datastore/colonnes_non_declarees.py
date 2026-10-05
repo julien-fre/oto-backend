@@ -288,3 +288,25 @@ def description_schema() -> str:
             "and `\"report\"`/`\"reject\"` still make the declared format a CONTRACT "
             "(top-level `options` enforced, value structure and unknown layers judged, "
             "declared sub-records closed).")
+
+
+def description_creation() -> str:
+    """Ce que `data_create_datastore` et `POST /api/datastores` disent du paramètre
+    `schema` : un tableau NAÎT sans colonne, donc, à partir de la date, sa première
+    écriture est refusée tant qu'on ne lui en a pas déclaré. Le déclarer à la création
+    est le geste normal pour un tableau qu'on va remplir — DÉRIVÉ de la date, comme les
+    autres annonces de ce module."""
+    if refus_arme():
+        regle = ("⚠️ **A new table is born with NO column, and a write into a column the "
+                 "schema does not declare is REFUSED** (`unknown_column`)")
+    else:
+        regle = (f"⚠️ **From {date_du_refus().isoformat()} on, a write into a column the "
+                 "schema does not declare is REFUSED** (`unknown_column`) — and a new "
+                 "table is born with NO column")
+    return (f"{regle}: its first write is refused until columns are declared. To "
+            "create a table you are going to FILL, pass `schema` — the SAME object as "
+            "`data_set_schema` (`{\"fields\": [{\"key\": …, \"type\": …}], \"key\"?: …}`, "
+            "same closed vocabulary, same validation): the table is born with it, in ONE "
+            "atomic call. If the schema is refused, the table is NOT created. That is the "
+            "normal way to create a table you fill; without `schema` it is born free, "
+            "and `data_patch_schema(fields=[…])` declares columns later.")

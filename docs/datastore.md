@@ -3642,4 +3642,24 @@ schéma compris. Pour écrire dans une colonne nouvelle, on la déclare d'abord
 - **Un tableau créé après le gel** naît sans colonne : sa première écriture est refusée
   tant qu'on ne lui a pas déclaré ses colonnes — le refus le dit (« ce tableau ne déclare
   encore aucune colonne ») et donne le geste.
+- **Naître avec son schéma** (suite d'oto#124) : `data_create_datastore(schema=…)` et
+  `POST /api/datastores` (`{"datastore", "schema"}`) prennent le MÊME objet que
+  `data_set_schema` / `PUT …/schema` — c'est, après le 21/10, le geste normal pour créer
+  un tableau qu'on va remplir (texte servi dérivé de la date :
+  `colonnes_non_declarees.description_creation`).
+  - **Pourquoi `schema` entier et pas `fields`** : la clé métier se pose le plus souvent
+    à la naissance (c'est elle que désigne `key`, et la bascule d'`upsert` tombe le même
+    jour) ; `fields` seul imposerait un second appel pour elle, exactement ce qu'on
+    retire. Et `schema` est le nom et la forme du paramètre de `data_set_schema` : aucun
+    vocabulaire de plus.
+  - **Un seul chemin de pose** : `set_schema` est coupé en résolution + `_poser_schema`
+    (validation, vocabulaire fermé, index de clé métier, relevés), que la création
+    appelle sur le tableau qu'elle vient d'insérer — sans le re-résoudre par son nom, qui
+    pourrait désigner un homonyme sous l'org active.
+  - **Atomique pour l'appelant** : un schéma refusé retire le tableau à peine inséré et
+    relève l'erreur d'origine (MCP `INVALID_PARAMS` « n'a PAS été créé », REST
+    `400 invalid_schema` avec le message) — sinon la reprise sous le même nom prendrait
+    `datastore_exists`. Un nom pris reste `409` AVANT toute pose.
+  - Sans `schema` (absent ou `null`), la réponse et le tableau sont ceux d'avant. Garde :
+    `tests/datastore/test_creation_avec_schema_124_live.py`.
 

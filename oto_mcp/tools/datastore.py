@@ -93,6 +93,12 @@ def _avec_la_regle_de_cle(fn):
         _MARQUE_COLONNES: colonnes_non_declarees.description_schema()})
 
 
+def _avec_la_creation(fn):
+    """Ce que la création dit du schéma de naissance (oto#124), DÉRIVÉ de la date —
+    la même phrase que la face REST (`POST /api/datastores`)."""
+    return _inserer(fn, {_MARQUE_COLONNES: colonnes_non_declarees.description_creation()})
+
+
 def _store_for(sub: str):
     return make_store(sub)
 
@@ -609,8 +615,11 @@ def register(mcp: FastMCP) -> None:
     # puis exige que le texte servi nomme ce défaut-là — jamais l'inverse. C'est lui qui
     # a refusé de virer au vert quand le défaut a changé, avant que ce texte ne bouge.
     @mcp.tool()
-    def data_create_datastore(datastore: Adresse) -> dict:
-        """Create a new datastore (PG-backed, schema-free).
+    @_avec_la_creation
+    def data_create_datastore(datastore: Adresse, schema: Optional[dict] = None) -> dict:
+        """Create a new datastore (PG-backed), optionally WITH its typed schema.
+
+        <<colonnes_non_declarees>>
 
         The table is PRIVATE: it belongs to you, and no one else can read it — not
         the other members of your org, not its admins. That is the default and it is
@@ -634,6 +643,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: kebab-case identifier, unique per owner (e.g. `timetrack`).
+            schema: optional — the table's schema, the SAME object as
+                `data_set_schema(schema=…)`. Omitted (or null) = a free table.
         """
         sub = access.current_user_sub_or_raise()
         if not datastore or not datastore.strip():
@@ -646,12 +657,17 @@ def register(mcp: FastMCP) -> None:
                          "(`oto_project op=link target_type=tableau … slot='<name>'`).")))
         store = _store_for(sub)
         try:
-            return store.create_datastore(datastore.strip())
+            return store.create_datastore(datastore.strip(), schema=schema)
         except DatastoreExists:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
                 message=f"datastore `{datastore}` existe déjà",
             ))
+        except ValueError as e:
+            # Le schéma de naissance refusé (oto#124) : le tableau n'a pas été créé.
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=f"{e} — le tableau `{datastore.strip()}` n'a PAS été créé."))
 
     @mcp.tool()
     def data_delete_datastore(datastore: Adresse) -> dict:

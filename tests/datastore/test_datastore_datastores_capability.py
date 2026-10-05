@@ -52,10 +52,10 @@ class _Store(registre.RegistreMixin):
     def list_datastores(self):
         return self._out("list_datastores")
 
-    def create_datastore(self, datastore, *, owner_type=None, owner_id=None):
+    def create_datastore(self, datastore, *, owner_type=None, owner_id=None, schema=None):
         self._out("create_datastore", datastore, owner_type, owner_id)
         return registre.RegistreMixin.create_datastore(
-            self, datastore, owner_type=owner_type, owner_id=owner_id)
+            self, datastore, owner_type=owner_type, owner_id=owner_id, schema=schema)
 
     def _org_de_l_appel(self):
         return 99

@@ -406,6 +406,20 @@ porte déjà le 21 octobre sont déclarées pour lui avant cette date — rien d
 existe ne devient inécrivable. Un patch qui touche une colonne déclarée d'une ligne
 portant une colonne ancienne non déclarée passe ; écrire `null` dans celle-ci l'efface.
 
+**Un tableau neuf naît sans colonne** : à partir du 21 octobre, sa première écriture
+est donc refusée tant que rien n'est déclaré. Pour un tableau que tu vas remplir, le
+geste normal est de le créer AVEC son schéma, en un seul appel :
+
+```
+data_create_datastore(datastore="prospects", schema={"fields": [
+    {"key": "siren", "type": "text"}, {"key": "nom", "type": "text"}], "key": "siren"})
+```
+
+(REST : `POST /api/datastores`, corps `{"datastore": …, "schema": {…}}`.) `schema` est
+le MÊME objet que `data_set_schema` — mêmes clés, même vocabulaire fermé, même
+validation, clé métier et réglages de tête compris. Le tableau naît avec ; si le schéma
+est refusé, le tableau n'est PAS créé (rien à nettoyer, le même nom reste libre).
+
 **D'ici là**, la colonne est encore créée, et la réponse le dit dans `notices` : les
 colonnes, la date, le geste. `oto_import` déclare lui-même les colonnes neuves d'un
 fichier (en-têtes CSV, clés NDJSON).

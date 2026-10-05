@@ -189,7 +189,8 @@ def test_la_face_rest_rend_exactement_ce_que_le_store_rend(monkeypatch):
              "owner_type": "group", "owner_id": "9", "is_personal": False}
 
     class _Store:
-        def create_datastore(self, datastore, *, owner_type=None, owner_id=None):
+        def create_datastore(self, datastore, *, owner_type=None, owner_id=None,
+                             schema=None):
             return dict(rendu)
 
     from oto_mcp.capabilities.datastore import datastores as dsn

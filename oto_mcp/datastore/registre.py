@@ -193,6 +193,7 @@ class RegistreMixin:
 
     def create_datastore(
         self, datastore: str, *, owner_type: Optional[str] = None, owner_id: Optional[str] = None,
+        schema: Optional[dict] = None,
     ) -> dict:
         """Crée un datastore. Défaut = **la personne** (`_default_owner`, ADR 0068).
 
@@ -212,7 +213,19 @@ class RegistreMixin:
         description servie du tool MCP promettait au modèle que « la réponse te dit le
         propriétaire ». Deux faces, un seul geste, une promesse vraie d'un côté : le
         créateur ne voit rien d'anormal, et l'écart se découvre au second agent. Le
-        store rend donc la forme complète et les deux faces la relaient (08/09/2026)."""
+        store rend donc la forme complète et les deux faces la relaient (08/09/2026).
+
+        `schema` (oto#124) : le tableau NAÎT avec ce schéma — le même objet que
+        `data_set_schema`, posé par le même chemin (`_poser_schema` : validation,
+        vocabulaire fermé, index de clé métier, relevés). À partir du 21/10/2026 une
+        colonne non déclarée est refusée à l'écriture : un tableau créé nu refuse sa
+        première ligne, et c'est ici qu'on déclare ce qu'on va y écrire.
+
+        ⚠️ **Un schéma refusé défait la création** : l'appelant voit un seul geste,
+        réussi ou refusé, jamais un tableau nu laissé derrière un refus — il le
+        recréerait sous le même nom et prendrait `datastore_exists`. Le retrait est le
+        geste inverse de l'insertion qu'on vient de faire, sur un tableau que personne
+        d'autre n'a encore pu remplir ; l'erreur d'origine est relevée telle quelle."""
         demande_explicite = owner_type is not None
         if owner_type is None:
             owner_type, owner_id = self._default_owner()
@@ -222,6 +235,13 @@ class RegistreMixin:
                                         context_org_id=self._org_de_l_appel())
         except ValueError as e:
             raise DatastoreExists(str(e))
+        pose: dict = {}
+        if schema is not None:
+            try:
+                pose = self._poser_schema(ns_id, datastore, schema)
+            except Exception:
+                db.delete_datastore_by_id(ns_id)
+                raise
         # `id` ET `ns_id` : le même nombre sous les deux noms (oto#176) — la
         # création est la remise où l'agent LIT le numéro pour la première fois,
         # c'est donc la dernière qui puisse ne le servir que sous un seul nom.
@@ -233,7 +253,9 @@ class RegistreMixin:
                                                  explicite=demande_explicite)
         if avertissement:
             out["avertissement"] = avertissement
-        return out
+        # Ce que la pose dit (`schema`, `enforced`, `warning`…), sous les clés de
+        # `data_set_schema` ; l'identité du tableau reste celle de la création.
+        return {**pose, **out}
 
     def delete_datastore(self, datastore: str) -> None:
         ns_id = self._resolve(datastore)
