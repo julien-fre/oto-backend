@@ -14,6 +14,11 @@ kind of friction this module exists to remove. Anything that has no faithful
 core-block equivalent (raw HTML) goes into a `core/html` block, which the
 editor accepts verbatim.
 
+Nothing is dropped. A list item holds text and nested lists only (that is all
+`core/list-item` accepts); a list whose items carry anything else — code, a
+table, a quote, raw HTML — is kept WHOLE as one `core/html` block rendered by
+markdown-it, rather than losing the code from a step-by-step guide.
+
 Not a helper for a tool of its own: no `register()` (cf. tests/test_capabilities_drift).
 """
 from __future__ import annotations
@@ -59,6 +64,10 @@ def _find_close(tokens, i: int) -> int:
     return len(tokens) - 1
 
 
+class _NotNative(Exception):
+    """A list item carries a block `core/list-item` cannot hold."""
+
+
 def _list(tokens, i: int, end: int) -> str:
     ordered = tokens[i].type == "ordered_list_open"
     tag = "ol" if ordered else "ul"
@@ -86,7 +95,7 @@ def _list(tokens, i: int, end: int) -> str:
                     nested.append(_list(tokens, k, sub_close))
                     k = sub_close + 1
                 else:
-                    k += 1
+                    raise _NotNative(t.type)
             li = "<li>" + " ".join(p for p in text_parts if p) + "".join(nested) + "</li>"
             items.append(_block("list-item", li))
             j = close + 1
@@ -129,7 +138,11 @@ def _blocks(tokens, start: int, stop: int) -> list[str]:
             i = close + 1
         elif t.type in ("bullet_list_open", "ordered_list_open"):
             close = _find_close(tokens, i)
-            out.append(_list(tokens, i, close))
+            try:
+                out.append(_list(tokens, i, close))
+            except _NotNative:
+                rendered = _MD.renderer.render(tokens[i:close + 1], _MD.options, {})
+                out.append(_block("html", rendered.strip()))
             i = close + 1
         elif t.type == "blockquote_open":
             close = _find_close(tokens, i)
@@ -152,7 +165,9 @@ def _blocks(tokens, start: int, stop: int) -> list[str]:
             out.append(_table(tokens, i, close))
             i = close + 1
         else:
-            i += 1
+            # Every block token markdown-it produces with this configuration is
+            # handled above: a new one must be converted, never skipped.
+            raise ValueError(f"bloc Markdown non converti : {t.type}")
     return out
 
 
@@ -161,9 +176,3 @@ def markdown_to_blocks(markdown: str) -> str:
     tokens = _MD.parse(markdown or "")
     return "\n\n".join(_blocks(tokens, 0, len(tokens)))
 
-
-def html_to_block(html: str) -> str:
-    """Raw HTML the caller already wrote → ONE `core/html` block, so the editor
-    keeps it verbatim instead of opening it as a Classic block."""
-    html = (html or "").strip()
-    return _block("html", html) if html else ""

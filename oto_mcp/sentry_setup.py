@@ -92,15 +92,17 @@ def _before_send_transaction(event, hint):
 
 
 def _redact_sensitive_query(event) -> None:
-    """Retire la query string des routes qui REÇOIVENT un secret en query — le
-    retour d'autorisation WordPress porte `password=` (protocole du site, pas un
-    choix). `send_default_pii=False` ne couvre pas la query d'une requête."""
-    from .auth.wordpress import CALLBACK_PATH
+    """Retire la query string des routes qui REÇOIVENT un secret en query
+    (`journal_secrets.routes_a_requete_secrete`, la même liste que le journal
+    d'accès). `send_default_pii=False` ne couvre pas la query d'une requête."""
+    from urllib.parse import urlsplit
+
+    from .journal_secrets import requete_secrete
     req = (event or {}).get("request") if isinstance(event, dict) else None
     if not isinstance(req, dict):
         return
     url = str(req.get("url") or "")
-    if CALLBACK_PATH in url:
+    if requete_secrete(urlsplit(url).path):
         req["url"] = url.split("?", 1)[0]
         req["query_string"] = "[redacted]"
 

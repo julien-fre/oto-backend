@@ -3,14 +3,18 @@ l'API REST cœur (`wp/v2`). Wrappe `oto.tools.wordpress.WordPressClient`.
 
 Credential multi-champs (`site_url`, `username`, `application_password`),
 résolu par appel via `access.resolve_credential_fields("wordpress")`, `site_url`
-passé à `egress.check_url` AVANT toute construction de client (le site est
-déclaré par l'utilisateur : c'est exactement la forme que la garde existe pour
-refuser quand elle vise l'intérieur). Multi-compte : un compte = un site.
+passé à `auth.wordpress.check_site` (garde d'egress, puis HTTPS) AVANT toute
+construction de client (le site est déclaré par l'utilisateur : c'est exactement
+la forme que la garde existe pour refuser quand elle vise l'intérieur).
+Multi-compte : un compte = un site.
 
-⚠️ **Rien ne devient public sans `wordpress_publish`.** `wordpress_content` et
-`wordpress_article` refusent `status=publish|future` : la frontière « rien ne
-bouge » / « c'est en ligne » reste dans le NOM de l'outil (même choix que
-`webflow_publish`), jamais un paramètre parmi d'autres.
+⚠️ **Aucun article ni aucune page ne devient public sans `wordpress_publish`.**
+`wordpress_content` et `wordpress_article` refusent `status=publish|future` : la
+frontière « rien ne bouge » / « c'est en ligne » reste dans le NOM de l'outil
+(même choix que `webflow_publish`), jamais un paramètre parmi d'autres.
+⚠️ **Un média, lui, est public dès son téléversement** (son `source_url` se lit
+sans compte), image à la une d'un brouillon comprise : WordPress n'a pas de
+média en brouillon. Les descriptions le disent.
 
 `wordpress_article` est le chemin composé — Markdown converti en blocs natifs
 de l'éditeur (`wordpress_blocks`), catégories/étiquettes données par NOM
@@ -33,7 +37,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto.tools.common.errors import UpstreamHTTPError
 
-from .. import access, egress
+from .. import access
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from . import wordpress_blocks
@@ -85,10 +89,21 @@ def _wp_message(e: UpstreamHTTPError) -> str:
 def _translate(e: Exception) -> McpError:
     """Erreur amont → message actionnable. Le `code` WordPress (`rest_*`) est
     lu, jamais deviné sur le texte."""
-    from oto.tools.wordpress import WordPressRedirect
+    from oto.tools.wordpress import (WordPressMediaFieldsError, WordPressRateLimited,
+                                     WordPressRedirect)
 
     if isinstance(e, McpError):
         return e
+    if isinstance(e, WordPressMediaFieldsError):
+        # Le média EXISTE (et il est public) : le renvoyer réessayer créerait un doublon.
+        return _bad(f"média {e.media_id} téléversé (déjà public), mais son texte "
+                    f"alternatif / sa légende / son titre n'ont pas été posés "
+                    f"(HTTP {e.status_code}) — complète-le avec `wordpress_media "
+                    f"op=update id={e.media_id}`, ne le téléverse pas à nouveau.")
+    if isinstance(e, WordPressRateLimited):
+        wait = (f"réessaie dans {int(e.retry_after)} s" if e.retry_after is not None
+                else "réessaie plus tard")
+        return _bad(f"le site WordPress limite le débit (429) — {wait}.")
     if isinstance(e, (WordPressRedirect, ValueError)):   # EgressRefused ⊂ ValueError
         return _bad(str(e))
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
@@ -117,7 +132,7 @@ def _translate(e: Exception) -> McpError:
             return _bad(f"introuvable (404 {code}) : {msg}")
         if e.status_code >= 500:
             return _bad(f"le site WordPress est en erreur (HTTP {e.status_code}) — "
-                        "ce n'est pas ton entrée ; réessaie plus tard.")
+                        f"ce n'est pas ton entrée ; réessaie plus tard. {msg}".rstrip())
         return _bad(f"WordPress a refusé la requête (HTTP {e.status_code} {code}) : {msg}")
     raise e
 
@@ -174,10 +189,12 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     site), jamais une limite de la sonde."""
     from oto.tools.wordpress import WordPressClient
 
-    egress.check_url(fields.get("site_url") or "", connector="wordpress", field="site_url")
+    from ..auth.wordpress import check_site
+
+    allow_http = check_site(fields.get("site_url") or "")
     try:
         me = WordPressClient(fields["site_url"], fields["username"],
-                             fields["application_password"]).me()
+                             fields["application_password"], allow_http=allow_http).me()
     except UpstreamHTTPError as e:
         if e.status_code == 401:
             raise connector_verify.NonAutorise(_translate(e).error.message) from e
@@ -189,13 +206,16 @@ def _verify(fields: dict, config: dict | None = None) -> None:
 def _client(account: Optional[str] = None) -> WordPressClient:
     from oto.tools.wordpress import WordPressClient
 
+    from ..auth.wordpress import check_site
+
     creds = access.resolve_credential_fields("wordpress", account)
     site = creds.get("site_url") or ""
     try:
-        egress.check_url(site, connector="wordpress", field="site_url")
+        allow_http = check_site(site)
         return WordPressClient(site, creds.get("username") or "",
-                               creds.get("application_password") or "")
-    except ValueError as e:   # garde d'egress, URL ou identifiants absents
+                               creds.get("application_password") or "",
+                               allow_http=allow_http)
+    except ValueError as e:   # garde d'egress, HTTP, URL ou identifiants absents
         raise _bad(f"credential WordPress inutilisable : {e}") from e
 
 
@@ -223,6 +243,17 @@ def _type_route(c, type_: str) -> str:
     if type_ in ("pages", "page"):
         return "wp/v2/pages"
     return _route_for(_run(c.types), type_, "type de contenu")
+
+
+def _type_taxonomies(c, type_: str) -> list:
+    """Les taxonomies que CE type accepte (`category`, `post_tag`, une personnalisée…),
+    lues sur le site : une page n'a pas de catégories, un type personnalisé a les
+    siennes."""
+    key = (type_ or "").strip()
+    for slug, t in _run(c.types).items():
+        if key in (slug, t.get("rest_base")):
+            return list(t.get("taxonomies") or [])
+    raise _bad(f"type de contenu « {key} » introuvable en REST sur ce site.")
 
 
 def _tax_route(c, taxonomy: str) -> str:
@@ -253,11 +284,13 @@ def _seo_plan(c, route: str, namespaces: list) -> dict:
                 "reason": "aucune extension SEO détectée (Yoast, Rank Math)."}
     try:
         schema, _ = c.request("OPTIONS", route)
-        meta_props = (((schema or {}).get("schema") or {}).get("properties") or {}) \
-            .get("meta", {}).get("properties", {}) or {}
-    except Exception:  # noqa: BLE001 — schéma illisible ⇒ on n'écrit pas, et on le dit
-        logger.debug("wordpress OPTIONS %s failed", route, exc_info=True)
-        meta_props = {}
+    except (UpstreamHTTPError, requests.ConnectionError, requests.Timeout) as e:
+        # Le schéma n'a pas pu être LU : on n'écrit pas, et on dit pourquoi — jamais
+        # « champs non exposés », qui enverrait poser un snippet pour rien.
+        return {"plugin": plugin, "via": None,
+                "reason": f"schéma de la route illisible : {_translate(e).error.message}"}
+    meta_props = (((schema or {}).get("schema") or {}).get("properties") or {}) \
+        .get("meta", {}).get("properties", {}) or {}
     keys = _SEO_META[plugin]
     if all(k in meta_props for k in keys.values()):
         return {"plugin": plugin, "via": "meta", "keys": keys}
@@ -275,13 +308,16 @@ def _seo_meta(plan: dict, seo: dict) -> dict:
 
 # --- termes par nom -------------------------------------------------------------
 
-def _resolve_terms(c, route: str, values: list, *, create: bool) -> tuple[list, list]:
-    """Noms ou ids → ids. Un nom absent est créé (`create=True`) ; en dry_run il
-    est seulement annoncé. `term_exists` (course, casse) rend l'id existant."""
-    ids, to_create = [], []
+def _resolve_terms(c, route: str, values: list, *,
+                   create: bool) -> tuple[list, list, list]:
+    """Noms ou ids → `(ids, à créer, créés)`. Un entier est un id, une chaîne est
+    TOUJOURS un nom (« 2026 » est une étiquette, pas le terme n° 2026). Un nom absent
+    est créé (`create=True`) ; en dry_run il est seulement annoncé. `term_exists`
+    (course, casse) rend l'id existant."""
+    ids, to_create, created = [], [], []
     for v in values or []:
-        if isinstance(v, int) or (isinstance(v, str) and v.isdigit()):
-            ids.append(int(v))
+        if isinstance(v, int) and not isinstance(v, bool):
+            ids.append(v)
             continue
         name = str(v).strip()
         if not name:
@@ -296,14 +332,16 @@ def _resolve_terms(c, route: str, values: list, *, create: bool) -> tuple[list, 
             to_create.append(name)
             continue
         try:
-            ids.append(c.create(route, {"name": name})["id"])
+            new_id = c.create(route, {"name": name})["id"]
+            ids.append(new_id)
+            created.append({"name": name, "id": new_id})
         except UpstreamHTTPError as e:
             existing = (e.body.get("data") or {}).get("term_id") if isinstance(e.body, dict) else None
             if _wp_code(e) == "term_exists" and existing:
                 ids.append(int(existing))
             else:
                 raise _translate(e) from e
-    return ids, to_create
+    return ids, to_create, created
 
 
 def _upload(c, source: Union[str, dict], *, filename: Optional[str] = None,
@@ -379,10 +417,13 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """WordPress posts, pages and custom post types — list, read, create,
         edit, trash. For a blog article prefer `wordpress_article` (Markdown,
-        categories by name, featured image, SEO in one call). Nothing goes live
+        categories by name, featured image, SEO in one call). No item goes live
         here: `status` publish/future is refused, use `wordpress_publish` —
         but editing an item that is ALREADY published changes it live (check
-        with `dry_run` first). `get` returns the editable form (`content.raw`, block markup). `delete`
+        with `dry_run` first). Raw HTML in the content (`<script>`, `<iframe>`,
+        a `wp:html` block) is kept as written unless the account lacks
+        `unfiltered_html` — never paste HTML from an untrusted page.
+        `get` returns the editable form (`content.raw`, block markup). `delete`
         moves to the trash; `force=true` deletes permanently. `dry_run` on
         update/delete fetches the item and returns the real diff / what would be
         deleted, without writing.
@@ -394,7 +435,8 @@ def register(mcp: FastMCP) -> None:
             data: create/update fields as WordPress names them (title, content,
                 excerpt, slug, status draft|pending|private, categories, tags,
                 featured_media, parent, meta, acf…). update sends only these keys.
-            content_format: `markdown` converts `data.content` to native blocks.
+            content_format: `markdown` converts `data.content` to native blocks
+                (raw HTML inside it is kept as an HTML block).
             search: list — full-text filter.
             status: list — e.g. `draft`, `publish`, `draft,pending`, `any`.
             page: list — 1-based page.
@@ -422,7 +464,8 @@ def register(mcp: FastMCP) -> None:
             body = dict(_need(data, "data", op))
             _refuse_live(body, "wordpress_content")
             if content_format == "markdown" and isinstance(body.get("content"), str):
-                body["content"] = wordpress_blocks.markdown_to_blocks(body["content"])
+                body["content"] = _run(
+                    lambda: wordpress_blocks.markdown_to_blocks(body["content"]))
             if op == "create":
                 body.setdefault("status", "draft")
                 if dry_run:
@@ -468,6 +511,9 @@ def register(mcp: FastMCP) -> None:
             at: optional schedule datetime (site timezone) — publish only.
             dry_run: preview, no write.
         """
+        if op == "unpublish" and at:
+            raise _bad("op='unpublish' ne prend pas `at` : la dépublication est immédiate "
+                       "(WordPress ne programme pas un retour en brouillon).")
         c = _client()
         route = _type_route(c, type)
         current = _run(lambda: c.get(route, id))
@@ -569,7 +615,9 @@ def register(mcp: FastMCP) -> None:
         """WordPress media library — list, read, upload, edit alt text/caption,
         delete. `upload` takes a public URL or an oto file reference
         (`{"kind": "drive"|"gmail"|"url"|"project_file", …}`) and returns the
-        media `id` — use it as a post's `featured_media`. Delete is permanent.
+        media `id` — use it as a post's `featured_media`. ⚠️ An uploaded file is
+        PUBLIC at once at its `source_url` (WordPress has no draft media), even
+        if the post using it is a draft. Delete is permanent.
 
         Args:
             op: list | get | upload | update | delete.
@@ -637,9 +685,13 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Write a WordPress article in ONE call — the path to use for blog
         posts. Markdown becomes native editor blocks (headings, lists, quotes,
-        code, tables, images stay editable in WordPress). Categories and tags
-        are given by NAME (created if missing) or id. `featured_image` is a URL
-        or an oto file reference, uploaded and attached. SEO title/description/
+        code, tables, images stay editable in WordPress); raw HTML in it
+        (`<script>`, `<iframe>`…) is kept as an HTML block unless the account
+        lacks `unfiltered_html` — never paste HTML from an untrusted page.
+        Categories and tags are given by NAME (a string, created if missing) or
+        id (an integer), and must be taxonomies of `type`. `featured_image` is a
+        URL or an oto file reference, uploaded and attached — the image is
+        public at once, even on a draft. SEO title/description/
         keyword are written when Yoast or Rank Math expose them (else `seo`
         says why). A new article is saved as draft (or pending review) — then
         `wordpress_publish` to go live or schedule. Pass `id` to rewrite an
@@ -654,8 +706,8 @@ def register(mcp: FastMCP) -> None:
             id: existing post to update instead of creating.
             type: `posts` or a custom type from `wordpress_site`.
             status: draft | pending (review) — default draft on create, unchanged on update.
-            categories: names or ids.
-            tags: names or ids.
+            categories: names (strings) or ids (integers).
+            tags: names (strings) or ids (integers).
             featured_image: URL or oto file reference dict.
             featured_image_alt: alt text for the featured image.
             excerpt: summary shown in listings.
@@ -668,7 +720,7 @@ def register(mcp: FastMCP) -> None:
         c = _client()
         route = _type_route(c, type)
         body: dict = {"title": title,
-                      "content": wordpress_blocks.markdown_to_blocks(markdown)}
+                      "content": _run(lambda: wordpress_blocks.markdown_to_blocks(markdown))}
         # Création : brouillon par défaut. Mise à jour : le statut n'est PAS
         # envoyé sans demande — l'envoyer d'office dépublierait un article en ligne.
         if status is not None or id is None:
@@ -677,9 +729,20 @@ def register(mcp: FastMCP) -> None:
             body["excerpt"] = excerpt
         if slug:
             body["slug"] = slug
-        cat_ids, cat_new = _resolve_terms(c, "wp/v2/categories", categories or [],
-                                          create=not dry_run)
-        tag_ids, tag_new = _resolve_terms(c, "wp/v2/tags", tags or [], create=not dry_run)
+        if categories or tags:
+            # Les termes d'un type sont CEUX que le site lui déclare : une page n'a pas
+            # de catégories, un type personnalisé peut avoir les siennes.
+            accepted = _type_taxonomies(c, type)
+            for given, tax, label in ((categories, "category", "catégories"),
+                                      (tags, "post_tag", "étiquettes")):
+                if given and tax not in accepted:
+                    raise _bad(f"le type « {type} » n'a pas de {label} sur ce site "
+                               f"(taxonomies : {accepted}) — `wordpress_terms` et "
+                               "`wordpress_content data=` pour une taxonomie propre au type.")
+        cat_ids, cat_new, cat_made = _resolve_terms(
+            c, _tax_route(c, "category"), categories or [], create=not dry_run)
+        tag_ids, tag_new, tag_made = _resolve_terms(
+            c, _tax_route(c, "post_tag"), tags or [], create=not dry_run)
         if categories:
             body["categories"] = cat_ids
         if tags:
@@ -700,11 +763,29 @@ def register(mcp: FastMCP) -> None:
                     "terms_to_create": {"categories": cat_new, "tags": tag_new},
                     "featured_image": featured_image, "seo": plan}
 
-        if featured_image:
-            media = _upload(c, featured_image, alt_text=featured_image_alt)
-            body["featured_media"] = media.get("id")
-
-        post = _run(lambda: c.update(route, id, body) if id else c.create(route, body))
+        media = None
+        try:
+            if featured_image:
+                media = _upload(c, featured_image, alt_text=featured_image_alt)
+                body["featured_media"] = media.get("id")
+            post = _run(lambda: c.update(route, id, body) if id else c.create(route, body))
+        except McpError as e:
+            # Termes et image sont créés AVANT l'article : un échec ici les laisse en
+            # place. On les nomme — jamais d'objets orphelins que personne ne connaît.
+            left = []
+            if cat_made or tag_made:
+                left.append("termes créés : " + ", ".join(
+                    f"{t['name']} (id {t['id']})" for t in cat_made + tag_made))
+            if media:
+                left.append(f"image téléversée : média id {media.get('id')} "
+                            f"({media.get('source_url')}, déjà public)")
+            if not left:
+                raise
+            raise _bad(f"{e.error.message} — l'article n'est pas écrit. Restent sur le "
+                       f"site : {' ; '.join(left)}. Un nouvel essai retrouve les termes "
+                       "par nom ; le média se rattache (`wordpress_content op=update "
+                       "data={featured_media: id}`) ou se supprime (`wordpress_media "
+                       "op=delete`).") from e
         pid = post.get("id")
         seo_out = None
         if seo_wanted:

@@ -108,6 +108,12 @@ lien public des pages et révoque les invitations en attente émises avant la ba
 Les jetons courts (upload, 15 min) ont expiré d'eux-mêmes ; ceux de désinscription
 n'ouvrent qu'une désinscription et ne se révoquent qu'en changeant le secret d'instance.
 
+Une route qui **reçoit un secret dans sa query** (protocole d'un tiers : le retour
+d'autorisation WordPress porte `password=`) se déclare dans
+`journal_secrets.routes_a_requete_secrete` : le même filtre remplace sa query par
+`[redacted]` au journal d'accès, et `sentry_setup` la retire des événements — une seule
+liste pour les deux canaux.
+
 Cliquets : `tests/test_journal_secrets.py`, `tests/test_rest_call_logger.py`,
 `tests/test_journal_no_plaintext_secret.py`, `tests/test_journal_token_purge_558.py`.
 

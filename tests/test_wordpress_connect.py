@@ -1,7 +1,9 @@
 """Flux « Connecter » WordPress — ce qui protège un credential posé depuis un
-retour de navigateur non authentifié : state signé et lié à son audience, site
-renvoyé = site demandé, vérification AVANT la pose, compte nommé par l'hôte,
-et le mot de passe (en query) retiré du journal d'accès et de Sentry."""
+retour de navigateur non authentifié : state signé, lié à son audience et à usage
+unique, droits re-vérifiés au retour, HTTPS, site renvoyé = site demandé,
+vérification AVANT la pose, compte nommé par l'hôte, et le mot de passe (en query)
+retiré du journal d'accès et de Sentry."""
+import asyncio
 import logging
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
@@ -30,7 +32,7 @@ def ctx(monkeypatch):
 
 
 def _index_with(endpoint):
-    def fake(site):
+    def fake(site, **kw):
         return endpoint
     return fake
 
@@ -52,8 +54,18 @@ def test_start_builds_native_authorization_url(ctx, monkeypatch):
     assert out.details["account"] == "blog.example.com"
 
 
+def _nothing_saved(*a, **k):
+    from mcp.types import ErrorData, INVALID_PARAMS
+    from oto_mcp.access import CredentialUnavailable
+
+    raise CredentialUnavailable(ErrorData(code=INVALID_PARAMS, message="aucun"))
+
+
 def test_start_refuses_empty_site_and_foreign_auth_host(ctx, monkeypatch):
-    with pytest.raises(wp_auth.ConnectRefused):
+    from oto_mcp import access
+
+    monkeypatch.setattr(access, "resolve_credential", _nothing_saved)
+    with pytest.raises(wp_auth.ConnectRefused, match="indique l'URL"):
         wp_auth.start(ctx, {"site_url": ""})
     monkeypatch.setattr(wp_auth, "_authorization_endpoint",
                         _index_with("https://evil.example.net/authorize"))
@@ -76,14 +88,14 @@ def test_state_of_another_flow_is_rejected():
     assert wp_auth.read_state("garbage") is None
 
 
-def _parsed():
+def _parsed(**over):
     return {"sub": "user-1", "org": 12, "scope": "member", "site": "https://blog.example.com",
-            "app": ""}
+            "app": "", "jti": "j-1", **over}
 
 
 def test_finish_refuses_substituted_site(monkeypatch):
     with pytest.raises(wp_auth.ConnectRefused, match="ne correspond pas"):
-        wp_auth.finish(_parsed(), "https://other.example.com", "julien", "pw")
+        wp_auth.finish(_parsed(), "https://other.example.com", "editor", "pw")
 
 
 def test_finish_verifies_then_persists_under_host_account(monkeypatch):
@@ -97,7 +109,7 @@ def test_finish_verifies_then_persists_under_host_account(monkeypatch):
                         lambda *a, **k: seen.setdefault("guard", a))
     monkeypatch.setattr(credentials_store, "set_credential",
                         lambda *a, **k: seen.setdefault("set", (a, k)))
-    account = wp_auth.finish(_parsed(), "https://blog.example.com", "julien", "ab cd")
+    account = wp_auth.finish(_parsed(), "https://blog.example.com", "editor", "ab cd")
     assert account == "blog.example.com"
     args, kw = seen["set"]
     assert args[0] == credentials_store.MEMBER and args[2] == "wordpress"
@@ -120,21 +132,23 @@ def test_finish_does_not_persist_when_password_fails(monkeypatch):
     monkeypatch.setattr(credentials_store, "set_credential",
                         lambda *a, **k: pytest.fail("posé malgré un refus"))
     with pytest.raises(UpstreamHTTPError):
-        wp_auth.finish(_parsed(), "", "julien", "bad")
+        wp_auth.finish(_parsed(), "", "editor", "bad")
 
 
-def test_access_log_redacts_password():
-    from oto_mcp.api.wordpress import _RedactSensitiveQuery
+@pytest.mark.parametrize("path", ["/api/wordpress/connect/callback",
+                                  "/api/wordpress/connect/callback/"])
+def test_access_log_redacts_password(path):
+    # Le filtre COMMUN du journal d'accès (posé par `server.main`), pas un filtre de plus.
+    from oto_mcp.journal_secrets import MasqueCheminAcces
 
     rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
-                            ("1.2.3.4:5", "GET",
-                             "/api/wordpress/connect/callback?state=s&password=SECRET",
+                            ("1.2.3.4:5", "GET", f"{path}?state=s&password=SECRET",
                              "1.1", 302), None)
-    _RedactSensitiveQuery().filter(rec)
-    assert "SECRET" not in rec.getMessage()
+    MasqueCheminAcces().filter(rec)
+    assert "SECRET" not in rec.getMessage() and "[redacted]" in rec.getMessage()
     other = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, "%s %s %s %s %d",
                               ("c", "GET", "/api/x?y=1", "1.1", 200), None)
-    _RedactSensitiveQuery().filter(other)
+    MasqueCheminAcces().filter(other)
     assert "y=1" in other.getMessage()
 
 
@@ -190,3 +204,186 @@ def test_reconnect_without_site_reuses_saved_credential(ctx, monkeypatch):
     monkeypatch.setattr(wp_auth, "_authorization_endpoint",
                         _index_with("https://blog.example.com/wp-admin/authorize-application.php"))
     assert wp_auth.start(ctx, {}).details["site"] == "https://blog.example.com"
+
+
+def test_state_without_jti_is_rejected():
+    legacy = oauth_flow.sign_state(wp_auth.AUD, {"sub": "u", "org": 1, "scope": "member",
+                                                 "site": "https://x", "app": ""})
+    assert wp_auth.read_state(legacy) is None
+
+
+def test_reconnect_with_nothing_saved_is_named(ctx, monkeypatch):
+    from oto_mcp import access
+
+    monkeypatch.setattr(access, "resolve_credential", _nothing_saved)
+    with pytest.raises(wp_auth.ConnectRefused, match="indique l'URL"):
+        wp_auth.start(ctx, {})
+
+
+def test_reconnect_other_refusal_is_said_not_masked(ctx, monkeypatch):
+    # Plusieurs sites posés : le refus de la cascade dit lequel choisir — jamais
+    # « indique l'URL », qui ferait croire que rien n'est posé.
+    from mcp.types import ErrorData, INVALID_PARAMS
+    from oto_mcp import access
+    from oto_mcp.mcp_errors import McpError
+
+    def ambiguous(*a, **k):
+        assert k.get("check_usage") is False      # configurer n'use aucun quota
+        raise McpError(ErrorData(code=INVALID_PARAMS, message="plusieurs sites : précise"))
+
+    monkeypatch.setattr(access, "resolve_credential", ambiguous)
+    with pytest.raises(wp_auth.ConnectRefused, match="plusieurs sites"):
+        wp_auth.start(ctx, {})
+
+
+def test_reconnect_db_failure_propagates(ctx, monkeypatch):
+    from oto_mcp import access
+
+    def down(*a, **k):
+        raise RuntimeError("pool down")
+
+    monkeypatch.setattr(access, "resolve_credential", down)
+    with pytest.raises(RuntimeError, match="pool down"):
+        wp_auth.start(ctx, {})
+
+
+# --- HTTPS ---------------------------------------------------------------------
+
+def test_http_site_is_refused(monkeypatch):
+    from oto_mcp import egress
+
+    monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
+    monkeypatch.setattr(egress, "resolved_addresses", lambda host, port: {"93.184.215.14"})
+    monkeypatch.delenv(egress.ALLOW_VAR, raising=False)
+    with pytest.raises(wp_auth.ConnectRefused, match="en clair"):
+        wp_auth.check_site("http://blog.example.com")
+    assert wp_auth.check_site("https://blog.example.com") is False
+
+
+def test_http_allowed_only_for_a_declared_internal_destination(monkeypatch):
+    from oto_mcp import egress
+
+    monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
+    monkeypatch.setattr(egress, "resolved_addresses", lambda host, port: {"127.0.0.1"})
+    monkeypatch.setenv(egress.ALLOW_VAR, "wp-local=127.0.0.1:9400")
+    assert wp_auth.check_site("http://127.0.0.1:9400") is True     # allow_http du client
+    with pytest.raises(wp_auth.ConnectRefused):
+        wp_auth.check_site("http://127.0.0.1:9401")
+
+
+def test_finish_refuses_http(monkeypatch):
+    from oto_mcp import credentials_store, egress
+
+    monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
+    monkeypatch.setattr(egress, "resolved_addresses", lambda host, port: {"93.184.215.14"})
+    monkeypatch.setattr(credentials_store, "set_credential",
+                        lambda *a, **k: pytest.fail("posé sur un site en HTTP"))
+    with pytest.raises(wp_auth.ConnectRefused):
+        wp_auth.finish(_parsed(site="http://blog.example.com"), "", "editor", "pw")
+
+
+def test_finish_org_scope_writes_the_org_row(monkeypatch):
+    from oto_mcp import credentials_store, egress
+    from oto.tools.wordpress import client as wp_client
+
+    monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
+    monkeypatch.setattr(wp_client.WordPressClient, "me", lambda self: {"id": 4})
+    seen = {}
+    monkeypatch.setattr(credentials_store, "guard_account_write",
+                        lambda *a, **k: seen.setdefault("guard", a))
+    monkeypatch.setattr(credentials_store, "set_credential",
+                        lambda *a, **k: seen.setdefault("set", a))
+    wp_auth.finish(_parsed(scope="org"), "", "editor", "pw")
+    assert seen["guard"][:2] == ("org", "12") and seen["set"][:2] == ("org", "12")
+
+
+# --- la route de retour ----------------------------------------------------------
+
+CALLBACK = "/api/wordpress/connect/callback"
+
+
+def _handler():
+    from oto_mcp.api import wordpress as wp_routes
+
+    routes = wp_routes.make_routes(None, None, None, None, None)
+    return next(r.endpoint for r in routes if r.path == CALLBACK)
+
+
+def _call(query: str):
+    from starlette.requests import Request
+
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    req = Request({"type": "http", "method": "GET", "path": CALLBACK, "headers": [],
+                   "query_string": query.encode(), "path_params": {}}, receive=_receive)
+    resp = asyncio.run(_handler()(req))
+    return parse_qs(urlsplit(resp.headers["location"]).query).get("connect", [None])[0]
+
+
+@pytest.fixture
+def retour(monkeypatch):
+    """Un state valide, une table de consommation en mémoire, une pose observée."""
+    from oto_mcp import db
+
+    used: set = set()
+    monkeypatch.setattr(db, "consume_state_jti",
+                        lambda aud, jti: not (f"{aud}:{jti}" in used or used.add(f"{aud}:{jti}")),
+                        raising=False)
+    monkeypatch.setattr(oauth_flow, "connector_return_url",
+                        lambda app, connector, etat, org=None:
+                        f"https://front.example.test/c?connector={connector}&connect={etat}")
+    posed = []
+    monkeypatch.setattr(wp_auth, "finish", lambda parsed, *a: posed.append(parsed) or "acct")
+    monkeypatch.setattr(wp_auth, "still_allowed", lambda parsed: True)
+
+    def state(**over):
+        return oauth_flow.sign_state(wp_auth.AUD, _parsed(**over))
+
+    return SimpleNamespace(state=state, posed=posed)
+
+
+def test_callback_unreadable_state_is_error(retour):
+    assert _call("state=garbage&password=x") == "error"
+    assert not retour.posed
+
+
+def test_callback_success_then_replay_is_refused(retour):
+    st = retour.state()
+    assert _call(f"state={st}&site_url=https://blog.example.com&user_login=e&password=p") \
+        == "connected"
+    # La même `success_url`, rejouée avec un autre identifiant : rien n'est posé.
+    assert _call(f"state={st}&site_url=https://blog.example.com&user_login=x&password=q") \
+        == "error"
+    assert len(retour.posed) == 1
+
+
+def test_callback_denied(retour):
+    assert _call(f"state={retour.state()}&success=false") == "denied"
+    assert not retour.posed
+
+
+def test_callback_rechecks_rights(retour, monkeypatch):
+    monkeypatch.setattr(wp_auth, "still_allowed", lambda parsed: False)
+    assert _call(f"state={retour.state(scope='org')}&user_login=e&password=p") == "forbidden"
+    assert not retour.posed
+
+
+def test_callback_finish_failure_is_error(retour, monkeypatch):
+    def boom(*a):
+        raise wp_auth.ConnectRefused("non")
+
+    monkeypatch.setattr(wp_auth, "finish", boom)
+    assert _call(f"state={retour.state()}&user_login=e&password=p") == "error"
+
+
+def test_still_allowed_reads_the_role_of_the_scope(monkeypatch):
+    from oto_mcp import roles
+
+    monkeypatch.setattr(roles, "is_org_admin", lambda sub, org: org == 12)
+    monkeypatch.setattr(roles, "can_admin_group", lambda sub, gid: gid == 7)
+    assert wp_auth.still_allowed(_parsed(scope="org"))
+    assert not wp_auth.still_allowed(_parsed(scope="org", org=13))
+    assert wp_auth.still_allowed(_parsed(scope="group", group=7))
+    assert not wp_auth.still_allowed(_parsed(scope="group", group=8))
+    assert wp_auth.still_allowed(_parsed())

@@ -1,6 +1,6 @@
 """Markdown → blocs Gutenberg : la forme exacte que chaque bloc cœur sauvegarde
 (l'éditeur signale « contenu inattendu » sur le moindre écart)."""
-from oto_mcp.tools.wordpress_blocks import html_to_block, markdown_to_blocks as md
+from oto_mcp.tools.wordpress_blocks import markdown_to_blocks as md
 
 
 def test_paragraph_softbreak_is_space():
@@ -37,7 +37,25 @@ def test_quote_image_separator_table_html():
     assert md('<div class="x">raw</div>') == '<!-- wp:html -->\n<div class="x">raw</div>\n<!-- /wp:html -->'
 
 
-def test_empty_and_html_block():
+def test_empty():
     assert md("") == ""
-    assert html_to_block("  ") == ""
-    assert html_to_block("<p>x</p>") == "<!-- wp:html -->\n<p>x</p>\n<!-- /wp:html -->"
+
+
+def test_code_in_a_list_item_is_kept_not_dropped():
+    # Un pas-à-pas avec sa commande : `core/list-item` ne porte que du texte et des
+    # sous-listes, la liste entière part donc en bloc HTML — jamais sans son code.
+    out = md("1. Step\n\n   ```bash\n   rm -rf x\n   ```\n2. Step two\n")
+    assert out.startswith("<!-- wp:html -->") and out.endswith("<!-- /wp:html -->")
+    assert "rm -rf x" in out and "Step two" in out
+
+
+def test_table_and_quote_in_a_list_item_are_kept():
+    table = md("- item\n\n  | A | B |\n  |---|---|\n  | 1 | 2 |\n")
+    assert "<table>" in table and "<td>1</td>" in table
+    quote = md("- item\n\n  > cited\n")
+    assert "<blockquote>" in quote and "cited" in quote
+
+
+def test_nested_list_with_code_keeps_the_whole_top_list():
+    out = md("- a\n  - b\n\n    ```\n    code\n    ```\n- c\n")
+    assert out.count("<!-- wp:html -->") == 1 and "code" in out and "<li>c</li>" in out

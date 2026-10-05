@@ -4,13 +4,14 @@ que le site renvoie ici, sans en-tête d'auth (l'identité vient du `state` sign
 et la réponse est un 302 vers le front. Déclarée comme exception dans
 `tests/test_rest_modules_are_capabilities.py`.
 
+Dans l'ordre : state lu, state CONSOMMÉ (usage unique), refus de l'utilisateur,
+droit d'écrire au palier RE-VÉRIFIÉ (`forbidden`), puis vérification et pose.
+
 ⚠️ **Cette URL porte un mot de passe en query string** (`password=`, protocole
-de WordPress, pas un choix). Deux fuites fermées ici :
-- le journal d'accès d'uvicorn — un filtre retire la query de CETTE route ;
-- Sentry — `sentry_setup` retire la query des routes listées dans
-  `SENSITIVE_QUERY_PATHS`.
-Jamais le détail d'une erreur dans l'URL de retour, jamais le mot de passe dans
-un message de journal.
+de WordPress, pas un choix). Sa query est retirée du journal d'accès et de Sentry
+par la liste commune `journal_secrets.routes_a_requete_secrete`. Jamais le détail
+d'une erreur dans l'URL de retour, jamais le mot de passe dans un message de
+journal.
 """
 from __future__ import annotations
 
@@ -30,29 +31,6 @@ logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
-SENSITIVE_QUERY_PATHS = (wp_auth.CALLBACK_PATH,)
-
-
-class _RedactSensitiveQuery(logging.Filter):
-    """Retire la query string des lignes du journal d'accès d'uvicorn pour les
-    routes qui reçoivent un secret en query. Les arguments d'une ligne d'accès
-    sont `(client, méthode, chemin_complet, version_http, statut)`."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        args = record.args
-        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
-            path = args[2]
-            if "?" in path and path.split("?", 1)[0] in SENSITIVE_QUERY_PATHS:
-                record.args = (*args[:2], path.split("?", 1)[0] + "?[redacted]", *args[3:])
-        return True
-
-
-def install_log_redaction() -> None:
-    """Idempotent — posé au montage des routes, jamais à l'import."""
-    access = logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, _RedactSensitiveQuery) for f in access.filters):
-        access.addFilter(_RedactSensitiveQuery())
-
 
 def make_routes(
     verifier: JWTVerifier,
@@ -61,7 +39,6 @@ def make_routes(
     json_error: Callable[..., JSONResponse],
     options_handler: Callable[[Request], Awaitable[Response]],
 ) -> list[Route]:
-    install_log_redaction()
 
     def _retour(etat: str, parsed: dict | None) -> str:
         parsed = parsed or {}
@@ -73,8 +50,17 @@ def make_routes(
         parsed = wp_auth.read_state(q.get("state"))
         if not parsed:
             return RedirectResponse(_retour("error", None), status_code=302)
+        if not await run_in_threadpool(oauth_flow.consume_state, wp_auth.AUD, parsed):
+            logger.warning("wordpress connect callback: state replayed (sub=%s)",
+                           parsed["sub"])
+            return RedirectResponse(_retour("error", parsed), status_code=302)
         if q.get("success") == "false":
             return RedirectResponse(_retour("denied", parsed), status_code=302)
+        if not await run_in_threadpool(wp_auth.still_allowed, parsed):
+            logger.warning("wordpress connect callback refusé : %s n'a plus le droit "
+                           "d'écrire au palier %s (org=%s group=%s)", parsed["sub"],
+                           parsed["scope"], parsed["org"], parsed.get("group"))
+            return RedirectResponse(_retour("forbidden", parsed), status_code=302)
 
         def _finish() -> str:
             return wp_auth.finish(parsed, q.get("site_url") or "", q.get("user_login") or "",

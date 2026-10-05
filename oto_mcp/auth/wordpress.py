@@ -17,13 +17,21 @@ Garde-fous propres à ce flux :
   sub, l'org, le palier, le site DEMANDÉ et le front de retour. WordPress
   conserve les paramètres de `success_url` (`add_query_arg`), le state revient
   donc tel quel.
+- **state à usage unique** (`jti`, `oauth_flow.consume_state`) : la
+  `success_url` traverse le site, ses extensions et ses journaux ; rejouée avec
+  un autre identifiant du même hôte, elle écraserait le credential.
+- **droits re-vérifiés au retour** (`still_allowed`) : le state vit 10 min, un
+  admin qui perd son rôle entre-temps ne pose plus rien pour l'org (ADR 0038,
+  comme Salesforce).
+- **HTTPS seulement**, sauf destination interne déclarée par l'opérateur
+  (`check_site`) : le mot de passe part en HTTP Basic.
 - **le site renvoyé doit être celui demandé** (même hôte) : un `site_url`
   substitué au retour ne pose jamais un credential ailleurs.
 - **vérifié avant d'être posé** : `users/me` avec le mot de passe reçu. Un mot
   de passe d'application ne tourne pas (contrairement à un refresh token
   Salesforce), la sonde ne détruit donc rien.
-- ⚠️ **le mot de passe arrive en query string** : `api/wordpress.py` retire la
-  query du journal d'accès et de Sentry pour cette route. Il reste dans
+- ⚠️ **le mot de passe arrive en query string** : la query de cette route est
+  retirée du journal d'accès (`journal_secrets`) et de Sentry (`sentry_setup`). Il reste dans
   l'historique du navigateur de l'utilisateur — inhérent au protocole de
   WordPress ; le mot de passe est révocable depuis le profil WordPress.
 """
@@ -56,6 +64,43 @@ def _host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
+def check_site(site_url: str) -> bool:
+    """La garde de TOUT chemin qui envoie le mot de passe au site : egress, puis
+    HTTPS. Le mot de passe d'application part en HTTP Basic — en clair sur `http`.
+    Seule exception : une destination interne DÉCLARÉE par l'opérateur
+    (`OTO_EGRESS_ALLOW`, un WordPress local de développement), la même liste
+    nommée que la garde d'egress — jamais un réglage par connecteur.
+
+    Rend `allow_http` à passer au client (qui refuse `http` par défaut) : True
+    seulement pour cette exception déclarée."""
+    from .. import egress
+
+    egress.check_url(site_url, connector="wordpress", field="site_url")
+    parts = urlsplit((site_url or "").strip())
+    if parts.scheme == "https":
+        return False
+    port = parts.port or 80
+    declared = egress.declared_exceptions()
+    if any((a, port) in declared
+           for a in egress.resolved_addresses(parts.hostname or "", port)):
+        return True
+    raise ConnectRefused(
+        f"{site_url} est en HTTP : le mot de passe d'application y partirait en "
+        "clair. Indique l'adresse en https:// (WordPress refuse d'ailleurs ces "
+        "mots de passe hors HTTPS, sauf environnement local).")
+
+
+def still_allowed(parsed: dict) -> bool:
+    """Le droit d'écrire au palier du state, relu AU RETOUR. Synchrone (SQL)."""
+    from .. import roles
+
+    if parsed["scope"] == "org":
+        return roles.is_org_admin(parsed["sub"], parsed["org"])
+    if parsed["scope"] == "group":
+        return roles.can_admin_group(parsed["sub"], parsed["group"])
+    return True
+
+
 def account_for(site_url: str) -> str:
     """Le nom de compte d'un site : son hôte (+ chemin d'une install en
     sous-dossier). Stable d'une connexion à l'autre du même site."""
@@ -72,11 +117,12 @@ def _app_name(org_id: int) -> str:
     try:
         return email_brand.marque(db.org_tenant_slug(org_id)).nom
     except Exception:  # noqa: BLE001 — un nom d'écran ne bloque pas une connexion
-        logger.debug("wordpress app_name: tenant brand unreadable", exc_info=True)
+        logger.warning("wordpress app_name: tenant brand unreadable for org %s, "
+                       "instance name shown", org_id, exc_info=True)
         return email_brand.nom_instance()
 
 
-def _authorization_endpoint(site_url: str) -> str:
+def _authorization_endpoint(site_url: str, *, allow_http: bool = False) -> str:
     """L'URL d'autorisation que le SITE annonce dans son index REST
     (`authentication.application-passwords.endpoints.authorization`) — jamais
     devinée : son absence dit que le site ne l'offre pas (HTTP sans
@@ -88,7 +134,7 @@ def _authorization_endpoint(site_url: str) -> str:
     # identifiants Basic sur TOUTE route REST, index compris — un identifiant
     # factice y rendrait un 401 (`rest_application_password_check_errors`). Les
     # deux valeurs du constructeur ne sont jamais envoyées.
-    c = WordPressClient(site_url, "-", "-")
+    c = WordPressClient(site_url, "-", "-", allow_http=allow_http)
     try:
         index = c.public_index()
     except ValueError as e:
@@ -110,20 +156,24 @@ def _saved_site(sub: str) -> str:
     """Reconnexion : le bouton de la fiche d'accès ne poste que les défauts du
     flux (pas de formulaire), donc pas de `site_url`. On reprend alors le site du
     credential déjà posé — celui que la cascade résout. Rien de posé ⟹ "" (et le
-    refus nommé qui suit)."""
+    refus nommé qui suit) ; tout autre refus (plusieurs sites, accès) est dit tel
+    quel, une panne remonte."""
     from .. import access
+    from ..mcp_errors import McpError
     try:
         return access.resolve_credential("wordpress", want="byo", sub=sub,
-                                         emit_on_failure=False).fields.get("site_url") or ""
-    except Exception:  # noqa: BLE001 — rien de posé : l'appelant refuse nommément
-        logger.debug("wordpress reconnect: no saved credential", exc_info=True)
+                                         emit_on_failure=False,
+                                         check_usage=False).fields.get("site_url") or ""
+    except access.CredentialUnavailable:
         return ""
+    except McpError as e:
+        raise ConnectRefused(e.error.message) from e
 
 
 def start(ctx, values: dict):
     """`connector_flow` → URL d'autorisation du site. `values` : `site_url`
     (saisi), `scope` et `app` (posés par le front, hors formulaire)."""
-    from .. import access, egress, roles
+    from .. import access, roles
     from ..connectors import flow as connector_flow
     from oto.tools.wordpress import normalize_site_url
 
@@ -131,10 +181,12 @@ def start(ctx, values: dict):
     if not raw:
         raise ConnectRefused("indique l'URL de ton site WordPress.")
     try:
-        site = normalize_site_url(raw)
+        # La FORME seule ici (http compris) : `check_site` décide ensuite du schéma,
+        # avec l'exception déclarée qu'elle seule connaît.
+        site = normalize_site_url(raw, allow_http=True)
     except ValueError as e:
         raise ConnectRefused(str(e)) from e
-    egress.check_url(site, connector="wordpress", field="site_url")
+    allow_http = check_site(site)
 
     scope = (values.get("scope") or "member").strip() or "member"
     if scope not in _SCOPES:
@@ -150,7 +202,7 @@ def start(ctx, values: dict):
         if group_id is None or not roles.can_admin_group(ctx.sub, group_id):
             raise PermissionError("seul un chef d'équipe peut connecter un site pour l'équipe.")
 
-    endpoint = _authorization_endpoint(site)
+    endpoint = _authorization_endpoint(site, allow_http=allow_http)
     # L'écran d'autorisation est servi par le site lui-même : son hôte est
     # celui du site (un site qui annonce une autorisation AILLEURS est refusé).
     if _host(endpoint) != _host(site):
@@ -159,7 +211,8 @@ def start(ctx, values: dict):
             f"({_host(endpoint)}) — refusé.")
 
     payload = {"sub": ctx.sub, "org": org_id, "scope": scope, "site": site,
-               "app": oauth_flow.resolve_return_app(values.get("app"))}
+               "app": oauth_flow.resolve_return_app(values.get("app")),
+               "jti": oauth_flow.new_jti()}
     if group_id is not None:
         payload["group"] = group_id
     state = oauth_flow.sign_state(AUD, payload)
@@ -178,7 +231,8 @@ def read_state(state: Optional[str]) -> Optional[dict]:
     if not data:
         return None
     if (not isinstance(data.get("sub"), str) or not isinstance(data.get("org"), int)
-            or data.get("scope") not in _SCOPES or not isinstance(data.get("site"), str)):
+            or data.get("scope") not in _SCOPES or not isinstance(data.get("site"), str)
+            or not isinstance(data.get("jti"), str)):
         return None
     if data["scope"] == "group" and not isinstance(data.get("group"), int):
         return None
@@ -190,18 +244,18 @@ def read_state(state: Optional[str]) -> Optional[dict]:
 def finish(parsed: dict, site_url: str, user_login: str, password: str) -> str:
     """Vérifie puis pose le credential. Synchrone (réseau + SQL) — l'appelant
     l'exécute hors boucle. Rend le nom de compte posé."""
-    from .. import credentials_store, egress
+    from .. import credentials_store
     from oto.tools.wordpress import WordPressClient, normalize_site_url
 
     asked = parsed["site"]
-    returned = normalize_site_url(site_url or asked)
+    returned = normalize_site_url(site_url or asked, allow_http=True)
     if _host(returned) != _host(asked):
         raise ConnectRefused("le site renvoyé ne correspond pas au site demandé.")
     if not user_login or not password:
         raise ConnectRefused("WordPress n'a renvoyé ni identifiant ni mot de passe.")
-    egress.check_url(asked, connector="wordpress", field="site_url")
+    allow_http = check_site(asked)
 
-    me = WordPressClient(asked, user_login, password).me()
+    me = WordPressClient(asked, user_login, password, allow_http=allow_http).me()
     if not me.get("id"):
         raise ConnectRefused("le mot de passe reçu n'authentifie pas (users/me vide).")
 
@@ -212,25 +266,10 @@ def finish(parsed: dict, site_url: str, user_login: str, password: str) -> str:
             "connected_via": "authorize_application",
             **credentials_store.meta_fields("wordpress", fields)}
     account = account_for(asked)
-    sub, org_id, scope = parsed["sub"], parsed["org"], parsed["scope"]
-
-    if scope == "org":
-        from .. import org_store
-        credentials_store.guard_account_write(credentials_store.ORG, str(org_id),
-                                              "wordpress", account, org=org_id)
-        org_store.set_org_secret(org_id, "wordpress", secret, set_by=sub, meta=meta,
-                                 account=account)
-    elif scope == "group":
-        from .. import group_store
-        gid = parsed["group"]
-        credentials_store.guard_account_write("group", str(gid), "wordpress", account,
-                                              org=org_id)
-        group_store.set_group_secret(gid, "wordpress", secret, set_by=sub, meta=meta,
-                                     account=account)
-    else:
-        eid = credentials_store.member_id(org_id, sub)
-        credentials_store.guard_account_write(credentials_store.MEMBER, eid, "wordpress",
-                                              account, org=org_id)
-        credentials_store.set_credential(credentials_store.MEMBER, eid, "wordpress", secret,
-                                         set_by=sub, account=account, meta=meta)
+    sub, org_id = parsed["sub"], parsed["org"]
+    etype, eid = credentials_store.entity_for_scope(parsed["scope"], org_id, sub,
+                                                    parsed.get("group"))
+    credentials_store.guard_account_write(etype, eid, "wordpress", account, org=org_id)
+    credentials_store.set_credential(etype, eid, "wordpress", secret, set_by=sub,
+                                     account=account, meta=meta)
     return account

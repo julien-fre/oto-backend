@@ -31,6 +31,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 from typing import Optional
 
@@ -110,6 +111,26 @@ def read_state(audience: str, state: Optional[str], *,
     if int(time.time()) - int(data.get("ts", 0)) > ttl:
         return None
     return data
+
+
+def new_jti() -> str:
+    """Identifiant d'un state à usage unique (cf. `consume_state`)."""
+    return secrets.token_urlsafe(16)
+
+
+def consume_state(audience: str, data: dict) -> bool:
+    """Usage unique d'un state lu par `read_state` : True la PREMIÈRE fois que son
+    `jti` est présenté, False ensuite (et sans `jti`). Synchrone (SQL) — l'appelant
+    l'exécute hors boucle.
+
+    Opt-in, pour le flux qui pose un credential reçu EN QUERY au retour (WordPress) :
+    la `success_url` qui porte le state traverse le site, ses extensions et ses
+    journaux, et rejouée dans les 10 min du TTL elle écraserait le credential."""
+    from .. import db
+    jti = data.get("jti") if isinstance(data, dict) else None
+    if not isinstance(jti, str) or not jti:
+        return False
+    return db.consume_state_jti(audience, jti)
 
 
 # --- URI de redirection --------------------------------------------------------

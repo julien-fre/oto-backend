@@ -41,7 +41,10 @@ class FakeWP:
                 "capabilities": {"publish_posts": True, "upload_files": True}}
 
     def types(self):
-        return {"post": {"rest_base": "posts", "rest_namespace": "wp/v2", "name": "Posts"},
+        return {"post": {"rest_base": "posts", "rest_namespace": "wp/v2", "name": "Posts",
+                         "taxonomies": ["category", "post_tag"]},
+                "page": {"rest_base": "pages", "rest_namespace": "wp/v2", "name": "Pages",
+                         "taxonomies": []},
                 "book": {"rest_base": "books", "rest_namespace": "wp/v2", "name": "Books"},
                 "attachment": {"rest_base": "media", "name": "Media"}}
 
@@ -250,7 +253,7 @@ def test_error_translation(status, code, needle):
 def test_site_summary(wp):
     out = wp("wordpress_site")
     assert out["user"]["can"]["publish_posts"] is True
-    assert {t["type"] for t in out["types"]} == {"posts", "books"}   # attachment masqué
+    assert {t["type"] for t in out["types"]} == {"posts", "pages", "books"}  # attachment masqué
     assert out["plugins"]["seo"]["plugin"] is None
 
 
@@ -271,3 +274,108 @@ def test_article_update_keeps_status_of_live_post(wp):
     wp("wordpress_article", title="New", markdown="x")
     created = [c[2] for c in wp.fake.calls if c[0] == "create"][0]
     assert created["status"] == "draft"
+
+
+# --- revue du 06/10 : chaque cas qui perdait ou masquait quelque chose ------------
+
+def test_numeric_tag_name_is_a_name_not_an_id(wp):
+    wp("wordpress_article", title="T", markdown="x", tags=["2026", 9])
+    made = [c for c in wp.fake.calls if c[0] == "create" and c[1] == "wp/v2/tags"]
+    assert [c[2]["name"] for c in made] == ["2026"]           # créé par nom
+    post = [c for c in wp.fake.calls if c[0] == "create" and c[1] == "wp/v2/posts"][0][2]
+    assert 9 in post["tags"] and 2026 not in post["tags"]
+
+
+def test_unpublish_with_at_is_refused(wp):
+    with pytest.raises(McpError, match="unpublish"):
+        wp("wordpress_publish", id=7, op="unpublish", at="2026-11-01T09:00:00")
+    assert not wp.fake.calls
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_seo_unreadable_schema_says_why(wp, status):
+    wp.fake.namespaces = ["wp/v2", "yoast/v1"]
+
+    def refuse(method, route, **kw):
+        raise UpstreamHTTPError(status, {"code": "rest_forbidden", "message": "no"})
+
+    wp.fake.request = refuse
+    out = wp("wordpress_article", title="T", markdown="x", seo_description="d")
+    assert out["seo"]["written"] is False
+    assert "illisible" in out["seo"]["reason"] and "snippet" not in out["seo"]["reason"]
+
+
+def test_article_terms_follow_the_type(wp):
+    with pytest.raises(McpError, match="pas de catégories"):
+        wp("wordpress_article", title="T", markdown="x", type="pages", categories=["A"])
+    assert not [c for c in wp.fake.calls if c[0] in ("create", "update", "upload")]
+
+
+def test_article_failure_names_what_was_left(wp, monkeypatch):
+    from oto_mcp import file_source
+
+    monkeypatch.setattr(file_source, "resolve",
+                        lambda src, **k: file_source.ResolvedFile(b"JPG", "c.jpg", "image/jpeg"))
+    real_create = wp.fake.create
+
+    def create(route, body):
+        if route == "wp/v2/posts":
+            raise UpstreamHTTPError(400, {"code": "rest_invalid_param", "message": "bad"})
+        return real_create(route, body)
+
+    wp.fake.create = create
+    with pytest.raises(McpError) as e:
+        wp("wordpress_article", title="T", markdown="x", categories=["Fresh"],
+           featured_image="https://img.example.com/c.jpg")
+    msg = e.value.error.message
+    assert "Fresh (id" in msg and "média id 55" in msg and "déjà public" in msg
+
+
+def test_media_and_html_are_said_in_the_served_text():
+    from fastmcp import FastMCP
+    from oto_mcp.tools import wordpress as mod
+
+    m = FastMCP("t")
+    mod.register(m)
+    media = asyncio.run(m.get_tool("wordpress_media")).description
+    article = asyncio.run(m.get_tool("wordpress_article")).description
+    assert "PUBLIC at once" in media
+    assert "unfiltered_html" in article and "public at once" in article
+
+
+def test_client_refuses_an_http_site(monkeypatch):
+    from oto_mcp import access, egress
+    from oto_mcp.tools import wordpress as mod
+
+    monkeypatch.setattr(access, "resolve_credential_fields", lambda p, a=None: {
+        "site_url": "http://blog.example.com", "username": "u",
+        "application_password": "p"})
+    monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
+    monkeypatch.setattr(egress, "resolved_addresses", lambda host, port: {"93.184.215.14"})
+    monkeypatch.delenv(egress.ALLOW_VAR, raising=False)
+    with pytest.raises(McpError, match="HTTP"):
+        mod._client()
+
+
+def test_media_fields_failure_names_the_created_media(wp, monkeypatch):
+    from oto.tools.wordpress import WordPressMediaFieldsError
+    from oto_mcp import file_source
+
+    monkeypatch.setattr(file_source, "resolve",
+                        lambda src, **k: file_source.ResolvedFile(b"JPG", "c.jpg", "image/jpeg"))
+
+    def upload(data, filename, mime, **fields):
+        raise WordPressMediaFieldsError(88, UpstreamHTTPError(400, {"code": "x"}))
+
+    wp.fake.upload_media = upload
+    with pytest.raises(McpError, match="id=88") as e:
+        wp("wordpress_media", op="upload", source="https://img.example.com/c.jpg",
+           alt_text="a")
+    assert "ne le téléverse pas à nouveau" in e.value.error.message
+
+
+def test_rate_limit_says_the_delay():
+    from oto.tools.wordpress import WordPressRateLimited
+    from oto_mcp.tools.wordpress import _translate
+
+    assert "42 s" in _translate(WordPressRateLimited(42.0)).error.message

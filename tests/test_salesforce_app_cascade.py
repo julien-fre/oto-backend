@@ -99,10 +99,10 @@ def test_le_callback_prefere_la_ligne_du_scope_quand_elle_est_complete(coffre):
 
 def test_lecriture_vise_le_scope_pas_la_source_de_lapplication():
     """L'asymétrie, littéralement : on LIT en remontant, on ÉCRIT là où on a demandé."""
-    assert so._fields_entity(2, "sub-x", "member") == (
+    assert credentials_store.entity_for_scope("member", 2, "sub-x") == (
         credentials_store.MEMBER, credentials_store.member_id(2, "sub-x"))
-    assert so._fields_entity(2, "sub-x", "org") == ("org", "2")
-    assert so._fields_entity(2, "sub-x", "group", 7) == ("group", "7")
+    assert credentials_store.entity_for_scope("org", 2, "sub-x") == ("org", "2")
+    assert credentials_store.entity_for_scope("group", 2, "sub-x", 7) == ("group", "7")
 
 
 def test_sans_equipe_la_cascade_reste_valide(coffre):
