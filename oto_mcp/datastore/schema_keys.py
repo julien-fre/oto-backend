@@ -83,7 +83,8 @@ CLES: tuple[Cle, ...] = (
     Cle("fields", ("validateur", "front"), "les sous-champs d'un objet", True),
     # — crans de garde, lus par le validateur —
     Cle("readonly", ("validateur", "front"),
-        "colonne du fichier source : une écriture ne la change pas", True),
+        "colonne du fichier source : une valeur posée ne se modifie plus, une case "
+        "vide (absente, null ou \"\") se remplit", True),
     # oto#34 : `agent_access`, `required_layers` et `formula` ne sont PAS lues par le
     # front — le dashboard ne les rend pas (`schema-keys-check.mjs`, remesure du
     # 01/10/2026). Les y déclarer promettait un lecteur qui n'existe pas.

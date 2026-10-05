@@ -823,8 +823,10 @@ def register(mcp: FastMCP) -> None:
           top level too: the write is REFUSED and nothing is stored.
           Fields the caller does NOT write — one question ("whose column is this?"),
           and each refusal names the field, the reason and where the thing goes:
-          `field.readonly: true` refuses a write that CHANGES the value in place
+          `field.readonly: true` refuses a write that CHANGES a value already SET
           (layers stay open — what another source says goes in `<field>.comment`);
+          a cell with NO value (key absent, `null` or `""`) can still be filled once,
+          `@empty` counts as set, and clearing a set value (`null`) is a change;
           ⚠️ `field.origine: "system"` was REMOVED on 2026-09-08 and is now
           REFUSED like any unknown key. Nothing captures a previous value
           automatically any more: the origin is set by the call that BRINGS the
@@ -872,8 +874,8 @@ def register(mcp: FastMCP) -> None:
             datastore: target datastore (must exist; you must have write access).
             schema: the schema object, or null to clear it. Head keys
                 `unknown_columns: "create"|"report"|"reject"` (an undeclared
-                column's fate) and `new_rows: "create"|"reject"`; a field may carry `readonly: true` (value locked, layers
-                open). ⚠️ `origine` was REMOVED on 2026-09-08 and is refused — the
+                column's fate) and `new_rows: "create"|"reject"`; a field may carry `readonly: true` (a value once set is
+                locked, an empty cell fills; layers open). ⚠️ `origine` was REMOVED on 2026-09-08 and is refused — the
                 origin is set by the call that brings the data
                 (`donnees_d_origine=true`), not by a schema format.
             semantic_search: true/false to toggle semantic row search; null = leave as is.
@@ -1090,7 +1092,10 @@ def register(mcp: FastMCP) -> None:
         ⚠️ A COLUMN can be LOCKED by the schema (`readonly: true`) — it holds a
         value someone put there, and an ordinary write that CHANGES it is refused by
         name (writing the same value again is fine, and `<column>.comment` always
-        stays open for what another source says). To REPLACE it anyway, pass
+        stays open for what another source says). The lock holds what is SET, not
+        what is missing: a cell with no value (key absent, `null` or `""`) can be filled
+        once; `@empty` ("searched, nothing") IS a value, and clearing one (`null`)
+        is a change. To REPLACE it anyway, pass
         `readonly_override=true` ON THIS CALL. It is open to the OWNER of the table
         (you, your org or your team) or to whoever GOVERNS it — a table merely SHARED
         with you in write is refused, by design. It applies to this one call and

@@ -452,6 +452,19 @@ def vide_assume(cell: Any) -> bool:
             and _is_empty(cell.get(VALUE_LAYER)))
 
 
+def valeur_posee(cell: Any) -> bool:
+    """La case porte-t-elle une VALEUR POSÉE ? — UN juge pour deux décisions :
+    ce qu'un `null` en écho a à effacer (`columns`), et ce que `readonly` verrouille
+    (`champs_reserves`, oto#140 J5).
+
+    Non quand la case est VIDE au sens d'`est_vide` : clé absente, `null`, `""`
+    ordinaire, `[]`, `{}`, ou une cellule de couches seules (`{"comment": …}`, sans
+    valeur). Oui pour tout le reste — et pour le vide ASSUMÉ : `@empty` (« cherché,
+    rien »), stocké `{"valeur": "", "oto.vide_assume": true}`, est un constat posé,
+    pas une case à remplir."""
+    return vide_assume(cell) or not _is_empty(unwrap(cell))
+
+
 def sans_cles_internes(value: Any) -> Any:
     """La valeur telle qu'un lecteur de la base BRUTE peut la montrer : sans clé
     interne, à toute profondeur (une liste de fiches porte ses marqueurs un cran plus

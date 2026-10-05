@@ -551,7 +551,7 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
     out = dict(user_data)
     for cle in candidats:
         cellule = donnees.get(cle)
-        if dsl.vide_assume(cellule) or not dsv2._is_empty(dsv2.unwrap(cellule)):
+        if dsl.valeur_posee(cellule):
             continue
         reste = _sans_la_valeur(out[cle])
         if reste is None:

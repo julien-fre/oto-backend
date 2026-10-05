@@ -103,13 +103,17 @@ def test_les_couches_d_une_colonne_readonly_restent_OUVERTES(banc):
                                               "link": "https://x"}
 
 
-def test_remplir_une_colonne_readonly_VIDE_est_refuse(banc):
-    """La colonne est au client ; vide, elle reste vide. Une divergence se note
-    ailleurs — c'est exactement « compléter avec ce que dit le registre »."""
+def test_remplir_une_colonne_readonly_VIDE_est_permis(banc):
+    """Renversé le 04/10/2026 (oto#140, J5) : ce banc disait « vide, elle reste vide ».
+    `readonly` veut dire « ne se modifie plus une fois POSÉ » — l'autre lecture rendait
+    toute colonne déclarée après son import définitivement vide. La case sans valeur
+    se remplit ; une fois posée, elle est verrouillée (`test_readonly_case_vide_oto140`)."""
     st, etat = banc
     etat["lignes"]["r1"].pop("naf")
+    st.update_row("viviers", "r1", {"naf": "62.01Z"})
+    assert etat["lignes"]["r1"]["naf"] == "62.01Z"
     with pytest.raises(RowValidationError, match="`naf`"):
-        st.update_row("viviers", "r1", {"naf": "62.01Z"})
+        st.update_row("viviers", "r1", {"naf": "70.22Z"})
 
 
 def test_effacer_une_colonne_readonly_est_refuse(banc):

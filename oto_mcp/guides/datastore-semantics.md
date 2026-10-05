@@ -441,15 +441,23 @@ tête : `semantic_search` n'est pas admise en tête du schéma — c'est un PARA
 
 ## 5. Ce que `readonly: true` protège — et ne protège pas
 
-Une colonne `readonly` (schéma) verrouille la **valeur** d'une ligne en place : une
-écriture qui la **change** (valeur nue, `null`, ou `{"valeur": …}`) est refusée en
-nommant la colonne et où va la chose — `champ.comment`, qui reste ouvert. Une valeur
-identique passe (no-op) ; `comment`, `link` et `origine` (sauf si le système la pose)
-restent écrivables.
+Une colonne `readonly` (schéma) verrouille une **valeur posée** : une écriture qui la
+**change** (valeur nue, `null`, ou `{"valeur": …}`) est refusée en nommant la colonne et
+où va la chose — `champ.comment`, qui reste ouvert. Une valeur identique passe (no-op) ;
+`comment`, `link` et `origine` (sauf si le système la pose) restent écrivables.
+
+`readonly` veut dire **« ne se modifie plus une fois posé »**, pas « ne s'écrit plus
+après la création » :
+
+- une case **sans valeur** — clé absente, `null` ou `""` — **se remplit**, une fois : une
+  colonne verrouillée après son import n'est pas vide pour toujours ;
+- **`@empty` est une valeur posée** (« cherché, rien ») : le remplacer est refusé ;
+- **effacer** une valeur posée (`null`) est un changement : refusé.
 
 Ce que le cran ne ferme **pas** : la **création** d'une ligne — rien n'est écrasé ; un
 tableau qui ne doit pas grossir se ferme par `new_rows: "reject"`. La colonne-clé ne
-peut pas être `readonly` : c'est `new_rows: "reject"` qui la protège.
+peut pas être `readonly` : c'est `new_rows: "reject"` qui la protège. Une colonne
+**calculée** (§9), elle, reste fermée même vide.
 
 Pour remplacer quand même : `readonly_override=true` **sur l'appel** (argument de
 `data_write` ; paramètre de query sur `POST`/`PATCH …/rows`). Réservé au propriétaire

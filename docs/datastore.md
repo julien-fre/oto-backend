@@ -1067,8 +1067,15 @@ de fin de passage détectait après coup.
   valeur en plus. **Les couches restent donc ouvertes** (`comment`, `link`, et `origine`
   sauf si le système la pose) — la garde sait les séparer de la valeur parce que la
   fusion les a toujours distinguées (`_merge_column`). **Le refus ne porte que sur un
-  CHANGEMENT de valeur** : nommer la valeur (nue, `null`, ou `{"valeur": …}`) d'une ligne
-  en place avec une valeur différente est refusé ; **une valeur identique n'est pas une
+  CHANGEMENT de valeur** : nommer la valeur (nue, `null`, ou `{"valeur": …}`) d'une case
+  qui a une valeur POSÉE avec une valeur différente est refusé ;
+  ⚠️ **« ne se modifie plus une fois posé », pas « ne s'écrit plus après la création »**
+  (oto#140 J5, 04/10/2026) : une case sans valeur (clé absente, `null`, `""` ordinaire) se remplit — la
+  lecture d'avant rendait toute colonne déclarée après son import définitivement vide.
+  Le vide est celui d'`est_vide` (`[]`, `{}` aussi) ; `@empty` (stocké `{"valeur": "",
+  "oto.vide_assume": true}`) EST une valeur posée ; une colonne calculée reste fermée
+  même vide. Juge unique : `couches.valeur_posee`, le même que le filtre des `null` en
+  écho ; **une valeur identique n'est pas une
   écriture** — no-op silencieux, couches préservées, et `{"valeur": <identique>,
   "comment": …}` écrit le comment (c'est le geste utile). Ce que le cran ne ferme PAS,
   et c'est dit : la **création** d'une ligne (rien n'est écrasé ; un tableau qui ne doit
@@ -2059,7 +2066,7 @@ dont découlent les deux défauts payés :
 | `{"champ": {"origine": null}}` | origine effacée ; ne reste que la valeur ⇒ colonne à nouveau plate |
 | `{"champ": {"origine": X}}` sur un champ `origine: "system"` | **refusé** — la plateforme la pose (#586) |
 | `{"champ": X}` avec X **identique** à la valeur en place | **no-op : toutes les couches restent** (29/08/2026 — le round-trip relire → repousser porte la valeur nue, il ne doit rien détruire) |
-| `{"champ": Y}` sur un champ `readonly: true` | **refusé** si Y change la valeur ; identique = no-op ; `{"champ": {"comment": …}}` passe (#606) ; `readonly_override=true` force, pour cet appel, si l'appelant possède ou gouverne le tableau (#658) |
+| `{"champ": Y}` sur un champ `readonly: true` | **refusé** si Y change une valeur posée (case absente, `null` ou `""` : se remplit ; `@empty` est posée) ; identique = no-op ; `{"champ": {"comment": …}}` passe (#606) ; `readonly_override=true` force, pour cet appel, si l'appelant possède ou gouverne le tableau (#658) |
 | `{"champ": Y}` sur un champ `agent_access: "read"` | **refusé depuis la face MCP** si Y change la valeur (création comprise) ; identique = no-op ; `{"champ": {"comment": …}}` passe. Depuis la face REST : accepté, le cran est inerte (oto#83) |
 | `{"champ": Y}` sur un champ `agent_access: "none"` | **refusé depuis la face MCP**, quelle que soit la forme et même à l'identique — la colonne ne lui est pas servie, il ne peut pas la tenir d'une lecture. Depuis la face REST : accepté (oto#83) |
 | `{"champ": {"origine": X}}` sur un champ `origine: "system"`, X = ce que le système poserait | accepté, no-op (29/08/2026 — le geste dominant du terrain) |

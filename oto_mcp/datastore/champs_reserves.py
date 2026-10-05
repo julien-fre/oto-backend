@@ -4,8 +4,10 @@ Deux crans, une seule garde (`reserved_refusals`), et ils répondent à la même
 dans le même ordre : *à qui appartient cette destination ?*
 
 - `readonly: true` — la colonne porte la valeur remise par le client ; une écriture
-  qui la CHANGE en place est refusée en nommant la colonne, la raison et où porter la
-  divergence (`report_to`). Le forçage sur l'appel est arbitré par `forcage.py` ;
+  qui CHANGE une valeur POSÉE est refusée en nommant la colonne, la raison et où porter
+  la divergence (`report_to`). Une case sans valeur (absente, `null`, `""`) se remplit : le
+  verrou tient ce qui est posé, pas ce qui manque (`valeur_posee`, oto#140 J5). Le
+  forçage sur l'appel est arbitré par `forcage.py` ;
 - `origine` — la couche `<champ>.origine` est fermée à l'appelant : la lui laisser
   écrire revenait à lui laisser détruire l'unique copie de la valeur d'import.
   ⚠️ Le cran `origine: "system"` qui la POSAIT automatiquement a été SUPPRIMÉ le
@@ -42,6 +44,7 @@ from .couches import (
     ORIGIN_LAYER,
     same_value,
     unwrap,
+    valeur_posee,
     VALUE_LAYER,
 )
 from .declaration import readonly_fields
@@ -321,6 +324,16 @@ def origine_posee(payload: Optional[dict], avant: Optional[dict] = None) -> list
     return sorted(out)
 
 
+def change_la_valeur(neuf: Any, cellule: Any) -> bool:
+    """L'écriture `neuf` CHANGE-t-elle la valeur de `cellule` ? — le payload NOMME la
+    valeur (nue, `null`, ou `{"valeur": …}` ; une écriture de couches seules ne la
+    nomme pas) et elle diffère de celle en place. **Une valeur identique n'est pas une
+    écriture** (29/08/2026). Partagée par `readonly` et `agent_access: "read"` : la
+    même question, deux copies divergeraient au premier cas limite."""
+    return ((not names_layers(neuf) or VALUE_LAYER in neuf)
+            and not same_value(unwrap(neuf), unwrap(cellule)))
+
+
 def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
                       avant: Optional[dict] = None, *,
                       forcage: Optional["fcg.Forcage"] = None,
@@ -343,7 +356,13 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       depuis le 08/09/2026, la règle vaut pour toute colonne — et elle est datée au
       01/10/2026 (`ORIGINE_REFUS_LE`), levable par `origine_override` ;
     - `readonly: true` — le payload NOMME la valeur (nue, `null`, ou `{"valeur": …}`)
-      d'une ligne en place ET elle CHANGE → refus. Identique → no-op silencieux, les
+      d'une case qui a une VALEUR POSÉE (`valeur_posee`) ET elle CHANGE → refus.
+      `readonly` veut dire « ne se modifie plus une fois posé », pas « ne s'écrit plus
+      après la création » (oto#140, J5) : une case SANS valeur (clé absente, `null`, `""`) se
+      remplit — `""` ordinaire compris, c'est un vide au sens d'`est_vide` —, sinon une
+      colonne déclarée après l'import resterait vide à jamais. `@empty` (vide ASSUMÉ)
+      est une valeur posée ; effacer (`null`) une valeur posée la change. Une
+      colonne CALCULÉE reste fermée même vide. Identique → no-op silencieux, les
       couches restent (substrat, `_merge_column`) ; `{"valeur": <identique>,
       "comment": …}` écrit le comment, c'est le geste utile. Une création n'écrase
       rien (un tableau qui ne doit pas grossir se ferme par `new_rows: "reject"`). La
@@ -363,8 +382,11 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       ⚠️ Contrairement à `readonly`, la CRÉATION est concernée : `readonly` protège une
       valeur remise par le client, qu'une création n'écrase pas ; ici c'est la
       DESTINATION qui n'est pas à l'agent, et elle ne l'est pas davantage sur une ligne
-      neuve. Aucun forçage : la sortie du propriétaire est son écran, où rien de tout
-      ceci ne s'applique (`agent=False`) — il n'y a donc rien à lever.
+      neuve — ni sur une case vide d'une ligne en place : `"read"` ne suit PAS la case
+      vide de `readonly` (oto#140, J5), il ne partage avec lui que « l'identique n'est
+      pas une écriture » (`change_la_valeur`). Aucun forçage : la sortie du
+      propriétaire est son écran, où rien de tout ceci ne s'applique (`agent=False`) —
+      il n'y a donc rien à lever.
 
     `details.expected_column` = `<colonne>.comment`, pour la face REST (#545) — un
     front pointe la destination sans reparser une phrase. ⚠️ **Le refus NOMME
@@ -391,9 +413,7 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
         if cle in masques:
             errors.append(aga.refus(schema, cle, aga.AUCUN))
             continue
-        if cle in lecture \
-                and (not names_layers(neuf) or VALUE_LAYER in neuf) \
-                and not same_value(unwrap(neuf), unwrap((avant or {}).get(cle))):
+        if cle in lecture and change_la_valeur(neuf, (avant or {}).get(cle)):
             errors.append(aga.refus(schema, cle, aga.LECTURE))
             continue
         # ⚠️ La branche qui refusait ici l'écriture d'une origine RÉSERVÉE est retirée
@@ -403,8 +423,8 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
         # conservée, et posée si elle manque »). L'écriture d'une origine se juge
         # désormais ailleurs, par la déclaration (`origine_override`).
         if cle in ro and avant is not None \
-                and (not names_layers(neuf) or VALUE_LAYER in neuf) \
-                and not same_value(unwrap(neuf), unwrap(avant.get(cle))):
+                and (cle in cf or valeur_posee(avant.get(cle))) \
+                and change_la_valeur(neuf, avant.get(cle)):
             # #658 : le forçage se juge ICI, sur la même condition que le refus —
             # ce qui garantit qu'il ne peut porter QUE sur ce que le cran refusait.
             # `arbitrer` rend `None` quand il passe (et relève la substitution pour
