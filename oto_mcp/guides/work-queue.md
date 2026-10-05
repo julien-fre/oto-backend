@@ -118,7 +118,11 @@ livelock, pas une panne, et on ne le voit pas de l'intérieur.
 relis ton filtre : réserver encore n'y changera rien. Ces lignes finissent par sortir de
 la file — au plafond déclaré (`lifecycle.max_claims`, dans l'état d'abandon), sinon au
 plafond de la plateforme (3 réservations sans écriture, statut inchangé, motif dans
-`_abandon`) — **perdues pour la passe, sans avoir rien de fautif**. Si le tableau déclare un périmètre de réservation
+`_abandon`) — **perdues pour la passe, sans avoir rien de fautif**. Le motif finit par ce
+que la DERNIÈRE tentative a rencontré (« dernière tentative : appels en erreur :
+serper_search », « écriture refusée : … », « aucune écriture tentée »…), et
+`_abandon_run` nomme son run : c'est là qu'on lit pourquoi, avant de remettre la ligne
+dans la file. Si le tableau déclare un périmètre de réservation
 (`lifecycle.claimable` dans son schéma), ton `filter` s'y ajoute en ET : il le resserre,
 il ne l'élargit jamais — et une réponse `row: null` te nomme ce périmètre.
 

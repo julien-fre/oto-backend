@@ -18,6 +18,7 @@ claimed_until TIMESTAMPTZ,
 claimed_run TEXT,
 claims INTEGER NOT NULL DEFAULT 0,
 abandon_reason TEXT,
+abandon_run TEXT,
 claimed_at TIMESTAMPTZ,
 rev BIGINT NOT NULL DEFAULT 0,
 PRIMARY KEY (ns_id, row_id)

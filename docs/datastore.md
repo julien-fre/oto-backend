@@ -541,6 +541,30 @@ Deux moments d'évaluation, et deux seulement :
 ⚠️ Une ligne sous bail **actif** n'est jamais abandonnée : son titulaire travaille
 encore, et lui retirer la ligne serait la course que le bail existe pour empêcher.
 
+**Le motif dit la CAUSE (oto-backend#491).** « 3 réservations sans écriture » réunissait
+quatre causes à quatre gestes différents : un redémarrage qui a coupé les sessions, un
+modèle qui dégénère, un outil en panne, une ligne impossible. Le motif finit donc par
+`— dernière tentative : <cause>`, et `abandon_run` (servi `_abandon_run`) garde le run de
+cette tentative. La cause, par ordre de préférence (`rowabandon._cause_de_l_abandon`) :
+
+| cause | d'où elle vient |
+| --- | --- |
+| `erreur du travail : <texte>` | l'erreur que le worker déclare en concluant le job en échec (`runner.jobs` op=complete), passée au relâchement qu'il déclenche |
+| ``run clos `failed` : <note>`` (ou `blocked`) | `runs.outcome`/`note`, posés par `run_finish` avant qu'il ne relâche |
+| `écriture refusée : <motif>` | la DERNIÈRE `data_write` du run sur cette ligne (ou sans ligne lisible au journal) a échoué — `tool_calls.ok`/`error` |
+| `appels en erreur : <outil>[, …]` | les outils en échec du run (cinq au plus, le plus récent d'abord ; `oto_call` nommé par sa cible) |
+| `bail expiré sans relâchement` | le filet du claim : la ligne portait encore un bail échu, personne ne l'a rendue |
+| `aucune écriture tentée` | un run connu, rien de ce qui précède |
+| `cause inconnue : réservée hors run` | aucun run : rien où lire |
+
+Le journal des appels est lu **par le run et depuis la dernière prise** (`claimed_at`,
+comparé en base), par `idx_tool_calls_run (run_id, created_at)`, `LIMIT` à chaque
+lecture, sous un point de sauvegarde et un `statement_timeout` de 2 s : une lecture qui
+échoue n'empêche ni l'abandon ni la réservation qui le porte — le motif dit alors
+`cause inconnue : journal illisible`, et le journal applicatif l'écrit en erreur. Le
+journal des révisions (`datastore_row_revisions`) n'y sert pas : il n'écrit que ce qui a
+été écrit, jamais un refus.
+
 Une ligne abandonnée **quitte la file quel que soit le filtre du client** : le pick de
 `claim_next` exclut `abandon_reason IS NOT NULL`, filet de plateforme indépendant de ce
 que l'appelant filtre. Elle reste lisible, et réparable : toute écriture réussie remet

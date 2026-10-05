@@ -334,17 +334,20 @@ def _depuis_curseur(cursor: str) -> int:
         ) from None
 
 
-def _release_run_rows(run_id: Optional[str]) -> dict:
+def _release_run_rows(run_id: Optional[str], erreur: Optional[str] = None) -> dict:
     """Le job conclu ne travaille plus : ce que son run tenait encore dans le
     datastore revient dans la file (#633) — la même troisième voie que `run_finish`,
     pour l'agent qui est MORT sans l'appeler (le worker, lui, survit à l'agent et
     conclut le job). Best-effort et HORS de la clôture : le job est déjà conclu
     quand on arrive ici, et un poste de flotte lit le compte — `0` écrit, ou `null`
-    avec sa raison, jamais un 0 fabriqué."""
+    avec sa raison, jamais un 0 fabriqué.
+
+    `erreur` = l'échec que le worker vient de déclarer : une ligne que ce relâchement
+    fait abandonner le porte dans son motif (#491)."""
     if not run_id:
         return {"run_id": None, "rows_released": None, "release": "no_run"}
     try:
-        n = db.datastore_release_by_run(run_id)
+        n = db.datastore_release_by_run(run_id, erreur=erreur)
     except Exception:  # noqa: BLE001
         logger.warning("libération des lignes du run %s à la conclusion du job "
                        "échouée (best-effort)", run_id, exc_info=True)
@@ -1182,7 +1185,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # Le run de l'appel d'abord (c'est celui que le worker vient d'exécuter),
         # sinon celui que le job connaît (`bind_run`, ou un `continue`).
         return {"ok": True, "status": res["status"],
-                **_release_run_rows(inp.run_id or res.get("run_id"))}
+                **_release_run_rows(inp.run_id or res.get("run_id"),
+                                    None if inp.ok else inp.error)}
 
     # get — lecture org-scopée (diagnostic, dashboard R4)
     job = db.get_job(inp.job_id, ctx.org_id)

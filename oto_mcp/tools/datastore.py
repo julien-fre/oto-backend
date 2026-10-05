@@ -871,7 +871,8 @@ def register(mcp: FastMCP) -> None:
         - work-queue ceiling: `lifecycle.max_claims: <int >= 1>` +
           `lifecycle.abandon_state: "<terminal state>"` — a row claimed that many
           times WITHOUT a successful write leaves the queue in that state, with a
-          platform reason in `_abandon`. Both go together: a ceiling without an
+          platform reason in `_abandon` (ending with what the last attempt hit; its
+          run in `_abandon_run`). Both go together: a ceiling without an
           abandon state, or an abandon state that is not terminal, is REFUSED here.
           Counter (`_claims`) resets on the first successful write to the row.
           Undeclared, a platform default ceiling (3) still applies: the row is set
@@ -1439,7 +1440,9 @@ def register(mcp: FastMCP) -> None:
         queue running empty: past the ceiling — `lifecycle.max_claims` declared on
         the table, else a platform default of 3; `max_claims` here can only RAISE
         it for this pass — the server sets it aside: it stamps `_abandon` with the
-        reason, moves it to `lifecycle.abandon_state` when the table declares a
+        reason, ending with what the LAST attempt hit (the job's error, a refused
+        write, the tools in error, or no write attempted) and `_abandon_run` with
+        that attempt's run, moves it to `lifecycle.abandon_state` when the table declares a
         ceiling (with the default one its status is left untouched), and STOPS
         serving it — whatever your filter says. It stays readable and repairable:
         an explicit data_write puts it back in the queue and resets the counter.

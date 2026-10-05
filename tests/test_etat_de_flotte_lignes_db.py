@@ -29,7 +29,10 @@ SCHEMA = {"fields": [
                    "terminal": ["enrichi", "echec", "ecarte"],
                    "max_claims": 3, "abandon_state": "echec"}},
 ]}
-MOTIF = "abandonnée après 3 réservations sans écriture, plafond 3"
+# Le motif finit par la cause de la dernière tentative (#491) : ici, un run clos en
+# échec sans note — et les deux lignes se ventilent ENSEMBLE sous cette cause.
+MOTIF = ("abandonnée après 3 réservations sans écriture, plafond 3 — dernière "
+         "tentative : run clos `failed` : sans note")
 
 
 @pytest.fixture(scope="module")

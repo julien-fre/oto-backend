@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # `rev` (12/09/2026) : la révision de la ligne, servie `_revision` — une réservation,
 # un renouvellement ou une libération la font avancer (déclencheur, `db/revision.py`).
 _RENDU = ("RETURNING row_id, created_at, updated_at, data, rev, claimed_by, "
-          "claimed_until, claimed_run, claims, abandon_reason, "
+          "claimed_until, claimed_run, claims, abandon_reason, abandon_run, "
           "(claimed_until IS NOT NULL AND claimed_until > NOW())"
           "    AS claim_active")
 
@@ -346,7 +346,7 @@ def datastore_row_within(ns_id: int, row_id: str, filters: list) -> bool:
         return hit is not None
 
 
-def datastore_release_by_run(run_id: str) -> int:
+def datastore_release_by_run(run_id: str, *, erreur: Optional[str] = None) -> int:
     """Libère toutes les lignes réservées sous ce run — la TROISIÈME voie du verrou.
 
     Appelée à la fermeture d'un run, quel que soit son issue (`done`, `failed`,
@@ -371,25 +371,31 @@ def datastore_release_by_run(run_id: str) -> int:
     agent qui libérerait la ligne d'un AUTRE. Ici c'est le run lui-même qui se ferme —
     il ne peut libérer que ce qu'il tenait, la clause `claimed_run = %s` s'en charge.
 
+    `erreur` = l'échec que l'appelant connaît (la conclusion en échec d'un travail) :
+    une ligne que ce relâchement fait abandonner le porte dans son motif (#491).
+
     Rend le nombre de lignes libérées (0 = le cas normal, un run qui n'a rien
     réservé)."""
     if not run_id:
         return 0
     liberees = _relacher("claimed_run = %s", (str(run_id),))
-    _juger_le_plafond(liberees)
+    _juger_le_plafond(liberees, erreur=erreur)
     return len(liberees)
 
 
-def _juger_le_plafond(liberees: list[dict]) -> None:
+def _juger_le_plafond(liberees: list[dict], *, erreur: Optional[str] = None) -> None:
     """Un relâchement sans écriture est LE geste que le plafond mesure : le traitement
     s'est conclu, la ligne revient intacte. L'évaluation suit la libération, jamais
     l'inverse — une ligne encore sous bail n'est pas à bout. Une ligne AVANCÉE a été
-    écrite (`claims = 0`) : le plafond ne la concerne pas, et ne la prend pas."""
+    écrite (`claims = 0`) : le plafond ne la concerne pas, et ne la prend pas.
+
+    Le run qui tenait chaque ligne part avec elle : le relâchement vient de l'effacer
+    de la ligne, et c'est lui que l'abandon interroge et garde (#491)."""
     par_tableau: dict = {}
     for r in liberees:
-        par_tableau.setdefault(int(r["ns_id"]), []).append(r["row_id"])
-    for ns_id, ids in par_tableau.items():
-        abandonner_les_lignes_a_bout(ns_id, row_ids=ids)
+        par_tableau.setdefault(int(r["ns_id"]), {})[r["row_id"]] = r["run"]
+    for ns_id, relachees in par_tableau.items():
+        abandonner_les_lignes_a_bout(ns_id, relachees=relachees, erreur=erreur)
 
 
 def _relacher(clause: str, params: tuple, *, precondition=None) -> list[dict]:
@@ -409,8 +415,8 @@ def _relacher(clause: str, params: tuple, *, precondition=None) -> list[dict]:
     superviseur qui force) : c'est sa passe qu'elle conclut.
 
     `precondition(conn)` = un contrôle sous la même transaction, avant tout geste
-    (la révision attendue d'oto#217). Rend `[{ns_id, row_id, avance}]`, `avance` =
-    `{field, from, to}` ou None."""
+    (la révision attendue d'oto#217). Rend `[{ns_id, row_id, run, avance}]`, `run` =
+    le run qui tenait la ligne, `avance` = `{field, from, to}` ou None."""
     with geste.comme(geste.SYSTEM, acteur=geste.service(_ACTEUR_FILE)), \
             ecriture_de_lignes() as conn:
         if precondition is not None:
@@ -441,7 +447,7 @@ def _relacher(clause: str, params: tuple, *, precondition=None) -> list[dict]:
             logger.info(
                 "datastore: ligne avancée — tableau=%s ligne=%s %s → %s run=%s",
                 a.ns_id, a.row_id, a.depuis, a.vers, a.run_id)
-    return [{"ns_id": int(r["ns_id"]), "row_id": r["row_id"],
+    return [{"ns_id": int(r["ns_id"]), "row_id": r["row_id"], "run": r["claimed_run"],
              "avance": (a_poser[(int(r["ns_id"]), str(r["row_id"]))].rendu()
                         if (int(r["ns_id"]), str(r["row_id"])) in a_poser else None)}
             for r in lignes]
@@ -469,7 +475,7 @@ def datastore_claimed_rows(ns_id: int) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT row_id, created_at, updated_at, data, rev, claimed_by, claimed_until, "
-            "       claimed_run, claims, abandon_reason, "
+            "       claimed_run, claims, abandon_reason, abandon_run, "
             "       (claimed_until IS NOT NULL AND claimed_until > NOW())"
             "           AS claim_active "
             "FROM datastore_rows WHERE ns_id = %s AND claimed_by IS NOT NULL "

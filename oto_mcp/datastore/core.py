@@ -7,8 +7,9 @@ la row renvoyée :
 
 - `_id` : identifiant uuid7-like (col `row_id`).
 - `_created_at` / `_updated_at` : timestamps (colonnes dédiées).
-- `_claims` / `_abandon` : ce que la file de travail sait de la ligne —
-  réservations sans écriture, et motif si le plafond l'en a sortie (#433).
+- `_claims` / `_abandon` / `_abandon_run` : ce que la file de travail sait de la
+  ligne — réservations sans écriture, motif si le plafond l'en a sortie (#433), et le
+  run de la dernière tentative (#491).
 
 Plus de dépendance Google : la vérité est en base, types préservés nativement
 par JSONB (fin de la sentinelle `__j:` de l'ère Sheets). La propriété et le partage
@@ -528,6 +529,10 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
             out["_claims"] = row["claims"]
         if row.get("abandon_reason") and (not projette or "_abandon" in fields):
             out["_abandon"] = row["abandon_reason"]
+        # Le run de la dernière tentative (#491) — à côté du motif, jamais dedans :
+        # `_abandon` reste une phrase, ce champ-ci se rapproche du journal sans la lire.
+        if row.get("abandon_run") and (not projette or "_abandon_run" in fields):
+            out["_abandon_run"] = row["abandon_run"]
         return out
 
     # --- schéma v2 : validation d'écriture + cycle de vie (ADR 0046) ---------

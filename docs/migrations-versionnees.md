@@ -838,6 +838,12 @@ gardent leur envoi). **Avant la fusion** : le code du lot l'écrit à la mise en
 lit au tirage. Le retour arrière retire la colonne (les copies des envois encore en file
 sont perdues).
 
+`0038_abandon_run` (05/10/2026, oto-backend#491, après `0037_emails_cc`) garde le run de
+la dernière tentative d'une ligne abandonnée : `datastore_rows.abandon_run TEXT`, nullable
+sans défaut (écriture de catalogue, `lock_timeout` 5 s ; les lignes existantes restent
+NULL). **Avant la fusion** : le code du lot la lit dans chaque projection de ligne et
+l'écrit à l'abandon. Le retour arrière retire la colonne (les motifs restent).
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

@@ -687,7 +687,7 @@ def datastore_get_row(ns_id: int, row_id: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             "SELECT row_id, created_at, updated_at, data, rev, claimed_by, claimed_until, "
-            "       claimed_run, claims, abandon_reason, "
+            "       claimed_run, claims, abandon_reason, abandon_run, "
             "       (claimed_until IS NOT NULL AND claimed_until > NOW())"
             "           AS claim_active "
             "FROM datastore_rows WHERE ns_id = %s AND row_id = %s",
@@ -729,7 +729,8 @@ _LIGNE_JSON = (
     "'data', t.data, 'rev', t.rev, 'claimed_by', t.claimed_by, "
     f"'claimed_until', to_char(t.claimed_until, {_HORODATAGE}), "
     "'claimed_run', t.claimed_run, 'claims', t.claims, "
-    "'abandon_reason', t.abandon_reason, 'claim_active', t.claim_active)"
+    "'abandon_reason', t.abandon_reason, 'abandon_run', t.abandon_run, "
+    "'claim_active', t.claim_active)"
 )
 
 
@@ -804,7 +805,7 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
                 f"FROM s {where_sql} ORDER BY rn{tail}) "
                 "SELECT p.rn, dr.row_id, dr.created_at, dr.updated_at, dr.data, dr.rev, "
                 "       dr.claimed_by, dr.claimed_until, dr.claimed_run, dr.claims, "
-                "       dr.abandon_reason, "
+                "       dr.abandon_reason, dr.abandon_run, "
                 "       (dr.claimed_until IS NOT NULL AND dr.claimed_until > NOW())"
                 "           AS claim_active "
                 # ⚠️ `row_id` n'est PAS globalement unique (TEXT scopé par
@@ -847,7 +848,7 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
         tail = " LIMIT %s OFFSET %s"
         params.extend([limit, offset])
     cols = ("row_id, created_at, updated_at, data, rev, claimed_by, claimed_until, "
-            "claimed_run, claims, abandon_reason, "
+            "claimed_run, claims, abandon_reason, abandon_run, "
             "(claimed_until IS NOT NULL AND claimed_until > NOW()) AS claim_active")
     with _connect() as conn:
         if limit is not None:
@@ -886,7 +887,7 @@ def datastore_list_rows_after(ns_id: int, *, after_row_id: Optional[str] = None,
         return _page_en_un_message(
             conn,
             "SELECT row_id, created_at, updated_at, data, rev, claimed_by, claimed_until, "
-            "       claimed_run, claims, abandon_reason, "
+            "       claimed_run, claims, abandon_reason, abandon_run, "
             "       (claimed_until IS NOT NULL AND claimed_until > NOW())"
             "           AS claim_active, "
             "       row_number() OVER (ORDER BY row_id ASC) AS rn "
@@ -1098,6 +1099,7 @@ def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[in
         "SELECT agg.total, agg.off_type, agg.empty, p.rn, "
         "dr.row_id, dr.created_at, dr.updated_at, dr.data, dr.rev, "
         "dr.claimed_by, dr.claimed_until, dr.claimed_run, dr.claims, dr.abandon_reason, "
+        "dr.abandon_run, "
         "(dr.claimed_until IS NOT NULL AND dr.claimed_until > NOW()) AS claim_active "
         "FROM agg LEFT JOIN p ON TRUE "
         "LEFT JOIN datastore_rows dr ON dr.row_id = p.row_id AND dr.ns_id = %s "
@@ -1132,7 +1134,8 @@ def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[in
              "updated_at": r["updated_at"], "data": r["data"], "rev": r["rev"],
              "claimed_by": r["claimed_by"], "claimed_until": r["claimed_until"],
              "claimed_run": r["claimed_run"], "claims": r["claims"],
-             "abandon_reason": r["abandon_reason"], "claim_active": r["claim_active"]}
+             "abandon_reason": r["abandon_reason"], "abandon_run": r["abandon_run"],
+             "claim_active": r["claim_active"]}
             for r in result if r["rn"] is not None]
     return rows, total, off_type, empty
 
@@ -1233,7 +1236,7 @@ def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: st
             "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz, "
             # Toute écriture de la ligne remet le compteur de reprises à zéro et
             # la rouvre à la file (#433) : une ligne réparée à la main y revient.
-            "       claims = 0, abandon_reason = NULL "
+            "       claims = 0, abandon_reason = NULL, abandon_run = NULL "
             "WHERE ns_id = %s AND row_id = %s "
             "RETURNING row_id, created_at, updated_at, data, rev",
             (json.dumps(merged), updated_at, ns_id, row_id),

@@ -260,7 +260,7 @@ def test_une_liberation_qui_echoue_ne_bloque_pas_la_cloture(surface, monkeypatch
     from oto_mcp import db as d
     job_id = _job_claime()
 
-    def _tousse(run_id):
+    def _tousse(run_id, **_kw):
         raise RuntimeError("la base tousse")
     monkeypatch.setattr(RJ.db, "datastore_release_by_run", _tousse)
 

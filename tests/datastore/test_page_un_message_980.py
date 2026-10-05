@@ -31,7 +31,7 @@ SUB = "usr_page_un_message_980"
 N_LIGNES = 300
 PAGE = 250
 COLS = ("row_id, created_at, updated_at, data, rev, claimed_by, claimed_until, "
-        "claimed_run, claims, abandon_reason, "
+        "claimed_run, claims, abandon_reason, abandon_run, "
         "(claimed_until IS NOT NULL AND claimed_until > NOW()) AS claim_active")
 
 

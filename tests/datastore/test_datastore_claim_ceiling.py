@@ -163,10 +163,12 @@ def test_le_motif_cite_ses_chiffres(plafonne):
 
     rid = _tourner_a_vide(st, ns, 3)
 
-    assert _brut(ns_id, rid)["abandon_reason"] == \
-        "abandonnée après 3 réservations sans écriture, plafond 3"
+    # Réservée hors run : rien où lire la cause, et le motif le dit (#491).
+    motif = ("abandonnée après 3 réservations sans écriture, plafond 3 — dernière "
+             "tentative : cause inconnue : réservée hors run")
+    assert _brut(ns_id, rid)["abandon_reason"] == motif
     lue = st.get_row(ns, rid)
-    assert lue["_abandon"] == "abandonnée après 3 réservations sans écriture, plafond 3"
+    assert lue["_abandon"] == motif
 
 
 def test_l_abandon_est_bruyant(plafonne, caplog):

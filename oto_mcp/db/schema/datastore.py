@@ -82,6 +82,12 @@ CREATE TABLE IF NOT EXISTS datastore_rows (
     -- quel que soit le filtre du client.
     claims INTEGER NOT NULL DEFAULT 0,
     abandon_reason TEXT,
+    -- Le run de la DERNIÈRE tentative d'une ligne abandonnée (oto-backend#491), posé
+    -- avec `abandon_reason` et effacé avec lui : le motif dit ce que la tentative a
+    -- rencontré, cette colonne-ci se rapproche du journal (`tool_calls.run_id`) sans
+    -- relire une phrase. NULL sur une ligne abandonnée = réservée hors run. Base
+    -- existante : révision `0038_abandon_run`.
+    abandon_run TEXT,
     -- L'instant de la dernière PRISE de la ligne par la file (oto#101) — jamais
     -- effacé par le relâchement, l'expiration ni l'écriture. `claim_next` sert la
     -- ligne servie le moins récemment (`NULLS FIRST` : jamais servie d'abord), sans
