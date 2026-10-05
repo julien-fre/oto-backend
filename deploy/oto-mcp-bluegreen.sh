@@ -55,6 +55,13 @@
 #                     propage  — mode HISTORIQUE, gardé jusqu'au lot 5b (retour arrière du
 #                                lot 5) : le lanceur `start-encrypted.sh` vit hors git dans
 #                                l'arbre et passe de la couleur en service à la nouvelle.
+#
+# Garde FACULTATIVE, une fonction et non une variable : `bg_garde_avant_demarrage <arbre>`.
+# Si le wrapper la définit, `bg_run` l'appelle après l'installation du tag dans la couleur
+# inactive et AVANT son démarrage ; un code non nul arrête tout — la couleur n'a pas
+# démarré, rien n'a basculé. Nos wrappers n'en définissent pas (leurs gestes sont figés par
+# tests/deploy/gestes_bleu_vert/) ; deploy/cible/deployer.sh y vérifie que la base du rôle
+# est à la tête des migrations du tag (oto-backend#1163).
 # ============================================================================
 set -uo pipefail
 
@@ -360,6 +367,11 @@ bg_run() {
     bg_install "$new" "$ref" || bg_abort "$new" "installation de ${ref} en échec"
     if [ "$BG_LANCEUR" = versionne ] && [ ! -f "$(bg_tree "$new")/deploy/lanceur_secrets.py" ]; then
       bg_abort "$new" "${ref} ne porte pas le lanceur versionné (deploy/lanceur_secrets.py) — tag antérieur à #967"
+    fi
+    if declare -F bg_garde_avant_demarrage >/dev/null \
+       && ! bg_garde_avant_demarrage "$(bg_tree "$new")"; then
+      bg_log "REFUS avant démarrage : ${ref} est installé dans ${new}, qui n'a PAS démarré — ${BG_ENV} reste servie par ${old}, rien n'a basculé"
+      exit 1
     fi
   fi
 

@@ -122,6 +122,56 @@ import /etc/caddy/upstream-<i>-<r>.conf          # en tête, avant le bloc globa
 Le service ne peut pas réécrire son code (les arbres sont à root), n'a d'état que dans
 son `StateDirectory`, et ne voit sa clé d'API que par `LoadCredential`.
 
+## Les migrations, un geste explicite (#1163)
+
+Le déploiement d'une cible **ne joue jamais les migrations** — et il **refuse** de monter un
+tag sur une base qui n'est pas à sa tête. Constaté avant cette garde : une cible servait le
+code d'un tag dont la tête Alembic était 0037, sur une base restée en 0031, sans que rien ne
+le dise.
+
+**Où.** `deploy/cible/deployer.sh` définit la garde facultative de la bibliothèque bleu/vert
+(`bg_garde_avant_demarrage`) : après l'installation du tag dans la couleur **inactive** et
+**avant son démarrage**, elle exécute `deploy/cible/migrations_a_jour.py` sous le lanceur de
+cet arbre (mêmes fichiers d'environnement et même clé d'API que l'unité du rôle). L'arbre
+installé est le seul endroit de la machine qui porte le registre **du tag** — la tête attendue
+en vient, jamais du code qui sert — et c'est depuis lui que la migration se joue. Ce qui sert
+n'a pas été touché : rien n'a démarré, rien n'a basculé.
+
+| La base du rôle | Verdict |
+|---|---|
+| à la tête du registre du tag | la montée continue |
+| neuve (aucune table) | la montée continue : le démarrage crée le schéma et pose la tête (`migrations-versionnees.md` §5.2) |
+| en retard sur une révision du registre du tag | **refus** : la révision actuelle, la révision attendue, et la commande qui migre |
+| sans `alembic_version`, plusieurs révisions, révision inconnue du tag (base plus récente, autre file), injoignable | **refus** : le motif, et les commandes qui lisent l'état (`migrer current`, `migrer heads`) |
+| registre du tag à plusieurs têtes ou vide | **refus**, sans lire la base |
+
+Une base injoignable est nommée par la classe de l'erreur seulement : son message peut porter
+l'hôte ou l'utilisateur, et ce journal remonte jusqu'au run du workflow.
+
+**Le geste**, en root sur la machine, quand la montée a refusé pour retard : la commande que le
+refus imprime, telle quelle — l'arbre est celui de la couleur inactive, où le tag est installé :
+
+```bash
+systemd-run --pipe --wait --quiet --collect -p WorkingDirectory=/opt/<i>/<r>-<couleur inactive> \
+  -p EnvironmentFile=/etc/<i>/<r>/app.env -p EnvironmentFile=/etc/<i>/<r>/lanceur.env \
+  -p LoadCredential=scw:/etc/<i>/scw.key \
+  /opt/<i>/<r>-<couleur inactive>/.venv/bin/python /opt/<i>/<r>-<couleur inactive>/deploy/lanceur_secrets.py migrer upgrade head
+```
+
+(`migrer upgrade head --sql` d'abord pour lire le SQL.) Puis **relancer la montée du même
+tag** : la couleur inactive est la même, l'installation est rejouée à l'identique, la garde
+passe. Chaque rôle a sa base, donc son geste : la préprod de la cible d'abord, sa prod à sa
+propre montée. Chaque révision dit dans son en-tête si elle se joue avant ou après le code
+(`migrations-versionnees.md` §5.1) ; avec cette garde, sur une cible, elle est toujours jouée
+avant que le tag ne serve.
+
+`action=retour` ne consulte pas la garde : il réactive une couleur qui a déjà servi, sans rien
+installer, et la base peut légitimement être en avance sur elle.
+
+Le banc : `tests/deploy/test_migrations_cible_1163.py` (verdicts du script sur un registre
+Alembic réel, lecture d'une base PostgreSQL réelle quand il y en a une, et la chaîne en root
+simulé : refus avant démarrage, aucune migration jouée).
+
 ## La chaîne — monter une cible de version
 
 `.github/workflows/deploy-cible.yml`, **à la main seulement** : depuis le dépôt privé du
@@ -149,7 +199,9 @@ Dans les deux cas, le code exécuté vient du **tronc au tag demandé** (checkou
    chez elle est confronté au contrat qu'il épingle (`scripts/contrat-front.py`). Le tronc
    ne s'interdit rien pour une cible ; c'est la cible qui juge le tag au moment de
    monter. Contrat illisible = pas de montée.
-6. **Préprod** de la cible, puis constat de ce qu'elle sert (`GET /api/version`).
+6. **Préprod** de la cible, puis constat de ce qu'elle sert (`GET /api/version`). Sa base
+   doit être à la tête des migrations du tag, sinon la montée refuse avant tout démarrage
+   (§ Les migrations, un geste explicite).
 7. **Prod** de la cible — seulement si sa préprod **sert déjà** ce tag, constaté de
    l'extérieur. `etape=prod` seul est donc le geste du lendemain.
 
@@ -177,7 +229,8 @@ vers la porte. La déclaration part sur l'entrée standard.
 n'accepte que `deployer|retour <preprod|prod> <vX.Y.Z>`, vérifie que le tag existe et
 qu'il est **sur la branche principale du tronc** (miroir local du dépôt, dont l'URL est
 écrite dans la porte et jamais reçue), extrait le `deploy/` **de ce tag** et lui passe
-la main (`deploy/cible/deployer.sh` : amorce, bleu/vert, maintenance). L'amorce, la
+la main (`deploy/cible/deployer.sh` : amorce, bleu/vert avec la garde des migrations,
+maintenance). L'amorce, la
 bibliothèque et le lanceur sont donc toujours ceux de la version qu'on monte.
 
 ## Déclarer une cible, pas à pas
@@ -294,6 +347,9 @@ Depuis le dépôt du propriétaire (son workflow appelant, § Le déclencheur) :
 gh workflow run monter-instance.yml -f tag=vX.Y.Z -f etape=preprod
 gh workflow run monter-instance.yml -f tag=vX.Y.Z -f etape=prod
 ```
+
+Une montée qui refuse pour **migrations en retard** : jouer sur la machine la commande que
+le refus imprime, puis relancer la même montée (§ Les migrations, un geste explicite).
 
 La première montée d'un rôle le fait naître (amorce) et installe la couleur verte. Puis,
 sur la machine, les valeurs **effectives** : `systemctl show <i>-<r>@green -p User -p
