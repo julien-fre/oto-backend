@@ -344,8 +344,9 @@ d'étiquette `role: "status"`, pas de clé de schéma à faire correspondre.
 `"transitions": {"a_qualifier": ["a_contacter", "perdu"], "a_contacter": ["gagne"]}`.
 `{"a_contacter": "gagne"}` (une chaîne) est **refusé à la pose et au patch**, et le
 refus donne la forme exacte (oto#63) : chaque écran et chaque validateur lit une liste,
-aucun ne devine. Un bloc stocké sous l'ancienne forme fait refuser le changement d'état
-de la ligne, avec le patch qui le répare.
+aucun ne devine. Même règle pour `terminal` : `"terminal": ["gagne"]`, jamais
+`"terminal": "gagne"`. Un bloc stocké sous l'ancienne forme est refusé à l'usage
+(changement d'état, réservation), avec le patch qui le répare.
 
 ⚠️ **Ce que ça supprime** : il est désormais IMPOSSIBLE de poser un cycle de vie qui ne
 s'applique pas. Avant, un `lifecycle` sur une colonne non étiquetée était stocké,
@@ -361,8 +362,12 @@ refusée, et nommée), chaque valeur une chaîne non vide d'au plus 60 caractèr
 `data_patch_schema(fields=[{"key": "statut", "lifecycle": {"labels": {"perdu":
 "Perdu"}}}])` — les autres libellés et le reste du cycle de vie ne bougent pas.
 
-Deux colonnes qui porteraient un bloc sont **refusées à la pose** : sinon le premier
-trouvé gagnerait, et l'ordre de déclaration trancherait en silence.
+Plusieurs colonnes peuvent porter un bloc — une file d'agents et des états suivis par
+un humain, par exemple. Ce qui est **refusé à la pose**, ce sont deux FILES : deux
+blocs qui déclarent `claimable`, `max_claims` ou `abandon_state`. Sinon la première
+trouvée gagnerait, et l'ordre de déclaration trancherait en silence. La file est la
+colonne dont le bloc les déclare (à défaut, la première qui porte un bloc) : c'est elle
+que `data_claim_next` réserve.
 
 ⚠️ **Et si aucune colonne n'en porte, le tableau n'a PAS de cycle de vie** — mais il a
 toujours une file : `data_claim_next` réserve sans rien déclarer. Ce qui manque, ce

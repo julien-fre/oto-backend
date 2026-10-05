@@ -281,8 +281,18 @@ def lifecycle_hors_statut_warning(champs: list[str],
         except Exception:
             return False
 
+    # Même règle pour `terminal_states`, qui LÈVE sur un `terminal` stocké hors forme
+    # (oto#63) : le diagnostic le compte comme absent — la lecture du cycle de vie,
+    # elle, le dit avec le geste qui répare.
+    def _terminaux_lisibles() -> bool:
+        try:
+            return bool(terminal_states(schema))
+        # noqa: SILENT — une forme illisible est refusée à la pose et levée à l'usage
+        except ValueError:
+            return False
+
     manques = [nom for nom, present in (
-        ("état terminal", bool(terminal_states(schema))),
+        ("état terminal", _terminaux_lisibles()),
         ("plafond de reprises", max_claims_of(schema) is not None),
         ("état d'abandon", abandon_state_of(schema) is not None),
         ("périmètre de réservation", _perimetre_utilisable()),

@@ -7,7 +7,8 @@ lecture et sa grammaire :
 - l'accès au bloc et à ses crans (`lifecycle_of`, `terminal_states`,
   `is_terminal_status`, `max_claims_of`, `abandon_state_of`, `claimable_of`) ;
 - la FORME de `transitions` (`fautes_de_transitions`, `table_des_transitions`) — un
-  objet dont chaque valeur est une LISTE d'états, jugée à la pose comme à la lecture ;
+  objet dont chaque valeur est une LISTE d'états — et celle de `terminal`
+  (`fautes_de_terminal`), une LISTE, jugées à la pose comme à la lecture ;
 - le REFUS d'une transition non déclarée (`refus_de_transition`) — l'unique texte ;
 - la FUSION d'un patch de cycle de vie (`merge_transitions`, `merge_lifecycle`), qui
   ajoute sans écraser ;
@@ -78,6 +79,29 @@ def fautes_de_transitions(transitions: Any) -> list[str]:
     return fautes
 
 
+def fautes_de_terminal(terminal: Any) -> list[str]:
+    """Les fautes de FORME de `lifecycle.terminal` — vide = bien formée, absente
+    comprise. Même parti, même chemin que `fautes_de_transitions` : servie à la pose
+    (`definition.py`, sur CHAQUE colonne qui porte un bloc) comme à la lecture
+    (`terminal_states`, qui LÈVE sur un bloc stocké hors forme).
+
+    ⚠️ **Une chaîne était parcourue lettre par lettre** (oto#63, suite). La pose
+    bouclait sur `terminal` sans en juger la forme : `"fait"` y devenait `f`, `a`, `i`,
+    `t` — des « états inconnus » sur la colonne de file, RIEN sur une colonne
+    secondaire, qui n'était pas regardée. La lecture, elle, ignorait en silence un
+    `terminal` qui n'était pas une liste et DÉRIVAIT les terminaux à sa place ; le
+    dashboard appelle `.map` dessus. Trois lecteurs, trois devinettes : la forme se
+    refuse à l'entrée, et le refus la donne."""
+    if terminal is None or isinstance(terminal, list):
+        return []
+    seul = terminal if isinstance(terminal, (str, int)) and not isinstance(terminal, bool) \
+        else "état final"
+    attendu = json.dumps({"terminal": [seul]}, ensure_ascii=False)
+    return [f"lifecycle.terminal doit être une LISTE d'états — reçu "
+            f"{type(terminal).__name__} {json.dumps(terminal, ensure_ascii=False)}. "
+            f"Forme attendue : {attendu[1:-1]}, même pour un seul état final."]
+
+
 def table_des_transitions(colonne: str, lc: dict) -> Optional[dict]:
     """La table `{état: [états atteignables]}` d'un bloc, ou None = aucune table
     déclarée (toute transition permise). LÈVE `ValueError` sur un bloc STOCKÉ hors
@@ -112,7 +136,18 @@ def terminal_states(schema: Optional[dict]) -> set:
     if not lc:
         return set()
     explicit = lc.get("terminal")
-    if isinstance(explicit, list):
+    fautes = fautes_de_terminal(explicit)
+    if fautes:
+        # Même parti que `table_des_transitions` : un bloc stocké hors forme ne peut
+        # venir que d'avant la garde de pose — il LÈVE en nommant le geste qui répare,
+        # il ne se rabat plus sur les terminaux dérivés (`scripts/transitions_en_liste.py`
+        # le convertit).
+        colonne = (status_field(schema) or {}).get("key") or "status"
+        raise ValueError(
+            f"{colonne}: cycle de vie stocké hors forme — {fautes[0]} Corrige-le par "
+            f"`data_patch_schema(datastore=…, fields=[{{\"key\": \"{colonne}\", "
+            f"\"lifecycle\": {{\"terminal\": [...]}}}}])`.")
+    if explicit is not None:
         return {str(s) for s in explicit}
     states = {str(s) for s in lc.get("states") or []}
     transitions = lc.get("transitions") or {}

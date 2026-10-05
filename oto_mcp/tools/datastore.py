@@ -842,7 +842,7 @@ def register(mcp: FastMCP) -> None:
           `role` tag needed), `lifecycle: {states:[…],
           transitions:{from:[to…]}, terminal?:[…]}` — unknown state or undeclared
           transition is refused. Each `transitions` value is a LIST, even for one
-          destination: `{"a": ["b"]}`; `{"a": "b"}` is refused at declaration. ⚠️ It no longer releases the work-queue claim:
+          destination: `{"a": ["b"]}`; `{"a": "b"}` is refused at declaration; `terminal` is a LIST too. ⚠️ It no longer releases the work-queue claim:
           writing a "final" state does NOT free the row (#317). Release is a gesture
           of the LOCK — data_release, or closing your run — never an inference from
           a business value.

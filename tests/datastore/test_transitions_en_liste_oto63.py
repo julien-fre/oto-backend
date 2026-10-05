@@ -273,3 +273,72 @@ def test_le_texte_servi_dit_la_forme():
         assert "even for one" in routes[verbe]["description"], verbe
     guide = guide_store.file_guide("datastore-semantics")["body_md"]
     assert "Les transitions s'écrivent toujours en LISTE" in guide
+
+
+# ── 5. `terminal`, même défaut, même chemin ──────────────────────────────────
+
+def _schema_terminal(terminal, *, secondaire=None) -> dict:
+    sch = _schema({"neuf": ["fait", "perdu"]})
+    sch["fields"][1]["lifecycle"]["terminal"] = terminal
+    if secondaire is not None:
+        sch["fields"].append({"key": "suivi", "type": "text",
+                              "lifecycle": {"states": ["x", "y"], "terminal": secondaire}})
+    return sch
+
+
+def test_un_terminal_en_chaine_est_REFUSE_avec_la_forme_exacte():
+    """⚠️ Avant : `"fait"` parcouru lettre par lettre — quatre « états inconnus »
+    `'f'`, `'a'`, `'i'`, `'t'`, et aucune phrase sur la forme."""
+    erreurs = S.validate_schema_def(_schema_terminal("fait"))
+    assert len(erreurs) == 1, erreurs
+    assert erreurs[0].startswith("`statut`") and "lifecycle.terminal" in erreurs[0]
+    assert "LISTE" in erreurs[0] and '"terminal": ["fait"]' in erreurs[0], erreurs[0]
+    assert "'f'" not in erreurs[0]
+
+
+def test_le_terminal_de_la_colonne_secondaire_est_juge_aussi():
+    """⚠️ Avant : une colonne secondaire n'était pas regardée du tout — sa chaîne passait
+    la pose, et l'écran qui l'appelle en `.map` levait."""
+    erreurs = S.validate_schema_def(_schema_terminal(["fait"], secondaire="y"))
+    assert len(erreurs) == 1 and erreurs[0].startswith("`suivi`"), erreurs
+    assert '"terminal": ["y"]' in erreurs[0]
+
+
+@pytest.mark.parametrize("valeur", [3, {"fait": True}, True, ""])
+def test_tout_terminal_qui_n_est_pas_une_liste_est_refuse(valeur):
+    erreurs = S.validate_schema_def(_schema_terminal(valeur))
+    assert any("lifecycle.terminal doit être une LISTE" in e for e in erreurs), erreurs
+
+
+def test_un_terminal_en_liste_passe_vide_compris():
+    assert S.validate_schema_def(_schema_terminal(["fait", "perdu"])) == []
+    assert S.validate_schema_def(_schema_terminal([])) == []
+
+
+def test_un_terminal_stocke_en_chaine_leve_au_lieu_d_etre_derive():
+    """⚠️ Avant : `terminal_states` ignorait la chaîne et DÉRIVAIT les terminaux — un
+    autre ensemble que celui déclaré, sans un mot."""
+    with pytest.raises(ValueError, match=r"hors forme.*data_patch_schema"):
+        S.terminal_states(_schema_terminal("fait"))
+    assert S.terminal_states(_schema_terminal(["fait"])) == {"fait"}
+
+
+def test_la_conversion_met_le_terminal_en_liste():
+    plan = M.convertir(_schema_terminal("fait", secondaire="y"))
+    assert sorted(plan.converties) == ["statut.terminal: 'fait'", "suivi.terminal: 'y'"]
+    assert [f["lifecycle"]["terminal"] for f in plan.schema["fields"]
+            if "lifecycle" in f] == [["fait"], ["y"]]
+    assert S.validate_schema_def(plan.schema) == []
+    assert M.convertir(plan.schema).vide
+    with pytest.raises(M.Inmigrable, match="terminal"):
+        M.convertir(_schema_terminal({"a": 1}))
+
+
+def test_le_guide_ne_dit_plus_que_deux_blocs_sont_refuses():
+    """Le guide affirmait « deux colonnes qui porteraient un bloc sont refusées » : faux
+    depuis le 08/09 — plusieurs cycles de vie sont permis, seules deux FILES le sont."""
+    from oto_mcp import guide_store
+    guide = guide_store.file_guide("datastore-semantics")["body_md"]
+    assert "Deux colonnes qui porteraient un bloc" not in guide
+    assert "ce sont deux FILES" in guide
+    assert '`"terminal": ["gagne"]`' in guide

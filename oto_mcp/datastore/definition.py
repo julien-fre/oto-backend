@@ -47,8 +47,8 @@ from .declaration import (
     SCALAR_TYPES,
     status_field,
 )
-from .cycle_de_vie import (LIBELLE_ETAT_MAX, fautes_de_transitions, lifecycle_of,
-                           terminal_states)
+from .cycle_de_vie import (LIBELLE_ETAT_MAX, fautes_de_terminal, fautes_de_transitions,
+                           lifecycle_of, terminal_states)
 from . import formule as _formule
 
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
@@ -140,7 +140,7 @@ def validate_schema_def(schema: Optional[dict],
         else:
             known = {str(s) for s in states}
         # La FORME de `transitions` (un objet, chaque valeur une LISTE) se juge sur
-        # CHAQUE colonne qui porte un bloc, plus bas (`_erreurs_forme_des_transitions`).
+        # CHAQUE colonne qui porte un bloc, plus bas (`_erreurs_de_forme_du_cycle`).
         # Ici, seuls les états nommés, et seulement dans une table bien formée : une
         # valeur qui n'est pas une liste n'est plus enrobée pour être jugée (oto#63) —
         # c'est cette tolérance qui laissait `{"a": "b"}` passer la pose.
@@ -153,7 +153,10 @@ def validate_schema_def(schema: Optional[dict],
                     for to in tos if isinstance(tos, list) else []:
                         if str(to) not in known:
                             errors.append(f"lifecycle.transitions: état cible inconnu {to!r}")
-            for t in lc.get("terminal") or []:
+            # Une liste seulement : sa FORME se juge plus bas (`fautes_de_terminal`) —
+            # une chaîne n'est plus parcourue lettre par lettre.
+            terminal = lc.get("terminal")
+            for t in terminal if isinstance(terminal, list) else []:
                 if str(t) not in known:
                     errors.append(f"lifecycle.terminal: état inconnu {t!r}")
         # Le plafond de reprises (#433) et son état d'abandon vont ENSEMBLE : un
@@ -173,7 +176,8 @@ def validate_schema_def(schema: Optional[dict],
             errors.append(
                 "lifecycle.max_claims exige lifecycle.abandon_state — l'état terminal "
                 "où verser une ligne réservée N fois sans écriture")
-        if abandon is not None and str(abandon) not in terminal_states(schema):
+        if (abandon is not None and not fautes_de_terminal(lc.get("terminal"))
+                and str(abandon) not in terminal_states(schema)):
             errors.append(
                 f"lifecycle.abandon_state: {abandon!r} n'est pas un état terminal déclaré "
                 "(ajoute-le à lifecycle.terminal) — une ligne abandonnée reviendrait "
@@ -187,7 +191,7 @@ def validate_schema_def(schema: Optional[dict],
             contraignant=reglages.format_contraignant(schema), status_key=sf.get("key"),
             states={str(s) for s in (lc.get("states") or [])}
             if isinstance(lc.get("states"), list) else set()))
-    errors.extend(_erreurs_forme_des_transitions(schema))
+    errors.extend(_erreurs_de_forme_du_cycle(schema))
     errors.extend(_erreurs_libelles_d_etat(schema))
     # ⚠️ Il y avait ici un refus « lifecycle exige role="status" ». Retiré le
     # 08/09/2026 avec l'étiquette : le bloc DÉSIGNE désormais sa colonne, il n'y a plus
@@ -198,8 +202,9 @@ def validate_schema_def(schema: Optional[dict],
     return errors
 
 
-def _erreurs_forme_des_transitions(schema: dict) -> list[str]:
-    """La FORME de `lifecycle.transitions` (oto#63), sur CHAQUE colonne qui porte un
+def _erreurs_de_forme_du_cycle(schema: dict) -> list[str]:
+    """La FORME de `lifecycle.transitions` et de `lifecycle.terminal` (oto#63) — des
+    LISTES d'états, l'une par état de départ, l'autre en bloc —, sur CHAQUE colonne qui porte un
     cycle de vie — pas seulement la file : un bloc secondaire est stocké et servi, et
     l'écran qui le lit appelle `.map` sur chaque valeur. Une chaîne à la place d'une
     liste ne se normalise pas en silence, elle se refuse, et le refus donne la forme.
@@ -212,8 +217,10 @@ def _erreurs_forme_des_transitions(schema: dict) -> list[str]:
         if not isinstance(f.get("lifecycle"), dict):
             continue
         col = f.get("key")
+        lc = f["lifecycle"]
         errs.extend(f"`{col}` : {faute}"
-                    for faute in fautes_de_transitions(f["lifecycle"].get("transitions")))
+                    for faute in (fautes_de_transitions(lc.get("transitions"))
+                                  + fautes_de_terminal(lc.get("terminal"))))
     return errs
 
 

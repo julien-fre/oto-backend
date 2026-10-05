@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Écrit en LISTE les transitions de cycle de vie stockées en chaîne (oto#63).
+"""Écrit en LISTE les transitions et les terminaux de cycle de vie stockés en chaîne (oto#63).
 
 `lifecycle.transitions: {"a": "b"}` était accepté à la pose — la boucle de contrôle
 enrobait la chaîne d'une liste pour la juger — puis stocké tel quel. Le validateur
@@ -8,6 +8,11 @@ levait au rendu. La pose le refuse désormais, et la lecture refuse le changemen
 d'une ligne dont le bloc stocké est hors forme (`cycle_de_vie.table_des_transitions`).
 Ce script convertit l'existant : chaque valeur chaîne (ou nombre) devient une liste à
 un élément, `{"a": "b"}` → `{"a": ["b"]}`. Le graphe ne change pas, seule sa forme.
+
+**`lifecycle.terminal`, même défaut, même conversion** (05/10/2026) : `"fait"` était
+parcouru lettre par lettre à la pose, ignoré à la lecture au profit des terminaux
+dérivés, et le dashboard l'appelle en `.map`. La pose le refuse et la lecture lève
+(`cycle_de_vie.fautes_de_terminal`) ; `"terminal": "fait"` → `"terminal": ["fait"]`.
 
 ⚠️ **La base est PARTAGÉE entre préproduction et production.** Lancé À LA MAIN, UNE
 fois, depuis le commit qui l'apporte — **avant** de taguer ce commit pour la prod : le
@@ -88,25 +93,35 @@ def convertir(schema: Any) -> Plan:
     champs = []
     for f in schema["fields"]:
         lc = f.get("lifecycle") if isinstance(f, dict) else None
-        transitions = lc.get("transitions") if isinstance(lc, dict) else None
-        if transitions is None:
+        if not isinstance(lc, dict):
             champs.append(f)
             continue
         col = f.get("key")
-        if not isinstance(transitions, dict):
-            raise Inmigrable(f"`{col}` : lifecycle.transitions vaut {transitions!r}, "
-                             f"pas un objet")
-        neuves = {}
-        for etat, cibles in transitions.items():
-            if isinstance(cibles, list):
-                neuves[etat] = cibles
-            elif _seule(cibles):
-                neuves[etat] = [cibles]
-                converties.append(f"{col}.{etat}: {cibles!r}")
-            else:
-                raise Inmigrable(f"`{col}` : lifecycle.transitions[{etat!r}] vaut "
-                                 f"{cibles!r}, ni liste ni état")
-        champs.append({**f, "lifecycle": {**lc, "transitions": neuves}})
+        neuf = dict(lc)
+        transitions = lc.get("transitions")
+        if transitions is not None:
+            if not isinstance(transitions, dict):
+                raise Inmigrable(f"`{col}` : lifecycle.transitions vaut {transitions!r}, "
+                                 f"pas un objet")
+            neuves = {}
+            for etat, cibles in transitions.items():
+                if isinstance(cibles, list):
+                    neuves[etat] = cibles
+                elif _seule(cibles):
+                    neuves[etat] = [cibles]
+                    converties.append(f"{col}.{etat}: {cibles!r}")
+                else:
+                    raise Inmigrable(f"`{col}` : lifecycle.transitions[{etat!r}] vaut "
+                                     f"{cibles!r}, ni liste ni état")
+            neuf["transitions"] = neuves
+        terminal = lc.get("terminal")
+        if terminal is not None and not isinstance(terminal, list):
+            if not _seule(terminal):
+                raise Inmigrable(f"`{col}` : lifecycle.terminal vaut {terminal!r}, "
+                                 f"ni liste ni état")
+            neuf["terminal"] = [terminal]
+            converties.append(f"{col}.terminal: {terminal!r}")
+        champs.append({**f, "lifecycle": neuf})
     if not converties:
         return Plan(schema)
     return Plan({**schema, "fields": champs}, converties)

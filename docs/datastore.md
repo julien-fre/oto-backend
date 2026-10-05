@@ -624,6 +624,15 @@ répare, jamais deviné. L'existant se convertit par `scripts/transitions_en_lis
 `--appliquer` pour écrire, journalisé `migration_systeme`), lancé **avant** le tag qui
 porte le refus : le code d'avant lit déjà les listes.
 
+⚠️ **`terminal` aussi est une LISTE (oto#63, 05/10/2026).** La pose bouclait dessus sans
+juger sa forme : `"terminal": "fait"` y devenait `f`, `a`, `i`, `t` sur la colonne de
+file, et passait sans un mot sur une colonne secondaire ; la lecture (`terminal_states`)
+ignorait la chaîne et **dérivait** d'autres terminaux à sa place ; le dashboard l'appelle
+en `.map`. `cycle_de_vie.fautes_de_terminal` la juge par le même chemin que
+`transitions` — à la pose et au patch sur chaque colonne qui porte un bloc, refus qui
+donne `"terminal": ["fait"]` —, et `terminal_states` **lève** sur un bloc stocké hors
+forme. Le même script la convertit (`"fait"` → `["fait"]`).
+
 **Les libellés d'étape : `lifecycle.labels` (oto#140, 25/09/2026).** Un état est un
 code (`a_qualifier`) ; un écran le montrait dérivé du code, sans accents (« A
 qualifier »). `labels: {"a_qualifier": "À qualifier", "perdu": "Perdu"}` donne le nom
