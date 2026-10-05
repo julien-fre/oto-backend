@@ -30,14 +30,14 @@ PERIMETRE = {"lot_test": "jalon-100", "statut": "a_enrichir"}
 ETATS = ["a_enrichir", "enrichi", "echec"]
 
 
-def _schema(claimable=None, *, strict: bool = False, **lifecycle) -> dict:
+def _schema(claimable=None, **lifecycle) -> dict:
     lc = {"states": list(ETATS),
           "transitions": {"a_enrichir": ["enrichi", "echec"], "echec": ["a_enrichir"]},
           "terminal": ["enrichi", "echec"]}
     lc.update(lifecycle)
     if claimable is not None:
         lc["claimable"] = claimable
-    return {"unknown_columns": "report" if strict else "create", "fields": [
+    return {"fields": [
         {"key": "societe", "type": "text"},
         {"key": "lot_test", "type": "text"},
         {"key": "statut", "type": "enum", "role": "status",
@@ -270,7 +270,7 @@ def _erreurs(claimable, **kw) -> list:
 def test_une_declaration_valide_passe_dans_les_deux_formes():
     assert _erreurs(PERIMETRE) == []
     assert _erreurs({"lot_test": {"in": ["jalon-100", "jalon-101"]},
-                     "_updated_at": {"lt": "2026-09-01"}}, strict=True) == []
+                     "_updated_at": {"lt": "2026-09-01"}}) == []
 
 
 def test_un_operateur_inconnu_est_refuse_en_nommant_les_operateurs():
@@ -279,10 +279,19 @@ def test_un_operateur_inconnu_est_refuse_en_nommant_les_operateurs():
     assert "`matches`" in erreurs[0] and "eq" in erreurs[0] and "in" in erreurs[0]
 
 
-def test_sous_strict_une_colonne_non_declaree_est_refusee():
-    erreurs = _erreurs({"lot": "jalon-100"}, strict=True)
-    assert any("`lot`" in e and "unknown_columns" in e for e in erreurs)
-    assert _erreurs({"lot": "jalon-100"}) == []          # souple : colonne libre
+def test_avant_la_date_une_colonne_non_declaree_est_dite_a_la_pose():
+    """oto#124 : la garde de pose de la validation complète — dite d'ici au 21/10."""
+    from oto_mcp.datastore.definition import preavis_de_pose
+    assert _erreurs({"lot": "jalon-100"}) == []
+    dites = preavis_de_pose(_schema({"lot": "jalon-100"}))
+    assert len(dites) == 1 and "`lot`" in dites[0] and "unknown_columns" not in dites[0]
+
+
+def test_apres_la_date_une_colonne_non_declaree_est_refusee(validation_complete_partout):
+    from oto_mcp.datastore.definition import preavis_de_pose
+    erreurs = _erreurs({"lot": "jalon-100"})
+    assert any("`lot`" in e and "fait contrat" in e for e in erreurs)
+    assert preavis_de_pose(_schema({"lot": "jalon-100"})) == []
 
 
 @pytest.mark.parametrize("valeur", [{}, "jalon-100", ["jalon-100"], 3])

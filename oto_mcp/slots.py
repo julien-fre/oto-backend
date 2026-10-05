@@ -89,7 +89,7 @@ class SlotDecl(BaseModel):
     # l'écriture, sinon le NOM du slot. Toujours présent sur un slot `connecteur`.
     connector: Optional[str] = None
     # Slots `tableau` seulement (ADR 0035 × 0046) : le schéma CIBLE du tableau attendu
-    # (`fields`/`unknown_columns`/`new_rows`/`lifecycle`/`key`). Au binding, un namespace vierge est
+    # (`fields`/`new_rows`/`lifecycle`/`key`). Au binding, un namespace vierge est
     # PROVISIONNÉ avec ; un namespace déjà schématisé autrement lève un warning non
     # bloquant. Le champ s'appelle `schema` sur le fil ; le nom python est décalé parce
     # que `schema` masque une méthode héritée de `BaseModel` (même parade que
@@ -171,7 +171,7 @@ def validate_slots(raw: object, anciens: object = None) -> list[dict]:
             # Le connecteur visé : champ `connector` explicite, sinon le nom du slot.
             slot["connector"] = str(connector or name).strip().lower()
         # Schéma CIBLE d'un slot tableau (ADR 0035 × 0046) : la procédure prescrit la
-        # FORME du tableau attendu (fields/unknown_columns/new_rows/lifecycle/key) — plus une prescription
+        # FORME du tableau attendu (fields/new_rows/lifecycle/key) — plus une prescription
         # en prose. Au binding, un namespace vierge est PROVISIONNÉ avec ce schéma ;
         # un namespace déjà schématisé différemment lève un warning (non bloquant).
         schema = item.get("schema")

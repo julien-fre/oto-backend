@@ -853,8 +853,15 @@ déclarée, où le cran était inerte) ; `key_required: true` avec `key` → `ne
 l'équivalent exact calculé sur la combinaison reçue. Stockés, ils sont tolérés tant
 qu'on n'y touche pas, **ne sont plus lus**, et la lecture les nomme avec leur
 équivalent. `data_get_schema` sert les deux réglages tels qu'ils s'appliquent
-(`reglages`), défauts compris ; `enforced` annonce `unknown_columns` et `new_rows`.
+(`reglages`), défauts compris ; `enforced` annonce `new_rows`.
 Les paragraphes qui suivent racontent ces crans sous leurs noms d'alors.
+
+> ⚠️ **`unknown_columns` est RETIRÉ le 05/10/2026 (oto#124)** — plus aucun réglage, les
+> colonnes et les valeurs sont toujours vérifiées. Ce qu'il réglait est désormais la
+> règle de tous les tableaux à partir du 21/10/2026 : la colonne non déclarée est
+> refusée (`colonnes_non_declarees`) et le format déclaré fait contrat
+> (`validation_complete`), cf. la dernière section. `scripts/renommer_reglages_tete.py`
+> est retiré avec lui (il posait ce réglage) ; `new_rows` reste le seul réglage de tête.
 
 **`key_required` : un tableau où l'on ne crée pas, on VISE (#516, 29/08/2026).** Le
 `notices` ci-dessus signale ; il ne refuse pas. **Un signal dans une réponse qu'un agent
@@ -3607,7 +3614,7 @@ schéma compris. Pour écrire dans une colonne nouvelle, on la déclare d'abord
   `mots_deprecies`, `vide_remplace`) : `COLONNE_NON_DECLAREE_REFUSEE_LE` = 2026-10-21,
   le même jour que la bascule d'`upsert` ; réglage `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE`
   (illisible ⇒ lève) ; texte servi DÉRIVÉ de la date (`data_write`, `data_set_schema`,
-  `data_patch_schema` et son paramètre `unknown_columns`, routes REST d'écriture, guide
+  `data_patch_schema`, routes REST d'écriture, guide
   `datastore-semantics` §4 sexies bis). Avant la date, la colonne est créée et la réponse
   porte UNE phrase dans `notices` par geste (union sur un lot) : les colonnes, la date,
   le geste — pour tous les réglages, `create` compris.
@@ -3622,11 +3629,8 @@ schéma compris. Pour écrire dans une colonne nouvelle, on la déclare d'abord
   le cran `reject`. Le prédicat (`non_declarees`) juge ce que le geste POSE : une ligne
   qui porte une colonne ancienne non déclarée reste écrivable sur ses colonnes déclarées,
   et `null` sur l'ancienne l'efface (un effacement ne crée rien).
-- **Découplé du format qui fait contrat.** `unknown_columns: "report"|"reject"` arme
-  encore la validation complète (`options` de premier niveau, structure des types,
-  couches inconnues, fermeture des sous-records, gardes de pose de `claimable` —
-  `reglages.format_contraignant`). Ce lot ne l'allume nulle part et ne l'éteint nulle
-  part : le sort de ce réglage est un arbitrage à part.
+- **Découplé du format qui fait contrat** — arbitré à part le même jour : c'est la
+  section suivante.
 - **Le gel** (`scripts/figer_colonnes.py`, à blanc par défaut, `--appliquer`) : avant la
   bascule, chaque tableau — à schéma ou sans — reçoit la déclaration des colonnes que
   ses lignes portent ; type déduit des valeurs (`datastore/types_inferes.py` :
@@ -3662,4 +3666,52 @@ schéma compris. Pour écrire dans une colonne nouvelle, on la déclare d'abord
     `datastore_exists`. Un nom pris reste `409` AVANT toute pose.
   - Sans `schema` (absent ou `null`), la réponse et le tableau sont ceux d'avant. Garde :
     `tests/datastore/test_creation_avec_schema_124_live.py`.
+
+## Le format déclaré fait contrat partout — plus aucun réglage (oto#124, 05/10/2026)
+
+La validation COMPLÈTE d'une écriture était un réglage : `unknown_columns` autre que
+`create` (`reglages.format_contraignant`) faisait respecter les `options` de premier
+niveau, la forme des valeurs `text`/`url`/`object`/`list`/`enum`, les couches inconnues,
+la fermeture des sous-records déclarés et, à la pose, la garde de `lifecycle.claimable`.
+Mesuré le 05/10 : active sur 100 tableaux, éteinte sur 382 — et 596 lignes déjà en faute
+sur 25 de ces 382 (options 295 lignes / 16 tableaux, forme 411 / 12, sous-records fermés
+3 / 1, couches 0). Décidé le 05/10 : **toujours refuser, plus aucun réglage.**
+
+- **La décision est UNE fonction** : `validation_complete.complete(schema)` — à partir de
+  `VALIDATION_COMPLETE_LE` (2026-10-21, réglage `OTO_VALIDATION_COMPLETE_LE`, illisible ⇒
+  lève), vraie pour tout tableau qui déclare une colonne ; avant, vraie là où le réglage
+  STOCKÉ le disait (lu jusqu'à la date seulement, pour que les 100 tableaux gardent leur
+  validation pendant le préavis). `declaration.validation_active`,
+  `validate_row(contraignant=…)`, la garde de `claimable` à la pose et l'avertissement
+  des colonnes orphelines la lisent ; rien d'autre ne lit `unknown_columns`.
+- **Le préavis** (patron de `colonnes_non_declarees`) : sur un tableau en préavis
+  (`en_preavis`), `validate_row(preavis=…)` refait le MÊME jugement réglé comme à la
+  date, et ce qu'il refuserait de plus part dans `notices` — UNE phrase par geste, union
+  sur un lot, chaque faute telle que le refus la dira (colonne, valeur, règle), la date,
+  le geste (corriger, ou étendre les `options` par `data_patch_schema`). Un seul seam
+  (`controles._check_row`) : MCP, REST, lots, upload signé, import. Rien n'est écarté ni
+  refusé à ce titre. Le relevé d'écriture `hors_options` (#319) est retiré : le préavis
+  le dit mieux. À la pose : `options_not_enforced_warning` donne la date, l'existant hors
+  liste est relevé (`_offending_enum_warning`) dès la pose, et la garde de `claimable`
+  est dite (`definition.preavis_de_pose`).
+- **On juge ce que le geste ÉCRIT, jamais ce que la ligne porte déjà** — vérifié famille
+  par famille dans `_row_errors` : options et forme (`errs_type and not pose` → `gelees`),
+  sous-records fermés (`closed or (contraignant and pose)`), élément de liste non écrit
+  (`elements_reecrits`) l'étaient déjà ; **deux trous fermés** : une couche inconnue EN
+  PLACE refusait l'écriture d'une autre colonne (elle part désormais dans `gelees`,
+  servie en `hors_type`), et une valeur hors options en place entrait dans `hors` (ce que
+  l'écriture peut écarter, #667), ce qui faisait refuser l'écartement de la valeur que
+  le geste pose. Les données des tenants ne sont pas corrigées.
+- **`unknown_columns` retiré** : `schema_keys.CLES_RETIREES` (refusé à la pose, au patch,
+  dans un slot, à la création, avec « plus aucun réglage : les colonnes et les valeurs
+  sont toujours vérifiées »), paramètre de `data_patch_schema` retiré et refusé
+  (`reglages.refus_parametres`, les deux faces), plus servi dans `reglages` ni annoncé
+  dans `enforced`. Stocké et inchangé, il passe (`cles_inconnues._deja_stockee`) et la
+  lecture le dit (`reglages.residu_unknown_columns`).
+- **Le retrait du stocké** : `scripts/retirer_unknown_columns.py` (à blanc par défaut,
+  `--appliquer` ; tableaux, slots de procédure, bibliothèque ; bougé ⇒ sauté ;
+  idempotent). **À lancer APRÈS le 21/10/2026** : avant, le retirer ferait retomber les
+  tableaux `report`/`reject` au préavis. Ensuite, la lecture transitoire
+  (`reglages.colonnes_inconnues`/`format_contraignant`), le relevé `hors_schema`, le cran
+  `reject` et `non_applique.options_not_enforced` sont du code mort, à retirer.
 

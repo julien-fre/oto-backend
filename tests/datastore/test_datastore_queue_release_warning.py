@@ -73,6 +73,9 @@ def test_set_schema_returns_the_warning(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_drop_key_index", lambda ns_id: None)
     # oto-backend#479 : le relevé des lignes en place compte d'abord le tableau — vide ici.
     monkeypatch.setattr(D.db, "datastore_count_rows", lambda *a, **k: 0)
+    # oto#124 : les options feront contrat partout à la date — l'existant hors liste
+    # se relève dès la pose. Aucun ici.
+    monkeypatch.setattr(D.db, "datastore_offending_enum_values", lambda *a, **k: [])
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 7)
     # `set_schema` relit le schéma en place avant de le remplacer (#388).

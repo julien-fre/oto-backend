@@ -392,7 +392,7 @@ silence.
 
 **À partir du 21 octobre 2026, une écriture dans une colonne que le schéma ne déclare
 pas est REFUSÉE** (`unknown_column`), sur TOUS les tableaux — tableaux sans schéma
-compris, et quel que soit `unknown_columns` (oto#124). Rien n'est écrit ; un lot ou un
+compris (oto#124). Rien n'est écrit ; un lot ou un
 import est refusé ENTIER, avant sa première ligne. Pour écrire dans une colonne
 nouvelle, déclare-la d'abord, puis écris :
 
@@ -417,41 +417,66 @@ data_create_datastore(datastore="prospects", schema={"fields": [
 
 (REST : `POST /api/datastores`, corps `{"datastore": …, "schema": {…}}`.) `schema` est
 le MÊME objet que `data_set_schema` — mêmes clés, même vocabulaire fermé, même
-validation, clé métier et réglages de tête compris. Le tableau naît avec ; si le schéma
+validation, clé métier et réglage de tête compris. Le tableau naît avec ; si le schéma
 est refusé, le tableau n'est PAS créé (rien à nettoyer, le même nom reste libre).
 
 **D'ici là**, la colonne est encore créée, et la réponse le dit dans `notices` : les
 colonnes, la date, le geste. `oto_import` déclare lui-même les colonnes neuves d'un
 fichier (en-têtes CSV, clés NDJSON).
 
-## 4 sexies ter. Deux réglages de tête, un par question
+## 4 sexies ter. Le format déclaré fait contrat — plus aucun réglage
 
-Un schéma porte deux réglages de tête (oto#127, 02/10/2026) :
+**À partir du 21 octobre 2026, le format déclaré fait contrat sur TOUS les tableaux à
+schéma** (oto#124, décidé le 05/10/2026 : toujours refuser, plus aucun réglage) :
 
-| réglage | question | crans |
-|---|---|---|
-| `unknown_columns` | que devient une colonne que le schéma ne déclare pas, jusqu'au 21/10/2026 (§4 sexies bis : ensuite refusée partout) ? | `"create"` (défaut : créée, avec le préavis) · `"report"` (créée et nommée dans `hors_schema`) · `"reject"` (refusée, rien n'est écrit — exige au moins une colonne déclarée) |
-| `new_rows` | une ligne nouvelle a-t-elle le droit de naître ? | `"create"` (défaut) · `"reject"` (une écriture qui ne désigne aucune ligne existante est refusée — exige `key`) |
+- les `options` d'une colonne sont appliquées, quel que soit son type ;
+- la FORME d'une valeur `text`, `url`, `object`, `list` et `enum` est vérifiée
+  (une URL commence par `http(s)://`, un objet est un objet, une liste une liste) ;
+- une couche inconnue d'une valeur est refusée (`{"valeur": …, "commentaire": …}`) ;
+- un sous-record déclaré (`object.fields`, `list.of.fields`) refuse un attribut qu'il
+  ne déclare pas ;
+- à la pose, la colonne d'un périmètre de réservation (`lifecycle.claimable`) doit
+  être déclarée.
 
-Hors `"create"`, `unknown_columns` dit aussi que le format FAIT CONTRAT : les
-`options` d'une colonne de premier niveau sont appliquées, un sous-record déclaré
-refuse un attribut qu'il ne déclare pas, la colonne d'un périmètre de réservation doit
-être déclarée. `data_get_schema` sert les deux tels qu'ils s'appliquent (`reglages`).
+Une faute est refusée (`row_invalid`), rien n'est écrit — sauf une valeur hors
+`options` seule dans sa faute : elle est ÉCARTÉE et le reste de la ligne s'écrit
+(`valeurs_ecartees`).
 
-Ils remplacent `strict`, `unknown_fields` et `key_required`, refusés à la pose comme au
-patch avec leur équivalent exact : `strict: true` → `unknown_columns: "report"` ;
-`strict: true` + `unknown_fields: "reject"` → `unknown_columns: "reject"` ;
-`strict: false` → `"create"` ; `key_required: true` → `new_rows: "reject"`. Un ancien
-réglage encore stocké n'est plus lu ; la lecture le dit, avec son équivalent.
+**D'ici là**, sur un tableau qui ne faisait pas contrat de son format, l'écriture
+passe et `notices` dit chaque faute — la colonne, la valeur, la règle (options
+permises, forme attendue) —, la date, et le geste : corriger la valeur, ou, si elle
+est juste, étendre le format :
+
+```
+data_patch_schema(datastore=…, fields=[{"key": "statut", "options": ["a", "b", "c"]}])
+```
+
+**On juge ce que le geste ÉCRIT, jamais ce que la ligne porte déjà.** Une ligne dont
+une valeur en place est hors format s'écrit sur ses AUTRES colonnes, avant comme après
+la date ; la faute en place est dite (`hors_type`), elle ne refuse rien. Les lignes
+existantes ne sont pas corrigées par la plateforme.
+
+**Un seul réglage de tête reste : `new_rows`** — une ligne nouvelle a-t-elle le droit
+de naître ? `"create"` (défaut) ou `"reject"` (une écriture qui ne désigne aucune
+ligne existante est refusée — exige `key`). `data_get_schema` le sert tel qu'il
+s'applique (`reglages`).
+
+`unknown_columns` est **retiré** (05/10/2026) : le poser ou le patcher est refusé,
+avec cette raison — plus aucun réglage, les colonnes et les valeurs sont toujours
+vérifiées. Un schéma qui le porte encore le garde tant qu'on n'y touche pas (la
+plateforme le retire elle-même ; la lecture le dit). `strict`, `unknown_fields` et
+`key_required` sont refusés depuis le 02/10/2026 (`key_required: true` →
+`new_rows: "reject"`).
 
 ## 4 septies. Une exigence déclarée s'applique, à toute profondeur
 
 La validation d'un tableau s'arme dès que son schéma déclare une exigence :
-`unknown_columns` à `"report"` ou `"reject"`, ou `required`, `required_when`, `max_length`, `max_items` sur une colonne, un
+`required`, `required_when`, `max_length`, `max_items` sur une colonne, un
 sous-champ d'objet ou l'attribut d'un élément de liste — et `options` dans un
 sous-champ. « Chaque contact porte un nom » se déclare sur `of.fields`, et il est
-tenu. Seules les `options` d'une colonne de premier niveau restent indicatives sous
-`unknown_columns: "create"` (le défaut) ; la réponse le dit.
+tenu. Le reste du format (les `options` d'une colonne de premier niveau, la forme des
+valeurs) fait contrat partout à partir du 21/10/2026 (§4 sexies ter) ; d'ici là, la
+réponse le dit.
 
 Deux formes qui ne s'appliqueraient pas sont **refusées à la pose**, avec la bonne :
 `max_items` se pose sur la liste (`{"type": "list", "max_items": 3, "of": {…}}`),
@@ -659,7 +684,8 @@ Un succès n'est pas un accusé de ce que tu crois avoir fait ; lis ce qui manqu
   dès que le tableau a été atteint ; un `ns_id: null` signale un chemin qui a rendu
   sans résoudre, pas un tableau sans numéro.
 - **Un `200`/`201` d'écriture ne porte que ce qui a dévié.** `hors_schema`,
-  `hors_options`, `valeurs_effacees`, `valeurs_ignorees`, `notices` sont absents quand
+  `hors_type`, `valeurs_ecartees`, `valeurs_effacees`, `valeurs_ignorees`, `notices`
+  sont absents quand
   tout est dans le format : leur absence est la réponse normale, leur présence est ce
   qu'il faut lire.
 - **Un agrégat sur un champ absent rend un groupe de clé `null`**, pas une erreur : un

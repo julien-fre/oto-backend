@@ -137,7 +137,7 @@ def test_omis_le_cran_ne_bouge_pas(monkeypatch):
     st.patch_schema("v", fields=[{"key": "statut", "label": "État"}])
     assert posed["schema"]["new_rows"] == "reject"
     st, posed = _banc(monkeypatch, OUVERT)
-    st.patch_schema("v", unknown_columns="create")
+    st.patch_schema("v", key="siren")
     assert "new_rows" not in posed["schema"]
 
 
@@ -173,7 +173,6 @@ def test_la_face_REST_passe_key_required_au_store(monkeypatch):
                          body={"new_rows": "reject"})
     assert status == 200, corps
     assert store.calls == [("vivier", {"fields": None, "remove": None, "remove_attrs": None,
-                                       "key": None, "unknown_columns": None,
-                                       "new_rows": "reject"})]
+                                       "key": None, "new_rows": "reject"})]
     assert corps["schema"]["new_rows"] == "reject"
     assert "new_rows" in corps["enforced"]

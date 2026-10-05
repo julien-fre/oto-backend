@@ -182,8 +182,8 @@ def test_the_enum_warning_says_what_the_code_does(monkeypatch):
                         lambda ns_id, options, **k: [
                             {"field": "etat", "rows": 1, "distinct": 1,
                              "values": [{"value": "peut-être", "rows": 1}]}])
-    schema = {"unknown_columns": "report", "fields": [
-        {"key": "etat", "type": "enum", "options": ["oui", "non"]}]}
+    schema = {"fields": [
+        {"key": "etat", "type": "enum", "options": ["oui", "non"], "required": True}]}
     assert ds.DatastorePg._offending_enum_warning(1, schema) == (
         "liste de valeurs déclarée sur des données qui en sortent déjà :\n"
         "  `etat` : 1 ligne(s) hors options — « peut-être » (1)  [options : oui, non]\n"
@@ -206,14 +206,25 @@ def _no_db(monkeypatch):
     return ds
 
 
-def test_a_soft_schema_is_not_scanned(monkeypatch):
-    """LA garde, et c'est un choix : sur un schéma souple la validation est
-    inactive (opt-in, 0016), donc l'enum ne condamnera rien. Signaler l'existant
-    y annoncerait un refus qui n'aura pas lieu — un faux avertissement coûte la
-    confiance qu'on met dans les vrais."""
+def test_a_table_without_columns_is_not_scanned(monkeypatch):
+    """Sans colonne déclarée, aucune liste ne condamne rien : pas de requête."""
     ds = _no_db(monkeypatch)
+    assert ds.DatastorePg._offending_enum_warning(1, {"fields": []}) is None
+
+
+def test_a_soft_schema_is_scanned_and_the_warning_gives_the_date(monkeypatch):
+    """oto#124 : la liste fera contrat le 21/10/2026 sur TOUS les tableaux — un
+    tableau qui ne faisait pas contrat est donc relevé dès la pose, et la phrase dit
+    QUAND l'écriture hors liste cessera de passer."""
+    from oto_mcp.datastore import core as ds
+    monkeypatch.setattr(ds.db, "datastore_offending_enum_values",
+                        lambda ns_id, options, **k: [
+                            {"field": "u", "rows": 2, "distinct": 1,
+                             "values": [{"value": "c", "rows": 2}]}])
     souple = {"fields": [{"key": "u", "type": "enum", "options": ["a", "b"]}]}
-    assert ds.DatastorePg._offending_enum_warning(1, souple) is None
+    msg = ds.DatastorePg._offending_enum_warning(1, souple)
+    assert "`u` : 2 ligne(s) hors options" in msg
+    assert "À partir du 2026-10-21 (d'ici là, elle passe avec un préavis)" in msg
 
 
 def test_a_strict_schema_without_enum_is_not_scanned(monkeypatch):

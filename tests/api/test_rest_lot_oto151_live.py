@@ -192,8 +192,9 @@ def test_un_mot_refuse_refuse_le_lot_entier_rien_n_est_ecrit(client, monkeypatch
     assert _base(ns_id) == {}
 
 
-def test_une_ligne_refusee_est_nommee_et_le_refus_dit_ou_reprendre(client):
-    ns, ns_id = _table({**SCHEMA, "unknown_columns": "report"})
+def test_une_ligne_refusee_est_nommee_et_le_refus_dit_ou_reprendre(
+        client, validation_complete_partout):
+    ns, ns_id = _table(SCHEMA)
     r = _lot(client, ns, {"rows": [{"siren": "1", "effectif": 3},
                                    {"siren": "2", "effectif": "beaucoup"}]})
     assert r.status_code == 400, r.text

@@ -12,7 +12,7 @@ from oto_mcp.datastore import schema as dsv2
 
 
 def _schema(**kw) -> dict:
-    base = {"unknown_columns": "report", "fields": [
+    base = {"fields": [
         {"key": "siren", "type": "text"},
         {"key": "contacts", "type": "list", "max_items": 2, "label": "Interlocuteurs",
          "of": {"type": "object", "fields": [

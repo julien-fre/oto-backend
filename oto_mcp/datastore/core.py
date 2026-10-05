@@ -164,7 +164,10 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
         # oto#124 : les colonnes NON DÉCLARÉES que ce geste a créées avant la date du
         # refus — union sur un lot, dites en UNE phrase datée (`off_schema_report`).
         self.off_non_declarees: set = set()
-        self.off_options: dict = {}
+        # oto#124 : les fautes au format déclaré que la validation complète refusera à
+        # partir du 21/10/2026 et que ce tableau laisse encore passer — chaque refus
+        # tel qu'il sera dit, union sur un lot, en UNE phrase datée.
+        self.off_format_preavis: set = set()
         # Colonnes dont la valeur EN BASE ne passe plus le type déclaré, rencontrées
         # en écrivant AILLEURS sur la même ligne. `{champ: refus}` — le refus qu'on
         # aurait rendu, gardé pour que l'agent sache quoi y écrire s'il veut réparer.

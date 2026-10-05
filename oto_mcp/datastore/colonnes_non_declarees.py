@@ -28,12 +28,11 @@ anciennes non déclarées ne se juge pas sur elles (le cran juge le geste, pas l
 qu'il hérite, #284). Effacer une colonne non déclarée (`null`) reste possible : elle
 n'est plus posée.
 
-⚠️ **Ce que ce module ne touche PAS** : `unknown_columns: "report"|"reject"` arme
-encore, jusqu'à arbitrage, la validation complète du format (`options` de premier
-niveau, structure des types, couches inconnues, fermeture des sous-records, gardes de
-pose de `claimable` — `reglages.format_contraignant`). Le refus des colonnes inconnues
-en est DÉCOUPLÉ : il ne l'allume pas sur un tableau `create`, il ne l'éteint pas sur un
-tableau `report`/`reject`.
+⚠️ **Ce que ce module ne touche PAS** : la validation complète du FORMAT (`options` de
+premier niveau, structure des types, couches inconnues, fermeture des sous-records,
+gardes de pose de `claimable`) — c'est `validation_complete`, sa propre bascule datée
+au même jour (oto#124, 05/10). Le réglage `unknown_columns` qui les réunissait est
+retiré : plus aucun réglage.
 
 **Le refus tombe À LA DATE, dans le code** : rien n'est à déployer le jour J. Le réglage
 `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE` déplace la date sans déployer.
@@ -258,13 +257,13 @@ def description_ecriture() -> str:
     le process franchit la date sans redémarrer ; démarré après, la règle au présent."""
     if refus_arme():
         return ("⚠️ **A write into a column the schema does NOT declare is REFUSED** "
-                "(`unknown_column`), on every table and whatever `unknown_columns` says "
+                "(`unknown_column`), on every table "
                 f"— nothing is written, a batch is refused WHOLE. {_GESTE_EN}")
     return (f"⚠️ **From {date_du_refus().isoformat()} on, a write into a column the "
             "schema does NOT declare is REFUSED** (`unknown_column`) instead of "
             "creating it — on every table, tables without a schema included (their "
-            "existing columns are declared for them before that date), whatever "
-            "`unknown_columns` says; a batch is refused WHOLE. Until then the column "
+            "existing columns are declared for them before that date); a batch is "
+            "refused WHOLE. Until then the column "
             f"is still created and the response warns in `notices`. {_GESTE_EN}")
 
 
@@ -273,21 +272,14 @@ DESCRIPTION_ECRITURE = description_ecriture()
 
 
 def description_schema() -> str:
-    """Ce que `data_set_schema` et `data_patch_schema` disent de la règle et du réglage
-    `unknown_columns` — qui ne décide plus du sort d'une colonne inconnue à partir de la
-    date, et garde d'ici à l'arbitrage son autre effet (le format fait contrat)."""
+    """Ce que `data_set_schema` et `data_patch_schema` disent de la règle : déclarer une
+    colonne est le SEUL moyen d'en ajouter une."""
     quand = ("" if refus_arme() else
              f" from {date_du_refus().isoformat()} on (until then it is still created, "
              "with a warning in `notices`)")
     return ("⚠️ A column the schema does NOT declare is REFUSED at write"
-            f"{quand}, on EVERY table whatever `unknown_columns` says: declaring a "
-            "column (`data_patch_schema(fields=[{\"key\": …}])`) is the ONLY way to "
-            "add one. `unknown_columns` (`\"create\"` default | `\"report\"` | "
-            "`\"reject\"`) still decides, until that date, whether an undeclared column "
-            "is created silently, created and named back in `hors_schema`, or refused; "
-            "and `\"report\"`/`\"reject\"` still make the declared format a CONTRACT "
-            "(top-level `options` enforced, value structure and unknown layers judged, "
-            "declared sub-records closed).")
+            f"{quand}, on EVERY table: declaring a column "
+            "(`data_patch_schema(fields=[{\"key\": …}])`) is the ONLY way to add one.")
 
 
 def description_creation() -> str:

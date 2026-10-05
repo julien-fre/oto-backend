@@ -23,6 +23,7 @@ from .. import access, db, ownership
 from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
 from ..datastore import upsert_implicite
 from ..datastore import colonnes_non_declarees
+from ..datastore import validation_complete
 from ..datastore import charge_a_renvoyer
 from ..datastore import forcage as fcg
 from ..datastore import layers as dsl
@@ -81,7 +82,8 @@ def _avec_la_phrase_des_couches(fn):
         _MARQUE_VIDE_REMPLACE: vide_remplace.DESCRIPTION_ECRITURE,
         _MARQUE_UPSERT_IMPLICITE: upsert_implicite.DESCRIPTION_ECRITURE,
         _MARQUE_UPSERT: upsert_implicite.description_parametre(),
-        _MARQUE_COLONNES: colonnes_non_declarees.DESCRIPTION_ECRITURE})
+        _MARQUE_COLONNES: (colonnes_non_declarees.DESCRIPTION_ECRITURE + " "
+                           + validation_complete.description_ecriture())})
 
 
 def _avec_la_regle_de_cle(fn):
@@ -90,7 +92,8 @@ def _avec_la_regle_de_cle(fn):
     `data_patch_schema` et la face REST."""
     return _inserer(fn, {
         _MARQUE_CLE_METIER: upsert_implicite.description_cle_schema(),
-        _MARQUE_COLONNES: colonnes_non_declarees.description_schema()})
+        _MARQUE_COLONNES: (colonnes_non_declarees.description_schema() + " "
+                           + validation_complete.description_schema())})
 
 
 def _avec_la_creation(fn):
@@ -730,8 +733,8 @@ def register(mcp: FastMCP) -> None:
         datetime|bool|json|object|list|url|email|phone|enum",
         "display"?: "title", "role"?: "status|metric|note|qualif",
         "description"?: str, "meta"?: {…}}],
-        "key"?: str, "unknown_columns"?: "create|report|reject",
-        "new_rows"?: "create|reject", "description"?: str, "meta"?: {…}}.
+        "key"?: str, "new_rows"?: "create|reject", "description"?: str,
+        "meta"?: {…}}.
         ⚠️ **The vocabulary is CLOSED: a key its level does not admit is REFUSED** —
         at the head, on a field, on a sub-field, in `of`, in `lifecycle`. The refusal
         names the path, the key and the closest known one (`read_only` → `readonly`),
@@ -759,23 +762,16 @@ def register(mcp: FastMCP) -> None:
 
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
         (e.g. "email", "siren"). <<cle_metier>>
-        Default is SOFT (rendering/dedup only, no write validation).
         <<colonnes_non_declarees>>
-        TWO head settings, one per question (they REPLACED `strict`, `unknown_fields`
-        and `key_required` on 2026-10-02 — those are refused, with their exact
-        equivalent):
-        - `"unknown_columns"` — what happens to a column the schema does NOT
-          declare: `"create"` (default) creates it (with a dated warning, see
-          above); `"report"` creates it and names it back in `hors_schema`, and
-          makes the declared format a CONTRACT (top-level `options` enforced,
-          declared sub-records closed); `"reject"` does the same and REFUSES the
-          write, storing nothing (needs at least one declared field).
+        ONE head setting is left (`strict`, `unknown_fields` and `key_required` were
+        replaced on 2026-10-02; `unknown_columns` was REMOVED on 2026-10-05 — no
+        setting decides what is checked, all are refused):
         - `"new_rows"` — whether a NEW row may be born: `"create"` (default) or
           `"reject"`, which CLOSES the table: a write that designates NO existing
           row (no `id`, and no key value the table already carries) is REFUSED
           instead of creating one. Needs `key`. A table often fills up before it
           has its key, hence the default.
-        `data_get_schema` serves both AS APPLIED (`reglages`). Pass schema=null to
+        `data_get_schema` serves it AS APPLIED (`reglages`). Pass schema=null to
         switch back to free-table mode.
 
         PRESENTATION — the schema also DRIVES THE UI (there is no visual editor:
@@ -834,16 +830,13 @@ def register(mcp: FastMCP) -> None:
           write does not name. It arms ITSELF — no head setting needed. ⚠️ It does NOT
           make a comment TRUE: it forces you to NAME a source, which makes a lie
           checkable — the truth is still established on the documents.
-          Validation is active when `unknown_columns` is `"report"`/`"reject"` or
-          any field has required/required_when/max_length. A non-conforming write FAILS naming the culprit
+          Every declared constraint applies (the format as a whole from the date
+          above). A non-conforming write FAILS naming the culprit
           (max_length reports the actual length AND the bound; pattern reports the
           value it saw AND the motif).
-          ⚠️ `unknown_columns: "report"` does NOT close the top level: a key no
-          field declares still CREATES a free column and the value persists — it is
-          only REPORTED, in `hors_schema`. That is how you explore a table before
-          typing it, and it is why `"report"` refuses an undeclared attribute INSIDE
-          a declared sub-record but not a column beside it. `"reject"` closes the
-          top level too: the write is REFUSED and nothing is stored.
+          Only what a write SETS is judged: a row whose stored value is already
+          off-format still accepts a write to its OTHER columns — the stale value
+          is named back in `hors_type`, never a reason to refuse.
           Fields the caller does NOT write — one question ("whose column is this?"),
           and each refusal names the field, the reason and where the thing goes:
           `field.readonly: true` refuses a write that CHANGES a value already SET
@@ -902,9 +895,9 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             datastore: target datastore (must exist; you must have write access).
-            schema: the schema object, or null to clear it. Head keys
-                `unknown_columns: "create"|"report"|"reject"` (an undeclared
-                column's fate) and `new_rows: "create"|"reject"`; a field may carry `readonly: true` (a value once set is
+            schema: the schema object, or null to clear it. Head key
+                `new_rows: "create"|"reject"` (`unknown_columns` is refused: no
+                setting any more); a field may carry `readonly: true` (a value once set is
                 locked, an empty cell fills; layers open). ⚠️ `origine` was REMOVED on 2026-09-08 and is refused — the
                 origin is set by the call that brings the data
                 (`donnees_d_origine=true`), not by a schema format.
@@ -1140,17 +1133,15 @@ def register(mcp: FastMCP) -> None:
         you read there is then a floor. The full history, whole values, is the row
         history: `data_row_history`.
 
-        On a datastore with a STRICT schema, any key you write that the schema does
-        NOT declare comes back in `hors_schema` (with `hors_schema_hint`): the write
-        IS accepted and the value persists, but it lands in a free column that the
-        interface and everything schema-driven ignore. CHECK that field after a
-        write — it is how you catch a renamed field you kept writing under its old
-        name. Absent = everything you wrote is in the declared format.
+        CHECK `notices` after a write: until the dates announced above, a column
+        the schema does not declare, or a value its declared format refuses, is
+        still WRITTEN and named there, dated — that is how you catch a renamed
+        field you kept writing under its old name, or a value outside `options`.
+        Absent = everything you wrote is in the declared format.
 
         ⚠️ The datastore must EXIST first (create it with `data_create_datastore`);
         writing to an unknown datastore raises "datastore inconnu" — it is NOT
-        auto-created. New JSON KEYS within an existing datastore, however, do
-        auto-create their columns.
+        auto-created.
 
         ⚠️ **Address the table by its NUMBER.** The reply carries `ns_id` — the
         table's number — and that is the form to pass as `datastore`:

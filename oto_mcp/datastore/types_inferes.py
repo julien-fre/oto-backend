@@ -22,7 +22,7 @@ même forme JSON :
 
 ⚠️ **Pourquoi pas de type plutôt que `text` quand c'est hétérogène** : un `type` déclaré
 s'arme seul pour `number`, `bool`, `date` (`types_declares.TYPES_ARMES`), et `text`
-refuse un non-texte sous un format qui fait contrat (`unknown_columns` ≠ `create`). Une
+refuse un non-texte sous un format qui fait contrat (partout au 21/10/2026, oto#124). Une
 colonne sans type n'a aucune forme à tenir (`validation._conformite_scalaire`) : la
 déclarer ne refuse RIEN de plus qu'aujourd'hui. Le type n'est déduit que là où TOUTES
 les valeurs en place le tiennent déjà — aucune ligne existante ne devient hors format.

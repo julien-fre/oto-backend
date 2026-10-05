@@ -35,8 +35,7 @@ def _un_refus(schema, ancien=None) -> str:
 # ── ① par niveau : le refus, son chemin, et la clé proche ────────────────────
 
 @pytest.mark.parametrize("schema,chemin,cle,proche", [
-    ({"unknown_column": "report", "fields": [{"key": "a"}]}, "tête", "unknown_column",
-     "unknown_columns"),
+    ({"new_row": "reject", "fields": [{"key": "a"}]}, "tête", "new_row", "new_rows"),
     ({"fields": [{"key": "a", "read_only": True}]}, "fields.a", "read_only", "readonly"),
     ({"fields": [{"key": "o", "type": "object",
                   "fields": [{"key": "y", "requird": True}]}]},
@@ -57,6 +56,9 @@ def test_une_cle_d_un_AUTRE_niveau_est_renvoyee_a_son_domicile():
     assert "`lifecycle.states`" in _un_refus(
         {"fields": [{"key": "s", "states": ["a"]}]})
     assert "réglage de TÊTE" in _un_refus(
+        {"fields": [{"key": "s", "new_rows": "reject"}]})
+    # oto#124 : un réglage RETIRÉ dit pourquoi, à tout niveau.
+    assert "plus aucun réglage" in _un_refus(
         {"fields": [{"key": "s", "unknown_columns": "report"}]})
     assert "attribut de COLONNE" in _un_refus({"readonly": True})
     msg = _un_refus({"fields": [{"key": "o", "type": "object",
@@ -92,7 +94,7 @@ def test_les_textes_d_aide_sont_refuses_et_renvoient_a_description(aide):
 def test_ce_que_le_dashboard_lit_est_admis():
     """Vérifié sur `oto-dashboard` (origin/main, 01/10/2026) avant de fermer : ce
     qu'un écran lit n'est pas inconnu."""
-    propre = {"key": "k", "unknown_columns": "report", "description": "d", "fields": [
+    propre = {"key": "k", "new_rows": "reject", "description": "d", "fields": [
         {"key": "k", "type": "text", "label": "K", "hidden": True, "width": "half",
          "display": "title", "role": "badge", "description": "aide"},
         {"key": "s", "type": "enum", "options": ["a", "b"], "role": "status",

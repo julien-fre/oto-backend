@@ -10,7 +10,10 @@ crée une VRAIE colonne qu'on peut déclarer après coup, et c'est ce qui permet
 d'explorer un tableau avant de le typer.
 
 Ce que le cran ajoute est un TROISIÈME état, opt-in table par table :
-`unknown_fields: "reject"`. Le défaut (`report`) ne bouge pas — le fermer
+`unknown_fields: "reject"`, puis `unknown_columns: "reject"` (oto#127). ⚠️ oto#124 : le
+réglage est RETIRÉ le 05/10/2026 — refusé à la pose, il ne vit plus que stocké, lu
+jusqu'au 21/10/2026 ; à partir de cette date, toute colonne non déclarée est refusée
+sur tous les tableaux (`colonnes_non_declarees`) et ce cran devient sans objet. Le défaut (`report`) ne bouge pas — le fermer
 retirerait un droit du contrat 0016.
 
 ⚠️ Deux propriétés sont plus importantes que le refus lui-même, parce que ce sont
@@ -100,39 +103,14 @@ def test_une_couche_d_une_colonne_declaree_n_est_pas_une_colonne():
     assert errors == []
 
 
-# ── la déclaration : un cran qui ne peut pas s'appliquer se refuse ───────────
+# ── la déclaration : le cran ne se POSE plus (oto#124) ───────────────────────
 
-def test_reject_sans_aucun_champ_declare_est_refuse_a_la_pose():
-    """Sans référentiel, tout serait hors schéma — le tableau deviendrait
-    inécrivable d'un coup."""
-    errs = dsv2.validate_schema_def(
-        {"unknown_columns": "reject", "fields": []})
-    assert any("aucun champ" in e or "référentiel" in e for e in errs), errs
-
-
-def test_une_valeur_hors_du_couple_ferme_est_refusee():
-    errs = dsv2.validate_schema_def(
-        {"unknown_columns": "refuse", "fields": FIELDS})
-    assert any("create" in e and "report" in e and "reject" in e for e in errs), errs
-
-
-def test_report_explicite_est_accepte():
-    assert dsv2.validate_schema_def(
-        {"unknown_columns": "report", "fields": FIELDS}) == []
-
-
-def test_reject_bien_pose_est_accepte():
-    assert dsv2.validate_schema_def(REJECT) == []
-
-
-def test_le_cran_s_annonce_dans_enforced():
-    """`enforced` est SONDÉ sur la fonction qui décide, jamais listé : le jour où
-    le cran disparaît, l'annonce tombe avec lui."""
-    dsv2.reset_enforced_keys()
-    try:
-        assert "unknown_columns" in dsv2.enforced_keys()
-    finally:
-        dsv2.reset_enforced_keys()
+def test_le_cran_ne_se_pose_plus():
+    """Retiré le 05/10/2026 : il ne vit plus que STOCKÉ, d'ici au 21/10 et à son
+    retrait (`scripts/retirer_unknown_columns.py`). Ce banc tient ce qu'il fait encore
+    sur un schéma qui le porte ; le poser est refusé, avec son explication."""
+    errs = dsv2.validate_schema_def(REJECT)
+    assert len(errs) == 1 and "plus aucun réglage" in errs[0], errs
 
 
 # ── le geste : les cinq portes d'écriture ────────────────────────────────────
@@ -255,45 +233,3 @@ def test_le_mode_report_reste_le_rapporteur(banc):
     store.append_row("viviers", {"siren": "552081317", "_liberation": "x"})
     assert etat["lignes"]["r1"]["_liberation"] == "x"
     assert store.off_schema_report()["hors_schema"] == ["_liberation"]
-
-
-# ── la POSE du cran ──────────────────────────────────────────────────────────
-
-def test_le_cran_se_pose_sans_reecrire_le_schema(monkeypatch):
-    """Un tableau se ferme quand il a FINI d'être exploré, donc quand son schéma
-    est long : le poser par `set` obligerait à réécrire quatre-vingts champs pour
-    une clé de tête — le geste exact que `patch` existe pour éviter (#388)."""
-    store = DatastorePg("u", acting_org=35)
-    vu: dict = {}
-    monkeypatch.setattr(store, "_resolve", lambda ns, write=False: 7)
-    monkeypatch.setattr(store, "_schema_of", lambda ns_id: dict(REPORT))
-    monkeypatch.setattr(store, "set_schema",
-                        lambda ns, sch, **k: vu.update(schema=sch) or
-                        {"datastore": ns, "schema": sch, "enforced": []})
-    store.patch_schema("viviers", unknown_columns="reject")
-    assert vu["schema"]["unknown_columns"] == "reject"
-    assert vu["schema"]["fields"] == FIELDS      # rien d'autre n'a bougé
-
-
-def test_une_valeur_illisible_n_est_PAS_repliee_sur_le_defaut(monkeypatch):
-    """Elle traverse telle quelle jusqu'à `validate_schema_def`, qui la refuse en
-    nommant les deux modes. La replier ici rendrait un SUCCÈS à qui croit avoir
-    fermé son tableau — le défaut même que ce cran corrige."""
-    store = DatastorePg("u", acting_org=35)
-    vu: dict = {}
-    monkeypatch.setattr(store, "_resolve", lambda ns, write=False: 7)
-    monkeypatch.setattr(store, "_schema_of", lambda ns_id: dict(REPORT))
-    monkeypatch.setattr(store, "set_schema",
-                        lambda ns, sch, **k: vu.update(schema=sch) or {})
-    store.patch_schema("viviers", unknown_columns="refuse")
-    assert vu["schema"]["unknown_columns"] == "refuse"
-
-
-def test_patcher_seulement_le_cran_n_est_pas_un_appel_vide(monkeypatch):
-    """La garde « rien à patcher » doit compter la clé neuve, sinon le seul geste
-    qui pose le cran est refusé comme un appel sans objet."""
-    store = DatastorePg("u", acting_org=35)
-    monkeypatch.setattr(store, "_resolve", lambda ns, write=False: 7)
-    monkeypatch.setattr(store, "_schema_of", lambda ns_id: dict(REPORT))
-    monkeypatch.setattr(store, "set_schema", lambda ns, sch, **k: {})
-    store.patch_schema("viviers", unknown_columns="reject")   # ne lève pas

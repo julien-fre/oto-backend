@@ -121,8 +121,7 @@ def _unknown_subkey_refusal(path: str, fields: list) -> str:
     # destination, et le refus la dit au lieu de faire relire la liste.
     proche = cle_la_plus_proche(path.rpartition(".")[2], noms)
     dispo += f" (le plus proche : `{proche}`)" if proche else ""
-    return (f"{path}: attribut non déclaré — le format de ce tableau fait contrat "
-            f"(`unknown_columns` n'y est pas `\"create\"`) et ce "
+    return (f"{path}: attribut non déclaré — le format déclaré fait contrat et ce "
             f"sous-record ferme ses attributs : {dispo}. Rien n'a été écrit. "
             "Contrairement à une colonne de premier niveau, un attribut inconnu ne "
             "crée PAS de colonne libre : il serait stocké là où ni le schéma ni "

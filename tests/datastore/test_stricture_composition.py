@@ -36,7 +36,7 @@ from oto_mcp.datastore.errors import RowValidationError
 
 # Un tableau qui porte les TROIS crans à la fois.
 SCHEMA = {
-    "unknown_columns": "report", "key": "siren", "new_rows": "reject",
+    "key": "siren", "new_rows": "reject",
     "unknown_columns": "reject",
     "fields": [
         {"key": "siren", "type": "text"},
@@ -50,8 +50,10 @@ LIGNE = {"siren": "552081317", "adresse": "1 rue A", "naf": "62.01Z"}
 
 def test_le_tableau_aux_trois_crans_est_un_schema_VALIDE():
     """Le premier fait à établir : rien dans la famille ne s'exclut mutuellement
-    par construction. Les trois tiennent sur une même déclaration."""
-    assert dsv2.validate_schema_def(SCHEMA) == []
+    par construction. Les trois tiennent sur une même déclaration — STOCKÉE : le
+    cran `reject` ne se pose plus depuis oto#124, il ne vit que dans un schéma déjà
+    en base, qui reste valide tant qu'on n'y touche pas."""
+    assert dsv2.validate_schema_def(SCHEMA, SCHEMA) == []
 
 
 def test_les_deux_etages_sont_disjoints():
@@ -70,7 +72,7 @@ def test_les_deux_etages_sont_disjoints():
 @pytest.mark.parametrize("schema,attendu", [
     ({"key": "k", "fields": [{"key": "k", "readonly": True}]}, "clé métier"),
     ({"new_rows": "reject", "fields": [{"key": "k"}]}, "clé métier"),
-    ({"unknown_columns": "reject", "fields": []}, "référentiel"),
+    ({"unknown_columns": "reject", "fields": [{"key": "k"}]}, "plus aucun réglage"),
 ])
 def test_un_cran_qui_ne_pourrait_pas_s_appliquer_est_refuse(schema, attendu):
     """Un cran inerte est PIRE que son absence : on cesse de surveiller ce qu'on

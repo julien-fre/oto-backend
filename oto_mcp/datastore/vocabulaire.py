@@ -32,7 +32,6 @@ from typing import Optional
 from . import claimable
 
 from .declaration import creation_refusee
-from .hors_schema import off_schema_refusal
 from .champs_reserves import reserved_refusals
 from .validation import validate_row
 
@@ -61,11 +60,8 @@ from .validation import validate_row
 # cran : dérivé du COMPORTEMENT, donc insensible à la façon dont le code est écrit.
 
 # `(clé, schéma qui doit REFUSER, ligne fautive, témoin qui doit PASSER ou None)`.
-# Le témoin ne sert qu'aux clés dont l'effet est d'ARMER autre chose :
-# `unknown_columns` (ex-`strict`, oto#127) n'interdit rien par lui-même au cran
-# `report`, il rend la conformité de type opposable. Sans le
-# témoin, on l'annoncerait dès que le type est vérifié, ce qui serait vrai par
-# accident.
+# Le témoin ne sert qu'aux clés dont l'effet est d'ARMER autre chose : sans lui, on
+# l'annoncerait dès qu'une autre règle refuse, ce qui serait vrai par accident.
 _ENFORCEMENT_PROBES = (
     ("required",
      {"fields": [{"key": "x", "required": True}]}, {}, None),
@@ -94,18 +90,11 @@ _ENFORCEMENT_PROBES = (
     ("type",
      {"unknown_columns": "report", "fields": [{"key": "x", "type": "number"}]},
      {"x": "abc"}, None),
-    # ⚠️ Sonde CHANGÉE le 08/09/2026, et le motif importe. Elle opposait un schéma
-    # strict à un schéma libre sur une valeur de mauvais TYPE — ce qui supposait que le
-    # type ne soit pas vérifié sans `strict`. Depuis que le type déclaré s'arme
-    # lui-même, les deux refusent, et la sonde concluait que `strict` n'était pas
-    # appliqué. Elle mesurait une différence qui n'existe plus.
-    # Le témoin repose désormais sur les `options`, qui restent inertes sous `unknown_columns: "create"`
-    # (mesuré le 08/09 : 181 tableaux du parc en portent sans les faire respecter).
-    ("unknown_columns",
-     {"unknown_columns": "report",
-      "fields": [{"key": "x", "type": "enum", "options": ["a"]}]},
-     {"x": "b"},
-     ({"fields": [{"key": "x", "type": "enum", "options": ["a"]}]}, {"x": "b"})),
+    # ⚠️ La sonde `unknown_columns` est RETIRÉE le 05/10/2026 avec le réglage (oto#124) :
+    # plus aucun réglage ne décide de ce qui est vérifié. Les sondes `options` et `type`
+    # gardent leur schéma `report` d'ici au 21/10 — c'est le réglage stocké, encore lu
+    # jusque-là (`reglages.format_contraignant`), qui y arme la validation complète ;
+    # à partir de la date elle s'applique sans lui.
     ("lifecycle",
      {"fields": [{"key": "s", "role": "status",
                   "lifecycle": {"states": ["a", "b"]}}]},
@@ -167,12 +156,6 @@ def enforced_keys() -> list[str]:
         # prouve pas sur `validate_row` (le relevé vit hors d'elle, dans `_check_row`,
         # pour rester la source unique du « hors du référentiel ») — sa sonde
         # interroge donc la fonction qui décide, comme `new_rows`.
-        # Le cran `reject` d'`unknown_columns` : sans lui, la clé n'est pas annoncée
-        # même si le cran `report` arme la validation (sonde ci-dessus).
-        if "unknown_columns" in vues and not off_schema_refusal(
-                {"unknown_columns": "reject", "fields": [{"key": "x"}]},
-                {"inventée": "v"})[0]:
-            vues.remove("unknown_columns")
         # #517 : le périmètre de réservation se juge au PICK, pas sur une row — la
         # sonde interroge la fonction qui produit les clauses que le pick ajoute.
         if claimable.clauses(claimable.perimetre_of({"claimable": {"x": "1"}})):
@@ -222,7 +205,8 @@ def _read_keys() -> frozenset:
                 "effacements.py",
                 "outils.py", "controles.py", "registre.py", "lecture.py",
                 "ecriture.py", "ecriture_par_id.py", "lots.py", "file_de_travail.py",
-                "vocabulaire.py", "non_applique.py", "formule.py", "reglages.py"):
+                "vocabulaire.py", "non_applique.py", "formule.py", "reglages.py",
+                "validation_complete.py"):
         try:
             arbre = ast.parse((ici / nom).read_text(encoding="utf-8"))
         # noqa: SILENT — clés de schéma illisibles ⇒ ensemble vide, la lecture continue

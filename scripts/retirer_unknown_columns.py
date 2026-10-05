@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Traduit les trois anciens réglages de tête en deux, sur les schémas EXISTANTS (oto#127).
+"""Retire `unknown_columns` des schémas STOCKÉS (oto#124) — plus aucun réglage.
 
-`strict`, `unknown_fields` et `key_required` sont remplacés par `unknown_columns`
-(`create` | `report` | `reject`) et `new_rows` (`create` | `reject`) — un réglage par
-axe (`oto_mcp/datastore/reglages.py`, qui porte la table de traduction). Ce script
-réécrit chaque schéma qui porte un ancien réglage avec son équivalent EXACT : le
-comportement du tableau ne change pas, seul son vocabulaire.
+Arbitré le 05/10/2026 : les colonnes et les valeurs sont toujours vérifiées. Le
+réglage `unknown_columns` (`create` | `report` | `reject`) est refusé à la pose et au
+patch depuis le commit qui apporte ce script ; ce script le RETIRE des schémas qui le
+portent encore. Pas de tolérance permanente du stocké : après lui, plus rien ne le lit.
+
+⚠️ **Quand le lancer : APRÈS le 21/10/2026** (jour UTC, `OTO_VALIDATION_COMPLETE_LE`).
+D'ici là, `reglages.format_contraignant` LIT encore le réglage stocké : c'est lui qui
+garde la validation complète aux tableaux réglés `report`/`reject` pendant le préavis.
+Le retirer avant la date les ferait retomber au préavis (une valeur hors options
+écrite au lieu d'être refusée). À partir de la date, la validation complète
+s'applique à tous et le réglage n'est plus consulté : le retrait ne change aucun
+comportement, et aucune lecture ne casse entre le déploiement et lui (le stocké
+inchangé est toléré à la pose comme au patch, et dit à la lecture).
 
 ⚠️ **La base est PARTAGÉE entre préproduction et production.** Lancé À LA MAIN, UNE
-fois, depuis le commit qui l'apporte, une fois ce commit déployé (il admet les
-nouveaux réglages et lit encore les anciens) et AVANT le commit qui refuse les anciens
-noms — ce n'est pas une migration de boot. **À blanc par défaut** : sans `--appliquer`,
-il liste ce qu'il ferait, et n'écrit rien.
+fois, depuis le commit qui l'apporte (ou un descendant). **À blanc par défaut** : sans
+`--appliquer`, il liste ce qu'il ferait, et n'écrit rien.
 
     # 1. à blanc : lire le rapport
-    ./.venv/bin/python -m scripts.renommer_reglages_tete [--tableau <ns_id> …] \\
+    ./.venv/bin/python -m scripts.retirer_unknown_columns [--tableau <ns_id> …] \\
         [--procedure <id> …] [--bibliotheque <id> …]
     # 2. écrire
-    ./.venv/bin/python -m scripts.renommer_reglages_tete --appliquer [filtres…]
+    ./.venv/bin/python -m scripts.retirer_unknown_columns --appliquer [filtres…]
     # 3. vérifier : un second passage à blanc doit annoncer 0 partout
 
-Trois familles, la même traduction (`reglages.traduire`) :
+Trois familles, sur le modèle du renommage d'oto#127 :
 
 - les **tableaux** (`user_datastores.schema`), écrits par `DatastorePg.set_schema` —
   le chemin de `data_set_schema` — via le store système de `durcir_schemas`, et
@@ -30,14 +36,10 @@ Trois familles, la même traduction (`reglages.traduire`) :
   dans l'historique, `expected_version` contre l'écrasement ; une procédure retirée
   est listée, jamais écrite ;
 - les **entrées de la bibliothèque** (`guide_library.slots[*].schema`), que le fork
-  recopie dans une procédure d'org — sans traduction, le premier fork après la bascule
-  serait refusé. Écrites par `org_store.publish_guide`, le chemin de la publication,
-  qui valide les slots contre ceux qu'il remplace : même slug, même auteur, tous les
-  champs reconduits, une version de plus.
+  recopie dans une procédure d'org. Écrites par `org_store.publish_guide`, le chemin
+  de la publication : même slug, même auteur, tous les champs reconduits.
 
-Un schéma qui porterait DÉJÀ un nouveau réglage contradictoire avec la traduction des
-anciens est listé « à arbitrer », jamais écrit. Un schéma qui a bougé depuis
-l'inventaire est sauté. Idempotent.
+Un schéma qui a bougé depuis l'inventaire est sauté (relancer). Idempotent.
 """
 from __future__ import annotations
 
@@ -54,70 +56,42 @@ from oto_mcp.datastore.errors import SchemaDefinitionError
 from scripts.durcir_schemas import (_StoreSysteme, inventaire, inventaire_bibliotheque,
                                     inventaire_procedures)
 
-MIGRATION = "renommer_reglages_tete"
+MIGRATION = "retirer_unknown_columns"
 #: L'auteur d'une version de procédure ou d'entrée de bibliothèque écrite ici.
 AUTEUR = f"migration:{MIGRATION}"
-
-
-class Inmigrable(Exception):
-    """Une traduction qui demanderait un arbitrage — listée, jamais écrite."""
+CLE = reglages.UNKNOWN_COLUMNS
 
 
 @dataclass
 class Plan:
-    """Ce que la traduction fait à UN schéma. Pur."""
+    """Ce que le retrait fait à UN schéma. Pur."""
     schema: Any
-    anciens: dict      # {ancien réglage: valeur}
-    nouveaux: dict     # {nouveau réglage: valeur}
+    retire: dict      # {"unknown_columns": valeur} — vide = rien à faire
 
     @property
     def vide(self) -> bool:
-        return not self.anciens
+        return not self.retire
 
 
-def renommer(schema: Any) -> Plan:
-    """Le plan de traduction d'un schéma. Les nouveaux réglages prennent la PLACE du
-    premier ancien (l'ordre des clés de tête est celui qu'on relit). Lève `Inmigrable`
-    quand un nouveau réglage déjà posé contredit la traduction."""
-    if not isinstance(schema, dict):
-        return Plan(schema, {}, {})
-    anciens = {k: schema[k] for k in schema if k in reglages.ANCIENS}
-    if not anciens:
-        return Plan(schema, {}, {})
-    nouveaux = reglages.traduire(schema)
-    for axe, v in nouveaux.items():
-        if axe in schema and schema[axe] != v:
-            raise Inmigrable(f"`{axe}: {schema[axe]!r}` déjà posé, alors que "
-                             f"{', '.join(f'`{k}`' for k in anciens)} se traduit par "
-                             f"`{axe}: {v!r}`")
-    out: dict = {}
-    for k, v in schema.items():
-        if k in reglages.ANCIENS:
-            for axe, nv in nouveaux.items():
-                if axe not in out:
-                    out[axe] = nv
-            continue
-        if k in nouveaux:
-            continue          # déjà posé, identique : il garde la place des anciens
-        out[k] = v
-    return Plan(out, anciens, nouveaux)
+def retirer(schema: Any) -> Plan:
+    """Le plan de retrait d'un schéma : le même, sans `unknown_columns` en tête, dans
+    l'ordre de ses autres clés."""
+    if not isinstance(schema, dict) or CLE not in schema:
+        return Plan(schema, {})
+    return Plan({k: v for k, v in schema.items() if k != CLE}, {CLE: schema[CLE]})
 
 
 def _decrire(plan: Plan) -> str:
-    return (", ".join(f"{k}: {v!r}" for k, v in plan.anciens.items()) + " → "
-            + ", ".join(f"{k}: {v!r}" for k, v in plan.nouveaux.items()))
+    return f"{CLE}: {plan.retire[CLE]!r} retiré"
 
 
-def renommer_slots(slots: Any) -> tuple[list, dict]:
-    """`(slots traduits, {nom du slot: Plan})` — seuls les slots qui changent sont dans
-    le dict. Lève `Inmigrable` en nommant le slot."""
+def retirer_slots(slots: Any) -> tuple[list, dict]:
+    """`(slots sans le réglage, {nom du slot: Plan})` — seuls les slots qui changent
+    sont dans le dict."""
     neufs, plans = [], {}
     for s in slots if isinstance(slots, list) else []:
         if isinstance(s, dict) and isinstance(s.get("schema"), dict):
-            try:
-                plan = renommer(s["schema"])
-            except Inmigrable as e:
-                raise Inmigrable(f"slot `{s.get('name')}` : {e}") from None
+            plan = retirer(s["schema"])
             if not plan.vide:
                 plans[s.get("name")] = plan
                 s = {**s, "schema": plan.schema}
@@ -141,7 +115,7 @@ def ecrire_tableau(t: dict, plan: Plan) -> tuple[str, Optional[str]]:
         "data_set_schema", sub=None, ok=ok, error=erreur,
         org_id=int(t["owner_id"]) if t["owner_type"] == "org" else None,
         args={"datastore": str(t["id"]), "migration_systeme": MIGRATION,
-              "anciens": plan.anciens, "nouveaux": plan.nouveaux})
+              "retire": plan.retire})
     return ("ecrit", out.get("warning")) if ok else ("refuse", erreur)
 
 
@@ -159,10 +133,10 @@ def ecrire_procedure(p: dict, slots: list) -> tuple[str, Optional[str]]:
 
 
 def ecrire_entree(e: dict, slots: list) -> tuple[str, Optional[str]]:
-    """Republie l'entrée telle quelle, slots traduits. Relue juste avant : une entrée
-    republiée depuis l'inventaire est sautée, jamais écrasée. `publish_guide` valide
+    """Republie l'entrée telle quelle, slots sans le réglage. Relue juste avant : une
+    entrée republiée depuis l'inventaire est sautée, jamais écrasée. `publish_guide` valide
     les slots lui-même, sous son verrou, contre ceux qu'il remplace (oto#34) : une clé
-    inconnue déjà stockée et inchangée passe, la traduction est jugée comme une pose."""
+    inconnue déjà stockée et inchangée passe, le retrait n'en pose aucune."""
     actuelle = org_store.get_library_entry(entry_id=int(e["id"]), include_unlisted=True)
     if not actuelle or (actuelle["version"], actuelle["slots"]) != (e["version"],
                                                                    e["slots"]):
@@ -185,21 +159,16 @@ def ecrire_entree(e: dict, slots: list) -> tuple[str, Optional[str]]:
 
 def _famille(bilan: dict, nom: str, elements: list, *, schemas, ecrire, titre,
              appliquer: bool, sortie, retiree=lambda x: False) -> None:
-    b = bilan[nom] = {"parcourus": len(elements), "a_traduire": 0, "ecrits": 0,
+    b = bilan[nom] = {"parcourus": len(elements), "a_retirer": 0, "ecrits": 0,
                       "bouges": [], "refuses": [], "retires": []}
     for x in elements:
-        try:
-            neuf, plans = schemas(x)
-        except Inmigrable as e:
-            bilan["inmigrables"].append((f"{nom} {x['id']}", str(e)))
-            sortie(f"{titre(x)} — À ARBITRER, non écrit : {e}")
-            continue
+        neuf, plans = schemas(x)
         if not plans:
             continue
-        b["a_traduire"] += 1
+        b["a_retirer"] += 1
         sortie(titre(x) + (" — RETIRÉE" if retiree(x) else ""))
         for ou, plan in plans.items():
-            bilan["traductions"][_decrire(plan)] += 1
+            bilan["retraits"][_decrire(plan)] += 1
             sortie(f"  {ou + ' : ' if ou else ''}{_decrire(plan)}")
         if not appliquer:
             continue
@@ -220,12 +189,12 @@ def _famille(bilan: dict, nom: str, elements: list, *, schemas, ecrire, titre,
 
 
 def _schema_du_tableau(t: dict):
-    plan = renommer(t["schema"])
+    plan = retirer(t["schema"])
     return plan, ({"": plan} if not plan.vide else {})
 
 
 def _slots_de(x: dict):
-    slots, plans = renommer_slots(x["slots"])
+    slots, plans = retirer_slots(x["slots"])
     return slots, {f"slot `{k}`": v for k, v in plans.items()}
 
 
@@ -235,7 +204,7 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
     """Le passage complet. Rend le bilan (aussi imprimé). Sans filtre, les trois
     familles ; un filtre ne parcourt que la sienne."""
     filtre = bool(tableaux or procedures or bibliotheque)
-    bilan: dict = {"inmigrables": [], "traductions": Counter()}
+    bilan: dict = {"retraits": Counter()}
     _famille(bilan, "tableaux",
              inventaire(tableaux) if (tableaux or not filtre) else [],
              schemas=_schema_du_tableau,
@@ -260,13 +229,11 @@ def executer(*, appliquer: bool = False, tableaux: Optional[list[int]] = None,
 
     sortie("")
     sortie(f"— {'ÉCRIT' if appliquer else 'À BLANC'} : "
-           + " ; ".join(f"{bilan[f]['a_traduire']} {f} à traduire sur "
+           + " ; ".join(f"{bilan[f]['a_retirer']} {f} à retirer sur "
                         f"{bilan[f]['parcourus']}"
                         for f in ("tableaux", "procedures", "bibliotheque")))
-    for trad, n in bilan["traductions"].most_common():
+    for trad, n in bilan["retraits"].most_common():
         sortie(f"  {n} × {trad}")
-    if bilan["inmigrables"]:
-        sortie(f"  à arbitrer (non écrits) : {len(bilan['inmigrables'])}")
     if appliquer:
         for f in ("tableaux", "procedures", "bibliotheque"):
             b = bilan[f]
@@ -292,7 +259,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                      procedures=a.procedure, bibliotheque=a.bibliotheque)
     echecs = any(bilan[f]["refuses"] or bilan[f]["bouges"]
                  for f in ("tableaux", "procedures", "bibliotheque"))
-    return 1 if echecs or bilan["inmigrables"] else 0
+    return 1 if echecs else 0
 
 
 if __name__ == "__main__":

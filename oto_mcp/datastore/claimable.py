@@ -13,7 +13,7 @@ D'où une déclaration du tableau, à côté de `max_claims` :
 
 Même grammaire que `filter` (`{col: val}` ou `{col: {op: val}}`), validée à la POSE
 par le même moteur que la lecture (`db.query`) — opérateurs whitelistés, colonnes
-déclarées quand le format fait contrat (`unknown_columns`), refus nommé sinon. Effet, sur les deux réservations :
+déclarées quand le format fait contrat (`validation_complete`), refus nommé sinon. Effet, sur les deux réservations :
 
 - le serveur ne sert JAMAIS une ligne hors de ce filtre, quel que soit le `filter`
   passé — celui de l'appelant s'y ajoute en ET : il resserre, jamais n'élargit ;
@@ -139,7 +139,8 @@ def erreurs(lc: dict, *, declared: set, contraignant: bool,
     parallèle qui divergerait le jour où le moteur apprend un opérateur. S'y ajoutent
     ce qu'un filtre d'appel ne vérifie pas et qu'une déclaration doit : une clause
     INERTE (`in: []`) est refusée à la source depuis #353 ; une colonne inconnue quand le
-    format fait contrat (`unknown_columns` autre que `create`) ; un
+    format fait contrat (`validation_complete.complete`, partout à partir du
+    21/10/2026) ; un
     état du statut que le cycle de vie ne déclare pas — la file serait vide pour
     toujours, sans un mot."""
     if CLE not in lc or lc[CLE] is None:
@@ -167,8 +168,7 @@ def erreurs(lc: dict, *, declared: set, contraignant: bool,
         if contraignant and tete not in declared and tete not in meta:
             out.append(
                 f"lifecycle.claimable: colonne `{col}` non déclarée au schéma, dont le "
-                "format fait contrat (`unknown_columns` autre que `create`) — "
-                "déclare-la, ou retire-la du périmètre")
+                "format fait contrat — déclare-la, ou retire-la du périmètre")
         if (status_key and col == status_key and states
                 and not isinstance(val, dict) and str(val) not in states):
             out.append(

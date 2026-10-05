@@ -105,7 +105,8 @@ def test_la_description_servie_dit_la_regle_et_la_date():
         assert "2026-10-21" in desc and "does NOT declare is REFUSED" in desc, nom
     patch = next(c for c in columns.CAPABILITIES if c.key == "me.datastore.patch_schema")
     assert "does NOT declare is REFUSED" in patch.description
-    assert "2026-10-21" in patch.Input.model_fields["unknown_columns"].description
+    assert "2026-10-21" in patch.description
+    assert "unknown_columns" not in patch.Input.model_fields, "retiré (oto#124)"
     for cle in ("me.datastore.append_row", "me.datastore.write_rows",
                 "me.datastore.update_row"):
         cap = next(c for c in CAPABILITIES if c.key == cle)
@@ -168,7 +169,11 @@ def _table(schema=SCHEMA, lignes=()):
     ns_id = db.create_datastore("user", SUB, ns)
     store = make_store(SUB)
     if schema is not None:
-        store.set_schema(ns, schema)
+        # oto#124 : `unknown_columns` ne se pose plus — un réglage STOCKÉ s'écrit en
+        # base, comme il subsiste sur les tableaux d'avant son retrait.
+        store.set_schema(ns, {k: v for k, v in schema.items() if k != "unknown_columns"})
+        if "unknown_columns" in schema:
+            db.set_datastore_schema(ns_id, schema)
     ids = [store.append_row(ns, dict(ligne))["_id"] for ligne in lignes]
     return ns, ns_id, ids
 

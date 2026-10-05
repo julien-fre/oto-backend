@@ -34,6 +34,7 @@ from typing import Optional
 
 from .couches import split_layer, SYSTEM_ORIGIN
 from . import reglages
+from . import validation_complete as vc
 from .motifs import PATTERN_MAX_SUBJECT, pattern_refusal
 
 # validation reste volontairement permissive — le schéma guide le rendu, il ne
@@ -371,9 +372,10 @@ def _exige(field: dict, *, sous_record: bool) -> bool:
 
 
 def validation_active(schema: Optional[dict]) -> bool:
-    """La validation d'écriture est OPT-IN : un format qui fait contrat
-    (`unknown_columns` autre que `create`, `reglages.format_contraignant`), OU au moins une
-    EXIGENCE déclarée, à n'importe quelle profondeur. Sans ça, écriture soft (0016).
+    """La validation d'écriture est-elle armée ? — le format déclaré fait contrat
+    (`validation_complete.complete` : sur TOUT tableau à colonnes à partir du 21/10/2026,
+    oto#124 ; d'ici là sur ceux que leur réglage stocké y avait mis), OU au moins une
+    EXIGENCE déclarée, à n'importe quelle profondeur.
 
     Une exigence, c'est `required`, `required_when`, `max_length`, `pattern` ou
     `max_items` —
@@ -390,17 +392,17 @@ def validation_active(schema: Optional[dict]) -> bool:
     de régime (34 lignes, les `options` de deux listes), et aucune ligne existante ne
     violait un `required` de sous-champ.
 
-    ⚠️ **`options` au PREMIER niveau n'arme toujours pas**, et c'est délibéré : sur un
-    tableau souple, une liste de colonne est indicative, et `non_applique.py` le dit à
-    la pose comme à l'écriture. L'armer basculerait d'un coup tous les tableaux souples
-    qui en portent (#319). Dans un sous-record, il n'y a ni avertissement ni relevé
-    SQL de l'existant : une liste inerte y serait muette — elle arme.
+    ⚠️ **`options` au PREMIER niveau n'arme pas seule** : elle est jugée par la
+    validation complète, qui s'applique partout à partir du 21/10/2026 (oto#124) ;
+    d'ici là, sur un tableau qui ne la portait pas, une valeur hors liste passe avec un
+    préavis daté (`validation_complete`). Dans un sous-record, elle arme déjà : une
+    liste inerte y serait muette.
 
     Une cible de COUCHE (`qualification.comment`, #377) est une entrée de la liste des
     champs comme une autre, et arme la validation comme elle."""
     if not isinstance(schema, dict):
         return False
-    if reglages.format_contraignant(schema):
+    if vc.complete(schema):
         return True
     haut = _fields(schema)
     if any(_exige(f, sous_record=False) for f in haut):

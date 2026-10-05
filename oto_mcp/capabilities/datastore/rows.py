@@ -33,6 +33,7 @@ from ...auth import token_scopes
 from ...datastore.identite import Adresse
 from ...datastore import journal as datastore_journal
 from ...datastore import colonnes_non_declarees as cnd
+from ...datastore import validation_complete as dsvc
 from ...datastore import couches, identite, jetons
 from ...datastore import forcage as fcg
 from ...datastore import layers as dsl
@@ -719,6 +720,10 @@ def _conflit_de_revision(e: RevisionConflict) -> AuthzDenied:
                        {"current_revision": e.current_revision})
 
 
+#: oto#124 : le format déclaré fait contrat partout à la date — DÉRIVÉ d'elle, composé
+#: au chargement (avant la date, le préavis ; après, la règle au présent).
+_FORMAT_DECLARE = dsvc.description_ecriture()
+
 _ECRITURE_DETRUIT = (
     " ⚠️ Une écriture DÉTRUIT ce qui est dans la colonne : sur une colonne "
     "ouverte il n'y a pas d'annulation, la valeur précédente quitte la ligne "
@@ -980,7 +985,7 @@ CAPABILITIES += [
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
                      + " " + couches.DESCRIPTION_ECRITURE
-                     + " " + cnd.DESCRIPTION_ECRITURE
+                     + " " + cnd.DESCRIPTION_ECRITURE + " " + _FORMAT_DECLARE
                      + " " + upi.description_cle_schema()
                      + " `readonly`, clé métier, ce qu'une écriture détruit : guide "
                      "`datastore-semantics`." + _ECRITURE_DETRUIT),
@@ -1023,7 +1028,7 @@ CAPABILITIES += [
                      "quelques milliers de lignes, l'upload signé NDJSON/CSV. "
                      + dsv2.description_donnees_d_origine()
                      + " " + couches.DESCRIPTION_ECRITURE
-                     + " " + cnd.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
+                     + " " + cnd.DESCRIPTION_ECRITURE + " " + _FORMAT_DECLARE + _ECRITURE_DETRUIT),
     ),
     Capability(
         key="me.datastore.get_row",
@@ -1063,7 +1068,7 @@ CAPABILITIES += [
                      "de cet appel — propriétaire ou gouvernant du tableau seulement, "
                      "et journalisé. " + dsv2.description_parametre_origine()
                      + " " + couches.DESCRIPTION_ECRITURE
-                     + " " + cnd.DESCRIPTION_ECRITURE + _ECRITURE_DETRUIT),
+                     + " " + cnd.DESCRIPTION_ECRITURE + " " + _FORMAT_DECLARE + _ECRITURE_DETRUIT),
     ),
     Capability(
         key="me.datastore.delete_row",

@@ -31,7 +31,7 @@ SCHEMA = {"fields": [{"key": "siren", "type": "text"}, {"key": "nom", "type": "t
 
 
 class _Store(ControlesMixin):
-    off_schema = set(); off_options = {}; off_geles = {}; off_notices = set()
+    off_schema = set(); off_format_preavis = set(); off_geles = {}; off_notices = set()
     off_erased = []; off_rejected = []; off_ignored = []; off_non_rapprochables = {}
     off_non_declarees = set()
     dernier_tableau = None

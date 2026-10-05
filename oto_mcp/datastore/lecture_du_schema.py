@@ -40,6 +40,7 @@ from . import cles_inconnues
 from . import schema_keys as sk
 from .declaration import readonly_fields
 from .non_applique import lifecycle_hors_statut, options_not_enforced
+from . import validation_complete as vc
 
 
 # ── La forme compacte ────────────────────────────────────────────────────────
@@ -85,16 +86,24 @@ def _sans_effet(schema: Optional[dict]) -> list[dict]:
     out = [{"chemin": c, "cle": "agent_access", "raison": r}
            for c, r in aga.sans_effet(schema)]
     out += [{"chemin": c, "cle": "options",
-             "raison": "`unknown_columns: \"create\"` : la liste est indicative, une valeur hors "
-                       "liste s'écrit"} for c in options_not_enforced(schema)]
+             "raison": f"appliquée à partir du {vc.date_de_bascule().isoformat()} "
+                       "(oto#124) : d'ici là, une valeur hors liste s'écrit, avec un "
+                       "préavis"}
+            for c in options_not_enforced(schema)]
     out += [{"chemin": c, "cle": "lifecycle",
              "raison": "seule la colonne de file voit ses transitions validées"}
             for c in lifecycle_hors_statut(schema)]
     for niveau, pas, noeud in cles_inconnues.parcours(schema):
         out += [{"chemin": _chemin(pas), "cle": c,
-                 "raison": "aucun niveau ne l'admet : stockée, jamais lue"}
+                 "raison": (_RETIRE if not pas and c == "unknown_columns" else
+                            "aucun niveau ne l'admet : stockée, jamais lue")}
                 for c in cles_inconnues.inconnues(niveau, noeud)]
     return out
+
+
+#: oto#124 : le réglage retiré, encore STOCKÉ, est lu jusqu'à la date — puis plus.
+_RETIRE = ("réglage retiré le 05/10/2026 (plus aucun réglage) : stocké, lu jusqu'à la "
+           "date où le format fait contrat partout, puis retiré par la plateforme")
 
 
 def gardes(schema: Optional[dict]) -> dict:

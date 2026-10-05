@@ -19,6 +19,9 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+# oto#124 : le format déclaré fait contrat partout (ex-`unknown_columns: "report"`).
+pytestmark = pytest.mark.usefixtures("validation_complete_partout")
+
 
 class _Claims:
     def __init__(self, sub: str):
@@ -76,7 +79,7 @@ def client(live):
 
 
 SCHEMA_FLOTTE = {
-    "unknown_columns": "report", "key": "siren",
+    "key": "siren",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "suivi", "type": "enum", "options": ["nouveau", "a_traiter", "traite"],

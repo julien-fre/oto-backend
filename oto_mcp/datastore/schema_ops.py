@@ -26,6 +26,8 @@ from typing import Optional
 from . import acces_agent as aga
 from . import cles_inconnues
 from . import reglages
+from . import validation_complete as dsvc
+from .definition import preavis_de_pose
 from . import formule as dsformule
 from . import schema as dsv2
 from . import violations_existantes as dsve
@@ -252,6 +254,9 @@ class SchemaOpsMixin:
                                 self._offpattern_warning(ns_id, schema),
                                 self._offending_enum_warning(ns_id, schema),
                                 self._orphan_columns_warning(ns_id, schema),
+                                # oto#124 : les gardes de pose que la validation
+                                # complète armera à la date, dites d'ici là.
+                                dsvc.avertissement_de_pose(preavis_de_pose(schema)),
                                 # oto-backend#479 : la phrase qui renvoie au relevé
                                 # structuré, et qui dit quand il n'est qu'un plancher.
                                 dsve.releve_warning(out)) if w]
@@ -269,7 +274,6 @@ class SchemaOpsMixin:
                      remove: Optional[list] = None,
                      remove_attrs: Optional[dict] = None,
                      key: Optional[str] = None,
-                     unknown_columns: Optional[str] = None,
                      new_rows: Optional[str] = None) -> dict:
         """Modifie le schéma PAR CLÉ, sans réécrire la liste entière (#388).
 
@@ -285,7 +289,7 @@ class SchemaOpsMixin:
         `fields` = fusion par clé (complète l'existant, ajoute l'inconnu) ; `remove`
         = le retrait EXPLICITE d'une COLONNE ; `remove_attrs` = `{colonne: [attribut,
         …]}`, le retrait d'un ATTRIBUT sur une colonne qui reste ;
-        `key`/`unknown_columns`/`new_rows` = les clés de tête, inchangées si omises
+        `key`/`new_rows` = les clés de tête, inchangées si omises
         (oto#127 : les deux réglages remplacent `strict`, `unknown_fields` et
         `key_required`). Ils se posent ICI en priorité : un tableau se ferme quand il a
         FINI d'être exploré, donc quand son schéma est long — et le poser par `set`
@@ -305,11 +309,11 @@ class SchemaOpsMixin:
             raise SchemaDefinitionError("le schéma courant n'est pas un objet — repose-le avec "
                              "data_set_schema avant de le patcher")
         if (fields is None and remove is None and remove_attrs is None
-                and key is None and unknown_columns is None and new_rows is None):
+                and key is None and new_rows is None):
             raise SchemaDefinitionError(
                 "rien à patcher : passe `fields` (fusion par clé), `remove` (retrait "
                 "d'une colonne), `remove_attrs` (retrait d'un attribut sur une "
-                "colonne qui reste), `key`, `unknown_columns` ou `new_rows`")
+                "colonne qui reste), `key` ou `new_rows`")
         merged = [f for f in (current.get("fields") or []) if isinstance(f, dict)]
         merged, added, updated = dsv2.merge_fields(merged, fields or [])
         merged, inconnus_attrs = dsv2.remove_field_attrs(merged, remove_attrs or {})
@@ -333,8 +337,6 @@ class SchemaOpsMixin:
         # Écrits TELS QUELS, jamais normalisés : une valeur hors des crans doit se
         # faire refuser par `validate_schema_def` en les nommant. La replier sur le
         # défaut ici rendrait un succès à qui croit avoir fermé son tableau.
-        if unknown_columns is not None:
-            out_schema[reglages.UNKNOWN_COLUMNS] = unknown_columns
         if new_rows is not None:
             out_schema[reglages.NEW_ROWS] = new_rows
         # Le patch NOMME ce qu'il retire (`removed`) : le relevé d'effacement n'a
@@ -360,10 +362,10 @@ class SchemaOpsMixin:
         nouveau : trois agents successifs ont écrit dedans en la prenant pour la
         bonne cible. Le silence à la pose du schéma est ce qui laisse le piège armé.
 
-        Seulement quand le format fait contrat (`unknown_columns` autre que `create`) :
-        sur un schéma souple, un champ libre est un droit du contrat (0016) — la table qu'on explore avant de la typer en est pleine, et
-        signaler y serait du bruit sur un usage normal."""
-        if not isinstance(schema, dict) or not reglages.format_contraignant(schema):
+        Seulement quand le format fait contrat (`validation_complete.complete` —
+        partout à partir du 21/10/2026, oto#124) : d'ici là, sur un tableau qui ne le
+        faisait pas, une colonne libre est encore créée à l'écriture, avec un préavis."""
+        if not dsvc.complete(schema):
             return None
         declared = {f.get("key") for f in dsv2._fields(schema)}
         orphans = [k for k in db.datastore_row_keys(ns_id) if k not in declared]
@@ -515,8 +517,11 @@ class SchemaOpsMixin:
         # écritures futures seront refusées. Sur un schéma souple, la liste ne
         # condamne rien (validation opt-in, 0016) : signaler l'existant y annoncerait
         # un refus qui n'aura pas lieu — un faux avertissement coûte la confiance
-        # qu'on met dans les vrais.
-        if not dsv2.validation_active(schema):
+        # qu'on met dans les vrais. oto#124 : en PRÉAVIS, le refus aura lieu à la
+        # date — l'avertissement la dit.
+        active = dsv2.validation_active(schema)
+        preavis = dsvc.en_preavis(schema) and not active
+        if not (preavis or active):
             return None
         options = dsv2.top_level_options(schema)
         if not options:
@@ -535,7 +540,11 @@ class SchemaOpsMixin:
                 "\nCes lignes restent en place, et les lectures les voient telles "
                 "quelles : les filtres, le regroupement et les comptes les rendent "
                 "comme toute valeur. Le tri sur cette colonne les range après les "
-                "valeurs conformes. Une écriture future qui pose une valeur hors "
+                "valeurs conformes. "
+                + (f"À partir du {dsvc.date_de_bascule().isoformat()} (d'ici là, elle "
+                   "passe avec un préavis), une écriture" if preavis
+                   else "Une écriture")
+                + " future qui pose une valeur hors "
                 "options la voit écartée, et le reste de la ligne s'écrit ; seule "
                 "dans le geste ou avec un autre refus, elle est refusée. Un patch "
                 "d'un autre champ passe. Corrige-les (réécris le champ) ou élargis "

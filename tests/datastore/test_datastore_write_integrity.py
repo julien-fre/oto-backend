@@ -36,6 +36,9 @@ import uuid
 
 import pytest
 
+# oto#124 : le format déclaré fait contrat partout (ex-`unknown_columns: "report"`).
+pytestmark = pytest.mark.usefixtures("validation_complete_partout")
+
 
 # Le tableau des signaux, réduit à ce qui porte les règles : la clé métier `siren`
 # et le format strict d'`edition-vivier`, plus les deux champs de l'incident.
@@ -46,7 +49,6 @@ import pytest
 # est donc LIBRE, et un champ libre se préserve comme les autres.
 SCHEMA = {
     "key": "siren",
-    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "raison_sociale", "type": "text"},

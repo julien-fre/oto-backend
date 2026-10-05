@@ -128,7 +128,11 @@ base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis p
   schéma remplace**, éditer = `data_patch_schema` · ⚠️ **une colonne se DÉCLARE avant de s'écrire** (oto#124) : à
   partir du **21 octobre 2026** une colonne non déclarée est refusée sur tous les tableaux (`unknown_column`,
   `OTO_COLONNE_NON_DECLAREE_REFUSEE_LE`), l'existant gelé par `scripts/figer_colonnes.py`, un tableau neuf naît
-  avec son schéma (`data_create_datastore(schema=…)`, `POST /api/datastores`) · ⚠️ **écrire la couche
+  avec son schéma (`data_create_datastore(schema=…)`, `POST /api/datastores`) · ⚠️ **le format déclaré fait
+  contrat partout, plus aucun réglage** (oto#124) : options, forme des valeurs, couches, sous-records fermés,
+  refusés à partir du **21 octobre 2026** (`datastore/validation_complete.py`, `OTO_VALIDATION_COMPLETE_LE`,
+  préavis daté d'ici là) ; **on juge ce que le geste ÉCRIT**, jamais ce que la ligne porte ; `unknown_columns`
+  refusé, retiré du stocké par `scripts/retirer_unknown_columns.py` APRÈS la date · ⚠️ **écrire la couche
   `origine` se DÉCLARE**
   (`origine_override=true`, les deux faces + au mint d'un upload signé) : à partir du **1er octobre 2026** la poser
   sans le dire est refusé — ce n'est pas un droit à obtenir, la date vit dans le code et `OTO_ORIGINE_REFUS_LE` la

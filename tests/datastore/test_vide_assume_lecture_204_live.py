@@ -17,10 +17,13 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+# oto#124 : le format déclaré fait contrat partout (ex-`unknown_columns: "report"`).
+pytestmark = pytest.mark.usefixtures("validation_complete_partout")
+
 SUB = "usr_vide_assume"
 MARQUEUR = "oto.vide_assume"
 MARQUEE = {"valeur": "", MARQUEUR: True}
-SCHEMA = {"unknown_columns": "report", "fields": [
+SCHEMA = {"fields": [
     {"key": "raison", "type": "text"},
     {"key": "fonction", "type": "text", "required": True},
     {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [

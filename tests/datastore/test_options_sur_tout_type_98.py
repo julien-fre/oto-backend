@@ -34,6 +34,13 @@ HORS = {"text": "zzz", "json": "zzz", None: "zzz",
         "url": "https://zzz.example", "email": "z@zzz.example"}
 
 
+def _preavis(schema, row) -> list:
+    """Le préavis d'oto#124 : ce que la validation complète refusera à la date."""
+    out: list = []
+    V.validate_row(schema, row, preavis=out)
+    return out
+
+
 def _schema(ftype, *, strict, options=("a", "b"), autres=()):
     f = {"key": "x", "options": list(options)}
     if ftype:
@@ -54,13 +61,14 @@ def test_STRICT_refuse_une_valeur_hors_liste_sur_tout_type_scalaire(ftype):
 @pytest.mark.parametrize("ftype", list(HORS))
 def test_SOUPLE_signale_une_valeur_hors_liste_sur_tout_type_scalaire(ftype):
     schema = _schema(ftype, strict=False)
-    assert na.unenforced_options(schema, {"x": HORS[ftype]}) == {"x": HORS[ftype]}
+    preavis = _preavis(schema, {"x": HORS[ftype]})
+    assert len(preavis) == 1 and "hors options" in preavis[0], preavis
     assert V.validate_row(schema, {"x": HORS[ftype]}) == [], "le régime souple ne refuse pas"
 
 
 def test_une_valeur_de_la_liste_passe_dans_les_deux_regimes():
     assert V.validate_row(_schema("text", strict=True), {"x": "a"}) == []
-    assert na.unenforced_options(_schema("text", strict=False), {"x": "a"}) == {}
+    assert _preavis(_schema("text", strict=False), {"x": "a"}) == []
 
 
 def test_une_valeur_mal_formee_n_est_jamais_jugee_sur_la_liste():
@@ -97,7 +105,7 @@ def test_un_composite_n_est_jamais_une_option_et_se_cite_en_JSON():
 def test_le_vide_n_est_pas_hors_liste():
     errs = V.validate_row(_schema("text", strict=True), {"x": ""})
     assert not any("hors options" in e for e in errs), errs
-    assert na.unenforced_options(_schema("text", strict=False), {"x": ""}) == {}
+    assert _preavis(_schema("text", strict=False), {"x": ""}) == []
     assert hors_des_options("zzz", []) is False and hors_des_options("zzz", None) is False
 
 

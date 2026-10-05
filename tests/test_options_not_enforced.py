@@ -1,17 +1,12 @@
-"""Des options déclarées hors régime strict ne contraignent rien — et le disent (#319).
+"""Des options déclarées que le tableau ne fait pas encore respecter — et qui le disent
+(#319, puis oto#124).
 
 Signalé sur pièce par une mission : `options: ["oui","non","inconnu"]` posées sur un
-tableau non-strict acceptent « Peut-être » sans un mot. `validation_active` ne s'arme
-que sur `strict` / `required` / `required_when` / `max_length`.
-
-⚠️ Le défaut était **aggravé par #316**, dont l'avertissement dirige vers `options` —
-donc vers une clé qui, hors strict, ne contraint rien. Le correctif précédent avait
-déplacé le mensonge d'un cran ; celui-ci le referme.
-
-**On avertit, on ne refuse pas** : un tableau non-strict est en régime souple PAR
-DÉCLARATION. Mesuré en production — 23 tableaux sur 57 sont dans ce cas, et les 118
-valeurs réellement hors liste sont toutes sur un seul, dont les écritures deviendraient
-des erreurs du jour au lendemain. Le régime strict, lui, refuse déjà.
+tableau non-strict acceptaient « Peut-être » sans un mot. Le 05/10/2026 (oto#124) :
+**toujours refuser, plus aucun réglage** — la liste s'applique sur TOUS les tableaux à
+partir du 21/10/2026. D'ici là, la valeur hors liste est ÉCRITE avec un préavis daté
+dans `notices` (`validation_complete`) ; le relevé d'écriture `hors_options` est
+retiré, la pose le dit avec la date.
 """
 from __future__ import annotations
 
@@ -23,107 +18,82 @@ from oto_mcp.datastore import schema as dsv2
 ENUM = {"key": "priorite", "type": "enum", "options": ["haute", "basse"]}
 
 
-# ── le silence est levé, l'écriture passe ────────────────────────────────────
+def _preavis(schema, row, **kw):
+    out: list = []
+    errs = dsv2.validate_row(schema, row, preavis=out, **kw)
+    return errs, out
 
-def test_a_value_outside_the_options_is_reported_when_nothing_enforces_it():
-    schema = {"fields": [ENUM]}
-    hors = dsv2.unenforced_options(schema, {"priorite": "Moyenne"})
 
-    assert hors == {"priorite": "Moyenne"}
-    msg = dsv2.unenforced_options_warning(hors)
-    # La CONSÉQUENCE avant le remède : sans elle on lit « valeur inhabituelle » là où
-    # il faut lire « ce champ n'est pas la liste fermée que le schéma laisse croire ».
-    assert "ÉCRITE quand même" in msg
-    assert 'unknown_columns: "report"' in msg
+# ── avant la date : la valeur passe, le préavis la nomme ─────────────────────
+
+def test_a_value_outside_the_options_passes_with_a_dated_notice():
+    errs, preavis = _preavis({"fields": [ENUM]}, {"priorite": "Moyenne"})
+    assert errs == []
+    assert preavis == ["priorite: valeur 'Moyenne' hors options (haute, basse)"]
+
+
+def test_after_the_date_the_same_value_is_refused(validation_complete_partout):
+    errs, preavis = _preavis({"fields": [ENUM]}, {"priorite": "Moyenne"})
+    assert errs and "hors options (haute, basse)" in errs[0]
+    assert preavis == [], "plus de préavis : la règle est en vigueur"
 
 
 @pytest.mark.parametrize("declencheur", [
-    {"unknown_columns": "report"},
-    {"fields": [ENUM, {"key": "x", "type": "text", "required": True}]},
+    {"fields": [ENUM, {"key": "x", "type": "text", "required": True}], "x": "ok"},
     {"fields": [ENUM, {"key": "x", "type": "text", "max_length": 10}]},
 ])
-def test_nothing_is_reported_when_the_validation_is_armed(declencheur):
-    """Dès que la validation est armée, la valeur est REFUSÉE en amont : le redire
-    serait un doublon bavard sur un chemin qui ne peut pas passer.
-
-    Les trois déclencheurs sont couverts parce que c'est la LISTE de
-    `validation_active` qui décide — pas une copie de sa logique. Si `options` y entre
-    un jour, ces avertissements s'éteignent d'eux-mêmes."""
-    schema = {"fields": [ENUM], **declencheur}
-    assert dsv2.unenforced_options(schema, {"priorite": "Moyenne"}) == {}
+def test_an_armed_validation_already_refuses_and_says_no_notice(declencheur):
+    """Une exigence arme la validation, qui juge déjà les options de tête : la valeur
+    est refusée aujourd'hui, le préavis n'a rien à annoncer en plus."""
+    schema = {"fields": declencheur["fields"]}
+    row = {"priorite": "Moyenne", **({"x": "ok"} if "x" in declencheur else {})}
+    errs, preavis = _preavis(schema, row)
+    assert errs and preavis == []
     assert dsv2.options_not_enforced(schema) == []
 
 
 def test_a_value_inside_the_options_says_nothing():
-    assert dsv2.unenforced_options({"fields": [ENUM]}, {"priorite": "haute"}) == {}
-    assert dsv2.unenforced_options_warning({}) is None
+    assert _preavis({"fields": [ENUM]}, {"priorite": "haute"}) == ([], [])
 
 
 def test_an_absent_field_is_not_a_violation():
-    """Ne rien écrire dans un champ n'est pas écrire hors liste — sans quoi tout
-    geste partiel déclencherait l'avertissement."""
-    assert dsv2.unenforced_options({"fields": [ENUM]}, {"autre": "x"}) == {}
+    assert _preavis({"fields": [ENUM]}, {"autre": "x"}) == ([], [])
 
-
-# ── ce que l'avertissement doit JUGER : la valeur, et seulement si elle existe ──
 
 def test_a_value_written_in_LAYERS_is_unwrapped_before_being_judged():
-    """⚠️ Une cellule vaut `{"valeur": …, "comment": …}` dès qu'un agent la justifie
-    en couches — geste NORMAL, et recommandé. Comparée à sa liste SANS déballage, elle
-    est fatalement « hors options » : le repr d'un dict n'est jamais une option.
-
-    L'avertissement criait donc à tort sur une valeur parfaitement légitime, et citait
-    la structure Python au lieu de la valeur. Le chemin de REFUS (régime strict)
-    déballait déjà depuis toujours ; seul l'avertissement ne le faisait pas.
-
-    ⚠️ **Mesuré avant de corriger** : 0 cellule en couches sur les 22 331 cellules
-    pleines des 151 tableaux souples à options de la production (09/09/2026). Le trou
-    n'était atteint par rien — ce qui rend le correctif gratuit, pas inutile : il ferme
-    la porte avant qu'on la pousse."""
-    schema = {"fields": [ENUM]}
-    assert dsv2.unenforced_options(
-        schema, {"priorite": {"valeur": "haute", "comment": "urgent"}}) == {}
+    assert _preavis({"fields": [ENUM]},
+                    {"priorite": {"valeur": "haute", "comment": "urgent"}}) == ([], [])
 
 
 def test_a_LAYERED_value_really_outside_the_list_is_still_reported():
-    """Déballer ne veut pas dire fermer les yeux : c'est la VALEUR qu'on juge, et le
-    relevé la cite ELLE, jamais son enveloppe — sinon le message reste illisible."""
-    hors = dsv2.unenforced_options(
-        {"fields": [ENUM]}, {"priorite": {"valeur": "Moyenne", "comment": "x"}})
-    assert hors == {"priorite": "Moyenne"}, "la valeur, pas la structure"
+    _, preavis = _preavis({"fields": [ENUM]},
+                          {"priorite": {"valeur": "Moyenne", "comment": "x"}})
+    assert preavis and "'Moyenne'" in preavis[0], "la valeur, pas la structure"
 
 
-@pytest.mark.parametrize("vide", ["", "   ", {"valeur": ""}, {"comment": "sans valeur"}])
+@pytest.mark.parametrize("vide", ["", {"valeur": ""}, {"comment": "sans valeur"}])
 def test_an_EMPTY_cell_is_not_a_value_outside_the_list(vide):
-    """⚠️ Une cellule vide n'a aucune valeur fautive à corriger. « valeur hors des
-    options déclarées : `status` = '' — elle est ÉCRITE quand même » envoie chercher
-    ce qui n'existe pas, et ce qu'un geste a vidé est déjà dit — mieux — par
-    `off_erased` / `off_ignored`.
-
-    Mesuré sur du vivant, celui-là : **25 écritures** l'ont déclenché à tort, sur 4
-    tableaux et 3 propriétaires. Même règle que `etats_trahis`, qui ignore `None` et
-    la chaîne vide depuis sa première ligne."""
-    assert dsv2.unenforced_options({"fields": [ENUM]}, {"priorite": vide}) == {}
+    assert _preavis({"fields": [ENUM]}, {"priorite": vide}) == ([], [])
 
 
 def test_an_enum_without_options_condemns_nothing():
-    """Un enum sans liste est un enum LIBRE : il ne promet rien, donc ne ment pas."""
     schema = {"fields": [{"key": "p", "type": "enum"}]}
-    assert dsv2.unenforced_options(schema, {"p": "n'importe quoi"}) == {}
+    assert _preavis(schema, {"p": "n'importe quoi"}) == ([], [])
     assert dsv2.options_not_enforced(schema) == []
 
 
 # ── le pendant à la pose ─────────────────────────────────────────────────────
 
-def test_posing_options_without_strict_is_warned_at_the_right_moment():
-    """Le moment qui compte est celui où l'on ÉCRIT le schéma — pas six semaines plus
-    tard devant des valeurs libres. C'est le pendant exact de #316."""
+def test_posing_options_is_warned_with_the_date():
     champs = dsv2.options_not_enforced({"fields": [ENUM, {"key": "s", "type": "enum",
                                                           "options": ["a"]}]})
     assert champs == ["priorite", "s"]
-
     msg = dsv2.options_not_enforced_warning(champs)
-    assert "NON appliquées" in msg and 'unknown_columns: "report"' in msg
+    assert "appliquées à partir du 2026-10-21" in msg and "unknown_columns" not in msg
+
+
+def test_after_the_date_nothing_is_said_at_pose(validation_complete_partout):
+    assert dsv2.options_not_enforced({"fields": [ENUM]}) == []
 
 
 def test_nothing_to_warn_gives_no_message():
@@ -167,15 +137,10 @@ def test_json_is_found_in_depth():
 # ── le vocabulaire reste DÉRIVÉ ──────────────────────────────────────────────
 
 def test_the_detection_derives_from_the_functions_that_decide():
-    """⚠️ Ce lot existe parce qu'une liste avait divergé de ce que le code lit. Sa
-    propre détection ne doit donc pas recopier la logique de `validation_active` : on
-    le vérifie en armant la validation par un chemin que le lot ne connaît pas
-    explicitement — un `required_when` niché dans un champ quelconque."""
+    """La détection de la pose suit `validation_active` — jamais une copie."""
     schema = {"fields": [ENUM, {"key": "livrable", "type": "text",
                                 "required_when": {"priorite": "haute"}}]}
-
     assert dsv2.validation_active(schema) is True
-    assert dsv2.unenforced_options(schema, {"priorite": "Moyenne"}) == {}
     assert dsv2.options_not_enforced(schema) == []
 
 
@@ -187,101 +152,65 @@ def _store():
     return make_store("sub-test")
 
 
-def test_the_real_write_path_carries_the_warning(live):
-    """⚠️ Ce qui compte pour l'utilisateur : l'avertissement remonte par le VRAI
-    chemin (`_check_row`, le seam que tous les gestes traversent), pas seulement
-    depuis les fonctions pures. Sans ce test, le lot pourrait être vert et muet en
-    conditions réelles."""
+def _table(st, schema):
     import uuid
 
     from oto_mcp import db
-    st = _store()
     ns = "t-" + uuid.uuid4().hex[:6]
     db.create_datastore("user", "sub-test", ns)
-    st.set_schema(ns, {"fields": [ENUM]})           # options, PAS de strict
+    out = st.set_schema(ns, schema)
+    return ns, out
+
+
+def test_the_real_write_path_carries_the_notice(live):
+    """Le préavis remonte par le VRAI chemin (`_check_row`), dans `notices`, et la
+    valeur est bel et bien écrite."""
+    from oto_mcp import db
+    st = _store()
+    ns, _ = _table(st, {"fields": [ENUM]})
 
     st.append_row(ns, {"priorite": "Moyenne"})
     out = st.off_schema_report()
 
-    assert out.get("hors_options") == {"priorite": "Moyenne"}
-    assert "ÉCRITE quand même" in (out.get("hors_options_hint") or "")
-    # …et la valeur est bel et bien écrite : on avertit, on ne refuse pas.
+    assert "hors_options" not in out, "relevé retiré : le préavis le dit"
+    notice = " ".join(out.get("notices") or [])
+    assert "'Moyenne' hors options (haute, basse)" in notice
+    assert "21 octobre 2026" in notice and "data_patch_schema" in notice
     ns_id = st.resolve_ns_id_for_write(ns)
-    lignes = db.datastore_list_rows(ns_id)
-    assert [l["data"]["priorite"] for l in lignes] == ["Moyenne"]
+    assert [l["data"]["priorite"] for l in db.datastore_list_rows(ns_id)] == ["Moyenne"]
 
 
-def test_the_strict_table_still_refuses(live):
-    """Le régime strict est inchangé — c'est lui qui protège les tableaux qui l'ont
-    demandé, et le lot ne doit pas l'avoir attendri."""
-    import uuid
-
-    from oto_mcp import db
+def test_after_the_date_the_table_refuses(live, validation_complete_partout):
     from oto_mcp.datastore.core import RowValidationError
     st = _store()
-    ns = "t-" + uuid.uuid4().hex[:6]
-    db.create_datastore("user", "sub-test", ns)
-    st.set_schema(ns, {"fields": [ENUM], "unknown_columns": "report"})
-
+    ns, _ = _table(st, {"fields": [ENUM]})
     with pytest.raises(RowValidationError):
         st.append_row(ns, {"priorite": "Moyenne"})
 
 
 def test_posing_the_schema_warns_at_the_right_moment(live):
-    """L'avertissement de POSE, par la vraie surface."""
-    import uuid
-
-    from oto_mcp import db
     st = _store()
-    ns = "t-" + uuid.uuid4().hex[:6]
-    db.create_datastore("user", "sub-test", ns)
-
-    out = st.set_schema(ns, {"fields": [ENUM, {"key": "prov", "type": "json"}]})
-
+    _, out = _table(st, {"fields": [ENUM, {"key": "prov", "type": "json"}]})
     w = out.get("warning") or ""
-    assert "NON appliquées" in w, w
+    assert "appliquées à partir du" in w, w
     assert "premier niveau" in w, "l'avertissement json doit être là aussi"
 
 
-def test_a_clean_schema_says_nothing(live):
-    """Pas de bruit sur le cas normal : un schéma strict et sans json ne déclenche
-    aucun de ces deux avertissements."""
-    import uuid
-
-    from oto_mcp import db
+def test_a_clean_schema_says_nothing(live, validation_complete_partout):
     st = _store()
-    ns = "t-" + uuid.uuid4().hex[:6]
-    db.create_datastore("user", "sub-test", ns)
-
-    out = st.set_schema(ns, {"fields": [ENUM], "unknown_columns": "report"})
-
+    _, out = _table(st, {"fields": [ENUM]})
     w = out.get("warning") or ""
-    assert "NON appliquées" not in w and "premier niveau" not in w
+    assert "appliquées à partir du" not in w and "premier niveau" not in w
 
 
 def test_a_status_field_driven_by_a_lifecycle_is_not_a_false_positive():
-    """⚠️ **Le faux positif que ce lot a failli introduire**, attrapé par un test
-    voisin (`test_datastore_queue_release_warning`).
-
-    Un champ `role="status"` porteur d'un `lifecycle` EST contraint : un état hors
-    liste est refusé même quand `validation_active` est faux. L'avertir aurait été
-    faux — et un avertissement qui crie à tort est celui qu'on apprend à ignorer,
-    donc celui qui ruine les deux autres du lot.
-
-    L'exclusion est DÉRIVÉE de `lifecycle_of`/`status_field` : le mécanisme de cycle
-    de vie est en cours de retrait (#317), et elle s'éteindra d'elle-même le jour où
-    il partira — sans que personne ait à y penser."""
+    """Un champ porteur d'un `lifecycle` EST contraint (un état hors liste est refusé)
+    — la pose ne l'annonce pas comme une liste à venir."""
     schema = {"fields": [
         {"key": "statut", "role": "status", "type": "enum", "options": ["a", "b"],
          "lifecycle": {"states": ["a", "b"]}},
-        ENUM,                                    # celui-là n'est contraint par rien
+        ENUM,
     ]}
-
-    # Le lifecycle refuse bien, sans strict — c'est ce qui fait le faux positif.
     assert dsv2.validate_row(schema, {"statut": "zzz"})
     assert dsv2.validation_active(schema) is False
-
-    # …donc le statut est TU, et la priorité seule est signalée.
     assert dsv2.options_not_enforced(schema) == ["priorite"]
-    assert dsv2.unenforced_options(
-        schema, {"statut": "zzz", "priorite": "Moyenne"}) == {"priorite": "Moyenne"}

@@ -305,6 +305,14 @@ _REGLAGES: tuple[Variable, ...] = (
              "schéma ne déclare pas est refusée, sur tous les tableaux (oto#124). Une "
              "valeur illisible LÈVE plutôt que de retomber sur le défaut.",
              ("oto_mcp/datastore/colonnes_non_declarees.py:71",)),
+    Variable("OTO_VALIDATION_COMPLETE_LE", Classe.REGLAGE, None,
+             "Déplace la date par défaut "
+             "(`datastore/validation_complete.py:VALIDATION_COMPLETE_LE`, 2026-10-21) à "
+             "partir de laquelle le format déclaré fait contrat sur tous les tableaux à "
+             "schéma — options, forme des valeurs, couches, sous-records fermés "
+             "(oto#124) ; d'ici là, une faute passe avec un préavis. Une valeur "
+             "illisible LÈVE plutôt que de retomber sur le défaut.",
+             ("oto_mcp/datastore/validation_complete.py:61",)),
     # -- timeouts / cadences / tailles / rétention -----------------------------
     Variable("OTO_SLOW_CALLBACK_WARN", Classe.REGLAGE, "1.0",
              "Seuil (s) d'avertissement d'un callback lent (event loop).",

@@ -28,7 +28,8 @@ from .options_declarees import hors_des_options, montrable, parmi, valeur_compar
 from .motifs import _pattern_re
 from .declaration import (_fields, borne_du_motif, cle_d_element, max_length_of,
                           pattern_of, status_field, validation_active)
-from . import dates, reglages, telephone
+from . import dates, telephone
+from . import validation_complete as vc
 from .etats_declares import etats_trahis
 from .types_declares import types_trahis
 from .cycle_de_vie import lifecycle_of, refus_de_transition, table_des_transitions
@@ -280,18 +281,11 @@ def _row_errors(fields: list, data: dict, path: str,
     ambigu. `cle_d_identite` = le `of.key` de la liste dont ce record est un élément —
     `@empty` n'y est pas une alternative.
 
-    `contraignant` = le format du tableau fait contrat (`unknown_columns` autre que
-    `create`, ex-`strict`, oto#127 — `reglages.format_contraignant`). Il n'interdit rien ICI (une clé
-    inconnue au premier niveau crée une colonne libre, droit du contrat 0016 : elle
-    est SIGNALÉE par `hors_schema`, jamais refusée — arbitrage #294) ; il FERME les
-    composites déclarés d'un cran plus bas (#544). `closed` porte cette fermeture.
-
-    Pourquoi l'asymétrie, alors que « le contrat s'applique récursivement » : au premier
-    niveau, un nom inconnu crée une vraie colonne, que l'interface affiche et qu'on
-    peut déclarer après coup — c'est ce qui permet d'explorer un tableau avant de le
-    typer. Dans un composite déclaré, il n'existe pas de « sous-colonne libre » :
-    `of.fields` EST le seul référentiel, et l'attribut serait stocké là où rien ne le
-    lit. Le geste qu'on protège en haut n'existe pas en bas.
+    `contraignant` = le format du tableau fait contrat (`validation_complete.complete`,
+    partout à partir du 21/10/2026, oto#124). Il n'interdit rien ICI au premier niveau
+    (une colonne non déclarée est l'affaire de `colonnes_non_declarees`, jugée sur le
+    geste dans `_check_row`) ; il FERME les composites déclarés d'un cran plus bas
+    (#544). `closed` porte cette fermeture.
 
     `vus` = les attributs déjà nommés pour la colonne-liste courante (borne du
     refus, cf. `_type_error`).
@@ -323,21 +317,34 @@ def _row_errors(fields: list, data: dict, path: str,
         if not key:
             continue
         fpath = f"{path}.{key}" if path else key
+        # Ce que le geste POSE — hissé ici parce que la fermeture d'un composite, les
+        # couches inconnues, la borne et le motif s'y restreignent : la validation
+        # porte sur le MERGÉ, donc juger une colonne que le geste ne réécrit pas
+        # rendrait inécritable toute ligne portant déjà une faute, y compris pour un
+        # patch sans rapport (les 23 lignes gelées d'oto-backend#284).
+        pose = written is None or key in written
         # Le marqueur du vide assumé (oto#204) est une clé INTERNE, pas un sous-champ.
         inconnues = [k for k in unknown_layers(data.get(key)) if k not in CLES_INTERNES]
         if inconnues:
             proches = [cle_la_plus_proche(k, list(LAYER_KEYS)) for k in inconnues]
             dites = [f"`{p}` pour {k!r}" for k, p in zip(inconnues, proches) if p]
-            errors.append(
+            inconnue = (
                 f"{fpath}: sous-champ(s) inconnu(s) {', '.join(repr(k) for k in inconnues)}"
                 f" — disponibles : {', '.join(LAYER_KEYS)}"
                 + (f" (le plus proche : {', '.join(dites)})" if dites else "")
                 + ". Une couche stockée sans être lue donnerait l'illusion d'une "
                 "provenance renseignée.")
-            for p in proches:
-                if p:
-                    car.noter(charge, car.champ(car.champ(chemin, str(key)), p),
-                              gabarit_de_couche(p))
+            # oto#124 : on juge ce que le geste ÉCRIT. Une couche inconnue déjà en
+            # base sur une colonne que ce geste ne touche pas se DIT (`gelees`), elle
+            # ne refuse pas l'écriture d'une autre colonne.
+            if pose:
+                errors.append(inconnue)
+                for p in proches:
+                    if p:
+                        car.noter(charge, car.champ(car.champ(chemin, str(key)), p),
+                                  gabarit_de_couche(p))
+            elif gelees is not None:
+                gelees.append({"champ": fpath, "refus": inconnue})
         # Déballer avant de juger : c'est la VALEUR qui doit respecter le type, la
         # borne et les options — pas son enveloppe. Sans ça un schéma strict refuse
         # toute écriture en couches, donc la primitive est inutilisable là où elle
@@ -354,12 +361,6 @@ def _row_errors(fields: list, data: dict, path: str,
         base, layer = split_layer(key)
         value = (layer_value(data.get(base), layer) if layer
                  else unwrap(data.get(key)))
-        # Ce que le geste POSE — hissé ici parce que la fermeture d'un composite s'y
-        # restreint, exactement comme la borne et le motif : la validation porte sur
-        # le MERGÉ, donc juger un composite que le geste ne réécrit pas rendrait
-        # inécritable toute ligne portant déjà un attribut hors format, y compris
-        # pour un patch sans rapport (les 23 lignes gelées d'oto-backend#284).
-        pose = written is None or key in written
         # Où ce champ vit dans la charge à renvoyer (oto#135). Une cible de couche
         # (`qualification.comment`) s'y écrit comme elle s'écrit : sous sa colonne.
         fchemin = car.champ(chemin, base)
@@ -424,10 +425,15 @@ def _row_errors(fields: list, data: dict, path: str,
                 ecrits = (elements_reecrits(value, unwrap((en_place or {}).get(key)),
                                             cle_d_element(f))
                           if pose and en_place is not None else None)
+            # `hors` (ce que l'écriture peut ÉCARTER, #667) ne relève que ce que le
+            # geste pose (oto#124) : une valeur hors options déjà en base sur une autre
+            # colonne n'est ni à écarter ni un motif de refuser l'écartement d'une
+            # valeur que le geste pose, elle.
             errs_type = _type_error(value, f.get("type"), fpath,
                                     f.get("fields"), f.get("of"), f.get("options"),
                                     closed=closed or (contraignant and pose),
-                                    hors=hors, ecrits=ecrits, gelees=gelees,
+                                    hors=hors if pose else None, ecrits=ecrits,
+                                    gelees=gelees,
                                     charge=fcharge, chemin=fchemin, decl=f)
             # #545 : la colonne qui vient de refuser est-elle un AIGUILLAGE dont une
             # autre colonne dépend ? Alors la chaîne libre qu'on y a écrite a une
@@ -534,16 +540,24 @@ def validate_row(schema: Optional[dict], merged: dict, *,
                  gelees: Optional[list] = None,
                  en_place: Optional[dict] = None,
                  pose: Optional[dict] = None,
-                 ecrits_par_rang: Optional[dict] = None) -> list[str]:
+                 ecrits_par_rang: Optional[dict] = None,
+                 preavis: Optional[list] = None) -> list[str]:
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
-    `lifecycle` est déclaré, même sous `unknown_columns: "create"`. Liste vide = OK.
+    `lifecycle` est déclaré, même hors validation armée. Liste vide = OK.
 
-    Quand le format fait contrat (`unknown_columns` autre que `create`), un composite DÉCLARÉ est en plus un référentiel FERMÉ
-    (#544) : un attribut absent de `of.fields` / `fields` est refusé. La fermeture
-    ne descend que dans les composites que le geste RÉÉCRIT — même restriction que
-    `max_length`, et même raison.
+    Quand le format fait contrat (`validation_complete.complete` — partout à partir du
+    21/10/2026, oto#124), un composite DÉCLARÉ est en plus un référentiel FERMÉ (#544) :
+    un attribut absent de `of.fields` / `fields` est refusé. La fermeture ne descend
+    que dans les composites que le geste RÉÉCRIT — même restriction que `max_length`,
+    et même raison.
+
+    `preavis` = liste OUT (oto#124) : sur un tableau en PRÉAVIS
+    (`validation_complete.en_preavis`), les fautes que la validation complète aurait
+    refusées et que le régime actuel laisse passer — jugées sur le même geste
+    (`written`, `en_place`, `ecrits_par_rang`), donc sur ce qu'il ÉCRIT. Elles ne
+    refusent rien : l'appelant les dit, datées. Absente = rien n'est calculé.
 
     `written` = les clés que ce geste réécrit (None = la row entière, cas d'un
     insert). **Quatre** contrôles s'y restreignent, et eux
@@ -592,13 +606,24 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     ou sans `of.key` : le geste dit lui-même ce qu'il écrit, il n'y a rien à déduire."""
     errors: list[str] = []
     charge: Optional[dict] = {} if details is not None else None
+    actuelles: list[str] = []
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
-        errors.extend(_row_errors(_fields(schema), merged, "", written,
-                                  contraignant=reglages.format_contraignant(schema),
-                                  details=details, hors=hors, gelees=gelees,
-                                  en_place=en_place, charge=charge,
-                                  ecrits_par_rang=ecrits_par_rang))
+        actuelles = _row_errors(_fields(schema), merged, "", written,
+                                contraignant=vc.complete(schema),
+                                details=details, hors=hors, gelees=gelees,
+                                en_place=en_place, charge=charge,
+                                ecrits_par_rang=ecrits_par_rang)
+        errors.extend(actuelles)
+    if preavis is not None and vc.en_preavis(schema):
+        # Le MÊME juge, réglé comme il le sera à la date : ce qu'il refuserait de plus
+        # que le régime actuel est le préavis. Ses relevés propres (`hors`, `gelees`,
+        # charge) ne sont pas collectés : rien n'est écarté ni refusé à ce titre.
+        deja = set(actuelles)
+        preavis.extend(e for e in _row_errors(_fields(schema), merged, "", written,
+                                              contraignant=True, en_place=en_place,
+                                              ecrits_par_rang=ecrits_par_rang)
+                       if e not in deja)
     # oto#75 barreau 1 : HORS du garde `validation_active`, comme le cycle de vie
     # ci-dessous — la déclaration `required_layers` s'arme elle-même.
     errors.extend(couches_manquantes(schema, merged, written=written, charge=charge,

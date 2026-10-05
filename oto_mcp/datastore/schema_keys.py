@@ -242,13 +242,9 @@ CLES_DU_CYCLE: tuple[Cle, ...] = (
 CLES_DE_TETE: tuple[Cle, ...] = (
     Cle("fields", ("validateur", "front"), "les colonnes du tableau"),
     Cle("key", ("validateur", "front"), "la colonne qui sert de clé métier"),
-    # oto#127 (02/10/2026) : DEUX réglages, un par axe (`reglages.py`). Ils remplacent
-    # `strict`, `unknown_fields` et `key_required`, désormais refusés à la pose et au
-    # patch avec leur équivalent exact (`reglages.refus_anciens`).
-    Cle("unknown_columns", ("validateur",),
-        "le sort d'une colonne non déclarée — `\"create\"` (défaut : créée en "
-        "silence), `\"report\"` (créée et nommée dans `hors_schema`) ou "
-        "`\"reject\"` (refusée) ; hors `create`, le format fait contrat"),
+    # oto#127 (02/10/2026) : `new_rows` remplace `key_required`, refusé à la pose et
+    # au patch avec son équivalent exact (`reglages.refus_anciens`). Son voisin
+    # `unknown_columns` est RETIRÉ le 05/10/2026 (oto#124, `CLES_RETIREES`).
     Cle("new_rows", ("validateur",),
         "le droit d'une ligne nouvelle de naître — `\"create\"` (défaut) ou "
         "`\"reject\"` (une écriture qui ne désigne aucune ligne existante est "
@@ -369,6 +365,14 @@ TEXTES_D_AIDE: tuple[str, ...] = ("note", "help", "hint", "placeholder")
 #: est passé ce qu'elles faisaient — « clé inconnue » ferait chercher une faute de
 #: frappe sur un mot qui était juste.
 CLES_RETIREES: dict[str, str] = {
+    # oto#124 : la phrase est celle de `reglages.refus_unknown_columns` (module pur,
+    # recopiée ici pour ne pas lier le vocabulaire au réglage).
+    "unknown_columns": ("retiré le 05/10/2026 — plus aucun réglage : les colonnes et "
+                        "les valeurs sont toujours vérifiées (une colonne non déclarée "
+                        "est refusée, le format déclaré fait contrat sur tous les "
+                        "tableaux). Retire-le du schéma ; pour écrire une colonne "
+                        "nouvelle, déclare-la dans `fields`, pour accepter une valeur, "
+                        "étends ses `options`"),
     "origine": ("retirée le 08/09/2026, elle n'est plus lue : l'origine d'une valeur "
                 "se déclare par l'appel qui APPORTE la donnée "
                 "(`data_write(donnees_d_origine=true)`), plus par le schéma"),

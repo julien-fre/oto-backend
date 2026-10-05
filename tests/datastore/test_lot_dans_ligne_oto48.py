@@ -74,7 +74,11 @@ def _table(schema=None):
     ns = "t-" + uuid.uuid4().hex[:6]
     ns_id = db.create_datastore("user", SUB, ns)
     if schema is not None:
-        make_store(SUB).set_schema(ns, schema)
+        # oto#124 : `unknown_columns` ne se pose plus — STOCKÉ, il s'écrit en base.
+        make_store(SUB).set_schema(
+            ns, {k: v for k, v in schema.items() if k != "unknown_columns"})
+        if "unknown_columns" in schema:
+            db.set_datastore_schema(ns_id, schema)
     return ns, ns_id
 
 

@@ -23,13 +23,15 @@ import uuid
 
 import pytest
 
+# oto#124 : le format déclaré fait contrat partout (ex-`unknown_columns: "report"`).
+pytestmark = pytest.mark.usefixtures("validation_complete_partout")
+
 
 # Le tableau de l'incident, réduit à ce qui porte la règle : une clé métier
 # déclarée, un format strict, et une colonne-liste d'objets (les contacts qu'un
 # script de reprise portait ligne à ligne).
 SCHEMA = {
     "key": "siren",
-    "unknown_columns": "report",
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "raison_sociale", "type": "text"},

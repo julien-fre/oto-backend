@@ -138,11 +138,12 @@ def test_patch_keeps_every_other_field_intact(store):
 def test_patch_leaves_head_keys_alone_unless_asked(store):
     st, posed = store
     st.patch_schema("v", fields=[{"key": "siren", "label": "Siren"}])
-    assert posed["schema"]["unknown_columns"] == "report"
+    assert posed["schema"]["unknown_columns"] == "report", \
+        "un réglage retiré mais STOCKÉ est reconduit tel quel, jusqu'à son retrait"
     assert posed["schema"]["key"] == "siren"
     assert "new_rows" not in posed["schema"]      # absent avant, absent après
-    st.patch_schema("v", unknown_columns="create")
-    assert posed["schema"]["unknown_columns"] == "create"
+    st.patch_schema("v", new_rows="reject")
+    assert posed["schema"]["new_rows"] == "reject"
 
 
 def test_remove_is_explicit_and_a_typo_touches_nothing(store):

@@ -50,7 +50,12 @@ def table(live):
     ns = "t-" + uuid.uuid4().hex[:6]
     ns_id = db.create_datastore("user", "sub-test", ns)
     st = _store()
-    st.set_schema(ns, SCHEMA)
+    # oto#124 : `unknown_columns` ne se POSE plus ; ce banc tient le relevé `report`
+    # tant qu'un schéma STOCKÉ le porte encore (jusqu'au 21/10/2026 et au retrait du
+    # stocké) — le schéma est donc posé sans lui, puis le réglage écrit comme il
+    # subsiste en base.
+    st.set_schema(ns, {k: v for k, v in SCHEMA.items() if k != "unknown_columns"})
+    db.set_datastore_schema(ns_id, SCHEMA)
     row = st.append_row(ns, {"siren": "552032534", "raison_sociale": "TEMOIN"})
     return st, ns, ns_id, row["_id"]
 

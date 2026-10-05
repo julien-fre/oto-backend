@@ -6,17 +6,16 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
 - **types imbriqués** : `type: "object"` (+ `fields: [...]`) et `type: "list"`
   (+ `of: <field-def>` — scalaire ou sous-record) décrivent une *fiche* (occupant,
   `contacts[]`, `signaux[]`) que le blob JSONB porte déjà ;
-- **référentiel fermé quand le format fait contrat** (`unknown_columns` autre que
-  `"create"`, oto#127) : dans un composite DÉCLARÉ (`object.fields`,
-  `list.of.fields`), un attribut que la déclaration ne nomme pas est REFUSÉ, en
-  nommant l'élément (`contacts[1].email_pattern`). Le premier niveau, lui, reste
-  ouvert : une clé inconnue y crée une colonne libre (contrat 0016) et n'est que
-  SIGNALÉE (`hors_schema`, #294) ;
+- **référentiel fermé quand le format fait contrat** (`validation_complete` : partout
+  à partir du 21/10/2026, oto#124 — plus aucun réglage) : dans un composite DÉCLARÉ
+  (`object.fields`, `list.of.fields`), un attribut que la déclaration ne nomme pas est
+  REFUSÉ, en nommant l'élément (`contacts[1].email_pattern`). Au premier niveau, une
+  colonne non déclarée est refusée à la même date (`colonnes_non_declarees`) ;
 - **validation à l'écriture** : `field.required`, conformité de type,
   `field.required_when: {<champ>: <valeur>}` (le guard-rail : livrables requis
   quand `status = "qualified"`) et `field.max_length` (borne de longueur — un
-  intitulé de poste n'est pas un paragraphe de raisonnement) — active si
-  `unknown_columns` n'est pas `"create"` OU si un field déclare une exigence ;
+  intitulé de poste n'est pas un paragraphe de raisonnement) — active si le format
+  fait contrat (partout à la date) OU si un field déclare une exigence ;
 - **cycle de vie** : `lifecycle: {states, transitions, terminal?}` sur le field
   `role="status"` — état inconnu ou transition non déclarée = refus ;
 - **états terminaux** : `terminal` explicite, sinon dérivés (état sans transition
@@ -146,7 +145,7 @@ from .donnees_d_origine import (
     description_parametre as description_donnees_d_origine,
 )
 from .non_applique import (
-    _options_already_enforced, unenforced_options, unenforced_options_warning,
+    _options_already_enforced,
     options_not_enforced, options_not_enforced_warning, json_fields_depth,
     json_depth_warning, lifecycle_hors_statut, lifecycle_hors_statut_warning,
     motif_sans_obligation, motif_sans_obligation_warning,

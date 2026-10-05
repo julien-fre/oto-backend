@@ -32,6 +32,7 @@ from . import acces_agent as aga
 from . import claimable
 from . import cles_inconnues
 from . import reglages
+from . import validation_complete as vc
 from . import schema_keys
 
 from .couches import LAYER_KEYS, split_layer
@@ -187,12 +188,7 @@ def validate_schema_def(schema: Optional[dict],
         # Le périmètre de réservation (#517) se valide par le moteur de filtre qui le
         # servira — refusé à la pose, comme le plafond : une déclaration illisible
         # au premier claim d'une campagne lancée est le pire moment pour l'apprendre.
-        sf = status_field(schema) or {}
-        errors.extend(claimable.erreurs(
-            lc, declared={f.get("key") for f in _fields(schema)},
-            contraignant=reglages.format_contraignant(schema), status_key=sf.get("key"),
-            states={str(s) for s in (lc.get("states") or [])}
-            if isinstance(lc.get("states"), list) else set()))
+        errors.extend(_gardes_claimable(schema, lc, contraignant=vc.complete(schema)))
     errors.extend(_erreurs_de_forme_du_cycle(schema))
     errors.extend(_erreurs_libelles_d_etat(schema))
     # ⚠️ Il y avait ici un refus « lifecycle exige role="status" ». Retiré le
@@ -202,6 +198,31 @@ def validate_schema_def(schema: Optional[dict],
     # et jamais lu, alors qu'il existait. Ce qui les arrête maintenant est plus haut :
     # deux blocs sont refusés, et un bloc seul EST l'état.
     return errors
+
+
+def _gardes_claimable(schema: dict, lc: dict, *, contraignant: bool) -> list[str]:
+    sf = status_field(schema) or {}
+    return claimable.erreurs(
+        lc, declared={f.get("key") for f in _fields(schema)},
+        contraignant=contraignant, status_key=sf.get("key"),
+        states={str(s) for s in (lc.get("states") or [])}
+        if isinstance(lc.get("states"), list) else set())
+
+
+def preavis_de_pose(schema: Optional[dict]) -> list[str]:
+    """oto#124 : ce que les gardes de pose de la validation complète REFUSERONT à
+    partir du 21/10/2026 sur ce schéma, et qu'elles laissent passer aujourd'hui —
+    `lifecycle.claimable` sur une colonne non déclarée. Vide hors préavis."""
+    lc = lifecycle_of(schema) if vc.en_preavis(schema) else None
+    if lc is None:
+        return []
+    try:
+        deja = set(_gardes_claimable(schema, lc, contraignant=False))
+        return [e for e in _gardes_claimable(schema, lc, contraignant=True)
+                if e not in deja]
+    # noqa: SILENT — un périmètre illisible est refusé par la pose elle-même
+    except ValueError:
+        return []
 
 
 def _erreurs_d_avance(schema: dict, lc: dict) -> list[str]:

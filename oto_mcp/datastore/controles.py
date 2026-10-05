@@ -18,6 +18,7 @@ from typing import Optional
 
 from .. import db, geste, ownership, session_org
 from . import colonnes_non_declarees as cnd
+from . import validation_complete as dsvc
 from . import dates as dsdates
 from . import ecartes as dsec
 from . import schema as dsv2
@@ -244,7 +245,7 @@ class ControlesMixin:
                    lot: bool = False, creation: bool = False,
                    ecrits_par_rang: Optional[dict] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
-        déclare ni `unknown_columns` contraignant, ni exigence, ni lifecycle (défaut 0016 soft).
+        fait ni contrat de son format (`validation_complete`), ni exigence, ni lifecycle.
 
         `written` = les clés que le geste réécrit (None sur un insert, où tout
         est écrit) : borne `max_length` restreinte à celles-là, cf.
@@ -258,8 +259,8 @@ class ControlesMixin:
 
         C'est aussi LE seam d'écriture — tous les chemins (append, batch, merge de
         clé métier, upsert, patch) y passent — donc l'endroit unique où relever les
-        champs HORS SCHÉMA du geste (#294), sur les seules clés posées. Un schéma
-        `unknown_columns: "report"` active la validation, donc l'appel a bien lieu."""
+        champs HORS SCHÉMA du geste (#294) et le PRÉAVIS du format (oto#124), sur les
+        seules clés posées — on juge ce que le geste écrit."""
         # #545 : le refus STRUCTURÉ se remplit PENDANT la validation — c'est le seul
         # endroit qui voit à la fois la colonne fautive et la colonne attendue. Le
         # récupérer après coup imposerait de reparser le message, ce que la face REST
@@ -277,10 +278,11 @@ class ControlesMixin:
         details: dict = {}
         hors: list = []
         gelees: list = []
+        preavis: list = []
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
                                    written=written, details=details, hors=hors,
                                    gelees=gelees, en_place=en_place, pose=pose,
-                                   ecrits_par_rang=ecrits_par_rang)
+                                   ecrits_par_rang=ecrits_par_rang, preavis=preavis)
         # Ce que ce geste n'écrit pas et qui ne passe plus le format déclaré. Relevé
         # même quand l'écriture réussit — c'est justement le cas normal : l'appelant
         # touche une autre colonne, et il est le seul à passer par cette ligne.
@@ -296,6 +298,10 @@ class ControlesMixin:
             if ecartes is None:
                 raise RowValidationError(errors, details=details)  # rien à relever
             self.off_rejected.extend(ecartes)
+        # oto#124 : ce que la validation complète refusera à la date, et que ce
+        # tableau laisse encore passer — relevé seulement quand l'écriture passe (un
+        # refus n'écrit rien, il n'y a rien à annoncer), union sur un lot.
+        self.off_format_preavis.update(preavis)
         posed = merged if written is None else {k: merged[k] for k in written
                                                 if k in merged}
         # #354 : un `id` NU posé par le geste, qu'aucun field ne déclare, est un
@@ -342,6 +348,8 @@ class ControlesMixin:
                 "déclare-la au schéma (data_set_schema) puis réécris.")
         # #614/#678 : le TROISIÈME cran au premier niveau — refuser la colonne non
         # déclarée, opt-in table par table (`unknown_columns: "reject"`, oto#127).
+        # ⚠️ oto#124 : le réglage est retiré ; il ne vit plus que STOCKÉ, d'ici au
+        # 21/10/2026 — après, `cnd.controler` refuse avant lui sur tous les tableaux.
         #
         # Posé ICI, contre `posed`, et les deux points comptent autant que le refus :
         #   • ici, parce que c'est le seam qui calcule DÉJÀ le relevé, deux lignes
@@ -395,11 +403,10 @@ class ControlesMixin:
         if hs_errors:
             raise RowValidationError(hs_errors, details=hs_details)
         self.off_schema.update(dsv2.off_schema_keys(schema, posed))
-        # Valeurs hors des options DÉCLARÉES quand rien ne les fait respecter (#319) :
-        # écrites quand même — le tableau est en régime souple — mais plus en silence.
-        # Vide dès que la validation est armée : là, `validate_row` ci-dessus a déjà
-        # refusé, et le redire serait un doublon sur un chemin qui ne passe pas.
-        self.off_options.update(dsv2.unenforced_options(schema, posed))
+        # ⚠️ Le relevé `hors_options` (#319, « options déclarées mais non appliquées »)
+        # est retiré le 05/10/2026 (oto#124) : les `options` s'appliquent partout à
+        # partir du 21/10, et d'ici là la valeur hors liste est dite par le préavis
+        # ci-dessus — avec la liste permise, la date et le geste.
 
     @staticmethod
     def _reject_misplaced_id(data: dict, row_id: Optional[str], *,
@@ -463,12 +470,6 @@ class ControlesMixin:
         if keys:
             out["hors_schema"] = keys
             out["hors_schema_hint"] = dsv2.off_schema_warning(keys)
-        # #319 : les options déclarées mais inertes. Clé DISTINCTE de `hors_schema` —
-        # ce n'est pas la même faute : là une colonne inconnue, ici une valeur hors
-        # d'une liste que le schéma laissait croire fermée.
-        if self.off_options:
-            out["hors_options"] = dict(sorted(self.off_options.items()))
-            out["hors_options_hint"] = dsv2.unenforced_options_warning(self.off_options)
         # #733 : le type ne gèle plus une ligne pour une colonne qu'on n'écrit pas —
         # il la SIGNALE. Clé distincte des deux précédentes : là une colonne inconnue,
         # là une valeur hors d'une liste, ici une valeur déjà en base devenue non
@@ -494,6 +495,10 @@ class ControlesMixin:
         notices = set(self.off_notices)
         if self.off_non_declarees:
             notices.add(cnd.avertissement(sorted(self.off_non_declarees)))
+        # oto#124 : le format déclaré que la validation complète fera respecter à la
+        # date — UNE phrase datée pour le geste, chaque faute citée.
+        if self.off_format_preavis:
+            notices.add(dsvc.avertissement(self.off_format_preavis))
         if notices:
             out["notices"] = sorted(notices)
         # Ce que le geste a VIDÉ (#407/#408/#409). Clé DISTINCTE des précédentes : ce

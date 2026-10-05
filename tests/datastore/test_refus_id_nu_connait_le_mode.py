@@ -33,7 +33,7 @@ REFUSES_EN_LOT = ("tel que servi", "passe le paramètre id=")
 
 class _Store(ControlesMixin):
     """Le mixin seul : ces refus se prononcent avant toute base."""
-    off_schema = set(); off_options = {}; off_geles = {}; off_notices = set()
+    off_schema = set(); off_format_preavis = set(); off_geles = {}; off_notices = set()
     off_erased = []; off_rejected = []; off_ignored = []; off_non_rapprochables = {}
     dernier_tableau = None
 

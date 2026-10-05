@@ -32,6 +32,9 @@ import uuid
 
 import pytest
 
+# oto#124 : le format déclaré fait contrat partout (ex-`unknown_columns: "report"`).
+pytestmark = pytest.mark.usefixtures("validation_complete_partout")
+
 
 def _store():
     from oto_mcp.datastore.core import make_store
@@ -43,7 +46,7 @@ def _table():
     ns = "t-" + uuid.uuid4().hex[:6]
     ns_id = db.create_datastore("user", "sub-test", ns)
     st = _store()
-    st.set_schema(ns, {"key": "siren", "unknown_columns": "reject",
+    st.set_schema(ns, {"key": "siren",
                        "fields": [
                            {"key": "siren", "type": "text"},
                            {"key": "autre", "type": "text"},

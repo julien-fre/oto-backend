@@ -93,14 +93,14 @@ def _tableau(lignes: list[dict]):
     return st, ns
 
 
-def test_interdire_un_sous_champ_que_N_lignes_portent_rend_N(live):
+def test_interdire_un_sous_champ_que_N_lignes_portent_rend_N(live, validation_complete_partout):
     """Le banc de l'issue : poser une interdiction sur un sous-champ de liste que N
     lignes portent rend `existing_violations` = N, avec leurs identifiants."""
     st, ns = _tableau(
         [{"ref": f"r{i}", "contacts": [{"email": f"c{i}@x.fr", "perso": "oui"}]}
          for i in range(3)]
         + [{"ref": "propre", "contacts": [{"email": "p@x.fr"}]}])
-    out = st.set_schema(ns, {"unknown_columns": "report", "key": "ref", "fields": [
+    out = st.set_schema(ns, {"key": "ref", "fields": [
         {"key": "ref", "type": "text"},
         {"key": "contacts", "type": "list", "of": {"type": "object", "fields": [
             {"key": "email", "type": "email"}]}}]})

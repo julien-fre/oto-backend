@@ -214,15 +214,21 @@ def residus_warning(schema: Any) -> Optional[str]:
     l'auteur : le lecteur doit savoir laquelle de deux clés fait foi (`options`, pas
     l'`enum` d'à côté), l'auteur que la modifier sera refusé."""
     trouvees, font_foi = [], set()
+    # oto#124 : `unknown_columns` stocké a sa propre phrase — il est encore LU jusqu'au
+    # 21/10/2026 et la plateforme le retire elle-même (`scripts/retirer_unknown_columns`).
+    retire = (isinstance(schema, dict) and reglages.UNKNOWN_COLUMNS in schema)
     for niveau, chemin, noeud in parcours(schema):
         for cle in inconnues(niveau, noeud):
+            if retire and not chemin and cle == reglages.UNKNOWN_COLUMNS:
+                continue
             trouvees.append(f"`{nom_du_chemin(chemin)}.{cle}`" if chemin
                             else f"`{cle}` (tête)")
             # Ce qui fait foi : la cousine admise, quand elle est posée À CÔTÉ.
             if sk.FAUTES_CONNUES.get(cle) in noeud:
                 font_foi.add(sk.FAUTES_CONNUES[cle])
     if not trouvees:
-        return None
+        return (reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
+                if retire else None)
     anciens = [k for k in reglages.ANCIENS if isinstance(schema, dict) and k in schema]
     msg = (f"ce schéma porte des clés qu'aucun niveau n'admet, posées avant la "
            f"fermeture du vocabulaire (01/10/2026) : {', '.join(trouvees[:8])}"
@@ -235,4 +241,6 @@ def residus_warning(schema: Any) -> Optional[str]:
                 + " — la clé inconnue d'à côté est un résidu, quoi qu'elle dise.")
     if anciens:
         msg += f" Pour {', '.join(f'`{k}`' for k in anciens)} : {reglages.residu(schema)}."
+    if retire:
+        msg += " " + reglages.residu_unknown_columns(schema[reglages.UNKNOWN_COLUMNS]) + "."
     return msg
