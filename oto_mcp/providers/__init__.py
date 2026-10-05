@@ -80,6 +80,8 @@ _DECLARATIONS: tuple[str, ...] = (
     # Neighbour of `attio` (CRM) — wired 2026-10-02.
     "affinity",
     "lemlist",
+    # Neighbour of `lemlist`: the domains and mailboxes it sends from — wired 2026-10-05.
+    "mailpool",
     "kaspr",
     "pennylane",
     # Voisin de `pennylane` : même catégorie Finance, et l'ordre gouverne
