@@ -3,7 +3,7 @@
 Le backend d'oto, **produit central et déployable** (SaaS ou on-premise : `Dockerfile`, config 100 % par env) : un
 serveur MCP (Streamable HTTP, toujours authentifié Logto) qui expose les connecteurs **oto-core** (`oto.tools`, importés
 directement — aucune dépendance à la CLI) et une face REST `/api/*` sur le même service. **Prod** = `mcp.oto.cx`,
-**preprod** = `mcp.oto.ninja` (ADR 0040) ; le tableau de bord servi aux utilisateurs vient de `config.dashboard_url()`.
+**preprod** = `mcp.oto.ninja` (ADR 0040, dépôt `infra`) ; le tableau de bord servi aux utilisateurs vient de `config.dashboard_url()`.
 
 > **Ce fichier est une CARTE, pas un journal** : où vit quoi, les règles en vigueur, les pointeurs — ni date ni récit
 > d'incident ; l'histoire qui a produit chaque règle vit dans `docs/` (index en bas). **Un lot qui change un concept
@@ -12,6 +12,9 @@ directement — aucune dépendance à la CLI) et une face REST `/api/*` sur le m
 > un identifiant de compte, d'organisation, de run ou d'infrastructure réels, ni une adresse IP de tiers — on
 > écrit la **forme** ou la **classe**. C'est une règle d'écriture, pas un contrôle : **rien ne l'attrapera à
 > votre place.**
+>
+> ADR et chantiers d'oto 1 : dépôt archivé `otomata-tech/oto-enterprise` (lecture seule). Les « ADR 00NN » cités
+> ici et dans `docs/` y vivent, sauf 0002 et 0040, dans le dépôt privé `otomata-tech/infra` (`docs/adr/`).
 
 ## Stack & environnement
 
@@ -176,7 +179,7 @@ base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis p
 - **Runner** : l'**état** ici (`run_messages`, `runner_jobs`, `runner_triggers`), la **boucle** dans `otomata-tech/oto-runner`
   · ⚠️ la reprise inter-agents lit le **journal**, jamais le fil (`docs/runner-et-automatisations.md`).
 - **MCP Apps, veille** : `prefab_ui` rend les `*_app` (`docs/mcp-apps.md`, `docs/mcp-spec-watch.md`) · ⚠️ **la
-  fédération MCP (`kind="mount"`) est RETIRÉE** (2026-09-09, ADR 0069 du blueprint) : trois connecteurs déclarés,
+  fédération MCP (`kind="mount"`) est RETIRÉE** (2026-09-09, ADR 0069, archive oto-enterprise) : trois connecteurs déclarés,
   zéro vivant. Un service distant se joint par le connecteur `http` générique, ou s'écrit en connecteur natif —
   ce qu'est devenu `planity`. Ne pas la réintroduire sans remplacer l'ADR.
 
@@ -196,7 +199,7 @@ propre niveau** — une borne posée au plus profond ne borne rien si les envelo
 ⚠️ **Le refus est bruyant, la divergence est muette** : `scripts/lint_silences.py` (joué par la suite) refuse un
 `except Exception` qui ne re-lève, ne journalise ni ne rend un refus nommé ; échappatoire unique `# noqa: SILENT —
 <raison>` (`docs/silences-2026-08-27.md`).
-**Box Scaleway dédiée** (ADR 0002) : oto-backend isolé + Caddy ; DB = PG managé partagé (`otomata-main`, DB `oto_mcp`) ;
+**Box Scaleway dédiée** (ADR 0002, dépôt `infra`) : oto-backend isolé + Caddy ; DB = PG managé partagé (`otomata-main-enc`, DB `oto_mcp`) ;
 coffre `connector_credentials` chiffré au repos (AES-256-GCM, master key en Secret Manager au boot) ; S3 pour
 avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on écrit depuis la preprod est la donnée de prod
 (`docs/live-migrations.md`), et seule la prod fait tourner les boucles de fond qui agissent sur un tiers (`boucles_de_fond.py`) · **détails machine et procédure de déploiement = repo privé `otomata-tech/infra`**, pas ici
@@ -223,6 +226,9 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
   résurrection automatique
 - `orgs-suspendues.md` — arrêter un ESPACE sans rien détruire : cinq portes gardées
   (capacités, outils, réservation, webhook, cron), ce qui reste ouvert et pourquoi
+- `contributions-forks.md` — recevoir une PR de fork : trois pièges, pin oto-core sur le tronc
+- `deploiement.md` — le modèle tronc unique : main = préprod, tag = prod, garde « préprod verte », domaines servis, pièges du tag
+- `namespace-fr.md` — sources `fr_`, deux stocks SIRENE, `dirigeants` vide à trois lectures, `data.oto.zone`
 - `rest-api.md` — endpoints, OpenAPI, jetons, CORS
 - `version-servie.md` — dater un changement : les 3 surfaces, les 3 coordonnées qui mentent
 - `verrou-dependances.md` — `uv.lock` versionné, installation par le verrou (CI, déploiement), le job hebdomadaire
