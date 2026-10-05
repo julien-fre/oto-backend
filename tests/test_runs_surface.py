@@ -175,7 +175,7 @@ def test_le_filtre_par_declencheur_lit_le_payload_et_entre_dans_le_total():
     assert "trigger_id" in RJ.JobsInput.model_fields
 
 
-def test_le_filtre_par_declencheur_ne_CASTE_pas_le_payload():
+def test_le_filtre_par_declencheur_ne_CASTE_pas_le_payload(monkeypatch):
     """⚠️ Le filtre a d'abord été écrit `(payload->>'trigger_id')::bigint = %s`.
 
     `payload` est un JSON libre : il suffit d'UNE ligne de l'org dont `trigger_id` n'est
@@ -186,15 +186,53 @@ def test_le_filtre_par_declencheur_ne_CASTE_pas_le_payload():
 
     La forme sûre vivait déjà deux fonctions plus haut dans le même fichier
     (`perimer_travaux_du_declencheur`, `comptage_perime`) : même clé, même lecture. Ce
-    banc tient les TROIS d'accord, parce que c'est la divergence qui a produit le
-    défaut — pas l'ignorance de la bonne forme."""
+    banc tient TOUTES ses lectures d'accord, parce que c'est la divergence qui a produit
+    le défaut — pas l'ignorance de la bonne forme.
+
+    Il vise l'AXE, pas une forme : un filtre sur cette clé compare du TEXTE à du texte,
+    à l'unité (`= %s`) comme pour une liste (`= ANY(%s)`, les lectures groupées de
+    #1148), et rien ne caste la clé — ni `(payload->>'trigger_id')::…`, ni
+    `payload->>'trigger_id'::…`."""
     import inspect
+    import re
     ou, params = JOBS._filtre_de_file(196, None, None, fleet_id=None, trigger_id=14)
     assert "::bigint" not in ou, (
         "un cast sur une clé de payload libre : une seule ligne non numérique dans "
         "l'org fait tomber la requête entière")
     assert params == [196, "14"], "la comparaison est textuelle des deux côtés"
-    # Et les trois lectures de cette clé restent d'accord.
+
     src = inspect.getsource(JOBS)
-    assert src.count("payload->>'trigger_id')::bigint") == 0
-    assert src.count("payload->>'trigger_id' = %s") >= 3
+    cle = r"payload\s*->>\s*'trigger_id'"
+    # La garde mord sur la forme qui a fait le défaut.
+    assert re.search(r"\(\s*" + cle + r"\s*\)\s*::", "(payload->>'trigger_id')::bigint = %s")
+    assert not re.search(r"\(\s*" + cle + r"\s*\)\s*::", src), "la clé est castée"
+    assert not re.search(cle + r"\s*::", src), "la clé est castée"
+    # Chaque COMPARAISON de la clé : texte contre un paramètre, à l'unité ou en liste.
+    comparaisons = re.findall(cle + r"\s*(=|<>|!=|IN\b|>=|<=|<|>)\s*(ANY\s*\(\s*%s\s*\)|[^\s\"']+)",
+                              src, flags=re.IGNORECASE)
+    formes = {f"{op} {rhs}" for op, rhs in comparaisons}
+    assert formes <= {"= %s", "= ANY(%s)"}, f"comparaison hors de l'axe : {formes}"
+    assert len(comparaisons) >= 4, (
+        "le relevé ne voit plus les filtres de la file : la garde ne regarde plus rien")
+
+    # Et le paramètre d'une liste est du texte, comme celui de l'unité.
+    vus = []
+
+    class _Conn:
+        def execute(self, q, p):
+            vus.append(p)
+            return self
+
+        def fetchall(self):
+            return []
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _connect():
+        yield _Conn()
+    monkeypatch.setattr(JOBS, "_connect", _connect)
+    JOBS.comptages_perimes(196, [14, 15])
+    JOBS.files_des_declencheurs(196, [14])
+    assert [p[1] for p in vus] == [["14", "15"], ["14"]], (
+        "une liste d'ids comparée à du texte doit être une liste de TEXTE")
