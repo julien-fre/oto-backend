@@ -1264,7 +1264,10 @@ journal de la porte, et l'état du travail n'a qu'une source.
 
 `queue_pending`/`queue_held` comptent **exactement le prédicat de `clear_queue`**
 (`status IN ('pending','held')` pour ce déclencheur, dans cette org) — le nombre
-posé à côté du bouton est ce que le bouton périme. `held` est séparé parce qu'il
+posé à côté du bouton est ce que le bouton périme. `op=list` lit ces comptes, les
+livraisons de 24 h et les pertes en UNE requête par mesure pour toute la liste
+(`db.files_des_declencheurs`, `comptages_livraisons`, `comptages_perimes`, #1148) ;
+la lecture d'un seul déclencheur est la même requête pour un id. `held` est séparé parce qu'il
 n'attend pas un worker mais le rallumage. Un travail ne disparaît jamais de
 `runner_jobs` (une reprise réutilise la même ligne), donc `job_status` suit la
 livraison jusqu'à son issue ; `null` = refus (aucun travail) ou travail introuvable.

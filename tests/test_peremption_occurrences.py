@@ -122,10 +122,12 @@ def test_le_declencheur_servi_porte_ce_qu_il_a_perdu(monkeypatch):
                         lambda org: [{"id": 5, "org_id": org, "enabled": True}])
     monkeypatch.setattr(RT.db, "runner_arme",
                         lambda org: {"armed": False, "workers": 0, "last_seen": None})
-    monkeypatch.setattr(RT.db, "comptage_perime",
-                        lambda org, tid: {"expired_count": 20,
-                                          "expired_since": "2026-08-20 18:00:00",
-                                          "expired_last": "2026-09-02 07:00:00"})
+    # La liste lit les pertes de tous ses déclencheurs en UNE requête (#1148).
+    monkeypatch.setattr(RT.db, "comptages_perimes",
+                        lambda org, ids: {i: {"expired_count": 20,
+                                              "expired_since": "2026-08-20 18:00:00",
+                                              "expired_last": "2026-09-02 07:00:00"}
+                                          for i in ids})
     out = asyncio.run(RT._triggers(_ctx(), RT.TriggerInput(op="list")))
     t = out["triggers"][0]
     assert t["expired_count"] == 20

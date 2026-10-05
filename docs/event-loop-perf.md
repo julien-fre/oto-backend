@@ -1157,5 +1157,14 @@ multiplie la contention, d'où la queue.
   appel (176 → 1, mesuré en local). Condition de l'enveloppe, gardée par un banc : le
   chemin ne fait que lire. L'option payante se juge une fois par (option, porteur du
   credential) au lieu d'une par canal.
+- **`runner.triggers op=list`** : le catalogue d'outils des avertissements
+  (`_avec_tool_warnings`) se calcule une fois par org et par réponse, plus une fois par
+  ligne (~13 lectures et ~12 ms de BOUCLE pour ~870 outils, par ligne) ; pertes,
+  livraisons et file d'un webhook se lisent en une requête par mesure pour toute la
+  liste (`db.comptages_perimes`, `comptages_livraisons`, `files_des_declencheurs`).
+  20 agents dont 10 webhooks sur 100 000 travaux : 302 emprunts et 551 ms → 18 et 43 ms.
+  ⚠️ La file d'un webhook (`status IN ('pending','held')`) n'a pas d'index pour `held` :
+  elle parcourt `runner_jobs`, désormais une fois par liste au lieu d'une par webhook.
 
-Preuves : `tests/test_connecteurs_me_une_connexion_1148.py`.
+Preuves : `tests/test_connecteurs_me_une_connexion_1148.py`,
+`tests/test_declencheurs_liste_une_passe_1148.py`.

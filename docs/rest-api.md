@@ -1045,7 +1045,14 @@ pas sa cause, et ses appelants sondent à cadence régulière. Preuves :
 | `GET /api/orgs/{id}/monitoring/summary` | 30 | 4 | supervision d'org |
 | `GET /api/admin/tenants`, `GET /api/admin/tenants/{slug}` | 30 | 2 | lectures de toute la fenêtre du journal |
 
-Non déclarées faute de diagnostic : `GET /api/me/connectors`, `POST /api/me/runner/triggers`.
+Non déclarées, et diagnostiquées (#1148) : `GET /api/me/connectors` et
+`POST /api/me/runner/triggers`. Leur lenteur venait de lectures par ligne, chacune sur
+son emprunt au pool — pas d'un client qui martèle (moins de 150 appels par jour chacune,
+lues à l'ouverture d'un écran du tableau de bord). Corrigées à la source
+(`docs/event-loop-perf.md` §Une lecture par ligne) : la première tient UNE connexion
+par appel, la seconde quelques lectures quelle que soit la longueur de la liste. Une
+concurrence bornée ajouterait un `503 route_busy` sur un geste d'écriture
+(`op=update`, `delete`) sans protéger le pool de rien de plus.
 Chaque gabarit est confronté à la table figée des routes
 (`tests/api/test_routes_lourdes_declarees_1145.py`).
 

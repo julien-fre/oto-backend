@@ -90,8 +90,9 @@ def org(monkeypatch):
     # Ce banc ne parle ni des pertes, ni de l'adresse, ni des avertissements d'outils.
     monkeypatch.setattr(RT, "_avec_pertes", lambda o, t: t)
     monkeypatch.setattr(RT, "_avec_hook", lambda o, t: t)
+    monkeypatch.setattr(RT, "_servis_en_liste", lambda o, ts: ts)
 
-    async def _sans(ctx, t):
+    async def _sans(ctx, t, catalogues=None):
         return t
     monkeypatch.setattr(RT, "_avec_tool_warnings", _sans)
     return etat

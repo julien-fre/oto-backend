@@ -508,7 +508,8 @@ def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None
                               "plafond journalier se compte (≥ 0, `0` = aucun).")
 
 
-def _avec_hook(org_id: int, t: dict) -> dict:
+def _avec_hook(org_id: int, t: dict, compte: Optional[dict] = None,
+               file: Optional[dict] = None) -> dict:
     """Le déclencheur, augmenté de ce qu'un écran de webhook doit lire : son URL,
     et ce qu'il a reçu. Jamais le secret, ni son haché.
 
@@ -521,13 +522,18 @@ def _avec_hook(org_id: int, t: dict) -> dict:
     ⚠️ Sans la variable (dev, tests), l'URL est rendue RELATIVE plutôt qu'inventée :
     un domaine deviné serait une adresse qui ne répond pas, donnée avec l'assurance
     d'une adresse juste.
+
+    `compte`/`file` : déjà lus pour toute une liste (`_servis_en_liste`) ; absents, ils
+    se lisent pour ce seul déclencheur.
     """
     if (t.get("kind") or "schedule") != "webhook":
         return t
     import os
     base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
-    compte = db.comptage_livraisons(t["id"], org_id)
-    file = db.file_du_declencheur(t["id"], org_id)
+    if compte is None:
+        compte = db.comptage_livraisons(t["id"], org_id)
+    if file is None:
+        file = db.file_du_declencheur(t["id"], org_id)
     # L'adresse privée REMPLACE l'id dans l'URL servie : c'est la seule qui ouvre.
     adresse = t.get("hook_slug") or t["id"]
     return {**t,
@@ -542,7 +548,39 @@ def _avec_hook(org_id: int, t: dict) -> dict:
             "queue_held": file["held"]}
 
 
-async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
+def _servis_en_liste(org_id: int, ts: list[dict]) -> list[dict]:
+    """La liste servie (`op=list`) : chaque déclencheur avec ses pertes et, pour un
+    webhook, son bloc d'écran — mêmes champs que `_avec_pertes` + `_avec_hook`, lus en
+    UNE requête par mesure pour toute la liste (oto-backend#1148). Une lecture par
+    déclencheur coûtait à l'écran des automatisations un à trois emprunts au pool par
+    ligne, dont un parcours de `runner_jobs` par webhook."""
+    ids = [int(t["id"]) for t in ts]
+    hooks = [int(t["id"]) for t in ts if (t.get("kind") or "schedule") == "webhook"]
+    pertes = db.comptages_perimes(org_id, ids)
+    comptes = db.comptages_livraisons(org_id, hooks)
+    files = db.files_des_declencheurs(org_id, hooks)
+    return [_avec_hook(org_id, {**t, **pertes[int(t["id"])]},
+                       comptes.get(int(t["id"])), files.get(int(t["id"])))
+            for t in ts]
+
+
+async def _catalogue_par_nom(ctx: ResolvedCtx, org: int) -> Optional[dict]:
+    """Le catalogue d'outils avec leur état pour (`ctx.sub`, `org`), indexé par nom —
+    `None` quand il ne se calcule pas (fail-soft, cf. `_avec_tool_warnings`)."""
+    inst = tool_registry.bound_instance()
+    if inst is None:
+        return None
+    shim = types.SimpleNamespace(fastmcp=inst)
+    try:
+        catalogue = await tool_catalogue.catalogue_avec_etat(shim, ctx.sub, "", org=org)
+    except Exception as e:  # noqa: SILENT — journalisé, un avertissement manqué n'est pas un déclencheur cassé
+        logger.warning("tool_warnings indisponible pour l'org %s : %s", org, e)
+        return None
+    return {e["name"]: e for e in catalogue}
+
+
+async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict,
+                              catalogues: Optional[dict] = None) -> dict:
     """Le déclencheur, augmenté de ce que ses outils déclarés risquent de ne pas
     atteindre au run — jamais un refus, un signal.
 
@@ -560,22 +598,22 @@ async def _avec_tool_warnings(ctx: ResolvedCtx, t: dict) -> dict:
     même impasse que `agent_toolbox`/`agent_context`, même détour : l'instance
     BOUCLÉE au démarrage du serveur (`tool_registry.bound_instance()`), portée
     dans un objet qui n'a que le seul attribut lu. `None` hors d'un serveur
-    booté (les bancs légers sans base) — fail-soft, jamais un refus."""
+    booté (les bancs légers sans base) — fail-soft, jamais un refus.
+
+    `catalogues` : `{org: catalogue}` partagé par toute une réponse. Le catalogue ne
+    dépend que de (porteur, org) : le recalculer par déclencheur coûtait, à chaque
+    ligne d'une liste, une douzaine de lectures et ~12 ms de boucle pour ~870 outils
+    (oto-backend#1148)."""
     outils = t.get("tools") or []
     if not outils:
         return t
-    inst = tool_registry.bound_instance()
-    if inst is None:
+    org = t.get("org_id") or ctx.org_id
+    catalogues = {} if catalogues is None else catalogues
+    if org not in catalogues:
+        catalogues[org] = await _catalogue_par_nom(ctx, org)
+    par_nom = catalogues[org]
+    if par_nom is None:
         return t
-    shim = types.SimpleNamespace(fastmcp=inst)
-    try:
-        catalogue = await tool_catalogue.catalogue_avec_etat(
-            shim, ctx.sub, "", org=t.get("org_id") or ctx.org_id)
-    except Exception as e:  # noqa: SILENT — journalisé, un avertissement manqué n'est pas un déclencheur cassé
-        logger.warning("tool_warnings indisponible pour le déclencheur %s : %s",
-                       t.get("id"), e)
-        return t
-    par_nom = {e["name"]: e for e in catalogue}
     avertis = []
     for nom in outils:
         entree = par_nom.get(nom)
@@ -768,10 +806,9 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         vus = [t for t in lus if niveaux[int(t["id"])]]
         pretes = _acces_agent.forfaits_pretes(ctx.sub, vus)
         return {"triggers": [_acces_agent.avec_acces(
-                                 _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
-                                 niveaux[int(t["id"])],
+                                 t, niveaux[int(t["id"])],
                                  ferme=_acces_agent.forfait_ferme(ctx.sub, t, pretes))
-                             for t in vus],
+                             for t in _servis_en_liste(ctx.org_id, vus)],
                 "runner": _modele.etat_servi(db.runner_arme(ctx.org_id), ctx.org_id)}
 
     if inp.trigger_id is None:
@@ -1346,10 +1383,12 @@ async def _ajouter_tool_warnings(ctx: ResolvedCtx, rep: dict) -> dict:
     Séparé du SQL (`_triggers_sync`) parce que le calcul de visibilité est asynchrone : le
     SQL part au threadpool en un bloc, les avertissements se calculent ensuite dans la
     boucle — ils ne lisent pas la base directement."""
+    catalogues: dict = {}   # un catalogue par org pour toute la réponse (#1148)
     if "trigger" in rep:
-        rep["trigger"] = await _avec_tool_warnings(ctx, rep["trigger"])
+        rep["trigger"] = await _avec_tool_warnings(ctx, rep["trigger"], catalogues)
     if "triggers" in rep:
-        rep["triggers"] = [await _avec_tool_warnings(ctx, t) for t in rep["triggers"]]
+        rep["triggers"] = [await _avec_tool_warnings(ctx, t, catalogues)
+                           for t in rep["triggers"]]
     return rep
 
 

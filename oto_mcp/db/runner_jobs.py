@@ -383,19 +383,36 @@ def file_du_declencheur(trigger_id: int, org_id: int) -> dict:
     `pending` part dès qu'un worker passe, `held` attend qu'on rallume l'agent.
     `0` est un vrai zéro, jamais une absence de mesure.
     """
+    return files_des_declencheurs(org_id, [trigger_id])[int(trigger_id)]
+
+
+def files_des_declencheurs(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
+    """`file_du_declencheur` pour toute une liste, en UNE lecture (oto-backend#1148) :
+    `{trigger_id: {pending, held}}`, chaque id demandé présent, `0` compris.
+
+    ⚠️ Aucun index ne sert `status = 'held'` (`idx_runner_jobs_live` couvre
+    `pending`/`claimed`) : cette lecture PARCOURT `runner_jobs`. Faite une fois par
+    déclencheur webhook de la liste, elle la parcourait autant de fois que l'org en
+    avait, à chaque ouverture de l'écran des automatisations."""
+    ids = [int(i) for i in trigger_ids]
+    if not ids:
+        return {}
     with _connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
+            SELECT payload->>'trigger_id' AS trigger_id,
+                   COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
                    COUNT(*) FILTER (WHERE status = 'held')::int AS held
               FROM runner_jobs
              WHERE org_id = %s AND status IN ('pending', 'held')
-               AND payload->>'trigger_id' = %s
+               AND payload->>'trigger_id' = ANY(%s)
+             GROUP BY 1
             """,
-            (org_id, str(trigger_id)),
-        ).fetchone()
-    d = dict(row) if row else {}
-    return {"pending": d.get("pending") or 0, "held": d.get("held") or 0}
+            (org_id, [str(i) for i in ids]),
+        ).fetchall()
+    lus = {int(r["trigger_id"]): r for r in rows}
+    return {i: {"pending": lus.get(i, {}).get("pending") or 0,
+                "held": lus.get(i, {}).get("held") or 0} for i in ids}
 
 
 def comptage_perime(org_id: int, trigger_id: int) -> dict:
@@ -404,22 +421,38 @@ def comptage_perime(org_id: int, trigger_id: int) -> dict:
     ⚠️ Dérivé de la file, jamais recopié sur le déclencheur : un compteur tenu à
     part diverge de ce qu'il compte, et c'est alors le compteur qu'on croit.
     """
+    return comptages_perimes(org_id, [trigger_id])[int(trigger_id)]
+
+
+def comptages_perimes(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
+    """`comptage_perime` pour toute une liste, en UNE lecture (oto-backend#1148) :
+    `{trigger_id: {expired_count, expired_since, expired_last}}`, chaque id demandé
+    présent — `expired_count = 0` est un vrai zéro.
+
+    Une lecture par déclencheur relisait, à chaque fois, TOUTES les lignes périmées de
+    l'org (`idx_runner_jobs_expired` ne porte que `org_id`) pour n'en garder qu'un
+    déclencheur : N passes sur les mêmes lignes pour une liste de N."""
+    ids = [int(i) for i in trigger_ids]
+    if not ids:
+        return {}
     with _connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT COUNT(*)::int AS expired_count,
+            SELECT payload->>'trigger_id' AS trigger_id,
+                   COUNT(*)::int AS expired_count,
                    MIN(due_at)   AS expired_since,
                    MAX(due_at)   AS expired_last
               FROM runner_jobs
              WHERE org_id = %s AND status = 'expired'
-               AND payload->>'trigger_id' = %s
+               AND payload->>'trigger_id' = ANY(%s)
+             GROUP BY 1
             """,
-            (org_id, str(trigger_id)),
-        ).fetchone()
-    d = dict(row) if row else {}
-    return {"expired_count": d.get("expired_count") or 0,
-            "expired_since": d.get("expired_since"),
-            "expired_last": d.get("expired_last")}
+            (org_id, [str(i) for i in ids]),
+        ).fetchall()
+    lus = {int(r["trigger_id"]): r for r in rows}
+    return {i: {"expired_count": lus.get(i, {}).get("expired_count") or 0,
+                "expired_since": lus.get(i, {}).get("expired_since"),
+                "expired_last": lus.get(i, {}).get("expired_last")} for i in ids}
 
 
 #: Granularité de la marque de présence d'un worker de PLATEFORME — bien en

@@ -394,19 +394,30 @@ def comptage_livraisons(trigger_id: int, org_id: int) -> dict:
     """Ce que l'écran dit AU-DESSUS de la liste : combien reçues sur 24 h, combien
     refusées, et la dernière. ⚠️ `0` est un vrai zéro (rien n'est arrivé), jamais
     une absence de mesure — même règle que `expired_count`."""
+    return comptages_livraisons(org_id, [trigger_id])[int(trigger_id)]
+
+
+def comptages_livraisons(org_id: int, trigger_ids: list[int]) -> dict[int, dict]:
+    """`comptage_livraisons` pour toute une liste, en UNE lecture (oto-backend#1148) :
+    `{trigger_id: {recues_24h, refusees_24h, derniere}}`, chaque id demandé présent."""
+    ids = [int(i) for i in trigger_ids]
+    if not ids:
+        return {}
     with _connect() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT COUNT(*)::int AS recues_24h,
+            SELECT trigger_id,
+                   COUNT(*)::int AS recues_24h,
                    COUNT(*) FILTER (WHERE outcome LIKE 'refused%%')::int AS refusees_24h,
                    MAX(received_at) AS derniere
               FROM runner_hook_deliveries
-             WHERE trigger_id = %s AND org_id = %s
+             WHERE trigger_id = ANY(%s) AND org_id = %s
                AND received_at > NOW() - INTERVAL '24 hours'
+             GROUP BY trigger_id
             """,
-            (trigger_id, org_id),
-        ).fetchone()
-    d = dict(row) if row else {}
-    return {"recues_24h": d.get("recues_24h") or 0,
-            "refusees_24h": d.get("refusees_24h") or 0,
-            "derniere": d.get("derniere")}
+            (ids, org_id),
+        ).fetchall()
+    lus = {int(r["trigger_id"]): r for r in rows}
+    return {i: {"recues_24h": lus.get(i, {}).get("recues_24h") or 0,
+                "refusees_24h": lus.get(i, {}).get("refusees_24h") or 0,
+                "derniere": lus.get(i, {}).get("derniere")} for i in ids}
