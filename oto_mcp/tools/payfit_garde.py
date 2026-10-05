@@ -13,7 +13,8 @@ Séparés des modules d'outils pour tenir sous 500 lignes. Cinq règles vivent i
   `payfit_write_not_wired`, sans résoudre la clé ni appeler PayFit (24/09/2026) ;
 - **un document ne sort que si la politique de l'org ne masque rien** : un PDF ou un
   fichier ne se filtre pas, donc il est verrouillé tant que les masques PayFit ne
-  sont pas levés (`serve_document`).
+  sont pas levés (`serve_document`). Un EXTRAIT verbatim d'un document (la ligne
+  brute d'un bulletin) suit le même verrou (`documents_unlocked`).
 """
 from __future__ import annotations
 
@@ -119,6 +120,13 @@ DOCUMENTS_POLICY_UNREADABLE = (
     "PayFit : document non servi. La politique de filtres de champs de ton org n'a "
     "pas pu être lue, et un document qui porte NIR ou IBAN ne sort pas sans elle. "
     "Réessaie dans un instant ; si ça persiste, c'est un incident côté oto.")
+OVERTIME_LINE_LOCKED = (
+    "PayFit : la ligne brute du bulletin (`line`) n'est pas servie. C'est du texte "
+    "du document, qu'un filtre de champs ne voit pas, et la politique de filtres de "
+    "champs de ton org masque des champs PayFit. `kind`, `label`, `numbers` et "
+    "`rates` restent servis, filtrés par cette politique. Pour obtenir la ligne "
+    "brute, un org_admin de l'org doit lever les masques du connecteur `payfit` "
+    "(politique sans aucune règle).")
 
 
 def documents_open() -> bool:
@@ -139,25 +147,29 @@ def documents_open() -> bool:
     return access.resolve_field_filter(_NAME).is_empty
 
 
+def documents_unlocked() -> bool:
+    """`documents_open`, **fail-closed** : une politique illisible (base
+    indisponible…) est un refus nommé, jamais un verrou ouvert — exactement comme
+    `redaction.redact_payload` retient la sortie JSON d'un service à défaut serveur.
+    À lire AVANT tout appel amont : ce qu'on ne servira pas ne se télécharge pas."""
+    try:
+        return documents_open()
+    except Exception as e:  # noqa: BLE001 — refus nommé, fail-closed
+        logger.warning("payfit : politique de filtres illisible, document refusé",
+                       exc_info=True)
+        raise _bad(DOCUMENTS_POLICY_UNREADABLE) from e
+
+
 def serve_document(fetch: Callable[[], dict]) -> dict:
     """Le SEUL chemin d'un document PayFit vers l'agent : verrou, PUIS appel amont,
-    PUIS rendu. Le document n'est pas même téléchargé quand le verrou est fermé.
-
-    **Fail-closed** : une politique illisible (base indisponible…) ferme le verrou,
-    exactement comme `redaction.redact_payload` retient la sortie JSON d'un service
-    à défaut serveur.
+    PUIS rendu. Le document n'est pas même téléchargé quand le verrou est fermé, ni
+    quand la politique est illisible (`documents_unlocked`).
 
     Le rendu passe par `file_content.render_for_agent`, domicile unique de la règle
     inline-vs-URL signée."""
     from .. import file_content
 
-    try:
-        ouvert = documents_open()
-    except Exception as e:  # noqa: BLE001 — refus nommé, fail-closed
-        logger.warning("payfit : politique de filtres illisible, document refusé",
-                       exc_info=True)
-        raise _bad(DOCUMENTS_POLICY_UNREADABLE) from e
-    if not ouvert:
+    if not documents_unlocked():
         raise _bad(DOCUMENTS_LOCKED)
     blob = run(fetch)
     sub = access.current_user_sub_or_raise()

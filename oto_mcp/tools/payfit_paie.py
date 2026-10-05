@@ -15,7 +15,9 @@ montants structurés de toute l'API sont les **écritures comptables**
 numéro de compte (641x salaires, 645x cotisations, 6417x avantages en nature), et
 c'est la seule voie qui existe. Le reste ne se déduit pas — ça se dit absent.
 Seule exception, et elle se DIT lue et non servie : les heures sup, que
-`payfit_payslip(op="overtime")` lit dans le PDF du bulletin (`payfit_bulletin`).
+`payfit_payslip(op="overtime")` lit dans le PDF du bulletin (`payfit_bulletin`). Leurs
+nombres sont des données (filtrées champ par champ par la politique de l'org) ; la
+ligne brute est du texte du bulletin, et suit le verrou des documents.
 
 ⚠️ **Le mois se dit `AAAAMM`** (janvier = `01`) partout ici, jamais `AAAA-MM` : c'est
 la seule forme que PayFit accepte, et son refus ne nomme aucun champ. Le client
@@ -31,8 +33,9 @@ from fastmcp import FastMCP
 from .. import file_extract
 from . import payfit_bulletin
 from . import payfit_socle as S
-from .payfit_garde import (_bad, _client, limit_or_default, need, refuse_ignored,
-                           refuse_unknown_op, run, serve_document)
+from .payfit_garde import (OVERTIME_LINE_LOCKED, _bad, _client, documents_unlocked,
+                           limit_or_default, need, refuse_ignored, refuse_unknown_op,
+                           run, serve_document)
 
 # Au-delà, l'appel porterait trop de téléchargements : on demande un mois.
 OVERTIME_MAX_PAYSLIPS = 24
@@ -40,10 +43,16 @@ OVERTIME_MAX_PAYSLIPS = 24
 
 def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
     """Les lignes heures sup des bulletins d'un salarié (un mois, ou tous) — le PDF
-    est lu CÔTÉ SERVEUR et seul ce qui nomme des heures sup en sort. Pas soumis au
-    verrou des documents : le bulletin lui-même ne quitte jamais le serveur."""
+    est lu CÔTÉ SERVEUR et seul ce qui nomme des heures sup en sort.
+
+    `kind`, `label`, `numbers`, `rates` sont des données : la politique de champs de
+    l'org les filtre par nom, comme toute sortie JSON. `line`, elle, est un extrait
+    VERBATIM du bulletin, qui répète montants et taux sous un nom que la politique ne
+    relie pas à `numbers` ni `rates` : elle suit le verrou des documents et ne sort
+    que si la politique ne masque rien (alerte du scanner de sécurité)."""
     if date is not None and not re.fullmatch(r"\d{4}(0[1-9]|1[0-2])", date):
         raise _bad(f"PayFit : `date` s'écrit `AAAAMM` (janvier = 01), reçu « {date} ».")
+    brute = documents_unlocked()
     env = run(lambda: c.list_payslips(collaborator_id))
     slips = [p for p in ((env or {}).get("payslips") or []) if isinstance(p, dict)]
     if date is not None:
@@ -62,7 +71,8 @@ def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
         row = {"year": p.get("year"), "month": p.get("month"),
                "contractId": p.get("contractId"), "payslipId": p.get("payslipId")}
         if ex.ok:
-            row["lines"] = payfit_bulletin.overtime_lines(ex.text)
+            row["lines"] = [l if brute else {k: v for k, v in l.items() if k != "line"}
+                            for l in payfit_bulletin.overtime_lines(ex.text)]
         else:
             row["lines"] = []
             row["unreadable"] = f"{ex.status} : {ex.detail}"
@@ -71,6 +81,8 @@ def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
            "notice": ("lignes lues dans le texte du PDF, format non contractuel : "
                       "`numbers` est dans l'ordre de la ligne, sans rôle attribué. "
                       "Vérifie la lecture sur un bulletin avant d'en tirer un total.")}
+    if not brute:
+        out["line_withheld"] = OVERTIME_LINE_LOCKED
     if truncated:
         out["truncated"] = (f"{len(slips)} bulletins, {OVERTIME_MAX_PAYSLIPS} lus (les "
                             "plus récents) : passe `date` pour viser un mois.")
@@ -110,7 +122,10 @@ def register(mcp: FastMCP) -> None:
           complémentaires / majorées) of the collaborator's payslips — one month
           with `date` (`YYYYMM`), else the most recent 24. The PDF is read server
           side and nothing else leaves it: per payslip `{year, month, contractId,
-          payslipId, lines: [{kind, label, numbers, rates, line}]}`. `kind` =
+          payslipId, lines: [{kind, label, numbers, rates, line}]}`. `line` (the
+          raw text of the line) is part of the document: it is served only when
+          the org's PayFit field policy masks nothing, else `line_withheld` says
+          why. `kind` =
           `paiement` (the paid hours) or `allegement` (a contribution reduction or
           exemption on them — never add it to the paid amount). `numbers` are in
           the line's order, with no role assigned: the payslip layout is not a
@@ -124,7 +139,8 @@ def register(mcp: FastMCP) -> None:
         is served only when an org_admin has lifted every PayFit mask; otherwise
         the call is refused with the reason. Do not try to rebuild the document
         from other calls — the refusal is the org's policy, not a bug.
-        op="overtime" is not locked: the document never leaves the server.
+        op="overtime" is not locked: the document never leaves the server; only
+        its raw `line` follows the lock.
 
         Args:
             op: list (default) | download | overtime.
