@@ -218,8 +218,9 @@ def _anomalies_table(t: str, entree: Table, schema: Schema,
         out.append(f"`{t}` (exclue) doit dire pourquoi elle ne part pas")
     presentes = set(schema.colonnes[t])
     destinataire = entree.destinataire.colonnes() if entree.destinataire else ()
+    naissance = entree.naissance[:1] if entree.naissance else ()
     for c in (*entree.regle.colonnes(), *entree.secrets, *entree.hors_base, *destinataire,
-              *entree.comptes):
+              *entree.comptes, *naissance):
         if c not in presentes:
             out.append(f"`{t}` : la colonne `{c}` nommée par le classement n'existe pas")
     liens = vias(entree.regle)

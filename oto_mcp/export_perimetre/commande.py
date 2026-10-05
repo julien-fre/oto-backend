@@ -9,8 +9,9 @@
         `--sans-journal` laisse le journal d'appels : il voyage par tranches.
 
     oto-mcp perimetre import perimetre.jsonl
-        verse le fichier dans la base de l'instance (`DATABASE_URL`), née par le
-        démarrage, et l'archive des objets dans SON stockage (`OTO_MCP_S3_*`), en
+        verse le fichier dans la base de l'instance (`DATABASE_URL`), née par `init_db`
+        et où l'app n'a JAMAIS démarré — sinon refus, qui nomme les tables déjà semées —,
+        et l'archive des objets dans SON stockage (`OTO_MCP_S3_*`), en
         réécrivant les URL vers SA base publique ; secrets et objets doivent être
         chiffrés sous SA clé (`OTO_MCP_MASTER_KEY`).
 
@@ -20,7 +21,7 @@
         une borne sans fuseau est en UTC.
 
     oto-mcp perimetre journal import journal-09.jsonl
-        la verse dans l'instance née par le démarrage, avant ou après l'import
+        la verse dans l'instance née par `init_db`, avant ou après l'import
         principal ; rejouée, elle n'insère rien.
 
 Un refus s'imprime tel quel, nommé, et sort en code 2 ; rien n'est écrit. Le résumé ne

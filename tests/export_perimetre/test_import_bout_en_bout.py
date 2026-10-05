@@ -42,8 +42,8 @@ from oto_mcp.export_perimetre.rechiffrement import AAD, empreinte_cle  # noqa: E
 from oto_mcp.export_perimetre.transformation import Transformation  # noqa: E402
 from oto_mcp.export_perimetre.objets import StockageS3  # noqa: E402
 from perimetre_banc import (  # noqa: E402
-    A, B, BASE_CIBLE, BASE_SOURCE, SECRET, FauxS3, _credential, membre, naitre, org, semer,
-    slug_de, tenant, url_cible)
+    A, B, BASE_CIBLE, BASE_SOURCE, SECRET, FauxS3, _credential, demarrer, membre, naitre,
+    org, semer, slug_de, tenant, url_cible)
 from perimetre_banc import detruire as _detruire  # noqa: E402
 
 CLE_SOURCE, CLE_CIBLE = os.urandom(32), os.urandom(32)
@@ -320,6 +320,64 @@ def test_les_sequences_sont_recalees(cible, export_a):
 def test_une_cible_deja_peuplee_refuse(cible, export_a):
     with pytest.raises(ImportRefuse, match="pas vierge"):
         _importer(cible["dsn"], export_a[0])
+
+
+def _refus_avant_ecriture(dsn: str, chemin, monkeypatch) -> str:
+    """L'import refusé par son contrôle PRÉALABLE : s'il atteignait l'écriture, le banc
+    tomberait sur autre chose qu'un `ImportRefuse`."""
+    from oto_mcp.export_perimetre import importation
+
+    def _ecriture(*_):
+        raise AssertionError("l'import a atteint l'écriture")
+    monkeypatch.setattr(importation, "_verser", _ecriture)
+    with pytest.raises(ImportRefuse) as refus:
+        _importer(dsn, chemin)
+    assert type(refus.value) is ImportRefuse
+    return str(refus.value)
+
+
+def _lignes(dsn: str, *tables: str) -> dict[str, int]:
+    with psycopg.connect(dsn, row_factory=dict_row) as c:
+        return {t: c.execute(f"SELECT count(*) AS n FROM {t}").fetchone()["n"] for t in tables}
+
+
+def test_une_cible_ou_l_app_a_demarre_refuse_avant_d_ecrire_en_nommant_ses_tables(
+        export_a, pg_dsn, monkeypatch):
+    """#1161 : le premier démarrage de l'app sème ses guides plateforme (`nodes`,
+    `blocks`), dont les identifiants heurtaient, tard et en `nodes_pkey`, ceux que
+    l'import préserve. Le contrôle préalable refuse la cible, nomme chaque table semée et
+    son nombre de lignes, et dit le geste ; les lignes de la naissance n'y sont pas."""
+    dsn = _naitre(pg_dsn, slug_de(A))
+    try:
+        demarrer(dsn, slug_de(A), NOM_A)
+        semees = _lignes(dsn, "nodes", "blocks", "orgs")
+        assert semees["nodes"] and semees["blocks"], "rien de semé : le banc ne prouve rien"
+        message = _refus_avant_ecriture(dsn, export_a[0], monkeypatch)
+        assert "pas vierge" in message
+        assert f"nodes ({semees['nodes']})" in message
+        assert f"blocks ({semees['blocks']})" in message
+        assert "connector_availability" not in message
+        assert "connector_selection_seeded" not in message
+        assert "tenants" not in message
+        assert "base neuve" in message and "AVANT le premier démarrage" in message
+        assert _lignes(dsn, "nodes", "blocks", "orgs") == semees
+    finally:
+        _detruire(pg_dsn, dsn)
+
+
+def test_une_ligne_hors_naissance_d_une_table_semee_refuse(export_a, pg_dsn, monkeypatch):
+    """Une table que la naissance sème n'est tolérée que pour CES lignes : une ligne
+    d'org dans `connector_availability` se compte et se nomme."""
+    dsn = _naitre(pg_dsn, slug_de(A))
+    try:
+        with psycopg.connect(dsn) as c:
+            c.execute("INSERT INTO connector_availability (scope_type, scope_id, connector, "
+                      "enabled) VALUES ('org', '99', 'serper', false)")
+        message = _refus_avant_ecriture(dsn, export_a[0], monkeypatch)
+        assert "connector_availability (1)." in message
+        assert "nodes" not in message
+    finally:
+        _detruire(pg_dsn, dsn)
 
 
 def test_une_cible_d_un_autre_tenant_ou_d_un_autre_nom_refuse(export_a, pg_dsn):

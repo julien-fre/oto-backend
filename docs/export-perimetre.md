@@ -3,13 +3,13 @@ title: Export par périmètre de propriétaire
 type: reference
 description: >-
   Extraire d'une base partagée tout ce qui appartient à un propriétaire, et rien
-  d'autre, pour le verser dans une instance née par le démarrage normal
-  (oto-backend#1088, ADR 0070 §7.6). Le classement déclaré de chaque table
-  (possédée, indirecte, instance, exclue), le refus d'une table non classée, le
+  d'autre, pour le verser dans une instance dont la base est née par `init_db`,
+  AVANT le premier démarrage de l'app (oto-backend#1088, #1161, ADR 0070 §7.6). Le
+  classement déclaré de chaque table (possédée, indirecte, instance, exclue), le refus d'une table non classée, le
   périmètre dérivé d'orgs déclarées (et de leur tenant), les lignes d'anciens comptes
   (rattachées au jumeau, sinon omises, comptées), les refus de l'extraction, et
-  l'import dans une base née par le démarrage : tenant sur la ligne 1, comptes
-  dénudés, secrets rechiffrés à l'export, vérification par relecture, commande
+  l'import dans une base née par `init_db` et jamais démarrée (refus nommé de toute
+  table écrite déjà semée) : tenant sur la ligne 1, comptes dénudés, secrets rechiffrés à l'export, vérification par relecture, commande
   `oto-mcp perimetre`. Le journal d'appels hors de la fenêtre de coupure : export
   principal sans journal, tranches de dates poussées la veille puis diff, import
   idempotent, faits de run complets.
@@ -31,8 +31,9 @@ fenêtre »).**
 # instance) — écrit perimetre.jsonl et perimetre.jsonl.objets.tar :
 OTO_EXPORT_CLE_CIBLE=<clé de l'instance cible> \
   oto-mcp perimetre export --org 12 [--org 13 …] --sortie perimetre.jsonl
-# Sur l'instance cible, née par le démarrage (sa DATABASE_URL, SA clé maîtresse, SON
-# stockage OTO_MCP_S3_*) — les deux fichiers côte à côte :
+# Sur l'instance cible, dont la base est née par `init_db` et où l'app n'a JAMAIS
+# démarré (sa DATABASE_URL, SA clé maîtresse, SON stockage OTO_MCP_S3_*) — les deux
+# fichiers côte à côte :
 oto-mcp perimetre import perimetre.jsonl
 
 # Le jour J : le journal d'appels voyage à part (« Le journal hors fenêtre ») —
@@ -44,6 +45,14 @@ oto-mcp perimetre journal import journal.jsonl
 
 Un refus s'imprime nommé et sort en code 2, sans rien écrire. Le résumé ne cite jamais
 une clé, seulement l'empreinte de la clé cible.
+
+⚠️ **Importer AVANT le premier démarrage de l'app** (#1161). Le démarrage sème ses
+propres lignes dans des tables que l'import écrit (les guides plateforme : `nodes`,
+`blocks`), sous des identifiants que l'import préserve : il tombait tard, en
+`nodes_pkey`. Il refuse désormais une telle cible dès son contrôle préalable, en nommant
+chaque table et son nombre de lignes. Il n'y a pas d'option pour passer outre : repartir
+d'une base neuve, née par `init_db`, et y importer avant de démarrer l'app. Sur une
+instance cible, l'ordre de la première montée : `docs/instance-cible.md`.
 
 ## Le classement : chaque table, une classe
 
@@ -235,19 +244,27 @@ de `oto-mcp perimetre export` l'affiche.
 
 ## L'import
 
-`importation.importer(conn, fichier)` verse le fichier dans une base **née par le
-démarrage** pour l'instance du propriétaire, en UNE transaction. L'import ne connaît
-que la clé de SON instance. Avant d'écrire, il refuse (`ImportRefuse`) dans ces cas :
+`importation.importer(conn, fichier)` verse le fichier dans une base **née par
+`init_db`, et jamais démarrée**, pour l'instance du propriétaire, en UNE transaction.
+L'import ne connaît que la clé de SON instance. Avant d'écrire, il refuse
+(`ImportRefuse`) dans ces cas :
 
 - un fichier dont l'empreinte ou les comptes ne sont pas ceux du manifeste ;
 - une version de schéma différente, ou des colonnes qui ne sont pas les mêmes. Elles se
   comparent par NOM, dans n'importe quel ordre : une base servie porte en fin de table
-  les colonnes ajoutées par `ALTER TABLE … ADD COLUMN`, une base née par le démarrage à
+  les colonnes ajoutées par `ALTER TABLE … ADD COLUMN`, une base née par `init_db` à
   leur place de création, et l'écriture comme la relecture associent par nom. Le refus
   nomme, par table, les colonnes présentes d'un seul côté (`source seule`, `cible
   seule`) ;
-- une base déjà peuplée (`orgs` ou `users`) — le journal, lui, a pu y être poussé la
-  veille : il ne compte pas ;
+- une base qui n'est pas vierge (`controler_vierge`) : une table que l'import écrit — les
+  tables exportées du classement sous lequel l'export a été lu, TOUTES — porte des
+  lignes autres que celles que la naissance de l'instance y sème. Ces dernières sont
+  déclarées au classement (`naissance` : le tenant primaire, les disponibilités
+  `platform` de `connector_availability`, les sentinelles `org_id = 0` de
+  `connector_selection_seeded`), et `test_classement_couvre_schema.py` les tient égales
+  à ce que sème `init_db`. Le refus nomme chaque table et son nombre de lignes, et dit le
+  geste : une base neuve, ou importer avant le premier démarrage. Un export sans journal
+  ne compte pas le journal : des tranches ont pu y être poussées la veille ;
 - un tenant primaire cible dont le slug (`OTO_TENANT_PRIMAIRE_SLUG`) ou le NOM (semé
   depuis `OTO_BRAND_NAME`) n'est pas celui du tenant exporté : le refus donne les deux
   noms, l'import n'écrase pas le nom que l'instance déclare (décision du 28/09/2026) ;
@@ -257,7 +274,7 @@ que la clé de SON instance. Avant d'écrire, il refuse (`ImportRefuse`) dans ce
 
 Ce qui change en chemin est `transformation.Transformation`, rien d'autre :
 
-- **le tenant** : la ligne 1 semée par le démarrage prend les valeurs du tenant exporté,
+- **le tenant** : la ligne 1 semée par `init_db` prend les valeurs du tenant exporté,
   et toute clé vers `tenants(id)` vaut 1 ;
 - **les comptes** perdent le préfixe `<slug>:` (validé le 28/09/2026) : toute VALEUR
   exactement égale à un sub du périmètre, ou à sa forme membre `<org>:<sub>`, est
@@ -355,9 +372,9 @@ instance NÉE par le démarrage, que l'import principal ait eu lieu ou non :
 
 ### L'ordre du jour J : pousser, puis le diff
 
-1. **La veille.** La base cible naît par le démarrage (`init_db` : tenant primaire en
-   ligne 1, ni orgs ni comptes). On y POUSSE les 30 derniers jours, en une ou plusieurs
-   tranches contiguës, la première avec `--faits-de-run-complets` :
+1. **La veille.** La base cible naît par `init_db` (tenant primaire en ligne 1, ni orgs
+   ni comptes), et l'app n'y démarre PAS avant l'import principal (#1161). On y POUSSE
+   les 30 derniers jours, en une ou plusieurs tranches contiguës, la première avec `--faits-de-run-complets` :
    ```bash
    oto-mcp perimetre journal export --org 12 --depuis 2026-09-01T00:00:00Z \
      --jusqu-a 2026-10-01T00:00:00Z --faits-de-run-complets --sortie push.jsonl

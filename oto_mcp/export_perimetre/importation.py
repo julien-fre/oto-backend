@@ -1,17 +1,19 @@
-"""L'import d'un export de périmètre dans une base NÉE PAR LE DÉMARRAGE (#969).
+"""L'import d'un export de périmètre dans une base NÉE PAR `init_db`, JAMAIS DÉMARRÉE.
 
-La cible est une base vierge qu'`init_db` a montée pour l'instance qui la sert : même
-schéma, version Alembic posée, tenant primaire (ligne 1) semé depuis
-`OTO_TENANT_PRIMAIRE_SLUG`. L'import y verse le fichier en UNE transaction, et ne la
-valide qu'après s'être relu.
+La cible est une base vierge qu'`init_db` a montée pour l'instance qui la sert (#969) :
+même schéma, version Alembic posée, tenant primaire (ligne 1) semé depuis
+`OTO_TENANT_PRIMAIRE_SLUG`. L'app n'y a pas encore démarré : son premier démarrage y
+sème ses propres lignes, que l'import heurterait (#1161). L'import y verse le fichier en
+UNE transaction, et ne la valide qu'après s'être relu.
 
 Refus, tous AVANT la première écriture et chacun nommé (`ImportRefuse`) : fichier dont
 l'empreinte ou les comptes ne sont pas ceux du manifeste, version de schéma différente
 de la source ou colonnes qui n'y sont pas les mêmes (comparées par NOM, l'ordre ne compte
-pas : `_ecarts_de_colonnes`), base cible déjà peuplée, tenant primaire de la cible dont
-le slug ou le NOM (semé depuis `OTO_BRAND_NAME`) n'est pas celui du tenant exporté,
-secrets ou objets chiffrés sous une autre clé que celle de CETTE instance, archive des
-objets absente ou modifiée.
+pas : `_ecarts_de_colonnes`), base cible qui n'est pas vierge (`controler_vierge` : une
+table que l'import écrit porte des lignes que sa naissance n'y a pas semées), tenant
+primaire de la cible dont le slug ou le NOM (semé depuis `OTO_BRAND_NAME`) n'est pas
+celui du tenant exporté, secrets ou objets chiffrés sous une autre clé que celle de CETTE
+instance, archive des objets absente ou modifiée.
 
 L'import ne connaît que la clé de son instance : les secrets arrivent déjà rechiffrés
 pour elle (`rechiffrement`, fait à l'export). Il vérifie seulement, en mémoire, que
@@ -51,7 +53,7 @@ from pathlib import Path
 import psycopg
 
 from ..crypto import _load_master_key
-from .classement import CLASSEMENT, Table, sans_journal
+from .classement import CLASSEMENT, EXPORTEES, Table, sans_journal
 from .decouverte import lire_schema, verifier_classement
 from .extraction import FORMAT, Lecture, _colonnes, ouvrir
 from .objets import ObjetsRefuses, Stockage, controler_archive
@@ -206,14 +208,46 @@ def cle_de_l_instance(manifeste: dict) -> bytes | None:
 
 def _controler_cible(conn, manifeste: dict):
     schema = controler_schema(conn, manifeste)
-    # Vierge en orgs et en comptes : le journal, lui, a pu y être poussé la veille.
-    peuplees = [t for t in ("orgs", "users")
-                if conn.execute(f"SELECT EXISTS (SELECT 1 FROM {t}) AS e").fetchone()["e"]]
-    if peuplees:
-        raise ImportRefuse(f"la base cible n'est pas vierge ({peuplees} portent des lignes) : "
-                           "l'import vise une base née par le démarrage, rien d'autre")
+    controler_vierge(conn, schema, manifeste)
     controler_tenant(conn, manifeste)
     return schema
+
+
+def controler_vierge(conn, schema, manifeste: dict) -> None:
+    """Chaque table que l'import écrit est vide sur la cible, hors les lignes que la
+    naissance de l'instance y sème (`Table.naissance`) — sinon refus, avant la première
+    écriture, qui nomme chaque table et son nombre de lignes.
+
+    Les tables sont celles du classement sous lequel l'export a été lu
+    (`classement_du`) : sans journal, le journal n'en est pas, et les tranches poussées
+    la veille ne comptent pas. Sans ce contrôle, une cible où l'app a déjà démarré
+    passait le contrôle de schéma et tombait tard sur une violation d'unicité
+    (`nodes_pkey` : les guides plateforme semés au démarrage portent les identifiants
+    que l'import préserve). Aucune option ne le contourne."""
+    deja = lignes_deja_la(conn, verifier_classement(schema, classement_du(manifeste)))
+    if deja:
+        raise ImportRefuse(
+            "la base cible n'est pas vierge : des tables que l'import écrit portent déjà "
+            "des lignes — " + ", ".join(f"{t} ({n})" for t, n in deja.items())
+            + ". L'import vise une base NEUVE, née par `init_db` et jamais démarrée : "
+            "repartir d'une base neuve, ou importer AVANT le premier démarrage de l'app")
+
+
+def lignes_deja_la(conn, classement: dict[str, Table]) -> dict[str, int]:
+    """Par table exportée du `classement` (indexé par table physique), le nombre de
+    lignes que la cible porte hors celles de sa naissance ; les tables vides n'y sont pas."""
+    deja = {}
+    for t, entree in sorted(classement.items()):
+        if entree.classe not in EXPORTEES:
+            continue
+        sql, params = f"SELECT count(*) AS n FROM {t}", ()
+        if entree.naissance:
+            sql += f" WHERE {entree.naissance[0]}::text IS DISTINCT FROM %s"
+            params = (entree.naissance[1],)
+        n = conn.execute(sql, params).fetchone()["n"]
+        if n:
+            deja[t] = n
+    return deja
 
 
 def controler_schema(conn, manifeste: dict):

@@ -15,6 +15,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from contextlib import contextmanager
 from urllib.parse import quote
 
 import psycopg
@@ -81,14 +82,11 @@ class FauxS3:
         return {"ContentLength": len(donnees), "Metadata": meta}
 
 
-def naitre(pg_dsn: str, slug: str, nom: str) -> str:
-    """Une base NEUVE montée par le démarrage normal, pour l'instance du tenant `slug`
-    (nom `nom`) ; rend son DSN. À `detruire`."""
-    from oto_mcp.db import _conn, init_db
-    base = "oto_test_" + uuid.uuid4().hex[:8]
-    with psycopg.connect(pg_dsn, autocommit=True) as root:
-        root.execute(f'CREATE DATABASE "{base}"')
-    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + base
+@contextmanager
+def _sur(dsn: str, slug: str, nom: str):
+    """Le code de l'instance du tenant `slug` (nom `nom`) branché sur la base `dsn`, le
+    temps du bloc : son environnement et un pool à elle, rendu à la sortie."""
+    from oto_mcp.db import _conn
     pool_avant = _conn._pool
     _conn._pool = None
     with pytest.MonkeyPatch.context() as mp:
@@ -96,12 +94,33 @@ def naitre(pg_dsn: str, slug: str, nom: str) -> str:
         mp.setenv("OTO_TENANT_PRIMAIRE_SLUG", slug)
         mp.setenv("OTO_BRAND_NAME", nom)
         try:
-            init_db()
+            yield mp
         finally:
             if _conn._pool is not None:
                 _conn._pool.close()
             _conn._pool = pool_avant
+
+
+def naitre(pg_dsn: str, slug: str, nom: str) -> str:
+    """Une base NEUVE montée par `init_db`, pour l'instance du tenant `slug` (nom `nom`),
+    où l'app n'a jamais démarré ; rend son DSN. À `detruire`."""
+    from oto_mcp.db import init_db
+    base = "oto_test_" + uuid.uuid4().hex[:8]
+    with psycopg.connect(pg_dsn, autocommit=True) as root:
+        root.execute(f'CREATE DATABASE "{base}"')
+    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + base
+    with _sur(dsn, slug, nom):
+        init_db()
     return dsn
+
+
+def demarrer(dsn: str, slug: str, nom: str) -> None:
+    """Le PREMIER démarrage de l'app sur la base `dsn` : la préparation de la base du
+    boot (`server._prepare_database`), telle quelle — elle y sème les lignes de l'app."""
+    from oto_mcp import server
+    with _sur(dsn, slug, nom) as mp:
+        mp.setattr(server, "_PREPARED", False)
+        server._prepare_database()
 
 
 def detruire(pg_dsn: str, dsn: str) -> None:

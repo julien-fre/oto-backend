@@ -33,6 +33,13 @@ lequel. Ce compte peut être un ANCIEN membre, hors périmètre : la ligne est a
 rattachée à son jumeau ou omise (`comptes`). Une colonne qui trace seulement l'AUTEUR
 d'un geste sur un objet de l'org (`created_by`, `actor_sub`, `edited_by`…) n'en est pas :
 l'objet est à l'org, pas à son auteur. Les règles ajoutent les leurs (`comptes_de`).
+
+`naissance` nomme, d'une table exportée, les lignes que la NAISSANCE de l'instance y sème
+(`init_db`, et lui seul) : `(colonne, valeur)`. Ce sont les siennes, jamais celles d'un
+propriétaire, et l'import les trouve sur toute cible : il les tolère, et rien d'autre
+(`importation.controler_vierge`). Un démarrage de l'app en sème d'autres (les guides
+plateforme dans `nodes` et `blocks`), que l'import heurterait : elles ne sont PAS de la
+naissance. `test_classement_couvre_schema.py` tient la liste égale à ce qu'`init_db` sème.
 """
 from __future__ import annotations
 
@@ -60,12 +67,15 @@ class Table:
     # sinon elle est omise, et comptée au manifeste (décision du 28/09/2026).
     destinataire: Regle | None = None
     comptes: tuple[str, ...] = ()
+    # Les lignes que la naissance de l'instance (`init_db`) sème : `(colonne, valeur)`.
+    naissance: tuple[str, str] | None = None
 
 
 def possedee(regle: Regle, raison: str = "", *, secrets: tuple[str, ...] = (),
              hors_base: tuple[str, ...] = (), destinataire: Regle | None = None,
-             comptes: tuple[str, ...] = ()) -> Table:
-    return Table(POSSEDEE, regle, raison, secrets, hors_base, destinataire, comptes)
+             comptes: tuple[str, ...] = (), naissance: tuple[str, str] | None = None) -> Table:
+    return Table(POSSEDEE, regle, raison, secrets, hors_base, destinataire, comptes,
+                 naissance)
 
 
 def indirecte(regle: Regle, raison: str = "", *, secrets: tuple[str, ...] = (),
@@ -122,7 +132,7 @@ CLASSEMENT: dict[str, Table] = {
     # Le tenant du périmètre PART (décision du 28/09/2026) : il devient la ligne 1 de
     # la cible, les clés qui le désignent y sont remappées (`importation`). Ses admins
     # partent s'ils sont des comptes du périmètre ; les nôtres restent.
-    "tenants": possedee(ParTenant()),
+    "tenants": possedee(ParTenant(), naissance=("id", "1")),
     "tenant_admins": possedee(ParSub()),
     "tenant_legal_docs": indirecte(Via("tenants", ("tenant_slug",), ("slug",), fk=False)),
     # ── contenu : projets, pages, tableaux, nœuds, procédures, fonctions ───────
@@ -179,11 +189,14 @@ CLASSEMENT: dict[str, Table] = {
                                       secrets=("secret_enc",)),
     "connector_instances": possedee(ParEntite()),
     "connector_availability": possedee(ParEntite("scope_type", "scope_id"),
-                                       "les lignes `platform` (semées au démarrage) et "
-                                       "`tenant` sont celles de l'instance"),
+                                       "les lignes `platform` (semées par `init_db`) et "
+                                       "`tenant` sont celles de l'instance",
+                                       naissance=("scope_type", "platform")),
     "connector_settings": possedee(ParEntite("scope_type", "scope_id")),
     "connector_selection_removed": possedee(ParOrg(), comptes=("sub",)),
-    "connector_selection_seeded": possedee(ParOrg(), comptes=("sub",)),
+    # Les sentinelles des backfills de démarrage vivent sous `org_id = 0` (`selection`).
+    "connector_selection_seeded": possedee(ParOrg(), comptes=("sub",),
+                                           naissance=("org_id", "0")),
     "user_selected_connectors": possedee(ParOrg(), comptes=("sub",)),
     "connector_account_grants": possedee(ParSub("owner_sub")),
     "connector_account_group_grants": possedee(ParSub("owner_sub")),

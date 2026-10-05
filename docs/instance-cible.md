@@ -374,6 +374,16 @@ sur la machine, les valeurs **effectives** : `systemctl show <i>-<r>@green -p Us
 NoNewPrivileges -p Restart`, et `curl https://<hôte>/api/version`. Les données arrivent
 à part, par l'export par périmètre (`docs/export-perimetre.md`), dans la base née.
 
+⚠️ **L'import précède le premier démarrage de l'app** (#1161) : ce démarrage sème des
+lignes (les guides plateforme, `nodes` et `blocks`) dans des tables que l'import écrit,
+sous des identifiants qu'il préserve. L'import refuse alors la base dès son contrôle
+préalable, en nommant chaque table et son nombre de lignes, sans option pour passer
+outre : une base où l'app a déjà démarré ne se rattrape pas, on repart d'une base neuve.
+Pour une cible qui reçoit des données, la base du rôle naît par `init_db`, reçoit
+l'import, et c'est ensuite seulement que l'app y démarre. Aujourd'hui, seul le démarrage
+fait naître le schéma d'une base neuve (§ Les migrations, un geste explicite) : faire
+naître la base par `init_db` sans démarrer l'app n'a pas encore de geste outillé.
+
 Retour arrière d'un rôle : `-f action=retour -f etape=<rôle>`.
 
 ## Le déclencheur, dans le dépôt du propriétaire

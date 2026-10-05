@@ -21,6 +21,7 @@ from oto_mcp.export_perimetre import classement as cl  # noqa: E402
 from oto_mcp.export_perimetre.decouverte import (  # noqa: E402
     ClassementIncomplet, lire_schema, verifier_classement)
 from oto_mcp.export_perimetre.extraction import ordre_d_export  # noqa: E402
+from oto_mcp.export_perimetre.importation import lignes_deja_la  # noqa: E402
 from oto_mcp.export_perimetre.regles import ParOrg, ParSub, Via  # noqa: E402
 
 
@@ -129,6 +130,27 @@ def test_l_ordre_d_export_place_chaque_parent_avant_ses_enfants(schema):
         for k in schema.cles_de(t):
             if k.cible in rang and k.cible != t:
                 assert rang[k.cible] < rang[t], f"{k.cible} doit précéder {t}"
+
+
+def test_la_naissance_declaree_est_exactement_ce_qu_init_db_seme(conn, schema):
+    """#1161 : l'import tolère, dans les tables qu'il écrit, les lignes que la naissance
+    de l'instance y sème (`Table.naissance`), et rien d'autre. La déclaration se lit
+    contre la base que vient de monter `init_db` : une table qu'il sème sans déclaration
+    ferait refuser TOUTE cible neuve, une déclaration sans semis ou trop large laisserait
+    passer des lignes que l'import heurterait. Une cible neuve passe donc le contrôle."""
+    classement = verifier_classement(schema, cl.CLASSEMENT)
+    semees = {t for t, e in classement.items() if e.classe in cl.EXPORTEES
+              and conn.execute(f"SELECT EXISTS (SELECT 1 FROM {t}) AS e").fetchone()["e"]}
+    declarees = {t for t, e in classement.items() if e.naissance}
+    assert semees == declarees
+    assert lignes_deja_la(conn, classement) == {}
+
+
+def test_une_colonne_de_naissance_absente_est_refusee(schema):
+    classement = {**cl.CLASSEMENT, "connector_selection_seeded": cl.possedee(
+        ParOrg(), comptes=("sub",), naissance=("org_renomme", "0"))}
+    assert "`connector_selection_seeded` : la colonne `org_renomme`" in \
+        _refus(schema, classement)
 
 
 def test_une_colonne_compte_absente_est_refusee(schema):

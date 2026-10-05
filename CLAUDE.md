@@ -276,8 +276,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `connector-test-gate-theirstack-origami.md` — porte de test locale
 - `billing.md` — abonnement par org, Mollie, TVA, **avantage offert / échéance / usage inclus**
 - `export-perimetre.md` — extraire d'une base partagée tout ce qui appartient à un propriétaire, et rien
-  d'autre (chaque table classée, un schéma non couvert REFUSE), puis l'importer dans une base née par le
-  démarrage : tenant en ligne 1, comptes dénudés, secrets rechiffrés, vérification par relecture ; le
+  d'autre (chaque table classée, un schéma non couvert REFUSE), puis l'importer dans une base née par
+  `init_db`, AVANT le premier démarrage de l'app (sinon refus nommé, #1161) : tenant en ligne 1, comptes dénudés, secrets rechiffrés, vérification par relecture ; le
   journal d'appels hors de la fenêtre de coupure, par tranches de dates poussées puis diff (#1088)
 - `droits-declares.md` — ce que le cœur applique sans savoir qui paie : catalogue, trois portées (org,
   personne dans l'org, personne partout),
