@@ -863,6 +863,13 @@ def register(mcp: FastMCP) -> None:
           `lifecycle.claimable: {col: val | {op: val}}` (`filter` grammar) = the
           rows the queue SERVES: no claim hands out a row outside it, whatever
           `filter` says.
+        - passes: `lifecycle.advance: {"societe": "dirigeant", "dirigeant": "email"}`
+          — the counterpart of `abandon_state`. A claimed row RELEASED (data_release,
+          run_finish) after at least one successful write since its claim moves to
+          the next state, as a platform revision of that run. Agents claim by state
+          and never write it; if a pass writes the state itself, its write wins. No
+          write, no move (the ceiling applies). Each step must be a declared
+          transition, never from a terminal state — refused here otherwise.
 
         SEMANTIC SEARCH (#67 V2.2 — opt-in per datastore): pass `semantic_search=true`
         to make this datastore's ROWS findable by MEANING via oto_search (not just exact
@@ -1407,6 +1414,10 @@ def register(mcp: FastMCP) -> None:
         (`lease_s`, default 900s) only covers a worker that died. While you hold a
         row, nobody else can write it.
 
+        Multi-pass table (`lifecycle.advance` declared): claim by the state of YOUR
+        pass (`filter={"statut": "societe"}`), write your findings, release — the
+        platform moves the row to the next state. Do not write that state yourself.
+
         The row carries `_claims` = how many times it has been claimed since the
         last successful write. A row claimed over and over WITHOUT a write is a
         queue running empty: past the ceiling — `lifecycle.max_claims` declared on
@@ -1490,6 +1501,10 @@ def register(mcp: FastMCP) -> None:
         run_start / run_finish, closing the run frees everything it held — that is
         the safety net when you forget.
 
+        On a table that declares `lifecycle.advance`, releasing a row you WROTE since
+        claiming it moves it to the next state (`advanced: {field, from, to}` in the
+        reply); a row you did not write stays where it is.
+
         `datastore` = the table's NUMBER (`ns_id`, the one data_claim_next handed
         you) — the form to use. Its name still resolves until 08/11/2026, then is
         refused. `slot:<name>` also works."""
@@ -1512,7 +1527,8 @@ def register(mcp: FastMCP) -> None:
         return {**identite.de_releve(store.dernier_tableau, datastore),
                 "id": id, "released": issue["released"],
                 "reason": issue["reason"],
-                **({} if issue["released"] else {"hint": indice_de_liberation(issue)})}
+                **({} if issue["released"] else {"hint": indice_de_liberation(issue)}),
+                **({"advanced": issue["advanced"]} if issue.get("advanced") else {})}
 
     @mcp.tool()
     def data_rows(

@@ -77,6 +77,8 @@ _ECRIVAINS = {
         "datastore_drop_column", "datastore_merge_key_duplicates",
         "datastore_merge_row_locked", "datastore_delete_row"},
     "oto_mcp/db/rowabandon.py": {"abandonner_les_lignes_a_bout"},
+    # oto#95 : le relâchement AVANCE une ligne que sa passe a écrite.
+    "oto_mcp/db/rowlock.py": {"_relacher"},
 }
 
 

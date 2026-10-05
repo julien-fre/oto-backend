@@ -1,11 +1,15 @@
 """Le CYCLE DE VIE d'une ligne : états, transitions, sorties (ADR 0046).
 
 Déclaré par `lifecycle: {states, transitions, terminal?, max_claims?, abandon_state?,
-claimable?, labels?}` sur le champ `role="status"`, et par lui seul. Ce module tient sa
+claimable?, labels?, advance?}` sur le champ `role="status"`, et par lui seul. Ce module tient sa
 lecture et sa grammaire :
 
 - l'accès au bloc et à ses crans (`lifecycle_of`, `terminal_states`,
-  `is_terminal_status`, `max_claims_of`, `abandon_state_of`, `claimable_of`) ;
+  `is_terminal_status`, `max_claims_of`, `abandon_state_of`, `claimable_of`,
+  `avance_of`) ;
+- la grammaire de l'AVANCE (`fautes_d_avance`, `refus_d_avance`) — la suite des
+  passes, que la plateforme fait parcourir à une ligne relâchée après écriture
+  (oto#95 ; l'avance elle-même, au relâchement → `db/rowavance.py`) ;
 - la FORME de `transitions` (`fautes_de_transitions`, `table_des_transitions`) — un
   objet dont chaque valeur est une LISTE d'états — et celle de `terminal`
   (`fautes_de_terminal`), une LISTE, jugées à la pose comme à la lecture ;
@@ -38,9 +42,9 @@ from .declaration import _fields, status_field
 
 #: Les clés du bloc `lifecycle` qu'une fusion de patch descend ÉTAT PAR ÉTAT : un
 #: patch qui nomme un état laisse les autres en place, `null` retire le sien.
-#: `transitions` (oto#64) et `labels` (oto#140) ont la même forme — un objet dont
-#: chaque clé est un état déclaré.
-PAR_ETAT = ("transitions", "labels")
+#: `transitions` (oto#64), `labels` (oto#140) et `advance` (oto#95) ont la même forme —
+#: un objet dont chaque clé est un état déclaré.
+PAR_ETAT = ("transitions", "labels", "advance")
 
 #: La borne d'un libellé d'étape (`lifecycle.labels`, oto#140). C'est le nom d'une
 #: étape dans un badge ou une puce, pas une description : au-delà, il ne tient plus.
@@ -123,6 +127,47 @@ def table_des_transitions(colonne: str, lc: dict) -> Optional[dict]:
     return {str(k): [str(t) for t in v] for k, v in transitions.items()}
 
 
+def fautes_d_avance(advance: Any) -> list[str]:
+    """Les fautes de FORME de `lifecycle.advance` (oto#95) — vide = bien formée, absente
+    comprise. Un objet `{"état": "état suivant"}` : une passe a UNE suite, la valeur
+    est donc une chaîne, jamais une liste — deux suites possibles seraient un choix, et
+    la plateforme n'en fait pas à la place du métier."""
+    if advance is None:
+        return []
+    if not isinstance(advance, dict):
+        return [f"lifecycle.advance doit être un objet {{\"état\": \"état suivant\"}} — "
+                f"reçu {type(advance).__name__}. Chaque clé est l'état d'une passe, sa "
+                f"valeur l'état où la plateforme fait passer une ligne relâchée après "
+                f"une écriture."]
+    fautes = []
+    for etat, suivant in advance.items():
+        if isinstance(suivant, str) and suivant:
+            continue
+        seul = (suivant[0] if isinstance(suivant, list) and len(suivant) == 1
+                and isinstance(suivant[0], str) else "état suivant")
+        attendu = json.dumps({str(etat): seul}, ensure_ascii=False)
+        fautes.append(
+            f"lifecycle.advance[{str(etat)!r}] doit être UN état — reçu "
+            f"{type(suivant).__name__} {json.dumps(suivant, ensure_ascii=False)}. "
+            f"Forme attendue : {attendu} : une passe a une seule suite.")
+    return fautes
+
+
+def refus_d_avance(colonne: str, depuis: str, vers: str,
+                   autorisees: list) -> str:
+    """Le refus d'une avance qui n'est pas une transition déclarée — et le patch qui la
+    déclare, destinations existantes comprises (même parti que `refus_de_transition` :
+    la liste d'un état se remplace, n'y mettre que la nouvelle effacerait les autres)."""
+    cibles = list(autorisees) + [vers]
+    patch = ('{"key": "%s", "lifecycle": {"transitions": {"%s": %s}}}'
+             % (colonne, depuis, "[" + ", ".join(f'"{c}"' for c in cibles) + "]"))
+    return (f"lifecycle.advance : {depuis!r} → {vers!r} n'est pas une transition "
+            f"déclarée (autorisées depuis {depuis!r} : {list(autorisees)}). L'avance "
+            f"n'est qu'un pas que la plateforme fait À LA PLACE de l'agent : elle "
+            f"emprunte une transition permise, jamais une autre. Déclare-la : "
+            f"`data_patch_schema(datastore=…, fields=[{patch}])`.")
+
+
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
     sf = status_field(schema)
     lc = (sf or {}).get("lifecycle")
@@ -188,6 +233,19 @@ def abandon_state_of(schema: Optional[dict]) -> Optional[str]:
     (`lifecycle.abandon_state`). None = non déclaré."""
     v = (lifecycle_of(schema) or {}).get("abandon_state")
     return str(v) if v is not None else None
+
+
+def avance_of(schema: Optional[dict]) -> dict:
+    """La suite des passes déclarée (`lifecycle.advance`, oto#95) : `{état: suivant}`,
+    vide = aucune avance. Même parti que `max_claims_of` : stockée hors forme (la pose
+    la refuse, elle ne peut venir que d'une écriture hors surface), elle LÈVE — une
+    avance ignorée en silence laisserait la campagne tourner sur place."""
+    lc = lifecycle_of(schema) or {}
+    advance = lc.get("advance")
+    fautes = fautes_d_avance(advance)
+    if fautes:
+        raise ValueError(f"cycle de vie stocké hors forme — {' ; '.join(fautes)}")
+    return {str(k): str(v) for k, v in (advance or {}).items()}
 
 
 def claimable_of(schema: Optional[dict],
@@ -281,6 +339,7 @@ def merge_lifecycle(current: dict, patch: dict) -> dict:
     d'UNE étape par `lifecycle: {labels: {"perdu": "Perdu"}}` ne doit pas effacer ceux
     des autres — le défaut d'oto#64 se serait reformé sur la première clé ajoutée au
     bloc depuis. `labels: {"perdu": null}` retire ce libellé, `labels: null` tous.
+    `advance` (oto#95) aussi : poser la suite d'UNE passe garde celles des autres.
 
     ⚠️ `claimable` NE descend pas : c'est un périmètre de réservation, un filtre entier
     dont le remplacement en bloc est le geste voulu. Une fusion par colonne y rendrait

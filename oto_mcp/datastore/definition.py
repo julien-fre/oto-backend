@@ -47,8 +47,9 @@ from .declaration import (
     SCALAR_TYPES,
     status_field,
 )
-from .cycle_de_vie import (LIBELLE_ETAT_MAX, fautes_de_terminal, fautes_de_transitions,
-                           lifecycle_of, terminal_states)
+from .cycle_de_vie import (LIBELLE_ETAT_MAX, fautes_d_avance, fautes_de_terminal,
+                           fautes_de_transitions, lifecycle_of, refus_d_avance,
+                           terminal_states)
 from . import formule as _formule
 
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
@@ -90,7 +91,7 @@ def validate_schema_def(schema: Optional[dict],
     if len(files) > 1:
         errors.append(
             f"deux colonnes déclarent une FILE de travail ({', '.join(files)}) — "
-            f"`claimable`, `max_claims` ou `abandon_state` ne peuvent vivre que sur "
+            f"{', '.join(f'`{k}`' for k in FILE_KEYS)} ne peuvent vivre que sur "
             f"une seule, celle que `data_claim_next` réserve. Plusieurs cycles de vie "
             f"sont permis (une file d'agents et des états humains, par exemple), mais "
             f"une seule file.")
@@ -182,6 +183,7 @@ def validate_schema_def(schema: Optional[dict],
                 f"lifecycle.abandon_state: {abandon!r} n'est pas un état terminal déclaré "
                 "(ajoute-le à lifecycle.terminal) — une ligne abandonnée reviendrait "
                 "sinon dans la file qu'elle vient de quitter")
+        errors.extend(_erreurs_d_avance(schema, lc))
         # Le périmètre de réservation (#517) se valide par le moteur de filtre qui le
         # servira — refusé à la pose, comme le plafond : une déclaration illisible
         # au premier claim d'une campagne lancée est le pire moment pour l'apprendre.
@@ -200,6 +202,52 @@ def validate_schema_def(schema: Optional[dict],
     # et jamais lu, alors qu'il existait. Ce qui les arrête maintenant est plus haut :
     # deux blocs sont refusés, et un bloc seul EST l'état.
     return errors
+
+
+def _erreurs_d_avance(schema: dict, lc: dict) -> list[str]:
+    """`lifecycle.advance` (oto#95) : la suite des passes que la plateforme fait
+    parcourir à une ligne relâchée après une écriture. Refusée à la POSE, comme le
+    plafond — une suite illisible au premier relâchement d'une campagne lancée est le
+    pire moment pour l'apprendre :
+
+    - la forme (`cycle_de_vie.fautes_d_avance`) : `{"état": "état suivant"}` ;
+    - des états déclarés, aux deux bouts ;
+    - **une transition déclarée** : l'avance est un pas que la plateforme fait à la
+      place de l'agent, jamais un pas qu'il n'aurait pas eu le droit de faire. Sans
+      table `transitions`, toute transition est permise, l'avance aussi. Un patch qui
+      retire ensuite cette transition est refusé de même : c'est le schéma FUSIONNÉ
+      qui passe ici ;
+    - **jamais depuis un état terminal** : une ligne conclue (ou abandonnée — l'état
+      d'abandon est terminal) n'a plus de passe à faire, et l'avancer déferait le
+      verdict ou l'abandon que la plateforme vient de poser."""
+    advance = lc.get("advance")
+    fautes = fautes_d_avance(advance)
+    if fautes or not advance:
+        return fautes
+    col = (status_field(schema) or {}).get("key") or "status"
+    etats = lc.get("states")
+    connus = {str(e) for e in etats} if isinstance(etats, list) else set()
+    table = (lc.get("transitions") if isinstance(lc.get("transitions"), dict)
+             and not fautes_de_transitions(lc.get("transitions")) else None)
+    terminaux = (terminal_states(schema) if not fautes_de_terminal(lc.get("terminal"))
+                 else set())
+    errs: list[str] = []
+    for depuis, vers in advance.items():
+        depuis, vers = str(depuis), str(vers)
+        inconnus = [e for e in (depuis, vers) if e not in connus]
+        if inconnus:
+            errs.extend(f"lifecycle.advance : état inconnu {e!r}" for e in inconnus)
+            continue
+        if depuis in terminaux:
+            errs.append(
+                f"lifecycle.advance : {depuis!r} est un état terminal — une ligne "
+                f"conclue n'a plus de passe à faire, et l'avancer déferait son verdict "
+                f"(ou son abandon). Retire `{depuis}` de `advance`.")
+        elif table is not None:
+            autorisees = [str(t) for t in table.get(depuis) or []]
+            if vers not in autorisees:
+                errs.append(refus_d_avance(col, depuis, vers, autorisees))
+    return errs
 
 
 def _erreurs_de_forme_du_cycle(schema: dict) -> list[str]:

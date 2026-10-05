@@ -281,21 +281,26 @@ class FileDeTravailMixin:
 
         *Le serveur sait lequel des deux c'est : c'est dans la ligne qu'il vient de ne
         pas modifier. Un succès partiel qu'on ne peut pas distinguer d'un échec est
-        pire qu'un refus — un refus, au moins, s'instruit.*"""
+        pire qu'un refus — un refus, au moins, s'instruit.*
+
+        `advanced` (oto#95) = `{field, from, to}` quand la ligne, écrite par sa passe,
+        est passée à l'état suivant que déclare `lifecycle.advance` — None sinon."""
         attendue = revision_attendue(expected_revision)
         ns_id = self._resolve(datastore, write=True)
         if trace is not None:
             self._trace(trace, ns_id, self._ns_of(ns_id))
+        avance: dict = {}
         if db.datastore_release_claim(ns_id, row_id, str(worker),
-                                      expected_revision=attendue):
-            return {"released": True, "reason": None, "lease": None}
+                                      expected_revision=attendue, avance=avance):
+            return {"released": True, "reason": None, "lease": None,
+                    "advanced": avance or None}
         # Relu APRÈS coup : l'ordre est celui du geste, pas d'un diagnostic préalable.
         # Une course changerait le motif rendu, jamais le fait — la ligne n'a pas été
         # libérée dans les deux cas.
         bail = db.datastore_active_lease(ns_id, row_id)
         return {"released": False,
                 "reason": "held_by_other" if bail else "no_lease",
-                "lease": bail}
+                "lease": bail, "advanced": None}
 
     def claimed_hint(self, datastore: str) -> Optional[str]:
         """Ce que le travail courant tient — dit au moment où une ADRESSE échoue (#517).
@@ -360,7 +365,8 @@ class FileDeTravailMixin:
 
     def force_release(self, datastore: str, row_id: str, *,
                       trace: Optional[dict] = None,
-                      expected_revision: Any = None) -> bool:
+                      expected_revision: Any = None,
+                      avance: Optional[dict] = None) -> bool:
         """Libère le bail SANS garde de worker — supervision humaine (dashboard),
         ≠ `release_claim` (agent, gardé). Exige le droit d'écriture. False = pas
         de bail à libérer.
@@ -370,10 +376,13 @@ class FileDeTravailMixin:
         garde de worker, une libération décidée sur un écran d'il y a dix minutes
         retirait le bail que le titulaire avait rendu et qu'un SECOND worker avait
         repris — la ligne partait alors à deux travaux à la fois. On ne libère jamais
-        un bail différent de celui vu au moment de la décision."""
+        un bail différent de celui vu au moment de la décision.
+
+        `avance` = dict OUT : une libération forcée est un relâchement comme un autre —
+        une ligne que sa passe a écrite avance (oto#95), et ceci le dit."""
         attendue = revision_attendue(expected_revision)
         ns_id = self._resolve(datastore, write=True)
         if trace is not None:
             self._trace(trace, ns_id, self._ns_of(ns_id))
         return db.datastore_release_claim(ns_id, row_id, None,
-                                          expected_revision=attendue)
+                                          expected_revision=attendue, avance=avance)

@@ -528,6 +528,9 @@ class ReleasedRow(BaseModel):
     ns_id: Optional[int] = Field(default=None, description=identite.DESCRIPTION)
     reason: Optional[str] = None
     hint: Optional[str] = None
+    # oto#95 : la ligne, écrite par sa passe, est passée à l'état suivant que déclare
+    # `lifecycle.advance` — `{field, from, to}` ; absent ou null sinon.
+    advanced: Optional[dict] = None
 
 
 def _adresse(datastore: str, row_id=None):
@@ -891,11 +894,13 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
         # La libération FORCÉE reste un booléen : la supervision humaine agit sans
         # garde, il n'y a pas de « bail d'un autre » qui la concerne. La PRÉCONDITION,
         # elle, vaut pour les deux régimes (oto#217).
+        avance: dict = {}
         issue = (store.release_claim(ns, rid, worker=worker, trace=trace,
                                      expected_revision=attendue) if worker
                  else {"released": store.force_release(ns, rid, trace=trace,
-                                                       expected_revision=attendue),
-                       "reason": None, "lease": None})
+                                                       expected_revision=attendue,
+                                                       avance=avance),
+                       "reason": None, "lease": None, "advanced": avance or None})
         released = issue["released"]
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
@@ -918,6 +923,7 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
         "ok": True, "released": released, "id": rid,
         **identite.numero(store.dernier_tableau), "reason": issue["reason"],
         **({} if released else {"hint": _indice_de_liberation(issue)}),
+        **({"advanced": issue["advanced"]} if issue.get("advanced") else {}),
     }
 
 

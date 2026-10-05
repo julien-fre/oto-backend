@@ -206,6 +206,14 @@ CLES_DU_CYCLE: tuple[Cle, ...] = (
         "l'état terminal où le plafond verse une ligne (#433)"),
     Cle("claimable", ("validateur", "front"),
         "le périmètre que la file sert, grammaire de `filter` (#517)"),
+    # oto#95 — la contrepartie d'`abandon_state` : la plateforme fait RECULER une ligne
+    # réservée sans écriture, elle fait AVANCER celle qu'on a écrite. Lue par le
+    # validateur (à la pose) et par le relâchement (`db/rowavance.py`) ; le dashboard
+    # ne la lit pas encore — la déclarer « front » promettrait un lecteur absent.
+    Cle("advance", ("validateur",),
+        "`{état: état suivant}` — la suite des passes : relâchée après une écriture "
+        "réussie depuis sa réservation, une ligne passe à l'état suivant (oto#95) ; "
+        "chaque pas est une transition déclarée, jamais depuis un état terminal"),
     # ⚠️ PRÉSENTATION, JAMAIS VALIDATION. Sa FORME est jugée à la pose (un objet, des
     # clés qui sont des états déclarés, des chaînes non vides d'au plus
     # `cycle_de_vie.LIBELLE_ETAT_MAX` caractères) ; aucune écriture de ligne ne la lit,

@@ -364,10 +364,22 @@ refusée, et nommée), chaque valeur une chaîne non vide d'au plus 60 caractèr
 
 Plusieurs colonnes peuvent porter un bloc — une file d'agents et des états suivis par
 un humain, par exemple. Ce qui est **refusé à la pose**, ce sont deux FILES : deux
-blocs qui déclarent `claimable`, `max_claims` ou `abandon_state`. Sinon la première
+blocs qui déclarent `claimable`, `max_claims`, `abandon_state` ou `advance`. Sinon la première
 trouvée gagnerait, et l'ordre de déclaration trancherait en silence. La file est la
 colonne dont le bloc les déclare (à défaut, la première qui porte un bloc) : c'est elle
 que `data_claim_next` réserve.
+
+**Une campagne en plusieurs passes : `advance`** (oto#95). Les passes sont des états
+(`a_traiter → societe → dirigeant → email`), et `"advance": {"societe": "dirigeant",
+"dirigeant": "email"}` déclare leur suite. Chaque passe réserve par SON état
+(`data_claim_next(filter={"statut": "societe"})`), écrit son travail et relâche
+(`data_release`, ou `run_finish`) : si la ligne a été écrite depuis sa réservation, la
+plateforme la fait passer à l'état suivant — une révision du journal, source `system`,
+rattachée au run de la passe. Tu n'écris pas l'état ; si tu l'écris quand même, ton
+écriture fait foi et rien ne bouge de plus. Sans écriture, rien n'avance (le plafond de
+reprises s'applique). Un bail qui expire n'avance pas : la passe se refait. Chaque pas
+doit être une transition déclarée (refusé à la pose sinon), jamais depuis un état
+terminal ; revenir en arrière reste une transition que tu écris.
 
 ⚠️ **Et si aucune colonne n'en porte, le tableau n'a PAS de cycle de vie** — mais il a
 toujours une file : `data_claim_next` réserve sans rien déclarer. Ce qui manque, ce

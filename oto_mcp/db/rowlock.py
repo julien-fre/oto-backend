@@ -34,6 +34,7 @@ toute ligne déjà servie —, puis `row_id` (ordre de création) entre égales.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -41,9 +42,13 @@ from typing import Optional
 
 import psycopg
 
+from .. import geste
 from ._conn import _connect
+from .estampille import ecriture_de_lignes
 from .query import _ds_filter_clauses
 from .rowabandon import abandonner_les_lignes_a_bout, plafond_de
+from .rowavance import ACTEUR as _ACTEUR_FILE
+from .rowavance import avances
 
 logger = logging.getLogger(__name__)
 
@@ -370,20 +375,76 @@ def datastore_release_by_run(run_id: str) -> int:
     réservé)."""
     if not run_id:
         return 0
-    with _connect() as conn:
-        liberees = conn.execute(
-            "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
-            "claimed_run = NULL WHERE claimed_run = %s "
-            "RETURNING ns_id, row_id", (str(run_id),)).fetchall()
-    # Un run qui se ferme sans avoir écrit est LE geste que le plafond mesure : le
-    # traitement s'est conclu, la ligne revient intacte. L'évaluation suit la
-    # libération, jamais l'inverse — une ligne encore sous bail n'est pas à bout.
+    liberees = _relacher("claimed_run = %s", (str(run_id),))
+    _juger_le_plafond(liberees)
+    return len(liberees)
+
+
+def _juger_le_plafond(liberees: list[dict]) -> None:
+    """Un relâchement sans écriture est LE geste que le plafond mesure : le traitement
+    s'est conclu, la ligne revient intacte. L'évaluation suit la libération, jamais
+    l'inverse — une ligne encore sous bail n'est pas à bout. Une ligne AVANCÉE a été
+    écrite (`claims = 0`) : le plafond ne la concerne pas, et ne la prend pas."""
     par_tableau: dict = {}
     for r in liberees:
         par_tableau.setdefault(int(r["ns_id"]), []).append(r["row_id"])
     for ns_id, ids in par_tableau.items():
         abandonner_les_lignes_a_bout(ns_id, row_ids=ids)
-    return len(liberees)
+
+
+def _relacher(clause: str, params: tuple, *, precondition=None) -> list[dict]:
+    """Libère les lignes sous bail que `clause` désigne, et AVANCE dans la même
+    transaction celles qu'une passe a écrites (oto#95, `rowavance`) — l'unique
+    relâchement, que la ligne soit rendue une à une (`data_release`, libération forcée)
+    ou en bloc (`run_finish`, conclusion d'un job).
+
+    **Une transaction, la ligne verrouillée de bout en bout** : libérer puis avancer en
+    deux temps laisserait une réservation s'intercaler et prendre la ligne dans son
+    état d'AVANT — la passe qu'on vient de faire serait refaite. `claim_next` saute la
+    ligne verrouillée (`SKIP LOCKED`), et la retrouve à l'état suivant.
+
+    L'avance est une écriture du SERVEUR, comme l'abandon : même geste que l'appel qui
+    relâche (on le retrouve), source `system`, acteur `service:file-de-travail` — et
+    rattachée au RUN qui tenait la ligne, pas à celui de l'appel (un `run_finish`, un
+    superviseur qui force) : c'est sa passe qu'elle conclut.
+
+    `precondition(conn)` = un contrôle sous la même transaction, avant tout geste
+    (la révision attendue d'oto#217). Rend `[{ns_id, row_id, avance}]`, `avance` =
+    `{field, from, to}` ou None."""
+    with geste.comme(geste.SYSTEM, acteur=geste.service(_ACTEUR_FILE)), \
+            ecriture_de_lignes() as conn:
+        if precondition is not None:
+            precondition(conn)
+        lignes = conn.execute(
+            "SELECT ns_id, row_id, data, claims, claimed_at, claimed_run "
+            f"FROM datastore_rows WHERE {clause} AND claimed_by IS NOT NULL "
+            "ORDER BY ns_id, row_id FOR UPDATE", params).fetchall()
+        if not lignes:
+            return []
+        a_poser = {(a.ns_id, a.row_id): a for a in avances(conn, lignes)}
+        conn.execute(
+            "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
+            "claimed_run = NULL "
+            f"WHERE {clause} AND claimed_by IS NOT NULL", params)
+        for a in a_poser.values():
+            # Le run de la passe, pour le journal : un réglage de transaction, comme
+            # le reste de l'estampille (`estampille._POSER`) — il vaut pour l'UPDATE
+            # qui suit, le suivant le repose.
+            conn.execute("SELECT set_config('oto.run_id', %s, true)",
+                         (a.run_id or "",))
+            conn.execute(
+                "UPDATE datastore_rows SET "
+                "  data = jsonb_set(data, ARRAY[%s], %s::jsonb, true), "
+                "  updated_at = NOW() "
+                "WHERE ns_id = %s AND row_id = %s",
+                (a.champ, json.dumps(a.cellule), a.ns_id, a.row_id))
+            logger.info(
+                "datastore: ligne avancée — tableau=%s ligne=%s %s → %s run=%s",
+                a.ns_id, a.row_id, a.depuis, a.vers, a.run_id)
+    return [{"ns_id": int(r["ns_id"]), "row_id": r["row_id"],
+             "avance": (a_poser[(int(r["ns_id"]), str(r["row_id"]))].rendu()
+                        if (int(r["ns_id"]), str(r["row_id"])) in a_poser else None)}
+            for r in lignes]
 
 
 def datastore_active_lease(ns_id: int, row_id: str) -> Optional[dict]:
@@ -451,7 +512,8 @@ def datastore_active_leases_of(*, run_id: Optional[str] = None,
 
 
 def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str], *,
-                            expected_revision: Optional[int] = None) -> bool:
+                            expected_revision: Optional[int] = None,
+                            avance: Optional[dict] = None) -> bool:
     """Libère le bail d'une row. `worker` non-None = gardé (on ne libère pas le
     claim d'un autre) ; None = libération inconditionnelle (chemin interne : entrée
     en état terminal, supervision humaine). Renvoie False si rien n'a été libéré (pas
@@ -466,30 +528,31 @@ def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str], *,
     qui en a le plus besoin : la libération forcée, qui n'a aucune garde. Jugée sous le
     verrou de la ligne, avant l'UPDATE : `RowNotFound` si la ligne n'existe plus,
     `RevisionConflict` si elle a changé depuis la lecture (une réservation reprise par
-    un autre worker EN EST une), et zéro ligne touchée dans les deux cas."""
+    un autre worker EN EST une), et zéro ligne touchée dans les deux cas.
+
+    `avance` = dict OUT (patron `trace`) : reçoit `{field, from, to}` quand la ligne,
+    écrite par sa passe, est passée à l'état suivant (oto#95, `_relacher`)."""
     guard = "" if worker is None else " AND claimed_by = %s"
     params: tuple = (ns_id, row_id) if worker is None else (ns_id, row_id, str(worker))
-    with _connect() as conn:
-        with conn.transaction():
-            if expected_revision is not None:
-                from ..datastore.errors import RevisionConflict, RowNotFound
-                locked = conn.execute(
-                    "SELECT rev FROM datastore_rows "
-                    "WHERE ns_id = %s AND row_id = %s FOR UPDATE",
-                    (ns_id, row_id)).fetchone()
-                if locked is None:
-                    raise RowNotFound(row_id)
-                if int(locked["rev"]) != int(expected_revision):
-                    raise RevisionConflict(row_id, expected_revision, locked["rev"])
-            cur = conn.execute(
-                "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
-                "claimed_run = NULL "
-                f"WHERE ns_id = %s AND row_id = %s AND claimed_by IS NOT NULL{guard}",
-                params,
-            )
-            libere = (cur.rowcount or 0) > 0
-    if libere:
-        # Rendre la ligne sans l'avoir écrite est le cas NOMINAL du faux départ :
-        # c'est ici, à la ligne qu'on vient de relâcher, que le plafond se juge.
-        abandonner_les_lignes_a_bout(ns_id, row_ids=[row_id])
-    return libere
+
+    def _revision_attendue(conn) -> None:
+        if expected_revision is None:
+            return
+        from ..datastore.errors import RevisionConflict, RowNotFound
+        locked = conn.execute(
+            "SELECT rev FROM datastore_rows "
+            "WHERE ns_id = %s AND row_id = %s FOR UPDATE",
+            (ns_id, row_id)).fetchone()
+        if locked is None:
+            raise RowNotFound(row_id)
+        if int(locked["rev"]) != int(expected_revision):
+            raise RevisionConflict(row_id, expected_revision, locked["rev"])
+
+    liberees = _relacher(f"ns_id = %s AND row_id = %s{guard}", params,
+                         precondition=_revision_attendue)
+    if liberees and liberees[0]["avance"] and avance is not None:
+        avance.update(liberees[0]["avance"])
+    # Rendre la ligne sans l'avoir écrite est le cas NOMINAL du faux départ : c'est
+    # ici, à la ligne qu'on vient de relâcher, que le plafond se juge.
+    _juger_le_plafond(liberees)
+    return bool(liberees)

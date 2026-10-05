@@ -23,6 +23,8 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
   sortante) — le store libère le claim de file de travail en y entrant ;
 - **plafond de reprises** : `lifecycle.max_claims` + `lifecycle.abandon_state` —
   une ligne réservée N fois sans qu'une écriture n'aboutisse quitte la file ;
+- **avance** (oto#95) : `lifecycle.advance: {état: suivant}` — sa contrepartie : une
+  ligne relâchée après une écriture passe à l'état suivant (`db/rowavance.py`) ;
 - **périmètre de réservation** : `lifecycle.claimable: {col: val}` — ce que la file
   SERT, quel que soit le `filter` de l'appelant (décision dans `claimable.py`).
 
@@ -100,7 +102,8 @@ from .declaration import (
 from .cycle_de_vie import (
     lifecycle_of, terminal_states, is_terminal_status, max_claims_of, abandon_state_of,
     claimable_of, refus_de_transition, merge_transitions, merge_lifecycle,
-    fautes_de_transitions, table_des_transitions,
+    fautes_de_transitions, table_des_transitions, fautes_de_terminal,
+    avance_of, fautes_d_avance,
     queue_release_warning,
 )
 from .hors_schema import (

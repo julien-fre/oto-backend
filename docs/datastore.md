@@ -548,6 +548,59 @@ le compteur à zéro ET efface le motif, donc la rouvre. ⚠️ Rouvrir son **st
 que le cycle de vie déclare la transition de retour (`"echec": ["a_traiter"]`) — la
 plateforme verse la ligne dans l'état d'abandon, elle ne s'autorise pas à l'en sortir.
 
+**La contrepartie : l'AVANCE d'une passe à la suivante (`lifecycle.advance`, oto#95,
+05/10/2026).** Une campagne en plusieurs passes traite chaque ligne passe après passe ;
+l'agent lisait le marqueur de passe à la réservation et ne l'écrivait jamais (mesuré :
+0 écriture sur 2 passages) — personne ne pouvait reprendre, ni savoir qu'une passe était
+finie. Les passes sont des ÉTATS de la colonne de file, et leur suite se déclare :
+
+```
+lifecycle: {
+  states: ["a_traiter", "societe", "dirigeant", "email", "fait", "echec"],
+  transitions: {"a_traiter": ["societe"], "societe": ["dirigeant", "echec"], …},
+  terminal: ["fait", "echec"], max_claims: 3, abandon_state: "echec",
+  advance: {"societe": "dirigeant", "dirigeant": "email", "email": "fait"}
+}
+```
+
+L'agent réserve par l'état de SA passe (`filter`, ou `claimable`) ; quand la ligne est
+**relâchée** après une écriture, la plateforme la fait passer à l'état suivant. Règles :
+
+- **la preuve d'écriture est `claims = 0`** au relâchement — le compteur que l'abandon
+  lit, à l'envers : il monte à chaque prise, retombe à zéro à chaque écriture, dans la
+  transaction de l'écriture, et sous bail actif seul le run titulaire peut écrire. Un
+  relâchement finit donc en avance ou compte vers le plafond, jamais les deux, jamais
+  aucun. Le journal des révisions n'a pas été retenu comme preuve : il ne garde pas une
+  écriture SANS EFFET (une passe qui confirme la valeur en place remettrait le compteur
+  à zéro sans révision — ni abandonnée, ni avancée, la ligne tournerait sur place), il
+  se coupe (`OTO_JOURNAL_REVISIONS=off`) et se purge ;
+- **l'écriture de l'agent fait foi** : si une révision depuis la prise (`claimed_at`)
+  change la colonne d'état, on n'avance pas une seconde fois. C'est la seule question
+  posée au journal — le compteur ne sait pas QUOI a été écrit. Journal coupé : pas
+  d'avance, une erreur au journal applicatif (avancer à l'aveugle pourrait sauter une
+  passe, et l'avance ne serait ni lisible ni réversible) ;
+- **chaque relâchement** : `data_release`, `run_finish` et la conclusion d'un job
+  (`datastore_release_by_run`), la libération forcée d'un superviseur — un seul chemin,
+  `rowlock._relacher`, qui libère et avance dans la MÊME transaction, la ligne
+  verrouillée (sinon une réservation s'intercale et reprend la ligne dans son état
+  d'avant). **Pas l'expiration d'un bail** : un agent qui n'a pas relâché n'a pas rendu
+  son verdict, la passe se refait ;
+- **une révision comme une autre** : `source = system`, acteur `service:file-de-travail`,
+  le geste de l'appel qui relâche, et le run QUI TENAIT la ligne (pas celui de l'appel —
+  un `run_finish`, un superviseur). Lisible dans `data_row_history`, réversible par une
+  écriture qui emprunte une transition déclarée, comme toute autre ;
+- **la déclaration est jugée à la pose** (`definition._erreurs_d_avance`) : la forme
+  `{"état": "état suivant"}` (une passe a UNE suite), des états déclarés, **une
+  transition déclarée** (refus qui donne le patch, destinations existantes comprises ;
+  un patch qui retire ensuite la transition est refusé de même), jamais depuis un état
+  terminal (une ligne conclue — ou abandonnée — n'a plus de passe). Elle se patche état
+  par état comme `transitions` (`advance: {"societe": null}` retire une suite).
+  `advance` est une clé de FILE (`FILE_KEYS`) : elle désigne la colonne de file, et deux
+  files restent refusées. Ce n'est pas une garde : rien n'est refusé à l'écriture ni au
+  relâchement ;
+- `data_release` (et `POST …/release`) rend `advanced: {field, from, to}` quand la ligne
+  a avancé. La valeur à couches garde ses couches (`valeur` seule réécrite).
+
 **Un filtre de réservation DÉCLARÉ sur le tableau : `lifecycle.claimable` (#517,
 29/08/2026).** Sans lui, `data_claim_next` sert toute ligne du tableau dont le bail est
 libre ou expiré. Mesuré sur un fichier de 8 910 lignes : un

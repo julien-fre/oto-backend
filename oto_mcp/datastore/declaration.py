@@ -278,12 +278,14 @@ def order_spec(schema: Optional[dict], key) -> tuple:
 #: admettait (`schema_keys.CLES_DU_CYCLE`), aucun schéma du parc ne les portait, et le
 #: bloc `lifecycle` refuse désormais une clé qu'il n'admet pas — un marqueur que nul ne
 #: peut poser ne désigne rien.
-FILE_KEYS = ("claimable", "max_claims", "abandon_state")
+#: `advance` y est ENTRÉE le 05/10/2026 (oto#95) : elle agit au relâchement d'un bail,
+#: donc sur la file — la contrepartie d'`abandon_state`, sur la même colonne.
+FILE_KEYS = ("claimable", "max_claims", "abandon_state", "advance")
 
 
 def status_field(schema: Optional[dict]) -> Optional[dict]:
-    """La colonne de FILE : celle dont le `lifecycle` déclare un périmètre de
-    réservation (`claimable`, `max_claims`, `abandon_state`). À défaut, la seule qui
+    """La colonne de FILE : celle dont le `lifecycle` déclare une clé de file
+    (`FILE_KEYS` : périmètre, plafond, état d'abandon, avance). À défaut, la seule qui
     porte un bloc.
 
     ⚠️ **Un tableau peut porter PLUSIEURS cycles de vie, et c'est légitime** — corrigé
