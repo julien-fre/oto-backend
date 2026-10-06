@@ -83,12 +83,34 @@ def _before_send(event, hint):
     if exc_info and (_is_expected_error(exc_info[1]) or _is_client_disconnect(exc_info[1])):
         return None
     _redact_sensitive_query(event)
+    _redact_hook_request(event)
     return event
 
 
 def _before_send_transaction(event, hint):
     _redact_sensitive_query(event)
+    _redact_hook_request(event)
     return event
+
+
+def _redact_hook_request(event) -> None:
+    """Une requête de webhook ne part jamais entière vers Sentry : son ADRESSE
+    est le credential d'un agent sans preuve (`hook_auth=none`), et son CORPS
+    porte le porteur d'un agent `lemlist` (le secret renvoyé par la source).
+    Le chemin est masqué, le corps retiré — la pile suffit au diagnostic."""
+    from urllib.parse import urlsplit
+
+    req = (event or {}).get("request") if isinstance(event, dict) else None
+    if not isinstance(req, dict):
+        return
+    url = str(req.get("url") or "")
+    parts = urlsplit(url)
+    if not parts.path.startswith("/api/hooks/"):
+        return
+    req["url"] = f"{parts.scheme}://{parts.netloc}/api/hooks/[redacted]" if parts.netloc \
+        else "/api/hooks/[redacted]"
+    req.pop("data", None)
+    req.pop("query_string", None)
 
 
 def _redact_sensitive_query(event) -> None:

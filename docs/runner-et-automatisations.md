@@ -1178,6 +1178,17 @@ change** et aucune colonne n'est ajoutée.
     credential dormant se réveillerait au prochain changement de mode ;
   - **l'agent le sait** : sa donnée reçue porte, sous la clôture habituelle, un
     avertissement « personne n'a vérifié qui l'a envoyée » (`_SANS_PREUVE`).
+  - ⚠️ **l'adresse EST le credential, donc elle se traite comme le porteur** :
+    `hook_url` est servie **masquée** (`h_••••••••`) à toute lecture — `_avec_hook`
+    est le passage unique de get/list/create/update, MCP compris et pour qui
+    l'agent est seulement partagé. Elle sort en clair **une fois**, au retour de
+    `PUT …/hook-auth` (REST seul, propriétaire ou admin), champ `hook_url`. Passer
+    en `none` **émet une adresse NEUVE** — l'ancienne a été servie en clair tant
+    qu'elle n'ouvrait rien ; redemander `none` la renouvelle. `rotate_address` par
+    l'outil y est refusé (`no_auth_address`) : l'adresse neuve passerait par un
+    transcript. Sentry ne reçoit ni le chemin ni le corps d'une requête
+    `/api/hooks/*` (`sentry_setup._redact_hook_request` — le corps d'un agent
+    `lemlist` porte aussi son porteur).
 - **Pose** : la même capacité REST `runner.trigger.hook_auth`. Passer vers un
   préréglage qui s'ouvre avec le porteur (`bearer`, `lemlist`) **émet un porteur
   neuf**, rendu une fois — l'ancien n'a été montré qu'une fois et la source doit de

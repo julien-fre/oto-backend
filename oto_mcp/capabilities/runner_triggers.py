@@ -265,7 +265,9 @@ class Trigger(BaseModel):
     #: L'URL à donner à la source. Servie sur un déclencheur webhook, jamais le
     #: secret — celui-ci n'existe en clair qu'au retour de `create`/`rotate_secret`.
     hook_url: Optional[str] = None
-    #: `bearer` | `standard_webhooks` — la preuve que la source doit apporter.
+    #: Le PRÉRÉGLAGE — `bearer` | `standard_webhooks` | `lemlist` | `none` (la
+    #: preuve que la source doit apporter, `runner_hook.PREREGLAGES`). En `none`,
+    #: `hook_url` est servie MASQUÉE : l'adresse y est le credential.
     hook_auth: Optional[str] = None
     #: Le secret de signature est-il posé ? JAMAIS le secret, ni son chiffré.
     signing_secret_set: Optional[bool] = None
@@ -508,6 +510,16 @@ def _valide_le_webhook(inp: TriggerInput, actuel: Optional[dict] = None) -> None
                               "plafond journalier se compte (≥ 0, `0` = aucun).")
 
 
+#: Ce qui remplace l'adresse d'un agent SANS preuve dans toute lecture.
+ADRESSE_MASQUEE = "••••••••"
+
+
+def _url_du_hook(adresse) -> str:
+    import os
+    base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
+    return f"{base}/api/hooks/{adresse}"
+
+
 def _avec_hook(org_id: int, t: dict, compte: Optional[dict] = None,
                file: Optional[dict] = None) -> dict:
     """Le déclencheur, augmenté de ce qu'un écran de webhook doit lire : son URL,
@@ -528,19 +540,23 @@ def _avec_hook(org_id: int, t: dict, compte: Optional[dict] = None,
     """
     if (t.get("kind") or "schedule") != "webhook":
         return t
-    import os
-    base = (os.environ.get("OTO_MCP_PUBLIC_URL") or "").rstrip("/")
     if compte is None:
         compte = db.comptage_livraisons(t["id"], org_id)
     if file is None:
         file = db.file_du_declencheur(t["id"], org_id)
     # L'adresse privée REMPLACE l'id dans l'URL servie : c'est la seule qui ouvre.
-    adresse = t.get("hook_slug") or t["id"]
+    # ⚠️ Sauf SANS preuve (`none`) : l'adresse y EST le credential. Elle se sert
+    # MASQUÉE à toute lecture (MCP compris, et à qui l'agent est seulement
+    # partagé) et en clair une seule fois, au retour de la pose (`_hook_auth`,
+    # REST seul, propriétaire ou admin) — comme le porteur.
+    sans_preuve = runner_hook.prereglage(t.get("hook_auth")).schema == runner_hook.NONE
+    adresse = (runner_hook.ADRESSE_PREFIX + ADRESSE_MASQUEE if sans_preuve
+               else t.get("hook_slug") or t["id"])
     return {**t,
             "hook_auth": t.get("hook_auth") or runner_hook.BEARER,
             "signing_secret_set": bool(t.get("signing_secret_set")),
             "private_address": bool(t.get("hook_slug")),
-            "hook_url": f"{base}/api/hooks/{adresse}",
+            "hook_url": _url_du_hook(adresse),
             "deliveries_24h": compte["recues_24h"],
             "deliveries_refused_24h": compte["refusees_24h"],
             "last_delivery": str(compte["derniere"]) if compte["derniere"] else None,
@@ -827,6 +843,15 @@ def _triggers_sync(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         if not t or (t.get("kind") or "schedule") != "webhook":
             raise AuthzDenied(404, "trigger_not_found", "automatisation inconnue")
         _exiger_la_porte(ctx, t)
+        if runner_hook.prereglage(t.get("hook_auth")).schema == runner_hook.NONE:
+            # Sans preuve, l'adresse EST le credential : la neuve ne doit pas
+            # passer par un outil. Elle se renouvelle sur l'écran de l'agent.
+            raise AuthzDenied(
+                400, "no_auth_address",
+                "cet agent n'exige aucune preuve : son adresse est son seul secret, "
+                "et elle ne passe jamais par un outil. Renouvelle-la sur l'écran de "
+                "l'agent (`PUT /api/me/runner/triggers/{id}/hook-auth`, "
+                "`hook_auth=none`).")
         # Donne une adresse privée à un agent qui n'en avait pas, ou la REMPLACE :
         # dans les deux cas l'adresse d'avant (numérique ou privée) cesse d'ouvrir.
         db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id,
@@ -1293,6 +1318,10 @@ class HookAuthOut(BaseModel):
     trigger: Trigger
     #: Le porteur NEUF, en clair, rendu UNE fois — seulement au retour au porteur.
     hook_secret: Optional[str] = None
+    #: SANS preuve (`none`) : l'adresse NEUVE, en clair, rendue UNE fois — à la
+    #: pose et à chaque `hook_auth=none` redemandé (qui la renouvelle). Partout
+    #: ailleurs `trigger.hook_url` est masquée.
+    hook_url: Optional[str] = None
 
 
 def _exiger_la_porte(ctx: ResolvedCtx, agent: dict) -> None:
@@ -1380,7 +1409,7 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
     _valide_l_authentification(inp, actuel)
     _exiger_la_porte(ctx, actuel)
     mode_avant = actuel.get("hook_auth") or runner_hook.BEARER
-    porteur = None
+    porteur = adresse_neuve = None
     vise = runner_hook.prereglage(inp.hook_auth)
     if inp.hook_auth == runner_hook.STANDARD_WEBHOOKS:
         enveloppe = (runner_hook.chiffrer_secret_de_signature(
@@ -1393,15 +1422,23 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
         logger.warning("webhook %s (org %s) : authentification par SIGNATURE posée "
                        "par %s%s", inp.trigger_id, ctx.org_id, ctx.sub,
                        " (secret posé)" if enveloppe else "")
-    elif mode_avant != inp.hook_auth and not vise.porte_le_porteur:
+    elif vise.schema == runner_hook.NONE:
         # SANS preuve : ni porteur ni secret de signature ne doivent survivre —
         # un credential dormant se réveillerait au prochain changement de mode.
-        db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
-                              effacer_le_secret=True)
-        db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
-        logger.warning("webhook %s (org %s) : passé SANS PREUVE (`none`) par %s — "
-                       "porteur et secret de signature effacés", inp.trigger_id,
-                       ctx.org_id, ctx.sub)
+        # ⚠️ Et une adresse NEUVE, à chaque fois : l'ancienne a été servie en
+        # clair tant qu'elle n'ouvrait rien (lectures MCP, agents partagés) — elle
+        # devient maintenant le credential, donc elle ne peut pas rester celle-là.
+        # Redemander `none` sur un agent déjà `none` = la renouveler.
+        if mode_avant != inp.hook_auth:
+            db.poser_auth_de_hook(inp.trigger_id, ctx.org_id, inp.hook_auth,
+                                  effacer_le_secret=True)
+            db.poser_secret_de_hook(inp.trigger_id, ctx.org_id, None)
+        adresse = runner_hook.nouvelle_adresse()
+        db.poser_adresse_de_hook(inp.trigger_id, ctx.org_id, adresse)
+        adresse_neuve = _url_du_hook(adresse)
+        logger.warning("webhook %s (org %s) : SANS PREUVE (`none`) par %s — porteur "
+                       "et secret de signature effacés, adresse neuve émise",
+                       inp.trigger_id, ctx.org_id, ctx.sub)
     elif mode_avant != inp.hook_auth:
         # Vers un préréglage qui s'ouvre avec NOTRE porteur (en-tête ou corps) : un
         # porteur NEUF à chaque changement — l'ancien n'a été montré qu'une fois,
@@ -1415,7 +1452,7 @@ def _hook_auth_sync(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
                        ctx.org_id, inp.hook_auth, ctx.sub)
     t = db.get_trigger(inp.trigger_id, ctx.org_id) or actuel
     return _avec_mon_acces(ctx, {"trigger": _avec_hook(ctx.org_id, _avec_pertes(ctx.org_id, t)),
-                                 "hook_secret": porteur})
+                                 "hook_secret": porteur, "hook_url": adresse_neuve})
 
 
 async def _hook_auth(ctx: ResolvedCtx, inp: HookAuthInput) -> dict:
@@ -1504,6 +1541,9 @@ CAPABILITIES += [
             DeclaredError(400, "daily_cap_required",
                           "`max_per_day=0` sur un webhook SANS preuve (`none`) : son "
                           "plafond ne se retire pas"),
+            DeclaredError(400, "no_auth_address",
+                          "`rotate_address` sur un webhook SANS preuve : son adresse "
+                          "est son credential, elle se renouvelle par l'écran (REST)"),
             DeclaredError(404, "trigger_not_found",
                           "automatisation inconnue dans l'org du porteur"),
             DeclaredError(403, "org_admin_required",

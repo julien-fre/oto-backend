@@ -268,6 +268,8 @@ def base(monkeypatch):
     monkeypatch.setattr(RT.db, "poser_auth_de_hook", _poser_auth)
     monkeypatch.setattr(RT.db, "poser_secret_de_hook",
                         lambda t, o, h: etat.update(hash=h) or True)
+    monkeypatch.setattr(RT.db, "poser_adresse_de_hook",
+                        lambda t, o, slug: ligne.update(hook_slug=slug) or True)
     return etat
 
 
@@ -316,3 +318,62 @@ def test_la_rotation_du_porteur_marche_sur_lemlist_PAS_sur_none(base):
     _auth(hook_auth="none")
     with pytest.raises(AuthzDenied):
         _appel(op="rotate_secret", trigger_id=5)
+
+
+# ── 5. SANS preuve, l'adresse EST le credential : servie masquée, révélée une fois
+
+def test_none_l_adresse_est_MASQUEE_a_toute_lecture(base):
+    """`_avec_hook` est le passage UNIQUE de toute lecture servie (get, list,
+    create, update, rotations) : masquer là, c'est masquer partout."""
+    _auth(hook_auth="none")
+    slug = base["ligne"]["hook_slug"]
+    servi = RT._avec_hook(ORG, dict(base["ligne"]))
+    assert slug not in servi["hook_url"], "ni MCP ni un agent partagé ne lisent le credential"
+    assert servi["hook_url"].endswith(RT.ADRESSE_MASQUEE)
+
+
+def test_passer_en_none_EMET_une_adresse_NEUVE_rendue_une_fois(base):
+    """L'adresse d'avant a été servie en clair tant qu'elle n'ouvrait rien : elle
+    ne peut pas devenir le credential."""
+    avant = base["ligne"]["hook_slug"]
+    out = _auth(hook_auth="none")
+    neuve = base["ligne"]["hook_slug"]
+    assert neuve != avant and neuve.startswith(runner_hook.ADRESSE_PREFIX)
+    assert out["hook_url"].endswith("/api/hooks/" + neuve)
+    assert neuve not in out["trigger"]["hook_url"]
+
+
+def test_redemander_none_RENOUVELLE_l_adresse(base):
+    premiere = _auth(hook_auth="none")["hook_url"]
+    seconde = _auth(hook_auth="none")["hook_url"]
+    assert seconde and seconde != premiere
+
+
+def test_rotate_address_PAR_L_OUTIL_est_refuse_sur_none(base):
+    _auth(hook_auth="none")
+    with pytest.raises(AuthzDenied) as e:
+        _appel(op="rotate_address", trigger_id=5)
+    assert e.value.code == "no_auth_address"
+
+
+def test_un_agent_AUTHENTIFIE_sert_son_adresse_en_clair(base):
+    assert RT._avec_hook(ORG, dict(base["ligne"]))["hook_url"].endswith("/api/hooks/h_privee")
+    assert not _auth(hook_auth="lemlist").get("hook_url")
+
+
+# ── 6. Sentry : ni l'adresse ni le corps d'un webhook ne partent ──────────────
+
+def test_sentry_ne_recoit_ni_l_ADRESSE_ni_le_CORPS_d_un_webhook():
+    from oto_mcp import sentry_setup
+    ev = {"request": {"url": "https://mcp.example/api/hooks/h_credentielsanspreuve",
+                      "data": {"secret": JETON}, "query_string": "a=1"}}
+    sentry_setup._before_send_transaction(ev, {})
+    assert "h_credentielsanspreuve" not in repr(ev) and JETON not in repr(ev)
+    assert ev["request"]["url"] == "https://mcp.example/api/hooks/[redacted]"
+
+
+def test_sentry_les_autres_routes_gardent_leur_requete():
+    from oto_mcp import sentry_setup
+    ev = {"request": {"url": "https://mcp.example/api/me", "data": {"x": 1}}}
+    sentry_setup._before_send_transaction(ev, {})
+    assert ev["request"] == {"url": "https://mcp.example/api/me", "data": {"x": 1}}
