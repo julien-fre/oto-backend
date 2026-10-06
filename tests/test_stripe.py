@@ -535,6 +535,92 @@ def test_checkout_create_link_requires_a_price():
         patcher.stop()
 
 
+def _link_body(ptype="one_time", **kw):
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        cls.return_value.get_price.return_value = {"type": ptype}
+        _tool(m, "stripe_checkout")(op="create_link", price_id="price_1", **kw)
+        return cls.return_value.create_payment_link.call_args[1], cls.return_value
+    finally:
+        patcher.stop()
+
+
+def test_create_link_recurring_puts_created_metadata_on_subscription():
+    body, client = _link_body(ptype="recurring", metadata={"campagne": "rentree"},
+                              created_metadata={"account_id": "7"}, max_uses=1)
+    assert body["metadata"] == {"campagne": "rentree"}
+    assert body["subscription_data"] == {"metadata": {"account_id": "7"}}
+    assert body["restrictions"] == {"completed_sessions": {"limit": 1}}
+    assert "payment_intent_data" not in body
+    client.get_price.assert_called_once_with("price_1")
+
+
+def test_create_link_one_time_uses_payment_intent_data():
+    body, _ = _link_body(ptype="one_time", created_metadata={"account_id": "7"})
+    assert body["payment_intent_data"] == {"metadata": {"account_id": "7"}}
+    assert "subscription_data" not in body
+
+
+def test_create_link_recurring_price_needs_no_metadata():
+    """Un lien d'abonnement sans métadonnée reste permis, et ne lit pas le prix
+    (la clé n'a peut-être pas Prices: Read)."""
+    body, client = _link_body(ptype="recurring")
+    assert body == {}
+    client.get_price.assert_not_called()
+
+
+def test_create_link_refuses_an_unreadable_price_type():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_checkout")
+        for price in ({"id": "price_1"}, ["price_1"], None):
+            cls.return_value.get_price.return_value = price
+            with pytest.raises(McpError, match="type illisible"):
+                fn(op="create_link", price_id="price_1", created_metadata={"a": "1"})
+        cls.return_value.create_payment_link.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+def test_create_link_surfaces_a_failed_price_read():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        from oto.tools.common.errors import UpstreamHTTPError
+        cls.return_value.get_price.side_effect = UpstreamHTTPError(
+            403, {"error": {"message": "no perms"}}, service="stripe")
+        with pytest.raises(McpError, match="RESTREINTE"):
+            _tool(m, "stripe_checkout")(op="create_link", price_id="price_1",
+                                        created_metadata={"a": "1"})
+        cls.return_value.create_payment_link.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+@pytest.mark.parametrize("max_uses", [0, -1, True])
+def test_create_link_refuses_a_bad_max_uses(max_uses):
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        with pytest.raises(McpError, match="max_uses"):
+            _tool(m, "stripe_checkout")(op="create_link", price_id="price_1",
+                                        max_uses=max_uses)
+        cls.return_value.create_payment_link.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+@pytest.mark.parametrize("kw", [{"max_uses": 1}, {"created_metadata": {"a": "1"}},
+                                {"price_id": "price_1"}, {"quantity": 2}])
+def test_create_link_fields_are_refused_on_other_ops(kw):
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        with pytest.raises(McpError, match="ne s'appliquent qu'à op='create_link'"):
+            _tool(m, "stripe_checkout")(op="update_link", payment_link_id="plink_1",
+                                        active=False, **kw)
+        cls.return_value.update_payment_link.assert_not_called()
+    finally:
+        patcher.stop()
+
+
 # --- messages d'erreur : actionnables, pas génériques --------------------------
 
 def test_missing_tax_code_error_tells_the_agent_how_to_fix_it():

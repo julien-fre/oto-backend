@@ -897,6 +897,8 @@ def register(mcp: FastMCP) -> None:
         status: Optional[Literal["open", "complete", "expired"]] = None,
         active: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        created_metadata: Optional[Dict[str, Any]] = None,
+        max_uses: Optional[int] = None,
         limit: Optional[int] = None,
         starting_after: Optional[str] = None,
     ) -> object:
@@ -923,9 +925,21 @@ def register(mcp: FastMCP) -> None:
                 switches a link off without deleting it.
             customer_id/status: "list_sessions" filters — `status="open"` are
                 abandoned checkouts.
-            metadata, limit, starting_after: as elsewhere.
+            metadata: on the link itself. Stripe does NOT copy it onto the
+                subscription / payment created at checkout — use
+                `created_metadata` for that.
+            created_metadata: "create_link" — metadata set on what each checkout
+                creates: the subscription for a recurring price, the payment
+                intent otherwise. Reads the price first (key needs Prices: Read).
+            max_uses: "create_link" — the link deactivates itself after N
+                completed checkouts (1 = paid once, by whoever opens it first).
+            limit, starting_after: as elsewhere.
 
         """
+        if op != "create_link":
+            _refuse_ignored(op, "ces champs ne s'appliquent qu'à op='create_link'",
+                            price_id=price_id, quantity=quantity,
+                            created_metadata=created_metadata, max_uses=max_uses)
         client = _client()
         if op == "list_links":
             return _run(lambda: client.list_payment_links(
@@ -957,7 +971,22 @@ def register(mcp: FastMCP) -> None:
                 raise _bad("op='create_link' requiert `price_id` — liste-les avec "
                            "stripe_catalog(op='list_prices').")
             items: List[Dict[str, Any]] = [{"price": price_id, "quantity": quantity or 1}]
-            return _run(lambda: client.create_payment_link(items, metadata=metadata))
+            if max_uses is not None and (isinstance(max_uses, bool) or max_uses < 1):
+                raise _bad("`max_uses` doit être un entier ≥ 1")
+            body: Dict[str, Any] = {}
+            if metadata:
+                body["metadata"] = metadata
+            if created_metadata:
+                price = _run(lambda: client.get_price(price_id))
+                ptype = price.get("type") if isinstance(price, dict) else None
+                if ptype not in ("recurring", "one_time"):
+                    raise _bad(f"prix {price_id!r} : type illisible ({ptype!r}) — "
+                               "impossible de savoir où poser `created_metadata`.")
+                target = "subscription_data" if ptype == "recurring" else "payment_intent_data"
+                body[target] = {"metadata": created_metadata}
+            if max_uses is not None:
+                body["restrictions"] = {"completed_sessions": {"limit": max_uses}}
+            return _run(lambda: client.create_payment_link(items, **body))
         if op == "update_link":
             if not payment_link_id:
                 raise _bad("op='update_link' requiert `payment_link_id`")
