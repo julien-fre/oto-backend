@@ -519,7 +519,7 @@ niveau ; la restriction par ACL, ADR 0025, a disparu le 24/09/2026).
 Voyager par appel (`client.get_feed`, sous `_scrape` comme toute lecture LinkedIn), la trie
 par `posted_at` en mémoire et rend `{items, cursor, count}` ; la suite se demande par le
 `cursor` rendu. Rien n'est écrit : le miroir `linkedin-feed` du datastore (sync à TTL
-600 s, `unipile_accounts.feed_synced_at`) se resynchronisait par `upsert_row`, qui
+600 s, `unipile_accounts.feed_synced_at`, retirée par la révision `0039`) se resynchronisait par `upsert_row`, qui
 REMPLAÇAIT la ligne entière — toute annotation posée entre deux syncs tombait sans trace.
 Décision d'Alexis du 05/10 : plus de miroir ni d'annotation (`signal`, `signal_type`,
 `is_target`, `traite_le` abandonnées), `upsert_row` retiré avec lui. Le TTL ne protégeait

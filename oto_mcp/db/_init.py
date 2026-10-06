@@ -1179,10 +1179,6 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # inconditionnelle du PK (sub, provider) écraserait la migration.
     conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS platform_seat BOOLEAN NOT NULL DEFAULT FALSE")
     conn.execute("ALTER TABLE unipile_pending ADD COLUMN IF NOT EXISTS platform_seat BOOLEAN NOT NULL DEFAULT FALSE")
-    # `unipile_accounts.feed_synced_at` (fraîcheur du miroir `linkedin-feed`) n'a plus
-    # ni lecteur ni écrivain depuis oto#156 : le feed est servi en direct. Son `DROP` n'est
-    # PAS ici — base partagée préprod/prod, DDL non additive jamais au démarrage
-    # (docs/live-migrations.md) : geste de l'opérationnel, une fois ce code en production.
     # Fin du droit `unipile` (#806, révision 0006) : le premier constat de la perte
     # (point de départ du délai avant suppression chez unipile) et le préavis envoyé.
     # Nullables sans défaut : catalogue seul. Écrites par `unipile_fin_de_droit.py`.

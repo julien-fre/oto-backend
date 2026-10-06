@@ -32,6 +32,13 @@ ailleurs que chez nous.
 4. **Promotion B**, puis **Lot C** (drops finaux), etc. Un lot = un boot canari vérifié
    (deploy vert + smoke + lecture d'une surface réelle) AVANT sa promotion.
 
+⚠️ **Un lot destructif s'écrit dans une révision Alembic, jamais en geste manuel en
+production** — même sur la base partagée, où un seul geste vaudrait pour la préprod et
+la prod. Une révision se rejoue sur toute autre base (instance cible, base née avant le
+geste) ; un geste manuel, nulle part. **Un commentaire de code n'est jamais la trace
+d'un DDL** (`docs/migrations-versionnees.md` §5.3, vécu sur
+`unipile_accounts.feed_synced_at`, #1162).
+
 ### En cours : la table `guides` (oto#239)
 
 - **Lot 1 — livré le 23/09/2026** : plus aucune ligne de code ne touche `guides`. Sont

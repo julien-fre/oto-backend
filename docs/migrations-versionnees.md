@@ -849,6 +849,19 @@ sans défaut (écriture de catalogue, `lock_timeout` 5 s ; les lignes existantes
 NULL). **Avant la fusion** : le code du lot la lit dans chaque projection de ligne et
 l'écrit à l'abandon. Le retour arrière retire la colonne (les motifs restent).
 
+`0039_feed_synced_at_retiree` (06/10/2026, oto-backend#1162, après `0038_abandon_run`)
+retire `unipile_accounts.feed_synced_at`, morte depuis que le feed LinkedIn est servi en
+direct. Son `DROP` avait été joué **à la main** sur la base partagée, sur la foi d'un
+commentaire de `_init.py` : une instance née avant ce geste l'a gardée, et l'import de
+périmètre vers elle a refusé des « colonnes différentes » (§5.3). La révision lit le
+catalogue (`pg_attribute`, sans verrou sur la table) et ne lance
+`ALTER TABLE unipile_accounts DROP COLUMN IF EXISTS feed_synced_at` que si la colonne
+existe : sur la base partagée et sur une base neuve, **aucun ordre, aucun verrou**.
+Ailleurs, `AccessExclusiveLock` bref sur `unipile_accounts` (écriture de catalogue, sans
+réécriture), attente bornée par `lock_timeout` 5 s. **Ordre indifférent** : aucun code ne
+lit ni n'écrit la colonne. **Le retour arrière lève** (irréversible) : un banc qui
+descend sous 0039 estampille la révision qu'il éprouve au lieu de `head`.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose
@@ -893,6 +906,27 @@ déclaration »). Banc : `tests/test_naissance_d_une_base.py`.
 la discipline de chaque révision (poser aussi sa colonne dans le fragment du schéma).
 Rien ne compare encore le schéma d'une base neuve à celui d'une base remise à niveau par
 `upgrade`.
+
+### 5.3 Un retrait passe TOUJOURS par une révision (06/10/2026, oto-backend#1162)
+
+Un retrait — `DROP COLUMN`, `DROP TABLE`, `DROP CONSTRAINT`, tout changement non additif —
+**s'écrit dans une révision du registre**, jamais en geste manuel sur la base de
+production, **même si cette base est partagée** et qu'un seul geste suffirait pour la
+préprod et la prod. Le registre est la seule trace qu'une autre base rejoue : une
+instance cible, une base née avant le geste, une base de test. Un geste joué à la main
+n'existe que là où il a été joué.
+
+**Un commentaire de code n'est jamais la trace d'un DDL.** « Son `DROP` n'est pas ici :
+geste de l'opérationnel » ne se rejoue nulle part. Vécu sur
+`unipile_accounts.feed_synced_at` : le commentaire de `_init.py` a été suivi en
+production, la colonne est restée sur une instance née avant, et l'import de périmètre
+l'a refusée ; la révision `0039_feed_synced_at_retiree` a rattrapé le geste.
+
+Ce qui ne change pas : un retrait n'est **jamais au démarrage** (ADR 0065, base
+partagée), il attend que plus aucun code servi ne lise l'objet (`docs/live-migrations.md`,
+« la danse en N lots »), et la révision le rend **idempotent** — constat au catalogue
+avant l'ordre, pour ne prendre aucun verrou là où il est déjà fait. Son retour arrière
+lève plutôt que de recréer un objet vide.
 
 ## 6. Références
 

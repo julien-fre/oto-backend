@@ -144,7 +144,8 @@ def test_la_revision_0017_pose_la_colonne_se_defait_et_le_boot_la_repose(
 
     from oto_mcp.db import init_db
     cfg = _alembic()
-    command.stamp(cfg, "head")
+    # Pas `head` : 0039 refuse de descendre (irréversible). Seul le retour de 0017 compte ici.
+    command.stamp(cfg, "0017_tableaux_contexte_org")
     command.downgrade(cfg, "0016_journal_suppression")
     assert not _colonne(pg_module_dsn)
     command.upgrade(cfg, "0017_tableaux_contexte_org")
