@@ -83,24 +83,29 @@ def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
     crédits). Le solde était lu puis JETÉ : un compte à sec gardait une sonde verte.
 
     Réponse documentée (`GET /v0/billing/credit-balance`) : `api_credits`,
-    `used_api_credits`, `ui_credits`, `used_ui_credits`, `earliest_expiration`. La doc
-    ne dit pas si `api_credits` est le RESTANT ou l'ALLOCATION : on ne conclut donc
-    « à sec » que sur `api_credits <= 0`, vrai sous les deux lectures, et on rend les
-    deux chiffres tels quels plutôt qu'un restant calculé qui pourrait mentir.
+    `used_api_credits`, `ui_credits`, `used_ui_credits`, `earliest_expiration`.
+    `api_credits` est l'ALLOCATION, pas le restant : un compte à sec a répondu
+    `api_credits=1700, used_api_credits=1700` et gardait une sonde verte (signal oto
+    #1189). Le compte est donc à sec quand `used_api_credits >= api_credits` — ou
+    quand l'allocation est nulle, si `used_api_credits` manque.
     """
     from oto.tools.theirstack.client import TheirStackClient
 
     solde = TheirStackClient(api_key=fields["key"]).credit_balance()
     api = solde.get("api_credits") if isinstance(solde, dict) else None
+    used = solde.get("used_api_credits") if isinstance(solde, dict) else None
     if not isinstance(api, int):
         raise RuntimeError(
             f"TheirStack a répondu sans solde de crédits API lisible : {str(solde)[:200]}")
-    if api <= 0:
+    restant = api - used if isinstance(used, int) else api
+    if restant <= 0:
         raise connector_verify.QuotaEpuise(
-            "La clé TheirStack est bonne, mais le compte n'a plus de crédits API. "
+            "La clé TheirStack est bonne, mais le compte n'a plus de crédits API "
+            f"({used if isinstance(used, int) else '?'} utilisés sur {api}). "
             "Recharge le compte chez TheirStack — reconnecter n'y changerait rien.")
     return {"quota": {"api_credits": api,
-                      "used_api_credits": solde.get("used_api_credits"),
+                      "used_api_credits": used,
+                      "restant": restant,
                       "unite": "crédits API"}}
 
 

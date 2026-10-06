@@ -212,3 +212,15 @@ def test_la_sonde_theirstack_a_sec_rend_no_quota(monkeypatch):
 def test_la_sonde_theirstack_rend_son_solde(monkeypatch):
     out = _sonde(monkeypatch, {"api_credits": 50, "used_api_credits": 3})
     assert out["quota"]["api_credits"] == 50
+    assert out["quota"]["restant"] == 47
+
+
+def test_la_sonde_theirstack_lit_api_credits_comme_l_ALLOCATION(monkeypatch):
+    """Signal oto #1189 : un compte à sec répondait `api_credits=1700,
+    used_api_credits=1700` et la sonde restait verte, parce qu'elle prenait
+    l'allocation pour le restant."""
+    from oto_mcp.connectors import verify as connector_verify
+
+    with pytest.raises(connector_verify.QuotaEpuise) as exc:
+        _sonde(monkeypatch, {"api_credits": 1700, "used_api_credits": 1700})
+    assert "1700 utilisés sur 1700" in str(exc.value)
