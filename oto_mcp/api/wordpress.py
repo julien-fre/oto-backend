@@ -1,17 +1,17 @@
-"""Retour de l'écran d'autorisation WordPress — route écrite à la main, comme le
-retour OAuth Zoho, et pour la même raison : c'est le NAVIGATEUR de l'utilisateur
-que le site renvoie ici, sans en-tête d'auth (l'identité vient du `state` signé),
-et la réponse est un 302 vers le front. Déclarée comme exception dans
+"""Return from the WordPress authorization screen — hand-written route, like the
+Zoho OAuth return, and for the same reason: it is the user's BROWSER
+that the site sends back here, with no auth header (the identity comes from the signed `state`),
+and the response is a 302 to the front end. Declared as an exception in
 `tests/test_rest_modules_are_capabilities.py`.
 
-Dans l'ordre : state lu, state CONSOMMÉ (usage unique), refus de l'utilisateur,
-droit d'écrire au palier RE-VÉRIFIÉ (`forbidden`), puis vérification et pose.
+In order: state read, state CONSUMED (single use), user refusal,
+right to write at the tier RE-CHECKED (`forbidden`), then verification and storage.
 
-⚠️ **Cette URL porte un mot de passe en query string** (`password=`, protocole
-de WordPress, pas un choix). Sa query est retirée du journal d'accès et de Sentry
-par la liste commune `journal_secrets.routes_a_requete_secrete`. Jamais le détail
-d'une erreur dans l'URL de retour, jamais le mot de passe dans un message de
-journal.
+⚠️ **This URL carries a password in the query string** (`password=`, WordPress's
+protocol, not a choice). Its query is stripped from the access log and from Sentry
+by the common list `journal_secrets.routes_a_requete_secrete`. Never an error's
+detail in the return URL, never the password in a log
+message.
 """
 from __future__ import annotations
 
@@ -57,8 +57,8 @@ def make_routes(
         if q.get("success") == "false":
             return RedirectResponse(_retour("denied", parsed), status_code=302)
         if not await run_in_threadpool(wp_auth.still_allowed, parsed):
-            logger.warning("wordpress connect callback refusé : %s n'a plus le droit "
-                           "d'écrire au palier %s (org=%s group=%s)", parsed["sub"],
+            logger.warning("wordpress connect callback refused: %s no longer has the right "
+                           "to write at tier %s (org=%s group=%s)", parsed["sub"],
                            parsed["scope"], parsed["org"], parsed.get("group"))
             return RedirectResponse(_retour("forbidden", parsed), status_code=302)
 
@@ -68,7 +68,7 @@ def make_routes(
 
         try:
             await run_in_threadpool(_finish)
-        except Exception as e:  # noqa: BLE001 — l'échec se dit par le retour, jamais en détail
+        except Exception as e:  # noqa: BLE001 — failure is signalled by the return, never in detail
             logger.warning("wordpress connect callback failed: %s", type(e).__name__)
             return RedirectResponse(_retour("error", parsed), status_code=302)
         return RedirectResponse(_retour("connected", parsed), status_code=302)

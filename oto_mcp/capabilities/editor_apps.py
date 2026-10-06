@@ -1,24 +1,24 @@
-"""Capacité « app OAuth de l'éditeur » — poser l'app d'oto chez un fournisseur.
+"""Capability "publisher's OAuth app" — setting oto's app at a provider.
 
-Pourquoi ça existe : sur un connecteur à consentement (Zoho & co), l'utilisateur devait
-créer LUI-MÊME une app OAuth chez le fournisseur (mode « Self Client ») avant de pouvoir
-connecter quoi que ce soit — une console développeur à traverser, des scopes à cocher à
-la main, et trois incidents de scopes mal choisis (#190, #202, Desk articles-only). Avec
-une app d'éditeur posée ici, il ne reste que le geste qui compte : consentir.
+Why it exists: on a consent connector (Zoho & co), the user had to
+create an OAuth app THEMSELVES at the provider ("Self Client" mode) before being able to
+connect anything — a developer console to get through, scopes to tick by
+hand, and three incidents of badly chosen scopes (#190, #202, Desk articles-only). With
+a publisher app set here, only the gesture that matters remains: consent.
 
-**Ce qui est posé n'est pas une clé d'accès.** `client_id`/`client_secret` identifient
-l'ÉDITEUR qui demande l'accès ; les données, elles, ne s'ouvrent qu'avec le
-`refresh_token` né du consentement de l'utilisateur, rangé à SON nom. L'invariant qui
-garantit cette séparation est documenté dans `credentials_store` §app d'éditeur.
+**What is set is not an access key.** `client_id`/`client_secret` identify
+the PUBLISHER that asks for access; the data only opens with the
+`refresh_token` born of the user's consent, stored in THEIR name. The invariant that
+guarantees this separation is documented in `credentials_store` §publisher app.
 
-**REST seulement, super admin** : la face MCP est délibérément absente — un secret brut
-en argument d'outil transiterait par le contexte du modèle (règle du repo, cf. la pose
-des secrets d'org).
+**REST only, super admin**: the MCP face is deliberately absent — a raw secret
+as a tool argument would transit through the model's context (repo rule, cf. the setting
+of org secrets).
 
-**La face du TENANT est ailleurs** (`tenant_apps`, 23/09/2026) : un admin de tenant pose
-SON app sous SON slug depuis `/api/admin/tenants/{slug}/apps/{connector}` — ici, la clé
-est libre (région zoho, `tenant:<slug>` pour l'app d'un tenant) et le geste reste celui
-de l'opérateur.
+**The TENANT face is elsewhere** (`tenant_apps`, 23/09/2026): a tenant admin sets
+THEIR app under THEIR slug from `/api/admin/tenants/{slug}/apps/{connector}` — here, the key
+is free (zoho region, `tenant:<slug>` for a tenant's app) and the gesture remains the
+operator's.
 """
 from __future__ import annotations
 
@@ -34,13 +34,13 @@ from .registry import CAPABILITIES
 
 
 def _guard(connector: str) -> str:
-    """Le connecteur doit avoir un flux de consentement — poser une app d'éditeur sur
-    un connecteur à clé API n'aurait aucun sens (rien ne la consommerait)."""
+    """The connector must have a consent flow — setting a publisher app on
+    an API-key connector would make no sense (nothing would consume it)."""
     name = (connector or "").strip()
     if not connector_flow.supports(name):
         raise AuthzDenied(400, "no_consent_flow",
-                          f"« {name} » n'a pas de flux de connexion par consentement : "
-                          "une app d'éditeur n'y servirait à rien.")
+                          f"\"{name}\" has no consent-based connection flow: "
+                          "a publisher app would be of no use there.")
     return name
 
 
@@ -50,8 +50,8 @@ class ListInput(BaseModel):
 
 class SetInput(BaseModel):
     connector: str
-    # La région fait partie de la CLÉ, pas d'un réglage : une app OAuth est enregistrée
-    # dans son data center et rejetée par les autres.
+    # The region is part of the KEY, not a setting: an OAuth app is registered
+    # in its data center and rejected by the others.
     data_center: str
     client_id: str
     client_secret: str
@@ -81,12 +81,12 @@ def _set(ctx: ResolvedCtx, inp: SetInput) -> dict:
 
 
 def _tenant_host(key: str) -> Optional[str]:
-    """Quand la clé de l'app désigne un TENANT (`tenant:<slug>`,
-    `credentials_store.tenant_app_key`), le rappel que l'admin doit enregistrer chez le
-    fournisseur est celui du tenant (cf. `google_oauth.app_for`) — lui rendre le nôtre,
-    c'est lui faire déclarer une URL que le flux n'enverra jamais. Une clé de RÉGION
-    rend `None` (le rappel de l'instance), même si un tenant porte le même nom : une
-    région n'est jamais lue comme un slug (revue de #1063)."""
+    """When the app's key designates a TENANT (`tenant:<slug>`,
+    `credentials_store.tenant_app_key`), the callback the admin must register at the
+    provider is the tenant's (cf. `google_oauth.app_for`) — giving them ours
+    would make them declare a URL the flow will never send. A REGION key
+    returns `None` (the instance's callback), even if a tenant bears the same name: a
+    region is never read as a slug (review of #1063)."""
     from .. import tenancy
     slug = credentials_store.tenant_of_app_key(key)
     return tenancy.current().callback_host(slug) if slug else None
@@ -95,7 +95,7 @@ def _tenant_host(key: str) -> Optional[str]:
 def _delete(ctx: ResolvedCtx, inp: DeleteInput) -> dict:  # noqa: ARG001
     if not credentials_store.clear_editor_app(inp.connector, inp.data_center):
         raise AuthzDenied(404, "unknown_editor_app",
-                          "aucune app d'éditeur pour ce connecteur et cette région.")
+                          "no publisher app for this connector and this region.")
     return {"ok": True, "connector": inp.connector,
             "data_center": inp.data_center.strip().lower()}
 
@@ -105,18 +105,18 @@ CAPABILITIES += [
         key="platform.editor_app.list", handler=_list, Input=ListInput,
         authz=SUPER_ADMIN, mcp=None,
         rest=RestBinding("GET", "/api/admin/editor-apps"),
-        description="Apps OAuth d'éditeur posées (connecteur × région), sans secret.",
+        description="Publisher OAuth apps that are set (connector × region), without secrets.",
     ),
     Capability(
         key="platform.editor_app.set", handler=_set, Input=SetInput,
         authz=SUPER_ADMIN, mcp=None,
         rest=RestBinding("POST", "/api/admin/editor-apps"),
-        description="Pose/rote l'app OAuth d'oto pour un connecteur et une région.",
+        description="Set/rotate oto's OAuth app for a connector and a region.",
     ),
     Capability(
         key="platform.editor_app.delete", handler=_delete, Input=DeleteInput,
         authz=SUPER_ADMIN, mcp=None,
         rest=RestBinding("DELETE", "/api/admin/editor-apps/{connector}/{data_center}"),
-        description="Retire l'app OAuth d'éditeur d'un connecteur pour une région.",
+        description="Remove a connector's publisher OAuth app for a region.",
     ),
 ]

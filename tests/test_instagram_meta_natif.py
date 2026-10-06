@@ -250,7 +250,7 @@ def test_sans_coordonnees_le_bouton_refuse_en_nommant_la_cle_et_le_geste(
     with pytest.raises(RuntimeError) as e:
         env.auth.app()
     assert "app_id" in str(e.value) and "oto_admin_connector_setting" in str(e.value)
-    assert "ton compte" in str(e.value)      # dit que ce n'est PAS l'utilisatrice
+    assert "not your account" in str(e.value)     # dit que ce n'est PAS l'utilisatrice
 
 
 def test_le_dialogue_part_avec_l_application_de_l_instance(env):
@@ -574,7 +574,7 @@ def test_un_outil_sans_coeur_installe_refuse_en_le_disant(env, monkeypatch):
         lambda nom, *a, **k: (_ for _ in ()).throw(ImportError("absent")))
     with pytest.raises(RuntimeError) as e:
         env.auth._coeur()
-    assert "oto-core" in str(e.value) and "exploitant" in str(e.value)
+    assert "oto-core" in str(e.value) and "operator" in str(e.value)
 
 
 # ── Le secret d'application ne se relit pas ─────────────────────────────────
@@ -598,7 +598,7 @@ def test_le_secret_de_l_application_ne_ressort_pas_de_la_console_admin():
     ])
     assert lignes[0]["value"] == "app-id-fictif"      # l'App ID n'est pas un secret
     assert "secret-fictif" not in str(lignes)
-    assert lignes[1]["value"] and "posée" in lignes[1]["value"]
+    assert lignes[1]["value"] and "set" in lignes[1]["value"]
     assert lignes[2]["value"] == ""                    # absente reste absente
 
 

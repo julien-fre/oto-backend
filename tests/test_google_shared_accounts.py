@@ -317,8 +317,8 @@ def test_le_retrait_dun_compte_partage_se_journalise(monkeypatch, caplog):
     _admins(monkeypatch, org=True)
     with caplog.at_level("INFO", logger=G.__name__):
         G.revoke("admin-2", account="hello@x.test", scope="org")
-    (ligne,) = [r.getMessage() for r in caplog.records if "retiré" in r.getMessage()]
-    assert "hello@x.test" in ligne and "par=admin-2" in ligne and "admin-1" in ligne
+    (ligne,) = [r.getMessage() for r in caplog.records if "removed" in r.getMessage()]
+    assert "hello@x.test" in ligne and "by=admin-2" in ligne and "admin-1" in ligne
 
 
 def test_la_carte_dun_service_est_reliee_par_un_compte_partage(monkeypatch):

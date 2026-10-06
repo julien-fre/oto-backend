@@ -162,7 +162,7 @@ def test_auth_url_uses_the_single_redirect_uri():
 
 
 def test_unknown_region_is_refused():
-    with pytest.raises(z.ZohoOAuthError, match="Data center"):
+    with pytest.raises(z.ZohoOAuthError, match="data center"):
         z.build_auth_url("u1", 35, "zoho", "xx", app=APP)
 
 
@@ -195,7 +195,7 @@ def test_missing_refresh_token_is_explained(monkeypatch):
     silencieux et incompréhensible sans ce message."""
     monkeypatch.setattr(z.oauth_flow.requests, "post",
                         lambda url, **kw: _Resp(200, {"access_token": "at"}))
-    with pytest.raises(z.ZohoOAuthError, match="Applications connectées"):
+    with pytest.raises(z.ZohoOAuthError, match="Connected Apps"):
         z.exchange_code("code", DC, app=APP)
 
 

@@ -1,22 +1,22 @@
-"""Meta Ads — obtenir l'autorisation (Facebook Login for Business).
+"""Meta Ads — obtaining authorization (Facebook Login for Business).
 
-Flux hébergé par oto, sur le patron commun (`connectors/flow` + `auth/flow`), copie
-de celui d'`instagram_meta` :
+Flow hosted by oto, on the common pattern (`connectors/flow` + `auth/flow`), copy
+of `instagram_meta`'s:
 
-1. « Connecter » sur la fiche → `_start_flow` rend l'URL du dialogue, avec un
-   `state` signé qui porte l'identité ;
-2. Meta ramène le navigateur sur `/api/meta_ads/oauth/callback`
-   (`api/meta_ads.py`) ; le code y devient un jeton ;
-3. le jeton part au coffre, palier MEMBRE.
+1. "Connect" on the card → `_start_flow` returns the dialog URL, with a signed
+   `state` carrying the identity;
+2. Meta brings the browser back to `/api/meta_ads/oauth/callback`
+   (`api/meta_ads.py`); the code becomes a token there;
+3. the token goes to the vault, MEMBER tier.
 
-**Pas de renouvellement.** La configuration attendue côté Meta émet un jeton
-d'utilisateur système (BISU), sans échéance. Si elle émet un jeton à durée de vie,
-l'échéance est rangée dans `meta.expires_at` et la fiche passe « à reconnecter » au
-premier rejet — on ne clone pas la passe quotidienne d'`instagram_meta` pour un cas
-qu'on déconseille.
+**No renewal.** The expected configuration on the Meta side issues a system-user
+token (BISU), with no expiry. If it issues a token with a lifetime,
+the expiry is stored in `meta.expires_at` and the card goes "to reconnect" at the
+first rejection — we do not clone `instagram_meta`'s daily pass for a case
+we discourage.
 
-⚠️ Les coordonnées de l'application Meta (App ID, secret, configuration) vivent en
-base, scope PLATEFORME de `connector_settings`, posées par l'exploitant.
+⚠️ The Meta application's coordinates (App ID, secret, configuration) live in the
+database, PLATFORM scope of `connector_settings`, set by the operator.
 """
 from __future__ import annotations
 
@@ -36,9 +36,9 @@ CONNECTOR = "meta_ads"
 _AUD = "meta_ads"
 _CALLBACK_PATH = "/api/meta_ads/oauth/callback"
 
-#: `config_id` = la configuration Facebook Login for Business (permissions + type
-#: de jeton). Seul `app_secret` est secret — et porte le suffixe `_secret` que la
-#: console admin masque.
+#: `config_id` = the Facebook Login for Business configuration (permissions + token
+#: type). Only `app_secret` is secret — and it carries the `_secret` suffix that the
+#: admin console masks.
 _REGLAGES = ("app_id", "app_secret", "config_id")
 
 _COMMANDE = ('oto_admin_connector_setting(op="set", connector="meta_ads", '
@@ -46,9 +46,9 @@ _COMMANDE = ('oto_admin_connector_setting(op="set", connector="meta_ads", '
 
 
 def _coeur():
-    """`oto.tools.meta_ads` d'oto-core, importé À L'APPEL — le connecteur reste
-    monté (et refuse en le disant) quand le tag épinglé ne le porte pas encore.
-    `importlib` : `oto` est un package d'espace de noms (cf. `instagram_meta`)."""
+    """oto-core's `oto.tools.meta_ads`, imported AT CALL TIME — the connector stays
+    mounted (and refuses, saying so) when the pinned tag does not carry it yet.
+    `importlib`: `oto` is a namespace package (cf. `instagram_meta`)."""
     import importlib
 
     try:
@@ -61,11 +61,11 @@ def _coeur():
             f"Detail: {e}") from e
 
 
-# --- les coordonnées de l'application ----------------------------------------
+# --- the application's coordinates ----------------------------------------
 
 def _reglages() -> dict:
-    """Lecture FROIDE, jamais sur le chemin d'un appel d'outil : seulement au
-    démarrage d'un flux ou au retour d'un consentement."""
+    """COLD read, never on the path of a tool call: only at
+    the start of a flow or on return from a consent."""
     from ..db import connector_settings as store
 
     return {r["key"]: (r["value"] or "").strip()
@@ -80,7 +80,7 @@ def coordonnees_manquantes() -> list[str]:
 
 
 def app():
-    """La `MetaAdsApp` de l'instance, ou un refus qui NOMME ce qui manque."""
+    """The instance's `MetaAdsApp`, or a refusal that NAMES what is missing."""
     manquantes = coordonnees_manquantes()
     if manquantes:
         raise RuntimeError(
@@ -98,10 +98,10 @@ def app_disponible(sub: str) -> bool:
     return not coordonnees_manquantes()
 
 
-# --- le state signé ----------------------------------------------------------
+# --- the signed state --------------------------------------------------------
 
 def _ctx_org(sub: str) -> int:
-    from .. import access  # lazy : évite tout cycle d'import au boot
+    from .. import access  # lazy: avoids any import cycle at boot
 
     org = access.current_org(sub)
     if org is None:
@@ -116,7 +116,7 @@ def make_state(sub: str, org_id: int, return_app: str = "") -> str:
 
 
 def verify_state(state: str) -> Optional[tuple[str, int, str]]:
-    """`(sub, org_id, return_app)` si le state est valide et émis POUR ce flux."""
+    """`(sub, org_id, return_app)` if the state is valid and issued FOR this flow."""
     data = oauth_flow.read_state(_AUD, state)
     if not data:
         return None
@@ -126,7 +126,7 @@ def verify_state(state: str) -> Optional[tuple[str, int, str]]:
     return sub, org, return_app if isinstance(return_app, str) else ""
 
 
-# --- démarrage du flux -------------------------------------------------------
+# --- flow start --------------------------------------------------------------
 
 def build_auth_url(sub: str, return_app: str = "") -> str:
     org_id = _ctx_org(sub)
@@ -154,7 +154,7 @@ connector_flow.declare(
 )
 
 
-# --- le coffre ---------------------------------------------------------------
+# --- the vault ---------------------------------------------------------------
 
 def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -165,10 +165,10 @@ def _scope(org_id: int, sub: str) -> tuple[str, str]:
 
 
 def persist_grant(sub: str, org_id: int, grant) -> dict:
-    """Le jeton est le secret (`secret_kind="oauth"`) ; le reste va dans `meta`.
+    """The token is the secret (`secret_kind="oauth"`); the rest goes into `meta`.
 
-    `client_business_id` n'existe que pour un jeton BISU : il dit QUEL portefeuille
-    business a autorisé. `expires_at` n'est rangé que si Meta en a donné une."""
+    `client_business_id` only exists for a BISU token: it says WHICH business
+    portfolio authorized. `expires_at` is only stored if Meta gave one."""
     maintenant = datetime.now(timezone.utc)
     meta = {"user_id": grant.user_id, "name": grant.name,
             "client_business_id": grant.client_business_id,
@@ -178,9 +178,9 @@ def persist_grant(sub: str, org_id: int, grant) -> dict:
     entity_type, entity_id = _scope(org_id, sub)
     credentials_store.set_credential(entity_type, entity_id, CONNECTOR,
                                      grant.access_token, set_by=sub, meta=meta)
-    logger.info("meta_ads : compte connecté (org=%s, business=%s, échéance=%s)",
+    logger.info("meta_ads: account connected (org=%s, business=%s, expiry=%s)",
                 org_id, grant.client_business_id or "-",
-                meta.get("expires_at") or "aucune")
+                meta.get("expires_at") or "none")
     return {"name": grant.name, "expires_at": meta.get("expires_at")}
 
 
@@ -189,7 +189,7 @@ def _row(org_id: int, sub: str) -> Optional[dict]:
     return credentials_store.get_credential_with_meta(entity_type, entity_id, CONNECTOR)
 
 
-# --- ce que la fiche affiche -------------------------------------------------
+# --- what the card displays --------------------------------------------------
 
 def _link_state(sub: str) -> connector_link.LinkState:
     from .. import access  # lazy
@@ -211,8 +211,8 @@ connector_link.register(CONNECTOR, _link_state)
 
 
 def _etape_manquante(sub: str, org, group, entry: dict) -> Optional[str]:
-    """Ce qu'il reste à faire — et à QUI. Sans coordonnées d'application, ce n'est
-    pas à l'utilisatrice de cliquer « Connecter » en boucle."""
+    """What remains to be done — and by WHOM. Without application coordinates, it is
+    not for the user to click "Connect" in a loop."""
     del org, group, entry
     if coordonnees_manquantes():
         return "Meta app to be configured by the operator"
@@ -228,15 +228,15 @@ status_hints.register(CONNECTOR, _etape_manquante)
 
 
 def avertir_au_demarrage() -> None:
-    """Dit AU BOOT ce qui empêchera le connecteur de servir. Ne lève jamais."""
+    """Says AT BOOT what will prevent the connector from serving. Never raises."""
     try:
         manquantes = coordonnees_manquantes()
-    except Exception as e:  # noqa: SILENT — au boot la base peut n'être pas prête
-        logger.info("meta_ads : configuration non vérifiable au démarrage (%s) — "
-                    "le premier flux tranchera.", type(e).__name__)
+    except Exception as e:  # noqa: SILENT — at boot the database may not be ready
+        logger.info("meta_ads: configuration not verifiable at startup (%s) — "
+                    "the first flow will decide.", type(e).__name__)
         return
     if manquantes:
         logger.warning(
-            "meta_ads : connecteur monté mais NON configuré — %s manquante(s). "
-            "Le bouton « Connecter » refusera en le disant. Poser : %s",
+            "meta_ads: connector mounted but NOT configured — %s missing. "
+            "The \"Connect\" button will refuse, saying so. Set with: %s",
             ", ".join(manquantes), _COMMANDE)

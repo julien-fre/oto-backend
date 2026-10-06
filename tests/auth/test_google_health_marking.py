@@ -105,7 +105,7 @@ def test_le_grant_mort_rend_un_refus_qui_nomme_le_compte(monkeypatch, wiring):
         google_oauth.credentials_for("sub-1", account="a@b.com")
 
     assert isinstance(e.value, google_oauth.GoogleReauthRequired)
-    assert "a@b.com" in str(e.value) and "reconnecte" in str(e.value)
+    assert "a@b.com" in str(e.value) and "reconnect" in str(e.value)
     assert "manage.oto.cx" in str(e.value)
 
 

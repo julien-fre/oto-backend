@@ -1,33 +1,33 @@
-"""La facturation est tenue ailleurs : le refus `billing_moved` (#1097).
+"""Billing lives elsewhere: the `billing_moved` refusal (#1097).
 
-Depuis la coupure du cœur, oto-commerce tient la facturation et pose SEUL les droits
-déclarés (`org_entitlements`) par l'API de service (`capabilities/service_commerce.py`).
-Le cœur n'en écrit plus aucun. Un geste qui vendait, offrait ou déclarait un droit ici
-n'a donc plus d'effet possible — le laisser répondre `ok` serait mentir : il écrirait un
-abonnement, un contrat ou un don que rien ne transforme en droit.
+Since the core split, oto-commerce owns billing and is the ONLY one to set the declared
+entitlements (`org_entitlements`) through the service API (`capabilities/service_commerce.py`).
+The core no longer writes any. An action that used to sell, grant or declare an entitlement
+here can therefore no longer have any effect — letting it answer `ok` would be lying: it
+would write a subscription, a contract or a gift that nothing turns into an entitlement.
 
-Ces gestes REFUSENT, nommément, en 409 `billing_moved` : une seule fabrique, pour que le
-code, le statut et la phrase ne divergent pas d'une surface à l'autre.
+These actions REFUSE, by name, with a 409 `billing_moved`: a single factory, so the code,
+the status and the sentence cannot drift apart from one surface to another.
 """
 from __future__ import annotations
 
 from ._types import AuthzDenied, DeclaredError
 
-_OU = ("la facturation est tenue par le service de facturation, oto-commerce : vendre "
-       "un abonnement, offrir un droit, poser ou clore un contrat se fait là.")
+_OU = ("billing is handled by the billing service, oto-commerce: selling a subscription, "
+       "granting an entitlement, setting or ending a contract is done there.")
 
 
 def refus(geste: str, suite: str = "") -> AuthzDenied:
-    """Le refus d'un geste de facturation du cœur, qui dit où il se fait désormais."""
-    return AuthzDenied(409, "billing_moved", f"{geste} : {_OU}{suite}")
+    """The refusal of a core billing action, saying where it is now done."""
+    return AuthzDenied(409, "billing_moved", f"{geste}: {_OU}{suite}")
 
 
-QUAND = ("La facturation est tenue par le service de facturation (oto-commerce) : ce "
-         "geste se fait là.")
+QUAND = ("Billing is handled by the billing service (oto-commerce): this action is done "
+         "there.")
 
 
 def declaration(quand: str = QUAND) -> DeclaredError:
-    """La déclaration publiée du refus, pour chaque capacité qui le lève. Par défaut, la
-    phrase commune à tous les gestes de facturation ; une capacité qui ne refuse que
-    dans un cas (une clé du catalogue) dit lequel."""
+    """The published declaration of the refusal, for every capability that raises it. By
+    default, the sentence shared by all billing actions; a capability that refuses only in
+    one case (a catalog key) says which."""
     return DeclaredError(409, "billing_moved", quand)

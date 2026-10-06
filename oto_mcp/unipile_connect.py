@@ -1,11 +1,11 @@
-"""Génération du lien hosted-auth Unipile — corps PARTAGÉ REST + MCP (feedback #131).
+"""Generation of the Unipile hosted-auth link — SHARED body for REST + MCP (feedback #131).
 
-Un seul corps de logique pour les deux faces (`POST /api/unipile/connect` côté
-dashboard, tool `unipile_connect_start` côté agent) : gates (canal, clé, org de
-contexte, option messagerie hébergée, plafond de sièges), pending posé (nonce = `name`
-du lien = clé de la réconciliation, LE chemin de liaison depuis #581), puis
-`hosted_auth_link` Unipile. Lève `ConnectRefused` (code machine + message) — chaque
-face la traduit (json_error / McpError).
+A single body of logic for both faces (`POST /api/unipile/connect` on the
+dashboard side, the `unipile_connect_start` tool on the agent side): gates (channel, key,
+context org, hosted-messaging option, seat cap), pending row set (nonce = `name`
+of the link = reconciliation key, THE binding path since #581), then Unipile's
+`hosted_auth_link`. Raises `ConnectRefused` (machine code + message) — each
+face translates it (json_error / McpError).
 """
 from __future__ import annotations
 
@@ -22,18 +22,18 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-# Ni X (TWITTER) ni Messenger (MESSENGER) : l'API Unipile v2 ne les sert pas (2026-09-15).
+# Neither X (TWITTER) nor Messenger (MESSENGER): the Unipile v2 API does not serve them (2026-09-15).
 CHANNELS = ("LINKEDIN", "WHATSAPP", "TELEGRAM", "INSTAGRAM")
-# Produits LinkedIn premium activables à la connexion (`config.linkedin.products`,
-# oto-core ≥1.30). EXCLUSIFS : un compte n'en active qu'UN (Unipile renvoie 400 sinon).
+# Premium LinkedIn products that can be activated at connection time (`config.linkedin.products`,
+# oto-core ≥1.30). EXCLUSIVE: an account activates only ONE (Unipile otherwise returns 400).
 LINKEDIN_PREMIUM = ("recruiter", "sales_navigator")
 
 
 
 
 class ConnectRefused(Exception):
-    """Refus gaté de la génération du lien. `status` = code HTTP de référence,
-    `code` = jeton machine stable, `message` = détail actionnable."""
+    """Gated refusal to generate the link. `status` = reference HTTP code,
+    `code` = stable machine token, `message` = actionable detail."""
 
     def __init__(self, status: int, code: str, message: str = ""):
         super().__init__(message or code)
@@ -43,8 +43,8 @@ class ConnectRefused(Exception):
 
 
 def _default_limit() -> int:
-    """Plafond par défaut de comptes Unipile par org (anti-dérapage coût) si l'org
-    n'en définit pas un propre. 0 = pas de plafond."""
+    """Default cap on Unipile accounts per org (cost runaway guard) if the org
+    does not define its own. 0 = no cap."""
     try:
         return int(os.environ.get("OTO_MCP_UNIPILE_DEFAULT_LIMIT", "5"))
     except ValueError:
@@ -52,29 +52,29 @@ def _default_limit() -> int:
 
 
 def plafond_de_comptes(org_id: int) -> int:
-    """Le plafond de comptes hébergés de l'org que le branchement applique : le sien
-    (`orgs.unipile_account_limit`), sinon le défaut d'env. `0` = pas de plafond.
+    """The org's cap on hosted accounts that the connection applies: its own
+    (`orgs.unipile_account_limit`), otherwise the env default. `0` = no cap.
 
-    ⚠️ Lecture HÉRITÉE du droit `unipile_seats` (limite (b) de `docs/droits-declares.md`,
-    où `0` veut dire « illimité ») : elle part quand `value_for` sera lu ici."""
+    ⚠️ INHERITED read of the `unipile_seats` right (limit (b) of `docs/droits-declares.md`,
+    where `0` means "unlimited"): it goes away once `value_for` is read here."""
     limit = db.get_org_unipile_limit(org_id)
     return _default_limit() if limit is None else limit
 
 
 def connections_page(sub: "str | None", org_id: "int | None") -> "str | None":
-    """La page où CE compte connecte sa messagerie hébergée — chez SON produit.
+    """The page where THIS account connects its hosted messaging — on ITS product.
 
-    Compte du tenant primaire ⟹ `/console/connections` du dashboard, à l'octet près.
-    Compte d'un tenant TIERS ⟹ le patron `connectors` que son tenant déclare
-    (`links.link_for`), ou `None` s'il n'en déclare pas : jamais NOTRE chemin sous son
-    domaine, ni notre domaine tout court — c'est un produit qu'il n'a pas.
+    Primary-tenant account ⟹ the dashboard's `/console/connections`, byte for byte.
+    THIRD-party tenant account ⟹ the `connectors` pattern its tenant declares
+    (`links.link_for`), or `None` if it declares none: never OUR path under its
+    domain, nor our domain at all — that is a product it does not have.
 
-    ⚠️ Vécu le 2026-09-03 puis le 2026-09-14 (tristan@koncile.ai, tenant tulina) : le
-    refus « connecte ton compte » codait `https://manage.oto.cx/console/connections`
-    en dur, et la fin de wizard de la face MCP y renvoyait aussi. La personne, qui n'a
-    pas de compte chez nous, s'en est CRÉÉ un (autre sub) pour passer l'écran de
-    connexion — et la réconciliation qui a suivi a tourné sous ce sub-là, sans pending :
-    rien n'a été lié (signal #689)."""
+    ⚠️ Lived on 2026-09-03 then 2026-09-14 (tristan@koncile.ai, tenant tulina): the
+    "connect your account" refusal hardcoded `https://manage.oto.cx/console/connections`,
+    and the end of the MCP side's wizard also sent people there. The person, who has
+    no account with us, CREATED one (another sub) to get past the login
+    screen — and the reconciliation that followed ran under that sub, with no pending:
+    nothing was linked (signal #689)."""
     if sub and config.tenant_slug_for(sub):
         from . import links
         return links.link_for("connectors", sub=sub, org=org_id)
@@ -83,24 +83,24 @@ def connections_page(sub: "str | None", org_id: "int | None") -> "str | None":
 
 def _return_to(app: "str | None", org_id: "int | None", suffix: str,
                sub: "str | None" = None) -> str:
-    """Où Unipile dépose la personne à la fin du wizard hébergé.
+    """Where Unipile drops the person at the end of the hosted wizard.
 
-    Le hosted-auth sort du site : c'est la SEULE chose qui décide sur quel front
-    on se réveille. Tant que c'était codé sur oto-dashboard, un utilisateur d'un
-    tenant tiers finissait sa connexion chez un autre produit — et pas seulement de
-    façon disgracieuse : la liaison du compte se fait par réconciliation, sous le
-    JWT du front d'arrivée. Atterrir sur le mauvais front, c'est réconcilier sous
-    un AUTRE sub, donc ne rien lier du tout (vécu le 2026-08-22).
+    The hosted-auth leaves the site: this is the ONLY thing that decides which front
+    we wake up on. As long as it was hardcoded to oto-dashboard, a user of a
+    third-party tenant ended their connection on another product — and not merely
+    awkwardly: the account is linked by reconciliation, under the
+    JWT of the arrival front. Landing on the wrong front means reconciling under
+    ANOTHER sub, hence linking nothing at all (lived on 2026-08-22).
 
-    `app` connu ⟹ le front qui a demandé. On ne fait JAMAIS confiance à une valeur
-    de client au-delà d'un lookup dans la liste fermée `RETURN_APPS`
-    (`resolve_return_app` s'en charge).
+    Known `app` ⟹ the front that asked. We NEVER trust a client-supplied value
+    beyond a lookup in the closed list `RETURN_APPS`
+    (`resolve_return_app` takes care of it).
 
-    `app` inconnu ou absent (face MCP : un agent n'a pas de front) ⟹ la page de
-    connexions du PRODUIT DU COMPTE (`connections_page`), dérivée du sub — donc du
-    jeton, jamais d'une valeur de client. Tenant primaire : destination historique,
-    à l'octet près. Tenant tiers sans patron `connectors` : on retombe sur la nôtre,
-    parce qu'une redirection doit aboutir (cf. `links.redirect_for`)."""
+    Unknown or missing `app` (MCP side: an agent has no front) ⟹ the
+    connections page of the ACCOUNT'S PRODUCT (`connections_page`), derived from the sub — hence from the
+    token, never from a client value. Primary tenant: historical destination,
+    byte for byte. Third-party tenant without a `connectors` pattern: we fall back on ours,
+    because a redirect must land somewhere (cf. `links.redirect_for`)."""
     from .auth import flow as oauth_flow
     if oauth_flow.resolve_return_app(app):
         return oauth_flow.return_url(app, suffix, org=org_id)
@@ -116,61 +116,61 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
                           force: bool = False,
                           premium: "str | None" = None,
                           app: "str | None" = None) -> dict:
-    """Génère l'URL hosted-auth où l'user connecte SON compte (canal donné) —
-    mêmes gates que la face dashboard. Renvoie `{url, channel}`.
+    """Generates the hosted-auth URL where the user connects THEIR account (given channel) —
+    same gates as the dashboard side. Returns `{url, channel}`.
 
-    `force=True` outrepasse le garde-fou anti-doublon cross-org (issue #172) : par
-    défaut, si `sub` a déjà connecté ce canal dans une AUTRE org, on refuse (le
-    compte est PAR-PERSONNE et suit désormais l'utilisateur cross-org).
+    `force=True` bypasses the cross-org anti-duplicate guard (issue #172): by
+    default, if `sub` has already connected this channel in ANOTHER org, we refuse (the
+    account is PER-PERSON and now follows the user cross-org).
 
-    `premium` (LinkedIn) = `'recruiter'` | `'sales_navigator'` : produit à ACTIVER
-    au moment de la connexion. Sans lui, Unipile ne connecte que `classic` → les
-    endpoints premium répondent 403 « out of your scope » et le wizard n'offre
-    aucune case. Les deux sont exclusifs (un seul par compte). Demander un premium
-    ajoute aussi la connexion par **cookies** au wizard (recommandé par Unipile
-    pour ces produits — sans ça, seul identifiant/mot de passe est proposé).
+    `premium` (LinkedIn) = `'recruiter'` | `'sales_navigator'`: product to ACTIVATE
+    at connection time. Without it, Unipile only connects `classic` → the premium
+    endpoints answer 403 "out of your scope" and the wizard offers
+    no checkbox. The two are exclusive (only one per account). Requesting a premium
+    also adds **cookie** connection to the wizard (recommended by Unipile
+    for these products — without it, only username/password is offered).
 
-    `app` = le front qui DEMANDE la connexion, clé d'une liste FERMÉE
-    (`oauth_flow.RETURN_APPS`) — jamais une origine prise telle quelle, ce serait
-    un open redirect. Il gouverne l'atterrissage de fin de wizard. Sans lui (face
-    MCP, oto-dashboard), on garde à l'octet près l'ancienne destination
-    `/console/connections` : c'est un chemin PROPRE au dashboard, que le patron
-    générique `return_url` ne connaît pas — y retomber renverrait le dashboard sur
-    `/connectors`, une régression pour l'appelant historique."""
+    `app` = the front that REQUESTS the connection, key of a CLOSED list
+    (`oauth_flow.RETURN_APPS`) — never an origin taken as is, that would be
+    an open redirect. It governs the end-of-wizard landing. Without it (MCP
+    side, oto-dashboard), we keep the old destination byte for byte
+    `/console/connections`: it is a path SPECIFIC to the dashboard, which the generic
+    `return_url` pattern does not know — falling back there would send the dashboard to
+    `/connectors`, a regression for the historical caller."""
     provider = str(channel or "linkedin").upper()
     if provider not in CHANNELS:
         raise ConnectRefused(400, "invalid_channel",
-                             f"canal inconnu : {channel} (attendu : "
+                             f"unknown channel: {channel} (expected: "
                              f"{', '.join(c.lower() for c in CHANNELS)})")
     if premium:
         if provider != "LINKEDIN":
             raise ConnectRefused(400, "premium_linkedin_only",
-                                 f"`premium` ne vaut que pour LinkedIn (canal demandé : {channel}).")
+                                 f"`premium` only applies to LinkedIn (requested channel: {channel}).")
         if premium not in LINKEDIN_PREMIUM:
             raise ConnectRefused(
                 400, "invalid_premium",
-                f"premium inconnu : {premium} (attendu : {', '.join(LINKEDIN_PREMIUM)}). "
-                "Un compte ne peut activer qu'UN produit premium.")
-    # Gate d'ACCÈS du CANAL (split du 2026-08-28). Depuis que chaque canal est un
-    # connecteur, « qui peut connecter WhatsApp » se règle par canal — activation
-    # d'org comprise. Le gate vit ICI, dans le corps partagé, et pas
-    # seulement dans la capacité REST générique : le tool `unipile_connect_start` et
-    # l'ancienne route `POST /api/unipile/connect` passent par là sans elle, et un
-    # gate qu'un seul des trois chemins applique n'en est pas un.
-    # Canal inconnu au registre (impossible après la garde ci-dessus, mais on ne
-    # présume pas) ⟹ pas de gate supplémentaire : le fail-open est celui d'un
-    # namespace inconnu, inchangé.
+                f"unknown premium: {premium} (expected: {', '.join(LINKEDIN_PREMIUM)}). "
+                "An account can only activate ONE premium product.")
+    # CHANNEL ACCESS gate (split of 2026-08-28). Since each channel is a
+    # connector, "who can connect WhatsApp" is set per channel — including org
+    # activation. The gate lives HERE, in the shared body, and not
+    # only in the generic REST capability: the `unipile_connect_start` tool and
+    # the old `POST /api/unipile/connect` route go through here without it, and a
+    # gate that only one of the three paths applies is not one.
+    # Channel unknown to the registry (impossible after the guard above, but we do not
+    # presume) ⟹ no additional gate: the fail-open is that of an unknown
+    # namespace, unchanged.
     from . import providers as _providers
     canal_con = _providers.connector_for_hosted_channel(provider)
-    # Le canal porte ses droits ; le résolveur suit sa délégation vers la clé
-    # unipile. Clé, mode et DSN viennent de LA MÊME instance, compte compris.
+    # The channel carries its rights; the resolver follows its delegation to the unipile
+    # key. Key, mode and DSN come from THE SAME instance, account included.
     try:
         credential = await asyncio.to_thread(
             access.resolve_credential, canal_con.name if canal_con else "unipile",
             sub=sub, check_usage=False, emit_on_failure=False)
     except CredentialUnavailable:
         raise ConnectRefused(404, "unipile_not_configured",
-                             "Unipile n'est pas configuré (ni clé BYO ni clé plateforme).")
+                             "Unipile is not configured (neither a BYO key nor a platform key).")
     except McpError as e:
         raise ConnectRefused(400, "credential_resolution_failed", e.error.message) from e
     api_key = credential.key
@@ -178,88 +178,88 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
     org_id = access.current_org(sub)
     if org_id is None:
         raise ConnectRefused(400, "no_org_context",
-                             "Aucune org de contexte — impossible de rattacher le compte.")
-    # Garde-fou anti-doublon (issue #172, piste C) : un compte de messagerie hébergé
-    # est intrinsèquement PAR-PERSONNE. Si `sub` a déjà connecté CE canal dans une
-    # AUTRE org (autre tenant Unipile), reconnecter créerait un 2e `account_id` pour
-    # le MÊME login → les deux sessions hébergées se disputent le cookie (rotation
-    # `li_at`) → dégradation silencieuse. On refuse avec un chemin actionnable :
-    # l'instance personnelle suit désormais l'utilisateur cross-org (piste A), inutile
-    # de reconnecter ; `force=True` pour un compte RÉELLEMENT distinct. (Reconnexion
-    # dans la MÊME org = remplacement, non concernée : filtrée par `org_id`.)
+                             "No context org — cannot attach the account.")
+    # Anti-duplicate guard (issue #172, track C): a hosted messaging account
+    # is inherently PER-PERSON. If `sub` has already connected THIS channel in
+    # ANOTHER org (another Unipile tenant), reconnecting would create a 2nd `account_id` for
+    # the SAME login → the two hosted sessions fight over the cookie (`li_at`
+    # rotation) → silent degradation. We refuse with an actionable path:
+    # the personal instance now follows the user cross-org (track A), no need
+    # to reconnect; `force=True` for a REALLY distinct account. (Reconnection
+    # in the SAME org = replacement, not concerned: filtered by `org_id`.)
     platform_seat = not byo
-    # Gate OPTION (couche 3) : hébergé sans le droit déclaré = refus. Le droit est
-    # celui de l'org OU une ligne posée sur la personne, dans l'org ou partout
-    # (ADR 0070 §7) ; la marque de compte (`option_comps`) ne l'ouvre pas.
+    # OPTION gate (layer 3): hosted without the declared right = refusal. The right is
+    # the org's OR a row set on the person, in the org or everywhere
+    # (ADR 0070 §7); the account mark (`option_comps`) does not open it.
     if not byo and not await asyncio.to_thread(access.has_right, sub, org_id, "unipile"):
-        from . import detenteurs  # paresseux, comme les autres paliers au point d'appel
+        from . import detenteurs  # lazy, like the other tiers at the call site
         raise ConnectRefused(402, "unipile_option_required",
-                             "La messagerie hébergée n'est active ni pour cette org ni "
-                             "pour toi : essai terminé ou abonnement requis."
+                             "Hosted messaging is active neither for this org nor "
+                             "for you: trial ended or subscription required."
                              + await asyncio.to_thread(detenteurs.qui_leve_une_option,
                                                        sub, org_id))
-    # Plafond de sièges hébergés (reconnexion d'un compte existant = remplacement, OK ;
-    # une ADOPTION ci-dessous crée un binding dans cette org → soumise au même plafond).
+    # Hosted seat cap (reconnecting an existing account = replacement, OK;
+    # an ADOPTION below creates a binding in this org → subject to the same cap).
     if platform_seat and db.get_unipile_account(sub, org_id, provider) is None:
         limit = plafond_de_comptes(org_id)
         if limit and db.count_unipile_accounts_for_org(org_id) >= limit:
             logger.info("unipile cap hit org=%s limit=%s", org_id, limit)
             raise ConnectRefused(429, "unipile_account_limit_reached",
-                                 "Plafond de comptes hébergés atteint pour l'org.")
-    # ADOPTION explicite (modèle binding-par-org) : le compte hébergé du sub vit déjà
-    # sur la clé PLATEFORME dans une autre de ses orgs → « connecter ici » n'a pas
-    # besoin du wizard, on écrit le binding pour CETTE org. Sûr : même clé partagée
-    # ⟹ l'account_id est joignable ici ; même sub ⟹ zéro usurpation. `force=True`
-    # (compte réellement différent) ou `premium` (reconnexion pour ATTACHER un
-    # produit) → wizard quand même.
-    dead_seat_account = None  # siège plateforme MORT (401) → à RECONNECTER via le wizard
+                                 "Hosted account cap reached for the org.")
+    # Explicit ADOPTION (binding-per-org model): the sub's hosted account already lives
+    # on the PLATFORM key in another of its orgs → "connect here" does not need
+    # the wizard, we write the binding for THIS org. Safe: same shared key
+    # ⟹ the account_id is reachable here; same sub ⟹ zero impersonation. `force=True`
+    # (really different account) or `premium` (reconnection to ATTACH a
+    # product) → wizard anyway.
+    dead_seat_account = None  # DEAD (401) platform seat → to RECONNECT via the wizard
     if not force and not premium and platform_seat:
         mine = db.seat_binding_elsewhere(sub, provider, exclude_org=org_id)
         if mine:
-            # Ne ré-adopter QUE si la session est VIVANTE (sonde 401). Ré-adopter un
-            # compte mort laisse l'user « connecté » sur un 401 (vécu en interne :
-            # disconnect→connect ré-adoptait le cadavre au lieu d'ouvrir un login).
-            # Compte mort ⟹ on tombe dans le wizard EN RECONNEXION de CE compte
-            # (type=reconnect, même account_id — pas un doublon). Fail-soft : sonde
-            # indisponible ⟹ on adopte (comportement d'avant).
+            # Only re-adopt if the session is ALIVE (401 probe). Re-adopting a
+            # dead account leaves the user "connected" on a 401 (lived internally:
+            # disconnect→connect re-adopted the corpse instead of opening a login).
+            # Dead account ⟹ we fall into the wizard in RECONNECT mode for THIS account
+            # (type=reconnect, same account_id — not a duplicate). Fail-soft: probe
+            # unavailable ⟹ we adopt (previous behaviour).
             alive = True
             try:
                 from oto.tools.unipile import make_unipile_client
-                # Hors boucle : `account_alive` est un appel HTTP synchrone, et
-                # cette fonction est `async def`. Appelé nûment, il figeait tout le
-                # processus le temps qu'Unipile réponde — jusqu'à 120 s de lecture
-                # (oto-backend#867). Le `hosted_auth_link` quinze lignes plus bas
-                # était déjà protégé : même fichier, même client, une seule des deux
-                # lignes traitée. Corriger ce qu'on regarde ne ferme pas la classe.
+                # Off the loop: `account_alive` is a synchronous HTTP call, and
+                # this function is `async def`. Called bare, it froze the whole
+                # process while Unipile answered — up to 120 s of read time
+                # (oto-backend#867). The `hosted_auth_link` fifteen lines below
+                # was already protected: same file, same client, only one of the two
+                # lines handled. Fixing what we look at does not close the class.
                 alive = await asyncio.to_thread(
                     lambda: make_unipile_client(api_key=api_key).account_alive(
                         mine["account_id"]))
-            # noqa: SILENT — fail-soft documenté : sonde indisponible ⇒ compte tenu pour vivant
-            except Exception:  # noqa: BLE001 — sonde best-effort, jamais bloquante
+            # noqa: SILENT — documented fail-soft: probe unavailable ⇒ account considered alive
+            except Exception:  # noqa: BLE001 — best-effort probe, never blocking
                 alive = True
             if alive:
-                # Écriture DIRECTE, et c'est délibéré : `bind_account` garde un
-                # identifiant venu d'un TIERS (l'inventaire du fournisseur). Ici
-                # l'identifiant sort d'une ligne que la base
-                # attribue DÉJÀ à ce `sub` (`seat_binding_elsewhere` filtre sur lui) —
-                # le confronter à la propriété d'autrui ne prouverait rien de plus, et
-                # refuserait une adoption légitime si un binding croisé traînait en
-                # base. Le cliquet AST de `tests/test_unipile_bind_guard.py` tient la
-                # liste FERMÉE des écrivains : un troisième doit se justifier ici.
+                # DIRECT write, and that is deliberate: `bind_account` guards an
+                # identifier coming from a THIRD party (the provider's inventory). Here
+                # the identifier comes from a row that the database
+                # ALREADY attributes to this `sub` (`seat_binding_elsewhere` filters on it) —
+                # checking it against someone else's ownership would prove nothing more, and
+                # would refuse a legitimate adoption if a crossed binding were lying around in the
+                # database. The AST ratchet of `tests/test_unipile_bind_guard.py` holds the
+                # CLOSED list of writers: a third one must justify itself here.
                 db.set_unipile_account(sub, mine["account_id"],
                                        account_name=mine.get("account_name"),
                                        org_id=org_id, provider=provider, platform_seat=True)
-                logger.info("unipile adopt: sub=%s account=%s org=%s (depuis org %s)",
+                logger.info("unipile adopt: sub=%s account=%s org=%s (from org %s)",
                             sub, mine["account_id"], org_id, mine.get("org_id"))
                 return {"adopted": True, "channel": provider.lower(),
                         "account_name": mine.get("account_name")}
             dead_seat_account = mine["account_id"]
-            logger.info("unipile adopt SKIP compte mort: sub=%s account=%s → reconnexion wizard",
+            logger.info("unipile adopt SKIP dead account: sub=%s account=%s → wizard reconnection",
                         sub, mine["account_id"])
-    # Anti-doublon BYO (issue #172) : un compte connecté sous la clé d'une AUTRE org
-    # (BYO) n'est PAS adoptable ici (un account_id n'existe que sur le tenant de la
-    # clé qui l'a créé) → reconnecter le même login créerait un 2e compte (rotation
-    # du cookie li_at, dégradation silencieuse). Refus actionnable.
+    # BYO anti-duplicate (issue #172): an account connected under ANOTHER org's key
+    # (BYO) is NOT adoptable here (an account_id only exists on the tenant of the
+    # key that created it) → reconnecting the same login would create a 2nd account (rotation
+    # of the li_at cookie, silent degradation). Actionable refusal.
     if not force:
         byo_elsewhere = [a for a in db.list_unipile_accounts(sub)
                          if a.get("provider") == provider and a.get("org_id") != org_id
@@ -269,25 +269,25 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
             who = other.get("account_name") or other["account_id"]
             raise ConnectRefused(
                 409, "unipile_already_connected_elsewhere",
-                f"Tu as déjà un compte {provider.lower()} connecté (« {who} ») dans "
-                "une autre de tes orgs, sous la clé Unipile de cette org-là (BYO) — "
-                "il n'est pas joignable ici. Pour connecter un compte différent, "
-                "relance avec force=true.")
+                f"You already have a {provider.lower()} account connected ('{who}') in "
+                "another of your orgs, under that org's Unipile key (BYO) — "
+                "it is not reachable here. To connect a different account, "
+                "retry with force=true.")
     from oto.tools.unipile import make_unipile_client
-    # DSN porté par le credential BYO gagnant (`config.dsn`) ; la plateforme reste
-    # sur le défaut oto-core (api.unipile.com).
+    # DSN carried by the winning BYO credential (`config.dsn`); the platform stays
+    # on the oto-core default (api.unipile.com).
     dsn = (await asyncio.to_thread(lambda: credential.config)).get("dsn") if byo else None
     client = make_unipile_client(api_key=api_key, dsn=dsn)
-    # Activer un premium sur un compte DÉJÀ connecté = `type=reconnect` sur CE compte
-    # (rattache le produit sans DOUBLON), pas un `create` (qui a produit les comptes
-    # concurrents vécus). On ne reconnecte que le siège plateforme du sub (même clé
-    # partagée). ⚠️ INDÉPENDANT de `force` (#237) : l'agent passe `force=true` POUR
-    # dépasser le garde anti-doublon quand le compte est DÉJÀ connecté — c'est
-    # justement le cas où il faut RECONNECTER (rattacher Recruiter/Sales Nav au siège
-    # existant), pas créer un 2e compte. `force` ne gouverne que l'anti-doublon BYO
-    # ci-dessus ; il ne doit PLUS forcer un `create` qui perd le produit premium.
-    # Reconnecter (type=reconnect, PAS create) le compte existant : (1) un siège mort
-    # détecté ci-dessus, ou (2) l'activation d'un premium sur un compte déjà connecté.
+    # Activating a premium on an ALREADY connected account = `type=reconnect` on THIS account
+    # (attaches the product without a DUPLICATE), not a `create` (which produced the
+    # competing accounts we lived through). We only reconnect the sub's platform seat (same
+    # shared key). ⚠️ INDEPENDENT of `force` (#237): the agent passes `force=true` TO
+    # get past the anti-duplicate guard when the account is ALREADY connected — that is
+    # precisely the case where we must RECONNECT (attach Recruiter/Sales Nav to the
+    # existing seat), not create a 2nd account. `force` only governs the BYO anti-duplicate
+    # above; it must no longer force a `create` that loses the premium product.
+    # Reconnect (type=reconnect, NOT create) the existing account: (1) a dead seat
+    # detected above, or (2) activating a premium on an already connected account.
     reconnect_account = dead_seat_account
     if not reconnect_account and premium and platform_seat:
         existing = db.seat_binding_elsewhere(sub, provider, exclude_org=None) \
@@ -295,9 +295,9 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
                 if db.get_unipile_account_id(sub, org_id, provider) else None)
         if existing and existing.get("account_id"):
             reconnect_account = existing["account_id"]
-    # Le nonce est le `name` du lien (opaque pour le fournisseur) et la clé du pending
-    # que `reconcile_pending` consomme. Pas de `notify_url` : plus rappelé en v2, et la
-    # route qui le recevait est retirée (#581) — l'envoyer pointerait sur un 404.
+    # The nonce is the link's `name` (opaque to the provider) and the key of the pending row
+    # that `reconcile_pending` consumes. No `notify_url`: no longer called back in v2, and the
+    # route that received it is removed (#581) — sending it would point to a 404.
     nonce = secrets.token_urlsafe(24)
     db.create_unipile_pending(nonce, sub, org_id, provider, platform_seat=platform_seat)
     ch = provider.lower()
@@ -309,11 +309,11 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
                 providers=[provider],
                 success_redirect_url=_return_to(app, org_id, f"?unipile=connected&channel={ch}", sub),
                 failure_redirect_url=_return_to(app, org_id, f"?unipile=failed&channel={ch}", sub),
-                # produit premium demandé → `config.linkedin` (+ cookies au wizard,
-                # recommandé par Unipile pour ces produits)
+                # requested premium product → `config.linkedin` (+ cookies in the wizard,
+                # recommended by Unipile for these products)
                 premium=premium,
                 allow_cookies=bool(premium),
-                # rattacher le produit sur le compte existant (anti-doublon)
+                # attach the product to the existing account (anti-duplicate)
                 reconnect_account=reconnect_account,
             )
         )
@@ -324,26 +324,26 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
     return {"url": url, "channel": ch}
 
 
-# --- Réconciliation poll-and-bind : LE chemin de liaison ----------------------
-# Le hosted-auth v2 ne rappelle aucun callback par lien (le webhook v2 se configure au
-# niveau de l'APPLICATION Unipile) et le compte ne porte pas notre nonce → rien à
-# corréler au retour. On LISTE donc les comptes Unipile, NON déjà liés, du bon
-# provider, créés APRÈS le pending (le floor évite de rebinder un siège pré-existant
-# d'un tiers) — et on ne lie que ce qui est identifié SANS ambiguïté (oto#247) :
-# l'`account_id` rendu au retour, une ligne morte du sub (preuve de propriété), ou un
-# candidat UNIQUE que personne d'autre n'attend. Sinon, refus nommé. Idempotent. Le
-# webhook de liaison v1, chemin jumeau dormant, a été retiré le 2026-08-29 (#581).
+# --- Poll-and-bind reconciliation: THE binding path ----------------------
+# Hosted-auth v2 calls no per-link callback (the v2 webhook is configured at the
+# level of the Unipile APPLICATION) and the account does not carry our nonce → nothing to
+# correlate on return. So we LIST the Unipile accounts, NOT already linked, of the right
+# provider, created AFTER the pending row (the floor avoids rebinding a pre-existing seat
+# of a third party) — and we only link what is identified WITHOUT ambiguity (oto#247):
+# the `account_id` returned on return, a dead row of the sub (proof of ownership), or a
+# UNIQUE candidate that nobody else is waiting for. Otherwise, named refusal. Idempotent. The
+# v1 linking webhook, a dormant twin path, was removed on 2026-08-29 (#581).
 
 def _parse_dt(v):
-    """Parse une date Unipile ou un datetime PG en `datetime` aware (UTC par défaut).
-    None si illisible — et depuis #580, une date illisible REFUSE une liaison : cette
-    lecture est donc sur le chemin de toute connexion, elle doit lire ce que sert le
-    fournisseur sur TOUTES les versions de Python supportées (>= 3.10).
+    """Parse an Unipile date or a PG datetime into an aware `datetime` (UTC by default).
+    None if unreadable — and since #580, an unreadable date REFUSES a binding: this
+    read is therefore on the path of every connection, it must read what the
+    provider serves on ALL supported Python versions (>= 3.10).
 
-    Formes lues : `2026-07-16 11:00:49.019235+00` (v1), ISO 8601 avec `Z` final
-    (`2026-07-16T11:00:49.019Z`, que `fromisoformat` refuse avant 3.11), une fraction
-    de seconde de 1 à 9 chiffres (3.10 n'en lit que 3 ou 6), un horodatage Unix en
-    secondes ou en millisecondes."""
+    Forms read: `2026-07-16 11:00:49.019235+00` (v1), ISO 8601 with trailing `Z`
+    (`2026-07-16T11:00:49.019Z`, which `fromisoformat` rejects before 3.11), a fractional
+    second of 1 to 9 digits (3.10 only reads 3 or 6), a Unix timestamp in
+    seconds or milliseconds."""
     from datetime import datetime, timezone
     import re as _re
     if v is None or isinstance(v, bool):
@@ -361,11 +361,11 @@ def _parse_dt(v):
         s = s.replace(" ", "T", 1)
     if s[-1:] in ("Z", "z"):
         s = s[:-1] + "+00:00"
-    # normaliser un offset "+00" / "+0000" en "+00:00" (fromisoformat 3.10 strict)
+    # normalize an offset "+00" / "+0000" to "+00:00" (fromisoformat 3.10 is strict)
     m = _re.search(r'([+-]\d{2})(\d{2})?$', s)
     if m and ":" not in s[m.start():]:
         s = s[:m.start()] + m.group(1) + ":" + (m.group(2) or "00")
-    # une fraction de seconde ramenée à 6 chiffres (3.10 n'en lit que 3 ou 6)
+    # a fractional second brought down to 6 digits (3.10 only reads 3 or 6)
     s = _re.sub(r'\.(\d+)', lambda f: "." + (f.group(1) + "000000")[:6], s, count=1)
     try:
         dt = datetime.fromisoformat(s)
@@ -375,14 +375,14 @@ def _parse_dt(v):
 
 
 def _rien(reason: str, detail: str) -> dict:
-    """Une réconciliation qui n'a rien lié, et qui DIT pourquoi."""
+    """A reconciliation that bound nothing, and SAYS why."""
     return {"bound": False, "accounts": [], "reason": reason, "detail": detail}
 
 
 def _attendu_ailleurs(sub: str, pend: dict, provider: str, created) -> bool:
-    """Une demande d'un AUTRE `sub` (même canal, même population de clé) attend-elle
-    dans une fenêtre qui couvre ce compte créé à `created` ? Date illisible ⟹ oui :
-    on ne sait pas l'exclure."""
+    """Is a request from ANOTHER `sub` (same channel, same key population) waiting
+    in a window that covers this account created at `created`? Unreadable date ⟹ yes:
+    we cannot rule it out."""
     planchers = db.unipile_pending_floors_elsewhere(
         sub, provider, bool(pend.get("platform_seat")))
     if created is None:
@@ -392,68 +392,68 @@ def _attendu_ailleurs(sub: str, pend: dict, provider: str, created) -> bool:
 
 
 def reconcile_pending(sub: str, account_id: "str | None" = None) -> dict:
-    """Lie le(s) compte(s) fraîchement connecté(s) par `sub` sans dépendre du
-    webhook. No-op si pas de pending / pas de clé / pas de nouveau compte.
-    Renvoie `{bound: bool, accounts: [{account_id, name, org_id}]}`.
+    """Links the account(s) freshly connected by `sub` without depending on the
+    webhook. No-op if no pending row / no key / no new account.
+    Returns `{bound: bool, accounts: [{account_id, name, org_id}]}`.
 
-    `account_id` = l'identifiant qu'Unipile ajoute à `redirect_uri` au succès, relu
-    par le front qui reçoit le retour (ou passé par l'agent,
-    `linkedin_unipile_account(op="status", account_id=…)`). Il RESTREINT les
-    candidats à ce seul compte — il n'élargit rien : toutes les gardes (provider,
-    tiers, déjà pris, floor, sonde) s'appliquent comme sans lui.
+    `account_id` = the identifier Unipile appends to `redirect_uri` on success, read back
+    by the front that receives the return (or passed by the agent,
+    `linkedin_unipile_account(op="status", account_id=…)`). It RESTRICTS the
+    candidates to that single account — it widens nothing: all the guards (provider,
+    third party, already taken, floor, probe) apply as without it.
 
-    ⚠️ **Sans lui, on ne choisit plus** (oto#247). La clé est PARTAGÉE : deux
-    personnes qui connectent dans la même fenêtre rendent leurs deux comptes
-    candidats pour chacune, et « le plus récent vivant » a lié un compte à la
-    mauvaise personne. Sans indice, un compte n'est lié que s'il est le SEUL
-    candidat vivant ET (une ligne morte de `sub` prouve qu'il est à lui, OU aucun
-    autre `sub` n'a de demande en attente, même canal, dont la fenêtre le couvre).
-    Autrement : refus `ambiguous_candidates`, rien n'est écrit, le pending reste —
-    un appel porteur de l'`account_id` le liera."""
+    ⚠️ **Without it, we no longer choose** (oto#247). The key is SHARED: two
+    people connecting in the same window make both accounts
+    candidates for each, and "the most recent alive" linked an account to the
+    wrong person. Without a hint, an account is only linked if it is the ONLY
+    live candidate AND (a dead row of `sub` proves it is theirs, OR no
+    other `sub` has a pending request, same channel, whose window covers it).
+    Otherwise: `ambiguous_candidates` refusal, nothing is written, the pending row stays —
+    a call carrying the `account_id` will link it."""
     pendings = db.list_unipile_pending_for_sub(sub)
     if not pendings:
         return _rien("no_pending",
-                     "Aucune demande de liaison en attente pour ce compte : le lien "
-                     "hosted-auth n'a pas été demandé depuis ce sub, ou la liaison a "
-                     "déjà eu lieu. Relance `op=connect` pour en obtenir un.")
+                     "No pending linking request for this account: the hosted-auth "
+                     "link was not requested from this sub, or the linking has "
+                     "already happened. Re-run `op=connect` to get one.")
     try:
         rc = access.resolve_credential("unipile", want="auto", sub=sub,
                                        emit_on_failure=False)
     except McpError:
         return _rien("no_credential",
-                     "Aucun credential Unipile résoluble pour ce compte : la liaison "
-                     "ne peut pas être vérifiée chez le fournisseur. Le parcours a pu "
-                     "aboutir de son côté sans que nous puissions le constater.")
+                     "No resolvable Unipile credential for this account: the linking "
+                     "cannot be verified with the provider. The flow may have "
+                     "completed on its side without us being able to see it.")
     from oto.tools.unipile import make_unipile_client
     dsn = None if rc.is_platform else rc.config.get("dsn")
     client = make_unipile_client(api_key=rc.key, dsn=dsn)
     try:
         accounts = client.list_accounts()
-    except Exception as e:  # noqa: BLE001 — best-effort, jamais fatal pour le statut
-        logger.warning("reconcile unipile: list_accounts échoué", exc_info=True)
+    except Exception as e:  # noqa: BLE001 — best-effort, never fatal for the status
+        logger.warning("reconcile unipile: list_accounts failed", exc_info=True)
         return _rien("provider_unreachable",
-                     f"Le fournisseur n'a pas répondu à la liste des comptes "
-                     f"({type(e).__name__}) : la liaison n'a pas pu être tentée. "
-                     "Réessaie — ce n'est pas un refus.")
-    taken = db.bound_unipile_account_ids()  # vivants + morts (jamais le siège d'un tiers)
-    # La garde de sécurité (#559), posée à l'ÉCRITURE dans `bind_account` : `foreign`
-    # est le sous-ensemble de `taken` qui appartient à quelqu'un d'AUTRE. `taken` reste,
-    # mais pour ce qu'il est vraiment ici — une heuristique de SÉLECTION (ne pas
-    # repiocher un identifiant déjà attribué en balayant une liste), pas une frontière.
-    # Distinguer les deux est ce qui rend la frontière transposable au prochain chemin.
+                     f"The provider did not answer the account listing "
+                     f"({type(e).__name__}): the linking could not be attempted. "
+                     "Try again — this is not a refusal.")
+    taken = db.bound_unipile_account_ids()  # alive + dead (never a third party's seat)
+    # The security guard (#559), set at WRITE time in `bind_account`: `foreign`
+    # is the subset of `taken` that belongs to SOMEONE ELSE. `taken` stays,
+    # but for what it really is here — a SELECTION heuristic (do not
+    # re-pick an already attributed identifier while sweeping a list), not a boundary.
+    # Distinguishing the two is what makes the boundary transposable to the next path.
     foreign = db.foreign_unipile_account_ids(sub)
     bound: list = []
     motifs: list = []
-    done: set = set()   # providers liés pendant CE passage
+    done: set = set()   # providers linked during THIS pass
     for pend in pendings:
         provider = (pend.get("provider") or "LINKEDIN").upper()
         if provider in done:
             continue
         floor = _parse_dt(pend.get("created_at"))
-        # Rebind DÉTERMINISTE : Unipile RÉUTILISE le compte existant à la reconnexion
-        # (même account_id) — une ligne soft-déconnectée du MÊME sub est la preuve de
-        # propriété → on rebinde direct, sans heuristique (le floor raterait un compte
-        # antérieur au pending, cas vécu 2026-07-17).
+        # DETERMINISTIC rebind: Unipile REUSES the existing account on reconnection
+        # (same account_id) — a soft-disconnected row of the SAME sub is proof of
+        # ownership → we rebind directly, without heuristics (the floor would miss an account
+        # older than the pending row, case lived 2026-07-17).
         mine_dead = db.dead_unipile_account_ids_for(sub, provider)
         cand = []
         for a in accounts:
@@ -464,9 +464,9 @@ def reconcile_pending(sub: str, account_id: "str | None" = None) -> dict:
                 continue
             if (a.get("provider") or a.get("type") or "").upper() != provider:
                 continue
-            # À moi (ligne morte) → candidat sans condition de date ; sinon, créé APRÈS
-            # le pending. La garde partagée tranche les deux, et refuse un compte d'un
-            # TIERS comme un siège orphelin sans date lisible (#580).
+            # Mine (dead row) → candidate with no date condition; otherwise, created AFTER
+            # the pending row. The shared guard settles both, and refuses a THIRD party's
+            # account as well as an orphan seat with no readable date (#580).
             prov = unipile_binding.Provenance(a_moi=aid in mine_dead,
                                               cree_le=_parse_dt(a.get("created_at")),
                                               plancher=floor)
@@ -476,73 +476,73 @@ def reconcile_pending(sub: str, account_id: "str | None" = None) -> dict:
                 continue
             cand.append((prov.cree_le, a, prov))
         if not cand:
-            # Le cas du signal #689 : le parcours s'est terminé côté fournisseur
-            # (redirection finale vue par l'utilisateur) et pourtant aucun compte
-            # n'est éligible. Trois causes possibles, indiscernables jusqu'ici parce
-            # que ce `continue` était muet.
+            # The case of signal #689: the flow ended on the provider side
+            # (final redirect seen by the user) and yet no account
+            # is eligible. Three possible causes, indistinguishable until now because
+            # this `continue` was silent.
             motifs.append({
                 "nonce": pend.get("nonce"), "provider": provider,
                 "reason": "no_candidate",
-                # Pas le NOMBRE de comptes : sur la clé plateforme, c'est l'inventaire
-                # de tous les tenants, et ce motif est servi à l'utilisateur final.
-                "detail": (f"Aucun compte éligible pour {provider} chez le "
-                           "fournisseur : soit le parcours n'a créé "
-                           "aucun compte (abandonné avant la fin), soit le compte "
-                           "existait DÉJÀ avant la demande (il est alors plus ancien "
-                           "que le pending), soit il appartient à quelqu'un d'autre. "
-                           "Un compte déjà lié ailleurs se libère par `op=disconnect` "
-                           "chez son porteur."),
+                # Not the NUMBER of accounts: on the platform key, that is the inventory
+                # of all tenants, and this reason is served to the end user.
+                "detail": (f"No eligible account for {provider} at the "
+                           "provider: either the flow created "
+                           "no account (abandoned before the end), or the account "
+                           "ALREADY existed before the request (it is then older "
+                           "than the pending row), or it belongs to someone else. "
+                           "An account already linked elsewhere is freed by `op=disconnect` "
+                           "on its holder's side."),
             })
             continue
-        # Sonde de SESSION sur CHAQUE candidat : ne binder qu'un compte VIVANT. Un
-        # wizard avorté produit un compte `status:'running'` mais mort (401 users/me)
-        # — le lier faisait taper l'agent sur une session morte pendant que l'ancien
-        # compte sain restait ignoré (incident 2026-07-17). Tous sondés, et plus
-        # seulement jusqu'au premier vivant : c'est le NOMBRE de vivants qui dit s'il
-        # y a un choix à faire (oto#247).
+        # SESSION probe on EACH candidate: only bind an ALIVE account. An aborted
+        # wizard produces an account with `status:'running'` but dead (401 users/me)
+        # — linking it made the agent hit a dead session while the old
+        # healthy account stayed ignored (incident 2026-07-17). All probed, and no longer
+        # only up to the first alive one: it is the NUMBER of alive ones that says whether
+        # there is a choice to make (oto#247).
         vivants = [(created, a, p) for created, a, p in cand
                    if client.account_alive(a["id"])]
         chosen, prov = (vivants[0][1], vivants[0][2]) if len(vivants) == 1 else (None, None)
-        # Sans preuve (ni indice, ni ligne du sub), un candidat unique n'est à `sub`
-        # que si personne d'autre n'attend un compte dans la même fenêtre.
+        # Without proof (neither hint nor row of the sub), a single candidate only belongs to `sub`
+        # if nobody else is waiting for an account in the same window.
         sans_preuve = chosen is not None and not account_id and not prov.a_moi
         if len(vivants) > 1 or (sans_preuve and _attendu_ailleurs(
                 sub, pend, provider, prov.cree_le)):
-            # oto#247 : plusieurs candidats vivants, ou un seul qu'une demande d'un
-            # AUTRE sub pourrait réclamer — et aucune preuve pour trancher (l'indice
-            # restreint à un compte, `vivants` n'en a donc jamais deux avec lui).
-            # « Le plus récent » a lié le compte d'une personne à une autre : on ne
-            # devine plus. Le pending reste, un appel porteur de l'`account_id` liera.
-            logger.warning("reconcile unipile: refus ambigu sub=%s provider=%s "
-                           "candidats=%s", sub, provider,
+            # oto#247: several alive candidates, or a single one that a request from
+            # ANOTHER sub could claim — and no proof to decide (the hint
+            # restricts to one account, so `vivants` never has two with it).
+            # "The most recent" linked one person's account to another: we no longer
+            # guess. The pending row stays, a call carrying the `account_id` will link.
+            logger.warning("reconcile unipile: ambiguous refusal sub=%s provider=%s "
+                           "candidates=%s", sub, provider,
                            [a["id"] for _, a, _ in vivants])
             motifs.append({
                 "nonce": pend.get("nonce"), "provider": provider,
                 "reason": "ambiguous_candidates",
-                # Ni le nombre de comptes ni l'existence d'un tiers : la possibilité
-                # seule, qui suffit à dire le geste.
-                "detail": ("Plus d'un compte peut correspondre à cette connexion "
-                           f"{provider} sur la clé partagée (plusieurs connexions dans "
-                           "la même fenêtre) : sans preuve, rien n'a été lié, pour ne "
-                           "pas rattacher le compte de quelqu'un d'autre. Termine le "
-                           "parcours du lien jusqu'à la page de retour : son adresse "
-                           "porte `account_id=…`, à repasser (`POST "
-                           "/api/me/unipile/reconcile`, ou "
+                # Neither the number of accounts nor the existence of a third party: the
+                # mere possibility, which is enough to say what to do.
+                "detail": ("More than one account may match this "
+                           f"{provider} connection on the shared key (several connections in "
+                           "the same window): without proof, nothing was linked, so as not to "
+                           "attach someone else's account. Complete the "
+                           "link's flow through to the return page: its address "
+                           "carries `account_id=…`, to pass back (`POST "
+                           "/api/me/unipile/reconcile`, or "
                            "`linkedin_unipile_account(op=\"status\", account_id=…)`). "
-                           "Sinon, relance la connexion par un nouveau lien "
-                           "(`op=connect`) dans quelques minutes."),
+                           "Otherwise, restart the connection with a new link "
+                           "(`op=connect`) in a few minutes."),
             })
             continue
         if chosen is None:
-            logger.info("reconcile unipile: candidats tous morts (session 401) sub=%s", sub)
+            logger.info("reconcile unipile: all candidates dead (401 session) sub=%s", sub)
             motifs.append({
                 "nonce": pend.get("nonce"), "provider": provider,
                 "reason": "candidates_dead",
-                "detail": (f"{len(cand)} compte(s) candidat(s), tous avec une session "
-                           "morte côté fournisseur (401) : le parcours a produit un "
-                           "compte que le fournisseur n'authentifie plus. Refais le "
-                           "parcours jusqu'au bout SANS fermer l'onglet avant la "
-                           "redirection finale."),
+                "detail": (f"{len(cand)} candidate account(s), all with a session "
+                           "dead on the provider side (401): the flow produced an "
+                           "account that the provider no longer authenticates. Redo the "
+                           "flow to the end WITHOUT closing the tab before the "
+                           "final redirect."),
             })
             continue
         issue = unipile_binding.bind_account(sub, chosen["id"], prov,
@@ -551,20 +551,20 @@ def reconcile_pending(sub: str, account_id: "str | None" = None) -> dict:
                              platform_seat=bool(pend.get("platform_seat")),
                              foreign=foreign)
         if not issue.bound:
-            # Injoignable en pratique (le candidat a déjà passé la garde ci-dessus) —
-            # mais l'écriture est gardée à SON point, pas au point d'appel : c'est
-            # cette discipline-là qui manquait au chemin jumeau.
-            logger.warning("reconcile unipile: liaison refusée (%s) sub=%s account_id=%s",
+            # Unreachable in practice (the candidate already passed the guard above) —
+            # but the write is guarded AT ITS point, not at the call site: that is
+            # the discipline the twin path lacked.
+            logger.warning("reconcile unipile: binding refused (%s) sub=%s account_id=%s",
                            issue.reason, sub, chosen["id"])
             motifs.append({"nonce": pend.get("nonce"), "provider": provider,
                            "reason": issue.reason or "bind_refused",
-                           "detail": "Le compte a été trouvé mais l'écriture de la "
-                                     "liaison a été refusée à son point de garde."})
+                           "detail": "The account was found but the write of the "
+                                     "binding was refused at its guard point."})
             continue
         db.resolve_unipile_pending(pend["nonce"])
-        # Les AUTRES demandes du même canal (double clic sur « Connecter », lien
-        # redemandé) sont consommées avec : laissées vivantes, elles resteraient une
-        # heure à même de lier le prochain compte qu'un tiers connecte sur la clé.
+        # The OTHER requests for the same channel (double click on "Connect", link
+        # requested again) are consumed along with it: left alive, they would stay for an
+        # hour able to link the next account a third party connects on the key.
         for other in pendings:
             if (other is not pend
                     and (other.get("provider") or "LINKEDIN").upper() == provider):
@@ -577,36 +577,36 @@ def reconcile_pending(sub: str, account_id: "str | None" = None) -> dict:
                     sub, chosen["id"], pend["org_id"])
     out: dict = {"bound": bool(bound), "accounts": bound}
     if motifs and not bound:
-        # Rien n'a été lié : rendre le motif établi, comme `unipile_binding` (#689).
+        # Nothing was linked: return the established reason, like `unipile_binding` (#689).
         out["reason"] = motifs[0]["reason"]
         out["detail"] = motifs[0]["detail"]
         out["pendings"] = motifs
     return out
 
 
-# --- Le geste « connecter », sous le point de passage commun (#300) ----------
+# --- The "connect" gesture, under the common checkpoint (#300) ----------
 
 async def _start_flow(ctx, values: dict):
-    """Démarre la connexion d'un canal hébergé — déclaré comme tout autre flux.
+    """Starts the connection of a hosted channel — declared like any other flow.
 
-    ⚠️ **Ce flux a deux issues, et une seule est un consentement.** Le cas nominal
-    rend un lien hébergé à ouvrir. Mais quand la MÊME personne a déjà connecté ce
-    canal ailleurs, le compte est **adopté** — rattaché ici sans wizard — et il n'y a
-    aucune page à ouvrir.
+    ⚠️ **This flow has two outcomes, and only one is a consent.** The nominal case
+    returns a hosted link to open. But when the SAME person has already connected this
+    channel elsewhere, the account is **adopted** — attached here without a wizard — and there is
+    no page to open.
 
-    Le contrat commun promet « démarrer une connexion ⟹ une URL à ouvrir ». Rendre
-    une URL vide dans le cas adopté serait un mensonge qu'un client ouvrirait ; et
-    rendre l'URL facultative rouvrirait pour TOUS un contrat fermé précisément parce
-    que chaque flux y inventait sa forme. Donc : **l'adoption n'est pas un démarrage
-    de flux**, c'est une résolution — deux gestes qu'une même route avait fusionnés
-    parce qu'ils partagent un bouton.
+    The common contract promises "start a connection ⟹ a URL to open". Returning
+    an empty URL in the adopted case would be a lie that a client would open; and
+    making the URL optional would reopen for ALL a contract closed precisely
+    because each flow invented its own shape there. Hence: **adoption is not a flow
+    start**, it is a resolution — two gestures that a single route had merged
+    because they share a button.
 
-    D'où un refus TYPÉ et actionnable (patron `tool_not_mounted` : un refus qui dit
-    quoi faire) plutôt qu'un `FlowStart` mutilé. L'adoption ayant déjà eu lieu, il ne
-    demande pas d'agir : il constate.
+    Hence a TYPED and actionable refusal (`tool_not_mounted` pattern: a refusal that says
+    what to do) rather than a mutilated `FlowStart`. Since the adoption has already happened, it
+    does not ask to act: it states.
 
-    L'ancienne route REST continue de servir ses deux issues telle quelle jusqu'à la
-    bascule du front — ce lot ne la touche pas.
+    The old REST route keeps serving its two outcomes as is until the
+    front switches over — this batch does not touch it.
     """
     from .connectors import flow as connector_flow
     from .capabilities._types import AuthzDenied
@@ -616,17 +616,17 @@ async def _start_flow(ctx, values: dict):
             force=bool(values.get("force")),
             premium=(str(values["premium"]).strip().lower()
                      if values.get("premium") else None),
-            # `app` voyage avec le geste (le front le pose déjà dans `params`) :
-            # sans lui, la fin du wizard repart chez oto-dashboard, quel que soit
-            # le front qui a demandé la connexion.
+            # `app` travels with the gesture (the front already puts it in `params`):
+            # without it, the end of the wizard goes back to oto-dashboard, whichever
+            # front asked for the connection.
             app=(str(values["app"]) if values.get("app") else None))
     except ConnectRefused as e:
         raise AuthzDenied(e.status, e.code, e.message)
     if out.get("adopted"):
         raise AuthzDenied(
             409, "already_linked",
-            f"Ce compte {out.get('channel') or 'hébergé'} était déjà connecté sous ton "
-            f"identité : il vient d'être rattaché ici ({out.get('account_name') or 'compte'}). "
-            "Aucun consentement à donner — relis tes identités pour le voir.")
+            f"This {out.get('channel') or 'hosted'} account was already connected under your "
+            f"identity: it has just been attached here ({out.get('account_name') or 'account'}). "
+            "No consent to give — re-read your identities to see it.")
     return connector_flow.FlowStart(auth_url=out["url"],
                                     details={"channel": out.get("channel")})

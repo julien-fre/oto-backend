@@ -198,7 +198,7 @@ def test_un_jeton_d_avant_la_pose_demande_de_reconnecter(cablage, monkeypatch):
     with pytest.raises(google_oauth.GoogleReauthRequired) as e:
         google_oauth.credentials_for("tulina:abc", account="a@b.com")
     assert isinstance(e.value, RuntimeError)
-    assert "a@b.com" in str(e.value) and "reconnecte" in str(e.value)
+    assert "a@b.com" in str(e.value) and "reconnect" in str(e.value)
     assert appels["mark"] == ["a@b.com"] and appels["post"] == []
 
 

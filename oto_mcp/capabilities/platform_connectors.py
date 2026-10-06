@@ -1,33 +1,33 @@
-"""Palier PLATEFORME des connecteurs : le cran d'activation, et l'accès ouvert par
-la plateforme à une org ou à un membre.
+"""PLATFORM tier of connectors: the activation switch, and the access the platform
+opens to an org or to a member.
 
-Cinq routes écrites à la main jusqu'au 2026-08-27, portées en capacités (ADR 0009) —
-mêmes chemins, mêmes codes, même corps sur le fil :
+Five hand-written routes until 2026-08-27, ported to capabilities (ADR 0009) —
+same paths, same codes, same body on the wire:
 
-- `GET|POST|DELETE /api/admin/connectors/activation`            → le cran d'activation (ADR 0010 B4)
-- `GET|POST        /api/admin/connectors/{provider}/platform-access` → l'accès plateforme (ADR 0044 §H)
+- `GET|POST|DELETE /api/admin/connectors/activation`            → the activation switch (ADR 0010 B4)
+- `GET|POST        /api/admin/connectors/{provider}/platform-access` → platform access (ADR 0044 §H)
 
-C'est l'étage manquant d'une famille dont les DEUX autres paliers étaient déjà des
-capacités : `connectors.activation.{org_list,set_org,clear_org}` et
-`{group_list,set_group,clear_group}`. Même métier, trois étages, une seule façon de
-le décrire désormais.
+This is the missing level of a family whose TWO other tiers were already
+capabilities: `connectors.activation.{org_list,set_org,clear_org}` and
+`{group_list,set_group,clear_group}`. Same domain, three levels, one single way to
+describe it from now on.
 
-**Master global comme override d'org prennent effet tout de suite**, sans redémarrage :
-`register_all` charge au boot les outils de TOUS les connecteurs du registre, et
-l'activation se lit en base à chaque requête (`connectors.activation.exposed_connectors`,
-par la visibilité de session et par les gardes d'appel — ADR 0011, 16/06/2026). La
-réponse portait jusqu'au 23/09/2026 un `restart_required: true` sur le master global :
-un reliquat d'avant l'ADR 0011, qui aurait fait redéployer la production pour un effet
-déjà obtenu (oto-backend#815, mesuré le 02/09 : catalogue public de 97 à 98 connecteurs
-sans redémarrage). Retiré, pas mis à `false` : un champ toujours faux ne dit rien.
+**Both the global master and the org override take effect immediately**, with no restart:
+`register_all` loads the tools of ALL registry connectors at boot, and
+activation is read from the database on every request (`connectors.activation.exposed_connectors`,
+by session visibility and by the call guards — ADR 0011, 16/06/2026). Until 23/09/2026 the
+response carried a `restart_required: true` on the global master:
+a leftover from before ADR 0011, which would have made us redeploy production for an effect
+already obtained (oto-backend#815, measured on 02/09: public catalogue going from 97 to 98 connectors
+without a restart). Removed, not set to `false`: an always-false field says nothing.
 
-**Pas de face MCP** (`mcp=None`) : basculer le master global engage toute la
-plateforme, et ouvrir l'accès plateforme est un acte commercial. Un agent n'a rien à en faire, et les paliers qu'un utilisateur peut
-réellement piloter — org et équipe — sont déjà servis par `oto_connector_activation`.
+**No MCP face** (`mcp=None`): flipping the global master affects the whole
+platform, and opening platform access is a commercial act. An agent has nothing to do with it, and the tiers a user can
+actually drive — org and team — are already served by `oto_connector_activation`.
 
-`/api/admin/*` est retiré du descriptif OpenAPI public : une console de plateforme n'a
-pas d'intégrateur tiers. L'`Output` sert ici la génération de types côté dashboard et
-la lisibilité du contrat, pas la publication.
+`/api/admin/*` is removed from the public OpenAPI description: a platform console has
+no third-party integrator. The `Output` is used here for type generation on the dashboard side and
+for the readability of the contract, not for publication.
 """
 from __future__ import annotations
 
@@ -46,29 +46,29 @@ _ACTIVATION = "/api/admin/connectors/activation"
 _ACCESS = "/api/admin/connectors/{provider}/platform-access"
 
 
-# --- Entrées ----------------------------------------------------------------
+# --- Inputs -----------------------------------------------------------------
 
 class ActivationListInput(BaseModel):
-    """Aucun paramètre : l'admin voit TOUT le registre, y compris ce qui est OFF —
-    c'est sa surface pour l'activer."""
+    """No parameters: the admin sees the WHOLE registry, including what is OFF —
+    that is their surface for turning it on."""
 
 
 class ActivationSetInput(BaseModel):
     connector: str = ""
-    # ⚠️ `Strict*` + défaut `None` : la route rend `400 enabled_must_be_bool` quand le
-    # champ MANQUE, pas le `400 invalid_input` de pydantic. Le défaut `None` fait donc
-    # tomber le cas manquant — le seul qui se produise — dans le handler, avec son code
-    # historique. Un champ présent mais MAL TYPÉ reste refusé par pydantic (même 400,
-    # code `invalid_input`) : personne n'en envoie, et le schéma reste juste.
+    # ⚠️ `Strict*` + default `None`: the route returns `400 enabled_must_be_bool` when the
+    # field is MISSING, not pydantic's `400 invalid_input`. The `None` default therefore
+    # lets the missing case — the only one that occurs — fall into the handler, with its
+    # historical code. A field that is present but WRONGLY TYPED is still refused by pydantic (same 400,
+    # code `invalid_input`): nobody sends one, and the schema stays accurate.
     enabled: Optional[StrictBool] = None
-    # Absent ⇒ master GLOBAL. Présent ⇒ override de CETTE org.
+    # Absent ⇒ GLOBAL master. Present ⇒ override for THIS org.
     org_id: Optional[StrictInt] = None
 
 
 class ActivationClearInput(BaseModel):
-    # Query string : les deux arrivent en TEXTE. On les garde tels quels et on convertit
-    # dans le handler, pour rendre `connector_and_org_id_required` et `org_id_must_be_int`
-    # — les deux codes servis — plutôt qu'un `invalid_input` générique.
+    # Query string: both arrive as TEXT. We keep them as is and convert
+    # in the handler, so as to return `connector_and_org_id_required` and `org_id_must_be_int`
+    # — the two codes served — rather than a generic `invalid_input`.
     connector: Optional[str] = None
     org_id: Optional[str] = None
 
@@ -80,13 +80,13 @@ class PlatformAccessInput(BaseModel):
 class PlatformAccessSetInput(BaseModel):
     provider: str
     scope: Optional[str] = None            # 'org' | 'user'
-    # Un id d'org arrive en nombre, un sub en texte : les deux sont acceptés et
-    # normalisés en texte, comme le faisait `str(body.get("id", ""))`.
+    # An org id arrives as a number, a sub as text: both are accepted and
+    # normalized to text, as `str(body.get("id", ""))` used to do.
     id: Union[int, str, None] = None
     on: bool = False
 
 
-# --- Sorties ----------------------------------------------------------------
+# --- Outputs ----------------------------------------------------------------
 
 class ActivationOverride(BaseModel):
     org_id: int
@@ -94,17 +94,17 @@ class ActivationOverride(BaseModel):
 
 
 class ActivationRow(BaseModel):
-    """⚠️ **`enabled: null` n'est pas « inconnu », c'est OFF.** Le master n'a jamais été
-    posé, et la règle est deny-by-default : le connecteur n'est pas exposé. Un front qui
-    traite `null` comme « activé » ou comme un état indéterminé se trompe."""
+    """⚠️ **`enabled: null` is not "unknown", it is OFF.** The master has never been
+    set, and the rule is deny-by-default: the connector is not exposed. A front end that
+    treats `null` as "enabled" or as an indeterminate state is wrong."""
     connector: str
     label: Optional[str] = None
     help: Optional[str] = None
     namespaces: list[str]
     enabled: Optional[bool] = None
-    # Les orgs qui dérogent au master global, dans un sens comme dans l'autre.
+    # The orgs that deviate from the global master, in either direction.
     overrides: list[ActivationOverride]
-    # Option payante qui conditionne ce connecteur (couche 3, ADR 0044 §H), ou `null`.
+    # Paid option that gates this connector (layer 3, ADR 0044 §H), or `null`.
     paid_option: Optional[str] = None
 
 
@@ -113,8 +113,8 @@ class ActivationListView(BaseModel):
 
 
 class ActivationSetView(BaseModel):
-    """La bascule posée, servie dès la requête suivante (master global comme override
-    d'org : l'activation se lit en base à chaque requête)."""
+    """The switch as set, served from the next request (global master and org
+    override alike: activation is read from the database on every request)."""
     ok: bool
     connector: str
     enabled: bool
@@ -122,51 +122,51 @@ class ActivationSetView(BaseModel):
 
 
 class ActivationClearView(BaseModel):
-    """L'override retiré : le connecteur retombe sur le master global pour cette org."""
+    """The override removed: the connector falls back to the global master for this org."""
     ok: bool
     connector: str
     org_id: int
 
 
 class Beneficiary(BaseModel):
-    """Une org ou un membre à qui la plateforme ouvre ce connecteur. `has_key` = grant
-    sur la clé plateforme (couche 2) ; `has_option` = option offerte (couche 3). Les
-    deux sont indépendants : l'un sans l'autre est un état normal, pas une incohérence.
+    """An org or a member to whom the platform opens this connector. `has_key` = grant
+    on the platform key (layer 2); `has_option` = option offered (layer 3). The
+    two are independent: one without the other is a normal state, not an inconsistency.
 
-    `daily_quota` = le quota journalier du grant de clé, lu dans `meta.rate_limit_by`
-    de l'instance plateforme dont le `share_down` nomme ce bénéficiaire ; `null` = pas
-    de quota posé, ou pas de grant de clé. ⚠️ `platform_revoke` EFFACE ce quota : qui
-    veut ré-accorder à l'identique doit le relever AVANT de révoquer. ⚠️ Pour un
-    connecteur passé au modèle par chaîne (`grants_chain.CHAIN_CONNECTORS`), le quota
-    vit sur l'arête du grant et n'est PAS rapporté ici."""
+    `daily_quota` = the daily quota of the key grant, read from `meta.rate_limit_by`
+    of the platform instance whose `share_down` names this beneficiary; `null` = no
+    quota set, or no key grant. ⚠️ `platform_revoke` ERASES this quota: anyone who
+    wants to re-grant identically must note it BEFORE revoking. ⚠️ For a
+    connector moved to the chain model (`grants_chain.CHAIN_CONNECTORS`), the quota
+    lives on the grant's edge and is NOT reported here."""
     scope: str                         # 'org' | 'user'
     id: str
     has_key: bool
     has_option: bool
-    daily_quota: Optional[int] = None  # quota du grant de clé (meta.rate_limit_by)
+    daily_quota: Optional[int] = None  # quota of the key grant (meta.rate_limit_by)
     label: Optional[str] = None
     logo_url: Optional[str] = None     # orgs
     email: Optional[str] = None        # membres
 
 
 class PlatformAccessView(BaseModel):
-    """Vue connecteur-centrique de l'accès plateforme (ADR 0044 §H) — elle remplace les
-    leviers dispersés `/platform/orgs` et `/platform/users`. **Aucun secret n'en sort.**
+    """Connector-centric view of platform access (ADR 0044 §H) — it replaces the
+    scattered levers `/platform/orgs` and `/platform/users`. **No secret leaves it.**
 
-    ⚠️ `open_tier: true` change la lecture de `beneficiaries` : une instance plateforme
-    en partage `open` ouvre le connecteur à TOUS sans grant nominatif, donc la liste
-    n'est plus la population servie — elle ne dit plus que les grants explicites."""
+    ⚠️ `open_tier: true` changes how `beneficiaries` is read: a platform instance
+    with `open` sharing opens the connector to EVERYONE without a named grant, so the list
+    is no longer the population served — it only lists the explicit grants."""
     connector: str
-    paid_option: Optional[str] = None   # None = pas d'option payante (couche 3)
-    platform_key: bool                  # une clé plateforme existe (couche 2)
-    open_tier: bool                     # free-tier : ouvert à tous sans grant
+    paid_option: Optional[str] = None   # None = no paid option (layer 3)
+    platform_key: bool                  # a platform key exists (layer 2)
+    open_tier: bool                     # free-tier: open to everyone without a grant
     beneficiaries: list[Beneficiary]
 
 
 class PlatformAccessSetView(BaseModel):
-    """L'acte UNIQUE « accès plateforme » : il pose ENSEMBLE ce que le backend couplait
-    déjà — l'option comp (si le connecteur en a une) ET le grant de clé plateforme (s'il
-    en existe une). `paid_option`/`platform_key` disent ce qui a effectivement été touché."""
+    """The SINGLE "platform access" act: it sets TOGETHER what the backend already coupled
+    — the comp option (if the connector has one) AND the platform key grant (if
+    one exists). `paid_option`/`platform_key` say what was actually touched."""
     ok: bool
     connector: str
     scope: str
@@ -185,7 +185,7 @@ def _known(connector: str, *, code: str, status: int):
 
 
 def _list_activation(ctx: ResolvedCtx, inp: ActivationListInput) -> dict:
-    """Tout le registre × son état d'activation (global + overrides d'org)."""
+    """The whole registry × its activation state (global + org overrides)."""
     glob: dict[str, bool] = {}
     overrides: dict[str, list] = {}
     for r in connector_activation.list_activations():
@@ -201,9 +201,9 @@ def _list_activation(ctx: ResolvedCtx, inp: ActivationListInput) -> dict:
             "label": c.label,
             "help": c.help,
             "namespaces": list(c.namespaces),
-            "enabled": glob.get(name),  # None = jamais posé = OFF
+            "enabled": glob.get(name),  # None = never set = OFF
             "overrides": overrides.get(name, []),
-            "paid_option": access.paid_option_for(name),  # couche 3 (ADR 0044 §H) ou None
+            "paid_option": access.paid_option_for(name),  # layer 3 (ADR 0044 §H) or None
         }
         for name, c in providers.REGISTRY.items()
     ]
@@ -211,7 +211,7 @@ def _list_activation(ctx: ResolvedCtx, inp: ActivationListInput) -> dict:
 
 
 def _set_activation(ctx: ResolvedCtx, inp: ActivationSetInput) -> dict:
-    """Pose l'activation : master global si `org_id` absent, sinon override d'org."""
+    """Set activation: global master if `org_id` is absent, otherwise org override."""
     if inp.connector not in providers.REGISTRY:
         raise AuthzDenied(400, "unknown_connector")
     if not isinstance(inp.enabled, bool):
@@ -227,7 +227,7 @@ def _set_activation(ctx: ResolvedCtx, inp: ActivationSetInput) -> dict:
 
 
 def _clear_override(ctx: ResolvedCtx, inp: ActivationClearInput) -> dict:
-    """Supprime un override d'org (le connecteur retombe sur le master global)."""
+    """Delete an org override (the connector falls back to the global master)."""
     if not inp.connector or not inp.org_id:
         raise AuthzDenied(400, "connector_and_org_id_required")
     try:
@@ -239,9 +239,9 @@ def _clear_override(ctx: ResolvedCtx, inp: ActivationClearInput) -> dict:
 
 
 def _platform_access(ctx: ResolvedCtx, inp: PlatformAccessInput) -> dict:
-    """[platform_admin] Les orgs et membres à qui la plateforme ouvre ce connecteur :
-    grantees de la clé plateforme (`share_down` des instances scope PLATFORM, ADR 0044
-    §F) ∪ bénéficiaires de l'option comp (couche 3). Aucun secret."""
+    """[platform_admin] The orgs and members to whom the platform opens this connector:
+    grantees of the platform key (`share_down` of PLATFORM-scope instances, ADR 0044
+    §F) ∪ beneficiaries of the comp option (layer 3). No secret."""
     _known(inp.provider, code="unknown_connector", status=404)
     from .. import credentials_store
     option = access.paid_option_for(inp.provider)
@@ -258,9 +258,9 @@ def _platform_access(ctx: ResolvedCtx, inp: PlatformAccessInput) -> dict:
     insts = credentials_store.list_platform_instances(inp.provider)
     open_tier = any(i["share_mode"] == "open" for i in insts)
     for inst in insts:
-        # Le quota d'un grant vit à côté du grant, sur la MÊME instance
-        # (`credentials_store.platform_grant`). Lecture seule : rien de la résolution
-        # ne change, et un connecteur par chaîne garde le quota sur son arête.
+        # A grant's quota lives next to the grant, on the SAME instance
+        # (`credentials_store.platform_grant`). Read-only: nothing about resolution
+        # changes, and a chain connector keeps the quota on its edge.
         quotas = (inst.get("meta") or {}).get("rate_limit_by") or {}
         for g in inst["share_down"]:
             scope, _, sid = str(g).partition(":")
@@ -288,23 +288,23 @@ def _platform_access(ctx: ResolvedCtx, inp: PlatformAccessInput) -> dict:
     out.sort(key=lambda r: (r["scope"], (r["label"] or "").lower()))
     return {
         "connector": inp.provider,
-        "paid_option": option,          # None = pas d'option payante (couche 3)
-        "platform_key": bool(insts),    # une clé plateforme existe (couche 2)
-        "open_tier": open_tier,         # free-tier : ouvert à tous sans grant
+        "paid_option": option,          # None = no paid option (layer 3)
+        "platform_key": bool(insts),    # a platform key exists (layer 2)
+        "open_tier": open_tier,         # free-tier: open to everyone without a grant
         "beneficiaries": out,
     }
 
 
 def _set_platform_access(ctx: ResolvedCtx, inp: PlatformAccessSetInput) -> dict:
-    """[super_admin] Acte UNIQUE « accès plateforme » (ADR 0044 §H) : ouvre/ferme
-    l'accès d'une org ou d'un membre à un connecteur = pose ENSEMBLE l'option comp
-    (couche 3) ET le grant de la clé plateforme (couche 2) — ce que le backend
-    couplait déjà, exposé en un geste."""
+    """[super_admin] SINGLE "platform access" act (ADR 0044 §H): opens/closes
+    an org's or a member's access to a connector = sets TOGETHER the comp option
+    (layer 3) AND the platform key grant (layer 2) — what the backend
+    already coupled, exposed in one gesture."""
     _known(inp.provider, code="unknown_connector", status=404)
     sid = str(inp.id if inp.id is not None else "").strip()
     if inp.scope not in ("org", "user") or not sid:
         raise AuthzDenied(400, "invalid_body")
-    # existence (pas de grant vers un fantôme)
+    # existence (no grant to a ghost)
     if inp.scope == "org":
         if not sid.isdigit() or not org_store.get_org(int(sid)):
             raise AuthzDenied(404, "unknown_org")
@@ -314,19 +314,19 @@ def _set_platform_access(ctx: ResolvedCtx, inp: PlatformAccessSetInput) -> dict:
     from .. import credentials_store
     option = access.paid_option_for(inp.provider)
     if option and catalogue.est_du_catalogue(option):
-        # L'option de ce connecteur est un droit du catalogue, qu'oto-commerce pose seul
-        # (#1097). Le geste composé ne peut plus en poser la moitié : la clé se partage
-        # seule, par le grant de la portée visée — l'org ou le compte.
-        partage = (" Pour partager seulement la clé de plateforme avec ce compte : "
+        # This connector's option is a catalogue entitlement, which oto-commerce sets alone
+        # (#1097). The composite gesture can no longer set half of it: the key is shared
+        # on its own, via the grant for the targeted scope — the org or the account.
+        partage = (" To share only the platform key with this account: "
                    "`platform.key.grant` (POST /api/admin/users/{sub}/grants/{provider})."
                    if inp.scope == "user" else
-                   " Pour partager seulement la clé de plateforme avec cette org : "
+                   " To share only the platform key with this org: "
                    "`platform.org.grant_key` (POST /api/admin/orgs/{id}/grants/{provider}).")
         raise facturation_externe.refus(
-            f"Ouvrir l'accès plateforme à {inp.provider!r} (l'option {option!r})", partage)
+            f"Opening platform access to {inp.provider!r} (the {option!r} option)", partage)
     has_key = bool(credentials_store.list_platform_instances(inp.provider))
     if not option and not has_key:
-        # ni option payante ni clé plateforme → rien à ouvrir côté plateforme
+        # neither paid option nor platform key → nothing to open on the platform side
         raise AuthzDenied(400, "no_platform_access")
     gscope = f"{inp.scope}:{sid}"
     on = bool(inp.on)
@@ -347,37 +347,37 @@ def _set_platform_access(ctx: ResolvedCtx, inp: PlatformAccessSetInput) -> dict:
 
 
 _DOC_LIST = (
-    "Tout le registre de connecteurs × son état d'activation : master global et "
-    "overrides par org. ⚠️ `enabled: null` veut dire OFF (jamais posé, deny-by-default), "
-    "pas « indéterminé »."
+    "The whole connector registry × its activation state: global master and "
+    "per-org overrides. ⚠️ `enabled: null` means OFF (never set, deny-by-default), "
+    "not \"indeterminate\"."
 )
 _DOC_SET = (
-    "Pose l'activation d'un connecteur : master GLOBAL si `org_id` est absent, override "
-    "de CETTE org sinon. L'un comme l'autre prend effet dès la requête suivante, sans "
-    "redémarrage : l'activation se lit en base à chaque requête."
+    "Sets a connector's activation: GLOBAL master if `org_id` is absent, override "
+    "for THIS org otherwise. Either takes effect from the next request, with no "
+    "restart: activation is read from the database on every request."
 )
 _DOC_CLEAR = (
-    "Retire un override d'org : le connecteur retombe sur le master global. Les deux "
-    "paramètres sont requis."
+    "Removes an org override: the connector falls back to the global master. Both "
+    "parameters are required."
 )
 _DOC_ACCESS = (
-    "Les orgs et membres à qui la PLATEFORME ouvre ce connecteur — grants de la clé "
-    "plateforme et marques de don d'option (`has_option`), réunis en une vue "
-    "connecteur-centrique. Aucun secret. ⚠️ `has_option` est la marque HÉRITÉE d'un don "
-    "(`option_comps`), pas le droit : le droit d'une option payante est posé par le "
-    "service de facturation (oto-commerce) et se lit dans les droits déclarés. ⚠️ Si "
-    "`open_tier` est vrai, le connecteur est ouvert à tous sans grant : la liste ne dit "
-    "alors plus la population servie."
+    "The orgs and members to whom the PLATFORM opens this connector — platform key "
+    "grants and option-gift marks (`has_option`), merged into one "
+    "connector-centric view. No secret. ⚠️ `has_option` is the LEGACY mark of a gift "
+    "(`option_comps`), not the entitlement: the entitlement of a paid option is set by the "
+    "billing service (oto-commerce) and is read from the declared entitlements. ⚠️ If "
+    "`open_tier` is true, the connector is open to everyone without a grant: the list then "
+    "no longer shows the population served."
 )
 _DOC_SET_ACCESS = (
-    "Ouvre ou ferme l'accès plateforme d'une org ou d'un membre à un connecteur, en un "
-    "geste : pose ensemble la marque d'option et le grant de clé plateforme, selon ce que "
-    "le connecteur possède. Refuse un grant vers une org ou un compte inexistant, et un "
-    "connecteur qui n'a ni option ni clé plateforme (`no_platform_access`). ⚠️ Refuse en "
-    "409 `billing_moved` un connecteur dont l'option est un droit du catalogue "
-    "(`unipile`) : ce droit est posé par le service de facturation (oto-commerce) seul ; "
-    "la clé de plateforme se partage alors par `platform.org.grant_key` (une org) ou "
-    "`platform.key.grant` (un compte)."
+    "Opens or closes an org's or a member's platform access to a connector, in one "
+    "gesture: sets the option mark and the platform key grant together, depending on what "
+    "the connector has. Refuses a grant to a non-existent org or account, and a "
+    "connector that has neither option nor platform key (`no_platform_access`). ⚠️ Refuses with "
+    "409 `billing_moved` a connector whose option is a catalogue entitlement "
+    "(`unipile`): that entitlement is set by the billing service (oto-commerce) alone; "
+    "the platform key is then shared via `platform.org.grant_key` (an org) or "
+    "`platform.key.grant` (an account)."
 )
 
 CAPABILITIES += [
@@ -385,7 +385,7 @@ CAPABILITIES += [
         key="platform.connector.activation_list", handler=_list_activation,
         Input=ActivationListInput, authz=PLATFORM_ADMIN, Output=ActivationListView,
         description=_DOC_LIST,
-        mcp=None,   # acte de déploiement : les paliers pilotables sont org/équipe
+        mcp=None,   # deployment act: the drivable tiers are org/team
         rest=RestBinding("GET", _ACTIVATION),
     ),
     Capability(
@@ -414,27 +414,27 @@ CAPABILITIES += [
         Input=PlatformAccessSetInput, authz=SUPER_ADMIN, Output=PlatformAccessSetView,
         description=_DOC_SET_ACCESS,
         errors=(facturation_externe.declaration(
-            "L'option du connecteur est une clé du catalogue des droits, que seul le "
-            "service de facturation (oto-commerce) pose ; la clé de plateforme se partage "
-            "par `platform.org.grant_key` (une org) ou `platform.key.grant` (un compte)."),),
+            "The connector's option is a key of the entitlements catalogue, which only the "
+            "billing service (oto-commerce) sets; the platform key is shared "
+            "via `platform.org.grant_key` (an org) or `platform.key.grant` (an account)."),),
         mcp=None,
         rest=RestBinding("POST", _ACCESS),
     ),
 ]
 
 
-# ── Propriétés de connecteur SURCHARGEABLES (L6 pièce 2 c2) ──────────────────
+# ── OVERRIDABLE connector properties (L6 piece 2 c2) ─────────────────────────
 #
-# « La base peut primer sur le défaut du code » (Alexis, 27/08), pour qu'élargir un
-# connecteur ne demande pas un déploiement. Une seule propriété aujourd'hui — la
-# CARDINALITÉ d'auth (`mono`|`multi`).
+# "The database may take precedence over the code default" (Alexis, 27/08), so that widening a
+# connector does not require a deployment. A single property today — auth
+# CARDINALITY (`mono`|`multi`).
 #
-# ⚠️ **`reload` n'est pas un détail d'implémentation, c'est la moitié du geste.** Les
-# surcharges vivent en MÉMOIRE (la cardinalité est consultée jusqu'à 4× par appel
-# d'outil, sur un serveur mono-loop : une requête par consultation serait un gel de
-# boucle). Poser une ligne ne change donc rien tant qu'on n'a pas rechargé — et le
-# rechargement est **PAR PROCESS**, exactement comme le registre d'émetteurs :
-# recharger la preprod ne recharge pas la prod.
+# ⚠️ **`reload` is not an implementation detail, it is half of the gesture.** The
+# overrides live in MEMORY (cardinality is consulted up to 4× per tool
+# call, on a single-loop server: one query per lookup would freeze the
+# loop). Setting a row therefore changes nothing until we reload — and the
+# reload is **PER PROCESS**, exactly like the issuer registry:
+# reloading preprod does not reload prod.
 
 _SETTINGS = "/api/admin/connectors/settings"
 
@@ -442,47 +442,47 @@ _SETTINGS = "/api/admin/connectors/settings"
 class ConnectorSettingInput(BaseModel):
     op: str = "list"                         # list | set | clear | reload
     connector: Optional[str] = None          # set / clear
-    key: str = "cardinality"                 # cardinality, ou un réglage de connecteur
-                                             # (ex. instagram_meta.app_id/app_secret)
-    value: Optional[str] = None              # set : 'mono' | 'multi', ou la valeur du réglage
-    org_id: Optional[int] = None             # None = surcharge PLATEFORME
+    key: str = "cardinality"                 # cardinality, or a connector setting
+                                             # (e.g. instagram_meta.app_id/app_secret)
+    value: Optional[str] = None              # set: 'mono' | 'multi', or the setting's value
+    org_id: Optional[int] = None             # None = PLATFORM override
 
 
 class ConnectorSettingView(BaseModel):
-    """Ce que la console rend. `active` est le relevé de ce que le PROCESS applique en
-    ce moment — pas ce que la base contient : c'est précisément l'écart qu'un admin
-    doit pouvoir voir avant de se demander pourquoi son réglage « ne marche pas »."""
+    """What the console renders. `active` is the snapshot of what the PROCESS is applying
+    right now — not what the database contains: that is precisely the gap an admin
+    must be able to see before wondering why their setting "doesn't work"."""
     op: str
-    rows: list[dict] = []                    # les lignes de la base
-    active: dict = {}                        # les surcharges VIVANTES de ce process
-    loaded: Optional[int] = None             # reload : combien ont été installées
+    rows: list[dict] = []                    # the database rows
+    active: dict = {}                        # the LIVE overrides of this process
+    loaded: Optional[int] = None             # reload: how many were installed
     changed: Optional[bool] = None           # set / clear
 
 
-#: Suffixe des clés dont la VALEUR ne se relit pas. La table a d'abord porté des
-#: réglages publics par conception (les trois coordonnées de l'application Planity,
-#: que tout navigateur reçoit) ; `instagram_meta.app_secret` en 2026-09-09 est le
-#: premier VRAI secret qu'on y range, et `op="list"` rendait jusque-là toute valeur
-#: telle quelle — à un appelant qui est souvent un AGENT, donc dans un transcript.
+#: Suffix of the keys whose VALUE is not read back. The table first held
+#: settings that are public by design (the three coordinates of the Planity application,
+#: which every browser receives); `instagram_meta.app_secret` on 2026-09-09 is the
+#: first REAL secret stored there, and `op="list"` until then returned every value
+#: as is — to a caller who is often an AGENT, hence into a transcript.
 #:
-#: Redaction par SUFFIXE, pas par liste de clés : une liste indexée par nom serait
-#: à tenir à jour au prochain connecteur, et l'oubli n'échouerait nulle part — il
-#: publierait le secret. Un `_secret` final est une convention qu'on peut exiger de
-#: l'auteur d'un réglage, et qu'un test vérifie.
+#: Redaction by SUFFIX, not by key list: a list indexed by name would have to
+#: be kept up to date with each new connector, and forgetting would fail nowhere — it
+#: would publish the secret. A trailing `_secret` is a convention we can require of
+#: the author of a setting, and that a test verifies.
 _SUFFIXE_SECRET = "_secret"
 
 
 def _sans_les_secrets(lignes: list[dict]) -> list[dict]:
-    """Les lignes, valeurs des clés secrètes remplacées par un marqueur.
+    """The rows, with the values of secret keys replaced by a marker.
 
-    On rend la PRÉSENCE, jamais la valeur — même tronquée : savoir qu'une clé est
-    posée est ce dont l'admin a besoin pour diagnostiquer, la relire ne lui apporte
-    rien qu'il n'ait déjà eu au moment de la poser."""
+    We return the PRESENCE, never the value — even truncated: knowing that a key is
+    set is what the admin needs to diagnose; reading it back brings them
+    nothing they did not already have when they set it."""
     out = []
     for r in lignes:
         ligne = dict(r)
         if str(ligne.get("key", "")).endswith(_SUFFIXE_SECRET):
-            ligne["value"] = "(posée — valeur non rendue)" if ligne.get("value") else ""
+            ligne["value"] = "(set — value not shown)" if ligne.get("value") else ""
         out.append(ligne)
     return out
 
@@ -500,46 +500,46 @@ def _connector_setting(ctx: ResolvedCtx, inp: ConnectorSettingInput) -> dict:
                 "rows": _sans_les_secrets(store.list_connector_settings(inp.key)),
                 "active": _actives()}
     if inp.op == "reload":
-        # Pas de repli : si la lecture échoue, l'appelant doit le SAVOIR — un reload
-        # qui rendrait « ok » sur une base injoignable est le pire des deux mondes.
+        # No fallback: if the read fails, the caller must KNOW — a reload
+        # that returned "ok" on an unreachable database is the worst of both worlds.
         n = cardinality.reload()
         return {"op": "reload", "loaded": n, "active": _actives()}
 
     if not inp.connector:
-        raise AuthzDenied(400, "missing_connector", "`connector` requis pour set/clear.")
+        raise AuthzDenied(400, "missing_connector", "`connector` required for set/clear.")
     if providers.REGISTRY.get(inp.connector) is None:
         raise AuthzDenied(404, "unknown_connector",
-                          f"Connecteur inconnu : {inp.connector!r}.")
+                          f"Unknown connector: {inp.connector!r}.")
     scope_type, scope_id = (("org", str(inp.org_id)) if inp.org_id is not None
                             else ("platform", "platform"))
     if inp.op == "clear":
         ok = store.clear_connector_setting(scope_type, scope_id, inp.connector, inp.key)
         return {"op": "clear", "changed": ok, "active": _actives()}
     if inp.op != "set":
-        raise AuthzDenied(400, "unsupported_op", f"op inconnue : {inp.op!r}.")
+        raise AuthzDenied(400, "unsupported_op", f"Unknown op: {inp.op!r}.")
     if inp.key == cardinality.KEY and inp.value not in (cardinality.MONO,
                                                         cardinality.MULTI):
-        # Refus NOMMÉ plutôt qu'une ligne que le chargement ignorera en silence : une
-        # surcharge qu'on croit posée et que personne ne lit est le défaut que ce lot
-        # existe pour fermer.
+        # NAMED refusal rather than a row that loading will silently ignore: an
+        # override believed to be set that nobody reads is the defect this batch
+        # exists to close.
         raise AuthzDenied(400, "invalid_cardinality",
-                          f"`value` doit valoir {cardinality.MONO!r} ou "
-                          f"{cardinality.MULTI!r} (reçu {inp.value!r}).")
+                          f"`value` must be {cardinality.MONO!r} or "
+                          f"{cardinality.MULTI!r} (got {inp.value!r}).")
     from ._cle_exigee import CLE_REGLAGE, FAUX, VRAI
     if inp.key == CLE_REGLAGE:
-        # Même refus NOMMÉ que la cardinalité, pour la même raison, et plus grave
-        # ici : `True` ou `oui` se liraient FAUX à la réservation, et une org qu'on
-        # croit contrainte continuerait de tourner sur la clé de la plateforme.
+        # Same NAMED refusal as cardinality, for the same reason, and more serious
+        # here: `True` or `oui` would be read as FALSE at reservation time, and an org believed
+        # to be constrained would keep running on the platform's key.
         if inp.value not in (VRAI, FAUX):
             raise AuthzDenied(400, "invalid_setting",
-                              f"`{CLE_REGLAGE}` vaut {VRAI!r} ou {FAUX!r} "
-                              f"(reçu {inp.value!r}).")
+                              f"`{CLE_REGLAGE}` is {VRAI!r} or {FAUX!r} "
+                              f"(got {inp.value!r}).")
         from .. import providers as _p
         if getattr(_p.REGISTRY.get(inp.connector), "kind", None) != "credential":
             raise AuthzDenied(400, "invalid_setting",
-                              f"`{CLE_REGLAGE}` ne se pose que sur un fournisseur de "
-                              f"MODÈLE (connecteur de type credential) — "
-                              f"`{inp.connector}` n'en est pas un.")
+                              f"`{CLE_REGLAGE}` can only be set on a MODEL "
+                              f"provider (connector of type credential) — "
+                              f"`{inp.connector}` is not one.")
     store.set_connector_setting(scope_type, scope_id, inp.connector, inp.key,
                                 str(inp.value), set_by=ctx.sub)
     return {"op": "set", "changed": True, "active": _actives()}

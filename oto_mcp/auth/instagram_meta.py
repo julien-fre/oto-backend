@@ -1,45 +1,45 @@
-"""Instagram (statistiques) — obtenir l'autorisation, et la GARDER en vie.
+"""Instagram (statistics) — obtaining authorization, and KEEPING it alive.
 
-Flux hébergé par oto, sur le patron commun (`connectors/flow` + `auth/flow`) :
+Flow hosted by oto, on the common pattern (`connectors/flow` + `auth/flow`):
 
-1. la personne clique « Connecter » sur la fiche → `_start_flow` rend l'URL du
-   dialogue Instagram, avec un `state` signé qui porte son identité ;
-2. Instagram la ramène sur `/api/instagram_meta/oauth/callback` (route écrite à la
-   main, `api/instagram_meta.py`) ; le code y devient un jeton de 60 jours ;
-3. le jeton part au coffre, palier MEMBRE, avec son échéance dans `meta`.
+1. the person clicks "Connect" on the card → `_start_flow` returns the URL of the
+   Instagram dialog, with a signed `state` that carries their identity;
+2. Instagram sends them back to `/api/instagram_meta/oauth/callback` (hand-written
+   route, `api/instagram_meta.py`); the code there becomes a 60-day token;
+3. the token goes to the vault, MEMBER tier, with its expiry in `meta`.
 
-Ce module porte l'ACQUISITION et ce que la fiche affiche. Le service — résoudre
-le jeton d'un appel, le renouveler, refuser en nommant la cause — vit dans
-`tools/instagram_meta_session.py`, qui importe d'ici. La ligne entre les deux
-est celle du déclencheur : un clic humain d'un côté, un appel d'outil ou la
-passe quotidienne de l'autre.
+This module carries the ACQUISITION and what the card displays. The service — resolving
+a call's token, renewing it, refusing while naming the cause — lives in
+`tools/instagram_meta_session.py`, which imports from here. The line between the two
+is the trigger: a human click on one side, a tool call or the
+daily pass on the other.
 
-⚠️ **CE JETON NE SE RENOUVELLE QUE TANT QU'IL VIT.** Meta n'émet pas de
-`refresh_token` sur ce produit : on échange le jeton courant contre un neuf, et
-un jeton mort ne s'échange plus. Une connexion oubliée soixante jours n'est pas
-dégradée — elle est PERDUE, et seule l'utilisatrice peut la refaire.
+⚠️ **THIS TOKEN CAN ONLY BE RENEWED WHILE IT IS ALIVE.** Meta does not issue a
+`refresh_token` on this product: the current token is exchanged for a new one, and
+a dead token can no longer be exchanged. A connection forgotten for sixty days is not
+degraded — it is LOST, and only the user can redo it.
 
-C'est ce fait, et lui seul, qui explique les deux mécanismes de renouvellement :
+This fact, and this fact alone, explains the two renewal mechanisms:
 
-- **à l'usage**, largement en avance (`RENEW_WHEN_REMAINING_DAYS` = 53 jours
-  restants sur 60, pas 10) : un usage même très espacé suffit alors à tenir ;
-- **et une passe QUOTIDIENNE** (`renouveler_les_jetons`, travail de maintenance
-  `instagram-tokens`), parce que le renouvellement paresseux meurt de non-usage.
-  Une personne qui ne consulte pas ses statistiques pendant deux mois perdrait sa
-  connexion sans avoir rien fait de mal — un mode de panne qu'on ne peut pas
-  demander à l'utilisatrice de prévenir.
+- **on use**, well in advance (`RENEW_WHEN_REMAINING_DAYS` = 53 days
+  remaining out of 60, not 10): even very sparse use is then enough to keep it going;
+- **and a DAILY pass** (`renouveler_les_jetons`, maintenance job
+  `instagram-tokens`), because lazy renewal dies of non-use.
+  A person who does not look at their statistics for two months would lose their
+  connection without having done anything wrong — a failure mode we cannot
+  ask the user to prevent.
 
-⚠️ **Les coordonnées de l'application Meta (App ID, secret) ne sont pas dans le
-code** : elles vivent en base, au scope PLATEFORME de `connector_settings`, et
-c'est l'exploitant de l'instance qui les pose. Ce dépôt est public, et une
-application Meta appartient à qui l'a créée — qui répond de ce qu'elle demande et
-de qui elle invite comme testeur.
+⚠️ **The Meta application's coordinates (App ID, secret) are not in the
+code**: they live in the database, at the PLATFORM scope of `connector_settings`, and
+the instance operator sets them. This repository is public, and a Meta
+application belongs to whoever created it — who answers for what it requests and
+for whom it invites as a tester.
 
-Réglage d'ops : `OTO_MCP_PUBLIC_URL` et `OTO_MCP_OAUTH_STATE_SECRET`, déjà posés
-pour les autres flux. L'URL de retour à déclarer chez Meta se LIT
-(`connector_flow.callback_url("instagram_meta")`) — jamais écrite en dur : la
-preprod et la prod n'ont pas la même, et une URL de prose ment dès qu'on la
-relit depuis l'autre.
+Ops setting: `OTO_MCP_PUBLIC_URL` and `OTO_MCP_OAUTH_STATE_SECRET`, already set
+for the other flows. The return URL to declare at Meta is READ
+(`connector_flow.callback_url("instagram_meta")`) — never hard-coded: preprod
+and prod do not have the same one, and a URL written in prose lies as soon as it is
+read from the other.
 """
 from __future__ import annotations
 
@@ -57,65 +57,65 @@ logger = logging.getLogger("oto_mcp.auth.instagram_meta")
 
 CONNECTOR = "instagram_meta"
 
-# Audience du state : un state émis pour ce flux ne vaut QUE pour son callback.
+# Audience of the state: a state issued for this flow is valid ONLY for its callback.
 _AUD = "instagram_meta"
 _CALLBACK_PATH = "/api/instagram_meta/oauth/callback"
 
-#: Les coordonnées de l'application Meta, sous ce connecteur dans
-#: `connector_settings`, scope plateforme.
+#: The Meta application's coordinates, under this connector in
+#: `connector_settings`, platform scope.
 #:
-#: ⚠️ Contrairement aux trois de `planity`, **`app_secret` en est un vrai** : il
-#: signe l'échange du code et le passage en jeton long. Il n'est pas au coffre pour
-#: autant, et pour la raison inverse de celle qui garde un secret d'utilisateur :
-#: le coffre range ce qui appartient à une PERSONNE ou à une ORG, et sa cascade
-#: irait le chercher au nom de quelqu'un. Celui-ci n'appartient à personne dans le
-#: produit — c'est un réglage de l'instance, comme une clé de service. Il n'est
-#: jamais rendu par une API : `oto_admin_connector_setting` est réservé à l'admin
-#: de plateforme, et rien de ce module ne l'écrit dans un message ni un journal.
+#: ⚠️ Unlike the three of `planity`, **`app_secret` is a real one**: it
+#: signs the code exchange and the switch to a long-lived token. It is not in the vault for
+#: all that, and for the opposite reason to the one that keeps a user's secret:
+#: the vault stores what belongs to a PERSON or an ORG, and its cascade
+#: would fetch it on someone's behalf. This one belongs to nobody in the
+#: product — it is an instance setting, like a service key. It is
+#: never returned by an API: `oto_admin_connector_setting` is reserved for the platform
+#: admin, and nothing in this module writes it into a message or a log.
 _REGLAGES = ("app_id", "app_secret")
 
-#: La commande qui les pose. Elle vit DANS le message de refus : un diagnostic qui
-#: n'indique pas le geste renvoie chercher, et c'est ainsi qu'on relance six fois
-#: une configuration valide.
+#: The command that sets them. It lives IN the refusal message: a diagnostic that
+#: does not state the gesture sends people searching, and that is how a valid
+#: configuration gets relaunched six times.
 _COMMANDE = ('oto_admin_connector_setting(op="set", connector="instagram_meta", '
-             'key="<clé>", value="<valeur>")')
+             'key="<key>", value="<value>")')
 
 
 def _coeur():
-    """Le paquet `oto.tools.instagram_meta` d'oto-core, importé À L'APPEL.
+    """The `oto.tools.instagram_meta` package of oto-core, imported AT CALL TIME.
 
-    Importé ici et pas au chargement du module, pour une raison de PRODUIT : le
-    connecteur reste **enregistré** même quand oto-core est trop ancien pour le
-    porter. Il est alors visible, sélectionnable, et chaque appel refuse en NOMMANT
-    ce qui manque — au lieu de disparaître du catalogue, ce qui ne se remarque pas
-    et ne s'explique pas.
+    Imported here and not at module load, for a PRODUCT reason: the
+    connector stays **registered** even when oto-core is too old to
+    carry it. It is then visible, selectable, and every call refuses while NAMING
+    what is missing — instead of disappearing from the catalogue, which goes unnoticed
+    and cannot be explained.
 
-    `importlib` et pas `import oto.tools.instagram_meta as …` : `oto` est un
-    package d'espace de noms (PEP 420) partagé entre oto-core et oto-cli, et la
-    forme `import a.b.c as x` y résout par attribut sur le parent — ce qui échoue
-    quand le sous-paquet n'existe pas encore sur ce chemin."""
+    `importlib` and not `import oto.tools.instagram_meta as …`: `oto` is a
+    namespace package (PEP 420) shared between oto-core and oto-cli, and the
+    `import a.b.c as x` form resolves by attribute on the parent there — which fails
+    when the subpackage does not exist yet on that path."""
     import importlib
 
     try:
         return importlib.import_module("oto.tools.instagram_meta")
     except ImportError as e:
         raise RuntimeError(
-            f"Le connecteur `instagram_meta` n'est pas installé sur cette instance : "
-            f"le cœur vit dans oto-core et le tag épinglé ne le porte pas encore. "
-            f"C'est une configuration de l'instance, pas un problème de ton compte — "
-            f"préviens l'exploitant. Détail : {e}") from e
+            f"The `instagram_meta` connector is not installed on this instance: "
+            f"the core lives in oto-core and the pinned tag does not carry it yet. "
+            f"This is an instance configuration, not a problem with your account — "
+            f"notify the operator. Detail: {e}") from e
 
 
-# --- les coordonnées de l'application, posées par l'exploitant -----------------
+# --- the application's coordinates, set by the operator ------------------------
 
 def _reglages() -> dict:
-    """Les coordonnées posées en base, scope plateforme. `{}` si la base est muette.
+    """The coordinates set in the database, platform scope. `{}` if the database is silent.
 
-    Lecture FROIDE et hors boucle : elle n'a lieu qu'au démarrage d'un flux de
-    connexion (un clic humain) ou au retour d'un consentement, jamais sur le chemin
-    d'un appel d'outil — c'est la propriété que `db/connector_settings` demande de
-    tenir. Ce qu'elle achète : une écriture, et toutes les couleurs déployées la
-    voient au flux suivant, sans redémarrage ni rechargement par processus."""
+    COLD read and off-loop: it only happens at the start of a connection
+    flow (a human click) or on return from a consent, never on the path
+    of a tool call — that is the property `db/connector_settings` asks us to
+    hold. What it buys: one write, and every deployed color
+    sees it at the next flow, without a restart or per-process reload."""
     from ..db import connector_settings as store
 
     return {r["key"]: (r["value"] or "").strip()
@@ -125,69 +125,69 @@ def _reglages() -> dict:
 
 
 def coordonnees_manquantes() -> list[str]:
-    """Celles des deux clés qui manquent en base. Vide = tout est là."""
+    """Those of the two keys that are missing from the database. Empty = all present."""
     poses = _reglages()
     return [nom for nom in _REGLAGES if not poses.get(nom)]
 
 
 def app():
-    """L'`InstagramApp` de cette instance, ou un refus qui NOMME ce qui manque.
+    """This instance's `InstagramApp`, or a refusal that NAMES what is missing.
 
-    Le refus est le point : sans lui, le dialogue partirait avec un `client_id`
-    vide et Instagram afficherait son écran d'erreur générique — que l'utilisatrice
-    lit comme « oto n'a pas le droit », alors que rien ne dépend d'elle."""
+    The refusal is the point: without it, the dialog would go out with an empty
+    `client_id` and Instagram would show its generic error screen — which the user
+    reads as "oto is not allowed", when nothing depends on them."""
     manquantes = coordonnees_manquantes()
     if manquantes:
         raise RuntimeError(
-            f"Le connecteur `instagram_meta` n'est pas configuré sur cette "
-            f"instance : {', '.join(manquantes)} manquante(s). Ce n'est pas ton "
-            f"compte — il n'y a rien à faire de ton côté : préviens l'exploitant de "
-            f"l'instance, qui les pose avec {_COMMANDE}.")
+            f"The `instagram_meta` connector is not configured on this "
+            f"instance: {', '.join(manquantes)} missing. It is not your "
+            f"account — there is nothing for you to do: notify the instance "
+            f"operator, who sets them with {_COMMANDE}.")
     poses = _reglages()
     return _coeur().InstagramApp(app_id=poses["app_id"],
                                  app_secret=poses["app_secret"])
 
 
 def app_disponible(sub: str) -> bool:
-    """`app_ready` du descripteur de flux : y a-t-il de quoi démarrer un dialogue ?
+    """`app_ready` of the flow descriptor: is there enough to start a dialog?
 
-    Ne dépend pas de `sub` — l'application est celle de l'instance, la même pour
-    tout le monde — mais la signature du seam le passe, et un connecteur dont
-    l'app serait par utilisateur y répondrait autrement."""
+    Does not depend on `sub` — the application is the instance's, the same for
+    everyone — but the seam's signature passes it, and a connector whose
+    app were per-user would answer differently."""
     del sub
     return not coordonnees_manquantes()
 
 
-# --- le state signé ------------------------------------------------------------
+# --- the signed state ----------------------------------------------------------
 
 def _ctx_org(sub: str) -> int:
-    from .. import access  # lazy : évite tout cycle d'import au boot
+    from .. import access  # lazy: avoids any import cycle at boot
 
     org = access.current_org(sub)
     if org is None:
         raise RuntimeError(
-            "Aucune org de contexte — impossible de scoper le compte Instagram. "
-            "Reconnecte-toi et réessaie.")
+            "No context org — cannot scope the Instagram account. "
+            "Sign in again and retry.")
     return org
 
 
 def make_state(sub: str, org_id: int, return_app: str = "") -> str:
-    """State signé, LIÉ à l'audience `instagram_meta`.
+    """Signed state, BOUND to the `instagram_meta` audience.
 
-    Porte `org` parce que le credential est scopé (org, sub) : le callback arrive
-    sans en-tête d'auth, ces valeurs doivent voyager avec lui plutôt qu'être
-    re-dérivées d'une session vivante. `app` porte le FRONT qui a demandé la
-    connexion, déjà réduit par `oauth_flow.resolve_return_app` à une liste
-    fermée — le state ne porte jamais une valeur de client non vérifiée."""
+    Carries `org` because the credential is scoped (org, sub): the callback arrives
+    without an auth header, so these values must travel with it rather than be
+    re-derived from a live session. `app` carries the FRONT that requested the
+    connection, already reduced by `oauth_flow.resolve_return_app` to a closed
+    list — the state never carries an unverified client value."""
     return oauth_flow.sign_state(_AUD, {"sub": sub, "org": org_id, "app": return_app})
 
 
 def verify_state(state: str) -> Optional[tuple[str, int, str]]:
-    """`(sub, org_id, return_app)` si le state est valide, non expiré et émis POUR
-    ce flux ; `None` sinon — un callback ne distingue jamais les causes d'un refus.
+    """`(sub, org_id, return_app)` if the state is valid, not expired and issued FOR
+    this flow; `None` otherwise — a callback never distinguishes the causes of a refusal.
 
-    `app` absent ou de mauvais type ⇒ `""`, pas un refus du state entier : perdre
-    le retour ciblé n'est pas une raison de perdre la connexion."""
+    `app` missing or of the wrong type ⇒ `""`, not a refusal of the whole state: losing
+    the targeted return is no reason to lose the connection."""
     data = oauth_flow.read_state(_AUD, state)
     if not data:
         return None
@@ -197,10 +197,10 @@ def verify_state(state: str) -> Optional[tuple[str, int, str]]:
     return sub, org, return_app if isinstance(return_app, str) else ""
 
 
-# --- démarrage du flux ---------------------------------------------------------
+# --- starting the flow ---------------------------------------------------------
 
 def build_auth_url(sub: str, return_app: str = "") -> str:
-    """L'URL du dialogue de consentement Instagram pour CETTE personne."""
+    """The URL of the Instagram consent dialog for THIS person."""
     org_id = _ctx_org(sub)
     return _coeur().authorize_url(
         app(), oauth_flow.redirect_uri(_CALLBACK_PATH),
@@ -208,12 +208,12 @@ def build_auth_url(sub: str, return_app: str = "") -> str:
 
 
 def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
-    """Le geste « connecter », déclaré comme celui de tout autre connecteur.
+    """The "connect" gesture, declared like that of any other connector.
 
-    Une instance non configurée (ou un oto-core trop ancien) est un refus
-    d'ENTRÉE, pas une panne : traduit en erreur nommée, l'appelant sait que
-    réessayer n'y changera rien. `app` est une clé CACHÉE, passée hors formulaire
-    par le front qui sait qui il est — jamais un champ visible."""
+    An unconfigured instance (or an oto-core that is too old) is a refusal
+    at the ENTRY, not an outage: translated into a named error, the caller knows that
+    retrying will change nothing. `app` is a HIDDEN key, passed outside the form
+    by the front end that knows who it is — never a visible field."""
     from ..capabilities._types import AuthzDenied
 
     try:
@@ -226,29 +226,29 @@ def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
 connector_flow.declare(
     CONNECTOR,
     start=_start_flow,
-    label="Autoriser oto chez Instagram",
+    label="Authorize oto on Instagram",
     callback_path=_CALLBACK_PATH,
     app_ready=app_disponible,
 )
 
 
-# --- le coffre ------------------------------------------------------------------
+# --- the vault ------------------------------------------------------------------
 
 def _scope(org_id: int, sub: str) -> tuple[str, str]:
-    """La ligne de coffre de cette personne dans cette org (palier MEMBRE)."""
+    """This person's vault row in this org (MEMBER tier)."""
     return credentials_store.MEMBER, credentials_store.member_id(org_id, sub)
 
 
 def persist_grant(sub: str, org_id: int, grant) -> dict:
-    """Range le jeton et ses satellites, et rend ce qu'on peut afficher.
+    """Stores the token and its satellites, and returns what can be displayed.
 
-    Le SECRET est le jeton long, seul (`secret_kind="oauth"` ⟹ pas de schéma de
-    champs, donc le blob est la valeur brute). Tout le reste va dans `meta`, en
-    clair et mergeable : `user_id` sans lequel aucun chemin de données ne se
-    construit, `username` pour que la fiche dise QUEL compte est connecté, et
-    surtout `expires_at` — sans échéance stockée, on ne peut plus que subir
-    l'expiration, et c'est précisément ce que ce connecteur ne peut pas se
-    permettre."""
+    The SECRET is the long-lived token, alone (`secret_kind="oauth"` ⟹ no field
+    schema, so the blob is the raw value). Everything else goes in `meta`, in
+    clear and mergeable: `user_id` without which no data path can be
+    built, `username` so the card says WHICH account is connected, and
+    above all `expires_at` — without a stored expiry, we can only suffer
+    the expiration, and that is precisely what this connector cannot
+    afford."""
     coeur = _coeur()
     maintenant = coeur.utcnow()
     expires_at = coeur.iso(maintenant + timedelta(seconds=grant.expires_in))
@@ -257,7 +257,7 @@ def persist_grant(sub: str, org_id: int, grant) -> dict:
         entity_type, entity_id, CONNECTOR, grant.access_token, set_by=sub,
         meta={"user_id": grant.user_id, "username": grant.username,
               "connected_at": coeur.iso(maintenant), "expires_at": expires_at})
-    logger.info("instagram_meta : compte connecté (org=%s, expire le %s)",
+    logger.info("instagram_meta: account connected (org=%s, expires %s)",
                 org_id, expires_at)
     return {"username": grant.username, "expires_at": expires_at}
 
@@ -267,14 +267,14 @@ def _row(org_id: int, sub: str) -> Optional[dict]:
     return credentials_store.get_credential_with_meta(entity_type, entity_id, CONNECTOR)
 
 
-# --- ce que la fiche affiche ---------------------------------------------------
+# --- what the card displays ----------------------------------------------------
 
 def _link_state(sub: str) -> connector_link.LinkState:
-    """État de lien pour `/api/me`. Mono-compte : une ligne de coffre par membre.
+    """Link state for `/api/me`. Single account: one vault row per member.
 
-    Le rejet enregistré est LU ICI plutôt que déduit ailleurs — c'est ce qui permet
-    à la fiche de dire « autorisation expirée, à reconnecter » sans attendre qu'un
-    appel échoue."""
+    The recorded rejection is READ HERE rather than inferred elsewhere — this is what lets
+    the card say "authorization expired, needs reconnecting" without waiting for a
+    call to fail."""
     from .. import access  # lazy
 
     org = access.current_org(sub)
@@ -294,22 +294,22 @@ connector_link.register(CONNECTOR, _link_state)
 
 
 def _etape_manquante(sub: str, org, group, entry: dict) -> Optional[str]:
-    """Hook `status_hints` : ce qu'il reste à faire, en un libellé que le front rend
-    tel quel — et qui dit à QUI de le faire.
+    """`status_hints` hook: what remains to be done, as a label the front end renders
+    as is — and that says WHO must do it.
 
-    Trois étapes possibles, et la première n'appartient pas à l'utilisatrice : sans
-    coordonnées d'application, le bouton « Connecter » ne peut pas aboutir, et lui
-    afficher « Autorise oto » l'enverrait cliquer en boucle sur un dialogue que Meta
-    refusera. Un verdict qui désigne la mauvaise personne coûte plus qu'un verdict
-    absent."""
+    Three possible steps, and the first does not belong to the user: without
+    application coordinates, the "Connect" button cannot succeed, and showing
+    them "Authorize oto" would send them clicking in a loop on a dialog that Meta
+    will refuse. A verdict that points at the wrong person costs more than no
+    verdict."""
     del org, group, entry
     if coordonnees_manquantes():
-        return "Application Instagram à configurer par l'exploitant"
+        return "Instagram application to be configured by the operator"
     etat = _link_state(sub)
     if not etat.linked:
-        return "Autorise oto chez Instagram"
+        return "Authorize oto on Instagram"
     if etat.health_ko:
-        return "Autorisation expirée — reconnecte ton compte"
+        return "Authorization expired — reconnect your account"
     return None
 
 
@@ -317,19 +317,19 @@ status_hints.register(CONNECTOR, _etape_manquante)
 
 
 def avertir_au_demarrage() -> None:
-    """Dit AU BOOT ce qui empêchera le connecteur de servir. Ne lève jamais.
+    """Says AT BOOT what will prevent the connector from serving. Never raises.
 
-    Le connecteur reste enregistré : sans cette ligne, un exploitant qui n'a pas
-    posé les coordonnées ne l'apprendrait qu'au premier clic d'une utilisatrice —
-    c'est-à-dire au pire moment, et par elle."""
+    The connector stays registered: without this line, an operator who has not
+    set the coordinates would only learn it at a user's first click —
+    that is, at the worst moment, and from her."""
     try:
         manquantes = coordonnees_manquantes()
-    except Exception as e:  # noqa: SILENT — au boot la base peut n'être pas prête
-        logger.info("instagram_meta : configuration non vérifiable au démarrage "
-                    "(%s) — le premier flux tranchera.", type(e).__name__)
+    except Exception as e:  # noqa: SILENT — at boot the database may not be ready
+        logger.info("instagram_meta: configuration cannot be verified at startup "
+                    "(%s) — the first flow will settle it.", type(e).__name__)
         return
     if manquantes:
         logger.warning(
-            "instagram_meta : connecteur monté mais NON configuré — %s "
-            "manquante(s). Le bouton « Connecter » refusera en le disant. "
-            "Poser : %s", ", ".join(manquantes), _COMMANDE)
+            "instagram_meta: connector mounted but NOT configured — %s "
+            "missing. The \"Connect\" button will refuse and say so. "
+            "Set with: %s", ", ".join(manquantes), _COMMANDE)

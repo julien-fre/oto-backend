@@ -1,19 +1,19 @@
-"""Capacité « connexion Salesforce » — fabrique le lien de consentement.
+"""Capability "Salesforce connection" — builds the consent link.
 
-ADR 0042 §Convergence des surfaces : un verbe de plateforme naît **capacité**, pas
-route REST écrite à la main. Calqué sur `zoho_connect.py` (même forme, même raison) —
-et comme lui, gagne une **face MCP** : l'agent peut fabriquer le lien et le tendre à
-l'utilisateur, ce qui est le geste utile en conversation.
+ADR 0042 §Convergence of surfaces: a platform verb is born a **capability**, not a
+hand-written REST route. Modeled on `zoho_connect.py` (same shape, same reason) —
+and like it, gains a **MCP face**: the agent can build the link and hand it to
+the user, which is the useful gesture in conversation.
 
-Ce qui RESTE en route écrite à la main (`api/salesforce.py`) : le **callback**.
-Salesforce y redirige le NAVIGATEUR — sans en-tête d'auth, avec une réponse 302 — ce
-qu'un contrat de capacité (JSON + autz) ne peut pas exprimer. Déclaré comme tel dans
+What REMAINS a hand-written route (`api/salesforce.py`): the **callback**.
+Salesforce redirects the BROWSER there — with no auth header, with a 302 response — which
+a capability contract (JSON + authz) cannot express. Declared as such in
 `test_rest_modules_are_capabilities.py`.
 
-Particularité Salesforce (cf. `salesforce_oauth.py`) : le client OAuth est
-**per-customer** (chaque org crée sa Connected App), donc `start` lit le triplet
-client_id/client_secret/login_url DÉJÀ posé sur la carte du connecteur — c'est un
-prérequis, pas une constante de plateforme.
+Salesforce particularity (cf. `salesforce_oauth.py`): the OAuth client is
+**per-customer** (each org creates its own Connected App), so `start` reads the
+client_id/client_secret/login_url triplet ALREADY set on the connector card — it is a
+prerequisite, not a platform constant.
 """
 from __future__ import annotations
 
@@ -30,21 +30,21 @@ from .registry import CAPABILITIES
 
 class SalesforceConnectInput(BaseModel):
     op: Literal["start"] = "start"
-    # Niveau où RANGER le credential : le membre (défaut), l'org entière, ou l'équipe
-    # active. Le droit est vérifié à la construction du lien ET re-vérifié au retour
-    # (le state vit 10 min — cf. le callback).
+    # Level at which to STORE the credential: the member (default), the whole org, or the active
+    # team. The right is checked when the link is built AND re-checked on return
+    # (the state lives 10 min — cf. the callback).
     scope: Optional[Literal["member", "org", "group"]] = "member"
 
 
 def start_for(ctx: ResolvedCtx, scope: str,
               return_app: Optional[str] = None) -> connector_flow.FlowStart:
-    """URL de consentement à ouvrir, pour le niveau demandé. Partagé avec le flux
-    générique (`connector_flow`, déclaré dans tools/salesforce.py) : une seule façon
-    de démarrer, deux surfaces.
+    """Consent URL to open, for the requested level. Shared with the generic
+    flow (`connector_flow`, declared in tools/salesforce.py): one single way
+    to start, two surfaces.
 
-    `return_app` : uniquement porté par le chemin REST générique (le navigateur
-    d'un front sait qui il est) ; le chemin MCP ci-dessous (`_start`) ne le passe
-    jamais — un agent Claude n'a pas de navigateur à rerediriger."""
+    `return_app`: only carried by the generic REST path (a front end's browser
+    knows who it is); the MCP path below (`_start`) never passes it
+    — a Claude agent has no browser to redirect."""
     try:
         auth_url = salesforce_oauth.build_auth_url(ctx.sub, scope or "member", return_app)
     except ValueError as e:
@@ -55,9 +55,9 @@ def start_for(ctx: ResolvedCtx, scope: str,
         raise AuthzDenied(400, "missing_credentials", str(e))
     except RuntimeError as e:
         raise AuthzDenied(400, "oauth_misconfigured", str(e))
-    # Le palier RETENU est spécifique à Salesforce (les autres flux n'en ont pas) : il
-    # descend dans `details`. Il porte une information — c'est le scope effectif, défaut
-    # résolu — mais aucun client générique n'a à le connaître pour ouvrir l'URL.
+    # The RETAINED tier is specific to Salesforce (other flows have none): it
+    # goes down into `details`. It carries information — it is the effective scope, default
+    # resolved — but no generic client needs to know it in order to open the URL.
     return connector_flow.FlowStart(auth_url=auth_url, details={"scope": scope or "member"})
 
 
@@ -71,15 +71,15 @@ CAPABILITIES += [
         handler=_start,
         Input=SalesforceConnectInput,
         authz=ORG_MEMBER,
-        # ⚠️ Nommé sous SON connecteur, pas sous le préfixe transverse : le gate
-        # par connecteur résout au namespace du nom, donc `oto_…` mettait ce verbe
-        # dans la toolbox de TOUS les comptes, y compris ceux qui n'ont pas
-        # salesforce. L'ancien nom reste servi et appelable jusqu'à sa date de retrait
-        # (`deprecations.TOOLS`) — une procédure d'org le référence encore.
+        # ⚠️ Named under ITS connector, not under the cross-cutting prefix: the
+        # per-connector gate resolves on the name's namespace, so `oto_…` put this verb
+        # in the toolbox of ALL accounts, including those that do not have
+        # salesforce. The old name is still served and callable until its removal date
+        # (`deprecations.TOOLS`) — an org procedure still references it.
         mcp="salesforce_connect",
-        # Plus de face REST NOMMÉE : le chemin fixe `/api/me/connectors/{name}/connect`
-        # (capacité `me.connector_connect`) la sert désormais, via le MÊME `start_for`.
-        # La face MCP reste — un agent connaît le connecteur qu'il connecte.
+        # No NAMED REST face any more: the fixed path `/api/me/connectors/{name}/connect`
+        # (capability `me.connector_connect`) now serves it, via the SAME `start_for`.
+        # The MCP face stays — an agent knows the connector it is connecting.
         rest=None,
         description=(
             "Connect Salesforce. op='start' returns the consent URL to OPEN in a "

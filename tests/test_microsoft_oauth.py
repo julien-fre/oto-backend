@@ -296,7 +296,7 @@ def test_un_nom_pris_par_un_autre_compte_n_est_pas_ecrase(env):
 
 
 def test_me_sans_identite_rien_n_est_range(env):
-    with pytest.raises(RuntimeError, match="rien n'a été enregistré"):
+    with pytest.raises(RuntimeError, match="nothing was saved"):
         _connecter(env, {"displayName": "x"}, "RT")
     assert not env.coffre.lignes
 

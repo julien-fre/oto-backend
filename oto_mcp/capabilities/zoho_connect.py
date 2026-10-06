@@ -1,16 +1,16 @@
-"""Capacité « connexion Zoho server-based » — démarrage + modes disponibles.
+"""Capability "Zoho server-based connection" — start + available modes.
 
-ADR 0042 §Convergence des surfaces : un verbe de plateforme naît **capacité**, pas
-route REST écrite à la main. Ces deux verbes ont été écrits en REST pur le
-2026-07-28 (motif hérité de folk/google, antérieur à la convergence) — ils
-sont ramenés ici, et gagnent au passage une **face MCP** : l'agent peut fabriquer le
-lien de consentement et le tendre à l'utilisateur, ce qui est précisément le geste
-utile en conversation.
+ADR 0042 §Convergence of surfaces: a platform verb is born a **capability**, not a
+hand-written REST route. These two verbs were written as pure REST on
+2026-07-28 (a pattern inherited from folk/google, predating the convergence) — they
+are brought here, and gain a **MCP face** along the way: the agent can build the
+consent link and hand it to the user, which is precisely the useful gesture
+in conversation.
 
-Ce qui RESTE en route écrite à la main (`api/zoho.py`) : le **callback**.
-Zoho y redirige le NAVIGATEUR — sans en-tête d'auth, avec une réponse 302 — ce
-qu'un contrat de capacité (JSON + autz) ne peut pas exprimer. C'est déclaré comme
-tel dans `test_rest_modules_are_capabilities.py`.
+What REMAINS a hand-written route (`api/zoho.py`): the **callback**.
+Zoho redirects the BROWSER there — with no auth header, with a 302 response — which
+a capability contract (JSON + authz) cannot express. This is declared as
+such in `test_rest_modules_are_capabilities.py`.
 """
 from __future__ import annotations
 
@@ -29,26 +29,26 @@ from .registry import CAPABILITIES
 class ZohoConnectInput(BaseModel):
     op: Literal["start", "modes"] = "start"
     connector: str                      # zoho | zohodesk | zohoanalytics
-    # Région du compte Zoho — REQUISE pour `start` : l'app OAuth et le token sont
-    # liés à leur data center, un client `.eu` sur `accounts.zoho.com` est rejeté
-    # par un `invalid_client` opaque. Indevinable, donc explicite.
+    # Region of the Zoho account — REQUIRED for `start`: the OAuth app and the token are
+    # tied to their data center, an `.eu` client on `accounts.zoho.com` is rejected
+    # with an opaque `invalid_client`. Unguessable, hence explicit.
     data_center: Optional[str] = None
 
 
 def _guard(inp: ZohoConnectInput) -> None:
     if not zoho_oauth.supports(inp.connector):
         raise AuthzDenied(400, "unknown_zoho_connector",
-                          f"« {inp.connector} » n'est pas un connecteur Zoho.")
+                          f"\"{inp.connector}\" is not a Zoho connector.")
 
 
 def _modes(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
-    """De quoi le front (ou l'agent) décide quoi afficher : le connecteur supporte-t-il
-    le server-based, et une app est-elle DÉJÀ à disposition (la mienne, celle de mon
-    équipe, de mon org ou de la plateforme — cascade habituelle) ?"""
+    """What the front end (or the agent) uses to decide what to display: does the connector support
+    server-based, and is an app ALREADY available (mine, my team's,
+    my org's or the platform's — usual cascade)?"""
     _guard(inp)
     return {
         "connector": inp.connector,
-        "self_client": True,            # toujours disponible
+        "self_client": True,            # always available
         "server_based": True,
         "has_app": zoho_oauth.has_app(inp.connector, ctx.sub, inp.data_center or ""),
         "scopes": list(zoho_oauth.SCOPES[inp.connector]),
@@ -57,14 +57,14 @@ def _modes(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
 
 def start_for(ctx: ResolvedCtx, connector: str, data_center: str,
               return_app: str = "") -> connector_flow.FlowStart:
-    """URL de consentement à ouvrir. L'app (client_id/secret) vient du COFFRE — jamais
-    d'une variable d'env : l'org qui apporte la sienne l'emporte, sinon on prend l'app
-    d'ÉDITEUR de la région (`credentials_store` §app d'éditeur), qui donne le « un
-    clic » à tous.
+    """Consent URL to open. The app (client_id/secret) comes from the VAULT — never
+    from an env variable: the org that brings its own wins, otherwise we take the
+    region's PUBLISHER app (`credentials_store` §publisher app), which gives everyone
+    the "one click".
 
-    Partagé avec le flux générique (`connector_flow`, déclaré dans tools/zoho.py) : il
-    ne doit exister qu'UNE façon de démarrer un consentement Zoho, sinon les deux
-    surfaces divergent — c'est exactement ce que la convergence cherche à éviter."""
+    Shared with the generic flow (`connector_flow`, declared in tools/zoho.py): there
+    must be only ONE way to start a Zoho consent, otherwise the two
+    surfaces diverge — exactly what the convergence seeks to avoid."""
     try:
         dc = (data_center or "").lower()
         url = zoho_oauth.build_auth_url(
@@ -73,8 +73,8 @@ def start_for(ctx: ResolvedCtx, connector: str, data_center: str,
             return_app=return_app)
     except zoho_oauth.ZohoOAuthError as e:
         raise AuthzDenied(400, "zoho_oauth_unavailable", str(e))
-    # L'écho du connecteur est SPÉCIFIQUE à Zoho (trois connecteurs partagent ce flux) :
-    # il descend dans `details`, le premier niveau restant commun à tous les flux.
+    # The connector echo is SPECIFIC to Zoho (three connectors share this flow):
+    # it goes down into `details`, the top level remaining common to all flows.
     return connector_flow.FlowStart(auth_url=url, details={"connector": connector})
 
 
@@ -88,7 +88,7 @@ def _dispatch(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
 
 
 class ZohoVerbInput(BaseModel):
-    """Entrée des faces REST — par-verbe, donc SANS `op` (le chemin le porte)."""
+    """Input of the REST faces — per-verb, hence WITHOUT `op` (the path carries it)."""
     connector: str
     data_center: Optional[str] = None
 
@@ -98,26 +98,26 @@ class AnalyticsOrgsInput(BaseModel):
 
 
 def _analytics_orgs(ctx: ResolvedCtx, inp: AnalyticsOrgsInput) -> dict:  # noqa: ARG001
-    """Les organisations Analytics du compte connecté, pour les faire CHOISIR.
+    """The Analytics organizations of the connected account, so the user can CHOOSE.
 
-    Zoho Analytics exige une organisation sur chaque appel, et un compte en voit
-    souvent plusieurs (workspaces partagés). Sans cette liste, il ne restait qu'à
-    demander un identifiant à onze chiffres — que personne ne connaît par cœur et
-    qu'il faut aller chercher dans l'interface Zoho. Ici on rend des NOMS.
+    Zoho Analytics requires an organization on every call, and an account often sees
+    several (shared workspaces). Without this list, all that was left was to
+    ask for an eleven-digit identifier — which nobody knows by heart and which
+    has to be looked up in the Zoho interface. Here we return NAMES.
 
-    Quand une seule organisation existe, elle a déjà été posée au consentement
-    (`zoho_oauth._derived_fields`) : cette surface ne sert donc que le cas ambigu,
-    et le confirme (`current` = celle qui est enregistrée)."""
+    When only one organization exists, it was already set at consent
+    (`zoho_oauth._derived_fields`): this surface therefore only serves the ambiguous case,
+    and confirms it (`current` = the one that is saved)."""
     try:
         fields = access.resolve_credential(
             "zohoanalytics", want="byo", sub=ctx.sub, emit_on_failure=False).fields or {}
-    # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de credential » (#424, verdict C)
+    # noqa: SILENT — declared debt: vault error read as "no credential" (#424, verdict C)
     except Exception:  # noqa: BLE001
         fields = {}
     if not fields.get("refresh_token"):
         raise AuthzDenied(400, "zoho_analytics_not_connected",
-                          "connecte d'abord Zoho Analytics — la liste des "
-                          "organisations vient de ton compte.")
+                          "connect Zoho Analytics first — the list of "
+                          "organizations comes from your account.")
     try:
         orgs = zoho_oauth.analytics_orgs(fields)
     except Exception as e:  # noqa: BLE001
@@ -125,14 +125,14 @@ def _analytics_orgs(ctx: ResolvedCtx, inp: AnalyticsOrgsInput) -> dict:  # noqa:
     return {"orgs": orgs, "current": fields.get("org_id") or None}
 
 
-# Motif `platform.instructions` (ADR 0042) : UNE capacité op-aware pour le MCP +
-# des capacités par-verbe pour REST, mêmes handlers. Les faces REST sont
-# idiomatiques (un chemin = un verbe) et le MCP garde une surface consolidée
-# (ADR 0047, un tool par objet métier).
+# `platform.instructions` pattern (ADR 0042): ONE op-aware capability for MCP +
+# per-verb capabilities for REST, same handlers. The REST faces are
+# idiomatic (one path = one verb) and MCP keeps a consolidated surface
+# (ADR 0047, one tool per business object).
 class AnalyticsOrgs(BaseModel):
-    """Les organisations Zoho Analytics visibles par le credential courant, et celle
-    qui est épinglée. `current` est None tant que personne n'a choisi — c'est ce qui
-    déclenche la question à l'utilisateur plutôt qu'un choix arbitraire."""
+    """The Zoho Analytics organizations visible to the current credential, and the one
+    that is pinned. `current` is None until someone has chosen — this is what
+    triggers the question to the user rather than an arbitrary choice."""
     orgs: list[dict]
     current: Optional[object] = None
 
@@ -143,20 +143,20 @@ CAPABILITIES += [
         handler=_dispatch,
         Input=ZohoConnectInput,
         authz=ORG_MEMBER,
-        # ⚠️ Nommé sous SON connecteur, pas sous le préfixe transverse : le gate
-        # par connecteur résout au namespace du nom, donc `oto_…` mettait ce verbe
-        # dans la toolbox de TOUS les comptes, y compris ceux qui n'ont pas
-        # zoho. L'ancien nom reste servi et appelable jusqu'à sa date de retrait
-        # (`deprecations.TOOLS`) — une procédure d'org le référence encore.
+        # ⚠️ Named under ITS connector, not under the cross-cutting prefix: the
+        # per-connector gate resolves on the name's namespace, so `oto_…` put this verb
+        # in the toolbox of ALL accounts, including those that do not have
+        # zoho. The old name is still served and callable until its removal date
+        # (`deprecations.TOOLS`) — an org procedure still references it.
         mcp="zoho_connect",
         rest=None,
         description=(
-            "Connexion Zoho « server-based » (CRM / Desk / Analytics) : op='modes' "
-            "dit si une app OAuth est déjà disponible et quels scopes oto demandera ; "
-            "op='start' (avec `data_center` : eu, com, in, au, jp, ca) renvoie l'URL "
-            "de consentement à OUVRIR dans un navigateur — au retour, le refresh token "
-            "est rangé au coffre. Prérequis : client_id + client_secret de l'app Zoho "
-            "posés sur la carte du connecteur (ou partagés par l'org)."),
+            "Zoho \"server-based\" connection (CRM / Desk / Analytics): op='modes' "
+            "says whether an OAuth app is already available and which scopes oto will request; "
+            "op='start' (with `data_center`: eu, com, in, au, jp, ca) returns the consent "
+            "URL to OPEN in a browser — on return, the refresh token "
+            "is stored in the vault. Prerequisite: client_id + client_secret of the Zoho app "
+            "set on the connector card (or shared by the org)."),
     ),
     Capability(
         key="me.zoho_analytics_orgs",
@@ -167,19 +167,19 @@ CAPABILITIES += [
         mcp="zohoanalytics_orgs",
         rest=RestBinding("GET", "/api/me/connectors/zohoanalytics/orgs"),
         description=(
-            "Organisations Zoho Analytics visibles par ton compte (id, nom, rôle) + "
-            "celle actuellement enregistrée. Analytics exige une organisation sur "
-            "chaque appel et un compte en voit souvent plusieurs (workspaces "
-            "partagés) : c'est ici qu'on la choisit, sur des noms plutôt que sur un "
-            "identifiant."),
+            "Zoho Analytics organizations visible to your account (id, name, role) + "
+            "the one currently saved. Analytics requires an organization on "
+            "every call and an account often sees several (shared "
+            "workspaces): this is where you choose it, from names rather than an "
+            "identifier."),
     ),
-    # `me.zoho_connect.start` a été RETIRÉE : elle n'existait que pour porter la face
-    # REST `/api/zoho/oauth/start`, désormais servie par le chemin fixe
-    # `/api/me/connectors/{name}/connect` (capacité `me.connector_connect`), via le
-    # même `start_for`. Le démarrage garde sa face MCP sur `me.zoho_connect` op=start.
-    # `me.zoho_connect.modes` a été RETIRÉE de même : son unique consommateur était le
-    # widget nommé du dashboard, supprimé avec la généralisation. L'op reste servie par
-    # `me.zoho_connect` (op='modes') côté MCP — un agent qui prépare une connexion a de
-    # bonnes raisons de demander « une app est-elle déjà disponible ? ». Une surface REST
-    # sans appelant, elle, est une dette qui se paie à chaque lecture du code.
+    # `me.zoho_connect.start` was REMOVED: it only existed to carry the REST face
+    # `/api/zoho/oauth/start`, now served by the fixed path
+    # `/api/me/connectors/{name}/connect` (capability `me.connector_connect`), via the
+    # same `start_for`. Start keeps its MCP face on `me.zoho_connect` op=start.
+    # `me.zoho_connect.modes` was REMOVED likewise: its only consumer was the dashboard's
+    # named widget, deleted with the generalization. The op is still served by
+    # `me.zoho_connect` (op='modes') on the MCP side — an agent preparing a connection has
+    # good reasons to ask "is an app already available?". A REST surface
+    # with no caller, on the other hand, is debt paid at every reading of the code.
 ]

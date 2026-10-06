@@ -1,11 +1,11 @@
-"""Route de retour du consentement Meta Ads — la seule pièce écrite à la main.
+"""Return route for the Meta Ads consent — the only hand-written piece.
 
-Même forme qu'`api/instagram_meta.py` : le `/start` passe par le seam commun
-(`connectors/flow`), seul le callback est une route (Meta redirige un NAVIGATEUR,
-sans en-tête d'auth). L'identité vient du `state` signé.
+Same shape as `api/instagram_meta.py`: `/start` goes through the common seam
+(`connectors/flow`), only the callback is a route (Meta redirects a BROWSER,
+with no auth header). The identity comes from the signed `state`.
 
-⚠️ Tant que l'application n'a pas l'accès requis, Meta peut refuser le dialogue
-avec `error=access_denied` — indistinguable d'un vrai refus de la personne.
+⚠️ As long as the application does not have the required access, Meta may refuse the dialog
+with `error=access_denied` — indistinguishable from a genuine refusal by the person.
 """
 from __future__ import annotations
 
@@ -46,12 +46,12 @@ def make_routes(
         erreur = request.query_params.get("error")
         parsed = ads_auth.verify_state(state) if state else None
         if not parsed:
-            logger.info("meta_ads : retour de consentement sans state lisible")
+            logger.info("meta_ads: consent return without a readable state")
             return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, return_app = parsed
         if erreur or not code:
-            logger.info("meta_ads : consentement non abouti (sub=%s, motif=%s)",
-                        sub, erreur or "code absent")
+            logger.info("meta_ads: consent not completed (sub=%s, reason=%s)",
+                        sub, erreur or "code missing")
             return RedirectResponse(
                 _retour("forbidden" if erreur == _REFUS else "error",
                         return_app, org_id), status_code=302)
@@ -63,11 +63,11 @@ def make_routes(
             return ads_auth.persist_grant(sub, org_id, grant)
 
         try:
-            # DB + HTTP synchrones hors de la boucle (oto-backend#867).
+            # Synchronous DB + HTTP off the loop (oto-backend#867).
             await run_in_threadpool(_echanger_et_ranger)
         except Exception:
-            # On journalise le traceback, jamais le `code` ni le jeton.
-            logger.exception("meta_ads : retour de consentement en échec "
+            # We log the traceback, never the `code` nor the token.
+            logger.exception("meta_ads: consent return failed "
                              "(sub=%s org=%s)", sub, org_id)
             return RedirectResponse(_retour("error", return_app, org_id),
                                     status_code=302)

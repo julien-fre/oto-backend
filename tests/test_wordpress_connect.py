@@ -65,11 +65,11 @@ def test_start_refuses_empty_site_and_foreign_auth_host(ctx, monkeypatch):
     from oto_mcp import access
 
     monkeypatch.setattr(access, "resolve_credential", _nothing_saved)
-    with pytest.raises(wp_auth.ConnectRefused, match="indique l'URL"):
+    with pytest.raises(wp_auth.ConnectRefused, match="enter your WordPress site's URL"):
         wp_auth.start(ctx, {"site_url": ""})
     monkeypatch.setattr(wp_auth, "_authorization_endpoint",
                         _index_with("https://evil.example.net/authorize"))
-    with pytest.raises(wp_auth.ConnectRefused, match="autre hôte"):
+    with pytest.raises(wp_auth.ConnectRefused, match="another host"):
         wp_auth.start(ctx, {"site_url": "https://blog.example.com"})
 
 
@@ -94,7 +94,7 @@ def _parsed(**over):
 
 
 def test_finish_refuses_substituted_site(monkeypatch):
-    with pytest.raises(wp_auth.ConnectRefused, match="ne correspond pas"):
+    with pytest.raises(wp_auth.ConnectRefused, match="does not match"):
         wp_auth.finish(_parsed(), "https://other.example.com", "editor", "pw")
 
 
@@ -216,7 +216,7 @@ def test_reconnect_with_nothing_saved_is_named(ctx, monkeypatch):
     from oto_mcp import access
 
     monkeypatch.setattr(access, "resolve_credential", _nothing_saved)
-    with pytest.raises(wp_auth.ConnectRefused, match="indique l'URL"):
+    with pytest.raises(wp_auth.ConnectRefused, match="enter your WordPress site's URL"):
         wp_auth.start(ctx, {})
 
 
@@ -255,7 +255,7 @@ def test_http_site_is_refused(monkeypatch):
     monkeypatch.setattr(egress, "check_url", lambda *a, **k: None)
     monkeypatch.setattr(egress, "resolved_addresses", lambda host, port: {"93.184.215.14"})
     monkeypatch.delenv(egress.ALLOW_VAR, raising=False)
-    with pytest.raises(wp_auth.ConnectRefused, match="en clair"):
+    with pytest.raises(wp_auth.ConnectRefused, match="clear text"):
         wp_auth.check_site("http://blog.example.com")
     assert wp_auth.check_site("https://blog.example.com") is False
 

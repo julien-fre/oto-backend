@@ -16,10 +16,10 @@ Otomata-owned client). So this flow is a hybrid: the customer still saves
 ALL of what that form collects for Salesforce), and this module's `/start`
 reads THAT already-saved partial credential to build a per-customer authorize
 URL, instead of a module-level constant like `google_oauth.py`'s
-`GOOGLE_WORKSPACE_CLIENT_ID`. Que le credential se complète HORS formulaire est dit par `status_hints`
-(`register_state` + `pending_action`, dans tools/salesforce.py) — le seam commun,
-celui que Zoho utilise déjà — et non par une méthode d'auth dédiée : le jeu de
-`auth_method` est fermé et consommé par un switch du dashboard.
+`GOOGLE_WORKSPACE_CLIENT_ID`. That the credential gets completed OUTSIDE the form is stated by `status_hints`
+(`register_state` + `pending_action`, in tools/salesforce.py) — the common seam,
+the one Zoho already uses — and not by a dedicated auth method: the set of
+`auth_method` values is closed and consumed by a dashboard switch.
 
 State design mirrors `google_oauth.py` specifically (hand-rolled HMAC, not the
 shared `oauth2_pkce.make_state`/`verify_state`): the credential is scoped
@@ -52,10 +52,10 @@ from typing import Optional
 from .. import credentials_store, org_store
 from . import pkce as oauth2_pkce, flow as oauth_flow
 
-# Audience du state (`oauth_flow.sign_state`) : un state émis pour Salesforce ne vaut
-# QUE pour le callback Salesforce. Avant la fabrique, cinq flux signaient au même
-# format avec le même secret, sans discriminant — un state d'un flux passait chez un
-# autre. C'est exactement ce que ce nom ferme.
+# Audience of the state (`oauth_flow.sign_state`): a state issued for Salesforce is valid
+# ONLY for the Salesforce callback. Before the factory, five flows signed in the same
+# format with the same secret, with no discriminator — a state from one flow passed at
+# another. That is exactly what this name closes.
 _AUD = "salesforce"
 _CALLBACK_PATH = "/api/salesforce/oauth/callback"
 
@@ -70,8 +70,8 @@ def _ctx_org(sub: str) -> int:
     org = access.current_org(sub)
     if org is None:
         raise RuntimeError(
-            "Aucune org de contexte — impossible de scoper la connexion Salesforce. "
-            "Reconnecte-toi et réessaie."
+            "No context org — cannot scope the Salesforce connection. "
+            "Sign in again and retry."
         )
     return org
 
@@ -81,28 +81,28 @@ def _ctx_group(sub: str) -> int:
     group = access.current_group(sub)
     if group is None:
         raise RuntimeError(
-            "Aucune équipe active — impossible de connecter Salesforce au nom "
-            "de ton équipe. Sélectionne une équipe active et réessaie."
+            "No active team — cannot connect Salesforce on behalf "
+            "of your team. Select an active team and retry."
         )
     return group
 
 
 def make_state(sub: str, org_id: int, scope: str, verifier: str,
                group_id: Optional[int] = None, return_app: str = "") -> str:
-    """State signé, LIÉ à l'audience `salesforce` (`oauth_flow.sign_state`).
+    """Signed state, BOUND to the `salesforce` audience (`oauth_flow.sign_state`).
 
-    Ce que le payload porte de spécifique : `org` (le credential est scopé (org, sub)),
-    `scope` ("member" | "org" | "group") et, pour une équipe, `group`. Le callback
-    arrive SANS en-tête d'auth : ces valeurs doivent voyager avec lui, pas être
-    re-dérivées d'une session vivante. `group` est gelé ici — l'équipe active au clic
-    est celle où l'on écrit, même si un autre onglet en change entre-temps.
+    What the payload carries that is specific: `org` (the credential is scoped (org, sub)),
+    `scope` ("member" | "org" | "group") and, for a team, `group`. The callback
+    arrives WITHOUT an auth header: these values must travel with it, not be
+    re-derived from a live session. `group` is frozen here — the team active at click time
+    is the one we write to, even if another tab changes it in the meantime.
 
-    `return_app` (payload `app`) porte quel FRONT a demandé la connexion (ex. un
-    tenant tiers) — pas l'application Salesforce (`_APP`/`_read_app`, un tout autre
-    sens du mot dans ce module). Toujours écrit, même vide : `oauth_flow.return_url`
-    dégrade correctement une chaîne vide vers le défaut historique
-    oto-dashboard. Déjà résolu/validé par l'appelant (`build_auth_url`) via
-    `oauth_flow.resolve_return_app` — ce module ne revalide pas."""
+    `return_app` (payload `app`) carries which FRONT requested the connection (e.g. a
+    third-party tenant) — not the Salesforce application (`_APP`/`_read_app`, an entirely different
+    meaning of the word in this module). Always written, even empty: `oauth_flow.return_url`
+    correctly degrades an empty string to the historical oto-dashboard
+    default. Already resolved/validated by the caller (`build_auth_url`) via
+    `oauth_flow.resolve_return_app` — this module does not revalidate."""
     payload = {"sub": sub, "org": org_id, "scope": scope, "v": verifier, "app": return_app}
     if group_id is not None:
         payload["group"] = group_id
@@ -110,14 +110,14 @@ def make_state(sub: str, org_id: int, scope: str, verifier: str,
 
 
 def verify_state(state: str) -> Optional[tuple[str, int, str, str, Optional[int], str]]:
-    """(sub, org_id, scope, verifier, group_id, return_app) si le state est valide,
-    non expiré et émis POUR ce flux ; None sinon. `group_id` n'est renseigné qu'en
-    scope `group` — et un payload `scope="group"` sans `group` est refusé (on ne
-    devine pas l'équipe où écrire un secret).
+    """(sub, org_id, scope, verifier, group_id, return_app) if the state is valid,
+    unexpired and issued FOR this flow; None otherwise. `group_id` is only set in
+    `group` scope — and a `scope="group"` payload without `group` is refused (we do not
+    guess the team to write a secret to).
 
-    `return_app` absent (state signé AVANT ce champ, encore vivant dans la fenêtre
-    de 10 min d'un déploiement) ou de mauvais type ⇒ `""`, pas un refus du state
-    entier — perdre le retour ciblé n'est pas une raison de perdre la connexion."""
+    `return_app` missing (state signed BEFORE this field, still alive in the 10-minute
+    window of a deploy) or of the wrong type ⇒ `""`, not a refusal of the whole
+    state — losing the targeted return is no reason to lose the connection."""
     data = oauth_flow.read_state(_AUD, state)
     if not data:
         return None
@@ -146,12 +146,12 @@ def _read_fields(entity_type: str, entity_id: str) -> Optional[dict]:
 
 def read_saved_fields(sub: str, org_id: int, scope: str,
                       group_id: Optional[int] = None) -> Optional[dict]:
-    """L'application à utiliser pour l'ÉCHANGE du code, au retour de Salesforce.
+    """The application to use for the code EXCHANGE, on return from Salesforce.
 
-    Même règle qu'à l'aller (`build_auth_url`) : la ligne de ce scope si elle existe,
-    sinon l'application la plus proche en remontant. Les deux DOIVENT s'accorder — le
-    code a été émis pour un `client_id` précis, l'échanger avec un autre échoue.
-    C'est pour ça que ce point d'entrée n'interroge plus l'entité exacte."""
+    Same rule as on the way out (`build_auth_url`): the row of this scope if it exists,
+    otherwise the nearest application going up. The two MUST agree — the
+    code was issued for a specific `client_id`, exchanging it with another fails.
+    That is why this entry point no longer queries the exact entity."""
     entity_type, entity_id = credentials_store.entity_for_scope(scope, org_id, sub, group_id)
     champs = _read_fields(entity_type, entity_id)
     if champs and all(champs.get(k) for k in _APP):
@@ -164,17 +164,17 @@ _APP = ("client_id", "client_secret", "login_url")
 
 def _entites_montantes(org_id: int, sub: str, scope: str,
                        group_id: Optional[int]) -> list[tuple[str, str]]:
-    """Les entités où CHERCHER l'application, du scope demandé vers le haut.
+    """The entities where to LOOK for the application, from the requested scope upwards.
 
-    L'application (client_id/secret/login_url) est une infrastructure d'ORG : un
-    admin la pose une fois. Le refresh token, lui, est une IDENTITÉ : il appartient à
-    qui consent. Les lire au même endroit obligeait chaque membre à recoller les
-    identifiants de l'application de son org pour pouvoir simplement s'authentifier —
-    en pratique, à connaître un secret qui ne le regarde pas.
+    The application (client_id/secret/login_url) is ORG infrastructure: an
+    admin sets it once. The refresh token, on the other hand, is an IDENTITY: it belongs to
+    whoever consents. Reading them in the same place forced every member to paste back
+    their org's application credentials just to authenticate —
+    in practice, to know a secret that is none of their business.
     """
-    # Construite PAR SCOPE, sans arithmétique d'index : une version calculée sur des
-    # positions supposait l'équipe toujours présente et sortait des bornes sans elle
-    # (donc aucune entité, donc « aucune application » sur un cas parfaitement valide).
+    # Built PER SCOPE, with no index arithmetic: a version computed on
+    # positions assumed the team was always present and went out of bounds without it
+    # (hence no entity, hence "no application" on a perfectly valid case).
     org = ("org", str(org_id))
     equipe = ("group", str(group_id)) if group_id else None
     if scope == "org":
@@ -187,7 +187,7 @@ def _entites_montantes(org_id: int, sub: str, scope: str,
 
 def _read_app(org_id: int, sub: str, scope: str,
               group_id: Optional[int]) -> Optional[dict]:
-    """L'application COMPLÈTE la plus proche, en remontant depuis le scope demandé."""
+    """The nearest COMPLETE application, going up from the requested scope."""
     for etype, eid in _entites_montantes(org_id, sub, scope, group_id):
         champs = _read_fields(etype, eid)
         if champs and all(champs.get(k) for k in _APP):
@@ -209,22 +209,22 @@ def build_auth_url(sub: str, scope: str = "member", return_app: Optional[str] = 
     Connect button can gate on) and `PermissionError` if `scope="org"`/`"group"`
     is requested by a non-admin.
 
-    `return_app` : clé de front déclarée par l'APPELANT (ex. un tenant tiers), jamais un
-    Origin sniffé (les capacités sont transport-agnostiques, ADR 0009). Validée
-    ICI, une seule fois, AVANT `make_state` — `oauth_flow.resolve_return_app`
-    réduit toute valeur hors de sa liste fermée à `""` : le state ne porte jamais
-    une valeur de client non vérifiée (pas d'open redirect).
+    `return_app`: front key declared by the CALLER (e.g. a third-party tenant), never a
+    sniffed Origin (capabilities are transport-agnostic, ADR 0009). Validated
+    HERE, once, BEFORE `make_state` — `oauth_flow.resolve_return_app`
+    reduces any value outside its closed list to `""`: the state never carries
+    an unverified client value (no open redirect).
     """
     if scope not in ("member", "org", "group"):
-        raise ValueError(f"scope invalide : {scope!r} (attendu 'member', 'org' ou 'group')")
+        raise ValueError(f"invalid scope: {scope!r} (expected 'member', 'org' or 'group')")
     org_id = _ctx_org(sub)
     group_id: Optional[int] = None
     if scope == "org":
         from .. import roles
         if not roles.is_org_admin(sub, org_id):
-            from .. import detenteurs  # QUI le peut, nommé à un membre (oto#108)
+            from .. import detenteurs  # WHO can, named to a member (oto#108)
             raise PermissionError(
-                "Seul un org_admin peut connecter Salesforce au nom de toute l'org."
+                "Only an org_admin can connect Salesforce on behalf of the whole org."
                 + detenteurs.phrase("Ses administrateurs, à qui le demander",
                                     detenteurs.admins_de_l_org(sub, org_id))
             )
@@ -232,22 +232,22 @@ def build_auth_url(sub: str, scope: str = "member", return_app: Optional[str] = 
         from .. import roles
         group_id = _ctx_group(sub)
         if not roles.can_admin_group(sub, group_id):
-            from .. import detenteurs  # QUI le peut, nommé à un membre (oto#108)
+            from .. import detenteurs  # WHO can, named to a member (oto#108)
             raise PermissionError(
-                "Seul un chef d'équipe peut connecter Salesforce au nom de toute l'équipe."
+                "Only a team lead can connect Salesforce on behalf of the whole team."
                 + detenteurs.phrase("Chefs de cette équipe",
                                     detenteurs.chefs_de_l_equipe(sub, group_id, org_id))
             )
-    # L'application se cherche EN CASCADE (voir `_entites_montantes`) : un membre
-    # consent avec l'application de son org sans jamais en connaître les identifiants.
-    # Le jeton, lui, sera écrit au scope demandé — c'est toute l'asymétrie.
+    # The application is looked up IN CASCADE (see `_entites_montantes`): a member
+    # consents with their org's application without ever knowing its credentials.
+    # The token, for its part, will be written at the requested scope — that is the whole asymmetry.
     fields = _read_app(org_id, sub, scope, group_id)
     if not fields:
         raise LookupError(
-            "Aucune application Salesforce n'est enregistrée à ce niveau ni au-dessus. "
-            "Un administrateur doit poser le Consumer Key, le Consumer Secret et la "
-            "Login URL sur la fiche du connecteur (au niveau org pour que toute "
-            "l'équipe en profite), puis relance l'autorisation."
+            "No Salesforce application is registered at this level or above. "
+            "An administrator must set the Consumer Key, the Consumer Secret and the "
+            "Login URL on the connector card (at org level so that the whole "
+            "team benefits), then restart the authorization."
         )
     resolved_app = oauth_flow.resolve_return_app(return_app)
     from urllib.parse import urlencode
@@ -267,11 +267,11 @@ def build_auth_url(sub: str, scope: str = "member", return_app: Optional[str] = 
 
 def exchange_code(code: str, client_id: str, client_secret: str, login_url: str,
                   verifier: str) -> dict:
-    """Échange le code contre les tokens sur le endpoint DE CE CLIENT (son `login_url`,
-    pas une URL Otomata fixe). La danse elle-même vit dans `oauth_flow.exchange_code`
-    (corps form-encodé, jamais de secret en query string, erreur sans URL) ; ici on ne
-    garde que le `code_verifier` PKCE et la traduction du message en indice actionnable
-    (`_sf_error_hint`, partagé avec la sonde)."""
+    """Exchange the code for tokens at THIS CLIENT's endpoint (its `login_url`,
+    not a fixed Otomata URL). The dance itself lives in `oauth_flow.exchange_code`
+    (form-encoded body, never a secret in the query string, error without URL); here we only
+    keep the PKCE `code_verifier` and the translation of the message into an actionable hint
+    (`_sf_error_hint`, shared with the probe)."""
     from ..tools.salesforce import _sf_error_hint
     try:
         return oauth_flow.exchange_code(
@@ -286,7 +286,7 @@ def exchange_code(code: str, client_id: str, client_secret: str, login_url: str,
 
 def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
                   group_id: Optional[int] = None) -> dict:
-    """Synchrone (DB) : l'appelant l'exécute par `run_in_threadpool`, jamais dans la boucle.
+    """Synchronous (DB): the caller runs it via `run_in_threadpool`, never in the event loop.
 
     Read-merge-write: `secret_enc` is one encrypted blob per row (no
     column-level partial update for a multi-field secret exists in
@@ -302,24 +302,24 @@ def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
     refresh_token = token_response.get("refresh_token")
     if not refresh_token:
         raise RuntimeError(
-            "Salesforce n'a pas renvoyé de refresh_token. Vérifie que le scope "
-            "`refresh_token` (ou `offline_access`) est coché dans les OAuth "
-            "Scopes de la Connected App (Setup → App Manager → ton app → "
+            "Salesforce did not return a refresh_token. Check that the "
+            "`refresh_token` (or `offline_access`) scope is ticked in the OAuth "
+            "Scopes of the Connected App (Setup → App Manager → your app → "
             "Edit Policies)."
         )
     entity_type, entity_id = credentials_store.entity_for_scope(scope, org_id, sub, group_id)
-    # `existing` = la ligne de CE scope si elle existe (on préserve ce qu'elle porte).
-    # Sinon l'application vient de la cascade : c'est le cas d'un membre qui consent
-    # avec l'application de son org — il n'a aucune ligne à lui avant ce moment.
-    # Les identifiants d'application sont alors COPIÉS dans sa ligne, ce qui est
-    # acceptable ici : régénérer le secret de l'application côté Salesforce invalide
-    # de toute façon tous les jetons émis, donc impose une reconnexion à chacun.
+    # `existing` = the row of THIS scope if it exists (we preserve what it carries).
+    # Otherwise the application comes from the cascade: that is the case of a member who consents
+    # with their org's application — they have no row of their own before this moment.
+    # The application credentials are then COPIED into their row, which is
+    # acceptable here: regenerating the application secret on the Salesforce side invalidates
+    # all issued tokens anyway, hence forces everyone to reconnect.
     existing = _read_fields(entity_type, entity_id) or _read_app(
         org_id, sub, scope, group_id)
     if not existing:
         raise RuntimeError(
-            "L'application Salesforce a disparu entre le clic sur Connecter et le "
-            "retour de Salesforce — recommence."
+            "The Salesforce application disappeared between the click on Connect and the "
+            "return from Salesforce — start over."
         )
     merged = {**existing, "refresh_token": refresh_token}
     secret = credentials_store.pack_secret("salesforce", merged)
@@ -337,24 +337,24 @@ def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
         credentials_store.set_credential(entity_type, entity_id, "salesforce", secret,
                                          set_by=sub, meta=meta)
 
-    # PAS de sonde post-écriture. Il y en avait une — « best-effort », censée
-    # confirmer que le jeton fraîchement obtenu fonctionnait. Sous rotation (RTR,
-    # imposée par Salesforce), elle **détruisait** ce qu'elle vérifiait : la sonde
-    # consomme le refresh token, Salesforce en renvoie un neuf, et ce chemin-ci
-    # n'avait aucun moyen de l'écrire. Mesuré le 31/07, trois fois de suite —
-    # jeton posé à 14:36:58.158, sondé avec succès à 14:36:58.679, mort ensuite.
+    # NO post-write probe. There used to be one — "best-effort", meant to
+    # confirm that the freshly obtained token worked. Under rotation (RTR,
+    # imposed by Salesforce), it **destroyed** what it verified: the probe
+    # consumes the refresh token, Salesforce returns a new one, and this path
+    # had no way of writing it. Measured on 31/07, three times in a row —
+    # token set at 14:36:58.158, probed successfully at 14:36:58.679, dead afterwards.
     #
-    # Câbler la persistance dans la sonde ne suffit pas ici : on est dans le
-    # CALLBACK OAuth, une requête navigateur sans contexte authentifié (le `sub`
-    # vient du state signé, pas d'un jeton), donc la sonde ne peut pas résoudre la
-    # cascade pour savoir où réécrire.
+    # Wiring persistence into the probe is not enough here: we are in the
+    # OAuth CALLBACK, a browser request without authenticated context (the `sub`
+    # comes from the signed state, not from a token), so the probe cannot resolve the
+    # cascade to know where to write back.
     #
-    # Et le coût n'achetait rien : `verified_at`/`verify_error` n'avaient AUCUN
-    # lecteur — ni backend, ni dashboard. Le commentaire d'origine reconnaissait
-    # déjà qu'un échec n'était jamais utilisé pour rejeter le jeton. On payait donc
-    # la connexion pour un marqueur que personne ne lisait.
+    # And the cost bought nothing: `verified_at`/`verify_error` had NO
+    # reader — neither backend nor dashboard. The original comment already admitted
+    # that a failure was never used to reject the token. So we paid for
+    # the connection with a marker that nobody read.
     #
-    # L'état réel de la connexion se constate au premier usage, ou via la sonde
-    # explicite (`oto_instance op=verify`), qui tourne dans un contexte authentifié
-    # et persiste, elle, le jeton renouvelé.
+    # The real state of the connection is found at first use, or via the explicit
+    # probe (`oto_instance op=verify`), which runs in an authenticated context
+    # and, for its part, persists the renewed token.
     return {"verified": None, "verify_error": None}

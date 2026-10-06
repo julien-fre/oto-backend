@@ -185,8 +185,8 @@ def test_aucun_candidat_nomme_les_trois_causes_possibles(monkeypatch):
     _setup(monkeypatch, [_pend()], [_acc("A", "vieux", created="2026-07-01 09:00:00+00")])
     out = uc.reconcile_pending("u1")
     assert out["bound"] is False and out["reason"] == "no_candidate"
-    assert "plus ancien que le pending" in out["detail"]
-    assert "quelqu'un d'autre" in out["detail"]
+    assert "older than the pending row" in out["detail"]
+    assert "someone else" in out["detail"]
     # Le compte-rendu porte AUSSI le nonce : deux demandes en attente ne se
     # confondent pas dans une seule phrase.
     assert out["pendings"][0]["nonce"] == "N"
@@ -198,7 +198,7 @@ def test_candidats_tous_morts_dit_quoi_refaire(monkeypatch):
     _setup(monkeypatch, [_pend()], [_acc("A", "mort")], alive_ids=set())
     out = uc.reconcile_pending("u1")
     assert out["reason"] == "candidates_dead"
-    assert "redirection finale" in out["detail"]
+    assert "final redirect" in out["detail"]
 
 
 def test_une_liaison_REUSSIE_ne_porte_aucune_raison(monkeypatch):
@@ -257,7 +257,7 @@ def test_une_liaison_consomme_les_demandes_doublons_du_meme_canal(monkeypatch):
 def test_le_motif_ne_revele_pas_le_nombre_de_comptes_de_la_cle(monkeypatch):
     _setup(monkeypatch, [_pend()], [_acc("A", "vieux", created="2026-07-01 09:00:00+00")] * 3)
     out = uc.reconcile_pending("u1")
-    assert "compte(s) chez le fournisseur" not in out["detail"]
+    assert "account(s) at the provider" not in out["detail"]
     assert not any(ch.isdigit() for ch in out["detail"].split(":")[0])
 
 

@@ -1,20 +1,20 @@
-"""Route de retour du consentement Instagram — la seule pièce écrite à la main.
+"""Return route of the Instagram consent — the only hand-written piece.
 
-Le `/start` n'est PAS ici : c'est le seam commun (`connectors/flow`), dont
-`auth/instagram_meta._start_flow` est la déclaration. Seul le callback reste une
-route : Meta y redirige un NAVIGATEUR, sans en-tête d'auth et avec un 302, ce
-qu'un contrat de capacité ne peut pas exprimer. Même forme que `api/salesforce.py`.
+`/start` is NOT here: it is the common seam (`connectors/flow`), whose declaration
+is `auth/instagram_meta._start_flow`. Only the callback remains a
+route: Meta redirects a BROWSER there, with no auth header and with a 302, which
+a capability contract cannot express. Same shape as `api/salesforce.py`.
 
-L'identité de la personne vient du `state` signé, pas d'une session : c'est tout
-ce dont ce handler dispose, et c'est pourquoi le state porte `sub` et `org`.
+The person's identity comes from the signed `state`, not from a session: it is all
+this handler has, and that is why the state carries `sub` and `org`.
 
-⚠️ **Le refus le plus fréquent de ce flux n'est pas un bug, c'est le régime des
-applications Meta non publiées** : tant qu'elle n'a pas passé l'App Review, seuls
-les comptes INVITÉS comme testeurs peuvent consentir. Meta renvoie alors un
-`error=access_denied`, indistinguable d'un vrai refus de la personne. Le message
-nomme donc les deux causes, dans cet ordre — parce que la première est la nôtre à
-régler, et que présenter « tu as refusé » à quelqu'un qui a cliqué « Autoriser »
-le laisse sans recours.
+⚠️ **The most frequent refusal of this flow is not a bug, it is the regime of
+unpublished Meta apps**: until it has passed App Review, only accounts INVITED
+as testers can consent. Meta then returns an
+`error=access_denied`, indistinguishable from a real refusal by the person. The message
+therefore names both causes, in this order — because the first is ours to
+fix, and telling someone who clicked "Allow" that "you refused"
+leaves them with no recourse.
 """
 from __future__ import annotations
 
@@ -34,9 +34,9 @@ logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
-#: Le motif que Meta rend quand la personne n'est pas testeuse de l'application.
-#: Il est le MÊME que celui d'un vrai refus : `access_denied`. On ne peut donc pas
-#: les distinguer — d'où un message qui nomme les deux, sans en affirmer une.
+#: The reason Meta returns when the person is not a tester of the application.
+#: It is the SAME as a real refusal: `access_denied`. We therefore cannot
+#: tell them apart — hence a message that names both, without asserting either.
 _REFUS = "access_denied"
 
 
@@ -49,11 +49,11 @@ def make_routes(
 ) -> list[Route]:
 
     def _retour(etat: str, return_app: str = "", org_id: int | None = None) -> str:
-        """Où renvoyer le navigateur : sur la fiche du connecteur, dépliée.
+        """Where to send the browser: to the connector card, expanded.
 
-        `connector=` est le deep-link lu par le dashboard, `connect=` dit CE QUI
-        S'EST PASSÉ — sans lui, une personne revient devant un écran muet et ne
-        peut pas savoir si son geste a abouti."""
+        `connector=` is the deep link read by the dashboard, `connect=` says WHAT
+        HAPPENED — without it, a person comes back to a silent screen and cannot
+        know whether their action succeeded."""
         return oauth_flow.connector_return_url(
             return_app, ig_auth.CONNECTOR, etat, org=org_id)
 
@@ -63,18 +63,18 @@ def make_routes(
         erreur = request.query_params.get("error")
         parsed = ig_auth.verify_state(state) if state else None
         if not parsed:
-            # State absent, expiré ou altéré : on n'a NI org NI front de retour
-            # (ils vivent DANS ce state qu'on vient d'échouer à lire). Dégradation
-            # acceptée vers le défaut, seul cas où ce module ne peut pas faire mieux.
-            logger.info("instagram_meta : retour de consentement sans state lisible")
+            # State missing, expired or tampered with: we have NEITHER org NOR return front
+            # (they live INSIDE this state that we just failed to read). Degradation
+            # accepted towards the default, the only case where this module cannot do better.
+            logger.info("instagram_meta: consent return without a readable state")
             return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, return_app = parsed
         if erreur or not code:
-            # On JOURNALISE le motif rendu par Meta (il n'est pas secret) et on
-            # renvoie l'utilisatrice sur sa fiche, où le message ci-dessous
-            # l'attend. Voir `oto_mcp/connectors/docs/instagram_meta.md`.
-            logger.info("instagram_meta : consentement non abouti (sub=%s, motif=%s)",
-                        sub, erreur or "code absent")
+            # We LOG the reason returned by Meta (it is not secret) and we
+            # send the user back to her card, where the message below
+            # awaits her. See `oto_mcp/connectors/docs/instagram_meta.md`.
+            logger.info("instagram_meta: consent not completed (sub=%s, reason=%s)",
+                        sub, erreur or "missing code")
             return RedirectResponse(
                 _retour("forbidden" if erreur == _REFUS else "error",
                         return_app, org_id), status_code=302)
@@ -86,15 +86,15 @@ def make_routes(
             return ig_auth.persist_grant(sub, org_id, grant)
 
         try:
-            # DB + HTTP synchrones hors de la boucle : ce handler est `async def`,
-            # et l'échange parle trois fois à Meta. Appelé nûment il fige tout le
-            # processus le temps que l'amont réponde (oto-backend#867).
+            # Synchronous DB + HTTP off the event loop: this handler is `async def`,
+            # and the exchange talks to Meta three times. Called bare it freezes the whole
+            # process while upstream answers (oto-backend#867).
             await run_in_threadpool(_echanger_et_ranger)
         except Exception:
-            # Sans trace ici, un échec de connexion est INDIAGNOSTICABLE : le
-            # client ne voit qu'un `connect=error`. On journalise le traceback,
-            # jamais le `code` ni le jeton.
-            logger.exception("instagram_meta : retour de consentement en échec "
+            # Without a trace here, a connection failure is UNDIAGNOSABLE: the
+            # client only sees a `connect=error`. We log the traceback,
+            # never the `code` or the token.
+            logger.exception("instagram_meta: consent return failed "
                              "(sub=%s org=%s)", sub, org_id)
             return RedirectResponse(_retour("error", return_app, org_id),
                                     status_code=302)

@@ -1,22 +1,22 @@
-"""Les connecteurs qu'un tenant OFFRE — son plafond d'activation, sur SA surface admin
+"""The connectors a tenant OFFERS — its activation ceiling, on ITS admin surface
 (2026-09-26).
 
-Un partenaire qui sert oto sous sa marque n'offre pas tout le catalogue : un service
-Google que son projet Google Cloud ne déclare pas, un connecteur qu'il ne veut pas
-supporter. Jusqu'ici il n'avait que deux leviers, tous deux faux : le master
-plateforme (qui coupe pour TOUT LE MONDE, oto compris) et l'override d'org (une ligne
-par org — soixante orgs, soixante gestes — et qu'un admin d'org peut défaire).
+A partner serving oto under its brand does not offer the whole catalog: a Google
+service its Google Cloud project does not declare, a connector it does not want to
+support. Until now it only had two levers, both wrong: the platform
+master (which cuts for EVERYONE, oto included) and the org override (one row
+per org — sixty orgs, sixty actions — and which an org admin can undo).
 
-Le cran TENANT de `connector_availability` (`connectors/activation.py`) est un
-PLAFOND : `enabled=false` coupe pour toutes les orgs du tenant, et rien en dessous —
-override d'org, équipe — ne rouvre. `enabled=true` ne fait que retirer la coupure : le
-plafond plateforme reste le sien, un tenant n'expose jamais ce que la plateforme ne
-donne pas (même règle que l'org, `_require_master_exposed`).
+The TENANT notch of `connector_availability` (`connectors/activation.py`) is a
+CEILING: `enabled=false` cuts for all the tenant's orgs, and nothing below it —
+org override, team — reopens. `enabled=true` only removes the cut: the
+platform ceiling stays its own, a tenant never exposes what the platform does not
+give (same rule as the org, `_require_master_exposed`).
 
-Trois capacités, une par geste — lister, couper/rouvrir, retirer la ligne — sur
-`/api/admin/tenants/{slug}/connectors/activation[/{name}]`, au plancher des clés et des
-apps de tenant (`TENANT_ADMIN_OF(slug)` : l'admin du tenant OU l'opérateur). Le tenant
-primaire est refusé : son plafond EST le master plateforme.
+Three capabilities, one per gesture — list, cut/reopen, remove the row — on
+`/api/admin/tenants/{slug}/connectors/activation[/{name}]`, at the floor of tenant keys and
+apps (`TENANT_ADMIN_OF(slug)`: the tenant's admin OR the operator). The primary
+tenant is refused: its ceiling IS the platform master.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class TenantConnectorsInput(BaseModel):
 
 class TenantConnectorSetInput(BaseModel):
     slug: str
-    name: str                  # connecteur (placeholder {name}, auto-mappé)
+    name: str                  # connector ({name} placeholder, auto-mapped)
     enabled: bool
 
 
@@ -48,38 +48,38 @@ class TenantConnectorClearInput(BaseModel):
 
 
 class TenantConnectorRow(BaseModel):
-    """Un connecteur vu du tenant : le plafond plateforme, SA ligne, la résultante
-    pour ses orgs (avant leurs propres overrides)."""
+    """A connector as seen from the tenant: the platform ceiling, ITS row, the result
+    for its orgs (before their own overrides)."""
     connector: str
     label: str
     help: Optional[str] = None
-    # `None` = jamais posé côté plateforme, ce qui vaut OFF.
+    # `None` = never set on the platform side, which counts as OFF.
     master_enabled: Optional[bool] = None
-    # `None` = pas de ligne tenant : le connecteur suit la plateforme.
+    # `None` = no tenant row: the connector follows the platform.
     tenant_enabled: Optional[bool] = None
-    effective: bool                         # master ET (ligne tenant, si posée)
+    effective: bool                         # master AND (tenant row, if set)
 
 
 class TenantConnectors(BaseModel):
-    """Le cockpit d'activation du tenant. FILTRÉ au plafond plateforme, comme celui
-    d'une org : un connecteur que la plateforme n'expose pas n'y figure pas (pas de
-    levier inerte) — sauf s'il porte une ligne tenant, pour qu'elle reste retirable."""
+    """The tenant's activation cockpit. FILTERED to the platform ceiling, like an
+    org's: a connector the platform does not expose does not appear there (no inert
+    lever) — unless it carries a tenant row, so that it stays removable."""
     slug: str
     connectors: list[TenantConnectorRow]
 
 
 class TenantConnectorSet(BaseModel):
-    """Écho de la pose. `enabled=false` vaut pour TOUTES les orgs du tenant, dès
-    leur prochaine session ; `true` retire la coupure sans rien exposer de plus que
-    la plateforme."""
+    """Echo of the setting. `enabled=false` applies to ALL the tenant's orgs, from
+    their next session; `true` removes the cut without exposing anything more than
+    the platform."""
     slug: str
     connector: str
     enabled: bool
 
 
 class TenantConnectorCleared(BaseModel):
-    """Retrait de la ligne : le connecteur suit à nouveau la plateforme. `cleared`
-    vaut TOUJOURS `true` (idempotent) — il ne prouve pas qu'une ligne existait."""
+    """Row removal: the connector follows the platform again. `cleared`
+    is ALWAYS `true` (idempotent) — it does not prove a row existed."""
     slug: str
     connector: str
     cleared: bool
@@ -89,14 +89,14 @@ def _tenant(slug: str) -> str:
     slug = _known(slug)
     if slug == tenancy.primary_slug():
         raise AuthzDenied(400, "primary_tenant_activation",
-                          f"Le tenant `{slug}` n'a pas de plafond de tenant : le sien est "
-                          "le master plateforme (/api/admin/connectors/activation).")
+                          f"Tenant `{slug}` has no tenant ceiling: its own is "
+                          "the platform master (/api/admin/connectors/activation).")
     return slug
 
 
 def _connu(name: str) -> str:
     if name not in providers.REGISTRY:
-        raise AuthzDenied(404, "unknown_connector", f"Connecteur `{name}` inconnu.")
+        raise AuthzDenied(404, "unknown_connector", f"Unknown connector `{name}`.")
     return name
 
 
@@ -121,8 +121,8 @@ def _set(ctx: ResolvedCtx, inp: TenantConnectorSetInput) -> dict:
     name = _connu(inp.name)
     if inp.enabled and not connector_activation.is_exposed(name, org_id=None):
         raise AuthzDenied(409, "platform_disabled",
-                          f"Connecteur `{name}` désactivé par la plateforme — un tenant ne "
-                          "l'expose pas au-delà (le plafond plateforme n'est jamais relâché).")
+                          f"Connector `{name}` is disabled by the platform — a tenant does not "
+                          "expose it beyond that (the platform ceiling is never loosened).")
     connector_activation.set_tenant_activation(slug, name, inp.enabled, set_by=ctx.sub)
     return {"slug": slug, "connector": name, "enabled": inp.enabled}
 

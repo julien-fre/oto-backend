@@ -1,12 +1,12 @@
-"""Route de retour de la connexion Microsoft — la seule pièce écrite à la main.
+"""Return route of the Microsoft connection — the only hand-written piece.
 
-Même forme qu'`api/meta_ads.py` : le `/start` passe par le seam commun
-(`connectors/flow`), seul le callback est une route (Microsoft redirige un
-NAVIGATEUR, sans en-tête d'auth). L'identité vient du `state` signé.
+Same shape as `api/meta_ads.py`: `/start` goes through the common seam
+(`connectors/flow`), only the callback is a route (Microsoft redirects a
+BROWSER, with no auth header). The identity comes from the signed `state`.
 
-⚠️ `error=access_denied` couvre aussi bien un refus de la personne qu'une
-organisation qui exige le consentement d'un administrateur : la fiche dit
-« refusé », et le texte du connecteur explique le second cas.
+⚠️ `error=access_denied` covers both a refusal by the person and an
+organisation that requires administrator consent: the card says
+"refused", and the connector text explains the second case.
 """
 from __future__ import annotations
 
@@ -47,14 +47,14 @@ def make_routes(
         erreur = request.query_params.get("error")
         parsed = ms_auth.verify_state(state) if state else None
         if not parsed:
-            logger.info("sharepoint : retour de connexion sans state lisible")
+            logger.info("sharepoint: connection return without a readable state")
             return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, return_app = parsed
         if erreur or not code:
-            # `error_description` peut nommer l'organisation : on ne journalise que
-            # le code d'erreur.
-            logger.info("sharepoint : connexion non aboutie (sub=%s, motif=%s)",
-                        sub, erreur or "code absent")
+            # `error_description` may name the organisation: we only log
+            # the error code.
+            logger.info("sharepoint: connection not completed (sub=%s, reason=%s)",
+                        sub, erreur or "missing code")
             return RedirectResponse(
                 _retour("forbidden" if erreur == _REFUS else "error",
                         return_app, org_id), status_code=302)
@@ -67,11 +67,11 @@ def make_routes(
             return ms_auth.persist_grant(sub, org_id, grant)
 
         try:
-            # DB + HTTP synchrones hors de la boucle (oto-backend#867).
+            # Synchronous DB + HTTP off the event loop (oto-backend#867).
             await run_in_threadpool(_echanger_et_ranger)
         except Exception:
-            # On journalise le traceback, jamais le `code` ni le jeton.
-            logger.exception("sharepoint : retour de connexion en échec "
+            # We log the traceback, never the `code` or the token.
+            logger.exception("sharepoint: connection return failed "
                              "(sub=%s org=%s)", sub, org_id)
             return RedirectResponse(_retour("error", return_app, org_id),
                                     status_code=302)

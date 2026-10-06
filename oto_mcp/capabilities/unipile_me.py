@@ -1,35 +1,35 @@
-"""Messagerie hébergée Unipile, côté MEMBRE : connecter, réconcilier, lire, délier.
+"""Unipile hosted messaging, MEMBER side: connect, reconcile, read, unlink.
 
-Quatre routes écrites à la main jusqu'au 2026-08-27, portées en capacités (ADR 0009) —
-mêmes chemins, mêmes codes, même corps sur le fil :
+Four hand-written routes until 2026-08-27, ported to capabilities (ADR 0009) —
+same paths, same codes, same body on the wire:
 
-- `POST   /api/me/unipile/connect`   → URL de hosted-auth (ou adoption d'un compte déjà lié)
-- `POST   /api/me/unipile/reconcile` → poll-and-bind explicite
-- `GET    /api/me/unipile`           → statut per-user, avec self-heal opportuniste
-- `DELETE /api/me/unipile`           → soft-déconnexion DANS l'org courante
+- `POST   /api/me/unipile/connect`   → hosted-auth URL (or adoption of an already-linked account)
+- `POST   /api/me/unipile/reconcile` → explicit poll-and-bind
+- `GET    /api/me/unipile`           → per-user status, with opportunistic self-heal
+- `DELETE /api/me/unipile`           → soft-disconnect WITHIN the current org
 
-⚠️ **`/api/me/unipile/connect` est SUPERSÉDÉ et vit jusqu'à la bascule du front.** Son
-successeur est la capacité générique `me.connector_connect`
-(`POST /api/me/connectors/{name}/connect`), qui rend une `FlowStart` — le corps partagé
-vit déjà dans `unipile_connect.hosted_auth_url`, appelé par les deux. On le porte quand
-même en capacité : la dette se rembourse, et sa suppression future devient une ligne.
+⚠️ **`/api/me/unipile/connect` is SUPERSEDED and lives until the front end switches over.** Its
+successor is the generic capability `me.connector_connect`
+(`POST /api/me/connectors/{name}/connect`), which returns a `FlowStart` — the shared body
+already lives in `unipile_connect.hosted_auth_url`, called by both. We still port it
+as a capability: debt gets repaid, and its future removal becomes one line.
 
-⚠️ **Il n'y a plus de webhook de liaison** : `POST /api/unipile/webhook` a été retiré le
-2026-08-29 (#581) — le fournisseur ne rappelait plus ce callback depuis sa v2, et une
-route non authentifiée sans appelant légitime se retire. La liaison passe par la
-réconciliation ci-dessous, sous le JWT de la personne.
+⚠️ **There is no linking webhook any more**: `POST /api/unipile/webhook` was removed on
+2026-08-29 (#581) — the provider had stopped calling this callback since its v2, and an
+unauthenticated route with no legitimate caller gets removed. Linking goes through the
+reconciliation below, under the person's JWT.
 
-**Pas de face MCP** (`mcp=None`). La face agent de ce geste existe déjà et c'est
-`me.connector_connect` ; en ajouter une seconde ici recréerait, du côté MCP, exactement
-le doublon que ce chantier supprime du côté REST.
+**No MCP face** (`mcp=None`). The agent face of this gesture already exists and is
+`me.connector_connect`; adding a second one here would recreate, on the MCP side, exactly
+the duplicate this work removes on the REST side.
 
-⚠️ **Deux replis qui ressemblent à des bugs et n'en sont pas :**
-- `GET /api/me/unipile` **réconcilie** avant de répondre (c'est LE chemin de liaison) —
-  best-effort, jamais fatal pour le statut, et no-op sans pending, donc sans appel
-  réseau ;
-- `DELETE` est une **soft**-déconnexion : le compte survit chez Unipile et la ligne
-  survit comme PREUVE DE PROPRIÉTÉ, ce qui rend le rebind déterministe à la reconnexion.
-  Elle est par-ORG, comme l'affichage : ce qu'on voit est ce qu'on déconnecte.
+⚠️ **Two fallbacks that look like bugs and are not:**
+- `GET /api/me/unipile` **reconciles** before answering (it is THE linking path) —
+  best-effort, never fatal for the status, and a no-op without a pending, hence with no
+  network call;
+- `DELETE` is a **soft**-disconnect: the account survives at Unipile and the row
+  survives as PROOF OF OWNERSHIP, which makes the rebind deterministic on reconnection.
+  It is per-ORG, like the display: what you see is what you disconnect.
 """
 from __future__ import annotations
 
@@ -49,40 +49,40 @@ logger = logging.getLogger(__name__)
 _ME = "/api/me/unipile"
 
 
-# --- Entrées ----------------------------------------------------------------
+# --- Inputs -----------------------------------------------------------------
 
 class UnipileConnectInput(BaseModel):
     channel: str = "linkedin"
-    # Passer outre le refus anti-doublon cross-org (#172) : reconnecter un login déjà
-    # porté sous la clé d'une AUTRE org créerait un second compte.
+    # Override the cross-org anti-duplicate refusal (#172): reconnecting a login already
+    # held under ANOTHER org's key would create a second account.
     force: bool = False
-    # 'recruiter' | 'sales_navigator' — produit LinkedIn à ACTIVER à la connexion,
-    # sans quoi ces APIs répondent 403 (classic seul).
+    # 'recruiter' | 'sales_navigator' — LinkedIn product to ACTIVATE at connection,
+    # without which these APIs answer 403 (classic only).
     premium: Optional[str] = None
-    # Front d'origine : sans lui, la fin du wizard repart chez oto-dashboard quel que
-    # soit le produit qui a demandé la connexion. Le dashboard ne l'envoie pas et
-    # retombe donc sur sa propre destination, inchangée.
+    # Originating front end: without it, the end of the wizard goes back to oto-dashboard whatever
+    # the product that requested the connection. The dashboard does not send it and
+    # therefore falls back on its own destination, unchanged.
     app: Optional[str] = None
 
 
 class UnipileReconcileInput(BaseModel):
-    """On lie ce que CE compte vient de connecter. `account_id` (facultatif) = celui
-    qu'Unipile a ajouté à l'adresse de retour : il RESTREINT la liaison à ce compte,
-    sans lever aucune garde — un identifiant forgé ne peut désigner qu'un compte que
-    la sélection aurait de toute façon pu retenir."""
+    """We link what THIS account has just connected. `account_id` (optional) = the one
+    Unipile appended to the return address: it RESTRICTS the linking to that account,
+    without lifting any guard — a forged identifier can only designate an account that
+    the selection could have retained anyway."""
     account_id: Optional[str] = None
 
 
 class UnipileStatusInput(BaseModel):
-    """Aucun paramètre : le statut est celui du porteur du jeton, dans son org active."""
+    """No parameters: the status is that of the token holder, in their active org."""
 
 
 class UnipileDisconnectInput(BaseModel):
-    # Canal côté front ('linkedin', 'whatsapp'…) ; mis en MAJUSCULES pour le coffre.
+    # Front-end channel ('linkedin', 'whatsapp'…); UPPERCASED for the vault.
     channel: str = "linkedin"
 
 
-# --- Sorties ----------------------------------------------------------------
+# --- Outputs ----------------------------------------------------------------
 
 class UnipileChannel(BaseModel):
     connected: bool
@@ -92,22 +92,22 @@ class UnipileChannel(BaseModel):
 
 
 class UnipileElsewhere(BaseModel):
-    """Un compte à MOI, connecté sous une AUTRE org avec la même clé plateforme : il est
-    adoptable ici en un clic — le bouton « Connecter » l'adopte côté backend, sans wizard."""
+    """An account of MINE, connected under ANOTHER org with the same platform key: it is
+    adoptable here in one click — the "Connect" button adopts it on the backend side, with no wizard."""
     account_id: str
     account_name: Optional[str] = None
     org_id: Optional[int] = None
 
 
 class UnipileStatusView(BaseModel):
-    """⚠️ **`channels` ne liste que les comptes liés à l'org COURANTE.** Le binding est un
-    acte par org (modèle explicite) : un canal vu « déconnecté » ici peut être connecté
-    ailleurs — c'est précisément ce que dit `elsewhere`, et pourquoi une résurgence
-    cross-org n'est plus possible.
+    """⚠️ **`channels` only lists the accounts linked to the CURRENT org.** The binding is an
+    act per org (explicit model): a channel seen as "disconnected" here may be connected
+    elsewhere — that is precisely what `elsewhere` says, and why a cross-org
+    resurgence is no longer possible.
 
-    `subscribed` est le gate du bouton « connecter » : vrai si l'org apporte sa propre
-    clé (BYO) ou si l'option de messagerie hébergée lui a été accordée. `mode` en dit
-    l'ORIGINE (`user`|`group`|`org`|`platform`|`over_quota`|`forbidden`)."""
+    `subscribed` is the gate of the "connect" button: true if the org brings its own
+    key (BYO) or if the hosted messaging option has been granted to it. `mode` gives
+    its ORIGIN (`user`|`group`|`org`|`platform`|`over_quota`|`forbidden`)."""
     subscribed: bool
     mode: Optional[str] = None
     byo: bool
@@ -116,11 +116,11 @@ class UnipileStatusView(BaseModel):
 
 
 class UnipileConnectView(BaseModel):
-    """⚠️ **Deux issues, deux formes.** Le cas ordinaire rend `{url}` : la page de
-    consentement à ouvrir. Le cas ADOPTION rend `{adopted, channel, account_name}` et
-    **pas d'`url`** — le compte était déjà connecté sous cette identité dans une autre
-    org, il vient d'être rattaché ici, il n'y a aucun consentement à donner. Le front
-    doit rafraîchir plutôt qu'ouvrir une fenêtre."""
+    """⚠️ **Two outcomes, two shapes.** The ordinary case returns `{url}`: the consent
+    page to open. The ADOPTION case returns `{adopted, channel, account_name}` and
+    **no `url`** — the account was already connected under this identity in another
+    org, it has just been attached here, there is no consent to give. The front end
+    must refresh rather than open a window."""
     url: Optional[str] = None
     adopted: Optional[bool] = None
     channel: Optional[str] = None
@@ -128,15 +128,15 @@ class UnipileConnectView(BaseModel):
 
 
 class UnipileReconcileView(BaseModel):
-    """`bound: false` avec `accounts: []` = rien à lier, pas une panne (aucun pending).
+    """`bound: false` with `accounts: []` = nothing to link, not an outage (no pending).
 
-    Quand rien n'a été lié, `reason` porte le motif établi (`no_pending`,
+    When nothing was linked, `reason` carries the established cause (`no_pending`,
     `no_candidate`, `candidates_dead`, `ambiguous_candidates`, `no_credential`,
-    `provider_unreachable`) et `detail` la phrase qui l'explique.
-    `ambiguous_candidates` (oto#247) : sans `account_id`, plusieurs comptes
-    connectés dans la même fenêtre sur la clé partagée peuvent être le mien — rien
-    n'est lié tant que l'`account_id` de l'adresse de retour n'est pas repassé. Le front d'un tenant les affiche au retour du
-    parcours hébergé : c'est la seule surface où `no_candidate` cesse d'être muet."""
+    `provider_unreachable`) and `detail` the sentence that explains it.
+    `ambiguous_candidates` (oto#247): without `account_id`, several accounts
+    connected in the same window on the shared key may be mine — nothing
+    is linked until the return address's `account_id` is passed again. A tenant's front end displays them on return from the
+    hosted flow: it is the only surface where `no_candidate` stops being silent."""
     bound: bool
     accounts: list[Any]
     reason: Optional[str] = None
@@ -150,10 +150,10 @@ class UnipileDisconnected(BaseModel):
 # --- Handlers ---------------------------------------------------------------
 
 async def _connect(ctx: ResolvedCtx, inp: UnipileConnectInput) -> dict:
-    """Hosted-auth Unipile : génère l'URL où l'user connecte SON compte sous
-    l'abonnement partagé (clé de son org). Per-user (pas admin)."""
-    # Corps partagé REST + MCP (`unipile_connect_start`) : gates + nonce +
-    # hosted_auth_link vivent dans `unipile_connect`.
+    """Unipile hosted-auth: generates the URL where the user connects THEIR account under
+    the shared subscription (their org's key). Per-user (not admin)."""
+    # Body shared by REST + MCP (`unipile_connect_start`): gates + nonce +
+    # hosted_auth_link live in `unipile_connect`.
     from .. import unipile_connect
     try:
         out = await unipile_connect.hosted_auth_url(
@@ -162,25 +162,25 @@ async def _connect(ctx: ResolvedCtx, inp: UnipileConnectInput) -> dict:
             premium=(str(inp.premium).strip().lower() if inp.premium else None),
             app=(str(inp.app) if inp.app else None))
     except unipile_connect.ConnectRefused as e:
-        # ⚠️ Forme HISTORIQUE conservée : 502 (échec amont) et 409 (doublon cross-org,
-        # #172) portent un message actionnable, servi À LA PLACE du code machine dans
-        # `error` ; les autres exposent leur code. Le champ `error` est donc de la PROSE
-        # pour ces deux-là — c'est ce qui est servi depuis toujours.
+        # ⚠️ HISTORICAL shape kept: 502 (upstream failure) and 409 (cross-org duplicate,
+        # #172) carry an actionable message, served INSTEAD OF the machine code in
+        # `error`; the others expose their code. The `error` field is therefore PROSE
+        # for these two — which is what has always been served.
         if e.status in (409, 502):
             raise AuthzDenied(e.status, e.message)
-        # La phrase part avec le code (oto#108) : `unipile_option_required` seul ne dit
-        # ni qui lève l'option ni où — le message, lui, le dit.
+        # The sentence goes out with the code (oto#108): `unipile_option_required` alone says
+        # neither who grants the option nor where — the message does.
         raise AuthzDenied(e.status, e.code, e.message)
-    # Adoption (binding-par-org) : le compte connecté ailleurs a été lié ICI sans
-    # wizard → pas d'URL, le front rafraîchit ({adopted, account_name, channel}).
+    # Adoption (per-org binding): the account connected elsewhere was linked HERE without
+    # a wizard → no URL, the front end refreshes ({adopted, account_name, channel}).
     if out.get("adopted"):
         return out
     return {"url": out["url"]}
 
 
 async def _reconcile(ctx: ResolvedCtx, inp: UnipileReconcileInput) -> dict:
-    """Poll-and-bind explicite (webhook v2 non livré) : lie le compte que `sub` vient
-    de connecter. Le dashboard peut l'appeler au retour du hosted-auth. Idempotent."""
+    """Explicit poll-and-bind (v2 webhook not delivered): links the account that `sub` has just
+    connected. The dashboard may call it on return from hosted-auth. Idempotent."""
     from .. import unipile_connect
     hint = (inp.account_id or "").strip()
     if hint:
@@ -189,62 +189,62 @@ async def _reconcile(ctx: ResolvedCtx, inp: UnipileReconcileInput) -> dict:
 
 
 async def _status(ctx: ResolvedCtx, inp: UnipileStatusInput) -> dict:
-    """Statut de connexion per-user. **Self-heal** : le webhook hosted-auth v2 n'étant
-    pas livré, on réconcilie (poll-and-bind) les comptes fraîchement connectés au
-    chargement du statut — no-op sans pending (donc sans appel Unipile). Best-effort :
-    jamais fatal pour le statut."""
+    """Per-user connection status. **Self-heal**: since the v2 hosted-auth webhook is not
+    delivered, we reconcile (poll-and-bind) freshly connected accounts when the status
+    loads — a no-op without a pending (hence no Unipile call). Best-effort:
+    never fatal for the status."""
     from .. import unipile_connect
     try:
         await asyncio.to_thread(unipile_connect.reconcile_pending, ctx.sub)
-    except Exception:  # noqa: BLE001 — réconciliation opportuniste, jamais bloquante
-        logger.warning("unipile status: reconcile best-effort échoué", exc_info=True)
+    except Exception:  # noqa: BLE001 — opportunistic reconciliation, never blocking
+        logger.warning("unipile status: best-effort reconcile failed", exc_info=True)
     from ..tools import unipile
     return unipile.status_for(ctx.sub)
 
 
 def _disconnect(ctx: ResolvedCtx, inp: UnipileDisconnectInput) -> dict:
-    """SOFT-déconnecte le canal DANS CETTE ORG (ne supprime pas le compte chez Unipile ;
-    la ligne survit comme preuve de propriété → rebind déterministe à la reconnexion).
-    Par-org : le binding est un acte par org — et l'affichage ne montrant QUE les
-    bindings de l'org courante, ce qu'on voit est ce qu'on déconnecte (ex-#221)."""
+    """SOFT-disconnects the channel WITHIN THIS ORG (does not delete the account at Unipile;
+    the row survives as proof of ownership → deterministic rebind on reconnection).
+    Per-org: the binding is an act per org — and since the display shows ONLY the
+    current org's bindings, what you see is what you disconnect (ex-#221)."""
     provider = str(inp.channel or "linkedin").upper()
     db.clear_unipile_account(ctx.sub, access.current_org(ctx.sub), provider)
     return {"ok": True}
 
 
 _DOC_CONNECT = (
-    "Démarre la connexion d'un compte de messagerie hébergée sous l'abonnement de mon "
-    "org. Rend `{url}` : la page de consentement à ouvrir. ⚠️ Deuxième issue possible — "
-    "`{adopted: true, channel, account_name}` **sans url** : le compte était déjà "
-    "connecté sous mon identité dans une autre org et vient d'être rattaché ici, il n'y "
-    "a rien à consentir, il faut rafraîchir. `premium` active un produit LinkedIn "
-    "(`recruiter`, `sales_navigator`) sans lequel ces APIs répondent 403."
+    "Starts the connection of a hosted messaging account under my org's "
+    "subscription. Returns `{url}`: the consent page to open. ⚠️ Second possible outcome — "
+    "`{adopted: true, channel, account_name}` **with no url**: the account was already "
+    "connected under my identity in another org and has just been attached here, there is "
+    "nothing to consent to, you must refresh. `premium` activates a LinkedIn product "
+    "(`recruiter`, `sales_navigator`) without which these APIs answer 403."
 )
 _DOC_RECONCILE = (
-    "Lie explicitement le compte que je viens de connecter (poll-and-bind), à appeler au "
-    "retour du consentement avec l'`account_id` que porte l'adresse de retour : sans "
-    "lui, rien n'est lié quand plusieurs connexions de la même fenêtre peuvent être la "
-    "mienne (`reason: ambiguous_candidates`). Idempotent. `bound: false` avec "
-    "`accounts: []` veut dire « rien à lier », pas « panne »."
+    "Explicitly links the account I have just connected (poll-and-bind), to be called on "
+    "return from consent with the `account_id` carried by the return address: without "
+    "it, nothing is linked when several connections in the same window may be "
+    "mine (`reason: ambiguous_candidates`). Idempotent. `bound: false` with "
+    "`accounts: []` means \"nothing to link\", not \"outage\"."
 )
 _DOC_STATUS = (
-    "L'état de ma messagerie hébergée DANS L'ORG COURANTE : canaux connectés, origine de "
-    "la clé, et option débloquée ou non. ⚠️ `channels` ne montre que les comptes liés à "
-    "CETTE org — un canal vu déconnecté peut être connecté ailleurs, et `elsewhere` le "
-    "dit alors, avec ce qui est adoptable ici en un clic."
+    "The state of my hosted messaging WITHIN THE CURRENT ORG: connected channels, origin of "
+    "the key, and option unlocked or not. ⚠️ `channels` only shows accounts linked to "
+    "THIS org — a channel seen as disconnected may be connected elsewhere, and `elsewhere` "
+    "then says so, with what is adoptable here in one click."
 )
 _DOC_DISCONNECT = (
-    "Délie un canal DE CETTE ORG. ⚠️ Déconnexion SOUPLE : le compte survit chez le "
-    "fournisseur et la ligne survit comme preuve de propriété, ce qui rend la "
-    "reconnexion déterministe. Ce qui est affiché est ce qui est délié — jamais un "
-    "binding d'une autre org."
+    "Unlinks a channel FROM THIS ORG. ⚠️ SOFT disconnect: the account survives at the "
+    "provider and the row survives as proof of ownership, which makes "
+    "reconnection deterministic. What is displayed is what is unlinked — never a "
+    "binding of another org."
 )
 
 CAPABILITIES += [
     Capability(
         key="me.unipile.connect", handler=_connect, Input=UnipileConnectInput,
         authz=SUB_ONLY, Output=UnipileConnectView, description=_DOC_CONNECT,
-        mcp=None,   # la face agent est `me.connector_connect` — pas de second chemin
+        mcp=None,   # the agent face is `me.connector_connect` — no second path
         rest=RestBinding("POST", _ME + "/connect"),
     ),
     Capability(

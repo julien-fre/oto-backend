@@ -1,17 +1,17 @@
-"""Routes REST `/api/sirene/*` — consommé par oto-cli (HTTP client) et autres
-scripts qui veulent du batch enrichment sans gérer un parquet local.
+"""REST routes `/api/sirene/*` — consumed by oto-cli (HTTP client) and other
+scripts that want batch enrichment without managing a local parquet.
 
-Backend = service FOD dédié (ADR 0028) via `fod/client` — le scan DuckDB ne tourne
-plus in-process, il est déporté sur la box `fod-0`. Surface inchangée.
+Backend = dedicated FOD service (ADR 0028) via `fod/client` — the DuckDB scan no longer
+runs in-process, it is offloaded to the `fod-0` box. Surface unchanged.
 
-- `POST /api/sirene/headquarters` {sirens:[...]}  → sièges en batch (1 scan)
-- `GET /api/sirene/siege?siren=`                 → siège (1 dict ou null)
-- `GET /api/sirene/etablissements?siren=`        → tous établissements (list)
-- `GET /api/sirene/siret?siret=`                 → 1 établissement
-- `GET /api/sirene/search?naf=&code_commune=...` → paginé
-- `GET /api/sirene/info`                         → métadonnées parquet (size, mtime, count)
+- `POST /api/sirene/headquarters` {sirens:[...]}  → headquarters in batch (1 scan)
+- `GET /api/sirene/siege?siren=`                 → headquarters (1 dict or null)
+- `GET /api/sirene/etablissements?siren=`        → all establishments (list)
+- `GET /api/sirene/siret?siret=`                 → 1 establishment
+- `GET /api/sirene/search?naf=&code_commune=...` → paginated
+- `GET /api/sirene/info`                         → parquet metadata (size, mtime, count)
 
-Auth : Bearer Logto JWT ou API token `oto_*` (même `_authenticate` que le reste).
+Auth: Bearer Logto JWT or `oto_*` API token (same `_authenticate` as the rest).
 """
 from __future__ import annotations
 
@@ -24,31 +24,31 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from oto_mcp.fod import client as sirene_duckdb  # ADR 0028 : scan déporté sur FOD
+from oto_mcp.fod import client as sirene_duckdb  # ADR 0028: scan offloaded to FOD
 
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
-# oto-backend#867 lot 2 — ces six routes sont des routes Starlette `async def` qui
-# appelaient le client FOD (httpx SYNC, `fod/http.py`) nûment : un scan FOD lent tenait
-# la boucle jusqu'à son read timeout de 100s (partagé par TOUS les clients FOD, non
-# modifié ici — un scan SIRENE légitime peut en avoir besoin). `_fod` sort l'appel de
-# la boucle (`run_in_threadpool`, même primitive qu'`api/zoho.py:85`) et le borne à un
-# délai REST défendable, plus court que ce timeout partagé :
-# - `_FICHE_S` (fiche unique — siege/siret/etablissements/info) : ne scanne jamais plus
-#   d'un SIREN, doit répondre en une fraction de seconde en fonctionnement normal.
-# - `_SCAN_S` (search, et surtout `headquarters` — jusqu'à 10 000 SIREN en UN scan) :
-#   un vrai lot volumineux peut légitimement approcher les dizaines de secondes.
+# oto-backend#867 batch 2 — these six routes are Starlette `async def` routes that
+# called the FOD client (SYNC httpx, `fod/http.py`) bare: a slow FOD scan held
+# the loop until its 100s read timeout (shared by ALL FOD clients, not
+# changed here — a legitimate SIRENE scan may need it). `_fod` takes the call off
+# the loop (`run_in_threadpool`, same primitive as `api/zoho.py:85`) and bounds it to a
+# defensible REST delay, shorter than this shared timeout:
+# - `_FICHE_S` (single record — siege/siret/etablissements/info): never scans more
+#   than one SIREN, must answer in a fraction of a second in normal operation.
+# - `_SCAN_S` (search, and above all `headquarters` — up to 10,000 SIRENs in ONE scan):
+#   a genuinely large batch may legitimately approach tens of seconds.
 _FOD_TIMEOUT_FICHE_S = 20
 _FOD_TIMEOUT_SCAN_S = 60
 
 
 async def _fod(fn, *args, timeout: float, **kwargs):
-    """Un appel FOD (fonction sync de `fod/client`), hors boucle et borné.
+    """A FOD call (sync function of `fod/client`), off the loop and bounded.
 
-    Lève `asyncio.TimeoutError` au-delà de `timeout` — le thread continue en
-    arrière-plan (impossible d'interrompre un appel HTTP en cours), mais
-    l'APPELANT REST reçoit un 504 nommé au lieu d'un gel de tout le processus."""
+    Raises `asyncio.TimeoutError` beyond `timeout` — the thread keeps running in the
+    background (an in-flight HTTP call cannot be interrupted), but
+    the REST CALLER gets a named 504 instead of a freeze of the whole process."""
     return await asyncio.wait_for(run_in_threadpool(fn, *args, **kwargs), timeout=timeout)
 
 
@@ -156,9 +156,9 @@ def make_routes(
         })
 
     async def headquarters(request: Request) -> JSONResponse:
-        # Batch enrichment : une LISTE de SIREN → siège de chacun en UN scan
-        # (vs N appels /siege). Indispensable sur parquet distant (httpfs) où
-        # chaque appel coûte une requête réseau. Body JSON {"sirens": [...]}.
+        # Batch enrichment: a LIST of SIRENs → headquarters of each in ONE scan
+        # (vs N /siege calls). Essential on a remote parquet (httpfs) where
+        # each call costs a network request. JSON body {"sirens": [...]}.
         sub, err = await authenticate(request, verifier)
         if err:
             return err
@@ -182,8 +182,8 @@ def make_routes(
         return json_response(request, {"headquarters": addresses, "count": len(addresses)})
 
     async def info(request: Request) -> JSONResponse:
-        # Public-ish — utile pour healthcheck depuis n'importe quel client.
-        # Auth quand même pour éviter de divulguer la taille.
+        # Public-ish — useful for a healthcheck from any client.
+        # Auth anyway to avoid disclosing the size.
         sub, err = await authenticate(request, verifier)
         if err:
             return err

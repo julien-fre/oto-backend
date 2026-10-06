@@ -1,15 +1,15 @@
-"""Routes REST OAuth Salesforce — live "Connect" flow replacing the manual
+"""Salesforce OAuth REST routes — live "Connect" flow replacing the manual
 Postman-style refresh-token acquisition (see salesforce_oauth.py's module
 docstring for the per-customer-Connected-App architecture this works around).
 
 Structure (shared with the OAuth callback modules that preceded it):
 - `GET /api/salesforce/oauth/callback` (no auth, Salesforce redirects) → exchange + persist
 
-Le `/start` n'est PAS ici : c'est une capacité (`capabilities/salesforce_connect.py`,
-ADR 0042 §Convergence des surfaces) qui en dérive les faces MCP et REST depuis un seul
-descripteur. Seul le callback reste une route écrite à la main — un fournisseur y
-redirige le NAVIGATEUR, sans auth et avec un 302, ce qu'un contrat de capacité ne peut
-pas exprimer.
+The `/start` is NOT here: it is a capability (`capabilities/salesforce_connect.py`,
+ADR 0042 §Surface convergence) from which the MCP and REST faces are derived out of a single
+descriptor. Only the callback remains a hand-written route — a provider
+redirects the BROWSER there, with no auth and with a 302, which a capability contract cannot
+express.
 
 There is no `/status`/`DELETE` here yet — the
 existing generic `/api/settings/api-keys/salesforce` GET/DELETE already covers
@@ -50,47 +50,47 @@ def make_routes(
 ) -> list[Route]:
 
     def _retour(etat: str, return_app: str = "", org_id: int | None = None) -> str:
-        """Où renvoyer le navigateur après le consentement : sur la fiche du
-        connecteur, dépliée. `connector=` est le deep-link lu par le dashboard —
-        sans lui on retombe sur la liste, et il faut retrouver la ligne à la main.
+        """Where to send the browser back after consent: to the connector's card,
+        expanded. `connector=` is the deep link read by the dashboard —
+        without it we fall back to the list, and the row has to be found by hand.
 
-        `return_app`/`org_id` : le FRONT qui a demandé la connexion (`""` =
-        historique, dégrade vers `OTO_APP_URL`/oto-dashboard) — `oauth_flow.return_url`
-        porte la résolution base+chemin, cf. son docstring. Absents dans l'UNE
-        branche où le state n'a même pas pu être lu (voir `callback` ci-dessous) :
-        cas dégradé accepté, on n'a alors aucun moyen de savoir qui rappeler.
+        `return_app`/`org_id`: the FRONT that requested the connection (`""` =
+        historical, degrades to `OTO_APP_URL`/oto-dashboard) — `oauth_flow.return_url`
+        carries the base+path resolution, cf. its docstring. Absent in the ONE
+        branch where the state could not even be read (see `callback` below):
+        accepted degraded case, we then have no way of knowing who to call back.
 
-        `connect=` dit CE QUI S'EST PASSÉ. Le paramètre s'appelait `salesforce=` et
-        **personne ne le lisait** : l'utilisateur revenait devant un écran muet. Vécu le
-        04/08 chez un client — le consentement avait RÉUSSI (jeton posé à la
-        milliseconde du callback, zéro erreur), et faute du moindre signe ils ont
-        désinstallé puis réinstallé le connecteur en boucle pendant cinq heures.
-        Nom générique : une clé nommée d'après un connecteur obligerait chaque surface
-        à en connaître le nom, exactement ce qu'on retire partout ailleurs.
+        `connect=` says WHAT HAPPENED. The parameter used to be called `salesforce=` and
+        **nobody read it**: the user came back to a silent screen. Lived on
+        04/08 at a customer — the consent had SUCCEEDED (token set at the
+        millisecond of the callback, zero errors), and for lack of the slightest sign they
+        uninstalled then reinstalled the connector in a loop for five hours.
+        Generic name: a key named after a connector would force every surface
+        to know its name, exactly what we are removing everywhere else.
 
-        Salesforce EST la forme cible (oto-backend#670) : `connector_return_url`
-        (le fabricant partagé) ne fait ici que ce que cette fonction composait déjà
-        à la main — aucun changement de comportement, salesforce n'a rien à doubler."""
+        Salesforce IS the target shape (oto-backend#670): `connector_return_url`
+        (the shared maker) only does here what this function already composed
+        by hand — no behaviour change, salesforce has nothing to double."""
         from ..auth import flow as oauth_flow
         return oauth_flow.connector_return_url(
             return_app, "salesforce", etat, org=org_id)
 
     async def callback(request: Request) -> Response:
-        # Salesforce redirige ici (pas d'auth Logto) — l'identité + le scope
-        # viennent du state signé (voir salesforce_oauth.make_state).
+        # Salesforce redirects here (no Logto auth) — the identity + the scope
+        # come from the signed state (see salesforce_oauth.make_state).
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         parsed = salesforce_oauth.verify_state(state) if state else None
         if not code or not parsed:
-            # State absent/expiré/altéré : on n'a NI org_id NI return_app (ils vivent
-            # DANS ce state qu'on vient d'échouer à lire) — dégradation acceptée vers
-            # le défaut oto-dashboard, seul cas où ce module ne peut pas faire mieux.
+            # State missing/expired/tampered: we have NEITHER org_id NOR return_app (they live
+            # IN this state that we just failed to read) — accepted degradation to
+            # the oto-dashboard default, the only case where this module cannot do better.
             return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, scope, verifier_pkce, group_id, return_app = parsed
-        # RE-GARDE du droit d'écrire au scope demandé. `build_auth_url` l'a vérifié
-        # au /start, mais le state vit 10 min : entre le clic et le retour, l'auteur
-        # a pu perdre son rôle. Parti pris maison (ADR 0038, ce qui a fermé #108) :
-        # une autorisation se re-vérifie à la RÉSOLUTION, pas seulement à la pose.
+        # RE-GUARD of the right to write at the requested scope. `build_auth_url` checked it
+        # at /start, but the state lives 10 min: between the click and the return, the author
+        # may have lost their role. In-house stance (ADR 0038, what closed #108):
+        # an authorization is re-checked at RESOLUTION, not only at set time.
         from .. import roles
 
         def _droit_d_ecrire() -> bool:
@@ -100,15 +100,15 @@ def make_routes(
                 return roles.can_admin_group(sub, group_id)
             return True
 
-        # Deux lectures de rôle en base : hors de la boucle (route publique, sans jeton).
+        # Two role reads in the database: off the loop (public route, no token).
         if not await run_in_threadpool(_droit_d_ecrire):
-            logger.warning("salesforce callback refusé : %s n'est plus admin du scope "
+            logger.warning("salesforce callback refused: %s is no longer admin of scope "
                            "%s (org=%s group=%s)", sub, scope, org_id, group_id)
             return RedirectResponse(_retour("forbidden", return_app, org_id), status_code=302)
         def _lire_et_echanger() -> dict:
             fields = salesforce_oauth.read_saved_fields(sub, org_id, scope, group_id)
             if not fields:
-                raise RuntimeError("Credential introuvable au retour de Salesforce.")
+                raise RuntimeError("Credential not found on return from Salesforce.")
             return salesforce_oauth.exchange_code(
                 code,
                 client_id=fields["client_id"],
@@ -118,30 +118,30 @@ def make_routes(
             )
 
         try:
-            # DB + HTTP synchrones hors de la boucle : ce handler est
-            # `async def`, et l'échange de code parle à un serveur
-            # distant (15 à 30 s d'attente). Appelé nûment il fige tout
-            # le processus le temps que l'amont réponde
-            # (oto-backend#867). Même forme que le callback Zoho, qui
-            # était déjà protégé — la discipline existait, elle n'avait
-            # simplement pas été appliquée ici.
+            # Synchronous DB + HTTP off the loop: this handler is
+            # `async def`, and the code exchange talks to a remote
+            # server (15 to 30 s of waiting). Called bare it freezes the whole
+            # process while upstream answers
+            # (oto-backend#867). Same shape as the Zoho callback, which
+            # was already protected — the discipline existed, it simply
+            # had not been applied here.
             tokens = await run_in_threadpool(_lire_et_echanger)
             result = await run_in_threadpool(
                 salesforce_oauth.persist_token, sub, org_id, scope, tokens, group_id)
         except Exception:
-            # Le client ne voit qu'un `?salesforce=error` : sans trace ici, un échec de
-            # connexion est INDIAGNOSTICABLE (Sentry ne voit rien, l'exception est
-            # avalée). On journalise le traceback, jamais le `code` ni les tokens.
-            logger.exception("salesforce oauth callback en échec (sub=%s scope=%s org=%s)",
+            # The client only sees a `?salesforce=error`: without a trace here, a connection
+            # failure is UNDIAGNOSABLE (Sentry sees nothing, the exception is
+            # swallowed). We log the traceback, never the `code` nor the tokens.
+            logger.exception("salesforce oauth callback failed (sub=%s scope=%s org=%s)",
                              sub, scope, org_id)
             return RedirectResponse(_retour("error", return_app, org_id), status_code=302)
-        # On revient sur LA FICHE du connecteur, pas sur l'accueil. Le retour
-        # atterrissait sur `/`, donc sur la vue d'ensemble — un écran où Salesforce
-        # n'apparaît nulle part : l'utilisateur venait d'autoriser et se retrouvait
-        # devant rien, sans moyen de constater le résultat de son geste.
-        # `connected_unverified` a disparu avec la sonde post-écriture : cet état
-        # n'existe plus, et le mot « unverified » inquiétait pour une connexion saine.
-        del result  # la pose EST le résultat ; plus de verdict à transporter
+        # We come back to THE connector's card, not to the home page. The return
+        # used to land on `/`, hence on the overview — a screen where Salesforce
+        # appears nowhere: the user had just authorized and found themselves
+        # facing nothing, with no way to see the result of their action.
+        # `connected_unverified` disappeared with the post-write probe: this state
+        # no longer exists, and the word "unverified" worried people for a healthy connection.
+        del result  # setting IS the result; no more verdict to carry
         return RedirectResponse(_retour("connected", return_app, org_id), status_code=302)
 
     return [Route("/api/salesforce/oauth/callback", callback, methods=["GET"])]
