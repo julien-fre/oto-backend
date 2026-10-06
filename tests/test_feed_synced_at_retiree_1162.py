@@ -90,21 +90,21 @@ def test_une_base_qui_a_la_colonne_la_perd_et_le_demarrage_ne_la_repose_pas(
     assert _a_la_colonne(pg_module_dsn), "le point de départ est celui d'une base d'avant"
     cfg = _alembic()
     command.stamp(cfg, AVANT)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert not _a_la_colonne(pg_module_dsn), "la révision n'a rien retiré"
     assert _version(pg_module_dsn) == REVISION
     init_db()
     assert not _a_la_colonne(pg_module_dsn), "le démarrage a reposé la colonne"
     # Rejouée sur la base nettoyée : rien à faire, rien ne lève.
     command.stamp(cfg, AVANT)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     assert not _a_la_colonne(pg_module_dsn)
 
 
 def test_le_retour_arriere_leve_et_ne_touche_a_rien(live, pg_module_dsn):
     from alembic import command
     cfg = _alembic()
-    command.stamp(cfg, "head")
+    command.stamp(cfg, REVISION)
     with pytest.raises(RuntimeError, match="irréversible"):
         command.downgrade(cfg, AVANT)
     assert _version(pg_module_dsn) == REVISION
