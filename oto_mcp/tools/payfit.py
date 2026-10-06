@@ -72,7 +72,8 @@ from fastmcp import FastMCP
 
 from . import payfit_socle as S
 from .payfit_garde import (_client, limit_or_default, need, not_wired,
-                           refuse_ignored, refuse_unknown_op, register_probe, run)
+                           redaction_notice, refuse_ignored, refuse_unknown_op,
+                           register_probe, run)
 
 
 def register(mcp: FastMCP) -> None:
@@ -156,14 +157,14 @@ def register(mcp: FastMCP) -> None:
             c = _client()
             return S.page(run(lambda: c.list_collaborators(
                 limit=limit_or_default(limit), cursor=cursor, email=email)),
-                "collaborators", "id", fields=fields, redaction=S.REDACTION)
+                "collaborators", "id", fields=fields, redaction=redaction_notice())
         if op == "get":
             need(op, collaborator_id=collaborator_id)
             refuse_ignored(op, email=email, limit=limit, cursor=cursor, fields=fields,
                            **creation)
             c = _client()
             return S.one(run(lambda: c.get_collaborator(collaborator_id)),
-                         "collaborator", redaction=S.REDACTION)
+                         "collaborator", redaction=redaction_notice())
         if op == "create":
             # Ni le NIR ni l'adresse ne sont repris : ils finiraient au journal.
             autres = sorted(k for k, v in creation.items()
@@ -227,7 +228,7 @@ def register(mcp: FastMCP) -> None:
             return S.page(run(lambda: c.list_contracts(
                 limit=limit_or_default(limit), cursor=cursor,
                 include_in_progress=include_in_progress, fr=bool(fr))),
-                "contracts", "contractId", fields=fields, redaction=S.REDACTION)
+                "contracts", "contractId", fields=fields, redaction=redaction_notice())
         if op == "get":
             need(op, contract_id=contract_id)
             refuse_ignored(op, collaborator_id=collaborator_id, job_title=job_title,
@@ -235,7 +236,7 @@ def register(mcp: FastMCP) -> None:
                            limit=limit, cursor=cursor, fields=fields)
             c = _client()
             return S.one(run(lambda: c.get_contract(contract_id, fr=bool(fr))),
-                         "contract", redaction=S.REDACTION)
+                         "contract", redaction=redaction_notice())
         if op == "create":
             raise not_wired(op, "créé un contrat de travail (mise en paie)",
                             collaborator_id=collaborator_id, job_title=job_title,
@@ -304,7 +305,7 @@ def register(mcp: FastMCP) -> None:
                 limit=limit_or_default(limit), cursor=cursor, contract_id=contract_id,
                 status=status, begin_date=begin_date, end_date=end_date)),
                 "absences", "id", fields=fields, shape=S.absence,
-                redaction=S.REDACTION)
+                redaction=redaction_notice())
         if op == "create":
             # Le motif (`absence_type`) n'est pas repris : donnée de santé, masquée
             # par défaut, qui finirait au journal.

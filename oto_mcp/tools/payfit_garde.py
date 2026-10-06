@@ -105,6 +105,53 @@ def not_wired(op: str, action: str, **what: Any) -> McpError:
 
 
 # ---------------------------------------------------------------------------
+# La mention de rédaction : ce que la politique EFFECTIVE masque, pas ce qu'elle
+# masquerait par défaut
+# ---------------------------------------------------------------------------
+
+_SONDE = "sonde-de-redaction"
+
+
+def _masque(ff, champ: str) -> bool:
+    """Vrai si la politique `ff` réécrit ou retire `champ` — éprouvé par son
+    `apply`, le chemin même de la sortie, et non en relisant ses règles."""
+    return ff.apply({champ: _SONDE}).get(champ) != _SONDE
+
+
+def redaction_notice() -> str:
+    """La mention servie avec chaque réponse qui peut porter un champ sensible.
+
+    Elle dit ce que la politique EFFECTIVE de l'appelant masque — la même cascade
+    que la sortie (`access.resolve_field_filter` : politique de l'org active, sinon
+    le défaut serveur). Une mention constante annonçait « NIR, IBAN/BIC masqués »
+    même quand l'org avait levé la règle (signal oto #1269) : l'agent croyait servir
+    une donnée protégée, et le disait à l'utilisateur.
+
+    Les champs sensibles sont ceux du défaut serveur (`SERVER_DEFAULTS["payfit"]`),
+    nommés comme ils sortent : c'est sous ces noms que l'agent les lit. Une politique
+    illisible LÈVE : la sortie est de toute façon retenue (`redaction.redact_payload`)."""
+    from .. import field_filter_defaults
+
+    ff = access.resolve_field_filter(_NAME)
+    sensibles = [c for regle in field_filter_defaults.SERVER_DEFAULTS[_NAME]["rules"]
+                 for c in regle["fields"]]
+    masques = [c for c in sensibles if _masque(ff, c)]
+    clairs = [c for c in sensibles if c not in masques]
+    lever = ("un org_admin règle la politique de ce connecteur (dashboard, ou "
+             "`oto_org_settings domain=field_filters service=payfit`)")
+    if not clairs:
+        return (f"Rédaction effective pour PayFit (défaut serveur, ou politique de "
+                f"l'org) : {', '.join(masques)} sont masqués. Ce n'est pas une absence "
+                f"de donnée — {lever}. `absence_category` reste lisible dans tous les "
+                f"cas.")
+    reste = (f"Restent masqués : {', '.join(masques)}." if masques
+             else "Aucun champ sensible n'est masqué.")
+    return (f"Rédaction effective pour PayFit : la politique de l'org laisse EN CLAIR "
+            f"{', '.join(clairs)} — servis tels que PayFit les rend. {reste} Pour "
+            f"changer cela, {lever}.")
+
+
+# ---------------------------------------------------------------------------
 # Documents : bulletin PDF, export comptable, fichier de virement, document
 # ---------------------------------------------------------------------------
 

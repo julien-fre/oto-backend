@@ -43,14 +43,6 @@ from typing import Any, Callable, Optional
 
 from .. import output_projection
 
-# Ce que le DÉFAUT SERVEUR masque sur ce connecteur, dit à l'agent pour qu'il ne
-# prenne pas un `••••` pour une donnée absente — et dit à l'org comment le lever.
-REDACTION = (
-    "défaut serveur de rédaction : NIR (et NTT), IBAN/BIC et `absence_type` sont "
-    "masqués. Ce n'est pas une absence de donnée — un org_admin lève la règle pour "
-    "ce connecteur (dashboard, ou `oto_org_settings domain=field_filters "
-    "service=payfit`). `absence_category` reste lisible dans tous les cas.")
-
 # Les congés ORDINAIRES : ceux qui ne disent rien de la santé ni de la vie familiale.
 # Tout AUTRE type — maladie, accident du travail, maternité, enfant malade, deuil,
 # mariage, ou un type ajouté demain — tombe en `restricted`. La liste est fermée
