@@ -7,29 +7,49 @@ Five tools, one per business object:
 - `mailpool_domains` — list, read, DNS records, deliverability audit,
   availability and suggestions for a new name, saved owners;
 - `mailpool_domain_fix` — the only tool that edits DNS: SPF hard fail, DMARC
-  report address, tracking CNAME, single records, redirect, DMARC policy.
-  `dry_run=True` by default, with a real diff;
+  report address, tracking CNAME, single records. `dry_run=True` by default,
+  with a real diff;
 - `mailpool_mailboxes` — list, read;
 - `mailpool_spam_checks` — run (free), read, list, delete;
 - `mailpool_account` — subscription slots, warmup.
 
 ⚠️ **No credential ever reaches the caller.** Three layers: the client strips
-every password/secret key, `_run` scrubs every result again, and mailboxes are
-served through a field ALLOWLIST (`_slim_mailbox`), spam checks without their
-embedded mailbox — a mailbox field Mailpool adds tomorrow is not served until it
-is listed here.
+every credential key, `_run` scrubs every result again, and mailboxes are
+served through the client's ALLOWLIST (`project_mailbox`, its domain reduced to
+id/name/type), spam checks without their embedded mailbox, warmup inboxes and
+registrant owners through allowlists of their own (an owner's name, address and
+phone are not served) — a field Mailpool adds tomorrow is not served until it
+is listed.
 
 ⚠️ **Nothing billed is served**: registering, transferring or renewing a domain,
 creating a mailbox, changing slots, enrolling in warmup, inbox placement.
 
 DNS behaviour (observed live on 2026-10-05, encoded in `mailpool_dns`): a DNS
-write REPLACES the whole record set — the fix tool always reads, sends the full
-set, reads back and restores the previous set if anything went missing; the
-`_dmarc` record only goes live through the DMARC-email call, which also writes
-`ruf`. Changes reach public DNS within ~5 minutes.
+write REPLACES the whole record set — the fix tool reads, plans, and hands the
+full set to `update_domain_dns(…, expected=<the read>)`, which refuses it if the
+set changed since, refuses to strip a host of its MX/SPF/DKIM, reads back and
+restores the previous set if anything went missing. What stays HERE is the
+business guard: no plan may add an audit error (`mailpool_dns`). The `_dmarc`
+record only goes live through the DMARC-email call, which also writes `ruf`.
+Changes reach public DNS within ~5 minutes.
 
-Client calls are written out (`_client().get_domain_dns(…)`) so the version-skew
-probe (`test_tools_client_methods_exist`) can check them.
+⚠️ **After a write, an error never says "nothing changed" unless it is known.**
+Three named outcomes, all `INTERNAL_ERROR` (not "invalid argument": re-running
+the same call is exactly what must not happen blindly):
+
+- `dns_outcome_unknown` — the DNS write itself got no answer (timeout, 5xx):
+  re-read with `op="dns"` before anything else;
+- `dns_not_kept` — Mailpool lost records on the write; the client restored
+  the previous set and read it back, or the error says it could not;
+- `partially_applied` — the DNS write landed, a later step did not; the error
+  lists what was applied.
+
+The DMARC policy and redirect-URL settings are not served: not verified live
+yet (a later report-address change may republish the stored `p=`).
+
+One client per tool call (`c = _client()`): the key is resolved once. Client
+calls are written out (`c.get_domain_dns(…)`) so the version-skew probe
+(`test_tools_client_methods_exist`) can check them.
 """
 from __future__ import annotations
 
@@ -37,7 +57,8 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.types import ErrorData, INVALID_PARAMS
+from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
+from pydantic import BaseModel, ConfigDict, Field
 
 from .. import access
 from ..connectors import verify as connector_verify
@@ -45,8 +66,25 @@ from ..mcp_errors import McpError
 from . import mailpool_dns
 
 
-def _bad(msg: str) -> McpError:
-    return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+def _bad(msg: str, reason: str = "invalid_argument") -> McpError:
+    return McpError(ErrorData(code=INVALID_PARAMS, message=msg, data={"reason": reason}))
+
+
+def _after_write(reason: str, msg: str, **data) -> McpError:
+    """A write may have landed: `INTERNAL_ERROR`, so it is not read as "fix the
+    argument and call again"."""
+    return McpError(ErrorData(code=INTERNAL_ERROR, message=msg,
+                              data={"reason": reason, **data}))
+
+
+class DnsRecord(BaseModel):
+    """One record, Mailpool's shape."""
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["A", "AAAA", "CNAME", "MX", "TXT"]
+    key: Optional[str] = Field(None, description="host label; null = apex")
+    value: str = Field(min_length=1)
+    priority: Optional[int] = Field(None, description="MX only")
 
 
 def _refuse_ignored(op: str, **provided) -> None:
@@ -56,14 +94,12 @@ def _refuse_ignored(op: str, **provided) -> None:
             raise _bad(f"op={op!r} does not use `{name}`.")
 
 
-#: Mailbox fields served. Anything else (passwords, admin account, avatar…) is not.
-MAILBOX_FIELDS = ("id", "email", "firstName", "lastName", "type", "status",
-                  "forwardTo", "isAdmin", "imapHost", "imapPort", "imapTLS",
-                  "smtpHost", "smtpPort", "smtpTLS", "error")
 DOMAIN_FIELDS = ("id", "domain", "type", "status", "expireAt", "redirectUrl")
 
-#: Spam checks are complete within seconds; `run` waits at most this long
-#: (the REST tool-invoke path cuts at 45 s).
+#: Spam checks complete within seconds. `run` sends no new read past this
+#: much time after the creation started (the REST tool-invoke path cuts at
+#: 45 s). A read already sent is bounded by the client's own per-call budget
+#: (`CALL_BUDGET_S`), not by what remains here: the client takes no timeout.
 SPAM_CHECK_WAIT_S = 20
 SPAM_CHECK_POLL_S = 4
 
@@ -82,14 +118,12 @@ def _slim_domain(d: Any) -> Any:
 
 
 def _slim_mailbox(m: Any) -> Any:
-    if not isinstance(m, dict):
-        return m
-    out = {k: m.get(k) for k in MAILBOX_FIELDS if m.get(k) not in (None, "")}
-    admin = m.get("admin")
-    if isinstance(admin, dict) and admin.get("email"):
-        out["adminEmail"] = admin["email"]
-    if isinstance(m.get("domain"), dict):
-        out["domain"] = {k: m["domain"].get(k) for k in ("id", "domain", "type")}
+    """The client's allowlist, plus the embedded domain cut to id/name/type:
+    its registrant (name, address, phone) has nothing to do here."""
+    from oto.tools.mailpool.client import project_mailbox
+    out = project_mailbox(m)
+    if isinstance(out, dict) and isinstance(out.get("domain"), dict):
+        out["domain"] = {k: out["domain"].get(k) for k in ("id", "domain", "type")}
     return out
 
 
@@ -110,14 +144,31 @@ def _slim_spam_check(check: Any, full: bool) -> Any:
 
 WARMUP_FIELDS = ("id", "mailboxId", "email", "fullName", "type", "status",
                  "createdAt")
+#: One enrolled inbox (`op="warmup_inbox"`) also serves its settings and counters.
+WARMUP_INBOX_FIELDS = WARMUP_FIELDS + ("dailyTarget", "replyRate", "duration", "counters")
+#: A saved registrant: the company only — name, email, address and phone are
+#: personal data the caller has no use for here.
+OWNER_FIELDS = ("id", "company", "country", "gtldVerified")
+
+
+def _slim_fields(obj: Any, fields) -> Any:
+    if not isinstance(obj, dict):
+        return obj
+    return {k: obj.get(k) for k in fields if obj.get(k) is not None}
 
 
 def _slim_warmup(w: Any) -> Any:
     """A warmup or available inbox, as an allowlist (spec `WarmupInbox` /
     `AvailableWarmupInbox`)."""
-    if not isinstance(w, dict):
-        return w
-    return {k: w.get(k) for k in WARMUP_FIELDS if w.get(k) is not None}
+    return _slim_fields(w, WARMUP_FIELDS)
+
+
+def _slim_owners(res: Any) -> Any:
+    if isinstance(res, list):
+        return [_slim_fields(o, OWNER_FIELDS) for o in res]
+    if isinstance(res, dict) and isinstance(res.get("data"), list):
+        return [_slim_fields(o, OWNER_FIELDS) for o in res["data"]]
+    return _slim_fields(res, OWNER_FIELDS)
 
 
 def _page(res: Any, slim) -> Any:
@@ -166,7 +217,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
 def register(mcp: FastMCP) -> None:
     import requests
     from oto.tools.common.errors import UpstreamHTTPError
-    from oto.tools.mailpool.client import MailpoolClient, strip_secrets
+    from oto.tools.mailpool.client import MailpoolClient, MailpoolDnsWriteError, strip_secrets
 
     connector_verify.register("mailpool", _verify)
 
@@ -183,10 +234,16 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise _bad(str(e))
         except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e))
+            raise _bad(_upstream_message(e), reason="upstream_refused")
         except (requests.Timeout, requests.ConnectionError):
-            raise _bad("Mailpool did not answer in time — retry later. Nothing "
-                       "is known to have changed.")
+            raise _bad("Mailpool did not answer in time — retry later.", reason="timeout")
+
+    def _cause(e: Exception) -> str:
+        if isinstance(e, UpstreamHTTPError):
+            return _upstream_message(e)
+        if isinstance(e, (requests.Timeout, requests.ConnectionError)):
+            return "Mailpool did not answer in time"
+        return str(e)
 
     def _need(value, name: str, op: str):
         if value is None or value == "":
@@ -212,9 +269,10 @@ def register(mcp: FastMCP) -> None:
         - `get` — one domain (`domain_id`).
         - `dns` — the DNS records Mailpool holds for a domain (`domain_id`), as
           `{type, key, value, priority}`; `key` is the host label, null = apex.
-        - `audit` — findings on SPF, DKIM, DMARC, MX and custom tracking domain,
-          worst first, for one domain (`domain_id`) or the first page of domains
-          (at most 20). Read from Mailpool's stored configuration, not a live DNS
+        - `audit` — findings on SPF, DKIM, DMARC, MX, CNAME conflicts and custom
+          tracking domain, worst first, for one domain (`domain_id`) or a page of
+          domains (at most 20 per call: `total` and `next_offset` say what is
+          left). Read from Mailpool's stored configuration, not a live DNS
           lookup. Fix what it finds with `mailpool_domain_fix`.
         - `availability` — can `domain` be registered, and at what price.
           Nothing is bought (registration is not served by this connector).
@@ -222,53 +280,59 @@ def register(mcp: FastMCP) -> None:
         - `google_workspace_check` / `microsoft_365_check` — is `domain` already
           used by a Google Workspace / Microsoft 365 account (enabled per
           Mailpool workspace, otherwise refused).
-        - `owners` — saved registrant contacts.
+        - `owners` — saved registrant contacts (company and country only).
 
         Args:
             op: what to do (see above).
             domain_id: Mailpool domain id (from `op="list"`).
             domain: domain name, for availability/suggestions/checks.
-            limit: page size, 1-100.
+            limit: page size, 1-100 (at most 20 for `audit`).
             offset: items to skip.
         """
         if op in ("list", "suggestions", "owners"):
             _refuse_ignored(op, domain_id=domain_id)
+        c = _client()
         if op == "list":
             _refuse_ignored(op, domain=domain)
-            return _page(_run(lambda: _client().list_domains(limit=limit, offset=offset)),
+            return _page(_run(lambda: c.list_domains(limit=limit, offset=offset)),
                          _slim_domain)
         if op == "get":
             _refuse_ignored(op, domain=domain)
-            return _slim_domain(_run(lambda: _client().get_domain(_need(domain_id, "domain_id", op))))
+            return _slim_domain(_run(lambda: c.get_domain(_need(domain_id, "domain_id", op))))
         if op == "dns":
             _refuse_ignored(op, domain=domain)
             return {"domain_id": domain_id,
-                    "records": _run(lambda: _client().get_domain_dns(_need(domain_id, "domain_id", op))),
+                    "records": _run(lambda: c.get_domain_dns(_need(domain_id, "domain_id", op))),
                     "source": "Mailpool's stored configuration, not a live DNS lookup"}
         if op == "audit":
             _refuse_ignored(op, domain=domain)
-            if domain_id is not None:
-                targets = [_run(lambda: _client().get_domain(domain_id))]
-            else:
-                page = _run(lambda: _client().list_domains(
-                    limit=min(limit, AUDIT_MAX_DOMAINS), offset=offset))
-                targets = page.get("data", []) if isinstance(page, dict) else []
-            audits = []
-            for d in targets:
-                records = _run(lambda: _client().get_domain_dns(d["id"]))
-                audits.append({"domain_id": d["id"], **mailpool_dns.audit(d["domain"], records)})
-            return audits[0] if domain_id is not None else {"domains": audits}
+            return _audit(c, domain_id, limit, offset)
         if op == "availability":
-            return _run(lambda: _client().get_domain_info(_need(domain, "domain", op)))
+            return _run(lambda: c.get_domain_info(_need(domain, "domain", op)))
         if op == "suggestions":
-            return _run(lambda: _client().get_domain_suggestions(
+            return _run(lambda: c.get_domain_suggestions(
                 _need(domain, "domain", op), limit=limit, offset=offset))
         if op == "google_workspace_check":
-            return _run(lambda: _client().check_google_workspace_availability(_need(domain, "domain", op)))
+            return _run(lambda: c.check_google_workspace_availability(_need(domain, "domain", op)))
         if op == "microsoft_365_check":
-            return _run(lambda: _client().check_microsoft_365_availability(_need(domain, "domain", op)))
+            return _run(lambda: c.check_microsoft_365_availability(_need(domain, "domain", op)))
         _refuse_ignored(op, domain=domain)
-        return _run(lambda: _client().list_domain_owners())
+        return _slim_owners(_run(lambda: c.list_domain_owners()))
+
+    def _audit(c: MailpoolClient, domain_id: Optional[int], limit: int, offset: int) -> Any:
+        def one(d: dict) -> dict:
+            records = _run(lambda: c.get_domain_dns(d["id"]))
+            return {"domain_id": d["id"], **mailpool_dns.audit(d["domain"], records)}
+
+        if domain_id is not None:
+            return one(_run(lambda: c.get_domain(domain_id)))
+        size = min(limit, AUDIT_MAX_DOMAINS)
+        page = _run(lambda: c.list_domains(limit=size, offset=offset))
+        targets = page.get("data", []) if isinstance(page, dict) else []
+        total = page.get("total") if isinstance(page, dict) else None
+        more = (offset + len(targets) < total) if isinstance(total, int) else len(targets) == size
+        return {"domains": [one(d) for d in targets], "count": len(targets), "total": total,
+                "next_offset": offset + len(targets) if more and targets else None}
 
     @mcp.tool()
     def mailpool_domain_fix(
@@ -277,13 +341,11 @@ def register(mcp: FastMCP) -> None:
         dmarc_report_email: Optional[str] = None,
         tracking_host: Optional[str] = None,
         tracking_target: Optional[str] = None,
-        set_records: Optional[List[Dict[str, Any]]] = None,
-        remove_records: Optional[List[Dict[str, Any]]] = None,
-        dmarc_policy: Optional[Literal["none", "quarantine", "reject"]] = None,
-        redirect_url: Optional[str] = None,
+        add_records: Optional[List[DnsRecord]] = None,
+        remove_records: Optional[List[DnsRecord]] = None,
         dry_run: bool = True,
     ) -> Any:
-        """Edit a Mailpool domain's DNS and DMARC settings — preview first, then apply.
+        """Edit a Mailpool domain's DNS records — preview first, then apply.
 
         `dry_run=True` (the default) reads the current records and returns the
         exact diff (`added`, `removed`) without writing anything. Re-call with
@@ -294,21 +356,25 @@ def register(mcp: FastMCP) -> None:
           `~all`. Only once every service sending as this domain is listed.
         - `dmarc_report_email` — where DMARC reports go. The record is also
           normalised: `fo`, `rf`, `ri` are dropped, policy and alignment kept.
-          Mailpool always publishes the address as `rua` AND `ruf`.
+          Mailpool always publishes the address as `rua` AND `ruf`. ⚠️ A domain
+          without `_dmarc` gets one with p=quarantine; sp=quarantine; pct=100.
         - `tracking_host` + `tracking_target` — a custom tracking domain, e.g.
           `track` → `custom.lemlist.com` (the target comes from the sending tool).
           Replaces any CNAME already on that host.
-        - `set_records` / `remove_records` — single records
-          `{type, key, value, priority?}` (`key` = host label, null = apex), e.g.
-          a verification TXT a sending tool asks for.
-        - `dmarc_policy` — none / quarantine / reject.
-        - `redirect_url` — where a web visit to the domain goes.
-        ⚠️ `dmarc_policy` and a NEW `redirect_url` are not live-verified yet:
-        re-run the audit after applying them.
+        - `add_records` — NEW records next to the existing ones, e.g. a
+          verification TXT a sending tool asks for. Never a second SPF: to
+          change SPF, use `spf_hard_fail` or remove the old record and add the
+          new one in the same call.
+        - `remove_records` — records to delete, matched exactly.
 
-        Safety: a DNS write replaces the WHOLE record set, so the full set is
+        Safety: a change that would add an audit error (second SPF or `_dmarc`,
+        MX, SPF or DKIM gone, CNAME next to other records) is refused, preview
+        included. A DNS write replaces the WHOLE record set, so the full set is
         always sent, read back, and the previous set restored if a record went
-        missing. Public DNS follows within ~5 minutes.
+        missing. Public DNS follows within ~5 minutes. After `dry_run=False`, an
+        error whose reason is `dns_outcome_unknown`, `dns_not_kept` or
+        `partially_applied` means records may have changed: re-read them with
+        `mailpool_domains(op="dns")` before calling again.
 
         Args:
             domain_id: Mailpool domain id.
@@ -316,59 +382,85 @@ def register(mcp: FastMCP) -> None:
             dmarc_report_email: DMARC report address.
             tracking_host: tracking subdomain label (e.g. `track`).
             tracking_target: its CNAME target, given by the sending tool.
-            set_records: records to add.
+            add_records: records to add next to the existing ones.
             remove_records: records to delete (exact match).
-            dmarc_policy: DMARC policy.
-            redirect_url: web redirect target.
             dry_run: preview only (default True).
         """
-        current = _run(lambda: _client().get_domain_dns(domain_id))
+        c = _client()
+        current = _run(lambda: c.get_domain_dns(domain_id))
         try:
             p = mailpool_dns.plan(
                 current, spf_hard_fail=spf_hard_fail, dmarc_report_email=dmarc_report_email,
                 tracking_host=tracking_host, tracking_target=tracking_target,
-                set_records=set_records, remove_records=remove_records)
-        except ValueError as e:
-            raise _bad(str(e))
-        settings = {}
-        if dmarc_policy is not None or redirect_url is not None:
-            dom = _run(lambda: _client().get_domain(domain_id))
-            dmarc_rec = [r for r in current if (r.get("key") or "") == "_dmarc"]
-            cur_policy = (mailpool_dns.parse_dmarc(dmarc_rec[0]["value"]).get("p")
-                          if dmarc_rec else None)
-            if dmarc_policy is not None and dmarc_policy != cur_policy:
-                settings["dmarc_policy"] = {"from": cur_policy, "to": dmarc_policy}
-            if redirect_url is not None and redirect_url.strip() != (dom.get("redirectUrl") or ""):
-                settings["redirect_url"] = {"from": dom.get("redirectUrl"), "to": redirect_url.strip()}
+                add_records=[r.model_dump() for r in add_records or []],
+                remove_records=[r.model_dump() for r in remove_records or []])
+        except mailpool_dns.PlanRefused as e:
+            raise _bad(str(e), reason=e.reason)
         preview = {"domain_id": domain_id, "added": p["added"], "removed": p["removed"],
-                   "settings": settings, "notes": p["notes"]}
-        if not p["changed"] and not settings:
+                   "notes": p["notes"]}
+        if not p["changed"]:
             return {**preview, "dry_run": dry_run, "changed": False,
                     "message": "Nothing to change: the domain already matches."}
         if dry_run:
             return {**preview, "dry_run": True, "changed": True}
 
-        done: List[str] = []
-        if p["changed"]:
-            _run(lambda: _client().update_domain_dns(domain_id, p["records"]))
-            check = mailpool_dns.missing_after(
-                p["records"], _run(lambda: _client().get_domain_dns(domain_id)))
-            if check["missing"]:
-                _run(lambda: _client().update_domain_dns(domain_id, current))
-                raise _bad(f"Mailpool did not keep the full record set (missing: "
-                           f"{check['missing']}); the previous records were restored.")
-            done.append("dns")
-            if p["publish_dmarc_email"]:
-                _run(lambda: _client().set_dmarc_email(domain_id, p["publish_dmarc_email"]))
-                done.append("dmarc_published")
-        if "dmarc_policy" in settings:
-            _run(lambda: _client().set_dmarc_policy(domain_id, dmarc_policy))
-            done.append("dmarc_policy")
-        if "redirect_url" in settings:
-            _run(lambda: _client().set_redirect_url(domain_id, redirect_url))
-            done.append("redirect_url")
-        return {**preview, "dry_run": False, "changed": True, "applied": done,
-                "message": "Applied. Public DNS follows within ~5 minutes."}
+        try:
+            after = c.update_domain_dns(domain_id, p["records"], expected=current)
+        except MailpoolDnsWriteError as e:
+            raise _not_kept(e)
+        except UpstreamHTTPError as e:
+            if e.status_code < 500:
+                raise _bad(_upstream_message(e), reason="upstream_refused")
+            raise _unknown(domain_id, e)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            raise _unknown(domain_id, e)
+        except ValueError as e:
+            raise _bad(str(e))
+        applied = ["dns"]
+        if p["publish_dmarc_email"]:
+            try:
+                c.set_dmarc_email(domain_id, p["publish_dmarc_email"])
+            except (UpstreamHTTPError, requests.Timeout, requests.ConnectionError, ValueError) as e:
+                raise _partial(domain_id, applied, ["dmarc_published"], e)
+            applied.append("dmarc_published")
+        out = {**preview, "dry_run": False, "changed": True, "applied": applied,
+               "message": "Applied. Public DNS follows within ~5 minutes."}
+        unexpected = mailpool_dns.missing_after(p["records"], after)["unexpected"]
+        if unexpected:
+            out["unexpected"] = unexpected
+            out["message"] += (" Mailpool also holds records this call did not send "
+                               "(`unexpected`): check them with op=\"dns\".")
+        return out
+
+    def _unknown(domain_id: int, e: Exception) -> McpError:
+        return _after_write(
+            "dns_outcome_unknown",
+            f"Outcome unknown: the DNS write got no usable answer ({_cause(e)}). The "
+            f"records of domain {domain_id} may or may not have changed — re-read them "
+            "with mailpool_domains(op=\"dns\") before calling again.",
+            applied=[])
+
+    def _partial(domain_id: int, applied: List[str], pending: List[str], e: Exception) -> McpError:
+        return _after_write(
+            "partially_applied",
+            f"Partially applied on domain {domain_id}: done {applied}, not done {pending} "
+            f"({_cause(e)}). Re-read with mailpool_domains(op=\"dns\") before calling again.",
+            applied=applied, not_done=pending)
+
+    def _not_kept(e: "MailpoolDnsWriteError") -> McpError:
+        """Mailpool lost records on the write; the client tried to put the
+        previous set back. Say which of the two states the domain is in."""
+        missing = [mailpool_dns.label(r) for r in e.missing]
+        if e.restored:
+            msg = (f"Mailpool did not keep the full record set (missing {missing}); the "
+                   "previous records were restored and read back. Nothing was changed.")
+        else:
+            why = f" ({_cause(e.restore_error)})" if e.restore_error else ""
+            msg = (f"Mailpool did not keep the full record set (missing {missing}) and "
+                   f"restoring the previous set failed{why}: the domain may be left without "
+                   "these records. Re-read with mailpool_domains(op=\"dns\") and fix it in "
+                   "Mailpool.")
+        return _after_write("dns_not_kept", msg, restored=e.restored, missing=missing)
 
     # --- mailboxes -------------------------------------------------------------
 
@@ -397,12 +489,13 @@ def register(mcp: FastMCP) -> None:
             limit: page size, 1-100.
             offset: items to skip.
         """
+        c = _client()
         if op == "get":
             _refuse_ignored(op, domain_id=domain_id)
-            return _slim_mailbox(_run(lambda: _client().get_mailbox(
+            return _slim_mailbox(_run(lambda: c.get_mailbox(
                 _need(mailbox_id, "mailbox_id", op))))
         _refuse_ignored(op, mailbox_id=mailbox_id)
-        return _page(_run(lambda: _client().list_mailboxes(
+        return _page(_run(lambda: c.list_mailboxes(
             limit=limit, offset=offset, domain_id=domain_id)), _slim_mailbox)
 
     # --- spam checks -----------------------------------------------------------
@@ -420,9 +513,9 @@ def register(mcp: FastMCP) -> None:
 
         Ops:
         - `run` — check `mailbox_id`. Free. With `wait=True` (default) waits up
-          to 20 s for the result (usually a few seconds); otherwise returns the
-          pending check to read later with `op="get"`. Some mailbox types are
-          refused by Mailpool (404).
+          to ~20 s for the result (usually a few seconds); a check still
+          `pending` after that is returned as is, to read later with
+          `op="get"`. Some mailbox types are refused by Mailpool (404).
         - `get` — one check (`spam_check_id`) with its detailed results.
         - `list` — past checks with score and per-check status.
         - `delete` — remove one check (`spam_check_id`) from the history.
@@ -439,24 +532,51 @@ def register(mcp: FastMCP) -> None:
             limit: page size, 1-100 (op="list").
             offset: items to skip (op="list").
         """
+        c = _client()
         if op == "list":
             _refuse_ignored(op, mailbox_id=mailbox_id, spam_check_id=spam_check_id)
-            return _page(_run(lambda: _client().list_spam_checks(limit=limit, offset=offset)),
+            return _page(_run(lambda: c.list_spam_checks(limit=limit, offset=offset)),
                          lambda x: _slim_spam_check(x, full=False))
         if op == "run":
             _refuse_ignored(op, spam_check_id=spam_check_id)
-            check = _run(lambda: _client().create_spam_check(_need(mailbox_id, "mailbox_id", op)))
-            deadline = time.monotonic() + SPAM_CHECK_WAIT_S
-            while wait and check.get("state") == "pending" and time.monotonic() < deadline:
-                time.sleep(SPAM_CHECK_POLL_S)
-                check = _run(lambda: _client().get_spam_check(check["id"]))
-            return _slim_spam_check(check, full=True)
+            return _run_spam_check(c, _need(mailbox_id, "mailbox_id", op), wait)
         _refuse_ignored(op, mailbox_id=mailbox_id)
         sid = _need(spam_check_id, "spam_check_id", op)
         if op == "get":
-            return _slim_spam_check(_run(lambda: _client().get_spam_check(sid)), full=True)
-        _run(lambda: _client().delete_spam_check(sid))
+            return _slim_spam_check(_run(lambda: c.get_spam_check(sid)), full=True)
+        _run(lambda: c.delete_spam_check(sid))
         return {"deleted": sid}
+
+    def _run_spam_check(c: MailpoolClient, mailbox_id: int, wait: bool) -> Any:
+        """Create, then poll until `SPAM_CHECK_WAIT_S`. A poll that fails or
+        runs out of time is not a tool failure: the check exists, it is
+        returned pending with how to read it later."""
+        deadline = time.monotonic() + SPAM_CHECK_WAIT_S
+        try:
+            check = strip_secrets(c.create_spam_check(mailbox_id))
+        except (requests.Timeout, requests.ConnectionError):
+            raise _bad("Mailpool did not answer in time: a spam check may have been created "
+                       "anyway — see mailpool_spam_checks(op=\"list\") before running another.",
+                       reason="timeout")
+        except UpstreamHTTPError as e:
+            raise _bad(_upstream_message(e), reason="upstream_refused")
+        except ValueError as e:
+            raise _bad(str(e))
+        note = None
+        while wait and isinstance(check, dict) and check.get("state") == "pending":
+            if time.monotonic() + SPAM_CHECK_POLL_S >= deadline:
+                note = "still pending after the wait: read it later with op=\"get\""
+                break
+            time.sleep(SPAM_CHECK_POLL_S)
+            try:
+                check = strip_secrets(c.get_spam_check(check["id"]))
+            except (UpstreamHTTPError, requests.Timeout, requests.ConnectionError) as e:
+                note = f"re-read failed ({_cause(e)}): read it later with op=\"get\""
+                break
+        out = _slim_spam_check(check, full=True)
+        if note and isinstance(out, dict):
+            out["next_step"] = note
+        return out
 
     # --- account ---------------------------------------------------------------
 
@@ -482,13 +602,15 @@ def register(mcp: FastMCP) -> None:
             limit: page size, 1-100.
             offset: items to skip.
         """
+        c = _client()
         if op == "warmup_inbox":
-            return _run(lambda: _client().get_warmup_inbox(_need(warmup_id, "warmup_id", op)))
+            inbox = _run(lambda: c.get_warmup_inbox(_need(warmup_id, "warmup_id", op)))
+            return _slim_fields(inbox, WARMUP_INBOX_FIELDS)
         _refuse_ignored(op, warmup_id=warmup_id)
         if op == "warmup":
-            return _page(_run(lambda: _client().list_warmup_inboxes(limit=limit, offset=offset)),
-                         lambda w: _slim_warmup(w))
+            return _page(_run(lambda: c.list_warmup_inboxes(limit=limit, offset=offset)),
+                         _slim_warmup)
         if op == "warmup_available":
-            return _page(_run(lambda: _client().list_available_warmup_inboxes(
-                limit=limit, offset=offset)), lambda w: _slim_warmup(w))
-        return _run(lambda: _client().get_subscription_slots())
+            return _page(_run(lambda: c.list_available_warmup_inboxes(
+                limit=limit, offset=offset)), _slim_warmup)
+        return _run(lambda: c.get_subscription_slots())

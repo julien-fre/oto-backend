@@ -8,8 +8,12 @@ SPECIFIC to this module:
   client mock returns raw payloads with nested passwords (the allowlist is a
   second layer behind the client's own stripping);
 - `mailpool_domain_fix`: dry run by default with a real diff, no write when
-  nothing changes, the FULL set sent, a read-back that restores the previous
-  set, DMARC published through the DMARC-email call;
+  nothing changes, the FULL set sent against the set it was planned from (the
+  client re-reads, writes, reads back and restores), DMARC published through
+  the DMARC-email call; refused before any write when the read is unusable or
+  the change would add an audit error; after a write, named `INTERNAL_ERROR`s
+  (`dns_outcome_unknown`, `dns_not_kept`, `partially_applied`) that never claim
+  nothing changed;
 - the DNS audit and plan rules (`mailpool_dns`);
 - Mailpool's error envelopes translated (validations, 403, credits);
 - arguments go through pydantic validation (`call_tool`, not `.fn`).
@@ -20,6 +24,7 @@ import re
 from unittest.mock import patch
 
 import pytest
+from mcp.types import INTERNAL_ERROR, INVALID_PARAMS
 
 from oto_mcp import providers
 from oto_mcp.tools import mailpool_dns as dns
@@ -51,19 +56,33 @@ def _call(name, args):
     return json.loads(res.content[0].text)
 
 
+def _err(name, args):
+    """The tool's `McpError` (fastmcp wraps it in a `ToolError`)."""
+    with pytest.raises(Exception) as e:
+        _call(name, args)
+    cause = e.value.__cause__
+    assert cause is not None and hasattr(cause, "error"), e.value
+    return cause.error
+
+
+def _reason(err):
+    return (err.data or {}).get("reason")
+
+
 SECRET = re.compile(r"pass|secret|auth_?code|api_?key|token", re.I)
 
 OWNER = {"id": 9, "company": "Example Co", "email": "owner@example.com",
+         "firstName": "Ann", "phone": "+33100000000", "country": "FR",
          "streetAddress1": "1 Example Street"}
 MAILBOX = {
-    "id": 5301, "email": "anna@example-outreach.com", "firstName": "Anna",
+    "id": 5301, "email": "anna@example-outreach.test", "firstName": "Anna",
     "type": "shared", "status": "active", "password": "p1", "imapHost": "imap.example.net",
     "imapPassword": "p2", "smtpPassword": "p3", "secret": "s1", "avatar": "https://x/a.png",
-    "admin": {"email": "admin@example-outreach.com", "password": "p4", "secret": "s2"},
-    "domain": {"id": 1201, "domain": "example-outreach.com", "type": "shared",
+    "admin": {"email": "admin@example-outreach.test", "password": "p4", "secret": "s2"},
+    "domain": {"id": 1201, "domain": "example-outreach.test", "type": "shared",
                "domainOwner": OWNER},
 }
-DOMAIN = {"id": 1201, "domain": "example-outreach.com", "type": "google", "status": "active",
+DOMAIN = {"id": 1201, "domain": "example-outreach.test", "type": "google", "status": "active",
           "expireAt": "2027-01-01T00:00:00Z", "redirectUrl": "example.com",
           "domainOwner": OWNER, "nameservers": None}
 RECORDS = [
@@ -75,7 +94,7 @@ RECORDS = [
         "aspf=s; adkim=s; rua=mailto:old@example.com; ruf=mailto:old@example.com")},
 ]
 SPAM = {"id": 880011, "createdAt": "2026-10-05T10:00:00Z", "state": "completed",
-        "fromEmail": "anna@example-outreach.com", "mailbox": MAILBOX,
+        "fromEmail": "anna@example-outreach.test", "mailbox": MAILBOX,
         "result": {"score": 97, "SPF": {"status": "passed"}, "DKIM": {"status": "passed"},
                    "spamAssassin": {"score": 0.9, "status": "warning"}}}
 
@@ -169,11 +188,11 @@ def test_no_credential_reaches_the_caller(client, name, args):
 
 def test_mailbox_is_an_allowlist(client):
     mb = _call("mailpool_mailboxes", {"op": "get", "mailbox_id": 5301})
-    assert mb["email"] == "anna@example-outreach.com"
+    assert mb["email"] == "anna@example-outreach.test"
     assert mb["imapHost"] == "imap.example.net"
-    assert mb["adminEmail"] == "admin@example-outreach.com"
-    assert mb["domain"] == {"id": 1201, "domain": "example-outreach.com", "type": "shared"}
-    assert "avatar" not in mb and "admin" not in mb
+    assert mb["admin"] == {"email": "admin@example-outreach.test"}
+    assert mb["domain"] == {"id": 1201, "domain": "example-outreach.test", "type": "shared"}
+    assert "secret" not in mb and "password" not in mb
 
 
 def test_spam_check_drops_the_embedded_mailbox(client):
@@ -186,8 +205,32 @@ def test_spam_check_drops_the_embedded_mailbox(client):
 def test_spam_check_run_waits_for_the_result(client):
     client.create_spam_check.return_value = {**SPAM, "state": "pending", "result": None}
     out = _call("mailpool_spam_checks", {"op": "run", "mailbox_id": 5301})
-    assert out["state"] == "completed"
+    assert out["state"] == "completed" and "next_step" not in out
     client.get_spam_check.assert_called_with(880011)
+
+
+def test_spam_check_run_stays_within_its_budget(client, monkeypatch):
+    """No poll is sent past the wait; the pending check is then returned with
+    how to read it later."""
+    now = [0.0]
+    monkeypatch.setattr("oto_mcp.tools.mailpool.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("oto_mcp.tools.mailpool.time.sleep",
+                        lambda s: now.__setitem__(0, now[0] + s))
+    pending = {**SPAM, "state": "pending", "result": None}
+    client.create_spam_check.return_value = pending
+    client.get_spam_check.return_value = pending
+    out = _call("mailpool_spam_checks", {"op": "run", "mailbox_id": 5301})
+    assert out["state"] == "pending" and "op=\"get\"" in out["next_step"]
+    from oto_mcp.tools.mailpool import SPAM_CHECK_WAIT_S
+    assert now[0] <= SPAM_CHECK_WAIT_S and client.get_spam_check.call_count >= 1
+
+
+def test_spam_check_failed_poll_returns_the_pending_check(client):
+    import requests
+    client.create_spam_check.return_value = {**SPAM, "state": "pending", "result": None}
+    client.get_spam_check.side_effect = requests.ReadTimeout("slow")
+    out = _call("mailpool_spam_checks", {"op": "run", "mailbox_id": 5301})
+    assert out["id"] == 880011 and out["state"] == "pending" and "next_step" in out
 
 
 # --- domain fix -------------------------------------------------------------
@@ -206,9 +249,9 @@ def test_fix_is_a_dry_run_by_default(client):
 def test_fix_applies_the_full_set_reads_back_and_publishes_dmarc(client):
     sent = {}
 
-    def put(domain_id, records):
+    def put(domain_id, records, **_kw):
         sent["records"] = records
-        client.get_domain_dns.return_value = records
+        return records
 
     client.update_domain_dns.side_effect = put
     out = _call("mailpool_domain_fix", {
@@ -230,38 +273,148 @@ def test_fix_sends_nothing_when_already_matching(client):
     client.update_domain_dns.assert_not_called()
 
 
-def test_fix_restores_the_previous_set_when_a_record_goes_missing(client):
-    client.update_domain_dns.side_effect = lambda *_a: setattr(
-        client.get_domain_dns, "return_value", RECORDS[:1])
-    with pytest.raises(Exception, match="restored"):
-        _call("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
-                                      "dry_run": False})
-    assert client.update_domain_dns.call_count == 2
-    restored = client.update_domain_dns.call_args_list[1].args[1]
-    assert restored == RECORDS
+def test_fix_sends_the_set_it_planned_from(client):
+    """The client refuses the write if the domain changed since this read."""
+    _applying_put(client)
+    _call("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True, "dry_run": False})
+    assert client.update_domain_dns.call_args.kwargs == {"expected": RECORDS}
 
 
-def test_fix_settings_policy_and_redirect(client):
-    out = _call("mailpool_domain_fix", {"domain_id": 1201, "dmarc_policy": "reject",
-                                        "redirect_url": "example.com", "dry_run": False})
-    assert out["settings"] == {"dmarc_policy": {"from": "quarantine", "to": "reject"}}
-    client.set_dmarc_policy.assert_called_once_with(1201, "reject")
-    client.set_redirect_url.assert_not_called()
+def _not_kept(restored, restore_error=None):
+    from oto.tools.mailpool.client import MailpoolDnsWriteError
+    return MailpoolDnsWriteError(1201, [RECORDS[1]], RECORDS, restored, restore_error)
+
+
+def test_fix_says_the_previous_set_was_restored(client):
+    client.update_domain_dns.side_effect = _not_kept(True)
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                       "dry_run": False})
+    assert (err.code, _reason(err), err.data["restored"]) == (INTERNAL_ERROR, "dns_not_kept", True)
+    assert err.data["missing"] == ["TXT @ v=spf1 include:_spf.example.net ~all"]
+    client.set_dmarc_email.assert_not_called()
+
+
+def test_fix_says_when_the_restore_failed(client):
+    import requests
+    client.update_domain_dns.side_effect = _not_kept(False, requests.ReadTimeout("slow"))
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                       "dry_run": False})
+    assert (err.code, _reason(err), err.data["restored"]) == (INTERNAL_ERROR, "dns_not_kept", False)
+    assert "Nothing was changed" not in err.message and "did not answer" in err.message
+
+
+def test_fix_reports_records_it_did_not_send(client):
+    extra = {"key": "www", "type": "A", "value": "192.0.2.1"}
+    client.update_domain_dns.side_effect = lambda d, records, **kw: records + [extra]
+    out = _call("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                        "dry_run": False})
+    assert out["applied"] == ["dns"]
+    assert out["unexpected"] == ["A www 192.0.2.1"]
+
+
+# --- domain fix: refused before any write -----------------------------------
+
+@pytest.mark.parametrize("read", [[], {}, "", [None], [{"value": "x"}]])
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_fix_refuses_to_plan_from_an_unusable_read(client, read, dry_run):
+    """A write replaces the whole set: planning from an empty read would wipe it."""
+    client.get_domain_dns.return_value = read
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "tracking_host": "track",
+                                       "tracking_target": "custom.lemlist.com",
+                                       "dry_run": dry_run})
+    assert (err.code, _reason(err)) == (INVALID_PARAMS, "dns_unreadable")
+    client.update_domain_dns.assert_not_called()
+
+
+@pytest.mark.parametrize("args", [
+    {"add_records": [{"type": "TXT", "key": None, "value": "v=spf1 include:x.test ~all"}]},
+    {"add_records": [{"type": "CNAME", "key": None, "value": "elsewhere.test"}]},
+    {"add_records": [{"type": "TXT", "key": "_dmarc", "value": "v=DMARC1; p=none"}]},
+    {"remove_records": [RECORDS[0]]},
+    {"remove_records": [RECORDS[2]]},
+])
+def test_fix_refuses_a_change_that_breaks_the_domain(client, args):
+    for dry_run in (True, False):
+        err = _err("mailpool_domain_fix", {"domain_id": 1201, "dry_run": dry_run, **args})
+        assert (err.code, _reason(err)) == (INVALID_PARAMS, "dns_would_break")
+    client.update_domain_dns.assert_not_called()
+
+
+def test_fix_may_repair_an_existing_error(client):
+    """Two SPF records are already an error: removing one is allowed."""
+    second = {"key": None, "type": "TXT", "value": "v=spf1 include:old.test ~all"}
+    client.get_domain_dns.return_value = RECORDS + [second]
+    out = _call("mailpool_domain_fix", {"domain_id": 1201, "remove_records": [second]})
+    assert out["removed"] == ["TXT @ v=spf1 include:old.test ~all"]
+
+
+@pytest.mark.parametrize("email", ["dmarc@corp", "x@y.test; p=none", "a@b.test,c@d.test",
+                                   "a b@c.test", "dmarc@example"])
+def test_fix_refuses_a_loose_dmarc_address_before_writing(client, email):
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                       "dmarc_report_email": email, "dry_run": False})
+    assert (err.code, _reason(err)) == (INVALID_PARAMS, "invalid_argument")
+    client.update_domain_dns.assert_not_called()
+
+
+# --- domain fix: after a write, never "nothing changed" ---------------------
+
+def _applying_put(client):
+    client.update_domain_dns.side_effect = lambda d, records, **kw: records
+
+
+def test_fix_lists_what_was_applied_when_dmarc_publishing_fails(client):
+    from oto.tools.common.errors import UpstreamHTTPError
+    _applying_put(client)
+    client.set_dmarc_email.side_effect = UpstreamHTTPError(400, {"message": "bad"}, service="mailpool")
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                       "dmarc_report_email": "dmarc@example.com",
+                                       "dry_run": False})
+    assert (err.code, _reason(err)) == (INTERNAL_ERROR, "partially_applied")
+    assert err.data["applied"] == ["dns"] and err.data["not_done"] == ["dmarc_published"]
+
+
+@pytest.mark.parametrize("exc", ["timeout", "502"])
+def test_fix_write_without_answer_is_an_unknown_outcome(client, exc):
+    import requests
+    from oto.tools.common.errors import UpstreamHTTPError
+    client.update_domain_dns.side_effect = (
+        requests.ReadTimeout("slow") if exc == "timeout"
+        else UpstreamHTTPError(502, "", service="mailpool"))
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                       "dry_run": False})
+    assert (err.code, _reason(err)) == (INTERNAL_ERROR, "dns_outcome_unknown")
+    assert "may or may not have changed" in err.message
+
+
+def test_fix_refused_write_is_a_plain_refusal(client):
+    from oto.tools.common.errors import UpstreamHTTPError
+    client.update_domain_dns.side_effect = UpstreamHTTPError(
+        400, {"message": "invalid record"}, service="mailpool")
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "spf_hard_fail": True,
+                                       "dry_run": False})
+    assert (err.code, _reason(err)) == (INVALID_PARAMS, "upstream_refused")
 
 
 def test_fix_arguments_are_validated(client):
-    with pytest.raises(Exception):
-        _call("mailpool_domain_fix", {"domain_id": "abc"})
-    with pytest.raises(Exception):
-        _call("mailpool_domain_fix", {"domain_id": 1201, "dmarc_policy": "strict"})
-    with pytest.raises(Exception, match="go together"):
-        _call("mailpool_domain_fix", {"domain_id": 1201, "tracking_host": "track"})
+    for args in ({"domain_id": "abc"},
+                 {"domain_id": 1201, "dmarc_policy": "reject"},        # not served
+                 {"domain_id": 1201, "redirect_url": "example.com"},   # not served
+                 {"domain_id": 1201, "set_records": []},               # renamed
+                 {"domain_id": 1201, "add_records": [{"type": "SPF", "value": "x"}]},
+                 {"domain_id": 1201, "add_records": [{"type": "TXT", "value": ""}]},
+                 {"domain_id": 1201, "add_records": [{"type": "TXT", "value": "x", "ttl": 3}]}):
+        with pytest.raises(Exception):
+            _call("mailpool_domain_fix", args)
+    err = _err("mailpool_domain_fix", {"domain_id": 1201, "tracking_host": "track"})
+    assert (err.code, _reason(err)) == (INVALID_PARAMS, "invalid_argument")
+    client.update_domain_dns.assert_not_called()
 
 
 # --- dns rules --------------------------------------------------------------
 
 def test_audit_findings():
-    a = dns.audit("example-outreach.com", RECORDS)
+    a = dns.audit("example-outreach.test", RECORDS)
     checks = {(f["level"], f["check"]) for f in a["findings"]}
     assert ("warning", "spf") in checks
     assert ("info", "tracking") in checks
@@ -272,7 +425,7 @@ def test_audit_findings():
 
 
 def test_audit_errors_and_tracking():
-    a = dns.audit("example-outreach.com", [
+    a = dns.audit("example-outreach.test", [
         {"key": "track", "type": "CNAME", "value": "custom.lemlist.com"}])
     assert a["ok"] is False
     assert {f["check"] for f in a["findings"] if f["level"] == "error"} == {
@@ -289,7 +442,7 @@ def test_plan_converges_on_what_mailpool_publishes():
 
 
 def test_plan_never_drops_unrelated_records():
-    p = dns.plan(RECORDS, set_records=[{"type": "TXT", "key": None, "value": "verify=1"}])
+    p = dns.plan(RECORDS, add_records=[{"type": "TXT", "key": None, "value": "verify=1"}])
     assert len(p["records"]) == len(RECORDS) + 1
     assert p["removed"] == [] and p["publish_dmarc_email"] is None
 
@@ -300,8 +453,32 @@ def test_plan_remove_needs_an_exact_match():
 
 
 def test_plan_refuses_a_cname_next_to_other_records():
-    with pytest.raises(ValueError):
-        dns.plan(RECORDS, tracking_host="_dmarc", tracking_target="custom.lemlist.com")
+    records = RECORDS + [{"key": "track", "type": "TXT", "value": "verify=1"}]
+    with pytest.raises(dns.PlanRefused, match="non-CNAME"):
+        dns.plan(records, tracking_host="track", tracking_target="custom.lemlist.com")
+
+
+def test_plan_says_it_creates_a_dmarc_policy():
+    p = dns.plan(RECORDS[:3], dmarc_report_email="dmarc@example.com")
+    assert any("p=quarantine; sp=quarantine; pct=100" in n for n in p["notes"])
+
+
+def test_plan_keeps_srv_fields_and_tells_srv_records_apart():
+    srv = {"key": "_sip._tls", "type": "SRV", "value": "sip.example.test", "priority": 10,
+           "port": 443, "weight": 5}
+    p = dns.plan(RECORDS + [srv], spf_hard_fail=True)
+    assert srv in p["records"]
+    other = {**srv, "port": 5061}
+    assert not dns.plan(RECORDS + [srv], add_records=[other])["removed"]
+    assert len(dns.plan(RECORDS + [srv], add_records=[other])["records"]) == len(RECORDS) + 2
+
+
+def test_audit_flags_duplicates_and_shared_cnames():
+    a = dns.audit("example-outreach.test", RECORDS + [
+        {"key": "_dmarc", "type": "TXT", "value": "v=DMARC1; p=none"},
+        {"key": None, "type": "CNAME", "value": "elsewhere.test"}])
+    errors = {f["check"] for f in a["findings"] if f["level"] == "error"}
+    assert {"dmarc", "cname"} <= errors
 
 
 # --- errors and arguments ---------------------------------------------------
@@ -309,8 +486,34 @@ def test_plan_refuses_a_cname_next_to_other_records():
 def test_timeout_is_a_clean_tool_error(client):
     import requests
     client.get_domain_info.side_effect = requests.ReadTimeout("slow")
-    with pytest.raises(Exception, match="did not answer in time"):
-        _call("mailpool_domains", {"op": "availability", "domain": "example.com"})
+    err = _err("mailpool_domains", {"op": "availability", "domain": "example.com"})
+    assert (err.code, _reason(err)) == (INVALID_PARAMS, "timeout")
+
+
+def test_owners_are_company_and_country_only(client):
+    out = _call("mailpool_domains", {"op": "owners"})
+    assert out == [{"id": 9, "company": "Example Co", "country": "FR"}]
+
+
+def test_warmup_inbox_is_an_allowlist(client):
+    client.get_warmup_inbox.return_value = {"id": 77, "email": "a@example-outreach.test",
+                                            "dailyTarget": 20, "newField": "x"}
+    out = _call("mailpool_account", {"op": "warmup_inbox", "warmup_id": 77})
+    assert out == {"id": 77, "email": "a@example-outreach.test", "dailyTarget": 20}
+
+
+def test_audit_page_says_what_is_left(client):
+    client.list_domains.return_value = {"data": [DOMAIN], "total": 45}
+    out = _call("mailpool_domains", {"op": "audit", "limit": 100, "offset": 20})
+    assert client.list_domains.call_args.kwargs == {"limit": 20, "offset": 20}
+    assert (out["count"], out["total"], out["next_offset"]) == (1, 45, 21)
+
+
+def test_one_client_per_tool_call(client):
+    from oto.tools.mailpool import client as client_module
+    client.list_domains.return_value = {"data": [DOMAIN] * 3, "total": 3}
+    _call("mailpool_domains", {"op": "audit"})
+    assert client_module.MailpoolClient.call_count == 1
 
 
 def test_lists_count_what_they_return(client):

@@ -12,6 +12,14 @@ What was observed live (2026-10-05, six domains) and is encoded here:
   `POST /dmarc-email` (which writes the address as `rua` AND `ruf`): a plan
   that touches DMARC says so (`publish_dmarc_email`);
 - the records are Mailpool's stored configuration, not a live DNS lookup.
+
+Two guards live here, so a preview refuses exactly what a write would:
+
+- a plan never starts from an unreadable set: an empty or malformed read would
+  make the PUT wipe the domain (`DnsUnreadable`);
+- a plan never introduces an audit ERROR the current set does not have (second
+  SPF, MX or DKIM gone, CNAME at the apex…): `WouldBreak`. Fixing an existing
+  error stays possible.
 """
 from __future__ import annotations
 
@@ -19,6 +27,27 @@ import re
 from typing import Any, Dict, List, Optional
 
 Record = Dict[str, Any]
+
+
+class PlanRefused(ValueError):
+    """A refused plan, named (`reason`) so the tool can say which refusal it is."""
+    reason = "invalid_argument"
+
+
+class DnsUnreadable(PlanRefused):
+    reason = "dns_unreadable"
+
+
+class WouldBreak(PlanRefused):
+    reason = "dns_would_break"
+
+    def __init__(self, message: str, findings: List[Dict[str, str]]):
+        super().__init__(message)
+        self.findings = findings
+
+
+#: A DMARC report address: no `;`, `,` or space can reach the `_dmarc` record.
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
 #: CNAME targets of sending tools' custom tracking domains (verified ones only).
 TRACKING_TARGETS = {
@@ -98,6 +127,8 @@ def audit(domain: str, records: List[Record]) -> Dict[str, Any]:
     dmarc = _dmarc(records)
     if not dmarc:
         add("error", "dmarc", "No DMARC record (`_dmarc`).")
+    elif len(dmarc) > 1:
+        add("error", "dmarc", f"{len(dmarc)} `_dmarc` records: receivers ignore DMARC altogether.")
     else:
         tags = parse_dmarc(dmarc[0]["value"])
         if tags.get("p", "none").lower() == "none":
@@ -112,6 +143,12 @@ def audit(domain: str, records: List[Record]) -> Dict[str, Any]:
                     f"Reports go to another domain ({other}): receivers only send them if {other} "
                     f"publishes `{domain}._report._dmarc.{other}` (or `*._report._dmarc.{other}`) "
                     "as TXT `v=DMARC1` — outside Mailpool.")
+
+    for host in sorted({_host(r) for r in records if r.get("type") == "CNAME"}):
+        others = [r for r in records if _host(r) == host]
+        if len(others) > 1:
+            add("error", "cname", f"`{host}` has a CNAME next to {len(others) - 1} other "
+                "record(s): resolvers then answer unpredictably.")
 
     tracking = [{"host": _host(r), "target": r["value"].rstrip(".").lower(),
                  "tool": TRACKING_TARGETS.get(r["value"].rstrip(".").lower())}
@@ -128,12 +165,33 @@ def audit(domain: str, records: List[Record]) -> Dict[str, Any]:
             "source": "Mailpool's stored DNS configuration, not a live lookup"}
 
 
+def _identity(r: Record) -> tuple:
+    return (r.get("type"), _host(r), r.get("value"), r.get("priority"),
+            r.get("port"), r.get("weight"))
+
+
 def _same(a: Record, b: Record) -> bool:
-    return (a.get("type"), _host(a), a.get("value"), a.get("priority")) == (
-        b.get("type"), _host(b), b.get("value"), b.get("priority"))
+    return _identity(a) == _identity(b)
 
 
-def _label(r: Record) -> str:
+def check_current(records: Any) -> List[Record]:
+    """The set read from Mailpool, refused unless it is a non-empty list of
+    records: a write replaces the whole set, so planning from `{}` or `[]`
+    would delete every record of the domain."""
+    if (not isinstance(records, list) or not records
+            or not all(isinstance(r, dict) and r.get("type") for r in records)):
+        raise DnsUnreadable(
+            "Mailpool returned no readable DNS record set for this domain, so nothing "
+            "can be planned: a write replaces the whole set. Check it with "
+            "mailpool_domains(op=\"dns\") or in Mailpool.")
+    return records
+
+
+def _errors(records: List[Record]) -> List[Dict[str, str]]:
+    return [f for f in audit("", records)["findings"] if f["level"] == "error"]
+
+
+def label(r: Record) -> str:
     prio = f" ({r['priority']})" if r.get("priority") is not None else ""
     return f"{r.get('type')} {_host(r)} {r.get('value')}{prio}"
 
@@ -141,10 +199,11 @@ def _label(r: Record) -> str:
 def plan(records: List[Record], *, spf_hard_fail: bool = False,
          dmarc_report_email: Optional[str] = None,
          tracking_host: Optional[str] = None, tracking_target: Optional[str] = None,
-         set_records: Optional[List[Record]] = None,
+         add_records: Optional[List[Record]] = None,
          remove_records: Optional[List[Record]] = None) -> Dict[str, Any]:
-    """The target record set and its diff. Raises `ValueError` on an impossible
-    request. Never drops a record that was not explicitly asked for."""
+    """The target record set and its diff. Raises `PlanRefused` on an impossible
+    or harmful request. Never drops a record that was not explicitly asked for."""
+    records = check_current(records)
     target = [dict(r) for r in records]
     notes: List[str] = []
     publish_email: Optional[str] = None
@@ -152,19 +211,20 @@ def plan(records: List[Record], *, spf_hard_fail: bool = False,
     if spf_hard_fail:
         spf = _apex_spf(target)
         if len(spf) != 1:
-            raise ValueError(f"spf_hard_fail: expected one apex SPF record, found {len(spf)}.")
+            raise PlanRefused(f"spf_hard_fail: expected one apex SPF record, found {len(spf)}.")
         value = spf[0]["value"]
         new = re.sub(r"[~?+]all\s*$", "-all", value.strip(), flags=re.IGNORECASE)
         if not new.lower().endswith("-all"):
-            raise ValueError("spf_hard_fail: the SPF record has no `all` mechanism to tighten.")
+            raise PlanRefused("spf_hard_fail: the SPF record has no `all` mechanism to tighten.")
         spf[0]["value"] = new
 
     if dmarc_report_email is not None:
-        if "@" not in dmarc_report_email:
-            raise ValueError("`dmarc_report_email` must be an email address.")
+        if not _EMAIL.fullmatch(dmarc_report_email):
+            raise PlanRefused("`dmarc_report_email` must be one plain email address, "
+                              "such as dmarc@example.com.")
         dmarc = _dmarc(target)
         if len(dmarc) > 1:
-            raise ValueError(f"{len(dmarc)} `_dmarc` records: fix them by hand first.")
+            raise PlanRefused(f"{len(dmarc)} `_dmarc` records: fix them by hand first.")
         if dmarc:
             tags = parse_dmarc(dmarc[0]["value"])
             for k in _DMARC_DROPPED:
@@ -175,37 +235,46 @@ def plan(records: List[Record], *, spf_hard_fail: bool = False,
             target.append({"type": "TXT", "key": "_dmarc", "value": render_dmarc({
                 "v": "DMARC1", "p": "quarantine", "sp": "quarantine", "pct": "100",
                 "rua": f"mailto:{dmarc_report_email}", "ruf": f"mailto:{dmarc_report_email}"})})
+            notes.append("The domain had no `_dmarc` record: it is created with policy "
+                         "p=quarantine; sp=quarantine; pct=100.")
         publish_email = dmarc_report_email
         notes.append("Mailpool publishes `_dmarc` with the address as rua AND ruf: ruf cannot be removed there, so it is kept.")
 
     if (tracking_host is None) != (tracking_target is None):
-        raise ValueError("`tracking_host` and `tracking_target` go together.")
+        raise PlanRefused("`tracking_host` and `tracking_target` go together.")
     if tracking_host is not None:
         host = tracking_host.strip().lower().rstrip(".")
         if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", host):
-            raise ValueError("`tracking_host` must be a single label, such as `track`.")
+            raise PlanRefused("`tracking_host` must be a single label, such as `track`.")
         existing = [r for r in target if _host(r) == host]
         if any(r.get("type") != "CNAME" for r in existing):
-            raise ValueError(f"`{host}` already has non-CNAME records: a CNAME cannot sit next to them.")
+            raise PlanRefused(f"`{host}` already has non-CNAME records: a CNAME cannot sit next to them.")
         target = [r for r in target if _host(r) != host]
         target.append({"type": "CNAME", "key": host, "value": tracking_target.strip().rstrip(".")})
 
     for r in remove_records or []:
         matches = [x for x in target if _same(x, r)]
         if not matches:
-            raise ValueError(f"remove_records: no record {_label(r)}.")
+            raise PlanRefused(f"remove_records: no record {label(r)}.")
         target = [x for x in target if not _same(x, r)]
-    for r in set_records or []:
+    for r in add_records or []:
         if not any(_same(x, r) for x in target):
             target.append({k: v for k, v in r.items() if v is not None or k == "key"})
 
-    added = [_label(r) for r in target if not any(_same(r, c) for c in records)]
-    removed = [_label(c) for c in records if not any(_same(c, r) for r in target)]
+    before = {(f["check"], f["message"]) for f in _errors(records)}
+    broken = [f for f in _errors(target) if (f["check"], f["message"]) not in before]
+    if broken:
+        raise WouldBreak(
+            "Refused, nothing was sent: this change would break the domain — "
+            + " ".join(f["message"] for f in broken), broken)
+
+    added = [label(r) for r in target if not any(_same(r, c) for c in records)]
+    removed = [label(c) for c in records if not any(_same(c, r) for r in target)]
     dmarc_changed = any(" _dmarc " in x for x in added + removed)
     if dmarc_changed and publish_email is None:
         rua = _mailto(parse_dmarc(_dmarc(target)[0]["value"]).get("rua")) if _dmarc(target) else []
         if not rua:
-            raise ValueError("The new `_dmarc` record has no rua address, which Mailpool needs to publish it.")
+            raise PlanRefused("The new `_dmarc` record has no rua address, which Mailpool needs to publish it.")
         publish_email = rua[0]
     return {"records": target, "added": added, "removed": removed,
             "changed": bool(added or removed),
@@ -214,6 +283,6 @@ def plan(records: List[Record], *, spf_hard_fail: bool = False,
 
 
 def missing_after(expected: List[Record], actual: List[Record]) -> Dict[str, List[str]]:
-    """Read-back check of a PUT: what is missing, what appeared."""
-    return {"missing": [_label(r) for r in expected if not any(_same(r, a) for a in actual)],
-            "unexpected": [_label(a) for a in actual if not any(_same(a, r) for r in expected)]}
+    """Two record sets compared: what `actual` lacks, what it has in excess."""
+    return {"missing": [label(r) for r in expected if not any(_same(r, a) for a in actual)],
+            "unexpected": [label(a) for a in actual if not any(_same(a, r) for r in expected)]}
