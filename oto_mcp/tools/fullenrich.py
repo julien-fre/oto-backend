@@ -2,23 +2,23 @@
 
 ~70% phone hit rate. Async bulk API (POST → poll). Pay-per-result.
 
-⚠️ Surface MCP async assumée (signal #252) : l'ex-tool synchrone pollait
-in-process 131-147s → tout client MCP raccroche (~60s), résultat perdu ET crédits
-consommés. Désormais : `fullenrich_enrich_linkedin` SOUMET le job (~1s, bulk
-jusqu'à 100 contacts) et `fullenrich_result` relève le statut/le résultat —
-le polling appartient à l'agent.
+⚠️ Deliberately async MCP surface (signal #252): the former synchronous tool polled
+in-process for 131-147s → every MCP client hangs up (~60s), result lost AND credits
+consumed. Now: `fullenrich_enrich_linkedin` SUBMITS the job (~1s, bulk
+up to 100 contacts) and `fullenrich_result` reads the status/the result —
+polling is the agent's job.
 
-Métrage (facturation du partenaire) : des faits distincts, aucun prix. La soumission trace les
-contacts SOUMIS. Le relevé d'un job terminé trace :
-- en `quantity`, les crédits que FullEnrich a DÉDUITS (`cost.credits`, rendu par
-  oto-core en `cost_credits`) — le chiffre de rapprochement avec l'amont ;
-- `found_work_emails` / `found_personal_emails` / `found_phones`, le nombre de
-  CONTACTS du job où au moins une valeur de chaque sorte a été trouvée — ce que lit un
-  prix par résultat qui n'est pas un multiple du barème de l'amont.
-Un relevé non terminé trace 0 et aucun compte. Le backend ne porte aucun barème et ne
-déduplique rien : un job relevé deux fois trace deux fois ses chiffres, et le
-consommateur le compte une fois par son `enrichment_id` (le `job_id` de la lentille
-`org.usage.calls`, qui rend aussi les comptes en `found`).
+Metering (partner billing): distinct facts, no price. The submission traces the
+contacts SUBMITTED. Reading a finished job traces:
+- as `quantity`, the credits FullEnrich DEDUCTED (`cost.credits`, returned by
+  oto-core as `cost_credits`) — the figure to reconcile with upstream;
+- `found_work_emails` / `found_personal_emails` / `found_phones`, the number of
+  CONTACTS in the job where at least one value of each kind was found — what a
+  per-result price that is not a multiple of the upstream rate card reads.
+An unfinished read traces 0 and no counts. The backend carries no rate card and
+deduplicates nothing: a job read twice traces its figures twice, and the
+consumer counts it once by its `enrichment_id` (the `job_id` of the
+`org.usage.calls` lens, which also returns the counts as `found`).
 """
 from __future__ import annotations
 
@@ -34,22 +34,22 @@ from ..connectors import verify as connector_verify
 
 _CREDITS_URL = "https://app.fullenrich.com/api/v1/account/credits"
 
-# Relever un job ne doit jamais devenir une boucle sans fin côté agent (signaux
-# #990, #1027-#1029). Un statut encore en cours dit QUAND repasser ; un statut qui ne
-# changera plus est un refus NOMMÉ ; passé ce plafond depuis la soumission, le relevé
-# dit d'arrêter (un job de 100 contacts finit d'ordinaire en moins de 4 minutes).
+# Reading a job must never turn into an endless loop on the agent side (signals
+# #990, #1027-#1029). A status still in progress says WHEN to come back; a status that
+# will never change is a NAMED refusal; past this ceiling since submission, the read
+# says to stop (a 100-contact job usually finishes in under 4 minutes).
 _REPASSER_S = {"CREATED": 30, "IN_PROGRESS": 30, "RATE_LIMIT": 60}
 _PLAFOND_MIN = 20
 _TERMINAUX = {
     "CANCELED": ("fullenrich_job_canceled",
-                 "le job a été annulé chez FullEnrich : il ne rendra aucun résultat."),
+                 "the job was canceled at FullEnrich: it will return no result."),
     "NOT_FOUND": ("fullenrich_job_not_found",
-                  "FullEnrich ne connaît pas (ou plus) ce job — id erroné ou job expiré."),
+                  "FullEnrich does not know (or no longer knows) this job — wrong id or expired job."),
 }
 
 
 def _refus(code: str, message: str, **data) -> McpError:
-    return McpError(ErrorData(code=INVALID_PARAMS, message=f"Refus `{code}` : {message}",
+    return McpError(ErrorData(code=INVALID_PARAMS, message=f"Refusal `{code}`: {message}",
                               data={"code": code, "retryable": False, **data}))
 
 
@@ -61,26 +61,26 @@ def _minutes_depuis(submitted_at: Optional[str]) -> Optional[float]:
     except ValueError:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=("`submitted_at` illisible : repasse tel quel le `submitted_at` "
-                     "rendu par fullenrich_enrich_linkedin (ISO 8601 avec fuseau).")))
+            message=("`submitted_at` unreadable: pass back the `submitted_at` "
+                     "returned by fullenrich_enrich_linkedin as is (ISO 8601 with timezone).")))
     if t.tzinfo is None:
         t = t.replace(tzinfo=_dt.timezone.utc)
     return (_dt.datetime.now(_dt.timezone.utc) - t).total_seconds() / 60
 
 
 class FullenrichASec(RuntimeError):
-    """Compte FullEnrich à sec, vu AVANT de soumettre. Porte `status_code = 402` EXPRÈS,
-    comme `serper.SerperASec` : la taxonomie (`error_taxonomy`, cran 0 →
-    `quota_exhausted` + marquage de la clé servie) le lit comme tout 402, sans chemin
-    parallèle à entretenir."""
+    """FullEnrich account is empty, seen BEFORE submitting. Carries `status_code = 402` ON PURPOSE,
+    like `serper.SerperASec`: the taxonomy (`error_taxonomy`, level 0 →
+    `quota_exhausted` + marking of the key used) reads it like any 402, with no
+    parallel path to maintain."""
     status_code = 402
 
 
 def _solde(headers: dict) -> int:
-    """Le solde de crédits du compte : `GET /api/v1/account/credits` (⚠️ v1, PAS le v2
-    du reste du client — deux préfixes de version distincts chez FullEnrich, vérifié).
-    Lecture sans effet de bord. Lève si le solde est illisible : un solde deviné
-    laisserait passer un lot impayable, ou en refuserait un bon."""
+    """The account's credit balance: `GET /api/v1/account/credits` (⚠️ v1, NOT the v2
+    of the rest of the client — two distinct version prefixes at FullEnrich, verified).
+    Read without side effects. Raises if the balance is unreadable: a guessed balance
+    would let through a batch that cannot be paid, or refuse a good one."""
     import requests
 
     r = requests.get(_CREDITS_URL, headers=headers, timeout=15)
@@ -89,30 +89,30 @@ def _solde(headers: dict) -> int:
     restant = infos.get("balance")
     if not isinstance(restant, int) or isinstance(restant, bool):
         raise RuntimeError(
-            "FullEnrich a répondu sans solde de crédits lisible : "
+            "FullEnrich answered without a readable credit balance: "
             f"{str(infos)[:200]}")
     return restant
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:
-    """Sonde « tester la connexion » — otomata-tech/oto#69. Couvre `auth+quota`.
+    """"Test the connection" probe — otomata-tech/oto#69. Covers `auth+quota`.
 
-    Bearer token, lecture de solde (`_solde`). Aucune mention explicite de
-    « gratuit » dans ce qu'on a trouvé — absence de mention, indice, pas une
-    preuve, comme Folk et Pennylane.
+    Bearer token, balance read (`_solde`). No explicit mention of
+    "free" in what we found — absence of a mention is a hint, not
+    proof, like Folk and Pennylane.
 
-    Le solde (`balance`) distingue une clé morte d'un compte à sec — recharger
-    n'est pas reconnecter.
+    The balance (`balance`) tells a dead key from an empty account — topping up
+    is not reconnecting.
     """
     from oto.tools.fullenrich.client import FullenrichClient
 
     restant = _solde(FullenrichClient(api_key=fields["key"])._headers())
     if restant <= 0:
         raise connector_verify.QuotaEpuise(
-            "La clé FullEnrich est bonne, mais le compte est à sec (0 crédit "
-            "restant). Recharge le compte chez FullEnrich — reconnecter n'y "
-            "changerait rien.")
-    return {"quota": {"restant": restant, "unite": "crédits"}}
+            "The FullEnrich key is good, but the account is empty (0 credits "
+            "left). Top up the account at FullEnrich — reconnecting would "
+            "change nothing.")
+    return {"quota": {"restant": restant, "unite": "credits"}}
 
 
 def register(mcp: FastMCP) -> None:
@@ -149,34 +149,34 @@ def register(mcp: FastMCP) -> None:
                 10 credits/phone, 1/work_email, 3/personal_email.
         """
         client, is_platform = _client(units=len(contacts))
-        # Le solde AVANT de soumettre : FullEnrich accepte un lot qu'il ne peut pas
-        # payer, et l'échec n'apparaissait qu'au relevé, minutes plus tard (signaux oto
-        # #1276, #1280, #1340). Une lecture gratuite contre un job perdu. On ne refuse
-        # qu'à zéro : le coût d'un lot n'est connu qu'au résultat (facturé à la donnée
-        # trouvée), un solde « trop bas » serait une devinette.
+        # The balance BEFORE submitting: FullEnrich accepts a batch it cannot
+        # pay for, and the failure only showed up at read time, minutes later (oto signals
+        # #1276, #1280, #1340). A free read against a lost job. We only refuse
+        # at zero: the cost of a batch is only known at result time (billed per data
+        # point found), so a "too low" balance would be a guess.
         if _solde(client._headers()) <= 0:
             raise FullenrichASec(
-                "FullEnrich : le compte de la clé servie est à sec (0 crédit restant). "
-                "L'appel était correct : ne le corrige pas et ne le réessaie pas.")
+                "FullEnrich: the account of the key used is empty (0 credits left). "
+                "The call was correct: do not fix it and do not retry it.")
         try:
             enrichment_id = client.submit(contacts, enrich_fields=enrich_fields)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         if is_platform:
-            # Un job = un contact facturé par contact : la consommation est le
-            # NOMBRE de contacts, comptée en un seul geste (l'ancienne boucle faisait
-            # une requête par contact — jusqu'à 100 par job).
-            # `len(contacts)` et non le coût réel : FullEnrich facture à la donnée
-            # trouvée et ne dit rien à la soumission (le coût n'existe qu'au résultat
-            # du job, `fullenrich_result`, sur un autre appel) — on ne devine pas.
+            # One job = one contact billed per contact: consumption is the
+            # NUMBER of contacts, counted in a single operation (the old loop made
+            # one request per contact — up to 100 per job).
+            # `len(contacts)` and not the real cost: FullEnrich bills per data point
+            # found and says nothing at submission (the cost only exists at the result
+            # of the job, `fullenrich_result`, on another call) — we do not guess.
             access.record_platform_usage("fullenrich", len(contacts))
-        # Métrage par unité (facturation du partenaire, 21/08) — INCONDITIONNEL (platform key
-        # OU BYO), contrairement à `record_platform_usage` ci-dessus (qui ne compte
-        # que le quota interne oto sur la clé plateforme) : `tool_calls.quantity`
-        # sert un consommateur EXTERNE (celui du partenaire) qui facture l'org quel que
-        # soit le mode de clé. Compte les contacts SOUMIS, pas ceux effectivement
-        # enrichis/trouvés — ce dernier chiffre n'existe qu'après coup, dans
-        # `fullenrich_result` (job async), une ligne de journal SÉPARÉE.
+        # Per-unit metering (partner billing, 21/08) — UNCONDITIONAL (platform key
+        # OR BYO), unlike `record_platform_usage` above (which only counts
+        # oto's internal quota on the platform key): `tool_calls.quantity`
+        # serves an EXTERNAL consumer (the partner's) who bills the org whatever the
+        # key mode. Counts the contacts SUBMITTED, not those actually
+        # enriched/found — that figure only exists after the fact, in
+        # `fullenrich_result` (async job), a SEPARATE log line.
         session_org.note_call_trace(quantity=len(contacts))
         return {
             "enrichment_id": enrichment_id,
@@ -207,29 +207,29 @@ def register(mcp: FastMCP) -> None:
             submitted_at: the `submitted_at` returned by the same call.
         """
         from oto.tools.fullenrich.client import FullenrichClient
-        # Le quota plateforme est débité à la SOUMISSION : le relevé ne consomme rien
-        # et ne le vérifie pas — sinon un job déjà payé devenait illisible le jour même
-        # que le quota s'épuisait (#943).
+        # The platform quota is debited at SUBMISSION: the read consumes nothing
+        # and does not check it — otherwise an already-paid job became unreadable the very day
+        # the quota ran out (#943).
         rc = access.resolve_credential("fullenrich", check_usage=False)
         try:
             res = FullenrichClient(api_key=rc.key).fetch(enrichment_id)
         except RuntimeError as e:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Refus `fullenrich_upstream_error` : {e}",
+                message=f"Refusal `fullenrich_upstream_error`: {e}",
                 data={"code": "fullenrich_upstream_error", "retryable": True}))
         status = res["status"]
         if status != "FINISHED":
-            # Un relevé de statut n'a rien consommé chez FullEnrich : un zéro TRACÉ,
-            # pas une absence — un consommateur du métrage lit l'absence comme 1.
+            # A status read consumed nothing at FullEnrich: a TRACED zero,
+            # not an absence — a metering consumer reads absence as 1.
             session_org.note_call_trace(quantity=0)
             if status not in _REPASSER_S:
                 code, pourquoi = _TERMINAUX.get(status, (
                     "fullenrich_job_status_unknown",
-                    f"FullEnrich rend le statut « {status} », qui ne mène pas à un résultat."))
-                raise _refus(code, f"{pourquoi} Ne relève plus ce job ; resoumets les "
-                                   "contacts seulement si tu en as encore besoin (nouvelle "
-                                   "facturation).", status=status, enrichment_id=enrichment_id)
+                    f"FullEnrich returns the status \"{status}\", which does not lead to a result."))
+                raise _refus(code, f"{pourquoi} Stop reading this job; resubmit the "
+                                   "contacts only if you still need them (new "
+                                   "billing).", status=status, enrichment_id=enrichment_id)
             out = {"done": False, "status": status,
                    "retry_after_s": _REPASSER_S[status],
                    "next_step": (f"Still running — call fullenrich_result again in "
@@ -243,21 +243,21 @@ def register(mcp: FastMCP) -> None:
                     "later with the same id — do not resubmit the same contacts, they "
                     "would be billed twice.")
             return out
-        # Métrage (facturation du partenaire), INCONDITIONNEL (clé plateforme OU BYO), comme
-        # `fullenrich_enrich_linkedin` : le consommateur filtre sur `key_mode`.
-        #   • `quantity` = les crédits que FULLENRICH a déduits pour ce job —
-        #     `cost_credits`, son `cost.credits` relu par oto-core : le chiffre de
-        #     RAPPROCHEMENT. Coût absent (oto-core antérieur au champ, amont muet) →
-        #     AUCUNE quantité, jamais une valeur devinée depuis les profils.
-        #   • `found_*` = combien de CONTACTS du job ont au moins une valeur de chaque
-        #     sorte (un contact à deux e-mails compte UNE fois, un contact vide nulle
-        #     part). Des faits lus dans les profils — donc tracés même sans coût
-        #     déclaré. C'est ce que lit un prix par résultat qui n'est pas un multiple
-        #     du barème de l'amont.
-        # Aucun barème ici, ni 1/3/10 ni conversion : un taux est une décision
-        # commerciale. ⚠️ Chaque relevé FINISHED d'un même job trace les mêmes
-        # chiffres : compter un job une fois (par son `enrichment_id`, que la lentille
-        # de facturation rend en `job_id`) appartient au consommateur, pas au backend.
+        # Metering (partner billing), UNCONDITIONAL (platform key OR BYO), like
+        # `fullenrich_enrich_linkedin`: the consumer filters on `key_mode`.
+        #   • `quantity` = the credits FULLENRICH deducted for this job —
+        #     `cost_credits`, its `cost.credits` re-read by oto-core: the
+        #     RECONCILIATION figure. Cost absent (oto-core older than the field, upstream silent) →
+        #     NO quantity, never a value guessed from the profiles.
+        #   • `found_*` = how many CONTACTS in the job have at least one value of each
+        #     kind (a contact with two e-mails counts ONCE, an empty contact nowhere).
+        #     Facts read from the profiles — hence traced even without a declared
+        #     cost. This is what a per-result price that is not a multiple
+        #     of the upstream rate card reads.
+        # No rate card here, neither 1/3/10 nor conversion: a rate is a commercial
+        # decision. ⚠️ Every FINISHED read of the same job traces the same
+        # figures: counting a job once (by its `enrichment_id`, which the billing lens
+        # returns as `job_id`) is the consumer's business, not the backend's.
         profiles = res.get("profiles") or []
         trace = {
             "found_work_emails": sum(1 for p in profiles if getattr(p, "work_emails", None)),

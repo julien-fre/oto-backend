@@ -127,7 +127,7 @@ def test_an_unreadable_payslip_says_why(client):
 
 @pytest.mark.parametrize("date", ["2026-01", "202613", "2026"])
 def test_a_malformed_month_is_refused_before_the_network(client, date):
-    with pytest.raises(McpError, match="AAAAMM"):
+    with pytest.raises(McpError, match="YYYYMM"):
         _payslip()(op="overtime", collaborator_id=K, date=date)
     client.list_payslips.assert_not_called()
 

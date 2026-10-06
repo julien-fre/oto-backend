@@ -1,32 +1,32 @@
-"""Registre des connecteurs — SOURCE UNIQUE de vérité (l'AGRÉGATEUR).
+"""Connector registry — SINGLE SOURCE of truth (the AGGREGATOR).
 
-Ce module ne DÉCRIT aucun connecteur : il les ASSEMBLE. Chaque connecteur
-déclare son entrée dans `providers/<nom>.py` (`CONNECTOR = _c(…)`, plus ses
-constantes curées `CATEGORY` / `PUBLISHER` / `DESCRIPTION` / `LOGO_DOMAIN`),
-et `_DECLARATIONS` ci-dessous fixe l'ORDRE dans lequel ils entrent au registre.
-Tout le reste — `REGISTRY`, `KEY_PROVIDERS`, `DEFAULT_ACTIVE_CONNECTORS`, le
-catalogue public — en DÉRIVE : le registre est une **projection calculée, jamais
-stockée**.
+This module DESCRIBES no connector: it ASSEMBLES them. Each connector
+declares its entry in `providers/<name>.py` (`CONNECTOR = _c(…)`, plus its
+curated constants `CATEGORY` / `PUBLISHER` / `DESCRIPTION` / `LOGO_DOMAIN`),
+and `_DECLARATIONS` below fixes the ORDER in which they enter the registry.
+Everything else — `REGISTRY`, `KEY_PROVIDERS`, `DEFAULT_ACTIVE_CONNECTORS`, the
+public catalog — is DERIVED from it: the registry is a **computed projection, never
+stored**.
 
-Ajouter un connecteur = un fichier `providers/<nom>.py` + une ligne dans
-`_DECLARATIONS`. Le module s'appelle comme le connecteur, et l'agrégation le
-vérifie à l'import (`tests/test_providers_registry_snapshot.py` verrouille les
-deux sens : pas de fichier orphelin, pas de ligne fantôme).
+Adding a connector = a `providers/<name>.py` file + a line in
+`_DECLARATIONS`. The module is named like the connector, and the aggregation
+checks it at import (`tests/test_providers_registry_snapshot.py` locks both
+directions: no orphan file, no phantom line).
 
-Module PUR (aucun import `oto_mcp` au niveau module, comme tool_visibility.py).
-C'est ce qui interdit de loger les déclarations dans `tools/<nom>.py` : ces
-modules-là importent `..access` (qui importe ce registre) et les clients
-oto-core, et `register_all` les charge en try/except — une dép optionnelle
-manquante retirerait alors un connecteur du CATALOGUE, pas seulement ses tools.
+PURE module (no `oto_mcp` import at module level, like tool_visibility.py).
+That is what forbids housing the declarations in `tools/<name>.py`: those
+modules import `..access` (which imports this registry) and the oto-core
+clients, and `register_all` loads them in a try/except — a missing optional
+dep would then remove a connector from the CATALOG, not just its tools.
 
-Remplace les 4 listes en dur qui dérivaient (`db.KEY_PROVIDERS`,
+Replaces the 4 hard-coded lists that used to drift (`db.KEY_PROVIDERS`,
 `access.ORG_SHAREABLE_PROVIDERS`, `tool_visibility.ADMIN_GRANT_ONLY_NAMESPACES`,
-le `PROVIDERS` du frontend) plus `_QUOTA_DEFAULTS`.
+the frontend's `PROVIDERS`) plus `_QUOTA_DEFAULTS`.
 
-NB barreau « Phase 1 » : ce registre encode l'état ACTUEL (les dérivations sont
-byte-identiques aux anciennes listes). Les évolutions de taxonomie (ex. gocardless
-→ BYO self_serve keyed, un grant-only → injection platform) sont des changements ultérieurs
-explicites de ce registre, qui piloteront leurs migrations.
+NB "Phase 1" rung: this registry encodes the CURRENT state (the derivations are
+byte-identical to the old lists). Taxonomy changes (e.g. gocardless
+→ BYO self_serve keyed, a grant-only → platform injection) are later, explicit
+changes to this registry, which will drive their migrations.
 """
 from __future__ import annotations
 
@@ -39,38 +39,38 @@ from ._model import (  # noqa: F401  — surface publique historique du module
     _c,
 )
 
-# --- l'ORDRE du registre, explicite ------------------------------------------
-# L'ordre de déclaration ne gouverne AUCUN calcul : ni `KEY_PROVIDERS` ni le
-# registre ne sont indexés par position, et `status_for` (access/status.py) les ITÈRE
-# pour remplir `out["providers"][nom]`, un dict par NOM. Il ne survit que comme
-# ordre de SÉRIALISATION — donc d'affichage (catalogue, primer de namespaces,
-# `status_for`). C'est quand même un ordre qu'on VEUT stable : il est écrit ici,
-# à la main, et jamais dérivé du système de fichiers (un `glob` rendrait la
-# sortie dépendante de l'ordre du répertoire).
+# --- the registry ORDER, explicit --------------------------------------------
+# The declaration order governs NO computation: neither `KEY_PROVIDERS` nor the
+# registry is indexed by position, and `status_for` (access/status.py) ITERATES them
+# to fill `out["providers"][name]`, a dict keyed by NAME. It survives only as the
+# SERIALIZATION order — hence the display order (catalog, namespace primer,
+# `status_for`). It is still an order we WANT stable: it is written here,
+# by hand, and never derived from the filesystem (a `glob` would make the
+# output depend on directory order).
 #
-# ⚠️ Trois commentaires de connecteur ont longtemps affirmé le contraire
-# (« l'ordre est chargé, `status_for` en dépend, je suis le dernier ») — corrigé
-# le 21/08/2026 : la phrase avait coûté trois tests faux (ahrefs, fireflies,
-# granola), dont deux affirmaient être le dernier, et un rouge sur main le jour
-# où deux connecteurs ont été ajoutés le même matin. Vérifier un invariant avant
-# de demander qu'on le garde.
+# ⚠️ Three connector comments long claimed the opposite
+# ("the order is loaded, `status_for` depends on it, I am the last") — fixed
+# on 21/08/2026: that sentence had cost three false tests (ahrefs, fireflies,
+# granola), two of which claimed to be last, and a red on main the day
+# two connectors were added the same morning. Check an invariant before
+# asking that it be kept.
 #
-# Notes de composition (des connecteurs ABSENTS, et pourquoi) :
-# - `bridge` (ADR 0034) RETIRÉ le 2026-07-16 (ADR 0037 / oto-backend#108) :
-#   subsumé par le connecteur `http` générique — un bridge n'est qu'une API HTTP
-#   que le back-office re-expose, jointe via http_get/http_post. Le bridge pilote a
-#   migré bridge→http. Le concept « remote data-driven » (base_url sur un
-#   provider hors registre) subsiste dans `org_secret_meta`, sans entrée de
-#   catalogue ; l'identité client vit dans la CONFIG d'org, jamais en dur.
-# - `justicelibre` (mount no-auth) RETIRÉ le 2026-08-21, puis `atlassian` et
-#   `folkmcp` le 2026-09-09 avec le MÉCANISME lui-même : la fédération MCP
-#   (`kind="mount"`) est retirée de la plateforme (ADR 0069). Un service distant
-#   se joint désormais par le connecteur `http` générique, ou s'écrit en
-#   connecteur natif — ce qu'est devenu `planity`.
-# - `linkedin` déposé le 2026-08-10 (#231) : absorbé par `aiark` — même vendeur,
-#   même client, la distinction n'était qu'un mode d'auth, donc une INSTANCE.
+# Composition notes (ABSENT connectors, and why):
+# - `bridge` (ADR 0034) REMOVED on 2026-07-16 (ADR 0037 / oto-backend#108):
+#   subsumed by the generic `http` connector — a bridge is just an HTTP API
+#   that the back-office re-exposes, joined via http_get/http_post. The pilot bridge
+#   migrated bridge→http. The "remote data-driven" concept (base_url on a
+#   provider outside the registry) survives in `org_secret_meta`, with no
+#   catalog entry; the client identity lives in the org CONFIG, never hard-coded.
+# - `justicelibre` (no-auth mount) REMOVED on 2026-08-21, then `atlassian` and
+#   `folkmcp` on 2026-09-09 along with the MECHANISM itself: MCP federation
+#   (`kind="mount"`) is removed from the platform (ADR 0069). A remote service
+#   is now joined through the generic `http` connector, or written as a
+#   native connector — which is what `planity` became.
+# - `linkedin` dropped on 2026-08-10 (#231): absorbed by `aiark` — same vendor,
+#   same client, the distinction was only an auth mode, hence an INSTANCE.
 _DECLARATIONS: tuple[str, ...] = (
-    # --- keyed (résolus via resolve_api_key, clé api per-user) ---------------
+    # --- keyed (resolved via resolve_api_key, per-user api key) --------------
     "serper",
     "hunter",
     "reddit",
@@ -84,24 +84,24 @@ _DECLARATIONS: tuple[str, ...] = (
     "mailpool",
     "kaspr",
     "pennylane",
-    # Voisin de `pennylane` : même catégorie Finance, et l'ordre gouverne
-    # l'affichage du catalogue.
+    # Neighbour of `pennylane`: same Finance category, and the order governs
+    # the catalog display.
     "finkare",
     "slack",
     "fullenrich",
-    # Voisin de `fullenrich` par le métier (enrichissement) ; porte aussi les
-    # webhooks de table Clay (écriture), cf. `providers/clay.py`.
+    # Neighbour of `fullenrich` by trade (enrichment); also carries the Clay
+    # table webhooks (write), see `providers/clay.py`.
     "clay",
     "dropcontact",
     "folk",
     "aiark",
     "unipile",
-    # Les CONNEXIONS du compte unipile ci-dessus (split 2026-08-28) : chacune
-    # est un connecteur à part entière (activation, ACL, sélection, visibilité,
-    # connexion hébergée en propre) qui DÉLÈGUE son credential à `unipile`. Elles
-    # se déclarent juste après lui : l'ordre gouverne l'affichage, et une carte de
-    # canal qui flotterait loin de son compte se lirait comme un connecteur sans
-    # rapport.
+    # The CONNECTIONS of the unipile account above (split 2026-08-28): each
+    # is a connector in its own right (activation, ACL, selection, visibility,
+    # its own hosted connection) that DELEGATES its credential to `unipile`. They
+    # are declared right after it: the order governs the display, and a channel
+    # card floating far from its account would read as an unrelated
+    # connector.
     "linkedin_unipile",
     "whatsapp",
     "telegram",
@@ -111,53 +111,53 @@ _DECLARATIONS: tuple[str, ...] = (
     "routine",
     "scaleway",
     "lusha",
-    # --- byo_user à credential multi-champs (hors resolve_api_key) -----------
+    # --- byo_user with multi-field credential (outside resolve_api_key) ------
     "silae",
     "forager",
     "lucca",
     "inqom",
     "threecx",
-    # --- gocardless : keyed BYO self-serve -----------------------------------
+    # --- gocardless: keyed BYO self-serve ------------------------------------
     "gocardless",
-    # --- yousign : BYO self-serve (clé + environnement), écrit réellement (envoie des invitations)
+    # --- yousign: BYO self-serve (key + environment), really writes (sends invitations)
     "yousign",
-    # `planity` reste ICI, à la place qu'il occupait quand il était fédéré : cet
-    # ordre ne gouverne que l'AFFICHAGE, et le déplacer réordonnerait le catalogue
-    # sans rien réparer. Sa place se juge au voisinage montré, pas au `kind`.
+    # `planity` stays HERE, in the spot it held when it was federated: this
+    # order only governs the DISPLAY, and moving it would reorder the catalog
+    # without fixing anything. Its place is judged by the neighbours shown, not by `kind`.
     "planity",
-    # Voisin de `planity` par la SITUATION, pas par le mécanisme : un connecteur
-    # métier que l'exploitant configure une fois (coordonnées d'application au
-    # palier plateforme) avant que quiconque puisse s'y connecter.
+    # Neighbour of `planity` by SITUATION, not by mechanism: a business
+    # connector that the operator configures once (application credentials at the
+    # platform tier) before anyone can connect to it.
     "instagram_meta",
     "meta_ads",
     "cognism",
     "lighton",
-    # --- sharepoint : connexion Microsoft de la personne (OAuth délégué), fichiers M365
+    # --- sharepoint: the person's Microsoft connection (delegated OAuth), M365 files
     "sharepoint",
     "promptwatch",
-    # --- sessions per-user (hors resolve_api_key, stockage dédié) ------------
+    # --- per-user sessions (outside resolve_api_key, dedicated storage) ------
     "crunchbase",
     "brevoauto",
     "pennylaneged",
     "browser",
     "google",
-    # --- les six SERVICES Google, sur le compte `google` (split 2026-09-26) ------
-    # Chacun sa carte, son activation, sa sélection, SON consentement (ses scopes
-    # seulement) ; le compte, lui, porte le coffre — `providers/google.service`.
+    # --- the six Google SERVICES, on the `google` account (split 2026-09-26) ------
+    # Each has its card, its activation, its selection, ITS consent (its scopes
+    # only); the account, for its part, carries the vault — `providers/google.service`.
     "gmail",
     "drive",
     "sheets",
     "calendar",
     "tasks",
     "chat",
-    # septième service (2026-10-02) — même forme, consentement `bigquery` seul.
+    # seventh service (2026-10-02) — same shape, `bigquery` consent only.
     "bigquery",
-    # --- open-data / sans credential ----------------------------------------
-    # Sources publiques sans rapport → connecteurs distincts (ex-`fr_open` qui les
-    # fusionnait : un sac « open data » incohérent, activer l'un activait l'autre).
-    # namespace = préfixe réel : culture_spectacle_* → `culture` (namespace_of =
-    # 1er token). Déclarer "culture", PAS "culture_spectacle" (jamais matché →
-    # fail-open du gate, #24).
+    # --- open-data / no credential ------------------------------------------
+    # Unrelated public sources → distinct connectors (formerly `fr_open`, which
+    # merged them: an incoherent "open data" bag, activating one activated the other).
+    # namespace = real prefix: culture_spectacle_* → `culture` (namespace_of =
+    # 1st token). Declare "culture", NOT "culture_spectacle" (never matched →
+    # gate fail-open, #24).
     "web",
     "culture",
     "gr",
@@ -167,9 +167,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "osm",
     "frenchtech",
     "infosec",
-    # Open data aussi, mais des États-Unis : salaires et emploi par métier (OEWS).
+    # Open data too, but from the United States: wages and employment by occupation (OEWS).
     "bls",
-    # --- connecteurs API tiers (clients oto-core déjà écrits, câblés 2026-06-19) ---
+    # --- third-party API connectors (oto-core clients already written, wired 2026-06-19) ---
     "hubspot",
     "brevo",
     "apollo",
@@ -185,16 +185,16 @@ _DECLARATIONS: tuple[str, ...] = (
     "salesforce",
     "pipedrive",
     "sellsy",
-    # Voisin de `sellsy` par le métier : le CRM des ESN et sociétés de conseil.
+    # Neighbour of `sellsy` by trade: the CRM for IT services firms and consultancies.
     "boondmanager",
-    # --- ATS / talent sourcing (RH) — câblés 2026-06-20 ----------------------
+    # --- ATS / talent sourcing (HR) — wired 2026-06-20 -----------------------
     "greenhouse",
     "lever",
     "ashby",
     "teamtailor",
     "recruitee",
     "spott",
-    # Voisin de `spott` : l'ATS de Welcome to the Jungle, côté recruteur.
+    # Neighbour of `spott`: the Welcome to the Jungle ATS, recruiter side.
     "wttj",
     "serpapi",
     "searchapi",
@@ -203,22 +203,22 @@ _DECLARATIONS: tuple[str, ...] = (
     "firecrawl",
     "tavily",
     "apify",
-    # Voisin d'`apify` : même régime (passerelle payante, clé plateforme sur grant).
+    # Neighbour of `apify`: same regime (paid gateway, platform key on grant).
     "monid",
-    # --- signaux de recrutement + campagnes sortantes — câblés 2026-08-17 ----
+    # --- hiring signals + outbound campaigns — wired 2026-08-17 --------------
     "theirstack",
     "origami",
-    # --- CRM agent-native — câblé 2026-08-19 --------------------------------
+    # --- agent-native CRM — wired 2026-08-19 --------------------------------
     "lightfield",
-    # --- automatisation de workflows (no-code) — câblés 2026-06-21 -----------
+    # --- workflow automation (no-code) — wired 2026-06-21 --------------------
     "n8n",
     "make",
     "zapier",
     "fireflies",
-    # --- connecteur http générique (secret DANS le coffre oto) ----------------
+    # --- generic http connector (secret IN the oto vault) ---------------------
     "http",
     "webflow",
-    # Voisin de `webflow` par le métier (CMS) : les deux cartes se lisent ensemble.
+    # Neighbour of `webflow` by trade (CMS): the two cards read together.
     "wordpress",
     "ahrefs",
     "granola",
@@ -226,8 +226,8 @@ _DECLARATIONS: tuple[str, ...] = (
     "linear",
     "stripe",
     "posthog",
-    # Voisin de `posthog` par le métier (mesure d'audience) : les deux cartes se
-    # lisent ensemble.
+    # Neighbour of `posthog` by trade (audience measurement): the two cards
+    # read together.
     "google_analytics",
     # Same family (product analytics) as `posthog`, read only — wired 2026-10-02.
     "amplitude",
@@ -235,52 +235,52 @@ _DECLARATIONS: tuple[str, ...] = (
     "waalaxy",
     "airtable",
     "tally",
-    # Voisin de `tally` par le métier (formulaires en ligne) ; en lecture seule.
+    # Neighbour of `tally` by trade (online forms); read-only.
     "typeform",
-    # --- signature électronique — câblé 2026-09-16 ---------------------------
+    # --- electronic signature — wired 2026-09-16 -----------------------------
     "signwell",
-    # --- prospection téléphonique — câblé 2026-08-31 -------------------------
+    # --- phone prospecting — wired 2026-08-31 --------------------------------
     "minari",
-    # --- forge logicielle — câblé 2026-09-02 ---------------------------------
+    # --- software forge — wired 2026-09-02 -----------------------------------
     "github",
-    # Voisin de `fireflies`/`grain`/`granola` par le métier (intelligence
-    # conversationnelle), et l'ordre gouverne l'affichage du catalogue.
+    # Neighbour of `fireflies`/`grain`/`granola` by trade (conversation
+    # intelligence), and the order governs the catalog display.
     "leexi",
-    # Voisin de `leexi` par le métier : les appels d'une société, leurs
-    # enregistrements et ce que l'IA de l'éditeur en a tiré.
+    # Neighbour of `leexi` by trade: a company's calls, their
+    # recordings and what the vendor's AI drew from them.
     "aircall",
     # Same family (meeting recordings, transcripts) — wired 2026-09-29.
     "claap",
-    # Voisin de `linear` : la roadmap de Productlane est ADOSSÉE à Linear
-    # (projets et issues y naissent, puis sont reflétés). Les deux cartes se
-    # lisent ensemble.
+    # Neighbour of `linear`: Productlane's roadmap is BACKED by Linear
+    # (projects and issues are born there, then mirrored). The two cards
+    # read together.
     "productlane",
-    # --- administration d'une marketplace métier — câblé 2026-09-11 ----------
-    # Jeton PERSONNEL d'un administrateur de la marketplace (byo_user seul) ; le
-    # seul connecteur du catalogue qui écrit dans un produit que nous opérons.
+    # --- administration of a business marketplace — wired 2026-09-11 ---------
+    # PERSONAL token of a marketplace administrator (byo_user only); the
+    # only connector in the catalog that writes into a product we operate.
     "hellostock",
-    # --- gestion de clinique esthétique — câblé 2026-09-17 --------------------
-    # Côté administratif seulement (agenda, catalogue, ventes, leads, réglages),
-    # en liste blanche : le contenu médical n'est pas servi, cf. `tools/nextmotion.py`.
+    # --- aesthetic clinic management — wired 2026-09-17 ----------------------
+    # Administrative side only (calendar, catalog, sales, leads, settings),
+    # allowlisted: medical content is not served, see `tools/nextmotion.py`.
     "nextmotion",
-    # --- paie et RH, en lecture — câblé 2026-09-17 ----------------------------
-    # Voisin de `nextmotion` par la SITUATION : un logiciel qui porte des données
-    # personnelles lourdes (NIR, IBAN, motifs d'absence médicaux), servi par liste
-    # blanche, cf. `tools/payfit.py`.
+    # --- payroll and HR, read-only — wired 2026-09-17 -------------------------
+    # Neighbour of `nextmotion` by SITUATION: software that carries heavy personal
+    # data (NIR, IBAN, medical absence reasons), served through an allowlist,
+    # see `tools/payfit.py`.
     "payfit",
-    # --- un audio du projet devient une page du projet — ADR 0074, #674 -----
+    # --- a project audio becomes a project page — ADR 0074, #674 ------------
     "transcription",
-    # --- référentiel des métiers US — câblé 2026-09-22 ------------------------
-    # Le pendant keyé de `bls` : O*NET nomme le métier, BLS en donne les salaires.
+    # --- US occupations reference — wired 2026-09-22 --------------------------
+    # The keyed counterpart of `bls`: O*NET names the occupation, BLS gives its wages.
     "onet",
-    # --- décision typée (System One) — câblé 2026-09-28 ----------------------
-    # Le modèle qui tranche une question fermée au lieu d'un tour de modèle. Voisin
-    # de `transcription` par la SITUATION : un service d'inférence dont la clé n'est
-    # jamais celle d'une org — ici celle du tenant, jamais la nôtre.
+    # --- typed decision (System One) — wired 2026-09-28 ----------------------
+    # The model that settles a closed question instead of a model turn. Neighbour
+    # of `transcription` by SITUATION: an inference service whose key is
+    # never an org's — here the tenant's, never ours.
     "jev",
-    # --- porteurs de CLÉ, aucun outil (kind="credential") --------------------
-    # La clé de modèle qu'une org dépose pour ses agents programmés. Ils ne
-    # servent aucun tool : le worker la consomme pour le compte de l'org.
+    # --- KEY carriers, no tools (kind="credential") --------------------------
+    # The model key an org deposits for its scheduled agents. They serve
+    # no tool: the worker consumes it on the org's behalf.
     "anthropic",
     "mistral",
 )
@@ -291,60 +291,60 @@ for _nom in _DECLARATIONS:
     _mod = importlib.import_module(f".{_nom}", __name__)
     if _mod.CONNECTOR.name != _nom:
         raise RuntimeError(
-            f"providers/{_nom}.py déclare le connecteur {_mod.CONNECTOR.name!r} : "
-            "le module doit s'appeler comme son connecteur (un domicile, un nom).")
+            f"providers/{_nom}.py declares connector {_mod.CONNECTOR.name!r}: "
+            "the module must be named like its connector (one home, one name).")
     _MODULES[_nom] = _mod
     _REGISTRY_LIST.append(_mod.CONNECTOR)
 
 
 def _curee(constante: str) -> dict:
-    """Indexe par connecteur une constante curée déclarée dans son module."""
+    """Index by connector a curated constant declared in its module."""
     return {nom: getattr(mod, constante) for nom, mod in _MODULES.items()
             if getattr(mod, constante, None) is not None}
 
 
-# Données curées PAR CONNECTEUR — déclarées dans `providers/<nom>.py`, indexées
-# ici. Elles ne sont pas des champs de `Connector` : la forme de la dataclass est
-# un contrat lu jusque dans un AUTRE repo (oto-dashboard, via `public_catalog`),
-# et l'ajout d'un champ typé se décide connecteur par connecteur (cf. #409 pour
-# la cardinalité d'auth, dont le domicile naturel est bien l'entrée elle-même).
+# Curated data PER CONNECTOR — declared in `providers/<name>.py`, indexed
+# here. They are not fields of `Connector`: the shape of the dataclass is
+# a contract read as far as ANOTHER repo (oto-dashboard, via `public_catalog`),
+# and adding a typed field is decided connector by connector (cf. #409 for
+# auth cardinality, whose natural home is indeed the entry itself).
 _CATEGORY_BY_CONNECTOR: dict = _curee("CATEGORY")
 _PUBLISHER_BY_CONNECTOR: dict = _curee("PUBLISHER")
 _DESCRIPTION_BY_CONNECTOR: dict = _curee("DESCRIPTION")
 _LOGO_DOMAIN_BY_CONNECTOR: dict = _curee("LOGO_DOMAIN")
-# Connecteurs SANS logo de marque, et c'est voulu : soit génériques (le connecteur
-# n'est pas une marque — `http`, `browser`), soit maison (`gr`), soit composés de
-# sources publiques hétérogènes (`infosec`). L'UI y rend un monogramme. Déclaré
-# `SANS_LOGO_DE_MARQUE = True` dans le module du connecteur, avec son motif.
-# L'inverse d'une dette : rend l'absence DÉLIBÉRÉE et vérifiable, au lieu de
-# laisser un oubli se confondre avec un choix — les 20 connecteurs sans logo du
-# 31/07 étaient tous des oublis, sauf ces cinq. Ratchet : test_connector_logos.py.
+# Connectors WITHOUT a brand logo, on purpose: either generic (the connector
+# is not a brand — `http`, `browser`), or in-house (`gr`), or made of
+# heterogeneous public sources (`infosec`). The UI renders a monogram there. Declared
+# `SANS_LOGO_DE_MARQUE = True` in the connector's module, with its reason.
+# The opposite of a debt: makes the absence DELIBERATE and verifiable, instead of
+# letting an oversight pass for a choice — the 20 connectors without a logo on
+# 31/07 were all oversights, except these five. Ratchet: test_connector_logos.py.
 _SANS_LOGO_DE_MARQUE: frozenset = frozenset(_curee("SANS_LOGO_DE_MARQUE"))
 
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
 
 
-# --- index inverse namespace -> connecteur ----------------------------------
+# --- reverse index namespace -> connector -----------------------------------
 _NS_INDEX: dict[str, Connector] = {}
 for _c_obj in _REGISTRY_LIST:
     for _ns in _c_obj.namespaces:
         _NS_INDEX[_ns] = _c_obj
 
 
-# --- dérivations (remplacent les 4 listes en dur + quotas + env-names) -------
+# --- derivations (replace the 4 hard-coded lists + quotas + env-names) -------
 
 KEY_PROVIDERS: tuple = tuple(c.name for c in _REGISTRY_LIST if c.keyed)
-# Providers pouvant DÉTENIR un credential per-membre dans le coffre — garde-fou d'écriture
-# `db._check_provider`. Plus large que KEY_PROVIDERS (keyed seul) : inclut les **sessions
-# navigateur** (secret_kind="cookie" : brevo/crunchbase/pennylaneged, qui persistent le
-# Context Browserbase) et les connecteurs **byo multi-champs**. Sans ça, la persistance
-# d'une session (ADR 0026/0033, `_persist`→`set_member_api_key`) levait « Unknown provider ».
-# ⚠️ Un connecteur qui DÉLÈGUE son credential (`credential_of`, ex. les six canaux
-# unipile) en est EXCLU : sa clé n'existe que sous le porteur. Sans cette exclusion,
-# une clé posée sous `whatsapp` serait acceptée au coffre puis jamais relue (la
-# cascade normalise vers `unipile`) — un credential fantôme, et deux clés qui se
-# contredisent. Cf. `credential_provider`.
+# Providers that can HOLD a per-member credential in the vault — write guard
+# `db._check_provider`. Broader than KEY_PROVIDERS (keyed only): includes **browser
+# sessions** (secret_kind="cookie": brevo/crunchbase/pennylaneged, which persist the
+# Browserbase Context) and **multi-field byo** connectors. Without it, persisting
+# a session (ADR 0026/0033, `_persist`→`set_member_api_key`) raised "Unknown provider".
+# ⚠️ A connector that DELEGATES its credential (`credential_of`, e.g. the six unipile
+# channels) is EXCLUDED: its key exists only under the carrier. Without this exclusion,
+# a key set under `whatsapp` would be accepted by the vault then never read back (the
+# cascade normalizes to `unipile`) — a phantom credential, and two keys that
+# contradict each other. See `credential_provider`.
 CREDENTIAL_PROVIDERS: frozenset = frozenset(
     c.name for c in _REGISTRY_LIST
     if c.credential_of is None
@@ -352,72 +352,72 @@ CREDENTIAL_PROVIDERS: frozenset = frozenset(
 )
 ORG_SHAREABLE_PROVIDERS: frozenset = frozenset(c.name for c in _REGISTRY_LIST if c.org_shareable)
 QUOTA_DEFAULTS: dict = {c.name: c.default_quota for c in _REGISTRY_LIST if c.default_quota}
-# Socle curé (ADR 0050) : les connecteurs installés d'office (state='active') au
-# seed de la sélection d'un NOUVEAU (sub, org). Le reste de l'exposé = library.
-# ⚠️ Politique actuelle (décision 16/07) : socle VIDE — aucun connecteur n'est
-# pré-installé ; l'agent guide l'utilisateur depuis les tools spine (`oto_connector`
-# op=list/select, `oto_call`) et le catalogue injecté. Le mécanisme reste : poser
-# default_active=True sur un connecteur le remettrait au départ.
+# Curated base (ADR 0050): the connectors installed by default (state='active') at
+# the selection seed of a NEW (sub, org). The rest of the exposed set = library.
+# ⚠️ Current policy (decision 16/07): EMPTY base — no connector is
+# pre-installed; the agent guides the user from the spine tools (`oto_connector`
+# op=list/select, `oto_call`) and the injected catalog. The mechanism remains: setting
+# default_active=True on a connector would put it back at the start.
 DEFAULT_ACTIVE_CONNECTORS: frozenset = frozenset(
     c.name for c in _REGISTRY_LIST if c.default_active
 )
 
-# Connecteurs d'envoi d'email → transport effectif. Un expéditeur appartient à un
-# connecteur (sa config vit dans orgs.email_settings keyé par connecteur) ; le
-# transport en DÉRIVE. `email_send` (spine) route sender→connecteur→transport.
+# Email-sending connectors → effective transport. A sender belongs to a
+# connector (its config lives in orgs.email_settings keyed by connector); the
+# transport is DERIVED from it. `email_send` (spine) routes sender→connector→transport.
 EMAIL_CONNECTOR_TRANSPORT: dict = {"scaleway": "scaleway", "resend": "resend"}
 REMOTE_CONNECTORS: tuple = tuple(c for c in _REGISTRY_LIST if c.kind == "remote")
 
 
-# --- catalogue de namespaces présenté à l'agent (_SERVER_INSTRUCTIONS) -------
-# DÉRIVÉ du registre (fini la liste écrite à la main qui dérivait — reddit/culture
-# mentionnés, foncier/pennylane/apollo/sante… omis). Améliorer le blurb d'un
-# namespace = éditer le `help` du connecteur (source unique : catalogue + carte +
-# ce primer).
+# --- namespace catalog presented to the agent (_SERVER_INSTRUCTIONS) ---------
+# DERIVED from the registry (gone is the hand-written list that drifted — reddit/culture
+# mentioned, foncier/pennylane/apollo/sante… omitted). Improving a namespace's
+# blurb = editing the connector's `help` (single source: catalog + card +
+# this primer).
 #
-# Le SOCLE (les capacités qu'oto porte lui-même, hors registre connecteurs) vit dans
-# `oto_mcp/spine_catalog.py` — même régime : une famille déclare sa ligne, et la
-# couverture est VÉRIFIÉE contre les outils réellement montés, si bien qu'aucune
-# capacité ne peut être passée sous silence. Elle l'était : quatre entrées écrites à la
-# main que rien ne faisait grandir, d'où l'absence d'`oto_resource`/`oto_doc`/`oto_kb`
-# de la carte qui s'annonce « complète » (signal #813 du 08/09/2026, arbitré le jour
-# même). Il est HORS de ce paquet à dessein : `providers/` est le registre des
-# CONNECTEURS, et tout fichier qui y dort sans ligne dans `_DECLARATIONS` est un
-# connecteur inatteignable (`test_providers_registry_snapshot`). Il est importé en
-# corps de `render_namespace_catalog` — cet agrégateur reste PUR.
+# The BASE (the capabilities oto carries itself, outside the connector registry) lives in
+# `oto_mcp/spine_catalog.py` — same regime: a family declares its line, and the
+# coverage is VERIFIED against the tools actually mounted, so that no
+# capability can be passed over in silence. It used to be: four hand-written
+# entries that nothing made grow, hence the absence of `oto_resource`/`oto_doc`/`oto_kb`
+# from the map that announces itself as "complete" (signal #813 of 08/09/2026, settled the same
+# day). It is OUTSIDE this package on purpose: `providers/` is the registry of
+# CONNECTORS, and any file sleeping there without a line in `_DECLARATIONS` is an
+# unreachable connector (`test_providers_registry_snapshot`). It is imported in the
+# body of `render_namespace_catalog` — this aggregator stays PURE.
 
 
 def _availability_tag(c: "Connector") -> str:
-    """Annotation courte de disponibilité (pour ne pas faire croire qu'un namespace
-    gaté/masqué est appelable d'office)."""
+    """Short availability annotation (so as not to suggest that a gated/hidden
+    namespace is callable out of the box)."""
     bits: list[str] = []
     if c.hosted_auth:
-        bits.append("compte à connecter")
+        bits.append("account to connect")
     return f" ({'; '.join(bits)})" if bits else ""
 
 
 def render_namespace_catalog(spine_tools=None) -> str:
-    """Le bloc « namespaces » des instructions serveur — les DEUX moitiés dérivées.
+    """The "namespaces" block of the server instructions — BOTH halves derived.
 
-    Connecteurs : une ligne par connecteur (ses namespaces groupés), sur tout
-    `_REGISTRY_LIST` → pas d'omission. Les transports email pur-credential
-    (scaleway/resend, aucun tool propre) sont présentés via la famille `email_send`.
+    Connectors: one line per connector (its namespaces grouped), over all of
+    `_REGISTRY_LIST` → no omission. The pure-credential email transports
+    (scaleway/resend, no tool of their own) are presented via the `email_send` family.
 
-    Socle : une ligne par famille déclarée (`spine_catalog.SPINE_FAMILIES`), puis une ligne
-    par outil spine que personne ne revendique. `spine_tools=None` = dérivation par
-    défaut (registre des capacités) ; le paramètre existe pour qu'un appelant qui
-    connaît l'inventaire réellement monté le passe, et pour que le test prouve le
-    mécanisme sans dépendre de ce qui est monté ce jour-là."""
+    Base: one line per declared family (`spine_catalog.SPINE_FAMILIES`), then one line
+    per spine tool that nobody claims. `spine_tools=None` = default derivation
+    (capability registry); the parameter exists so that a caller who
+    knows the inventory actually mounted can pass it, and so that the test proves the
+    mechanism without depending on what is mounted that day."""
     lines: list[str] = []
     for c in _REGISTRY_LIST:
-        if c.name in EMAIL_CONNECTOR_TRANSPORT:   # credential-only → couvert par email_send
+        if c.name in EMAIL_CONNECTOR_TRANSPORT:   # credential-only → covered by email_send
             continue
         ns = " / ".join(f"{n}_*" for n in c.namespaces)
         desc = f"{c.label} : {c.help}" if c.help else c.label
         lines.append(f"• {ns} — {desc}{_availability_tag(c)}")
     lines.append("")
-    lines.append("Plateforme (le socle — ce qu'oto porte lui-même, toujours monté) :")
-    from ..spine_catalog import render_spine   # module pur, import tardif (cf. supra)
+    lines.append("Platform (the base — what oto carries itself, always mounted):")
+    from ..spine_catalog import render_spine   # pure module, late import (see above)
     lines += render_spine(spine_tools)
     return "\n".join(lines)
 
@@ -438,53 +438,53 @@ def is_keyed(name: str) -> bool:
 
 
 def require_keyed(name: str) -> None:
-    """Remplace db._check_provider : lève si `name` n'est pas un provider keyed."""
+    """Replaces db._check_provider: raises if `name` is not a keyed provider."""
     if not is_keyed(name):
         raise ValueError(f"Unknown provider {name!r} (allowed: {KEY_PROVIDERS})")
 
 
 def require_credential(entity_type: str, name: str) -> None:
-    """Lève si le connecteur ne peut PAS porter un credential à ce niveau d'entité.
-    user → doit accepter `byo_user` (clé API keyed OU secret de session :
-    linkedin/crunchbase/google/slack…) ; group → org-partageable OU byo_user (une
-    équipe délègue l'org, ADR 0012) ; org → doit être org-partageable (byo_org,
-    ex. http, ou un remote org-only). Utilisé par credentials_store (coffre unique tous secrets)."""
-    # Délégation (`credential_of`) : le connecteur n'a pas de credential à lui, à
-    # AUCUN niveau d'entité. Refus nommant le porteur — « whatsapp n'accepte pas de
-    # clé » sans dire où la poser laisserait l'appelant chercher une carte qui
-    # n'existe pas.
+    """Raises if the connector CANNOT carry a credential at this entity level.
+    user → must accept `byo_user` (keyed API key OR session secret:
+    linkedin/crunchbase/google/slack…); group → org-shareable OR byo_user (a
+    team delegates the org, ADR 0012); org → must be org-shareable (byo_org,
+    e.g. http, or an org-only remote). Used by credentials_store (single vault for all secrets)."""
+    # Delegation (`credential_of`): the connector has no credential of its own, at
+    # NO entity level. Refusal naming the carrier — "whatsapp does not accept a
+    # key" without saying where to put it would leave the caller looking for a card that
+    # does not exist.
     porteur = credential_provider(name)
     if porteur != name:
         raise ValueError(
-            f"{name!r} ne porte pas de credential : sa clé se pose sur {porteur!r} "
-            f"(un seul compte fournisseur pour toutes ses connexions).")
+            f"{name!r} does not carry a credential: its key is set on {porteur!r} "
+            f"(a single provider account for all its connections).")
     if entity_type in ("org", "tenant"):
-        # Un TENANT (L-clés PR 1) pose la même question que l'org : sa clé est
-        # partagée par ses orgs, donc lue aux barreaux partagés du walker (gate
-        # `ORG_SHAREABLE_PROVIDERS`) — et à eux seuls.
+        # A TENANT (L-keys PR 1) asks the same question as the org: its key is
+        # shared by its orgs, hence read at the walker's shared rungs (gate
+        # `ORG_SHAREABLE_PROVIDERS`) — and at those alone.
         if not is_org_shareable(name):
-            raise ValueError(f"{name!r} n'est pas un credential org-partageable")
+            raise ValueError(f"{name!r} is not an org-shareable credential")
     elif entity_type == "platform":
-        # ADR 0044 §F : la clé plateforme est une instance du coffre, gatée sur le mode
-        # d'auth 'platform' du connecteur (le même gate que le palier plateforme de la
-        # résolution : un provider byo-only ne porte jamais de clé plateforme).
+        # ADR 0044 §F: the platform key is an instance of the vault, gated on the connector's
+        # 'platform' auth mode (the same gate as the platform tier of the
+        # resolution: a byo-only provider never carries a platform key).
         c = REGISTRY.get(name)
         if not (c and "platform" in c.auth_modes):
-            raise ValueError(f"{name!r} n'accepte pas de credential plateforme (auth_modes 'platform' requis)")
+            raise ValueError(f"{name!r} does not accept a platform credential (auth_modes 'platform' required)")
     elif entity_type == "group":
-        # Un GROUPE est une délégation de l'org (ADR 0012) : ce qui est
-        # org-partageable est posable au niveau équipe (miroir EXACT du palier
-        # groupe de la résolution, gaté `ORG_SHAREABLE_PROVIDERS`, pas byo_user).
-        # Un byo_user pur (sessions linkedin/google) reste posable en équipe aussi.
-        # ⚠️ NE PAS exiger byo_user ici : un connecteur org-only (http « un par
-        # département », #183) DOIT pouvoir poser son secret d'équipe sans devenir
-        # byo_user (ce qui réactiverait à tort le palier membre — cf. access/cascade.py).
+        # A GROUP is a delegation of the org (ADR 0012): whatever is
+        # org-shareable can be set at team level (EXACT mirror of the resolution's
+        # group tier, gated `ORG_SHAREABLE_PROVIDERS`, not byo_user).
+        # A pure byo_user (linkedin/google sessions) can be set at team level too.
+        # ⚠️ DO NOT require byo_user here: an org-only connector (http "one per
+        # department", #183) MUST be able to set its team secret without becoming
+        # byo_user (which would wrongly reactivate the member tier — see access/cascade.py).
         if not (is_org_shareable(name) or is_byo_user(name)):
-            raise ValueError(f"{name!r} n'accepte pas de credential de groupe")
+            raise ValueError(f"{name!r} does not accept a group credential")
     else:  # user
         if not is_byo_user(name):
             raise ValueError(
-                f"{name!r} n'accepte pas de credential per-user (byo_user requis)")
+                f"{name!r} does not accept a per-user credential (byo_user required)")
 
 
 def is_byo_user(name: str) -> bool:
@@ -498,9 +498,9 @@ def is_org_shareable(name: str) -> bool:
 
 
 def is_personal_cross_org(name: str) -> bool:
-    """Le connecteur porte-t-il une instance PERSONNELLE cross-org (issue #172) ?
-    Vrai ⟹ la clé membre d'un `sub` posée dans une org le suit dans toutes ses
-    orgs (résolution de proximité). Défaut False (ADR 0033 : scope `(sub, org)`)."""
+    """Does the connector carry a PERSONAL cross-org instance (issue #172)?
+    True ⟹ a `sub`'s member key set in one org follows it across all its
+    orgs (proximity resolution). Default False (ADR 0033: scope `(sub, org)`)."""
     c = REGISTRY.get(name)
     return bool(c and c.personal_cross_org)
 
@@ -510,35 +510,35 @@ PERSONAL_CROSS_ORG_PROVIDERS: frozenset = frozenset(
 
 
 def credential_provider(name: str) -> str:
-    """Le connecteur qui PORTE le credential de `name` (lui-même par défaut).
+    """The connector that CARRIES `name`'s credential (itself by default).
 
-    **LE seam de la délégation** (`Connector.credential_of`) : tout ce qui touche au
-    coffre, à la cascade, au quota, à la clé plateforme ou à l'option couche-3 pose
-    sa question à travers lui ; tout ce qui GATE (activation, ACL, sélection,
-    visibilité, pin `_instance=`) garde le nom NU. Les deux questions se ressemblent
-    et ne sont pas la même — c'est exactement la confusion qui a produit, le
-    2026-07-07, une carte « clé d'org » verte à côté d'un « Bloqué » rouge.
+    **THE seam of delegation** (`Connector.credential_of`): everything that touches the
+    vault, the cascade, the quota, the platform key or the layer-3 option asks
+    its question through it; everything that GATES (activation, ACL, selection,
+    visibility, `_instance=` pin) keeps the BARE name. The two questions look alike
+    and are not the same — exactly the confusion that produced, on
+    2026-07-07, a green "org key" card next to a red "Blocked".
 
-    Un seul niveau, volontairement : un porteur ne délègue pas à son tour (une chaîne
-    rendrait le coffre adressable par un chemin qu'aucune surface ne montre). Nom
-    inconnu ⟹ rendu tel quel (le fail-open des gates est inchangé)."""
+    One level only, on purpose: a carrier does not delegate in turn (a chain
+    would make the vault addressable by a path no surface shows). Unknown
+    name ⟹ returned as is (the gates' fail-open is unchanged)."""
     c = REGISTRY.get(name)
     return (c.credential_of or name) if c else name
 
 
 def delegates_credential(name: str) -> bool:
-    """`name` emprunte-t-il le credential d'un autre connecteur ?"""
+    """Does `name` borrow another connector's credential?"""
     c = REGISTRY.get(name)
     return bool(c and c.credential_of)
 
 
 def connector_for_hosted_channel(channel: str) -> Connector | None:
-    """Le connecteur qui REPRÉSENTE un canal hébergé (`LINKEDIN`, `WHATSAPP`…).
+    """The connector that REPRESENTS a hosted channel (`LINKEDIN`, `WHATSAPP`…).
 
-    Réciproque de `Connector.hosted_channel`. C'est par là que le code qui ne
-    connaît que le canal — la résolution du compte opéré, les tools de messagerie,
-    le picker d'identités — retrouve le connecteur à GATER, au lieu de retomber sur
-    le porteur de la clé et de gater tout le monde pareil."""
+    Inverse of `Connector.hosted_channel`. This is how code that only
+    knows the channel — operated-account resolution, the messaging tools,
+    the identity picker — finds the connector to GATE, instead of falling back to
+    the key's carrier and gating everyone the same."""
     if not channel:
         return None
     return _CHANNEL_INDEX.get(channel.upper())
@@ -548,34 +548,34 @@ _CHANNEL_INDEX: dict = {c.hosted_channel: c for c in _REGISTRY_LIST if c.hosted_
 
 
 def org_secret_meta(provider: str, base_url: str | None) -> tuple[dict | None, str | None]:
-    """Valide l'écriture d'un secret partagé d'org et calcule son `meta` satellite.
+    """Validates the write of an org shared secret and computes its satellite `meta`.
 
-    Un connecteur **remote** (ADR 0003/0011) est défini par la DONNÉE : fournir un
-    `base_url` (endpoint du bridge) ⇒ c'est un remote, qu'il ait ou non une entrée
-    au registre (zéro nom client en dur). Sinon, le provider doit être un connecteur
-    org-partageable du registre (clé partagée : attio, pennylane…) et REFUSE un
-    `base_url`. Pure (registre seul) → testable hors DB.
+    A **remote** connector (ADR 0003/0011) is defined by DATA: supplying a
+    `base_url` (bridge endpoint) ⇒ it is a remote, whether or not it has an entry
+    in the registry (zero hard-coded client names). Otherwise, the provider must be an
+    org-shareable connector of the registry (shared key: attio, pennylane…) and REFUSES a
+    `base_url`. Pure (registry only) → testable without a DB.
 
-    Renvoie `(meta, error_code)`. `error_code` None = OK ; `meta` = `{base_url}` pour
-    un remote, sinon None. Codes : `provider_not_shareable`, `base_url_required`,
+    Returns `(meta, error_code)`. `error_code` None = OK; `meta` = `{base_url}` for
+    a remote, otherwise None. Codes: `provider_not_shareable`, `base_url_required`,
     `base_url_not_allowed`.
     """
     c = connector_for_provider(provider)
-    # remote = entrée registre kind="remote" (legacy) OU un base_url sur un provider
-    # hors registre (data-driven : le credential définit le bridge).
+    # remote = registry entry kind="remote" (legacy) OR a base_url on a provider
+    # outside the registry (data-driven: the credential defines the bridge).
     is_remote = (c is not None and c.kind == "remote") or (c is None and bool(base_url))
     if is_remote:
         if not base_url:
             return None, "base_url_required"
         return {"base_url": base_url.rstrip("/")}, None
-    # NB : un connecteur qui DÉLÈGUE son credential en est exclu par construction
-    # (`Connector.org_shareable`) — sa clé se pose sur le porteur, pas sur lui.
+    # NB: a connector that DELEGATES its credential is excluded by construction
+    # (`Connector.org_shareable`) — its key is set on the carrier, not on it.
     if provider not in ORG_SHAREABLE_PROVIDERS:
         return None, "provider_not_shareable"
-    # Un connecteur OAuth se partage par CONSENTEMENT, jamais par un secret collé :
-    # `google` accepte le palier org (compte partagé posé par un admin, 2026-09-27),
-    # mais seulement par son flux (`auth/google.build_auth_url(scope='org')`). Une
-    # pose générique écrirait une ligne sans refresh token qu'aucun outil ne lirait.
+    # An OAuth connector is shared by CONSENT, never by a pasted secret:
+    # `google` accepts the org tier (shared account set by an admin, 2026-09-27),
+    # but only through its flow (`auth/google.build_auth_url(scope='org')`). A
+    # generic set would write a row without a refresh token that no tool would read.
     if c is not None and c.secret_kind == "oauth":
         return None, "provider_not_shareable"
     if base_url:
@@ -584,9 +584,9 @@ def org_secret_meta(provider: str, base_url: str | None) -> tuple[dict | None, s
 
 
 def public_catalog() -> list[dict]:
-    """Vue publique (GET /api/connectors) — sans secret, pour le frontend."""
-    # Lazy : le registre des backends d'identités se remplit à l'import des modules
-    # tools/* (register_all au boot) — on le lit à la demande, jamais à l'import.
+    """Public view (GET /api/connectors) — no secret, for the frontend."""
+    # Lazy: the identity backends registry fills at import of the tools/*
+    # modules (register_all at boot) — we read it on demand, never at import.
     from ..connectors import flow as connector_flow
     from ..connectors import identities as connector_identities
     from ..connectors import verify as connector_verify
@@ -595,50 +595,50 @@ def public_catalog() -> list[dict]:
             "name": c.name,
             "label": c.label,
             "help": c.help,
-            # Description curée 2-3 phrases (carte catalogue) — "" si non rédigée,
-            # le front retombe sur `help`.
+            # Curated 2-3 sentence description (catalog card) — "" if not written,
+            # the front falls back to `help`.
             "description": c.description,
-            # Doc « how-to » user-facing (prérequis/setup/usage), markdown par section.
+            # User-facing "how-to" doc (prerequisites/setup/usage), markdown per section.
             "doc_sections": [
                 {"kind": s.kind, "title": s.title, "body_md": s.body_md}
                 for s in c.doc_sections
             ],
             "href": c.href,
-            "publisher": c.publisher_name,   # éditeur (curé) — catalogue
-            "logo_url": c.logo_url_for(),     # logo éditeur (oto-media), None si absent
+            "publisher": c.publisher_name,   # publisher (curated) — catalog
+            "logo_url": c.logo_url_for(),     # publisher logo (oto-media), None if absent
             "availability": c.availability,
             "auth_modes": sorted(c.auth_modes),
             "personal_session": c.personal_session,
             "secret_kind": c.secret_kind,
-            # Descripteur d'auth unifié (ADR 0024) — method/cardinality/fields.
-            # Source du widget credential de la carte ; `secret_kind` reste exposé
-            # le temps de la transition (dérivable l'un de l'autre).
+            # Unified auth descriptor (ADR 0024) — method/cardinality/fields.
+            # Source of the card's credential widget; `secret_kind` stays exposed
+            # during the transition (derivable from one another).
             "auth": c.auth,
             "namespaces": list(c.namespaces),
-            "family": c.family,        # axe builder (dérivé) — ADR 0011
-            "category": c.category,    # axe utilisateur (curé) — ADR 0011
-            # Schéma de saisie du credential (modèle générique multi-champs) — le
-            # dashboard rend le formulaire en bouclant dessus. Jamais de valeur,
-            # juste la forme (name/label/secret/when/choices).
-            # DÉRIVÉ de `auth["fields"]`, pas recopié : les deux listes décrivaient la
-            # même chose à deux endroits, et un champ ajouté à l'une manquait à
-            # l'autre en silence (constaté en ajoutant `when`/`choices`, #449).
+            "family": c.family,        # builder axis (derived) — ADR 0011
+            "category": c.category,    # user axis (curated) — ADR 0011
+            # Credential input schema (generic multi-field model) — the
+            # dashboard renders the form by looping over it. Never a value,
+            # just the shape (name/label/secret/when/choices).
+            # DERIVED from `auth["fields"]`, not copied: the two lists described the
+            # same thing in two places, and a field added to one was silently missing from
+            # the other (noticed when adding `when`/`choices`, #449).
             "credential_fields": c.auth["fields"],
-            # Free-tier (ADR 0031) : clé plateforme ouverte sans grant, quota gratuit
-            # par user/jour. Le dashboard affiche un badge « gratuit : N/j » côté USER.
+            # Free-tier (ADR 0031): platform key open without grant, free quota
+            # per user/day. The dashboard shows a "free: N/d" badge on the USER side.
             "free_tier": {"daily_quota": c.default_quota} if c.platform_key_open else None,
-            # Sélecteur d'identité (ADR 0024) : le connecteur permet de choisir une
-            # identité/cible par défaut (pennylaneged : la société = SA GED). La
-            # carte USER en dérive son picker (google/unipile ont leur widget dédié).
+            # Identity selector (ADR 0024): the connector lets you choose a default
+            # identity/target (pennylaneged: the company = ITS GED). The
+            # USER card derives its picker from it (google/unipile have their own widget).
             "identities": connector_identities.supports(c.name),
-            # Sonde de credential (framework « tester la connexion ») : le connecteur a
-            # enregistré un `verify` sans effet de bord (zoho…). La carte affiche alors
-            # un bouton « tester la connexion » à côté de l'état « clé posée ».
+            # Credential probe ("test the connection" framework): the connector has
+            # registered a side-effect-free `verify` (zoho…). The card then shows
+            # a "test the connection" button next to the "key set" state.
             "verifiable": connector_verify.supports(c.name),
-            # FORME du geste « connecter » (label + paramètres attendus), ou None
-            # pour les ~56 connecteurs sans flux. Jamais d'URL ni de nom de
-            # capacité : /api/connectors est servie SANS auth, et le chemin est
-            # fixe côté client. Cf. `connector_flow`.
+            # SHAPE of the "connect" gesture (label + expected parameters), or None
+            # for the ~56 connectors without a flow. Never a URL or a
+            # capability name: /api/connectors is served WITHOUT auth, and the path is
+            # fixed client-side. See `connector_flow`.
             "connect": connector_flow.describe(c.name),
         }
         for c in _REGISTRY_LIST

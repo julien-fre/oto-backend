@@ -1,32 +1,32 @@
-"""Déclaration de registre du connecteur `sharepoint`.
+"""Registry declaration of the `sharepoint` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+Sole home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import _c
 
-# sharepoint : fichiers Microsoft 365 (sites SharePoint, bibliothèques de
-# documents, OneDrive) via Microsoft Graph, AU NOM DE LA PERSONNE : chacune se
-# connecte avec son compte Microsoft 365 (OAuth, permissions déléguées) et l'agent
-# voit exactement ce qu'elle voit — plusieurs comptes possibles, choisis par
-# `_account=` à l'appel. L'application est celle d'oto, multilocataire,
-# dont les coordonnées sont posées au palier plateforme (`auth/microsoft.py`) ; le
-# client n'enregistre aucune application. L'hôte Graph est fixe : pas de garde
-# d'egress à poser.
+# sharepoint: Microsoft 365 files (SharePoint sites, document libraries,
+# OneDrive) via Microsoft Graph, ON BEHALF OF THE PERSON: each one
+# connects with their Microsoft 365 account (OAuth, delegated permissions) and the agent
+# sees exactly what they see — several accounts possible, chosen by
+# `_account=` at call time. The application is oto's own, multi-tenant,
+# whose credentials are set at the platform tier (`auth/microsoft.py`); the
+# client registers no application. The Graph host is fixed: no egress
+# guard to set.
 CONNECTOR = _c(
     "sharepoint", ["sharepoint"],
     auth_modes={"byo_user"},
-    # Le consentement naît du compte Microsoft de la personne, pas de son org.
+    # Consent comes from the person's Microsoft account, not from their org.
     personal_session=True, secret_kind="oauth",
-    # OAuth ⟹ la dérivation dirait mono ; or une personne lie plusieurs comptes
-    # Microsoft (son annuaire, celui d'un client) et le coffre porte une ligne par
-    # compte (`auth/microsoft.persist_grant`). Même raison de fournisseur que google.
+    # OAuth ⟹ the derivation would say single; yet a person links several Microsoft
+    # accounts (their directory, a client's) and the vault holds one row per
+    # account (`auth/microsoft.persist_grant`). Same provider reason as google.
     cardinality="multi",
     label="SharePoint & OneDrive",
-    help="tes fichiers Microsoft 365 : sites, bibliothèques, OneDrive — chercher, lire, "
-         "déposer, avec tes droits",
+    help="your Microsoft 365 files: sites, libraries, OneDrive — search, read, "
+         "upload, with your rights",
     href="https://learn.microsoft.com/graph/api/resources/sharepoint",
 )
 
@@ -35,8 +35,8 @@ PUBLISHER = "Microsoft"
 LOGO_DOMAIN = "microsoft.com"
 
 DESCRIPTION = (
-    "Tes fichiers Microsoft 365 : ton OneDrive, les sites SharePoint et les "
-    "bibliothèques de documents auxquels tu as accès. Chercher, lire un document "
-    "(Word, PDF, Excel…) et en déposer un. Tu te connectes avec ton compte "
-    "Microsoft : l'agent voit ce que tu vois, ni plus ni moins."
+    "Your Microsoft 365 files: your OneDrive, the SharePoint sites and the "
+    "document libraries you have access to. Search, read a document "
+    "(Word, PDF, Excel…) and upload one. You connect with your Microsoft "
+    "account: the agent sees what you see, no more, no less."
 )

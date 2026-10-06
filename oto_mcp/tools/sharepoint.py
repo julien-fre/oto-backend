@@ -1,25 +1,25 @@
-"""SharePoint & OneDrive — les fichiers Microsoft 365 d'une personne, via Microsoft Graph.
+"""SharePoint & OneDrive — a person's Microsoft 365 files, via Microsoft Graph.
 
-Credential = la connexion Microsoft de la PERSONNE (OAuth, permissions déléguées),
-acquise et renouvelée par `auth/microsoft.py` : l'agent voit exactement ce
-qu'elle voit dans Microsoft 365. Un 403 dit « pas d'accès pour toi », jamais
-« n'existe pas ». Plusieurs comptes liés : l'appel choisit le sien par l'axe
-générique `_account=` (aucun paramètre propre aux outils), résolu par
-`access.resolve_credential` comme pour tout connecteur multi-compte.
+Credential = the PERSON's Microsoft connection (OAuth, delegated permissions),
+acquired and renewed by `auth/microsoft.py`: the agent sees exactly what they
+see in Microsoft 365. A 403 says "no access for you", never
+"doesn't exist". Several linked accounts: the call picks its own through the
+generic `_account=` axis (no parameter specific to the tools), resolved by
+`access.resolve_credential` like for any multi-account connector.
 
-**Surface** (un tool par objet, le verbe en `op`) :
-- `sharepoint_site` (search/get/drives) — trouver un site, lire ses bibliothèques
-  de documents (une bibliothèque = un drive) ;
-- `sharepoint_file` (list/get/search/download/upload/create_folder) — les éléments
-  d'un drive : le OneDrive de la personne par défaut, une bibliothèque par
-  `drive_id`, ou le OneDrive d'un collaborateur (`user`) ; un élément par `item_id` ou par `path`. La lecture passe par
-  `file_content.render_for_agent` (texte inline, CSV d'un tableur, URL signée
-  sinon) ; un document Word ou PowerPoint est converti en PDF par Graph pour que
-  son texte se lise.
+**Surface** (one tool per object, the verb in `op`):
+- `sharepoint_site` (search/get/drives) — find a site, read its document
+  libraries (one library = one drive);
+- `sharepoint_file` (list/get/search/download/upload/create_folder) — the items
+  of a drive: the person's OneDrive by default, a library by
+  `drive_id`, or a colleague's OneDrive (`user`); an item by `item_id` or by `path`. Reading goes through
+  `file_content.render_for_agent` (inline text, CSV for a spreadsheet, signed URL
+  otherwise); a Word or PowerPoint document is converted to PDF by Graph so that
+  its text can be read.
 
-⚠️ `upload` et `create_folder` ÉCRIVENT dans SharePoint ou OneDrive ; par défaut
-un nom déjà pris est refusé (`conflict="fail"`), jamais écrasé en silence. Aucune
-suppression, aucun déplacement, aucun partage : hors de cette surface.
+⚠️ `upload` and `create_folder` WRITE to SharePoint or OneDrive; by default
+a name already taken is refused (`conflict="fail"`), never silently overwritten. No
+deletion, no move, no sharing: outside this surface.
 """
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..mcp_errors import McpError
 
-# Lus en PDF par défaut : Graph les convertit, et c'est le texte du PDF que l'agent
-# lit (le binaire Office brut ne se lit pas). Un tableur reste brut : il se rend
-# en CSV. `as_pdf` force l'un ou l'autre.
+# Read as PDF by default: Graph converts them, and it is the PDF's text that the agent
+# reads (the raw Office binary can't be read). A spreadsheet stays raw: it renders
+# as CSV. `as_pdf` forces one or the other.
 _CONVERTIS = {"doc", "docx", "dot", "dotx", "odt", "rtf", "ppt", "pptx", "pps",
               "ppsx", "odp"}
 _DOWNLOAD_MAX = 50 * 1024 * 1024
@@ -53,22 +53,22 @@ def _upstream_message(e) -> str:
     body = e.body if isinstance(e.body, dict) else {}
     detail = str((body.get("error") or {}).get("message") or e.body or "")[:400]
     if status == 401:
-        return (f"Microsoft Graph refuse le jeton (HTTP 401) : reconnecte-toi depuis "
-                f"tes connecteurs, « SharePoint & OneDrive ». {detail}").strip()
+        return (f"Microsoft Graph rejects the token (HTTP 401): reconnect from "
+                f"your connectors, \"SharePoint & OneDrive\". {detail}").strip()
     if status == 403:
-        return (f"Microsoft Graph refuse l'accès (HTTP 403) : ce compte Microsoft n'a "
-                f"pas les droits sur cet élément, ou son organisation bloque oto. "
+        return (f"Microsoft Graph denies access (HTTP 403): this Microsoft account does "
+                f"not have rights on this item, or its organization blocks oto. "
                 f"{detail}").strip()
     if status == 404:
-        return f"Microsoft Graph : introuvable (HTTP 404). {detail}".strip()
+        return f"Microsoft Graph: not found (HTTP 404). {detail}".strip()
     if status == 409:
-        return (f"Microsoft Graph : un élément porte déjà ce nom (HTTP 409) — "
-                f"`conflict=\"rename\"` ou `\"replace\"` pour passer outre. {detail}").strip()
-    return f"Microsoft Graph a refusé la requête (HTTP {status}) : {detail}"
+        return (f"Microsoft Graph: an item already has this name (HTTP 409) — "
+                f"`conflict=\"rename\"` or `\"replace\"` to override. {detail}").strip()
+    return f"Microsoft Graph rejected the request (HTTP {status}): {detail}"
 
 
 def _brut(objet: dict) -> dict:
-    """`full=True` : l'objet Graph tel que l'amont le livre."""
+    """`full=True`: the Graph object as upstream delivers it."""
     return objet
 
 
@@ -81,7 +81,7 @@ def _drive(d: dict) -> dict:
 
 
 def _item(i: dict) -> dict:
-    """La vue d'un driveItem : de quoi le reconnaître et le rouvrir."""
+    """A driveItem's view: enough to recognize it and reopen it."""
     parent = i.get("parentReference") or {}
     dossier = (parent.get("path") or "").split("root:", 1)[-1] if parent.get("path") else None
     return {
@@ -99,34 +99,34 @@ def _item(i: dict) -> dict:
 
 
 def _refuse_ignored(op: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention."""
+    """An argument provided that THIS op does not use is an intent error."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op='{op}' n'utilise pas `{name}`.")
+            raise _bad(f"op='{op}' does not use `{name}`.")
 
 
 def _need(value, name: str, op: str):
     if value is None or (isinstance(value, str) and not value.strip()):
-        raise _bad(f"op='{op}' requiert `{name}`.")
+        raise _bad(f"op='{op}' requires `{name}`.")
     return value
 
 
 def _contenu(content_base64: Optional[str], content_text: Optional[str]) -> bytes:
     if (content_base64 is None) == (content_text is None):
-        raise _bad("op='upload' requiert `content_base64` OU `content_text` (un seul).")
+        raise _bad("op='upload' requires `content_base64` OR `content_text` (only one).")
     if content_text is not None:
         data = content_text.encode("utf-8")
     else:
         try:
             data = base64.b64decode(content_base64, validate=True)
         except (binascii.Error, ValueError):
-            raise _bad("`content_base64` n'est pas du base64 valide — encode le fichier "
-                       "entier, sans en-tête `data:` ni retour à la ligne.") from None
+            raise _bad("`content_base64` is not valid base64 — encode the whole file, "
+                       "without a `data:` header or line breaks.") from None
     if not data:
-        raise _bad("le contenu à déposer est vide.")
+        raise _bad("the content to upload is empty.")
     if len(data) > _UPLOAD_MAX:
-        raise _bad(f"fichier de {len(data) // (1024 * 1024)} Mo : ce tool dépose "
-                   f"jusqu'à {_UPLOAD_MAX // (1024 * 1024)} Mo.")
+        raise _bad(f"{len(data) // (1024 * 1024)} MB file: this tool uploads "
+                   f"up to {_UPLOAD_MAX // (1024 * 1024)} MB.")
     return data
 
 
@@ -138,8 +138,8 @@ def register(mcp: FastMCP) -> None:
     from ..auth import microsoft as ms_auth
 
     def _client() -> GraphClient:
-        """Le client Graph de CET appelant, avec son jeton du moment (renouvelé
-        par `auth/microsoft.py` s'il expire)."""
+        """The Graph client of THIS caller, with their current token (renewed
+        by `auth/microsoft.py` if it expires)."""
         try:
             jeton = ms_auth.access_token_for(access.current_user_sub_or_raise())
         except (RuntimeError, MicrosoftAuthError) as e:
@@ -147,8 +147,8 @@ def register(mcp: FastMCP) -> None:
         return GraphClient(jeton)
 
     def _run(fn):
-        """4xx de Graph → refus nommé. 429 et 5xx restent ce qu'ils sont : la
-        taxonomie d'erreurs les classe réessayables."""
+        """Graph 4xx → named refusal. 429 and 5xx stay what they are: the
+        error taxonomy classifies them as retryable."""
         try:
             return fn()
         except UpstreamHTTPError as e:
@@ -159,12 +159,12 @@ def register(mcp: FastMCP) -> None:
             raise _bad(str(e))
 
     def _drive_id(client: GraphClient, drive_id: Optional[str], user: Optional[str]) -> str:
-        """Le drive visé : une bibliothèque (`drive_id`), le OneDrive d'un
-        collaborateur (`user`), sinon le OneDrive de la personne connectée."""
+        """The target drive: a library (`drive_id`), a colleague's OneDrive
+        (`user`), otherwise the connected person's OneDrive."""
         if drive_id and user:
-            raise _bad("désigne le drive par `drive_id` (une bibliothèque, depuis "
-                       "sharepoint_site op='drives') OU par `user` (le OneDrive d'un "
-                       "collaborateur, par son adresse) — pas les deux.")
+            raise _bad("designate the drive by `drive_id` (a library, from "
+                       "sharepoint_site op='drives') OR by `user` (a colleague's "
+                       "OneDrive, by their address) — not both.")
         if drive_id:
             return drive_id
         if user:
@@ -207,12 +207,12 @@ def register(mcp: FastMCP) -> None:
         if op == "get":
             _refuse_ignored(op, query=query)
             if bool(site_id) == bool(url):
-                raise _bad("op='get' requiert `site_id` OU `url` (un seul).")
+                raise _bad("op='get' requires `site_id` OR `url` (only one).")
             if site_id:
                 return site_vue(_run(lambda: c.get_site(site_id)))
             parts = urlsplit(url.strip())
             if parts.scheme != "https" or not parts.hostname:
-                raise _bad("`url` est l'adresse https du site, ex. "
+                raise _bad("`url` is the site's https address, e.g. "
                            "https://contoso.sharepoint.com/sites/Marketing")
             chemin = parts.path.strip("/")
             return site_vue(_run(lambda: c.get_site_by_path(parts.hostname, chemin) if chemin
@@ -222,7 +222,7 @@ def register(mcp: FastMCP) -> None:
             drives = _run(lambda: c.list_site_drives(_need(site_id, "site_id", op),
                                                      limit=limit))
             return {"drives": [drive_vue(d) for d in drives], "count": len(drives)}
-        raise _bad("op doit être 'search', 'get' ou 'drives'.")
+        raise _bad("op must be 'search', 'get' or 'drives'.")
 
     @mcp.tool()
     def sharepoint_file(
@@ -249,7 +249,7 @@ def register(mcp: FastMCP) -> None:
         (from `sharepoint_site` op="drives"), `user` a colleague's OneDrive (by
         email, if they shared it with you) — at most one of the two. Inside it, an
         item is `item_id` OR `path` relative to the drive root
-        ("Contrats/2026/nda.docx"); neither = the drive root.
+        ("Contracts/2026/nda.docx"); neither = the drive root.
 
         `op`:
         - **"list"** (default): the content of a folder (`item_id`/`path`, root
@@ -297,11 +297,11 @@ def register(mcp: FastMCP) -> None:
         vue = _brut if full else _item
         if (as_pdf is not None or sheet is not None or max_rows is not None) \
                 and op != "download":
-            raise _bad(f"`as_pdf`/`sheet`/`max_rows` ne valent que pour op='download' "
-                       f"(reçu op='{op}').")
+            raise _bad(f"`as_pdf`/`sheet`/`max_rows` only apply to op='download' "
+                       f"(got op='{op}').")
         if (content_base64 is not None or content_text is not None) and op != "upload":
-            raise _bad(f"`content_base64`/`content_text` ne valent que pour op='upload' "
-                       f"(reçu op='{op}').")
+            raise _bad(f"`content_base64`/`content_text` only apply to op='upload' "
+                       f"(got op='{op}').")
         c = _client()
         drive = _drive_id(c, drive_id, user)
 
@@ -326,15 +326,15 @@ def register(mcp: FastMCP) -> None:
         if op == "download":
             _refuse_ignored(op, query=query, name=name)
             if not item_id and not path:
-                raise _bad("op='download' requiert `item_id` ou `path`.")
+                raise _bad("op='download' requires `item_id` or `path`.")
             meta = _run(lambda: c.get_item(drive, item_id=item_id, path=path))
             if "folder" in meta:
-                raise _bad(f"« {meta.get('name')} » est un dossier : op='list' pour "
-                           "voir son contenu.")
+                raise _bad(f"« {meta.get('name')} » is a folder: use op='list' to "
+                           "see its content.")
             if (meta.get("size") or 0) > _DOWNLOAD_MAX:
-                raise _bad(f"« {meta.get('name')} » pèse {meta['size'] // (1024 * 1024)} "
-                           f"Mo : ce tool lit jusqu'à {_DOWNLOAD_MAX // (1024 * 1024)} Mo "
-                           f"(ouvre-le par son webUrl : {meta.get('webUrl')}).")
+                raise _bad(f"« {meta.get('name')} » weighs {meta['size'] // (1024 * 1024)} "
+                           f"MB: this tool reads up to {_DOWNLOAD_MAX // (1024 * 1024)} MB "
+                           f"(open it through its webUrl: {meta.get('webUrl')}).")
             nom = meta.get("name") or meta["id"]
             ext = nom.rsplit(".", 1)[-1].lower() if "." in nom else ""
             pdf = as_pdf if as_pdf is not None else ext in _CONVERTIS
@@ -371,5 +371,5 @@ def register(mcp: FastMCP) -> None:
                                                       parent_id=item_id, parent_path=path,
                                                       conflict=conflict)))
 
-        raise _bad("op doit être 'list', 'get', 'search', 'download', 'upload' ou "
+        raise _bad("op must be 'list', 'get', 'search', 'download', 'upload' or "
                    "'create_folder'.")

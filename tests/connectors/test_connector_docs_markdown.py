@@ -62,7 +62,7 @@ def test_chaque_section_servie_vient_de_son_seul_markdown():
         servies = c.doc_sections
         if c.auth_multi_account:
             assert servies and servies[-1] == connector_docs.multi_account_section(
-                nom, c.account_noun or "compte",
+                nom, c.account_noun or "account",
                 par_connexion=c.secret_kind == "oauth"), (
                 f"{nom} : multi-compte sans sa section générée en dernière position")
             servies = servies[:-1]
@@ -162,7 +162,7 @@ def test_le_texte_hors_section_ne_disparait_pas_en_silence(caplog):
     """Il ne serait affiché nulle part : mieux vaut un avertissement qu'une perte
     invisible."""
     connector_docs._parse("du texte égaré\n\n## usage — vrai titre\n\ncorps\n", "t.md")
-    assert any("hors section" in r.message for r in caplog.records)
+    assert any("outside any section" in r.message for r in caplog.records)
 
 
 def test_un_dossier_absent_ne_fait_pas_tomber_le_serveur(monkeypatch):

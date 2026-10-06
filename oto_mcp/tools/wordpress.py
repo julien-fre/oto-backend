@@ -1,29 +1,29 @@
-"""WordPress — articles, pages, contenus personnalisés, médias, taxonomies, via
-l'API REST cœur (`wp/v2`). Wrappe `oto.tools.wordpress.WordPressClient`.
+"""WordPress — posts, pages, custom content types, media, taxonomies, via
+the core REST API (`wp/v2`). Wraps `oto.tools.wordpress.WordPressClient`.
 
-Credential multi-champs (`site_url`, `username`, `application_password`),
-résolu par appel via `access.resolve_credential_fields("wordpress")`, `site_url`
-passé à `_guard` (garde d'egress, puis HTTPS) AVANT toute
-construction de client (le site est déclaré par l'utilisateur : c'est exactement
-la forme que la garde existe pour refuser quand elle vise l'intérieur).
-Multi-compte : un compte = un site.
+Multi-field credential (`site_url`, `username`, `application_password`),
+resolved per call via `access.resolve_credential_fields("wordpress")`, with
+`site_url` passed to `_guard` (egress guard, then HTTPS) BEFORE any client
+is built (the site is declared by the user: it is exactly the shape the guard
+exists to refuse when it points at the internal network).
+Multi-account: one account = one site.
 
-⚠️ **Aucun article ni aucune page ne devient public sans `wordpress_publish`.**
-`wordpress_content` et `wordpress_article` refusent `status=publish|future` : la
-frontière « rien ne bouge » / « c'est en ligne » reste dans le NOM de l'outil
-(même choix que `webflow_publish`), jamais un paramètre parmi d'autres.
-⚠️ **Un média, lui, est public dès son téléversement** (son `source_url` se lit
-sans compte), image à la une d'un brouillon comprise : WordPress n'a pas de
-média en brouillon. Les descriptions le disent.
+⚠️ **No post or page goes public without `wordpress_publish`.**
+`wordpress_content` and `wordpress_article` refuse `status=publish|future`: the
+"nothing moves" / "it's live" boundary stays in the tool NAME
+(same choice as `webflow_publish`), never one parameter among others.
+⚠️ **Media, on the other hand, is public as soon as it is uploaded** (its
+`source_url` can be read without an account), including the featured image of
+a draft: WordPress has no draft media. The descriptions say so.
 
-`wordpress_article` est le chemin composé — Markdown converti en blocs natifs
-de l'éditeur (`wordpress_blocks`), catégories/étiquettes données par NOM
-(créées si absentes), image à la une importée depuis une source oto, champs SEO
-écrits quand le site le permet. C'est le chemin qu'un agent réussit ; les
-outils unitaires restent pour le reste.
+`wordpress_article` is the composed path — Markdown converted to native editor
+blocks (`wordpress_blocks`), categories/tags given by NAME (created if
+missing), featured image imported from an oto source, SEO fields written when
+the site allows it. It is the path an agent gets right; the single-purpose
+tools remain for everything else.
 
-Le flux « Connecter » (écran d'autorisation natif de WordPress) vit dans
-`auth/wordpress.py` ; il pose le MÊME credential que le formulaire.
+The "Connect" flow (WordPress's native authorization screen) lives in
+`auth/wordpress.py`; it sets the SAME credential as the form.
 """
 from __future__ import annotations
 
@@ -47,17 +47,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Statuts qui rendent un contenu public — réservés à `wordpress_publish`.
+# Statuses that make content public — reserved for `wordpress_publish`.
 _LIVE_STATUSES = {"publish", "future"}
-# Types internes de l'éditeur : servis en REST, jamais du contenu à rédiger.
+# Internal editor types: served over REST, never content to write.
 _INTERNAL_TYPES = frozenset({
     "attachment", "wp_block", "wp_template", "wp_template_part", "wp_navigation",
     "wp_font_family", "wp_font_face", "wp_global_styles", "nav_menu_item"})
-# Ce qu'une liste rend par élément : de quoi choisir, pas le contenu entier.
+# What a list returns per item: enough to choose from, not the whole content.
 _LIST_KEYS = ("id", "status", "date", "modified", "slug", "link", "type", "parent")
 
-# Clés méta SEO connues, par extension. Écrites par `meta` UNIQUEMENT si le site
-# les expose en REST (schéma de la route) — sinon WordPress les ignore EN SILENCE.
+# Known SEO meta keys, per plugin. Written through `meta` ONLY if the site
+# exposes them over REST (route schema) — otherwise WordPress ignores them SILENTLY.
 _SEO_META = {
     "yoast": {"title": "_yoast_wpseo_title", "description": "_yoast_wpseo_metadesc",
               "focus_keyword": "_yoast_wpseo_focuskw"},
@@ -72,7 +72,7 @@ def _bad(msg: str) -> McpError:
 
 def _need(value, name: str, op: str):
     if value is None or value == "":
-        raise _bad(f"op='{op}' requiert {name}")
+        raise _bad(f"op='{op}' requires {name}")
     return value
 
 
@@ -87,53 +87,53 @@ def _wp_message(e: UpstreamHTTPError) -> str:
 
 
 def _translate(e: Exception) -> McpError:
-    """Erreur amont → message actionnable. Le `code` WordPress (`rest_*`) est
-    lu, jamais deviné sur le texte."""
+    """Upstream error → actionable message. The WordPress `code` (`rest_*`) is
+    read, never guessed from the text."""
     from oto.tools.wordpress import (WordPressMediaFieldsError, WordPressRateLimited,
                                      WordPressRedirect)
 
     if isinstance(e, McpError):
         return e
     if isinstance(e, WordPressMediaFieldsError):
-        # Le média EXISTE (et il est public) : le renvoyer réessayer créerait un doublon.
-        return _bad(f"média {e.media_id} téléversé (déjà public), mais son texte "
-                    f"alternatif / sa légende / son titre n'ont pas été posés "
-                    f"(HTTP {e.status_code}) — complète-le avec `wordpress_media "
-                    f"op=update id={e.media_id}`, ne le téléverse pas à nouveau.")
+        # The media EXISTS (and it is public): sending the caller back to retry would create a duplicate.
+        return _bad(f"media {e.media_id} uploaded (already public), but its alt "
+                    f"text / caption / title were not set "
+                    f"(HTTP {e.status_code}) — complete it with `wordpress_media "
+                    f"op=update id={e.media_id}`, do not upload it again.")
     if isinstance(e, WordPressRateLimited):
-        wait = (f"réessaie dans {int(e.retry_after)} s" if e.retry_after is not None
-                else "réessaie plus tard")
-        return _bad(f"le site WordPress limite le débit (429) — {wait}.")
+        wait = (f"retry in {int(e.retry_after)} s" if e.retry_after is not None
+                else "retry later")
+        return _bad(f"the WordPress site is rate limiting (429) — {wait}.")
     if isinstance(e, (WordPressRedirect, ValueError)):   # EgressRefused ⊂ ValueError
         return _bad(str(e))
     if isinstance(e, (requests.ConnectionError, requests.Timeout)):
-        return _bad("site WordPress injoignable (connexion ou délai) — vérifie l'URL "
-                    "du site, ou réessaie dans un moment.")
+        return _bad("WordPress site unreachable (connection or timeout) — check the "
+                    "site URL, or retry in a moment.")
     if isinstance(e, UpstreamHTTPError):
         code, msg = _wp_code(e), _wp_message(e)
         if e.status_code == 401 and code == "rest_not_logged_in":
-            # Ambigu par construction : WordPress rend ce même code pour un
-            # identifiant/mot de passe faux ET pour un en-tête Authorization retiré
-            # en route (constaté sur un WordPress local). On nomme les deux.
+            # Ambiguous by construction: WordPress returns this same code for a
+            # wrong username/password AND for an Authorization header stripped
+            # along the way (seen on a local WordPress). We name both.
             return _bad(
-                "WordPress ne t'a pas reconnu (401 rest_not_logged_in) : soit "
-                "l'identifiant ou le mot de passe d'application est faux (ou révoqué), "
-                "soit l'hébergeur / une extension de sécurité retire l'en-tête "
-                "Authorization. Voir la fiche du connecteur (section note).")
+                "WordPress did not recognize you (401 rest_not_logged_in): either "
+                "the username or application password is wrong (or revoked), "
+                "or the host / a security plugin strips the Authorization "
+                "header. See the connector sheet (note section).")
         if e.status_code == 401:
-            return _bad(f"identifiant ou mot de passe d'application refusé (401 {code}) : "
+            return _bad(f"username or application password rejected (401 {code}): "
                         f"{msg}")
         if e.status_code == 403:
-            return _bad(f"droits WordPress insuffisants pour ce compte (403 {code}) : {msg}")
+            return _bad(f"insufficient WordPress permissions for this account (403 {code}): {msg}")
         if e.status_code == 404 and code == "rest_no_route":
-            return _bad("cette route n'existe pas sur le site (404 rest_no_route) — type "
-                        "de contenu non exposé en REST, ou extension absente.")
+            return _bad("this route does not exist on the site (404 rest_no_route) — content "
+                        "type not exposed over REST, or plugin missing.")
         if e.status_code == 404:
-            return _bad(f"introuvable (404 {code}) : {msg}")
+            return _bad(f"not found (404 {code}): {msg}")
         if e.status_code >= 500:
-            return _bad(f"le site WordPress est en erreur (HTTP {e.status_code}) — "
-                        f"ce n'est pas ton entrée ; réessaie plus tard. {msg}".rstrip())
-        return _bad(f"WordPress a refusé la requête (HTTP {e.status_code} {code}) : {msg}")
+            return _bad(f"the WordPress site is erroring (HTTP {e.status_code}) — "
+                        f"this is not your input; retry later. {msg}".rstrip())
+        return _bad(f"WordPress rejected the request (HTTP {e.status_code} {code}): {msg}")
     raise e
 
 
@@ -142,12 +142,12 @@ def _run(fn):
         return fn()
     except McpError:
         raise
-    except Exception as e:  # noqa: BLE001 — traduit, ou re-levé tel quel par _translate
+    except Exception as e:  # noqa: BLE001 — translated, or re-raised as is by _translate
         raise _translate(e) from e
 
 
 def _strip(item) -> dict:
-    """Retire `_links` (lourd, sans valeur pour un agent)."""
+    """Removes `_links` (heavy, no value for an agent)."""
     if isinstance(item, dict):
         return {k: v for k, v in item.items() if k != "_links"}
     return item
@@ -160,8 +160,8 @@ def _rendered(v):
 
 
 def _slim(item: dict, keys=_LIST_KEYS) -> dict:
-    """Ce qu'une LISTE rend par élément : de quoi choisir, jamais le contenu entier
-    (un article complet par ligne serait payé à chaque tour). `get` rend le reste."""
+    """What a LIST returns per item: enough to choose from, never the whole content
+    (a full post per row would be paid for on every turn). `get` returns the rest."""
     out = {k: item.get(k) for k in keys if k in item}
     for k in ("title", "name"):
         if k in item:
@@ -170,8 +170,8 @@ def _slim(item: dict, keys=_LIST_KEYS) -> dict:
 
 
 def _diff(current: dict, changes: dict) -> dict:
-    """`{champ: {"from", "to"}}` pour les champs qui CHANGENT réellement —
-    comparés sur la forme brute (`raw`), jamais sur le HTML rendu."""
+    """`{field: {"from", "to"}}` for the fields that actually CHANGE —
+    compared on the raw form (`raw`), never on the rendered HTML."""
     out = {}
     for k, new in changes.items():
         old = _rendered(current.get(k))
@@ -181,8 +181,8 @@ def _diff(current: dict, changes: dict) -> dict:
 
 
 def _guard(site_url: str) -> bool:
-    """Avant toute construction de client : garde d'egress, puis HTTPS
-    (`auth.wordpress.http_allowed`). Rend `allow_http` pour le client."""
+    """Before any client is built: egress guard, then HTTPS
+    (`auth.wordpress.http_allowed`). Returns `allow_http` for the client."""
     from ..auth.wordpress import http_allowed
 
     egress.check_url(site_url, connector="wordpress", field="site_url")
@@ -190,12 +190,12 @@ def _guard(site_url: str) -> bool:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » — `GET wp/v2/users/me?context=edit`.
+    """"Test the connection" probe — `GET wp/v2/users/me?context=edit`.
 
-    Authentifiée, sans effet de bord, gratuite. `context=edit` n'est servi qu'à
-    un utilisateur identifié : un 401 dit donc bien « ce mot de passe ne passe
-    pas » (ou l'en-tête est retiré par l'hébergeur — même geste : corriger côté
-    site), jamais une limite de la sonde."""
+    Authenticated, no side effects, free. `context=edit` is only served to an
+    identified user: a 401 therefore really means "this password doesn't work"
+    (or the header is stripped by the host — same fix: correct it on the
+    site side), never a limit of the probe."""
     from oto.tools.wordpress import WordPressClient
 
     allow_http = _guard(fields.get("site_url") or "")
@@ -207,7 +207,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:
             raise connector_verify.NonAutorise(_translate(e).error.message) from e
         raise
     if not me.get("id"):
-        raise RuntimeError(f"réponse inattendue de users/me : {str(me)[:200]}")
+        raise RuntimeError(f"unexpected response from users/me: {str(me)[:200]}")
 
 
 def _client(account: Optional[str] = None) -> WordPressClient:
@@ -220,15 +220,15 @@ def _client(account: Optional[str] = None) -> WordPressClient:
         return WordPressClient(site, creds.get("username") or "",
                                creds.get("application_password") or "",
                                allow_http=allow_http)
-    except ValueError as e:   # garde d'egress, HTTP, URL ou identifiants absents
-        raise _bad(f"credential WordPress inutilisable : {e}") from e
+    except ValueError as e:   # egress guard, HTTP, URL or credentials missing
+        raise _bad(f"unusable WordPress credential: {e}") from e
 
 
-# --- résolution des types / taxonomies ---------------------------------------
+# --- resolving types / taxonomies --------------------------------------------
 
 def _route_for(entries: dict, key: str, kind: str) -> str:
-    """`posts`/`post`/`product`/`book` → `wp/v2/posts`. Accepte le slug OU le
-    `rest_base` ; un type absent du REST est nommé avec la liste disponible."""
+    """`posts`/`post`/`product`/`book` → `wp/v2/posts`. Accepts the slug OR the
+    `rest_base`; a type missing from REST is reported with the available list."""
     key = (key or "").strip()
     for slug, t in entries.items():
         base = t.get("rest_base")
@@ -239,7 +239,7 @@ def _route_for(entries: dict, key: str, kind: str) -> str:
     dispo = sorted(t.get("rest_base") for s, t in entries.items()
                    if t.get("rest_base") and s not in _INTERNAL_TYPES
                    and "(" not in t.get("rest_base"))
-    raise _bad(f"{kind} « {key} » introuvable en REST sur ce site. Disponibles : {dispo}.")
+    raise _bad(f"{kind} \"{key}\" not found in REST on this site. Available: {dispo}.")
 
 
 def _type_route(c, type_: str) -> str:
@@ -247,18 +247,18 @@ def _type_route(c, type_: str) -> str:
         return "wp/v2/posts"
     if type_ in ("pages", "page"):
         return "wp/v2/pages"
-    return _route_for(_run(c.types), type_, "type de contenu")
+    return _route_for(_run(c.types), type_, "content type")
 
 
 def _type_taxonomies(c, type_: str) -> list:
-    """Les taxonomies que CE type accepte (`category`, `post_tag`, une personnalisée…),
-    lues sur le site : une page n'a pas de catégories, un type personnalisé a les
-    siennes."""
+    """The taxonomies THIS type accepts (`category`, `post_tag`, a custom one…),
+    read from the site: a page has no categories, a custom type has its
+    own."""
     key = (type_ or "").strip()
     for slug, t in _run(c.types).items():
         if key in (slug, t.get("rest_base")):
             return list(t.get("taxonomies") or [])
-    raise _bad(f"type de contenu « {key} » introuvable en REST sur ce site.")
+    raise _bad(f"content type \"{key}\" not found in REST on this site.")
 
 
 def _tax_route(c, taxonomy: str) -> str:
@@ -266,43 +266,43 @@ def _tax_route(c, taxonomy: str) -> str:
         return "wp/v2/categories"
     if taxonomy in ("tags", "post_tag"):
         return "wp/v2/tags"
-    return _route_for(_run(c.taxonomies), taxonomy, "taxonomie")
+    return _route_for(_run(c.taxonomies), taxonomy, "taxonomy")
 
 
 def _refuse_live(data: dict, tool: str) -> None:
     if (data or {}).get("status") in _LIVE_STATUSES:
-        raise _bad(f"{tool} ne publie pas (status={data['status']!r}) : le contenu "
-                   "reste en brouillon, `wordpress_publish` le met en ligne.")
+        raise _bad(f"{tool} does not publish (status={data['status']!r}): the content "
+                   "stays a draft, `wordpress_publish` puts it live.")
 
 
 # --- SEO -----------------------------------------------------------------------
 
 def _seo_plan(c, route: str, namespaces: list) -> dict:
-    """Où écrire le SEO sur CE site : `{"plugin", "via", "keys"}` ou
-    `{"plugin", "via": None, "reason"}`. Lit le schéma de la route (OPTIONS) :
-    une clé méta non déclarée `show_in_rest` est ignorée sans erreur par
-    WordPress — on ne l'écrit donc que si le schéma la porte."""
+    """Where to write SEO on THIS site: `{"plugin", "via", "keys"}` or
+    `{"plugin", "via": None, "reason"}`. Reads the route schema (OPTIONS):
+    a meta key not declared `show_in_rest` is silently ignored by
+    WordPress — so we only write it if the schema carries it."""
     plugin = ("yoast" if "yoast/v1" in namespaces
               else "rankmath" if "rankmath/v1" in namespaces else None)
     if plugin is None:
         return {"plugin": None, "via": None,
-                "reason": "aucune extension SEO détectée (Yoast, Rank Math)."}
+                "reason": "no SEO plugin detected (Yoast, Rank Math)."}
     try:
         schema, _ = c.request("OPTIONS", route)
     except (UpstreamHTTPError, requests.ConnectionError, requests.Timeout) as e:
-        # Le schéma n'a pas pu être LU : on n'écrit pas, et on dit pourquoi — jamais
-        # « champs non exposés », qui enverrait poser un snippet pour rien.
+        # The schema could not be READ: we don't write, and we say why — never
+        # "fields not exposed", which would send the user to add a snippet for nothing.
         return {"plugin": plugin, "via": None,
-                "reason": f"schéma de la route illisible : {_translate(e).error.message}"}
+                "reason": f"route schema unreadable: {_translate(e).error.message}"}
     meta_props = (((schema or {}).get("schema") or {}).get("properties") or {}) \
         .get("meta", {}).get("properties", {}) or {}
     keys = _SEO_META[plugin]
     if all(k in meta_props for k in keys.values()):
         return {"plugin": plugin, "via": "meta", "keys": keys}
     return {"plugin": plugin, "via": None,
-            "reason": (f"{plugin} est installé mais ses champs ne sont pas exposés en "
-                       "écriture par l'API REST de ce site — le snippet à ajouter est "
-                       "sur la fiche du connecteur (section note).")}
+            "reason": (f"{plugin} is installed but its fields are not exposed for "
+                       "writing by this site's REST API — the snippet to add is "
+                       "on the connector sheet (note section).")}
 
 
 def _seo_meta(plan: dict, seo: dict) -> dict:
@@ -311,14 +311,14 @@ def _seo_meta(plan: dict, seo: dict) -> dict:
     return {plan["keys"][k]: v for k, v in seo.items() if v is not None}
 
 
-# --- termes par nom -------------------------------------------------------------
+# --- terms by name -------------------------------------------------------------
 
 def _resolve_terms(c, route: str, values: list, *,
                    create: bool) -> tuple[list, list, list]:
-    """Noms ou ids → `(ids, à créer, créés)`. Un entier est un id, une chaîne est
-    TOUJOURS un nom (« 2026 » est une étiquette, pas le terme n° 2026). Un nom absent
-    est créé (`create=True`) ; en dry_run il est seulement annoncé. `term_exists`
-    (course, casse) rend l'id existant."""
+    """Names or ids → `(ids, to create, created)`. An integer is an id, a string is
+    ALWAYS a name ("2026" is a tag, not term no. 2026). A missing name
+    is created (`create=True`); in dry_run it is only announced. `term_exists`
+    (race, case) returns the existing id."""
     ids, to_create, created = [], [], []
     for v in values or []:
         if isinstance(v, int) and not isinstance(v, bool):
@@ -357,7 +357,7 @@ def _upload(c, source: Union[str, dict], *, filename: Optional[str] = None,
     try:
         rf = file_source.resolve(src)
     except file_source.FileSourceError as e:
-        raise _bad(f"source de fichier illisible : {e}") from e
+        raise _bad(f"unreadable file source: {e}") from e
     return _run(lambda: c.upload_media(rf.data, filename or rf.filename, rf.mime, **fields))
 
 
@@ -492,7 +492,7 @@ def register(mcp: FastMCP) -> None:
                         "item": _slim(current)}
             return _strip(_run(lambda: c.delete(route, id, force=force)))
 
-        raise _bad(f"op inconnue : {op}")
+        raise _bad(f"unknown op: {op}")
 
     @mcp.tool()
     def wordpress_publish(
@@ -517,8 +517,8 @@ def register(mcp: FastMCP) -> None:
             dry_run: preview, no write.
         """
         if op == "unpublish" and at:
-            raise _bad("op='unpublish' ne prend pas `at` : la dépublication est immédiate "
-                       "(WordPress ne programme pas un retour en brouillon).")
+            raise _bad("op='unpublish' does not take `at`: unpublishing is immediate "
+                       "(WordPress cannot schedule a return to draft).")
         c = _client()
         route = _type_route(c, type)
         current = _run(lambda: c.get(route, id))
@@ -527,8 +527,8 @@ def register(mcp: FastMCP) -> None:
         elif at:
             body = {"status": "future", "date": at}
         elif current.get("status") == "future":
-            # Programmé : WordPress garde sa date future et le laisse `future`
-            # tant qu'on ne la ramène pas à maintenant (constaté en local).
+            # Scheduled: WordPress keeps its future date and leaves it `future`
+            # until it is brought back to now (seen locally).
             body = {"status": "publish",
                     "date_gmt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")}
         else:
@@ -601,7 +601,7 @@ def register(mcp: FastMCP) -> None:
                 return {"dry_run": True, "id": id, "would": "delete permanently",
                         "term": {k: current.get(k) for k in ("id", "name", "slug", "count")}}
             return _strip(_run(lambda: c.delete(route, id, force=True)))
-        raise _bad(f"op inconnue : {op}")
+        raise _bad(f"unknown op: {op}")
 
     @mcp.tool()
     def wordpress_media(
@@ -668,7 +668,7 @@ def register(mcp: FastMCP) -> None:
                         "media": {"title": _rendered(m.get("title")),
                                   "source_url": m.get("source_url")}}
             return _strip(_run(lambda: c.delete(route, id, force=True)))
-        raise _bad(f"op inconnue : {op}")
+        raise _bad(f"unknown op: {op}")
 
     @mcp.tool()
     def wordpress_article(
@@ -726,8 +726,8 @@ def register(mcp: FastMCP) -> None:
         route = _type_route(c, type)
         body: dict = {"title": title,
                       "content": _run(lambda: wordpress_blocks.markdown_to_blocks(markdown))}
-        # Création : brouillon par défaut. Mise à jour : le statut n'est PAS
-        # envoyé sans demande — l'envoyer d'office dépublierait un article en ligne.
+        # Create: draft by default. Update: the status is NOT sent unless
+        # asked — sending it unconditionally would unpublish a live post.
         if status is not None or id is None:
             body["status"] = status or "draft"
         if excerpt is not None:
@@ -735,15 +735,15 @@ def register(mcp: FastMCP) -> None:
         if slug:
             body["slug"] = slug
         if categories or tags:
-            # Les termes d'un type sont CEUX que le site lui déclare : une page n'a pas
-            # de catégories, un type personnalisé peut avoir les siennes.
+            # A type's terms are THE ONES the site declares for it: a page has no
+            # categories, a custom type may have its own.
             accepted = _type_taxonomies(c, type)
-            for given, tax, label in ((categories, "category", "catégories"),
-                                      (tags, "post_tag", "étiquettes")):
+            for given, tax, label in ((categories, "category", "categories"),
+                                      (tags, "post_tag", "tags")):
                 if given and tax not in accepted:
-                    raise _bad(f"le type « {type} » n'a pas de {label} sur ce site "
-                               f"(taxonomies : {accepted}) — `wordpress_terms` et "
-                               "`wordpress_content data=` pour une taxonomie propre au type.")
+                    raise _bad(f"type \"{type}\" has no {label} on this site "
+                               f"(taxonomies: {accepted}) — use `wordpress_terms` and "
+                               "`wordpress_content data=` for a taxonomy specific to the type.")
         cat_ids, cat_new, cat_made = _resolve_terms(
             c, _tax_route(c, "category"), categories or [], create=not dry_run)
         tag_ids, tag_new, tag_made = _resolve_terms(
@@ -775,21 +775,21 @@ def register(mcp: FastMCP) -> None:
                 body["featured_media"] = media.get("id")
             post = _run(lambda: c.update(route, id, body) if id else c.create(route, body))
         except McpError as e:
-            # Termes et image sont créés AVANT l'article : un échec ici les laisse en
-            # place. On les nomme — jamais d'objets orphelins que personne ne connaît.
+            # Terms and image are created BEFORE the post: a failure here leaves them
+            # in place. We name them — never orphaned objects nobody knows about.
             left = []
             if cat_made or tag_made:
-                left.append("termes créés : " + ", ".join(
+                left.append("terms created: " + ", ".join(
                     f"{t['name']} (id {t['id']})" for t in cat_made + tag_made))
             if media:
-                left.append(f"image téléversée : média id {media.get('id')} "
-                            f"({media.get('source_url')}, déjà public)")
+                left.append(f"image uploaded: media id {media.get('id')} "
+                            f"({media.get('source_url')}, already public)")
             if not left:
                 raise
-            raise _bad(f"{e.error.message} — l'article n'est pas écrit. Restent sur le "
-                       f"site : {' ; '.join(left)}. Un nouvel essai retrouve les termes "
-                       "par nom ; le média se rattache (`wordpress_content op=update "
-                       "data={featured_media: id}`) ou se supprime (`wordpress_media "
+            raise _bad(f"{e.error.message} — the post was not written. Left on the "
+                       f"site: {' ; '.join(left)}. A new attempt finds the terms "
+                       "by name; the media can be attached (`wordpress_content op=update "
+                       "data={featured_media: id}`) or deleted (`wordpress_media "
                        "op=delete`).") from e
         pid = post.get("id")
         seo_out = None
@@ -806,11 +806,11 @@ def register(mcp: FastMCP) -> None:
         }
 
 
-# --- flux « Connecter » (écran d'autorisation natif du site) ------------------
+# --- "Connect" flow (the site's native authorization screen) ------------------
 
 def _start_flow(ctx, values: dict):
-    """Point d'entrée du seam `connector_flow` — traduit les refus en réponses
-    nommées (400 / 403) plutôt qu'en 500."""
+    """Entry point of the `connector_flow` seam — turns refusals into named
+    responses (400 / 403) instead of a 500."""
     from ..auth import wordpress as wp_auth
     from ..capabilities._types import AuthzDenied
 
@@ -826,16 +826,16 @@ def _declare_flow() -> None:
     from ..auth import wordpress as wp_auth
     from ..connectors import flow as connector_flow
 
-    # `site_url` est un champ LIBRE : `declare` refuse un paramètre requis sans
-    # options ni défaut (il ne sait rendre qu'un select) — il est donc déclaré
-    # facultatif et `wp_auth.start` refuse lui-même une valeur vide, nommément.
+    # `site_url` is a FREE field: `declare` refuses a required parameter with no
+    # options or default (it can only render a select) — so it is declared
+    # optional and `wp_auth.start` itself refuses an empty value, by name.
     connector_flow.declare(
         "wordpress",
         start=_start_flow,
         params=(connector_flow.FlowParam(
-            "site_url", "URL du site", required=False,
-            help="ex. blog.example.com — tu approuveras l'accès dans ton wp-admin"),),
-        label="Connecter mon site WordPress",
+            "site_url", "Site URL", required=False,
+            help="e.g. blog.example.com — you will approve access in your wp-admin"),),
+        label="Connect my WordPress site",
         callback_path=wp_auth.CALLBACK_PATH,
     )
 

@@ -1,35 +1,35 @@
-"""Doc « how-to » user-facing des connecteurs — un MARKDOWN par connecteur.
+"""User-facing "how-to" docs for connectors — one MARKDOWN file per connector.
 
-Le contenu vit dans `connectors/docs/<nom>.md`, à côté du code, éditable sans toucher
-à Python. C'était auparavant un dict de 850 lignes ici même : écrire de la prose dans
-des chaînes Python décourage de la tenir à jour, et ça s'est vu — la doc Salesforce
-décrivait encore un modèle d'application que Salesforce a depuis désactivé.
+The content lives in `connectors/docs/<name>.md`, next to the code, editable without
+touching Python. It used to be an 850-line dict right here: writing prose inside
+Python strings discourages keeping it up to date, and it showed — the Salesforce doc
+still described an application model that Salesforce has since disabled.
 
-**Format.** Un fichier = un connecteur, nommé comme lui (`tools/<nom>.py` ⟷
-`connectors/docs/<nom>.md`). Chaque section est un titre de niveau 2 :
+**Format.** One file = one connector, named like it (`tools/<name>.py` ⟷
+`connectors/docs/<name>.md`). Each section is a level-2 heading:
 
-    ## <kind> — <titre>
+    ## <kind> — <title>
 
-    corps en markdown léger
+    light markdown body
 
-`kind` ∈ {prerequisite, setup, usage, note} :
-- `prerequisite` — ce qu'il faut AVANT de connecter (où prendre la clé, une
-  autorisation à poser côté fournisseur…). Affiché avant connexion ;
-- `setup`        — étapes de configuration ;
-- `usage`        — ce que le connecteur permet + exemples concrets. Affiché aussi en
-  découverte (marketplace, vitrine) ;
-- `note`         — divers.
+`kind` ∈ {prerequisite, setup, usage, note}:
+- `prerequisite` — what is needed BEFORE connecting (where to get the key, an
+  authorization to grant on the provider side…). Shown before connecting;
+- `setup`        — configuration steps;
+- `usage`        — what the connector allows + concrete examples. Also shown in
+  discovery (marketplace, showcase);
+- `note`         — miscellaneous.
 
-**Corps** = markdown léger : `[label](url)` (http(s) seulement, sinon rendu en texte),
-`**gras**`, `` `code` ``, listes `- `. Rester FACTUEL : décrire ce que font réellement
-les outils, et lier la page de doc de l'éditeur plutôt qu'inventer un chemin d'UI
-exact — les consoles SaaS bougent, et un chemin périmé envoie l'utilisateur dans le mur.
+**Body** = light markdown: `[label](url)` (http(s) only, otherwise rendered as text),
+`**bold**`, `` `code` ``, `- ` lists. Stay FACTUAL: describe what the tools actually
+do, and link the vendor's doc page rather than invent an exact UI path — SaaS
+consoles move around, and a stale path sends the user into a wall.
 
-**Valeurs dérivées** : `{{callback:/chemin}}`, résolu à la lecture (cf. `_resoudre`).
+**Derived values**: `{{callback:/path}}`, resolved at read time (see `_resoudre`).
 
-Le catalogue public et `/api/me/connectors` en dérivent (`Connector.doc_sections`) ;
-c'est rendu partout où le connecteur s'affiche — carte de connexion, marketplace,
-vitrine.
+The public catalog and `/api/me/connectors` derive from them (`Connector.doc_sections`);
+it is rendered everywhere the connector is displayed — connection card, marketplace,
+showcase.
 """
 from __future__ import annotations
 
@@ -45,13 +45,13 @@ _DIR = pathlib.Path(__file__).parent / "docs"
 
 KINDS = ("prerequisite", "setup", "usage", "note")
 
-# `## kind — titre` (tiret cadratin ou simple : les deux passent à la saisie).
+# `## kind — title` (em dash or plain hyphen: both are accepted on input).
 _TITRE = re.compile(r"^##\s+(" + "|".join(KINDS) + r")\s*[—-]\s*(.+?)\s*$")
-# Un titre de section qui RESSEMBLE au patron mais dont le premier mot n'est pas un
-# kind connu. Sans lui, `## plusieurs workspaces — …` ne matchait rien : la ligne
-# tombait dans le CORPS de la section précédente, `##` compris, et le texte
-# s'affichait au mauvais endroit — dans le prérequis, montré avant connexion. Vécu
-# le 2026-08-27 sur la doc Slack. Un titre mal nommé se signale, il ne s'avale pas.
+# A section title that LOOKS like the pattern but whose first word is not a known
+# kind. Without it, `## several workspaces — …` matched nothing: the line fell into
+# the BODY of the previous section, `##` included, and the text was displayed in
+# the wrong place — in the prerequisite, shown before connecting. Seen on
+# 2026-08-27 on the Slack doc. A badly named title gets flagged, not swallowed.
 _TITRE_SUSPECT = re.compile(r"^##\s+([a-zA-Z][\w -]*?)\s*[—-]\s*(.+?)\s*$")
 _MARQUEUR = re.compile(r"\{\{callback:([^}]+)\}\}")
 
@@ -64,13 +64,13 @@ class DocSection:
 
 
 def _resoudre(corps: str) -> str:
-    """Remplace les marqueurs `{{callback:/chemin}}` par leur valeur DÉRIVÉE.
+    """Replaces the `{{callback:/path}}` markers with their DERIVED value.
 
-    Une doc ne doit JAMAIS écrire une URL de rappel en dur : elle dépend de
-    l'environnement, donc une URL de prose ment dès qu'on la lit depuis l'autre. Bug
-    vécu : la doc de deux connecteurs affichait le domaine de PREPROD à des
-    utilisateurs de production, et le `redirect_uri_mismatch` qui s'ensuivait accusait
-    le client. Résolu à la LECTURE, jamais à l'import."""
+    A doc must NEVER hard-code a callback URL: it depends on the environment, so a
+    prose URL lies as soon as it is read from the other one. Real bug: the docs of
+    two connectors showed the PREPROD domain to production users, and the
+    resulting `redirect_uri_mismatch` blamed the client. Resolved at READ time,
+    never at import."""
     if "{{callback:" not in corps:
         return corps
     from ..auth import flow as oauth_flow
@@ -96,15 +96,15 @@ def _parse(texte: str, source: str) -> tuple[DocSection, ...]:
         suspect = _TITRE_SUSPECT.match(ligne)
         if suspect and suspect.group(1) not in KINDS:
             logger.warning(
-                "connectors/docs/%s : section `%s` — kind inconnu, la section entière "
-                "part dans le corps de la précédente. Attendus : %s",
+                "connectors/docs/%s : section `%s` — unknown kind, the whole section "
+                "goes into the body of the previous one. Expected: %s",
                 source, suspect.group(1), ", ".join(KINDS))
         if kind is not None:
             corps.append(ligne)
         elif ligne.strip():
-            # Texte avant tout titre : il ne serait affiché nulle part. On le signale
-            # plutôt que de le laisser disparaître en silence.
-            logger.warning("connectors/docs/%s : texte hors section, ignoré : %.60s",
+            # Text before any heading: it would be displayed nowhere. We flag it
+            # rather than let it disappear silently.
+            logger.warning("connectors/docs/%s : text outside any section, ignored: %.60s",
                            source, ligne.strip())
     _fermer()
     return tuple(sections)
@@ -112,10 +112,10 @@ def _parse(texte: str, source: str) -> tuple[DocSection, ...]:
 
 @functools.lru_cache(maxsize=1)
 def _fichiers() -> dict[str, tuple[DocSection, ...]]:
-    """Lu une fois par processus : le contenu est statique, livré avec le code."""
+    """Read once per process: the content is static, shipped with the code."""
     out: dict[str, tuple[DocSection, ...]] = {}
     if not _DIR.is_dir():
-        logger.warning("connectors/docs/ absent : les fiches seront sans doc")
+        logger.warning("connectors/docs/ missing: sheets will have no doc")
         return out
     for f in sorted(_DIR.glob("*.md")):
         sections = _parse(f.read_text(encoding="utf-8"), f.name)
@@ -125,15 +125,15 @@ def _fichiers() -> dict[str, tuple[DocSection, ...]]:
 
 
 def sections_for(connector: str) -> tuple[DocSection, ...]:
-    """Sections du connecteur, marqueurs résolus. Vide si aucune doc."""
+    """The connector's sections, markers resolved. Empty if there is no doc."""
     return tuple(DocSection(s.kind, s.title, _resoudre(s.body_md))
                  for s in _fichiers().get(connector, ()))
 
 
 class _Vue(dict):
-    """`DOC_SECTIONS[nom]`, `in`, `.get()` marchent comme avec l'ancien dict — mais les
-    valeurs sont résolues À LA LECTURE : l'URL de rappel dépend de l'environnement et
-    ne peut pas être figée au chargement du module."""
+    """`DOC_SECTIONS[name]`, `in`, `.get()` work like the old dict — but the
+    values are resolved AT READ TIME: the callback URL depends on the environment and
+    cannot be frozen at module load."""
 
     def __getitem__(self, k):
         s = sections_for(k)
@@ -168,44 +168,44 @@ DOC_SECTIONS = _Vue()
 
 def multi_account_section(connector: str, noun: str,
                           par_connexion: bool = False) -> DocSection:
-    """La section « plusieurs <noun>s » d'un connecteur multi-compte — ÉCRITE UNE
-    FOIS pour tous : la mécanique (compte nommé, défaut, `_account`, refus en cas
-    d'ambiguïté) est celle de la plateforme, pas celle d'un fournisseur. Une fiche
-    n'écrit que ce qui lui est propre (pourquoi il faut une clé par <noun>).
+    """The "multiple <noun>s" section of a multi-account connector — WRITTEN ONCE
+    FOR ALL: the mechanics (named account, default, `_account`, refusal on
+    ambiguity) are the platform's, not a provider's. A connector sheet only writes
+    what is specific to it (why one key per <noun> is needed).
 
-    `par_connexion` : le compte naît d'une CONNEXION (OAuth — google, sharepoint),
-    pas d'une clé posée. Il est alors nommé par son adresse, le premier lié est le
-    défaut, et rien ne se pose à l'équipe ou à l'org depuis ce geste : la règle
-    « le premier sans nom, puis « principal » » des clés posées y serait fausse."""
+    `par_connexion`: the account comes from a CONNECTION (OAuth — google, sharepoint),
+    not from a stored key. It is then named by its address, the first linked one is
+    the default, and nothing is set at the team or org level from this action: the
+    stored-keys rule "the first one unnamed, then "main"" would be wrong here."""
     if par_connexion:
         nommage = (
-            f"ce connecteur accepte plusieurs {noun}s : se connecter avec un autre "
-            f"{noun} l'**ajoute** à côté des autres, nommé par son adresse ; se "
-            f"reconnecter avec le même remplace le sien.",
-            f"- le premier {noun} lié est le défaut",
+            f"this connector accepts multiple {noun}s: connecting with another "
+            f"{noun} **adds** it alongside the others, named by its address; "
+            f"reconnecting with the same one replaces its own.",
+            f"- the first linked {noun} is the default",
         )
         lister = f"`oto_identity(op='list', connector='{connector}')`"
-        renommer, pose = "", "lié"
+        renommer, pose = "", "linked"
     else:
         nommage = (
-            f"ce connecteur accepte plusieurs {noun}s : chaque credential posé devient un "
-            f"**compte nommé** (un nom par {noun}), à ton niveau, à celui de ton équipe ou "
-            f"de ton org.",
-            "- le premier n'a pas besoin de nom ; à partir du deuxième, chacun porte le sien "
-            "(le premier prend alors le nom « principal », renommable)",
+            f"this connector accepts multiple {noun}s: each stored credential becomes a "
+            f"**named account** (one name per {noun}), at your level, your team's or "
+            f"your org's.",
+            "- the first one doesn't need a name; from the second on, each one carries its own "
+            "(the first then takes the name \"principal\", renamable)",
         )
-        lister = (f"`oto_identity(op='list', connector='{connector}')` (`scope='org'` ou "
-                  f"`scope='group'` pour ceux de l'org ou de l'équipe)")
-        renommer, pose = " ; renommer : `op='rename'` avec `new_name`", "posé"
-    return DocSection("setup", f"plusieurs {noun}s", "\n".join((
+        lister = (f"`oto_identity(op='list', connector='{connector}')` (`scope='org'` or "
+                  f"`scope='group'` for the org's or team's)")
+        renommer, pose = "; rename: `op='rename'` with `new_name`", "stored"
+    return DocSection("setup", f"multiple {noun}s", "\n".join((
         *nommage,
-        f"- sans précision, l'agent prend le seul {noun} {pose}, sinon celui marqué par "
-        f"défaut ; sinon l'appel est **refusé** en nommant les {noun}s disponibles — "
-        f"jamais un choix au hasard",
-        f"- viser un {noun} pour un appel : `_account=\"<nom>\"` sur l'outil ; les lister : "
+        f"- without specification, the agent takes the only {pose} {noun}, otherwise the one marked "
+        f"as default; otherwise the call is **refused**, naming the available {noun}s — "
+        f"never a random choice",
+        f"- target a {noun} for a call: `_account=\"<name>\"` on the tool; list them: "
         f"{lister}",
-        f"- fixer le défaut : `oto_identity(op='set', connector='{connector}', "
-        f"identity_id='<nom>')`{renommer}",
-        f"- ⚠️ aucun outil ne parcourt les {noun}s tout seul : un total sur plusieurs "
-        f"{noun}s s'obtient en appelant chacun (`_account`) et en additionnant",
+        f"- set the default: `oto_identity(op='set', connector='{connector}', "
+        f"identity_id='<name>')`{renommer}",
+        f"- ⚠️ no tool walks through the {noun}s on its own: a total across several "
+        f"{noun}s is obtained by calling each one (`_account`) and adding up",
     )))

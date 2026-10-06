@@ -575,7 +575,7 @@ def test_create_link_refuses_an_unreadable_price_type():
         fn = _tool(m, "stripe_checkout")
         for price in ({"id": "price_1"}, ["price_1"], None):
             cls.return_value.get_price.return_value = price
-            with pytest.raises(McpError, match="type illisible"):
+            with pytest.raises(McpError, match="unreadable type"):
                 fn(op="create_link", price_id="price_1", created_metadata={"a": "1"})
         cls.return_value.create_payment_link.assert_not_called()
     finally:
@@ -588,7 +588,7 @@ def test_create_link_surfaces_a_failed_price_read():
         from oto.tools.common.errors import UpstreamHTTPError
         cls.return_value.get_price.side_effect = UpstreamHTTPError(
             403, {"error": {"message": "no perms"}}, service="stripe")
-        with pytest.raises(McpError, match="RESTREINTE"):
+        with pytest.raises(McpError, match="RESTRICTED"):
             _tool(m, "stripe_checkout")(op="create_link", price_id="price_1",
                                         created_metadata={"a": "1"})
         cls.return_value.create_payment_link.assert_not_called()
@@ -613,7 +613,7 @@ def test_create_link_refuses_a_bad_max_uses(max_uses):
 def test_create_link_fields_are_refused_on_other_ops(kw):
     m, cls, patcher = _fn_with_mock_client()
     try:
-        with pytest.raises(McpError, match="ne s'appliquent qu'à op='create_link'"):
+        with pytest.raises(McpError, match="only apply to op='create_link'"):
             _tool(m, "stripe_checkout")(op="update_link", payment_link_id="plink_1",
                                         active=False, **kw)
         cls.return_value.update_payment_link.assert_not_called()

@@ -1,24 +1,25 @@
-"""Le MODÈLE d'un connecteur — la forme, jamais le contenu.
+"""The MODEL of a connector — the shape, never the content.
 
-`CredentialField`, `Connector` et la factory `_c` vivent ici ; les ~90 entrées
-qui les instancient vivent chacune dans `providers/<nom>.py`, et
-`providers/__init__.py` les AGRÈGE. Séparer les deux évite le cycle d'import
-qu'aurait un modèle défini dans l'agrégateur et importé par les déclarations.
+`CredentialField`, `Connector` and the `_c` factory live here; the ~90 entries
+that instantiate them each live in `providers/<name>.py`, and
+`providers/__init__.py` AGGREGATES them. Keeping the two apart avoids the import
+cycle that a model defined in the aggregator and imported by the declarations
+would create.
 
-Module PUR : aucun import `oto_mcp` au niveau module (les propriétés qui ont
-besoin d'une donnée curée — `doc_sections`, `category`, `description`,
-`publisher_name`, `logo_url_for` — l'importent PARESSEUSEMENT depuis
-l'agrégateur, jamais à l'import).
+PURE module: no `oto_mcp` import at module level (the properties that need
+curated data — `doc_sections`, `category`, `description`,
+`publisher_name`, `logo_url_for` — import it LAZILY from the aggregator,
+never at import time).
 
-Chaque connecteur porte les 3 axes du modèle plateforme :
-- **A. Disponibilité** : `availability` (self_serve | platform_granted). platform_granted
-  = grant-only (la plateforme accorde explicitement, ex. un connecteur réservé à un client).
-- **B. Visibilité** : `default_active` (SOCLE curé, ADR 0050 — installé d'office
-  dans la sélection d'un nouveau (sub, org) ; le reste du catalogue = library
-  installable). Policy, tunable.
-- **C. Credential** : `auth_modes` ⊆ {byo_user, byo_org, platform} ; `keyed` (résolu via
-  `resolve_api_key` avec une clé api) ; `secret_kind` ; `personal_session` (session
-  physiologiquement per-user : linkedin/google/slack/whatsapp/crunchbase, jamais org).
+Each connector carries the 3 axes of the platform model:
+- **A. Availability**: `availability` (self_serve | platform_granted). platform_granted
+  = grant-only (the platform grants explicitly, e.g. a connector reserved for one customer).
+- **B. Visibility**: `default_active` (curated BASE SET, ADR 0050 — installed by default
+  in the selection of a new (sub, org); the rest of the catalog = installable
+  library). Policy, tunable.
+- **C. Credential**: `auth_modes` ⊆ {byo_user, byo_org, platform}; `keyed` (resolved via
+  `resolve_api_key` with an api key); `secret_kind`; `personal_session` (session
+  that is physiologically per-user: linkedin/google/slack/whatsapp/crunchbase, never org).
 """
 from __future__ import annotations
 
@@ -28,226 +29,226 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class CredentialField:
-    """Un champ de saisie d'un credential (modèle générique multi-champs, ADR 0011).
+    """An input field of a credential (generic multi-field model, ADR 0011).
 
-    SOURCE UNIQUE du formulaire de saisie (dashboard), de l'endpoint REST et du
-    packing au coffre.
+    SINGLE SOURCE for the input form (dashboard), the REST endpoint and the
+    vault packing.
 
-    `secret` porte à lui seul la règle de sortie, et il n'y a **plus d'exception** :
-    `secret=False` (une URL de base, une région, un email) est rendu tel quel en
-    lecture ; `secret=True` n'est **JAMAIS** rendu — ni en clair, ni tronqué, ni vidé :
-    sa clé est absente du corps, et une empreinte non inversible le nomme à côté.
+    `secret` alone carries the output rule, and there is **no exception anymore**:
+    `secret=False` (a base URL, a region, an email) is rendered as-is on
+    read; `secret=True` is **NEVER** rendered — not in clear, not truncated, not blanked:
+    its key is absent from the body, and a non-reversible fingerprint names it alongside.
 
-    ⚠️ **Un cran `reveal` a existé jusqu'au 2026-08-31** (oto-backend#671) et il était
-    le DÉFAUT : tout connecteur `secret_kind="api_key"` sans `credential_fields`
-    explicites héritait d'un `key` révélable, soit 55 connecteurs dont 49 ne l'avaient
-    jamais décidé. Il est **retiré**, pas neutralisé : le passer à un `CredentialField`
-    lève désormais un `TypeError` à l'import, plutôt que d'ouvrir en silence une sortie
-    de secret. Une déclaration qui aurait besoin de le rendre ne l'a pas — c'est ce que
-    la décision a tranché."""
+    ⚠️ **A `reveal` notch existed until 2026-08-31** (oto-backend#671) and it was
+    the DEFAULT: every `secret_kind="api_key"` connector without explicit
+    `credential_fields` inherited a revealable `key`, i.e. 55 connectors of which 49 had
+    never decided it. It is **removed**, not neutralized: passing it to a `CredentialField`
+    now raises a `TypeError` at import, rather than silently opening a secret
+    output. A declaration that needed to render it does not have it — that is what
+    the decision settled."""
     name: str
     label: str
     secret: bool = True
     help: str = ""
-    # False = champ facultatif (connecteur « ET/OU » type slack : au moins un
-    # champ non vide exigé à la pose, mais aucun champ individuellement requis).
+    # False = optional field (an "AND/OR" connector like slack: at least one
+    # non-empty field required at setup, but no individually required field).
     required: bool = True
-    # False (défaut) = les whitespace n'ont aucun sens dans la valeur (clés, tokens,
-    # ids) → nettoyés à la pose (parasites d'un copier-coller). True = l'espace est
-    # significatif (mot de passe) → strip des bords seul. Cf.
+    # False (default) = whitespace is meaningless in the value (keys, tokens,
+    # ids) → cleaned at setup (copy-paste debris). True = whitespace is
+    # significant (password) → strip the edges only. See
     # credentials_store.clean_field_value.
     whitespace_significant: bool = False
-    # Valeurs PERTINENTES du champ discriminant du connecteur (`field_discriminator`)
-    # pour ce champ-ci. Vide (défaut) = le champ vaut quel que soit le discriminant —
-    # donc RIEN NE CHANGE pour les ~90 connecteurs qui n'en déclarent pas.
-    # Renseigné, il dit deux choses d'un coup : le champ ne s'AFFICHE que pour ces
-    # valeurs, et son `required` ne s'APPLIQUE que là. Ex. `http` : `header_name` est
-    # requis, mais seulement en `auth_mode=header`. Cf. `Connector.fields_for`.
+    # RELEVANT values of the connector's discriminator field (`field_discriminator`)
+    # for this field. Empty (default) = the field applies whatever the discriminator —
+    # so NOTHING CHANGES for the ~90 connectors that declare none.
+    # When set, it says two things at once: the field is only DISPLAYED for these
+    # values, and its `required` only APPLIES there. E.g. `http`: `header_name` is
+    # required, but only with `auth_mode=header`. See `Connector.fields_for`.
     when: tuple[str, ...] = ()
-    # Jeu FERMÉ de valeurs acceptées (un `select`, pas un champ libre). Vide = libre.
-    # À réserver aux champs qui discriminent ou dont une faute de frappe casse
-    # silencieusement : une valeur hors liste est refusée à l'ÉCRITURE, avec le jeu
-    # attendu dans le message.
+    # CLOSED set of accepted values (a `select`, not a free field). Empty = free.
+    # Reserve for fields that discriminate or whose typo silently
+    # breaks things: a value outside the list is refused at WRITE time, with the expected
+    # set in the message.
     choices: tuple[str, ...] = ()
-    # True = la valeur vit dans `connector_credentials.meta`, EN CLAIR, et non dans le
-    # chiffré (14/09/2026). Pour un champ NON secret ajouté à un connecteur dont des
-    # credentials sont déjà posés : la forme du chiffré ne dépend que des champs qui y
-    # vivent (`Connector.vault_fields`), donc une clé stockée brute reste brute — aucune
-    # ligne à reconditionner, et l'ancien code comme le nouveau relisent la même ligne
-    # de la base partagée prod/préprod. Cas fondateur : le workspace d'une clé
-    # d'organisation Anthropic.
+    # True = the value lives in `connector_credentials.meta`, IN CLEAR, and not in the
+    # encrypted blob (14/09/2026). For a NON-secret field added to a connector whose
+    # credentials are already set: the shape of the encrypted blob depends only on the fields that
+    # live in it (`Connector.vault_fields`), so a key stored raw stays raw — no
+    # row to repackage, and the old code and the new code read the same row
+    # of the prod/preprod shared database. Founding case: the workspace of an Anthropic
+    # organization key.
     in_meta: bool = False
 
     def __post_init__(self):
-        # ⚠️ `meta` sort en clair vers les écrans de statut et de listing (`public_meta`) :
-        # un champ secret qui y vivrait sortirait avec. Refusé à l'import, pas à l'usage.
+        # ⚠️ `meta` goes out in clear to the status and listing screens (`public_meta`):
+        # a secret field living there would go out with it. Refused at import, not at use.
         if self.in_meta and self.secret:
             raise TypeError(
-                f"CredentialField `{self.name}` : `in_meta` exige `secret=False` — "
-                "`meta` est rendu en clair aux écrans de statut et de listing.")
+                f"CredentialField `{self.name}`: `in_meta` requires `secret=False` — "
+                "`meta` is rendered in clear on the status and listing screens.")
 
 
 @dataclass(frozen=True)
 class Connector:
-    name: str                          # identité = clé de credential
-    namespaces: tuple[str, ...]        # préfixes de tools possédés
+    name: str                          # identity = credential key
+    namespaces: tuple[str, ...]        # owned tool prefixes
     availability: str                  # "self_serve" | "platform_granted"
     auth_modes: frozenset              # ⊆ {"byo_user","byo_org","platform"}
-    keyed: bool                        # résolu via resolve_api_key (→ KEY_PROVIDERS)
-    personal_session: bool             # catégorie « session navigateur » (Live View
-                                       # Browserbase) côté UI — ORTHOGONAL au partage :
-                                       # le niveau (user/équipe/org) suit `auth_modes`
-                                       # (`byo_org` ⇒ session partageable, ex. pennylaneged)
+    keyed: bool                        # resolved via resolve_api_key (→ KEY_PROVIDERS)
+    personal_session: bool             # "browser session" category (Live View
+                                       # Browserbase) on the UI side — ORTHOGONAL to sharing:
+                                       # the level (user/team/org) follows `auth_modes`
+                                       # (`byo_org` ⇒ shareable session, e.g. pennylaneged)
     secret_kind: str                   # api_key|refresh_token|oauth|cookie|none
-    default_quota: int                 # 0 = illimité
-    default_active: bool               # axe B : socle curé (ADR 0050) — installé
-                                       # d'office au seed d'un nouveau (sub, org) ;
-                                       # le reste reste installable depuis la library
-    platform_key_open: bool = False    # free-tier : clé plateforme utilisable SANS grant
-                                       # (quota gratuit = default_quota par user/jour, ADR 0031)
+    default_quota: int                 # 0 = unlimited
+    default_active: bool               # axis B: curated base set (ADR 0050) — installed
+                                       # by default when seeding a new (sub, org);
+                                       # the rest stays installable from the library
+    platform_key_open: bool = False    # free-tier: platform key usable WITHOUT a grant
+                                       # (free quota = default_quota per user/day, ADR 0031)
     label: str = ""
     help: str = ""
     href: str | None = None
-    # Éditeur du connecteur (affiché au catalogue). Vide → dérivé de la constante
-    # `PUBLISHER` du module de déclaration (cf. `publisher_name`). Vide des DEUX
-    # côtés ⟹ la fiche n'affiche AUCUN éditeur : il n'y a plus de défaut (2026-09-02).
-    # Le champ sert quand l'éditeur est une propriété PARTAGÉE par plusieurs entrées
-    # construites par une même factory (les six canaux hébergés, cf. `unipile.channel`) ;
-    # sinon, le domicile normal est la constante du module.
+    # Publisher of the connector (shown in the catalog). Empty → derived from the
+    # `PUBLISHER` constant of the declaration module (see `publisher_name`). Empty on BOTH
+    # sides ⟹ the sheet shows NO publisher: there is no default anymore (2026-09-02).
+    # The field is used when the publisher is a property SHARED by several entries
+    # built by the same factory (the six hosted channels, see `unipile.channel`);
+    # otherwise, the normal home is the module constant.
     publisher: str = ""
-    # URL publique du logo de l'éditeur. None → dérivée du CDN logo.dev à partir
-    # du domaine de marque curé `LOGO_DOMAIN` du module de déclaration
-    # (cf. `logo_url_for`).
-    # Le champ explicite reste un override (logo custom hébergé ailleurs).
+    # Public URL of the publisher's logo. None → derived from the logo.dev CDN from
+    # the curated brand domain `LOGO_DOMAIN` of the declaration module
+    # (see `logo_url_for`).
+    # The explicit field remains an override (custom logo hosted elsewhere).
     logo_url: str | None = None
-    # "tools" = module in-process (tools/<name>.py) ; "remote" = bridge distant
-    # (ADR 0003) servi par le module générique tools/remote.py — le credential
-    # d'org est alors {secret=token M2M, meta.base_url=endpoint du bridge} ;
-    # "credential" = ne fournit AUCUN outil : l'objet ne sert qu'à porter une clé
-    # que la plateforme utilise pour le compte de l'org (ex. la clé de modèle
-    # qu'un agent programmé consomme). Tranché par Alexis le 03/09 : un type
-    # DISTINCT, pas un connecteur à namespaces vides.
+    # "tools" = in-process module (tools/<name>.py); "remote" = remote bridge
+    # (ADR 0003) served by the generic module tools/remote.py — the org
+    # credential is then {secret=M2M token, meta.base_url=bridge endpoint};
+    # "credential" = provides NO tool: the object only serves to carry a key
+    # that the platform uses on behalf of the org (e.g. the model key
+    # that a scheduled agent consumes). Decided by Alexis on 03/09: a
+    # DISTINCT type, not a connector with empty namespaces.
     #
-    # ⚠️ La raison n'est pas technique — un connecteur sans namespace se construit
-    # très bien. C'est qu'il **se présenterait comme un connecteur sans en avoir
-    # les effets** : il apparaîtrait dans la liste, se « connecterait », et son
-    # activation n'apporterait aucune capacité. Un objet qui a l'air de faire
-    # quelque chose et ne fait rien est la famille de défauts qu'on documente
-    # depuis le 03/09 — un champ lu sans producteur, un champ produit que rien ne
-    # lit, une alerte qui ne se déclenche jamais. Ici c'est la version que
-    # l'UTILISATEUR voit.
+    # ⚠️ The reason is not technical — a connector without a namespace builds
+    # just fine. It is that it **would present itself as a connector without having
+    # its effects**: it would appear in the list, "connect", and its
+    # activation would bring no capability. An object that looks like it does
+    # something and does nothing is the family of defects we have been documenting
+    # since 03/09 — a field read with no producer, a produced field that nothing
+    # reads, an alert that never fires. Here it is the version that the
+    # USER sees.
     #
-    # Un type distinct laisse l'écran le présenter pour ce qu'il est — « clé de
-    # fournisseur », pas « connecteur » — au lieu de mentir par omission.
+    # A distinct type lets the screen present it for what it is — "provider
+    # key", not "connector" — instead of lying by omission.
     #
-    # ⚠️ La valeur `"mount"` (fédération d'un MCP tiers) a été RETIRÉE le
-    # 2026-09-09 avec le mécanisme (ADR 0069) : un service distant se joint par
-    # le connecteur `http` générique, ou s'écrit en connecteur natif.
+    # ⚠️ The `"mount"` value (federation of a third-party MCP) was REMOVED on
+    # 2026-09-09 along with the mechanism (ADR 0069): a remote service is joined through
+    # the generic `http` connector, or written as a native connector.
     kind: str = "tools"
-    # Schéma de saisie EXPLICITE du credential (modèle générique multi-champs).
-    # Vide → dérivé du secret_kind (cf. `secret_fields`). Renseigné pour les
-    # credentials à >1 champ qui ne sont ni api_key ni basic_auth (ex. Silae :
+    # EXPLICIT input schema of the credential (generic multi-field model).
+    # Empty → derived from secret_kind (see `secret_fields`). Set for
+    # credentials with >1 field that are neither api_key nor basic_auth (e.g. Silae:
     # client_id + client_secret + subscription_key).
     credential_fields: tuple[CredentialField, ...] = ()
-    # Modules `tools/<m>.py` à importer pour ce connecteur (kind="tools" seulement).
-    # Vide ⇒ `(name,)`. Renseigné quand le module ≠ nom du provider (sirene→fr) ou
-    # qu'un provider porte plusieurs modules (google→gmail/datastore/tasks).
-    # `register_all` DÉRIVE le chargement de ce champ (fin de la liste hardcodée, #24).
+    # `tools/<m>.py` modules to import for this connector (kind="tools" only).
+    # Empty ⇒ `(name,)`. Set when the module ≠ provider name (sirene→fr) or
+    # when a provider carries several modules (google→gmail/datastore/tasks).
+    # `register_all` DERIVES the loading from this field (end of the hardcoded list, #24).
     modules: tuple[str, ...] = ()
-    # Auth « hébergée » (ADR 0024) : le credential est une clé (resolve_api_key,
-    # cascade inchangée), MAIS la connexion user-facing passe par un flux hébergé
-    # tiers (ex. unipile : l'org pose l'abonnement, chaque membre lie son compte
-    # LinkedIn/WhatsApp par hosted-auth) — pas un formulaire de clé. Posé ici, le
-    # descripteur `auth.method` vaut "hosted" → la carte rend le widget dédié sans
-    # cas par nom côté front.
+    # "Hosted" auth (ADR 0024): the credential is a key (resolve_api_key,
+    # cascade unchanged), BUT the user-facing connection goes through a third-party
+    # hosted flow (e.g. unipile: the org sets the subscription, each member links their
+    # LinkedIn/WhatsApp account through hosted-auth) — not a key form. Set here, the
+    # `auth.method` descriptor is "hosted" → the card renders the dedicated widget without
+    # a per-name case on the front side.
     hosted_auth: bool = False
-    # Instance PERSONNELLE cross-org (issue #172, ADR 0033 amendé) : le credential
-    # est intrinsèquement PAR-PERSONNE — un compte de messagerie hébergé (unipile :
-    # le login LinkedIn/WhatsApp EST l'humain, pas l'appartenance). Sa clé membre
-    # posée dans UNE org suit alors le `sub` dans TOUTES ses orgs (résolution de
-    # proximité, pas seulement pin `_instance=`) : « même email = instance dispo dans
-    # chaque org ». Sans ce flag, un credential membre reste strictement `(sub, org)`
-    # (ADR 0033) — la valeur par défaut ne change rien pour les ~autres connecteurs.
+    # Cross-org PERSONAL instance (issue #172, ADR 0033 amended): the credential
+    # is intrinsically PER-PERSON — a hosted messaging account (unipile:
+    # the LinkedIn/WhatsApp login IS the human, not the membership). Its member key
+    # set in ONE org then follows the `sub` into ALL their orgs (proximity
+    # resolution, not just the `_instance=` pin): "same email = instance available in
+    # every org". Without this flag, a member credential stays strictly `(sub, org)`
+    # (ADR 0033) — the default value changes nothing for the ~other connectors.
     personal_cross_org: bool = False
-    # LA CARDINALITÉ D'AUTH, déclarée — `"mono"` | `"multi"` | `""` (dérivée du
-    # descripteur d'auth, le cas normal). Tranché par Alexis le 2026-08-27 : « ce qui
-    # gêne, c'est la liste ELLE-MÊME » — la cardinalité se dérive par défaut et se
-    # déclare **par connecteur, dans son entrée**, jamais dans une liste transverse
-    # indexée par nom (c'est ce qui a emporté `MULTI_ACCOUNT_PROVIDERS`).
+    # AUTH CARDINALITY, declared — `"mono"` | `"multi"` | `""` (derived from the auth
+    # descriptor, the normal case). Decided by Alexis on 2026-08-27: "what
+    # bothers me is the LIST ITSELF" — cardinality is derived by default and
+    # declared **per connector, in its entry**, never in a cross-cutting list
+    # indexed by name (that is what took down `MULTI_ACCOUNT_PROVIDERS`).
     #
-    # À ne poser que pour une raison de FOURNISSEUR, motivée à côté de la déclaration
-    # — jamais pour la forme du credential : le nombre de champs ne dit rien de la
-    # cardinalité (un token Slack est émis par installation, deux champs ou pas), et
-    # c'était précisément le trou de règle d'oto-backend#409.
+    # Only set for a PROVIDER reason, motivated next to the declaration
+    # — never for the shape of the credential: the number of fields says nothing about
+    # cardinality (a Slack token is issued per installation, two fields or not), and
+    # that was precisely the rule gap of oto-backend#409.
     #
-    # ⚠️ **Le défaut du CODE, pas le dernier mot** : une ligne de `connector_settings`
-    # peut le surcharger par org (le patron du bloc d'instructions — constante =
-    # défaut, ligne DB = surcharge), pour qu'un élargissement ne demande pas un
-    # déploiement. Le seam qui tranche les deux est `connectors.cardinality`, pas
-    # cette propriété.
+    # ⚠️ **The CODE's default, not the last word**: a `connector_settings` row
+    # can override it per org (the pattern of the instruction block — constant =
+    # default, DB row = override), so that a widening does not require
+    # a deployment. The seam that decides between the two is `connectors.cardinality`, not
+    # this property.
     cardinality: str = ""
-    # Le connecteur ANNONCE-T-IL l'axe `_account=` dans le schéma de ses tools, sans
-    # attendre que l'appelant détienne deux comptes ? Rien à voir avec la cardinalité,
-    # et c'est pourquoi ça n'est plus le même champ : chaque propriété d'axe est
-    # recopiée dans le schéma de CHAQUE tool à chaque handshake (test_call_axes_budget),
-    # donc l'annonce statique est CURÉE — elle est réservée aux connecteurs dont
-    # l'appelant a, en pratique, toujours plusieurs comptes. Ailleurs l'axe reste
-    # annoncé DYNAMIQUEMENT (dès 2 comptes détenus) et ACCEPTÉ partout où il a un sens.
+    # Does the connector ANNOUNCE the `_account=` axis in the schema of its tools, without
+    # waiting for the caller to hold two accounts? Nothing to do with cardinality,
+    # which is why it is no longer the same field: each axis property is
+    # copied into the schema of EVERY tool at each handshake (test_call_axes_budget),
+    # so the static announcement is CURATED — reserved for connectors whose
+    # caller, in practice, always has several accounts. Elsewhere the axis stays
+    # announced DYNAMICALLY (from 2 held accounts) and ACCEPTED wherever it makes sense.
     account_axis_static: bool = False
-    # Mot métier d'un compte chez CE fournisseur, quand « compte » sonne faux : un
-    # compte Slack du coffre est un workspace, un compte Zoho une organisation.
-    # Vide = « compte ». Publié dans le descripteur `auth` et affiché tel quel.
+    # Business word for an account at THIS provider, when "account" sounds wrong: a
+    # Slack account in the vault is a workspace, a Zoho account an organization.
+    # Empty = "account". Published in the `auth` descriptor and displayed as-is.
     account_noun: str = ""
-    # Nom du champ dont la VALEUR sélectionne les autres (`auth_mode` chez `http`).
-    # Vide (défaut) = credential à schéma plat : tous les champs valent toujours.
-    # Renseigné, il active `fields_for` : un formulaire qui ne montre que ce qui
-    # sert, et une validation à l'écriture qui refuse un mode incohérent au lieu de
-    # l'accepter et d'échouer au premier appel réel (oto-backend#449).
+    # Name of the field whose VALUE selects the others (`auth_mode` on `http`).
+    # Empty (default) = flat-schema credential: all fields always apply.
+    # When set, it enables `fields_for`: a form that only shows what
+    # is useful, and a write-time validation that refuses an inconsistent mode instead of
+    # accepting it and failing on the first real call (oto-backend#449).
     field_discriminator: str = ""
-    # DÉLÉGATION DE CREDENTIAL (split unipile, oto-backend — 2026-08-28). Ce
-    # connecteur n'a PAS de credential propre : sa clé, son quota, sa clé plateforme
-    # et son option (couche 3) vivent sous le connecteur NOMMÉ ici. Le cas d'usage
-    # est un fournisseur dont UNE clé ouvre N *connexions* qu'on veut gouverner
-    # séparément — unipile : une clé d'abonnement, six canaux, chacun sa carte, son
-    # activation et sa sélection.
+    # CREDENTIAL DELEGATION (unipile split, oto-backend — 2026-08-28). This
+    # connector has NO credential of its own: its key, quota, platform key
+    # and option (layer 3) live under the connector NAMED here. The use case
+    # is a provider whose ONE key opens N *connections* that we want to govern
+    # separately — unipile: one subscription key, six channels, each with its card, its
+    # activation and its selection.
     #
-    # ⚠️ Deux questions cohabitent alors, et CHAQUE site doit choisir laquelle il pose :
-    #   · « quel connecteur est APPELÉ ? »  → les gates : activation, sélection,
-    #     visibilité de session, pin `_instance=`. C'est le nom NU.
-    #   · « quel connecteur PORTE la clé ? » → le coffre, la cascade, le quota, la
-    #     clé plateforme, l'option. C'est `providers.credential_provider(nom)`.
-    # Confondre les deux redonne exactement la divergence de 2026-07-07 (carte « clé
-    # d'org » verte + « Bloqué » rouge) : le statut et la résolution répondaient à
-    # deux questions différentes en croyant répondre à la même.
+    # ⚠️ Two questions then coexist, and EVERY site must choose which one it asks:
+    #   · "which connector is CALLED?"  → the gates: activation, selection,
+    #     session visibility, `_instance=` pin. That is the BARE name.
+    #   · "which connector CARRIES the key?" → the vault, the cascade, the quota, the
+    #     platform key, the option. That is `providers.credential_provider(name)`.
+    # Mixing the two reproduces exactly the 2026-07-07 divergence (green "org
+    # key" card + red "Blocked"): the status and the resolution were answering
+    # two different questions believing they answered the same one.
     #
-    # Un connecteur délégant ne DÉTIENT jamais de credential : il est hors
-    # `CREDENTIAL_PROVIDERS`, donc la pose d'une clé sous son nom est refusée et
-    # renvoie sur le porteur (sinon deux clés diraient le contraire l'une de l'autre).
+    # A delegating connector never HOLDS a credential: it is outside
+    # `CREDENTIAL_PROVIDERS`, so setting a key under its name is refused and
+    # points to the carrier (otherwise two keys would contradict each other).
     credential_of: str | None = None
-    # Canal Unipile connecté par ce connecteur (`LINKEDIN`/`WHATSAPP`/…) quand la
-    # carte représente UNE connexion hébergée. None = pas un connecteur de canal.
-    # Rend le canal DÉRIVABLE du connecteur : le flux hébergé se déclare alors sans
-    # paramètre (`connectors/flow.py`), et le front n'a plus de sélecteur de canal à
-    # rendre — la carte EST le canal.
+    # Unipile channel connected by this connector (`LINKEDIN`/`WHATSAPP`/…) when the
+    # card represents ONE hosted connection. None = not a channel connector.
+    # Makes the channel DERIVABLE from the connector: the hosted flow is then declared
+    # without a parameter (`connectors/flow.py`), and the front no longer has a channel
+    # selector to render — the card IS the channel.
     hosted_channel: str | None = None
 
     @property
     def org_shareable(self) -> bool:
-        """Un secret de ce connecteur peut-il être posé au niveau ORG (ou équipe) ?
+        """Can a secret of this connector be set at ORG (or team) level?
 
-        Faux pour un connecteur qui DÉLÈGUE son credential, même s'il hérite
-        `byo_org` de son porteur : ce qui se partage, c'est la clé du COMPTE, sur la
-        carte du compte. Sans ce faux, les lecteurs qui interrogent le nom NU —
-        `org_secret_meta`, les hints « une équipe a la clé » (`access/rbac.py`), le
-        levier de partage de la carte — proposeraient de poser ou d'atteindre un
-        secret d'org sous `whatsapp`, que la cascade (normalisée vers `unipile`)
-        n'irait jamais lire."""
+        False for a connector that DELEGATES its credential, even if it inherits
+        `byo_org` from its carrier: what is shared is the key of the ACCOUNT, on the
+        account's card. Without this false, the readers that query the BARE name —
+        `org_secret_meta`, the "a team has the key" hints (`access/rbac.py`), the
+        card's sharing lever — would offer to set or reach an org
+        secret under `whatsapp`, which the cascade (normalized to `unipile`)
+        would never go read."""
         return "byo_org" in self.auth_modes and not self.credential_of
 
     @property
     def family(self) -> str:
-        """Nature de l'intégration (axe *builder*, ADR 0011) — DÉRIVÉE du credential
-        + runtime : open-data | api | browser | google | bridge."""
+        """Nature of the integration (*builder* axis, ADR 0011) — DERIVED from the credential
+        + runtime: open-data | api | browser | google | bridge."""
         if self.kind == "remote":
             return "bridge"
         if self.name in BROWSER_PROVIDERS:
@@ -260,79 +261,79 @@ class Connector:
 
     @property
     def category(self) -> str:
-        """Domaine d'usage (axe *utilisateur*, ADR 0011) — CURÉ (constante
-        `CATEGORY` du module de déclaration), pour grouper l'UI."""
+        """Usage domain (*user* axis, ADR 0011) — CURATED (`CATEGORY` constant
+        of the declaration module), for grouping in the UI."""
         from . import _CATEGORY_BY_CONNECTOR
         return _CATEGORY_BY_CONNECTOR.get(self.name, "Autres")
 
     @property
     def doc_sections(self) -> tuple:
-        """Sections de doc « how-to » (CURÉ) — un markdown par connecteur,
-        `connectors/docs/<nom>.md`, joint par NOM. `connectors/docs_reader.py` n'en porte
-        que le parseur et la résolution des marqueurs, plus aucune prose. Lazy
-        import : garde ce module pur au niveau module.
+        """"How-to" doc sections (CURATED) — one markdown per connector,
+        `connectors/docs/<name>.md`, joined by NAME. `connectors/docs_reader.py` only carries
+        the parser and the marker resolution, no prose anymore. Lazy
+        import: keeps this module pure at module level.
 
-        ⚠️ Cette ligne a dit « contenu dans `connector_docs.py` » (le module de l'époque) jusqu'au
-        27/08/2026 : vrai à l'écriture, faux depuis la migration du 02/08 (la
-        prose est passée du dict Python aux markdown), et recopiée telle quelle
-        au découpage du registre du 27/08. Un audit du 27/08 en a conclu qu'il
-        restait 153 lignes de prose curée à ventiler dans `providers/<nom>.py` —
-        le déplacement était fait depuis trois semaines. Une carte périmée coûte
-        plus qu'une carte absente : elle est lue avec confiance."""
+        ⚠️ This line used to say "contained in `connector_docs.py`" (the module of the time) until
+        27/08/2026: true when written, false since the 02/08 migration (the
+        prose moved from the Python dict to markdown), and copied verbatim
+        when the registry was split on 27/08. An audit on 27/08 concluded that
+        153 lines of curated prose remained to be distributed into `providers/<name>.py` —
+        the move had been done for three weeks. A stale map costs
+        more than no map: it is read with confidence."""
         from ..connectors.docs_reader import DOC_SECTIONS, multi_account_section
         sections = tuple(DOC_SECTIONS.get(self.name, ()))
         if self.auth_multi_account:
-            sections += (multi_account_section(self.name, self.account_noun or "compte",
+            sections += (multi_account_section(self.name, self.account_noun or "account",
                                                par_connexion=self.secret_kind == "oauth"),)
         return sections
 
     @property
     def description(self) -> str:
-        """Description user-facing 2-3 phrases (CURÉE, constante `DESCRIPTION`
-        du module de déclaration).
-        Vide si non rédigée — le front retombe alors sur `help`."""
+        """User-facing description, 2-3 sentences (CURATED, `DESCRIPTION` constant
+        of the declaration module).
+        Empty if not written — the front then falls back to `help`."""
         from . import _DESCRIPTION_BY_CONNECTOR
         return _DESCRIPTION_BY_CONNECTOR.get(self.name, "")
 
     @property
     def publisher_name(self) -> str:
-        """Éditeur affiché au catalogue — override champ si renseigné, sinon la
-        constante curée `PUBLISHER` du module de déclaration. **Sinon RIEN.**
+        """Publisher shown in the catalog — field override if set, otherwise the curated
+        `PUBLISHER` constant of the declaration module. **Otherwise NOTHING.**
 
-        ⚠️ Ce repli valait « Otomata » jusqu'au 2026-09-02 : une omission de
-        déclaration était alors indiscernable du choix « connecteur maison », et le
-        défaut nous attribuait le produit d'un tiers — le MCP *officiel* de Folk a
-        été servi sous notre nom pendant un mois, et six canaux de messagerie
-        envoyaient des messages via une passerelle tierce sous notre nom.
+        ⚠️ This fallback used to be "Otomata" until 2026-09-02: an omitted
+        declaration was then indistinguishable from the "in-house connector" choice, and the
+        default attributed a third party's product to us — Folk's *official* MCP was
+        served under our name for a month, and six messaging channels
+        sent messages through a third-party gateway under our name.
 
-        **Une absence se voit et se corrige ; une attribution fausse se croit.**
+        **An absence is seen and fixed; a false attribution is believed.**
 
-        Le vide servi est la chaîne vide, **pas `None`**. Mesuré le 2026-09-02 en
-        rendant les composants du dashboard : les cinq surfaces qui affichent
-        l'éditeur traitent `""` et `null` à l'IDENTIQUE — elles masquent
-        (`v-if`, `filter(Boolean)`) ou coercent (`(c.publisher || "")`,
-        `[…].join(" ")`), aucune ne rend « undefined » ni ne casse. Le départage
-        est donc le CONTRAT, pas le rendu : oto-dashboard déclare
-        `publisher: string` (`types/api.ts`) et la capacité `MyConnectors` sert la
-        clé sur toutes ses lignes verbeuses ; `None` ferait mentir le premier sans
-        rien gagner sur le second.
+        The empty value served is the empty string, **not `None`**. Measured on 2026-09-02 by
+        rendering the dashboard components: the five surfaces that display
+        the publisher treat `""` and `null` IDENTICALLY — they hide
+        (`v-if`, `filter(Boolean)`) or coerce (`(c.publisher || "")`,
+        `[…].join(" ")`), none renders "undefined" or breaks. The tie-breaker
+        is therefore the CONTRACT, not the rendering: oto-dashboard declares
+        `publisher: string` (`types/api.ts`) and the `MyConnectors` capability serves the
+        key on all its verbose rows; `None` would make the first one lie without
+        gaining anything on the second.
 
-        Le ratchet `tests/test_connector_publisher.py` fait que ce vide ne DOIT
-        jamais être atteint depuis le registre : il exige une déclaration par
-        connecteur, tout le registre, sans filtre de famille. Le vide reste le
-        comportement d'une entrée construite AILLEURS — c'est là qu'il protège."""
+        The `tests/test_connector_publisher.py` ratchet ensures this empty value MUST
+        never be reached from the registry: it requires one declaration per
+        connector, the whole registry, without a family filter. The empty value remains the
+        behavior of an entry built ELSEWHERE — that is where it protects."""
         if self.publisher:
             return self.publisher
         from . import _PUBLISHER_BY_CONNECTOR
         return _PUBLISHER_BY_CONNECTOR.get(self.name, "")
 
     def logo_url_for(self) -> str | None:
-        """URL publique du logo de l'éditeur. Override `logo_url` si présent,
-        sinon dérivée du CDN **logo.dev** : domaine de marque curé
-        (`LOGO_DOMAIN` du module de déclaration) + token publishable
+        """Public URL of the publisher's logo. `logo_url` override if present,
+        otherwise derived from the **logo.dev** CDN: curated brand domain
+        (`LOGO_DOMAIN` of the declaration module) + publishable token
         `LOGODEV_TOKEN` (env).
-        None si pas de domaine connu (open-data/maison → monogramme côté UI) ou
-        token absent. Le token est *publishable* (conçu pour vivre dans l'URL)."""
+        None if no known domain (open-data/in-house → monogram on the UI side) or
+        token missing. The token is *publishable* (designed to live in the URL)."""
         if self.logo_url:
             return self.logo_url
         from . import _LOGO_DOMAIN_BY_CONNECTOR
@@ -345,23 +346,23 @@ class Connector:
 
     @property
     def auth_method(self) -> str:
-        """Mécanisme d'obtention du credential (ADR 0024) — DÉRIVÉ. Pilote le
-        widget rendu par la `ConnectorCard` (un flux, une carte). Priorité :
-        `hosted` (flux hébergé tiers, ex. unipile) > `remote` (bridge ADR 0003,
-        posé par grant d'org) > `oauth`/`cookie`/`none` (flux dédiés / pas de
-        credential) > `secret` (champ(s) à coller : api_key, basic_auth, fields).
-        ⚠️ Ce jeu de valeurs est FERMÉ *et consommé par un `switch` dans un AUTRE
-        repo* (oto-dashboard, `ConnectorConnectionPanel.connKind`) : y ajouter une
-        valeur est une rupture de contrat cross-repo qui échoue en SILENCE (branche
-        `default` → panneau de connexion vide). Vécu avec `secret_then_oauth`,
-        retiré le 29/07 : « il reste une étape » se dit par `status_hints`
-        (pending_action), pas par une nouvelle méthode d'auth."""
+        """Mechanism for obtaining the credential (ADR 0024) — DERIVED. Drives the
+        widget rendered by the `ConnectorCard` (one flow, one card). Priority:
+        `hosted` (third-party hosted flow, e.g. unipile) > `remote` (bridge ADR 0003,
+        set by org grant) > `oauth`/`cookie`/`none` (dedicated flows / no
+        credential) > `secret` (field(s) to paste: api_key, basic_auth, fields).
+        ⚠️ This set of values is CLOSED *and consumed by a `switch` in ANOTHER
+        repo* (oto-dashboard, `ConnectorConnectionPanel.connKind`): adding a
+        value there is a cross-repo contract break that fails SILENTLY (`default`
+        branch → empty connection panel). Lived through with `secret_then_oauth`,
+        removed on 29/07: "one step remains" is expressed through `status_hints`
+        (pending_action), not through a new auth method."""
         if self.hosted_auth:
             return "hosted"
         if self.kind == "remote" and not self.credential_fields:
-            # Bridge legacy (ADR 0003) : credential posé par grant d'org, pas de
-            # formulaire. Un bridge NOUVEAU modèle (ADR 0034) déclare ses
-            # credential_fields → formulaire self-serve standard (method=secret).
+            # Legacy bridge (ADR 0003): credential set by org grant, no
+            # form. A NEW-model bridge (ADR 0034) declares its
+            # credential_fields → standard self-serve form (method=secret).
             return "remote"
         if self.secret_kind in ("oauth", "cookie", "none"):
             return self.secret_kind
@@ -369,43 +370,42 @@ class Connector:
 
     @property
     def auth_multi_account(self) -> bool:
-        """Le credential est-il multi-compte — N grants pour une même entité
-        (ADR 0024) ?
+        """Is the credential multi-account — N grants for the same entity
+        (ADR 0024)?
 
-        ⚠️ **C'est le défaut du CODE, pas la réponse servie.** Une ligne de
-        `connector_settings` peut le surcharger par org : l'appelant qui doit TRANCHER
-        passe par `connectors.cardinality.is_multi_account(connector, org)`, jamais par
-        cette propriété. Elle reste ici parce que le registre est PUR (aucun import
-        `oto_mcp`, aucune base) — et c'est ce qui la rend lisible d'un test.
+        ⚠️ **This is the CODE's default, not the served answer.** A
+        `connector_settings` row can override it per org: a caller that must DECIDE
+        goes through `connectors.cardinality.is_multi_account(connector, org)`, never through
+        this property. It stays here because the registry is PURE (no `oto_mcp`
+        import, no database) — and that is what makes it readable from a test.
 
-        Par DÉFAUT pour tout connecteur dont le credential se POSE (`method=secret`
-        — clé simple `api_key`/`basic_auth` **ou** multi-champs `fields`) : le coffre
-        est déjà segmenté par `account` sur chaque ligne, la résolution membre
-        (access/resolve.py `_member_fetch`) traite un compte unique — la ligne legacy
-        `account=''` comprise — exactement comme avant. Une clé posée hier reste
-        donc la clé d'aujourd'hui ; ce qui change est qu'on peut en poser une
-        deuxième, nommée.
+        By DEFAULT for every connector whose credential is SET (`method=secret`
+        — simple `api_key`/`basic_auth` key **or** multi-field `fields`): the vault
+        is already segmented by `account` on each row, the member resolution
+        (access/resolve.py `_member_fetch`) treats a single account — the legacy row
+        `account=''` included — exactly as before. A key set yesterday therefore stays
+        today's key; what changes is that a second, named one can be set.
 
-        **Une déclaration `cardinality` PRIME sur la dérivation** — les deux seuls
-        porteurs sont ceux dont le descripteur d'auth dit faux : `google` (OAuth, donc
-        dérivé mono, mais N consentements = N comptes) et `browser` (session cookie,
-        donc dérivé mono, mais un compte = un SITE). `zoho` et `folk`, longtemps dans
-        la liste transverse, n'ont rien à déclarer : la dérivation les rend multi toute
-        seule. C'est la mesure qui l'a montré, pas une intuition.
+        **A `cardinality` declaration TAKES PRECEDENCE over the derivation** — the only two
+        carriers are those whose auth descriptor is wrong: `google` (OAuth, so
+        derived mono, but N consents = N accounts) and `browser` (cookie session,
+        so derived mono, but one account = one SITE). `zoho` and `folk`, long in the
+        cross-cutting list, have nothing to declare: the derivation makes them multi all
+        by itself. It is the measurement that showed it, not an intuition.
 
-        ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité.**
-        Jusqu'au 2026-08-27, `fields` était hors règle : Slack (`bot_token` +
-        `user_token`) en tombait mono-compte alors qu'un token Slack est émis par
-        INSTALLATION dans un workspace (N installations = N tokens indépendants) —
-        un trou de règle, pas une raison de fournisseur. Poser un 2ᵉ compte y
-        écrivait une ligne que la résolution n'allait jamais lire (oto-backend#409).
+        ⚠️ **The number of credential fields says NOTHING about cardinality.**
+        Until 2026-08-27, `fields` was outside the rule: Slack (`bot_token` +
+        `user_token`) fell into single-account although a Slack token is issued per
+        INSTALLATION in a workspace (N installations = N independent tokens) —
+        a rule gap, not a provider reason. Setting a 2nd account there
+        wrote a row that the resolution would never read (oto-backend#409).
 
-        Hors périmètre, volontairement : OAuth/cookie/none (N comptes = N
-        consentements, un autre problème), hosted/remote (pas de clé à poser), et
-        les connecteurs `personal_cross_org` (unipile), dont le barreau
-        cross-org de la cascade est mono-compte par construction. Un cas qui
-        n'entre dans aucune de ces familles se déclare `cardinality="mono"`, DANS
-        son entrée de registre et avec son motif — jamais par une liste transverse."""
+        Out of scope, deliberately: OAuth/cookie/none (N accounts = N
+        consents, a different problem), hosted/remote (no key to set), and
+        `personal_cross_org` connectors (unipile), whose cross-org rung
+        of the cascade is single-account by construction. A case that
+        falls into none of these families is declared `cardinality="mono"`, IN
+        its registry entry and with its reason — never through a cross-cutting list."""
         if self.cardinality:
             return self.cardinality == "multi"
         return (self.auth_method == "secret"
@@ -414,37 +414,37 @@ class Connector:
 
     @property
     def auth(self) -> dict:
-        """Descripteur d'auth unifié (ADR 0024) — source unique du rendu de la
-        face credential, quel que soit le mécanisme. `fields` = schéma de saisie
-        (vide hors `method=secret`, où les flux sont dédiés)."""
+        """Unified auth descriptor (ADR 0024) — single source for rendering the
+        credential face, whatever the mechanism. `fields` = input schema
+        (empty outside `method=secret`, where the flows are dedicated)."""
         return {
             "method": self.auth_method,
             "cardinality": "multi_account" if self.auth_multi_account else "single",
-            # Le MOT que l'utilisateur emploie pour un compte de ce connecteur, quand
-            # « compte » est faux chez lui : un compte Slack du coffre EST un workspace.
-            # Le front l'affiche tel quel (oto-dashboard#121) — c'est le registre qui
-            # connaît le vocabulaire du fournisseur, pas l'écran.
-            "account_noun": self.account_noun or "compte",
-            # Le champ dont la valeur sélectionne les autres, quand il y en a un
-            # (`auth_mode` chez `http`) : le front n'a pas à connaître le connecteur
-            # pour n'afficher que les champs qui servent — il lit `when` (#449).
+            # The WORD the user uses for an account of this connector, when
+            # "account" is wrong for it: a Slack account in the vault IS a workspace.
+            # The front displays it as-is (oto-dashboard#121) — it is the registry that
+            # knows the provider's vocabulary, not the screen.
+            "account_noun": self.account_noun or "account",
+            # The field whose value selects the others, when there is one
+            # (`auth_mode` on `http`): the front does not need to know the connector
+            # to show only the useful fields — it reads `when` (#449).
             "field_discriminator": self.field_discriminator,
-            # Le CANAL hébergé de ce connecteur, quand il en porte un (split unipile
-            # du 2026-08-28). Sans lui, un écran qui rend la face « connecter un
-            # compte » ne peut pas savoir LEQUEL des six canaux sa carte représente —
-            # et la seule issue est une liste des six recopiée dans le front, qui
-            # s'affiche identique sur les six cartes. C'est exactement la panne
-            # constatée : la carte WhatsApp proposait de connecter LinkedIn,
-            # Telegram, Instagram… et affichait leur état de connexion comme le sien.
-            # Minuscule, comme le paramètre du flux — le coffre, lui, majuscule.
+            # The hosted CHANNEL of this connector, when it carries one (unipile split
+            # of 2026-08-28). Without it, a screen that renders the "connect an
+            # account" face cannot know WHICH of the six channels its card represents —
+            # and the only way out is a copy of the six in the front, which
+            # displays identically on all six cards. That is exactly the observed
+            # failure: the WhatsApp card offered to connect LinkedIn,
+            # Telegram, Instagram… and displayed their connection state as its own.
+            # Lowercase, like the flow parameter — the vault, for its part, uppercase.
             "hosted_channel": (self.hosted_channel or "").lower() or None,
-            # Le connecteur qui DÉTIENT le credential, quand ce n'est pas celui-ci
-            # (`credential_of`). Un connecteur qui délègue n'a AUCUN champ à saisir
-            # (`secret_fields` est vide par construction, cf. plus bas) : un écran qui
-            # lui propose quand même « pose ta propre clé » propose un geste sans
-            # effet, la clé qu'il poserait n'étant lue par personne. Le nom du porteur
-            # plutôt qu'un booléen : c'est LUI que l'écran doit nommer pour dire où le
-            # geste se fait vraiment.
+            # The connector that HOLDS the credential, when it is not this one
+            # (`credential_of`). A delegating connector has NO field to enter
+            # (`secret_fields` is empty by construction, see below): a screen that
+            # still offers "set your own key" offers a gesture with no
+            # effect, the key it would set being read by nobody. The carrier's name
+            # rather than a boolean: it is THAT one the screen must name to say where the
+            # gesture is really done.
             "credential_of": self.credential_of,
             "fields": [
                 {"name": f.name, "label": f.label, "secret": f.secret,
@@ -455,16 +455,16 @@ class Connector:
         }
 
     def fields_for(self, values: dict) -> tuple[CredentialField, ...]:
-        """Les champs PERTINENTS d'une saisie, le discriminant une fois connu.
+        """The RELEVANT fields of an input, once the discriminator is known.
 
-        Sans `field_discriminator`, c'est `secret_fields` — le cas des ~90 autres
-        connecteurs. Avec, on retire les champs qu'aucune valeur du discriminant ne
-        rend utiles : `header_name` n'a rien à faire dans un formulaire `bearer`,
-        et son `required` n'a rien à y refuser.
+        Without `field_discriminator`, it is `secret_fields` — the case of the ~90 other
+        connectors. With one, we remove the fields that no discriminator value
+        makes useful: `header_name` has no business in a `bearer` form,
+        and its `required` has nothing to refuse there.
 
-        ⚠️ Discriminant ABSENT ou vide = tout est pertinent. C'est volontaire : à ce
-        stade la saisie n'a pas encore choisi, et masquer serait deviner. Le refus
-        d'une valeur hors `choices` est le travail de l'écriture, pas d'ici."""
+        ⚠️ Discriminator ABSENT or empty = everything is relevant. This is deliberate: at
+        this stage the input has not chosen yet, and hiding would be guessing. Refusing
+        a value outside `choices` is the write's job, not this one's."""
         if not self.field_discriminator:
             return self.secret_fields
         picked = str(values.get(self.field_discriminator) or "").strip().lower()
@@ -474,17 +474,17 @@ class Connector:
 
     @property
     def secret_fields(self) -> tuple[CredentialField, ...]:
-        """Schéma de saisie du credential — SOURCE UNIQUE pour l'UI, l'endpoint REST,
-        `status_for` et le packing. Déclaré explicitement (`credential_fields`),
-        sinon dérivé des formes simples. Vide = pas de saisie générique : `cookie`
-        (linkedin/crunchbase), `oauth` (google) et `none` (open-data) ont
-        des flux dédiés, pas un formulaire de champs.
+        """Input schema of the credential — SINGLE SOURCE for the UI, the REST endpoint,
+        `status_for` and the packing. Declared explicitly (`credential_fields`),
+        otherwise derived from the simple forms. Empty = no generic input: `cookie`
+        (linkedin/crunchbase), `oauth` (google) and `none` (open-data) have
+        dedicated flows, not a field form.
 
-        Vide aussi pour un connecteur qui DÉLÈGUE son credential (`credential_of`) :
-        il n'a pas de champ à lui. Rendre le formulaire de son porteur sur sa carte
-        inviterait à poser une deuxième clé — que le coffre refuse (hors
-        `CREDENTIAL_PROVIDERS`) et que la cascade n'irait jamais lire. La carte du
-        porteur est le seul endroit où la clé se pose."""
+        Also empty for a connector that DELEGATES its credential (`credential_of`):
+        it has no field of its own. Rendering its carrier's form on its card
+        would invite setting a second key — which the vault refuses (outside
+        `CREDENTIAL_PROVIDERS`) and which the cascade would never read. The
+        carrier's card is the only place where the key is set."""
         if self.credential_of:
             return ()
         if self.credential_fields:
@@ -493,50 +493,50 @@ class Connector:
             return (CredentialField("key", "API key", secret=True),)
         if self.secret_kind == "basic_auth":
             return (CredentialField("email", "Email", secret=False),
-                    CredentialField("password", "Mot de passe", secret=True,
+                    CredentialField("password", "Password", secret=True,
                                     whitespace_significant=True))
         return ()
 
     @property
     def vault_fields(self) -> tuple[CredentialField, ...]:
-        """Les champs rangés DANS le chiffré : `secret_fields` moins ceux qui vivent dans
-        `meta` (`in_meta`). C'est leur nombre, et lui seul, qui décide de la forme du
-        blob (`credentials_store.pack_secret`) — ajouter un champ `in_meta` ne la change
-        pas."""
+        """The fields stored INSIDE the encrypted blob: `secret_fields` minus those that live in
+        `meta` (`in_meta`). Their count, and that alone, decides the shape of the
+        blob (`credentials_store.pack_secret`) — adding an `in_meta` field does not change
+        it."""
         return tuple(f for f in self.secret_fields if not f.in_meta)
 
     @property
     def config_fields(self) -> tuple[CredentialField, ...]:
-        """Champs NON-secrets du credential (endpoint/host/region : `base_url`
-        n8n/make, `data_center` zoho, `org_id` zohodesk…). Dérivés de `secret_fields`
-        (flag `secret=False`) — la config voyage avec la clé via `resolve_credential`
-        (le `meta` non-secret, ex. `dsn` unipile, s'y ajoute à la résolution)."""
+        """NON-secret fields of the credential (endpoint/host/region: `base_url`
+        n8n/make, `data_center` zoho, `org_id` zohodesk…). Derived from `secret_fields`
+        (flag `secret=False`) — the config travels with the key via `resolve_credential`
+        (the non-secret `meta`, e.g. unipile `dsn`, is added to it at resolution)."""
         return tuple(f for f in self.secret_fields if not f.secret)
 
 
-# Connecteurs passant par un browser IN-PROCESS (o-browser local) — non dérivable
-# du seul secret_kind. Vide depuis la migration de crunchbase sur le substrat
-# HÉBERGÉ Browserbase (ADR 0026) : crunchbase appelle désormais l'API privée
-# `/v4/data` via une session navigateur distante (family dérivée → "api", comme
-# brevo). LinkedIn était déjà parti vers Unipile. Mécanisme conservé pour un
-# éventuel futur connecteur browser local.
+# Connectors going through an IN-PROCESS browser (local o-browser) — not derivable
+# from secret_kind alone. Empty since crunchbase migrated to the HOSTED
+# Browserbase substrate (ADR 0026): crunchbase now calls the private `/v4/data`
+# API through a remote browser session (family derived → "api", like
+# brevo). LinkedIn had already moved to Unipile. Mechanism kept for a
+# possible future local browser connector.
 BROWSER_PROVIDERS = frozenset()
 
-# ⚠️ **`MULTI_ACCOUNT_PROVIDERS` A ÉTÉ RETIRÉE le 2026-08-29** (lot L6 pièce 2 c),
-# et sa disparition EST le lot. C'était la dernière liste transverse indexée par nom,
-# et Alexis l'a tranché le 27/08 : « ce qui gêne, c'est la LISTE elle-même ». Elle
-# portait deux choses sans rapport, qui vivent désormais chacune dans l'entrée du
-# connecteur concerné, à côté de la déclaration qu'elle qualifie :
+# ⚠️ **`MULTI_ACCOUNT_PROVIDERS` WAS REMOVED on 2026-08-29** (batch L6 piece 2 c),
+# and its disappearance IS the batch. It was the last cross-cutting list indexed by name,
+# and Alexis settled it on 27/08: "what bothers me is the LIST itself". It
+# carried two unrelated things, which now each live in the entry of the
+# connector concerned, next to the declaration they qualify:
 #
-# · la CARDINALITÉ → `cardinality="multi"` — et seulement là où la dérivation dit
-#   faux : `google` (OAuth ⟹ dérivé mono, mais N consentements = N comptes) et
-#   `browser` (cookie ⟹ dérivé mono, mais un compte = un SITE). `zoho` et `folk` n'ont
-#   RIEN à déclarer : depuis que la règle couvre les credentials multi-champs, la
-#   dérivation les rend multi toute seule — ils n'étaient plus dans la liste que par
-#   habitude, et c'est la mesure qui l'a montré ;
-# · l'annonce STATIQUE de l'axe `_account=` → `account_axis_static=True`, sur les
-#   quatre. Ce rôle-là n'a jamais été la cardinalité (il parle du SCHÉMA des tools, pas
-#   du coffre) — les confondre dans une seule liste est ce qui la rendait indéboulonnable.
+# · CARDINALITY → `cardinality="multi"` — and only where the derivation
+#   is wrong: `google` (OAuth ⟹ derived mono, but N consents = N accounts) and
+#   `browser` (cookie ⟹ derived mono, but one account = one SITE). `zoho` and `folk` have
+#   NOTHING to declare: since the rule covers multi-field credentials, the
+#   derivation makes them multi all by itself — they were only in the list
+#   out of habit, and it is the measurement that showed it;
+# · the STATIC announcement of the `_account=` axis → `account_axis_static=True`, on the
+#   four. That role was never cardinality (it is about the tools' SCHEMA, not
+#   the vault) — mixing them in a single list is what made it unremovable.
 
 
 def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=False,
@@ -548,11 +548,11 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        personal_cross_org=False, cardinality="", account_axis_static=False,
        account_noun="",
        field_discriminator="", credential_of=None, hosted_channel=None) -> Connector:
-    """Factory d'une entrée de registre — appelée par `providers/<nom>.py`.
+    """Factory for a registry entry — called by `providers/<name>.py`.
 
-    Ajouter un CHAMP par connecteur = l'ajouter à `Connector` ET ici, puis le
-    renseigner dans le module du connecteur concerné, à côté de la déclaration
-    qu'il qualifie (jamais dans une liste transverse indexée par nom)."""
+    Adding a FIELD per connector = adding it to `Connector` AND here, then
+    setting it in the module of the connector concerned, next to the declaration
+    it qualifies (never in a cross-cutting list indexed by name)."""
     return Connector(
         name=name, namespaces=tuple(namespaces), availability=availability,
         auth_modes=frozenset(auth_modes), keyed=keyed, personal_session=personal_session,

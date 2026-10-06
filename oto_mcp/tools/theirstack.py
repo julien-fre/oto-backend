@@ -1,41 +1,41 @@
-"""TheirStack — offres d'emploi par employeur + technologies utilisées (ERP…).
+"""TheirStack — job postings by employer + technologies used (ERP…).
 
-Wrappe `oto.tools.theirstack.client.TheirStackClient` (API v1, Bearer). keyed
-`api_key`, **BYO ou clé plateforme** : `auth_modes = {byo_user, byo_org, platform}`
-depuis oto-backend#405 — TheirStack est une donnée-marchandise, donc revendable,
-contrairement aux CRM/ATS qui restent byo-only. TheirStack se facture au crédit,
-au record rendu.
-⚠️ Ce docstring a dit « byo-only » jusqu'au 2026-09-09, plusieurs semaines APRÈS
-que #405 ait ouvert le mode plateforme. Le registre (`providers.REGISTRY`) fait
-foi, pas ce texte — la contradiction a fait conclure à tort que les deux lignes
-TheirStack du site (« Get hiring signals », « tech stack ») étaient invendables.
-Le palier plateforme reste **grant-only** (`default_quota=0,
-platform_key_open=False`) : une org n'y accède que par un grant explicite.
+Wraps `oto.tools.theirstack.client.TheirStackClient` (API v1, Bearer). Keyed
+`api_key`, **BYO or platform key**: `auth_modes = {byo_user, byo_org, platform}`
+since oto-backend#405 — TheirStack is commodity data, hence resellable,
+unlike the CRMs/ATSs which stay byo-only. TheirStack bills per credit,
+per record returned.
+⚠️ This docstring said "byo-only" until 2026-09-09, several weeks AFTER
+#405 opened platform mode. The registry (`providers.REGISTRY`) is the source
+of truth, not this text — the contradiction led to the wrong conclusion that the
+two TheirStack lines on the website ("Get hiring signals", "tech stack") could not be sold.
+The platform tier stays **grant-only** (`default_quota=0,
+platform_key_open=False`): an org only gets in through an explicit grant.
 
-Deux gestes, lecture seule :
-- `theirstack_jobs_search` : les offres publiées par une ou des entreprises (ou par
-  pays / titre / techno) — le signal « qui recrute quoi, où, depuis quand ».
-- `theirstack_companies_search` : la fiche firmographique + les technologies détectées
-  (technographie : ERP, CRM, e-commerce…) d'entreprises nommées ou filtrées.
+Two operations, read-only:
+- `theirstack_jobs_search`: the job postings published by one or more companies (or by
+  country / title / tech) — the "who is hiring what, where, since when" signal.
+- `theirstack_companies_search`: the firmographic record + the detected technologies
+  (technographics: ERP, CRM, e-commerce…) of named or filtered companies.
 
-Le contrat côté agent est PROJETÉ par défaut (ce qu'un balayage de sourcing lit :
-société, titre, date, url, lieu / nom, domaine, effectif, secteur, technologies) ;
-`full=True` rend le record TheirStack entier (description, salaires, hiring_team,
-company_object…). Les filtres typés couvrent le quotidien ; `extra` (fusionné EN
-DERNIER, il prime) ouvre toute la DSL éditeur sans casser le schéma du tool.
+The agent-facing contract is PROJECTED by default (what a sourcing sweep reads:
+company, title, date, url, location / name, domain, headcount, industry, technologies);
+`full=True` returns the whole TheirStack record (description, salaries, hiring_team,
+company_object…). The typed filters cover everyday use; `extra` (merged LAST,
+it wins) opens up the whole vendor DSL without breaking the tool's schema.
 
-Facturation : le crédit se compte au record ENTREPRISE rendu — un crédit entreprise
-« déverrouille » toutes les offres + technologies + firmographie de cette entreprise.
-Le spec OpenAPI (17/08/2026) le chiffre en crédits API : 1 par offre rendue sur
-jobs/search, 3 par entreprise sur companies/search — dans les deux cas `limit` borne
-la dépense, et `metadata.truncated_*` dit ce qui n'a PAS été rendu faute de crédits.
-TheirStack ne rend AUCUN compteur de crédits consommés : chaque réponse porte
-`credits_estimes`, notre estimation d'après ce barème (oto#174), étiquetée comme telle.
-Couverture partielle sur les PME (≈ 8 % des petits grossistes français vus dans le
-pilote) : `data: []` est un résultat NORMAL, pas une erreur — ne pas réessayer.
+Billing: the credit is counted per COMPANY record returned — one company credit
+"unlocks" all the jobs + technologies + firmographics of that company.
+The OpenAPI spec (17/08/2026) prices it in API credits: 1 per job returned on
+jobs/search, 3 per company on companies/search — in both cases `limit` bounds
+the spend, and `metadata.truncated_*` says what was NOT returned for lack of credits.
+TheirStack returns NO counter of credits consumed: every response carries
+`credits_estimes`, our estimate from this rate card (oto#174), labelled as such.
+Partial coverage on SMEs (≈ 8% of the small French wholesalers seen in the
+pilot): `data: []` is a NORMAL result, not an error — do not retry.
 
-Les appels au client sont écrits en clair (`_client().search_jobs(…)`) : c'est ce qui
-les rend vérifiables par la sonde version-skew (`test_tools_client_methods_exist`).
+Calls to the client are written out in plain sight (`_client().search_jobs(…)`): that is what
+makes them verifiable by the version-skew probe (`test_tools_client_methods_exist`).
 """
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, output_projection, session_org
 from ..connectors import verify as connector_verify
 
-# Ce qu'un balayage de sourcing lit sur une offre / une entreprise (`full=True` rend tout).
+# What a sourcing sweep reads on a job / a company (`full=True` returns everything).
 _JOB_FIELDS = ("company", "job_title", "date_posted", "url", "location")
 _COMPANY_FIELDS = ("name", "domain", "employee_count", "industry", "technology_names")
 
@@ -60,34 +60,34 @@ def _bad(msg: str) -> McpError:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"TheirStack a rejeté la clé API (HTTP {status}) — vérifie la clé "
-                "configurée sur ce connecteur (TheirStack : Settings → API keys).")
+        return (f"TheirStack rejected the API key (HTTP {status}) — check the key "
+                "configured on this connector (TheirStack: Settings → API keys).")
     if status == 402:
-        return ("TheirStack : crédits épuisés ou plan insuffisant (402) — recharge le "
-                "compte, ou réduis `limit`.")
+        return ("TheirStack: credits exhausted or plan insufficient (402) — top up the "
+                "account, or reduce `limit`.")
     if status == 422:
-        return (f"TheirStack a refusé les filtres (422) : {e.body} — jobs_search exige au "
-                "moins un de posted_at_max_age_days / posted_at_gte / posted_at_lte / "
-                "company_names (company_name_or) / company_domain_or / company_linkedin_url_or ; "
-                "les noms de champs de `extra` doivent être ceux de la DSL TheirStack.")
+        return (f"TheirStack rejected the filters (422): {e.body} — jobs_search requires at "
+                "least one of posted_at_max_age_days / posted_at_gte / posted_at_lte / "
+                "company_names (company_name_or) / company_domain_or / company_linkedin_url_or; "
+                "the field names in `extra` must be those of the TheirStack DSL.")
     if status == 429:
-        return "TheirStack : trop de requêtes (429) — réessaie dans un instant."
+        return "TheirStack: too many requests (429) — retry in a moment."
     if status in (500, 502, 503, 504):
-        return f"TheirStack est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"TheirStack a refusé la requête (HTTP {status}): {e.body}"
+        return f"TheirStack is temporarily unavailable (HTTP {status}) — retry later."
+    return f"TheirStack rejected the request (HTTP {status}): {e.body}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
-    """Sonde « tester la connexion » — couvre `auth+quota` : le solde de crédits,
-    l'appel authentifié GRATUIT (une recherche, même `limit=1`, dépenserait des
-    crédits). Le solde était lu puis JETÉ : un compte à sec gardait une sonde verte.
+    """"Test the connection" probe — covers `auth+quota`: the credit balance is
+    the FREE authenticated call (a search, even `limit=1`, would spend
+    credits). The balance used to be read then THROWN AWAY: an empty account kept a green probe.
 
-    Réponse documentée (`GET /v0/billing/credit-balance`) : `api_credits`,
+    Documented response (`GET /v0/billing/credit-balance`): `api_credits`,
     `used_api_credits`, `ui_credits`, `used_ui_credits`, `earliest_expiration`.
-    `api_credits` est l'ALLOCATION, pas le restant : un compte à sec a répondu
-    `api_credits=1700, used_api_credits=1700` et gardait une sonde verte (signal oto
-    #1189). Le compte est donc à sec quand `used_api_credits >= api_credits` — ou
-    quand l'allocation est nulle, si `used_api_credits` manque.
+    `api_credits` is the ALLOCATION, not what remains: an empty account answered
+    `api_credits=1700, used_api_credits=1700` and kept a green probe (oto
+    signal #1189). So the account is empty when `used_api_credits >= api_credits` — or
+    when the allocation is zero, if `used_api_credits` is missing.
     """
     from oto.tools.theirstack.client import TheirStackClient
 
@@ -96,100 +96,100 @@ def _verify(fields: dict, config: dict | None = None) -> dict:  # noqa: ARG001
     used = solde.get("used_api_credits") if isinstance(solde, dict) else None
     if not isinstance(api, int):
         raise RuntimeError(
-            f"TheirStack a répondu sans solde de crédits API lisible : {str(solde)[:200]}")
+            f"TheirStack answered without a readable API credit balance: {str(solde)[:200]}")
     restant = api - used if isinstance(used, int) else api
     if restant <= 0:
         raise connector_verify.QuotaEpuise(
-            "La clé TheirStack est bonne, mais le compte n'a plus de crédits API "
-            f"({used if isinstance(used, int) else '?'} utilisés sur {api}). "
-            "Recharge le compte chez TheirStack — reconnecter n'y changerait rien.")
+            "The TheirStack key is good, but the account has no API credits left "
+            f"({used if isinstance(used, int) else '?'} used out of {api}). "
+            "Top up the account at TheirStack — reconnecting would change nothing.")
     return {"quota": {"api_credits": api,
                       "used_api_credits": used,
                       "restant": restant,
-                      "unite": "crédits API"}}
+                      "unite": "API credits"}}
 
 
 def _clean_names(names: Optional[list[str]], what: str) -> list[str]:
     if names is None:
         return []
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-        raise _bad(f"`{what}` doit être une liste de chaînes.")
+        raise _bad(f"`{what}` must be a list of strings.")
     return [n.strip() for n in names if n and n.strip()]
 
 
 def _merge_extra(payload: dict, extra: Optional[dict]) -> dict:
-    """`extra` = clés brutes de la DSL TheirStack, fusionnées EN DERNIER (elles priment
-    sur les arguments typés — c'est l'échappatoire vers les ~110 filtres éditeur)."""
+    """`extra` = raw TheirStack DSL keys, merged LAST (they win
+    over the typed arguments — it is the escape hatch to the ~110 vendor filters)."""
     if extra is None:
         return payload
     if not isinstance(extra, dict):
-        raise _bad("`extra` doit être un dict de filtres TheirStack (DSL éditeur).")
+        raise _bad("`extra` must be a dict of TheirStack filters (vendor DSL).")
     payload.update(extra)
     return payload
 
 
 def _project(result: Any, fields: tuple, full: bool) -> Any:
-    """`full=True` → payload INCHANGÉ ; sinon chaque item de `data` est resserré sur
-    `fields`. L'enveloppe `metadata` (total, truncated_*) reste dans tous les cas."""
+    """`full=True` → payload UNCHANGED; otherwise each item of `data` is narrowed to
+    `fields`. The `metadata` envelope (total, truncated_*) is kept in every case."""
     if full:
         return result
     return output_projection.project(result, items_path="data", fields=fields)
 
 
-#: Le barème publié (spec OpenAPI, 17/08/2026), en crédits API par record rendu.
+#: The published rate card (OpenAPI spec, 17/08/2026), in API credits per record returned.
 _CREDITS_PAR_OFFRE = 1
 _CREDITS_PAR_ENTREPRISE = 3
 
 
 def _with_credit_estimate(result: Any, par_record: int, unite: str) -> Any:
-    """Ajoute `credits_estimes` à l'enveloppe (oto#174).
+    """Add `credits_estimes` to the envelope (oto#174).
 
-    TheirStack ne rend AUCUN compteur de crédits — ni dans `metadata`, ni en
-    en-tête ; seul un appel de solde à part le donne. Des procédures disaient
-    pourtant « compte les crédits depuis `metadata` » : impossible, et l'appelant
-    dépassait son budget sans le savoir. Le backend connaît le barème et le nombre
-    de records rendus (c'est déjà le métrage, `_trace_quantity`) : on le dit, en
-    l'étiquetant ESTIMÉ — ce n'est pas un relevé du fournisseur."""
+    TheirStack returns NO credit counter — neither in `metadata` nor in a
+    header; only a separate balance call gives it. Procedures nonetheless said
+    "count the credits from `metadata`": impossible, and the caller
+    went over budget without knowing it. The backend knows the rate card and the number
+    of records returned (that is already the metering, `_trace_quantity`): we say so, labelling
+    it ESTIMATED — it is not a statement from the provider."""
     if not (isinstance(result, dict) and isinstance(result.get("data"), list)):
         return result
     out = dict(result)
     out["credits_estimes"] = par_record * len(result["data"])
     out["credits_estimes_source"] = (
-        f"Estimé d'après le barème publié ({par_record} crédit(s) par {unite} "
-        "rendue), pas un compteur : TheirStack n'en renvoie aucun. Le solde réel "
-        "se lit dans le tableau de bord TheirStack (API : "
+        f"Estimated from the published rate card ({par_record} credit(s) per {unite} "
+        "returned), not a counter: TheirStack returns none. The real balance "
+        "is read on the TheirStack dashboard (API: "
         "GET /v0/billing/credit-balance).")
     return out
 
 
 def _trace_quantity(result: Any) -> None:
-    """Métrage par unité (facturation du partenaire, 21/08) — le nombre de records RENDUS
-    dans `data`, avant projection (`_project` ne change jamais la longueur de
-    la liste, seulement les clés de chaque item). C'est ce que TheirStack
-    facture réellement : 1 crédit API/offre sur jobs/search, 3/entreprise sur
-    companies/search — voir le docstring du module. Les deux tools résolvent
-    au MÊME connecteur (`namespace_of` = premier token, "theirstack" pour les
-    deux : aucun préfixe multi-token "theirstack_jobs"/"theirstack_companies"
-    n'est déclaré au registre) — c'est la grille de prix du consommateur de
-    facturation du partenaire (dépôt externe) qui doit donc distinguer les deux
-    TAUX par nom de TOOL, pas par connecteur."""
+    """Per-unit metering (partner billing, 21/08) — the number of records RETURNED
+    in `data`, before projection (`_project` never changes the length of
+    the list, only the keys of each item). This is what TheirStack
+    actually bills: 1 API credit/job on jobs/search, 3/company on
+    companies/search — see the module docstring. Both tools resolve
+    to the SAME connector (`namespace_of` = first token, "theirstack" for
+    both: no multi-token prefix "theirstack_jobs"/"theirstack_companies"
+    is declared in the registry) — so it is the price grid of the partner's
+    billing consumer (external repo) that must tell the two
+    RATES apart by TOOL name, not by connector."""
     if isinstance(result, dict) and isinstance(result.get("data"), list):
         session_org.note_call_trace(quantity=len(result["data"]))
 
 
 def _record_platform_usage(result, is_platform: bool) -> None:
-    """Débite le quota interne oto quand c'est NOTRE clé qui a servi.
+    """Debit oto's internal quota when OUR key was the one used.
 
-    Mêmes deux gestes que `aiark`/`fullenrich`, et la même séparation nette :
-    - `record_platform_usage` ne compte QUE le mode plateforme — c'est le quota
-      d'oto sur sa propre clé, sans objet quand le client apporte la sienne ;
-    - `note_call_trace(quantity=…)` ci-dessus est INCONDITIONNEL — c'est le
-      métrage, et `tool_calls.key_mode` dit séparément sous quelle clé l'appel
-      est passé, ce que le consommateur de facturation lit pour ne facturer que
-      la clé du partenaire.
-    Compté au nombre de records RENDUS, pas au nombre d'appels : TheirStack nous
-    facture au record (1 crédit/offre, 3/entreprise), donc un appel qui rend 50
-    offres coûte 50, et une page vide coûte 0."""
+    Same two operations as `aiark`/`fullenrich`, and the same clean separation:
+    - `record_platform_usage` counts ONLY platform mode — it is oto's quota
+      on its own key, irrelevant when the customer brings their own;
+    - `note_call_trace(quantity=…)` above is UNCONDITIONAL — it is the
+      metering, and `tool_calls.key_mode` says separately which key the call
+      went through, which the billing consumer reads to bill only
+      the partner's key.
+    Counted in RECORDS returned, not in calls: TheirStack bills us
+    per record (1 credit/job, 3/company), so a call that returns 50
+    jobs costs 50, and an empty page costs 0."""
     if not is_platform:
         return
     if isinstance(result, dict) and isinstance(result.get("data"), list):
@@ -207,7 +207,7 @@ def register(mcp: FastMCP) -> None:
         return TheirStackClient(api_key=key), is_platform
 
     def _run(fn):
-        """Traduit un refus de TheirStack en erreur d'outil actionnable."""
+        """Translate a TheirStack refusal into an actionable tool error."""
         try:
             return fn()
         except ValueError as e:
@@ -271,9 +271,9 @@ def register(mcp: FastMCP) -> None:
         """
         names = _clean_names(company_names, "company_names")
         if limit is not None and limit <= 0:
-            raise _bad("`limit` doit être ≥ 1.")
+            raise _bad("`limit` must be ≥ 1.")
         if page is not None and page < 0:
-            raise _bad("`page` est 0-based (≥ 0).")
+            raise _bad("`page` is 0-based (≥ 0).")
         payload: dict = {"page": page, "limit": limit}
         if posted_at_max_age_days is not None:
             payload["posted_at_max_age_days"] = posted_at_max_age_days
@@ -287,7 +287,7 @@ def register(mcp: FastMCP) -> None:
         _record_platform_usage(result, is_platform)
         _trace_quantity(result)
         return _with_credit_estimate(_project(result, _JOB_FIELDS, full),
-                                     _CREDITS_PAR_OFFRE, "offre")
+                                     _CREDITS_PAR_OFFRE, "job")
 
     @mcp.tool()
     def theirstack_companies_search(
@@ -337,9 +337,9 @@ def register(mcp: FastMCP) -> None:
         """
         names = _clean_names(company_names, "company_names")
         if limit is not None and limit <= 0:
-            raise _bad("`limit` doit être ≥ 1.")
+            raise _bad("`limit` must be ≥ 1.")
         if page is not None and page < 0:
-            raise _bad("`page` est 0-based (≥ 0).")
+            raise _bad("`page` is 0-based (≥ 0).")
         payload: dict = {"page": page, "limit": limit}
         if names:
             payload["company_name_or"] = names
@@ -351,4 +351,4 @@ def register(mcp: FastMCP) -> None:
         _record_platform_usage(result, is_platform)
         _trace_quantity(result)
         return _with_credit_estimate(_project(result, _COMPANY_FIELDS, full),
-                                     _CREDITS_PAR_ENTREPRISE, "entreprise")
+                                     _CREDITS_PAR_ENTREPRISE, "company")

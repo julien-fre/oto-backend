@@ -937,7 +937,7 @@ def register(mcp: FastMCP) -> None:
 
         """
         if op != "create_link":
-            _refuse_ignored(op, "ces champs ne s'appliquent qu'à op='create_link'",
+            _refuse_ignored(op, "these fields only apply to op='create_link'",
                             price_id=price_id, quantity=quantity,
                             created_metadata=created_metadata, max_uses=max_uses)
         client = _client()
@@ -972,7 +972,7 @@ def register(mcp: FastMCP) -> None:
                            "stripe_catalog(op='list_prices').")
             items: List[Dict[str, Any]] = [{"price": price_id, "quantity": quantity or 1}]
             if max_uses is not None and (isinstance(max_uses, bool) or max_uses < 1):
-                raise _bad("`max_uses` doit être un entier ≥ 1")
+                raise _bad("`max_uses` must be an integer ≥ 1")
             body: Dict[str, Any] = {}
             if metadata:
                 body["metadata"] = metadata
@@ -980,8 +980,8 @@ def register(mcp: FastMCP) -> None:
                 price = _run(lambda: client.get_price(price_id))
                 ptype = price.get("type") if isinstance(price, dict) else None
                 if ptype not in ("recurring", "one_time"):
-                    raise _bad(f"prix {price_id!r} : type illisible ({ptype!r}) — "
-                               "impossible de savoir où poser `created_metadata`.")
+                    raise _bad(f"price {price_id!r}: unreadable type ({ptype!r}) — "
+                               "cannot tell where to set `created_metadata`.")
                 target = "subscription_data" if ptype == "recurring" else "payment_intent_data"
                 body[target] = {"metadata": created_metadata}
             if max_uses is not None:

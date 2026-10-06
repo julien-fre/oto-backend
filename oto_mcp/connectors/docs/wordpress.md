@@ -1,37 +1,37 @@
-## prerequisite — un site WordPress en HTTPS, un compte qui peut écrire
+## prerequisite — a WordPress site on HTTPS, an account that can write
 
-- WordPress **5.6 ou plus récent**, servi en **HTTPS** : une adresse `http://` est refusée (le mot de passe y partirait en clair), sauf destination interne déclarée par l'opérateur de la plateforme.
-- un compte WordPress avec le rôle **Auteur** (ses propres articles), **Éditeur** (tout le contenu) ou **Administrateur**. un Contributeur ne peut rien publier.
-- aucune extension à installer.
+- WordPress **5.6 or newer**, served over **HTTPS**: an `http://` address is refused (the password would travel in clear), unless it is an internal destination declared by the platform operator.
+- a WordPress account with the **Author** role (own posts), **Editor** (all content) or **Administrator**. A Contributor cannot publish anything.
+- no plugin to install.
 
-## setup — deux façons, le même résultat
+## setup — two ways, same result
 
-- **bouton « Connecter mon site WordPress »** : saisis l'URL du site, tu arrives sur l'écran d'autorisation de ton wp-admin, clique **Approuver**. WordPress crée un mot de passe d'application et nous le renvoie : rien à copier. le site apparaît comme un compte nommé par son adresse.
-- **à la main** : dans wp-admin, **Utilisateurs → Profil → Mots de passe d'application**, donne un nom (ex. « oto »), clique **Ajouter**, puis colle dans le formulaire l'URL du site, ton identifiant et ce mot de passe (les espaces peuvent rester).
-- **plusieurs sites** : chaque site est un compte du connecteur ; une agence en connecte autant qu'elle en gère.
-- **révoquer** : même écran du profil WordPress, bouton **Révoquer** — l'accès s'arrête immédiatement.
+- **"Connect my WordPress site" button**: enter the site URL, you land on the authorization screen of your wp-admin, click **Approve**. WordPress creates an application password and sends it back to us: nothing to copy. the site appears as an account named after its address.
+- **by hand**: in wp-admin, **Users → Profile → Application Passwords**, give it a name (e.g. "oto"), click **Add**, then paste the site URL, your username and that password into the form (the spaces can stay).
+- **multiple sites**: each site is an account of the connector; an agency connects as many as it manages.
+- **revoke**: same WordPress profile screen, **Revoke** button — access stops immediately.
 
-## usage — rédiger, publier, gérer
+## usage — write, publish, manage
 
-- « qu'est-ce que je peux faire sur ce site ? » → `wordpress_site()` (rôle, types de contenu, taxonomies, extensions SEO détectées)
-- « rédige un article sur … » → `wordpress_article(title=…, markdown=…, categories=["Guides"], tags=["seo"], featured_image="https://…/cover.jpg", seo_description=…)` — toujours en brouillon
-- « publie-le » / « programme-le pour lundi 9h » → `wordpress_publish(id=…)` / `wordpress_publish(id=…, at="2026-10-05T09:00:00")`
-- « repasse-le en brouillon » → `wordpress_publish(id=…, op="unpublish")`
-- « liste mes brouillons » → `wordpress_content(op="list", status="draft")`
-- « modifie la page À propos » → `wordpress_content(op="update", type="pages", id=…, data={…}, dry_run=True)` puis sans `dry_run`
-- « mes fiches produit / études de cas » (type personnalisé) → `wordpress_content(type="<type donné par wordpress_site>", …)`
-- « importe cette image » → `wordpress_media(op="upload", source="https://…", alt_text="…")`
+- "what can I do on this site?" → `wordpress_site()` (role, content types, taxonomies, detected SEO plugins)
+- "write a post about …" → `wordpress_article(title=…, markdown=…, categories=["Guides"], tags=["seo"], featured_image="https://…/cover.jpg", seo_description=…)` — always as a draft
+- "publish it" / "schedule it for Monday 9am" → `wordpress_publish(id=…)` / `wordpress_publish(id=…, at="2026-10-05T09:00:00")`
+- "put it back to draft" → `wordpress_publish(id=…, op="unpublish")`
+- "list my drafts" → `wordpress_content(op="list", status="draft")`
+- "edit the About page" → `wordpress_content(op="update", type="pages", id=…, data={…}, dry_run=True)` then without `dry_run`
+- "my product sheets / case studies" (custom type) → `wordpress_content(type="<type given by wordpress_site>", …)`
+- "import this image" → `wordpress_media(op="upload", source="https://…", alt_text="…")`
 
-## note — ce qu'il faut savoir
+## note — what to know
 
-- **aucun article ne se publie par accident** : `wordpress_article` et `wordpress_content` refusent `status=publish`. seul `wordpress_publish` met en ligne. ⚠️ en revanche, modifier un article DÉJÀ publié change le site tout de suite — `dry_run=True` montre le diff avant.
-- ⚠️ **un média est public dès son téléversement** : WordPress n'a pas de média en brouillon. l'image à la une d'un brouillon se lit déjà à son adresse (`source_url`).
-- **Markdown → blocs natifs** : titres, paragraphes, listes, citations, code, tableaux et images arrivent comme de vrais blocs de l'éditeur, modifiables un par un. une liste dont un élément porte du code, un tableau ou une citation arrive entière en bloc « HTML personnalisé » (l'éditeur n'accepte que du texte et des sous-listes dans un élément de liste) : rien n'est perdu.
-- ⚠️ **HTML brut** : du HTML dans le Markdown (`<script>`, `<iframe>`…) devient un bloc « HTML personnalisé », gardé tel quel si le compte a le droit `unfiltered_html` (administrateur, éditeur sur un site simple) — `wordpress_site()` le dit. ne jamais y recopier le HTML d'une page qu'on ne maîtrise pas.
-- **catégories et étiquettes** : données par nom (une chaîne, créée si absente) ou par id (un entier) ; « 2026 » est une étiquette, pas le terme n° 2026. elles doivent exister pour le type visé : une page n'a pas de catégories.
-- **« 401 rest_not_logged_in »** : selon la version et l'hébergement, ce code peut aussi venir d'un identifiant ou d'un mot de passe d'application faux (ou révoqué) — vérifier d'abord ceux-là (ailleurs WordPress répond `incorrect_password` / `invalid_username`). si ce sont les bons, l'hébergeur ou une extension de sécurité retire l'en-tête `Authorization`. correctifs connus : sur Apache, ajouter au `.htaccess` `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1` ; dans Wordfence / iThemes / un pare-feu Cloudflare, autoriser l'API REST pour les utilisateurs authentifiés.
-- **« le site redirige vers … »** : enregistre l'adresse exacte que le site sert (https, avec ou sans www).
-- **SEO (Yoast, Rank Math)** : titre, description et mot-clé sont écrits quand l'extension les expose à l'API REST — c'est le cas des versions récentes de Yoast. `wordpress_site()` dit ce qu'il en est sur ce site. si ce n'est pas le cas (version plus ancienne, Rank Math), ajouter ce snippet (thème enfant ou extension « Code Snippets ») :
+- **no post is published by accident**: `wordpress_article` and `wordpress_content` refuse `status=publish`. only `wordpress_publish` puts it live. ⚠️ however, editing a post that is ALREADY published changes the site right away — `dry_run=True` shows the diff first.
+- ⚠️ **media is public as soon as it is uploaded**: WordPress has no draft media. the featured image of a draft can already be read at its address (`source_url`).
+- **Markdown → native blocks**: headings, paragraphs, lists, quotes, code, tables and images arrive as real editor blocks, editable one by one. a list with an item that contains code, a table or a quote arrives whole as a "Custom HTML" block (the editor only accepts text and sub-lists inside a list item): nothing is lost.
+- ⚠️ **raw HTML**: HTML in the Markdown (`<script>`, `<iframe>`…) becomes a "Custom HTML" block, kept as is if the account has the `unfiltered_html` capability (administrator, editor on a single site) — `wordpress_site()` says so. never paste in the HTML of a page you don't control.
+- **categories and tags**: given by name (a string, created if missing) or by id (an integer); "2026" is a tag, not term no. 2026. they must exist for the target type: a page has no categories.
+- **"401 rest_not_logged_in"**: depending on the version and hosting, this code can also come from a wrong (or revoked) username or application password — check those first (elsewhere WordPress answers `incorrect_password` / `invalid_username`). if they are right, the host or a security plugin strips the `Authorization` header. known fixes: on Apache, add to `.htaccess` `SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1`; in Wordfence / iThemes / a Cloudflare firewall, allow the REST API for authenticated users.
+- **"the site redirects to …"**: save the exact address the site serves (https, with or without www).
+- **SEO (Yoast, Rank Math)**: title, description and keyword are written when the plugin exposes them to the REST API — this is the case for recent Yoast versions. `wordpress_site()` says how it stands on this site. if it is not the case (older version, Rank Math), add this snippet (child theme or "Code Snippets" plugin):
 
   ```php
   add_action('init', function () {
@@ -47,7 +47,7 @@
       }
   });
   ```
-  sans lui, l'article est créé quand même et la réponse dit que le SEO n'a pas été écrit.
-- **suppression** : un article ou une page part à la corbeille (restaurable) ; `force=true` supprime définitivement. catégories, étiquettes et médias n'ont pas de corbeille : leur suppression est définitive.
-- **WordPress.com** : les sites Business et plus (extensions activées) marchent comme un site auto-hébergé. les autres offres WordPress.com n'acceptent pas les mots de passe d'application.
-- **pas de déclencheur instantané** : WordPress n'envoie pas d'événements sans extension. pour réagir à une publication, une automatisation planifiée qui liste les articles récents (`wordpress_content(op="list", status="publish", orderby="date")`) suffit.
+  without it, the post is still created and the response says the SEO was not written.
+- **deletion**: a post or page goes to the trash (restorable); `force=true` deletes permanently. categories, tags and media have no trash: deleting them is permanent.
+- **WordPress.com**: Business plans and above (plugins enabled) work like a self-hosted site. other WordPress.com plans do not accept application passwords.
+- **no instant trigger**: WordPress sends no events without a plugin. to react to a publication, a scheduled automation that lists recent posts (`wordpress_content(op="list", status="publish", orderby="date")`) is enough.

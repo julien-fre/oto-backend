@@ -238,10 +238,10 @@ def test_article_seo_written_only_when_exposed(wp):
 
 @pytest.mark.parametrize("status,code,needle", [
     (401, "rest_not_logged_in", "Authorization"),
-    (401, "incorrect_password", "mot de passe"),
-    (403, "rest_cannot_create", "droits"),
+    (401, "incorrect_password", "password"),
+    (403, "rest_cannot_create", "permissions"),
     (404, "rest_no_route", "rest_no_route"),
-    (502, "", "erreur"),
+    (502, "", "erroring"),
 ])
 def test_error_translation(status, code, needle):
     from oto_mcp.tools.wordpress import _translate
@@ -302,11 +302,11 @@ def test_seo_unreadable_schema_says_why(wp, status):
     wp.fake.request = refuse
     out = wp("wordpress_article", title="T", markdown="x", seo_description="d")
     assert out["seo"]["written"] is False
-    assert "illisible" in out["seo"]["reason"] and "snippet" not in out["seo"]["reason"]
+    assert "unreadable" in out["seo"]["reason"] and "snippet" not in out["seo"]["reason"]
 
 
 def test_article_terms_follow_the_type(wp):
-    with pytest.raises(McpError, match="pas de catégories"):
+    with pytest.raises(McpError, match="no categories"):
         wp("wordpress_article", title="T", markdown="x", type="pages", categories=["A"])
     assert not [c for c in wp.fake.calls if c[0] in ("create", "update", "upload")]
 
@@ -328,7 +328,7 @@ def test_article_failure_names_what_was_left(wp, monkeypatch):
         wp("wordpress_article", title="T", markdown="x", categories=["Fresh"],
            featured_image="https://img.example.com/c.jpg")
     msg = e.value.error.message
-    assert "Fresh (id" in msg and "média id 55" in msg and "déjà public" in msg
+    assert "Fresh (id" in msg and "media id 55" in msg and "already public" in msg
 
 
 def test_media_and_html_are_said_in_the_served_text():
@@ -371,7 +371,7 @@ def test_media_fields_failure_names_the_created_media(wp, monkeypatch):
     with pytest.raises(McpError, match="id=88") as e:
         wp("wordpress_media", op="upload", source="https://img.example.com/c.jpg",
            alt_text="a")
-    assert "ne le téléverse pas à nouveau" in e.value.error.message
+    assert "do not upload it again" in e.value.error.message
 
 
 def test_rate_limit_says_the_delay():

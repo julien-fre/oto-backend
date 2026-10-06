@@ -1,32 +1,32 @@
-## prerequisite — se connecter avec son compte Microsoft 365
+## prerequisite — connect with your Microsoft 365 account
 
-sur la fiche « SharePoint & OneDrive », clique **Se connecter avec Microsoft** et choisis ton compte professionnel. Rien d'autre à installer ni à enregistrer.
-- l'agent agit **avec tes droits** : il voit ton OneDrive, les sites SharePoint et les fichiers partagés avec toi, ni plus ni moins. Chaque personne de l'org connecte son propre compte
-- comptes professionnels ou scolaires seulement : un compte Microsoft personnel (outlook.com, hotmail) n'a pas SharePoint
-- ⚠️ **beaucoup d'organisations exigent qu'un administrateur Microsoft 365 autorise oto une première fois.** Si Microsoft affiche « approbation de l'administrateur requise », c'est ce cas : ton admin se connecte une fois de la même façon et coche « consentir au nom de votre organisation », puis chacun peut se connecter
-- la connexion tient dans la durée ; elle tombe si le mot de passe change, si l'organisation la révoque ou après une longue inactivité : la fiche dit alors quel compte est « à reconnecter », les autres continuent de servir
-- **plusieurs comptes Microsoft** (le tien, celui que te donne un client) : connecte-les l'un après l'autre, Microsoft te laisse choisir le compte à chaque fois. Chacun s'ajoute aux autres, nommé par son adresse ; se reconnecter avec le même compte remplace seulement le sien. Pour en retirer un, retire sa ligne sur la fiche : les autres restent
+on the "SharePoint & OneDrive" card, click **Connect with Microsoft** and choose your work account. Nothing else to install or register.
+- the agent acts **with your rights**: it sees your OneDrive, the SharePoint sites and the files shared with you, no more, no less. Each person in the org connects their own account
+- work or school accounts only: a personal Microsoft account (outlook.com, hotmail) does not have SharePoint
+- ⚠️ **many organizations require a Microsoft 365 administrator to authorize oto a first time.** If Microsoft shows "admin approval required", this is that case: your admin connects once in the same way and ticks "consent on behalf of your organization", then everyone can connect
+- the connection lasts over time; it drops if the password changes, if the organization revokes it or after a long inactivity: the card then says which account is "to reconnect", the others keep working
+- **several Microsoft accounts** (yours, the one a client gives you): connect them one after the other, Microsoft lets you choose the account each time. Each one is added to the others, named by its address; reconnecting with the same account only replaces its own. To remove one, remove its row on the card: the others stay
 
-## usage — trouver, lire, déposer un document
+## usage — find, read, drop a document
 
-- « mes fichiers » → `sharepoint_file()` : la racine de ton OneDrive ; `path="Dossier/Sous-dossier"` pour descendre
-- « dans le Microsoft 365 du client » → le même appel avec `_account="moi@fabrikam.com"` (l'adresse du compte lié) ; sans `_account`, c'est le compte par défaut. Chaque réponse rappelle en `_account` le compte qui a servi
-- « le site Marketing » → `sharepoint_site(query="Marketing")`, ou par son adresse : `sharepoint_site(op="get", url="https://contoso.sharepoint.com/sites/Marketing")`
-- « ses bibliothèques de documents » → `sharepoint_site(op="drives", site_id="…")` ; chaque `id` rendu est un `drive_id`
-- « le contenu de ce dossier » → `sharepoint_file(drive_id="…", path="Contrats/2026")`
-- « le OneDrive de Marie » → `sharepoint_file(user="marie@contoso.com")`, si elle l'a partagé avec toi
-- « retrouve le contrat Dupont » → `sharepoint_file(op="search", query="Dupont contrat")` dans ton OneDrive, ou avec `drive_id=` dans une bibliothèque
-- « lis ce document » → `sharepoint_file(op="download", drive_id="…", item_id="…")` : un Word ou un PowerPoint revient en texte (converti en PDF par Microsoft), un Excel en CSV, un PDF en texte
-- chaque réponse est une vue resserrée (nom, taille, type, dossier, lien, dernière modification) ; `full=true` rend l'objet Microsoft Graph complet
-- « dépose ce compte rendu » → `sharepoint_file(op="upload", drive_id="…", path="Comptes rendus", name="cr-2026-10-01.md", content_text="…")` ; un fichier binaire en `content_base64`
+- "my files" → `sharepoint_file()`: the root of your OneDrive; `path="Folder/Subfolder"` to go down
+- "in the client's Microsoft 365" → the same call with `_account="me@fabrikam.com"` (the linked account's address); without `_account`, it is the default account. Each response recalls in `_account` the account that was used
+- "the Marketing site" → `sharepoint_site(query="Marketing")`, or by its address: `sharepoint_site(op="get", url="https://contoso.sharepoint.com/sites/Marketing")`
+- "its document libraries" → `sharepoint_site(op="drives", site_id="…")`; each returned `id` is a `drive_id`
+- "the content of this folder" → `sharepoint_file(drive_id="…", path="Contracts/2026")`
+- "Marie's OneDrive" → `sharepoint_file(user="marie@contoso.com")`, if she shared it with you
+- "find the Dupont contract" → `sharepoint_file(op="search", query="Dupont contract")` in your OneDrive, or with `drive_id=` in a library
+- "read this document" → `sharepoint_file(op="download", drive_id="…", item_id="…")`: a Word or PowerPoint comes back as text (converted to PDF by Microsoft), an Excel as CSV, a PDF as text
+- each response is a trimmed view (name, size, type, folder, link, last modified); `full=true` returns the complete Microsoft Graph object
+- "drop this meeting report" → `sharepoint_file(op="upload", drive_id="…", path="Meeting reports", name="cr-2026-10-01.md", content_text="…")`; a binary file in `content_base64`
 
-## note — ce qui trompe
+## note — what is misleading
 
-- ⚠️ **un 403 ne veut pas dire que le fichier n'existe pas** : ton compte n'y a pas accès, ou ton organisation bloque oto
-- ⚠️ **la recherche passe par l'index de SharePoint** : un fichier tout juste déposé peut ne pas y être encore. Pour le retrouver tout de suite, le lister par son dossier
-- ⚠️ **un nom déjà pris est refusé** au dépôt (`conflict="fail"`, le défaut) : `conflict="rename"` garde les deux, `conflict="replace"` écrase
-- la recherche de sites (`op="search"`) ne trouve pas les OneDrive personnels : pour celui d'un collègue, `user=`
+- ⚠️ **a 403 does not mean the file doesn't exist**: your account has no access to it, or your organization blocks oto
+- ⚠️ **search goes through SharePoint's index**: a file that was just dropped may not be there yet. To find it right away, list it by its folder
+- ⚠️ **a name already taken is refused** on upload (`conflict="fail"`, the default): `conflict="rename"` keeps both, `conflict="replace"` overwrites
+- site search (`op="search"`) does not find personal OneDrives: for a colleague's, use `user=`
 
-## note — périmètre
+## note — scope
 
-fichiers seulement : sites, bibliothèques, OneDrive ; lister, chercher, lire (jusqu'à 50 Mo), déposer (jusqu'à 25 Mo), créer un dossier. Rien ne supprime, ne déplace ni ne partage un fichier. Le courrier Outlook, le calendrier et Teams ne passent pas par ce connecteur.
+files only: sites, libraries, OneDrive; list, search, read (up to 50 MB), upload (up to 25 MB), create a folder. Nothing deletes, moves or shares a file. Outlook mail, the calendar and Teams do not go through this connector.

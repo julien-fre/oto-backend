@@ -1,20 +1,20 @@
-"""3CX — standard téléphonique, en LECTURE SEULE : journal d'appels, enregistrements.
+"""3CX — phone system, READ-ONLY: call log, recordings.
 
-Credential = l'adresse du standard (`base_url`) + UN accès : client API
-(`client_id`/`client_secret`) ou compte utilisateur (`username`/`password`),
-résolus par appel via `access.resolve_credential_fields("threecx")` (ADR 0011).
-Le jeton porte les droits de cet accès : ce qu'il ne voit pas, aucun outil ne le
-voit.
+Credential = the address of the phone system (`base_url`) + ONE access: API client
+(`client_id`/`client_secret`) or user account (`username`/`password`),
+resolved per call via `access.resolve_credential_fields("threecx")` (ADR 0011).
+The token carries the rights of that access: what it cannot see, no tool
+can see.
 
-**Surface** :
-- `threecx_call` (list/export) — une page du journal d'appels sur une période,
-  ou toute la période en un fichier CSV (les « traces d'appels » d'une journée),
-  éventuellement réduites aux segments enregistrés ;
-- `threecx_recording` — l'audio d'un enregistrement, rendu par
-  `file_content.render_for_agent` (URL signée vers le stockage privé).
+**Surface**:
+- `threecx_call` (list/export) — one page of the call log over a period,
+  or the whole period as a CSV file (a day's "call traces"),
+  optionally reduced to the recorded segments;
+- `threecx_recording` — the audio of a recording, rendered by
+  `file_content.render_for_agent` (signed URL to private storage).
 
-`base_url` est une destination choisie par l'utilisateur : chaque construction du
-client passe par `egress.check_url` (outil ET sonde).
+`base_url` is a destination chosen by the user: every client construction goes
+through `egress.check_url` (tool AND probe).
 """
 from __future__ import annotations
 
@@ -32,13 +32,13 @@ from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
 _NAME = "threecx"
-# Les champs de chaque mode d'accès (`auth_mode`, discriminant de la carte).
+# The fields of each access mode (`auth_mode`, the card's discriminator).
 _ACCES = {"api_client": ("client_id", "client_secret"), "user": ("username", "password")}
-# Colonnes-corps d'une ligne du journal : rendues en taille dans la vue de tri.
+# Body columns of a call-log row: rendered as a size in the trimmed view.
 _CORPS = ("QualityReport", "Summary", "Transcription")
 _ADRESSE = ("CallHistoryId", "StartTime", "SrcRecId", "DstRecId")
-# Export : colonnes du fichier, dans l'ordre. `SegmentId` et `CallId` n'y sont pas :
-# l'amont les numérote par réponse, ils n'identifient rien.
+# Export: the file's columns, in order. `SegmentId` and `CallId` are not in it:
+# upstream numbers them per response, they identify nothing.
 _COLONNES = (
     "StartTime", "Direction", "CallType", "Status", "Answered",
     "SourceDn", "SourceCallerId", "SourceDisplayName",
@@ -48,7 +48,7 @@ _COLONNES = (
 )
 _DUREES = ("RingingDuration", "TalkingDuration")
 _PAGE_EXPORT = 500
-_EXPORT_PAGES_MAX = 200  # 100 000 segments ; une journée en compte quelques milliers
+_EXPORT_PAGES_MAX = 200  # 100,000 segments ; a day has a few thousand
 _DUREE_ISO = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$")
 
 
@@ -57,31 +57,31 @@ def _bad(msg: str) -> McpError:
 
 
 def _champs(fields: dict) -> dict:
-    """`base_url` + la paire du mode choisi (`auth_mode`), NON VIDES. Un champ vide
-    passé au client y lèverait `MissingCredential` au nom de la lib : on le refuse
-    ici, au nom du connecteur."""
+    """`base_url` + the pair for the chosen mode (`auth_mode`), NON-EMPTY. An empty
+    field passed to the client would raise `MissingCredential` there in the lib's
+    name: we refuse it here, in the connector's name."""
     mode = (fields.get("auth_mode") or "").strip()
     if mode not in _ACCES:
-        raise ValueError(f"credential 3CX : auth_mode doit valoir l'un de "
-                         f"{sorted(_ACCES)} — reçu {mode!r}")
+        raise ValueError(f"3CX credential: auth_mode must be one of "
+                         f"{sorted(_ACCES)} — got {mode!r}")
     noms = ("base_url",) + _ACCES[mode]
     vides = [n for n in noms if not (fields.get(n) or "").strip()]
     if vides:
-        raise ValueError(f"credential 3CX incomplet ({mode}) : {', '.join(vides)} vide(s)")
+        raise ValueError(f"3CX credential incomplete ({mode}): {', '.join(vides)} empty")
     return {n: fields[n] for n in noms}
 
 
 def _refuse_ignored(op: str, hint: str, **provided) -> None:
-    """Un argument fourni que CET op n'utilise pas est une erreur d'intention.
-    Testé sur `is not None` : `0` fourni est une intention aussi."""
+    """An argument provided that THIS op does not use is an error of intent.
+    Tested with `is not None`: a provided `0` is an intent too."""
     for name, value in provided.items():
         if value is not None:
-            raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+            raise _bad(f"op='{op}' does not use {name} — {hint}")
 
 
 def _secondes(value):
-    """Une durée ISO 8601 (`PT1M16.4S`) en secondes, arrondie au dixième ; une
-    valeur illisible est rendue telle quelle plutôt que perdue."""
+    """An ISO 8601 duration (`PT1M16.4S`) in seconds, rounded to the tenth; an
+    unreadable value is returned as is rather than lost."""
     m = _DUREE_ISO.match(value) if isinstance(value, str) else None
     if not m:
         return value
@@ -91,9 +91,9 @@ def _secondes(value):
 
 
 def _csv(rows: list[dict]) -> bytes:
-    """Le fichier des traces : `;` et BOM UTF-8, la forme qu'un tableur français
-    ouvre sans assistant d'import ; durées en secondes ; aucune cellule texte ne
-    s'ouvre en formule."""
+    """The traces file: `;` and UTF-8 BOM, the form a French spreadsheet
+    opens without an import wizard; durations in seconds; no text cell
+    opens as a formula."""
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=_COLONNES, delimiter=";", extrasaction="ignore",
                        lineterminator="\n")
@@ -107,19 +107,19 @@ def _csv(rows: list[dict]) -> bytes:
 def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
-        return (f"3CX : accès refusé (HTTP {status}) — identifiants invalides, double "
-                "authentification active, ou droit qui manque à ce compte.")
+        return (f"3CX: access denied (HTTP {status}) — invalid credentials, two-factor "
+                "authentication enabled, or a permission missing for this account.")
     if status == 404:
-        return "3CX : introuvable (HTTP 404)."
+        return "3CX: not found (HTTP 404)."
     if status >= 500:
-        return f"3CX est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"3CX a refusé la requête (HTTP {status}) : {str(e.body)[:400]}"
+        return f"3CX is temporarily unavailable (HTTP {status}) — retry later."
+    return f"3CX rejected the request (HTTP {status}): {str(e.body)[:400]}"
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:
-    """Sonde « tester la connexion » : la première page (une ligne) du journal
-    d'appels du jour, le plus petit appel authentifié qui exerce le droit utile.
-    Une page vide est un état possible, jamais un refus."""
+    """"Test the connection" probe: the first page (one row) of today's call
+    log, the smallest authenticated call that exercises the relevant permission.
+    An empty page is a possible state, never a refusal."""
     from datetime import date, timedelta
 
     from oto.tools.common.errors import UpstreamHTTPError
@@ -165,8 +165,8 @@ def register(mcp: FastMCP) -> None:
             raise _bad(str(e))
 
     def _periode_entiere(date_from: str, date_to: str, recorded_only: bool) -> list[dict]:
-        """Tout le journal de la période, page après page, jusqu'à la page
-        incomplète ; borné d'avance pour qu'un export ne tourne jamais sans fin."""
+        """The whole log of the period, page after page, up to the incomplete
+        page; bounded in advance so an export never runs endlessly."""
         client = _client()
         rows: list[dict] = []
         skip = 0
@@ -178,8 +178,8 @@ def register(mcp: FastMCP) -> None:
             if page["next_skip"] is None:
                 return rows
             skip = page["next_skip"]
-        raise _bad(f"op='export' : plus de {_EXPORT_PAGES_MAX * _PAGE_EXPORT} segments "
-                   "sur la période — resserre date_from / date_to (une journée, une semaine)")
+        raise _bad(f"op='export': more than {_EXPORT_PAGES_MAX * _PAGE_EXPORT} segments "
+                   "in the period — narrow date_from / date_to (a day, a week)")
 
     @mcp.tool()
     def threecx_call(
@@ -220,7 +220,7 @@ def register(mcp: FastMCP) -> None:
                 rows; a list of names for exactly those.
         """
         if op == "export":
-            _refuse_ignored(op, "l'export lit toute la période et rend un fichier",
+            _refuse_ignored(op, "the export reads the whole period and returns a file",
                             top=top, skip=skip, fields=fields)
             rows = _periode_entiere(date_from, date_to, recorded_only)
             nom = f"appels-3cx-{date_from[:10]}-{date_to[:10]}.csv"

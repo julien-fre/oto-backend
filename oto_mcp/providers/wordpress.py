@@ -1,35 +1,35 @@
-"""Déclaration de registre du connecteur `wordpress`.
+"""Registry declaration of the `wordpress` connector.
 
-Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
-décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+The single home of its entry: `providers/__init__.py` AGGREGATES it (it does not
+describe it). See `providers/_model.py` for the `Connector` contract.
 """
 from __future__ import annotations
 
 from ._model import CredentialField, _c
 
-# wordpress : API REST cœur (`wp/v2`), auth = mot de passe d'application
-# (WordPress ≥ 5.6, HTTP Basic sur HTTPS) — aucune extension à installer.
-# Trois champs, comme n8n : le site s'auto-héberge, il n'y a pas d'hôte unique
-# (`site_url` passe par `egress.check_url`). Deux façons de poser le même
-# credential : le formulaire (coller le mot de passe) ou le flux « Connecter »
-# (`tools/wordpress.py`, écran d'autorisation natif de WordPress,
-# `wp-admin/authorize-application.php`) qui le remplit sans copier-coller.
-# Multi-compte dérivé (`fields`) : un compte = un site — une agence en gère dix.
+# wordpress: core REST API (`wp/v2`), auth = application password
+# (WordPress ≥ 5.6, HTTP Basic over HTTPS) — no plugin to install.
+# Three fields, like n8n: the site is self-hosted, there is no single host
+# (`site_url` goes through `egress.check_url`). Two ways to set the same
+# credential: the form (paste the password) or the "Connect" flow
+# (`tools/wordpress.py`, WordPress's native authorization screen,
+# `wp-admin/authorize-application.php`) which fills it in without copy-paste.
+# Derived multi-account (`fields`): one account = one site — an agency manages ten.
 CONNECTOR = _c(
     "wordpress", ["wordpress"], auth_modes={"byo_user", "byo_org"},
     secret_kind="fields", account_noun="site",
     label="WordPress",
-    help="articles, pages, médias et taxonomies (mot de passe d'application)",
+    help="posts, pages, media and taxonomies (application password)",
     href="https://wordpress.org",
     credential_fields=(
-        CredentialField("site_url", "URL du site", secret=False,
-                        help="ex. https://blog.example.com"),
-        CredentialField("username", "Identifiant WordPress", secret=False,
-                        help="ton identifiant de connexion à wp-admin"),
-        CredentialField("application_password", "Mot de passe d'application",
+        CredentialField("site_url", "Site URL", secret=False,
+                        help="e.g. https://blog.example.com"),
+        CredentialField("username", "WordPress username", secret=False,
+                        help="your wp-admin login username"),
+        CredentialField("application_password", "Application password",
                         secret=True,
-                        help="Utilisateurs → Profil → Mots de passe d'application "
-                             "(pas ton mot de passe de connexion)"),
+                        help="Users → Profile → Application Passwords "
+                             "(not your login password)"),
     ),
 )
 
@@ -38,7 +38,7 @@ PUBLISHER = "WordPress"
 LOGO_DOMAIN = "wordpress.org"
 
 DESCRIPTION = (
-    "Ton site WordPress : rédiger et programmer des articles, gérer pages, "
-    "contenus personnalisés, médias, catégories et étiquettes. Tout part en "
-    "brouillon, la publication est un geste à part."
+    "Your WordPress site: write and schedule posts, manage pages, "
+    "custom content types, media, categories and tags. Everything starts as a "
+    "draft, publishing is a separate step."
 )

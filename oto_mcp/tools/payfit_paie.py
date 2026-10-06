@@ -1,27 +1,27 @@
-"""PayFit — la PAIE elle-même : bulletins, comptabilité et virements, état du cycle,
-temps de travail réalisé, titres-restaurant.
+"""PayFit — PAYROLL itself: payslips, accounting and transfers, cycle status,
+worked time, meal vouchers.
 
-Module frère de `payfit.py` (même clé, même client, monté par `Connector.modules`).
-Découpé par domaine pour tenir sous 500 lignes ; le client, les gardes, le rendu de
-fichier et la sonde vivent dans `payfit_garde`.
+Sibling module of `payfit.py` (same key, same client, mounted by `Connector.modules`).
+Split by domain to stay under 500 lines; the client, the guards, file rendering
+and the probe live in `payfit_garde`.
 
-⚠️ **Ce que cette API ne sert pas, et qu'un agent est tenté d'inventer.** Il n'y a
-**aucun endpoint** pour : les LIGNES d'un bulletin (brut, net, cotisation par
-cotisation), les cumuls annuels, un « coût employeur » agrégé, les charges en tant
-que ressource, la DSN, les plannings et les pointages, les notes de frais, les
-avantages en nature en tant qu'objet, les soldes et compteurs de congés. Les seuls
-montants structurés de toute l'API sont les **écritures comptables**
-(`payfit_payroll(op="accounting")`) : le coût employeur et les charges s'y lisent par
-numéro de compte (641x salaires, 645x cotisations, 6417x avantages en nature), et
-c'est la seule voie qui existe. Le reste ne se déduit pas — ça se dit absent.
-Seule exception, et elle se DIT lue et non servie : les heures sup, que
-`payfit_payslip(op="overtime")` lit dans le PDF du bulletin (`payfit_bulletin`). Leurs
-nombres sont des données (filtrées champ par champ par la politique de l'org) ; la
-ligne brute est du texte du bulletin, et suit le verrou des documents.
+⚠️ **What this API does not serve, and what an agent is tempted to invent.** There is
+**no endpoint** for: a payslip's LINES (gross, net, contribution by
+contribution), year-to-date totals, an aggregated "employer cost", charges as a
+resource, the DSN, schedules and clock-ins, expense reports, benefits in kind
+as an object, leave balances and counters. The only structured
+amounts in the whole API are the **accounting entries**
+(`payfit_payroll(op="accounting")`): employer cost and charges are read there by
+account number (641x wages, 645x contributions, 6417x benefits in kind), and
+it is the only route that exists. The rest cannot be deduced — say it is absent.
+The one exception, which must be SAID to be read and not served: overtime, which
+`payfit_payslip(op="overtime")` reads from the payslip PDF (`payfit_bulletin`). Its
+numbers are data (filtered field by field by the org's policy); the
+raw line is payslip text, and follows the documents lock.
 
-⚠️ **Le mois se dit `AAAAMM`** (janvier = `01`) partout ici, jamais `AAAA-MM` : c'est
-la seule forme que PayFit accepte, et son refus ne nomme aucun champ. Le client
-refuse la forme à tirets avant le réseau.
+⚠️ **The month is written `YYYYMM`** (January = `01`) everywhere here, never `YYYY-MM`: it is
+the only form PayFit accepts, and its refusal names no field. The client
+refuses the dashed form before the network.
 """
 from __future__ import annotations
 
@@ -37,21 +37,21 @@ from .payfit_garde import (OVERTIME_LINE_LOCKED, _bad, _client, documents_unlock
                            limit_or_default, need, refuse_ignored, refuse_unknown_op,
                            run, serve_document)
 
-# Au-delà, l'appel porterait trop de téléchargements : on demande un mois.
+# Beyond this, the call would carry too many downloads: ask for one month.
 OVERTIME_MAX_PAYSLIPS = 24
 
 
 def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
-    """Les lignes heures sup des bulletins d'un salarié (un mois, ou tous) — le PDF
-    est lu CÔTÉ SERVEUR et seul ce qui nomme des heures sup en sort.
+    """The overtime lines of an employee's payslips (one month, or all) — the PDF
+    is read SERVER SIDE and only what names overtime comes out.
 
-    `kind`, `label`, `numbers`, `rates` sont des données : la politique de champs de
-    l'org les filtre par nom, comme toute sortie JSON. `line`, elle, est un extrait
-    VERBATIM du bulletin, qui répète montants et taux sous un nom que la politique ne
-    relie pas à `numbers` ni `rates` : elle suit le verrou des documents et ne sort
-    que si la politique ne masque rien (alerte du scanner de sécurité)."""
+    `kind`, `label`, `numbers`, `rates` are data: the org's field policy
+    filters them by name, like any JSON output. `line`, on the other hand, is a
+    VERBATIM excerpt of the payslip, which repeats amounts and rates under a name the policy does not
+    link to `numbers` or `rates`: it follows the documents lock and only goes out
+    if the policy masks nothing (security scanner alert)."""
     if date is not None and not re.fullmatch(r"\d{4}(0[1-9]|1[0-2])", date):
-        raise _bad(f"PayFit : `date` s'écrit `AAAAMM` (janvier = 01), reçu « {date} ».")
+        raise _bad(f"PayFit: `date` is written `YYYYMM` (January = 01), got \"{date}\".")
     brute = documents_unlocked()
     env = run(lambda: c.list_payslips(collaborator_id))
     slips = [p for p in ((env or {}).get("payslips") or []) if isinstance(p, dict)]
@@ -78,14 +78,14 @@ def _overtime(c, collaborator_id: str, date: Optional[str]) -> dict:
             row["unreadable"] = f"{ex.status} : {ex.detail}"
         rows.append(row)
     out = {"collaboratorId": collaborator_id, "count": len(rows), "payslips": rows,
-           "notice": ("lignes lues dans le texte du PDF, format non contractuel : "
-                      "`numbers` est dans l'ordre de la ligne, sans rôle attribué. "
-                      "Vérifie la lecture sur un bulletin avant d'en tirer un total.")}
+           "notice": ("lines read from the PDF text, non-contractual format: "
+                      "`numbers` is in the line's order, with no role assigned. "
+                      "Check the reading against a payslip before drawing a total.")}
     if not brute:
         out["line_withheld"] = OVERTIME_LINE_LOCKED
     if truncated:
-        out["truncated"] = (f"{len(slips)} bulletins, {OVERTIME_MAX_PAYSLIPS} lus (les "
-                            "plus récents) : passe `date` pour viser un mois.")
+        out["truncated"] = (f"{len(slips)} payslips, {OVERTIME_MAX_PAYSLIPS} read (the "
+                            "most recent): pass `date` to target one month.")
     return out
 
 
@@ -153,8 +153,8 @@ def register(mcp: FastMCP) -> None:
             fields: op="list" — keep only these keys per row (`payslipId` always
                 kept); omitted or `["*"]` = the full view.
         """
-        # L'op d'abord : un `op` inventé qui se ferait répondre « exige
-        # collaborator_id » enverrait chercher un argument au lieu d'une op.
+        # The op first: an invented `op` answered with "requires
+        # collaborator_id" would send the caller looking for an argument instead of an op.
         if op not in ("list", "download", "overtime"):
             raise refuse_unknown_op(op, "list", "download", "overtime")
         need(op, collaborator_id=collaborator_id)

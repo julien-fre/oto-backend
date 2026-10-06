@@ -83,7 +83,7 @@ def test_under_the_server_default_the_notice_says_masked(monkeypatch, client):
     _politique(monkeypatch, {})
     client.get_collaborator.return_value = _collaborateur()
     mention = _get()["redaction"]
-    assert "EN CLAIR" not in mention
+    assert "IN CLEAR" not in mention
     for champ in ("socialSecurityNumber", "temporaryTechnicalNumber", "iban", "bic"):
         assert champ in mention
 
@@ -95,9 +95,9 @@ def test_a_lifted_policy_is_said_and_never_called_masked(monkeypatch, client):
     out = _get()
     assert redaction.redact_payload("payfit", out) is redaction.PASSTHROUGH
     assert NIR in json.dumps(out)
-    assert "EN CLAIR" in out["redaction"]
+    assert "IN CLEAR" in out["redaction"]
     assert "socialSecurityNumber" in out["redaction"]
-    assert "Aucun champ sensible n'est masqué" in out["redaction"]
+    assert "No sensitive field is masked" in out["redaction"]
 
 
 def test_a_partial_policy_names_what_stays_clear(monkeypatch, client):
@@ -106,6 +106,6 @@ def test_a_partial_policy_names_what_stays_clear(monkeypatch, client):
         {"fields": ["iban", "bic"], "action": "mask"}]}})
     client.get_collaborator.return_value = _collaborateur()
     mention = _get()["redaction"]
-    clair, _, masque = mention.partition("Restent masqués")
+    clair, _, masque = mention.partition("Still masked")
     assert "socialSecurityNumber" in clair and "iban" not in clair
     assert "iban" in masque and "bic" in masque

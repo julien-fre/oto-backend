@@ -1,63 +1,63 @@
-## prerequisite — ta clé api payfit
+## prerequisite — your payfit api key
 
-connecte-toi à PayFit **en admin de l'entreprise**, puis **Intégrations → API** ([app.payfit.com/integrations/hub/api](https://app.payfit.com/integrations/hub/api)) → « Créer une clé » : donne-lui un libellé explicite et coche **uniquement des scopes de lecture**, puis copie-la — elle n'est plus affichée ensuite. colle-la dans tes clés de connecteur oto sous `payfit`.
-- **le connecteur ne fait que lire** : aucune écriture n'est câblée vers PayFit.
-- **la clé décide de ce que tu verras** : oto sert tout ce que l'API expose en lecture, mais un champ qu'un scope absent ne renvoie pas n'existe pour personne. pour un pilotage RH et financier complet : `collaborators:read`, `collaborators:management:read`, `collaborators:contracts:read`, `collaborators:personal:read`, `collaborators:legal-identity:read`, `contracts:read`, `contracts:payslips:read`, `time:read`, `accounting:read`, `health-insurance:read`, `collaborators:meal-vouchers:read`
-- scopes **sensibles**, à ne cocher que si tu en as l'usage : `collaborators:social-security:read` (NIR), `collaborators:bank-info:read` (IBAN), `payment-files:read` (fichier de virement)
-- **ne coche aucun scope d'écriture** (`collaborators:write`, `collaborators:contracts:write`, `time:write`, `health-insurance:write`) : le connecteur ne s'en sert pas. sur une clé existante qui en porte, ils ne servent à rien et peuvent être retirés côté PayFit
-- la clé n'ouvre **que ton entreprise** ; oto retrouve son identifiant tout seul (par introspection), tu n'as aucun identifiant à saisir
-- que l'accès API soit inclus ou payant selon l'offre PayFit n'est pas documenté publiquement ; l'accès partenaire (OAuth) est une autre voie, sur candidature
-- BYO seulement : pas de clé oto partagée
+log in to PayFit **as a company admin**, then **Integrations → API** ([app.payfit.com/integrations/hub/api](https://app.payfit.com/integrations/hub/api)) → "Create a key": give it an explicit label and tick **read scopes only**, then copy it — it is not shown again afterwards. paste it into your oto connector keys under `payfit`.
+- **the connector only reads**: no write is wired to PayFit.
+- **the key decides what you will see**: oto serves everything the API exposes for reading, but a field that a missing scope does not return does not exist for anyone. for full HR and finance steering: `collaborators:read`, `collaborators:management:read`, `collaborators:contracts:read`, `collaborators:personal:read`, `collaborators:legal-identity:read`, `contracts:read`, `contracts:payslips:read`, `time:read`, `accounting:read`, `health-insurance:read`, `collaborators:meal-vouchers:read`
+- **sensitive** scopes, to be ticked only if you need them: `collaborators:social-security:read` (NIR), `collaborators:bank-info:read` (IBAN), `payment-files:read` (payment file)
+- **do not tick any write scope** (`collaborators:write`, `collaborators:contracts:write`, `time:write`, `health-insurance:write`): the connector does not use them. on an existing key that carries some, they are useless and can be removed on the PayFit side
+- the key opens **only your company**; oto finds its identifier on its own (by introspection), you have no identifier to enter
+- whether API access is included or paid depending on the PayFit plan is not publicly documented; partner access (OAuth) is another route, by application
+- BYO only: no shared oto key
 
-## setup — un groupe de sociétés, une clé par société
+## setup — a group of companies, one key per company
 
-une clé PayFit n'ouvre **qu'une entreprise**, et l'API n'a aucune vue de groupe : deux sociétés = deux clés indépendantes. crée une clé dans chaque entreprise PayFit, puis pose chacune comme une société du connecteur (section « plusieurs sociétés »).
-- ⚠️ **la consolidation se fait chez toi, pas chez PayFit** : un total rendu sans avoir bouclé sur chaque `_account` serait le chiffre d'une seule société présenté comme celui du groupe
+a PayFit key opens **only one company**, and the API has no group view: two companies = two independent keys. create a key in each PayFit company, then set each one as a company of the connector (section "multiple companies").
+- ⚠️ **consolidation is done on your side, not at PayFit**: a total returned without looping over each `_account` would be the figure of a single company presented as the group's
 
-## usage — de l'annuaire au pilotage financier
+## usage — from the directory to financial steering
 
-commence par `payfit_company()` : son `country` dit si les variantes françaises s'appliquent (contrats FR, titres-restaurant, temps de travail, mutuelle).
-- « qui travaille chez nous, qui est son manager ? » → `payfit_collaborator()` (page suivante : `cursor=<next_cursor>`)
-- « quel poste, quel type de contrat, quelle convention, forfait jours ? » → `payfit_contract(fr=True)` (`natureContratDsn` : 01 CDI, 02 CDD… ; `workingTimeModality` : `forfait_jours`…)
-- « qui est absent la semaine prochaine ? » → `payfit_absence(begin_date="AAAA-MM-JJ", end_date="AAAA-MM-JJ")`, puis relie `contractId` aux `contracts` d'un collaborateur
-- « combien nous a coûté la paie de janvier, et en quoi ? » → `payfit_payroll(op="accounting", date="202601")` : une ligne par écriture, avec compte, libellé, débit, crédit, salarié et codes analytiques. **c'est la seule donnée chiffrée structurée de l'API** — masse salariale, charges et avantages en nature s'y lisent par numéro de compte (641x, 645x, 6417x)
-- « le mois est-il clos ? » → `payfit_payroll(date="202601")` (op `status` par défaut) **avant** d'exploiter des chiffres
-- « le journal pour mon cabinet » → `payfit_payroll(op="accounting_export", date="202601")` ; « le fichier de virement » → `op="payment_file"` — **documents verrouillés par défaut**, cf. la note sur les données personnelles
-- « les bulletins de quelqu'un » → `payfit_payslip(collaborator_id=…)` pour la liste, puis `op="download"` avec les trois identifiants de la ligne : le texte du PDF revient lisible, le PDF original en `raw_url` (**verrouillé par défaut**, comme tout document)
-- « combien d'heures sup, et combien d'euros ? » → `payfit_payslip(op="overtime", collaborator_id=…, date="202601")` : seules les lignes heures sup / complémentaires / majorées du bulletin, lues côté serveur (le bulletin ne sort pas). les nombres sont rendus dans l'ordre de la ligne, sans rôle attribué : vérifie la lecture sur un bulletin avant de totaliser, et n'ajoute jamais une ligne `allegement` (réduction de cotisations) au montant payé. pour une société, boucle sur `payfit_collaborator()`
-- « combien d'heures réalisées ? » → `payfit_worked_time(date="202601")` · « titres-restaurant » → `payfit_meal_voucher(date="202601")`
-- « mutuelle et prévoyance » → `payfit_insurance()` pour les contrats de l'entreprise, `kind="provident"` pour la prévoyance
-- **le mois s'écrit `AAAAMM`** (`202601`), jamais `2026-01` : c'est la seule forme que PayFit accepte
+start with `payfit_company()`: its `country` says whether the French variants apply (FR contracts, meal vouchers, worked time, health insurance).
+- "who works here, who is their manager?" → `payfit_collaborator()` (next page: `cursor=<next_cursor>`)
+- "what position, what contract type, what collective agreement, days-based package?" → `payfit_contract(fr=True)` (`natureContratDsn`: 01 CDI, 02 CDD…; `workingTimeModality`: `forfait_jours`…)
+- "who is absent next week?" → `payfit_absence(begin_date="YYYY-MM-DD", end_date="YYYY-MM-DD")`, then link `contractId` to a collaborator's `contracts`
+- "how much did January's payroll cost us, and on what?" → `payfit_payroll(op="accounting", date="202601")`: one row per entry, with account, label, debit, credit, employee and analytic codes. **this is the only structured numeric data in the API** — payroll cost, charges and benefits in kind are read there by account number (641x, 645x, 6417x)
+- "is the month closed?" → `payfit_payroll(date="202601")` (op `status` by default) **before** using any figures
+- "the journal for my accounting firm" → `payfit_payroll(op="accounting_export", date="202601")`; "the payment file" → `op="payment_file"` — **documents locked by default**, see the note on personal data
+- "someone's payslips" → `payfit_payslip(collaborator_id=…)` for the list, then `op="download"` with the three identifiers of the row: the PDF text comes back readable, the original PDF as `raw_url` (**locked by default**, like any document)
+- "how many overtime hours, and how many euros?" → `payfit_payslip(op="overtime", collaborator_id=…, date="202601")`: only the overtime / complementary / increased-rate hours lines of the payslip, read server side (the payslip does not go out). the numbers are returned in the line's order, with no role assigned: check the reading against a payslip before totalling, and never add an `allegement` line (contribution reduction) to the paid amount. for a company, loop over `payfit_collaborator()`
+- "how many hours worked?" → `payfit_worked_time(date="202601")` · "meal vouchers" → `payfit_meal_voucher(date="202601")`
+- "health insurance and provident cover" → `payfit_insurance()` for the company's contracts, `kind="provident"` for provident cover
+- **the month is written `YYYYMM`** (`202601`), never `2026-01`: it is the only form PayFit accepts
 
-## note — aucune écriture dans payfit
+## note — no writes in payfit
 
-le connecteur **n'écrit jamais** dans PayFit, quel que soit l'argument. les ops d'écriture existent encore dans leurs outils, mais chacune rend le refus nommé `payfit_write_not_wired`, qui dit ce que l'appel aurait fait — rien n'est envoyé :
+the connector **never writes** to PayFit, whatever the argument. the write ops still exist in their tools, but each returns the named refusal `payfit_write_not_wired`, which says what the call would have done — nothing is sent:
 - `payfit_collaborator(op="create")`, `payfit_contract(op="create")`
-- `payfit_absence(op="create")` et `op="cancel"`
-- `payfit_insurance(op="affiliate")` et `op="regularize"`
+- `payfit_absence(op="create")` and `op="cancel"`
+- `payfit_insurance(op="affiliate")` and `op="regularize"`
 
-il n'y a ni interrupteur d'org ni activation par un administrateur : la capacité n'existe pas dans le connecteur. une embauche, un contrat, une absence ou une affiliation se font dans PayFit même.
+there is neither an org switch nor an activation by an administrator: the capability does not exist in the connector. a hire, a contract, an absence or an affiliation is done in PayFit itself.
 
-## note — ce que l'api payfit n'a pas
+## note — what the payfit api does not have
 
-ces questions reviennent souvent et n'ont **aucun endpoint** — oto ne les fabriquera pas, et une réponse inventée serait fausse :
-- **les lignes d'un bulletin** (brut, net, cotisation par cotisation) : seuls le PDF et ses métadonnées existent. les seuls montants lisibles par un programme sont les écritures comptables — hors les heures sup, que `op="overtime"` LIT dans le PDF. pour les avoir en données comptables, isole-les sur un sous-compte dédié dans le paramétrage comptable de PayFit (l'API ne permet pas de le faire) : le nouveau compte apparaîtra tel quel dans `op="accounting"`
-- **les cumuls annuels**, un « coût employeur » agrégé, les charges en tant que ressource : à reconstituer depuis les écritures, mois par mois
-- **la DSN** : les contrats FR portent des champs *codés selon* la norme DSN (nature, statut, IDCC, motif de rupture), mais aucun dépôt ni récupération de DSN
-- **les plannings et les pointages** : seul un agrégat mensuel par contrat existe (`payfit_worked_time`)
-- **les soldes et compteurs de congés** (CP acquis/pris, RTT restants) : rien. ne les déduis pas d'une liste d'absences
-- **l'historique des avenants** et toute modification d'un contrat existant : un contrat se lit tel qu'il est aujourd'hui
-- **les notes de frais**, les avantages en nature en tant qu'objet
-- **les documents fiscaux** : ceux qui existent (`payfit_document`) sont **britanniques** ; sur une entreprise française la liste est vide, et c'est la bonne réponse
+these questions come up often and have **no endpoint** — oto will not fabricate them, and an invented answer would be wrong:
+- **a payslip's lines** (gross, net, contribution by contribution): only the PDF and its metadata exist. the only amounts a program can read are the accounting entries — except overtime, which `op="overtime"` READS from the PDF. to get them as accounting data, isolate them on a dedicated sub-account in PayFit's accounting settings (the API cannot do it): the new account will appear as is in `op="accounting"`
+- **year-to-date totals**, an aggregated "employer cost", charges as a resource: to be rebuilt from the entries, month by month
+- **the DSN**: FR contracts carry fields *coded according to* the DSN standard (nature, status, IDCC, termination reason), but there is no DSN filing or retrieval
+- **schedules and clock-ins**: only a monthly aggregate per contract exists (`payfit_worked_time`)
+- **leave balances and counters** (paid leave accrued/taken, RTT remaining): nothing. do not deduce them from a list of absences
+- **the history of amendments** and any change to an existing contract: a contract is read as it is today
+- **expense reports**, benefits in kind as an object
+- **tax documents**: those that exist (`payfit_document`) are **British**; on a French company the list is empty, and that is the right answer
 
-## note — données personnelles : ce qui est masqué, et comment le lever
+## note — personal data: what is masked, and how to lift it
 
-le connecteur ne retire plus rien en dur : il sert ce que la clé autorise, et la protection est une **politique d'org**, modifiable.
-- **masqué par défaut** (défaut serveur) : NIR (et NTT), IBAN/BIC, et le motif d'une absence (`absence_type`) — maladie, accident du travail, maternité sont des données de santé. un `••••` est une valeur masquée, pas une donnée absente
-- `absence_category` reste toujours lisible : `ordinary_leave` (congés payés, RTT, repos, sans solde, télétravail, école) ou `restricted` pour tout le reste — de quoi planifier une charge sans lire un motif
-- **servi sans masque** : rémunérations des écritures comptables, bulletins, coût employeur, charges, contrats complets (rupture, essai, convention, statut), temps de travail, mutuelle et prévoyance, titres-restaurant, e-mail, téléphone, adresse, date de naissance, sexe, nationalité, ancienneté, manager
-- **lever un masque** : un administrateur de l'org pose la politique du connecteur `payfit` (dashboard → carte du connecteur → transformations, ou `oto_org_settings domain=field_filters op=set service=payfit rules=[]`). la politique d'org est autoritaire : `rules: []` lève tout. ⚠️ *effacer* la politique (`rules: null`) fait l'inverse — ça **remet** le défaut serveur
-- **la mention `redaction` dit la politique EFFECTIVE** : chaque réponse qui peut porter un champ sensible nomme ceux que la politique de l'org (ou le défaut serveur) masque, et ceux qu'elle laisse EN CLAIR. une org qui a levé un masque reçoit la donnée en clair, et la mention le dit — elle n'annonce jamais un masque qui ne s'applique pas
-- **les documents sont verrouillés** : un filtre de champs ne voit pas l'intérieur d'un fichier, or le bulletin PDF porte le NIR, le fichier de virement l'IBAN de chaque salarié, l'export comptable les noms et montants par personne (et les documents fiscaux britanniques le numéro d'assurance). ces quatre documents ne sont servis **que si la politique de l'org pour `payfit` ne masque rien** — c'est-à-dire après qu'un administrateur a levé les masques (`rules: []`). sinon l'appel est refusé en le disant, et le refus n'est pas un bug. si la politique ne peut pas être lue, le document est refusé aussi. `payfit_payslip(op="overtime")` n'est pas verrouillé : il ne rend que les lignes heures sup, jamais le bulletin. leurs nombres (`numbers`, `rates`) sont filtrés par la politique comme toute donnée ; la ligne brute (`line`), extrait verbatim du bulletin, suit le verrou des documents et n'est servie que si la politique ne masque rien (`line_withheld` dit pourquoi sinon)
-- les **données** (écritures comptables en JSON, état de la paie, liste des bulletins) ne sont jamais verrouillées : la politique les filtre champ par champ
-- dérivé de la documentation et de la spec OpenAPI publiques (lues le 17/09/2026), jamais exercé avec une vraie clé
+the connector no longer removes anything in a hard-coded way: it serves what the key allows, and protection is an **org policy**, editable.
+- **masked by default** (server default): NIR (and NTT), IBAN/BIC, and the reason for an absence (`absence_type`) — sickness, work accident, maternity are health data. a `••••` is a masked value, not missing data
+- `absence_category` always stays readable: `ordinary_leave` (paid leave, RTT, rest, unpaid, remote work, school) or `restricted` for everything else — enough to plan a workload without reading a reason
+- **served unmasked**: pay in accounting entries, payslips, employer cost, charges, full contracts (termination, trial period, collective agreement, status), worked time, health insurance and provident cover, meal vouchers, e-mail, phone, address, date of birth, gender, nationality, seniority, manager
+- **lifting a mask**: an org administrator sets the `payfit` connector's policy (dashboard → connector card → transformations, or `oto_org_settings domain=field_filters op=set service=payfit rules=[]`). the org policy is authoritative: `rules: []` lifts everything. ⚠️ *clearing* the policy (`rules: null`) does the opposite — it **restores** the server default
+- **the `redaction` notice states the EFFECTIVE policy**: every response that may carry a sensitive field names those that the org's policy (or the server default) masks, and those it leaves IN CLEAR. an org that has lifted a mask receives the data in clear, and the notice says so — it never announces a mask that does not apply
+- **documents are locked**: a field filter cannot see inside a file, yet the PDF payslip carries the NIR, the payment file each employee's IBAN, the accounting export names and amounts per person (and the British tax documents the insurance number). these four documents are served **only if the org's policy for `payfit` masks nothing** — that is, after an administrator has lifted the masks (`rules: []`). otherwise the call is refused, saying so, and the refusal is not a bug. if the policy cannot be read, the document is refused too. `payfit_payslip(op="overtime")` is not locked: it only returns the overtime lines, never the payslip. their numbers (`numbers`, `rates`) are filtered by the policy like any data; the raw line (`line`), a verbatim excerpt of the payslip, follows the documents lock and is only served if the policy masks nothing (`line_withheld` says why otherwise)
+- **data** (accounting entries as JSON, payroll status, payslip list) is never locked: the policy filters it field by field
+- derived from the public documentation and OpenAPI spec (read on 17/09/2026), never exercised with a real key

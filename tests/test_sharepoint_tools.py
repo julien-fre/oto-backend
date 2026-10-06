@@ -135,14 +135,14 @@ def test_drives_d_un_site(construits, monkeypatch):
 
 
 def test_site_get_exige_un_seul_designateur(construits, monkeypatch):
-    with pytest.raises(McpError, match="un seul"):
+    with pytest.raises(McpError, match="only one"):
         _tool("sharepoint_site")(op="get", site_id="s1", url="https://a.sharepoint.com")
 
 
 # --- drive ----------------------------------------------------------------------
 
 def test_drive_id_et_user_s_excluent(construits, monkeypatch):
-    with pytest.raises(McpError, match="pas les deux"):
+    with pytest.raises(McpError, match="not both"):
         _tool("sharepoint_file")(drive_id="d1", user="a@b.fr")
 
 
@@ -219,11 +219,11 @@ def test_as_pdf_false_garde_l_original(construits, monkeypatch):
 def test_dossier_et_gros_fichier_refuses(construits, monkeypatch):
     inst, _ = construits
     inst.get_item.return_value = {"id": "i1", "name": "Contrats", "folder": {}}
-    with pytest.raises(McpError, match="dossier"):
+    with pytest.raises(McpError, match="folder"):
         _tool("sharepoint_file")(op="download", drive_id="d1", item_id="i1")
     inst.get_item.return_value = {"id": "i2", "name": "film.mp4", "size": 60 * 1024 ** 2,
                                   "file": {}}
-    with pytest.raises(McpError, match="50 Mo"):
+    with pytest.raises(McpError, match="50 MB"):
         _tool("sharepoint_file")(op="download", drive_id="d1", item_id="i2")
     inst.download.assert_not_called()
 
@@ -270,7 +270,7 @@ def test_depot_contenu_invalide(construits, monkeypatch, kw):
 def test_403_refus_nomme_permission(construits, monkeypatch):
     inst, _ = construits
     inst.list_children.side_effect = _upstream(403)
-    with pytest.raises(McpError, match="pas les droits"):
+    with pytest.raises(McpError, match="not have rights"):
         _tool("sharepoint_file")(drive_id="d1")
 
 

@@ -469,13 +469,13 @@ def _with_readiness(ctx: ResolvedCtx, row: dict) -> dict:
 
 
 def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
-    """`GET /api/me/connectors` : UNE connexion du pool pour toute la lecture
-    (oto-backend#1148). Le chemin fait ~160 lectures unitaires (sélection, coffre,
-    cascade, options, apps OAuth) ; chacune empruntait sa connexion et payait son
-    `BEGIN`/`COMMIT` — 3 allers-retours par lecture, et autant d'attentes au pool sous
-    charge : médiane 3,0 s, p95 15,7 s en production les 03-04/10/2026. Même enveloppe
-    que `access.status_for`, et même condition : le chemin ne fait QUE lire (un banc
-    relève chaque requête, `tests/test_connecteurs_me_une_connexion_1148.py`)."""
+    """`GET /api/me/connectors`: ONE pool connection for the whole read
+    (oto-backend#1148). The path does ~160 unit reads (selection, vault,
+    cascade, options, OAuth apps); each one borrowed its own connection and paid its
+    `BEGIN`/`COMMIT` — 3 round trips per read, and as many waits on the pool under
+    load: median 3.0 s, p95 15.7 s in production on 03-04/10/2026. Same envelope
+    as `access.status_for`, and same condition: the path ONLY reads (a test bench
+    records each request, `tests/test_connecteurs_me_une_connexion_1148.py`)."""
     with db.reuse_connection():
         return _me_projection(ctx, inp)
 
@@ -519,9 +519,9 @@ def _me_projection(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     # envelope, otherwise rows without `credential` would be read again as "nothing is
     # connected", the very conclusion being repaired.
     presence, credentials = credential_presence.lire(ctx.sub, org=ctx.org_id)
-    # L'option couche 3 se juge par (option, porteur du credential) : les canaux d'un
-    # compte hébergé partagent l'option ET la clé de leur porteur, donc le même verdict.
-    # Une marche de cascade par couple, pas une par ligne (#1148).
+    # The layer-3 option is judged by (option, credential holder): the channels of a
+    # hosted account share the option AND the key of their holder, hence the same verdict.
+    # One cascade walk per pair, not one per row (#1148).
     options_ouvertes: dict[tuple, bool] = {}
 
     def _option_ok(nom: str) -> bool:

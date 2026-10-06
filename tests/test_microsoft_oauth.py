@@ -339,7 +339,7 @@ def test_plusieurs_comptes_sans_defaut_refus_qui_les_nomme(env):
 
 def test_compte_inconnu_refuse_jamais_un_autre(env):
     _deux_comptes(env)
-    with pytest.raises(McpError, match="introuvable"):
+    with pytest.raises(McpError, match="not found"):
         env.sous_compte("inconnu@exemple.test")(env.auth.access_token_for, SUB)
     env.coeur.auth.refresh.assert_not_called()
 
@@ -454,5 +454,5 @@ def test_l_axe_account_est_accepte_sur_les_outils(env):
 
 def test_la_fiche_dit_la_regle_des_comptes_par_connexion():
     sections = providers.REGISTRY[CONNECTEUR].doc_sections
-    multi = next(s for s in sections if "plusieurs" in s.title)
+    multi = next(s for s in sections if "multiple" in s.title)
     assert "_account" in multi.body_md and "principal" not in multi.body_md

@@ -1,41 +1,41 @@
-"""PayFit — les ENVELOPPES de sortie et la seule clé que ce connecteur renomme.
+"""PayFit — the output ENVELOPES and the one key this connector renames.
 
-Séparé de `payfit.py` et de ses frères pour qu'une seule partie décide de la FORME
-de ce qui sort : la pagination, la projection `fields`, et le sort du type d'absence.
+Separate from `payfit.py` and its siblings so that a single part decides the SHAPE
+of what goes out: pagination, the `fields` projection, and the fate of the absence type.
 
-## Ce qui a changé le 17/09/2026, et pourquoi
+## What changed on 17/09/2026, and why
 
-Ce module portait une **liste blanche** : seuls quelques champs nommés sortaient de
-l'entreprise, du collaborateur, du contrat, de l'absence. Le retrait était EN DUR —
-personne ne pouvait l'ouvrir, pas même l'entreprise propriétaire de ses propres
-données de paie. Décision d'Alexis (signal d'usage #1063) : **on sert tout ce que
-l'API expose**, et la protection passe désormais par les **filtres de champs par
-org** (ADR 0009/0015), avec des **défauts serveur protecteurs** posés dans
-`field_filter_defaults.SERVER_DEFAULTS["payfit"]` — qu'un org_admin peut lever,
-connecteur par connecteur.
+This module used to carry an **allowlist**: only a few named fields went out of
+the company, the collaborator, the contract, the absence. The removal was HARD-CODED —
+nobody could open it, not even the company that owns its own
+payroll data. Alexis's decision (usage signal #1063): **we serve everything the
+API exposes**, and protection now goes through **per-org field filters**
+(ADR 0009/0015), with **protective server defaults** set in
+`field_filter_defaults.SERVER_DEFAULTS["payfit"]` — which an org_admin can lift,
+connector by connector.
 
-Conséquence directe : il n'y a plus de `_pick`. Une réponse sort telle que l'API la
-livre, et ce qui la réduit est (1) le scope de la clé PayFit, (2) la politique de
-rédaction de l'org, (3) `fields` quand l'appelant veut moins de tokens.
+Direct consequence: there is no more `_pick`. A response goes out as the API
+delivers it, and what reduces it is (1) the PayFit key's scope, (2) the org's
+redaction policy, (3) `fields` when the caller wants fewer tokens.
 
-## La clé renommée, et pourquoi c'est nécessaire ici
+## The renamed key, and why it is necessary here
 
-⚠️ **`FieldFilter` matche par NOM DE CLÉ FEUILLE, à toute profondeur.** Une règle
-sur `type` toucherait donc AUSSI `emails[].type`, `phoneNumbers[].type`,
-`addresses[].type`, `analyticCodes[].type` et `documents[].type` — cinq champs
-anodins corrompus pour en protéger un. Le mécanisme ne sait pas dire « `type`, mais
-seulement sous `absences` » : c'est sa limite, pas un oubli de configuration.
+⚠️ **`FieldFilter` matches by LEAF KEY NAME, at any depth.** A rule
+on `type` would therefore ALSO hit `emails[].type`, `phoneNumbers[].type`,
+`addresses[].type`, `analyticCodes[].type` and `documents[].type` — five
+harmless fields corrupted to protect one. The mechanism cannot say "`type`, but
+only under `absences`": that is its limit, not a configuration oversight.
 
-Le type d'une absence est donc servi sous **`absence_type`**, un nom de feuille qui
-n'appartient qu'à lui — et c'est CE nom que le défaut serveur masque. La clé `type`
-de l'amont n'est pas servie : deux noms pour la même donnée, l'un filtré et l'autre
-non, serait une passoire.
+An absence's type is therefore served under **`absence_type`**, a leaf name that
+belongs only to it — and it is THAT name the server default masks. The upstream
+`type` key is not served: two names for the same data, one filtered and the other
+not, would be a sieve.
 
-`absence_category` l'accompagne, calculé ici : `ordinary_leave` pour un congé
-ordinaire, `restricted` pour tout le reste. Il reste lisible quand `absence_type`
-est masqué — un pilotage de charge a besoin de savoir qu'une personne est absente et
-que ce n'est pas un congé payé, sans lire un motif médical. Il ne nomme JAMAIS la
-santé : `restricted` couvre aussi bien un arrêt maladie qu'un mariage.
+`absence_category` comes with it, computed here: `ordinary_leave` for an ordinary
+leave, `restricted` for everything else. It stays readable when `absence_type`
+is masked — workload planning needs to know that a person is absent and
+that it is not paid leave, without reading a medical reason. It NEVER names
+health: `restricted` covers a sick leave as well as a wedding.
 """
 from __future__ import annotations
 
@@ -43,10 +43,10 @@ from typing import Any, Callable, Optional
 
 from .. import output_projection
 
-# Les congés ORDINAIRES : ceux qui ne disent rien de la santé ni de la vie familiale.
-# Tout AUTRE type — maladie, accident du travail, maternité, enfant malade, deuil,
-# mariage, ou un type ajouté demain — tombe en `restricted`. La liste est fermée
-# côté sûreté : un type inconnu n'est jamais « ordinaire ».
+# ORDINARY leaves: those that say nothing about health or family life.
+# Any OTHER type — sickness, work accident, maternity, sick child, bereavement,
+# wedding, or a type added tomorrow — falls into `restricted`. The list is closed
+# on the safe side: an unknown type is never "ordinary".
 ORDINARY_ABSENCE_TYPES = frozenset({
     "fr_conges_payes", "fr_rtt", "fr_repos", "fr_sans_solde", "fr_teletravail",
     "fr_ecole", "fr_absence_remuneree", "uk_annual_leave", "uk_paid_leave",
@@ -58,8 +58,8 @@ RESTRICTED = "restricted"
 
 
 def absence(a: Any) -> Any:
-    """Une absence, telle que l'API la livre, sauf `type` → `absence_type` +
-    `absence_category` (cf. docstring du module)."""
+    """An absence, as the API delivers it, except `type` → `absence_type` +
+    `absence_category` (see the module docstring)."""
     if not isinstance(a, dict):
         return a
     out = {k: v for k, v in a.items() if k != "type"}
@@ -73,11 +73,11 @@ def absence(a: Any) -> Any:
 def page(env: Any, key: str, id_key: str, *, fields: Optional[list] = None,
          shape: Optional[Callable[[Any], Any]] = None,
          redaction: Optional[str] = None) -> dict:
-    """Une page de liste : `{count, next_cursor, <key>: [...]}`.
+    """A list page: `{count, next_cursor, <key>: [...]}`.
 
-    `fields` ne peut que RETIRER, et `id_key` est toujours gardé : c'est une
-    économie de tokens, jamais un pouvoir de lecture — il n'y a plus rien à ouvrir
-    par ce chemin, tout est déjà servi. `["*"]` rend la vue complète.
+    `fields` can only REMOVE, and `id_key` is always kept: it is a
+    token saving, never a read privilege — there is nothing left to open
+    through this path, everything is already served. `["*"]` returns the full view.
     """
     env = env if isinstance(env, dict) else {}
     meta = env.get("meta") if isinstance(env.get("meta"), dict) else {}
@@ -97,9 +97,9 @@ def page(env: Any, key: str, id_key: str, *, fields: Optional[list] = None,
 def rows(items: Any, key: str, id_key: str, *, fields: Optional[list] = None,
          shape: Optional[Callable[[Any], Any]] = None,
          redaction: Optional[str] = None) -> dict:
-    """Une liste NON paginée servie sous `key` — l'API en a plusieurs (écritures
-    comptables, contrats de mutuelle, documents). Même projection, pas de curseur :
-    inventer un `next_cursor: null` ferait croire à une pagination qui n'existe pas.
+    """An UNPAGINATED list served under `key` — the API has several (accounting
+    entries, health-insurance contracts, documents). Same projection, no cursor:
+    inventing a `next_cursor: null` would suggest a pagination that does not exist.
     """
     items = items if isinstance(items, list) else []
     if shape is not None:
