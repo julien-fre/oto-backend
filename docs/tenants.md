@@ -113,13 +113,30 @@ de 500 caractères ; on ne désactive pas le tenant de son propre compte
 nommément — les jetons du tenant, au lieu d'un `401 invalid_token` anonyme. Un export de
 périmètre ne transporte pas la désactivation (le tenant devient le primaire de sa cible).
 
-**Ce que le geste ne fait PAS — décision de produit ouverte.** Il coupe les COMPTES du
-tenant, pas ses ORGS : un compte d'un autre tenant (ou du primaire) membre d'une org du
-tenant continue d'y travailler, l'endpoint anonyme d'un projet publié d'une de ses orgs
-reste servi, et les automatisations (cron, webhooks) d'une de ses orgs s'enfilent encore
-— leurs jetons de délégation sont refusés à l'usage. Options : (A) en rester là — le
-compte est l'unité d'identité ; (B) suspendre aussi ses orgs (`orgs-suspendues.md`,
-`orgs.tenant_id`) dans le même geste ; (C) l'offrir en option (`suspend_orgs=true`).
+**Le geste suspend aussi les ORGS du tenant** (décision du 06/10/2026). Couper les seuls
+comptes laissait ouverts un compte d'un autre tenant (ou du primaire) membre d'une de ses
+orgs, l'endpoint anonyme d'un projet publié d'une de ses orgs, et les automatisations
+(cron, webhooks) qui continuaient d'enfiler. `op=disable` suspend donc, dans la même
+transaction, toutes les orgs de `orgs.tenant_id` par la suspension d'org existante
+(`orgs-suspendues.md`) — pas de second système : plus personne n'y agit, ses projets
+publiés ne sont plus servis, rien ne s'enfile ni ne se réserve. Chaque suspension posée
+ainsi porte son origine, `orgs.suspended_tenant_id` (révision
+`0042_orgs_suspension_par_tenant`), avec pour auteur l'opérateur du geste et pour motif
+`tenant <slug> désactivé : <motif>`. La réponse rend `orgs_suspended` (et leurs ids) et
+`orgs_already_suspended` — celles qu'une autre raison suspendait déjà, non touchées.
+
+- **Rejoué sur un tenant déjà désactivé**, le geste rattrape les orgs pas encore
+  suspendues (une org née depuis, ou un tenant désactivé avant ce lot) : c'est le
+  rattrapage d'un tenant coupé par la version précédente, qui ne suspendait pas ses orgs.
+- **`op=enable`** lève les suspensions qu'il a posées, elles seules
+  (`orgs_resumed`) : une org suspendue pour une autre raison (essai fini) le reste.
+- **Le tenant passe avant l'org** : tant qu'il est désactivé, le geste d'org
+  (`admin.org_suspension`, `service.org.suspension`) refuse de lever la suspension d'une
+  de ses orgs (`409 tenant_disabled`) ; et suspendre par ce geste une org que le tenant
+  avait suspendue REPREND la suspension à son compte — la réactivation du tenant ne la
+  lèvera pas.
+- Un export de périmètre ne transporte pas ces suspensions-là, comme la désactivation.
+
 Révoquer les sessions **dans l'annuaire du tenant** (Management API, quand nous
 l'administrons) est une autre décision non prise (`tenancy.ForeignTenantDirectory`).
 

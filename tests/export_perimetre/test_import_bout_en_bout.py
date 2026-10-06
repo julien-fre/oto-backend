@@ -327,6 +327,21 @@ def test_la_transformation_denude_et_rattache_au_tenant_primaire():
     assert t.appliquer("tenants", {"id": 9})["id"] == 1
 
 
+def test_les_suspensions_posees_par_le_tenant_ne_le_suivent_pas():
+    """Comme sa désactivation (#1165) : une suspension que la désactivation du tenant a
+    posée sur une org n'a plus de tenant à réactiver dans la cible. Celle posée sur
+    l'org elle-même (un essai fini) la suit."""
+    t = Transformation.depuis(Schema({}, {}, {}, (), {}, {}), {})
+    par_tenant = {"id": 4, "suspended_at": "t", "suspended_by": "op",
+                  "suspended_reason": "tenant x désactivé : fin", "suspended_tenant_id": 7}
+    assert t.appliquer("orgs", par_tenant) == {
+        "id": 4, "suspended_at": None, "suspended_by": None, "suspended_reason": None,
+        "suspended_tenant_id": None}
+    propre = {"id": 5, "suspended_at": "t", "suspended_by": "svc",
+              "suspended_reason": "trial_ended", "suspended_tenant_id": None}
+    assert t.appliquer("orgs", propre) == propre
+
+
 def test_les_sequences_sont_recalees(cible, export_a):
     _, manifeste = export_a
     with psycopg.connect(cible["dsn"], row_factory=dict_row) as c:

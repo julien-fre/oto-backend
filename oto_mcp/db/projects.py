@@ -255,11 +255,16 @@ def get_project_by_mcp_slug(slug: str) -> Optional[dict]:
 def list_published_mcp_projects() -> list[dict]:
     """Projets publiés en endpoint MCP **anonyme ET listé** (annuaire public oto-websites).
     Exclut les endpoints `org` (authentifiés) **et `secret`** (sans login mais non listés,
-    par construction hors galerie — le filtre `= 'anonymous'` les écarte) + les archivés."""
+    par construction hors galerie — le filtre `= 'anonymous'` les écarte) + les archivés
+    + ceux d'une org SUSPENDUE (`org_suspension`) : l'endpoint ne les sert plus
+    (`subdomain_project`), l'annuaire ne les annonce plus."""
     with _connect() as conn:
         rows = conn.execute(
             f"SELECT {_PROJECT_COLS} FROM projects "
             "WHERE mcp_access = 'anonymous' AND mcp_slug IS NOT NULL AND archived_at IS NULL "
+            "  AND NOT EXISTS (SELECT 1 FROM orgs o WHERE projects.owner_type = 'org' "
+            "                   AND o.id::text = projects.owner_id "
+            "                   AND o.suspended_at IS NOT NULL) "
             "ORDER BY updated_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]

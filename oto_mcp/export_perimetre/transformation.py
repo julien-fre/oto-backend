@@ -10,7 +10,8 @@ Ce qu'elle change, et rien d'autre :
   (`Perimetre.comptes_cible`) : toute VALEUR exactement égale à un sub du périmètre,
   ou à sa forme membre `<org>:<sub>`, à toute profondeur d'un JSON ;
 - **le tenant** devient la ligne 1 de la cible : sa ligne prend l'id 1, toute clé
-  étrangère vers `tenants(id)` vaut 1, et sa désactivation éventuelle ne le suit pas ;
+  étrangère vers `tenants(id)` vaut 1, et sa désactivation éventuelle ne le suit pas,
+  ni les suspensions qu'elle a posées sur ses orgs (`orgs.suspended_tenant_id`) ;
 - **les URL de notre stockage public** (décision du 28/09/2026) : dans toute valeur
   texte, colonne ou contenu (page, JSON), `<base source>/` devient `<base cible>/` ; les
   objets, eux, gardent leur clé (`objets`). Seul l'import connaît la base cible, que la
@@ -67,4 +68,11 @@ class Transformation:
             for c in ("disabled_at", "disabled_by", "disabled_reason"):
                 if c in cible:
                     cible[c] = None
+        if table == "orgs" and cible.get("suspended_tenant_id") is not None:
+            # …ni les suspensions que cette désactivation a posées sur ses orgs : elles
+            # n'ont plus de tenant à réactiver pour les lever. Une suspension posée sur
+            # l'org elle-même (`suspended_tenant_id` NULL) la suit, elle.
+            for c in ("suspended_at", "suspended_by", "suspended_reason",
+                      "suspended_tenant_id"):
+                cible[c] = None
         return cible

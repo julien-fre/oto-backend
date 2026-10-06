@@ -213,6 +213,20 @@ def _offset_from_query(scope) -> int:
         return 0
 
 
+async def _send_suspendu(send) -> None:
+    """L'org qui publie le projet est SUSPENDUE (`org_suspension`) : l'endpoint n'est
+    plus servi, ni le MCP ni l'UI navigable. Le porteur est un tiers sans compte : ni
+    le motif ni le chemin de levée ne lui sont dus."""
+    from . import org_suspension
+    body = json.dumps({"error": org_suspension.CODE,
+                       "message": "Ce projet publié n'est plus servi : l'espace qui le "
+                                  "publie est suspendu."}).encode()
+    await send({"type": "http.response.start", "status": 403,
+                "headers": [(b"content-type", b"application/json"),
+                            (b"cache-control", b"no-store")]})
+    await send({"type": "http.response.body", "body": body})
+
+
 async def _send_429(send) -> None:
     body = json.dumps({"error": "rate_limited",
                        "message": "Trop de requêtes sur cet endpoint anonyme. Réessaie plus tard."}).encode()
@@ -308,6 +322,11 @@ def _connect_url(host: str) -> str:
     return f"{base}/mcp" if _is_share_host(host) else base
 
 
+def _org_suspendue(org_id: int) -> bool:
+    from . import org_suspension
+    return bool(org_suspension.etat(org_id))
+
+
 def resolve_project(host: str) -> Optional[dict]:
     """Projet publié pour ce Host, ou None (host canonique / slug inconnu / dé-publié).
     Pas de cache : la requête est indexée et le trafic anonyme faible ; une dé-publication
@@ -398,6 +417,14 @@ class HostDispatch:
             # pas une intention.
             if not _check_bucket((_client_ip(scope, headers), int(proj["id"])), time.monotonic()):
                 return await _send_429(send)
+            # Org SUSPENDUE (`org_suspension` ; un tenant désactivé suspend toutes ses
+            # orgs) : ici aucun `sub`, donc aucune des gardes d'appel ne la verrait —
+            # `activation_gate` laisse passer un appel sans compte, et l'UI lit la base
+            # en direct. Tout l'endpoint se ferme, avant le moindre travail. Lecture en
+            # threadpool : la liste en mémoire peut se relire en base. Une panne de
+            # première lecture remonte (fail-closed, comme toutes les gardes).
+            if org_id is not None and await run_in_threadpool(_org_suspendue, org_id):
+                return await _send_suspendu(send)
             # `secret` = même chemin sans login que `anonymous` (aucun sub, credential de
             # l'org propriétaire) ; il n'en diffère QUE par l'annuaire (non listé) et un slug
             # non devinable — deux propriétés portées côté publication, transparentes ici.
@@ -414,7 +441,6 @@ class HostDispatch:
             # `(None, 0)` pour un path non-UI (ex. GET /mcp) → on retombe sur le MCP ci-dessous.
             if (scope.get("method") == "GET"
                     and b"text/html" in headers.get(b"accept", b"").lower()):
-                from starlette.concurrency import run_in_threadpool
                 from . import share_ui
                 html_out, status = await run_in_threadpool(
                     share_ui.build_page, proj, scope.get("path") or "/",

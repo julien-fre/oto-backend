@@ -17,6 +17,7 @@ from .. import config
 from .. import logodev
 from ..db import _connect
 from ..db.billing import ABONNEMENT_QUI_PRELEVE
+from ..db.tenants import TenantDesactive
 from ..tenancy import primary_slug
 
 _log = logging.getLogger(__name__)
@@ -113,27 +114,48 @@ def suspended_org_ids() -> list[int]:
 
 def suspend_org(org_id: int, *, by: str, reason: str) -> Optional[dict]:
     """Suspend une org. Rend l'état posé, `None` si l'org n'existe pas. Ne réécrit
-    pas une suspension en cours (même règle que `suspend_account`)."""
+    pas une suspension en cours (même règle que `suspend_account`) — sauf celle qu'a
+    posée la désactivation d'un tenant (`suspended_tenant_id`) : ce geste-ci la
+    REPREND à son compte (auteur, motif, origine), pour que la réactivation du tenant
+    ne lève pas une suspension que l'org a désormais pour sa propre raison."""
     with _connect() as conn:
         row = conn.execute(
             "UPDATE orgs SET suspended_at = COALESCE(suspended_at, NOW()), "
-            "  suspended_by = COALESCE(suspended_by, %s), "
-            "  suspended_reason = COALESCE(suspended_reason, %s) "
-            "WHERE id = %s "
+            "  suspended_by = CASE WHEN suspended_at IS NULL OR suspended_tenant_id "
+            "    IS NOT NULL THEN %(by)s ELSE suspended_by END, "
+            "  suspended_reason = CASE WHEN suspended_at IS NULL OR suspended_tenant_id "
+            "    IS NOT NULL THEN %(reason)s ELSE suspended_reason END, "
+            "  suspended_tenant_id = NULL "
+            "WHERE id = %(id)s "
             "RETURNING id, suspended_at, suspended_by, suspended_reason",
-            (by, reason, org_id)).fetchone()
+            {"by": by, "reason": reason, "id": org_id}).fetchone()
     return dict(row) if row else None
 
 
 def resume_org(org_id: int) -> bool:
-    """Lève la suspension. True si une suspension a bien été levée."""
+    """Lève la suspension. True si une suspension a bien été levée.
+
+    ⚠️ Refuse (`TenantDesactive`) tant que le TENANT de l'org est désactivé : sa
+    désactivation suspend toutes ses orgs, et lever l'une d'elles par le geste d'org
+    (le commerce à un abonnement, un super admin) la rouvrirait à ses membres venus
+    d'autres tenants. Lu sous le verrou de la ligne : une désactivation concurrente
+    attend la levée puis re-suspend l'org, ou l'a déjà fait et se voit ici."""
     with _connect() as conn:
-        row = conn.execute(
+        etat = conn.execute(
+            "SELECT o.suspended_at, t.slug AS tenant_desactive, t.disabled_reason "
+            "FROM orgs o LEFT JOIN tenants t "
+            "  ON t.id = o.tenant_id AND t.disabled_at IS NOT NULL "
+            "WHERE o.id = %s FOR UPDATE OF o", (org_id,)).fetchone()
+        if etat is None or etat["suspended_at"] is None:
+            return False
+        if etat["tenant_desactive"]:
+            raise TenantDesactive(etat["tenant_desactive"], etat["disabled_reason"] or "",
+                                  f"Lever la suspension de l'org #{org_id}")
+        conn.execute(
             "UPDATE orgs SET suspended_at = NULL, suspended_by = NULL, "
-            "  suspended_reason = NULL "
-            "WHERE id = %s AND suspended_at IS NOT NULL RETURNING id",
-            (org_id,)).fetchone()
-    return bool(row)
+            "  suspended_reason = NULL, suspended_tenant_id = NULL WHERE id = %s",
+            (org_id,))
+    return True
 
 
 def get_org(org_id: int) -> Optional[dict]:

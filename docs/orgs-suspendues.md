@@ -32,6 +32,7 @@ seulement lui.
 | travaux d'agent | `claim_next_job` / `claim_fallback_job` : `NOT EXISTS` sur `orgs.suspended_at` | non réservés, restent en file |
 | webhooks entrants | `runner_hook.declencher` | 409 `org_suspended`, journalisé `refused_suspended` |
 | cron | `runner_tick._tick` : échéance consommée, rien d'enfilé | journalisé, et livraison `refused_suspended` sur la page de l'agent |
+| projet publié sans login (`anonymous`, `secret` : MCP et UI navigable) | `subdomain_project.HostDispatch`, avant tout travail — l'appel n'a pas de `sub`, aucune garde d'appel ne le verrait | 403 `org_suspended` ; retiré de l'annuaire public |
 
 L'org est celle sous laquelle l'appel **résout** (`access.current_org` : `_org`,
 projet, run, `X-Oto-Org`, puis l'org par défaut) — jamais l'org « maison » à la place
@@ -56,12 +57,23 @@ en upload) ne passent pas par ces gardes : exporter ses propres données reste
 possible, c'est voulu. `tools/list` et le handshake non plus — la liste est servie,
 les appels sont refusés.
 
-## 4. Invariants
+## 4. Suspendue par son tenant
+
+Désactiver un tenant (`docs/tenants.md` §Désactiver un tenant) suspend toutes ses orgs par
+ce même mécanisme, en marquant l'origine : `orgs.suspended_tenant_id` = le tenant (NULL
+pour une suspension posée sur l'org elle-même). Sa réactivation ne lève que celles-là.
+Tant que le tenant est désactivé, `resume` refuse (`409 tenant_disabled`) ; `suspend`
+sur une org qu'il a suspendue reprend la suspension à son compte (auteur, motif, origine
+NULL), pour que la réactivation du tenant ne la lève pas.
+
+## 5. Invariants
 
 - **Rien n'est supprimé ni détaché.** Trois colonnes (`orgs.suspended_at`,
-  `suspended_by`, `suspended_reason`), posées au boot, NULL = active.
+  `suspended_by`, `suspended_reason`), posées au boot, NULL = active ; une quatrième,
+  `suspended_tenant_id`, dit l'origine (révision `0042_orgs_suspension_par_tenant`).
 - **Re-suspendre ne réécrit rien** (auteur, date, motif d'origine), comme la pause de
-  compte ; `resume` rend `changed=false` sur une org active.
+  compte — sauf une suspension posée par le tenant, que le geste d'org reprend (§4) ;
+  `resume` rend `changed=false` sur une org active.
 - **Aucune lecture de base par appel.** La liste des orgs suspendues est gardée en
   mémoire par processus et relue toutes les 30 s (`TTL_S`, un balayage de `orgs`,
   petite table ; l'index partiel `idx_orgs_suspended_by` sert la fusion de comptes). Une org active se tranche en mémoire ; seule une org suspendue lit
@@ -79,7 +91,7 @@ les appels sont refusés.
   son identité de service, et non à un compte qu'il faudrait garder super admin. Ni
   un admin de l'org ni un admin de tenant ne suspendent ni ne lèvent.
 
-## 5. Le premier appel d'une org
+## 6. Le premier appel d'une org
 
 `platform.usage.first_calls` (`GET /api/admin/usage/first-calls?org_ids=…`, admin
 plateforme) rend le premier appel journalisé (`tool_calls`, MCP et REST) de chaque

@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS orgs (
     -- (`_init.py`) pour une base existante.
     suspended_at TIMESTAMPTZ,
     suspended_by TEXT,
-    suspended_reason TEXT
+    suspended_reason TEXT,
+    -- Le tenant dont la DÉSACTIVATION a posé la suspension (NULL = posée sur l'org
+    -- elle-même) : sa réactivation ne lève que celles-là. Base existante : révision
+    -- `0042_orgs_suspension_par_tenant`.
+    suspended_tenant_id BIGINT
 );
 """
 

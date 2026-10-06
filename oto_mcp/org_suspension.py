@@ -6,7 +6,7 @@ ESPACE, pour tous ses membres — et seulement lui : un membre garde ses autres 
 C'est le geste d'un tenant qui facture ses orgs (02/10/2026 : un essai fini sans
 abonnement arrête l'app, pas seulement les clés payées par le tenant).
 
-**Où il tombe.** Il n'y a pas UN point d'entrée par org, donc quatre gardes, toutes
+**Où il tombe.** Il n'y a pas UN point d'entrée par org, donc cinq gardes, toutes
 sur ce module :
 - les capacités, juste après la règle d'autz, dans les deux adaptateurs (MCP et
   REST) — c'est là que l'org de l'appel est connue, champ d'entrée compris ;
@@ -14,7 +14,13 @@ sur ce module :
   main (`data_*`, `run_*`, `oto_doc_app`…) —, appel direct comme cible d'`oto_call`,
   dans `activation_gate.require_active` — leur seam commun (`outil_garde`) ;
 - les travaux de fond : un travail d'org suspendue n'est pas réservé
-  (`claim_next_job`), un webhook entrant est refusé, une échéance cron n'enfile rien.
+  (`claim_next_job`), un webhook entrant est refusé, une échéance cron n'enfile rien ;
+- l'endpoint d'un projet publié sans login (`subdomain_project`) : sans `sub`, aucune
+  garde d'appel ne le voit, il se ferme entier.
+
+**Suspendue par son tenant** : désactiver un tenant suspend toutes ses orgs par ce même
+mécanisme, origine marquée (`orgs.suspended_tenant_id`) — sa réactivation ne lève que
+celles-là (`docs/orgs-suspendues.md` §4).
 
 **Ce qui reste ouvert** (`OUVERTES`) : se voir, lister ses orgs, lire l'org, en
 changer. Sans ça, un membre dont l'org PAR DÉFAUT est suspendue ne pourrait même plus

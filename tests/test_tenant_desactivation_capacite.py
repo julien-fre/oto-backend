@@ -29,13 +29,18 @@ def tenants(monkeypatch):
         return {"slug": slug, "disabled_at": "2026-10-06T10:00:00", "disabled_by": by,
                 "disabled_reason": reason, "changed": True,
                 "revoked": {"user": 2, "delegation": 1}, "accounts_cut": 3,
-                "aliases_cut": 1}
+                "aliases_cut": 1, "orgs_suspended": [11, 12],
+                "orgs_already_suspended": 1}
     monkeypatch.setattr(td.db, "desactiver_tenant", _desactiver)
     monkeypatch.setattr(td.db, "reactiver_tenant",
-                        lambda slug: gestes.append(("enable", slug)) or True)
-    from oto_mcp import server
+                        lambda slug: gestes.append(("enable", slug))
+                        or {"changed": True, "orgs_resumed": [11, 12]})
+    from oto_mcp import server, org_suspension
     monkeypatch.setattr(server, "reload_tenant_registry",
                         lambda: gestes.append(("reload",)) or {})
+    # Le geste fait relire la liste des orgs suspendues à CE processus : relevé aussi.
+    monkeypatch.setattr(org_suspension, "invalider",
+                        lambda: gestes.append(("invalider",)))
     return gestes
 
 
@@ -95,11 +100,15 @@ def test_on_ne_desactive_pas_son_propre_tenant(tenants):
 def test_desactiver_rend_les_compteurs_par_type(tenants):
     out = td._disablement(_ctx(), td.TenantDisablementInput(
         slug="acme", op="disable", reason="contrat terminé"))
-    assert tenants == [("disable", "acme", "op-1", "contrat terminé"), ("reload",)]
+    assert tenants == [("disable", "acme", "op-1", "contrat terminé"), ("invalider",),
+                       ("reload",)]
     assert out["disabled"] is True and out["changed"] is True
     assert out["registry_reloaded"] is True
     assert out["revoked"] == {"user": 2, "delegation": 1}
     assert out["accounts_cut"] == 3 and out["aliases_cut"] == 1
+    # Le nombre d'orgs suspendues par CE geste, leurs ids, et celles qu'il n'a pas touchées.
+    assert out["orgs_suspended"] == 2 and out["orgs_suspended_ids"] == [11, 12]
+    assert out["orgs_already_suspended"] == 1
     # Ce qui n'est pas stocké est NOMMÉ, pas compté à zéro.
     assert "dashboard_session_jwt" in out["refused_not_stored"]
     assert "mcp_oauth_refresh_token" in out["refused_not_stored"]
@@ -108,9 +117,10 @@ def test_desactiver_rend_les_compteurs_par_type(tenants):
 
 def test_reactiver_ne_rend_aucun_jeton(tenants):
     out = td._disablement(_ctx(), td.TenantDisablementInput(slug="acme", op="enable"))
-    assert tenants == [("enable", "acme"), ("reload",)]
+    assert tenants == [("enable", "acme"), ("invalider",), ("reload",)]
     assert out["disabled"] is False and out["changed"] is True
     assert out.get("revoked", {}) == {}
+    assert out["orgs_resumed"] == 2 and out["orgs_resumed_ids"] == [11, 12]
     td.TenantDisablementOut(**out)
 
 
@@ -121,7 +131,8 @@ def test_la_console_mcp_et_la_route_rest_partagent_le_handler(tenants):
     out = tenants_admin._console(_ctx(), tenants_admin.TenantConsoleInput(
         op="enable", slug="acme"))
     assert out["disablement"]["disabled"] is False
-    assert [g[0] for g in tenants] == ["disable", "reload", "enable", "reload"]
+    assert [g[0] for g in tenants] == ["disable", "invalider", "reload",
+                                       "enable", "invalider", "reload"]
 
 
 def test_un_registre_illisible_ne_defait_pas_le_geste_et_le_dit(tenants, monkeypatch):

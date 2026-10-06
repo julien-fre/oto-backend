@@ -903,6 +903,16 @@ ligne `démarrage : idx_datastore_rows_valeurs_…` ; au catalogue (lecture seul
 `indisvalid = t`. Retour arrière : les deux `DROP INDEX CONCURRENTLY`, puis `DROP
 FUNCTION`, APRÈS le retrait du code qui l'appelle.
 
+`0042_orgs_suspension_par_tenant` (06/10/2026, oto-backend#1165, après
+`0041_recherche_valeurs_servies`) dit l'origine d'une suspension d'org :
+`orgs.suspended_tenant_id BIGINT`, nullable sans défaut, sans index ni clé étrangère
+(écriture de catalogue ; `AccessExclusiveLock` bref sur `orgs`, lue à presque chaque
+requête, attente bornée par `lock_timeout` 5 s). NULL = suspension posée sur l'org ;
+sinon le tenant dont la désactivation l'a posée, et que sa réactivation lève. **Avant la
+fusion** : le code du lot l'écrit à chaque suspension, levée d'org et (dés)activation de
+tenant. Le retour arrière retire la colonne (une suspension posée par un tenant devient
+une suspension d'org ordinaire).
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

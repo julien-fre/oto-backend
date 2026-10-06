@@ -167,6 +167,14 @@ def desactiver_tenant(slug: str, *, by: str, reason: str) -> "dict | None":
        ramasse ce qui aurait été émis depuis (un travail réservé entre-temps).
     3. **Les comptes et les anciens identifiants coupés**, comptés pour le rapport : ce
        que la garde d'identité refuse désormais à chaque requête.
+    4. **Ses orgs suspendues** (`orgs.tenant_id`), par la suspension d'org existante
+       (`org_suspension`) : plus personne n'y agit, membre d'un autre tenant compris,
+       ses projets publiés ne sont plus servis, ses automatisations n'enfilent ni ne
+       réservent plus rien. Chaque suspension posée ICI porte son origine
+       (`suspended_tenant_id`), que `reactiver_tenant` lève, et elle seule ; une org
+       déjà suspendue pour une autre raison n'est pas touchée (comptée à part). Rejouée
+       à chaque geste comme la révocation : elle rattrape une org née depuis, ou un
+       tenant désactivé avant que le geste ne suspende ses orgs.
 
     Ce qui n'est PAS stocké ici ne se révoque pas ici : les jetons signés par l'annuaire
     du tenant (session de tableau de bord, jeton d'accès et de rafraîchissement OAuth du
@@ -175,8 +183,8 @@ def desactiver_tenant(slug: str, *, by: str, reason: str) -> "dict | None":
     pfx = f"{slug}:%"
     motif_jeton = f"tenant {slug} désactivé : {reason}"
     with _connect() as conn:
-        avant = conn.execute("SELECT disabled_at FROM tenants WHERE slug = %s FOR UPDATE",
-                             (slug,)).fetchone()
+        avant = conn.execute("SELECT id, disabled_at FROM tenants WHERE slug = %s "
+                             "FOR UPDATE", (slug,)).fetchone()
         if avant is None:
             return None
         etat = conn.execute(
@@ -197,19 +205,39 @@ def desactiver_tenant(slug: str, *, by: str, reason: str) -> "dict | None":
                                (pfx,)).fetchone()["n"]
         alias = conn.execute("SELECT COUNT(*) AS n FROM sub_aliases WHERE new_sub LIKE %s",
                              (pfx,)).fetchone()["n"]
+        orgs = [int(r["id"]) for r in conn.execute(
+            "UPDATE orgs SET suspended_at = NOW(), suspended_by = %s, "
+            "  suspended_reason = %s, suspended_tenant_id = %s "
+            "WHERE tenant_id = %s AND suspended_at IS NULL RETURNING id",
+            (by, motif_jeton, avant["id"], avant["id"])).fetchall()]
+        deja = conn.execute(
+            "SELECT COUNT(*) AS n FROM orgs WHERE tenant_id = %s "
+            "AND suspended_at IS NOT NULL AND suspended_tenant_id IS DISTINCT FROM %s",
+            (avant["id"], avant["id"])).fetchone()["n"]
     return {**dict(etat), "changed": avant["disabled_at"] is None,
-            "revoked": revoques, "accounts_cut": int(comptes), "aliases_cut": int(alias)}
+            "revoked": revoques, "accounts_cut": int(comptes), "aliases_cut": int(alias),
+            "orgs_suspended": sorted(orgs), "orgs_already_suspended": int(deja)}
 
 
-def reactiver_tenant(slug: str) -> bool:
-    """Lève la désactivation. True si elle était posée. Ne rétablit AUCUN jeton : la
-    révocation est définitive, les personnes se reconnectent."""
+def reactiver_tenant(slug: str) -> "dict | None":
+    """Lève la désactivation ET les suspensions d'org que SA désactivation a posées
+    (`orgs.suspended_tenant_id`), en UNE transaction. `None` si le slug n'existe pas ;
+    sinon `changed` (la désactivation était posée) et `orgs_resumed` (les orgs
+    rouvertes). Une org suspendue pour une autre raison le reste. Ne rétablit AUCUN
+    jeton : la révocation est définitive, les personnes se reconnectent."""
     with _connect() as conn:
-        row = conn.execute(
+        avant = conn.execute("SELECT id, disabled_at FROM tenants WHERE slug = %s "
+                             "FOR UPDATE", (slug,)).fetchone()
+        if avant is None:
+            return None
+        conn.execute(
             "UPDATE tenants SET disabled_at = NULL, disabled_by = NULL, "
-            "  disabled_reason = NULL "
-            "WHERE slug = %s AND disabled_at IS NOT NULL RETURNING slug", (slug,)).fetchone()
-    return bool(row)
+            "  disabled_reason = NULL WHERE id = %s", (avant["id"],))
+        orgs = [int(r["id"]) for r in conn.execute(
+            "UPDATE orgs SET suspended_at = NULL, suspended_by = NULL, "
+            "  suspended_reason = NULL, suspended_tenant_id = NULL "
+            "WHERE suspended_tenant_id = %s RETURNING id", (avant["id"],)).fetchall()]
+    return {"changed": avant["disabled_at"] is not None, "orgs_resumed": sorted(orgs)}
 
 
 # ── Suivi (console plateforme) ───────────────────────────────────────────────

@@ -20,14 +20,23 @@ qualifié (`sub_aliases`, drain d'alias) ne passent jamais par cet émetteur
    délégation, `user_api_tokens.revoked_*`). Les jetons signés par son annuaire
    (session de tableau de bord, accès et rafraîchissement OAuth du MCP) n'existent pas
    chez nous : ils sont refusés à chaque présentation ;
-3. journalise et rend les compteurs par type.
+3. suspend toutes ses ORGS (`orgs.tenant_id`) par la suspension d'org existante
+   (`org_suspension`, décision du 06/10/2026) : plus personne n'y agit — un compte d'un
+   autre tenant membre d'une de ses orgs compris —, ses projets publiés ne sont plus
+   servis, ses automatisations (cron, webhooks, travaux d'agent) n'enfilent ni ne
+   réservent plus rien. Une org déjà suspendue pour une autre raison n'est pas touchée ;
+4. journalise et rend les compteurs : jetons par type, comptes, orgs suspendues.
 
-**`enable` ne rouvre que le point 1** : les nouvelles connexions. Aucun jeton révoqué ne
-revit — les personnes se reconnectent, et leurs jetons d'API se réémettent.
+**Rejoué sur un tenant déjà désactivé**, le geste ne réécrit pas l'état d'origine mais
+rattrape ce qui manque : jetons émis depuis, orgs pas encore suspendues (une org née
+depuis, ou un tenant désactivé avant que le geste ne suspende ses orgs).
 
-**Ce que le geste ne fait PAS** (décision de produit non prise, `docs/tenants.md`) :
-suspendre les ORGS du tenant. Un compte d'un autre tenant membre d'une de ses orgs n'est
-pas touché, l'endpoint anonyme d'un projet publié dans une de ses orgs non plus.
+**`enable` rouvre les nouvelles connexions et les orgs que la désactivation a
+suspendues** — elles seules (`orgs.suspended_tenant_id`) : une org suspendue pour une
+autre raison (un essai fini sans abonnement) le reste. Aucun jeton révoqué ne revit — les
+personnes se reconnectent, et leurs jetons d'API se réémettent. Tant que le tenant est
+désactivé, le geste d'org (`admin.org_suspension`, `service.org.suspension`) ne lève pas
+la suspension d'une de ses orgs (`409 tenant_disabled`).
 """
 from __future__ import annotations
 
@@ -36,7 +45,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import db, tenancy
+from .. import db, org_suspension, tenancy
 from ._authz import SUPER_ADMIN
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -76,6 +85,19 @@ class TenantDisablementOut(BaseModel):
     aliases_cut: int = Field(
         default=0, description="Anciens identifiants redirigés vers un compte du tenant "
                                "(`sub_aliases`) — refusés aussi, après canonicalisation.")
+    orgs_suspended: int = Field(
+        default=0, description="Orgs du tenant suspendues PAR CE GESTE (`disable`) : plus "
+                               "personne n'y agit, leurs projets publiés ne sont plus "
+                               "servis, leurs automatisations n'enfilent plus rien. Un "
+                               "geste rejoué ne compte que celles qu'il rattrape.")
+    orgs_suspended_ids: list[int] = Field(default_factory=list)
+    orgs_already_suspended: int = Field(
+        default=0, description="Orgs du tenant déjà suspendues pour une AUTRE raison : non "
+                               "touchées, et `enable` ne les lèvera pas.")
+    orgs_resumed: int = Field(
+        default=0, description="Orgs rouvertes par `enable` : celles que la désactivation "
+                               "avait suspendues, et elles seules.")
+    orgs_resumed_ids: list[int] = Field(default_factory=list)
     registry_reloaded: bool = Field(
         default=False,
         description="Le registre d'émetteurs de CE processus a été relu : la façade OAuth "
@@ -137,11 +159,17 @@ def _disablement(ctx: ResolvedCtx, inp: TenantDisablementInput) -> dict:
     slug = _tenant_cible(inp.slug)
 
     if inp.op == "enable":
-        change = db.reactiver_tenant(slug)
-        logger.warning("tenant RÉACTIVÉ slug=%s par=%s (changed=%s) — les nouvelles "
-                       "connexions repassent, aucun jeton révoqué ne revit",
-                       slug, ctx.sub, change)
-        return _vue(slug, None, changed=change, registry_reloaded=_relire_registre(slug))
+        fait = db.reactiver_tenant(slug)
+        if fait is None:  # supprimé entre la garde et le geste
+            raise AuthzDenied(404, "unknown_tenant", f"Aucun tenant `{slug}`.")
+        org_suspension.invalider()
+        logger.warning("tenant RÉACTIVÉ slug=%s par=%s (changed=%s) orgs_rouvertes=%s — "
+                       "les nouvelles connexions repassent, aucun jeton révoqué ne revit",
+                       slug, ctx.sub, fait["changed"], fait["orgs_resumed"])
+        return _vue(slug, None, changed=fait["changed"],
+                    orgs_resumed=len(fait["orgs_resumed"]),
+                    orgs_resumed_ids=fait["orgs_resumed"],
+                    registry_reloaded=_relire_registre(slug))
 
     motif = (inp.reason or "").strip()
     if not motif:
@@ -160,12 +188,20 @@ def _disablement(ctx: ResolvedCtx, inp: TenantDisablementInput) -> dict:
     fait = db.desactiver_tenant(slug, by=ctx.sub or "?", reason=motif)
     if fait is None:  # supprimé entre la garde et le geste
         raise AuthzDenied(404, "unknown_tenant", f"Aucun tenant `{slug}`.")
+    # Ce processus voit les orgs suspendues tout de suite ; les autres sous `TTL_S`, et la
+    # réservation des travaux, qui lit la base, dès le geste.
+    org_suspension.invalider()
     logger.warning("tenant DÉSACTIVÉ slug=%s par=%s changed=%s jetons_revoques=%s "
-                   "comptes_coupes=%d anciens_identifiants_coupes=%d motif=%r",
+                   "comptes_coupes=%d anciens_identifiants_coupes=%d orgs_suspendues=%s "
+                   "orgs_deja_suspendues=%d motif=%r",
                    slug, ctx.sub, fait["changed"], fait["revoked"], fait["accounts_cut"],
-                   fait["aliases_cut"], motif)
+                   fait["aliases_cut"], fait["orgs_suspended"],
+                   fait["orgs_already_suspended"], motif)
     return _vue(slug, fait, changed=fait["changed"], revoked=fait["revoked"],
                 accounts_cut=fait["accounts_cut"], aliases_cut=fait["aliases_cut"],
+                orgs_suspended=len(fait["orgs_suspended"]),
+                orgs_suspended_ids=fait["orgs_suspended"],
+                orgs_already_suspended=fait["orgs_already_suspended"],
                 registry_reloaded=_relire_registre(slug),
                 refused_not_stored=list(_SANS_ETAT))
 
@@ -190,9 +226,14 @@ CAPABILITIES += [
             "account qualified under the tenant from the next one on — REST, MCP and "
             "signed upload links, whatever the token, dashboard session included — and "
             "every new registration, authorization or refresh on its hosts; revokes the "
-            "API and delegation tokens of all its accounts; returns the counts by type. "
-            "Enable reopens new connections only: revoked tokens stay revoked. Nothing "
-            "is deleted. Super admin. The primary tenant cannot be disabled."),
+            "API and delegation tokens of all its accounts; suspends all its orgs (no one "
+            "acts in them any more, members from other tenants included; their published "
+            "projects are no longer served; their schedules, webhooks and agent jobs "
+            "enqueue nothing); returns the counts. Replayed on a disabled tenant, it "
+            "catches up what is missing (new tokens, orgs not yet suspended). Enable "
+            "reopens new connections and the orgs the disablement suspended — not an org "
+            "suspended for another reason; revoked tokens stay revoked. Nothing is "
+            "deleted. Super admin. The primary tenant cannot be disabled."),
         # POST y compris pour `enable` : l'adaptateur REST fusionne la requête dans
         # l'`Input`, un GET muterait.
         rest=RestBinding("POST", "/api/admin/tenants/{slug}/disablement"),

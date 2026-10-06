@@ -163,8 +163,9 @@ def test_reactiver_rouvre_les_connexions_sans_faire_revivre_un_jeton(base):
     db = base
     j = _jetons(db)
     db.desactiver_tenant("acme", by="op-1", reason="contrat terminé")
-    assert db.reactiver_tenant("acme") is True
-    assert db.reactiver_tenant("acme") is False             # il ne l'était plus
+    assert db.reactiver_tenant("acme")["changed"] is True
+    assert db.reactiver_tenant("acme")["changed"] is False  # il ne l'était plus
+    assert db.reactiver_tenant("inconnu") is None
     assert db.tenant_desactive_du_sub("acme:carla") is None
     # Nouvelles connexions : servies.
     assert _rest("eyJ.a.b", "acme:carla") == ("acme:carla", None)

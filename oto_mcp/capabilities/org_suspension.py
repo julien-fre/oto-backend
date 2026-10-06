@@ -11,6 +11,11 @@ admin garde la main (`admin.org_suspension`). Les deux suspendent ET lèvent, pa
 même handler. Personne d'autre : ni un admin de l'org (elle se rouvrirait seule), ni
 un admin de tenant, ni un compte de service d'usage — et aucun compte n'a besoin
 d'être super admin pour que le commerce coupe une org.
+
+**Le tenant désactivé passe avant** (oto-backend#1165) : sa désactivation suspend
+toutes ses orgs (`admin.tenant_disablement`). Tant qu'il l'est, `resume` est refusé
+(`409 tenant_disabled`) ; `suspend` sur une org qu'il a suspendue REPREND la suspension
+à son compte, pour que la réactivation du tenant ne la lève pas.
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from .. import org_store, org_suspension
+from ..db.tenants import TenantDesactive
 from ._authz import COMMERCE_SERVICE, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -60,7 +66,15 @@ def _org_suspension(ctx: ResolvedCtx, inp: OrgSuspensionInput) -> dict:
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     if inp.op == "resume":
-        change = org_store.resume_org(inp.org_id)
+        try:
+            change = org_store.resume_org(inp.org_id)
+        except TenantDesactive as e:
+            # Son tenant est désactivé : la désactivation a suspendu toutes ses orgs, la
+            # lever ici rouvrirait celle-ci à ses membres venus d'autres tenants. Elle se
+            # lève par `op=enable` du tenant (celles qu'il a suspendues), puis ici.
+            logger.warning("levée refusée org=%s par=%s : tenant %s désactivé",
+                           inp.org_id, ctx.sub, e.slug)
+            raise AuthzDenied(409, "tenant_disabled", str(e)) from e
         org_suspension.invalider()
         logger.warning("org réactivée org=%s par=%s (change=%s)", inp.org_id, ctx.sub, change)
         return _vue(inp.org_id, None, changed=change)
@@ -83,6 +97,9 @@ _ERREURS = (
     DeclaredError(404, "unknown_org", "aucune org ne porte cet id"),
     DeclaredError(400, "missing_reason", "op=suspend sans `reason`"),
     DeclaredError(400, "reason_too_long", f"`reason` dépasse {_MOTIF_MAX} caractères"),
+    DeclaredError(409, "tenant_disabled",
+                  "op=resume sur une org dont le tenant est désactivé : elle rouvre avec "
+                  "lui (`admin.tenant_disablement` op=enable)"),
 )
 
 CAPABILITIES += [

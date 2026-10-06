@@ -77,7 +77,7 @@ pas à une org ; c'est l'admin de **tenant**, sur les comptes du sien (`docs/com
 **Désactiver un tenant** = `oto_admin_tenant op=disable` (REST `POST /api/admin/tenants/{slug}/disablement`),
 **jamais** vider son `issuer` : l'état `tenants.disabled_at` est lu à chaque requête par la garde d'identité unique
 (`garde_identite.refus`, sub canonique, toutes portes : REST, MCP, upload signé ; la façade OAuth lit le registre,
-rechargé par le geste), et le geste révoque les jetons `oto_` de ses comptes · ⚠️ un ancien identifiant de NOTRE annuaire redirigé vers un compte du tenant est
+rechargé par le geste), et le geste révoque les jetons `oto_` de ses comptes et suspend ses orgs (origine marquée, `enable` ne lève que celles-là) · ⚠️ un ancien identifiant de NOTRE annuaire redirigé vers un compte du tenant est
 coupé aussi — retirer l'émetteur ne le voyait pas (`docs/tenants.md` §Désactiver un tenant).
 `/api/*` sous le même `JWTVerifier` que `/mcp` ; `GET /openapi.json` **dérivé** du registre de capacités ; un jeton
 `oto_` peut naître **porté** · ⚠️ **CORS : aucune liste dans le code**, chaque instance déclare `OTO_MCP_CORS_ORIGINS`
@@ -233,8 +233,8 @@ avatars/logos · ⚠️ **PROD et PREPROD partagent la MÊME base** : ce qu'on �
 - `tenants.md` — l'identité au-dessus des orgs
 - `comptes-en-pause.md` — neutraliser un compte sans le détruire : un seul état, aucune
   résurrection automatique
-- `orgs-suspendues.md` — arrêter un ESPACE sans rien détruire : cinq portes gardées
-  (capacités, outils, réservation, webhook, cron), ce qui reste ouvert et pourquoi
+- `orgs-suspendues.md` — arrêter un ESPACE sans rien détruire : six portes gardées
+  (capacités, outils, réservation, webhook, cron, projet publié sans login), ce qui reste ouvert et pourquoi
 - `contributions-forks.md` — recevoir une PR de fork : trois pièges, pin oto-core sur le tronc
 - `deploiement.md` — le modèle tronc unique : main = préprod, tag = prod, garde « préprod verte », domaines servis, pièges du tag
 - `namespace-fr.md` — sources `fr_`, deux stocks SIRENE, `dirigeants` vide à trois lectures, `data.oto.zone`

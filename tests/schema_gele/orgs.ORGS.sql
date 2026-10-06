@@ -10,5 +10,6 @@ created_by TEXT,
 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 suspended_at TIMESTAMPTZ,
 suspended_by TEXT,
-suspended_reason TEXT
+suspended_reason TEXT,
+suspended_tenant_id BIGINT
 );
