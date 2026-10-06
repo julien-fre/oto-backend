@@ -1,5 +1,11 @@
 """Un vide qui ne pose RIEN d'autre est refusé, en nommant la porte (#724).
 
+⚠️ **Depuis oto#140 J2 (arbitré le 23/09/2026), `""` et `[]` sont des VALEURS** : ils
+remplacent la valeur en place, et la valeur remplacée revient dans `valeurs_effacees`
+— le risque des gabarits à demi remplis est accepté. #608 et #724 ne valent plus que
+pour `{}`, qui n'est pas une valeur (oto#165). L'histoire ci-dessous est celle de `[]`
+avant J2 ; les bancs éprouvent la règle d'aujourd'hui.
+
 Mesuré en production le 2026-09-01, entre 04:16 et 04:20 : dix `data_write(id=…,
 row={'contacts': []})` sur des fiches clientes, dix `200`, zéro retrait.
 
@@ -129,7 +135,7 @@ def _blob(ns_id: int, row_id: str) -> dict:
 # ── le cas SEUL : refusé, et le refus ENSEIGNE ────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_face_MCP_une_liste_vide_SEULE_est_refusee_en_nommant_la_porte(
+async def test_face_MCP_un_objet_vide_SEUL_est_refuse_en_nommant_la_porte(
         fiche, client, monkeypatch):
     """Le geste des dix retraits perdus. Il ne pose rien d'autre : il ne peut pas
     aboutir par ce chemin, et il ne doit pas répondre comme un succès.
@@ -142,7 +148,7 @@ async def test_face_MCP_une_liste_vide_SEULE_est_refusee_en_nommant_la_porte(
     ns, ns_id, rid = fiche
 
     with pytest.raises(McpError) as e:
-        data_write(datastore=ns, id=rid, row={"contacts": []})
+        data_write(datastore=ns, id=rid, row={"contacts": {}})
 
     message = str(e.value)
     assert "contacts" in message, message
@@ -153,23 +159,28 @@ async def test_face_MCP_une_liste_vide_SEULE_est_refusee_en_nommant_la_porte(
         "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
 
 
-def test_face_REST_une_liste_vide_SEULE_rend_400_et_pas_200(client, fiche):
+def test_face_REST_un_objet_vide_SEUL_rend_400_et_pas_200(client, fiche):
     ns, ns_id, rid = fiche
     r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
-                     json={"contacts": []})
+                     json={"contacts": {}})
     assert r.status_code == 400, r.text
     detail = r.json().get("detail", "")
     assert "contacts" in detail and '"contacts": null' in detail, detail
     assert _blob(ns_id, rid)["contacts"] == ["a@exemple.invalid"]
 
 
-def test_la_chaine_vide_et_lobjet_vide_SEULS_sont_refuses_pareil(client, fiche):
-    """La règle porte sur la FORME du geste, pas sur le type de la valeur."""
-    ns, _ns_id, rid = fiche
-    for valeur in ("", {}):
-        r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
-                         json={"statut": valeur})
-        assert r.status_code == 400, (valeur, r.text)
+def test_la_chaine_vide_SEULE_remplace_l_objet_vide_SEUL_est_refuse(client, fiche):
+    """oto#140 J2 : `""` est une valeur — il remplace, et le dit ; `{}` n'en est pas
+    une — seul, il est refusé (#724)."""
+    ns, ns_id, rid = fiche
+    r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
+                     json={"statut": {}})
+    assert r.status_code == 400, r.text
+    r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
+                     json={"statut": ""})
+    assert r.status_code == 200, r.text
+    assert _blob(ns_id, rid)["statut"] == ""
+    assert [e["champ"] for e in r.json()["valeurs_effacees"]] == ["statut"]
 
 
 def test_le_null_nomme_EST_la_porte_et_elle_est_ouverte(client, fiche):
@@ -188,22 +199,21 @@ def test_deux_vides_ensemble_et_rien_dautre_sont_refuses_ensemble(client, fiche)
     """« Rien d'autre posé » se juge sur le GESTE entier, pas colonne par colonne."""
     ns, ns_id, rid = fiche
     r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
-                     json={"contacts": [], "statut": ""})
+                     json={"contacts": {}, "statut": {}})
     assert r.status_code == 400, r.text
     blob = _blob(ns_id, rid)
     assert blob["contacts"] == ["a@exemple.invalid"] and blob["statut"] == "nouveau"
 
 
-# ── le cas ACCOMPAGNÉ : 104 appels par mois en dépendent ──────────────────────
+# ── le cas ACCOMPAGNÉ ─────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_la_fiche_ENTIERE_reemise_avec_un_vide_NE_LEFFACE_PAS(
+async def test_la_fiche_ENTIERE_reemise_avec_une_liste_vide_la_REMPLACE_et_le_dit(
         fiche, client, monkeypatch):
-    """LE test qui vaut 104 appels par mois (mesure du 01/09, 30 j).
-
-    Payload relevé en production : la fiche entière, où `contacts: []` veut dire
-    « l'enrichissement n'a rien trouvé ». Élargir l'effacement à cette forme
-    détruirait de la donnée cliente — c'est la moitié de l'arbitrage qui ne bouge pas.
+    """Payload relevé en production (01/09) : la fiche entière, où `contacts: []`
+    voulait dire « l'enrichissement n'a rien trouvé ». Depuis oto#140 J2, `[]` est une
+    valeur : il REMPLACE, risque accepté, et la valeur remplacée se dit dans
+    `valeurs_effacees` — c'est ce qui permet de la rétablir.
     """
     data_write = await _data_write(monkeypatch)
     ns, ns_id, rid = fiche
@@ -214,21 +224,19 @@ async def test_la_fiche_ENTIERE_reemise_avec_un_vide_NE_LEFFACE_PAS(
         "notes_verification": "registre consulté ; aucune page au nom de la structure",
     })
 
-    assert out["contacts"] == ["a@exemple.invalid"], out
-    assert out.get("valeurs_ignorees"), \
-        "préserver en silence serait le défaut de #608 retourné"
-    assert "null" in (out.get("valeurs_ignorees_hint") or ""), \
-        "le relevé nomme la porte, ici aussi"
-    assert "valeurs_effacees" not in out, "rien n'a été détruit ici"
+    assert out["contacts"] == [], out
+    assert [(e["champ"], e["valeur"]) for e in out["valeurs_effacees"]] == [
+        ("contacts", ["a@exemple.invalid"])], out
+    assert "valeurs_ignorees" not in out, out
     blob = _blob(ns_id, rid)
-    assert blob["contacts"] == ["a@exemple.invalid"]
+    assert blob["contacts"] == []
     assert blob["notes_verification"].startswith("registre consulté")
 
 
-def test_face_REST_la_fiche_reemise_NE_LEFFACE_PAS_non_plus(client, fiche):
+def test_face_REST_la_fiche_reemise_avec_un_objet_vide_NE_LEFFACE_PAS(client, fiche):
     ns, ns_id, rid = fiche
     r = client.patch(f"/api/datastores/{ns}/rows/{rid}", headers=_h(),
-                     json={"contacts": [], "statut": "traite"})
+                     json={"contacts": {}, "statut": "traite"})
     assert r.status_code == 200, r.text
     assert _blob(ns_id, rid)["contacts"] == ["a@exemple.invalid"], r.text
     assert r.json().get("valeurs_ignorees"), r.json()
@@ -261,10 +269,10 @@ def test_un_vide_sur_une_colonne_DEJA_vide_passe_et_ne_dit_rien(client, live):
     assert "valeurs_ignorees" not in r.json(), r.json()
 
 
-def test_un_LOT_qui_porte_la_cle_metier_est_une_REEMISSION_donc_preserve(live):
-    """Le lot dédouble par la clé : elle est TOUJOURS posée, donc une row de lot est
-    par construction une réémission — jamais une déclaration. C'est ce qui garantit
-    qu'un import de 500 lignes ne peut pas vider une colonne par un gabarit."""
+def test_un_LOT_qui_porte_la_cle_metier_ne_casse_pas_et_la_liste_vide_remplace(live):
+    """Le lot dédouble par la clé : elle est TOUJOURS posée, donc une row de lot pose
+    toujours quelque chose et ne tombe jamais sous #724. Depuis oto#140 J2, sa liste
+    vide REMPLACE, comme sur les autres chemins."""
     from oto_mcp import db
     from oto_mcp.datastore.core import make_store
 
@@ -275,5 +283,4 @@ def test_un_LOT_qui_porte_la_cle_metier_est_une_REEMISSION_donc_preserve(live):
     store.write_rows(ns, [{"siren": "552032534", "contacts": ["a@exemple.invalid"]}])
     out = store.write_rows(ns, [{"siren": "552032534", "contacts": []}])
     assert out["updated"] == 1, out
-    assert _blob(ns_id, out["ids"][0])["contacts"] == ["a@exemple.invalid"], \
-        "le lot préserve (#608) — la clé métier posée en fait une réémission"
+    assert _blob(ns_id, out["ids"][0])["contacts"] == []

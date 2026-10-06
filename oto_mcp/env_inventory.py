@@ -267,30 +267,11 @@ _REGLAGES: tuple[Variable, ...] = (
              "`report` la journalise et la laisse passer, `off` le coupe. Une valeur "
              "inconnue vaut `enforce`.",
              ("oto_mcp/verrou_org.py:92",)),
-    Variable("OTO_ORIGINE_REFUS_LE", Classe.REGLAGE, None,
-             "Déplace la date par défaut (`datastore/schema.py:ORIGINE_REFUS_LE`, "
-             "2026-10-01) à partir de laquelle poser la couche `origine` sans la "
-             "déclarer est refusé. Une valeur illisible LÈVE plutôt que de retomber "
-             "sur le défaut.",
-             ("oto_mcp/datastore/champs_reserves.py:127",)),
-    Variable("OTO_VIDE_REMPLACE_LE", Classe.REGLAGE, None,
-             "Déplace la date par défaut (`datastore/vide_remplace.py:VIDE_REMPLACE_LE`, "
-             "2026-10-06) à partir de laquelle `\"\"` et `[]` remplacent la valeur en "
-             "place (oto#140 J2). Une valeur illisible LÈVE plutôt que de retomber sur "
-             "le défaut.",
-             ("oto_mcp/datastore/vide_remplace.py:44",)),
     Variable("OTO_JOURNAL_REVISIONS", Classe.REGLAGE, "on",
              "Interrupteur du journal des révisions de ligne du datastore (oto#273) : "
              "`off` le coupe pour les écritures de CE processus, sans redéployer (un "
              "redémarrage suffit). Toute autre valeur que `on`/`off` LÈVE au boot.",
              ("oto_mcp/db/journal_revisions.py:70",)),
-    Variable("OTO_MOTS_DEPRECIES_REFUSES_LE", Classe.REGLAGE, None,
-             "Déplace la date par défaut "
-             "(`datastore/mots_deprecies.py:MOTS_DEPRECIES_REFUSES_LE`, 2026-10-08) à "
-             "partir de laquelle une écriture qui porte `@keep` ou `@clear` est refusée "
-             "(oto#140 J3). Une valeur illisible LÈVE plutôt que de retomber sur le "
-             "défaut.",
-             ("oto_mcp/datastore/mots_deprecies.py:54",)),
     Variable("OTO_UPSERT_IMPLICITE_REFUSE_LE", Classe.REGLAGE, None,
              "Déplace la date par défaut "
              "(`datastore/upsert_implicite.py:UPSERT_IMPLICITE_REFUSE_LE`, 2026-10-21) "

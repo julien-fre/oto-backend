@@ -11,8 +11,8 @@ il suit la règle commune.
 
 Rejouée sur 40 jours de journal, la garde aurait refusé 3 653 écritures (07/09), et un
 refus répété pousse une ligne vers l'abandon : **avertir d'abord, refuser à une date
-annoncée** — le mécanisme des autres bascules datées (`upsert_implicite`,
-`mots_deprecies`, `vide_remplace`), pas un de plus.
+annoncée** — le mécanisme des autres bascules datées (`upsert_implicite`), pas un
+de plus.
 
 - **Avant la date** : l'écriture passe, la colonne est créée, et la réponse porte dans
   `notices` UNE phrase par geste (union sur un lot) : les colonnes, la date, le geste.

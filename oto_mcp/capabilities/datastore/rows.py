@@ -1034,7 +1034,7 @@ CAPABILITIES += [
                      "`inserted`, `updated`, `count`, `ids` (un par ligne envoyée, "
                      "rang pour rang), `fusions` (les lignes qui ont fusionné), et "
                      "les relevés du geste cumulés sur le lot. Une écriture qui porte un mot refusé (`@keep`, "
-                     "`@clear`, après leur date) est refusée ENTIÈRE, rien n'est "
+                     "`@clear`) est refusée ENTIÈRE, rien n'est "
                      "écrit. ⚠️ Sinon le lot n'est PAS atomique : une ligne refusée "
                      "arrête le lot, les lignes d'avant restent écrites, et le refus "
                      "dit à quelle ligne reprendre. Pour un volume au-delà de "

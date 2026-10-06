@@ -139,9 +139,9 @@ def sans_les_origines_posees(payload: dict, releve: dict) -> dict:
 
     Les origines que ce geste vient de poser sont celles de la PLATEFORME, déclarées
     par `donnees_d_origine=true` : elles n'ont rien à faire dans le relevé des
-    origines écrites sans le dire (oto#70), qui avertit aujourd'hui et refusera dès la
-    date. Sans ce retrait, un ré-import sur une ligne existante était averti — puis
-    serait refusé — pour avoir fait exactement ce qu'il déclarait."""
+    origines écrites sans le dire (oto#70), qui refuse. Sans ce retrait, un ré-import
+    sur une ligne existante serait refusé pour avoir fait exactement ce qu'il
+    déclarait."""
     posees = set(releve["posees"])
     return {k: v for k, v in payload.items() if k not in posees}
 

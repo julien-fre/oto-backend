@@ -1,4 +1,4 @@
-"""Les champs que l'appelant N'ÉCRIT PAS — le cran de schéma et son préavis (#586, #606).
+"""Les champs que l'appelant N'ÉCRIT PAS — le cran de schéma et l'origine déclarée (#586, #606).
 
 Deux crans, une seule garde (`reserved_refusals`), et ils répondent à la même question
 dans le même ordre : *à qui appartient cette destination ?*
@@ -13,15 +13,12 @@ dans le même ordre : *à qui appartient cette destination ?*
   ⚠️ Le cran `origine: "system"` qui la POSAIT automatiquement a été SUPPRIMÉ le
   08/09/2026 (`declaration.system_origin_fields` rend `set()`) : plus rien ne capture
   de lui-même. L'origine se pose désormais par `donnees_d_origine`, sur l'appel qui
-  apporte la donnée. Le refus d'écrire la couche, lui, reste — daté au 01/10/2026 ;
+  apporte la donnée. Écrire la couche soi-même SANS LE DÉCLARER (`origine_override`)
+  est refusé (oto#70) ;
 - `agent_access` — délégué à `acces_agent.py`, dont ce module appelle les refus.
 
-La seconde moitié du fichier est un PRÉAVIS DATÉ, pas une règle : le paramètre
-`origine_override` reste accepté jusqu'à `ORIGINE_REFUS_LE`, avec avertissement, puis
-il est refusé. Tout ce qui l'entoure — la date lue de l'environnement (`date_refus`),
-sa forme française, la description servie à l'agent, les deux gestes de remplacement —
-existe pour que la bascule soit un seul chiffre à changer, et pour qu'un agent qui
-lit l'outil sache AVANT le refus ce qui va se passer.
+Il tient aussi les deux outils PARTAGÉS par les bascules datées du datastore
+(`date_reglee`, `jour_utc`, et la date en français `_en_francais`).
 
 Ce qu'il ne tient pas :
 - **le palier qui décide qui peut forcer** → `core.DatastorePg._forcage_readonly` ;
@@ -62,32 +59,6 @@ from .formule import colonnes_formule
 #: le paramètre suffit, et sa présence engage celui qui l'envoie.
 PARAMETRE_ORIGINE = "origine_override"
 
-#: La date à partir de laquelle une écriture d'origine NON DÉCLARÉE est refusée.
-#:
-#: ⚠️ **Elle vit ici, dans le code, et c'est délibéré** — le contraire de ce que ce
-#: commentaire disait au barreau 1. Une date qui n'existerait que dans l'env d'une box
-#: se lit « prochainement » partout où personne ne l'a posée : le produit annoncerait
-#: une échéance floue et n'en tiendrait aucune, et l'écart ne se verrait nulle part.
-#: Ici, ce que le tronc ANNONCE est exactement ce qu'il REFUSERA, sans dépendre d'un
-#: geste sur une machine.
-#:
-#: Le réglage ci-dessous la DÉPLACE sans déploiement (`YYYY-MM-DD`), ce qui était la
-#: vraie exigence : la fenêtre bougera si un écrivain se manifeste.
-#:
-#: Pourquoi le 1er octobre 2026 (arbitré le 05/09/2026, et contestable comme tel) : les
-#: écritures concernées vont de sept à cinquante-deux lignes par semaine et MONTENT, il
-#: faut donc couvrir plusieurs cycles hebdomadaires entiers — vingt-six jours en
-#: couvrent trois — et le lecteur de l'avertissement est un agent, qui peut s'adapter
-#: dès sa première lecture.
-ORIGINE_REFUS_LE = _date(2026, 10, 1)
-
-#: Déplace la date sans déployer. Format `YYYY-MM-DD` — la seule forme non ambiguë, et
-#: le texte français servi en est DÉRIVÉ : deux réglages (« la date affichée » et « la
-#: date qui refuse ») divergeraient, et c'est l'affichage qui aurait tort.
-#: ⚠️ Une valeur illisible LÈVE, elle ne retombe pas sur le défaut : un préavis dont la
-#: date est muette annoncerait une échéance que rien n'applique.
-ENV_ORIGINE_REFUS_LE = "OTO_ORIGINE_REFUS_LE"
-
 _MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
             "août", "septembre", "octobre", "novembre", "décembre")
 
@@ -95,9 +66,9 @@ _MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
 def date_reglee(reglage: str, brut: Optional[str], defaut: "_date") -> "_date":
     """La date d'une BASCULE en vigueur : `brut` (la valeur du réglage `reglage`) s'il
     est posé, le défaut du code sinon. Partagée par toutes les bascules datées du
-    datastore (l'origine ici, `vide_remplace` et `mots_deprecies` pour oto#140) : une
-    seule façon de lire, une seule façon de lever. Chaque appelant lit LUI-MÊME son
-    réglage (`os.environ.get(ENV_…)`), pour que l'inventaire des variables le voie.
+    datastore : une seule façon de lire, une seule façon de lever. Chaque appelant lit
+    LUI-MÊME son réglage (`os.environ.get(ENV_…)`), pour que l'inventaire des variables
+    le voie.
 
     ⚠️ Une valeur illisible LÈVE : le réglage décide à la fois de ce qui est ANNONCÉ
     et de ce qui est APPLIQUÉ, et le lire de travers ferait promettre une échéance
@@ -120,19 +91,6 @@ def jour_utc() -> "_date":
     doit tomber au même instant sur toutes les box, et le fuseau d'une machine n'est
     pas un fait de produit."""
     return _datetime.now(_timezone.utc).date()
-
-
-def date_refus() -> "_date":
-    """La date en vigueur : le réglage s'il est posé, le défaut du code sinon."""
-    import os
-
-    return date_reglee(ENV_ORIGINE_REFUS_LE, os.environ.get(ENV_ORIGINE_REFUS_LE),
-                       ORIGINE_REFUS_LE)
-
-
-def date_refus_fr() -> str:
-    """La date en vigueur, telle qu'on l'écrit dans un texte servi."""
-    return _en_francais(date_refus())
 
 
 def description_parametre_origine(en: bool = False) -> str:
@@ -159,13 +117,10 @@ def description_parametre_origine(en: bool = False) -> str:
     face MCP décriraient sinon le même paramètre en deux termes, et l'écart se lirait
     comme deux paramètres différents.
 
-    Évaluée à l'appel, pas figée à l'import : la date peut être déplacée par le réglage
-    et la description doit dire celle qui refuse.
-
     `en` = la face MCP, dont les descriptions d'outils sont en anglais. MÊME fonction
-    et non deux textes indépendants : le nom du paramètre et la date sortent d'une
-    seule source, et c'est sur ces deux-là qu'un écart se paierait — une description
-    qui nommerait un autre paramètre, ou une autre date, que celle qui refuse.
+    et non deux textes indépendants : le nom du paramètre sort d'une seule source, et
+    c'est là qu'un écart se paierait — une description qui nommerait un autre
+    paramètre que celui qui lève le refus.
 
     ⚠️ La face MCP ne peut pas COMPOSER sa description : `@mcp.tool()` lit la
     docstring littérale du handler, et la remplacer par `description=` emporterait
@@ -175,9 +130,9 @@ def description_parametre_origine(en: bool = False) -> str:
     if en:
         return (f"`{PARAMETRE_ORIGINE}=true` states that this call sets the "
                 f"`origine` layer (the value at the START, at import time) "
-                f"knowingly. Without it, writing an origin is refused from "
-                f"{date_refus()} on. ⚠️ Nothing captures an origin automatically any "
-                f"more: `origine: \"system\"` was REMOVED on 2026-09-08, so writing "
+                f"knowingly. Without it, writing an origin is refused. ⚠️ Nothing "
+                f"captures an origin automatically any more: `origine: \"system\"` "
+                f"was REMOVED on 2026-09-08, so writing "
                 f"the value alone keeps nothing — an overwrite is final. For a real "
                 f"IMPORT, prefer `donnees_d_origine=true`, which writes both versions "
                 f"— the current value and the origin — in the same gesture, at the "
@@ -187,7 +142,7 @@ def description_parametre_origine(en: bool = False) -> str:
                 f"the absence of the layer says so, never a text in its place.")
     return (f"`{PARAMETRE_ORIGINE}=true` déclare que cet appel pose la couche "
             f"`origine` (la valeur du DÉPART, à l'import) en le sachant. Sans lui, une "
-            f"écriture d'origine est refusée à partir du {date_refus_fr()}. "
+            f"écriture d'origine est refusée. "
             f"⚠️ Plus rien ne capture une origine automatiquement : "
             f"`origine: \"system\"` a été SUPPRIMÉ le 08/09/2026, donc écrire la "
             f"valeur seule ne garde rien — un écrasement est définitif. Pour un vrai "
@@ -200,26 +155,14 @@ def description_parametre_origine(en: bool = False) -> str:
 
 
 def _en_francais(quand: "_date") -> str:
-    """La date telle qu'une personne la lit. DÉRIVÉE de la date qui refuse — un texte
-    saisi à côté d'elle finirait par annoncer un autre jour que celui qui coupe."""
+    """La date telle qu'une personne la lit — DÉRIVÉE de la date d'une bascule : un
+    texte saisi à côté d'elle finirait par annoncer un autre jour que celui qui coupe."""
     jour = "1er" if quand.day == 1 else str(quand.day)
     return f"{jour} {_MOIS_FR[quand.month - 1]} {quand.year}"
 
 
-def refus_arme(aujourdhui: Optional["_date"] = None) -> bool:
-    """Le refus est-il tombé ? — `aujourdhui` en UTC, pas au fuseau du process : la
-    bascule doit tomber au même instant sur toutes les box, et le fuseau d'une machine
-    n'est pas un fait de produit."""
-    return (aujourdhui or jour_utc()) >= date_refus()
-
-
-def _les_deux_gestes(colonnes: list, maintenant: bool = False) -> str:
-    """Les deux issues, côte à côte — le CORPS que l'avertissement et le refus
-    partagent.
-
-    ⚠️ Partagé, pas recopié : le refus doit dire exactement ce que l'avertissement
-    disait, sinon celui qui s'est préparé pendant le préavis découvre au moment du
-    refus qu'on lui demandait autre chose.
+def _les_deux_gestes(colonnes: list) -> str:
+    """Les deux issues, côte à côte — le CORPS du refus.
 
     ⚠️ **Les DEUX, toujours.** Celui qui n'a pas besoin d'écrire l'origine ne doit pas
     ajouter un paramètre pour rien, et celui qui en a besoin ne doit pas réécrire son
@@ -241,13 +184,18 @@ def _les_deux_gestes(colonnes: list, maintenant: bool = False) -> str:
     garde neuve qui ferme un geste répandu doit dire par quoi le remplacer.
 
     ⚠️ Les deux gestes restent DEUX : la phrase ajoutée ne décrit pas un troisième geste
-    sur l'origine, elle renvoie une AUTRE intention vers une autre couche."""
-    quand = ", dès maintenant" if maintenant else ""
+    sur l'origine, elle renvoie une AUTRE intention vers une autre couche.
+
+    ⚠️ « l'origine est conservée, et posée par la plateforme quand elle manque » a été
+    retiré : rien ne la pose d'office depuis le 08/09/2026. Pour un import, c'est
+    `donnees_d_origine=true` qui la pose, et le texte le nomme."""
     col = str(colonnes[0]) if colonnes else "<colonne>"
     return (
-        f"Deux gestes, l'un ou l'autre{quand} : si vous n'avez pas besoin d'écrire "
-        "l'origine, écrivez la valeur seule (l'origine est conservée, et posée par la "
-        "plateforme quand elle manque) ; si votre import doit vraiment la poser, "
+        "Deux gestes, l'un ou l'autre : si vous n'avez pas besoin d'écrire l'origine, "
+        "écrivez la valeur seule (l'origine en place n'est pas touchée) — pour un "
+        "import, `donnees_d_origine: true` pose l'origine à votre place, copie de la "
+        "valeur remise, là où aucune n'est posée ; si votre import doit vraiment "
+        "l'écrire lui-même, "
         f"ajoutez `{PARAMETRE_ORIGINE}: true` à cet appel — ou, si vous chargez un "
         f"fichier par URL signée, à l'appel qui a CRÉÉ l'URL (`oto_upload_url`), le PUT "
         "ne portant aucun paramètre. Rien à demander à personne : ce paramètre déclare "
@@ -259,31 +207,8 @@ def _les_deux_gestes(colonnes: list, maintenant: bool = False) -> str:
         f"valeur du DÉPART, à l'import.")
 
 
-def avertissement_origine(colonnes: list) -> str:
-    """La phrase servie à qui pose une origine sans le déclarer, AVANT la date.
-
-    ⚠️ Elle VOUVOIE et nomme le geste exact : c'est une personne qui décidera d'agir
-    dessus, et un avertissement qui ne dit pas quoi faire à la place ne fait que gêner.
-    Servie par le SERVEUR — l'écran comme l'agent la rendent telle quelle.
-
-    ⚠️ **Elle est la SEULE annonce.** Décision d'Alexis (05/09/2026) : aucun client ne
-    sera prévenu par un envoi. Personne ne recevra de courriel, personne ne lira de note
-    de version — ce texte-ci, répété à chaque écriture, est tout ce que l'écrivain aura.
-
-    ⚠️ Premier temps d'un préavis en DEUX temps (oto#70 lot 2). Ce premier temps est
-    aussi l'INSTRUMENT — le journal d'appels ne porte pas les couches (clés de premier
-    niveau seulement, arguments tronqués), donc seuls les écrivains peuvent nous dire
-    combien ils sont."""
-    quoi = ", ".join(f"`{c}`" for c in colonnes)
-    return (
-        f"Cette écriture pose la couche `origine` de {quoi}. L'origine est la valeur du "
-        f"départ, à l'import : la poser SANS LE DIRE sera refusé à partir du "
-        f"{_en_francais(date_refus())}. Écrire l'origine reste possible — ce qui change, "
-        f"c'est qu'il faudra le déclarer. {_les_deux_gestes(colonnes, maintenant=True)}")
-
-
 def refus_origine(colonnes: list) -> str:
-    """Le refus, une fois la date passée. MÊME corps que l'avertissement.
+    """Le refus d'une origine posée sans la déclarer (oto#70).
 
     ⚠️ Il ne renvoie vers personne, et c'est le fond de la décision : il n'y a pas de
     droit à obtenir, donc pas de tiers à qui écrire. Un refus qui enverrait demander
@@ -292,27 +217,25 @@ def refus_origine(colonnes: list) -> str:
     quoi = ", ".join(f"`{c}`" for c in colonnes)
     return (
         f"Cette écriture pose la couche `origine` de {quoi} sans la déclarer — rien n'a "
-        f"été écrit. L'origine est la valeur du départ, à l'import : depuis le "
-        f"{_en_francais(date_refus())}, la poser exige de le dire. Écrire l'origine "
-        f"reste possible. {_les_deux_gestes(colonnes)}")
+        f"été écrit. L'origine est la valeur du départ, à l'import : la poser exige "
+        f"de le dire. Écrire l'origine reste possible. {_les_deux_gestes(colonnes)}")
 
 
 def origine_posee(payload: Optional[dict], avant: Optional[dict] = None) -> list[str]:
     """Les colonnes dont CET appel pose ou modifie la couche `origine`.
 
-    Sert l'avertissement du premier temps (oto#70 lot 2) : le journal d'appels ne peut
-    pas dire qui écrit une couche — `arg_keys` ne garde que le premier niveau, et la
-    fiche d'un appel tronque les arguments. Ce sont donc les écritures elles-mêmes qui
-    doivent se signaler.
+    Sert le refus et le relevé d'oto#70 : le journal d'appels ne peut pas dire qui
+    écrit une couche — `arg_keys` ne garde que le premier niveau, et la fiche d'un
+    appel tronque les arguments. Ce sont donc les écritures elles-mêmes qui doivent
+    se signaler.
 
     ⚠️ **Une origine réécrite À L'IDENTIQUE ne compte pas.** Relire une ligne puis la
-    repousser telle quelle est un geste banal, et le compter ferait crier l'avertissement
-    sur des appels qui ne changent rien — un avertissement qu'on reçoit toujours cesse
-    d'être lu, et c'est justement l'instrument qu'on essaie de fabriquer.
+    repousser telle quelle est un geste banal, et le compter ferait refuser des appels
+    qui ne changent rien.
 
     ⚠️ Indépendante du format déclaré : elle regarde ce que l'APPELANT écrit, pas ce que
     la colonne autorise. Sur une colonne déclarée, `reserved_refusals` refuse déjà — cette
-    liste-ci sert les autres, celles où l'écriture passe aujourd'hui sans un mot.
+    liste-ci sert les autres.
     """
     out: list[str] = []
     for cle, neuf in (payload or {}).items():
@@ -353,8 +276,8 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
       création, la valeur écrite. Égale → acceptée, c'est un no-op (le geste dominant
       du terrain : `{"valeur": <identique>, "origine": <la même>}`).
       ⚠️ Ce refus ne dépend PLUS d'un cran de schéma : `origine: "system"` est supprimé
-      depuis le 08/09/2026, la règle vaut pour toute colonne — et elle est datée au
-      01/10/2026 (`ORIGINE_REFUS_LE`), levable par `origine_override` ;
+      depuis le 08/09/2026, la règle vaut pour toute colonne, levable par
+      `origine_override` (jugée par `controles._relever_origine_module`) ;
     - `readonly: true` — le payload NOMME la valeur (nue, `null`, ou `{"valeur": …}`)
       d'une case qui a une VALEUR POSÉE (`valeur_posee`) ET elle CHANGE → refus.
       `readonly` veut dire « ne se modifie plus une fois posé », pas « ne s'écrit plus

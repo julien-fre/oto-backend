@@ -135,10 +135,6 @@ class DatastorePg(SchemaOpsMixin, RegistreMixin, LectureMixin, EcritureMixin,
                  allowed_ns_ids: Optional[set] = None, read_only: bool = False):
         self.sub = sub
         self.acting_org = acting_org
-        # Les colonnes dont CET appel a posé la couche `origine` (oto#70 lot 2) : le
-        # store est instancié par requête, donc ce set est celui d'un seul appel — et
-        # un lot qui écrit vingt lignes n'avertit qu'une fois par colonne.
-        self._origine_posee: set = set()
         # oto#164 : ce qu'un geste `donnees_d_origine=true` a posé et sauté, cumulé
         # sur le geste (`donnees_d_origine.relever`) — `{colonne: lignes}` pour les
         # posées, `{raison: {colonne: lignes}}` pour les sautées, et les phrases

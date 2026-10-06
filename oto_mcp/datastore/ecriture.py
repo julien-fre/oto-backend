@@ -39,7 +39,6 @@ from .errors import RowNotFound, RowValidationError
 from . import mots_deprecies as mdp
 from . import jetons
 from . import upsert_implicite as upi
-from . import vide_remplace as vr
 from . import reliques as rq
 from .forcage import Forcage
 from .outils import _new_id, _now_iso, _refus_de_creation
@@ -135,10 +134,9 @@ class EcritureMixin:
         user_data, objets_vides = sans_les_objets_vides(
             user_data, lambda: self._donnees_de_la_ligne_visee(ns_id, schema, user_data))
         self.off_rejected.extend(objets_vides)
-        # oto#140 : `@keep` et `@clear` — avertis jusqu'à leur date, REFUSÉS à partir
-        # d'elle (J3), dit à l'instant où l'appelant les emploie, le seul moment
-        # actionnable.
-        mdp.controler(self.off_notices, user_data, rangs.brut if rangs else None)
+        # oto#140 : `@keep` et `@clear` sont REFUSÉS, dit à l'instant où l'appelant
+        # les emploie, le seul moment actionnable.
+        mdp.controler(user_data, rangs.brut if rangs else None)
         _refuse_dotted_names(user_data)
         refuser_cles_internes(user_data)
         refuser_les_mots_mal_places(schema, user_data)
@@ -323,8 +321,8 @@ class EcritureMixin:
                      else {**user_data, **rangs.appliquer(current, schema)})
             # Arbitrage AVANT la fusion : après, l'ancienne valeur n'existe plus
             # nulle part. Il rend d'un coup ce que l'écriture pose VRAIMENT (les
-            # vides non-`null` qui auraient déplacé une valeur en sont retirés,
-            # #608) et les deux relevés. Posés sur le store seulement une fois la
+            # `{}` qui aurait déplacé une valeur en est retiré, #608) et les deux
+            # relevés. Posés sur le store seulement une fois la
             # validation passée — un refus n'a rien effacé, l'annoncer ferait
             # chercher un dégât imaginaire.
             # `donnees_d_origine` : l'appel apporte la donnée telle qu'elle a été
@@ -352,10 +350,7 @@ class EcritureMixin:
             # qui garantit qu'un LOT ne casse jamais dessus. Il y est quand même :
             # les deux chemins d'écriture ont déjà divergé une fois sur cette famille
             # de règles (#322), ils partagent la fonction, pas seulement l'intention.
-            # oto#140 J2 : ce vide écarté REMPLACERA la valeur à une date annoncée — dit
-            # dans la réponse comme dans le refus.
-            annonce = vr.annonce(ecrit, ecartes)
-            refuser_geste_sans_effet(pose, ecartes, annonce)
+            refuser_geste_sans_effet(pose, ecartes)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
@@ -390,8 +385,6 @@ class EcritureMixin:
                             lot=lot, ecrits_par_rang=rangs.ecrits if rangs else None)
             self.off_erased.extend(vidages)
             self.off_ignored.extend(ecartes)
-            if annonce:
-                self.off_notices.add(annonce)
             if releve is not None:
                 ddo.relever(self, releve)
             return merged

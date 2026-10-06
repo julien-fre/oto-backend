@@ -195,7 +195,7 @@ def test_MCP_refuse_une_forme_inconnue_en_la_nommant(outils, tableau, acteur, ou
     assert "empties" in str(e.value) and "sentinel" in str(e.value)
 
 
-# ── l'écriture : `@empty` émet, `@clear` efface, la relecture referme ────────
+# ── l'écriture : `@empty` émet, la relecture referme ─────────────────────────
 #
 # Les lignes naissent ici par le GESTE (`POST` avec `@empty`), plus par une pose à la main :
 # c'est l'émission que ce lot livre, et ce banc la tient sur chaque chemin.
@@ -253,13 +253,13 @@ def test_creation_POST_sans_cle_pose_le_marqueur_jamais_le_litteral(client, base
     cree = _poster(client, ns, {
         "raison": "ACME", "fonction": "@empty",
         "contacts": [{"nom": "Alice", "fonction": "@empty"},
-                     {"nom": "Bruno", "fonction": "DAF", "note": "@clear"}]})
+                     {"nom": "Bruno", "fonction": "DAF", "note": ""}]})
     stockee = _stockee(ns_id, cree["_id"])
     assert stockee["fonction"] == MARQUEE
     assert stockee["contacts"] == [{"nom": "Alice", "fonction": MARQUEE},
                                    {"nom": "Bruno", "fonction": "DAF", "note": ""}]
     brut = json.dumps(stockee)
-    assert "@empty" not in brut and "@clear" not in brut, "un mot stocké comme texte"
+    assert "@empty" not in brut, "un mot stocké comme texte"
     _aucune_fuite(cree)
 
 
@@ -313,7 +313,7 @@ def test_liste_a_cle_element_nouveau_resolu_et_keep_refuse_sans_rien_ecrire(clie
     rid = _poster(client, ns, {"raison": "ACME", "fonction": "DG",
                                "contacts": [{"role": "rh", "fonction": "DRH"}]})["_id"]
     r = _patcher(client, ns, rid, {"contacts": [
-        {"role": "rh", "fonction": "DRH", "note": "@clear"},
+        {"role": "rh", "fonction": "DRH", "note": ""},
         {"role": "paie", "fonction": "@empty"}]})
     assert r.status_code == 200, r.text
     assert _stockee(ns_id, rid)["contacts"] == [{"role": "rh", "fonction": "DRH", "note": ""},
@@ -321,16 +321,16 @@ def test_liste_a_cle_element_nouveau_resolu_et_keep_refuse_sans_rien_ecrire(clie
     avant = _intacte(ns_id, rid)
     refus = _patcher(client, ns, rid, {"contacts": [{"role": "achats", "fonction": "@keep"}]})
     assert refus.status_code == 400 and refus.json()["error"] == "row_invalid", refus.text
-    assert "contacts[0].fonction" in refus.text
+    assert "`@keep` (`contacts`)" in refus.text      # retiré : refusé à l'entrée
     assert _intacte(ns_id, rid) == avant
 
 
 @pytest.mark.parametrize("corps, chemin", [
     ({"contacts": [{"role": "@empty", "fonction": "x"}]}, "contacts[0].role"),
-    ({"contacts": [{"role": {"valeur": "@clear"}, "fonction": "x"}]}, "contacts[0].role"),
-    ({"tags": ["a", "@clear"]}, "tags[1]"),
-    ({"adresse": {"rue": "@keep"}}, "adresse.rue"),
-], ids=["identite_empty", "identite_clear", "liste_de_valeurs", "sous_champ_objet"])
+    ({"contacts": [{"role": {"valeur": "@empty"}, "fonction": "x"}]}, "contacts[0].role"),
+    ({"tags": ["a", "@empty"]}, "tags[1]"),
+    ({"adresse": {"rue": "@empty"}}, "adresse.rue"),
+], ids=["identite_empty", "identite_empty_en_couches", "liste_de_valeurs", "sous_champ_objet"])
 def test_un_mot_hors_d_une_case_est_refuse_en_400_sans_rien_creer(client, base, corps, chemin):
     from oto_mcp import db
     ns, ns_id = _table(SCHEMA_CLE)
@@ -429,72 +429,29 @@ def test_aucune_fuite_au_defaut_ni_sur_la_page_publique(client, base, monkeypatc
     assert "@empty" not in html and "vide_assume" not in html
 
 
-# ── `@clear` : effacer SANS assumer ──────────────────────────────────────────
+# ── `@clear` et `@keep` : retirés, refusés à l'entrée (oto#140 J3) ──────────
 
-def test_clear_efface_une_vraie_valeur_sans_marqueur_et_le_dit(client, base):
-    ns, ns_id = _table()
-    rid = _poster(client, ns, ALICE)["_id"]
-    r = _patcher(client, ns, rid, {"raison": "@clear"})
-    assert r.status_code == 200, r.text
-    assert _stockee(ns_id, rid)["raison"] == ""
-    assert [e["champ"] for e in r.json()["valeurs_effacees"]] == ["raison"]
-
-
-def test_clear_demarque_une_case_marquee_sans_relever_de_perte(client, base):
-    ns, ns_id = _table()
-    rid = _poster(client, ns, ALICE)["_id"]
-    corps = _corps(_lire(client, ns, rid, empties="sentinel"))
-    corps["contacts"][1]["note"] = "@clear"
-    r = _patcher(client, ns, rid, corps)
-    assert r.status_code == 200, r.text
-    assert _stockee(ns_id, rid)["contacts"][1] == {"nom": "Bruno", "fonction": "DAF", "note": ""}
-    assert "couches_effacees" not in r.json(), "effacer sans assumer est le geste, pas une perte"
-
-
-@pytest.mark.parametrize("corps, chemin", [
-    ({"fonction": "@clear"}, "fonction"),
-    ({"fonction": {"valeur": "@clear"}}, "fonction"),
-    ({"contacts": [{"nom": "Alice", "fonction": {"valeur": "@clear"}}]}, "contacts[0].fonction"),
-], ids=["premier_niveau", "premier_niveau_en_couches", "element_de_liste"])
-def test_clear_sur_un_requis_est_refuse_atomiquement(client, base, corps, chemin):
+@pytest.mark.parametrize("corps", [
+    {"raison": "@clear"},
+    {"fonction": {"comment": "@clear"}},
+    {"raison": {"valeur": "ACME2", "comment": "@keep"}},
+    {"contacts": [{"nom": "Alice", "fonction": "@keep"}]},
+], ids=["valeur", "couche", "couche_keep", "element_de_liste"])
+def test_clear_et_keep_sont_refuses_sans_rien_ecrire(client, base, corps):
     ns, ns_id = _table()
     rid = _poster(client, ns, ALICE)["_id"]
     avant = _intacte(ns_id, rid)
     r = _patcher(client, ns, rid, corps)
     assert r.status_code == 400 and r.json()["error"] == "row_invalid", r.text
-    assert chemin in r.text
+    assert "ne sont pas acceptés" in r.text
     assert _intacte(ns_id, rid) == avant
-
-
-def test_clear_a_la_creation_POST(client, base):
-    ns, ns_id = _table()
-    cree = _poster(client, ns, {"raison": "@clear", "fonction": "DG", "contacts": []})
-    assert _stockee(ns_id, cree["_id"])["raison"] == ""
     r = client.post(f"/api/datastores/{ns}/rows", headers=_h(),
-                    json={"raison": "ACME", "fonction": "@clear", "contacts": []})
+                    json={"fonction": "DG", "contacts": [], **corps})
     assert r.status_code == 400 and r.json()["error"] == "row_invalid", r.text
-    assert "fonction" in r.text
 
 
-def test_clear_dans_une_couche_ne_retire_que_la_couche(client, base):
-    ns, ns_id = _table()
-    rid = _poster(client, ns, {"raison": "ACME", "contacts": [],
-                               "fonction": {"valeur": "@empty", "comment": "aucune source"}})["_id"]
-    assert _patcher(client, ns, rid, {"fonction": {"comment": "@clear"}}).status_code == 200
-    assert _stockee(ns_id, rid)["fonction"] == {"valeur": "", "comment": "", MARQUEUR: True}
-
-
-def test_un_comment_keep_reste_protege_sous_clear(client, base):
-    ns, ns_id = _table()
-    rid = _poster(client, ns, {"fonction": "DG", "contacts": [], "raison": {
-        "valeur": "ACME", "comment": "registre", "link": "https://exemple.test/r"}})["_id"]
-    r = _patcher(client, ns, rid, {"raison": {"valeur": "@clear", "comment": "@keep"}})
-    assert r.status_code == 200, r.text
-    assert _stockee(ns_id, rid)["raison"] == {"valeur": "", "comment": "registre"}
-
-
-@pytest.mark.parametrize("mot", ["@clear", "@empty"])
-def test_un_effacement_sur_une_relique_est_refuse_pour_clear_comme_pour_empty(client, base, mot):
+@pytest.mark.parametrize("mot", ["@empty"])
+def test_un_effacement_sur_une_relique_est_refuse_pour_empty(client, base, mot):
     ns, ns_id = _table()
     rid = _poster(client, ns, {"raison": "ACME", "fonction": "DG", "contacts": []})["_id"]
     _poser_a_la_main(ns_id, rid, {**_stockee(ns_id, rid),

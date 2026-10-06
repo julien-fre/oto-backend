@@ -22,7 +22,6 @@ from typing import Any, Callable, Optional
 
 from . import couches as dsl
 from . import schema as dsv2
-from . import vide_remplace as vr
 from .declaration import COMPOSITE_TYPES, champ_declare, cle_d_element
 from .errors import RowValidationError
 
@@ -464,13 +463,16 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
 # `""` depuis des mois n'a rien demandé (8 897 cellules vides mesurées en production
 # le 28/08, sur 59 tableaux — les refuser rétroactivement casserait 59 clients).
 #
-# ══ oto#140 J2 (arbitré le 23/09/2026) : `""` ET `[]` REDEVIENNENT DES VALEURS ═══
+# ══ oto#140 J2 (arbitré le 23/09/2026) : `""` ET `[]` SONT DES VALEURS ═══════════
 #
 # Le contrat à deux gestes (`null` efface, `@empty` dit « cherché, rien ») retire cette
-# garde pour `""` et `[]`, risque des gabarits à demi remplis accepté : à partir de
-# `vide_remplace.date_de_bascule()`, ils remplacent la valeur en place et la valeur
-# remplacée revient dans `valeurs_effacees`. La bascule est jugée à l'écriture, pas au
-# déploiement. `{}` reste écarté : ce n'est pas une valeur (oto#165).
+# garde pour `""` et `[]`, risque des gabarits à demi remplis accepté : ils remplacent
+# la valeur en place, et la valeur remplacée revient dans `valeurs_effacees`. Seul `{}`
+# reste écarté : ce n'est pas une valeur (oto#165).
+
+#: Le seul vide non-`null` que l'arbitrage écarte sur une valeur en place — nommé dans
+#: le relevé `valeurs_ignorees` et dans le refus #724.
+_VIDE_ECARTE = "objet vide `{}`, qui n'est pas une valeur"
 
 # Deux bornes, pour qu'un relevé reste lisible par un agent : le nombre
 # d'effacements nommés, et la taille d'une valeur rendue. Au-delà, on dit la TAILLE
@@ -534,7 +536,7 @@ def sans_les_nulls_sans_effet(user_data: Optional[dict],
 
     ⚠️ **Un vide ASSUMÉ (`@empty`) est une valeur en place** (oto#140, J2) : sa valeur
     est `""`, mais son marqueur dit « cherché, rien ». Un `null` dessus l'efface, marqueur
-    compris, comme sur toute autre case — c'est le geste qui remplace `@clear`, déprécié.
+    compris, comme sur toute autre case — c'est le geste qui remplace `@clear`, refusé.
     Écarté, il laissait `@clear` seul à pouvoir démarquer une case.
 
     `en_place` rend les données de la ligne visée (`{}` pour une création) et n'est
@@ -589,7 +591,7 @@ def sans_les_objets_vides(user_data: Optional[dict],
     écriture en couches garde ce qui accompagne sa valeur (`{"valeur": {}, "comment":
     …}` → `{"comment": …}`), comme pour un `null` sans effet.
 
-    ⚠️ **Sur une case VIDE seulement.** Sur une valeur en place, `{}` est déjà un vide
+    ⚠️ **Sur une case VIDE seulement.** Sur une valeur en place, `{}` est le vide
     non-`null` que l'arbitrage écarte et relève (#608, `valeurs_ignorees`) — ou refuse
     quand il est tout le geste (#724). Ce filtre ne change rien à ce chemin-là.
 
@@ -706,13 +708,11 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     ⚠️ Ce parcours ne décide QUE de la valeur : le sort du GESTE — quand il n'a plus
     rien à poser — se juge après, sur ses trois sorties (`refuser_geste_sans_effet`).
 
-    ⚠️ **Bascule datée (oto#140 J2)** : à partir de `vide_remplace.date_de_bascule()`,
-    `""` et `[]` sur une valeur en place la REMPLACENT (relevés comme effacement) ; seul
-    `{}` est encore écarté."""
+    ⚠️ **`""` et `[]` sont des valeurs (oto#140 J2)** : sur une valeur en place, ils la
+    REMPLACENT (relevés comme effacement) ; seul `{}` est écarté."""
     pose: dict = {}
     effaces: list[dict] = []
     ignores: list[dict] = []
-    bascule: Optional[bool] = None       # oto#140 J2, jugée au premier vide seulement
     for cle, neuf in (user_data or {}).items():
         touche, posee = _valeur_posee(neuf)
         if cle in _META_COLS or not touche:
@@ -739,16 +739,13 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
             effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
             pose[cle] = neuf
             continue
-        if bascule is None:
-            bascule = vr.bascule_faite()
-        if bascule and vr.vide_valeur(posee):
+        if not isinstance(posee, dict):
             # oto#140 J2 : `""` et `[]` sont des valeurs — ils remplacent, et la valeur
             # remplacée se dit comme sous un `null`.
             effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
             pose[cle] = neuf
             continue
-        # Vide non-`null` sur une valeur en place : la valeur survit (#608) — depuis
-        # la bascule J2, seul `{}` arrive encore ici.
+        # `{}` sur une valeur en place : ce n'est pas une valeur, la valeur survit (#608).
         ignores.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
         reste = _sans_la_valeur(neuf)
         if reste is not None:
@@ -756,12 +753,12 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     return pose, effaces, ignores
 
 
-def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list,
-                             annonce: Optional[str] = None) -> None:
+def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
     """REFUSE une écriture qui, après arbitrage, ne pose plus RIEN (#724).
 
-    #608 préserve une valeur en place contre un vide non-`null` et le DIT
-    (`valeurs_ignorees`). Il reste un cas où le dire ne suffit pas : quand l'écarté
+    #608 préserve une valeur en place contre un `{}` (depuis oto#140 J2, `""` et `[]`
+    sont des valeurs et remplacent) et le DIT (`valeurs_ignorees`). Il reste un cas où
+    le dire ne suffit pas : quand l'écarté
     était **tout** ce que l'écriture portait. L'appel n'a alors aucun effet et répond
     `200` — un succès qui n'a rien fait, dont le seul témoin est une clé de la réponse.
 
@@ -783,10 +780,6 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list,
     inchangée. Conséquence structurelle : une row de LOT porte toujours sa clé métier,
     donc elle pose — un import de 500 lignes ne peut pas casser ici. Chiffres, fenêtre
     et réserves : `docs/datastore.md`.
-
-    `annonce` : le préavis daté de la bascule (`vide_remplace.annonce`, oto#140 J2) — à
-    partir de sa date, ce même geste REMPLACERA la valeur. Le refus le porte, comme la
-    réponse d'une écriture qui passe.
     """
     if not ecartes:
         return                       # rien n'a été écarté : rien à refuser
@@ -797,14 +790,13 @@ def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list,
     porte = ", ".join(f'"{c}": null' for c in champs)
     raise ValueError(
         f"écriture sans effet : {cite} porte une valeur VIDE non-`null` "
-        f"({vr.vides_ecartables()}) sur une valeur déjà en place, et ton écriture ne "
+        f"({_VIDE_ECARTE}) sur une valeur déjà en place, et ton écriture ne "
         "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
         "succès. Un tel vide ne déplace pas une valeur : c'est ce que rend "
         "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
         f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour dire « cherché, "
         f"rien », écris `{dsl.VIDE_DELIBERE}`, la raison dans `comment`. Pour laisser "
-        "la valeur intacte, retire ce champ de ton corps."
-        + (f" {annonce}" if annonce else ""))
+        "la valeur intacte, retire ce champ de ton corps.")
 
 
 def _valeur_rendue(valeur: Any) -> Any:
@@ -837,10 +829,8 @@ def effacements_report(records: list) -> dict:
     Les confondre ferait prescrire l'un pour l'autre — un aller-retour dépensé pour
     rien, exactement ce que la famille de relevés existe pour éviter.
 
-    ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici — jusqu'à la bascule
-    oto#140 J2, à partir de laquelle `""` et `[]` remplacent aussi : la phrase ne les
-    cite qu'une fois la date passée, sous peine de prescrire avant elle un geste qui
-    est REFUSÉ quand il est seul et ignoré quand il accompagne (#724)."""
+    `null` n'est pas le seul vide qui arrive ici : `""` et `[]` sont des valeurs et
+    remplacent aussi (oto#140 J2) — la phrase le dit."""
     out: dict = {}
     valeurs = [r for r in records or [] if "couche" not in r]
     if valeurs:
@@ -849,10 +839,9 @@ def effacements_report(records: list) -> dict:
                 "aussi, en disant « cherché, rien ») — ce n'est "
                 "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
                 "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
-                "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base.")
-        if vr.bascule_faite():
-            hint += (" `\"\"` et `[]` sont des valeurs : eux aussi REMPLACENT la valeur "
-                     "en place, qui figure alors ci-dessus.")
+                "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base. "
+                "`\"\"` et `[]` sont des valeurs : eux aussi REMPLACENT la valeur en "
+                "place, qui figure alors ci-dessus.")
         if reste:
             hint += f" {len(valeurs)} effacements au total, {len(nommes)} nommés ici."
         out["valeurs_effacees"] = nommes
@@ -964,7 +953,7 @@ def ignores_report(records: list) -> dict:
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = (f"une valeur VIDE non-`null` ({vr.vides_ecartables()}) ne "
+    hint = (f"une valeur VIDE non-`null` ({_VIDE_ECARTE}) ne "
             "remplace pas une valeur déjà en place : c'est ce que rend une source "
             "muette ou un gabarit à demi peuplé, pas une demande d'effacement. Les "
             "valeurs ci-dessus sont INTACTES en base — il n'y a rien à rétablir. "
@@ -1078,7 +1067,7 @@ def _merge_items(avant: Any, nouveaux: list, cle: str,
              f"{', '.join('`' + r + '`' for r in refus)} — aucun élément en place ne porte "
              f"cette valeur de `{cle}`, il n'y a rien à garder. Rien n'a été écrit. Écris "
              f"le contenu, `{dsl.VIDE_DELIBERE}` pour « cherché, rien », ou omets le "
-             f"sous-champ. `{dsl.GARDE}` est déprécié : il sera refusé partout."])
+             f"sous-champ. `{dsl.GARDE}` n'est pas accepté."])
     return out
 
 
@@ -1162,7 +1151,7 @@ def _sentinelles_dans_les_items(nouveaux: Any, chemin: str) -> Any:
              f"celui-ci. Deux issues : déclarer `of.key` au schéma de `{chemin}` (le "
              "nom d'un CRÉNEAU stable — `contact_rh`, jamais un nom de personne), et "
              f"la fusion se fera élément par élément ; ou renvoyer le contenu au lieu "
-             f"de `{dsl.GARDE}`, qui est déprécié. `{dsl.VIDE_DELIBERE}` (« cherché, "
+             f"de `{dsl.GARDE}`, qui n'est pas accepté. `{dsl.VIDE_DELIBERE}` (« cherché, "
              "rien ») fonctionne ici — il ne demande aucun passé."])
     return out
 

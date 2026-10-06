@@ -111,9 +111,8 @@ from .hors_schema import (
     couche_mal_ecrite, enveloppe_probable, off_schema_refusal,
 )
 from .champs_reserves import (
-    PARAMETRE_ORIGINE, ORIGINE_REFUS_LE, ENV_ORIGINE_REFUS_LE, _MOIS_FR, date_refus,
-    date_refus_fr, description_parametre_origine, _en_francais, refus_arme,
-    _les_deux_gestes, avertissement_origine, refus_origine, origine_posee,
+    PARAMETRE_ORIGINE, _MOIS_FR, description_parametre_origine, _en_francais,
+    _les_deux_gestes, refus_origine, origine_posee,
     reserved_refusals, _origine_attendue,
 )
 from .definition import (

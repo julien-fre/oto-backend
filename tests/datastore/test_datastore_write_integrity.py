@@ -248,26 +248,26 @@ def test_le_lot_refuse_dit_ce_quil_a_deja_ecrit(table):
 # manquant ») et OUI à la fusion (elle écrase). Deux réponses contradictoires sur la
 # même donnée, dans le même appel.
 
-def test_la_chaine_vide_du_lot_nefface_pas(table):
-    """LE défaut de #608 : la chaîne vide d'un gabarit détruisait la valeur en place.
-
-    Une source qui ne rend rien pour un champ ne dit pas « oublie ce que tu savais » :
-    elle ne dit rien. Le geste qui vide reste disponible, il est explicite (`null`)."""
+def test_l_objet_vide_du_lot_nefface_pas(table):
+    """LE défaut de #608, sur le seul vide qui n'est pas une valeur : `{}` (oto#165).
+    Depuis oto#140 J2, `""` et `[]` sont des valeurs et remplacent
+    (`test_regle_finale_j2_j3.py`) ; `{}`, lui, ne détruit rien. Le geste qui vide
+    reste explicite (`null`)."""
     st, ns, ns_id, rid = table
 
-    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": ""}], key="siren")
+    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": {}}], key="siren")
 
     assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client", \
         "un lot d'enrichissement dont une source est muette ne détruit rien"
 
 
-def test_la_chaine_vide_ignoree_le_dit(table):
+def test_l_objet_vide_ignore_le_dit(table):
     """Le silence dans l'AUTRE sens serait le même défaut retourné : un appelant qui
     voulait vraiment vider doit apprendre que son geste n'a rien fait, et par quoi le
     remplacer. On n'empêche pas sans le dire — même patron que `valeurs_effacees`."""
     st, ns, ns_id, rid = table
 
-    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": ""}], key="siren")
+    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": {}}], key="siren")
     releve = st.off_schema_report()
 
     ignores = releve.get("valeurs_ignorees")
@@ -290,7 +290,7 @@ def test_la_chaine_vide_sur_un_champ_deja_vide_ne_dit_rien(table):
     assert "valeurs_ignorees" not in st.off_schema_report()
 
 
-def test_la_chaine_vide_SEULE_par_id_est_REFUSEE_en_nommant_la_porte(table):
+def test_l_objet_vide_SEUL_par_id_est_REFUSE_en_nommant_la_porte(table):
     """L'autre chemin d'écriture. Les deux ont déjà divergé une fois sur cette
     famille de règles (#322), et c'est le patch par `id` qui est le geste le plus
     courant d'un agent : une règle câblée d'un seul côté ne protège personne.
@@ -303,7 +303,7 @@ def test_la_chaine_vide_SEULE_par_id_est_REFUSEE_en_nommant_la_porte(table):
     st, ns, ns_id, rid = table
 
     with pytest.raises(ValueError) as exc:
-        st.update_row(ns, rid, {"origine_ligne": ""})
+        st.update_row(ns, rid, {"origine_ligne": {}})
 
     assert "origine_ligne" in str(exc.value), exc.value
     assert '"origine_ligne": null' in str(exc.value), \
@@ -312,7 +312,7 @@ def test_la_chaine_vide_SEULE_par_id_est_REFUSEE_en_nommant_la_porte(table):
         "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
 
 
-def test_la_chaine_vide_ACCOMPAGNEE_est_preservee_et_relevee_par_id_aussi(table):
+def test_l_objet_vide_ACCOMPAGNE_est_preserve_et_releve_par_id_aussi(table):
     """LE test qui porte #608 sur ce chemin, et il vaut 104 appels par mois.
 
     Dès que l'écriture pose autre chose, c'est un gabarit à demi peuplé — le geste
@@ -321,7 +321,7 @@ def test_la_chaine_vide_ACCOMPAGNEE_est_preservee_et_relevee_par_id_aussi(table)
     (#724) à cette forme détruirait 104 valeurs clientes par mois."""
     st, ns, ns_id, rid = table
 
-    st.update_row(ns, rid, {"origine_ligne": "", "raison_sociale": "ACME"})
+    st.update_row(ns, rid, {"origine_ligne": {}, "raison_sociale": "ACME"})
 
     assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client"
     assert _donnees(ns_id, rid).get("raison_sociale") == "ACME"
@@ -337,7 +337,8 @@ def test_la_valeur_vide_ecartee_nemporte_pas_lorigine_quelle_accompagne(table):
     par la porte de derrière."""
     st, ns, ns_id, rid = table
 
-    st.update_row(ns, rid, {"origine_ligne": {"valeur": "", "origine": "apollo"}}, origine_override=True)
+    st.update_row(ns, rid, {"origine_ligne": {"valeur": {}, "origine": "apollo"}},
+                  origine_override=True)
 
     apres = _donnees(ns_id, rid)
     assert apres.get("origine_ligne") == {"valeur": "fichier-client",

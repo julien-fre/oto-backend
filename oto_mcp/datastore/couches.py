@@ -100,8 +100,8 @@ VALUE_BOUND_LAYERS = tuple(k for k in LAYER_KEYS if k != ORIGIN_LAYER)
 GARDE = "@keep"
 VIDE_DELIBERE = "@empty"
 #: oto#204 : vider SANS assumer — la valeur part, le vide assumé éventuel avec elle.
-#: ⚠️ Déprécié avec `@keep` (oto#140, 23/09/2026) : `null` efface et reste, ces deux
-#: mots seront refusés à la date de `mots_deprecies.MOTS_DEPRECIES_REFUSES_LE`.
+#: ⚠️ Retiré avec `@keep` (oto#140, 23/09/2026) : `null` efface et reste, ces deux
+#: mots sont refusés à l'entrée de toute écriture (`mots_deprecies.controler`).
 EFFACEMENT = "@clear"
 
 #: Tout le vocabulaire, pour un test d'appartenance lisible. Ce que fait chacun vit dans

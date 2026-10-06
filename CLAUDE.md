@@ -139,9 +139,8 @@ base n'a pas bougé, CONSERVE et signale une base éditée — défauts servis p
   préavis daté d'ici là) ; **on juge ce que le geste ÉCRIT**, jamais ce que la ligne porte ; `unknown_columns`
   refusé, retiré du stocké par `scripts/retirer_unknown_columns.py` APRÈS la date · ⚠️ **écrire la couche
   `origine` se DÉCLARE**
-  (`origine_override=true`, les deux faces + au mint d'un upload signé) : à partir du **1er octobre 2026** la poser
-  sans le dire est refusé — ce n'est pas un droit à obtenir, la date vit dans le code et `OTO_ORIGINE_REFUS_LE` la
-  déplace · ⚠️ **une colonne peut EXIGER sa provenance** (`required_layers: ["comment"]`, oto#75) : la valeur non
+  (`origine_override=true`, les deux faces + au mint d'un upload signé) : la poser sans le dire est refusé — ce
+  n'est pas un droit à obtenir · ⚠️ **une colonne peut EXIGER sa provenance** (`required_layers: ["comment"]`, oto#75) : la valeur non
   vide ne s'écrit pas sans la couche, sur les deux faces — capacité livrée, **aucun tableau n'exige de couche**
   (quatre la déclarent VIDE, ce qui n'exige rien et **reste accepté à la pose**) · ⚠️ **un tableau s'adresse par son
   NUMÉRO** (`ns_id`) : le nom résout encore jusqu'au 08/11/2026 et chaque réponse obtenue par lui le dit, mais les remises (réservation, écriture,

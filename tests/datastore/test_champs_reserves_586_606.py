@@ -147,10 +147,11 @@ def test_annoter_sans_toucher_la_valeur_PASSE(banc):
                                               "comment": "registre — 20 B AV. HUGO"}
 
 
-def test_un_vide_non_null_est_ecarte_AVANT_le_cran(banc):
-    """`""` sur une valeur en place ne déplace rien (#608) : rien à refuser."""
+def test_un_objet_vide_est_ecarte_AVANT_le_cran(banc):
+    """`{}` sur une valeur en place ne déplace rien (#608, oto#165) : rien à refuser.
+    (`""`, lui, est une valeur depuis oto#140 J2 : il CHANGE la valeur, le cran juge.)"""
     st, etat = banc
-    st.update_row("viviers", "r1", {"adresse": "", "libre": "x"})
+    st.update_row("viviers", "r1", {"adresse": {}, "libre": "x"})
     assert etat["lignes"]["r1"]["adresse"] == "1 rue A"
     assert st.off_schema_report()["valeurs_ignorees"][0]["champ"] == "adresse"
 

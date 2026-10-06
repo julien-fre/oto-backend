@@ -1,71 +1,38 @@
-"""Le vide est une valeur (oto#140, jalon J2) — le préavis daté, et `null` qui démarque.
+"""Le vide est une valeur (oto#140, jalon J2) — et `null` qui démarque.
 
-Deux moitiés :
-
-- **le préavis** : `""` / `[]` sur une valeur en place est encore écarté (#608), ou refusé
-  quand il est tout le geste (#724) ; rien ne change à l'écriture, mais la réponse — et le
-  refus — annoncent la date à partir de laquelle ce vide REMPLACERA la valeur ;
-- **`null` retire le vide assumé** : `@clear` sera refusé, `null` doit donc effacer une case
+- **le vide remplace** : `""` / `[]` sur une valeur en place la REMPLACE, sur les trois
+  chemins (cf. `test_regle_finale_j2_j3.py`), et plus aucune annonce datée n'est servie ;
+- **`null` retire le vide assumé** : `@clear` est refusé, `null` efface donc une case
   marquée `@empty`, marqueur compris. Un `null` sur une case vraiment vide reste sans effet
   (oto#182).
 """
 from __future__ import annotations
 
-import inspect
 import pathlib
 import uuid
 
 import pytest
 
 from oto_mcp.datastore import couches as dsl
-from oto_mcp.datastore import vide_remplace as vr
-from oto_mcp.datastore.champs_reserves import _en_francais
-from oto_mcp.datastore.columns import refuser_geste_sans_effet, sans_les_nulls_sans_effet
+from oto_mcp.datastore.columns import sans_les_nulls_sans_effet
 
-QUAND = _en_francais(vr.VIDE_REMPLACE_LE)
 MARQUEE = {"valeur": "", dsl.VIDE_ASSUME: True}
 _SCHEMA = {"fields": [{"key": k, "type": "text"} for k in ("raison", "fonction")]}
 
 
 # ── le texte, sans base ──────────────────────────────────────────────────────
 
-def test_la_date_est_le_6_octobre_et_le_texte_en_derive():
-    assert vr.VIDE_REMPLACE_LE.isoformat() == "2026-10-06"
-    t = vr.avertissement(["contacts", "site_web"])
-    assert QUAND == "6 octobre 2026" and f"À partir du {QUAND}" in t
-    assert "`\"\"` / `[]` REMPLACERA la valeur en place de `contacts`, `site_web`" in t
-    assert "pour la garder, omets la colonne" in t
-    assert vr.avertissement([]) is None
+def test_le_guide_dit_la_regle_au_present():
+    guide = (pathlib.Path(__file__).parents[2]
+             / "oto_mcp/guides/datastore-semantics.md").read_text()
+    assert "6 octobre 2026" not in guide and "8 octobre 2026" not in guide
+    assert "ils REMPLACENT la valeur en place**" in guide
 
 
-def test_seuls_chaine_et_liste_vides_sont_annonces():
-    ecartes = [{"champ": c} for c in ("a", "b", "c", "d")]
-    corps = {"a": "", "b": {"valeur": [], "origine": "x"}, "c": {}, "d": {"valeur": {}}}
-    assert vr.colonnes_annoncees(corps, ecartes) == ["a", "b"]
-    assert vr.annonce(corps, []) is None
+def test_le_module_du_preavis_est_retire():
+    import importlib.util
 
-
-def test_le_refus_sans_effet_porte_l_annonce():
-    annonce = vr.avertissement(["contacts"])
-    with pytest.raises(ValueError, match="écriture sans effet") as e:
-        refuser_geste_sans_effet({}, [{"champ": "contacts"}], annonce)
-    assert f"À partir du {QUAND}" in str(e.value) and '"contacts": null' in str(e.value)
-
-
-def test_la_description_de_data_write_et_le_guide_annoncent_la_date():
-    from oto_mcp.tools import datastore as tools_ds
-
-    assert vr.VIDE_REMPLACE_LE.isoformat() in vr.description_ecriture()
-    assert "<<vide_remplace>>" in inspect.getsource(tools_ds), "la date est recopiée"
-    guide = pathlib.Path(__file__).parents[2] / "oto_mcp/guides/datastore-semantics.md"
-    assert f"à partir du {QUAND}" in guide.read_text()
-
-
-def test_l_annonce_est_posee_sur_les_deux_chemins_de_fusion():
-    from oto_mcp.datastore import ecriture, ecriture_par_id
-
-    for mod in (ecriture, ecriture_par_id):
-        assert "vr.annonce(" in inspect.getsource(mod), mod.__name__
+    assert importlib.util.find_spec("oto_mcp.datastore.vide_remplace") is None
 
 
 # ── `null` sur un vide assumé, la règle ──────────────────────────────────────
@@ -101,53 +68,6 @@ def _table():
 def _data(ns_id, rid):
     from oto_mcp import db
     return db.datastore_get_row(ns_id, rid)["data"]
-
-
-def _annonces(st):
-    return [n for n in st.off_notices if f"À partir du {QUAND}" in n]
-
-
-def test_patch_par_id_le_vide_est_ecarte_et_la_bascule_annoncee(live):
-    st, ns, ns_id = _table()
-    rid = st.append_row(ns, {"siren": "1", "site_web": "a.fr", "tags": ["x"]})["_id"]
-    st.off_notices.clear()
-
-    st.update_row(ns, rid, {"raison": "ACME", "site_web": "", "tags": []})
-
-    assert _data(ns_id, rid)["site_web"] == "a.fr" and _data(ns_id, rid)["tags"] == ["x"]
-    (annonce,) = _annonces(st)
-    assert "`site_web`, `tags`" in annonce
-
-
-def test_fusion_et_lot_annoncent_aussi(live):
-    st, ns, ns_id = _table()
-    rid = st.append_row(ns, {"siren": "2", "site_web": "b.fr"})["_id"]
-    st.off_notices.clear()
-    st.append_row(ns, {"siren": "2", "raison": "BETA", "site_web": ""})
-    assert _data(ns_id, rid)["site_web"] == "b.fr"
-    assert any("`site_web`" in n for n in _annonces(st)), st.off_notices
-
-    st.off_notices.clear()
-    st.write_rows(ns, [{"siren": "2", "raison": "BETA2", "site_web": ""}], key="siren")
-    assert _data(ns_id, rid)["site_web"] == "b.fr"
-    assert any("`site_web`" in n for n in _annonces(st)), st.off_notices
-
-
-def test_un_vide_seul_est_refuse_avec_l_annonce(live):
-    st, ns, ns_id = _table()
-    rid = st.append_row(ns, {"siren": "3", "site_web": "c.fr"})["_id"]
-    with pytest.raises(ValueError, match="écriture sans effet") as e:
-        st.update_row(ns, rid, {"site_web": ""})
-    assert f"À partir du {QUAND}" in str(e.value)
-    assert _data(ns_id, rid)["site_web"] == "c.fr"
-
-
-def test_rien_d_annonce_sans_valeur_en_place(live):
-    st, ns, ns_id = _table()
-    rid = st.append_row(ns, {"siren": "4", "raison": "D"})["_id"]
-    st.off_notices.clear()
-    st.update_row(ns, rid, {"site_web": "", "raison": "D2"})
-    assert not _annonces(st), st.off_notices
 
 
 @pytest.mark.parametrize("chemin", ["par_id", "fusion", "lot"])

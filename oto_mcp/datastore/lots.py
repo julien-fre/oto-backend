@@ -96,9 +96,8 @@ class LotsMixin:
         forcage = self._forcage_readonly(
             ns_id, schema, readonly_override or bool(force), force)
         # oto#140 : `@keep` et `@clear` sur le chemin des imports aussi — jugés sur le
-        # lot ENTIER avant la première ligne : l'avertissement en une phrase et non
-        # cinq cents, et le refus daté (J3) sans moitié de lot déjà écrite.
-        mdp.controler(self.off_notices, *(r for r in rows if isinstance(r, dict)))
+        # lot ENTIER avant la première ligne : le refus sans moitié de lot déjà écrite.
+        mdp.controler(*(r for r in rows if isinstance(r, dict)))
         # oto#124 : une colonne non déclarée, à partir de sa date — le lot ENTIER est
         # jugé ici, avant sa première ligne. Avant la date, rien : chaque ligne relève
         # ses colonnes au passage (`_check_row`), dites en une phrase.
@@ -136,7 +135,7 @@ class LotsMixin:
                 self._reject_misplaced_id(data, None, batch=True)
                 user_data = {k: v for k, v in data.items() if k not in _META_COLS}
                 # oto#22 : l'écriture PAR RANG, sortie avant toute garde (cf.
-                # `append_row`). Les mots dépréciés de ses valeurs ont été jugés sur le
+                # `append_row`). Les mots refusés de ses valeurs ont été jugés sur le
                 # lot ENTIER, plus haut, clés de rang comprises.
                 user_data, rangs = rg.sortir_les_rangs(schema, user_data)
                 if rangs is not None:
