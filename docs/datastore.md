@@ -2339,7 +2339,7 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `db/datastore.py` | les LIGNES : CRUD + clé métier/index |
 | `datastore/errors.py` | les refus — **aucune dépendance**, importable de partout |
 | `datastore/columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
-| `datastore/rangs.py` | l'écriture PAR RANG d'une colonne-liste (`contacts[0].email`, `contacts[+]`, `contacts[0]: null`) : grammaire, refus, gardes à l'élément, résolution contre la ligne en place (oto#22) |
+| `datastore/rangs.py` | l'écriture PAR RANG d'une colonne-liste (`contacts[0].email`, `contacts[+]`, `contacts[0]: null`) et l'ajout de lignes à une colonne texte (`journal[+]`) : grammaire, refus, gardes à l'élément, résolution contre la ligne en place (oto#22) |
 | `datastore/reserves.py` | les champs que l'appelant n'écrit pas : refuser, et poser l'origine à sa place (#586/#606) |
 | `datastore/claimable.py` | le périmètre de réservation déclaré (`lifecycle.claimable`, #517) : décision, clauses du pick, refus, phrase — **n'importe le moteur qu'à l'appel** |
 | `datastore/schema.py` | **une FAÇADE, plus un corps** : elle ré-exporte les douze modules ci-dessous et rien d'autre. Une cinquantaine de sites importent `datastore.schema` — ce contrat les tient tous |
@@ -3766,3 +3766,24 @@ sur 25 de ces 382 (options 295 lignes / 16 tableaux, forme 411 / 12, sous-record
   (`reglages.colonnes_inconnues`/`format_contraignant`), le relevé `hors_schema`, le cran
   `reject` et `non_applique.options_not_enforced` sont du code mort, à retirer.
 
+## Ajouter une ligne à une cellule texte sans la relire (06/10/2026)
+
+**Le défaut.** Une colonne `text` ne s'écrivait qu'entière : pour ajouter une ligne à
+un journal tenu dans une cellule, l'agent relisait et réémettait jusqu'à 25 000
+caractères, et deux écritures concurrentes perdaient un ajout. Une perte de données a
+eu lieu (signaux d'usage 929, 1158 et leurs doublons).
+
+**Le contrat retenu : le même verbe `[+]`** (`datastore/rangs.py`). Sur une colonne
+déclarée `text` — ou, non déclarée, qui porte déjà du texte — `journal[+]` ajoute en fin
+de cellule, chaque morceau sur sa ligne (`\n`) ; une liste ajoute plusieurs lignes ;
+une cellule vide prend l'ajout tel quel. Pas de second verbe ni de séparateur au
+choix : `[+]` est déjà l'ajout servi sur toutes les faces, et une ligne est l'unité
+d'un journal. La résolution se fait dans `EcrituresParRang.appliquer`, sous le
+`FOR UPDATE` de la ligne, contre la valeur en place : deux ajouts simultanés arrivent
+tous les deux. Le texte résultant suit la fusion et la validation d'une colonne
+entière (`max_length`, `pattern`, mots réservés refusés), et le journal porte l'avant
+et l'après. Refusés et nommés : `[+]` sur une colonne ni liste ni texte, un morceau
+qui n'est pas une chaîne, une chaîne vide, un rang ou un retrait sur un texte. Une
+colonne non déclarée et vide garde l'ajout d'élément de liste, comme avant.
+Le banc : `tests/datastore/test_ajout_texte_live.py` (store, REST, MCP ; patch, lot,
+création, concurrence).

@@ -19,6 +19,8 @@ servie rend pour ses couches (`item["email.comment"]`). Une forme imbriquée
     contacts[0]: null            l'élément de rang 0 SUPPRIMÉ
     tags[-]                      une valeur RETIRÉE, ou une liste de valeurs
                                  (liste de valeurs seulement, oto#102)
+    journal[+]                   du TEXTE ajouté en fin d'une colonne texte, sur
+                                 une nouvelle ligne — ou une liste de lignes
 
 Un attribut s'écrit comme une colonne : valeur nue, `{"valeur": …, "comment": …}`,
 `null` (efface l'attribut), `@empty`. Il se FUSIONNE dans l'élément en place par la
@@ -49,6 +51,18 @@ avec les DEUX — sans `expected_revision`, sans réservation.
   absents) et se retire à son rang. Une valeur ABSENTE se refuse, comme un rang hors
   bornes : le plus souvent une faute de frappe, ou un autre geste passé avant — rien
   n'est écrit, et le refus dit ce qui manque.
+
+## L'ajout à une colonne TEXTE
+
+`journal[+]` sur une colonne déclarée `text` — ou, non déclarée, qui porte déjà du
+texte — ajoute en fin de cellule, chaque morceau sur sa ligne (`\n` entre l'existant et
+l'ajout, et entre deux morceaux d'une liste) ; une cellule vide prend l'ajout tel quel.
+Même résolution que l'ajout dans une liste : sous le verrou de la ligne, contre la
+valeur en place, donc deux ajouts simultanés arrivent tous les deux, sans réémettre
+une cellule de 25 000 caractères. Le texte résultant passe la validation de la colonne
+(`max_length`, `pattern`) comme une écriture entière. Seul `[+]` s'y applique : ni
+rang, ni retrait — un texte n'a pas d'éléments. Un journal tenu à plusieurs vit mieux
+dans une TABLE, une ligne par passage ; la cellule allongée reste un pis-aller.
 
 ## Ce qui est refusé, et vers quoi on oriente
 
@@ -98,6 +112,8 @@ _RANG = re.compile(r"^(?:\d+|[+-]|)$|=")
 
 AJOUT = "+"
 RETRAIT = "-"
+#: Entre le texte en place et ce que `col[+]` lui ajoute, et entre deux morceaux.
+SEPARATEUR_DE_LIGNE = "\n"
 
 
 def _refus(message: str) -> RowValidationError:
@@ -179,7 +195,11 @@ class EcrituresParRang:
         out: dict = {}
         self.ecrits = {}
         for col in self.colonnes.values():
-            avant = _liste_en_place(col.nom, (en_place or {}).get(col.nom), creation)
+            cellule = (en_place or {}).get(col.nom)
+            if _ajout_de_texte(champ_declare(schema, col.nom), cellule, col):
+                out[col.nom] = _ajouter_le_texte(col, cellule)
+                continue
+            avant = _liste_en_place(col.nom, cellule, creation)
             cle_item = cle_d_element(champ_declare(schema, col.nom))
             vises = sorted(set(col.modifs) | col.suppressions)
             if vises and vises[-1] >= len(avant):
@@ -280,6 +300,14 @@ def _refuser_la_forme(cle: str, nom: str, rang: str, attribut: Optional[str],
                       valeur: Any, schema: Optional[dict]) -> None:
     champ = champ_declare(schema, nom)
     if champ is not None and champ.get("type") != "list":
+        if champ.get("type") == "text" and rang == AJOUT and attribut is None:
+            _refuser_le_texte(cle, nom, valeur)
+            return
+        if rang == AJOUT:
+            raise _refus(
+                f"`{cle}` ajoute à `{nom}`, déclarée `{champ.get('type')}` : `[+]` "
+                f"n'ajoute qu'à une colonne-liste (un élément) ou texte (une ligne). "
+                f"Écris `{nom}` entière.")
         raise _refus(
             f"`{cle}` vise un rang de `{nom}`, déclarée `{champ.get('type')}` : seule une "
             f"colonne-liste (`type: list`) s'adresse par rang. Écris `{nom}` entière.")
@@ -322,6 +350,47 @@ def _refuser_la_forme(cle: str, nom: str, rang: str, attribut: Optional[str],
             f"`{cle}` descend sous l'attribut `{tete}` : un attribut d'élément s'écrit "
             f"entier — `{nom}[{int(rang)}].{tete}` —, ou par l'une de ses couches "
             f"({', '.join('`' + c + '`' for c in dsv2.LAYER_KEYS)}).")
+
+
+def _refuser_le_texte(cle: str, nom: str, valeur: Any) -> None:
+    """`journal[+]` sur une colonne texte : une chaîne, ou une liste de chaînes."""
+    _refuser_le_vide(cle, nom, valeur,
+                     "ajoute du texte en fin de cellule — une chaîne, ou une liste de "
+                     "chaînes, chacune sur sa ligne")
+    morceaux = valeur if isinstance(valeur, list) else [valeur]
+    if not all(isinstance(x, str) for x in morceaux):
+        raise _refus(
+            f"`{cle}` ajoute du TEXTE à `{nom}` : une chaîne, ou une liste de chaînes ; "
+            f"reçu {_forme(next(x for x in morceaux if not isinstance(x, str)))}. Pour "
+            f"poser une autre forme, écris `{nom}` entière.")
+    if any(x == "" for x in morceaux):
+        raise _refus(
+            f"`{cle}` : une chaîne vide n'ajoute rien à `{nom}`. Pour l'effacer : "
+            f"`\"{nom}\": null`.")
+
+
+def _ajout_de_texte(champ: Optional[dict], cellule: Any, col: _Colonne) -> bool:
+    """Le geste est-il un ajout à une colonne TEXTE ? Déclarée `text` ; non déclarée,
+    seulement si elle porte déjà du texte — sur une case vide, `[+]` reste l'ajout
+    d'élément d'une liste, comme avant. Un rang ou un retrait n'en est jamais un : un
+    texte n'a pas d'éléments, et `_liste_en_place` le refuse en le disant."""
+    if col.modifs or col.suppressions or col.retraits:
+        return False
+    if champ is not None:
+        return champ.get("type") == "text"
+    return isinstance(_existing_layers(cellule).get(dsv2.VALUE_LAYER), str)
+
+
+def _ajouter_le_texte(col: _Colonne, cellule: Any) -> str:
+    """Le texte en place, puis chaque morceau ajouté, sur sa ligne."""
+    _refuser_le_texte(f"{col.nom}[{AJOUT}]", col.nom,
+                      col.ajouts if len(col.ajouts) != 1 else col.ajouts[0])
+    avant = _existing_layers(cellule).get(dsv2.VALUE_LAYER)
+    if avant is not None and not isinstance(avant, str):
+        raise _refus(
+            f"`{col.nom}` porte une valeur qui n'est pas du texte ({_forme(avant)}) : "
+            f"`{col.nom}[+]` n'y ajoute pas de ligne. Écris `{col.nom}` entière.")
+    return SEPARATEUR_DE_LIGNE.join(([avant] if avant else []) + list(col.ajouts))
 
 
 def _refuser_le_retrait(cle: str, nom: str, attribut: Optional[str], valeur: Any,

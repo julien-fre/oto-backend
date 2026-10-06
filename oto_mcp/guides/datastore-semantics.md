@@ -99,6 +99,7 @@ l'adresse que tu lis — la même que dans `filters` et `group_by`.
 | supprimer un élément | `{"contacts[0]": null}` |
 | ajouter SANS relire, un ou plusieurs éléments | `{"tags[+]": ["relance", "chaud"]}` — dans l'ordre, doublons gardés |
 | retirer SANS relire, par valeur | `{"tags[-]": "chaud"}` ou une liste — toutes les occurrences |
+| ajouter une ligne à une colonne TEXTE, sans la relire | `{"journal[+]": "06/10 relance faite"}` — ou une liste de lignes |
 
 L'attribut suit la règle d'une colonne (§3) : `comment`/`link` tombent avec une valeur
 qui change, l'origine reste, les autres attributs et les autres éléments ne bougent pas.
@@ -113,6 +114,13 @@ arrivent TOUS LES DEUX — c'est le geste d'un journal tenu à plusieurs. Ordre 
 appel : les rangs, puis les retraits, puis les ajouts. Le retrait ne vise qu'une liste
 de VALEURS (une fiche se retire à son rang) ; une valeur absente est refusée, rien
 n'est écrit. Pour compter : `group_by: "tags[]"` (un groupe par valeur).
+
+Sur une colonne `text`, `[+]` ajoute en fin de cellule, sur une nouvelle ligne, sous le
+même verrou : pas besoin de renvoyer un texte de 25 000 caractères pour y ajouter une
+ligne, et deux ajouts simultanés arrivent tous les deux. Le texte obtenu respecte
+`max_length`. Mais un journal tenu à plusieurs vit mieux dans une TABLE, une ligne par
+passage : il se filtre, se compte et se lit par morceaux ; la cellule allongée reste un
+pis-aller.
 
 Refusé, avec la forme qui marche : un rang qui n'existe pas (« `contacts` a 2 éléments ;
 rang 5 inexistant ; pour ajouter : `contacts[+]` »), `{"contacts[0]": {…}}` (écris ses

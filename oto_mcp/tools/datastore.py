@@ -1011,7 +1011,9 @@ def register(mcp: FastMCP) -> None:
         appends one element or a list of them, in order, duplicates kept;
         `{"tags[-]": ["x"]}` removes every occurrence of each value (plain values
         only — a record is removed at its rank; an absent value is refused). Both are
-        applied under the row lock: two concurrent appends both land.
+        applied under the row lock: two concurrent appends both land. On a `text`
+        column, `{"journal[+]": "…"}` appends a line to the cell (a list = several
+        lines) without resending it; a log kept by many is better as a table.
         Refused, with the form that works: a rank that does not exist (append with
         `contacts[+]`), `contacts[0]: {…}` (write its fields), `contacts[].x`, and the
         whole column together with one of its ranks.
