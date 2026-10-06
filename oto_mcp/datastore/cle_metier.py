@@ -2,8 +2,8 @@
 ce qu'on dit quand l'index refuse malgré tout.
 
 L'index `ds_bkey_<ns>` est PARTIEL sur `IS NOT NULL` (`db.datastore_ensure_key_index`) :
-une clé ABSENTE n'y entre pas, mais une clé VIDE — `""`, et ce que `@empty` ou `@clear`
-posent à la création — y entre comme n'importe quelle valeur. Deux lignes « sans clé »
+une clé ABSENTE n'y entre pas, mais une clé VIDE — `""`, et ce que `@empty` pose à la
+création — y entre comme n'importe quelle valeur. Deux lignes « sans clé »
 écrites ainsi portent donc la même valeur `""` pour l'index.
 
 Mesuré par le signal feedback 994 : deux lignes `@empty` sur la clé déclarée, la seconde
@@ -27,8 +27,8 @@ from .columns import mots_resolus_a_la_creation
 
 
 def refuser_cle_metier_vide(schema: Optional[dict], user_data: dict) -> None:
-    """Refuse le geste qui écrit la clé métier DÉCLARÉE à vide — `""`, `@empty`,
-    `@clear`, nus ou en couche `valeur`. Une clé absente (ou `null`) passe : elle
+    """Refuse le geste qui écrit la clé métier DÉCLARÉE à vide — `""` ou `@empty`, nus
+    ou en couche `valeur`. Une clé absente (ou `null`) passe : elle
     n'entre pas dans l'index, et la ligne naît non rapprochable, ce qui est DIT
     ailleurs (`off_non_rapprochables`).
 

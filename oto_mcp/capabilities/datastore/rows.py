@@ -796,8 +796,8 @@ def _write_rows(ctx: ResolvedCtx, inp: WriteRowsInput) -> dict:
     Un client REST pur n'avait AUCUN chemin de lot : 8 907 `PATCH` ligne à ligne,
     douze minutes sur la production. Le moteur, lui, est indifférent à la face qui
     l'appelle — ce n'était qu'un trou de surface. Mêmes refus nommant la ligne
-    fautive, mêmes notices, mêmes bascules datées (`@keep`/`@clear` jugés sur le lot
-    ENTIER avant la première ligne)."""
+    fautive, mêmes notices, mêmes refus jugés sur le lot ENTIER avant la première
+    ligne (`@keep`/`@clear`)."""
     ns, _ = _adresse(inp.datastore)
     _verifier_contenu(inp.rows)
     store = make_store(ctx.sub)

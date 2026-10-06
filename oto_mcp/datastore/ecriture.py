@@ -363,9 +363,9 @@ class EcritureMixin:
             # oto#204 : un vide ASSUMÉ redevenu vide ordinaire par le remplacement d'une
             # liste se relève. Sur un requis, `_check_row` refuse juste après ; ailleurs
             # il tomberait sans un mot.
-            for _k, _v in pose.items():
+            for _k in pose:
                 vidages.extend(vides_assumes_perdus((current or {}).get(_k),
-                                                    merged.get(_k), _k, row_id, _v))
+                                                    merged.get(_k), _k, row_id))
             # #586/#606 : ce que l'appelant n'écrit pas — jugé sur le geste ENTIER
             # (payload, ligne en place, résultat), sous le verrou, avant que quoi
             # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.

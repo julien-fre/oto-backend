@@ -3261,7 +3261,7 @@ seul démarquait. Bancs : `tests/datastore/test_vide_est_une_valeur_j2.py`.
 
 Bancs : `tests/datastore/test_vide_assume_lecture_204.py` et `…_204_live.py`.
 
-## Le vide ASSUMÉ — étape 2 : `@empty` l'émet, `@clear` l'efface, `empties=sentinel` le relit (oto#204, 13/09/2026)
+## Le vide ASSUMÉ — étape 2 : `@empty` l'émet, `empties=sentinel` le relit (oto#204, 13/09/2026)
 
 **Le défaut fermé.** Une liste sans `of.key` se remplace en bloc (#120). Relue au défaut puis
 renvoyée, une case au vide assumé revenait `""`, un vide ORDINAIRE. Sur un requis, l'écriture
@@ -3274,23 +3274,27 @@ assoupli, ni obligation de clé.
 ⚠️ **Ce lot ÉMET le marqueur** : il ne touche `main` qu'une fois l'étape 1 servie en production,
 préprod et prod partageant la base.
 
-### Les trois mots
+### Le mot
 
 | mot | sur la VALEUR d'une case | sur une COUCHE (`comment`, `link`) |
 |---|---|---|
-| `@keep` *(refusé, oto#140 J3)* | tient ce qui est en place ; sur une case neuve, rien | tient la couche |
 | `@empty` | vide ASSUMÉ : valeur `""`, marqueur posé — satisfait `required` | vide la couche seule |
-| `@clear` *(refusé, oto#140 J3)* | efface SANS assumer : valeur `""`, marqueur retiré — refusé sur un requis | vide la couche seule |
+
+`@keep` et `@clear` (étape 2 d'origine : « tient ce qui est en place », « efface sans
+assumer ») sont **retirés** (oto#140 J3) : refusés à l'entrée de toute écriture par
+`mots_deprecies.controler`, ils n'atteignent plus la fusion, et leur résolution a été retirée
+le 06/10/2026. La preuve que tout chemin qui fusionne passe d'abord par `controler` est une
+garde (`tests/datastore/test_controler_garde_toutes_les_ecritures.py`) : un nouveau point
+d'entrée qui fusionnerait sans lui la fait tomber — sinon `"@keep"` serait stocké comme du
+texte.
 
 `""` garde son comportement : le `""` servi, renvoyé sur une case marquée, ne change rien ; sur
-une valeur en place il la remplace (oto#140 J2). Formes acceptées : `"champ": "@clear"` et
-`"champ": {"valeur": "@clear", …}`, au premier niveau et sur les cellules des éléments de liste.
+une valeur en place il la remplace (oto#140 J2).
 
-**Une table, un résolveur** : `columns._MOTS`, lue par la fusion (`_merge_column`, `_merge_items`,
-`_sentinelles_dans_les_items`) et par la création (`columns.mots_resolus_a_la_creation`, appelée
-par `append_row` sans clé métier et la ligne neuve d'un lot, avant la capture
-d'origine et la validation). Un mot de plus = une entrée ici et son nom dans
-`couches.SENTINELLES` (`test_la_table_couvre_tout_le_vocabulaire`).
+**Un résolveur** : `couches.est_vide_delibere`, lu par la fusion (`_merge_column`,
+`_merge_items`, `_sentinelles_dans_les_items`) et par la création
+(`columns.mots_resolus_a_la_creation`, appelée par `append_row` sans clé métier et la ligne
+neuve d'un lot, avant la capture d'origine et la validation).
 
 Couches et origine suivent les règles existantes (bancs `test_4a…`, `test_4b…`, `test_4c…`) :
 
@@ -3298,14 +3302,11 @@ Couches et origine suivent les règles existantes (bancs `test_4a…`, `test_4b�
   `link` non envoyé reste ; sur une valeur en place, `comment` et `link` non envoyés tombent et
   `origine` survit ;
 - un mot dans une couche ne vide que cette couche : ni la valeur ni le marqueur ne bougent ;
-- une `origine` renvoyée inchangée ne change rien au geste ;
-- `@clear` sur une case marquée qui porte un `comment` : le marqueur part, le `comment` reste
-  (la valeur, `""`, ne change pas) ;
-- `{"valeur": "@clear", "comment": "@keep"}` : le commentaire est tenu, le `link` tombe.
+- une `origine` renvoyée inchangée ne change rien au geste.
 
 **Deux trous fermés.** À la création, `"@empty"` partait en base comme texte et satisfaisait
 `required` (#183). Dans une liste à clé, un élément NOUVEAU entrait tel quel (`_merge_items`),
-mots compris : il se résout désormais comme une liste sans identité, et `@keep` y est refusé.
+mot compris : il se résout désormais comme une liste sans identité.
 
 ### Où un mot se pose
 
@@ -3313,7 +3314,7 @@ Sur une CASE : une colonne, ou l'attribut d'une fiche dans une liste, chacune av
 Ailleurs, refus `row_invalid` qui nomme le chemin, rien n'est écrit
 (`columns.refuser_les_mots_mal_places`, sur les cinq points d'entrée) :
 
-- l'identité d'un élément (`of.key`) — ni `@empty`, ni `@clear`, ni `@keep` ;
+- l'identité d'un élément (`of.key`) — pas de `@empty` ;
 - un élément d'une liste de valeurs (`tags[1]`) ;
 - un sous-champ d'objet, le contenu d'une colonne `json`, le contenu d'un attribut.
 
@@ -3342,14 +3343,14 @@ n'est inventée.
 - **Requis** : `row_invalid`, dont le message nomme le chemin (`contacts[0].fonction`), `@empty`
   et la relecture `empties=sentinel`. Atomique : base et `_revision` intactes.
 - **Relecture périmée** : `expected_revision` rend `409 revision_conflict`, rien n'est écrit.
-- **Relique pointée** : `@clear` est un effacement comme `null` et `@empty` (`reliques._efface`) ;
-  sur une relique qui porte une valeur, refusé.
-- **`valeurs_effacees`** : `@clear` et `@empty` sur une valeur en place la nomment, comme `null`.
+- **Relique pointée** : `@empty` est un effacement comme `null` (`reliques._efface`) ; sur une
+  relique qui porte une valeur, refusé.
+- **`valeurs_effacees`** : `@empty` sur une valeur en place la nomme, comme `null`.
   Les valeurs rendues le sont sans clé interne.
 - **Vide assumé non requis rendu ordinaire** : `couches_effacees`, couche `@empty`
   (`columns.vides_assumes_perdus`), jugé après la fusion, par attribut et par COMPTE — un
   marqueur de moins ET un vide ordinaire de plus. Pas relevés, délibérément : une vraie valeur,
-  un `@clear` écrit à cette place, un élément retiré, une liste réordonnée renvoyée en
+  un élément retiré, une liste réordonnée renvoyée en
   `sentinel`. Le chemin est celui de la liste ÉCRITE.
 
 OpenAPI : `invalid_layers` et `invalid_empties` déclarés sur les quatre lectures.

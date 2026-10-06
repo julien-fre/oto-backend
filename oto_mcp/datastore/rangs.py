@@ -99,7 +99,7 @@ from .columns import (
     refuser_cles_internes,
     reposer_la_liste,
 )
-from .couches import GARDE, VIDE_DELIBERE, layer_address
+from .couches import layer_address
 from .declaration import champ_declare, cle_d_element
 from .errors import RowValidationError
 from .points import _ranger_une_fiche
@@ -212,7 +212,7 @@ class EcrituresParRang:
                 del suivis[r]
             if col.retraits:
                 suivis = _retirer(col.nom, suivis, col.retraits, creation)
-            suivis += [(_nouvel_element(col.nom, x), True) for x in col.ajouts]
+            suivis += [(_nouvel_element(x), True) for x in col.ajouts]
             apres = [x for x, _ in suivis]
             if cle_item:
                 _refuser_identite_doublee(col.nom, cle_item, avant, apres)
@@ -490,19 +490,12 @@ def _fusionner_l_element(nom: str, rang: int, element: Any, partielle: dict) -> 
     return fusion
 
 
-def _nouvel_element(nom: str, element: Any) -> Any:
-    """L'élément AJOUTÉ n'a rien en place : ses mots se résolvent contre rien, et
-    `@keep` n'a rien à tenir (même règle qu'un élément neuf de `_merge_items`)."""
+def _nouvel_element(element: Any) -> Any:
+    """L'élément AJOUTÉ n'a rien en place : son `@empty` se résout contre rien (même
+    règle qu'un élément neuf de `_merge_items`)."""
     if not isinstance(element, dict):
         return element
-    refus: list = []
-    propre = _resoudre_la_fiche(element, f"{nom}[{AJOUT}]", refus)
-    if refus:
-        raise _refus(
-            f"`{GARDE}` ne peut rien tenir dans un élément AJOUTÉ : "
-            f"{', '.join('`' + r + '`' for r in refus)} — rien n'est en place. Écris le "
-            f"contenu, ou `{VIDE_DELIBERE}` pour « cherché, rien ».")
-    return propre
+    return _resoudre_la_fiche(element)
 
 
 def _identites(liste: list, cle: str) -> list:

@@ -10,7 +10,8 @@ il inventait une valeur, ou posait `@empty` sur un vide que personne n'avait che
 l'export ne changent pas.
 
 Ce banc tient ce qui se juge SANS base : la forme servie, le refus nommé, la parité des
-surfaces, et ce que chaque mot réservé fait d'une case (`@keep`, `@empty`, `@clear`). Les
+surfaces, et ce que le mot réservé `@empty` fait d'une case (`@keep` et `@clear`, retirés,
+sont refusés avant la fusion). Les
 chemins d'écriture, l'aller-retour et la concurrence sont au banc `_live`.
 """
 from __future__ import annotations
@@ -213,10 +214,12 @@ AVEC_CLE = {"key": "contacts", "type": "list", "of": {"type": "object", "key": "
                        {"key": "note", "type": "text"}]}}
 
 
-def test_la_table_couvre_tout_le_vocabulaire():
-    """Un mot de plus est une entrée de `_MOTS` et son nom dans `SENTINELLES` : qu'un des
-    deux manque et le mot serait reconnu sans être résolu, ou résolu sans être reconnu."""
-    assert set(dcol._MOTS) == set(dsc.SENTINELLES)
+def test_seul_empty_est_un_mot_que_la_fusion_resout():
+    """`@keep` et `@clear` sont refusés à l'entrée : la fusion ne les connaît plus, et
+    ne doit pas les reconnaître (sinon un chemin non gardé les « résoudrait »)."""
+    assert dsc.est_vide_delibere(dsc.VIDE_DELIBERE)
+    assert not dsc.est_vide_delibere(dsc.GARDE) and not dsc.est_vide_delibere(dsc.EFFACEMENT)
+    assert not hasattr(dcol, "_MOTS")
 
 
 def test_empty_vide_une_valeur_en_place_et_assume_le_vide():
@@ -225,18 +228,8 @@ def test_empty_vide_une_valeur_en_place_et_assume_le_vide():
     assert _merge_column(None, dsc.VIDE_DELIBERE) == MARQUEE
 
 
-def test_clear_vide_une_valeur_en_place_sans_rien_assumer():
-    assert _merge_column(REMPLIE, dsc.EFFACEMENT) == {"valeur": "", "origine": "DG"}
-    assert _merge_column("Directrice", dsc.EFFACEMENT) == ""
-    assert _merge_column("Directrice", {"valeur": dsc.EFFACEMENT}) == ""
 
 
-def test_clear_demarque_une_case_marquee():
-    assert _merge_column(MARQUEE, dsc.EFFACEMENT) == ""
-    assert _merge_column(MARQUEE, {"valeur": dsc.EFFACEMENT}) == ""
-    annotee = {**MARQUEE, "comment": "aucune source"}
-    # La valeur ne change pas (`""` → `""`) : la couche liée RESTE, règle existante.
-    assert _merge_column(annotee, dsc.EFFACEMENT) == {"valeur": "", "comment": "aucune source"}
 
 
 def test_4a_empty_en_couches_sur_une_case_deja_vide_garde_ce_qui_n_est_pas_envoye():
@@ -250,7 +243,7 @@ def test_4a_empty_en_couches_sur_une_valeur_en_place_fait_tomber_comment_et_link
         "valeur": "", "origine": "DG", "comment": "rien", MARQUEUR: True}
 
 
-@pytest.mark.parametrize("mot", [dsc.VIDE_DELIBERE, dsc.EFFACEMENT])
+@pytest.mark.parametrize("mot", [dsc.VIDE_DELIBERE])
 def test_4b_un_mot_dans_une_couche_ne_touche_que_la_couche(mot):
     annotee = {**MARQUEE, "comment": "aucune source", "link": "https://exemple.test/c"}
     assert _merge_column(annotee, {"comment": mot}) == {**annotee, "comment": ""}, (
@@ -264,15 +257,12 @@ def test_4c_une_origine_renvoyee_inchangee_ne_change_rien_au_geste():
         "valeur": "", "origine": "DG", MARQUEUR: True}
 
 
-def test_un_comment_keep_reste_protege_sous_clear():
-    assert _merge_column(REMPLIE, {"valeur": dsc.EFFACEMENT, "comment": dsc.GARDE}) == {
-        "valeur": "", "origine": "DG", "comment": "site"}
 
 
-def test_liste_sans_cle_empty_marque_clear_vide_sans_marquer():
+def test_liste_sans_cle_empty_marque():
     out = _merge_column([{"nom": "A", "fonction": "DG"}], [
         {"nom": "A", "fonction": dsc.VIDE_DELIBERE},
-        {"nom": "B", "fonction": dsc.EFFACEMENT,
+        {"nom": "B", "fonction": "",
          "note": {"valeur": dsc.VIDE_DELIBERE, "comment": "rien"}},
         {"nom": "A", "fonction": dsc.VIDE_DELIBERE}], SANS_CLE)
     assert out == [{"nom": "A", "fonction": MARQUEE},
@@ -281,17 +271,14 @@ def test_liste_sans_cle_empty_marque_clear_vide_sans_marquer():
                    {"nom": "A", "fonction": MARQUEE}], "deux éléments identiques, deux marqueurs"
 
 
-def test_liste_a_cle_element_nouveau_resolu_et_keep_refuse():
+def test_liste_a_cle_element_nouveau_resolu():
     avant = [{"role": "rh", "fonction": "DRH"}, {"role": "paie", "fonction": MARQUEE}]
     out = _merge_column(avant, [{"role": "paie", "fonction": ""},
-                                {"role": "rh", "fonction": dsc.EFFACEMENT},
+                                {"role": "rh", "fonction": None},
                                 {"role": "achats", "fonction": dsc.VIDE_DELIBERE}], AVEC_CLE)
     assert out == [{"role": "paie", "fonction": MARQUEE},
-                   {"role": "rh", "fonction": ""},
+                   {"role": "rh"},
                    {"role": "achats", "fonction": MARQUEE}]
-    with pytest.raises(RowValidationError) as e:
-        _merge_column(avant, [{"role": "achats", "fonction": dsc.GARDE}], AVEC_CLE)
-    assert "contacts[0].fonction" in str(e.value) and "NOUVEAU" in str(e.value)
 
 
 SCHEMA_MOTS = {"fields": [
@@ -304,12 +291,13 @@ SCHEMA_MOTS = {"fields": [
 
 @pytest.mark.parametrize("corps, chemin", [
     ({"tags": ["a", dsc.VIDE_DELIBERE]}, "tags[1]"),
-    ({"adresse": {"rue": dsc.GARDE}}, "adresse.rue"),
-    ({"brut": {"a": [dsc.EFFACEMENT]}}, "brut.a[0]"),
+    ({"adresse": {"rue": dsc.VIDE_DELIBERE}}, "adresse.rue"),
+    ({"brut": {"a": [dsc.VIDE_DELIBERE]}}, "brut.a[0]"),
     ({"brut": [{"a": dsc.VIDE_DELIBERE}]}, "brut[0].a"),
     ({"contacts": [{"role": dsc.VIDE_DELIBERE, "fonction": "x"}]}, "contacts[0].role"),
-    ({"contacts": [{"role": {"valeur": dsc.EFFACEMENT}, "fonction": "x"}]}, "contacts[0].role"),
-    ({"contacts": [{"role": "rh", "fonction": {"valeur": [dsc.GARDE]}}]},
+    ({"contacts": [{"role": {"valeur": dsc.VIDE_DELIBERE}, "fonction": "x"}]},
+     "contacts[0].role"),
+    ({"contacts": [{"role": "rh", "fonction": {"valeur": [dsc.VIDE_DELIBERE]}}]},
      "contacts[0].fonction[0]"),
 ], ids=["liste_de_valeurs", "sous_champ_objet", "json_objet", "json_liste",
         "identite_nue", "identite_en_couches", "contenu_d_attribut"])
@@ -321,20 +309,19 @@ def test_un_mot_hors_d_une_case_est_refuse_en_nommant_le_chemin(corps, chemin):
 
 def test_les_cases_et_leurs_couches_admettent_les_mots():
     refuser_les_mots_mal_places(SCHEMA_MOTS, {
-        "brut": dsc.VIDE_DELIBERE, "tags": dsc.EFFACEMENT,
-        "adresse": {"valeur": dsc.GARDE, "comment": dsc.VIDE_DELIBERE},
-        "contacts": [{"role": {"valeur": "rh", "comment": dsc.GARDE},
+        "brut": dsc.VIDE_DELIBERE, "tags": dsc.VIDE_DELIBERE,
+        "adresse": {"valeur": dsc.VIDE_DELIBERE, "comment": dsc.VIDE_DELIBERE},
+        "contacts": [{"role": {"valeur": "rh", "comment": dsc.VIDE_DELIBERE},
                       "fonction": dsc.VIDE_DELIBERE,
-                      "note": {"valeur": "x", "comment": dsc.EFFACEMENT}}]})
+                      "note": {"valeur": "x", "comment": dsc.VIDE_DELIBERE}}]})
 
 
 def test_a_la_creation_les_mots_se_resolvent_sur_une_copie():
-    corps = {"raison": "ACME", "fonction": dsc.VIDE_DELIBERE, "note": dsc.GARDE,
-             "contacts": [{"nom": "A", "fonction": dsc.EFFACEMENT}]}
+    corps = {"raison": "ACME", "fonction": dsc.VIDE_DELIBERE,
+             "contacts": [{"nom": "A", "fonction": dsc.VIDE_DELIBERE}]}
     out = mots_resolus_a_la_creation(SCHEMA, corps)
     assert out == {"raison": "ACME", "fonction": MARQUEE,
-                   "contacts": [{"nom": "A", "fonction": ""}]}, (
-        "`@keep` sur une case neuve ne garde rien : la colonne est absente")
+                   "contacts": [{"nom": "A", "fonction": MARQUEE}]}
     assert corps["fonction"] == dsc.VIDE_DELIBERE, "le geste reçu n'est pas modifié"
     sans_mot = {"raison": "ACME"}
     assert mots_resolus_a_la_creation(SCHEMA, sans_mot) == sans_mot
@@ -343,19 +330,17 @@ def test_a_la_creation_les_mots_se_resolvent_sur_une_copie():
 AVANT = [{"nom": "A", "note": MARQUEE}, {"nom": "B", "note": "x"}]
 
 
-@pytest.mark.parametrize("apres, posee, attendu", [
-    ([{"nom": "A", "note": ""}, {"nom": "B", "note": "x"}], None, ["contacts[0].note"]),
-    ([{"nom": "A"}, {"nom": "B", "note": "x"}], None, ["contacts[0].note"]),
-    ([{"nom": "B", "note": "x"}, {"nom": "A", "note": ""}], None, ["contacts[1].note"]),
-    ([{"nom": "A", "note": MARQUEE}, {"nom": "B", "note": "x"}], None, []),
-    ([{"nom": "A", "note": "trouvée"}, {"nom": "B", "note": "x"}], None, []),
-    ([{"nom": "B", "note": "x"}], None, []),
-    ([{"nom": "A", "note": ""}, {"nom": "B", "note": "x"}],
-     [{"nom": "A", "note": dsc.EFFACEMENT}, {"nom": "B", "note": "x"}], []),
+@pytest.mark.parametrize("apres, attendu", [
+    ([{"nom": "A", "note": ""}, {"nom": "B", "note": "x"}], ["contacts[0].note"]),
+    ([{"nom": "A"}, {"nom": "B", "note": "x"}], ["contacts[0].note"]),
+    ([{"nom": "B", "note": "x"}, {"nom": "A", "note": ""}], ["contacts[1].note"]),
+    ([{"nom": "A", "note": MARQUEE}, {"nom": "B", "note": "x"}], []),
+    ([{"nom": "A", "note": "trouvée"}, {"nom": "B", "note": "x"}], []),
+    ([{"nom": "B", "note": "x"}], []),
 ], ids=["relue_au_defaut", "attribut_retire", "reordonnee_au_defaut", "renvoyee_en_sentinel",
-        "vraie_valeur", "element_retire", "clear_voulu"])
-def test_un_vide_assume_rendu_ordinaire_se_releve_et_rien_d_autre(apres, posee, attendu):
-    out = vides_assumes_perdus(AVANT, apres, "contacts", "r1", posee)
+        "vraie_valeur", "element_retire"])
+def test_un_vide_assume_rendu_ordinaire_se_releve_et_rien_d_autre(apres, attendu):
+    out = vides_assumes_perdus(AVANT, apres, "contacts", "r1")
     assert [r["champ"] for r in out] == attendu
     assert all(r["couche"] == dsc.VIDE_DELIBERE for r in out)
 
@@ -379,8 +364,8 @@ def test_le_refus_de_requis_nomme_le_chemin_le_mot_et_la_relecture():
     assert "`@empty`" in message and "empties=sentinel" in message
 
 
-@pytest.mark.parametrize("mot", [dsc.VIDE_DELIBERE, dsc.EFFACEMENT, None])
-def test_clear_sur_une_relique_est_un_effacement_comme_empty_et_null(mot):
+@pytest.mark.parametrize("mot", [dsc.VIDE_DELIBERE, None])
+def test_empty_sur_une_relique_est_un_effacement_comme_null(mot):
     avant = {"c": {"valeur": "x"}, "c.link": "https://exemple.test/relique"}
     assert rq.effacements_sur_relique({"c": {"link": mot}}, avant) == ["c.link"]
     assert rq.effacements_sur_relique({"c.link": mot}, avant) == ["c.link"]

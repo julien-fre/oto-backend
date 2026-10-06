@@ -42,11 +42,11 @@ GESTE = "data_drop_column"
 
 
 def _efface(valeur: Any) -> bool:
-    """Ce sous-champ demande-t-il une DESTRUCTION ? — `null`, `@empty` ou `@clear`.
+    """Ce sous-champ demande-t-il une DESTRUCTION ? — `null` ou `@empty`.
 
-    oto#204 : `@clear` vide sans assumer, `@empty` en assumant — les deux détruisent ce
-    qui est en place, donc les deux se refusent sur une relique qu'ils ne toucheraient pas."""
-    return valeur is None or valeur in (dsl.VIDE_DELIBERE, dsl.EFFACEMENT)
+    oto#204 : `@empty` détruit ce qui est en place, comme `null` : les deux se refusent
+    sur une relique qu'ils ne toucheraient pas."""
+    return valeur is None or dsl.est_vide_delibere(valeur)
 
 
 def effacements_sur_relique(user_data: Optional[dict],

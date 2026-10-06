@@ -17,7 +17,6 @@ les deux découlent, non.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from . import couches as dsl
@@ -238,52 +237,32 @@ def refuser_cles_internes(user_data: Optional[dict]) -> None:
         raise RowValidationError(errors)
 
 
-# ── les MOTS RÉSERVÉS : une table, un résolveur (oto#140, oto#204) ──────────────
+# ── le MOT RÉSERVÉ : `@empty`, et un résolveur (oto#140, oto#204) ───────────────
 #
-# Ce qui distingue les mots tient en deux questions : le mot a-t-il besoin de ce qui est
-# EN PLACE (`@keep` le tient) ? Et, s'il vide, que devient le vide ASSUMÉ — posé
-# (`@empty`) ou retiré (`@clear`) ? Toute la résolution lit cette table, à la fusion
-# comme à la création : un mot de plus est une entrée ici et son nom dans
-# `couches.SENTINELLES`, rien d'autre (`test_la_table_couvre_tout_le_vocabulaire`).
+# Un seul mot se résout : `@empty`, « cherché, rien ». Il vide la case par la règle
+# ordinaire et pose le vide ASSUMÉ. `@keep` et `@clear` sont retirés : refusés à l'entrée
+# de toute écriture (`mots_deprecies.controler`), ils n'arrivent jamais jusqu'ici — la
+# garde `test_controler_garde_toutes_les_ecritures.py` tient cette preuve.
 #
-# ⚠️ Le mot porté par une COUCHE (`comment`, `link`) ne touche que cette couche : il la
-# vide ou la tient, jamais la valeur ni le marqueur. Seul le mot posé sur la VALEUR —
-# la case nue, ou `valeur` — décide du vide assumé.
+# ⚠️ Le mot porté par une COUCHE (`comment`, `link`) ne vide que cette couche, jamais la
+# valeur ni le marqueur. Seul le mot posé sur la VALEUR — la case nue, ou `valeur` —
+# pose le vide assumé.
 
 
-@dataclass(frozen=True)
-class _Mot:
-    exige_le_passe: bool                 # tient ce qui est en place ; sans passé, refusé
-    marqueur: bool = False               # s'il vide : le vide assumé posé, ou retiré
-
-
-_MOTS = {
-    dsl.GARDE: _Mot(exige_le_passe=True),
-    dsl.VIDE_DELIBERE: _Mot(exige_le_passe=False, marqueur=True),
-    dsl.EFFACEMENT: _Mot(exige_le_passe=False, marqueur=False),
-}
-
-
-def _mot(valeur: Any) -> Optional[_Mot]:
-    """Le mot réservé que porte cette valeur — au mot ENTIER, au type près — ou `None`."""
-    return _MOTS.get(valeur) if dsl.est_sentinelle(valeur) else None
-
-
-def _vider(existing: Any, mot: _Mot) -> Any:
-    """La case vidée par un mot. Sa valeur devient `""` par la règle ORDINAIRE des couches
-    — celle d'une écriture de `""` : `origine` survit, `comment`/`link` tombent si la
-    valeur change — puis le vide assumé est posé (`@empty`) ou retiré (`@clear`)."""
+def _vider(existing: Any) -> Any:
+    """La case vidée par `@empty`. Sa valeur devient `""` par la règle ORDINAIRE des
+    couches — celle d'une écriture de `""` : `origine` survit, `comment`/`link` tombent
+    si la valeur change — puis le vide assumé est posé."""
     cellule = _existing_layers(_merge_column(existing, ""))
     cellule[dsv2.VALUE_LAYER] = ""
     for cle in dsl.CLES_INTERNES:
         cellule.pop(cle, None)
-    if mot.marqueur:
-        cellule[dsl.VIDE_ASSUME] = True
-    return "" if set(cellule) == {dsv2.VALUE_LAYER} else cellule
+    cellule[dsl.VIDE_ASSUME] = True
+    return cellule
 
 
 def _porte_un_mot(valeur: Any) -> bool:
-    if _mot(valeur) is not None:
+    if dsl.est_vide_delibere(valeur):
         return True
     if isinstance(valeur, dict):
         return any(_porte_un_mot(v) for v in valeur.values())
@@ -302,8 +281,8 @@ def mots_resolus_a_la_creation(schema: Optional[dict], user_data: Optional[dict]
     n'importe quelle chaîne. On résout ici par la MÊME fonction (`_merge_column` contre
     rien), donc sans seconde règle.
 
-    Rend une copie : seules les colonnes qui portent un mot changent, les autres restent
-    l'objet reçu. Une colonne qui ne garde rien (`@keep` sur une case neuve) est absente."""
+    Rend une copie : seules les colonnes qui portent le mot changent, les autres restent
+    l'objet reçu."""
     out = dict(user_data or {})
     for cle, val in (user_data or {}).items():
         if cle in _META_COLS or not _porte_un_mot(val):
@@ -324,7 +303,7 @@ def _refus_hors_case(chemin: str, mot: Any) -> str:
 
 
 def _aucun_mot(valeur: Any, chemin: str, errors: list) -> None:
-    if _mot(valeur) is not None:
+    if dsl.est_vide_delibere(valeur):
         errors.append(_refus_hors_case(chemin, valeur))
     elif isinstance(valeur, dict):
         for k, v in valeur.items():
@@ -370,12 +349,11 @@ def mots_dans_l_element(element: Any, ici: str, errors: list, *,
         return
     for attribut, sous in element.items():
         ou = f"{ici}.{attribut}"
-        if attribut == cle_item and _mot(dsv2.unwrap(sous)) is not None:
+        if attribut == cle_item and dsl.est_vide_delibere(dsv2.unwrap(sous)):
             errors.append(
                 f"`{ou}` porte `{dsv2.unwrap(sous)}` : c'est l'IDENTITÉ de l'élément "
-                f"(`of.key` = `{cle_item}`) — une identité ne se déclare ni vide ni "
-                "effacée, et ne se garde pas sans valeur. Rien n'a été écrit. Donne-lui "
-                "sa valeur.")
+                f"(`of.key` = `{cle_item}`) — une identité ne se déclare pas vide. Rien "
+                "n'a été écrit. Donne-lui sa valeur.")
             continue
         _mots_dans_la_case(sous, ou, errors, fiches=False, cle_item=None)
 
@@ -389,8 +367,7 @@ def refuser_les_mots_mal_places(schema: Optional[dict], user_data: Optional[dict
 
     - un élément d'une liste de VALEURS (`["a", "@empty"]`) n'est pas une case ;
     - un sous-champ d'OBJET, ou le contenu d'une colonne `json`, non plus ;
-    - l'IDENTITÉ d'un élément (`of.key`) n'accepte aucun mot : un vide n'identifie rien,
-      et `@keep` n'a rien à tenir là où rien n'est apparié.
+    - l'IDENTITÉ d'un élément (`of.key`) n'accepte pas le mot : un vide n'identifie rien.
 
     Jugé sur le payload, AVANT toute écriture, sur tous les chemins : rien n'est écrit."""
     errors: list[str] = []
@@ -720,10 +697,8 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
             continue
         ancienne = dsv2.unwrap((existing or {}).get(cle))
         if not dsv2._is_empty(posee):
-            mot = _mot(posee)
-            if mot is not None and not mot.exige_le_passe and not dsv2._is_empty(ancienne):
-                # `@clear` et `@empty` sur une valeur EN PLACE l'effacent : c'est le geste
-                # nommé qui remplace `null` (oto#204), et il se dit comme lui.
+            if dsl.est_vide_delibere(posee) and not dsv2._is_empty(ancienne):
+                # `@empty` sur une valeur EN PLACE l'efface : il se dit comme `null`.
                 effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
             # La valeur est posée : rien ne tombe au premier niveau. Un cran plus
             # bas, si — la liste est remplacée en bloc (oto#120).
@@ -886,13 +861,8 @@ def couches_effacees_report(records: list) -> dict:
     return {"couches_effacees": nommes, "couches_effacees_hint": hint}
 
 
-def _efface_sans_assumer(cellule: Any) -> bool:
-    mot = _mot(dsv2.unwrap(cellule))
-    return mot is not None and not mot.exige_le_passe and not mot.marqueur
-
-
-def vides_assumes_perdus(avant: Any, apres: Any, cle: str, row_id: Optional[str],
-                         posee: Any = None) -> list[dict]:
+def vides_assumes_perdus(avant: Any, apres: Any, cle: str,
+                         row_id: Optional[str]) -> list[dict]:
     """Les vides ASSUMÉS qu'une écriture de liste a fait redevenir des vides ORDINAIRES
     (oto#204) — au format de `couches_effacees`, couche `@empty`.
 
@@ -905,7 +875,6 @@ def vides_assumes_perdus(avant: Any, apres: Any, cle: str, row_id: Optional[str]
     ordinaire de plus pour le même attribut. Ce que ça écarte, délibérément :
 
     - une vraie valeur posée à la place (le marqueur tombe, c'est le geste voulu) ;
-    - un `@clear` écrit à cette place, lu dans `posee` (effacer sans assumer EST le geste) ;
     - un élément retiré de la liste (retiré par qui l'a renvoyée sans lui) ;
     - une liste réordonnée où chaque marqueur a été renvoyé (`@empty` à sa nouvelle place).
 
@@ -915,8 +884,6 @@ def vides_assumes_perdus(avant: Any, apres: Any, cle: str, row_id: Optional[str]
     if not isinstance(anciens, list):
         return []
     neufs = neufs if isinstance(neufs, list) else []
-    posees = dsv2.unwrap(posee)
-    posees = posees if isinstance(posees, list) else []
     marques = Counter(a for f in anciens if isinstance(f, dict)
                       for a, c in f.items() if dsl.vide_assume(c))
     out: list[dict] = []
@@ -925,11 +892,9 @@ def vides_assumes_perdus(avant: Any, apres: Any, cle: str, row_id: Optional[str]
             return (isinstance(f, dict) and not dsl.vide_assume(f.get(attribut))
                     and dsv2.est_vide(dsv2.unwrap(f.get(attribut))))
 
-        voulus = {i for i, f in enumerate(posees)
-                  if isinstance(f, dict) and _efface_sans_assumer(f.get(attribut))}
-        restes = len(voulus) + sum(1 for f in neufs if isinstance(f, dict)
-                                   and dsl.vide_assume(f.get(attribut)))
-        rangs = [i for i, f in enumerate(neufs) if _ordinaire(f) and i not in voulus]
+        restes = sum(1 for f in neufs if isinstance(f, dict)
+                     and dsl.vide_assume(f.get(attribut)))
+        rangs = [i for i, f in enumerate(neufs) if _ordinaire(f)]
         perdus = min(marques[attribut] - restes,
                      len(rangs) - sum(1 for f in anciens if _ordinaire(f)))
         if perdus <= 0:
@@ -979,8 +944,7 @@ def _index_par_cle(items: Any, cle: str) -> dict:
     return out
 
 
-def _merge_items(avant: Any, nouveaux: list, cle: str,
-                 nom: str = "liste") -> list:
+def _merge_items(avant: Any, nouveaux: list, cle: str) -> list:
     """Fusionne une liste ÉLÉMENT PAR ÉLÉMENT sur l'identité déclarée.
 
     Ce que ça répare : une liste se fusionnait en bloc, donc un agent qui réémettait
@@ -1039,12 +1003,11 @@ def _merge_items(avant: Any, nouveaux: list, cle: str,
     # est le comportement d'une liste sans clé — et la liste envoyée, elle, est valide.
     # Le geste répare au lieu d'échouer.
     if _doublons(avant):
-        return _sentinelles_dans_les_items(nouveaux, nom)
+        return _sentinelles_dans_les_items(nouveaux)
 
     index = _index_par_cle(avant, cle)
     out = []
-    refus: list[str] = []
-    for i, it in enumerate(nouveaux):
+    for it in nouveaux:
         if not isinstance(it, dict):
             out.append(it)
             continue
@@ -1052,108 +1015,59 @@ def _merge_items(avant: Any, nouveaux: list, cle: str,
         ancien = index.get(v) if v not in (None, "") else None
         if ancien is None:
             # ⚠️ oto#204 — le trou qu'avait cette ligne : l'élément NOUVEAU entrait TEL
-            # QUEL, donc `"@empty"` et `"@keep"` y étaient stockés comme du texte, et le
-            # premier satisfaisait `required` comme n'importe quelle chaîne. Il n'a rien
-            # en place : ses mots se résolvent comme dans une liste sans identité.
-            out.append(_resoudre_la_fiche(it, f"{nom}[{i}]", refus))
+            # QUEL, donc `"@empty"` y était stocké comme du texte, et satisfaisait
+            # `required` comme n'importe quelle chaîne. Il n'a rien en place : son mot se
+            # résout comme dans une liste sans identité.
+            out.append(_resoudre_la_fiche(it))
             continue
         fusionne = dict(ancien)
         for k, val in it.items():
             fusionne[k] = _merge_column(ancien.get(k), val)
         out.append({k: v2 for k, v2 in fusionne.items() if v2 is not None})
-    if refus:
-        raise RowValidationError(
-            [f"`{dsl.GARDE}` ne peut rien tenir dans un élément NOUVEAU de `{nom}` : "
-             f"{', '.join('`' + r + '`' for r in refus)} — aucun élément en place ne porte "
-             f"cette valeur de `{cle}`, il n'y a rien à garder. Rien n'a été écrit. Écris "
-             f"le contenu, `{dsl.VIDE_DELIBERE}` pour « cherché, rien », ou omets le "
-             f"sous-champ. `{dsl.GARDE}` n'est pas accepté."])
     return out
 
 
-def _resoudre_la_fiche(fiche: dict, chemin: str, refus: list) -> dict:
-    """Les mots d'une fiche SANS élément apparié en place — liste sans `of.key`, ou élément
-    nouveau d'une liste à clé. Ce qui vide se résout contre rien (`_vider`) ; ce qui tient
-    le passé n'a rien à tenir, et son chemin part dans `refus`."""
+def _resoudre_la_fiche(fiche: dict) -> dict:
+    """Le mot d'une fiche SANS élément apparié en place — liste sans `of.key`, ou élément
+    nouveau d'une liste à clé : `@empty` se résout contre rien (`_vider`)."""
     propre: dict = {}
     for cle, val in fiche.items():
-        base = f"{chemin}.{cle}"
         if isinstance(val, dict) and dsv2.names_layers(val):
             cellule: dict = {}
-            marqueur = None
+            marque = False
             for couche, v in val.items():
-                mot = _mot(v)
-                if mot is None:
-                    cellule[couche] = v
-                elif mot.exige_le_passe:
-                    refus.append(base if couche == dsv2.VALUE_LAYER else f"{base}.{couche}")
-                    cellule[couche] = v
-                else:
+                if dsl.est_vide_delibere(v):
                     cellule[couche] = ""
-                    if couche == dsv2.VALUE_LAYER:
-                        marqueur = mot.marqueur
-            if marqueur:
+                    marque = marque or couche == dsv2.VALUE_LAYER
+                else:
+                    cellule[couche] = v
+            if marque:
                 cellule[dsl.VIDE_ASSUME] = True
             propre[cle] = cellule
             continue
-        mot = _mot(val)
-        if mot is None:
-            propre[cle] = val
-        elif mot.exige_le_passe:
-            refus.append(base)
-            propre[cle] = val
-        else:
-            propre[cle] = _vider(None, mot)
+        propre[cle] = _vider(None) if dsl.est_vide_delibere(val) else val
     return propre
 
 
-def _sentinelles_dans_les_items(nouveaux: Any, chemin: str) -> Any:
-    """Résout `@empty` et REFUSE `@keep` dans les éléments d'une liste remplacée.
+def _sentinelles_dans_les_items(nouveaux: Any) -> Any:
+    """Résout `@empty` dans les éléments d'une liste remplacée.
 
     ⚠️ **Le trou que ça ferme a atteint la production**, et il a été trouvé sur de la
     donnée servie, pas dans un journal : `contacts[0].commentaire.comment` valait
-    littéralement `"@keep"` sur une fiche de campagne. L'agent avait écrit le mot au
-    bon endroit — c'est une couche d'un attribut d'élément, un endroit parfaitement
-    légitime — et la plateforme l'a pris pour du texte. Une ligne de plus et la
-    cliente lisait « @keep » dans le commentaire d'un contact.
+    littéralement un mot réservé sur une fiche de campagne. L'agent avait écrit le mot
+    au bon endroit — une couche d'un attribut d'élément — et la plateforme l'a pris pour
+    du texte.
 
     **Pourquoi ce chemin échappait à la résolution.** Une liste sans identité d'élément
     déclarée se REMPLACE en bloc : `_merge_column` ne descend pas dedans, donc rien n'y
-    résolvait les deux mots. Avec `of.key`, `_merge_items` fusionne attribut par
-    attribut et les résout — le défaut n'existe que sur le chemin du remplacement.
-
-    **Les deux mots ne se traitent pas pareil ici, et la raison est structurelle :**
-
-    - `@empty` **se résout** : « vide-le » ne demande aucun passé, donc il tient sans
-      identité d'élément ;
-    - `@keep` **se refuse** : « garde ce qui est là » exige de savoir QUEL élément
-      précédent correspond à celui-ci. Sans identité déclarée, on ne le sait pas — et
-      choisir au hasard sur des données de personnes est le mode d'échec qu'on s'est
-      interdit. Le laisser tomber en silence perdrait l'intention de l'agent ; le
-      stocker l'expédie chez la cliente. **Refuser en nommant le geste est la seule
-      des trois issues qui ne ment pas.**
+    résolvait le mot. Avec `of.key`, `_merge_items` fusionne attribut par attribut et le
+    résout — le défaut n'existe que sur le chemin du remplacement. `@empty` ne demande
+    aucun passé : il tient sans identité d'élément.
     """
     if not isinstance(nouveaux, list):
         return nouveaux
-
-    refus: list[str] = []
-    # oto#204 : la fiche se résout par la table des mots (`_resoudre_la_fiche`) — `@empty`
-    # y pose le vide assumé, `@clear` vide sans l'affirmer, `@keep` n'a rien à tenir.
-    out = [_resoudre_la_fiche(item, f"{chemin}[{i}]", refus) if isinstance(item, dict)
-           else item
-           for i, item in enumerate(nouveaux)]
-
-    if refus:
-        raise RowValidationError(
-            [f"`{dsl.GARDE}` ne peut pas être tenu dans une liste sans identité "
-             f"d'élément : {', '.join('`' + r + '`' for r in refus)}. Une liste se "
-             "remplace en bloc, donc rien ne dit QUEL élément précédent correspond à "
-             f"celui-ci. Deux issues : déclarer `of.key` au schéma de `{chemin}` (le "
-             "nom d'un CRÉNEAU stable — `contact_rh`, jamais un nom de personne), et "
-             f"la fusion se fera élément par élément ; ou renvoyer le contenu au lieu "
-             f"de `{dsl.GARDE}`, qui n'est pas accepté. `{dsl.VIDE_DELIBERE}` (« cherché, "
-             "rien ») fonctionne ici — il ne demande aucun passé."])
-    return out
+    return [_resoudre_la_fiche(item) if isinstance(item, dict) else item
+            for item in nouveaux]
 
 
 def reposer_la_liste(existing: Any, liste: list) -> Any:
@@ -1213,11 +1127,10 @@ def _merge_column(existing: Any, new: Any, champ: Any = None) -> Any:
     `False`). Vaut aussi en couches : `{"valeur": <identique>, "comment": …}` écrit le
     comment sans faire tomber le link — la valeur n'a pas changé, rien ne tombe.
 
-    ⚠️ **Deux mots réservés depuis oto#140** : `@keep` sur un sous-champ repose ce qui
-    était là — sans que l'appelant ait à le relire ni à le retaper —, `@empty` y pose un
-    vide DÉLIBÉRÉ, qui ne se confond pas avec l'absence. Ils se résolvent ICI et nulle
-    part ailleurs : qu'un seul passe en aval et il serait stocké comme une valeur, puis
-    servi à une cliente comme sa propre donnée."""
+    ⚠️ **Un mot réservé (oto#140)** : `@empty` pose un vide DÉLIBÉRÉ, qui ne se confond
+    pas avec l'absence. Il se résout ICI (et à la création, par la même fonction) : qu'il
+    passe en aval et il serait stocké comme une valeur, puis servi à une cliente comme sa
+    propre donnée. `@keep` et `@clear` n'arrivent pas ici : refusés à l'entrée."""
     # Une LISTE dont le schéma déclare l'identité de ses éléments se fusionne
     # élément par élément ; sans déclaration, elle se remplace en bloc, comme avant.
     cle_item = cle_d_element(champ)
@@ -1238,36 +1151,18 @@ def _merge_column(existing: Any, new: Any, champ: Any = None) -> Any:
             # couches qui étaient là. Deux gestes, parce que la liste est la valeur
             # de la colonne, pas la colonne.
             fusion = _merge_items(_existing_layers(existing).get(dsv2.VALUE_LAYER),
-                                  new, cle_item,
-                                  str((champ or {}).get("key") or "liste"))
+                                  new, cle_item)
             return reposer_la_liste(existing, fusion)
         # Remplacement en bloc : personne ne descend plus dans les éléments après
-        # cette ligne, donc les deux mots réservés se règlent ICI ou jamais.
-        nom = str((champ or {}).get("key") or "liste")
-        new = _sentinelles_dans_les_items(new, nom)
+        # cette ligne, donc le mot réservé se règle ICI ou jamais.
+        new = _sentinelles_dans_les_items(new)
 
-    # ── Les mots réservés valent AUSSI sur une valeur nue (oto#140) ─────────
+    # ── Le mot réservé vaut AUSSI sur une valeur nue (oto#140) ──────────────
     #
-    # ⚠️ **C'est le trou que ce lot aurait ouvert sans cette garde**, et il a été
-    # signalé par la campagne avant la mise en production, pas après : un agent
-    # recopie ce qu'on lui montre — mesuré, cinquante emplois pour un exemple — mais
-    # il peut le recopier AU MAUVAIS ENDROIT. `{"champ": "@keep"}` au lieu de
-    # `{"champ": {"valeur": …, "comment": "@keep"}}`, et sans cette résolution la
-    # chaîne `@keep` partait en base, puis chez la cliente comme sa propre donnée.
-    #
-    # On RÉSOUT plutôt que de refuser, parce que l'intention est claire dans les deux
-    # cas et qu'un refus ferait rejouer l'appel sans que l'agent comprenne : poser le
-    # mot sur toute la case dit la même chose que le poser sur son sous-champ.
-    #
-    # ⚠️ Le test est au mot ENTIER : `vu au registre @keep` reste du texte, et
-    # `contact@keepcool.fr` aussi. Une sentinelle qui mordrait au milieu d'une chaîne
-    # serait le défaut qu'on vient de passer la nuit à traquer — un motif plus large
-    # que ce qu'il prétend viser.
-    mot = None if _writes_layers(new) else _mot(new)
-    if mot is not None:
-        # `@keep` : « n'y touche pas », rien ne bouge. `@empty` / `@clear` : la case est
-        # vidée par la règle ordinaire, et le vide assumé posé ou retiré (oto#204).
-        return existing if mot.exige_le_passe else _vider(existing, mot)
+    # `{"champ": "@empty"}` dit la même chose que `{"champ": {"valeur": "@empty"}}` :
+    # résolu, jamais stocké. Au mot ENTIER : `contact@empty.fr` reste du texte.
+    if not _writes_layers(new) and dsl.est_vide_delibere(new):
+        return _vider(existing)
 
     if not _writes_layers(new):
         if dsv2.same_value(_existing_layers(existing).get(dsv2.VALUE_LAYER), new):
@@ -1299,56 +1194,36 @@ def _merge_column(existing: Any, new: Any, champ: Any = None) -> Any:
         return {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine}
     avant = _existing_layers(existing)
 
-    # ── Les deux mots réservés, résolus AVANT toute décision (oto#140, palier 1) ──
+    # ── Le mot réservé, résolu AVANT toute décision (oto#140) ──
     #
-    # `@keep` = « je n'y touche pas, sans avoir à le renvoyer » ; `@empty` = « je le
-    # vide, délibérément ». Résolus ici et nulle part ailleurs : l'aval ne doit jamais
-    # voir passer une sentinelle, sous peine de la stocker comme une valeur.
-    #
-    # ⚠️ `@keep` sur une couche ABSENTE ne crée rien — on garde le néant, ce qui est
-    # exactement ce que le mot promet. Poser `""` à la place inventerait un « vide
-    # délibéré » que l'appelant n'a pas demandé, et les deux ne se lisent pas pareil.
+    # `@empty` vide le sous-champ, délibérément ; posé sur la VALEUR, il pose aussi le
+    # vide assumé. Résolu ici : l'aval ne doit jamais le voir passer.
     pose = {}
-    marqueur = None
+    marque = False
     for cle, val in new.items():
-        mot = _mot(val)
-        if mot is None:
-            pose[cle] = val
-        elif mot.exige_le_passe:
-            if cle in avant:
-                pose[cle] = avant[cle]
-        else:
+        if dsl.est_vide_delibere(val):
             pose[cle] = ""
-            if cle == dsv2.VALUE_LAYER:
-                marqueur = mot.marqueur
+            marque = marque or cle == dsv2.VALUE_LAYER
+        else:
+            pose[cle] = val
 
     out = dict(avant)
     if dsv2.VALUE_LAYER in pose and not dsv2.same_value(out.get(dsv2.VALUE_LAYER),
                                                         pose[dsv2.VALUE_LAYER]):
-        # ⚠️ La chute reste INCONDITIONNELLE, et c'est volontairement inchangé.
-        #
-        # J'avais d'abord écrit ici une garde « une couche nommée ne tombe pas ».
-        # **Elle était du code mort**, et c'est l'épreuve rouge du banc qui l'a montré :
-        # en la désarmant, les treize cas restaient verts. La raison est que `pose`
-        # repose juste après ce que `@keep` a rattrapé — faire tomber puis reposer
-        # donne le même résultat que ne pas faire tomber.
-        #
-        # Le comportement neuf vient donc ENTIÈREMENT de la résolution des sentinelles
-        # au-dessus, et de rien d'autre. Le dire ici évite qu'on croie demain que cette
-        # boucle porte la règle : elle ne porte que l'ancienne, intacte.
+        # ⚠️ La chute reste INCONDITIONNELLE : ce que l'appelant nomme est reposé
+        # juste après (`out.update(pose)`), le reste décrivait l'ancienne valeur.
         for couche in dsv2.VALUE_BOUND_LAYERS:
             out.pop(couche, None)
         # Le vide assumé (oto#204) décrit la valeur vide : une vraie valeur le fait tomber.
         for cle in dsl.CLES_INTERNES:
             out.pop(cle, None)
     out.update(pose)
-    if marqueur is not None:
-        # oto#204 : le mot posé sur la VALEUR décide du vide assumé — posé par `@empty`,
-        # retiré par `@clear` — même quand la valeur ne change pas (`""` → `""`).
+    if marque:
+        # oto#204 : `@empty` posé sur la VALEUR pose le vide assumé — même quand la
+        # valeur ne change pas (`""` → `""`).
         for cle in dsl.CLES_INTERNES:
             out.pop(cle, None)
-        if marqueur:
-            out[dsl.VIDE_ASSUME] = True
+        out[dsl.VIDE_ASSUME] = True
     out = {k: v for k, v in out.items() if v is not None}
     if not out:
         return None

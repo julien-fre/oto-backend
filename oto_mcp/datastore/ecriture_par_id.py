@@ -172,8 +172,7 @@ class EcritureParIdMixin:
             # oto#204 : MÊME relevé que la fusion — le vide assumé qu'un remplacement de
             # liste rend ordinaire ne tombe pas sans un mot.
             for k in written:
-                vidages.extend(vides_assumes_perdus(avant.get(k), data.get(k), k, row_id,
-                                                    pose.get(k)))
+                vidages.extend(vides_assumes_perdus(avant.get(k), data.get(k), k, row_id))
             # #586/#606 : MÊME garde que la fusion — le patch par `id` est le geste le
             # plus courant d'un agent, et celui qui a écrasé les quatorze valeurs.
             refuser_champs_reserves(schema, pose, avant=avant,
