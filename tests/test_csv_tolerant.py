@@ -165,3 +165,14 @@ def test_duplicate_headers_through_parse_import():
     with pytest.raises(ut.UploadError) as ei:
         ut.parse_import(b"email;siren;email\nx;1;y\n", "csv", SCHEMA)
     assert (ei.value.status, ei.value.code) == (400, "entete_en_double")
+
+
+def test_un_export_neutralise_se_relit_tel_qu_il_est_parti():
+    """`csv_formules` préfixe d'une apostrophe un texte qui s'ouvrirait en formule ;
+    la lecture la retire. Une apostrophe devant autre chose est une donnée."""
+    from oto_mcp.csv_tolerant import read_rows
+
+    headers, rows = read_rows("'=nom,tel,note\n'=SUM(1),'+33123456789,'bonjour\n", ",")
+
+    assert headers == ["=nom", "tel", "note"]
+    assert rows == [{"=nom": "=SUM(1)", "tel": "+33123456789", "note": "'bonjour"}]

@@ -44,6 +44,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ..capabilities.datastore.common import ns_not_found
+from ..csv_formules import neutraliser
 from ..datastore import declaration as dsdecl
 from ..datastore.core import DatastoreNotFound, make_store
 from .base import _authenticate, _file_stream, _json_error
@@ -123,6 +124,16 @@ def _cell_text(value: object) -> str:
     return str(value)
 
 
+def _cell(value: object) -> str:
+    """La cellule écrite : `_cell_text`, puis neutralisée si un tableur l'ouvrirait
+    en formule (`csv_formules`) — les lignes viennent d'imports et d'agents. Un
+    nombre reste un nombre : `-5` n'est pas préfixé."""
+    text = _cell_text(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return text
+    return neutraliser(text)
+
+
 def _encode_rows(rows: list[list[str]]) -> bytes:
     """Un lot de lignes CSV, encodées une seule fois. `csv.writer` tient déjà
     RFC 4180 (guillemets, `\\r\\n`) — rien à réimplémenter ici."""
@@ -196,13 +207,13 @@ async def export_csv(request: Request, *, verifier: JWTVerifier) -> Response:
     filename = f"{table_name}-{dt.date.today().isoformat()}.csv"
 
     async def body():
-        yield _encode_rows([[c["label"] for c in columns]])
+        yield _encode_rows([[neutraliser(c["label"]) for c in columns]])
         page = first_page
         served = 0
         while True:
             rows = page["rows"]
             if rows:
-                yield _encode_rows([[_cell_text(row.get(c["key"])) for c in columns]
+                yield _encode_rows([[_cell(row.get(c["key"])) for c in columns]
                                     for row in rows])
             served += len(rows)
             cursor = page.get("next_cursor")

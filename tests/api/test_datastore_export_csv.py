@@ -175,3 +175,24 @@ def test_nom_de_fichier_reprend_le_nom_canonique_du_tableau(monkeypatch):
     rep = client.get("/api/datastores/174/rows/export.csv")
 
     assert "prospection-q3" in rep.headers["content-disposition"]
+
+
+def test_aucune_cellule_texte_ne_s_ouvre_en_formule(monkeypatch):
+    """Les lignes viennent d'imports et d'agents : un texte qu'un tableur lirait
+    comme une formule est préfixé d'une apostrophe, en-tête compris ; un nombre
+    reste un nombre."""
+    schema = {"fields": [{"key": "nom", "label": "=Nom"}, {"key": "tel"}, {"key": "solde"},
+                         {"key": "note"}, {"key": "tags"}]}
+    store = _Store(schema, [
+        {"rows": [{"_id": "r1", "nom": '=HYPERLINK("x";"y")', "tel": "+33123456789",
+                   "solde": -5, "note": "client fidèle", "tags": ["@a", "b"],
+                   "_created_at": "2026-09-01 10:00:00", "_updated_at": "2026-09-01 10:00:00"}],
+         "next_cursor": None},
+    ])
+    client = TestClient(_app(monkeypatch, store))
+
+    lignes = _rows(client.get("/api/datastores/174/rows/export.csv").text)
+
+    assert lignes[0][:5] == ["'=Nom", "tel", "solde", "note", "tags"]
+    assert lignes[1][:5] == ["'=HYPERLINK(\"x\";\"y\")", "'+33123456789", "-5",
+                             "client fidèle", "'@a; b"]

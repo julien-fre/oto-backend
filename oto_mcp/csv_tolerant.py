@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from itertools import islice
 from typing import Optional
 
+from .csv_formules import relire
+
 SEPARATORS = (",", ";", "\t", "|")
 _SAMPLE_ROWS = 20
 _BINARY_PROBE = 8192
@@ -144,7 +146,7 @@ def read_rows(text: str, separator: str) -> tuple[list, list]:
     the header's width are dropped, never written under a `None` column."""
     try:
         reader = csv.DictReader(io.StringIO(text), delimiter=separator)
-        headers = [h.strip() if isinstance(h, str) else h
+        headers = [relire(h.strip()) if isinstance(h, str) else h
                    for h in (reader.fieldnames or [])]
         # Two identical headers: DictReader keeps only the last one — a column
         # would vanish without a word. Refused, naming it.
@@ -156,7 +158,10 @@ def read_rows(text: str, separator: str) -> tuple[list, list]:
                                f"imported: rename one of the two columns.")
             vus.add(h)
         reader.fieldnames = headers
-        rows = [{k: v for k, v in r.items() if k is not None} for r in reader]
+        # Un export neutralisé contre les formules (`csv_formules`) se relit
+        # tel qu'il est parti : `'+33…` redevient `+33…`.
+        rows = [{k: relire(v) if isinstance(v, str) else v
+                 for k, v in r.items() if k is not None} for r in reader]
     except csv.Error as e:
         raise _mal_forme(e) from None
     return headers, rows

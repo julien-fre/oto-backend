@@ -27,6 +27,7 @@ from fastmcp import FastMCP
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, egress, output_projection
+from ..csv_formules import cellule
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 
@@ -46,9 +47,6 @@ _COLONNES = (
     "MainCallHistoryId", "CallHistoryId", "CdrId", "SrcRecId", "DstRecId",
 )
 _DUREES = ("RingingDuration", "TalkingDuration")
-# Premiers caractères qu'un tableur lit comme le début d'une formule (OWASP, « CSV
-# injection ») : un nom affiché vient d'un appelant extérieur.
-_FORMULE = ("=", "+", "-", "@", "\t", "\r")
 _PAGE_EXPORT = 500
 _EXPORT_PAGES_MAX = 200  # 100 000 segments ; une journée en compte quelques milliers
 _DUREE_ISO = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?)?$")
@@ -92,15 +90,6 @@ def _secondes(value):
                  + float(s or 0), 1)
 
 
-def _cellule(value):
-    """Un texte qu'un tableur prendrait pour une formule est préfixé d'une
-    apostrophe, que le tableur masque : `+33…` reste lisible tel quel. Un nombre
-    n'est jamais touché."""
-    if isinstance(value, str) and value.startswith(_FORMULE):
-        return "'" + value
-    return value
-
-
 def _csv(rows: list[dict]) -> bytes:
     """Le fichier des traces : `;` et BOM UTF-8, la forme qu'un tableur français
     ouvre sans assistant d'import ; durées en secondes ; aucune cellule texte ne
@@ -111,7 +100,7 @@ def _csv(rows: list[dict]) -> bytes:
     w.writeheader()
     for r in rows:
         ligne = {**r, **{d: _secondes(r.get(d)) for d in _DUREES}}
-        w.writerow({k: _cellule(v) for k, v in ligne.items()})
+        w.writerow({k: cellule(v) for k, v in ligne.items()})
     return buf.getvalue().encode("utf-8-sig")
 
 
