@@ -3,7 +3,7 @@ l'API REST cœur (`wp/v2`). Wrappe `oto.tools.wordpress.WordPressClient`.
 
 Credential multi-champs (`site_url`, `username`, `application_password`),
 résolu par appel via `access.resolve_credential_fields("wordpress")`, `site_url`
-passé à `auth.wordpress.check_site` (garde d'egress, puis HTTPS) AVANT toute
+passé à `_guard` (garde d'egress, puis HTTPS) AVANT toute
 construction de client (le site est déclaré par l'utilisateur : c'est exactement
 la forme que la garde existe pour refuser quand elle vise l'intérieur).
 Multi-compte : un compte = un site.
@@ -37,7 +37,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto.tools.common.errors import UpstreamHTTPError
 
-from .. import access
+from .. import access, egress
 from ..connectors import verify as connector_verify
 from ..mcp_errors import McpError
 from . import wordpress_blocks
@@ -180,6 +180,15 @@ def _diff(current: dict, changes: dict) -> dict:
     return out
 
 
+def _guard(site_url: str) -> bool:
+    """Avant toute construction de client : garde d'egress, puis HTTPS
+    (`auth.wordpress.http_allowed`). Rend `allow_http` pour le client."""
+    from ..auth.wordpress import http_allowed
+
+    egress.check_url(site_url, connector="wordpress", field="site_url")
+    return http_allowed(site_url)
+
+
 def _verify(fields: dict, config: dict | None = None) -> None:
     """Sonde « tester la connexion » — `GET wp/v2/users/me?context=edit`.
 
@@ -189,9 +198,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:
     site), jamais une limite de la sonde."""
     from oto.tools.wordpress import WordPressClient
 
-    from ..auth.wordpress import check_site
-
-    allow_http = check_site(fields.get("site_url") or "")
+    allow_http = _guard(fields.get("site_url") or "")
     try:
         me = WordPressClient(fields["site_url"], fields["username"],
                              fields["application_password"], allow_http=allow_http).me()
@@ -206,12 +213,10 @@ def _verify(fields: dict, config: dict | None = None) -> None:
 def _client(account: Optional[str] = None) -> WordPressClient:
     from oto.tools.wordpress import WordPressClient
 
-    from ..auth.wordpress import check_site
-
     creds = access.resolve_credential_fields("wordpress", account)
     site = creds.get("site_url") or ""
     try:
-        allow_http = check_site(site)
+        allow_http = _guard(site)
         return WordPressClient(site, creds.get("username") or "",
                                creds.get("application_password") or "",
                                allow_http=allow_http)

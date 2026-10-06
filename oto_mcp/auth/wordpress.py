@@ -76,6 +76,15 @@ def check_site(site_url: str) -> bool:
     from .. import egress
 
     egress.check_url(site_url, connector="wordpress", field="site_url")
+    return http_allowed(site_url)
+
+
+def http_allowed(site_url: str) -> bool:
+    """La moitié « schéma » de `check_site`, pour un appelant qui pose lui-même la
+    garde d'egress (les outils, que `tests/test_egress_guard.py` lit) : False en
+    HTTPS, True pour une destination interne déclarée en HTTP, refus sinon."""
+    from .. import egress
+
     parts = urlsplit((site_url or "").strip())
     if parts.scheme == "https":
         return False
