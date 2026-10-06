@@ -176,7 +176,7 @@ RETURN_APPS: dict[str, tuple[str, str]] = {
     # casse une redirection OAuth réelle. Leur relocalisation vers la config privée
     # est le second volet de oto-private#85, pas le lot du garde-fou.
     "tulina": ("https://app.tulina.ai", "/org/{org}/connectors"),  # noqa: CLIENT — cf. ci-dessus
-    "tulina-preprod": ("https://tulina.oto.zone", "/org/{org}/connectors"),  # noqa: CLIENT — cf. ci-dessus
+    "tulina-preprod": ("https://preprod.tulina.ai", "/org/{org}/connectors"),  # noqa: CLIENT — cf. ci-dessus
 }
 
 # Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de
