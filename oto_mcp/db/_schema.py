@@ -73,6 +73,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.orgs.INVITATIONS_RESSOURCE,  # partage en attente d'un objet vers une adresse sans compte
     schema.recipes.RECIPES,          # recettes : connecteur → tableau sans modèle
     schema.procedures.PROCESS_SHARES,  # partage d'une procédure par lien, et ses lecteurs
+    schema.usage.SIGNAL_OCCURRENCES,  # occurrences rattachées à un signal d'usage en attente
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

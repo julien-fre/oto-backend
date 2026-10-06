@@ -43,8 +43,10 @@ def live_signals(pg_module_dsn, monkeypatch):
         return m.group(0)
 
     with psycopg.connect(pg_module_dsn, row_factory=dict_row, autocommit=True) as c:
+        c.execute("DROP TABLE IF EXISTS usage_signal_occurrences")
         c.execute("DROP TABLE IF EXISTS usage_signals")
         c.execute(_ddl("usage_signals"))
+        c.execute(_ddl("usage_signal_occurrences"))
 
         @contextmanager
         def _connect_test():
@@ -52,6 +54,7 @@ def live_signals(pg_module_dsn, monkeypatch):
 
         monkeypatch.setattr(usage, "_connect", _connect_test)
         yield c
+        c.execute("DROP TABLE IF EXISTS usage_signal_occurrences")
         c.execute("DROP TABLE IF EXISTS usage_signals")
 
 
@@ -65,10 +68,11 @@ def _depose(**kw):
 
 def test_le_meme_retour_depose_deux_fois_rend_le_MEME_identifiant(live_signals):
     """Le cas mesuré, à onze secondes d'écart."""
-    premier, deja_1 = _depose()
-    second, deja_2 = _depose(session_id="s2")     # même agent, session relancée
-    assert deja_1 is False and deja_2 is True
-    assert second == premier, "un rejeu ne doit pas fabriquer une seconde ligne"
+    premier = _depose()
+    second = _depose(session_id="s2")     # même agent, session relancée
+    assert premier.deja is False and second.deja is True
+    assert second.id == premier.id, "un rejeu ne doit pas fabriquer une seconde ligne"
+    assert second.occurrences == 1, "un rejeu n'est pas une occurrence"
 
 
 def test_une_seule_ligne_existe_en_base(live_signals):
@@ -80,26 +84,35 @@ def test_une_seule_ligne_existe_en_base(live_signals):
     assert n["n"] == 1
 
 
-def test_un_corps_DIFFERENT_est_un_vrai_second_retour(live_signals):
-    """La borne du lot : deux retours sur le même outil sont normaux et fréquents.
-    C'est le texte à l'identique qui trahit le rejeu, pas le sujet."""
-    premier, _ = _depose()
-    second, deja = _depose(body=_CORPS + " Deuxième occurrence, autre compte.")
-    assert deja is False and second != premier
+def test_un_corps_DIFFERENT_est_une_seconde_OCCURRENCE(live_signals):
+    """Deux retours sur le même sujet sont normaux et fréquents. C'est le texte à
+    l'identique qui trahit le rejeu ; un autre texte est une vraie seconde occurrence —
+    rattachée au signal en attente, son texte gardé, pas un second sujet dans la pile."""
+    premier = _depose()
+    second = _depose(body=_CORPS + " Deuxième occurrence, autre compte.")
+    assert second.deja is False and second.rattache is True
+    assert second.id == premier.id and second.occurrences == 2
+    o = live_signals.execute("SELECT body FROM usage_signal_occurrences").fetchone()
+    assert o["body"].endswith("autre compte."), "le texte de l'occurrence est gardé"
 
 
 def test_un_AUTRE_agent_n_est_jamais_un_rejeu(live_signals):
     """Deux agents qui butent sur le même défaut, c'est le signal le plus fort
-    qu'on puisse recevoir — le fusionner effacerait précisément l'information."""
-    premier, _ = _depose()
-    second, deja = _depose(sub="agent-2")
-    assert deja is False and second != premier
+    qu'on puisse recevoir : le second est une OCCURRENCE qui garde son auteur, jamais
+    un rejeu effacé."""
+    premier = _depose()
+    second = _depose(sub="agent-2")
+    assert second.deja is False and second.rattache is True
+    assert second.id == premier.id and second.occurrences == 2
+    o = live_signals.execute("SELECT sub FROM usage_signal_occurrences").fetchone()
+    assert o["sub"] == "agent-2", "l'auteur de l'occurrence est gardé"
 
 
 def test_le_meme_outil_avec_un_AUTRE_sujet_passe(live_signals):
-    premier, _ = _depose()
-    second, deja = _depose(target="salesforce_query")
-    assert deja is False and second != premier
+    premier = _depose()
+    second = _depose(target="salesforce_query")
+    assert second.deja is False and second.rattache is False
+    assert second.id != premier.id
 
 
 def test_la_surface_DIT_le_rejeu_au_lieu_de_le_taire(live_signals, monkeypatch):
@@ -139,8 +152,9 @@ def test_une_AUTRE_organisation_n_est_jamais_un_rejeu(live_signals):
     vérifié. Un rapport de terrain est une mesure ; l'interprétation qu'on en
     fait n'en est pas une.
     """
-    premier, _ = _depose(org_id=249)
-    second, deja = _depose(org_id=178)
-    assert deja is False and second != premier, (
+    premier = _depose(org_id=249)
+    second = _depose(org_id=178)
+    assert second.deja is False and second.rattache is False
+    assert second.id != premier.id, (
         "le même texte sur DEUX organisations est une correction d'adresse, "
         "pas un rejeu — les fusionner perd le classement")

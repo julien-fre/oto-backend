@@ -57,9 +57,20 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
 - **Signaux volontaires** : capacité MCP+REST unique (`capabilities/usage.py`) `feedback`
   — axe explicite `signal` ∈ `tool_feedback | gap` → table **durable** `usage_signals`
   (hors prune 30j). `gap` = cas d'usage non couvert (l'agent capte la demande non satisfaite).
+- **Un sujet en attente ne se redépose pas, il se rattache** (06/10/2026) : un signal de
+  même org, même `signal` et même `target` (casse et blancs ignorés) déposé alors qu'un
+  signal de cette clé attend son arbitrage (open | acknowledged) devient une **occurrence**
+  de celui-ci (`usage_signal_occurrences` : auteur, session, genre, texte — rien n'est
+  perdu). L'agent reçoit `already_reported` (état, décision, nombre d'occurrences) et sait
+  qu'il n'a pas à redéposer. Mesuré ce jour-là : une quarantaine de redites sur 338
+  signaux en attente. ⚠️ Un sujet **clos** (resolved | declined) qui revient crée un signal
+  **neuf** (`regression_of` cite le dernier clos) : une régression doit se voir. ⚠️ Sans
+  cible, rien ne se rattache. ⚠️ L'org fait partie de la clé (#684/#685). Le **rejeu**
+  (même texte, même auteur, < 10 min) ne s'écrit toujours pas du tout.
 - **Projections** (opérateur) : `/api/admin/usage/{runs,runs/{id},gaps,tool-quality,signals}`
   (`capabilities/usage.py`, PLATFORM_ADMIN) → vue dashboard `UsageView.vue` (« usage & déroulés »).
-  `signals` filtrable par `status` ; la réponse porte AUSSI `counts` (la pile entière par
+  `signals` filtrable par `status`, chaque ligne avec `occurrences` et `last_seen_at`, triée
+  sur la dernière occurrence ; la réponse porte AUSSI `counts` (la pile entière par
   état — une page ne dit pas si le stock fait 203 ou 2 000). Face MCP
   `oto_admin_signal(op='list')` (console ADR 0047).
 - **Arbitrage — QUATRE états** (#450, 27/08) : `POST /api/admin/usage/signals/{id}/status`

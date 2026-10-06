@@ -37,16 +37,25 @@ class SignalRecorded(BaseModel):
     ni correction, ni notification en retour. Le suivi vit ailleurs (les projections
     admin `usage.signals`, où le signal se résout).
 
-    Rien n'est dédupliqué : deux appels identiques donnent deux lignes et deux `id`
-    distincts. C'est volontaire — la répétition d'un même manque EST le signal (ADR
-    0017) —, mais un client qui rejoue sa requête sur timeout double son propre poids.
+    **Un sujet en attente ne se redépose pas, il se rattache** : même org, même type,
+    même cible qu'un signal encore en attente d'arbitrage ⟹ le dépôt devient une
+    occurrence de celui-ci (`already_reported`), avec son état et son nombre
+    d'occurrences. Un sujet CLOS qui revient crée un signal neuf (`regression_of`).
 
     L'échec, lui, n'a pas de forme : l'écriture est synchrone, une panne remonte en
     erreur HTTP et non en `ok: false`. Il n'existe donc pas de 200 négative ici."""
     ok: bool                     # toujours `true` — un échec ne prend pas ce chemin
-    # Identifiant durable de la ligne `usage_signals`, à citer pour la résoudre côté
-    # plateforme. Croît strictement, tous signaux et tous émetteurs confondus.
+    # Identifiant durable de la ligne `usage_signals` — le signal NEUF, ou celui auquel
+    # ce dépôt s'est rattaché. À citer pour le résoudre côté plateforme.
     id: int
+    # Rejeu : le même texte, du même auteur, il y a moins de dix minutes — rien écrit.
+    deja_signale: Optional[bool] = None
+    deja_signale_hint: Optional[str] = None
+    # Rattaché à un signal en attente : son état, la décision s'il y en a une, et le
+    # nombre d'occurrences (celle-ci comprise).
+    already_reported: Optional[dict] = None
+    # Le sujet avait été clos et revient : le dernier signal clos de cette clé.
+    regression_of: Optional[dict] = None
 
 
 def _correlation() -> tuple[str, Optional[str]]:
@@ -71,13 +80,13 @@ def _active_org(sub: str) -> Optional[int]:
 
 def _feedback(ctx: ResolvedCtx, inp: FeedbackInput) -> dict:
     source, session_id = _correlation()
-    sid, deja = db.insert_usage_signal(
+    depot = db.insert_usage_signal(
         sub=ctx.sub, org_id=ctx.org_id or _active_org(ctx.sub),
         signal=inp.signal, kind=inp.kind, target=inp.target, body=inp.text,
         session_id=session_id, source=source,
     )
-    out = {"ok": True, "id": sid}
-    if deja:
+    out = {"ok": True, "id": depot.id}
+    if depot.deja:
         # #684/#685 : le même retour déposé deux fois à onze secondes d'écart.
         # On rend l'id du premier et on le DIT — se taire ferait croire à deux
         # occurrences, refuser ferait perdre son retour à qui redépose de bonne foi.
@@ -88,6 +97,22 @@ def _feedback(ctx: ResolvedCtx, inp: FeedbackInput) -> dict:
             "Si le défaut s'est vraiment reproduit, dis ce qui a changé (autre "
             "ligne, autre paramètre, autre moment) — deux textes identiques ne se "
             "distinguent pas d'un rejeu.")
+    elif depot.rattache:
+        # L'agent apprend que le sujet est connu, où il en est, et ce qui a été
+        # décidé : il n'a pas à le redéposer, et peut agir sur la décision.
+        out["already_reported"] = {
+            "status": depot.status, "resolution": depot.resolution,
+            "occurrences": depot.occurrences,
+            "hint": ("this subject is already reported and awaiting arbitration: your "
+                     "report was added to it as one more occurrence. No need to report "
+                     "it again; work around it or tell the user."),
+        }
+    if depot.precedent is not None:
+        out["regression_of"] = {
+            **depot.precedent,
+            "hint": ("this subject had already been closed: a NEW signal was opened, "
+                     "since it is happening again."),
+        }
     return out
 
 
@@ -152,6 +177,11 @@ class SignalRow(BaseModel):
     resolved_at: Optional[str] = None
     resolved_by: Optional[str] = None
     resolution: Optional[str] = None
+    # Les dépôts de même org, même type et même cible faits pendant que ce signal
+    # attendait son arbitrage : `occurrences` = 1 + leur nombre, `last_seen_at` = le
+    # plus récent. La liste est triée sur `last_seen_at`.
+    occurrences: Optional[int] = None
+    last_seen_at: Optional[str] = None
 
 
 class SignalsPage(BaseModel):
@@ -398,7 +428,10 @@ CAPABILITIES += [
                     "wrong_result | praise | other). signal='gap' = a use case oto could NOT do, "
                     "call it whenever you wanted to act but no oto capability covered it "
                     "(target = what you were trying to accomplish ; kind = missing_tool | "
-                    "missing_doctrine | missing_data | other). text = optional detail.",
+                    "missing_doctrine | missing_data | other). text = optional detail. A "
+                    "subject already reported (same workspace, signal and target) and still "
+                    "awaiting a decision is not duplicated: your report is added to it and "
+                    "the answer says its status and decision.",
         mcp="feedback", rest=RestBinding("POST", "/api/me/usage/feedback"),
     ),
     # --- projections de lecture (opérateur plateforme) ---------------------
@@ -413,7 +446,9 @@ CAPABILITIES += [
     Capability(key="usage.signals", handler=_signals, Input=SignalsInput, authz=PLATFORM_ADMIN,
                Output=SignalsPage,
                description="List usage signals (feedback/gap) reported about oto, most recent "
-                           "first, plus `counts` per status over the WHOLE table. Filters: "
+                           "activity first (`last_seen_at`: repeated reports of a pending subject "
+                           "are attached to it, counted in `occurrences`), plus `counts` "
+                           "per status over the WHOLE table. Filters: "
                            "signal ('tool_feedback'|'gap'), target, status "
                            "('open'|'acknowledged'|'declined'|'resolved', or 'pending' = "
                            "everything not yet arbitrated). Platform-admin only.",

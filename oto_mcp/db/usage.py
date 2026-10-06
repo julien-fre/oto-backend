@@ -12,7 +12,7 @@ import os
 import re
 import secrets
 from datetime import date, datetime, timezone
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, NamedTuple, Optional
 
 import psycopg
 
@@ -518,70 +518,141 @@ def project_run_stats(project_id: int) -> dict:
 _REJEU_SIGNAL_MINUTES = 10
 
 
+class DepotSignal(NamedTuple):
+    """Ce que le dépôt d'un signal a produit.
+
+    - `deja` : un REJEU — le même texte, du même auteur, sur la même clé, il y a moins
+      de `_REJEU_SIGNAL_MINUTES` minutes. Rien n'a été écrit ; `id` est l'existant.
+    - `rattache` : une NOUVELLE occurrence d'un signal de même clé encore en attente
+      d'arbitrage. Écrite dans `usage_signal_occurrences` ; `id` est ce signal-là.
+    - `precedent` : la clé avait un signal CLOS (resolved | declined) et aucun en
+      attente — le problème revient. Un signal neuf est créé ; `precedent` décrit le
+      dernier clos (`id`, `status`, `resolution`).
+    `status`, `resolution` et `occurrences` décrivent le signal `id` tel qu'il est
+    APRÈS le dépôt."""
+    id: int
+    deja: bool = False
+    rattache: bool = False
+    status: str = "open"
+    resolution: Optional[str] = None
+    occurrences: int = 1
+    precedent: Optional[dict] = None
+
+
+# La CLÉ d'un sujet : même org, même type, même cible. Le genre (`kind`) n'en est pas :
+# deux agents qui butent sur la même valeur absente la disent l'un « bug », l'autre
+# « wrong_result » — c'est le même sujet, et chaque occurrence garde son genre.
+_CLE_SIGNAL = """
+       org_id IS NOT DISTINCT FROM %(org_id)s
+   AND signal = %(signal)s
+   AND lower(btrim(target)) = lower(btrim(%(target)s))
+"""
+
+
 def insert_usage_signal(
     *, sub: Optional[str], org_id: Optional[int], signal: str, kind: str,
     target: Optional[str], body: Optional[str], session_id: Optional[str],
     source: str = "agent",
-) -> tuple[int, bool]:
-    """Dépose un signalement → `(id, deja_depose)`.
+) -> DepotSignal:
+    """Dépose un signalement → `DepotSignal`.
 
-    Un signalement identique du même auteur dans les dernières minutes rend l'id
-    du PREMIER, sans en créer un second (#684/#685 — le même retour déposé deux
-    fois à ONZE SECONDES d'écart par le même agent, sur des doublons créés en
-    silence dans le CRM d'un client). L'insertion était nue : deux dépôts, deux
-    lignes, aucun signe.
+    **Un sujet en attente ne se redépose pas, il se RATTACHE.** Un signal de même org,
+    même type et même cible, déposé alors qu'un signal de cette clé attend un arbitrage
+    (open | acknowledged), devient une occurrence de celui-ci
+    (`usage_signal_occurrences`) — mesuré le 06/10/2026 : une quarantaine de redites
+    sur 338 signaux en attente, la même valeur absente déposée douze fois. Rien n'est
+    perdu : chaque occurrence garde son auteur, sa session, son genre et son texte ; la
+    pile, elle, compte des sujets.
 
-    ⚠️ **C'est notre propre boucle de retour qui se faisait le défaut qu'elle
-    sert à remonter** — une information produite (« tu m'as déjà dit ça ») que
-    personne ne rendait. Elle n'a droit à aucun traitement de faveur.
+    ⚠️ **Un sujet CLOS qui revient crée un signal neuf** : une régression doit se voir,
+    pas s'enterrer sous un arbitrage déjà rendu. Le dépôt décrit alors le dernier clos
+    (`precedent`).
 
-    ⚠️ **On ne REFUSE pas, on rend l'existant et on le DIT.** Refuser ferait
-    perdre son retour à un agent qui redépose de bonne foi ; se taire laisserait
-    croire à deux occurrences là où il n'y a qu'un rejeu, et gonflerait la pile
-    d'arbitrage de faux volume. Le second appel reçoit donc le même identifiant,
-    et sait que c'est le même.
+    ⚠️ **Sans cible, rien ne se rattache** : une cible vide ne désigne aucun sujet.
 
-    ⚠️ La comparaison porte sur le CORPS ENTIER, pas sur le sujet : deux
-    signalements sur le même outil sont normaux et fréquents — c'est le texte à
-    l'identique qui trahit le rejeu.
+    ⚠️ **L'ORGANISATION fait partie de la clé** (#684/#685) : le même texte sur deux
+    organisations est une correction d'adresse, pas une redite — les fusionner
+    laisserait le signalement classé au mauvais endroit, définitivement.
 
-    ⚠️ **Et sur l'ORGANISATION, faute de quoi ce cran détruirait la donnée qu'il
-    prétend ranger.** Les deux dépôts qui ont motivé ce lot n'étaient PAS un
-    rejeu : l'auteur avait adressé le premier à la mauvaise organisation et l'a
-    redéposé, texte identique, sur la bonne — il le dit lui-même dans le second
-    corps. Sans cette clause, le second aurait été fusionné dans le premier et le
-    signalement serait resté classé au mauvais endroit, définitivement.
+    Le REJEU reste ce qu'il était : le même texte, du même auteur, sur la même clé,
+    en moins de dix minutes, ne s'écrit pas du tout — ni signal, ni occurrence.
 
-    ⚠️ **Le défaut de fond reste entier et n'est pas ici** : corriger l'adresse
-    d'un signalement impose de le redéposer, parce que le réaiguillage n'existe
-    que côté administrateur. L'émetteur n'a pas d'autre recours que le doublon.
-    Tant que ça dure, ces doublons-là sont légitimes."""
+    ⚠️ Deux dépôts SIMULTANÉS d'une clé neuve peuvent créer deux signaux : la course
+    n'est pas fermée par un verrou, elle ne coûte qu'un doublon que l'arbitrage voit."""
+    p = {"sub": sub, "org_id": org_id, "signal": signal, "kind": kind,
+         "target": target, "body": body, "session_id": session_id,
+         "source": source, "minutes": str(_REJEU_SIGNAL_MINUTES)}
     with _connect() as conn:
         vu = conn.execute(
             """
             SELECT id FROM usage_signals
-             WHERE sub IS NOT DISTINCT FROM %s
-               AND org_id IS NOT DISTINCT FROM %s
-               AND signal = %s AND kind = %s
-               AND target IS NOT DISTINCT FROM %s
-               AND body IS NOT DISTINCT FROM %s
-               AND created_at > NOW() - (%s || ' minutes')::interval
+             WHERE sub IS NOT DISTINCT FROM %(sub)s
+               AND org_id IS NOT DISTINCT FROM %(org_id)s
+               AND signal = %(signal)s AND kind = %(kind)s
+               AND target IS NOT DISTINCT FROM %(target)s
+               AND body IS NOT DISTINCT FROM %(body)s
+               AND created_at > NOW() - (%(minutes)s || ' minutes')::interval
+            UNION ALL
+            SELECT s.id FROM usage_signal_occurrences o
+              JOIN usage_signals s ON s.id = o.signal_id
+             WHERE o.sub IS NOT DISTINCT FROM %(sub)s
+               AND s.org_id IS NOT DISTINCT FROM %(org_id)s
+               AND s.signal = %(signal)s AND o.kind = %(kind)s
+               AND s.target IS NOT DISTINCT FROM %(target)s
+               AND o.body IS NOT DISTINCT FROM %(body)s
+               AND o.created_at > NOW() - (%(minutes)s || ' minutes')::interval
              ORDER BY id DESC LIMIT 1
-            """,
-            (sub, org_id, signal, kind, target, body,
-             str(_REJEU_SIGNAL_MINUTES)),
-        ).fetchone()
+            """, p).fetchone()
         if vu is not None:
-            return int(vu["id"]), True
+            etat = _etat_signal(conn, int(vu["id"]))
+            return DepotSignal(int(vu["id"]), deja=True, **etat)
+        if target is not None and target.strip():
+            ouvert = conn.execute(
+                f"""
+                SELECT id FROM usage_signals
+                 WHERE {_CLE_SIGNAL} AND status <> ALL(%(clos)s)
+                 ORDER BY created_at DESC LIMIT 1
+                """, {**p, "clos": list(SIGNAL_TERMINAL)}).fetchone()
+            if ouvert is not None:
+                conn.execute(
+                    """
+                    INSERT INTO usage_signal_occurrences
+                        (signal_id, sub, kind, body, session_id, source)
+                    VALUES (%(id)s, %(sub)s, %(kind)s, %(body)s, %(session_id)s, %(source)s)
+                    """, {**p, "id": int(ouvert["id"])})
+                etat = _etat_signal(conn, int(ouvert["id"]))
+                return DepotSignal(int(ouvert["id"]), rattache=True, **etat)
+            clos = conn.execute(
+                f"""
+                SELECT id, status, resolution FROM usage_signals
+                 WHERE {_CLE_SIGNAL} AND status = ANY(%(clos)s)
+                 ORDER BY COALESCE(resolved_at, created_at) DESC LIMIT 1
+                """, {**p, "clos": list(SIGNAL_TERMINAL)}).fetchone()
+        else:
+            clos = None
         row = conn.execute(
             """
             INSERT INTO usage_signals
                 (sub, org_id, signal, kind, target, body, session_id, source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
-            """,
-            (sub, org_id, signal, kind, target, body, session_id, source),
-        ).fetchone()
-        return int(row["id"]), False
+            VALUES (%(sub)s, %(org_id)s, %(signal)s, %(kind)s, %(target)s, %(body)s,
+                    %(session_id)s, %(source)s) RETURNING id
+            """, p).fetchone()
+        precedent = ({"id": int(clos["id"]), "status": clos["status"],
+                      "resolution": clos["resolution"]} if clos is not None else None)
+        return DepotSignal(int(row["id"]), precedent=precedent)
+
+
+def _etat_signal(conn, signal_id: int) -> dict:
+    """`status`, `resolution` et `occurrences` (1 + les rattachées) d'un signal."""
+    r = conn.execute(
+        """
+        SELECT s.status, s.resolution,
+               1 + (SELECT count(*) FROM usage_signal_occurrences o
+                     WHERE o.signal_id = s.id) AS occurrences
+          FROM usage_signals s WHERE s.id = %s
+        """, (signal_id,)).fetchone()
+    return {"status": r["status"], "resolution": r["resolution"],
+            "occurrences": int(r["occurrences"])}
 
 
 # Les quatre états d'ARBITRAGE d'un signal (#450). Deux ne suffisaient pas :
@@ -616,10 +687,16 @@ def list_usage_signals(
     #450 un signal arbitré peut l'être en `declined`, qui porte lui aussi une date
     — la dériver de la date rendrait un refus indistinguable d'un traitement."""
     limit = max(1, min(int(limit), 1000))
+    # `occurrences` = 1 + les dépôts rattachés ; `last_seen_at` = le plus récent. Le tri
+    # suit la DERNIÈRE occurrence : un sujet ancien qui revient remonte en tête.
     sql = ("SELECT s.id, s.created_at, s.sub, u.email, u.name, s.org_id, s.signal, "
            "s.kind, s.target, s.body, s.session_id, s.source, s.status, "
-           "s.resolved_at, s.resolved_by, s.resolution, s.notified_at "
-           "FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub")
+           "s.resolved_at, s.resolved_by, s.resolution, s.notified_at, "
+           "1 + COALESCE(oc.n, 0) AS occurrences, "
+           "GREATEST(s.created_at, oc.dernier) AS last_seen_at "
+           "FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub "
+           "LEFT JOIN LATERAL (SELECT count(*) AS n, max(o.created_at) AS dernier "
+           "FROM usage_signal_occurrences o WHERE o.signal_id = s.id) oc ON true")
     clauses, params = [], []
     if signal:
         clauses.append("s.signal = %s"); params.append(signal)
@@ -637,7 +714,7 @@ def list_usage_signals(
         clauses.append("s.status = %s"); params.append(status)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY s.created_at DESC LIMIT %s"
+    sql += " ORDER BY last_seen_at DESC, s.id DESC LIMIT %s"
     params.append(limit)
     with _connect() as conn:
         return [dict(r) for r in conn.execute(sql, tuple(params)).fetchall()]

@@ -392,6 +392,7 @@ _SUB_COLUMNS = [
     # et `datastore_shares` : colonnes mortes, plus rien ne les lit, DROP en B2).
     # données de l'user
     ("usage", "sub"), ("tool_calls", "sub"), ("usage_signals", "sub"),
+    ("usage_signal_occurrences", "sub"),
     ("user_disabled_tools", "sub"), ("user_enabled_tools", "sub"),
     ("org_members", "sub"), ("org_group_members", "sub"),
     # Le journal des entrées/sorties d'org (oto#145) suit la personne et celui qui a

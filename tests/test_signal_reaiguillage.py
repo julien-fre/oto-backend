@@ -248,9 +248,11 @@ def live_signals(pg_module_dsn, monkeypatch):
         return m.group(0)
 
     with psycopg.connect(pg_module_dsn, row_factory=dict_row, autocommit=True) as c:
+        c.execute("DROP TABLE IF EXISTS usage_signal_occurrences")
         c.execute("DROP TABLE IF EXISTS usage_signals")
         c.execute("DROP TABLE IF EXISTS users CASCADE")
         c.execute(_ddl("usage_signals"))
+        c.execute(_ddl("usage_signal_occurrences"))
         # `list_usage_signals` joint le rapporteur : sans la table, la lentille d'org
         # ne s'exerce pas — et c'est justement ce qu'on vient vérifier.
         c.execute(_ddl("users"))
@@ -266,10 +268,10 @@ def live_signals(pg_module_dsn, monkeypatch):
 def test_le_deplacement_rend_l_avant_ET_l_apres(live_signals):
     """Les deux valeurs, en une instruction. Les lire en deux temps les laisserait
     diverger entre les deux."""
-    sid, _ = usage.insert_usage_signal(
+    sid = usage.insert_usage_signal(
         sub="u1", org_id=246, signal="gap", kind="missing_tool",
         target="retirer un membre", body="déposé sur le mauvais espace",
-        session_id=None)
+        session_id=None).id
 
     row = usage.reroute_usage_signal(sid, org_id=2)
     assert row["org_id"] == 2 and row["previous_org_id"] == 246
@@ -281,9 +283,9 @@ def test_le_deplacement_rend_l_avant_ET_l_apres(live_signals):
 
 
 def test_remonter_a_la_plateforme_puis_redescendre(live_signals):
-    sid, _ = usage.insert_usage_signal(sub="u1", org_id=246, signal="gap",
-                                       kind="other", target="x", body=None,
-                                       session_id=None)
+    sid = usage.insert_usage_signal(sub="u1", org_id=246, signal="gap",
+                                    kind="other", target="x", body=None,
+                                    session_id=None).id
     assert usage.reroute_usage_signal(sid, org_id=None)["org_id"] is None
     assert usage.reroute_usage_signal(sid, org_id=246)["previous_org_id"] is None
 

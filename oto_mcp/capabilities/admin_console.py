@@ -411,7 +411,8 @@ CAPABILITIES += [
         key="admin.signal", handler=_signal, Input=SignalAdminInput,
         authz=PLATFORM_ADMIN,
         description=("Usage signals reported about oto (feedback/gap; platform admin). "
-                     "op=list (most recent first + `counts` per status; filters `signal` "
+                     "op=list (most recent activity first, each with `occurrences` = repeated "
+                     "reports attached while it was pending, + `counts` per status; filters `signal` "
                      "tool_feedback|gap, `target`, `status` open|acknowledged|declined|"
                      "resolved, or 'pending' = everything left to arbitrate) / set_status "
                      "(`signal_id`, `status`, `note` = what was decided — REQUIRED to "

@@ -247,6 +247,8 @@ CLASSEMENT: dict[str, Table] = {
                                  "mêlent tous les propriétaires, hors base"),
     "usage": possedee(ParSub(), "compteurs par compte, sans org"),
     "usage_signals": possedee(_ORG_OU_COMPTE),
+    "usage_signal_occurrences": indirecte(Via("usage_signals", ("signal_id",)),
+                                          comptes=("sub",)),
     "access_shadow_l7": possedee(ParOrg()),
     "origine_ecritures": possedee(_ORG_OU_COMPTE),
     "portee_elargissements": possedee(Ou((ParOrg(), ParSubSansOrg("acteur_sub")))),

@@ -60,9 +60,9 @@ def _compte(conn, sub: str, email: str) -> None:
 
 def _signal_termine(sub: str) -> int:
     from oto_mcp.db import usage as db_usage
-    sid, _deja = db_usage.insert_usage_signal(
+    sid = db_usage.insert_usage_signal(
         sub=sub, org_id=None, signal="tool_feedback", kind="bug",
-        target="x_tool", body="ça casse", session_id=None)
+        target="x_tool", body="ça casse", session_id=None).id
     db_usage.set_usage_signal_status(sid, status="resolved", by="op-1", note="corrigé")
     return sid
 

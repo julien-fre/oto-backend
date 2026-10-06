@@ -240,3 +240,31 @@ CREATE TABLE IF NOT EXISTS journal_archives (
     archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
+
+# Occurrences d'un signal d'usage (oto-backend : signaux rattachés) — fragment séparé :
+# la révision Alembic `0043_signal_occurrences` l'exécute tel quel (une seule écriture
+# du DDL), et le démarrage d'une base neuve le pose avec le reste.
+SIGNAL_OCCURRENCES = """
+-- Les OCCURRENCES d'un signal d'usage. Un signal de même org, même type (`signal`) et
+-- même cible (`target`) déposé alors qu'un signal de cette clé attend un arbitrage
+-- (open | acknowledged) n'en crée plus un nouveau : il s'y RATTACHE, ici. Mesuré le
+-- 06/10/2026 : 338 signaux en attente, dont une quarantaine de redites (douze fois la
+-- même valeur absente d'une procédure, huit fois la même clé morte) — la pile comptait
+-- des répétitions comme des sujets.
+-- Rien n'est perdu (la règle du ré-aiguillage : un signal est un FAIT) : chaque
+-- occurrence garde son auteur, sa session, son genre et son texte. La ligne de
+-- `usage_signals` reste la PREMIÈRE occurrence ; le compte servi = 1 + les lignes d'ici.
+-- Table neuve, née entière (aucune colonne posée par ALTER).
+CREATE TABLE IF NOT EXISTS usage_signal_occurrences (
+    id BIGSERIAL PRIMARY KEY,
+    signal_id BIGINT NOT NULL REFERENCES usage_signals(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sub TEXT,
+    kind TEXT NOT NULL,
+    body TEXT,
+    session_id TEXT,
+    source TEXT NOT NULL DEFAULT 'agent'
+);
+CREATE INDEX IF NOT EXISTS idx_usage_signal_occurrences_signal
+    ON usage_signal_occurrences(signal_id, created_at DESC);
+"""
