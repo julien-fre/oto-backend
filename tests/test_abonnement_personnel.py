@@ -181,6 +181,27 @@ class TestOption:
             _abonnement.exiger_ouvert(_PORTEUR, _FAMILLE)
         assert e.value.code == "subscription_not_enabled"
 
+    @pytest.mark.parametrize("valeur", ["1", "TRUE", " yes ", "on"])
+    def test_les_oui_ouvrent(self, monkeypatch, _option_ouverte, valeur):
+        _option_ouverte.clear()
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
+        assert _abonnement.ouvert(_PORTEUR)
+
+    @pytest.mark.parametrize("valeur", ["", "0", "false", "no", "off"])
+    def test_les_non_ferment(self, monkeypatch, _option_ouverte, valeur):
+        _option_ouverte.clear()
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
+        assert not _abonnement.ouvert(_PORTEUR)
+
+    @pytest.mark.parametrize("valeur", ["oui", "2", "ture"])
+    def test_une_valeur_illisible_leve_au_lieu_de_fermer(self, monkeypatch,
+                                                         _option_ouverte, valeur):
+        """Fermer en silence ferait recevoir un 403 à tous sans que l'exploitation le
+        sache : la déclaration fausse se dit, en la nommant."""
+        monkeypatch.setenv(_abonnement.ENV_OUVERT_A_TOUS, valeur)
+        with pytest.raises(_abonnement.OuvertureIllisible, match=_abonnement.ENV_OUVERT_A_TOUS):
+            _abonnement.ouvert(_PORTEUR)
+
 
 class TestEnfilage:
     """Le QUATRIÈME chemin de pose : un travail enfilé à la main (revue du 23/09/2026)."""

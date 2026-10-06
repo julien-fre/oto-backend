@@ -19,7 +19,7 @@ Trois refus nommés, tous à l'écriture ou à la réservation, jamais silencieu
 (`org_subscription_pool`) : ses travaux tournent alors sur l'abonnement d'un membre
 qui l'a PRÊTÉ à cette org (opt-in, par org), choisi à la réservation — le moins
 récemment servi, libre, servable. Le demandeur n'a plus besoin d'une connexion à
-lui (il porte toujours l'option), une flotte y passe, et le forfait rapporté est
+lui (le chemin doit toujours lui être ouvert : `ouvert`), une flotte y passe, et le forfait rapporté est
 celui du PRÊTEUR, sous SON seuil (min du plafond de l'org du travail et du sien).
 Le mode personnel reste le défaut, à l'octet près.
 
@@ -197,11 +197,35 @@ def servable(sub: Optional[str], famille: str) -> tuple[bool, Optional[str], Opt
     return False, statut, sandbox
 
 
+class OuvertureIllisible(RuntimeError):
+    """`ENV_OUVERT_A_TOUS` porte une valeur qui n'est ni un oui ni un non."""
+
+
+_OUI = ("1", "true", "yes", "on")
+_NON = ("", "0", "false", "no", "off")
+
+
+def ouvert_a_toute_l_instance() -> bool:
+    """L'instance ouvre-t-elle le chemin à TOUT compte (`ENV_OUVERT_A_TOUS`) ? Lu à
+    chaque appel : l'ouvrir ne demande pas de redémarrer. Une valeur qui n'est ni un oui
+    ni un non LÈVE : `yes` mal orthographié fermerait le chemin en silence, et chacun
+    recevrait un 403 sans que l'exploitation en sache rien."""
+    brut = os.environ.get(ENV_OUVERT_A_TOUS, "").strip().lower()
+    if brut in _OUI:
+        return True
+    if brut in _NON:
+        return False
+    raise OuvertureIllisible(
+        f"{ENV_OUVERT_A_TOUS}={brut!r} n'est ni un oui ({', '.join(_OUI)}) ni un non "
+        f"(absente, vide, {', '.join(n for n in _NON if n)}) : corrige la déclaration "
+        "de l'instance.")
+
+
 def ouvert(sub: str) -> bool:
     """Le chemin est-il ouvert à `sub` ? L'instance l'ouvre à tous
-    (`ENV_OUVERT_A_TOUS`), sinon la personne porte l'option `OPTION`. Seule source,
-    lue par la garde ET par `/api/me` (le front n'affiche que ce qui passera)."""
-    if os.environ.get(ENV_OUVERT_A_TOUS, "").strip().lower() in ("1", "true", "on"):
+    (`ouvert_a_toute_l_instance`), sinon la personne porte l'option `OPTION`. Seule
+    source, lue par la garde ET par `/api/me` (le front n'affiche que ce qui passera)."""
+    if ouvert_a_toute_l_instance():
         return True
     return access.has_option(sub, OPTION)
 
@@ -227,7 +251,8 @@ def exiger_a_la_pose(sub: str, proprietaire: Optional[str], famille: Optional[st
     **En mode pool**, ce n'est plus la connexion du demandeur qui se juge (il ne paie
     pas) mais le pool : au moins un membre de l'org doit lui prêter un abonnement
     servable, sinon l'agent resterait programmé sans jamais tourner. Une flotte y
-    passe. L'option, elle, se porte toujours : le chemin reste ouvert nommément.
+    passe. Le chemin, lui, doit toujours être ouvert au demandeur (`ouvert`) : par
+    son option, ou à toute l'instance quand elle le déclare.
 
     ⚠️ La propriété de l'agent se juge dans les DEUX modes (`peut_agir_pour`) :
     l'org peut repasser en personnel, et l'agent d'un autre retouché pendant le pool
