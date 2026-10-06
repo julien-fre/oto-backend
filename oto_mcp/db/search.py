@@ -21,6 +21,8 @@ import re
 from typing import Optional
 
 from ._conn import _connect
+from .index_concurrent import IndexConcurrent
+from .paths import ROW_SERVED_VALUES_TEXT_SQL
 from .projects import _fold
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,28 @@ _HL_OPTS = "MaxWords=22,MinWords=8,ShortWord=2,HighlightAll=false,MaxFragments=2
 
 def _vec(text_expr: str) -> str:
     return f"to_tsvector('french', {_fold(text_expr)})"
+
+
+def _lexical_ou_fragment(text_expr: str, tsq: str, raw: str,
+                         vecteur: Optional[str] = None) -> str:
+    """LE prédicat de la recherche plein texte, partagé par toutes les sources : le
+    texte matche la tsquery `tsq` (mots/stems — GIN `_vec`) OU contient la saisie
+    foldée `raw` en sous-chaîne (fragments, préfixes, symboles, stopwords — GIN
+    `_trgm`). Les deux moitiés sont écrites sur les expressions EXACTES des index ;
+    les recopier ailleurs, c'est perdre l'index au premier écart.
+
+    `vecteur` remplace l'expression de la moitié lexicale quand la requête ne PEUT
+    pas passer par le GIN et lira donc ligne à ligne : un vecteur matérialisé s'y lit
+    sans être recalculé (cf. `lignes_trouvees_sql`, portée `all`)."""
+    return (f"({vecteur or _vec(text_expr)} @@ {tsq} "
+            f"OR {_fold(text_expr)} ILIKE '%%' || {raw} || '%%')")
+
+
+def _rang(rank_on: str, tsq: str) -> str:
+    """LE classement : `ts_rank_cd` normalisé par la longueur (|32 — une page géante ne
+    domine ni ne disparaît). Un seul appel dans le module, partagé par toutes les
+    sources et par la recherche des lignes : deux copies finiraient par diverger."""
+    return f"ts_rank_cd({rank_on}, {tsq}, 32)"
 
 
 def _trgm(text_expr: str) -> str:
@@ -273,6 +297,87 @@ def index_ddl() -> list[str]:
     ]
 
 
+# ── La recherche `q` dans les lignes d'UN tableau (#307) ─────────────────────────────
+#
+# Même construction qu'`oto_search` (`_prose_query`) : config `french`, repli d'accents
+# `_fold` sur le texte ET la saisie, et le prédicat `_lexical_ou_fragment` — le sens OU
+# la sous-chaîne —, écrit sur les expressions exactes des index. Deux écarts, voulus :
+#
+# - **un prédicat PAR MOT**, en ET : « cahiers 52100 » doit trouver la ligne où
+#   « cahiers » matche par le sens et « 52100 » par fragment de SIREN. Sur la saisie
+#   entière, ni la tsquery (« 52100 » n'est pas un lexème de la ligne) ni la
+#   sous-chaîne (« cahiers 52100 » n'y figure pas) ne la trouveraient ;
+# - **`plainto_tsquery`, pas `websearch_to_tsquery`**, parce que chaque mot est
+#   interrogé seul : la syntaxe web n'y a plus de sens, et elle y serait dangereuse —
+#   un fragment « -123 » deviendrait `!123`, qui matche toute ligne SANS 123.
+#
+# Le texte cherché dépend de la portée (`datastore/recherche.py`) :
+# - `values` = les valeurs servies (`paths.ROW_SERVED_VALUES_TEXT_SQL`), servi par
+#   `INDEX_VALEURS` : la fonction a le coût d'une fonction (`procost` 100), le
+#   planificateur préfère donc les deux GIN au filtre ligne à ligne. Mesuré sur 5 000
+#   lignes d'un tableau parmi 30 000 : 2 à 45 ms pour un mot sélectif ;
+# - `all` = `data::text`. ⚠️ Ses GIN existent (`index_ddl`, pour `oto_search`) mais le
+#   planificateur ne les prend PAS sous `ns_id = …` : il juge `data::text` gratuit et
+#   filtre ligne à ligne, en recalculant `to_tsvector` — 1,3 s sur les mêmes 5 000
+#   lignes. La moitié lexicale lit donc le vecteur MATÉRIALISÉ de la ligne
+#   (`rank_expr`, #318 : exactement `_vec(data::text)`, repli compris) : 0,55 s, le
+#   coût de l'ancienne sous-chaîne seule (0,54 s), sans régression.
+TEXTE_DES_LIGNES = {"all": DATASTORE_ROWS_TEXT, "values": ROW_SERVED_VALUES_TEXT_SQL}
+
+
+def _vecteur_des_lignes(portee: str) -> str:
+    """Le vecteur lu par la moitié lexicale ET par le classement, selon la portée."""
+    if portee == "all":
+        return rank_expr("datastore_rows")
+    return _vec(TEXTE_DES_LIGNES[portee])
+
+# Les deux index de la portée `values`, posés CONCURRENTLY par la révision 0041 ou à la
+# main (`index_concurrent`). Seuil bas (10 000 lignes) : chaque ligne coûte un appel de
+# la fonction en plus du GIN, et, au démarrage, la construction non concurrente
+# bloquerait les écritures de `datastore_rows` — la table que chaque agent écrit.
+_REVISION_VALEURS = "0041_recherche_valeurs_servies"
+INDEX_VALEURS = (
+    IndexConcurrent(nom="idx_datastore_rows_valeurs_fts", table="datastore_rows",
+                    forme=f"USING GIN ({_vec(ROW_SERVED_VALUES_TEXT_SQL)})",
+                    revision=_REVISION_VALEURS, max_lignes=10_000),
+    IndexConcurrent(nom="idx_datastore_rows_valeurs_trgm", table="datastore_rows",
+                    forme=f"USING GIN ({_trgm(ROW_SERVED_VALUES_TEXT_SQL)})",
+                    revision=_REVISION_VALEURS, max_lignes=10_000),
+)
+
+
+def _tsquery_mot() -> str:
+    """La tsquery d'UN mot de la saisie (paramètre `%s`), foldée comme le texte."""
+    return f"plainto_tsquery('french', {_fold('%s')})"
+
+
+def lignes_trouvees_sql(recherche) -> tuple[str, list]:
+    """`(clause, params)` : la ligne contient CHAQUE mot, par le sens ou par fragment.
+
+    `recherche` est une `datastore.recherche.Recherche` (validée en amont)."""
+    texte = TEXTE_DES_LIGNES[recherche.portee]
+    # `values` : l'expression même de son GIN (le vecteur par défaut) ; `all` : le
+    # vecteur matérialisé, la requête lisant de toute façon ligne à ligne.
+    vecteur = None if recherche.portee == "values" else _vecteur_des_lignes("all")
+    un_mot = _lexical_ou_fragment(texte, _tsquery_mot(), _fold("%s"), vecteur)
+    clause = " AND ".join([un_mot] * len(recherche.mots))
+    return f"({clause})", [p for mot in recherche.mots for p in (mot, mot)]
+
+
+def rang_des_lignes_sql(recherche) -> tuple[str, list]:
+    """`(expression, params)` du CLASSEMENT : `ts_rank_cd` normalisé (|32), comme
+    `oto_search`, contre l'union (`||`) des tsqueries des mots — une ligne qui en
+    porte davantage par le sens passe devant. Une ligne trouvée seulement par fragment
+    vaut 0 : elle vient après toutes celles que le sens a trouvées.
+
+    Portée `all` : le vecteur matérialisé de la ligne (`rank_expr`, #318) — c'est
+    exactement le texte de cette portée. Portée `values` : calculé sur les seules
+    lignes trouvées, faute de colonne matérialisée pour ce texte."""
+    vec = _vecteur_des_lignes(recherche.portee)
+    tsq = " || ".join([_tsquery_mot()] * len(recherche.mots))
+    return _rang(vec, tsq), list(recherche.mots)
+
+
 def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str,
                  where_scope: str, scope_params: tuple, q: str, limit: int,
                  rank_vec: str = "") -> list[dict]:
@@ -294,10 +399,8 @@ def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str
     le `WHERE` continue de porter l'expression indexée, sans quoi le planner cesserait
     d'utiliser les GIN — le filtre et le rang répondent à deux questions différentes,
     et une seule des deux coûtait cher. Vide = l'ancien chemin, à l'identique."""
-    vec = _vec(text_expr)
-    rank_on = rank_vec or vec
-    fold_q = _fold("%s")            # translate(lower(%s), accents…)
-    folded_doc = _fold(text_expr)   # le texte du document, foldé (repli ILIKE)
+    rank_on = rank_vec or _vec(text_expr)
+    fold_q = _fold("%s")            # translate(%s, accents…)
     hl_text = f"replace({headline_col}, '|', ' ')"  # pas de coupe en plein tableau
 
     def _run(or_mode: bool) -> list[dict]:
@@ -306,14 +409,13 @@ def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str
         tsq = f"replace({ws}::text, '&', '|')::tsquery" if or_mode else ws
         sql = (
             f"WITH qq AS (SELECT {tsq} AS tsq, {fold_q} AS raw) "
-            f"SELECT {select_cols}, ts_rank_cd({rank_on}, qq.tsq, 32) AS rank, "
+            f"SELECT {select_cols}, {_rang(rank_on, 'qq.tsq')} AS rank, "
             f"ts_headline('french', {hl_text}, qq.tsq, '{_HL_OPTS}') AS headline "
             f"FROM {table}, qq "
             # FTS tokenisée (mots/stems, rangés par ts_rank) OR substring trigramme
             # (fragments/préfixes « syl »→« Sylvie », rang 0 → en fin). Le substring
             # couvre AUSSI les symboles/stopwords (numnode=0, tsq vide ne matche rien).
-            f"WHERE ({vec} @@ qq.tsq "
-            f"       OR {folded_doc} ILIKE '%%' || qq.raw || '%%') "
+            f"WHERE {_lexical_ou_fragment(text_expr, 'qq.tsq', 'qq.raw')} "
             f"  AND ({where_scope}) "
             "ORDER BY rank DESC LIMIT %s"
         )

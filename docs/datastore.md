@@ -2206,10 +2206,37 @@ s'adresse par aucun filtre et ne se lit nulle part. Refusé (`RowValidationError
 validation des noms de colonne (`points._refuse_dotted_names`) — celle que la sonde de
 `test_lot_refuse_cles_pointees.py` exige devant chaque porte d'écriture en base.
 
-**Le blob lu en TEXTE** (recherche plein-texte, extrait, embedding) est reconstruit
-avec les valeurs à la place des enveloppes (`ROW_VALUES_TEXT_SQL`), sinon `q=hunter`
-matcherait toute ligne dont l'e-mail VIENT de Hunter. Gardé par un `jsonb_path_exists`
-mesuré : ×6,4 si systématique, ×1,5 sur une table sans couches.
+**Le blob lu en TEXTE pour l'embedding** est reconstruit avec les valeurs à la place des
+enveloppes (`ROW_VALUES_TEXT_SQL`), sinon l'embedding porterait la provenance au même
+titre que le contenu. Gardé par un `jsonb_path_exists` mesuré : ×6,4 si systématique,
+×1,5 sur une table sans couches.
+
+**La recherche `q` des lignes** (`data_rows`, `data_aggregate`, `GET …/rows`,
+`GET …/aggregate`, lignes d'un nœud tableau) — #307. Chaque MOT de `q` doit se
+retrouver, dans n'importe quel ordre, **par le sens** (tsquery `french`, accents et
+casse repliés : « cahiers » trouve « Le Cahier », « corp acme » trouve « ACME Corp »)
+**ou par fragment** (sous-chaîne : un bout de SIREN, d'URL, de référence collé tel
+quel). ⚠️ Le fragment n'est pas un repli : une recherche tokenisée seule ne retrouve
+pas « 52100 » dans « 552100554 », et l'utilisateur conclurait que la ligne n'existe
+pas. Construction partagée avec `oto_search` (`db/search.py::_lexical_ou_fragment`),
+à deux écarts près : un prédicat PAR MOT (le sens d'un mot, le fragment d'un autre),
+et `plainto_tsquery` (un fragment « -123 » deviendrait `!123` en syntaxe web).
+Sans `order_by`, une recherche **classe** : `ts_rank_cd` (|32, comme `oto_search`)
+d'abord, les lignes trouvées seulement par fragment ensuite (rang 0), puis l'ordre de
+création (`order_dir`) ; un `order_by` explicite, `_created_at` compris, garde la main.
+Côté MCP, le curseur d'une recherche classée est donc un curseur d'OFFSET.
+`q_scope` choisit le texte : `values` = les seules valeurs servies (fonction IMMUTABLE
+`datastore_valeurs_texte_v1`, ni clé, ni couche, ni échappement JSON) ; `all` =
+`data::text` entier, clés et couches comprises (retrouve une ligne par son
+`comment`) — défaut `all`, une valeur inconnue est refusée. Performances, mesurées
+sur 5 000 lignes d'un tableau parmi 30 000 : `values` passe par ses deux GIN
+(`idx_datastore_rows_valeurs_fts`/`_trgm`, révision 0041) — 2 à 45 ms pour un mot
+sélectif ; `all` filtre ligne à ligne sous `ns_id` (le planificateur ne prend pas les
+GIN de `data::text` dans un tableau), la moitié lexicale lisant le vecteur
+matérialisé `search_vec` — 0,55 s, le prix de l'ancienne sous-chaîne seule. La
+fonction porte `SET jit = off` : sans lui, le JIT recompilait son corps à chaque
+appel (200 ms par ligne, donc par écriture). Les deux GIN doublent à peu près le coût
+d'une insertion (5 000 lignes : 1,9 s → 4,1 s).
 
 ## Interroger PLUSIEURS colonnes à la fois (oto#22 barreau 1)
 

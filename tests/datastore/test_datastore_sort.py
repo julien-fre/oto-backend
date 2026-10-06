@@ -19,6 +19,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp.datastore import core as D
+from oto_mcp.datastore.recherche import PORTEE_DEFAUT, Recherche
 
 
 _ROWS = [{"row_id": f"r{i:02d}", "created_at": "t", "updated_at": "t", "data": {"n": i}}
@@ -70,7 +71,7 @@ def test_sorted_path_keeps_narrowing(spy):
     store, calls = spy
     store.cursor_rows("ns", order_by="n", q="sylvie",
                       filter={"statut": "won"})
-    assert calls["list"]["q"] == "sylvie"
+    assert calls["list"]["q"] == Recherche(mots=("sylvie",), portee=PORTEE_DEFAUT)
     assert calls["list"]["filters"] == [
         {"field": "statut", "op": "eq", "value": "won"}]
 
@@ -84,6 +85,27 @@ def test_sorted_pagination_advances_by_offset(spy):
     p3 = store.cursor_rows("ns", order_by="n", limit=2, cursor=p2["next_cursor"])
     assert [r["n"] for r in p3["rows"]] == [5]
     assert p3["next_cursor"] is None                 # page partielle ⇒ fin
+
+
+def test_q_without_order_by_ranks_on_the_offset_path(spy):
+    """#307 : une recherche CLASSE (meilleures correspondances d'abord) — c'est un tri,
+    donc l'offset ; le keyset ne connaît que l'ordre de création."""
+    store, calls = spy
+    p1 = store.cursor_rows("ns", q="sylvie", limit=2)
+    assert "after" not in calls
+    assert calls["list"]["order_by"] is None          # le rang, pas un tri demandé
+    assert calls["list"]["q"] == Recherche(mots=("sylvie",), portee=PORTEE_DEFAUT)
+    p2 = store.cursor_rows("ns", q="sylvie", limit=2, cursor=p1["next_cursor"])
+    assert calls["list"]["offset"] == 2 and len(p2["rows"]) == 2
+    with pytest.raises(D.InvalidCursor):              # un curseur keyset n'y vaut rien
+        store.cursor_rows("ns", q="sylvie", cursor=D._encode_cursor("r02"))
+
+
+def test_q_scope_unknown_is_refused_before_any_read(spy):
+    store, calls = spy
+    with pytest.raises(ValueError, match="q_scope"):
+        store.cursor_rows("ns", q="sylvie", q_scope="tout")
+    assert calls == {}
 
 
 # ── les deux régimes de curseur ne se mélangent pas ──

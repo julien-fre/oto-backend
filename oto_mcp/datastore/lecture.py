@@ -16,6 +16,7 @@ from . import schema as dsv2
 from .columns import _refuse_composite_compare, _refuse_group_by_compose
 from .dates import typer_les_clauses
 from .errors import InvalidCursor, RowNotFound
+from .recherche import recherche
 from .outils import (
     _OFFSET_CURSOR_PREFIX,
     _decode_cursor,
@@ -96,6 +97,7 @@ class LectureMixin:
         limit: int = 100,
         cursor: Optional[str] = None,
         q: Optional[str] = None,
+        q_scope: Optional[str] = None,
         order_by: Optional[str] = None,
         order_dir: str = "desc",
         filters: Optional[list] = None,
@@ -112,10 +114,12 @@ class LectureMixin:
         colonne, le second en vise plusieurs à la fois.
 
         Deux régimes de pagination, et le curseur porte lequel :
-          - **sans `order_by`** (défaut) → keyset sur `row_id` = ordre de création,
-            robuste aux écritures concurrentes (pas d'OFFSET qui dérive) ;
+          - **sans `order_by` ni `q`** (défaut) → keyset sur `row_id` = ordre de
+            création, robuste aux écritures concurrentes (pas d'OFFSET qui dérive) ;
           - **avec `order_by`** → tri SQL demandé + pagination par offset, faute de clé
-            keyset stable pour un tri arbitraire.
+            keyset stable pour un tri arbitraire ;
+          - **avec `q` sans `order_by`** → les meilleures correspondances d'abord
+            (#307), donc un tri, donc l'offset : un rang n'est pas une clé keyset.
 
         Repasser le curseur d'un régime dans l'autre lève `InvalidCursor` plutôt que de
         rendre une page fausse — un curseur d'offset relu comme un `row_id` cadrerait
@@ -124,6 +128,7 @@ class LectureMixin:
         `fields` (oto-backend#980, lot 2) : projette CHAQUE ligne dès sa fabrication
         (`_row_to_dict`), pas après coup — `["*"]` ou `None` = pas de projection,
         la page sort inchangée."""
+        cherche = recherche(q, q_scope)
         ns_id = self._resolve(datastore)
         proj = None if not fields or "*" in fields else frozenset(fields)
         filters = self._clauses(ns_id, filter, filters)
@@ -131,14 +136,14 @@ class LectureMixin:
         # à servir : le lire dès l'entrée ferait payer une requête à un appel qui va
         # refuser son curseur — un coût là où il n'y a même pas de résultat.
         sch = self._schema_of(ns_id) if order_by else None
-        if order_by:
+        if order_by or cherche:
             offset = _decode_offset_cursor(cursor) if cursor else 0
             # Même résolution de type que `page_rows` : le tri d'un champ ne peut
             # pas répondre juste sur une face et faux sur l'autre (#336).
-            otype, oopts = dsv2.order_spec(sch, order_by)
+            otype, oopts = dsv2.order_spec(sch, order_by) if order_by else (None, None)
             rows = db.datastore_list_rows(
                 ns_id, offset=offset, limit=limit, order_by=order_by,
-                order_dir=order_dir, q=q, filters=filters,
+                order_dir=order_dir, q=cherche, filters=filters,
                 order_type=otype, order_options=oopts)
             next_cursor = (_encode_offset_cursor(offset + len(rows))
                            if len(rows) == limit else None)
@@ -153,7 +158,7 @@ class LectureMixin:
             # fois il l'aurait deviné. Au niveau de la RÉPONSE, jamais de la cellule :
             # coût nul par ligne, et l'enveloppe devient autoportante.
                    "versions_servies": list(versions)}
-            health = self._order_health(ns_id, order_by, otype, oopts, q, filters)
+            health = self._order_health(ns_id, order_by, otype, oopts, cherche, filters)
             if health:
                 out["order_health"] = health
             return out
@@ -161,7 +166,7 @@ class LectureMixin:
         if after and after.startswith(_OFFSET_CURSOR_PREFIX):
             raise InvalidCursor(cursor)  # curseur trié repassé sans `order_by`
         rows = db.datastore_list_rows_after(
-            ns_id, after_row_id=after, limit=limit, q=q, filters=filters)
+            ns_id, after_row_id=after, limit=limit, filters=filters)
         if sch is None and rows:
             sch = self._schema_of(ns_id)
         out = [self._row_to_dict(r, sch, layers=layers, versions=versions, empties=empties,
@@ -175,17 +180,20 @@ class LectureMixin:
                 "versions_servies": list(versions)}
 
     def count_rows(self, datastore: str, *, filter: Optional[dict] = None,
-                   q: Optional[str] = None, filters: Optional[list] = None) -> int:
-        """Nombre de lignes (mêmes `filter`/`filters`/`q` que `cursor_rows`), poussé en
-        SQL (`COUNT(*)`) — sans rapatrier les lignes (feedback #191 : stats d'un gros
-        vivier sans charger 300+ lignes en contexte)."""
+                   q: Optional[str] = None, q_scope: Optional[str] = None,
+                   filters: Optional[list] = None) -> int:
+        """Nombre de lignes (mêmes `filter`/`filters`/`q`/`q_scope` que `cursor_rows`),
+        poussé en SQL (`COUNT(*)`) — sans rapatrier les lignes (feedback #191 : stats
+        d'un gros vivier sans charger 300+ lignes en contexte)."""
+        cherche = recherche(q, q_scope)
         ns_id = self._resolve(datastore)
         clauses = self._clauses(ns_id, filter, filters)
-        return db.datastore_count_rows(ns_id, q=q, filters=clauses)
+        return db.datastore_count_rows(ns_id, q=cherche, filters=clauses)
 
     def aggregate(self, datastore: str, *, group_by=None,
                   metrics: Optional[list] = None, filter: Optional[dict] = None,
-                  q: Optional[str] = None, filters: Optional[list] = None) -> list[dict]:
+                  q: Optional[str] = None, q_scope: Optional[str] = None,
+                  filters: Optional[list] = None) -> list[dict]:
         """Agrégat serveur (feedback #191) : COUNT/SUM/AVG/MIN/MAX sur des champs JSONB,
         `group_by` optionnel — stats d'un vivier sans rapatrier les lignes. Délègue à
         `db.datastore_aggregate`. Deux formes de filtre cumulables : `filter` exact
@@ -195,6 +203,7 @@ class LectureMixin:
 
         `group_by` accepte une LISTE de colonnes (oto#22) : leurs valeurs sont mises en
         commun, une ligne comptant une occurrence par colonne renseignée."""
+        cherche = recherche(q, q_scope)
         ns_id = self._resolve(datastore)
         clauses = self._clauses(
             ns_id, filter, filters,
@@ -202,7 +211,7 @@ class LectureMixin:
               if isinstance(m, dict) and isinstance(m.get("where"), list)])
         _refuse_group_by_compose(group_by)
         return db.datastore_aggregate(
-            ns_id, group_by=group_by, metrics=metrics, q=q, filters=clauses)
+            ns_id, group_by=group_by, metrics=metrics, q=cherche, filters=clauses)
 
     def page_rows(
         self,
@@ -213,6 +222,7 @@ class LectureMixin:
         order_by: Optional[str] = None,
         order_dir: str = "desc",
         q: Optional[str] = None,
+        q_scope: Optional[str] = None,
         filter: Optional[dict] = None,
         filters: Optional[list] = None,
         layers: str = dsl.DEFAUT,
@@ -243,7 +253,11 @@ class LectureMixin:
         après coup : un ramassage complet du vivier par cette route coûtait
         ~10,5 s de calcul Python sur son aplatissement de couches (mesuré
         17/09/2026), pour un usage qui ne lit souvent que 3-4 colonnes.
-        Absent (ou `["*"]`) = même payload qu'avant ce lot."""
+        Absent (ou `["*"]`) = même payload qu'avant ce lot.
+
+        `q`/`q_scope` (#307) : même recherche que `cursor_rows` ; sans `order_by`, les
+        meilleures correspondances d'abord (`db.datastore_list_rows`)."""
+        cherche = recherche(q, q_scope)
         ns_id = self._resolve(datastore)
         proj = None if not fields or "*" in fields else frozenset(fields)
         clauses = self._clauses(ns_id, filter, filters) or None
@@ -257,7 +271,7 @@ class LectureMixin:
         # historiques, inchangés.
         combined = db.datastore_page_with_stats(
             ns_id, offset=offset, limit=limit, order_by=order_by,
-            order_dir=order_dir, q=q, filters=clauses,
+            order_dir=order_dir, q=cherche, filters=clauses,
             order_type=otype, order_options=oopts)
         if combined is not None:
             rows, total, off_type, empty = combined
@@ -266,10 +280,10 @@ class LectureMixin:
         else:
             rows = db.datastore_list_rows(
                 ns_id, offset=offset, limit=limit, order_by=order_by,
-                order_dir=order_dir, q=q, filters=clauses,
+                order_dir=order_dir, q=cherche, filters=clauses,
                 order_type=otype, order_options=oopts)
-            total = db.datastore_count_rows(ns_id, q=q, filters=clauses)
-            health = self._order_health(ns_id, order_by, otype, oopts, q, clauses)
+            total = db.datastore_count_rows(ns_id, q=cherche, filters=clauses)
+            health = self._order_health(ns_id, order_by, otype, oopts, cherche, clauses)
         out = {
             "rows": [self._row_to_dict(r, sch, layers=layers, versions=versions,
                                        empties=empties, fields=proj) for r in rows],

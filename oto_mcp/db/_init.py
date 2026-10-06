@@ -13,7 +13,7 @@ import time
 
 import psycopg
 
-from . import (_prerequis, index_releve, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
+from . import (_prerequis, index_concurrent, index_releve, _tenant_primaire, _version_alembic, connector_instances, datastore_ns, journal_revisions,
                revision, rowlock, transcription, user_subscriptions)
 from ._conn import _connect
 from ._ddl_garde import GardeDdl, ddl_a_faire
@@ -677,6 +677,7 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # Source unique des expressions : db/search.py (index ↔ requête identiques).
     # pg_trgm requis par les index TRIGRAMME (#67 : substring indexé « syl »→« Sylvie »
     # en plus de la FTS tokenisée) : posée en tête, avec les prérequis (`_prerequis`).
+    from . import paths as _paths
     from . import search as _search
     # Colonnes de vecteur de CLASSEMENT (#318) — AVANT les index, parce qu'elles
     # doivent exister quand une requête les lit. `ADD COLUMN <tsvector>` nullable
@@ -688,6 +689,15 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         _executer_ddl_idempotent(conn, ddl)
     for ddl in _search.index_ddl():
         _executer_ddl_idempotent(conn, ddl)
+    # Recherche `q_scope=values` (#307) : la fonction des valeurs servies, posée
+    # seulement si elle MANQUE (son corps est figé, deux index en dépendent —
+    # `db/paths.py`), puis ses deux index sous le verdict CONCURRENTLY : construits ici
+    # sur une base neuve seulement ; une base servie les reçoit de la révision 0041 ou
+    # à la main. Sans eux la recherche répond juste, en parcourant le tableau.
+    if not index_concurrent.scalaire_de(conn)(_paths.SQL_FONCTION_VALEURS_PRESENTE):
+        conn.execute(_paths.DDL_FONCTION_VALEURS_TEXTE)
+    for index in _search.INDEX_VALEURS:
+        index_concurrent.poser_au_demarrage(conn, index)
     # Lot 3 chantier 0.4 : purge du type de lien `doc` (pointeur
     # manuel vers une page, subsumé par les backlinks [[…]] de Ship 4). 4 liens en
     # prod au comptage du 17/07. Idempotent (0 row ensuite).
@@ -1096,15 +1106,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_org ON tool_calls(org_id, created_at DESC) WHERE org_id IS NOT NULL")
     # Relevés d'org par outil (oto-backend#1145) : la forme d'une base NEUVE. Une base
     # servie le reçoit à la main ou de la révision 0032, CONCURRENTLY. Le verdict
-    # (`index_releve.a_construire`) ne laisse construire ici, non concurrent, que sur
+    # (`index_concurrent.a_construire`) ne laisse construire ici, non concurrent, que sur
     # une `tool_calls` PETITE : sur une grosse, la construction bloquerait les écritures
     # du journal au-delà de la fenêtre de démarrage. Index invalide ou table trop
     # grosse : le démarrage continue et le DIT, le geste est manuel (§5.1).
-    try:
-        if index_releve.a_construire(index_releve.scalaire_de(conn)):
-            conn.execute(index_releve.DDL_DEMARRAGE)
-    except (index_releve.IndexInvalide, index_releve.ConstructionManuelleRequise) as e:
-        logger.error("démarrage : %s", e)
+    index_concurrent.poser_au_demarrage(conn, index_releve.RELEVE)
     # Application OAuth cliente porteuse du grant (`azp` du JWT — claude.ai,
     # Claude Code, ChatGPT…) : axe de télémétrie par surface, extension OTO-LOCALE.
     conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS client_id TEXT")

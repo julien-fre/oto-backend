@@ -48,7 +48,7 @@ class _Store:
         self.filtres_page = list(kw.get("filters") or [])
         return self.page
 
-    def count_rows(self, datastore, *, filter=None, q=None, filters=None):
+    def count_rows(self, datastore, *, filter=None, q=None, q_scope=None, filters=None):
         # `core.count_rows` : « le compte doit décrire le MÊME jeu que la page ».
         self.filtres_compte = list(filters or [])
         return self.total

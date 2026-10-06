@@ -115,10 +115,14 @@ def test_the_filter_still_uses_the_indexed_expression():
     recherche passerait au balayage, sans rien signaler."""
     from pathlib import Path
     src = Path(S.__file__).read_text()
-    i = src.index("WHERE ({vec} @@ qq.tsq")
+    # Le `WHERE` passe par le prédicat partagé (#307), écrit sur `_vec`/`_fold` — les
+    # expressions des GIN — et jamais sur l'expression de classement.
+    i = src.index("WHERE {_lexical_ou_fragment(text_expr")
     fenetre = src[i:i + 200]
-
-    assert "{vec}" in fenetre and "rank_on" not in fenetre
+    assert "rank_on" not in fenetre
+    j = src.index("def _lexical_ou_fragment(")
+    corps = src[j:src.index("\ndef ", j + 1)]
+    assert "_vec(text_expr)} @@" in corps and "rank_" not in corps
 
 
 # ── le classement ne bouge pas (vrai PostgreSQL) ─────────────────────────────

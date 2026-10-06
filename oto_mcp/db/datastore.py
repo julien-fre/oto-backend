@@ -12,9 +12,12 @@ import os
 import re
 import secrets
 from datetime import date, datetime, timezone
-from typing import Any, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 import psycopg
+
+if TYPE_CHECKING:
+    from ..datastore.recherche import Recherche
 
 logger = logging.getLogger(__name__)
 
@@ -748,12 +751,15 @@ def _page_en_un_message(conn, sql: str, params: tuple, *, stats: str = "") -> di
 
 def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = None,
                         order_by: Optional[str] = None, order_dir: str = "desc",
-                        q: Optional[str] = None, filters: Optional[list] = None,
+                        q: Optional["Recherche"] = None, filters: Optional[list] = None,
                         order_type: Optional[str] = None,
                         order_options: Optional[list] = None) -> list[dict]:
     """Page de rows d'un namespace. `order_by` : `_created_at`/`_updated_at`/`_id`
-    (colonnes méta) ou un nom de champ user → `data->>field`. `q` : recherche
-    plein-texte sur tout le JSON (substring ACCENT-INSENSIBLE, aligné sur oto_search).
+    (colonnes méta) ou un nom de champ user → `data->>field`. `q` : la recherche
+    validée (`datastore.recherche.Recherche`) — chaque mot par le sens OU par
+    fragment (#307). SANS `order_by`, elle CLASSE : rang lexical d'abord, les lignes
+    trouvées seulement par fragment ensuite, puis l'ordre de création (`order_dir`) ;
+    un `order_by` explicite, `_created_at` compris, garde la main.
     `filters` : filtres par
     colonne (liste `{field, op, value}`, combinés AND — cf. `_ds_filter_clauses`).
     Tri/pagination/recherche/filtres côté SQL (server-side, ADR 0016). `limit=None`
@@ -823,7 +829,12 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
             return [{k: v for k, v in r.items() if k != "rn"}
                     for r in conn.execute(sql, params_).fetchall()]
     where, params = _ds_where(ns_id, q, filters)
-    if order_by in (None, "", "_created_at"):
+    if order_by in (None, "") and q:
+        from .search import rang_des_lignes_sql  # lazy : search → projects → datastore
+        rang, rparams = rang_des_lignes_sql(q)
+        order_sql = f"{rang} DESC, created_at {direction}, row_id {direction}"
+        params.extend(rparams)
+    elif order_by in (None, "", "_created_at"):
         order_sql = f"created_at {direction}, row_id {direction}"
     elif order_by == "_updated_at":
         order_sql = f"updated_at {direction}, row_id {direction}"
@@ -869,16 +880,17 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
 
 
 def datastore_list_rows_after(ns_id: int, *, after_row_id: Optional[str] = None,
-                              limit: int = 100, q: Optional[str] = None,
+                              limit: int = 100,
                               filters: Optional[list] = None) -> list[dict]:
     """Page **keyset** (curseur stable) triée par `row_id`. `row_id` est un uuid7 —
     monotone dans le temps de création — donc `ORDER BY row_id ASC` = ordre de
     création et `WHERE row_id > after_row_id` (borne EXCLUSIVE) enchaîne les pages
     sans dérive sous écritures concurrentes (contrairement à OFFSET, décalé par toute
-    insertion). `after_row_id=None` = première page. `q`/`filters` = même filtrage
-    SQL que `datastore_list_rows`. La clé est exacte (pas de troncature de timestamp,
+    insertion). `after_row_id=None` = première page. `filters` = même filtrage
+    SQL que `datastore_list_rows`. Pas de `q` : une recherche CLASSE (#307), elle
+    passe par `datastore_list_rows` et son offset — un rang n'est pas une clé keyset. La clé est exacte (pas de troncature de timestamp,
     contrairement à un keyset sur `created_at` rendu à la seconde)."""
-    where, params = _ds_where(ns_id, q, filters)
+    where, params = _ds_where(ns_id, None, filters)
     if after_row_id:
         where += " AND row_id > %s"
         params.append(after_row_id)
@@ -959,7 +971,7 @@ def datastore_clear_formula_dirty_ns(ns_id: int) -> None:
 
 def datastore_order_health(ns_id: int, *, order_by: str, order_type: str,
                            order_options: Optional[list] = None,
-                           q: Optional[str] = None,
+                           q: Optional["Recherche"] = None,
                            filters: Optional[list] = None) -> dict:
     """Les compteurs d'écart d'un tri typé (#336) : `{off_type, empty}` sur le
     même WHERE que la page — décision ① rendue à l'issue : les valeurs qu'on ne
@@ -992,7 +1004,7 @@ def datastore_order_health(ns_id: int, *, order_by: str, order_type: str,
     return {"off_type": int(row["off_type"] or 0), "empty": int(row["empty"] or 0)}
 
 
-def datastore_count_rows(ns_id: int, q: Optional[str] = None,
+def datastore_count_rows(ns_id: int, q: Optional["Recherche"] = None,
                          filters: Optional[list] = None) -> int:
     """Nombre total de rows d'un namespace (pour la pagination), filtré par `q` et
     les filtres par colonne — même clause que `datastore_list_rows` → total cohérent
@@ -1021,7 +1033,7 @@ def datastore_count_rows(ns_id: int, q: Optional[str] = None,
 
 def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[int] = None,
                               order_by: Optional[str] = None, order_dir: str = "desc",
-                              q: Optional[str] = None, filters: Optional[list] = None,
+                              q: Optional["Recherche"] = None, filters: Optional[list] = None,
                               order_type: Optional[str] = None,
                               order_options: Optional[list] = None
                               ) -> Optional[tuple[list[dict], int, int, int]]:
@@ -1141,7 +1153,7 @@ def datastore_page_with_stats(ns_id: int, *, offset: int = 0, limit: Optional[in
 
 
 def datastore_aggregate(ns_id: int, *, group_by: Optional[str] = None,
-                        metrics: Optional[list] = None, q: Optional[str] = None,
+                        metrics: Optional[list] = None, q: Optional["Recherche"] = None,
                         filters: Optional[list] = None, limit: int = 1000) -> list[dict]:
     """Agrégat serveur d'un namespace (feedback #191) : `COUNT/SUM/AVG/MIN/MAX` sur des
     champs JSONB, avec `group_by` optionnel — stats d'un gros vivier sans rapatrier les

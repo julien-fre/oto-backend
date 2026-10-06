@@ -47,11 +47,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from starlette.concurrency import run_in_threadpool
 
 from ..datastore import core as ds
+from ..datastore import recherche
 from ..datastore.errors import InvalidCursor
 from ..db import node_tables as db_node_tables
 from ..db import node_view as db_node
@@ -69,7 +70,11 @@ _LIMITE_DEFAUT = 50
 
 class NodeRowsInput(BaseModel):
     node_id: str
-    q: Optional[str] = None
+    q: Optional[str] = Field(default=None, description=recherche.DESCRIPTION_Q)
+    # Le vocabulaire fermé de la recherche des lignes (#307) : même paramètre que
+    # `GET /api/datastores/{ns}/rows`, une valeur inconnue refusée par le type.
+    q_scope: Optional[recherche.PorteeRecherche] = Field(
+        default=None, description=recherche.DESCRIPTION_Q_SCOPE)
     sort: Optional[str] = None
     direction: Optional[Literal["asc", "desc"]] = None
     # `<clé>:<valeur>` par entrée — la forme du contrat front. Une chaîne unique est
@@ -196,8 +201,8 @@ def _natif(inp: NodeRowsInput, fiche: dict, props: dict) -> dict:
     Le curseur est une POSITION, pas un décalage : intercaler une ligne pendant
     qu'on pagine ne fait ni sauter ni répéter de ligne.
     """
-    refuses = [n for n, v in (("q", inp.q), ("sort", inp.sort),
-                              ("filter", inp.filter)) if v]
+    refuses = [n for n, v in (("q", inp.q), ("q_scope", inp.q_scope),
+                              ("sort", inp.sort), ("filter", inp.filter)) if v]
     if refuses:
         raise AuthzDenied(
             400, "non_supporte_sur_tableau_natif",
@@ -259,7 +264,8 @@ def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
     filtres = _filtres(inp.filter)
     limite = cap_limit(inp.limit, _LIMITE_MAX, default=_LIMITE_DEFAUT)
     try:
-        page = store.cursor_rows(namespace, q=inp.q, order_by=inp.sort,
+        page = store.cursor_rows(namespace, q=inp.q, q_scope=inp.q_scope,
+                                 order_by=inp.sort,
                                  order_dir=(inp.direction or "desc"),
                                  filters=filtres or None, cursor=inp.cursor,
                                  limit=limite)
@@ -281,7 +287,8 @@ def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
         # (« le compte doit décrire le MÊME jeu que la page ») : la redire ici en
         # ferait une seconde vérité, qui divergerait au premier correctif appliqué
         # d'un seul côté.
-        "total": store.count_rows(namespace, q=inp.q, filters=filtres or None),
+        "total": store.count_rows(namespace, q=inp.q, q_scope=inp.q_scope,
+                                  filters=filtres or None),
         "items": [TableRow(id=str(r.get("_id")),
                            cells=_cellules(r, colonnes)).model_dump()
                   for r in page.get("rows") or []],

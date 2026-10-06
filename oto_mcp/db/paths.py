@@ -27,7 +27,9 @@ import re
 from ..datastore.schema import LAYER_KEYS, VALUE_LAYER, split_layer  # noqa: F401 — ré-export
 
 __all__ = [
-    "FIELD_VALUE_PARAM_SQL", "LAYER_VALUE_PARAM_SQL", "ROW_VALUES_TEXT_SQL",
+    "DDL_FONCTION_VALEURS_TEXTE", "FIELD_VALUE_PARAM_SQL", "FONCTION_VALEURS_TEXTE",
+    "LAYER_VALUE_PARAM_SQL", "ROW_SERVED_VALUES_TEXT_SQL", "ROW_VALUES_TEXT_SQL",
+    "SQL_FONCTION_VALEURS_PRESENTE",
     "bkey_index_expr", "field_read_sql", "field_value_sql", "leaf_read_sql",
     "list_items_sql", "split_layer", "split_list_path",
 ]
@@ -153,7 +155,11 @@ LAYER_VALUE_PARAM_SQL = "COALESCE(data->%s->>%s, data->>%s)"
 
 
 # Le blob RECONSTRUIT avec les valeurs à la place des enveloppes — pour tout ce qui
-# lit la ligne entière en texte : recherche plein-texte, extrait, embedding sémantique.
+# lit la ligne entière en texte : l'embedding sémantique (`datastore_embed`). La
+# recherche `q` l'a lu du 13/08 au 05/10/2026 ; depuis #307 elle choisit son texte
+# (`q_scope`) : `data::text` entier, ou les valeurs servies seules
+# (`ROW_SERVED_VALUES_TEXT_SQL`, ci-dessous) — les deux indexés, ce que ce blob, fait
+# d'une sous-requête, ne peut pas être.
 #
 # Sans ça, une colonne à couches ferait entrer sa provenance dans le texte cherché :
 # `q=hunter` matcherait toute ligne dont un email VIENT de Hunter, et l'embedding
@@ -186,6 +192,92 @@ ROW_VALUES_TEXT_SQL = (
     "CASE WHEN jsonb_path_exists(data, '$.*." + VALUE_LAYER + "')"
     " THEN " + _ROW_VALUES_REBUILD_SQL + " ELSE data::text END"
 )
+
+
+# ── Les VALEURS SERVIES d'une ligne, en texte : la portée `values` de `q` (#307) ────
+#
+# `ROW_VALUES_TEXT_SQL` ci-dessus garde la FORME du JSON (clés, guillemets,
+# échappements) : c'était le prix de l'identité à l'octet avec `data::text`. La
+# recherche `q_scope=values` veut l'inverse — ce qu'un LECTEUR reçoit, rien d'autre :
+#   - la valeur de chaque case, déballée par la règle de lecture (`_REGLE_VALEUR`, le
+#     jumeau d'`unwrap`) ; une case faite de couches seules ne contribue rien ;
+#   - un cran plus bas pour une liste de fiches, comme `served_value` : chaque attribut
+#     d'un item est déballé par la même règle ;
+#   - de tout cela, les FEUILLES seules (chaînes, nombres, booléens), en texte nu —
+#     ni clé, ni couche (`origine`/`comment`/`link`), ni échappement JSON.
+#
+# ⚠️ **Une FONCTION, et IMMUTABLE, parce que c'est la seule forme indexable.** Une
+# expression d'index ne peut pas porter de sous-requête ; le déroulé des cases en
+# exige une. PostgreSQL accepte en revanche une fonction IMMUTABLE dont le corps en
+# contient — d'où ce choix, et le `ORDER BY` de l'agrégat : sans lui, l'ordre des
+# feuilles dépendrait du plan, et la fonction ne serait immuable que de nom.
+#
+# ⚠️ **Le corps est FIGÉ, le nom est VERSIONNÉ.** Deux index d'expression en dépendent
+# (`db/search.py::INDEX_VALEURS`). Changer le corps sous le même nom laisserait ces
+# index décrire l'ANCIENNE règle — PostgreSQL ne le détecte pas, et une ligne serait
+# trouvée ou non selon que le plan passe par l'index. Changer la règle, c'est donc
+# une `_v2`, ses propres index, et le retrait des anciens. C'est aussi pourquoi le
+# démarrage ne la pose que si elle MANQUE (`CREATE`, jamais `CREATE OR REPLACE`).
+#
+# ⚠️ **`SET jit = off`, et c'est mesuré** (PostgreSQL 17, JIT actif par défaut) : le
+# planificateur estime le corps à plus de `jit_above_cost` (ses fonctions de
+# déroulement valent 100 lignes chacune, imbriquées), et la requête d'une fonction SQL
+# se recompile À CHAQUE APPEL — 200 ms par ligne, quelle que soit sa taille. Sans JIT :
+# 45 µs par ligne réaliste (2 000 lignes en 93 ms, contre 6 ms pour `data::text`).
+# Laissé tel quel, chaque écriture de ligne payait 2 × 200 ms de maintenance d'index,
+# et la construction d'un index sur 5 500 lignes ne finissait pas en dix minutes.
+#
+# Le corps n'appelle que des fonctions de `pg_catalog` : il se résout sous le
+# `search_path` restreint que PostgreSQL 17 impose aux opérations de maintenance
+# (`CREATE INDEX`, `REINDEX`, `VACUUM`).
+FONCTION_VALEURS_TEXTE = "datastore_valeurs_texte_v1"
+ROW_SERVED_VALUES_TEXT_SQL = f"{FONCTION_VALEURS_TEXTE}(data)"
+
+# La règle de lecture rendue en JSONB plutôt qu'en texte : une liste de fiches doit
+# rester une liste pour descendre dans ses items. DÉRIVÉE du texte de la règle, jamais
+# recopiée — la seule différence est l'opérateur qui lit `valeur`.
+_REGLE_VALEUR_JSONB = _REGLE_VALEUR.replace("{c}->>{v}", "{c}->{v}")
+assert _REGLE_VALEUR_JSONB != _REGLE_VALEUR, "la règle ne lit plus `valeur` par ->>"
+
+
+def _valeur_jsonb(cellule: str) -> str:
+    return _REGLE_VALEUR_JSONB.format(c=cellule, f=cellule, v=f"'{VALUE_LAYER}'",
+                                      vide=_OBJET_VIDE_SQL, couches=_COUCHES_SQL)
+
+
+_FEUILLES = ("strict $.** ? (@.type() == \"string\" || @.type() == \"number\""
+             " || @.type() == \"boolean\")")
+
+DDL_FONCTION_VALEURS_TEXTE = (
+    f"CREATE FUNCTION {FONCTION_VALEURS_TEXTE}(data jsonb) RETURNS text "
+    "LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET jit = off AS $corps$ "
+    "SELECT coalesce(string_agg(f.feuille #>> '{}', ' ' "
+    "ORDER BY c.n, m.i, m.a, f.n), '') "
+    "FROM jsonb_each(CASE WHEN jsonb_typeof(data) = 'object' THEN data END) "
+    "WITH ORDINALITY AS c(cle, cellule, n) "
+    f"CROSS JOIN LATERAL (SELECT {_valeur_jsonb('c.cellule')} AS v) AS u "
+    "CROSS JOIN LATERAL ("
+    # la case elle-même, quand sa valeur n'est pas une liste
+    "SELECT 0::bigint AS i, 0::bigint AS a, u.v AS piece "
+    "WHERE jsonb_typeof(u.v) IS DISTINCT FROM 'array' "
+    # les éléments d'une liste de valeurs
+    "UNION ALL SELECT e.i, 0::bigint, e.item "
+    "FROM jsonb_array_elements(CASE WHEN jsonb_typeof(u.v) = 'array' THEN u.v END) "
+    "WITH ORDINALITY AS e(item, i) WHERE jsonb_typeof(e.item) <> 'object' "
+    # les attributs des fiches d'une liste, déballés par la même règle
+    f"UNION ALL SELECT e.i, t.a, {_valeur_jsonb('t.attribut')} "
+    "FROM jsonb_array_elements(CASE WHEN jsonb_typeof(u.v) = 'array' THEN u.v END) "
+    "WITH ORDINALITY AS e(item, i) "
+    "CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(e.item) = 'object' "
+    "THEN e.item END) WITH ORDINALITY AS t(cle, attribut, a)"
+    ") AS m "
+    f"CROSS JOIN LATERAL jsonb_path_query(m.piece, '{_FEUILLES}') "
+    "WITH ORDINALITY AS f(feuille, n) $corps$"
+)
+
+#: `None` tant que la fonction n'existe pas — la garde du démarrage et de la révision.
+SQL_FONCTION_VALEURS_PRESENTE = (
+    f"SELECT to_regprocedure('{FONCTION_VALEURS_TEXTE}(jsonb)') IS NOT NULL")
 
 
 # `split_layer` vit dans `datastore_schema` depuis #377 et n'est que RÉ-EXPORTÉE ici

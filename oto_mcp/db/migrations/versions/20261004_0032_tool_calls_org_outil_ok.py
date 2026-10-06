@@ -20,7 +20,8 @@ temps du parcours complet de la table. CONCURRENTLY est refusé dans une transac
 **`IF NOT EXISTS`** : l'index est d'abord joué à la main en production, la révision
 ne fait alors que le constater.
 
-**Le verdict vit dans `oto_mcp/db/index_releve.py`**, partagé avec le démarrage :
+**Le verdict vit dans `oto_mcp/db/index_concurrent.py`** (l'index est déclaré dans
+`oto_mcp/db/index_releve.py`), partagé avec le démarrage :
 la révision ne construit que si l'index est ABSENT et `tool_calls` PETITE (base
 neuve, vide, préproduction fraîche — au plus `CONSTRUCTION_MAX_LIGNES`, estimées par
 `pg_class.reltuples`). Sur une `tool_calls` de production (12 M lignes, 172 s de
@@ -54,40 +55,18 @@ from __future__ import annotations
 
 from alembic import op
 
-from oto_mcp.db import index_releve
+from oto_mcp.db import index_concurrent
+from oto_mcp.db.index_releve import RELEVE
 
 revision = "0032_tool_calls_org_outil_ok"
 down_revision = "0031_selection_org_reelle"
 branch_labels = None
 depends_on = None
 
-#: Hors transaction, un `SET` vaut pour la SESSION : il est remis à zéro en sortie.
-_ATTENTE_MAX = "SET lock_timeout = '5min'"
-_ATTENTE_RENDUE = "RESET lock_timeout"
-
 
 def upgrade() -> None:
-    with op.get_context().autocommit_block():
-        bind = op.get_bind()
-
-        def scalaire(sql: str):
-            return bind.exec_driver_sql(sql).scalar()
-
-        if not index_releve.a_construire(scalaire):
-            return
-        op.execute(_ATTENTE_MAX)
-        try:
-            op.execute(index_releve.DDL_CONCURRENT)
-        finally:
-            op.execute(_ATTENTE_RENDUE)
-        if scalaire(index_releve.SQL_VALIDITE) is not True:
-            raise index_releve.IndexInvalide()
+    index_concurrent.poser_par_revision(op, RELEVE)
 
 
 def downgrade() -> None:
-    with op.get_context().autocommit_block():
-        op.execute(_ATTENTE_MAX)
-        try:
-            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {index_releve.INDEX}")
-        finally:
-            op.execute(_ATTENTE_RENDUE)
+    index_concurrent.retirer_par_revision(op, RELEVE)

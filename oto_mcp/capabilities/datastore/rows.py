@@ -34,7 +34,7 @@ from ...datastore.identite import Adresse
 from ...datastore import journal as datastore_journal
 from ...datastore import colonnes_non_declarees as cnd
 from ...datastore import validation_complete as dsvc
-from ...datastore import couches, identite, jetons
+from ...datastore import couches, identite, jetons, recherche
 from ...datastore import forcage as fcg
 from ...datastore import layers as dsl
 from ...datastore import schema as dsv2
@@ -79,6 +79,14 @@ def _tolerant_int(v):
         return None
 
 
+# `q`/`q_scope` : les phrases de `datastore.recherche`, les mêmes que la face MCP
+# (`data_rows`, `data_aggregate`) — une vérité, deux faces. `q_scope` est typé par le
+# vocabulaire fermé : une valeur inconnue sort en `400 invalid_input`, nommée, jamais
+# ramenée au défaut.
+_Q = Field(default=None, description=recherche.DESCRIPTION_Q)
+_Q_SCOPE = Field(default=None, description=recherche.DESCRIPTION_Q_SCOPE)
+
+
 def _precondition(refus: str):
     """`?expected_revision=` — le MÊME champ sur les trois gestes qui décident d'après
     une lecture : écrire, supprimer, libérer (oto#217).
@@ -103,7 +111,8 @@ class ListRowsInput(EntreeDatastore):
     limit: Optional[int] = None
     order_by: Optional[str] = None
     order_dir: str = "desc"
-    q: Optional[str] = None
+    q: Optional[str] = _Q
+    q_scope: Optional[recherche.PorteeRecherche] = _Q_SCOPE
     # JSON encodé : filtre d'égalité exacte `{colonne: valeur}` — le MÊME paramètre
     # que la face MCP `data_rows`, et ce que la CLI envoie sur `--filter`. Il était
     # absent : la route l'ignorait en silence et rendait TOUTES les lignes en les
@@ -156,7 +165,8 @@ class AggregateInput(EntreeDatastore):
     metrics: Optional[str] = None
     # JSON encodé : filtre d'égalité exacte `{colonne: valeur}` (chemin MCP).
     filter: Optional[str] = None
-    q: Optional[str] = None
+    q: Optional[str] = _Q
+    q_scope: Optional[recherche.PorteeRecherche] = _Q_SCOPE
     # JSON encodé : mêmes clauses riches que `/rows` — les tuiles du cockpit agrègent
     # le jeu filtré affiché.
     filters: Optional[str] = None
@@ -603,7 +613,8 @@ def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
         page = store.page_rows(
             ns, offset=offset, limit=limit,
             order_by=inp.order_by or None, order_dir=inp.order_dir,
-            q=inp.q or None, filter=filter_eq, filters=filters, layers=layers,
+            q=inp.q or None, q_scope=inp.q_scope, filter=filter_eq,
+            filters=filters, layers=layers,
             versions=_versions(inp.versions), fields=inp.fields, **empties)
         return {**page, **identite.numero(store.dernier_tableau)}
     except DatastoreNotFound:
@@ -628,7 +639,7 @@ def _aggregate(ctx: ResolvedCtx, inp: AggregateInput) -> dict:
     try:
         groups = make_store(ctx.sub).aggregate(
             ns, group_by=inp.group_by or None, metrics=metrics,
-            filter=filter_eq, q=inp.q or None, filters=filters)
+            filter=filter_eq, q=inp.q or None, q_scope=inp.q_scope, filters=filters)
     except DatastoreNotFound:
         raise ns_not_found(ctx.sub, ns)
     except ValueError as e:
@@ -951,7 +962,9 @@ CAPABILITIES += [
         mcp=None,  # `data_rows` tient déjà la face agent
         rest=RestBinding(verb="GET", path=_NS + "/rows"),
         errors=_REFUS_DE_FORME,
-        description=("Page de lignes d’un tableau (tri, recherche, filtres serveur). "
+        description=("Page de lignes d’un tableau (tri, recherche `q`/`q_scope`, "
+                     "filtres serveur ; sans `order_by`, une recherche rend les "
+                     "meilleures correspondances d’abord). "
                      "Pagination par `offset` + `limit` avec `total` du jeu filtré, "
                      "pas de curseur — la fin se calcule. Toute colonne déclarée est "
                      "servie, `null` sans valeur. Couches à plat par défaut, "

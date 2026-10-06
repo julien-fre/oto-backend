@@ -16,12 +16,13 @@ dans `paths`, avec un littéral échappé.
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
+if TYPE_CHECKING:
+    from ..datastore.recherche import Recherche
 from .paths import (
     FIELD_VALUE_PARAM_SQL,
     LAYER_VALUE_PARAM_SQL,
-    ROW_VALUES_TEXT_SQL,
     field_read_sql,
     leaf_read_sql,
     list_items_sql,
@@ -470,20 +471,21 @@ def _ds_leaf_predicate(V: str, fp: list, op: str, val,
     return f"{V} {sym} %s", fp + [sval]
 
 
-def _ds_where(ns_id: int, q: Optional[str], filters: Optional[list]) -> tuple[str, list]:
-    """Clause WHERE partagée par list/count (même filtrage → total cohérent)."""
+def _ds_where(ns_id: int, q: Optional["Recherche"], filters: Optional[list]
+              ) -> tuple[str, list]:
+    """Clause WHERE partagée par list/count/agrégat (même filtrage → total cohérent).
+
+    `q` = la recherche VALIDÉE (`datastore.recherche.recherche`), jamais la saisie
+    brute : la portée voyage avec les mots, aucun étage ne peut la perdre en route.
+    Chaque mot matche par le sens OU par fragment (#307), construction partagée avec
+    `oto_search` (`db/search.py::lignes_trouvees_sql`)."""
     where = "WHERE ns_id = %s"
     params: list = [ns_id]
     if q:
-        # Recherche plein-texte sur tout le JSON. ACCENT-INSENSIBLE (#67 V2.3) :
-        # même repli d'accents `_fold` qu'`oto_search` → « café » trouve « cafe » et
-        # inversement (fin de la divergence « sans accents repliés »). Reste un substring
-        # (matching partiel conservé, choix de la file feed) — l'alignement en tsquery
-        # tokenisée est un arbitrage distinct.
-        from .projects import _fold  # lazy : projects importe datastore (évite le cycle)
-        where += (f" AND {_fold(ROW_VALUES_TEXT_SQL)} ILIKE"
-                  f" '%%' || {_fold('%s')} || '%%'")
-        params.append(q)
+        from .search import lignes_trouvees_sql  # lazy : search → projects → datastore
+        clause, qparams = lignes_trouvees_sql(q)
+        where += f" AND {clause}"
+        params.extend(qparams)
     fclauses, fparams = _ds_filter_clauses(filters)
     for c in fclauses:
         where += f" AND {c}"
@@ -602,7 +604,7 @@ def thinnable_read_keys(order_by: Optional[str],
     return keys or None
 
 
-def thin_read_cte_sql(ns_id: int, q: Optional[str], filters: Optional[list],
+def thin_read_cte_sql(ns_id: int, q: Optional["Recherche"], filters: Optional[list],
                       order_by: Optional[str] = None
                       ) -> Optional[tuple[str, list, str, list]]:
     """La CTE MATÉRIALISÉE qui isole les colonnes lues par un tri typé ET/OU des
@@ -775,7 +777,7 @@ def _metric_across_items(op: str, colonne: str, attribut: str,
 
 
 def _build_aggregate(ns_id: int, group_by, metrics: Optional[list],
-                     q: Optional[str], filters: Optional[list],
+                     q: Optional["Recherche"], filters: Optional[list],
                      limit: int) -> tuple[str, list, list]:
     """Construit `(sql, params, names)` de l'agrégat — PUR (aucun I/O), testable sans PG.
     `names` = `[(alias_sql, nom_lisible)]`. Ordre des `%s` : colonnes SELECT (group +

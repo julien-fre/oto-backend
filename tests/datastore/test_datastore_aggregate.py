@@ -4,6 +4,7 @@ la construction SQL réelle est validée en preprod)."""
 from __future__ import annotations
 
 from oto_mcp.datastore import core as D
+from oto_mcp.datastore.recherche import PORTEE_DEFAUT, Recherche
 
 
 def test_aggregate_delegates_and_converts_filter(monkeypatch):
@@ -64,7 +65,7 @@ def test_aggregate_combines_exact_filter_and_rich_filters(monkeypatch):
 
     s.aggregate("vivier", filter={"statut": "qualified"},
                 q="lyon", filters=[{"field": "bp", "op": "gte", "value": "100"}])
-    assert seen["q"] == "lyon"
+    assert seen["q"] == Recherche(mots=("lyon",), portee=PORTEE_DEFAUT)   # validée (#307)
     assert seen["filters"] == [
         {"field": "statut", "op": "eq", "value": "qualified"},
         {"field": "bp", "op": "gte", "value": "100"},

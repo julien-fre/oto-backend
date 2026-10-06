@@ -2,14 +2,16 @@
 
 oto-backend#1145. Mesuré en production : 172 s de construction pour environ 12 M
 lignes, au-delà des 120 s de la fenêtre de démarrage. Le verdict partagé par la
-révision 0032 et le démarrage (`oto_mcp/db/index_releve.py`) refuse donc, en le
+révision 0032 et le démarrage (`oto_mcp/db/index_concurrent.py`, l'index déclaré dans
+`oto_mcp/db/index_releve.py`) refuse donc, en le
 NOMMANT, de construire sur une grosse table, et de prendre un index invalide pour fait.
 """
 from __future__ import annotations
 
 import pytest
 
-from oto_mcp.db import index_releve as ir
+from oto_mcp.db import index_concurrent as ic
+from oto_mcp.db.index_releve import RELEVE
 
 
 def _faux(*, valide, trop_grosse=False):
@@ -17,38 +19,38 @@ def _faux(*, valide, trop_grosse=False):
 
     def scalaire(sql: str):
         vus.append(sql)
-        if sql == ir.SQL_VALIDITE:
+        if sql == RELEVE.sql_validite:
             return valide
-        assert sql == ir.sql_table_trop_grosse(ir.CONSTRUCTION_MAX_LIGNES)
+        assert sql == RELEVE.sql_table_trop_grosse(ic.CONSTRUCTION_MAX_LIGNES)
         return trop_grosse
     return scalaire, vus
 
 
 def test_absent_sur_une_petite_table_se_construit():
     scalaire, _ = _faux(valide=None, trop_grosse=False)
-    assert ir.a_construire(scalaire) is True
+    assert ic.a_construire(RELEVE, scalaire) is True
 
 
 def test_absent_sur_une_grosse_table_renvoie_au_geste_manuel():
     scalaire, _ = _faux(valide=None, trop_grosse=True)
-    with pytest.raises(ir.ConstructionManuelleRequise) as e:
-        ir.a_construire(scalaire)
+    with pytest.raises(ic.ConstructionManuelleRequise) as e:
+        ic.a_construire(RELEVE, scalaire)
     assert "§5.1" in str(e.value) and "CONCURRENTLY" in str(e.value)
 
 
 def test_invalide_n_est_ni_pris_pour_fait_ni_reconstruit():
     scalaire, vus = _faux(valide=False)
-    with pytest.raises(ir.IndexInvalide) as e:
-        ir.a_construire(scalaire)
+    with pytest.raises(ic.IndexInvalide) as e:
+        ic.a_construire(RELEVE, scalaire)
     assert "DROP INDEX CONCURRENTLY" in str(e.value)
     # La taille n'est même pas lue : il n'y a rien à construire ici.
-    assert vus == [ir.SQL_VALIDITE]
+    assert vus == [RELEVE.sql_validite]
 
 
 def test_valide_ne_fait_rien():
     scalaire, vus = _faux(valide=True)
-    assert ir.a_construire(scalaire) is False
-    assert vus == [ir.SQL_VALIDITE]
+    assert ic.a_construire(RELEVE, scalaire) is False
+    assert vus == [RELEVE.sql_validite]
 
 
 def test_le_verdict_contre_une_vraie_base(live):
@@ -57,13 +59,13 @@ def test_le_verdict_contre_une_vraie_base(live):
     from oto_mcp.db._conn import _connect
 
     with _connect() as conn:
-        scalaire = ir.scalaire_de(conn)
-        assert scalaire(ir.SQL_VALIDITE) is True
-        assert ir.a_construire(scalaire) is False
+        scalaire = ic.scalaire_de(conn)
+        assert scalaire(RELEVE.sql_validite) is True
+        assert ic.a_construire(RELEVE, scalaire) is False
 
-        conn.execute(f"DROP INDEX {ir.INDEX}")
+        conn.execute(f"DROP INDEX {RELEVE.nom}")
         conn.execute("INSERT INTO tool_calls (tool) SELECT 'essai' FROM generate_series(1, 3)")
-        assert ir.a_construire(scalaire) is True
-        with pytest.raises(ir.ConstructionManuelleRequise):
-            ir.a_construire(scalaire, max_lignes=1)
+        assert ic.a_construire(RELEVE, scalaire) is True
+        with pytest.raises(ic.ConstructionManuelleRequise):
+            ic.a_construire(RELEVE, scalaire, max_lignes=1)
         conn.rollback()

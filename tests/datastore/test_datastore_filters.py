@@ -162,14 +162,13 @@ class TestMetaColumns:
 
 
 def test_where_merges_q_and_filters_in_order():
-    from oto_mcp.db.projects import _fold
-    where, params = db._ds_where(7, "marseille", [{"field": "statut", "op": "eq", "value": "retenu"}])
-    # `q` est ACCENT-INSENSIBLE depuis #67 V2.3 : l'expression de repli est DÉRIVÉE de
-    # `_fold` (source unique index↔requête) — la recopier en dur ici la ferait mentir au
-    # prochain ajustement du jeu de caractères.
-    # La recherche lit les VALEURS, pas les enveloppes (#318) — d'où la constante
-    # plutôt que `data::text` : une colonne à couches ne doit pas faire matcher sa
-    # provenance (`q=hunter` sur une ligne dont l'email VIENT de Hunter).
-    assert where == (f"WHERE ns_id = %s AND {_fold(db.ROW_VALUES_TEXT_SQL)} ILIKE "
-                     f"'%%' || {_fold('%s')} || '%%' AND {V} = %s")
-    assert params == [7, "marseille"] + P("statut") + ["retenu"]  # les % vivent dans le SQL
+    from oto_mcp.datastore.recherche import recherche
+    from oto_mcp.db.search import lignes_trouvees_sql
+    q = recherche("marseille", "values")
+    where, params = db._ds_where(7, q, [{"field": "statut", "op": "eq", "value": "retenu"}])
+    # La clause de recherche est DÉRIVÉE de la construction partagée avec `oto_search`
+    # (#307) — la recopier en dur ici la ferait mentir au prochain ajustement, et
+    # perdre l'identité avec l'expression des index ne se verrait pas autrement.
+    clause, qparams = lignes_trouvees_sql(q)
+    assert where == f"WHERE ns_id = %s AND {clause} AND {V} = %s"
+    assert params == [7, *qparams] + P("statut") + ["retenu"]  # les % vivent dans le SQL

@@ -168,7 +168,7 @@ class _Store:
         self.vu = dict(kw, datastore=datastore)
         return {"rows": [{"_id": "r1", "nom": "x"}], "next_cursor": None}
 
-    def count_rows(self, datastore, *, filter=None, q=None, filters=None):
+    def count_rows(self, datastore, *, filter=None, q=None, q_scope=None, filters=None):
         # Le compte passe par le STORE depuis #621 (il y résout les noms plats comme
         # la page, ce que `db.datastore_count_rows` ne fait pas).
         return len(filters or [])

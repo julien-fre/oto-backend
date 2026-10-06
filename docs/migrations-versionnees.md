@@ -862,6 +862,47 @@ réécriture), attente bornée par `lock_timeout` 5 s. **Ordre indifférent** : 
 lit ni n'écrit la colonne. **Le retour arrière lève** (irréversible) : un banc qui
 descend sous 0039 estampille la révision qu'il éprouve au lieu de `head`.
 
+`0041_recherche_valeurs_servies` (06/10/2026, oto-backend#307, après `0040_tenants_desactivation`)
+sert la portée `q_scope=values` de la recherche des lignes : la fonction IMMUTABLE
+`datastore_valeurs_texte_v1(jsonb)` (`db/paths.py` ; posée si elle MANQUE, son corps
+est figé — changer la règle, c'est une `_v2` et ses index), puis
+`idx_datastore_rows_valeurs_fts` et `idx_datastore_rows_valeurs_trgm` (GIN sur
+l'expression, `db/search.py::INDEX_VALEURS`), **CONCURRENTLY IF NOT EXISTS**, sous le
+verdict de 0032 — désormais `oto_mcp/db/index_concurrent.py`, partagé par les deux
+révisions et le démarrage. Seuil abaissé à **10 000 lignes** : un appel de fonction par
+ligne en plus du GIN, et une construction non concurrente au démarrage bloquerait les
+écritures de `datastore_rows`. Sur la base servie, la révision lève donc
+`ConstructionManuelleRequise` ; le geste manuel, puis la révision rejouée qui constate :
+
+```sql
+SET statement_timeout = 0;          -- deux parcours de datastore_rows, une fonction par ligne
+SET lock_timeout = '5min';
+-- la fonction d'abord, si to_regprocedure('datastore_valeurs_texte_v1(jsonb)') est nul
+CREATE FUNCTION datastore_valeurs_texte_v1(data jsonb) RETURNS text … ;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_datastore_rows_valeurs_fts ON datastore_rows
+    USING GIN (to_tsvector('french', translate(datastore_valeurs_texte_v1(data), …)));
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_datastore_rows_valeurs_trgm ON datastore_rows
+    USING GIN ((translate(datastore_valeurs_texte_v1(data), …)) gin_trgm_ops);
+SELECT c.relname, i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+ WHERE c.relname LIKE 'idx_datastore_rows_valeurs_%';                 -- deux t attendus
+-- si f : DROP INDEX CONCURRENTLY IF EXISTS <nom>; puis rejouer le CREATE
+```
+
+Les `…` sont le texte exact de `paths.DDL_FONCTION_VALEURS_TEXTE` et de
+`IndexConcurrent.ddl_concurrent` (le corps de la fonction, le repli d'accents
+`translate`) : les tirer du code du lot (`python -c "from oto_mcp.db.paths import
+DDL_FONCTION_VALEURS_TEXTE as F; from oto_mcp.db.search import INDEX_VALEURS as I;
+print(';\n'.join([F] + [i.ddl_concurrent for i in I]) + ';')"`), jamais les retaper —
+une expression d'index qui diffère d'un caractère de celle de la requête ne sert
+aucune lecture. **Avant la fusion** : le démarrage du lot construirait sinon les
+deux index NON concurrents si la table était sous le seuil ; au-dessus, il le dit en
+erreur et continue. Sans les index, `q_scope=values` répond juste, en parcourant les
+lignes du tableau visé. **Preuve en production** : au journal du démarrage, aucune
+ligne `démarrage : idx_datastore_rows_valeurs_…` ; au catalogue (lecture seule),
+`to_regprocedure('datastore_valeurs_texte_v1(jsonb)')` non nul et les deux
+`indisvalid = t`. Retour arrière : les deux `DROP INDEX CONCURRENTLY`, puis `DROP
+FUNCTION`, APRÈS le retrait du code qui l'appelle.
+
 ### 5.2 Une base neuve naît à la tête du registre (24/09/2026, oto-backend#969)
 
 Une base neuve reçoit tout son schéma du démarrage : chaque colonne qu'une révision pose

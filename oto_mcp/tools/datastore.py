@@ -21,7 +21,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
 from ..datastore import claimable, couches, identite, jetons, mots_deprecies, vide_remplace
-from ..datastore import upsert_implicite
+from ..datastore import recherche, upsert_implicite
 from ..datastore import colonnes_non_declarees
 from ..datastore import validation_complete
 from ..datastore import charge_a_renvoyer
@@ -56,6 +56,8 @@ _MARQUE_UPSERT_IMPLICITE = "<<upsert_implicite>>"
 _MARQUE_UPSERT = "<<upsert>>"
 _MARQUE_CLE_METIER = "<<cle_metier>>"
 _MARQUE_COLONNES = "<<colonnes_non_declarees>>"
+_MARQUE_Q = "<<recherche_q>>"
+_MARQUE_Q_SCOPE = "<<recherche_q_scope>>"
 
 
 def _inserer(fn, phrases: dict):
@@ -94,6 +96,13 @@ def _avec_la_regle_de_cle(fn):
         _MARQUE_CLE_METIER: upsert_implicite.description_cle_schema(),
         _MARQUE_COLONNES: (colonnes_non_declarees.description_schema() + " "
                            + validation_complete.description_schema())})
+
+
+def _avec_la_recherche(fn):
+    """Ce que `q` et `q_scope` font (#307) — les phrases de `datastore.recherche`,
+    les mêmes que sert la face REST, défaut compris."""
+    return _inserer(fn, {_MARQUE_Q: recherche.DESCRIPTION_Q,
+                         _MARQUE_Q_SCOPE: recherche.DESCRIPTION_Q_SCOPE})
 
 
 def _avec_la_creation(fn):
@@ -1550,11 +1559,13 @@ def register(mcp: FastMCP) -> None:
                 **({"advanced": issue["advanced"]} if issue.get("advanced") else {})}
 
     @mcp.tool()
+    @_avec_la_recherche
     def data_rows(
         datastore: Adresse, id: str | None = None,
         filter: Optional[dict] = None, limit: int = 100,
         cursor: str | None = None, fields: Optional[list[str]] = None,
         count_only: bool = False, q: str | None = None,
+        q_scope: recherche.PorteeRecherche | None = None,
         order_by: str | None = None, order_dir: str = "desc",
         filters: Optional[list[dict]] = None, layers: str = dsl.DEFAUT,
         # ⚠️ `dsver.DEFAUT`, jamais un littéral — même promesse que `layers.DEFAUT` :
@@ -1599,8 +1610,10 @@ def register(mcp: FastMCP) -> None:
         Without `order_by` the cursor is keyset-stable (rows created meanwhile don't
         shift the paging). With `order_by` it pages by offset instead, since an
         arbitrary sort has no stable keyset — so a row inserted mid-walk can shift the
-        remaining pages. Keep the SAME `order_by` across a walk: passing a cursor from
-        one regime into the other is rejected rather than silently mispaged.
+        remaining pages. `q` without `order_by` ranks the rows (best match first), so
+        it pages by offset too. Keep the SAME `order_by` and `q` across a walk:
+        passing a cursor from one regime into the other is rejected rather than
+        silently mispaged.
 
         Use `count_only=True` to get just the TOTAL number of (optionally filtered)
         rows — computed server-side, no rows returned — when you only need the count
@@ -1642,9 +1655,9 @@ def register(mcp: FastMCP) -> None:
                 first. A clause may also name a single column (`{"field": …}`), and
                 a `champ.origine`/`.comment`/`.link` suffix targets that layer.
                 Clauses combine with AND, and with `filter`. (list mode only)
-            q: free-text search across the whole row (accent-insensitive substring)
-                — the way to find a row when you don't know WHICH column holds the
-                word. Combines with `filter` (AND). (list mode only)
+            q: <<recherche_q>> The way to find a row when you don't know WHICH
+                column holds the word. Combines with `filter` (AND). (list mode only)
+            q_scope: <<recherche_q_scope>>
             limit: page size (default 100, list mode only).
             cursor: opaque `next_cursor` from a previous call = fetch the NEXT page.
             fields: list of column names to keep (projection) — the returned rows
@@ -1654,7 +1667,8 @@ def register(mcp: FastMCP) -> None:
             order_by: sort column — a user field, or a system one (`_created_at`,
                 `_updated_at`, `_id`). Omit = creation order. Sorting in SQL is how
                 you get "the 10 most recent" or "the top scores" without pulling the
-                table and sorting it yourself. (list mode only)
+                table and sorting it yourself. With `q` and no `order_by`, best
+                matches come first. (list mode only)
                 Sorting honors the DECLARED type of the column: a `number` sorts
                 numerically (never "10 < 2"), an `enum` sorts in its declared
                 option order, a `date` chronologically. Values that don't fit the
@@ -1663,7 +1677,8 @@ def register(mcp: FastMCP) -> None:
                 last of all. When that happens the response carries
                 `order_health: {off_type, empty}` — counts over the whole filtered
                 set, absent when everything conforms.
-            order_dir: `desc` (default) or `asc`. Only meaningful with `order_by`.
+            order_dir: `desc` (default) or `asc`. Meaningful with `order_by`; with
+                `q` alone, it orders rows of EQUAL rank by creation.
             layers: shape of a cell that carries layers (`origine`/`comment`/`link`).
                 ⚠️ This is a READ: do NOT send the row back. Write only the fields
                 you established — and never `<field>.origine`, which is read here
@@ -1698,7 +1713,7 @@ def register(mcp: FastMCP) -> None:
             vers = dsver.check(versions)
             if count_only:
                 total = store.count_rows(datastore, filter=filter, q=q,
-                                         filters=filters)
+                                         q_scope=q_scope, filters=filters)
                 return {"total": total, **identite.numero(store.dernier_tableau)}
             if id is not None:
                 row = store.get_row(datastore, id, layers=layers,
@@ -1712,7 +1727,8 @@ def register(mcp: FastMCP) -> None:
                 # ci-dessous, elle, a une enveloppe : le numéro y tient sans risque.
                 return _project_row(row, fields) if fields else row
             page = store.cursor_rows(datastore, filter=filter, limit=limit,
-                                     cursor=cursor, q=q, filters=filters,
+                                     cursor=cursor, q=q, q_scope=q_scope,
+                                     filters=filters,
                                      order_by=order_by, order_dir=order_dir,
                                      layers=layers, versions=vers, fields=fields,
                                      **dsl.relayer_empties(empties))
@@ -1796,6 +1812,7 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     @mcp.tool()
+    @_avec_la_recherche
     def data_aggregate(
         datastore: Adresse,
         metrics: Optional[list[dict]] = None,
@@ -1803,6 +1820,7 @@ def register(mcp: FastMCP) -> None:
         filter: Optional[dict] = None,
         filters: Optional[list[dict]] = None,
         q: str | None = None,
+        q_scope: recherche.PorteeRecherche | None = None,
     ) -> dict:
         """Aggregate rows SERVER-SIDE — stats over a whole (optionally filtered) table
         WITHOUT pulling the rows into context (feedback #191). Use this for totals and
@@ -1877,8 +1895,9 @@ def register(mcp: FastMCP) -> None:
             filter: dict `{column: value}` exact match to scope the aggregate.
             filters: list of clauses, incl. multi-column ones — same grammar as
                 `data_rows.filters`. Combines with `filter` (AND).
-            q: free-text search across the whole row, to aggregate the same set a
-                search shows.
+            q: <<recherche_q>> Aggregates the same set a `data_rows` search
+                shows (ranking aside).
+            q_scope: <<recherche_q_scope>>
         """
         store = _acting_store()
         datastore, _ = _adresse(datastore)
@@ -1886,7 +1905,7 @@ def register(mcp: FastMCP) -> None:
             jetons.verifier_champs(filter=filter, filters=filters)
             results = store.aggregate(
                 datastore, group_by=group_by, metrics=metrics, filter=filter,
-                filters=filters, q=q)
+                filters=filters, q=q, q_scope=q_scope)
             return {"results": results}
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
