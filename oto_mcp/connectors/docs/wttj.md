@@ -14,4 +14,4 @@ pilote ton ats wttj : tout part d'une **organisation**, une offre est un **job**
 - « qui est en entretien sur ce poste ? » → `wttj_candidate(op="list")` avec `job_reference` et `job_stage_id` ; détail → `wttj_candidate(op="get")`
 - « ajoute ce candidat » → `wttj_candidate(op="create")` ; « passe-le à l'étape suivante » → `wttj_candidate(op="update", job_stage_id=…)` ; archiver → `archived=true`
 - « note l'échange d'hier » → `wttj_comment` (écriture seule : l'api ne relit pas les commentaires)
-- « qu'est-ce qui a bougé cette semaine ? » → `wttj_moves`
+- « qu'est-ce qui a bougé sur ce poste ? » → `wttj_moves` (par job ; peut exiger un scope de partenaire que wttj ne délivre pas aux clients)

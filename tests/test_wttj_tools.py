@@ -42,16 +42,18 @@ def _no_write(client):
 
 # --- organisations -------------------------------------------------------------
 
-def test_organization_list_par_defaut_lit_l_utilisateur_courant(client):
+def test_organization_lit_les_organisations_du_jeton(client):
     _tool("wttj_organization")()
     client.get_current_user.assert_called_once_with(organizations=True)
+    client.get_organization.assert_not_called()
 
 
-def test_organization_get_exige_la_reference(client):
-    with pytest.raises(McpError, match="organization_reference"):
-        _tool("wttj_organization")(op="get")
-    _tool("wttj_organization")(op="get", organization_reference="org")
-    client.get_organization.assert_called_once()
+def test_organization_n_a_plus_de_detail():
+    """Le détail d'une organisation exige un scope de partenaire qu'un compte client
+    n'obtient pas : l'outil ne l'offre plus, il ne prend aucun paramètre."""
+    import inspect
+
+    assert inspect.signature(_tool("wttj_organization")).parameters == {}
 
 
 # --- offres ----------------------------------------------------------------------
@@ -153,6 +155,14 @@ def test_moves(client):
     client.list_moves.assert_called_once_with("org", job_reference="J1", page=None,
                                               per_page=None)
     assert out["moves"] == []
+
+
+def test_moves_exige_le_job():
+    """L'API refuse l'historique sans `job_reference` : l'outil l'exige à la signature."""
+    import inspect
+
+    param = inspect.signature(_tool("wttj_moves")).parameters["job_reference"]
+    assert param.default is inspect.Parameter.empty
 
 
 # --- refus amont ---------------------------------------------------------------

@@ -13,10 +13,15 @@ job et s'adressent par leur `id` entier ; un **candidat** appartient à un job.
 Pas de liste globale de candidats : l'API exige le job.
 
 **Surface consolidée (ADR 0047 §Amendement)** : un tool par OBJET métier, le verbe
-en `op` — `wttj_organization` (list/get), `wttj_job` (list/get), `wttj_candidate`
-(list/get/create/update). Deux tools restent seuls, leurs paramètres ne recouvrent
-pas ceux d'un voisin : `wttj_comment` (une écriture, aucune lecture n'existe en
-amont) et `wttj_moves` (l'historique du pipeline, adressé par l'organisation).
+en `op` — `wttj_job` (list/get), `wttj_candidate` (list/get/create/update). Trois
+tools restent seuls, leurs paramètres ne recouvrent pas ceux d'un voisin :
+`wttj_organization` (les organisations du jeton, sans paramètre), `wttj_comment`
+(une écriture, aucune lecture n'existe en amont) et `wttj_moves` (l'historique du
+pipeline d'un job).
+
+⚠️ Le détail d'une organisation (`GET /organizations/{ref}`) exige un scope de
+partenaire (`su_organizations_r`) qu'un compte client n'obtient pas : il n'est pas
+servi, la liste des organisations du jeton porte déjà leur nom et leur référence.
 
 ⚠️ Ce module ÉCRIT dans l'ATS du client : `wttj_candidate` op="create"/"update"
 (l'update DÉPLACE un candidat par `job_stage_id` ou l'archive) et `wttj_comment`.
@@ -39,7 +44,6 @@ from ..mcp_errors import McpError
 OU_OBTENIR_LA_CLE = ("demande à WTTJ via help.welcometothejungle.com "
                      "(le jeton n'est pas généré en libre-service)")
 
-_ORGANIZATION_OPS = ("list", "get")
 _JOB_OPS = ("list", "get")
 _CANDIDATE_OPS = ("list", "get", "create", "update")
 
@@ -138,33 +142,11 @@ def register(mcp: FastMCP) -> None:
     # --- Organisations ------------------------------------------------------
 
     @mcp.tool()
-    def wttj_organization(
-        op: Literal["list", "get"] = "list",
-        organization_reference: Optional[str] = None,
-        offices: Optional[bool] = None,
-        websites: Optional[bool] = None,
-    ) -> dict:
+    def wttj_organization() -> dict:
         """The Welcome to the Jungle organizations this token reaches — start here:
-        every other wttj tool needs an `organization_reference` or a job.
-
-        `op`:
-        - **"list"** (default): the token's user and the organizations it can reach
-          (with their `reference`).
-        - **"get"**: one organization (`organization_reference`): name, description,
-          sectors, size; `offices` / `websites` on request.
-        """
-        if op not in _ORGANIZATION_OPS:
-            raise _bad(_ops_error(_ORGANIZATION_OPS))
-        if op == "list":
-            _refuse_ignored(op, "n'existe que sur op='get'",
-                            organization_reference=organization_reference,
-                            offices=offices, websites=websites)
-            return {"user": _run(lambda: _client().get_current_user(organizations=True))}
-        if op == "get":
-            ref = _need(organization_reference, "organization_reference", op)
-            return {"organization": _run(lambda: _client().get_organization(
-                ref, offices=offices, websites=websites))}
-        raise _bad(_ops_error(_ORGANIZATION_OPS))
+        every other wttj tool needs an `organization_reference` or a job. Returns
+        the token's user with `organizations: [{reference, name, …}]`."""
+        return {"user": _run(lambda: _client().get_current_user(organizations=True))}
 
     # --- Offres -------------------------------------------------------------
 
@@ -338,14 +320,18 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def wttj_moves(
         organization_reference: str,
-        job_reference: Optional[str] = None,
+        job_reference: str,
         page: Optional[int] = None,
         per_page: Optional[int] = None,
         fields: Optional[list[str]] = None,
     ) -> dict:
-        """History of stage changes in an organization (optionally one job): each
-        `{candidate: {reference}, from: {stage, job}, to: {stage, job}, created_at}`.
-        Answers « who moved where, when » — a pipeline activity feed."""
+        """History of stage changes of ONE job (`job_reference` is required by the
+        API): each `{candidate: {reference}, from: {stage, job}, to: {stage, job},
+        created_at}`. Answers « who moved where, when » on that job.
+
+        Needs the `moves_r` scope; WTTJ may also require a partner scope
+        (`su_moves_r`) that client accounts do not get — the refusal then names
+        it, and the history cannot be read with that token."""
         rows = _run(lambda: _client().list_moves(
             organization_reference, job_reference=job_reference, page=page,
             per_page=per_page))
